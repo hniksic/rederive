@@ -10,7 +10,7 @@ Rederive imitates the original in everything but color. Color is the exception
 because the original ships monochrome - Work 15 on 0, Menu 7, 7, 15, 7 on
 0, 0 - so a colorless screenshot is not evidence that this palette is wrong
 and must not be "corrected" to match. Those numbers are the monochrome preset
-of R-COL1, for whoever adds it.
+of R-COL3, for whoever adds it.
 
 The colors below are not invented either. They are the original's factory
 settings from the last version whose defaults were colorful, as set in its

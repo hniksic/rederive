@@ -214,6 +214,12 @@ under `artifacts/screenshots/`: `dos-v2-algebra-window-selected-expression.png`,
 Menu wording and key bindings are cross-checked against the Derive 3.14 User
 Manual (see `artifacts/screenshots/ui-look-and-feel-notes.md` §2).
 
+**Reference versions.** Imitate the original in everything - layout, wording,
+keys - except colors, which come from an earlier version, the last whose
+factory defaults were colorful. The original ships monochrome, so a colorless
+screen is not evidence of a wrong palette. Where the manual and the original
+disagree, the original wins.
+
 ### 4.1 Screen anatomy
 
 A pane is built from the same four horizontal bands the DOS version used:
@@ -234,16 +240,18 @@ A pane is built from the same four horizontal bands the DOS version used:
 
 ### 4.2 Color scheme
 
-The reference screenshots are monochrome-style, not the multicolor EGA
-splash palette; treat that as the default look:
+Derive colors eight slots, and the remake keeps them: a foreground and
+background for the work area, and Frame, Option, Prompt, Status, Background
+and Border for the chrome. A preset is therefore a table of eight color
+numbers.
 
-- **R-COL1.** Default theme: black background, white/light-gray text,
-  matching `dos-v3.14-algebra-window-limits-*.png`.
+- **R-COL1.** Default theme: the original's factory colors - white
+  expressions on black, red frame, yellow menu, red message line, green
+  status line. Exact numbers in `src/rederive/ui/theme.py`.
 - **R-COL2.** At least one alternate preset: green-phosphor (green on
-  black), matching the v2-era screenshots.
-- **R-COL3 (stretch).** A "Color" preset approximating the documented
-  16-color EGA palette (yellow menu text, magenta rule, red message line,
-  green pane-type tag; see `dos-v2.01-splash-screen-menu-bar.png`).
+  black).
+- **R-COL3.** A monochrome preset, matching the original's later factory
+  settings: white expressions on black, gray chrome.
 - **R-COL4.** The selected expression is a solid inverse-video block (light
   background, dark text), as in the screenshots, in every theme.
 
