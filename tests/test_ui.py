@@ -25,8 +25,8 @@ def _styled(widget, style):
 
 
 def highlighted_menu_option(app):
-    (option,) = _styled(app.query_one("#menu"), STYLES["option-highlight"])
-    return option
+    options = _styled(app.query_one("#menu"), STYLES["option-highlight"])
+    return options[0] if options else None
 
 
 def highlighted_expression(app):
@@ -110,8 +110,11 @@ async def test_quit_asks_before_abandoning_expressions(app):
         await author(pilot, "x")
         await pilot.press("q")
         assert message(app) == "Abandon expressions (Y/N)?"
+        # The original takes the highlight off the menu while it asks.
+        assert highlighted_menu_option(app) is None
         await pilot.press("n")
         assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
         assert app.is_running
         await pilot.press("q", "y")
         await pilot.pause()

@@ -28,7 +28,9 @@ MODE_AUTHOR = "author"
 MODE_CONFIRM_QUIT = "confirm_quit"
 
 ENTER_OPTION = "Enter option"
-ENTER_EXPRESSION = "Enter expression"
+# F1 does nothing yet: Help is not part of this milestone. The wording is the
+# original's, kept so the screen reads right.
+ENTER_EXPRESSION = "Enter expression (press F1 for help)"
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 
@@ -101,7 +103,9 @@ class RederiveApp(App[None]):
         self.query_one(WorkArea).show(
             self.session.entries, self.session.selected, self.session.selection_span()
         )
-        self.query_one(MenuBand).show(self.menu_index)
+        # Quit's confirmation takes the highlight off the menu entirely.
+        highlighted = None if self.mode == MODE_CONFIRM_QUIT else self.menu_index
+        self.query_one(MenuBand).show(highlighted)
         self.query_one(MessageLine).show(self.message)
         annotation = "User" if self.session.selected_entry is not None else ""
         self.query_one(StatusLine).show(annotation)
@@ -180,7 +184,8 @@ class RederiveApp(App[None]):
             self.exit()
             return
         self.mode = MODE_CONFIRM_QUIT
-        self._set_message(ABANDON_PROMPT)
+        self.message = ABANDON_PROMPT
+        self.refresh_screen()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()

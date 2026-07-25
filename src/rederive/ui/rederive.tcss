@@ -8,11 +8,18 @@ Screen {
     layout: vertical;
 }
 
+/* The history grows upwards from the rule: with a few entries the work area
+   is empty at the top, and the newest entry always sits against the bottom. */
 #work {
     height: 1fr;
+    align-vertical: bottom;
     background: $rd-work-background;
     color: $rd-work-foreground;
     scrollbar-size: 0 0;
+}
+
+#work-content {
+    height: auto;
 }
 
 #rule {

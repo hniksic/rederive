@@ -66,14 +66,15 @@ class MessageLine(Static):
 class MenuBand(Static):
     """The two-line command menu, one option highlighted in inverse video."""
 
-    def show(self, highlighted: int) -> None:
+    def show(self, highlighted: int | None) -> None:
+        """Render the menu; `None` highlights nothing, as while Quit asks."""
         indent = " " + " " * len(MENU_TITLE) + " "
         first = self._line(f" {MENU_TITLE} ", 0, FIRST_LINE_OPTIONS, highlighted)
         second = self._line(indent, FIRST_LINE_OPTIONS, len(ALGEBRA_MENU), highlighted)
         self.update(Text("\n").join([first, second]))
 
     @staticmethod
-    def _line(prefix: str, start: int, stop: int, highlighted: int) -> Text:
+    def _line(prefix: str, start: int, stop: int, highlighted: int | None) -> Text:
         text = Text(prefix, style=STYLES["option"], no_wrap=True)
         for index in range(start, stop):
             if index > start:
