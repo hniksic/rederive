@@ -25,7 +25,7 @@ def _styled(widget, style):
 
 
 def highlighted_menu_option(app):
-    (option,) = _styled(app.query_one("#menu"), STYLES["menu-highlight"])
+    (option,) = _styled(app.query_one("#menu"), STYLES["option-highlight"])
     return option
 
 

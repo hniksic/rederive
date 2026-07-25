@@ -36,7 +36,7 @@ class WorkArea(VerticalScroll):
         selected: int | None,
         span: tuple[int, int] | None,
     ) -> None:
-        text = Text(style=STYLES["expression"], no_wrap=True)
+        text = Text(style=STYLES["work"], no_wrap=True)
         for index, entry in enumerate(entries):
             if index:
                 text.append("\n\n")
@@ -60,7 +60,7 @@ class MessageLine(Static):
     """One line saying what is happening or what input is expected."""
 
     def show(self, message: str) -> None:
-        self.update(Text(f" {message}", style=STYLES["annotation"]))
+        self.update(Text(f" {message}", style=STYLES["prompt"]))
 
 
 class MenuBand(Static):
@@ -74,11 +74,12 @@ class MenuBand(Static):
 
     @staticmethod
     def _line(prefix: str, start: int, stop: int, highlighted: int) -> Text:
-        text = Text(prefix, style=STYLES["menu"], no_wrap=True)
+        text = Text(prefix, style=STYLES["option"], no_wrap=True)
         for index in range(start, stop):
             if index > start:
                 text.append(" ")
-            style = STYLES["menu-highlight"] if index == highlighted else STYLES["menu"]
+            highlight = index == highlighted
+            style = STYLES["option-highlight"] if highlight else STYLES["option"]
             text.append(ALGEBRA_MENU[index], style=style)
         return text
 
@@ -94,8 +95,11 @@ class StatusLine(Static):
     """Bottom line: selection annotation, memory field, pane type."""
 
     annotation = ""
-    center = "Free:100%"
-    pane = "Derive Algebra"
+    #: The original's muLISP heap gauge lived here. The slot is kept for
+    #: something useful today, such as a busy indicator during long
+    #: computations (REQUIREMENTS 4.1), and stays empty until there is one.
+    center = ""
+    pane = "Rederive Algebra"
 
     def show(self, annotation: str) -> None:
         self.annotation = annotation
@@ -104,7 +108,7 @@ class StatusLine(Static):
     def render(self) -> Text:
         width = max(self.size.width, len(self.pane) + 2)
         text = Text(" ", no_wrap=True)
-        text.append(self.annotation, style=STYLES["annotation"])
+        text.append(self.annotation, style=STYLES["status"])
         used = 1 + len(self.annotation)
         center_at = max(used + 1, (width - len(self.center)) // 2)
         text.append(" " * (center_at - used))

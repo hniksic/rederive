@@ -1,36 +1,39 @@
 /* Layout and colors for the four bands of an Algebra pane.
-   Every color here comes from rederive.ui.theme via $rd-* variables. */
+   Every color here comes from rederive.ui.theme via $rd-* variables, named
+   after the slots Derive's own Options Color commands expose. */
 
 Screen {
-    background: $rd-background;
-    color: $rd-expression;
+    background: $rd-menu-background;
+    color: $rd-work-foreground;
     layout: vertical;
 }
 
 #work {
     height: 1fr;
-    background: $rd-background;
-    color: $rd-expression;
+    background: $rd-work-background;
+    color: $rd-work-foreground;
     scrollbar-size: 0 0;
 }
 
 #rule {
     height: 1;
-    color: $rd-rule;
+    color: $rd-frame;
 }
 
 #menu {
     height: 2;
-    color: $rd-menu;
+    color: $rd-option;
 }
 
 #author-band {
     height: 2;
 }
 
+/* The author prompt takes the Option color, not the Prompt color: in Derive it
+   is yellow like the menu, while the message line below it is red. */
 #author-prompt {
     width: auto;
-    color: $rd-message;
+    color: $rd-option;
 }
 
 #author-input {
@@ -38,18 +41,19 @@ Screen {
     height: 1;
     border: none;
     padding: 0;
-    background: $rd-background;
-    color: $rd-expression;
+    background: $rd-work-background;
+    background-tint: $rd-work-background;
+    color: $rd-work-foreground;
 }
 
 #author-input > .input--cursor {
-    background: $rd-selection-bg;
-    color: $rd-selection-fg;
+    background: $rd-selection-background;
+    color: $rd-work-background;
 }
 
 #message {
     height: 1;
-    color: $rd-message;
+    color: $rd-prompt;
 }
 
 #status {

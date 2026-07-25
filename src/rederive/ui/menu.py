@@ -1,7 +1,8 @@
 """The Algebra pane's command menu: the words and their mnemonic letters.
 
-`Unremove` is deliberately absent: per R-MENU1 it appears only while there is
-something to restore, which cannot happen yet.
+`Unremove` is listed unconditionally. R-MENU1 says it appears only while there
+is something to restore, but the original shows it in the menu of a session
+where nothing has ever been removed, so the requirement is wrong about this.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ ALGEBRA_MENU: tuple[str, ...] = (
     "Remove",
     "Simplify",
     "Transfer",
+    "Unremove",
     "moVe",
     "Window",
     "approX",
