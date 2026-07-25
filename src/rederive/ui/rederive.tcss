@@ -1,0 +1,57 @@
+/* Layout and colors for the four bands of an Algebra pane.
+   Every color here comes from rederive.ui.theme via $rd-* variables. */
+
+Screen {
+    background: $rd-background;
+    color: $rd-expression;
+    layout: vertical;
+}
+
+#work {
+    height: 1fr;
+    background: $rd-background;
+    color: $rd-expression;
+    scrollbar-size: 0 0;
+}
+
+#rule {
+    height: 1;
+    color: $rd-rule;
+}
+
+#menu {
+    height: 2;
+    color: $rd-menu;
+}
+
+#author-band {
+    height: 2;
+}
+
+#author-prompt {
+    width: auto;
+    color: $rd-message;
+}
+
+#author-input {
+    width: 1fr;
+    height: 1;
+    border: none;
+    padding: 0;
+    background: $rd-background;
+    color: $rd-expression;
+}
+
+#author-input > .input--cursor {
+    background: $rd-selection-bg;
+    color: $rd-selection-fg;
+}
+
+#message {
+    height: 1;
+    color: $rd-message;
+}
+
+#status {
+    height: 1;
+}
