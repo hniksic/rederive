@@ -24,8 +24,10 @@ from rederive.display import glyphs
 from rederive.display.boxes import Box, Placed, centered, fenced, rail, row, text
 from rederive.model.expr import Kind, Node
 
-# The precedence ladder, loosest first, as the grammar builds it: `-x*y` is
-# `(-x)*y`, so a unary sign binds tighter than a product.
+# The precedence ladder, loosest first. This is how tightly a rendering binds
+# as read back off the screen, which is not everywhere how the grammar builds
+# it: `-x*y` parses as `-(x·y)`, and a sign already drawn stands to the left
+# of a product the way one binding tighter would.
 ASSIGNMENT = 0
 IMP = 1
 XOR = 2
@@ -42,9 +44,6 @@ POSTFIX = 12
 ATOM = 13
 
 _BINOPS: dict[str, int] = {
-    "+": ADD,
-    "-": ADD,
-    "*": MUL,
     "/": MUL,
     ".": MUL,
     "^": POW,
@@ -106,6 +105,10 @@ def body_precedence(node: Node) -> int | None:
 def precedence(node: Node) -> int:
     """How tightly `node`'s own rendering binds."""
     match node.kind:
+        case Kind.SUM:
+            return ADD
+        case Kind.PRODUCT:
+            return MUL
         case Kind.BINOP:
             return _BINOPS[str(node.value)]
         case Kind.UNOP:

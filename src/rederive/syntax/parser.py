@@ -10,6 +10,15 @@ applications, optionally signed. It is looser than `!` and tighter than `^`, so
 `:=` is settled in `primary`: a name immediately followed by `:=` becomes an
 assignment before any surrounding operator is considered, which is what makes
 `"inapplicable"=a_:=F(...)` a relation whose right operand is an assignment.
+
+`sum` and `product` build one node per run rather than a spine of pairs,
+because that is what the original builds: Transfer Save keeps the parentheses
+of `(a-b)+c` and `(a*b)*c`, which it would drop if they were the same tree as
+`a-b+c` and `a*b*c`, and the selection highlight gives each of those runs
+three operands. A run carries one operator per gap, so `a-b+c` holds `b` bare
+and its sign among the operators; the highlight covers `b`, not `- b`. `/` and
+the dot product are genuinely binary and close a run - `(a*b)/c` saves as
+`a*b/c` - which is why `a*b/c*d` is a product of `a·b/c` and `d`.
 """
 
 from __future__ import annotations
@@ -133,7 +142,13 @@ class Parser:
         return self.implication()
 
     def implication(self) -> _Parsed:
-        return self._logical("IMP", self.exclusive_or)
+        """`IMP` is the one logical operator that folds left."""
+        left = self.exclusive_or()
+        while _is_op(self.peek(), "IMP"):
+            self.advance()
+            right = self.exclusive_or()
+            left = _combine(Kind.IMP, left, right)
+        return left
 
     def exclusive_or(self) -> _Parsed:
         return self._logical("XOR", self.disjunction)
@@ -145,12 +160,16 @@ class Parser:
         return self._logical("AND", self.negation)
 
     def _logical(self, word: str, tighter) -> _Parsed:
+        """`AND`, `OR` and `XOR`, each nesting to the right.
+
+        `a AND b AND c` is `a AND (b AND c)`, which is what the original
+        builds and what its own saved form spells out.
+        """
         left = tighter()
-        while _is_op(self.peek(), word):
-            self.advance()
-            right = tighter()
-            left = _combine(_LOGICAL_KINDS[word], left, right)
-        return left
+        if not _is_op(self.peek(), word):
+            return left
+        self.advance()
+        return _combine(_LOGICAL_KINDS[word], left, self._logical(word, tighter))
 
     def negation(self) -> _Parsed:
         token = self.peek()
@@ -165,10 +184,11 @@ class Parser:
         return self.relation()
 
     def relation(self) -> _Parsed:
-        """A chain of relations is one node, not a tree of comparisons."""
-        parts = [self.sum()]
-        operators: list[str] = []
-        surfaces: list[str] = []
+        """A relation is binary, and a chain of them nests to the left.
+
+        `a=b<c` is `(a=b)<c`: one operator per node, two operands each.
+        """
+        left = self.sum()
         while True:
             token = self.peek()
             if not _is_op(token, *_RELATIONS):
@@ -176,37 +196,38 @@ class Parser:
             if token.value == "=" and self.after(token).kind is TokenKind.EOF:
                 break  # the author line's trailing `=`
             self.advance()
-            operators.append(token.value)
-            surfaces.append(token.surface or token.value)
-            parts.append(self.sum())
-        if not operators:
-            return parts[0]
-        spelled = " ".join(surfaces)
-        canonical = " ".join(operators)
-        return _Parsed(
-            Node(
-                Kind.REL,
-                parts[0].lo,
-                parts[-1].hi,
-                tuple(part.node for part in parts),
-                canonical,
-                None if spelled == canonical else spelled,
-            ),
-            parts[0].lo,
-            parts[-1].hi,
-        )
-
-    def sum(self) -> _Parsed:
-        left = self.product()
-        while _is_op(self.peek(), "+", "-"):
-            token = self.advance()
-            right = self.product()
-            left = _combine(Kind.BINOP, left, right, token.value, token.surface)
+            right = self.sum()
+            left = _combine(Kind.REL, left, right, token.value, token.surface)
         return left
 
+    def sum(self) -> _Parsed:
+        """A run of `+` and `-` over signed terms, held as one node."""
+        terms = [self.signed()]
+        gaps: list[tuple[str, str]] = []
+        while _is_op(self.peek(), "+", "-"):
+            token = self.advance()
+            gaps.append((token.value, token.surface or token.value))
+            terms.append(self.signed())
+        return _run(Kind.SUM, terms, gaps)
+
+    def signed(self) -> _Parsed:
+        """A sign over a whole product: `-x/y*z` is `-(x/y·z)`.
+
+        The ladder is `^` over `*` `/` `.` and juxtaposition, over a unary
+        sign, over binary `+` and `-`.
+        """
+        return self._sign(self.signed) or self.product()
+
     def product(self) -> _Parsed:
-        """`*`, `/`, the dot product, and juxtaposition, all left to right."""
-        left = self.unary()
+        """`*`, `/`, the dot product, and juxtaposition, all left to right.
+
+        A run of `*` and juxtaposition is one node; `/` and the dot product
+        are binary and close the run, becoming its left operand. `a*b/c*d` is
+        therefore a product of `a·b/c` and `d`, which is how the original
+        offers it to the cursor.
+        """
+        factors = [self.power()]
+        gaps: list[tuple[str, str]] = []
         while True:
             token = self.peek()
             if _is_op(token, "*"):
@@ -214,45 +235,61 @@ class Parser:
                 # A run of consecutive `*` behaves as a single `*`.
                 while _is_op(self.peek(), "*"):
                     self.advance()
-                right = self.unary()
-                left = _combine(Kind.BINOP, left, right, "*", token.surface)
+                gaps.append(("*", token.surface or "*"))
+                factors.append(self.factor())
+            elif self.starts_factor(token):
+                gaps.append(("*", " "))
+                factors.append(self.factor())
             elif _is_op(token, "/", "."):
                 self.advance()
-                right = self.unary()
-                left = _combine(Kind.BINOP, left, right, token.value, token.surface)
-            elif self.starts_factor(token):
-                right = self.unary()
-                left = _combine(Kind.BINOP, left, right, "*", "")
+                left = _run(Kind.PRODUCT, factors, gaps)
+                right = self.factor()
+                factors = [
+                    _combine(Kind.BINOP, left, right, token.value, token.surface)
+                ]
+                gaps = []
             else:
                 break
-        return left
+        return _run(Kind.PRODUCT, factors, gaps)
 
-    def unary(self) -> _Parsed:
+    def factor(self) -> _Parsed:
+        """A sign is still accepted where a factor is expected.
+
+        There it governs that factor alone and no more of the product, so
+        `a*-b*c` is `(a·(-b))·c`.
+        """
+        return self._sign(self.factor) or self.power()
+
+    def _sign(self, inner) -> _Parsed | None:
+        """`-u`, `+u` or `±u`, with `inner` parsing the `u`.
+
+        `None` when no sign is there, leaving the caller to parse whatever
+        binds tighter.
+        """
         token = self.peek()
-        if _is_op(token, *_SIGNS):
-            self.advance()
-            operand = self.unary()
-            return _Parsed(
-                Node(
-                    Kind.UNOP,
-                    token.start,
-                    operand.hi,
-                    (operand.node,),
-                    token.value,
-                    token.surface,
-                ),
-                token.start,
-                operand.hi,
-            )
-        return self.power()
+        if not _is_op(token, *_SIGNS):
+            return None
+        self.advance()
+        operand = inner()
+        node = Node(
+            Kind.UNOP,
+            token.start,
+            operand.hi,
+            (operand.node,),
+            token.value,
+            token.surface,
+        )
+        return _Parsed(node, token.start, operand.hi)
 
     def power(self) -> _Parsed:
         base = self.subscripted()
         token = self.peek()
         if _is_op(token, "^"):
             self.advance()
-            # Right-associative, and the exponent may carry its own sign.
-            return _combine(Kind.BINOP, base, self.unary(), "^", token.surface)
+            # Right-associative, and the exponent may carry its own sign,
+            # which reaches no further than the exponent: `a^-b*c` is
+            # `(a^(-b))·c`.
+            return _combine(Kind.BINOP, base, self.factor(), "^", token.surface)
         return base
 
     def subscripted(self) -> _Parsed:
@@ -354,7 +391,7 @@ class Parser:
         """
         self.advance()
         self.expect("^", "'^'")
-        exponent = self.unary()
+        exponent = self.factor()
         token = self.peek()
         if not self.starts_operand(token):
             raise self.error(token.start, "an operand")
@@ -365,19 +402,9 @@ class Parser:
         )
 
     def operand(self) -> _Parsed:
-        token = self.peek()
-        if _is_op(token, *_SIGNS):
-            self.advance()
-            inner = self.operand()
-            node = Node(
-                Kind.UNOP,
-                token.start,
-                inner.hi,
-                (inner.node,),
-                token.value,
-                token.surface,
-            )
-            return _Parsed(node, token.start, inner.hi)
+        signed = self._sign(self.operand)
+        if signed is not None:
+            return signed
         left = self.application()
         while _is_op(self.peek(), "SUB"):
             sub = self.advance()
@@ -604,6 +631,26 @@ def _combine(
     surface: str | None = None,
 ) -> _Parsed:
     node = Node(kind, left.lo, right.hi, (left.node, right.node), value, surface)
+    return _Parsed(node, node.start, node.end)
+
+
+def _run(kind: Kind, parts: list[_Parsed], gaps: list[tuple[str, str]]) -> _Parsed:
+    """A `SUM` or a `PRODUCT` over `parts`, one `gap` between each pair.
+
+    A run of one is just its term: nothing was written to make it a run.
+    """
+    if not gaps:
+        return parts[0]
+    value = "".join(canonical for canonical, _ in gaps)
+    spelled = "".join(surface for _, surface in gaps)
+    node = Node(
+        kind,
+        parts[0].lo,
+        parts[-1].hi,
+        tuple(part.node for part in parts),
+        value,
+        None if spelled == value else spelled,
+    )
     return _Parsed(node, node.start, node.end)
 
 

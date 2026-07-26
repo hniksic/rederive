@@ -2,13 +2,19 @@
 
 The mapping is total: every node has exactly one written form, and
 `(juxt a b)` is distinct from `(* a b)`.
+
+A sum or a product is a run of terms rather than a nest of pairs, and carries
+one operator per gap. When every gap is the same the operator heads the form,
+`(+ a b c)` and `(juxt x y z)`; when they differ the run is named and the
+operators are written between the terms it joins, `(sum a - b + c)` and
+`(prod 2 juxt x * y)`.
 """
 
 from __future__ import annotations
 
 from rederive.model.expr import Kind, Node
 
-_BINOPS = {"*": "*", "/": "/", "+": "+", "-": "-", "^": "^", ".": "dot"}
+_BINOPS = {"/": "/", "^": "^", ".": "dot"}
 _UNOPS = {"-": "neg", "+": "pos", "+-": "pm"}
 _POSTOPS = {"!": "fact", "%": "pct", "`": "transpose"}
 
@@ -23,10 +29,10 @@ def to_sexpr(node: Node) -> str:
             return f'"{node.value}"'
         case Kind.LABEL:
             return f"(label {node.value})"
+        case Kind.SUM | Kind.PRODUCT:
+            return _run(node, children)
         case Kind.BINOP:
-            juxtaposed = node.value == "*" and node.surface == ""
-            head = "juxt" if juxtaposed else _BINOPS[str(node.value)]
-            return _form(head, children)
+            return _form(_BINOPS[str(node.value)], children)
         case Kind.UNOP:
             return _form(_UNOPS[str(node.value)], children)
         case Kind.POSTOP:
@@ -44,7 +50,8 @@ def to_sexpr(node: Node) -> str:
         case Kind.VECTOR:
             return _form("vec", children)
         case Kind.REL:
-            return _form("rel", _interleave(children, str(node.value).split()))
+            # Binary, and the operator is written between its operands.
+            return _form("rel", [children[0], str(node.value), children[1]])
         case Kind.NOT | Kind.AND | Kind.OR | Kind.XOR | Kind.IMP:
             return _form(str(node.kind), children)
         case Kind.ASSIGN:
@@ -67,8 +74,21 @@ def _form(head: str, parts: list[str]) -> str:
     return "(" + " ".join([head, *parts]) + ")"
 
 
-def _interleave(operands: list[str], operators: list[str]) -> list[str]:
-    parts = [operands[0]]
-    for operator, operand in zip(operators, operands[1:], strict=True):
-        parts += [operator, operand]
-    return parts
+def _run(node: Node, children: list[str]) -> str:
+    """A sum or a product, written by its gaps."""
+    gaps = [_gap(node, index) for index in range(len(children) - 1)]
+    if len(set(gaps)) == 1:
+        return _form(gaps[0], children)
+    head = "sum" if node.kind is Kind.SUM else "prod"
+    parts = [children[0]]
+    for gap, child in zip(gaps, children[1:], strict=True):
+        parts += [gap, child]
+    return _form(head, parts)
+
+
+def _gap(node: Node, index: int) -> str:
+    """The operator joining term `index` to the one after it."""
+    if node.kind is Kind.SUM:
+        return str(node.value)[index]
+    written = node.surface or str(node.value)
+    return "juxt" if written[index] == " " else "*"

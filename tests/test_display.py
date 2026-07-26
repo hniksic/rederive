@@ -588,7 +588,7 @@ def test_a_route_that_leads_nowhere_is_none() -> None:
 def test_a_route_names_the_subexpression_it_covers() -> None:
     """`Region.node` is how an operation gets back to what is selected."""
     layout = layout_of("a+b/c+d")
-    assert to_sexpr(layout.at(()).node) == "(+ (+ a (/ b c)) d)"
+    assert to_sexpr(layout.at(()).node) == "(+ a (/ b c) d)"
     assert to_sexpr(layout.at((1,)).node) == "(/ b c)"
     assert to_sexpr(layout.at((1, 1)).node) == "c"
 
@@ -630,20 +630,33 @@ def covers(text: str, route: tuple[int, ...]) -> list[str]:
     ("text", "expected"),
     [
         ("a+b+c", ["a", "b", "c"]),
-        # The sign belongs to the chain, so the third term is `c`, not `-c`.
+        # The sign belongs to the run, so the third term is `c`, not `-c`.
         ("a+b-c", ["a", "b", "c"]),
         ("a b c", ["a", "b", "c"]),
         ("a*b*c", ["a", "b", "c"]),
-        # `/` and the dot product are drawn as groups of their own.
+        # `/` and the dot product are binary and drawn as groups of their own.
         ("a*b/c", ["(* a b)", "c"]),
+        ("a*b/c*d", ["(/ (* a b) c)", "d"]),
         ("[1,2].[3,4]", ["(vec 1 2)", "(vec 3 4)"]),
-        # Fences say the operand is one term however the chain would flatten.
+        # Parentheses are a run of their own, whichever operator they group.
         ("a-(b-c)", ["a", "(- b c)"]),
-        ("a+(b+c)", ["a", "b", "c"]),
+        ("a+(b+c)", ["a", "(+ b c)"]),
+        ("a*(b*c)", ["a", "(* b c)"]),
     ],
 )
-def test_chains_flatten(text: str, expected: list[str]) -> None:
+def test_a_run_offers_its_terms(text: str, expected: list[str]) -> None:
     assert operands(text) == expected
+
+
+def test_a_parenthesised_run_keeps_its_fences() -> None:
+    """`a + (b + c)` is two terms in the original, and says so on the screen.
+
+    Only the parentheses tell it from `a + b + c`, which is three, so they
+    are drawn even though `+` would be read the same way without them.
+    """
+    check("a+(b+c)", "a + (b + c)")
+    check("a*(b*c)", "a·(b·c)")
+    check("a+b+c", "a + b + c")
 
 
 def test_a_flattened_term_covers_the_term_alone() -> None:
@@ -731,6 +744,14 @@ def test_a_quotient_of_a_product_offers_the_product_whole() -> None:
 def test_the_operand_of_a_unary_sign_is_selectable() -> None:
     assert operands("-x") == ["x"]
     assert covers("-x", (0,)) == ["x"]
+
+
+def test_a_relation_chain_selects_as_nested_pairs() -> None:
+    # `(a = b) < c`: two operands at the root, and the left one steps into
+    # its own pair. The original does the same.
+    assert operands("a=b<c") == ["(rel a = b)", "c"]
+    assert covers("a=b<c", (0,)) == ["a = b"]
+    assert operands("a=b<c", (0,)) == ["a", "b"]
 
 
 def test_a_domain_and_its_interval_select_together() -> None:
@@ -1197,13 +1218,22 @@ def test_a_sign_stands_off_a_raised_or_lowered_operand() -> None:
     )
 
 
-def test_a_sign_in_a_numerator_stays_where_the_parse_put_it() -> None:
-    """`(-x)/y` is `-x` over the bar, which is what the original writes.
+def test_a_sign_over_a_quotient_stands_beside_the_bar() -> None:
+    """Where the sign is drawn follows the tree, and nothing compensates.
 
-    `-x/y` reaches the renderer as this same tree, though the original parses
-    it as `-(x/y)` and draws the sign beside the bar. That is a difference in
-    `rederive.syntax`, not one any display rule can tell apart.
+    `-x/y` is `-(x/y)`, whose operand is a quotient rather than a leaf, so the
+    ordinary rule that a sign stands off anything but a leaf puts it beside
+    the bar. `(-x)/y` really does put `-x` over the bar. The original draws
+    both this way.
     """
+    check(
+        "-x/y",
+        """
+           x
+        - ───
+           y
+        """,
+    )
     check(
         "(-x)/y",
         """

@@ -53,12 +53,6 @@ _LINEAR_SCRIPTS = 2
 #: precedence on the ladder, so it can absorb nothing.
 ALONE = -1
 
-#: The operators drawn as a run of terms rather than as nested pairs. `a + b
-#: - c` offers three operands and the sign belongs to the chain, so the third
-#: is `c` and not `-c`. `/` and the dot product are absent: each is drawn as a
-#: group of its own, so `a·b/c` offers `a·b` and `c`.
-_CHAINS = {"+": "sum", "-": "sum", "*": "product"}
-
 #: The default options, held as one value so that the common call builds none.
 _DEFAULTS = DisplayOptions()
 
@@ -184,6 +178,8 @@ class Engine:
                 return text(f"#{node.value}", node)
             case Kind.UNKNOWN:
                 return text("?", node)
+            case Kind.SUM | Kind.PRODUCT:
+                return self._run(node, level, budget)
             case Kind.BINOP:
                 return self._binop(node, level, budget)
             case Kind.UNOP:
@@ -245,48 +241,63 @@ class Engine:
     # -- operators ----------------------------------------------------------
 
     def _binop(self, node: Node, level: int, budget: int | None) -> Box:
+        """`/`, `^` and the dot product, the three that really are binary."""
         operator = str(node.value)
         if operator == "/":
             return self._division(node, level, budget)
         if operator == "^":
             return self._power(node, level, budget)
         left, right = node.children
-        if operator in ("*", "."):
-            spelling = (
-                glyphs.TIMES[self.options.times]
-                if operator == "*"
-                else glyphs.DOT_PRODUCT
-            )
-            first = self._factor(left, level, budget, forms.MUL, forms.MUL)
-            second = self.operand(right, level, budget, forms.MUL)
-            return row(
-                [first, text(spelling), second],
-                node,
-                self._terms(node, left, first) + self._terms(node, right, second),
-            )
-        # `a - (b - c)` needs its fences where `a + (b + c)` does not.
-        tighter = forms.ADD if operator == "+" else forms.MUL
-        first = self.operand(left, level, budget, forms.ADD, forms.ADD)
-        second = self.operand(right, level, budget, tighter)
-        return row(
-            [first, text(self._spaced(operator)), second],
-            node,
-            self._terms(node, left, first) + self._terms(node, right, second),
-        )
+        first = self.operand(left, level, budget, forms.MUL, forms.MUL)
+        second = self.operand(right, level, budget, forms.MUL)
+        return row([first, text(glyphs.DOT_PRODUCT), second], node, (first, second))
+
+    def _run(self, node: Node, level: int, budget: int | None) -> Box:
+        """A sum or a product: every term at once, and its own operands.
+
+        Each gap carries its own operator, so the terms are offered bare and
+        `a + b - c` offers three of them rather than `a + b` and `c`.
+        """
+        own = forms.precedence(node)
+        gaps = [self._gap(node, index) for index in range(len(node.children) - 1)]
+        operands = []
+        parts: list[Box] = []
+        for index, child in enumerate(node.children):
+            if index:
+                parts.append(text(gaps[index - 1]))
+            after = own if index < len(gaps) else ALONE
+            box = self.operand(child, level, budget, own, after)
+            if self._fenced_in_run(node, child):
+                box = self.fence(box)
+            operands.append(box)
+            parts.append(box)
+        return row(parts, node, tuple(operands))
+
+    def _gap(self, node: Node, index: int) -> str:
+        """How the operator before term `index + 1` is drawn.
+
+        A product draws every gap the same way, juxtaposition included: the
+        original writes `a b` as `a·b`, keeping no trace of how it was typed.
+        """
+        if node.kind is Kind.PRODUCT:
+            return glyphs.TIMES[self.options.times]
+        return self._spaced(str(node.value)[index])
 
     @staticmethod
-    def _terms(node: Node, child: Node, box: Box) -> tuple[Box, ...]:
-        """What `child` contributes to `node`'s operands.
+    def _fenced_in_run(node: Node, child: Node) -> bool:
+        """Whether a term takes fences that its precedence alone will not ask for.
 
-        A chain splices in the terms of a same-kind operand instead of
-        offering it whole, so `a + b - c` offers three. A fenced operand
-        splices to itself, which is right: `a - (b - c)` is drawn as two
-        terms and the parentheses are what say so.
+        A run nested in a run of its own kind is one. The original keeps the
+        parentheses of `a+(b+c)` and `a·(b·c)`, which is the only thing that
+        tells them from `a+b+c` and `a·b·c`, where it drops them.
+
+        A sign inside a product is the other, `a·(-b)`: a drawn sign reaches
+        over a whole product, so `a·-b` would read as `a·(-b·…)`. A sign in a
+        sum needs nothing, `a + -b` being unambiguous already.
         """
-        chain = _CHAINS.get(str(node.value)) if node.kind is Kind.BINOP else None
-        if chain is not None and _CHAINS.get(_binop_value(child)) == chain:
-            return box.operands
-        return (box,)
+        if child.kind is node.kind:
+            return True
+        return node.kind is Kind.PRODUCT and child.kind is Kind.UNOP
 
     def _sign(
         self, node: Node, level: int, budget: int | None, detached: bool = False
@@ -302,25 +313,6 @@ class Engine:
         if detached or not node.children[0].is_atom:
             sign += " "
         return row([text(sign), operand], node, (operand,))
-
-    def _factor(
-        self, node: Node, level: int, budget: int | None, required: int, after: int
-    ) -> Box:
-        """The left operand of a product, a linear quotient or a dot product.
-
-        `rederive.syntax` binds a unary sign tighter than these operators,
-        where the original binds it looser: `-x/y` arrives here as `(-x)/y`
-        where the original holds `-(x/y)`. Standing the sign off renders what
-        the original renders for the same authored text, `- x/y` and `- x·y`.
-
-        A compensation, not a rule, and it can go once the parser agrees: with
-        the sign outside, the operand of the sign is a quotient rather than a
-        leaf and it stands off on its own. A built-up numerator is left alone
-        either way, since `(-x)/y` really does put `-x` over the bar.
-        """
-        if _is_negation(node):
-            return self._sign(node, level, budget, detached=True)
-        return self.operand(node, level, budget, required, after)
 
     def _division(self, node: Node, level: int, budget: int | None) -> Box:
         numerator, denominator = node.children
@@ -352,7 +344,7 @@ class Engine:
         """An operand of a linear `/`, where a built-up fraction needs no fences."""
         if _is_quotient(node) and self.built_up(node, level, budget):
             return self.box(node, level, budget)
-        return self._factor(node, level, budget, required, after)
+        return self.operand(node, level, budget, required, after)
 
     def _power(self, node: Node, level: int, budget: int | None) -> Box:
         base, exponent = node.children
@@ -397,18 +389,17 @@ class Engine:
         )
 
     def _relation(self, node: Node, level: int, budget: int | None) -> Box:
-        """A chain of relations, which the parser keeps as one node."""
-        operators = str(node.value).split()
-        first = node.children[0]
-        operands = [self.operand(first, level, budget, forms.ADD, forms.RELATION)]
-        parts = [operands[0]]
-        for index, operator in enumerate(operators, start=1):
-            child = node.children[index]
-            after = ALONE if index == len(operators) else forms.RELATION
-            operands.append(self.operand(child, level, budget, forms.ADD, after))
-            parts.append(text(self._spaced(glyphs.operator(operator))))
-            parts.append(operands[-1])
-        return row(parts, node, tuple(operands))
+        """`a = b`, and a chain of them nests to the left and draws flat.
+
+        The left operand may be a relation itself, and is left unfenced so
+        that `a=b<c` renders `a = b < c`. The right may not, which is what
+        makes `a=(b<c)` keep its parentheses.
+        """
+        left, right = node.children
+        first = self.operand(left, level, budget, forms.RELATION, forms.RELATION)
+        second = self.operand(right, level, budget, forms.ADD)
+        operator = glyphs.operator(str(node.value))
+        return row([first, text(self._spaced(operator)), second], node, (first, second))
 
     def _logical(self, node: Node, level: int, budget: int | None) -> Box:
         word = _WORD_OPERATORS[node.kind]
@@ -561,16 +552,8 @@ class Engine:
         )
 
 
-def _binop_value(node: Node) -> str | None:
-    return str(node.value) if node.kind is Kind.BINOP else None
-
-
 def _is_quotient(node: Node) -> bool:
     return node.kind is Kind.BINOP and node.value == "/"
-
-
-def _is_negation(node: Node) -> bool:
-    return node.kind is Kind.UNOP and node.value == "-"
 
 
 def _is_matrix(node: Node) -> bool:

@@ -25,6 +25,8 @@ class Kind(StrEnum):
     STRING = "string"
     LABEL = "label"
     UNKNOWN = "unknown"
+    SUM = "sum"
+    PRODUCT = "product"
     BINOP = "binop"
     UNOP = "unop"
     POSTOP = "postop"
@@ -60,7 +62,15 @@ class Node:
     `value` carries the canonical spelling - the operator, or a leaf's text.
     `surface` carries how it was actually written when that differs, so that
     nothing a printer would need is discarded at parse time: `None` means
-    "spelled canonically", and juxtaposition is a `*` whose surface is empty.
+    "spelled canonically".
+
+    `SUM` and `PRODUCT` are runs rather than pairs, holding all their terms at
+    once the way the original does. Their operators sit between the terms, so
+    `value` and `surface` carry one character per gap and are one shorter than
+    `children`: `a-b+c` is a `SUM` of three with `value` `"-+"`. A `PRODUCT`
+    is all `*` canonically, and its surface says how each gap was written -
+    `*`, `·`, or a space for juxtaposition, which is written as nothing at
+    all.
     """
 
     kind: Kind

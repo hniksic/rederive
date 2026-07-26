@@ -120,7 +120,7 @@ def test_a_setting_the_caller_ignores_changes_nothing():
     source = Source.from_file("InputMode:=Word\nxyz\n")
     state = ParseState()
     written = [to_sexpr(result.node) for result in parse_source(source, state)]
-    assert written == ["(:= InputMode Word)", "(juxt (juxt x y) z)"]
+    assert written == ["(:= InputMode Word)", "(juxt x y z)"]
 
 
 # -- declarations -----------------------------------------------------------
@@ -175,7 +175,7 @@ def test_clearing_the_table_makes_a_name_split_again():
     state.declare(VariableDeclaration("tera", has_value=True))
     assert sexpr("terab", state) == "(juxt tera b)"
     state.clear(ClearWhat.VARIABLES)
-    assert sexpr("terab", state) == "(juxt (juxt (juxt (juxt t e) r) a) b)"
+    assert sexpr("terab", state) == "(juxt t e r a b)"
 
 
 def test_lookup_answers_in_canonical_spelling():
@@ -210,16 +210,19 @@ def test_declarations_from_nested_assignments_are_reported():
 def test_a_parenthesised_operand_excludes_its_parentheses():
     text = "x (x + 1)"
     node = parse(text).node
-    assert (node.kind, text[node.start : node.end]) == (Kind.BINOP, "x (x + 1)")
+    assert (node.kind, text[node.start : node.end]) == (Kind.PRODUCT, "x (x + 1)")
     spans = [(child.kind, text[child.start : child.end]) for child in node.children]
-    assert spans == [(Kind.NAME, "x"), (Kind.BINOP, "x + 1")]
+    assert spans == [(Kind.NAME, "x"), (Kind.SUM, "x + 1")]
 
 
 def test_juxtaposition_records_that_no_operator_was_written():
+    # A product spells each of its gaps; juxtaposition is the one written
+    # as nothing, and stands in the run as a space.
     juxtaposed = parse("x y").node
     explicit = parse("x*y").node
-    assert (juxtaposed.value, juxtaposed.surface) == ("*", "")
+    assert (juxtaposed.value, juxtaposed.surface) == ("*", " ")
     assert (explicit.value, explicit.surface) == ("*", None)
+    assert parse("2*3 4").node.surface == "* "
 
 
 def test_a_greek_variable_has_one_name_however_it_is_spelled():
@@ -240,7 +243,7 @@ def test_a_greek_variable_has_one_name_however_it_is_spelled():
 def test_a_greek_letter_with_no_alias_is_an_ordinary_name():
     # Only the ten letters Derive pre-defines have a spelled-out form.
     assert sexpr("λ") == "λ"
-    assert sexpr("lambda") == "(juxt (juxt (juxt (juxt (juxt l a) m) b) d) a)"
+    assert sexpr("lambda") == "(juxt l a m b d a)"
 
 
 def test_a_glyph_operator_keeps_the_spelling_it_was_written_with():
@@ -248,11 +251,16 @@ def test_a_glyph_operator_keeps_the_spelling_it_was_written_with():
     assert (node.kind, node.value, node.surface) == (Kind.REL, "<=", "≤")
 
 
-def test_a_relation_chain_is_one_node():
+def test_a_relation_chain_nests_to_the_left():
+    # `(1<=a)<=b`: two operands per node, one operator each. Transfer Save
+    # drops the parentheses of `(a=b)<c` and keeps those of `a=(b<c)`.
     node = parse("1<=a<=b").node
     assert node.kind is Kind.REL
-    assert node.value == "<= <="
-    assert len(node.children) == 3
+    assert node.value == "<="
+    left, right = node.children
+    assert (left.kind, left.value) == (Kind.REL, "<=")
+    assert [child.value for child in left.children] == ["1", "a"]
+    assert right.value == "b"
 
 
 def test_authored_expressions_stay_inert():
