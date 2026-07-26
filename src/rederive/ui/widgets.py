@@ -12,7 +12,7 @@ from textual.containers import VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Static
 
-from rederive.model import Entry
+from rederive.model.session import Entry
 from rederive.model.settings import ChoiceField, DialogEditor, Field, NumberField
 from rederive.ui.menu import Menu
 

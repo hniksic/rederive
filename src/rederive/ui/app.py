@@ -22,7 +22,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Input, Static
 
-from rederive.model import Session
+from rederive.model.session import Session
 from rederive.model.settings import ChoiceField, Dialog, DialogEditor, Settings
 from rederive.syntax import DeriveSyntaxError
 from rederive.ui import menu as menus

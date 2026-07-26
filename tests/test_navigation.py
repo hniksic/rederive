@@ -7,7 +7,7 @@ the cells it covers - what would be in inverse video on screen.
 import pytest
 from sexpr import to_sexpr
 
-from rederive.model import Session
+from rederive.model.session import Session
 from rederive.model.settings import Settings
 from rederive.syntax import DeriveSyntaxError
 
