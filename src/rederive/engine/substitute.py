@@ -17,6 +17,10 @@ Three rules make it terminate and stay honest:
   the leading parameters only. `ACCELERATION(f, m) := f/m` applied to one
   argument gives `6/m`: the parameters nobody supplied stay as the names they
   are, which is Derive's partial application.
+* A function that names a variable of its own binds it. With `x := 5`,
+  `SUM(x^2, x, 1, 3)` is a sum over `x` and not the nonsense `SUM(25, 5, 1, 3)`:
+  inside the first argument the bound name stands for itself, and it shadows a
+  parameter of the same name.
 
 What a definition names is never substituted for. `u := u + 1` keeps its own
 left-hand side, `F(x) := x` keeps its parameter list, and a declaration keeps
@@ -37,6 +41,7 @@ from dataclasses import dataclass, field, replace
 from rederive.engine.context import Context
 from rederive.model.expr import Kind, Node
 from rederive.syntax import ParseState
+from rederive.syntax.names import BINDING_FUNCTIONS
 
 __all__ = ["named_as_declared", "substitute"]
 
@@ -84,7 +89,8 @@ class _Scope:
 
     `arguments` are the trees a call's parameters stand for, already
     substituted, so they are spliced in rather than walked again. `bound` are
-    the names that stand for themselves: a definition's own parameters.
+    the names that stand for themselves: a definition's own parameters, and the
+    variable a sum, an integral or a generated vector names.
     """
 
     arguments: Mapping[str, Node] = field(default_factory=dict)
@@ -156,8 +162,10 @@ def _label(node: Node, scope: _Scope, context: Context) -> Node:
 def _call(node: Node, scope: _Scope, context: Context) -> Node:
     """A call, with its arguments substituted and its body written in."""
     head, *arguments = node.children
-    substituted = tuple(_walk(argument, scope, context) for argument in arguments)
     name = str(head.value)
+    if name in BINDING_FUNCTIONS:
+        return _binding(node, arguments, scope, context)
+    substituted = tuple(_walk(argument, scope, context) for argument in arguments)
     definition = context.functions.get(name)
     if definition is None or name in scope.functions:
         return replace(node, children=(head, *substituted))
@@ -171,6 +179,41 @@ def _call(node: Node, scope: _Scope, context: Context) -> Node:
         labels=scope.labels,
     )
     return _walk(body, deeper, context)
+
+
+def _binding(
+    node: Node, arguments: list[Node], scope: _Scope, context: Context
+) -> Node:
+    """`SUM(u, k, m, n)`: `k` stands for itself in `u`, and nowhere else.
+
+    The name itself is left as written - substituting for it would leave the
+    call with no variable to range over - and the arguments after it are read in
+    the enclosing scope, because a limit is not part of what it bounds.
+
+    A second argument that is no name binds nothing. `SUM(v)` over a vector's
+    elements has none either, and both walk like any other call.
+    """
+    head = node.children[0]
+    if len(arguments) < 2 or arguments[1].kind is not Kind.NAME:
+        walked = tuple(_walk(argument, scope, context) for argument in arguments)
+        return replace(node, children=(head, *walked))
+    body, index, *rest = arguments
+    name = str(index.value)
+    inner = replace(
+        scope,
+        arguments={
+            parameter: written
+            for parameter, written in scope.arguments.items()
+            if parameter != name
+        },
+        bound=scope.bound | {name},
+    )
+    written = (
+        _walk(body, inner, context),
+        index,
+        *(_walk(argument, scope, context) for argument in rest),
+    )
+    return replace(node, children=(head, *written))
 
 
 def _fundef(node: Node, scope: _Scope, context: Context) -> Node:

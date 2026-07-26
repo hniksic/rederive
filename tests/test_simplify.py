@@ -449,6 +449,48 @@ def test_vectors_and_matrices(text, expected):
     assert simp(text) == expected
 
 
+#: The four ways of saying which values a generated vector's variable takes.
+#: The first three are the manual's own examples.
+GENERATED = [
+    ("VECTOR(x^2, x, 5)", "[1, 4, 9, 16, 25]"),
+    ("VECTOR(j!, j, 0, 4)", "[1, 1, 2, 6, 24]"),
+    ("VECTOR(k^2, k, [2, 3, 5, 7, 11])", "[4, 9, 25, 49, 121]"),
+    # A step, and the count rounded down: four elements, the last one short of
+    # pi/4. Exact, the manual's decimals being what it approximates to.
+    ("VECTOR(SIN(z), z, 0, pi/4, 1/5)", "[0, SIN(1/5), SIN(2/5), SIN(3/5)]"),
+    # A vector of vectors is a matrix, so a nested call generates one.
+    (
+        "VECTOR(VECTOR(j + k, k, 1, 4), j, 1, 3)",
+        "[[2, 3, 4, 5], [3, 4, 5, 6], [4, 5, 6, 7]]",
+    ),
+    # The variable ranges over a matrix's rows, as every other element access
+    # does.
+    ("VECTOR(k, k, [[1, 2], [3, 4]])", "[[1, 2], [3, 4]]"),
+    # A range the step cannot cross once has one element; one going the wrong
+    # way has none.
+    ("VECTOR(x^2, x, 3, 3)", "[9]"),
+    ("VECTOR(x, x, 5, 1)", "[]"),
+    # Bounds that are no sequence yet, and a second argument that is no
+    # variable: the call itself is the answer.
+    ("VECTOR(x^2, x, n)", "VECTOR(x^2, x, n)"),
+    ("VECTOR(x^2, 5, 1, 3)", "VECTOR(x^2, 5, 1, 3)"),
+    ("VECTOR(x^2, x, 1, 3, 0)", "VECTOR(x^2, x, 1, 3, 0)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), GENERATED, ids=str)
+def test_generated_vectors(text, expected):
+    assert simp(text) == expected
+
+
+def test_an_element_access_that_could_not_be_taken_is_taken_once_generated():
+    # An access into a vector converts before the index is a number, and becomes
+    # an inert one. Each generated element has a number for it, so the access is
+    # worth making again - which is how the demo's outer product comes out.
+    assert simp("VECTOR([[a, b, c] SUB i], i, 3)") == "[[a], [b], [c]]"
+    assert simp("VECTOR([a, b, c] SUB i + 1, i, 2)") == "[a + 1, b + 1]"
+
+
 # -- relations and logic ------------------------------------------------------
 
 
@@ -787,6 +829,13 @@ DEMO_CALCULUS = [
 ]
 
 DEMO_MATRICES = [
+    # The table of squares and cubes the demo opens with.
+    (
+        "VECTOR([x,x^2,x^3],x,1,8)",
+        "[[1, 1, 1], [2, 4, 8], [3, 9, 27], [4, 16, 64], [5, 25, 125], "
+        "[6, 36, 216], [7, 49, 343], [8, 64, 512]]",
+    ),
+    ("IDENTITY_MATRIX(3)", "[[1, 0, 0], [0, 1, 0], [0, 0, 1]]"),
     ("[[a,b,c],[1,2,3]] SUB 1 SUB 2", "b"),
     ("[[a,b,c],[1,2,3]] SUB 2", "[1, 2, 3]"),
     ("2*[[a,2],[3,b]]+[[1,3],[a,-b]]", "[[2*a + 1, 7], [a + 6, b]]"),
@@ -827,6 +876,25 @@ DEMO = (
 @pytest.mark.parametrize(("text", "expected"), DEMO, ids=str)
 def test_a_case_from_the_demo_scripts(text, expected):
     assert simp(text) == expected
+
+
+def test_the_demos_matrix_generator():
+    # `MATRIX(z,i,m,j,n) := VECTOR(VECTOR(z,j,1,n),i,1,m)`, the definition the
+    # demo builds out of two nested generated vectors.
+    body = parse("VECTOR(VECTOR(z,j,1,n),i,1,m)")
+    context = Context(functions={"MATRIX": (("z", "i", "m", "j", "n"), body)})
+    assert simp("MATRIX(i-j,i,2,j,3)", context) == "[[0, -1, -2], [1, 0, -1]]"
+
+
+def test_the_demos_outer_product():
+    # `OUTER(v,w) := VECTOR([v SUB i],i,DIMENSION(v)) . [w]`. The generator's
+    # length is a call on its own argument, so nothing generates until the
+    # definition is applied.
+    body = parse("VECTOR([v SUB i],i,DIMENSION(v)) . [w]")
+    context = Context(functions={"OUTER": (("v", "w"), body)})
+    assert simp("OUTER([a,b,c],[2,3,4])", context) == (
+        "[[2*a, 3*a, 4*a], [2*b, 3*b, 4*b], [2*c, 3*c, 4*c]]"
+    )
 
 
 # -- totality -----------------------------------------------------------------
@@ -906,7 +974,10 @@ EVERY_CASE = [
     *((text, context) for text, _, context in DOMAINS),
     *((text, context) for text, _, context in TRIGONOMETRY),
     *((text, context) for text, _, context in LOGARITHMS),
-    *((text, None) for text, _ in CALCULUS + SPECIAL + VECTORS + LOGIC + INERT),
+    *(
+        (text, None)
+        for text, _ in CALCULUS + SPECIAL + VECTORS + GENERATED + LOGIC + INERT
+    ),
     *((text, context) for text, _, context in CONDITIONALS),
     *((text, None) for text in OPAQUE),
     *((text, None) for text, _ in DEMO),

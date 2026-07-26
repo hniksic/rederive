@@ -21,6 +21,16 @@ BUILTIN_FUNCTIONS: frozenset[str] = frozenset(
     """.split()
 )
 
+# The functions whose second argument names a variable of their own: the index
+# of a sum, the variable a derivative is taken with respect to, the one a
+# generated vector steps through. Inside the first argument that name stands for
+# itself, whatever else it may have been assigned - and everything after it is
+# read outside the binding, which is what lets `ITERATES(TAN(x), x, x, -1)` mean
+# the outer `x` in its third argument and the bound one in its first.
+BINDING_FUNCTIONS: frozenset[str] = frozenset(
+    "DIF INT ITERATE ITERATES LIM PRODUCT SELECT SUM TAYLOR VECTOR".split()
+)
+
 # `e` and `i` are not here: they are ordinary free variables. `?` is the
 # unknown value and has its own token.
 CONSTANTS: frozenset[str] = frozenset(

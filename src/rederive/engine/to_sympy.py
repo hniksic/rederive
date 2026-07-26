@@ -24,6 +24,7 @@ from dataclasses import replace
 from fractions import Fraction
 
 import sympy as sp
+from sympy.core.function import AppliedUndef
 
 from rederive.engine.approximation import simplest
 from rederive.engine.context import (
@@ -929,6 +930,82 @@ def _element_of(conv: _Converter, args: list) -> sp.Basic:
     return _matrix(matrix)[int(row) - 1, int(column) - 1]
 
 
+def _generated_vector(conv: _Converter, args: list) -> sp.Basic:
+    """`VECTOR(u, k, ...)`: `u` at each value `k` takes, as a vector.
+
+    Four ways of saying which values those are - a count, a range, a range with
+    a step, and a vector of the values themselves - and a nested call makes a
+    matrix, a vector of vectors being all a matrix is.
+
+    Bounds that are not numbers describe no sequence, and the call stays inert
+    until they are: that is what makes `VECTOR([v SUB i], i, DIMENSION(v))`
+    keep its shape in a definition and generate when the definition is applied.
+    """
+    body, index, *rest = args
+    if type(index) is not sp.Symbol:
+        raise TypeError("not a variable")
+    generated = [body.subs(index, value) for value in _steps(rest)]
+    return _vector_of([_retried(conv, element) for element in generated])
+
+
+def _steps(rest: list) -> list[sp.Basic]:
+    """The values a generated vector's variable takes, in order.
+
+    `(n - m)/s + 1` of them, rounded down, which is one element for a range that
+    the step cannot cross and none at all for a range going the wrong way.
+    """
+    if len(rest) == 1 and isinstance(rest[0], sp.MatrixBase):
+        return _elements_of(rest[0])
+    if not rest or len(rest) > 3:
+        raise ValueError("not a sequence")
+    low = sp.Integer(1) if len(rest) == 1 else rest[0]
+    high = rest[0] if len(rest) == 1 else rest[1]
+    step = rest[2] if len(rest) == 3 else sp.Integer(1)
+    count = int(sp.floor((high - low) / step)) + 1
+    return [low + step * offset for offset in range(max(count, 0))]
+
+
+def _elements_of(matrix: sp.MatrixBase) -> list[sp.Basic]:
+    """What a vector holds: its elements, or its rows where it is a matrix."""
+    if matrix.rows == 1:
+        return list(matrix)
+    return [matrix[row, :] for row in range(matrix.rows)]
+
+
+def _vector_of(elements: list) -> sp.Basic:
+    """A vector of values that were computed rather than written.
+
+    Their shape is all there is to go on, `_vector` having had the notation to
+    read: rows of one width stack into a matrix, plain expressions make one row,
+    and anything else is a vector sympy will not hold.
+    """
+    if not elements:
+        return sp.Matrix(0, 0, [])
+    if _all_matrices(elements):
+        shapes = {element.shape for element in elements}
+        if len(shapes) == 1 and elements[0].rows == 1 and elements[0].cols:
+            return sp.Matrix([list(element) for element in elements])
+        return InertVector(*elements)
+    if not all(isinstance(element, sp.Expr) for element in elements):
+        return InertVector(*elements)
+    return sp.Matrix(1, len(elements), elements)
+
+
+def _retried(conv: _Converter, value: sp.Basic) -> sp.Basic:
+    """`value` with every head that could not be read before read again.
+
+    A generated element is a converted body with a number written in, and the
+    body was converted while the variable was still a variable: `v SUB i` had no
+    index to take and became the inert `ELEMENT(v, i)`. Now that it has one, the
+    call is worth making. A head the tables still cannot make sense of comes
+    back the head it was.
+    """
+    return value.replace(
+        lambda found: isinstance(found, AppliedUndef),
+        lambda found: conv.call(type(found).__name__, found.args),
+    )
+
+
 def _identity_matrix(conv: _Converter, args: list) -> sp.Basic:
     size = _one(args)
     if not isinstance(size, sp.Integer) or size < 1:
@@ -981,6 +1058,7 @@ FUNCTIONS: dict[str, Handler] = {
     "ELEMENT": _element_of,
     "IDENTITY_MATRIX": _identity_matrix,
     "CROSS": _cross,
+    "VECTOR": _generated_vector,
 }
 
 

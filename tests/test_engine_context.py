@@ -275,6 +275,33 @@ def test_a_function_the_context_does_not_know_is_left_alone():
     assert written("H(u)", context) == same_as("H(7)")
 
 
+# -- substitution: bound variables --------------------------------------------
+
+
+def test_the_variable_a_sum_names_is_not_substituted_for():
+    # `SUM(25, 5, 1, 3)` is not a sum over anything, and it is what writing an
+    # assigned value into every position would produce.
+    context = Context(assignments={"x": parse("5")})
+    assert written("SUM(x^2, x, 1, 3)", context) == same_as("SUM(x^2, x, 1, 3)")
+
+
+def test_an_argument_after_the_bound_variable_is_read_outside_the_binding():
+    # `ITERATES(TAN(x), x, x, -1)` is from the manual: the third argument is the
+    # starting value, and the `x` in it is whatever `x` means outside.
+    context = Context(assignments={"x": parse("5")})
+    assert written("SUM(x^2, x, 1, x)", context) == same_as("SUM(x^2, x, 1, 5)")
+
+
+def test_a_bound_variable_shadows_a_parameter_of_the_same_name():
+    context = Context(functions={"F": (("x",), parse("SUM(x^2, x, 1, 3)"))})
+    assert written("F(9)", context) == same_as("SUM(x^2, x, 1, 3)")
+
+
+def test_a_binding_function_given_no_variable_binds_nothing():
+    context = Context(assignments={"v": parse("[1, 2, 3]")})
+    assert written("SUM(v)", context) == same_as("SUM([1, 2, 3])")
+
+
 # -- substitution: labels -----------------------------------------------------
 
 
