@@ -588,6 +588,87 @@ async def test_expand_asks_for_nothing_when_the_history_is_empty(app):
         assert message(app) == "Enter option"
 
 
+# -- approX, which asks the one question Simplify asks ------------------------
+#
+# Every screen asserted here was checked against the original. The command is
+# Simplify at approximate precision, and its line says so and no more: there
+# is no question about digits, which come from Options Precision.
+
+
+async def test_approx_offers_the_highlighted_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "pi")
+        await pilot.press("x")
+        assert prompt(app) == ("APPROX expression:", "#1")
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        assert work_area(app) == ["#1:  π", "", "#2:  3.14159"]
+        assert highlighted_expression(app) == "3.14159"
+        assert message(app).startswith("Compute time:")
+        assert annotation(app) == "Approx(#1)"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_approx_of_a_part_copies_the_rest_of_the_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "SQRT(2) + x^2")
+        await pilot.press("right")
+        assert highlighted_expression(app) == "√2"
+        await pilot.press("x", "enter")
+        assert work_area(app)[-2:] == ["                2", "#2:  1.41421 + x"]
+        # The quote says that only part of the expression was approximated.
+        assert annotation(app) == "Approx(#1')"
+
+
+async def test_a_typed_expression_is_approximated_as_the_users_own(app):
+    async with app.run_test() as pilot:
+        await pilot.press("x")
+        assert prompt(app) == ("APPROX expression:", "")
+        await pilot.press(*"SQRT(3)")
+        await pilot.press("enter")
+        assert work_area(app) == ["#1:  1.73205"]
+        assert annotation(app) == "Approx(User)"
+
+
+async def test_approx_leaves_the_precision_setting_alone(app):
+    """The mode is approximate for the one command, and Simplify says so."""
+    async with app.run_test() as pilot:
+        await author(pilot, "1/3")
+        await pilot.press("x", "enter")
+        assert entries(app)[-1] == "0.333333"
+        await pilot.press("s")
+        assert prompt(app) == ("SIMPLIFY expression:", "#2")
+        await pilot.press(*"1")
+        await pilot.press("enter")
+        assert entries(app)[-1] == "1/3"
+
+
+async def test_approx_leaves_a_line_that_does_not_read_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("x")
+        await pilot.press(*"+")
+        await pilot.press("enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert entries(app) == ["x"]
+
+
+async def test_approx_asks_for_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("x", "enter")
+        assert app.session.entries == []
+        assert message(app) == "Enter option"
+
+
+async def test_an_abandoned_approx_leaves_the_history_alone(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "pi")
+        await pilot.press("x", "escape")
+        assert entries(app) == ["pi"]
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
 # -- Remove and Unremove ------------------------------------------------------
 #
 # Every screen asserted here was checked against the original.

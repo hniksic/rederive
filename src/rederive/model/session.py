@@ -319,6 +319,18 @@ class Session:
         """Append the simplified form of the expression `request` names."""
         return self._command(request, "Simp", engine.simplify)
 
+    def approx(self, request: str) -> Entry:
+        """Append the approximated form of the expression `request` names.
+
+        Simplify with the precision temporarily approximate, at whatever
+        `PrecisionDigits` says; the rest is Simplify's story exactly.
+        """
+
+        def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
+            return engine.approx(node, context, None, state)
+
+        return self._command(request, "Approx", run)
+
     def factor(
         self,
         request: str,

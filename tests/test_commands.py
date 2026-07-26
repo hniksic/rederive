@@ -322,3 +322,61 @@ def test_a_ratio_is_recognised_before_an_amount_is_asked_for(session):
         # the original goes by how it is written.
         False,
     ]
+
+
+# -- approX -------------------------------------------------------------------
+#
+# Simplify with the precision temporarily approximate, and nothing else: the
+# command asks for an expression and no more.
+
+
+def test_an_approximated_answer_is_appended_and_annotated(session):
+    session.author("pi")
+    answer = session.approx("#1")
+    assert texts(session) == ["pi", "3.14159"]
+    assert answer.annotation == "Approx(#1)"
+
+
+def test_a_typed_expression_is_approximated_as_the_users_own(session):
+    assert session.approx("SQRT(3)").text == "1.73205"
+    assert session.entries[0].annotation == "Approx(User)"
+
+
+def test_approximating_part_of_an_entry_copies_the_rest_of_it(session):
+    session.author("SQRT(2) + x^2")
+    part(session, "right")
+    answer = session.approx("#1")
+    assert answer.layout.lines == ("           2", "1.41421 + x ")
+    assert answer.annotation == "Approx(#1')"
+
+
+def test_the_settings_are_left_where_they_were(session):
+    """The precision is approximate for the one command, not from now on."""
+    session.author("1/3")
+    assert session.approx("#1").text == "0.333333"
+    assert session.settings["Precision"] == "Exact"
+    assert session.simplify("#1").text == "1/3"
+
+
+def test_the_precision_digits_setting_reaches_the_command(session):
+    session.author("pi")
+    session.settings.assign("PrecisionDigits", 12)
+    assert session.approx("#1").text == "3.14159265359"
+
+
+def test_what_has_no_number_in_it_is_simplified_and_no_more(session):
+    session.author("x + x")
+    assert session.approx("#1").text == "2*x"
+
+
+def test_a_line_that_does_not_parse_approximates_nothing(session):
+    session.author("x")
+    with pytest.raises(DeriveSyntaxError):
+        session.approx("x +")
+    assert texts(session) == ["x"]
+
+
+def test_an_assignment_reaches_the_approximation(session):
+    session.author("k := 2")
+    session.author("SQRT(k)")
+    assert session.approx("#2").text == "1.41421"

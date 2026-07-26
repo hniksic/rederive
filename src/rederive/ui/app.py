@@ -21,13 +21,13 @@ block `Remove` takes out, the place `Unremove` puts it back - and gets its
 answer handed to it rather than stored, since it is about the command in hand
 and not about the system.
 
-A command that needs a line of its own - Author, Simplify, Factor and Expand an
-expression, Jump a label number, the Transfer commands a file name - takes the
-screen with the prompt band instead, which is one Input with a label in front
-of it. The mode says which command the line belongs to, and so what Enter does
-with it. A command that runs is finished with, so it leaves the command menu up
-rather than the submenu it was picked from; Esc, which abandons the line
-instead, leaves that submenu where it was.
+A command that needs a line of its own - Author, Simplify, approX, Factor and
+Expand an expression, Jump a label number, the Transfer commands a file name -
+takes the screen with the prompt band instead, which is one Input with a label
+in front of it. The mode says which command the line belongs to, and so what
+Enter does with it. A command that runs is finished with, so it leaves the
+command menu up rather than the submenu it was picked from; Esc, which abandons
+the line instead, leaves that submenu where it was.
 
 Ctrl-Enter is Enter with the expression the command enters simplified after it,
 on every line an expression is entered from. It is one key in two spellings:
@@ -109,6 +109,7 @@ from rederive.ui.widgets import (
 MODE_MENU = "menu"
 MODE_AUTHOR = "author"
 MODE_SIMPLIFY = "simplify"
+MODE_APPROX = "approx"
 #: The two modes the prompt band is in while Factor or Expand is asking.
 MODE_ASKING = "asking"
 MODE_ASKING_VARIABLE = "asking_variable"
@@ -127,6 +128,7 @@ MODE_DEMO = "demo"
 PROMPT_MODES = (
     MODE_AUTHOR,
     MODE_SIMPLIFY,
+    MODE_APPROX,
     MODE_ASKING,
     MODE_ASKING_VARIABLE,
     MODE_JUMP,
@@ -150,13 +152,13 @@ WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode != MODE_ASKING_VARIAB
 #: selected on them. A line typed on is a line the user has taken over. The
 #: Declare lines take an expression too but are offered nothing to begin with,
 #: so there is nothing on them to keep in step with the highlight.
-LABELLED_MODES = (MODE_SIMPLIFY, MODE_ASKING)
+LABELLED_MODES = (MODE_SIMPLIFY, MODE_APPROX, MODE_ASKING)
 
 #: The prompt lines an expression is entered on, and so the ones Ctrl-Enter
 #: says something on: it enters the line and simplifies what the command
-#: entered. The lines that derive an expression instead - Simplify, and the
-#: expression Factor and Expand ask for - have simplified it already, and Jump
-#: enters nothing at all, so on those Ctrl-Enter is Enter and nothing more.
+#: entered. The lines that derive an expression instead - Simplify, approX, and
+#: the expression Factor and Expand ask for - have simplified it already, and
+#: Jump enters nothing at all, so on those Ctrl-Enter is Enter and nothing more.
 ENTERING_MODES = (
     MODE_AUTHOR,
     MODE_VARIABLE_VALUE,
@@ -168,12 +170,14 @@ ENTERING_MODES = (
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
 ENTER_EXPRESSION = "Enter expression (press F1 for help)"
-ENTER_TO_SIMPLIFY = "Enter expression"
+#: What every command that derives an expression from another asks for, the
+#: help the Author line offers being left off theirs.
 ENTER_TO_DERIVE = "Enter expression"
 #: What Quit and the two Clear commands that throw expressions away both ask.
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
+APPROX_PROMPT = " APPROX expression: "
 JUMP_PROMPT = " JUMP to: "
 EXPRESSION_PROMPT = " {word} expression: "
 VARIABLE_PROMPT = " {word} variable {number}: "
@@ -547,6 +551,7 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Remove"): self._command_remove,
             (ALGEBRA, "Simplify"): self._command_simplify,
             (ALGEBRA, "Unremove"): self._command_unremove,
+            (ALGEBRA, "approX"): self._command_approx,
             (menus.DECLARE, "Function"): self._command_declare_function,
             (menus.DECLARE, "Variable"): self._command_declare_variable,
             (menus.DECLARE, "Matrix"): self._command_declare_matrix,
@@ -1075,9 +1080,22 @@ class RederiveApp(App[None]):
 
     def _command_simplify(self) -> None:
         """Ask which expression to simplify, offering the highlighted one."""
+        self._ask_expression(MODE_SIMPLIFY, SIMPLIFY_PROMPT)
+
+    def _command_approx(self) -> None:
+        """Ask which expression to approximate, offering the highlighted one."""
+        self._ask_expression(MODE_APPROX, APPROX_PROMPT)
+
+    def _ask_expression(self, mode: str, label: str) -> None:
+        """Put up the line Simplify and approX both read, which is one line.
+
+        The highlighted expression's label is offered, and there is nothing
+        else to ask: approX takes its precision from the settings rather than
+        from a question, so the two commands differ only in what they run.
+        """
         entry = self.session.selected_entry
         offered = "" if entry is None else f"#{entry.number}"
-        self._prompt(MODE_SIMPLIFY, SIMPLIFY_PROMPT, offered, ENTER_TO_SIMPLIFY, keep=1)
+        self._prompt(mode, label, offered, ENTER_TO_DERIVE, keep=1)
 
     def _prompt(
         self, mode: str, label: str, offered: str, message: str, keep: int = 0
@@ -1918,6 +1936,8 @@ class RederiveApp(App[None]):
         """Take the line, whichever command's question it is answering."""
         if self.mode == MODE_SIMPLIFY:
             self._simplify(value)
+        elif self.mode == MODE_APPROX:
+            self._approx(value)
         elif self.mode == MODE_ASKING:
             self._asked(value)
         elif self.mode == MODE_ASKING_VARIABLE:
@@ -1966,7 +1986,15 @@ class RederiveApp(App[None]):
         self._end_prompt()
 
     def _simplify(self, request: str) -> None:
-        """Simplify what the line asks for, and say how long the answer took.
+        """Simplify what the line asks for."""
+        self._derive(request, self.session.simplify)
+
+    def _approx(self, request: str) -> None:
+        """Approximate what the line asks for."""
+        self._derive(request, self.session.approx)
+
+    def _derive(self, request: str, run: Callable[[str], object]) -> None:
+        """Run `run` on what the line asks for, and say how long it took.
 
         An empty line asks for nothing, so it leaves the history alone. A line
         that does not read stays up to be corrected, as an authored one does.
@@ -1976,7 +2004,7 @@ class RederiveApp(App[None]):
             return
         started = time.monotonic()
         try:
-            self.session.simplify(request)
+            run(request)
         except DeriveSyntaxError as error:
             self._refused(error)
             return
