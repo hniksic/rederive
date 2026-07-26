@@ -151,6 +151,18 @@ async def test_records_are_written_in_the_notation_they_select(app):
         assert entries(app)[1:] == ["OutputBase:=Octal", "NotationDigits:=14"]
 
 
+async def test_backspace_steps_a_field_back_through_its_choices(app):
+    async with app.run_test() as pilot:
+        await options(pilot, "r", "space")
+        assert highlighted(app) == "Hexadecimal"
+        await pilot.press("backspace")
+        assert highlighted(app) == "Decimal"
+        # And it wraps around the end rather than leaving the field.
+        await pilot.press("backspace", "backspace", "backspace")
+        assert highlighted(app) == "Other"
+        assert message(app) == "Select number system"
+
+
 async def test_radix_other_asks_for_a_base(app):
     async with app.run_test() as pilot:
         await options(pilot, "r", "space", "space")

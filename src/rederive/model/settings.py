@@ -704,14 +704,22 @@ class DialogEditor:
         self.next_field()
         return True
 
-    def cycle(self) -> bool:
-        """Step the active field to its next choice, as Space does."""
+    def cycle(self, step: int = 1) -> bool:
+        """Step the active field to its next choice, as Space does.
+
+        Backspace steps the other way, with `step` of -1.
+        """
         field = self.field
         if not isinstance(field, ChoiceField) or not field.inline:
             return False
         current = self.value(field)
-        index = field.choices.index(current) if current in field.choices else -1
-        self.values[field.setting] = field.choices[(index + 1) % len(field.choices)]
+        if current in field.choices:
+            index = (field.choices.index(current) + step) % len(field.choices)
+        else:
+            # A field holding a number typed into its prompt is on no choice
+            # at all, so a step onto the list enters it from the near end.
+            index = 0 if step > 0 else len(field.choices) - 1
+        self.values[field.setting] = field.choices[index]
         return True
 
     def lists_choices(self) -> bool:

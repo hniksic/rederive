@@ -77,6 +77,17 @@ def test_space_steps_through_the_choices_and_wraps(settings):
     assert dialog.value(dialog.field) == "Normal"
 
 
+def test_backspace_steps_back_through_the_choices_and_wraps(settings):
+    dialog = editor(RADIX, settings)
+    assert dialog.value(dialog.field) == "Decimal"
+    dialog.cycle(-1)
+    assert dialog.value(dialog.field) == "Octal"
+    dialog.cycle(-1)
+    assert dialog.value(dialog.field) == "Binary"
+    dialog.cycle(-1)
+    assert dialog.value(dialog.field) == "Other"
+
+
 def test_tab_wraps_through_every_field(settings):
     dialog = editor(INPUT, settings)
     labels = []

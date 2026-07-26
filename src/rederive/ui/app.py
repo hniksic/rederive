@@ -706,9 +706,14 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def action_menu_erase(self) -> None:
-        """Backspace edits a number field, and otherwise steps back."""
+        """Backspace undoes what Space does, and otherwise steps back.
+
+        On a field that holds text it erases the character before the cursor,
+        and on one whose choices Space steps forward through it steps back
+        through them rather than leaving the field.
+        """
         editor = self.editor
-        if editor is not None and editor.erase():
+        if editor is not None and (editor.erase() or editor.cycle(-1)):
             self.refresh_screen()
         else:
             self.action_menu_previous()
