@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A modern remake of the DOS-era Derive computer algebra system"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["textual>=0.86"]
+dependencies = ["textual>=0.86", "sympy>=1.14"]
 
 [project.scripts]
 rederive = "rederive.__main__:main"
