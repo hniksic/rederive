@@ -17,6 +17,9 @@ from rederive.model.settings import ChoiceField, DialogEditor, Field, NumberFiel
 from rederive.ui.menu import Menu
 
 #: Lines a single history entry occupies, including the blank line after it.
+# TODO(display): an entry is as tall as its render plus the blank line after
+# it, so this becomes a per-entry height and the scroll target has to be
+# computed from the running total.
 _LINES_PER_ENTRY = 2
 
 #: Blanks between two fields of an Options dialog.
@@ -24,6 +27,9 @@ _FIELD_GAP = "  "
 
 
 def _label(entry: Entry) -> str:
+    # TODO(display): the label sits on the vertically centred row of the
+    # entry's render, biased downward when the height is even, not on its first
+    # row.
     return f" #{entry.number}:  "
 
 
@@ -49,6 +55,13 @@ class WorkArea(VerticalScroll):
         selected: int | None,
         span: tuple[int, int] | None,
     ) -> None:
+        # TODO(display): take a Layout per entry rather than raw text, paint
+        # its lines, and stylize the selection rectangle row by row.
+
+        # TODO(display): the work area neither wraps nor reflows. A render
+        # wider than the pane is clipped at the right edge, and Ctrl-Right and
+        # Ctrl-Left scroll it by half a pane without moving the selection.
+        # Entries stack upward from the bottom of the pane.
         styles = self.app.palette.styles
         text = Text(style=styles["work"], no_wrap=True)
         for index, entry in enumerate(entries):

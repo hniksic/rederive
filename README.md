@@ -27,4 +27,6 @@ uv run pytest
 - `src/rederive/placeholder_parser.py` - temporary scaffolding that gives
   authored text a shape to navigate. It will be deleted when the real engine
   lands.
+- `src/rederive/display/` - expression trees to built-up, multi-row terminal
+  renders, plus the rectangle each subexpression lands on.
 - `src/rederive/ui/` - the Textual layer: theme, menu data, widgets, app.

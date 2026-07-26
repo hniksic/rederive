@@ -5,6 +5,9 @@ an authored expression: a node kind, the source span it covers, and its
 operands. Selection and navigation are defined purely in these terms, so the
 placeholder parser can be replaced by a real engine without touching anything
 else.
+
+TODO(display): superseded by rederive.model.expr.Node. Delete with
+rederive.placeholder_parser once the UI is wired to the real parser.
 """
 
 from __future__ import annotations

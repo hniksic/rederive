@@ -11,6 +11,10 @@ to a single atom covering the whole line - input is never rejected.
 
 The whole module is deleted when the real engine lands. Nothing outside it may
 depend on its internals; consumers see only `Node` trees.
+
+TODO(display): superseded once the session parses with rederive.syntax and the
+work area paints rederive.display layouts. Delete this module and
+rederive.model.tree together at that point.
 """
 
 from __future__ import annotations

@@ -22,6 +22,10 @@ def _default_parse(text: str) -> Node:
     Imported at call time: the parser is scaffolding that depends on the model,
     not the other way round, and a caller can pass its own parse function.
     """
+    # TODO(display): parse with rederive.syntax.parse_expression instead. The
+    # session has to own one ParseState for its whole life and apply each
+    # accepted expression's declarations to it, because InputMode, CaseMode and
+    # every definition change how later lines lex.
     from rederive.placeholder_parser import parse
 
     return parse(text)
@@ -30,6 +34,9 @@ def _default_parse(text: str) -> Node:
 @dataclass(frozen=True)
 class Entry:
     """One numbered line of the history."""
+
+    # TODO(display): an entry also needs its Layout, rendered from the current
+    # display options, and re-rendered when those options change.
 
     number: int
     text: str
@@ -89,6 +96,10 @@ class Session:
         An entry selected as a whole highlights all of its text, even when the
         parse dropped enclosing parentheses from the root node's span.
         """
+        # TODO(display): a built-up render makes the selection a rectangle
+        # rather than a character span. Add selection_rect(), returning
+        # Layout.at(self.route), and retire this once the work area paints
+        # layouts.
         entry = self.selected_entry
         if entry is None:
             return None
@@ -108,6 +119,11 @@ class Session:
         return self._node_at(entry, self.path[:-1]).children
 
     # -- navigation --------------------------------------------------------
+
+    # TODO(display): the selection is a route into Layout.root, not a path into
+    # the parse tree, so Right and Left step Region.children and Up and Down
+    # move between a region and its parent or first child. Region.node is how
+    # an operation gets from the selection back to the subexpression.
 
     def select_entry(self, index: int) -> bool:
         """Select entry `index` as a whole, clamped to the history."""

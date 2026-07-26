@@ -63,6 +63,9 @@ class RederiveApp(App[None]):
     AUTO_FOCUS = None
     # Nothing on screen belongs to anything but the pane itself.
     ENABLE_COMMAND_PALETTE = False
+    # TODO(display): Ctrl-Right and Ctrl-Left scroll the work area
+    # horizontally by half a pane. They move no selection, so they are not nav
+    # actions.
     BINDINGS = [
         Binding("tab", "menu_next", "Next option", priority=True, show=False),
         Binding("space", "menu_space", "Next option", priority=True, show=False),
@@ -141,6 +144,7 @@ class RederiveApp(App[None]):
 
     def refresh_screen(self) -> None:
         """Push the whole model state at the widgets."""
+        # TODO(display): pass the rendered layouts and the selection rectangle.
         self.query_one(WorkArea).show(
             self.session.entries, self.session.selected, self.session.selection_span()
         )
@@ -166,6 +170,9 @@ class RederiveApp(App[None]):
 
     def _settings_changed(self, changed: frozenset[str]) -> None:
         """React to settings that other parts of the screen are built from."""
+        # TODO(display): DisplayFormat, TimesOperator and OutputBase decide how
+        # expressions render, so a change to any of them has to re-render the
+        # work area the way COLOR_SETTINGS repaints it.
         if changed & COLOR_SETTINGS:
             self.refresh_css()
             self.refresh_screen()

@@ -364,6 +364,10 @@ class Settings:
         Above base ten the digits run A to Z, and a numeral that would begin
         with a letter takes a leading zero so that it cannot be read as a
         variable name: fourteen is `0E` in hexadecimal, not `E`.
+
+        The display package formats numerals for the screen by the same rule.
+        The two are kept apart so that the model does not depend on the display
+        layer.
         """
         base = self.base("OutputBase")
         magnitude = abs(number)
