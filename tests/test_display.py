@@ -1,13 +1,13 @@
 """The display conformance corpus.
 
-Every block below is `prompts/expression-display-cases.md`, which is the
-original's own output and therefore the specification. A block is never edited
-to make an implementation pass.
+Every block below is the original's own output and therefore the
+specification, never something to edit until an implementation passes. The
+render blocks are its reference renders; the fencing, sign and selection
+sections were checked against the original, as were the renders.
 
-One block is reproduced with a correction, marked where it occurs: the `LIM`
-case in the corpus is missing the denominator of its built-up quotient, which
-cannot be right - `lim` sits on the bar row, so the row below it carries both
-`x→0` and the denominator.
+Two blocks carry a correction, marked where each occurs. The transcription
+they reached us in disagrees with the program itself, and in both cases with
+the rest of the corpus as well.
 
 Tests may look inside `rederive.display`; the rule that nothing outside the
 package imports from inside it is about the application, not about its tests.
@@ -90,9 +90,9 @@ FRACTIONS = [
         """,
     ),
     (
-        # Corrected: the corpus block puts `x` one column left of centre,
-        # where every other block - a one-wide numerator over bars of 3, 5
-        # and 9 - centres exactly.
+        # Corrected against the program: the reference block puts `x` one
+        # column left of centre, where every other block - a one-wide
+        # numerator over bars of 3, 5 and 9 - centres exactly.
         "x/(a+b)",
         """
            x
@@ -409,8 +409,9 @@ CALCULUS = [
         """,
     ),
     (
-        # Corrected: the corpus block drops the `x` of the denominator, which
-        # shares its row with `x→0` because `lim` sits on the bar row.
+        # Corrected against the program: the reference block drops the `x` of
+        # the denominator, which shares its row with `x→0` because `lim` sits
+        # on the bar row.
         "LIM((SIN x)/x,x,0)",
         """
              SIN(x)
