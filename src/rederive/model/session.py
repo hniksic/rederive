@@ -916,6 +916,72 @@ class Session:
     def move_last_entry(self) -> bool:
         return self.select_entry(len(self.entries) - 1)
 
+    def move_page_up(self, rows: int) -> bool:
+        """Select the expression at the top of a pane of `rows`.
+
+        A page is measured in rows and not in entries, since a paneful of
+        built-up fractions is fewer expressions than a paneful of one-line
+        ones. An expression too tall to share the pane with anything is a page
+        of its own, and the highlight moves one entry rather than none.
+        """
+        if self.selected is None:
+            return False
+        first, _ = self._pane(rows)
+        return self.select_entry(first if first < self.selected else self.selected - 1)
+
+    def move_page_down(self, rows: int) -> bool:
+        """Select the expression at the bottom of a pane of `rows`.
+
+        Once the highlight is on that expression the pane has to scroll to go
+        any further, and what comes up is the paneful below: the farthest entry
+        that still fits on screen together with the one selected now.
+        """
+        if self.selected is None:
+            return False
+        _, last = self._pane(rows)
+        if last > self.selected:
+            return self.select_entry(last)
+        return self.select_entry(self._paneful_below(rows))
+
+    def _pane(self, rows: int) -> tuple[int, int]:
+        """The entries a pane of `rows` holds, the first and the last.
+
+        The pane is where the original puts it: the selected expression at the
+        bottom, with as much history above it as fits. What it cannot do is
+        scroll past the first expression, and when the top of the history is on
+        screen the rest of the pane is filled downward instead - which is what
+        leaves the highlight somewhere other than the bottom edge.
+        """
+        assert self.selected is not None
+        first = last = self.selected
+        used = self.entries[first].height
+        while first > 0 and used + 1 + self.entries[first - 1].height <= rows:
+            first -= 1
+            used += 1 + self.entries[first].height
+        if first == 0:
+            while last + 1 < len(self.entries) and (
+                used + 1 + self.entries[last + 1].height <= rows
+            ):
+                last += 1
+                used += 1 + self.entries[last].height
+        return first, last
+
+    def _paneful_below(self, rows: int) -> int:
+        """The farthest entry below the selected one that fits on the pane too.
+
+        At least the next entry, whatever its height, so that a page key is
+        never a dead end.
+        """
+        assert self.selected is not None
+        index = self.selected
+        used = self.entries[index].height
+        while index + 1 < len(self.entries) and (
+            index == self.selected or used + 1 + self.entries[index + 1].height <= rows
+        ):
+            index += 1
+            used += 1 + self.entries[index].height
+        return index
+
 
 def _is_infinite(bound: str) -> bool:
     """Whether a bound is an infinity, however it was spelled."""

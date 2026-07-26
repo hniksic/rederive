@@ -161,6 +161,84 @@ def test_a_selection_is_the_rectangle_a_subexpression_covers():
     assert selected_text(session) == " b\n───\n c"
 
 
+# -- paging -------------------------------------------------------------------
+#
+# A page is however much of the history is on screen, so these tests say how
+# tall the pane is: 20 rows, which is the original's. The landings were checked
+# against it, key by key.
+
+
+def paged(session):
+    return session.selected_entry.number
+
+
+def test_a_page_is_the_expressions_a_pane_holds():
+    session = Session()
+    for number in range(1, 31):
+        session.author(str(number))
+    session.jump(20)
+    # Ten one-line expressions fit, blank lines between them counted, so a
+    # page keeps the expression it started from in view at the far edge.
+    assert session.move_page_up(20) and paged(session) == 11
+    assert session.move_page_up(20) and paged(session) == 2
+
+
+def test_a_page_of_built_up_expressions_is_fewer_of_them():
+    session = Session()
+    for number in range(1, 21):
+        session.author(f"{number}/2")
+    session.jump(20)
+    # Three rows each, so five to a pane rather than ten.
+    assert session.move_page_up(20) and paged(session) == 16
+    assert session.move_page_up(20) and paged(session) == 12
+    assert session.move_page_down(20) and paged(session) == 16
+
+
+def test_paging_down_takes_the_bottom_of_the_pane_before_it_scrolls():
+    session = Session()
+    for number in range(1, 31):
+        session.author(str(number))
+    session.jump(2)
+    # The pane cannot scroll past the first expression, so the highlight is
+    # not at its bottom edge: the first page down is to that edge.
+    assert session.move_page_down(20) and paged(session) == 10
+    assert session.move_page_down(20) and paged(session) == 19
+    assert session.move_page_down(20) and paged(session) == 28
+
+
+def test_paging_stops_at_the_ends(session):
+    session.move_first_entry()
+    assert not session.move_page_up(20)
+    session.move_last_entry()
+    assert not session.move_page_down(20)
+
+
+def test_an_expression_too_tall_for_the_pane_is_a_page_of_its_own():
+    session = Session()
+    session.author("x")
+    session.author("[[1], [2], [3], [4], [5], [6], [7], [8], [9], [10], [11]]")
+    session.author("y")
+    assert session.entries[1].height > 20
+    session.jump(2)
+    assert session.move_page_up(20) and paged(session) == 1
+    session.jump(2)
+    assert session.move_page_down(20) and paged(session) == 3
+
+
+def test_a_page_selects_the_expression_it_lands_on_whole(session):
+    session.move_first_entry()
+    session.move_right()
+    assert selected_text(session) == "x"
+    session.move_page_down(20)
+    assert session.route == ()
+
+
+def test_an_empty_history_has_nothing_to_page():
+    empty = Session()
+    assert not empty.move_page_up(20)
+    assert not empty.move_page_down(20)
+
+
 # -- Jump ---------------------------------------------------------------------
 #
 # Every rule asserted here was checked against the original.

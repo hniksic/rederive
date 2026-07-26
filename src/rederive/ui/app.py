@@ -274,7 +274,11 @@ CURSOR_MOVES = {
 #: The movements that walk the history rather than the line or the field they
 #: are pressed on: on a prompt line, and on the dialogs whose fields name
 #: expressions. The rest move the cursor of whatever is up.
-ENTRY_MOVES = ("up", "down", "first_entry", "last_entry")
+ENTRY_MOVES = ("up", "down", "page_up", "page_down", "first_entry", "last_entry")
+
+#: The movements that have to be told how tall the pane is, being about how
+#: much of the history is on screen rather than about how it is put together.
+PAGE_MOVES = ("page_up", "page_down")
 
 
 class RederiveApp(App[None]):
@@ -301,8 +305,15 @@ class RederiveApp(App[None]):
         Binding("right", "nav('right')", "Right", priority=True, show=False),
         Binding("home", "nav('first_sibling')", "Home", priority=True, show=False),
         Binding("end", "nav('last_sibling')", "End", priority=True, show=False),
+        Binding("pageup", "nav('page_up')", "Page up", priority=True, show=False),
+        Binding("pagedown", "nav('page_down')", "Page down", priority=True, show=False),
         Binding("ctrl+home", "nav('first_entry')", "Top", priority=True, show=False),
         Binding("ctrl+end", "nav('last_entry')", "Bottom", priority=True, show=False),
+        # The original's other spelling of the same two commands.
+        Binding("ctrl+pageup", "nav('first_entry')", "Top", priority=True, show=False),
+        Binding(
+            "ctrl+pagedown", "nav('last_entry')", "Bottom", priority=True, show=False
+        ),
         # Ctrl-Right and Ctrl-Left scroll the work area sideways over a render
         # too wide for the pane. They move no selection, so they are not nav.
         Binding("ctrl+right", "scroll_work(1)", "Right", priority=True, show=False),
@@ -640,7 +651,7 @@ class RederiveApp(App[None]):
             return
         editor = self.editor
         if editor is None:
-            getattr(self.session, f"move_{movement}")()
+            self._move_selection(movement)
         elif editor.dialog.tracks_selection and movement in ENTRY_MOVES:
             self._walk_history(editor, movement)
         elif not editor.move_cursor(CURSOR_MOVES.get(movement)):
@@ -655,7 +666,7 @@ class RederiveApp(App[None]):
         the manual's own advice for naming an expression is to move the
         highlight onto it rather than to type its number.
         """
-        getattr(self.session, f"move_{movement}")()
+        self._move_selection(movement)
         if self.mode in LABELLED_MODES:
             self._relabel_prompt()
         self.refresh_screen()
@@ -676,9 +687,20 @@ class RederiveApp(App[None]):
         line.value = f"{line.value[:start]}{number}{line.value[end:]}"
         line.selection = Selection(start, start + len(number))
 
+    def _move_selection(self, movement: str) -> bool:
+        """One movement of the highlight, and whether it moved anything.
+
+        A page is the one movement that has to know how tall the pane is: how
+        far it goes is however many expressions are on screen.
+        """
+        if movement in PAGE_MOVES:
+            rows = max(1, self.query_one(WorkArea).size.height)
+            return getattr(self.session, f"move_{movement}")(rows)
+        return getattr(self.session, f"move_{movement}")()
+
     def _walk_history(self, editor: DialogEditor, movement: str) -> None:
         """Move the selection, and label the active field with where it landed."""
-        if not getattr(self.session, f"move_{movement}")():
+        if not self._move_selection(movement):
             self._beep()
         entry = self.session.selected_entry
         if entry is not None:

@@ -406,6 +406,11 @@ def numbered(app):
     return [f"#{entry.number}: {entry.text}" for entry in app.session.entries]
 
 
+def selected_number(app):
+    """The label of the expression the highlight is on."""
+    return app.session.selected_entry.number
+
+
 async def worksheet(pilot, *texts):
     for text in texts:
         await author(pilot, text)
@@ -941,13 +946,57 @@ async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):
         assert message(app) == "Enter option"
 
 
+async def test_the_page_keys_walk_a_paneful_at_a_time(app):
+    async with app.run_test(size=(80, 25)) as pilot:
+        # Twenty-five rows leave a twenty-row pane, which is the original's.
+        for number in range(1, 31):
+            await author(pilot, str(number))
+        await pilot.press("j", *"20", "enter")
+        await pilot.press("pageup")
+        assert selected_number(app) == 11
+        await pilot.press("pageup")
+        assert selected_number(app) == 2
+        await pilot.press("pagedown")
+        assert selected_number(app) == 10
+        # The two spellings of first and last the original gives them.
+        await pilot.press("ctrl+pageup")
+        assert selected_number(app) == 1
+        await pilot.press("ctrl+pagedown")
+        assert selected_number(app) == 30
+        await pilot.press("ctrl+home")
+        assert selected_number(app) == 1
+
+
+async def test_the_page_keys_walk_under_a_prompt_line_too(app):
+    async with app.run_test(size=(80, 25)) as pilot:
+        for number in range(1, 31):
+            await author(pilot, str(number))
+        await pilot.press("j", *"20", "enter")
+        await pilot.press("s")
+        assert prompt(app)[1] == "#20"
+        await pilot.press("pageup")
+        assert selected_number(app) == 11
+        assert prompt(app)[1] == "#11"
+
+
+async def test_the_page_keys_label_a_dialogs_field_too(app):
+    async with app.run_test(size=(80, 25)) as pilot:
+        for number in range(1, 31):
+            await author(pilot, str(number))
+        await pilot.press("j", *"20", "enter")
+        await pilot.press("r")
+        assert band(app) == [" REMOVE: Start: 20     End: 20"]
+        await pilot.press("pageup")
+        assert band(app) == [" REMOVE: Start: 11     End: 20"]
+
+
 async def test_factors_variable_line_takes_no_notice_of_them(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x", "y", "x^2 - y^2")
         await pilot.press("f", "enter")
         assert prompt(app)[0] == "FACTOR variable 1:"
         # What to factor has been settled by now, so the highlight stays put.
-        for key in ("up", "down", "ctrl+home", "ctrl+end"):
+        for key in ("up", "down", "pageup", "pagedown", "ctrl+home", "ctrl+end"):
             await pilot.press(key)
             assert highlighted_expression(app) == " 2    2\nx  - y"
 
