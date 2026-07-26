@@ -10,7 +10,10 @@ keystrokes instead.
 
 Submenus and Options dialogs stack on top of the command menu: Esc pops one
 level, and committing a dialog returns all the way to the command menu, as the
-original does.
+original does. A command with a question of its own puts up a dialog too - the
+block `Remove` takes out, the place `Unremove` puts it back - and gets its
+answer handed to it rather than stored, since it is about the command in hand
+and not about the system.
 
 A command that needs a line of its own - Author, Simplify and Factor an
 expression, the Transfer commands a file name - takes the screen with the
@@ -88,6 +91,10 @@ NEXT_VARIABLE = "Return for no more or select next: {variables}"
 #: What the message line says once an answer is in.
 COMPUTE_TIME = "Compute time: {seconds:.1f} seconds"
 
+#: What Unremove says when there is nothing to put back. Every other refusal
+#: in either command is the beep alone, but this one has no dialog to leave up.
+BUFFER_EMPTY = "Unremove buffer empty"
+
 # The three commands that name a file, and what they ask for. F1 does not list
 # a directory yet, as it does not offer help yet; the wording is the
 # original's, kept so the screen reads right.
@@ -128,6 +135,10 @@ CURSOR_MOVES = {
     "first_sibling": "start",
     "last_sibling": "end",
 }
+
+#: The movements that walk the history rather than a field, on the dialogs
+#: whose fields name expressions. The rest still move the field's own cursor.
+ENTRY_MOVES = ("up", "down", "first_entry", "last_entry")
 
 
 class RederiveApp(App[None]):
@@ -182,6 +193,8 @@ class RederiveApp(App[None]):
         self.file_command: Callable[[str], None] | None = None
         #: What to do with the values of the dialog that stores none.
         self.answer: Callable[[dict[str, str | int]], None] | None = None
+        #: What that dialog's command will take, when it is choosy about it.
+        self.accepts: Callable[[dict[str, str | int]], bool] | None = None
         #: The block of labels the next save writes, when one was asked for.
         self.block: tuple[int | None, int | None] = (None, None)
         #: The Factor command's answers so far, while it is asking for them.
@@ -194,7 +207,9 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Author"): self._command_author,
             (ALGEBRA, "Factor"): self._command_factor,
             (ALGEBRA, "Quit"): self._command_quit,
+            (ALGEBRA, "Remove"): self._command_remove,
             (ALGEBRA, "Simplify"): self._command_simplify,
+            (ALGEBRA, "Unremove"): self._command_unremove,
             (menus.TRANSFER, "Merge"): self._command_merge,
             (menus.TRANSFER_LOAD, "Derive"): self._command_load,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
@@ -333,7 +348,7 @@ class RederiveApp(App[None]):
             else:
                 self.invoke_command(index)
             return
-        if editor.type_digit(character):
+        if editor.type_character(character):
             self.refresh_screen()
             return
         field = editor.field
@@ -429,13 +444,28 @@ class RederiveApp(App[None]):
 
         A dialog's selection fields take no arrow keys at all in the original,
         which falls out of this: there is no cursor in them to move.
+
+        A dialog whose fields name expressions is the exception. There the keys
+        that walk the history still walk it, and the field takes the label of
+        whatever they land on - which the manual recommends over typing the
+        number, as being harder to get wrong.
         """
         editor = self.editor
         if editor is None:
             getattr(self.session, f"move_{movement}")()
+        elif editor.dialog.tracks_selection and movement in ENTRY_MOVES:
+            self._walk_history(editor, movement)
         elif not editor.move_cursor(CURSOR_MOVES.get(movement)):
             self._beep()
         self.refresh_screen()
+
+    def _walk_history(self, editor: DialogEditor, movement: str) -> None:
+        """Move the selection, and label the active field with where it landed."""
+        if not getattr(self.session, f"move_{movement}")():
+            self._beep()
+        entry = self.session.selected_entry
+        if entry is not None:
+            editor.retype(str(entry.number))
 
     def action_scroll_work(self, direction: int) -> None:
         """Ctrl-Right and Ctrl-Left, over a render wider than the pane."""
@@ -480,15 +510,32 @@ class RederiveApp(App[None]):
         self._ask_again()
         self.refresh_screen()
 
-    def _ask(self, dialog: Dialog, answer: Callable[[dict[str, str | int]], None]) -> None:
-        """Stack a dialog that stores nothing, and say who wants its values."""
+    def _ask(
+        self,
+        dialog: Dialog,
+        answer: Callable[[dict[str, str | int]], None],
+        accepts: Callable[[dict[str, str | int]], bool] | None = None,
+    ) -> None:
+        """Stack a dialog that stores nothing, and say who wants its values.
+
+        `accepts` is what the command will not take, for the answers a field
+        cannot rule out on its own: a label number is a number whatever the
+        history holds, so only the command knows whether it names anything.
+        """
         self.answer = answer
+        self.accepts = accepts
         self._open(dialog)
 
     def _answered(self, values: dict[str, str | int]) -> None:
         """Give such a dialog's values to the command that put it up."""
+        if self.accepts is not None and not self.accepts(values):
+            # The original says nothing about an answer it will not take: the
+            # question stays up, with what was typed still on it to correct.
+            self._beep()
+            self.refresh_screen()
+            return
         self.stack.pop()
-        answer, self.answer = self.answer, None
+        answer, self.answer, self.accepts = self.answer, None, None
         assert answer is not None
         answer(values)
 
@@ -559,6 +606,55 @@ class RederiveApp(App[None]):
         line.selection = Selection(min(keep, len(offered)), len(offered))
         line.focus()
         self._set_message(message)
+
+    # -- Remove and Unremove -----------------------------------------------
+
+    def _command_remove(self) -> None:
+        """Ask which block of expressions to take out, offering the highlighted one.
+
+        A history with nothing in it has no block to name, and the original
+        asks nothing at all: no dialog, no message, just the beep.
+        """
+        entry = self.session.selected_entry
+        if entry is None:
+            self._beep()
+            return
+        self._ask(menus.remove_block(entry.number), self._remove, self._both_labels)
+
+    def _both_labels(self, values: dict[str, str | int]) -> bool:
+        return all(
+            self.session.numbered(int(values[setting])) is not None
+            for setting in ("RemoveFirst", "RemoveLast")
+        )
+
+    def _remove(self, values: dict[str, str | int]) -> None:
+        self.session.remove(int(values["RemoveFirst"]), int(values["RemoveLast"]))
+        self._return_to_menu(ENTER_OPTION)
+
+    def _command_unremove(self) -> None:
+        """Put the last removal back, asking where when there is a choice.
+
+        An empty buffer is the one thing either command says anything about. An
+        empty history is no choice of where, so the expressions simply go back.
+        """
+        if not self.session.removed:
+            self._set_message(BUFFER_EMPTY)
+            return
+        entry = self.session.selected_entry
+        if entry is None:
+            self.session.unremove()
+            self._return_to_menu(ENTER_OPTION)
+            return
+        self._ask(menus.unremove_before(entry.number), self._unremove, self._one_label)
+
+    def _one_label(self, values: dict[str, str | int]) -> bool:
+        before = values["UnremoveBefore"]
+        return before == menus.END or self.session.numbered(int(before)) is not None
+
+    def _unremove(self, values: dict[str, str | int]) -> None:
+        before = values["UnremoveBefore"]
+        self.session.unremove(None if before == menus.END else int(before))
+        self._return_to_menu(ENTER_OPTION)
 
     # -- Factor ------------------------------------------------------------
 

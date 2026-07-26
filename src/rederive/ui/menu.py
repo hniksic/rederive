@@ -19,8 +19,14 @@ FIRST_LINE_OPTIONS = 10
 
 ENTER_OPTION = "Enter option"
 
-#: What the message line asks for on either field of the save block dialog.
+#: What the message line asks for on a field that names an expression.
 ENTER_LABEL = "Enter label number"
+
+#: What it asks for on the one field that takes a word instead as well.
+ENTER_LABEL_OR_END = 'Enter label number or type "end"'
+
+#: The word that sends the unremoved expressions past the last entry.
+END = "end"
 
 
 def mnemonic(word: str) -> str:
@@ -143,6 +149,56 @@ def save_block(first: int, last: int) -> settings.Dialog:
             ),
         ),
         stored=False,
+    )
+
+
+def remove_block(number: int) -> settings.Dialog:
+    """The dialog that asks which block of expressions Remove takes out.
+
+    Both fields offer the highlighted entry, so removing the expression you are
+    looking at is two keystrokes. Naming the same label twice removes it alone,
+    which is what the manual tells you to do for one expression.
+    """
+    return settings.Dialog(
+        "REMOVE:",
+        (
+            (
+                settings.NumberField(
+                    "Start", ENTER_LABEL, "RemoveFirst", number, minimum=1, recorded=False
+                ),
+                settings.NumberField(
+                    "End", ENTER_LABEL, "RemoveLast", number, minimum=1, recorded=False
+                ),
+            ),
+        ),
+        stored=False,
+        tracks_selection=True,
+    )
+
+
+def unremove_before(number: int) -> settings.Dialog:
+    """The dialog that asks where the removed expressions go back.
+
+    The one field takes the label of the entry to put them in front of, or
+    `end` to put them after the last one.
+    """
+    return settings.Dialog(
+        "UNREMOVE:",
+        (
+            (
+                settings.NumberField(
+                    "Before",
+                    ENTER_LABEL_OR_END,
+                    "UnremoveBefore",
+                    number,
+                    minimum=1,
+                    recorded=False,
+                    word=END,
+                ),
+            ),
+        ),
+        stored=False,
+        tracks_selection=True,
     )
 
 

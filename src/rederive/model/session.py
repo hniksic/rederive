@@ -18,13 +18,17 @@ A render is not remade. Switching the times operator or the display format
 changes how later expressions are drawn and leaves the ones already on screen
 alone, which is what the original does: what you see is what it looked like
 when it was entered.
+
+Entries leave the history only through `remove`, which keeps what it took in
+`removed` for `unremove` to put back. That buffer is the whole of what the two
+commands share, and any engine command empties it.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rederive import engine
@@ -104,6 +108,8 @@ class Session:
         self.route: Route = ()
         #: The file this session was last saved to or read from, if any.
         self.file: Path | None = None
+        #: What the last Remove took out, for an Unremove to put back.
+        self.removed: list[Entry] = []
         #: What the lines so far have defined, for the engine to substitute.
         self.assignments: dict[str, Node] = {}
         self.functions: dict[str, engine.Definition] = {}
@@ -320,6 +326,9 @@ class Session:
         parse.
         """
         node = parse_expression(request, self.state).node
+        # Deriving an expression empties the unremove buffer, which is what the
+        # original does with the memory it was holding.
+        self.removed = []
         entry = self._labelled(node)
         if entry is None:
             return self._answered(node, run, f"{prefix}({AUTHORED})")
@@ -335,7 +344,7 @@ class Session:
             number = int(str(node.value))
         except ValueError:
             return None
-        return next((entry for entry in self.entries if entry.number == number), None)
+        return self.numbered(number)
 
     def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
         result = run(node, self.context, self.state)
@@ -359,6 +368,84 @@ class Session:
         text = entry.text[: part.start] + fragment + entry.text[part.end :]
         node = parse_expression(text, self.state).node
         return self._append(text, node, f"{prefix}(#{entry.number}')")
+
+    # -- removing ----------------------------------------------------------
+
+    def numbered(self, number: int) -> Entry | None:
+        """The entry labelled `number`, or None when the history holds no such.
+
+        Removing an entry does not free its label, and unremoving one may have
+        to find it taken, so a label is worth looking up rather than indexing.
+        """
+        return next((entry for entry in self.entries if entry.number == number), None)
+
+    def remove(self, first: int, last: int) -> int:
+        """Take out the block `first` and `last` delimit, and say how many went.
+
+        The two labels name the ends of a physically contiguous block, which is
+        not necessarily a numerically contiguous run of labels: an earlier
+        unremove can leave the history in an order its numbers do not follow.
+        Either end may be given first, and naming one label twice removes that
+        entry alone.
+
+        The removed entries become the unremove buffer, replacing whatever was
+        in it. Their labels are not reused and the entries that stay keep
+        theirs, so removing renumbers nothing. What the removed lines defined is
+        left standing, since a value outlives the line that gave it.
+
+        The selection lands on the entry that takes the block's place, or on the
+        last entry when the block was at the end.
+
+        Raises `KeyError` when either label names no entry.
+        """
+        start = self._index_of(first)
+        stop = self._index_of(last)
+        if start > stop:
+            start, stop = stop, start
+        self.removed = self.entries[start : stop + 1]
+        del self.entries[start : stop + 1]
+        self.selected = min(start, len(self.entries) - 1) if self.entries else None
+        self.route = ()
+        return len(self.removed)
+
+    def unremove(self, before: int | None = None) -> int:
+        """Put the removed expressions back, and say how many came.
+
+        They go in front of the entry labelled `before`; None puts them after
+        the last entry, which is what typing `end` in the field asks for.
+
+        The buffer is not emptied, so the same block can be put back more than
+        once. A restored entry keeps its own label where the history has left it
+        free and takes a fresh one where it has not, which is what keeps two
+        entries from answering to the same number.
+
+        The selection lands on the entry the block went in front of, or on the
+        last of the restored ones when they went at the end.
+
+        Raises `KeyError` when `before` names no entry.
+        """
+        at = len(self.entries) if before is None else self._index_of(before)
+        restored = [self._relabelled(entry) for entry in self.removed]
+        self.entries[at:at] = restored
+        following = at + len(restored)
+        self.selected = following if before is not None else following - 1
+        self.route = ()
+        return len(restored)
+
+    def _index_of(self, number: int) -> int:
+        """Where the entry labelled `number` sits, which is what a block is cut by."""
+        for index, entry in enumerate(self.entries):
+            if entry.number == number:
+                return index
+        raise KeyError(number)
+
+    def _relabelled(self, entry: Entry) -> Entry:
+        """`entry` under its own label, or under a fresh one when that is taken."""
+        if self.numbered(entry.number) is None:
+            return entry
+        entry = replace(entry, number=self._next_number)
+        self._next_number += 1
+        return entry
 
     # -- files -------------------------------------------------------------
 

@@ -394,3 +394,150 @@ async def test_factor_asks_for_nothing_when_the_history_is_empty(app):
         await pilot.press("f", "enter")
         assert app.session.entries == []
         assert message(app) == "Enter option"
+
+
+# -- Remove and Unremove ------------------------------------------------------
+#
+# Every screen asserted here was checked against the original.
+
+
+def numbered(app):
+    """The history as the work area labels it."""
+    return [f"#{entry.number}: {entry.text}" for entry in app.session.entries]
+
+
+async def worksheet(pilot, *texts):
+    for text in texts:
+        await author(pilot, text)
+
+
+async def test_remove_offers_the_highlighted_expression_at_both_ends(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z", "w", "v")
+        await pilot.press("r")
+        assert band(app) == [" REMOVE: Start: 5      End: 5"]
+        assert message(app) == "Enter label number"
+        await pilot.press("2", "tab", "4", "enter")
+        assert numbered(app) == ["#1: x", "#5: v"]
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_enter_alone_removes_the_highlighted_expression(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("r", "enter")
+        assert numbered(app) == ["#1: x", "#2: y"]
+
+
+async def test_the_arrows_walk_the_history_and_label_the_field(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z", "w")
+        await pilot.press("r", "tab")
+        await pilot.press("up")
+        # The highlight moved with the key, and the End field took it.
+        assert band(app) == [" REMOVE: Start: 4      End: 3"]
+        assert highlighted_expression(app) == "z"
+        await pilot.press("up")
+        assert band(app) == [" REMOVE: Start: 4      End: 2"]
+        await pilot.press("enter")
+        assert numbered(app) == ["#1: x"]
+
+
+async def test_a_label_that_names_no_expression_leaves_the_question_up(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("r", "9", "tab", "9", "enter")
+        assert band(app) == [" REMOVE: Start: 9      End: 9"]
+        assert message(app) == "Enter label number"
+        assert numbered(app) == ["#1: x", "#2: y", "#3: z"]
+
+
+async def test_escape_abandons_remove_and_leaves_the_history_alone(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("r", "1", "tab", "2")
+        await pilot.press("escape")
+        assert numbered(app) == ["#1: x", "#2: y"]
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_remove_asks_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        assert band(app)[0].startswith(" COMMAND:")
+        assert message(app) == "Enter option"
+
+
+async def test_unremove_asks_where_and_puts_them_back(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z", "w", "v")
+        await pilot.press("r", "2", "tab", "4", "enter")
+        await pilot.press("u")
+        assert band(app) == [" UNREMOVE: Before: 5"]
+        assert message(app) == 'Enter label number or type "end"'
+        await pilot.press("enter")
+        assert numbered(app) == ["#1: x", "#2: y", "#3: z", "#4: w", "#5: v"]
+        assert highlighted_expression(app) == "v"
+
+
+async def test_end_puts_them_after_the_last_expression(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("r", "1", "tab", "2", "enter")
+        await pilot.press("u")
+        await pilot.press(*"END", "enter")
+        assert numbered(app) == ["#3: z", "#1: x", "#2: y"]
+        assert highlighted_expression(app) == "y"
+
+
+async def test_unremove_says_so_when_there_is_nothing_to_put_back(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x")
+        await pilot.press("u")
+        assert message(app) == "Unremove buffer empty"
+        assert band(app)[0].startswith(" COMMAND:")
+
+
+async def test_an_engine_command_empties_the_buffer(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "2 + 3", "y")
+        await pilot.press("r", "2", "tab", "2", "enter")
+        await pilot.press("s", "enter")
+        await pilot.press("u")
+        assert message(app) == "Unremove buffer empty"
+
+
+async def test_unremove_asks_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("r", "1", "tab", "2", "enter")
+        assert numbered(app) == []
+        await pilot.press("u")
+        assert numbered(app) == ["#1: x", "#2: y"]
+        assert message(app) == "Enter option"
+
+
+async def test_the_buffer_outlives_the_unremove_that_used_it(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("r", "1", "tab", "2", "enter")
+        await pilot.press("u", "3", "enter")
+        assert numbered(app) == ["#1: x", "#2: y", "#3: z"]
+        # The same block again, under labels that are free this time.
+        await pilot.press("u", "3", "enter")
+        assert numbered(app) == ["#1: x", "#2: y", "#4: x", "#5: y", "#3: z"]
+
+
+async def test_the_history_keys_all_label_the_field(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z", "w")
+        await pilot.press("r")
+        await pilot.press("ctrl+home")
+        assert band(app) == [" REMOVE: Start: 1      End: 4"]
+        assert highlighted_expression(app) == "x"
+        await pilot.press("down")
+        assert band(app) == [" REMOVE: Start: 2      End: 4"]
+        await pilot.press("ctrl+end")
+        assert band(app) == [" REMOVE: Start: 4      End: 4"]

@@ -72,6 +72,12 @@ class NumberField:
     minimum: int
     maximum: int | None = None
     recorded: bool = True
+    word: str | None = None
+    """A word the field takes in place of a number, as `Unremove` takes `end`.
+
+    Such a field is typed into with letters as well as digits, and holds the
+    word itself once one is entered.
+    """
 
     def accepts(self, number: int) -> bool:
         return number >= self.minimum and (self.maximum is None or number <= self.maximum)
@@ -119,6 +125,13 @@ class Dialog:
     Most dialogs are the whole command, so committing returns to the command
     menu. `Transfer Save Options` is not: you set the options and then issue
     the save they apply to, so the original leaves its menu up.
+    """
+    tracks_selection: bool = False
+    """Whether walking the history writes what it lands on into the active field.
+
+    True for the dialogs whose fields name expressions: `Remove` and
+    `Unremove` let the arrow keys pick an expression instead of its label
+    number, which the manual recommends as the less error prone of the two.
     """
 
     @property
@@ -628,7 +641,11 @@ class DialogEditor:
         field = self.field
         if self.text is None or not isinstance(field, NumberField):
             return True
-        number = int(self.text) if self.text.isdigit() else None
+        typed = self.text.strip()
+        if field.word is not None and typed.lower() == field.word.lower():
+            self.values[field.setting] = field.word
+            return True
+        number = int(typed) if typed.isdigit() else None
         if number is None or not field.accepts(number):
             return False
         self.values[field.setting] = number
@@ -663,13 +680,25 @@ class DialogEditor:
         field = self.field
         return isinstance(field, ChoiceField) and not field.inline
 
-    def type_digit(self, character: str) -> bool:
-        """Type a digit into the active number field, overwriting at the cursor."""
-        if self.text is None or not character.isdigit():
+    def type_character(self, character: str) -> bool:
+        """Type into the active number field, overwriting at the cursor.
+
+        Digits only, unless the field takes a word as well - then the letters
+        that spell it are typed the same way, and what they spell is judged
+        when the field is left.
+        """
+        field = self.field
+        takes_letters = isinstance(field, NumberField) and field.word is not None
+        if self.text is None or not (character.isdigit() or takes_letters):
             return False
         self.text = self.text[: self.cursor] + character + self.text[self.cursor + 1 :]
         self.cursor += 1
         return True
+
+    def retype(self, text: str) -> None:
+        """Put `text` in the active field, as walking the history onto one does."""
+        self.text = text
+        self.cursor = 0
 
     def erase(self) -> bool:
         """Delete the digit before the cursor, as Backspace does."""

@@ -90,8 +90,8 @@ def test_typing_overwrites_the_number_under_the_cursor(settings):
     dialog = editor(NOTATION, settings)
     dialog.next_field()
     assert dialog.text == "6"
-    dialog.type_digit("1")
-    dialog.type_digit("2")
+    dialog.type_character("1")
+    dialog.type_character("2")
     assert dialog.text == "12"
     dialog.erase()
     assert dialog.text == "1"
@@ -101,7 +101,7 @@ def test_typing_overwrites_the_number_under_the_cursor(settings):
 def test_a_digit_count_below_one_is_refused(settings):
     dialog = editor(PRECISION, settings)
     dialog.next_field()
-    dialog.type_digit("0")
+    dialog.type_character("0")
     assert dialog.commit() is None
     # The dialog stays put, with the offending digit still there to correct.
     assert dialog.text == "0"
@@ -116,12 +116,12 @@ def test_other_asks_for_a_base_between_2_and_36(settings):
     assert dialog.prompt is not None
     # The base offered is the one in effect, not the one just stepped over.
     assert dialog.text == "10"
-    dialog.type_digit("4")
-    dialog.type_digit("0")
+    dialog.type_character("4")
+    dialog.type_character("0")
     assert dialog.commit() is None
     dialog.erase()
     dialog.erase()
-    dialog.type_digit("7")
+    dialog.type_character("7")
     assert dialog.commit()["InputBase"] == 7
 
 
