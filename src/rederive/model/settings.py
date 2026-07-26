@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from rederive.model import worksheet
 from rederive.model.expr import Kind, Node
 
 #: The colors a color slot can take, in the order Derive's Options Color
@@ -104,6 +105,21 @@ class Dialog:
 
     title: str
     lines: tuple[tuple[Field, ...], ...]
+    stored: bool = True
+    """Whether committing writes the fields to the settings.
+
+    False for a dialog that asks about the command in hand rather than about
+    the system: the block of expressions `Transfer Save` writes is answered
+    once and forgotten. Such a dialog opens on its fields' defaults and hands
+    its values back to the command that put it up.
+    """
+    keeps_menu: bool = False
+    """Whether committing goes back to the menu the dialog was opened from.
+
+    Most dialogs are the whole command, so committing returns to the command
+    menu. `Transfer Save Options` is not: you set the options and then issue
+    the save they apply to, so the original leaves its menu up.
+    """
 
     @property
     def fields(self) -> tuple[Field, ...]:
@@ -252,6 +268,46 @@ RADIX = Dialog(
 )
 
 
+# The one dialog here that is not an Options command. It says how the next
+# `Transfer Save` writes its file, which is why committing it leaves the
+# Transfer Save menu up rather than returning to the command menu.
+SAVE = Dialog(
+    "TRANSFER SAVE OPTIONS:",
+    (
+        (
+            ChoiceField(
+                "Range",
+                "Select save range",
+                "SaveRange",
+                ("All", "Some"),
+                "All",
+                recorded=False,
+            ),
+            # The original's message line for this field says only `Annotation`,
+            # which tells a first-time user nothing; every other field on the
+            # screen is phrased as an instruction, and so is this one.
+            ChoiceField(
+                "Annotation",
+                "Select annotation mode",
+                "SaveAnnotation",
+                ("Save", "Omit"),
+                "Save",
+                recorded=False,
+            ),
+            NumberField(
+                "Length",
+                "Enter line length",
+                "SaveLength",
+                worksheet.LINE_LENGTH,
+                minimum=worksheet.MINIMUM_LENGTH,
+                recorded=False,
+            ),
+        ),
+    ),
+    keeps_menu=True,
+)
+
+
 def _color_field(label: str, setting: str, default: str) -> ChoiceField:
     return ChoiceField(
         label,
@@ -303,6 +359,7 @@ DIALOGS: tuple[Dialog, ...] = (
     OUTPUT,
     MUTE,
     RADIX,
+    SAVE,
     COLOR_MENU,
     COLOR_WORK,
 )
@@ -466,7 +523,13 @@ class DialogEditor:
 
     def __init__(self, dialog: Dialog, settings: Settings) -> None:
         self.dialog = dialog
-        self.values = {field.setting: settings[field.setting] for field in dialog.fields}
+        # A dialog that stores nothing has no settings behind its fields, so it
+        # opens on their defaults - which is where a caller that computes them,
+        # as the save block does from the history, puts the answer it offers.
+        self.values = {
+            field.setting: settings[field.setting] if dialog.stored else field.default
+            for field in dialog.fields
+        }
         self.active = 0
         self.prompt: NumberField | None = None
         self.text: str | None = None

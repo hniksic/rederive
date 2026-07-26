@@ -19,6 +19,9 @@ FIRST_LINE_OPTIONS = 10
 
 ENTER_OPTION = "Enter option"
 
+#: What the message line asks for on either field of the save block dialog.
+ENTER_LABEL = "Enter label number"
+
 
 def mnemonic(word: str) -> str:
     """The lower-cased capital letter that invokes `word`, e.g. `l` for soLve."""
@@ -97,6 +100,43 @@ OPTIONS = Menu(
 
 COLOR = Menu("OPTIONS COLOR:", ("Menu", "Work"))
 
+# The Transfer menus, word for word as the original lists them. Only the
+# commands that move expressions between the worksheet and a file do anything:
+# `Print` is paper, `Demo` is a scripted replay, `State` is the settings file,
+# and the languages under Save write source code for programs to compile.
+TRANSFER = Menu("TRANSFER:", ("Load", "Save", "Merge", "Clear", "Demo", "Print"))
+
+TRANSFER_LOAD = Menu("TRANSFER LOAD:", ("Derive", "State", "daTa", "Utility"))
+
+TRANSFER_SAVE = Menu(
+    "TRANSFER SAVE:",
+    ("Derive", "Basic", "C", "Fortran", "Pascal", "Options", "State"),
+)
+
+
+def save_block(first: int, last: int) -> settings.Dialog:
+    """The dialog that asks which block of expressions a save writes.
+
+    Put up by `Transfer Save Derive` when the Range option says Some. It offers
+    the whole history and stores nothing: the block is answered for the one
+    save that asked, and the next save asks again.
+    """
+    return settings.Dialog(
+        "TRANSFER SAVE DERIVE:",
+        (
+            (
+                settings.NumberField(
+                    "Start", ENTER_LABEL, "SaveFirst", first, minimum=1, recorded=False
+                ),
+                settings.NumberField(
+                    "End", ENTER_LABEL, "SaveLast", last, minimum=1, recorded=False
+                ),
+            ),
+        ),
+        stored=False,
+    )
+
+
 #: How each color is spelled on the color menu. Derive asked for a number, so
 #: these mnemonics are the remake's own; every one of the sixteen needs a letter
 #: of its own, which is what pushes `Blue`, `Brown`, `Gray` and `Aqua` off their
@@ -143,6 +183,17 @@ OPTIONS_TARGETS: dict[str, Menu | settings.Dialog] = {
 COLOR_TARGETS: dict[str, settings.Dialog] = {
     "Menu": settings.COLOR_MENU,
     "Work": settings.COLOR_WORK,
+}
+
+#: Every word that opens another screen rather than doing something, by the
+#: menu it is listed on. A word on none of these lists is a command, and the
+#: app decides whether it has one.
+TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
+    ALGEBRA: {"Options": OPTIONS, "Transfer": TRANSFER},
+    OPTIONS: OPTIONS_TARGETS,
+    COLOR: COLOR_TARGETS,
+    TRANSFER: {"Load": TRANSFER_LOAD, "Save": TRANSFER_SAVE},
+    TRANSFER_SAVE: {"Options": settings.SAVE},
 }
 
 

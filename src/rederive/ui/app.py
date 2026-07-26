@@ -12,14 +12,19 @@ Submenus and Options dialogs stack on top of the command menu: Esc pops one
 level, and committing a dialog returns all the way to the command menu, as the
 original does.
 
-A command that needs an expression - Author, Simplify - takes the screen with
-the prompt band instead, which is one Input with a label in front of it. The
-mode says which command the line belongs to, and so what Enter does with it.
+A command that needs a line of its own - Author and Simplify an expression,
+the Transfer commands a file name - takes the screen with the prompt band
+instead, which is one Input with a label in front of it. The mode says which
+command the line belongs to, and so what Enter does with it. A command that
+runs is finished with, so it leaves the command menu up rather than the
+submenu it was picked from; Esc, which abandons the line instead, leaves that
+submenu where it was.
 """
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from textual.app import App, ComposeResult
@@ -28,6 +33,7 @@ from textual.containers import Horizontal
 from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
+from rederive.model import worksheet
 from rederive.model.session import Session
 from rederive.model.settings import ChoiceField, Dialog, DialogEditor, Settings
 from rederive.syntax import DeriveSyntaxError
@@ -46,10 +52,11 @@ from rederive.ui.widgets import (
 MODE_MENU = "menu"
 MODE_AUTHOR = "author"
 MODE_SIMPLIFY = "simplify"
+MODE_FILE = "file"
 MODE_CONFIRM_QUIT = "confirm_quit"
 
 #: The modes in which the prompt band has the screen, and the keys with it.
-PROMPT_MODES = (MODE_AUTHOR, MODE_SIMPLIFY)
+PROMPT_MODES = (MODE_AUTHOR, MODE_SIMPLIFY, MODE_FILE)
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
@@ -60,6 +67,22 @@ AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
 #: What the message line says once an answer is in.
 COMPUTE_TIME = "Compute time: {seconds:.1f} seconds"
+
+# The three commands that name a file, and what they ask for. F1 does not list
+# a directory yet, as it does not offer help yet; the wording is the
+# original's, kept so the screen reads right.
+LOAD_PROMPT = " TRANSFER LOAD DERIVE file: "
+MERGE_PROMPT = " TRANSFER MERGE file: "
+SAVE_PROMPT = " TRANSFER SAVE DERIVE file: "
+ENTER_FILE = "Enter filename"
+ENTER_FILE_TO_READ = "Enter filename (press F1 for list)"
+FILE_NOT_FOUND = "File not found"
+CANNOT_READ = "Cannot read file"
+CANNOT_WRITE = "Cannot write file"
+#: What the message line says when a file held a line that would not parse.
+#: The original drops such a line without a word; saying so is cheap, and a
+#: worksheet quietly missing an expression is worth knowing about.
+UNREADABLE = "{count} expression{s} could not be read"
 
 #: What the navigation keys mean inside an Options dialog's number field.
 CURSOR_MOVES = {
@@ -118,12 +141,20 @@ class RederiveApp(App[None]):
         #: The command menu, plus whatever submenu or dialog is stacked on it.
         self.stack: list[MenuCursor | DialogEditor] = [MenuCursor(ALGEBRA)]
         self.message = ENTER_OPTION
+        #: What to do with the file the prompt line is naming.
+        self.file_command: Callable[[str], None] | None = None
+        #: What to do with the values of the dialog that stores none.
+        self.answer: Callable[[dict[str, str | int]], None] | None = None
+        #: The block of labels the next save writes, when one was asked for.
+        self.block: tuple[int | None, int | None] = (None, None)
         # Commands not listed here are present and navigable but inert.
-        self.commands: dict[str, Callable[[], None]] = {
-            "Author": self._command_author,
-            "Options": self._command_options,
-            "Quit": self._command_quit,
-            "Simplify": self._command_simplify,
+        self.commands: dict[tuple[Menu, str], Callable[[], None]] = {
+            (ALGEBRA, "Author"): self._command_author,
+            (ALGEBRA, "Quit"): self._command_quit,
+            (ALGEBRA, "Simplify"): self._command_simplify,
+            (menus.TRANSFER, "Merge"): self._command_merge,
+            (menus.TRANSFER_LOAD, "Derive"): self._command_load,
+            (menus.TRANSFER_SAVE, "Derive"): self._command_save,
         }
 
     # -- composition -------------------------------------------------------
@@ -185,9 +216,15 @@ class RederiveApp(App[None]):
             self.query_one(MenuBand).show(cursor.menu, highlighted)
         self.query_one(MessageLine).show(self.message)
         # The annotation belongs to the entry, so it follows the selection: it
-        # says where the expression now highlighted came from.
+        # says where the expression now highlighted came from. Beside it is the
+        # file the session last read or wrote, named rather than pathed: the
+        # status line is a glance, and the prompt is where the whole path is
+        # offered back for editing.
         entry = self.session.selected_entry
-        self.query_one(StatusLine).show("" if entry is None else entry.annotation)
+        file = self.session.file
+        self.query_one(StatusLine).show(
+            "" if entry is None else entry.annotation, "" if file is None else file.name
+        )
 
     def _set_message(self, message: str) -> None:
         self.message = message
@@ -239,7 +276,7 @@ class RederiveApp(App[None]):
         elif self.mode in PROMPT_MODES and event.key == "escape":
             event.stop()
             event.prevent_default()
-            self._end_prompt()
+            self._end_prompt(done=False)
 
     def _typed(self, character: str) -> None:
         """A letter or digit while a menu or a dialog is up."""
@@ -366,18 +403,18 @@ class RederiveApp(App[None]):
         cursor = self.top
         assert isinstance(cursor, MenuCursor)
         word = cursor.menu.words[index]
-        if cursor.menu is ALGEBRA:
-            command = self.commands.get(word)
-            if command is None:
-                self._set_message(f"{word}: not implemented yet")
-            else:
-                command()
-        elif cursor.menu is menus.OPTIONS:
-            self._open(menus.OPTIONS_TARGETS[word])
-        elif cursor.menu is menus.COLOR:
-            self._open(menus.COLOR_TARGETS[word])
-        elif cursor.menu is COLORS:
+        if cursor.menu is COLORS:
             self._chose_color(index)
+            return
+        target = menus.TARGETS.get(cursor.menu, {}).get(word)
+        if target is not None:
+            self._open(target)
+            return
+        command = self.commands.get((cursor.menu, word))
+        if command is None:
+            self._set_message(f"{word}: not implemented yet")
+        else:
+            command()
 
     # -- Options -----------------------------------------------------------
 
@@ -389,6 +426,18 @@ class RederiveApp(App[None]):
             self.stack.append(DialogEditor(target, self.settings))
         self._ask_again()
         self.refresh_screen()
+
+    def _ask(self, dialog: Dialog, answer: Callable[[dict[str, str | int]], None]) -> None:
+        """Stack a dialog that stores nothing, and say who wants its values."""
+        self.answer = answer
+        self._open(dialog)
+
+    def _answered(self, values: dict[str, str | int]) -> None:
+        """Give such a dialog's values to the command that put it up."""
+        self.stack.pop()
+        answer, self.answer = self.answer, None
+        assert answer is not None
+        answer(values)
 
     def _chose_color(self, index: int) -> None:
         """A color picked off the color menu belongs to the dialog beneath it."""
@@ -411,8 +460,14 @@ class RederiveApp(App[None]):
                 self._beep()
             self.refresh_screen()
             return
+        if not editor.dialog.stored:
+            self._answered(values)
+            return
         changed = editor.changes(self.settings)
-        del self.stack[1:]
+        if editor.dialog.keeps_menu:
+            self.stack.pop()
+        else:
+            del self.stack[1:]
         self.settings.apply(values)
         # Recorded after the change, so that the record itself is written the
         # way the new settings say to write it.
@@ -430,13 +485,17 @@ class RederiveApp(App[None]):
         """Ask which expression to simplify, offering the highlighted one."""
         entry = self.session.selected_entry
         offered = "" if entry is None else f"#{entry.number}"
-        self._prompt(MODE_SIMPLIFY, SIMPLIFY_PROMPT, offered, ENTER_TO_SIMPLIFY)
+        self._prompt(MODE_SIMPLIFY, SIMPLIFY_PROMPT, offered, ENTER_TO_SIMPLIFY, keep=1)
 
-    def _prompt(self, mode: str, label: str, offered: str, message: str) -> None:
-        """Put the prompt band up for a command that reads an expression.
+    def _prompt(
+        self, mode: str, label: str, offered: str, message: str, keep: int = 0
+    ) -> None:
+        """Put the prompt band up for a command that reads a line.
 
-        What is offered comes up selected, so that typing a label number
-        replaces it and Enter alone accepts it.
+        What is offered comes up selected, so that typing replaces it and Enter
+        alone accepts it. `keep` is how much of it stands outside the
+        selection: the `#` of a label number, which typing a digit should not
+        take away, and nothing at all of a file name.
         """
         self.mode = mode
         self.query_one("#menu").display = False
@@ -444,12 +503,82 @@ class RederiveApp(App[None]):
         self.query_one("#prompt-label", Static).update(label)
         line = self.query_one("#prompt-input", Input)
         line.value = offered
-        line.selection = Selection(min(1, len(offered)), len(offered))
+        line.selection = Selection(min(keep, len(offered)), len(offered))
         line.focus()
         self._set_message(message)
 
-    def _command_options(self) -> None:
-        self._open(menus.OPTIONS)
+    # -- Transfer ----------------------------------------------------------
+
+    def _command_save(self) -> None:
+        """Write the worksheet, asking first which block of it when Some.
+
+        A history with nothing in it is nothing to write, and the original
+        simply declines: no prompt, no message, just the beep.
+        """
+        if not self.session.entries:
+            self._beep()
+            return
+        if self.settings["SaveRange"] != "Some":
+            self.block = (None, None)
+            self._ask_file(SAVE_PROMPT, ENTER_FILE, self._save)
+            return
+        numbers = [entry.number for entry in self.session.entries]
+        self._ask(menus.save_block(numbers[0], numbers[-1]), self._chose_block)
+
+    def _chose_block(self, values: dict[str, str | int]) -> None:
+        self.block = (int(values["SaveFirst"]), int(values["SaveLast"]))
+        self._ask_file(SAVE_PROMPT, ENTER_FILE, self._save)
+
+    def _command_load(self) -> None:
+        self._ask_file(LOAD_PROMPT, ENTER_FILE_TO_READ, self._load)
+
+    def _command_merge(self) -> None:
+        self._ask_file(MERGE_PROMPT, ENTER_FILE_TO_READ, self._merge)
+
+    def _ask_file(self, label: str, message: str, command: Callable[[str], None]) -> None:
+        """Put the prompt band up for a command that names a file.
+
+        The file the session last used comes up on the line, as it does in the
+        original, so that saving twice over the same name is one keystroke.
+        """
+        self.file_command = command
+        offered = "" if self.session.file is None else str(self.session.file)
+        self._prompt(MODE_FILE, label, offered, message)
+
+    def _save(self, name: str) -> None:
+        try:
+            self.session.save(worksheet.path_of(name), *self.block)
+        except OSError:
+            self._refuse_file(CANNOT_WRITE)
+            return
+        self._end_prompt()
+
+    def _load(self, name: str) -> None:
+        self._read(name, self.session.load)
+
+    def _merge(self, name: str) -> None:
+        self._read(name, self.session.merge)
+
+    def _read(self, name: str, command: Callable[[Path], int]) -> None:
+        """Read a file into the history, leaving the line up if it cannot be."""
+        try:
+            skipped = command(worksheet.path_of(name))
+        except FileNotFoundError:
+            self._refuse_file(FILE_NOT_FOUND)
+            return
+        except OSError:
+            self._refuse_file(CANNOT_READ)
+            return
+        self._end_prompt(
+            ENTER_OPTION
+            if not skipped
+            else UNREADABLE.format(count=skipped, s="" if skipped == 1 else "s")
+        )
+
+    def _refuse_file(self, message: str) -> None:
+        """Say what went wrong and leave the name up to be corrected."""
+        self._beep()
+        self._set_message(message)
 
     def _command_quit(self) -> None:
         if not self.session.entries:
@@ -464,8 +593,18 @@ class RederiveApp(App[None]):
         event.stop()
         if self.mode == MODE_SIMPLIFY:
             self._simplify(event.value)
+        elif self.mode == MODE_FILE:
+            self._named(event.value)
         else:
             self._author(event.value)
+
+    def _named(self, name: str) -> None:
+        """Enter on a file prompt: a line with nothing on it names nothing."""
+        if not name.strip():
+            self._end_prompt(done=False)
+            return
+        assert self.file_command is not None
+        self.file_command(name)
 
     def _author(self, text: str) -> None:
         """Enter the line as a new expression.
@@ -506,11 +645,20 @@ class RederiveApp(App[None]):
         self._set_message(str(error))
         self.query_one("#prompt-input", Input).cursor_position = error.offset
 
-    def _end_prompt(self, message: str = ENTER_OPTION) -> None:
+    def _end_prompt(self, message: str = ENTER_OPTION, done: bool = True) -> None:
+        """Take the prompt line down, and put a menu back where it was.
+
+        A command that ran is finished with, so the whole path it was reached
+        by goes: `Transfer Save Derive` leaves the command menu up, not the
+        Transfer Save menu it was picked from. Abandoning the line instead
+        leaves that menu where it was, which is what Esc does.
+        """
         self.query_one("#prompt-input", Input).value = ""
         self.query_one("#prompt-band").display = False
         self.query_one("#menu").display = True
         self.set_focus(None)
+        if done:
+            del self.stack[1:]
         self._return_to_menu(message)
 
     def _return_to_menu(self, message: str) -> None:

@@ -54,14 +54,28 @@ class Source:
         ever looks for one.
         """
         body, offsets = _identity(text)
+        body, offsets = _cut_at_end_marker(body, offsets)
         body, offsets = _normalize_line_endings(body, offsets)
         body, offsets = _strip_comments(body, offsets)
         body, offsets = _splice_continuations(body, offsets)
         return cls(text=body, original=text, origin=origin, offsets=tuple(offsets))
 
 
+#: What ends a DOS text file. Every file the original wrote carries one, and
+#: nothing after it is text.
+END_MARKER = "\x1a"
+
+
 def _identity(text: str) -> tuple[str, list[int]]:
     return text, list(range(len(text)))
+
+
+def _cut_at_end_marker(text: str, offsets: list[int]) -> tuple[str, list[int]]:
+    """Drop the Ctrl-Z that ends a DOS text file, and anything after it."""
+    end = text.find(END_MARKER)
+    if end < 0:
+        return text, offsets
+    return text[:end], offsets[:end]
 
 
 def _normalize_line_endings(text: str, offsets: list[int]) -> tuple[str, list[int]]:

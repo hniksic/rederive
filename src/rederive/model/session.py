@@ -22,19 +22,26 @@ when it was entered.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from rederive import engine
 from rederive.display import DisplayOptions, Layout, Region, render
+from rederive.model import worksheet
 from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
 from rederive.syntax import (
     PARSING_SETTINGS,
     Declaration,
+    DeriveSyntaxError,
     ParseState,
     SettingDeclaration,
+    Source,
     parse_expression,
+    source_lines,
+    write_expression,
 )
 
 #: A route into an entry's selection tree: indices into `Region.children`,
@@ -44,6 +51,10 @@ Rect = tuple[int, int, int, int]
 
 #: What the status line says about a line the user wrote.
 AUTHORED = "User"
+
+#: A reference to a numbered entry, wherever one is written: in an expression,
+#: and in an annotation such as `Simp(#3)`.
+LABEL = re.compile(r"#(\d+)")
 
 
 @dataclass(frozen=True)
@@ -86,6 +97,8 @@ class Session:
         self.entries: list[Entry] = []
         self.selected: int | None = None
         self.route: Route = ()
+        #: The file this session was last saved to or read from, if any.
+        self.file: Path | None = None
         #: What the lines so far have defined, for the engine to substitute.
         self.assignments: dict[str, Node] = {}
         self.functions: dict[str, engine.Definition] = {}
@@ -284,6 +297,103 @@ class Session:
         node = parse_expression(text, self.state).node
         return self._append(text, node, f"Simp(#{entry.number}')")
 
+    # -- files -------------------------------------------------------------
+
+    def save(self, path: Path, first: int | None = None, last: int | None = None) -> int:
+        """Write the history to `path`, and say how many entries went.
+
+        `first` and `last` bound the block of label numbers written, which is
+        what the Range option asks for; by default the whole history goes. The
+        settings decide whether annotations go with it and how long a line may
+        be, so a file is written the way `Transfer Save Options` was left.
+
+        An entry is written from its tree, not from the text it was typed as,
+        so the file says what the expression is rather than how it was reached:
+        `x (x + 1)` goes out as `x*(x+1)`, as it does in the original.
+        """
+        records = [
+            worksheet.Record(write_expression(entry.node), self._noted(entry))
+            for entry in self.entries
+            if (first is None or entry.number >= first)
+            and (last is None or entry.number <= last)
+        ]
+        text = worksheet.write(
+            records,
+            length=int(self.settings["SaveLength"]),
+            annotations=self.settings["SaveAnnotation"] == "Save",
+        )
+        path.write_text(text, encoding="utf-8")
+        self.file = path
+        return len(records)
+
+    @staticmethod
+    def _noted(entry: Entry) -> str:
+        """What to write above `entry`; a line the user wrote needs nothing."""
+        return "" if entry.annotation == AUTHORED else entry.annotation
+
+    def load(self, path: Path) -> int:
+        """Replace the history with the expressions in `path`.
+
+        Numbering starts again at one, as it does in the original. What earlier
+        lines defined is left alone: clearing variables and functions is its
+        own command, and the file's own definitions are applied as it is read.
+
+        Returns how many of the file's expressions did not parse and were
+        therefore left out.
+
+        The file is read before the history goes, so that a name that turns out
+        to be nothing costs nothing: what is on screen is still there to try
+        again from.
+        """
+        text = _text_of(path)
+        self.entries = []
+        self.selected = None
+        self.route = ()
+        self._next_number = 1
+        return self._read(path, text)
+
+    def merge(self, path: Path) -> int:
+        """Append the expressions in `path` to the history.
+
+        Numbering carries on, and every reference to a numbered entry moves
+        with it: a file whose third expression is `#1 + 2` still means its own
+        first expression once merged behind five others. The original resolves
+        such a reference as it reads, which comes to the same thing; Rederive
+        keeps the reference, so it is the reference that has to move.
+        """
+        return self._read(path, _text_of(path))
+
+    def _read(self, path: Path, text: str) -> int:
+        """Append what `path` holds, and say how many lines would not parse.
+
+        A line that does not parse is left out and the rest of the file is
+        read, which is what the original does with a file an editor has damaged
+        - one bad line does not cost you the other two hundred.
+        """
+        source = Source.from_file(text, str(path))
+        annotations = worksheet.annotations_of(text)
+        offset = self._next_number - 1
+        skipped = 0
+        for start, stop in source_lines(source):
+            annotation = annotations.get(source.locate(start)[0], AUTHORED)
+            try:
+                self._entered(source.text[start:stop].strip(), annotation, offset)
+            except DeriveSyntaxError:
+                skipped += 1
+        self.file = path
+        return skipped
+
+    def _entered(self, text: str, annotation: str, offset: int) -> None:
+        """Append one line of a file as an entry, its references moved on."""
+        result = parse_expression(text, self.state)
+        if offset:
+            text = _shift_labels(text, result.node, offset)
+            result = parse_expression(text, self.state)
+        for declaration in result.declarations:
+            self.declare(declaration)
+        self._define(result.node, result.declarations)
+        self._append(text, result.node, _shift_annotation(annotation, offset))
+
     # -- selection ---------------------------------------------------------
 
     @property
@@ -398,6 +508,46 @@ class Session:
 
     def move_last_entry(self) -> bool:
         return self.select_entry(len(self.entries) - 1)
+
+
+def _text_of(path: Path) -> str:
+    """A file's text. Raises, as reading a file does, before anything changes.
+
+    UTF-8 is what Rederive writes. A file the original wrote is code page 437,
+    which only shows in one where a glyph left ASCII - a Greek variable name,
+    almost always - and that is what the fallback reads. Code page 437 decodes
+    any byte at all, so a file is never refused for what is in it.
+    """
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp437")
+
+
+def _shift_labels(text: str, node: Node, offset: int) -> str:
+    """`text` with every label it refers to moved on by `offset`.
+
+    Rewritten from the right, so that a span still indexes `text` when its turn
+    comes. Going through the tree rather than over the characters is what keeps
+    a `#3` inside a string literal the data it is.
+    """
+    for found in sorted(_subtrees(node), key=lambda found: found.start, reverse=True):
+        if found.kind is not Kind.LABEL:
+            continue
+        try:
+            number = int(str(found.value)) + offset
+        except ValueError:
+            continue
+        text = f"{text[: found.start]}#{number}{text[found.end :]}"
+    return text
+
+
+def _shift_annotation(annotation: str, offset: int) -> str:
+    """The same shift over an annotation, which is text and not a tree."""
+    if not offset:
+        return annotation
+    return LABEL.sub(lambda found: f"#{int(found.group(1)) + offset}", annotation)
 
 
 def _subtrees(node: Node) -> Iterator[Node]:

@@ -1,7 +1,11 @@
-"""Derive expression syntax: text in, expression trees out.
+"""Derive expression syntax: text in, expression trees out, and text again.
 
 Nothing outside this package may import from inside it except through the
 names re-exported here.
+
+`write_expression` is the parser run backwards, and the two are kept together
+because they are one contract: what the writer writes, the parser reads back as
+the same tree.
 
 Parsing produces no mathematics. `2+3` yields a sum node, never `5`: authored
 expressions stay inert until the user asks for a Simplify.
@@ -31,6 +35,7 @@ from rederive.syntax.state import (
     VariableDeclaration,
     VariableInfo,
 )
+from rederive.syntax.writer import write_expression
 
 __all__ = [
     "CaseMode",
@@ -52,6 +57,8 @@ __all__ = [
     "VariableInfo",
     "parse_expression",
     "parse_source",
+    "source_lines",
+    "write_expression",
 ]
 
 
@@ -79,12 +86,13 @@ def parse_expression(text: str, state: ParseState) -> ParseResult:
     return _parse_one(source, state, 0, len(source.text))
 
 
-def parse_source(source: Source, state: ParseState) -> Iterator[ParseResult]:
-    """Parse a .MTH/.DMO source, one expression at a time.
+def source_lines(source: Source) -> Iterator[tuple[int, int]]:
+    """The span of each expression of a prepared file, in `source.text`.
 
-    Lazy by contract, not by convenience: `InputMode := Word` on line 3 must
-    change how line 5 lexes, so the caller applies each result's declarations
-    before pulling the next expression.
+    One line, one expression: comments are already gone and a `~` continuation
+    has already joined its lines into one, so what is left is either blank or a
+    whole expression. This is where that rule lives; a caller that has to
+    survive a line which does not parse walks the spans itself.
     """
     text = source.text
     start = 0
@@ -93,10 +101,21 @@ def parse_source(source: Source, state: ParseState) -> Iterator[ParseResult]:
         if stop < 0:
             stop = len(text)
         if text[start:stop].strip():
-            yield _parse_one(source, state, start, stop)
+            yield start, stop
         if stop >= len(text):
             return
         start = stop + 1
+
+
+def parse_source(source: Source, state: ParseState) -> Iterator[ParseResult]:
+    """Parse a .MTH/.DMO source, one expression at a time.
+
+    Lazy by contract, not by convenience: `InputMode := Word` on line 3 must
+    change how line 5 lexes, so the caller applies each result's declarations
+    before pulling the next expression.
+    """
+    for start, stop in source_lines(source):
+        yield _parse_one(source, state, start, stop)
 
 
 def _parse_one(source: Source, state: ParseState, start: int, limit: int) -> ParseResult:

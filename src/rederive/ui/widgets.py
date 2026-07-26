@@ -24,6 +24,13 @@ _LABEL_WIDTH = 5
 #: Blanks between two fields of an Options dialog.
 _FIELD_GAP = "  "
 
+#: Columns a number field's value takes, so that the field beside it does not
+#: shift as digits are typed. The original reserves the same width.
+_NUMBER_WIDTH = 5
+
+#: Where the status line names the file the session last read or wrote.
+_FILE_COLUMN = 22
+
 
 def _label(entry: Entry) -> str:
     return f"#{entry.number}:"
@@ -232,15 +239,19 @@ class FieldBand(Band):
         self, text: Text, editor: DialogEditor, current: str | int, active: bool
     ) -> None:
         if not active:
-            text.append(f" {current}")
+            text.append(f" {str(current).ljust(_NUMBER_WIDTH)}")
             return
         cursor = self.colors["option-highlight"]
         digits = editor.text or ""
         text.append(" ")
         for position, digit in enumerate(digits):
             text.append(digit, style=cursor if position == editor.cursor else None)
+        written = len(digits)
         if editor.cursor >= len(digits):
+            # Past the last digit, the cursor is a cell of its own.
             text.append(" ", style=cursor)
+            written += 1
+        text.append(" " * max(0, _NUMBER_WIDTH - written))
 
     def _choices(self, text: Text, field: ChoiceField, current: str | int) -> None:
         colors = self.colors
@@ -269,17 +280,19 @@ class MenuRule(Static):
 
 
 class StatusLine(Band):
-    """Bottom line: selection annotation, memory field, pane type."""
+    """Bottom line: selection annotation, current file, memory field, pane type."""
 
     annotation = ""
+    file = ""
     #: The original's muLISP heap gauge lived here. The slot is kept for
     #: something useful today, such as a busy indicator during long
     #: computations, and stays empty until there is one.
     center = ""
     pane = "Rederive Algebra"
 
-    def show(self, annotation: str) -> None:
+    def show(self, annotation: str, file: str = "") -> None:
         self.annotation = annotation
+        self.file = file
         self.refresh()
 
     def render(self) -> Text:
@@ -288,6 +301,11 @@ class StatusLine(Band):
         text = Text(" ", no_wrap=True)
         text.append(self.annotation, style=style)
         used = 1 + len(self.annotation)
+        if self.file:
+            file_at = max(used + 1, _FILE_COLUMN)
+            text.append(" " * (file_at - used))
+            text.append(self.file, style=style)
+            used = file_at + len(self.file)
         center_at = max(used + 1, (width - len(self.center)) // 2)
         text.append(" " * (center_at - used))
         text.append(self.center, style=style)
