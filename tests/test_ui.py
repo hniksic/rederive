@@ -90,6 +90,42 @@ async def test_author_appends_and_selects_the_new_entry(app):
         assert text_of(app.query_one("#status")).plain.strip().startswith("User")
 
 
+@pytest.mark.parametrize("key", ["ctrl+j", "ctrl+enter"], ids=str)
+async def test_ctrl_enter_authors_and_simplifies_in_one(app, key):
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.press(*"2+3")
+        await pilot.press(key)
+        assert entries(app) == ["2+3", "5"]
+        assert annotation(app) == "Simp(#1)"
+        assert message(app).startswith("Compute time:")
+
+
+async def test_ctrl_enter_is_enter_on_a_line_that_simplifies_already(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2+3")
+        await pilot.press("s")
+        await pilot.press("ctrl+j")
+        assert entries(app) == ["2+3", "5"]
+
+
+async def test_ctrl_enter_enters_nothing_of_its_own_to_simplify(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2+3")
+        await pilot.press("j")
+        await pilot.press("1", "ctrl+j")
+        assert entries(app) == ["2+3"]
+
+
+async def test_a_vector_is_entered_and_simplified_at_once(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "r", "2", "enter")
+        await pilot.press("1", "enter")
+        await pilot.press(*"2+3")
+        await pilot.press("ctrl+j")
+        assert entries(app) == ["[1, 2+3]", "[1, 5]"]
+
+
 async def test_a_syntax_error_leaves_the_author_line_up(app):
     async with app.run_test() as pilot:
         await pilot.press("a")

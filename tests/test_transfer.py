@@ -557,6 +557,15 @@ async def test_loading_replaces_what_is_on_screen(app, file):
         assert message(app) == "Enter option"
 
 
+async def test_ctrl_enter_simplifies_every_expression_it_reads(app, file):
+    file.write_text("2+3\n\n4 5\n")
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d", *str(file))
+        await pilot.press("ctrl+j")
+        assert entries(app) == ["2+3", "4 5", "5", "20"]
+        assert message(app).startswith("Compute time:")
+
+
 async def test_merging_adds_to_what_is_on_screen(app, file):
     file.write_text("a\n\nb\n")
     async with app.run_test() as pilot:

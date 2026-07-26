@@ -29,6 +29,11 @@ with it. A command that runs is finished with, so it leaves the command menu up
 rather than the submenu it was picked from; Esc, which abandons the line
 instead, leaves that submenu where it was.
 
+Ctrl-Enter is Enter with the expression the command enters simplified after it,
+on every line an expression is entered from. It is one key in two spellings:
+Ctrl-J is what a terminal sends for it unless it speaks the keyboard protocol
+that tells the two apart.
+
 Two commands take the band for something other than a menu. A question with a
 Y or N for an answer - Quit, and the two Clear commands that throw expressions
 away - leaves the menu up with its highlight off, and `confirm` holds what a Y
@@ -137,6 +142,19 @@ WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode != MODE_ASKING_VARIAB
 #: Declare lines take an expression too but are offered nothing to begin with,
 #: so there is nothing on them to keep in step with the highlight.
 LABELLED_MODES = (MODE_SIMPLIFY, MODE_ASKING)
+
+#: The prompt lines an expression is entered on, and so the ones Ctrl-Enter
+#: says something on: it enters the line and simplifies what the command
+#: entered. The lines that derive an expression instead - Simplify, and the
+#: expression Factor and Expand ask for - have simplified it already, and Jump
+#: enters nothing at all, so on those Ctrl-Enter is Enter and nothing more.
+ENTERING_MODES = (
+    MODE_AUTHOR,
+    MODE_VARIABLE_VALUE,
+    MODE_FUNCTION_VALUE,
+    MODE_ELEMENT,
+    MODE_FILE,
+)
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
@@ -385,6 +403,22 @@ class RederiveApp(App[None]):
         Binding("backspace", "menu_erase", "Previous option", priority=True, show=False),
         Binding("delete", "menu_delete", "Delete", priority=True, show=False),
         Binding("enter", "menu_invoke", "Invoke option", priority=True, show=False),
+        # Ctrl-Enter reaches a terminal as Ctrl-J, unless it speaks the keyboard
+        # protocol that tells the two apart; both spell the same command.
+        Binding(
+            "ctrl+j",
+            "enter_and_simplify",
+            "Enter and simplify",
+            priority=True,
+            show=False,
+        ),
+        Binding(
+            "ctrl+enter",
+            "enter_and_simplify",
+            "Enter and simplify",
+            priority=True,
+            show=False,
+        ),
         Binding("escape", "menu_escape", "Go back", priority=True, show=False),
         Binding("up", "nav('up')", "Up", priority=True, show=False),
         Binding("down", "nav('down')", "Down", priority=True, show=False),
@@ -445,6 +479,10 @@ class RederiveApp(App[None]):
         self.dimension: int | str = ""
         #: What a Y answers, while a command is asking for one.
         self.confirm: Callable[[], None] | None = None
+        #: The history as it stood when Ctrl-Enter was pressed, or None while no
+        #: line has been taken that way. Whatever the command adds to it is what
+        #: gets simplified once the command is done.
+        self.simplifying: tuple[sessions.Entry, ...] | None = None
         #: The demonstration under way, running or suspended.
         self.demo: Demonstration | None = None
         #: The state file last read or written, offered back by both commands.
@@ -593,6 +631,9 @@ class RederiveApp(App[None]):
         Space and Backspace. The movements that walk the history are the
         exception: a line of text has nothing vertical for them to do, so they
         go on moving the highlight with the question still up.
+
+        Ctrl-Enter is the other exception: it is a form of Enter, so it applies
+        wherever Enter does - on a menu, on a dialog, and on a prompt line.
         """
         if action.startswith("menu_") or action == "scroll_work":
             return self.mode == MODE_MENU
@@ -600,6 +641,8 @@ class RederiveApp(App[None]):
             return self.mode == MODE_MENU or (
                 self.mode in WALKED_MODES and parameters[0] in ENTRY_MOVES
             )
+        if action == "enter_and_simplify":
+            return self.mode == MODE_MENU or self.mode in PROMPT_MODES
         return True
 
     def on_key(self, event: Any) -> None:
@@ -732,6 +775,22 @@ class RederiveApp(App[None]):
             self.invoke_command(cursor.index)
         else:
             self._commit()
+
+    def action_enter_and_simplify(self) -> None:
+        """Ctrl-Enter: what Enter does, and the expression it enters simplified.
+
+        The manual spells the key out for a vector and a matrix, but the
+        original takes it on every line an expression is entered from, and it
+        is the same thing on each of them: the command runs, and what it left
+        in the history is simplified after it. On the lines that enter nothing
+        of their own, and everywhere a menu or a dialog is up, it is Enter.
+        """
+        if self.mode in ENTERING_MODES:
+            self.simplifying = tuple(self.session.entries)
+        if self.mode == MODE_MENU:
+            self.action_menu_invoke()
+        else:
+            self._submitted(self.query_one("#prompt-input", Input).value)
 
     def action_menu_escape(self) -> None:
         """Leave the submenu or dialog on top, abandoning what it was set to.
@@ -1651,6 +1710,9 @@ class RederiveApp(App[None]):
                 self._refuse_file(CANNOT_READ)
                 return
             self.demo = Demonstration(path, steps)
+        # A demonstration simplifies each step as it takes it, so a file named
+        # with Ctrl-Enter has nothing left to ask for.
+        self.simplifying = None
         self._hide_prompt()
         del self.stack[1:]
         self._restart_menu()
@@ -1728,30 +1790,34 @@ class RederiveApp(App[None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter on a prompt line: the whole line, wherever the cursor is."""
         event.stop()
+        self._submitted(event.value)
+
+    def _submitted(self, value: str) -> None:
+        """Take the line, whichever command's question it is answering."""
         if self.mode == MODE_SIMPLIFY:
-            self._simplify(event.value)
+            self._simplify(value)
         elif self.mode == MODE_ASKING:
-            self._asked(event.value)
+            self._asked(value)
         elif self.mode == MODE_ASKING_VARIABLE:
-            self._asked_variable(event.value)
+            self._asked_variable(value)
         elif self.mode == MODE_JUMP:
-            self._jumped(event.value)
+            self._jumped(value)
         elif self.mode == MODE_FILE:
-            self._named(event.value)
+            self._named(value)
         elif self.mode == MODE_VARIABLE_NAME:
-            self._variable_name(event.value)
+            self._variable_name(value)
         elif self.mode == MODE_VARIABLE_VALUE:
-            self._variable_value(event.value)
+            self._variable_value(value)
         elif self.mode == MODE_FUNCTION_NAME:
-            self._function_name(event.value)
+            self._function_name(value)
         elif self.mode == MODE_FUNCTION_VALUE:
-            self._function_value(event.value)
+            self._function_value(value)
         elif self.mode == MODE_FUNCTION_VARIABLE:
-            self._function_variable(event.value)
+            self._function_variable(value)
         elif self.mode == MODE_ELEMENT:
-            self._element(event.value)
+            self._element(value)
         else:
-            self._author(event.value)
+            self._author(value)
 
     def _named(self, name: str) -> None:
         """Enter on a file prompt: a line with nothing on it names nothing."""
@@ -1825,7 +1891,36 @@ class RederiveApp(App[None]):
             self._restart_menu()
         self._return_to_menu(message)
 
+    def _simplify_entered(self) -> str | None:
+        """Simplify what the command entered, for a line taken with Ctrl-Enter.
+
+        What its compute time says, or None when there is nothing to simplify:
+        the line was taken with Enter, or the command entered no expression
+        after all. A command that enters more than one - a Transfer that reads
+        a file - has every one of them simplified, in the order they came in.
+
+        What is new is told by identity rather than by label, since `Transfer
+        Load` starts the numbering again and a number proves nothing.
+        """
+        before, self.simplifying = self.simplifying, None
+        if before is None:
+            return None
+        known = {id(entry) for entry in before}
+        entered = [entry for entry in self.session.entries if id(entry) not in known]
+        if not entered:
+            return None
+        started = time.monotonic()
+        for entry in entered:
+            self.session.simplify(f"#{entry.number}")
+        return COMPUTE_TIME.format(seconds=time.monotonic() - started)
+
     def _return_to_menu(self, message: str) -> None:
+        # Simplifying is the last thing that happened, so its compute time is
+        # what the message line says - unless the command has something of its
+        # own to say, as a file that would not all read has.
+        simplified = self._simplify_entered()
+        if simplified is not None and message == ENTER_OPTION:
+            message = simplified
         self.mode = MODE_MENU
         self.message = message
         self.refresh_screen()
