@@ -27,9 +27,10 @@ from rederive.engine.to_sympy import (
     Subscript,
     Transposed,
 )
+from rederive.model.expr import Kind
 from rederive.syntax import ParseState, parse_expression
 
-x, y = sp.symbols("x y", real=True)
+x, y, z = sp.symbols("x y z", real=True)
 n = sp.Symbol("n", integer=True)
 
 
@@ -260,3 +261,79 @@ def test_a_caller_may_supply_the_parse_state():
     from_sympy(sp.Symbol("kilo", real=True), Context(), state)
     # The caller's state is used as given; it is not the engine's to replace.
     assert "kilo" not in state.variables
+
+
+# -- what `.doit()` can hand back --------------------------------------------
+#
+# Sympy answers some integrals and derivatives with heads the notation has no
+# word for, and with bound variables it invented on the spot. Each has to come
+# out as something the author line could have been typed with, or the result is
+# unreadable and the entry is lost.
+
+
+def test_a_case_split_is_written_as_the_conditional_the_notation_has():
+    piecewise = sp.Piecewise((1 / x, sp.Ne(x, 0)), (sp.oo, True))
+    assert written(piecewise) == "IF(x /= 0, 1/x, inf)"
+    # Without a final `true` the last case has no else clause, which is right:
+    # outside every condition there is no value.
+    assert written(sp.Piecewise((1 / x, sp.Ne(x, 0)))) == "IF(x /= 0, 1/x)"
+
+
+def test_a_head_carrying_tuples_writes_them_as_vectors():
+    # `HYPER((1, 2), (3,), x)` is not readable - a parenthesised list is no
+    # expression - and a vector is.
+    assert written(sp.hyper((1, 2), (3,), x)) == "HYPER([1, 2], [3], x)"
+    assert written(sp.Subs(sp.Function("F")(y), y, x)) == "SUBS(F(y), [y], [x])"
+
+
+def test_a_sympy_bound_variable_is_written_as_an_ordinary_name():
+    # Sympy writes a `Dummy` as `_k1`, and `_k1` does not lex.
+    assert written(sp.Dummy("k1")) == "k1"
+    assert written(sp.Dummy("xi_2") + 1) == "xi_2 + 1"
+
+
+def test_an_inert_head_is_parenthesised_by_what_it_is_written_as():
+    """`±u` is written like a sum, not like a call.
+
+    `#e^±inf*z` would read back as `(#e^±inf)*z`, which is a different
+    expression. What comes back is not `zoo` - `±inf` is the notation for
+    unsigned infinity, and reading it gives the `±` head - but it is the same
+    exponent, whole.
+    """
+    assert written(sp.exp(sp.zoo * z)) == "#e^(±inf*z)"
+    exponent = to_sympy(from_sympy(sp.exp(sp.zoo * z)).node).args[0]
+    assert exponent == PlusMinus(sp.oo * z)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        sp.Piecewise((1 / x, sp.Ne(x, 0)), (sp.oo, True)),
+        sp.hyper((1, 2), (3,), x),
+        sp.Subs(sp.Function("F")(y), y, x),
+        sp.Dummy("k1") * 2,
+        sp.exp(sp.zoo * z),
+    ],
+    ids=str,
+)
+def test_what_doit_hands_back_reads_back(expression):
+    result = from_sympy(expression)
+    assert result.node.kind is not Kind.STRING
+    assert from_sympy(to_sympy(result.node)).text == result.text
+
+
+def test_a_supplied_state_learns_the_names_only_the_answer_uses():
+    """A caller's symbol table does not know what the engine invented.
+
+    Differentiating a product `n` times gives a sum over a bound variable
+    sympy names itself, and in Character mode `k1` is `k*1` until something
+    declares it. The caller's state is not the engine's to write to, so the
+    declaration goes into a copy.
+    """
+    state = ParseState()
+    invented = sp.Dummy("k1") * 2
+    result = from_sympy(invented, Context(), state)
+    assert result.text == "2*k1"
+    assert to_sympy(result.node) == sp.Symbol("k1", real=True) * 2
+    # The session's own table is left as it was.
+    assert "k1" not in state.variables

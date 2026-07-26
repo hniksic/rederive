@@ -13,7 +13,7 @@ once something has declared it - so the caller may supply a `ParseState`, and
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
@@ -55,12 +55,45 @@ def from_sympy(
     text = author_text(expression, context)
     if state is None:
         state = parse_state_for(expression, context)
+    else:
+        state = _knowing(state, expression, context)
     try:
         return Result(parse_expression(text, state).node, text)
     except DeriveSyntaxError:
         # Nothing the engine produces should be unreadable, but a result that
         # is stays inert and legible rather than taking the command down.
         return Result(Node(Kind.STRING, 0, len(text), (), text), text)
+
+
+def _knowing(
+    state: ParseState, expression: sp.Basic, context: Context
+) -> ParseState:
+    """The caller's state, plus the names only the result mentions.
+
+    The caller's modes are what the session is working in and are kept exactly.
+    Its symbol table is not enough on its own: an answer can name something the
+    author line never did - the bound variable sympy invents for the Leibniz
+    rule, say - and in Character mode `k1` is `k*1` until something declares
+    it, so the answer would read back as a different expression.
+
+    A copy, because the caller's state belongs to the caller. Declaring the
+    engine's own working names into the session's table would leave them there
+    as variables the user never wrote.
+    """
+    known = replace(
+        state, functions=dict(state.functions), variables=dict(state.variables)
+    )
+    for symbol in expression.atoms(sp.Symbol):
+        if isinstance(symbol, StringLiteral):
+            continue
+        for part in symbol.name.split(_SUBSCRIPT):
+            if state.resolve(part) is None:
+                _declare_variable(known, part)
+    for call in expression.atoms(AppliedUndef):
+        name = type(call).__name__
+        if state.resolve(name) is None:
+            _declare_function(known, name, len(call.args))
+    return known
 
 
 def parse_state_for(expression: sp.Basic, context: Context) -> ParseState:

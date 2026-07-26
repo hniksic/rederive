@@ -22,9 +22,30 @@ product of shapes it cannot multiply - becomes such a head as well, rather
 than a guess at what was meant.
 
 Commands are built on top of these two doors and the converters know nothing
-about them. The first of them, Simplify, is not here yet: its pipeline and the
-substitution pre-pass it shares with every later command are the next
-increment.
+about them. The first of them is Simplify.
+
+`simplify(node, context)` promises Derive's Simplify: the sufficiently simple
+form of an expression - no superfluous variables, roots, functions or reducible
+degrees - reached by transforming as little as necessary. It reads only its
+`Context`: precision, branch, the Trigonometry, Trigpower, Exponential and
+Logarithm directions, angle measure, input base, and the domains, assignments,
+function definitions and labels the session has recorded. It has no other state
+and no side effects, so the same tree and context always give the same answer.
+
+Two promises hold across every input:
+
+* It never raises on anything the parser produced. A rewrite that fails is a
+  rewrite not taken, and the previous form stands.
+* It never guesses. A transformation that needs a variable to be real, or
+  positive, or an integer, fires only where a declaration says so; where
+  nothing says so the expression comes back as it went in. An undeclared
+  variable is real, which is Derive's own default.
+
+`approx` is the same pipeline with the precision mode set to Approximate, which
+is what the manual says the approX command is.
+
+`simplify` works on any subtree, not only on a whole authored line, so the
+session can simplify what the user has highlighted and put the answer back.
 """
 
 from __future__ import annotations
@@ -42,7 +63,9 @@ from rederive.engine.context import (
     domain_of_node,
 )
 from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
+from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
+from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
 
 __all__ = [
@@ -56,9 +79,12 @@ __all__ = [
     "Precision",
     "Result",
     "TrigPower",
+    "approx",
     "author_text",
     "domain_of_node",
     "from_sympy",
     "parse_state_for",
+    "simplify",
+    "substitute",
     "to_sympy",
 ]

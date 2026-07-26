@@ -14,15 +14,20 @@ is why numerals come out in the context's input base.
 `AuthorPrinter` subclasses sympy's `StrPrinter` and overrides one method per
 construct spelled differently: powers, roots, the constants, function names,
 vectors, the unevaluated calculus heads, the inert heads, and numerals. What
-it does *not* override is the sum and product spine. Term ordering, sign
-extraction, collecting negative powers into a denominator, unevaluated and
-noncommutative products - all of that is inherited, because reimplementing it
-would mean carrying a few hundred lines of subtle logic for no gain in what
-the output means. The cost is that sympy's own conventions show through:
-`x*k^-2` comes out as `x/k^2` because that is how `_print_Mul` splits a
-denominator. That is a form difference, never a meaning difference, and both
-forms reparse to the same tree. `_print_Pow` follows the same convention for
-a power standing alone, so that one expression does not print two ways.
+it does *not* override is the sum and product spine. Sign extraction,
+collecting negative powers into a denominator, unevaluated and noncommutative
+products - all of that is inherited, because reimplementing it would mean
+carrying a few hundred lines of subtle logic for no gain in what the output
+means. The cost is that sympy's own conventions show through: `x*k^-2` comes
+out as `x/k^2` because that is how `_print_Mul` splits a denominator. That is a
+form difference, never a meaning difference, and both forms reparse to the same
+tree. `_print_Pow` follows the same convention for a power standing alone, so
+that one expression does not print two ways.
+
+Of the ordering only the two rules the original is recognisable by are ours:
+terms run by descending degree, and a sum does not begin with a minus sign
+unless every term is negated, so that a sum is written `x^2 + c` and
+`SQRT(3) - 1`. Beyond those two, term order is sympy's.
 
 The inert heads of `to_sympy` are printed by name rather than by import: a
 sympy printer dispatches on the class name, so `_print_PlusMinus` finds
@@ -35,10 +40,18 @@ from decimal import Decimal
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
-from sympy.printing.precedence import PRECEDENCE
+from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES
 
 from rederive.engine.context import Context
 from rederive.syntax.names import GREEK_GLYPHS
+
+# How tightly the inert heads bind. Sympy's `parenthesize` reads these by class
+# name, and without an entry it takes any `Function` for a call as tight as
+# `SIN(x)` - which would write `#e^(±inf*z)` as `#e^±inf*z`, a different
+# expression. Each is registered as the operator it is written as.
+PRECEDENCE_VALUES.setdefault("PlusMinus", PRECEDENCE["Add"])
+PRECEDENCE_VALUES.setdefault("Dot", PRECEDENCE["Mul"])
+PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -107,8 +120,32 @@ class AuthorPrinter(sp.StrPrinter):
     """A `StrPrinter` that writes author notation."""
 
     def __init__(self, context: Context | None = None) -> None:
-        super().__init__({"full_prec": False})
+        # `grlex` is descending total degree, which is the order the original
+        # writes a polynomial in: `x^2 + c`, not `c + x^2`.
+        super().__init__({"full_prec": False, "order": "grlex"})
         self.context = context or Context()
+
+    # -- sums ---------------------------------------------------------------
+
+    def _as_ordered_terms(self, expr, order=None):
+        """The terms of a sum, led by one that is not negated.
+
+        `SQRT(3) - 1` and `SIN(x) - x*COS(x)`, not `-1 + SQRT(3)` and
+        `-x*COS(x) + SIN(x)`: a sum is written starting with a term it can be
+        written starting with, and only a sum of nothing but negated terms
+        begins with a minus sign. The first such term moves to the front and
+        nothing else changes order.
+        """
+        terms = super()._as_ordered_terms(expr, order)
+        leading = next(
+            (
+                index
+                for index, term in enumerate(terms)
+                if not term.could_extract_minus_sign()
+            ),
+            0,
+        )
+        return [terms[leading], *terms[:leading], *terms[leading + 1 :]]
 
     # -- names --------------------------------------------------------------
 
@@ -123,6 +160,18 @@ class AuthorPrinter(sp.StrPrinter):
         return _SUBSCRIPT.join(
             GREEK_GLYPHS.get(part, part) for part in expr.name.split(_SUBSCRIPT)
         )
+
+    def _print_Dummy(self, expr):
+        """A sympy-invented variable, written like any other name.
+
+        Sympy marks a `Dummy` apart by writing it with a leading underscore,
+        and the author line has no such name: `_k1` does not lex, so a result
+        carrying one would come back unreadable. The bound variable that
+        differentiating a product or taking a `SUBS` introduces is an ordinary
+        variable by the time it reaches the worksheet, and is written as one.
+        """
+        name = self._print_Symbol(expr)
+        return name if name[:1].isalpha() else "v" + name.lstrip("_")
 
     # -- numbers ------------------------------------------------------------
 
@@ -225,6 +274,25 @@ class AuthorPrinter(sp.StrPrinter):
         """`STEP(u)`. The value at zero is ours, not the author's."""
         return f"STEP({self._print(expr.args[0])})"
 
+    def _print_Piecewise(self, expr):
+        """A case split, as the nested `IF` the notation has for one.
+
+        Sympy answers a conditional integral or a conditional limit with a
+        `Piecewise`, and `IF(test, then, else)` is what Derive calls that. A
+        final `true` condition is the else clause; without one the last case
+        has none, which is right - outside every condition the value is `?`.
+        """
+        pairs = list(expr.args)
+        text = None
+        if pairs and pairs[-1][1] is sp.true:
+            text = self._print(pairs.pop()[0])
+        for value, condition in reversed(pairs):
+            parts = [self._print(condition), self._print(value)]
+            if text is not None:
+                parts.append(text)
+            text = f"IF({', '.join(parts)})"
+        return "?" if text is None else text
+
     def function_name(self, expression: sp.Basic) -> str:
         """What a function head is called in author notation.
 
@@ -275,6 +343,25 @@ class AuthorPrinter(sp.StrPrinter):
         return f"LIM({', '.join(parts)})"
 
     # -- vectors and matrices ------------------------------------------------
+
+    def _print_Tuple(self, expr):
+        """A tuple, as the vector the notation has for one.
+
+        Sympy heads such as `hyper`, `meijerg` and `Subs` carry tuples of
+        arguments, and `(1, m + 1)` is not something the grammar reads: a
+        parenthesised list is not an expression. A vector is, so that is what
+        it is written as, and the head reads back as an inert call over
+        vectors.
+        """
+        return self._vector(expr.args)
+
+    def _print_Subs(self, expr):
+        """`SUBS(u, [x], [a])`, upper-cased like any other head.
+
+        Sympy prints this one itself, in mixed case, and a name that changed
+        case on the way out would not be a fixed point.
+        """
+        return f"SUBS({self.stringify(expr.args, ', ')})"
 
     def _print_MatrixBase(self, expr):
         """A row is written flat; anything taller is a vector of its rows."""
