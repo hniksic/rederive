@@ -23,7 +23,7 @@ when it was entered.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +55,11 @@ AUTHORED = "User"
 #: A reference to a numbered entry, wherever one is written: in an expression,
 #: and in an annotation such as `Simp(#3)`.
 LABEL = re.compile(r"#(\d+)")
+
+#: One engine command, as the session calls it. Every command takes the same
+#: three things and gives back an answer, which is what lets `_command` serve
+#: all of them and know nothing about which one it is running.
+Command = Callable[[Node, "engine.Context", ParseState], "engine.Result"]
 
 
 @dataclass(frozen=True)
@@ -245,13 +250,71 @@ class Session:
         )
 
     def simplify(self, request: str) -> Entry:
-        """Append the simplified form of the expression `request` names.
+        """Append the simplified form of the expression `request` names."""
+        return self._command(request, "Simp", engine.simplify)
+
+    def factor(
+        self,
+        request: str,
+        amount: engine.Amount = engine.Amount.RATIONAL,
+        variables: Sequence[str] = (),
+    ) -> Entry:
+        """Append the factored form of the expression `request` names.
+
+        `amount` is how far to go and `variables` names the factorization
+        variables, in the order they were chosen; the rest is Simplify's story
+        exactly.
+        """
+
+        def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
+            return engine.factor(node, context, amount, variables, state)
+
+        return self._command(request, "Fctr", run)
+
+    def target(self, request: str) -> Node:
+        """The expression a command for `request` would act on.
+
+        What the command itself resolves, offered on its own because Factor has
+        to look at it before it can ask its questions: which variables it may
+        offer, and whether to ask anything at all.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        node = parse_expression(request, self.state).node
+        entry = self._labelled(node)
+        if entry is None:
+            return node
+        if entry is self.selected_entry and self.route:
+            part = self.selected_node
+            if part is not None:
+                return part
+        return entry.node
+
+    def factor_variables(self, request: str) -> tuple[str, ...]:
+        """The variables Factor would offer for what `request` names.
+
+        Alphabetical, as the original lists them. Fewer than two is no choice
+        at all, and the original asks nothing then.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        return engine.factor_variables(self.target(request), self.context)
+
+    def decomposes(self, request: str) -> bool:
+        """Whether what `request` names is a number, which Factor just decomposes.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        return engine.decomposes(self.target(request))
+
+    def _command(self, request: str, prefix: str, run: Command) -> Entry:
+        """Run one engine command on what `request` names, and append the answer.
 
         `#3` on its own is entry 3. When that is the entry the selection is in
-        and only part of it is highlighted, that part alone is simplified and
+        and only part of it is highlighted, that part alone is transformed and
         the rest of the entry is copied around it; the annotation marks such an
         entry with a quote. Any other text is an expression in its own right,
-        simplified as it stands, and is annotated as the user's.
+        transformed as it stands, and is annotated as the user's.
 
         Raises `DeriveSyntaxError` and appends nothing when `request` does not
         parse.
@@ -259,10 +322,10 @@ class Session:
         node = parse_expression(request, self.state).node
         entry = self._labelled(node)
         if entry is None:
-            return self._simplified(node, f"Simp({AUTHORED})")
+            return self._answered(node, run, f"{prefix}({AUTHORED})")
         if entry is self.selected_entry and self.route:
-            return self._simplify_part(entry)
-        return self._simplified(entry.node, f"Simp(#{entry.number})")
+            return self._answered_part(entry, run, prefix)
+        return self._answered(entry.node, run, f"{prefix}(#{entry.number})")
 
     def _labelled(self, node: Node) -> Entry | None:
         """The entry a bare `#3` names, or None when that is not what this is."""
@@ -274,12 +337,12 @@ class Session:
             return None
         return next((entry for entry in self.entries if entry.number == number), None)
 
-    def _simplified(self, node: Node, annotation: str) -> Entry:
-        result = engine.simplify(node, self.context, self.state)
+    def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
+        result = run(node, self.context, self.state)
         return self._append(result.text, result.node, annotation)
 
-    def _simplify_part(self, entry: Entry) -> Entry:
-        """`entry` again, with the highlighted part of it simplified.
+    def _answered_part(self, entry: Entry, run: Command, prefix: str) -> Entry:
+        """`entry` again, with the highlighted part of it transformed.
 
         The answer is spliced into the entry's own text and the whole line read
         back, so that the new entry's spans index its text exactly as an
@@ -291,11 +354,11 @@ class Session:
         """
         part = self.selected_node
         assert part is not None
-        result = engine.simplify(part, self.context, self.state)
+        result = run(part, self.context, self.state)
         fragment = result.text if result.node.is_atom else f"({result.text})"
         text = entry.text[: part.start] + fragment + entry.text[part.end :]
         node = parse_expression(text, self.state).node
-        return self._append(text, node, f"Simp(#{entry.number}')")
+        return self._append(text, node, f"{prefix}(#{entry.number}')")
 
     # -- files -------------------------------------------------------------
 

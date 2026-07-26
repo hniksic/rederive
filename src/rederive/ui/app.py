@@ -12,18 +12,27 @@ Submenus and Options dialogs stack on top of the command menu: Esc pops one
 level, and committing a dialog returns all the way to the command menu, as the
 original does.
 
-A command that needs a line of its own - Author and Simplify an expression,
-the Transfer commands a file name - takes the screen with the prompt band
-instead, which is one Input with a label in front of it. The mode says which
-command the line belongs to, and so what Enter does with it. A command that
-runs is finished with, so it leaves the command menu up rather than the
-submenu it was picked from; Esc, which abandons the line instead, leaves that
-submenu where it was.
+A command that needs a line of its own - Author, Simplify and Factor an
+expression, the Transfer commands a file name - takes the screen with the
+prompt band instead, which is one Input with a label in front of it. The mode
+says which command the line belongs to, and so what Enter does with it. A
+command that runs is finished with, so it leaves the command menu up rather
+than the submenu it was picked from; Esc, which abandons the line instead,
+leaves that submenu where it was.
+
+Factor asks more than one question, and asks them in both forms: an expression,
+then a factorization variable at a time on the prompt band, then an amount off
+a menu stacked on the command menu. What has been answered so far lives in
+`Factoring` until there is enough to run the command, since each prompt is gone
+by the time the next one is up. How many questions get asked depends on the
+answers - a number is decomposed without being asked about at all - so the
+sequence is in the handlers rather than in a table.
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,6 +42,7 @@ from textual.containers import Horizontal
 from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
+from rederive.engine import Amount
 from rederive.model import worksheet
 from rederive.model.session import Session
 from rederive.model.settings import ChoiceField, Dialog, DialogEditor, Settings
@@ -52,19 +62,29 @@ from rederive.ui.widgets import (
 MODE_MENU = "menu"
 MODE_AUTHOR = "author"
 MODE_SIMPLIFY = "simplify"
+MODE_FACTOR = "factor"
+MODE_FACTOR_VARIABLE = "factor_variable"
 MODE_FILE = "file"
 MODE_CONFIRM_QUIT = "confirm_quit"
 
 #: The modes in which the prompt band has the screen, and the keys with it.
-PROMPT_MODES = (MODE_AUTHOR, MODE_SIMPLIFY, MODE_FILE)
+PROMPT_MODES = (MODE_AUTHOR, MODE_SIMPLIFY, MODE_FACTOR, MODE_FACTOR_VARIABLE, MODE_FILE)
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
 ENTER_EXPRESSION = "Enter expression (press F1 for help)"
 ENTER_TO_SIMPLIFY = "Enter expression"
+ENTER_TO_FACTOR = "Enter expression"
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
+FACTOR_PROMPT = " FACTOR expression: "
+FACTOR_VARIABLE_PROMPT = " FACTOR variable {number}: "
+#: What the message line offers while Factor is collecting variables. The
+#: first question may be answered for all of them at once; the ones after it
+#: end the list instead, since something has been chosen by then.
+FIRST_VARIABLE = "Return for all or select 1: {variables}"
+NEXT_VARIABLE = "Return for no more or select next: {variables}"
 #: What the message line says once an answer is in.
 COMPUTE_TIME = "Compute time: {seconds:.1f} seconds"
 
@@ -83,6 +103,23 @@ CANNOT_WRITE = "Cannot write file"
 #: The original drops such a line without a word; saying so is cheap, and a
 #: worksheet quietly missing an expression is worth knowing about.
 UNREADABLE = "{count} expression{s} could not be read"
+
+
+@dataclass
+class Factoring:
+    """A Factor command part way through its questions.
+
+    The command asks for an expression, then for factorization variables, then
+    for an amount, and each answer has to outlive the prompt that collected it.
+    """
+
+    request: str
+    #: The variables not chosen yet, in the order they are offered.
+    remaining: tuple[str, ...]
+    #: The ones chosen so far, in the order they were, which is what makes the
+    #: first of them the primary factorization variable.
+    chosen: tuple[str, ...] = ()
+
 
 #: What the navigation keys mean inside an Options dialog's number field.
 CURSOR_MOVES = {
@@ -147,9 +184,15 @@ class RederiveApp(App[None]):
         self.answer: Callable[[dict[str, str | int]], None] | None = None
         #: The block of labels the next save writes, when one was asked for.
         self.block: tuple[int | None, int | None] = (None, None)
+        #: The Factor command's answers so far, while it is asking for them.
+        self.factoring: Factoring | None = None
+        #: The amount menu's own cursor, kept across invocations rather than
+        #: made fresh: the original opens it on whatever was chosen last.
+        self.amount = MenuCursor(menus.AMOUNT, menus.AMOUNT.words.index("Rational"))
         # Commands not listed here are present and navigable but inert.
         self.commands: dict[tuple[Menu, str], Callable[[], None]] = {
             (ALGEBRA, "Author"): self._command_author,
+            (ALGEBRA, "Factor"): self._command_factor,
             (ALGEBRA, "Quit"): self._command_quit,
             (ALGEBRA, "Simplify"): self._command_simplify,
             (menus.TRANSFER, "Merge"): self._command_merge,
@@ -363,7 +406,12 @@ class RederiveApp(App[None]):
     def action_menu_escape(self) -> None:
         """Leave the submenu or dialog on top, abandoning what it was set to."""
         if len(self.stack) > 1:
-            self.stack.pop()
+            left = self.stack.pop()
+            # Escaping the amount menu abandons the whole Factor command, since
+            # the amount is the last thing it asks for and there is nothing to
+            # go back to: the original returns straight to the command menu.
+            if isinstance(left, MenuCursor) and left.menu is menus.AMOUNT:
+                self.factoring = None
             self._ask_again()
             self.refresh_screen()
 
@@ -403,8 +451,13 @@ class RederiveApp(App[None]):
         cursor = self.top
         assert isinstance(cursor, MenuCursor)
         word = cursor.menu.words[index]
+        # The color and amount menus answer a question the command beneath
+        # them asked, so what is picked off them is a value and not a command.
         if cursor.menu is COLORS:
             self._chose_color(index)
+            return
+        if cursor.menu is menus.AMOUNT:
+            self._chose_amount(index)
             return
         target = menus.TARGETS.get(cursor.menu, {}).get(word)
         if target is not None:
@@ -507,6 +560,111 @@ class RederiveApp(App[None]):
         line.focus()
         self._set_message(message)
 
+    # -- Factor ------------------------------------------------------------
+
+    def _command_factor(self) -> None:
+        """Ask which expression to factor, offering the highlighted one."""
+        entry = self.session.selected_entry
+        offered = "" if entry is None else f"#{entry.number}"
+        self._prompt(MODE_FACTOR, FACTOR_PROMPT, offered, ENTER_TO_FACTOR, keep=1)
+
+    def _factor(self, request: str) -> None:
+        """The expression is settled: work out what is left to ask.
+
+        A number has nothing to ask about and is decomposed on the spot. One
+        variable is no choice, so only the amount is asked for. Two or more and
+        the variables are asked for first, one question at a time.
+        """
+        if not request.strip():
+            self._end_prompt()
+            return
+        try:
+            decomposes = self.session.decomposes(request)
+            variables = self.session.factor_variables(request)
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return
+        if decomposes:
+            self._factored(request, ())
+            return
+        self.factoring = Factoring(request, variables)
+        if len(variables) < 2:
+            self._ask_amount()
+        else:
+            self._ask_variable()
+
+    def _ask_variable(self) -> None:
+        """Put up the next factorization variable question."""
+        pending = self.factoring
+        assert pending is not None
+        number = len(pending.chosen) + 1
+        offer = FIRST_VARIABLE if number == 1 else NEXT_VARIABLE
+        self._prompt(
+            MODE_FACTOR_VARIABLE,
+            FACTOR_VARIABLE_PROMPT.format(number=number),
+            "",
+            offer.format(variables=",".join(pending.remaining)),
+        )
+
+    def _factor_variable(self, answer: str) -> None:
+        """One answer to a factorization variable question.
+
+        An empty line ends the list, and so does choosing the last variable
+        there was: either way what is left to ask is the amount. A name that is
+        not one of the variables on offer is refused and the question put
+        again, which is what the original does with it.
+        """
+        pending = self.factoring
+        assert pending is not None
+        answer = answer.strip()
+        if not answer:
+            self._ask_amount()
+            return
+        chosen = next(
+            (name for name in pending.remaining if name.lower() == answer.lower()), None
+        )
+        if chosen is None:
+            self._beep()
+            self._ask_variable()
+            return
+        pending.chosen += (chosen,)
+        pending.remaining = tuple(n for n in pending.remaining if n != chosen)
+        if pending.remaining:
+            self._ask_variable()
+        else:
+            self._ask_amount()
+
+    def _ask_amount(self) -> None:
+        """Stack the amount menu on the command menu, the prompt band done."""
+        self._hide_prompt()
+        self.mode = MODE_MENU
+        self.stack.append(self.amount)
+        self.message = menus.AMOUNT.message
+        self.refresh_screen()
+
+    def _chose_amount(self, index: int) -> None:
+        """The amount is the last question, so choosing one runs the command."""
+        self.amount.index = index
+        self.stack.pop()
+        pending = self.factoring
+        self.factoring = None
+        assert pending is not None
+        self._factored(pending.request, pending.chosen, menus.AMOUNT.words[index])
+
+    def _factored(
+        self, request: str, variables: tuple[str, ...], amount: str | None = None
+    ) -> None:
+        """Run Factor, and say how long the answer took."""
+        started = time.monotonic()
+        try:
+            self.session.factor(request, Amount(amount or "Rational"), variables)
+        except DeriveSyntaxError as error:
+            # The line parsed when it was collected, so this is all but
+            # unreachable; there may be no prompt left to put the cursor in.
+            self._end_prompt(str(error))
+            return
+        self._end_prompt(COMPUTE_TIME.format(seconds=time.monotonic() - started))
+
     # -- Transfer ----------------------------------------------------------
 
     def _command_save(self) -> None:
@@ -593,6 +751,10 @@ class RederiveApp(App[None]):
         event.stop()
         if self.mode == MODE_SIMPLIFY:
             self._simplify(event.value)
+        elif self.mode == MODE_FACTOR:
+            self._factor(event.value)
+        elif self.mode == MODE_FACTOR_VARIABLE:
+            self._factor_variable(event.value)
         elif self.mode == MODE_FILE:
             self._named(event.value)
         else:
@@ -645,18 +807,23 @@ class RederiveApp(App[None]):
         self._set_message(str(error))
         self.query_one("#prompt-input", Input).cursor_position = error.offset
 
+    def _hide_prompt(self) -> None:
+        """Give the screen back to the menu band, whatever comes next."""
+        self.query_one("#prompt-input", Input).value = ""
+        self.query_one("#prompt-band").display = False
+        self.query_one("#menu").display = True
+        self.set_focus(None)
+
     def _end_prompt(self, message: str = ENTER_OPTION, done: bool = True) -> None:
-        """Take the prompt line down, and put a menu back where it was.
+        """The command is over, answered or abandoned: put a menu back up.
 
         A command that ran is finished with, so the whole path it was reached
         by goes: `Transfer Save Derive` leaves the command menu up, not the
         Transfer Save menu it was picked from. Abandoning the line instead
         leaves that menu where it was, which is what Esc does.
         """
-        self.query_one("#prompt-input", Input).value = ""
-        self.query_one("#prompt-band").display = False
-        self.query_one("#menu").display = True
-        self.set_focus(None)
+        self.factoring = None
+        self._hide_prompt()
         if done:
             del self.stack[1:]
         self._return_to_menu(message)

@@ -3,6 +3,8 @@
 import pytest
 from screen import (
     annotation,
+    band,
+    entries,
     highlighted,
     highlighted_expression,
     highlighted_rows,
@@ -44,8 +46,8 @@ async def test_menu_highlight_cycles_and_wraps(app):
 
 async def test_mnemonic_invokes_without_moving_the_highlight(app):
     async with app.run_test() as pilot:
-        await pilot.press("f")
-        assert message(app) == "Factor: not implemented yet"
+        await pilot.press("b")
+        assert message(app) == "Build: not implemented yet"
         assert highlighted_menu_option(app) == "Author"
 
 
@@ -237,3 +239,158 @@ async def test_quit_asks_before_abandoning_expressions(app):
         await pilot.press("q", "y")
         await pilot.pause()
         assert not app.is_running
+
+
+# -- Factor, which asks three questions before it answers ---------------------
+#
+# Every screen asserted here was checked against the original.
+# The order is the original's and not the manual's, which describes the amount
+# as being asked for before the variables.
+
+
+async def test_factor_asks_for_expression_then_variables_then_amount(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "6x^2 + 10x^3/y")
+        await pilot.press("f")
+        assert prompt(app) == ("FACTOR expression:", "#1")
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        assert prompt(app) == ("FACTOR variable 1:", "")
+        assert message(app) == "Return for all or select 1: x,y"
+        await pilot.press("enter")
+        assert band(app) == [
+            " FACTOR: Amount: Trivial Squarefree Rational raDical Complex"
+        ]
+        assert message(app) == "Select amount of factoring"
+        await pilot.press("t")
+        assert work_area(app)[-4:] == [
+            "         2",
+            "      2·x ·(5·x + 3·y)",
+            "#2:  ──────────────────",
+            "              y",
+        ]
+        assert message(app).startswith("Compute time:")
+        assert annotation(app) == "Fctr(#1)"
+
+
+async def test_one_variable_is_no_choice_so_none_is_asked_for(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 - 4")
+        await pilot.press("f", "enter")
+        assert highlighted_menu_option(app) == "Rational"
+        await pilot.press("r")
+        assert entries(app)[-1] == "(x - 2)*(x + 2)"
+
+
+async def test_a_number_is_decomposed_without_being_asked_about(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "1234567890")
+        await pilot.press("f", "enter")
+        assert entries(app)[-1] == "2*3^2*5*3607*3803"
+        assert message(app).startswith("Compute time:")
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_the_amount_menu_opens_on_what_was_chosen_last(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 - 4")
+        await pilot.press("f", "enter")
+        assert highlighted_menu_option(app) == "Rational"
+        await pilot.press("t")
+        await author(pilot, "x^2 - 9")
+        await pilot.press("f", "enter")
+        assert highlighted_menu_option(app) == "Trivial"
+
+
+async def test_the_variables_are_collected_one_at_a_time(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 y^2 - x^2 - y^4 + y^2")
+        await pilot.press("f", "enter")
+        assert message(app) == "Return for all or select 1: x,y"
+        await pilot.press("x", "enter")
+        assert prompt(app) == ("FACTOR variable 2:", "")
+        assert message(app) == "Return for no more or select next: y"
+        # Ending the list leaves y out, which is what keeps y^2 - 1 whole.
+        await pilot.press("enter", "r")
+        assert entries(app)[-1] == "(x - y)*(x + y)*(y^2 - 1)"
+
+
+async def test_choosing_the_last_variable_ends_the_list(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 y^2 - x^2 - y^4 + y^2")
+        await pilot.press("f", "enter")
+        await pilot.press("x", "enter")
+        await pilot.press("y", "enter")
+        assert message(app) == "Select amount of factoring"
+        await pilot.press("r")
+        assert entries(app)[-1] == "(x - y)*(x + y)*(y - 1)*(y + 1)"
+
+
+async def test_a_name_that_is_no_variable_is_refused(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 - y^2")
+        await pilot.press("f", "enter")
+        await pilot.press("q", "enter")
+        # The question is put again, unchanged and with nothing chosen.
+        assert prompt(app) == ("FACTOR variable 1:", "")
+        assert message(app) == "Return for all or select 1: x,y"
+
+
+async def test_factor_of_a_part_copies_the_rest_of_the_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "(x^2 - 1) + SIN(z)")
+        await pilot.press("right")
+        assert highlighted_expression(app) == " 2\nx  - 1"
+        # Only x is in the highlighted part, so no variable is asked for.
+        await pilot.press("f", "enter", "r")
+        assert work_area(app)[-1] == "#2:  (x - 1)·(x + 1) + SIN(z)"
+        assert annotation(app) == "Fctr(#1')"
+
+
+async def test_a_typed_expression_is_factored_as_the_users_own(app):
+    async with app.run_test() as pilot:
+        await pilot.press("f")
+        assert prompt(app) == ("FACTOR expression:", "")
+        await pilot.press(*"x^2-9")
+        await pilot.press("enter", "r")
+        # The line that was typed is not an entry; only the answer is.
+        assert entries(app) == ["(x - 3)*(x + 3)"]
+        assert annotation(app) == "Fctr(User)"
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("f",), "the expression"),
+        (("f", "enter"), "the variables"),
+        (("f", "enter", "enter"), "the amount"),
+    ],
+    ids=str,
+)
+async def test_escape_abandons_factor_from_any_of_its_questions(app, keys, step):
+    """One Esc returns to the command menu, whichever question is up."""
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 y^2 - 1")
+        await pilot.press(*keys)
+        await pilot.press("escape")
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+        assert app.factoring is None
+        assert entries(app) == ["x^2 y^2 - 1"]
+
+
+async def test_factor_leaves_a_line_that_does_not_read_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("f")
+        await pilot.press(*"+")
+        await pilot.press("enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert entries(app) == ["x"]
+
+
+async def test_factor_asks_for_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("f", "enter")
+        assert app.session.entries == []
+        assert message(app) == "Enter option"

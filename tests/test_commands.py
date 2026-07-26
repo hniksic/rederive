@@ -8,6 +8,7 @@ brings the rest of it along.
 
 import pytest
 
+from rederive import engine
 from rederive.model.session import Session
 from rederive.syntax import DeriveSyntaxError
 
@@ -165,3 +166,102 @@ def test_the_precision_setting_reaches_the_command(session):
     session.author("1/3")
     session.settings.assign("Precision", "Approximate")
     assert session.simplify("#1").text.startswith("0.333333")
+
+
+# -- Factor ------------------------------------------------------------------
+#
+# The engine's own answers are tested in `test_factor`. What matters here is
+# that Factor reaches the history the way Simplify does, and that the two
+# questions it asks first are answered from the expression it would act on.
+
+
+def test_a_factored_answer_is_appended_and_annotated(session):
+    session.author("x^2 - 4")
+    answer = session.factor("#1")
+    assert texts(session) == ["x^2 - 4", "(x - 2)*(x + 2)"]
+    assert answer.annotation == "Fctr(#1)"
+
+
+def test_a_typed_expression_is_factored_as_the_users_own(session):
+    assert session.factor("x^2 - 9").text == "(x - 3)*(x + 3)"
+    assert session.entries[0].annotation == "Fctr(User)"
+
+
+def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
+    session.author("(x^2 - 1) + SIN(z)")
+    part(session, "right")
+    answer = session.factor("#1")
+    # The splice is fenced and the line's own fences stay, so the text carries
+    # a pair more than it needs. What is drawn comes from the tree, where a
+    # fence is a matter of precedence, so the extra pair shows up nowhere.
+    assert answer.text == "(((x - 1)*(x + 1))) + SIN(z)"
+    assert answer.layout.lines == ("(x - 1)·(x + 1) + SIN(z)",)
+    assert answer.annotation == "Fctr(#1')"
+
+
+def test_the_amount_reaches_the_command(session):
+    session.author("2 x^3 - 12 x^2 + 18 x")
+    assert session.factor("#1", engine.Amount.TRIVIAL).text == "2*x*(x^2 - 6*x + 9)"
+    assert session.factor("#1", engine.Amount.SQUAREFREE).text == "2*x*(x - 3)^2"
+
+
+def test_the_factorization_variables_reach_the_command(session):
+    session.author("x^2 y^2 - x^2 - y^4 + y^2")
+    whole = session.factor("#1", engine.Amount.RATIONAL, ("x", "y"))
+    assert whole.text == "(x - y)*(x + y)*(y - 1)*(y + 1)"
+    about_x = session.factor("#1", engine.Amount.RATIONAL, ("x",))
+    assert about_x.text == "(x - y)*(x + y)*(y^2 - 1)"
+
+
+def test_a_line_that_does_not_parse_factors_nothing(session):
+    session.author("x")
+    with pytest.raises(DeriveSyntaxError):
+        session.factor("x +")
+    assert texts(session) == ["x"]
+
+
+def test_an_assignment_reaches_the_factoring(session):
+    session.author("k := 4")
+    session.author("x^2 - k")
+    assert session.factor("#2").text == "(x - 2)*(x + 2)"
+
+
+# -- what Factor asks before it factors ---------------------------------------
+
+
+def test_the_variables_on_offer_are_alphabetical(session):
+    session.author("y^2 - x^2")
+    assert session.factor_variables("#1") == ("x", "y")
+    session.author("b a - c^2")
+    assert session.factor_variables("#2") == ("a", "b", "c")
+
+
+def test_the_variables_on_offer_come_from_the_highlighted_part(session):
+    """Only the subexpression is factored, so only its variables are offered."""
+    session.author("(x^2 - 1) + SIN(z)")
+    assert session.factor_variables("#1") == ("x", "z")
+    part(session, "right")
+    assert session.factor_variables("#1") == ("x",)
+
+
+def test_an_assigned_name_is_no_longer_a_variable(session):
+    session.author("k := 4")
+    session.author("x^2 - k")
+    assert session.factor_variables("#2") == ("x",)
+
+
+def test_a_number_is_recognised_before_anything_is_asked(session):
+    session.author("1234567890")
+    session.author("1234567890/49")
+    session.author("-12")
+    session.author("10!")
+    session.author("x^2 - 4")
+    assert [session.decomposes(f"#{n}") for n in (1, 2, 3, 4, 5)] == [
+        True,
+        True,
+        True,
+        # A factorial has a number for a value but is not written as one, and
+        # the original asks for an amount for it.
+        False,
+        False,
+    ]

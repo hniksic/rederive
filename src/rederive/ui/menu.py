@@ -90,6 +90,15 @@ ALGEBRA = Menu(
 ALGEBRA_MENU = ALGEBRA.words
 MNEMONICS = ALGEBRA.mnemonics
 
+#: How much factoring Factor does. `raDical` carries its capital because `R`
+#: belongs to Rational, and the amounts are in increasing order: each does
+#: everything the one before it does, and costs more time doing it.
+AMOUNT = Menu(
+    "FACTOR: Amount:",
+    ("Trivial", "Squarefree", "Rational", "raDical", "Complex"),
+    message="Select amount of factoring",
+)
+
 # `Display` and `Execute` are the two of Derive's nine Options commands that
 # are not here: one chose between text and graphics modes on adapters that no
 # longer exist, the other shelled out to DOS.

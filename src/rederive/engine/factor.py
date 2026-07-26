@@ -28,10 +28,12 @@ from rederive.engine.context import Context, Precision
 from rederive.engine.factoring import DEFAULT_AMOUNT, Amount, factored_expression
 from rederive.engine.from_sympy import Result, from_sympy
 from rederive.engine.pipeline import approximated, simplified
-from rederive.model.expr import Node
+from rederive.engine.substitute import substitute
+from rederive.engine.to_sympy import to_sympy
+from rederive.model.expr import Kind, Node
 from rederive.syntax.state import ParseState
 
-__all__ = ["factor", "factored"]
+__all__ = ["decomposes", "factor", "factor_variables", "factored"]
 
 
 def factor(
@@ -69,3 +71,47 @@ def factored(
     return factored_expression(
         expression, amount, variables, lambda e: approximated(e, context)
     )
+
+
+def factor_variables(node: Node, context: Context | None = None) -> tuple[str, ...]:
+    """The variables Factor would offer for `node`, in the order it offers them.
+
+    Alphabetical, which is what the original lists: `y^2 - x^2` offers `x,y`.
+    What an assignment has given a value is not among them, since substitution
+    has already replaced it by the time there is anything to factor.
+
+    The command needs this before it can ask anything, because whether it asks
+    at all depends on the answer: one variable is not a choice, so the original
+    puts up no prompt unless there are two or more.
+    """
+    context = context or Context()
+    try:
+        expression = to_sympy(substitute(node, context), context)
+        symbols = expression.free_symbols
+    except Exception:
+        return ()
+    # `type is` rather than `isinstance`: a string literal is a `Symbol`
+    # subclass, and a string is data rather than a variable to factor about.
+    return tuple(sorted(s.name for s in symbols if type(s) is sp.Symbol))
+
+
+def decomposes(node: Node) -> bool:
+    """Whether `node` is written as a rational number, and nothing else.
+
+    Which is the question the original asks before it asks anything else: a
+    number has a prime decomposition and no amount to choose, so the amount
+    menu never comes up for one. The test is on how the expression is written
+    rather than on what it is worth. `1234567890/49` is a rational number, and
+    `10!` is a factorial that has one for a value - the original asks for an
+    amount for the second and not the first.
+
+    An amount would change nothing either way, since a number is decomposed
+    whatever was asked for. What it changes is how many questions are put.
+    """
+    if node.kind is Kind.NUMBER:
+        return True
+    if node.kind is Kind.UNOP and node.value in ("-", "+"):
+        return all(decomposes(child) for child in node.children)
+    if node.kind is Kind.BINOP and node.value == "/":
+        return all(decomposes(child) for child in node.children)
+    return False

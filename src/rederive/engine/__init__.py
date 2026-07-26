@@ -74,7 +74,7 @@ from rederive.engine.context import (
     TrigPower,
     domain_of_node,
 )
-from rederive.engine.factor import factor
+from rederive.engine.factor import decomposes, factor, factor_variables
 from rederive.engine.factoring import Amount
 from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
 from rederive.engine.pipeline import approx, simplify
@@ -96,8 +96,10 @@ __all__ = [
     "TrigPower",
     "approx",
     "author_text",
+    "decomposes",
     "domain_of_node",
     "factor",
+    "factor_variables",
     "from_sympy",
     "parse_state_for",
     "simplify",
