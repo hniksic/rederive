@@ -1,0 +1,625 @@
+"""Recursive descent with precedence climbing.
+
+Two of the productions are not ordinary precedence levels and are worth
+naming here:
+
+`operand` is what a bare application consumes - a `SUB` chain over
+applications, optionally signed. It is looser than `!` and tighter than `^`, so
+`SIN x!` is `SIN(x)!` and `SIN x^2` is `SIN(x)^2`.
+
+`:=` is settled in `primary`: a name immediately followed by `:=` becomes an
+assignment before any surrounding operator is considered, which is what makes
+`"inapplicable"=a_:=F(...)` a relation whose right operand is an assignment.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from rederive.model.expr import Kind, Node
+from rederive.syntax import names
+from rederive.syntax.errors import DeriveSyntaxError
+from rederive.syntax.lexer import Lexer
+from rederive.syntax.state import (
+    Declaration,
+    DomainDeclaration,
+    FunctionDeclaration,
+    SettingDeclaration,
+    VariableDeclaration,
+)
+from rederive.syntax.tokens import Token, TokenKind
+
+_FACTOR_KINDS = (
+    TokenKind.NUMBER,
+    TokenKind.NAME,
+    TokenKind.STRING,
+    TokenKind.LABEL,
+)
+_SIGNS = ("-", "+", "+-")
+_POSTFIX = ("!", "%", "`")
+_RELATIONS = ("=", "/=", "<", "<=", ">", ">=")
+_CLOSERS = (",", "]", ")")
+_LOGICAL_KINDS = {
+    "OR": Kind.OR,
+    "XOR": Kind.XOR,
+    "IMP": Kind.IMP,
+    "AND": Kind.AND,
+}
+
+
+@dataclass(frozen=True)
+class _Parsed:
+    """A node plus the extent of the text that produced it.
+
+    `node.start`/`node.end` is the highlight span, which excludes enclosing
+    parentheses; `lo`/`hi` include them, so an enclosing node's span reaches
+    over the parentheses of its operands.
+    """
+
+    node: Node
+    lo: int
+    hi: int
+
+    @classmethod
+    def of(cls, node: Node) -> _Parsed:
+        return cls(node, node.start, node.end)
+
+
+class Parser:
+    """One expression's worth of parsing."""
+
+    def __init__(self, lexer: Lexer) -> None:
+        self.lexer = lexer
+        self.pos = lexer.start
+        self.bars = 0
+        self.declarations: list[Declaration] = []
+
+    # -- token handling -----------------------------------------------------
+
+    def peek(self) -> Token:
+        return self.lexer.token_at(self.pos)
+
+    def after(self, token: Token) -> Token:
+        return self.lexer.token_at(token.end)
+
+    def advance(self) -> Token:
+        token = self.peek()
+        self.pos = token.end
+        return token
+
+    def error(self, offset: int, expected: str) -> DeriveSyntaxError:
+        return DeriveSyntaxError(offset, expected, self.lexer.source)
+
+    def expect(self, text: str, expected: str) -> Token:
+        token = self.peek()
+        if not _is_op(token, text):
+            raise self.error(token.start, expected)
+        return self.advance()
+
+    def starts_factor(self, token: Token) -> bool:
+        """Whether `token` can begin a factor, so juxtaposition applies."""
+        if token.kind is TokenKind.EOF:
+            return False
+        if token.kind in _FACTOR_KINDS:
+            return True
+        if token.kind is not TokenKind.OP:
+            return False
+        if token.value == "|":
+            # A `|` met where an operator could continue the expression closes
+            # the innermost open bar rather than opening a new one.
+            return self.bars == 0
+        return token.value in ("(", "[", "?")
+
+    def starts_operand(self, token: Token) -> bool:
+        return self.starts_factor(token) or _is_op(token, *_SIGNS)
+
+    # -- the top of the grammar ---------------------------------------------
+
+    def parse(self) -> Node:
+        parsed = self.assignment()
+        token = self.peek()
+        if _is_op(token, "=") and self.after(token).kind is TokenKind.EOF:
+            # The author line's trailing `=`: show the value of this.
+            self.advance()
+            parsed = _Parsed.of(
+                Node(Kind.SHOWVALUE, parsed.lo, token.end, (parsed.node,))
+            )
+        token = self.peek()
+        if token.kind is not TokenKind.EOF:
+            raise self.error(token.start, "end of the expression")
+        return parsed.node
+
+    def assignment(self) -> _Parsed:
+        return self.implication()
+
+    def implication(self) -> _Parsed:
+        return self._logical("IMP", self.exclusive_or)
+
+    def exclusive_or(self) -> _Parsed:
+        return self._logical("XOR", self.disjunction)
+
+    def disjunction(self) -> _Parsed:
+        return self._logical("OR", self.conjunction)
+
+    def conjunction(self) -> _Parsed:
+        return self._logical("AND", self.negation)
+
+    def _logical(self, word: str, tighter) -> _Parsed:
+        left = tighter()
+        while _is_op(self.peek(), word):
+            self.advance()
+            right = tighter()
+            left = _combine(_LOGICAL_KINDS[word], left, right)
+        return left
+
+    def negation(self) -> _Parsed:
+        token = self.peek()
+        if _is_op(token, "NOT"):
+            self.advance()
+            operand = self.negation()
+            return _Parsed(
+                Node(Kind.NOT, token.start, operand.hi, (operand.node,)),
+                token.start,
+                operand.hi,
+            )
+        return self.relation()
+
+    def relation(self) -> _Parsed:
+        """A chain of relations is one node, not a tree of comparisons."""
+        parts = [self.sum()]
+        operators: list[str] = []
+        surfaces: list[str] = []
+        while True:
+            token = self.peek()
+            if not _is_op(token, *_RELATIONS):
+                break
+            if token.value == "=" and self.after(token).kind is TokenKind.EOF:
+                break  # the author line's trailing `=`
+            self.advance()
+            operators.append(token.value)
+            surfaces.append(token.surface or token.value)
+            parts.append(self.sum())
+        if not operators:
+            return parts[0]
+        spelled = " ".join(surfaces)
+        canonical = " ".join(operators)
+        return _Parsed(
+            Node(
+                Kind.REL,
+                parts[0].lo,
+                parts[-1].hi,
+                tuple(part.node for part in parts),
+                canonical,
+                None if spelled == canonical else spelled,
+            ),
+            parts[0].lo,
+            parts[-1].hi,
+        )
+
+    def sum(self) -> _Parsed:
+        left = self.product()
+        while _is_op(self.peek(), "+", "-"):
+            token = self.advance()
+            right = self.product()
+            left = _combine(Kind.BINOP, left, right, token.value, token.surface)
+        return left
+
+    def product(self) -> _Parsed:
+        """`*`, `/`, the dot product, and juxtaposition, all left to right."""
+        left = self.unary()
+        while True:
+            token = self.peek()
+            if _is_op(token, "*"):
+                self.advance()
+                # A run of consecutive `*` behaves as a single `*`.
+                while _is_op(self.peek(), "*"):
+                    self.advance()
+                right = self.unary()
+                left = _combine(Kind.BINOP, left, right, "*", token.surface)
+            elif _is_op(token, "/", "."):
+                self.advance()
+                right = self.unary()
+                left = _combine(Kind.BINOP, left, right, token.value, token.surface)
+            elif self.starts_factor(token):
+                right = self.unary()
+                left = _combine(Kind.BINOP, left, right, "*", "")
+            else:
+                break
+        return left
+
+    def unary(self) -> _Parsed:
+        token = self.peek()
+        if _is_op(token, *_SIGNS):
+            self.advance()
+            operand = self.unary()
+            return _Parsed(
+                Node(
+                    Kind.UNOP,
+                    token.start,
+                    operand.hi,
+                    (operand.node,),
+                    token.value,
+                    token.surface,
+                ),
+                token.start,
+                operand.hi,
+            )
+        return self.power()
+
+    def power(self) -> _Parsed:
+        base = self.subscripted()
+        token = self.peek()
+        if _is_op(token, "^"):
+            self.advance()
+            # Right-associative, and the exponent may carry its own sign.
+            return _combine(Kind.BINOP, base, self.unary(), "^", token.surface)
+        return base
+
+    def subscripted(self) -> _Parsed:
+        left = self.postfix()
+        while _is_op(self.peek(), "SUB"):
+            token = self.advance()
+            right = self.postfix()
+            left = _combine(Kind.SUB, left, right, None, token.surface)
+        return left
+
+    def postfix(self) -> _Parsed:
+        left = self.application()
+        while _is_op(self.peek(), *_POSTFIX):
+            token = self.advance()
+            left = _Parsed(
+                Node(Kind.POSTOP, left.lo, token.end, (left.node,), token.value),
+                left.lo,
+                token.end,
+            )
+        return left
+
+    # -- application --------------------------------------------------------
+
+    def application(self) -> _Parsed:
+        token = self.peek()
+        if token.kind is TokenKind.NAME and not token.is_defhead:
+            following = self.after(token)
+            if token.is_function:
+                if _is_op(following, "("):
+                    return self.call(token)
+                if _is_op(following, "^"):
+                    return self.function_power(token)
+                return self.bare_application(token)
+            if _is_op(following, "("):
+                parsed = self.argument_list_on_a_variable(token, following)
+                if parsed is not None:
+                    return parsed
+        return self.primary()
+
+    def call(self, name: Token) -> _Parsed:
+        self.advance()
+        self.expect("(", "'('")
+        arguments = self.arguments()
+        close = self.expect(")", "')'")
+        children = (_name_node(name), *(argument.node for argument in arguments))
+        node = Node(Kind.CALL, name.start, close.end, children)
+        return _Parsed(node, name.start, close.end)
+
+    def arguments(self) -> list[_Parsed]:
+        """A comma-separated argument list, which may not be empty.
+
+        Arity is the engine's business: many built-ins are variadic, and
+        calling a user function with fewer arguments than it has parameters is
+        meaningful.
+        """
+        if _is_op(self.peek(), ")"):
+            raise self.error(self.peek().start, "an argument")
+        arguments = [self.assignment()]
+        while _is_op(self.peek(), ","):
+            self.advance()
+            arguments.append(self.assignment())
+        return arguments
+
+    def argument_list_on_a_variable(self, name: Token, opening: Token) -> _Parsed | None:
+        """`NAME(...)` where `NAME` is not a known function.
+
+        With exactly one argument this is a product, which the ordinary
+        juxtaposition rule already builds, so we decline it here and let the
+        product level have it. Anything else is a syntax error, reported once
+        the whole list has been consumed.
+        """
+        count = self.lexer.count_arguments(opening.start)
+        if count is None or count == 1:
+            return None
+        self.advance()
+        self.expect("(", "'('")
+        if not _is_op(self.peek(), ")"):
+            self.arguments()
+        self.expect(")", "')'")
+        raise self.error(self.pos, "a function name")
+
+    def bare_application(self, name: Token) -> _Parsed:
+        """`SIN x`: exactly one operand, and `^` and `!` bind outside it."""
+        self.advance()
+        token = self.peek()
+        if not self.starts_operand(token):
+            raise self.error(token.start, "an operand")
+        operand = self.operand()
+        children = (_name_node(name), operand.node)
+        return _Parsed(
+            Node(Kind.APPLY, name.start, operand.hi, children), name.start, operand.hi
+        )
+
+    def function_power(self, name: Token) -> _Parsed:
+        """`SQRT^3 25`: apply, then raise.
+
+        The exponent attaches to the name, so `SIN^-1 x` is the reciprocal
+        `1/SIN(x)` and not `ASIN(x)`.
+        """
+        self.advance()
+        self.expect("^", "'^'")
+        exponent = self.unary()
+        token = self.peek()
+        if not self.starts_operand(token):
+            raise self.error(token.start, "an operand")
+        operand = self.operand()
+        children = (_name_node(name), exponent.node, operand.node)
+        return _Parsed(
+            Node(Kind.FUNCPOW, name.start, operand.hi, children), name.start, operand.hi
+        )
+
+    def operand(self) -> _Parsed:
+        token = self.peek()
+        if _is_op(token, *_SIGNS):
+            self.advance()
+            inner = self.operand()
+            node = Node(
+                Kind.UNOP,
+                token.start,
+                inner.hi,
+                (inner.node,),
+                token.value,
+                token.surface,
+            )
+            return _Parsed(node, token.start, inner.hi)
+        left = self.application()
+        while _is_op(self.peek(), "SUB"):
+            sub = self.advance()
+            right = self.application()
+            left = _combine(Kind.SUB, left, right, None, sub.surface)
+        return left
+
+    # -- primaries ----------------------------------------------------------
+
+    def primary(self) -> _Parsed:
+        token = self.peek()
+        if token.kind is TokenKind.NUMBER:
+            self.advance()
+            surface = token.surface if token.surface != token.value else None
+            node = Node(Kind.NUMBER, token.start, token.end, (), token.value, surface)
+            return _Parsed.of(node)
+        if token.kind is TokenKind.NAME:
+            return self.name_primary(token)
+        if token.kind is TokenKind.STRING:
+            following = self.after(token)
+            if _is_op(following, ":=", ":=="):
+                return self.assignment_to(token, _string_node(token))
+            self.advance()
+            return _Parsed.of(_string_node(token))
+        if token.kind is TokenKind.LABEL:
+            self.advance()
+            return _Parsed.of(Node(Kind.LABEL, token.start, token.end, (), token.value))
+        if _is_op(token, "?"):
+            self.advance()
+            return _Parsed.of(Node(Kind.UNKNOWN, token.start, token.end, (), "?"))
+        if _is_op(token, "("):
+            return self.group(token)
+        if _is_op(token, "["):
+            return self.vector(token)
+        if _is_op(token, "|"):
+            return self.absolute_value(token)
+        raise self.error(token.start, "an operand")
+
+    def name_primary(self, token: Token) -> _Parsed:
+        if token.is_defhead:
+            return self.function_definition(token)
+        following = self.after(token)
+        if _is_op(following, ":=", ":=="):
+            return self.assignment_to(token, _name_node(token))
+        if _is_op(following, ":epsilon"):
+            return self.domain_declaration(token)
+        self.advance()
+        return _Parsed.of(_name_node(token))
+
+    def group(self, opening: Token) -> _Parsed:
+        self.advance()
+        inner = self.assignment()
+        closing = self.expect(")", "')'")
+        # The parentheses widen the extent but not the highlight span.
+        return _Parsed(inner.node, opening.start, closing.end)
+
+    def vector(self, opening: Token) -> _Parsed:
+        """A vector literal. Brackets never group, so this is the only `[`."""
+        self.advance()
+        elements: list[_Parsed] = []
+        if not _is_op(self.peek(), "]"):
+            elements.append(self.assignment())
+            while _is_op(self.peek(), ","):
+                self.advance()
+                elements.append(self.assignment())
+        closing = self.expect("]", "']'")
+        node = Node(
+            Kind.VECTOR,
+            opening.start,
+            closing.end,
+            tuple(element.node for element in elements),
+        )
+        return _Parsed.of(node)
+
+    def absolute_value(self, opening: Token) -> _Parsed:
+        """`|u|` is `ABS(u)`, and bars nest."""
+        if not self.starts_operand(self.after(opening)):
+            raise self.error(opening.start, "an operand")
+        self.advance()
+        self.bars += 1
+        inner = self.implication()
+        closing = self.peek()
+        if not _is_op(closing, "|"):
+            raise self.error(closing.start, "'|'")
+        self.advance()
+        self.bars -= 1
+        return _Parsed.of(Node(Kind.ABS, opening.start, closing.end, (inner.node,)))
+
+    # -- declarations -------------------------------------------------------
+
+    def assignment_to(self, name: Token, lhs: Node) -> _Parsed:
+        """`name := expr`, with an empty right side allowed."""
+        self.advance()
+        operator = self.advance()
+        right = None
+        if not self._ends_assignment(self.peek()):
+            right = self.assignment()
+        children = (lhs,) if right is None else (lhs, right.node)
+        end = operator.end if right is None else right.hi
+        self._record_assignment(lhs, right)
+        node = Node(Kind.ASSIGN, name.start, end, children, operator.value)
+        return _Parsed(node, name.start, end)
+
+    def function_definition(self, name: Token) -> _Parsed:
+        """`F(x,y) := body`, or `F(x,y):=` for an arbitrary function.
+
+        The parameters are registered as known variables before the body is
+        lexed, because the body cannot be lexed otherwise, and they stay
+        registered afterwards: after `FIT3(mx,mf):=mx+mf`, a later bare `mx+mf`
+        is `mx + mf` and not `m*x + m*f`.
+        """
+        self.advance()
+        self.expect("(", "'('")
+        if _is_op(self.peek(), ")"):
+            raise self.error(self.peek().start, "a parameter")
+        parameters: list[Node] = []
+        while True:
+            parameters.append(self.parameter())
+            if not _is_op(self.peek(), ","):
+                break
+            self.advance()
+        closing = self.expect(")", "')'")
+        operator = self.peek()
+        if not _is_op(operator, ":=", ":=="):
+            raise self.error(operator.start, "':='")
+        self.advance()
+        params_node = Node(
+            Kind.PARAMS,
+            parameters[0].start if parameters else closing.start,
+            closing.end,
+            tuple(parameters),
+        )
+        spelled = tuple(str(parameter.value) for parameter in parameters)
+        self._declare(FunctionDeclaration(str(name.value), spelled, has_body=False))
+        body = None
+        if not self._ends_assignment(self.peek()):
+            body = self.assignment()
+        children = (params_node,) if body is None else (params_node, body.node)
+        end = operator.end if body is None else body.hi
+        if body is not None:
+            self._declare(FunctionDeclaration(str(name.value), spelled, has_body=True))
+        node = Node(Kind.FUNDEF, name.start, end, children, name.value)
+        return _Parsed(node, name.start, end)
+
+    def parameter(self) -> Node:
+        token = self.lexer.name_run_at(self.pos)
+        self.pos = token.end
+        canonical = self.lexer.new_variable(token.value)
+        self._declare(VariableDeclaration(canonical))
+        return Node(Kind.NAME, token.start, token.end, (), canonical, _surface(token))
+
+    def domain_declaration(self, name: Token) -> _Parsed:
+        """`x :ε Real [0, inf)`.
+
+        An unrecognised domain is not an error; the domain becomes `?`.
+        """
+        self.advance()
+        self.advance()
+        token = self.lexer.name_run_at(self.pos)
+        self.pos = token.end
+        domain = self.lexer.state.lookup(token.value) or token.value
+        if domain not in names.DOMAINS:
+            domain = "?"
+        children: tuple[Node, ...] = (_name_node(name),)
+        end = token.end
+        if _is_op(self.peek(), "(", "["):
+            interval = self.interval()
+            children += (interval.node,)
+            end = interval.hi
+        self.declarations.append(DomainDeclaration(str(name.value), domain))
+        node = Node(Kind.DOMAIN, name.start, end, children, domain)
+        return _Parsed(node, name.start, end)
+
+    def interval(self) -> _Parsed:
+        """`[0, inf)`: standard notation, and it may close with either bracket."""
+        opening = self.advance()
+        low = self.implication()
+        self.expect(",", "','")
+        high = self.implication()
+        closing = self.peek()
+        if not _is_op(closing, ")", "]"):
+            raise self.error(closing.start, "')' or ']'")
+        self.advance()
+        node = Node(
+            Kind.INTERVAL,
+            opening.start,
+            closing.end,
+            (low.node, high.node),
+            opening.value + closing.value,
+        )
+        return _Parsed.of(node)
+
+    def _ends_assignment(self, token: Token) -> bool:
+        return token.kind is TokenKind.EOF or _is_op(token, *_CLOSERS)
+
+    def _record_assignment(self, lhs: Node, right: _Parsed | None) -> None:
+        if lhs.kind is not Kind.NAME:
+            return
+        name = str(lhs.value)
+        if name in names.SETTINGS:
+            self.declarations.append(SettingDeclaration(name, _setting_value(right)))
+            return
+        self.declarations.append(VariableDeclaration(name, has_value=right is not None))
+
+    def _declare(self, declaration: Declaration) -> None:
+        """Register now, and report it too.
+
+        The one place the parser touches the caller's state: a definition head
+        must be in the table before its own body is lexed.
+        """
+        self.lexer.state.declare(declaration)
+        self.declarations.append(declaration)
+
+
+def _is_op(token: Token, *texts: str) -> bool:
+    return token.kind is TokenKind.OP and token.value in texts
+
+
+def _combine(
+    kind: Kind,
+    left: _Parsed,
+    right: _Parsed,
+    value: str | None = None,
+    surface: str | None = None,
+) -> _Parsed:
+    node = Node(kind, left.lo, right.hi, (left.node, right.node), value, surface)
+    return _Parsed(node, node.start, node.end)
+
+
+def _surface(token: Token) -> str | None:
+    return token.surface if token.surface != token.value else None
+
+
+def _name_node(token: Token) -> Node:
+    return Node(Kind.NAME, token.start, token.end, (), token.value, _surface(token))
+
+
+def _string_node(token: Token) -> Node:
+    return Node(Kind.STRING, token.start, token.end, (), token.value)
+
+
+def _setting_value(right: _Parsed | None) -> str:
+    if right is None:
+        return ""
+    return str(right.node.value) if right.node.value is not None else ""

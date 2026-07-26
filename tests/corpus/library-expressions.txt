@@ -1,0 +1,2139 @@
+# Every expression in the utility files Derive shipped, and in their demo
+# files, extracted from the archives under `artifacts/sessions/`.
+#
+# One expression per line, in file order. `;` comments are already stripped and
+# `~` continuation lines already joined, so each line is one whole expression.
+# Each `##` group is replayed with a fresh symbol table, so the declarations an
+# earlier line of a group makes are in force for the later ones.
+#
+# Two kinds of line are left out. Expressions that are nothing but a string
+# literal, which Derive's files use as commentary, carry nothing the shorter
+# conformance corpus does not already cover. And a handful of expressions that
+# only parse in a session this replay cannot reproduce:
+#
+#   FIT_.MTH     `c_:=[c0_,...]` and `c__:=[c0__,...]` need Word mode, since
+#                Character mode reads `c0_` as `c`, `0`, `_`.
+#   TENSOR1.DMO  `lhs-rhs` is `LHS(-RHS(...))` unless CaseMode is Sensitive,
+#                and LHS then has no operand.
+#   TENSOR2.DMO  three lines pass `x` to a function, but an earlier `X(r):=`
+#                in that file made `x` an arbitrary function, which needs an
+#                operand of its own.
+
+## derive-1.62-dos/ALGEBRA.MTH
+(x+a)^2-2*a*x
+2 (x^2 - y^2)^6 - (x^2 - y^2)^5(2 x^2 - 3)
+(x + (a + 1)^10) ^ 2  -  (a + 1)^20
+a^3/((a-b)*(a-c)) + b^3/((b-c)*(b-a)) + c^3/((c-a)*(c-b))
+(x^6+a^6)(x+1)/((x^6+a^6)*(x^2-a^2)+a^2*x^2*(x^4-a^4))+a^2*x^2(x+1)/(x^6-a^6-a^2*x^2*(x^2-a^2))
+((a*n + b*m)^2 + (a*m - b*n)^2) / ((a*p + b*Q)^2 + (a*Q - b*p)^2)
+((p*x^2+(k-s)*x+r)^2-(p*x^2+(k+s)*x+r)^2)/((p*x^2+(k+t)*x+r)^2-(p*x^2+(k-t)*x+r)^2)
+(1 - (1-(y+1)/(x+y+1)) / (1-x/(x+y+1))) / ((y+1)^2 - x / (1+x/(y-x+1)) (x (y+1)/(y-x+1) - x))
+((1/x^2+1/y^2)/(1/x^2-1/y^2)-(1/x^2-1/y^2)/(1/x^2+1/y^2))/((2x+y)/(((x+y)/(x-y)+(x-y)/(x+y))*(x^2/y^2+y^2/x^2-2)))
+
+## derive-1.62-dos/ANNUITY.MTH
+v*(1+i)^n+p*(1+i*t)*(((1+i)^n-1)/i)+f=0
+
+## derive-1.62-dos/APPROX.MTH
+CF(a,m,n):=VECTOR(VECTOR(ELEMENT(a,m-n+i+j),j,1,n+1),i,1,n)
+DV(a,m,n):=ELEMENT(ROW_REDUCE(CF(a,m,n))`,n+1)
+NV(a,u,m,n):=VECTOR(ELEMENT(a,k+1)-SUM(ELEMENT(u,n+1-i)*ELEMENT(a,k+1-i),i,1,k),k,1,MIN(m,n))
+P3(a,v,u,x,c,m,n):=(ELEMENT(a,1)+SUM(ELEMENT(v,k)*(x-c)^k,k,1,m))/(1-SUM(ELEMENT(u,n+1-k)*(x-c)^k,k,1,n))
+P2(a,u,x,c,m,n):=P3(a,NV(a,u,m,n),u,x,c,m,n)
+P1(a,x,c,m,n):=P2(a,DV(a,m,n),x,c,m,n)
+PADE(wx,x,c,m,n):=P1(VECTOR(LIM(DIF(wx,x,k),x,c)/k!,k,0,m+n+1),x,c,m,n)
+PADE(EXP(x),x,0,2,2)
+
+## derive-1.62-dos/ARITH.MTH
+5 (9 - 3) / 2
+1/2 + 1/6
+5^99
+54!
+SQRT 9
+(2/27)^(2/3)
+SQRT (4 - 2 * SQRT (3))
+SQRT (5 + SQRT 24) + SQRT (5 - SQRT 24)
+SQRT (-1)
+(1 + 2 #i) (3 + #i)
+(2 + #i) / (#i + 1)
+(-8)^(1/3)
+SQRT (55/36 + 4/3 #i)
+inf + inf + 5
+
+## derive-1.62-dos/CALCULUS.MTH
+LIM (((x + h)^3 - x^3) / h, h, 0)
+LIM (SIN x / x, x, 0)
+LIM (x^(1/x), x, inf)
+LIM ((a^x - b^x) / x, x, 0)
+LIM (1/x, x, 0, -1)
+LIM ((SIN x)^249 (LN (1 - x))^251 / (x^100 (ATAN x)^400), x, 0)
+DIF (x^3, x)
+DIF (sin (x^3), x)
+DIF (x^2 y^3, y)
+TAYLOR (#e^x, x, 0, 5)
+TAYLOR (LN COS (a x), x, 0, 7)
+INT (x^2, x)
+INT (COS x, x)
+INT (x^2 COS (a x^3 + b), x)
+INT (x^2, x, a, b)
+INT (1/x^2, x, a^2, inf)
+INT (1/SQRT x, x, 0, b^2)
+INT (INT (x y, y, 0, SQRT (r^2 - x^2)), x, 0, r)
+SUM (k, k, 0, n)
+SUM (k^3, k, 0, n)
+SUM (a^k, k, 0, n)
+SUM (2^-k, k, 0, inf)
+SUM (k/370370367, k, -123456788, 123456789)
+PRODUCT (2 k, k, 1, n)
+
+## derive-1.62-dos/COORD.MTH
+CYLINDRICAL:=[[r, theta, z], [1, r, 1]]
+SPHERICAL:=[[r, theta, phi], [1, r*SIN(phi), r]]
+JACOBIAN(u,v):=VECTOR(VECTOR(DIF(ELEMENT(u,i),ELEMENT(v,j)),j,DIMENSION(v)),i,DIMENSION(u))
+COVARIANT_METRIC_TENSOR(u):=u`.u
+SQRT_DIAGONAL(u):=VECTOR(SQRT(ELEMENT(ELEMENT(u,j),j)),j,DIMENSION(u))
+
+## derive-1.62-dos/DERIV.MTH
+LINE(x,y,m,t):=y+m*(t-x)
+TANGENT_LINE(u,x,a):=LINE(a,LIM(u,x,a),LIM(DIF(u,x),x,a),x)
+PERPENDICULAR(u,x,a):=LINE(a,LIM(u,x,a),(-1)/LIM(DIF(u,x),x,a),x)
+CURVATURE(u,x,a):=LIM(DIF(u,x,2)/(1+DIF(u,x)^2)^(3/2),x,a)
+CIRCLE(x,y,r,t):=[x+r*COS(t), y+r*SIN(t)]
+OSCULATING_CIRCLE(u,x,a):=CIRCLE(a-LIM(DIF(u,x),x,a)/(CURVATURE(u,x,a)*SQRT(1+LIM(DIF(u,x),x,a)^2)),LIM(u,x,a)+1/(CURVATURE(u,x,a)*SQRT(1+LIM(DIF(u,x),x,a)^2)),1/CURVATURE(u,x,a),x)
+IMPLICIT_DIF(u,y,x):=(-DIF(u,x)/DIF(u,y))
+
+## derive-1.62-dos/ENGLISH.MTH
+FOOT:=
+INCH:=1/12*FOOT
+MIL:=1/1000*INCH
+YARD:=3*FOOT
+FATHOM:=6*FOOT
+ROD:=16.5*FOOT
+MILE:=5280*FOOT
+FURLONG:=1/8*MILE
+LEAGUE:=3*MILE
+ACRE:=1/640*MILE^2
+GALLON:=231*INCH^3
+QUART:=1/4*GALLON
+PINT:=1/2*QUART
+BARREL:=31.5*GALLON
+POUND:=
+OUNCE:=1/16*POUND
+TON:=2000*POUND
+SECOND:=
+MINUTE:=60*SECOND
+HOUR:=60*MINUTE
+DAY:=24*HOUR
+WEEK:=7*DAY
+FORTNIGHT:=2*WEEK
+YEAR:=365.2422*DAY
+DECADE:=10*YEAR
+CENTURY:=100*YEAR
+METER:=1/(0.3048)*FOOT
+GRAM:=1/(453.59237)*POUND
+
+## derive-1.62-dos/FUNCTION.MTH
+LN 1
+LN 6 - LN 2
+LN 16 / LN 8
+LN (1 + #i)
+LN(x^2)/LN(x^(-2))
+LOG (10^3, 10)
+LOG x
+EXP LN x
+LN EXP x
+LN (2 x^3 EXP y)
+EXP x
+#e^(3 x LN y)
+#e^(2x(y+1)+y) - #e^(2 x y+2x+y)
+4 (2^z)^2 - 4^(z+1)
+a^(x+1) - a a^x
+#e^(1 + pi/4 #i)
+COSH x
+ASINH x
+SIGN 5
+SIGN -3
+SIGN (3 + 4 #i)
+SIGN 0
+SIGN SIGN z
+SIGN ATAN x
+SIGN LN (1 + COS x)
+ABS z SIGN z
+ABS (x^2)
+(ABS x)^2
+COS ABS x
+ABS (x ATAN x)
+ABS (1 + COS x)
+ABS x / SIGN x
+GAMMA (x+1)
+(1/2) !
+(- 1/2) !
+(n+2)!/(n-1)!
+PERM (m, n)
+COMB (m, n)
+AVERAGE (x, y, z)
+AVERAGE (VECTOR (1/k, k, 1, 10))
+RMS ([2, 3, 5])
+VAR (x, y)
+STDEV (x, y)
+PMT (10%/12, 2*12, 12000)
+
+## derive-1.62-dos/INTEGRAL.MTH
+ARC_LENGTH(u,x,a,b):=INT(SQRT(1+DIF(u,x)^2),x,a,b)
+VECTOR_ARC_LENGTH(v,t,a,b):=INT(SQRT(SUM(DIF(ELEMENT(v,k_),t)^2,k_,1,DIMENSION(v))),t,a,b)
+VOLUME_OF_REVOLUTION(u,x,a,b):=PI*INT(u^2,x,a,b)
+SURFACE_OF_REVOLUTION(u,x,a,b):=2*PI*INT(u*SQRT(1+DIF(u,x)^2),x,a,b)
+FOURIER(u,x,a,b,n):=1/(b-a)*INT(u,x,a,b)+2/(b-a)*SUM(COS(2*PI*k_*x/(b-a))*INT(u*COS(2*PI*k_*x/(b-a)),x,a,b)+SIN(2*PI*k_*x/(b-a))*INT(u*SIN(2*PI*k_*x/(b-a)),x,a,b),k_,1,n)
+LAPLACE(u,t,s):=INT(#e^(-s*t)*u,t,0,INF)
+
+## derive-1.62-dos/MATRIX.MTH
+VECTOR([x,x^2,x^3],x,1,8)
+MATRIX(z,i,m,j,n):=VECTOR(VECTOR(z,j,1,n),i,1,m)
+MATRIX(i-j,i,2,j,3)
+IDENTITY_MATRIX(3)
+ELEMENT([[a, b, c], [1, 2, 3]],1,2)
+ELEMENT([[a, b, c], [1, 2, 3]],2)
+2*[[a, 2], [3, b]]+[[1, 3], [a, -b]]
+[2, a, 5].[2*a, 3, -1]
+[[a, b], [c, d]].[[x], [y]]
+CROSS([1, 2, 3],[a, b, c])
+DIMENSION([a, b, c])
+DIMENSION([[1, 2, 3], [4, 5, 6]])
+OUTER(v,w):=VECTOR([ELEMENT(v,i)],i,DIMENSION(v)).[w]
+OUTER([a, b, c], [2, 3, 4])
+[[a, b, c], [1, 2, 3]]`
+ELEMENT([[a, b, c], [1, 2, 3]]`,3)
+DET([[2, 3], [a, b]])
+DET [[1, a, a, a], [1, x, a, a], [1, a, x, a], [1, a, a, x]]
+DET [[x, 1, 1, 1, 1], [1, x, 1, 1, 1], [1, 1, x, 1, 1], [1, 1, 1, x, 1], [1, 1, 1, 1, x]]
+TRACE([[a, b], [1, 2]])
+[[a, b], [2, 3]]^(-1)
+[[a, b], [c, d]].[[a, b], [c, d]]^(-1)
+[[a, b], [c, d]]^(-1).[[e], [f]]
+ROW_REDUCE([[2, 4], [3, 6]], [[6], [9]])
+CHARPOLY([[a, b], [b, a]],z)
+EIGENVALUES([[a, b], [b, a]])
+a.(b+c)-(b`.a`)`
+GRAD(x+y^2+z^3)
+DIV([1, 2*y, 3*z^2])
+LAPLACIAN(x+y^2+z^3)
+CURL([y^2, 2*x*z, 0])
+POTENTIAL([1, 2*y, 3*z^2])
+VECTOR_POTENTIAL([-2*x, 0, 2*z-2*y])
+
+## derive-1.62-dos/METRIC.MTH
+TERA:=10^12
+GIGA:=10^9
+MEGA:=10^6
+KILO:=1000
+HECTO:=100
+DECA:=10
+DECI:=0.1
+CENTI:=0.01
+MILLI:=0.001
+MICRO:=10^(-6)
+NANO:=10^(-9)
+PICO:=10^(-12)
+METER:=
+MICRON:=MICRO*METER
+ANGSTROM:=10^(-8)*CENTI*METER
+ARE:=100*METER^2
+HECTARE:=HECTO*ARE
+LITER:=1/1000*METER^3
+GRAM:=
+METRIC_TON:=1000*KILO*GRAM
+CARAT:=200*MILLI*GRAM
+SECOND:=
+MINUTE:=60*SECOND
+HOUR:=60*MINUTE
+DAY:=24*HOUR
+WEEK:=7*DAY
+YEAR:=365.2422*DAY
+DECADE:=10*YEAR
+CENTURY:=100*YEAR
+NEWTON:=KILO*GRAM*METER/SECOND^2
+DYNE:=NEWTON/100000
+JOULE:=NEWTON*METER
+ERG:=JOULE/10000000
+WATT:=JOULE/SECOND
+FOOT:=0.3048*METER
+POUND:=453.59237*GRAM
+COULOMB:=SQRT(METER)*SQRT(GRAM)/100
+DEGREE_KELVIN:=
+MOLE:=
+
+## derive-1.62-dos/ODE1.MTH
+SEPARABLE(px,qy,x,y_,x0,y0):=INT(1/qy,y_,y0,y_)=INT(px,x,x0,x)
+EXACT_IF_0(pxy,qxy,x,y_):=DIF(pxy,y_)-DIF(qxy,x)
+EXACT(pxy,qxy,x,y_,x0,y0):=INT(pxy,x,x0,x)+INT(LIM(qxy,x,x0),y_,y0,y_)=0
+USE_INTEG_FCTR(mu,pxy,qxy,x,y_,x0,y0):=EXACT(mu*pxy,mu*qxy,x,y_,x0,y0)
+LINEAR1(px,qx,x,y_,x0,y0):=USE_INTEG_FCTR(#e^INT(px,x),px*y_-qx,1,x,y_,x0,y0)
+BERNOULLI(px,qx,k,x,y_,x0,y0):=LIM(LINEAR1((1-k)*px,(1-k)*qx,x,y_,x0,y0),y_,y_^(1-k))
+HOMOGENEOUS_IF_FREE_OF_X(rxy,x,y_):=LIM(rxy,y_,x*y_)
+HOMOGENEOUS(rxy,x,y_,x0,y0):=LIM(SEPARABLE(1/x,LIM(rxy,x,1)-y_,x,y_,x0,y0/x0),y_,y_/x)
+FUN_LIN_CCF(qxy,a,b,c,x,y_,x0,y0):=LIM(SEPARABLE(1,a+b*LIM(qxy,y_,(y_-a*x-c)/b),x,y_,x0,a*x0+b*y0+c),y_,a*x+b*y_+c)
+LIN_FRAC_AUX(rxy,h_,k_,x,y_,x0,y0):=LIM(LIM(HOMOGENEOUS(LIM(LIM(rxy,y_,y_+k_),x,x+h_),x,y_,x0-h_,y0-k_),y_,y_-k_),x,x-h_)
+LIN_FRAC(rxy,a,b,c,s_,t_,d_,x,y_,x0,y0):=LIN_FRAC_AUX(rxy,(b*d_-c*t_)/(a*t_-b*s_),(c*s_-a*d_)/(a*t_-b*s_),x,y_,x0,y0)
+TEST_FREE_OF_X(pxy,qxy,x,y_):=(DIF(qxy,x)-DIF(pxy,y_))/pxy
+INTEG_FCTR_FREE_OF_X(test_result,pxy,qxy,x,y_,x0,y0):=USE_INTEG_FCTR(#e^INT(test_result,y_),pxy,qxy,x,y_,x0,y0)
+TEST_FREE_OF_Y(pxy,qxy,x,y_):=(DIF(pxy,y_)-DIF(qxy,x))/qxy
+INTEG_FCTR_FREE_OF_Y(test_result,pxy,qxy,x,y_,x0,y0):=USE_INTEG_FCTR(#e^INT(test_result,x),pxy,qxy,x,y_,x0,y0)
+TESTM2(v_,x,y_):=x^ELEMENT(v_,1)*y_^ELEMENT(v_,2)
+TESTM1(v_,x,y_):=TESTM2(ELEMENT(ROW_REDUCE([LIM(LIM(v_,y_,5),x,2), LIM(LIM(v_,y_,3),x,7)])`,3),x,y_)
+TEST_MONOMIAL(pxy,qxy,x,y_):=TESTM1([y_*qxy, -x*pxy, x*y_*(DIF(pxy,y_)-DIF(qxy,x))],x,y_)
+GEN_HOM_IF_CONST(rxy,x,y_):=x*DIF(x*rxy/y_,x)/(y_*DIF(x*rxy/y_,y_))
+GEN_HOM(rxy,k_,x,y_,x0,y0):=LIM(SEPARABLE(1/x,y_*(k_+LIM(rxy*x/y_,y_,y_/x^k_)),x,y_,x0,y0*x0^k_),y_,y_*x^k_)
+ALMOST_LIN_IF_FREE_OF_X(rxy,hy,y_):=DIF(hy,y_)/rxy
+ALMOST_LIN(rxy,hy,px,qx,x,y_,x0,y0):=LIM(LINEAR1(px*DIF(hy,y_)/rxy,qx*DIF(hy,y_),x,y_,x0,LIM(hy,y_,y0)),y_,hy)
+CLAIRAUT(fxvy,gv,x,y_,v_):=[LIM(fxvy=gv,v_,@1), x*LIM(DIF(LIM(fxvy,y_,x*v_-y_),y_),y_,x*v_-y_)=DIF(gv,v_)]
+SOLVABLE_Y(rxv,x,v_):=(v_-DIF(rxv,x))/DIF(rxv,v_)
+SOLVABLE_X(ryv,y_,v_):=(1-v_*DIF(ryv,y_))/(v_*DIF(ryv,v_))
+LIM_2(uxy,x,x0,y_,y0):=LIM(LIM(uxy,y_,y0),x,x0)
+TAY3(r1,r3,x,y_,x0,y0):=(x-x0)^3*LIM_2(r3,x,x0,y_,y0)/6+(x-x0)^4*LIM_2(DIF(r3,x)+r1*DIF(r3,y_),x,x0,y_,y0)/4!
+TAY2(r1,r2,x,y_,x0,y0):=(x-x0)^2*LIM_2(r2,x,x0,y_,y0)/2+TAY3(r1,DIF(r2,x)+r1*DIF(r2,y_),x,y_,x0,y0)
+TAY_ODE1(rxy,x,y_,x0,y0):=y0+(x-x0)*LIM_2(rxy,x,x0,y_,y0)+TAY2(rxy,DIF(rxy,x)+rxy*DIF(rxy,y_),x,y_,x0,y0)
+PICARD(rxy,yprev,x,y_,x0,y0):=y0+INT(LIM(rxy,y_,yprev),x,x0,x)
+
+## derive-1.62-dos/ODE2.MTH
+LIN2_RED_CCF_DISC(p_,q_):=p_^2-4*q_
+LIN2_RED_CCF_POS(p_,q_,x):=@1*#e^((SQRT(p_^2-4*q_)-p_)*x/2)+@2*#e^((-p_-SQRT(p_^2-4*q_))*x/2)
+LIN2_RED_CCF_NEG(p_,q_,x):=#e^(-p_*x/2)*(@1*SIN(x*SQRT(4*q_-p_^2)/2)+@2*COS(x*SQRT(4*q_-p_^2)/2))
+LIN2_RED_CCF_0(p_,x):=#e^(-p_*x/2)*(@1+@2*x)
+WRONSKIAN(ux,vx,x):=DET([[ux, vx], [DIF(ux,x), DIF(vx,x)]])
+LIN2_COMPLETE(ux,vx,rx,x):=vx*INT(ux*rx/WRONSKIAN(ux,vx,x),x)-ux*INT(vx*rx/WRONSKIAN(ux,vx,x),x)
+SECOND_RED_PARTIC(px,ux,x):=ux*INT(#e^INT(px,x)/ux^2,x)
+AUTONOMOUS_CONSERVATIVE(qy,x,y_,x0,y0,v0):=x=x0+INT((2*INT(qy,y_,y0,y_)+v0^2)^(-1/2),y_,y0,y_)
+AUTONOMOUS(rvy,v_):=rvy/v_
+IMPOSE_BV2(x,y_,x1,y1,x2,y2):=SOLVE([LIM(y_,x,x1)=y1, LIM(y_,x,x2)=y2],[@1, @2])
+IMPOSE_IC2(x,y_,x0,y0,v0):=SOLVE([LIM(y_,x,x0)=y0, LIM(DIF(y_,x),x,x0)=v0],[@1, @2])
+LIOUVILLE(px,qy,x,y_):=INT(#e^INT(qy,y_),y_)=@1+@2*INT(#e^INT(-px,x),x)
+EXACT2_IF_ZEROS(f_,g_,x,y_,v_):=[(v_*DIF(f_,y_,2)+2*DIF(DIF(f_,x),y_)-DIF(DIF(g_,y_),v_))*v_+DIF(f_,x,2)-DIF(DIF(g_,x),v_)+DIF(g_,y_), v_*DIF(DIF(f_,y_),v_)+DIF(DIF(f_,x),v_)+2*DIF(f_,y_)-DIF(g_,v_,2)]
+EXACT2_AUX3(s_,h_,x):=s_+INT(h_-DIF(s_,x),x)
+EXACT2_AUX2(r_,x,y_,v_):=EXACT2_AUX3(INT(DIF(r_,v_),y_),LIM(r_,v_,0),x)
+EXACT2_AUX1(p_,g_,x,y_,v_):=p_+EXACT2_AUX2(g_-DIF(p_,x)-v_*DIF(p_,y_),x,y_,v_)
+EXACT2(f_,g_,x,y_,v_):=EXACT2_AUX1(INT(f_,v_),g_,x,y_,v_)=@1
+EULER(p_,q_,b_):=[p/b-1, q/b^2]
+EQUIDIMENSIONAL_IF_FREE_OF_Y(rxyv,y_,v_):=LIM(rxyv,v_,y_*v_)/y_
+EQUIDIMENSIONAL_Y(rxyv,y_,v_):=LIM(rxyv,y_,1)-v_^2
+EQUIDIMENSIONAL_IF_FREE_OF_X(rxyv,x,v_):=x^2*LIM(rxyv,v_,v_/x)
+EQUIDIMENSIONAL_X(rxyv,x,v_):=(v_+LIM(rxyv,x,1))/v_
+HOMOGENEOUS2_IF_FREE_OF_X(rxyv,x,y_):=x*LIM(rxyv,y_,x*y_)
+HOMOGENEOUS2(rxyv,x,y_,v_):=(LIM(LIM(rxyv,x,1),v_,v_+y_)-v_)/v_
+HOMOGENEOUS2((y-x*v)^2/(n*x^3),x,y,v)
+
+## derive-1.62-dos/PHYSICAL.MTH
+C_:=299792458*(METER/SECOND)
+G_:=6.67260*10^(-14)*(METER^3/(GRAM*SECOND^2))
+H_:=6.6260755*10^(-34)*JOULE*SECOND
+E_:=1.60217733*10^(-19)*COULOMB
+ALPHA:=0.00729735308
+R_INF:=10973731.534/METER
+A0:=5.29177249*10^(-11)*METER
+ME:=9.1093898*10^(-28)*GRAM
+MP:=1.6726231*10^(-24)*GRAM
+MN:=1.6749286*10^(-24)*GRAM
+LAMBDA_C:=2.42631058*10^(-12)*METER
+LAMBDA_CP:=1.32141002*10^(-15)*METER
+LAMBDA_CN:=1.31959110*10^(-15)*METER
+RE_:=2.81794092*10^(-15)*METER
+NA:=6.0221367*10^23/MOLE
+F_:=96485.309*(COULOMB/MOLE)
+R_:=8.314511*(JOULE/(MOLE*DEGREE_KELVIN))
+K_:=1.380658*10^(-23)*(JOULE/DEGREE_KELVIN)
+SIGMA:=5.67051*10^(-8)*WATT/(METER^2*DEGREE_KELVIN^4)
+GN:=9.80665*(METER/SECOND^2)
+
+## derive-1.62-dos/PLOT2D.MTH
+2 SIN LN ABS x
+x^2 * SQRT (15 - x^2) / 10
+SEC SIN x
+x * SIN (2/x)
+(abs (x/2))^abs (x/2)
+ASIN ATAN (0.4 * x)
+TAN COS x
+ASIN SIN x
+ATAN TAN x
+COTH SEC x + TANH SEC x
+SIGN COS x
+2 SQRT ABS SIN x
+- SQRT ABS COT (0.8 x)
+3 SECH SEC x
+2 CSCH SEC x
+4 * EXP (-1 / ABS x) - 2
+SIN SIN x
+ATAN ATAN x
+
+## derive-1.62-dos/PLOT3D.MTH
+1 / (9 + x^2 + y^2)
+- y / (9 + x^2 + y^2)
+1 / (9 + x^2 + (y - 3)^2) + 1 / (9 + x^2 + (y + 3)^2)
+7 * x^2 - y^3
+y^2 - x^2
+y^2 / 5 - 3 * ABS x
+(y^2 + 1/10) / (x^2 + y^2 + 1/10)
+y * (3 * x^2 - y^2)
+x*y * (SIGN (x + 1/10) * SQRT (x^2 + y^2) + 2*y) / (x^2 + y^2 + 1/10)
+- SQRT ABS (x*y)
+- SQRT ABS x - SQRT ABS y
+SQRT ABS x - SQRT ABS y
+- y * SQRT ABS x
+50 / (50 + ((x^2 + y^2)^(1/2) - 37/10)^2) - 1
+COS ((x^2 + y^2) / 4) / (3 + x^2 + y^2)
+EXP (- x/9) * (pi / 2 - ATAN y)
+ATAN (- y, x + 1/10)
+- COS (3 * PI * X/10) * COS (PI * Y /10)
+- COS (3 * PI * X/10) * SIN (PI * Y/5)
+
+## derive-1.62-dos/PLOTPARA.MTH
+[t * (t^2 - 1) / (t^2 + 1), 2 * (t^2 - 1) / (t^2 + 1)]
+[2 * (COS t)^3, 2 * (SIN t)^3]
+[3 sin t, 2 sin (2*t)]
+[(t / pi) * (12 * (t / pi)^2 - 9), (((t / pi)^2 - 1) * 16 * (t / pi)^2 + 2)]
+[3/2 * COS t * (COS t + 1), 2 * SIN (2*t)]
+[SIN (2*t) + SIN t, - COS (2*t) - COS t]
+[EXP (t/4) * SIN (2*t), EXP (t/4) * COS (2*t)]
+[2/3 * t * COS (7/2 * t), 2/3 * t * SIN (7/2 * t)]
+[t - 11/10 * SIN (3*t), - 22/10 * COS (3*t)]
+
+## derive-1.62-dos/RECUREQN.MTH
+LIN1_DIFFERENCE(px,qx,x,x0,y0):=PRODUCT(px,x,x0,x-1)*(y0+SUM(qx/PRODUCT(px,x,x0,x),x,x0,x-1))
+GEOMETRIC1(px,qx,k,x,x0,y0):=LIM(LIN1_DIFFERENCE(LIM(px,x,k^x_),LIM(qx,x,k^x_),x_,LOG(x0,k),y0),x_,LOG(x,k))
+CLAIRAUT_DIF(f_,gd,d_):=LIM(f_=gd,d_,@1)
+LIN2_RED_CCF_RECUR_DISC(p_,q_):=p_^2-4*q_
+LIN2_RED_CCF_RECUR_POS(p_,q_,x):=@1*((SQRT(p_^2-4*q_)-p_)/2)^x+@2*((-p_-SQRT(p_^2-4*q_))/2)^x
+LIN2_RED_CCF_RECUR_NEG(p_,q_,x):=q_^(x/2)*(@1*SIN(x*ATAN(SQRT(4*q_-p_^2)/(-p_)))+@2*COS(x*ATAN(SQRT(4*q_-p_^2)/(-p_))))
+LIN2_RED_CCF_RECUR_0(p_,x):=(-p_/2)^x*(@1+@2*x)
+EXACT2_IF_0(px,qx,rx,x):=px+LIM(qx,x,x+1)+LIM(rx,x,x+2)
+EXACT2_RECUR(px,x):=LIM(px,x,x-1)
+LIN2_RED_GIVEN1(qx,ux,x):=ux*SUM(PRODUCT(qx,x)/(ux*LIM(ux,x,x+1)),x)
+CASORATIAN(ux,vx,x):=DET([[ux, vx], [LIM(ux,x,x+1), LIM(vx,x,x+1)]])
+LIN2_COMPLETE(ux,vx,rx,x):=vx*SUM(rx*LIM(ux/CASORATIAN(ux,vx,x),x,x+1),x)-ux*SUM(rx*LIM(vx/CASORATIAN(ux,vx,x),x,x+1),x)
+IMPOSE_BV2(x,y_,x1,y1,x2,y2):=SOLVE([LIM(y_,x,x1)=y1, LIM(y_,x,x2)=y2],[@1, @2])
+
+## derive-1.62-dos/SPECIAL.MTH
+EULER_GAMMA:=0.577215664901532860606512
+EI(x,m):=EULER_GAMMA+LN(x)+SUM(x^k_/(k_*k_!),k_,1,m)
+LI(x,m):=EI(LN(x),m)
+EN(n,z):=INT(#e^(-z*t_)/t_^n,t_,1,INF)
+EN_ASYMP(n,z,m):=#e^(-z)/z*SUM(PERM(n+k_-1,k_)/(-z)^k_,k_,0,m)
+E1(z,m):=-EULER_GAMMA-LN(z)-SUM((-z)^k_/(k_*k_!),k_,1,m)
+SI(z):=INT(SIN(t_)/t_,t_,0,z)
+CI(z):=EULER_GAMMA+LN(z)+INT((COS(t_)-1)/t_,t_,0,z)
+POCHHAMMER(a,x):=GAMMA(a+x)/GAMMA(a)
+PSI(z):=LN(z)-1/(2*z)-2*INT(t_/((t_^2+z^2)*(#e^(2*PI*t_)-1)),t_,0,INF)
+POLYGAMMA(n,z,m):=(-1)^(n-1)*n!*(1/(n*(z+m+1/2)^n)+SUM((z+k_)^(-n-1),k_,0,m))
+INCOMPLETE_GAMMA(z,w):=1/GAMMA(z)*(w^z/z+INT((#e^(-t_)-1)*t_^(z-1),t_,0,w))
+INCOMPLETE_GAMMA_SERIES(z,w,m):=#e^(-w)*w^z*SUM(w^(m-k_)/GAMMA(z+m-k_+1),k_,0,m)
+BETA(z,w):=GAMMA(z)*GAMMA(w)/GAMMA(z+w)
+INCOMPLETE_BETA(x,z,w):=(x^z/z+(1-(1-x)^w)/w+INT(t_^(z-1)*((1-t_)^(w-1)-1)-(1-t_)^(w-1),t_,0,x))/BETA(z,w)
+FRESNEL_S(z):=INT(SIN(PI*t_^2/2),t_,0,z)
+FRESNEL_S_SERIES(z,m):=SUM((-1)^k_*(PI/2)^(2*k_+1)*z^(4*k_+3)/((2*k_+1)!*(4*k_+3)),k_,0,m)
+FRESNEL_C(z):=INT(COS(PI*t_^2/2),t_,0,z)
+FRESNEL_C_SERIES(z,m):=SUM((-1)^k_*(PI/2)^(2*k_)*z^(4*k_+1)/((2*k_)!*(4*k_+1)),k_,0,m)
+BESSEL_J(n,z):=(z/2)^n/(SQRT(PI)*GAMMA(n+1/2))*INT(COS(z*COS(t_))*SIN(t_)^(2*n),t_,0,PI)
+BESSEL_J_SERIES(n,z,m):=(z/2)^n*SUM((-z^2/4)^k_/(k_!*(n+k_)!),k_,0,m)
+BESSEL_J_ASYMP(n,z):=SQRT(2/(PI*z))*COS(z-(n+1/2)*PI/2)
+BESSEL_Y(n,z):=(BESSEL_J(n,z)*COS(n*PI)-BESSEL_J(-n,z))/SIN(n*PI)
+BESSEL_Y_ASYMP(n,z):=SQRT(2/(PI*z))*SIN(z-(n+1/2)*PI/2)
+AI(z):=SQRT(-z)/3*(BESSEL_J(1/3,2*(-z)^(3/2)/3)+BESSEL_J(-1/3,2*(-z)^(3/2)/3))
+BI(z):=SQRT(-z/3)*(BESSEL_J(1/3,2*(-z)^(3/2)/3)-BESSEL_J(-1/3,2*(-z)^(3/2)/3))
+KUM_AUX(a,b,z):=(1/2)^a/a+INT(t_^(a-1)*(#e^(z*t_)*(1-t_)^(b-a-1)-1),t_,0,1/2)
+KUMMER(a,b,z):=GAMMA(b)/(GAMMA(b-a)*GAMMA(a))*(KUM_AUX(a,b,z)+#e^z*KUM_AUX(b-a,b,-z))
+KUMMER_SERIES(a,b,z,m):=GAMMA(b)/GAMMA(a)*SUM(GAMMA(a+k_)*z^k_/(GAMMA(b+k_)*k_!),k_,0,m)
+HYP_AUX(a,b,c,z):=(1/2)^b/b+INT(t_^(b-1)*((1-t_)^(c-b-1)*(1-t_*z)^(-a)-1),t_,0,1/2)
+HYPERGEOMETRIC(a,b,c,z):=GAMMA(c)/(GAMMA(b)*GAMMA(c-b))*(HYP_AUX(a,b,c,z)+(1-z)^(-a)*HYP_AUX(a,c-b,c,z/(z-1)))
+HYPERGEOMETRIC_SERIES(a,b,c,z,m):=GAMMA(c)/(GAMMA(a)*GAMMA(b))*SUM(GAMMA(a+k_)*GAMMA(b+k_)*z^k_/(GAMMA(c+k_)*k_!),k_,0,m)
+ELLIPTIC_F(a,m):=INT(1/SQRT(1-m*SIN(t_)^2),t_,0,a)
+ELLIPTIC_E(a,m):=INT(SQRT(1-m*SIN(t_)^2),t_,0,a)
+ELLIPTIC_PI(a,n,m):=INT(1/((1-n*SIN(t_)^2)*SQRT(1-m*SIN(t_)^2)),t_,0,a)
+CHEBYCHEV_T(n,x):=SQRT(PI*(1-x^2))/((-2)^n*GAMMA(n+1/2))*DIF((1-x^2)^(n-1/2),x,n)
+CHEBYCHEV_U(n,x):=(-(n+1)*SQRT(PI)/((-2)^(n+1)*GAMMA(n+3/2)*SQRT(1-x^2))*DIF((1-x^2)^(n+1/2),x,n))
+LEGENDRE_P(n,x):=DIF((1-x^2)^n,x,n)/((-2)^n*n!)
+ASSOCIATED_LEGENDRE_P(n,m,x):=(-1)^m*(1-x^2)^(m/2)*DIF(LEGENDRE_P(n,x),x,m)
+HERMITE_H(n,x):=(-1)^n*#e^(x^2)*DIF(#e^(-x^2),x,n)
+HERMITE_HE(n,x):=HERMITE_H(n,x/SQRT(2))
+WEBER_D(n,x):=#e^(-x^2/4)*HERMITE_HE(n,x)
+GENERALIZED_LAGUERRE(n,a,x):=#e^x/(x^a*n!)*DIF(x^(a+n)/#e^x,x,n)
+JACOBI_P(n,a,b,x):=DIF((1-x)^a*(1-x)^b*(1-x^2)^n,x,n)/((-2)^n*n!*(1-x)^a*(1-x)^b)
+GEGENBAUER_C(n,a,x):=GAMMA(a+1/2)*GAMMA(n+2*a)/((-2)^n*n!*GAMMA(2*a)*GAMMA(a+n+1/2)*(1-x^2)^(a-1/2))*DIF((1-x^2)^(n+a-1/2),x,n)
+ZETA(s,m):=(m+1/2)^(1-s)/(s-1)+SUM(k^(-s),k,1,m)
+HURWITZ_ZETA(s,a,m):=(m+a+1/2)^(1-s)/(s-1)+SUM((k_+a)^(-s),k_,0,m)
+LERCH_PHI(z,s,a,m):=SUM(z^k_/(a+k_)^s,k_,0,m)
+POLYLOG(n,z,m):=SUM(z^k_/k_^n,k_,1,m)
+DILOG(x):=INT(LN(t_)/(1-t_),t_,1,x)
+POISSON_DENSITY(k,t):=#e^(-t)*t^k/k!
+POISSON_DISTRIBUTION(k,t):=SUM(POISSON_DENSITY(j_,t),j_,0,k)
+BINOMIAL_DENSITY(k,n,p):=COMB(n,k)*p^k*(1-p)^(n-k)
+BINOMIAL_DISTRIBUTION(k,n,p):=SUM(BINOMIAL_DENSITY(j_,n,p),j_,0,MIN(k,n))
+HYPERGEOMETRIC_DENSITY(k,n,m,j):=COMB(m,k)*COMB(j-m,n-k)/COMB(j,n)
+HYPERGEOMETRIC_DISTRIBUTION(k,n,m,j):=SUM(HYPERGEOMETRIC_DENSITY(i_,n,m,j),i_,MAX(0,n-j+m),MIN(k,n,m))
+STUDENT(x,d):=1-INCOMPLETE_BETA(d/2,1/2,d/(d+x^2))
+F_DISTRIBUTION(x,d1,d2):=INCOMPLETE_BETA(d2/2,d1/2,d2/(d2+d1*x))
+CHI_SQ(x,d):=INCOMPLETE_GAMMA(d/2,x/2)
+
+## derive-1.62-dos/TRIG.MTH
+COS (17/6 pi)
+SIN (-30 DEG)
+(SIN x)^3 + SIN x + (COS x)^2 SIN x
+(1 - (COS x)^2)^4 (1 - (SIN x)^2)^3 ((SIN x)^2 + (COS x)^2)^5
+SIN (pi / 4 + a) - SIN (0.25 (pi - 4 a))
+SIN (1.5 pi/2+x) / COS (pi+x) + COS ((3pi-2x)/2) / SIN (pi/2+x)
+SIN (pi - a) / TAN (pi + a) * COT ((pi - 2 a)/2) / TAN (pi / 2 + a) * SIN (1.5 * pi + a) / SIN (- a)
+SIN (6 x) / SIN (3 x)
+1/(1+TAN(a)*TAN(a/2))
+(COS (a/2) + SIN (a/2))^2
+SIN((PI-t)/4)^2*SIN(PI/4+t/4)^2
+CSC (2x) (2 (COS (x/2))^2 - 1)
+(1 + SIN a) * (1 + SEC a) / ((1 + COS a) * (1 + CSC a))
+(TAN a)^2 / (1 + (TAN a)^2) * (1 + (COT a)^2) / (COT a)^2
+ATAN (2 + SQRT 3)
+ATAN (-1, -1)
+ASIN (-1/2)
+ACOS (- 1 / SQRT 2)
+ASIN (x/SQRT(x^2 + 1))
+ATAN (x/SQRT(1-x^2))
+ATAN (x/2 + 3) + ATAN (2/(x + 6))
+TAN ATAN x
+ASEC (1/x)
+CSC ACSC x
+ACOT t + ATAN t
+
+## derive-3.14-dos/ALGEBRA.DMO
+(x+a)^2-2*a*x
+2 (x^2 - y^2)^6 - (x^2 - y^2)^5(2 x^2 - 3)
+(x + (a + 1)^10) ^ 2  -  (a + 1)^20
+a^3/((a-b)*(a-c)) + b^3/((b-c)*(b-a)) + c^3/((c-a)*(c-b))
+(x^6+a^6)(x+1)/((x^6+a^6)*(x^2-a^2)+a^2*x^2*(x^4-a^4))+a^2*x^2(x+1)/(x^6-a^6-a^2*x^2*(x^2-a^2))
+((a*n + b*m)^2 + (a*m - b*n)^2) / ((a*p + b*q)^2 + (a*q - b*p)^2)
+((p*x^2+(k-s)*x+r)^2-(p*x^2+(k+s)*x+r)^2)/((p*x^2+(k+t)*x+r)^2-(p*x^2+(k-t)*x+r)^2)
+(1 - (1-(y+1)/(x+y+1)) / (1-x/(x+y+1))) / ((y+1)^2 - x / (1+x/(y-x+1)) (x (y+1)/(y-x+1) - x))
+((1/x^2+1/y^2)/(1/x^2-1/y^2)-(1/x^2-1/y^2)/(1/x^2+1/y^2))/((2x+y)/(((x+y)/(x-y)+(x-y)/(x+y))*(x^2/y^2+y^2/x^2-2)))
+
+## derive-3.14-dos/APPROX.MTH
+CF(a,m,n):=VECTOR(VECTOR(a SUB (m-n+i+j),j,1,n+1),i,1,n)
+DV(a,m,n):=ELEMENT(ROW_REDUCE(CF(a,m,n))`,n+1)
+NV(a,u,m,n):=VECTOR(a SUB (k+1)-SUM(u SUB (n+1-i)*a SUB (k+1-i),i,1,k),k,1,MIN(m,n))
+P3(a,v,u,x,c,m,n):=(a SUB 1+SUM(v SUB k*(x-c)^k,k,1,m))/(1-SUM(u SUB (n+1-k)*(x-c)^k,k,1,n))
+P2(a,u,x,c,m,n):=P3(a,NV(a,u,m,n),u,x,c,m,n)
+P1(a,x,c,m,n):=P2(a,DV(a,m,n),x,c,m,n)
+PADE(y,x,x0,n,d):=P1(VECTOR(LIM(DIF(y,x,m_),x,x0)/m_!,m_,0,n+d+1),x,x0,n,d)
+
+## derive-3.14-dos/BESSEL.MTH
+BESSEL_J3(v):=v/(v SUB 1+2*SUM(v SUB (2*k_+1),k_,1,DIMENSION(v)/2-1))
+BESSEL_J2(v):=BESSEL_J3(VECTOR(v SUB (2*j_),j_,1,DIMENSION(v)/2))
+BESSEL_J1(n,z):=ITERATE(APPEND([v_ SUB 1-1,2*v_ SUB 1/z*v_ SUB 2-v_ SUB 4],v_),v_,[n,1,n+1,0],n)
+BESSEL_J(n,z):=(BESSEL_J2(BESSEL_J1(n+20+2*FLOOR(ABS(z)),z))) SUB (n+1)
+BESSEL_J_SERIES(n,z,m):=(z/2)^n*SUM((-z^2/4)^k_/(k_!*(n+k_)!),k_,0,m)
+BESSEL_J_ASYMP(n,z):=SQRT(2/(pi*z))*COS(z-(n+1/2)*pi/2)
+BESSEL_Y(n,z):=(BESSEL_J(n,z)*COS(n*pi)-BESSEL_J(-n,z))/SIN(n*pi)
+HARMONIC_NUMBER(n):=SUM(1/k,k,1,n)
+BESSEL_Y_SERIES(n,z,m):=2/pi*((euler_gamma+LN(z/2))*BESSEL_J_SERIES(n,z,m)-(SUM((n-m_-1)!/m_!*(z/2)^(2*m_-n),m_,0,n-1)+SUM(COS(pi*m_)*(z/2)^(n+2*m_)/(m_!*(n+m_)!)*(HARMONIC_NUMBER(m_)+HARMONIC_NUMBER(n+m_)),m_,0,m))/2)
+BESSEL_Y_ASYMP(n,z):=SQRT(2/(pi*z))*SIN(z-(n+1/2)*pi/2)
+BESSEL_I(n,z):=INT(#e^(z*COS(t))*COS(n*t),t,0,pi)/pi
+BESSEL_I_SERIES(n,z,m):=(z/2)^n*SUM((z^2/4)^k/(k!*(n+k)!),k,0,m)
+BESSEL_I_ASYMP(n,z):=#e^z/SQRT(2*pi*z)*(1-(4*n^2-1)/(8*z))
+BESSEL_K(n,z):=INT(#e^(-z*COSH(t))*COSH(n*t),t,0,inf)
+BESSEL_K_ASYMP(n,z):=#e^(-z)*SQRT(pi/(2*z))*(1+(4*n^2-1)/(8*z))
+SPHERICAL_BESSEL_J_AUX(n,z):=IF(n=0,SIN(z)/z,-LIM(DIF(SPHERICAL_BESSEL_J_AUX(n-1,z_),z_),z_,z)/z)
+SPHERICAL_BESSEL_J(n,z):=z^n*SPHERICAL_BESSEL_J_AUX(n,z)
+SPHERICAL_BESSEL_Y_AUX(n,z):=IF(n=0,COS(z)/z,-LIM(DIF(SPHERICAL_BESSEL_Y_AUX(n-1,z_),z_),z_,z)/z)
+SPHERICAL_BESSEL_Y(n,z):=-z^n*SPHERICAL_BESSEL_Y_AUX(n,z)
+AI_AUX(z,m):=SUM(3^k*GAMMA(1/3+k)*z^(3*k)/(3*k)!,k,0,m)
+BI_AUX(z,m):=SUM(3^k*GAMMA(2/3+k)*z^(3*k+1)/(3*k+1)!,k,0,m)
+AI_SERIES(z,m):=IF(z=0,3^(5/6)*(1/3)!/(2*pi),(3^(-1/6)*AI_AUX(z,m)-3^(1/6)*BI_AUX(z,m))/(2*pi))
+BI_SERIES(z,m):=IF(z=0,3^(4/3)*(1/3)!/(2*pi),(3^(1/3)*AI_AUX(z,m)+3^(2/3)*BI_AUX(z,m))/(2*pi))
+
+## derive-3.14-dos/CALCULUS.DMO
+LIM (((x + h)^3 - x^3) / h, h, 0)
+LIM (SIN x / x, x, 0)
+LIM (x^(1/x), x, inf)
+LIM ((a^x - b^x) / x, x, 0)
+LIM (1/x, x, 0, -1)
+LIM ((SIN x)^249 (LN (1 - x))^251 / (x^100 (ATAN x)^400), x, 0)
+DIF (x^3, x)
+DIF (SIN (x^3), x)
+DIF (x^2 y^3, y)
+TAYLOR (#e^x, x, 0, 5)
+TAYLOR (LN COS (a x), x, 0, 7)
+INT (x^2, x)
+INT (COS x, x)
+INT (x^2 COS (a x^3 + b), x)
+INT (x^2, x, a, b)
+INT (1/x^2, x, a^2, inf)
+INT (1/SQRT x, x, 0, b^2)
+INT (INT (x y, y, 0, SQRT (r^2 - x^2)), x, 0, r)
+SUM (k, k, 0, n)
+SUM (k^3, k, 0, n)
+SUM (a^k, k, 0, n)
+SUM (2^-k, k, 0, inf)
+SUM (k/370370367, k, -123456788, 123456789)
+PRODUCT (2 k, k, 1, n)
+
+## derive-3.14-dos/DIF_APPS.MTH
+LINE(x0,y0,d1,x):=y0+d1*(x-x0)
+CIRCLE(v0,r,alpha):=[v0 SUB 1+r*COS(alpha),v0 SUB 2+r*SIN(alpha)]
+CURVATURE_AUX(d1,d2):=d2/(1+d1^2)^(3/2)
+CURVATURE(y,x):=CURVATURE_AUX(DIF(y,x),DIF(y,x,2))
+CENTER_OF_CURVATURE_AUX(v,d1,d2):=v+[-d1,1]*(1+d1^2)/d2
+CENTER_OF_CURVATURE(y,x):=CENTER_OF_CURVATURE_AUX([x,y],DIF(y,x),DIF(y,x,2))
+TANGENT(y,x,x0):=LIM(LINE(x_,LIM(y,x,x_),LIM(DIF(y,x),x,x_),x),x_,x0,0)
+PERPENDICULAR(y,x,x0):=LIM(LINE(x_,LIM(y,x,x_),(-1)/LIM(DIF(y,x),x,x_),x),x_,x0,0)
+OSCULATING_CIRCLE(y,x,theta):=CIRCLE(CENTER_OF_CURVATURE(y,x),1/CURVATURE(y,x),theta)
+[default1:=1,PARA_DIF(v,t,default1):=ITERATE(DIF(dk,t)/DIF(v SUB 1,t),dk,v SUB 2,default1)]
+PARA_CURVATURE(v,t):=CURVATURE_AUX(PARA_DIF(v,t,1),PARA_DIF(v,t,2))
+PARA_CENTER_OF_CURVATURE(v,t):=CENTER_OF_CURVATURE_AUX(v,PARA_DIF(v,t,1),PARA_DIF(v,t,2))
+PARA_TANGENT(v,t,t0,x):=LIM(LINE(LIM(v SUB 1,t,t_),LIM(v SUB 2,t,t_),LIM(PARA_DIF(v,t,1),t,t_),x),t_,t0,0)
+PARA_PERPENDICULAR(v,t,t0,x):=LIM(LINE(LIM(v SUB 1,t,t_),LIM(v SUB 2,t,t_),-1/LIM(PARA_DIF(v,t,1),t,t_),x),t_,t0,0)
+PARA_OSCULATING_CIRCLE(v,t,t0,phi):=CIRCLE(LIM(PARA_CENTER_OF_CURVATURE(v,t),t,t0),1/LIM(PARA_CURVATURE(v,t),t,t0),phi)
+[default1:=1,POLAR_DIF(r,theta,default1):=PARA_DIF([r*COS(theta),r*SIN(theta)],theta,default1)]
+POLAR_CURVATURE(r,theta):=PARA_CURVATURE([r*COS(theta),r*SIN(theta)],theta)
+POLAR_CENTER_OF_CURVATURE(r,theta):=PARA_CENTER_OF_CURVATURE([r*COS(theta),r*SIN(theta)],theta)
+POLAR_TANGENT(r,theta,theta0,x):=PARA_TANGENT([r*COS(theta),r*SIN(theta)],theta,theta0,x)
+POLAR_PERPENDICULAR(r,theta,theta0,x):=PARA_PERPENDICULAR([r*COS(theta),r*SIN(theta)],theta,theta0,x)
+POLAR_OSCULATING_CIRCLE(r,theta,theta0,phi):=PARA_OSCULATING_CIRCLE([r*COS(theta),r*SIN(theta)],theta,theta0,phi)
+IMP_DIF_AUX(d1,x,y,n):=ITERATE(DIF(dk,x)+d1*DIF(dk,y),dk,d1,n-1)
+[default1:=1,IMP_DIF(u,x,y,default1):=IMP_DIF_AUX(-DIF(u,x)/DIF(u,y),x,y,default1)]
+IMP_CURVATURE(u,x,y):=CURVATURE_AUX(IMP_DIF(u,x,y,1),IMP_DIF(u,x,y,2))
+IMP_CENTER_OF_CURVATURE(u,x,y):=CENTER_OF_CURVATURE_AUX([x,y],IMP_DIF(u,x,y,1),IMP_DIF(u,x,y,2))
+IMP_TANGENT(u,x,y,x0,y0):=LIM(LINE(x_,y_,LIM(IMP_DIF(u,x,y,1),[x,y],[x_,y_]),x),[x_,y_],[x0,y0])
+IMP_PERPENDICULAR(u,x,y,x0,y0):=LIM(LINE(x_,y_,-1/LIM(IMP_DIF(u,x,y,1),[x,y],[x_,y_]),x),[x_,y_],[x0,y0])
+IMP_OSCULATING_CIRCLE(u,x,y,x0,y0,theta):=CIRCLE(LIM(IMP_CENTER_OF_CURVATURE(u,x,y),[x,y],[x0,y0]),1/LIM(IMP_CURVATURE(u,x,y),[x,y],[x0,y0]),x,theta)
+TANGENT_PLANE(u,v,v0):=LIM(GRAD(u,v),v,v0) . (v-v0)
+NORMAL_LINE(u,v,v0,t):=v0+t*LIM(GRAD(u,v),v,v0)
+
+## derive-3.14-dos/ELLIPTIC.MTH
+ELLIPTIC_F(phi,m):=INT(1/SQRT(1-m*SIN(t_)^2),t_,0,phi)
+ELLIPTIC_E(phi,m):=INT(SQRT(1-m*SIN(t_)^2),t_,0,phi)
+ELLIPTIC_PI(phi,m,n):=INT(1/((1-n*SIN(t_)^2)*SQRT(1-m*SIN(t_)^2)),t_,0,phi)
+
+## derive-3.14-dos/ENGLISH.MTH
+foot:=
+inch:=1/12*foot
+mil:=1/1000*inch
+yard:=3*foot
+fathom:=6*foot
+rod:=16.5*foot
+mile:=5280*foot
+furlong:=1/8*mile
+league:=3*mile
+acre:=1/640*mile^2
+gallon:=231*inch^3
+quart:=1/4*gallon
+pint:=1/2*quart
+barrel:=31.5*gallon
+pound:=
+ounce:=1/16*pound
+ton:=2000*pound
+second:=
+minute:=60*second
+hour:=60*minute
+day:=24*hour
+week:=7*day
+fortnight:=2*week
+year:=365.2422*day
+decade:=10*year
+century:=100*year
+meter:=1/(0.3048)*foot
+gram:=1/(453.59237)*pound
+
+## derive-3.14-dos/EXP_INT.MTH
+EI(x,m):=euler_gamma+LN(x)+SUM(x^n_/(n_*n_!),n_,1,m)
+LI(x,m):=EI(LN(x),m)
+EN(n,z):=INT(#e^(-z*t_)/t_^n,t_,1,inf)
+EN_ASYMP(n,z,m):=#e^(-z)/z*SUM(PERM(n+l_-1,l_)/(-z)^l_,l_,0,m)
+E1(z,m):=-euler_gamma-LN(z)-SUM((-z)^n_/(n_*n_!),n_,1,m)
+SI(z):=INT(SIN(t_)/t_,t_,0,z)
+CI(z):=euler_gamma+LN(z)+INT((COS(t_)-1)/t_,t_,0,z)
+
+## derive-3.14-dos/FRESNEL.MTH
+DAWSON(x):=-SQRT(pi)*#i*#e^(-x^2)*ERF(#i*x)/2
+FRESNEL_SIN(z):=INT(SIN(pi*t_^2/2),t_,0,z)
+FRESNEL_SIN_SERIES(z,m):=SUM(COS(pi*k_)*(pi/2)^(2*k_+1)*z^(4*k_+3)/((2*k_+1)!*(4*k_+3)),k_,0,m)
+FRESNEL_COS(z):=INT(COS(pi*t_^2/2),t_,0,z)
+FRESNEL_COS_SERIES(z,m):=SUM(COS(pi*k_)*(pi/2)^(2*k_)*z^(4*k_+1)/((2*k_)!*(4*k_+1)),k_,0,m)
+FRESNEL_AUX_F(z):=1/(pi*z)-3/(pi^3*z^5)
+FRESNEL_AUX_G(z):=1/(pi^2*z^3)-15/(pi^4*z^7)
+FRESNEL_SIN_ASYMP(z):=1/2-FRESNEL_AUX_F(z)*COS(pi*z^2/2)-FRESNEL_AUX_G(z)*SIN(pi*z^2/2)
+FRESNEL_COS_ASYMP(z):=1/2+FRESNEL_AUX_F(z)*SIN(pi*z^2/2)-FRESNEL_AUX_G(z)*COS(pi*z^2/2)
+
+## derive-3.14-dos/GRAPHICS.MTH
+axes:=[[-t_,-t_/2],[t_,-t_/2],[0,t_]]
+ROTATE_X(alpha):=[[1,0,0],[0,COS(alpha),-SIN(alpha)],[0,SIN(alpha),COS(alpha)]]
+ROTATE_Y(beta):=[[COS(beta),0,SIN(beta)],[0,1,0],[-SIN(beta),0,COS(beta)]]
+ROTATE_Z(sigma):=[[COS(sigma),-SIN(sigma),0],[SIN(sigma),COS(sigma),0],[0,0,1]]
+ISOMETRIC(v):=[v SUB 2-v SUB 1,v SUB 3-(v SUB 1+v SUB 2)/2]
+GRID(u,s,s0,sm,m,t,t0,tn,n):=VECTOR(VECTOR(LIM(u,[s,t],[s0+j*(sm-s0)/m,t0+k*(tn-t0)/n]),j,0,m),k,0,n)
+ISOMETRICS(v,s,s0,sm,m,t,t0,tn,n):=GRID(ISOMETRIC(v),s,s0,sm,m,t,t0,tn,n)
+COPROJECTION(v):=VECTOR(VECTOR(u_ SUB n_,u_,v),n_,DIMENSION(v SUB 1))
+SPHERE(r,theta,phi):=r*[SIN(phi)*COS(theta),SIN(phi)*SIN(theta),COS(phi)]
+CYLINDER(r,theta,z):=[r*COS(theta),r*SIN(theta),z]
+CONE(alpha,theta,z):=[z*SIN(alpha)*COS(theta),z*SIN(alpha)*SIN(theta),z]
+NORMAL_VECTOR(v,t):=SIGN(DIF(v,t,2))
+BINORMAL(v,t):=SIGN(CROSS(DIF(v,t),DIF(v,t,2)))
+SPACE_TUBE(v,t,r,phi):=v+r*(SIN(phi)*NORMAL_VECTOR(v,t)+COS(phi)*BINORMAL(v,t))
+TORUS(rc,rs,theta,phi):=SPACE_TUBE(rc*[COS(theta),SIN(theta),0],theta,rs,phi)
+RE_IM(w):=[RE(w),IM(w)]
+RAYS(w,z,z00,zmn,m,n,x,y):=GRID([[x,y],[[x,y],[x,y]+RE_IM(LIM(w,z,x+#i*y))]],x,RE(z00),RE(zmn),m,y,IM(z00),IM(zmn),n)
+HORIZONTALS(w,z,z00,zmn,m,n,x,y):=GRID(RE_IM(LIM(w,z,x+#i*y)),x,RE(z00),RE(zmn),m,y,IM(z00),IM(zmn),n)
+ARCS(w,z,r0,rm,m,theta0,Θn,n,r,theta):=GRID(RE_IM(LIM(w,z,r*#e^(#i*theta))),theta,theta0,Θn,n,r,r0,rm,m)
+
+## derive-3.14-dos/HYPERGEO.MTH
+KUM_AUX(a,b,z):=(1/2)^a/a+INT(t^(a-1)*(#e^(z*t)*(1-t)^(b-a-1)-1),t,0,1/2)
+KUMMER(a,b,z):=GAMMA(b)/(GAMMA(b-a)*GAMMA(a))*(KUM_AUX(a,b,z)+#e^z*KUM_AUX(b-a,b,-z))
+KUMMER_SERIES(a,b,z,m):=GAMMA(b)/GAMMA(a)*SUM(GAMMA(a+k)*z^k/(GAMMA(b+k)*k!),k,0,m)
+HYP_AUX(a,b,c,z):=(1/2)^b/b+INT(t^(b-1)*((1-t)^(c-b-1)*(1-t*z)^(-a)-1),t,0,1/2)
+HYPERGEOMETRIC(a,b,c,z):=GAMMA(c)/(GAMMA(b)*GAMMA(c-b))*(HYP_AUX(a,b,c,z)+(1-z)^(-a)*HYP_AUX(a,c-b,c,z/(z-1)))
+HYPERGEOMETRIC_SERIES(a,b,c,z,m):=GAMMA(c)/(GAMMA(a)*GAMMA(b))*SUM(GAMMA(a+k_)*GAMMA(b+k_)*z^k_/(GAMMA(c+k_)*k_!),k_,0,m)
+
+## derive-3.14-dos/INT_APPS.MTH
+LAPLACE(y,t,s):=INT(#e^(-s*t)*y,t,0,inf)
+FOURIER(y,t,t1,t2,n):=1/(t2-t1)*INT(y,t,t1,t2)+2/(t2-t1)*SUM(COS(2*pi*m_*t/(t2-t1))*INT(y*COS(2*pi*m_*t/(t2-t1)),t,t1,t2)+SIN(2*pi*m_*t/(t2-t1))*INT(y*SIN(2*pi*m_*t/(t2-t1)),t,t1,t2),m_,1,n)
+default1:=1
+PARA_ARC_LENGTH(v,t,t1,t2,default1):=INT(default1*SQRT(SUM(DIF(v SUB m_,t)^2,m_,1,DIMENSION(v))),t,t1,t2)
+ARC_LENGTH(y,x,x1,x2,default1):=PARA_ARC_LENGTH([x,y],x,x1,x2,default1)
+POLAR_ARC_LENGTH(r,theta,theta1,theta2,default1):=INT(default1*SQRT(r^2+DIF(r,theta)^2),theta,theta1,theta2)
+AREA(x,x1,x2,y,y1,y2,default1):=INT(INT(default1,y,y1,y2),x,x1,x2)
+AREA_CENTROID(x,x1,x2,y,y1,y2,default1):=AREA(x,x1,x2,y,y1,y2,[x,y]*default1)/AREA(x,x1,x2,y,y1,y2,default1)
+AREA_INERTIA(x,x1,x2,y,y1,y2,default1):=AREA(x,x1,x2,y,y1,y2,[[y^2,-x*y],[-x*y,x^2]]*default1)/AREA(x,x1,x2,y,y1,y2,default1)
+POLAR_AREA(r,r1,r2,theta,theta1,theta2,default1):=INT(INT(default1*r,r,r1,r2),theta,theta1,theta2)
+SURFACE_AREA(z,x,x1,x2,y,y1,y2,default1):=INT(LIM(INT(default1*SQRT(1+DIF(z,x)^2+DIF(z,y)^2),y,LIM(y1,x,x_),LIM(y2,x,x_)),x_,x),x,x1,x2)
+VOLUME(x,x1,x2,y,y1,y2,z,z1,z2,default1):=INT(INT(INT(default1,z,z1,z2),y,y1,y2),x,x1,x2)
+VOLUME_CENTROID(x,x1,x2,y,y1,y2,z,z1,z2,default1):=VOLUME(x,x1,x2,y,y1,y2,z,z1,z2,[x,y,z]*default1)/VOLUME(x,x1,x2,y,y1,y2,z,z1,z2,default1)
+VOLUME_INERTIA(x,x1,x2,y,y1,y2,z,z1,z2,default1):=VOLUME(x,x1,x2,y,y1,y2,z,z1,z2,[[y^2+z^2,-x*y,-x*z],[-x*y,x^2+z^2,-y*z],[-x*z,-y*z,x^2+y^2]]*default1)/VOLUME(x,x1,x2,y,y1,y2,z,z1,z2,default1)
+SPHERICAL_VOLUME(r,r1,r2,theta,theta1,theta2,phi,phi1,phi2,default1):=INT(INT(INT(default1*r^2*SIN(theta),phi,phi1,phi2),theta,theta1,theta2),r,r1,r2)
+CYLINDRICAL_VOLUME(r,r1,r2,theta,theta1,theta2,z,z1,z2,default1):=INT(INT(INT(default1*r,r,r1,r2),theta,theta1,theta2),z,z1,z2)
+VOLUME_OF_REVOLUTION(y,x,x1,x2):=CYLINDRICAL_VOLUME(r_,0,y,theta_,0,2*pi,x,x1,x2)
+AREA_OF_REVOLUTION(y,x,x1,x2):=2*pi*PARA_ARC_LENGTH([x,y],x,x1,x2,y)
+VOLUMEY_OF_REVOLUTION(y,x,x1,x2):=2*pi*INT(x*y,x,x1,x2)
+AREAY_OF_REVOLUTION(y,x,x1,x2):=2*pi*PARA_ARC_LENGTH([x,y],x,x1,x2,x)
+
+## derive-3.14-dos/MATRIX.DMO
+VECTOR([x,x^2,x^3],x,1,8)
+MATRIX(z,i,m,j,n):=VECTOR(VECTOR(z,j,1,n),i,1,m)
+MATRIX(i-j,i,2,j,3)
+IDENTITY_MATRIX(3)
+[[a,b,c],[1,2,3]] SUB 1 SUB 2
+[[a,b,c],[1,2,3]] SUB 2
+2*[[a,2],[3,b]]+[[1,3],[a,-b]]
+[2,a,5] . [2*a,3,-1]
+[[a,b],[c,d]] . [[x],[y]]
+CROSS([1,2,3],[a,b,c])
+DIMENSION([a,b,c])
+DIMENSION([[1,2,3],[4,5,6]])
+OUTER(v,w):=VECTOR([v SUB i],i,DIMENSION(v)) . [w]
+OUTER([a,b,c],[2,3,4])
+[[a,b,c],[1,2,3]]`
+[[a,b,c],[1,2,3]]` SUB 3
+DET([[2,3],[a,b]])
+DET([[1,a,a,a],[1,x,a,a],[1,a,x,a],[1,a,a,x]])
+DET([[x,1,1,1,1],[1,x,1,1,1],[1,1,x,1,1],[1,1,1,x,1],[1,1,1,1,x]])
+TRACE([[a,b],[1,2]])
+[[a,b],[2,3]]^(-1)
+[[a,b],[c,d]] . [[a,b],[c,d]]^(-1)
+[[a,b],[c,d]]^(-1) . [[e],[f]]
+ROW_REDUCE([[2,4],[3,6]],[[6],[9]])
+CHARPOLY([[a,b],[b,a]],z)
+EIGENVALUES([[a,b],[b,a]])
+a . (b+c)-(b` . a`)`
+GRAD(x+y^2+z^3)
+DIV([1,2*y,3*z^2])
+LAPLACIAN(x+y^2+z^3)
+CURL([y^2,2*x*z,0])
+POTENTIAL([1,2*y,3*z^2])
+VECTOR_POTENTIAL([-2*x,0,2*z-2*y])
+
+## derive-3.14-dos/METRIC.MTH
+tera:=10^12
+giga:=10^9
+mega:=10^6
+kilo:=1000
+hecto:=100
+deca:=10
+deci:=0.1
+centi:=0.01
+milli:=0.001
+micro:=10^(-6)
+nano:=10^(-9)
+pico:=10^(-12)
+meter:=
+micron:=micro*meter
+angstrom:=10^(-8)*centi*meter
+are:=100*meter^2
+hectare:=hecto*are
+liter:=1/1000*meter^3
+gram:=
+metric_ton:=1000*kilo*gram
+carat:=200*milli*gram
+second:=
+minute:=60*second
+hour:=60*minute
+day:=24*hour
+week:=7*day
+year:=365.2422*day
+decade:=10*year
+century:=100*year
+newton:=kilo*gram*meter/second^2
+dyne:=newton/100000
+joule:=newton*meter
+erg:=joule/10000000
+watt:=joule/second
+foot:=0.3048*meter
+pound:=453.59237*gram
+coulomb:=SQRT(meter)*SQRT(gram)/100
+degree_kelvin:=
+mole:=
+
+## derive-3.14-dos/MISC.MTH
+RATIO_TEST(t,n):=LIM(ABS(LIM(t,n,n+1)/t),n,inf)
+LIM2(u,x,y,x0,y0):=LIM(u,[y,x],[y0+@1*(x-x0),x0])
+LEFT_RIEMANN(u,x,a,b,n):=(b-a)/n*SUM(LIM(u,x,a+(b-a)*k_/n),k_,0,n-1)
+INT_PARTS(u,v,x):=u*INT(v,x)-INT(INT(v,x)*DIF(u,x),x)
+DEF_INT_PARTS(u,v,x,a,b):=(LIM(u*INT(v,x),x,b,-1)-LIM(u*INT(v,x),x,a,1))-INT(INT(v,x)*DIF(u,x),x,a,b)
+INVERSE(u,x):=ITERATE(u,x,x,-1)
+INT_SUBST(y,x,u):=LIM(INT(LIM(y,x,INVERSE(u,x))*DIF(INVERSE(u,x),x),x),x,u)
+DEF_INT_SUBST(y,x,u,a,b):=INT(LIM(y,x,INVERSE(u,x))*DIF(INVERSE(u,x),x),x,LIM(u,x,a),LIM(u,x,b))
+PROVE_SUM(t,k,a,n,s):=[LIM(t,k,a)-LIM(s,n,a),s+LIM(t,k,n+1)-LIM(s,n,n+1)]
+POLY_COEFF(u,x,n):=1/n!*LIM(DIF(u,x,n),x,0)
+POLY_DEGREE_AUX(u,x,n):=IF(u=0,n,POLY_DEGREE_AUX(DIF(u,x),x,n+1),POLY_DEGREE_AUX(DIF(u,x),x,n+1))
+POLY_DEGREE(u,x):=POLY_DEGREE_AUX(u,x,-1)
+random_sign:=2*RANDOM(2)-1
+RANDOM_POLY(x,d,s):=SUM(random_sign*RANDOM(s)*x^j,j,0,d-1)+(1+RANDOM(s))*x^d
+RANDOM_VECTOR(n,s):=VECTOR(random_sign*RANDOM(s),j,1,n)
+RANDOM_MATRIX(m,n,s):=VECTOR(RANDOM_VECTOR(n,s),k,1,m)
+GOODNESS_OF_FIT(u,x,a):=SQRT(SUM((LIM(u,x,a SUB k SUB 1)-a SUB k SUB 2)^2,k,1,DIMENSION(a))/DIMENSION(a))
+POLY_INTERPOLATE_AUX(a,x,k,n):=PRODUCT((x-a SUB j_ SUB 1)/(a SUB k SUB 1-a SUB j_ SUB 1),j_,1,k-1)*PRODUCT((x-a SUB j_ SUB 1)/(a SUB k SUB 1-a SUB j_ SUB 1),j_,k+1,n)
+POLY_INTERPOLATE(a,x):=SUM(a SUB k_ SUB 2*POLY_INTERPOLATE_AUX(a,x,k_,DIMENSION(a)),k_,1,DIMENSION(a))
+POLY_INTERPOLATE_EXPRESSION(u,x,a):=POLY_INTERPOLATE(VECTOR([a SUB k_,LIM(u,x,a SUB k_)],k_,1,DIMENSION(a)),x)
+
+## derive-3.14-dos/NUMBER.MTH
+default1:=1
+CEILING(a,default1):=-FLOOR(-a,default1)
+ROUND(a,default1):=FLOOR(a/default1+1/2)
+SQUARE_WAVE(x):=(-1)^FLOOR(x)
+POWER_MOD(n,d,m):=MOD(n^d,m)
+NTH_PRIME(n):=ITERATE(NEXT_PRIME(k),k,1,n)
+CATALAN(n):=COMB(2*n,n)/(n+1)
+BERNOULLI(n):=IF(n=0,1,IF(n=1,-1/2,-n*ZETA(1-n)))
+BERNOULLI_POLY(n,x):=IF(n=1,x-1/2,n*LIM(SUM(k^(n-1),k,1,x_-1),x_,x)+BERNOULLI(n))
+EULER_POLY(n,x):=2/(n+1)*(BERNOULLI_POLY(n+1,x)-2^(n+1)*BERNOULLI_POLY(n+1,x/2))
+EULER(n):=IF(MOD(n,2)=1,0,2^n*EULER_POLY(n,1/2))
+LUCAS(n):=(ITERATE(IF((n AND d_)=0,[a_^2-2*(-1)^c_,a_*b_-(-1)^c_,2*c_,d_/2],[a_*b_-(-1)^c_,b_^2+2*(-1)^c_,2*c_+1,d_/2]),[a_,b_,c_,d_],[2,1,0,2^FLOOR(LOG(n,2))],FLOOR(LOG(n,2))+1)) SUB 1
+FIBONACCI(n):=IF(n>=0 AND FLOOR(n)=n,(2*LUCAS(n+1)-LUCAS(n))/5,1/SQRT(5)*(((1+SQRT(5))/2)^n-((SQRT(5)-1)/2)^n*COS(pi*n)))
+PELL(n):=ELEMENT(ITERATE([v SUB 2,v SUB 1+2*v SUB 2],v,[1,0],n),1)
+NEXT_MERSENNE_DEGREE(n):=IF(PRIME(2^(n+1)-1),n+1,NEXT_MERSENNE_DEGREE(n+1))
+MERSENNE(n):=2^ITERATE(NEXT_MERSENNE_DEGREE(j),j,1,n)-1
+MERSENNE_DEGREE(n):=ELEMENT([2,3,5,7,13,17,19,31,61,89,107,127,521,607,1279,2203,2281,3217,4253,4423,9689,9941,11213,19937,21701,23209,44497,86243,110503,132049,216091,756839,859433],n)
+MERSENNE(n):=2^MERSENNE_DEGREE(n)-1
+CONTINUED_FRACTION(u,n):=FLOOR(ITERATES(1/MOD(x_),x_,u,n))
+CONVERGENT_AUX(v,k,a):=IF(k=0,a,CONVERGENT_AUX(v,k-1,v SUB k+1/a))
+CONVERGENT(v):=CONVERGENT_AUX(v,DIMENSION(v),inf)
+PARTS_AUX(n,m):=IF(n<2*m,1,1+SUM(PARTS_AUX(n-k_,k_),k_,m,FLOOR(n,2)))
+PARTS(n):=IF(n<1,0,PARTS_AUX(n,1))
+DISTINCT_PARTS_AUX(n,m):=IF(n<2*m,1,1+SUM(DISTINCT_PARTS_AUX(n-k_,k_+1),k_,m,FLOOR(n,2)))
+DISTINCT_PARTS(n):=IF(n<1,0,DISTINCT_PARTS_AUX(n-1,1))
+PARTS(n):=IF(n<2,1,FLOOR(APPROX(SUM(1/pi*SQRT(k_/2)*SUM(IF(GCD(h_,k_)=1,COS(pi*(SUM((i_/k_-1/2)*(MOD(i_*h_/k_)-1/2),i_,1,k_-1)-2*n*h_/k_)),0),h_,1,k_)*(-2*SQRT(6)*#e^(-pi*SQRT(24*n-1)/(6*k_))*(#e^(pi*SQRT(24*n-1)/(3*k_))*(6*k_-pi*SQRT(24*n-1))-6*k_-pi*SQRT(24*n-1))/(k_*(24*n-1)^(3/2))),k_,1,SQRT(n)/LOG(n,11)),LOG(1/(4*n*SQRT(3))*EXP(pi*SQRT(2*n/3)),10)+5)+0.5))
+DISTINCT_PARTS(n):=SUM(IF(8*n-16*i_+1=FLOOR(SQRT(8*n-16*i_+1))^2,PARTS(i_),0),i_,0,n/2)
+
+## derive-3.14-dos/NUMERIC.MTH
+DIF_NUM(y,x,x0,h):=(LIM(y,x,x0+h)-LIM(y,x,x0-h))/(2*h)
+DIF2_NUM(y,x,x0,h):=(LIM(y,x,x0+h)-2*LIM(y,x,x0)+LIM(y,x,x0-h))/h^2
+SMOOTH_VECTOR(v):=VECTOR(IF(m_=1 OR m_=DIMENSION(v),v SUB m_,(v SUB (m_-1)+v SUB m_+v SUB (m_+1))/3),m_,DIMENSION(v))
+SMOOTH_COLUMN_AUX(a,j):=VECTOR(IF(m_=j,SMOOTH_VECTOR(a SUB j),a SUB m_),m_,DIMENSION(a))
+SMOOTH_COLUMN(a,j):=SMOOTH_COLUMN_AUX(a`,j)`
+DIF_DATA_AUX(v1,v2):=(v1 SUB 1^2*v2 SUB 2-v1 SUB 2*v2 SUB 1^2)/(v1 SUB 1*v2 SUB 1*(v1 SUB 1-v2 SUB 1))
+DIF_DATA(a):=VECTOR([a SUB m_ SUB 1,IF(m_=1,DIF_DATA_AUX(a SUB 2-a SUB 1,a SUB 3-a SUB 1),IF(m_=DIMENSION(a),DIF_DATA_AUX(a SUB (m_-1)-a SUB m_,a SUB (m_-2)-a SUB m_),DIF_DATA_AUX(a SUB (m_+1)-a SUB m_,a SUB (m_-1)-a SUB m_)))],m_,DIMENSION(a))
+DIF2_DATA_AUX(v1,v2):=2*(v1 SUB 1*v2 SUB 2-v1 SUB 2*v2 SUB 1)/(v1 SUB 1*v2 SUB 1*(v2 SUB 1-v1 SUB 1))
+DIF2_DATA(a):=VECTOR([a SUB m SUB 1,IF(m=1,DIF2_DATA_AUX(a SUB 3-a SUB 2,a SUB 1-a SUB 2),IF(m=DIMENSION(a),DIF2_DATA_AUX(a SUB m-a SUB (m-1),a SUB (m-2)-a SUB (m-1)),DIF2_DATA_AUX(a SUB (m+1)-a SUB m,a SUB (m-1)-a SUB m)))],m,DIMENSION(a))
+INT_DATA(a):=[ELEMENT(a`,1),ELEMENT(ITERATES([1+ELEMENT(v,1),ELEMENT(v,2)+(ELEMENT(a,ELEMENT(v,1),2)+ELEMENT(a,1+ELEMENT(v,1),2))*(ELEMENT(a,1+ELEMENT(v,1),1)-ELEMENT(a,ELEMENT(v,1),1))/2],v,[1,0],DIMENSION(a)-1)`,2)]`
+
+## derive-3.14-dos/ODE1.MTH
+LINEAR1(p,q,x,y,x0,y0):=y=(y0+INT(q*#e^INT(p,x,x0,x),x,x0,x))/#e^INT(p,x,x0,x)
+LINEAR1_GEN(p,q,x,y,c):=y=(c+INT(q*#e^INT(p,x),x))/#e^INT(p,x)
+SEPARABLE(p,q,x,y,x0,y0):=INT(1/q,y,y0,y)=INT(p,x,x0,x)
+SEPARABLE_GEN(p,q,x,y,c):=INT(1/q,y)=INT(p,x)+c
+HOMOGENEOUS(r,x,y,x0,y0):=IF(DIF(LIM(r,y,x*y),x),LIM(SEPARABLE(1/x,LIM(r,x,1)-y,x,y,x0,y0/x0),y,y/x),"inapplicable","inapplicable")
+HOMOGENEOUS_GEN(r,x,y,c):=IF(DIF(LIM(r,y,x*y),x),LIM(SEPARABLE_GEN(1/x,LIM(r,x,1)-y,x,y,c),y,y/x),"inapplicable","inapplicable")
+EXACT(p,q,x,y,x0,y0):=IF(DIF(q,x)=DIF(p,y),INT(LIM(q,x,x0),y,y0,y)+INT(p,x,x0,x)=0,"inapplicable","inapplicable")
+EXACT_GEN_AUX(s,q,y):=s+INT(q-DIF(s,y),y)
+EXACT_GEN(p,q,x,y,c):=IF(DIF(q,x)=DIF(p,y),EXACT_GEN_AUX(INT(p,x),q,y)=c,"inapplicable","inapplicable")
+BERNOULLI(p,q,k,x,y,x0,y0):=LINEAR1((1-k)*p,(1-k)*q,x,y^(1-k),x0,y0^(1-k))
+BERNOULLI_GEN(p,q,k,x,y,c):=LINEAR1_GEN((1-k)*p,(1-k)*q,x,y^(1-k),c)
+INTF_AUX(mu,p,q,x,y,x0,y0):=INT(LIM(mu*q,x,x0),y,y0,y)+INT(mu*p,x,x0,x)=0
+INTF_HLP(p,q,x,y,x0,y0):= IF(DIF((DIF(p,y)-DIF(q,x))/q,y),    INTF_AUX(#e^INT((DIF(p,y)-DIF(q,x))/q,x),p,q,x,y,x0,y0),    "inapplicable",    "inapplicable")
+INTEGRATING_FACTOR(p,q,x,y,x0,y0):= IF(DIF((DIF(q,x)-DIF(p,y))/p,x),    INTF_AUX(#e^INT((DIF(q,x)-DIF(p,y))/p,y),p,q,x,y,x0,y0),    INTF_HLP(p,q,x,y,x0,y0),    INTF_HLP(p,q,x,y,x0,y0))
+INTF_GEN_AUX(mu,p,q,x,y):=EXACT_GEN_AUX(INT(mu*p,x),mu*q,y)
+INTF_GEN_HLP(p,q,x,y,c):= IF(DIF((DIF(p,y)-DIF(q,x))/q,y),    INTF_GEN_AUX(#e^INT((DIF(p,y)-DIF(q,x))/q,x),p,q,x,y)=c,    "inapplicable",    "inapplicable")
+INTEGRATING_FACTOR_GEN(p,q,x,y,c):= IF(DIF((DIF(q,x)-DIF(p,y))/p,x),    INTF_GEN_AUX(#e^INT((DIF(q,x)-DIF(p,y))/p,y),p,q,x,y)=c,    INTF_GEN_HLP(p,q,x,y,c),    INTF_GEN_HLP(p,q,x,y,c))
+FUN_LIN_CCF(r,p,q,k,x,y,x0,y0):=LIM(SEPARABLE(1,p+q*LIM(r,y,(y-p*x-k)/q),x,y,x0,p*x0+q*y0+k),y,p*x+q*y+k)
+FUN_LIN_CCF_GEN(r,p,q,k,x,y,c):=LIM(SEPARABLE_GEN(1,p+q*LIM(r,y,(y-p*x-k)/q),x,y,c),y,p*x+q*y+k)
+LIN_FRAC_AUX(r,p,q,x,y,x0,y0):=LIM(HOMOGENEOUS(LIM(r,[y,x],[y+q,x+p]),x,y,x0-p,y0-q),[y,x],[y-q,x-p])
+LIN_FRAC(r,a,b,d,p,q,k,x,y,x0,y0):=LIN_FRAC_AUX(r,(b*k-d*q)/(a*q-b*p),(d*p-a*k)/(a*q-b*p),x,y,x0,y0)
+LIN_FRAC_AUX_GEN(r,p,q,x,y,c):=LIM(HOMOGENEOUS_GEN(LIM(r,[y,x],[y+q,x+p]),x,y,c),[y,x],[y-q,x-p])
+LIN_FRAC_GEN(r,a,b,d,p,q,k,x,y,c):=LIN_FRAC_AUX_GEN(r,(b*k-d*q)/(a*q-b*p),(d*p-a*k)/(a*q-b*p),x,y,c)
+GEN_HOM_AUX(k,r,x,y,x0,y0):=IF(DIF(k,x)=0 AND DIF(k,y)=0,LIM(SEPARABLE(1/x,y*(k+LIM(r*x/y,y,y/x^k)),x,y,x0,y0*x0^k),y,y*x^k),"inapplicable","inapplicable")
+GEN_HOM(r,x,y,x0,y0):=GEN_HOM_AUX(x*DIF(x*r/y,x)/(y*DIF(x*r/y,y)),r,x,y,x0,y0)
+GEN_HOM_AUX_GEN(k,r,x,y,c):=IF(DIF(k,x)=0 AND DIF(k,y)=0,LIM(SEPARABLE_GEN(1/x,y*(k+LIM(r*x/y,y,y/x^k)),x,y,c),y,y*x^k),"inapplicable","inapplicable")
+GEN_HOM_GEN(r,x,y,c):=GEN_HOM_AUX_GEN(x*DIF(x*r/y,x)/(y*DIF(x*r/y,y)),r,x,y,c)
+ALMOST_LIN(r,b,p,q,x,y,x0,y0):=IF(DIF(DIF(b,y)/r,y),LIM(LINEAR1(p*DIF(b,y)/r,q*DIF(b,y)/r,x,y,x0,LIM(b,y,y0)),y,b),"inapplicable","inapplicable")
+ALMOST_LIN_GEN(r,b,p,q,x,y,c):=IF(DIF(DIF(b,y)/r,y),LIM(LINEAR1_GEN(p*DIF(b,y)/r,q*DIF(b,y)/r,x,y,c),y,b),"inapplicable","inapplicable")
+TESTM2(r,x,y):=x^ELEMENT(r,1)*y^ELEMENT(r,2)
+TESTM1(r,x,y):=TESTM2(ELEMENT(ROW_REDUCE([LIM(r,[y,x],[5,2]),LIM(r,[y,x],[3,7])])`,3),x,y)
+MONOMIAL_TEST(p,q,x,y):=TESTM1([y*q,-x*p,x*y*(DIF(p,y)-DIF(q,x))],x,y)
+CLAIRAUT(p,q,x,y,v,c):=[LIM(p-q,v,c)=0,x*LIM(DIF(LIM(p,y,x*v-y),y),y,x*v-y)-DIF(q,v)=0]
+SEP_GEN_HLP(p,q,x,y,c):= IF(DIF(p,x)=0 and DIF(q,y)=0,    SEPARABLE_GEN(1/q,-p,x,y,c),    "inapplicable",    "inapplicable")
+SEP_GEN(p,q,x,y,c):= IF(DIF(p,y)=0 and DIF(q,x)=0,    SEPARABLE_GEN(p,-1/q,x,y,c),    SEP_GEN_HLP(p,q,x,y,c),    SEP_GEN_HLP(p,q,x,y,c))
+DSOLVE1_GEN(p,q,x,y,c,a_):= IF("inapplicable"=a_:=INTEGRATING_FACTOR_GEN(p,q,x,y,c),    IF("inapplicable"=a_:=HOMOGENEOUS_GEN(-p/q,x,y,c),       IF("inapplicable"=a_:=SEP_GEN(p,q,x,y,c),	  GEN_HOM_GEN(-p/q,x,y,c),a_,a_),a_,a_),a_,a_)
+SEP_HLP(p,q,x,y,x0,y0):= IF(DIF(p,x)=0 and DIF(q,y)=0,    SEPARABLE(1/q,-p,x,y,x0,y0),    "inapplicable",    "inapplicable")
+SEP(p,q,x,y,x0,y0):= IF(DIF(p,y)=0 and DIF(q,x)=0,    SEPARABLE(p,-1/q,x,y,x0,y0),    SEP_HLP(p,q,x,y,x0,y0),    SEP_HLP(p,q,x,y,x0,y0))
+DSOLVE1(p,q,x,y,x0,y0,a_):= IF("inapplicable"=a_:=INTEGRATING_FACTOR(p,q,x,y,x0,y0),    IF("inapplicable"=a_:=HOMOGENEOUS(-p/q,x,y,x0,y0),       IF("inapplicable"=a_:=SEP(p,q,x,y,x0,y0),	  GEN_HOM(-p/q,x,y,x0,y0),a_,a_),a_,a_),a_,a_)
+
+## derive-3.14-dos/ODE2.MTH
+LIN_SOLVE(a,b):=ELEMENT(ROW_REDUCE(a,b)`,1+DIMENSION(a))
+DISC(p,q,x):=p^2/4-q+DIF(p,x)/2
+LIN2_HOM_AUX(d,x):=IF(d<0,[COS(SQRT(-d)*x),SIN(SQRT(-d)*x)],			  [#e^(SQRT(d)*x),#e^(-SQRT(d)*x)],			  [#e^(SQRT(d)*x),#e^(-SQRT(d)*x)])
+LIN2_HOM(d,x):=IF(d=0,[1,x],LIN2_HOM_AUX(d,x),LIN2_HOM_AUX(d,x))
+LIN2_PARTIC(h,r,x):=h . INT([-ELEMENT(h,2),ELEMENT(h,1)]*r/DET([h,DIF(h,x)]),x)
+LIN2_AUX2(h,r,x,c):=c . h+LIN2_PARTIC(h,r,x)
+LIN2_AUX(d,p,r,x,c):= IF(DIF(d,x)=0,LIN2_AUX2(LIN2_HOM(d,x)*#e^(INT(p,x)/-2),r,x,c),	       "inapplicable","inapplicable")
+DSOLVE2(p,q,r,x,c1,c2):=LIN2_AUX(DISC(p,q,x),p,r,x,[c1,c2])
+LIN2_BV_AUX3(h,p,x,x0,y0,x2,y2):= p+h . LIN_SOLVE([LIM(h,x,x0),LIM(h,x,x2)],[y0-LIM(p,x,x0),y2-LIM(p,x,x2)])
+LIN2_BV_AUX2(h,r,x,x0,y0,x2,y2):= LIN2_BV_AUX3(h,LIN2_PARTIC(h,r,x),x,x0,y0,x2,y2)
+LIN2_BV_AUX(d,p,r,x,x0,y0,x2,y2):= IF(DIF(d,x)=0,LIN2_BV_AUX2(LIN2_HOM(d,x)*#e^(INT(p,x)/-2),r,x,x0,y0,x2,y2),    "inapplicable","inapplicable")
+DSOLVE2_BV(p,q,r,x,x0,y0,x2,y2):=LIN2_BV_AUX(DISC(p,q,x),p,r,x,x0,y0,x2,y2)
+LIN2_IV_AUX3(h,p,x,x0,y0,v0):= p+h . LIN_SOLVE(LIM([h,DIF(h,x)],x,x0),LIM([y0-p,v0-DIF(p,x)],x,x0))
+LIN2_IV_AUX2(h,r,x,x0,y0,v0):= LIN2_IV_AUX3(h,LIN2_PARTIC(h,r,x),x,x0,y0,v0)
+LIN2_IV_AUX(d,p,r,x,x0,y0,v0):= IF(DIF(d,x)=0,LIN2_IV_AUX2(LIN2_HOM(d,x)*#e^(INT(p,x)/-2),r,x,x0,y0,v0),    "inapplicable","inapplicable")
+DSOLVE2_IV(p,q,r,x,x0,y0,v0):=LIN2_IV_AUX(DISC(p,q,x),p,r,x,x0,y0,v0)
+AUTONOMOUS_CONSERVATIVE(q,x,y,x0,y0,v0):=x=x0+IF(v0=0,1,SIGN(v0))*INT((2*INT(q,y,y0,y)+v0^2)^(-1/2),y,y0,y)
+LIOUVILLE(p,q,x,y,c1,c2):=INT(#e^INT(q,y),y)-c1+c2*INT(#e^INT(-p,x),x)=0
+AUTONOMOUS(r,v):=r/v
+EXACT2_AUX3(r,u,x):=r+INT(u-DIF(r,x),x)
+EXACT2_AUX2(r,x,y,v):=EXACT2_AUX3(INT(DIF(r,v),y),LIM(r,v,0),x)
+EXACT2_AUX1(p,q,x,y,v):=p+EXACT2_AUX2(q-DIF(p,x)-v*DIF(p,y),x,y,v)
+EXACT2(p,q,x,y,v,c):=IF((v*DIF(p,y,2)+2*DIF(DIF(p,x),y)-DIF(DIF(q,y),v))*v+   DIF(p,x,2)-DIF(DIF(q,x),v)+DIF(q,y)=0 AND   v*DIF(DIF(p,y),v)+DIF(DIF(p,x),v)+2*DIF(p,y)-DIF(q,v,2)=0, EXACT2_AUX1(INT(p,v),q,x,y,v)=c,"inapplicable","inapplicable")
+
+## derive-3.14-dos/ODE_APPR.MTH
+TAYLOR_ODE1(r,x,y,x0,y0,n,v_):=ELEMENT(ITERATE([v_ SUB 1+1,DIF(v_ SUB 2,x)+r*DIF(v_ SUB 2,y),v_ SUB 3+(x-x0)^v_ SUB 1*LIM(v_ SUB 2,[x,y],[x0,y0])/v_ SUB 1!],v_,[1,r,y0],n),3)
+TAY_ODE1(r,x,y,x0,y0,n,v_):=TAYLOR_ODE1(r,x,y,x0,y0,n,v_)
+PICARD(r,p,x,y,x0,y0):=y0+INT(LIM(r,y,p),x,x0,x)
+TAYLOR_ODES(r,x,y,x0,y0,n):=ELEMENT(ITERATE([v_ SUB 1+1,DIF(v_ SUB 2,x)+r . GRAD(v_ SUB 2,y),v_ SUB 3+(x-x0)^v_ SUB 1*LIM(LIM(v_ SUB 2,y,y0),x,x0)/v_ SUB 1!],v_,[1,r,y0],n),3)
+TAY_ODES(r,x,y,x0,y0,n):=TAYLOR_ODES(r,x,y,x0,y0,n)
+TAYLOR_ODE2_AUX(x,y,v,x0,y0,v0,n,aux):=y0+v0*(x-x0)+SUM(LIM(aux SUB (k_-1),[v,y,x],[v0,y0,x0])/k_!*(x-x0)^k_,k_,2,n)
+TAYLOR_ODE2(r,x,y,v,x0,y0,v0,n):=TAYLOR_ODE2_AUX(x,y,v,x0,y0,v0,n,ITERATES(DIF(g_,v)*r+DIF(g_,y)*v+DIF(g_,x),g_,r,n-2))
+EULER(r,x,y,x0,y0,h,n):=ITERATES(v_+h*[1,LIM(r,[x,y],v_)],v_,[x0,y0],n)
+EXTRACT_2_ELEMENTS(v,p,q):=[v SUB p,v SUB q]
+EXTRACT_2_COLUMNS(a,c1,c2):=EXTRACT_2_ELEMENTS(a`,c1,c2)`
+RK_AUX3(p,v,u_,c1,c2,c3):=(c1+LIM(p,v,u_+c3)+2*(c2+c3))/6
+RK_AUX2(p,v,u_,c1,c2):=RK_AUX3(p,v,u_,c1,c2,LIM(p,v,u_+c2/2))
+RK_AUX1(p,v,u_,c1):=RK_AUX2(p,v,u_,c1,LIM(p,v,u_+c1/2))
+RK_AUX0(p,v,v0,n):=ITERATES(u_+RK_AUX1(p,v,u_,LIM(p,v,u_)),u_,v0,n)
+RK(r,v,v0,h,n):=RK_AUX0(h*APPEND([1],r),v,v0,n)
+SEG(rc,x,y,δx,δy):=IF(ABS(rc)>1 AND δy<ABS(rc)*δx,[[x-δy/rc,y-δy],[x+δy/rc,y+δy]],[[x-δx,y-rc*δx],[x+δx,y+rc*δx]])
+DIRECTION_FIELD(r,x,x0,xm,m,y,y0,yn,n):=VECTOR(VECTOR(SEG(LIM(r,[x,y],[x0+j*(xm-x0)/m,y0+k*(yn-y0)/n]),x0+j*(xm-x0)/m,y0+k*(yn-y0)/n,(xm-x0)/(4*m),(yn-y0)/(4*n)),j,0,m),k,0,n)
+
+## derive-3.14-dos/ORTH_POL.MTH
+CHEBYCHEV_T(n,x):=IF(n=0,1,n/2*SUM((-1)^m_*(n-m_-1)!/(m_!*(n-2*m_)!)*(2*x)^(n-2*m_),m_,0,n/2))
+CHEBYCHEV_U(n,x):=SUM((-1)^m_*(n-m_)!/(m_!*(n-2*m_)!)*(2*x)^(n-2*m_),m_,0,n/2)
+LEGENDRE_P(n,x):=SUM((-1)^m_*COMB(n,m_)*COMB(2*n-2*m_,n)*x^(n-2*m_),m_,0,n/2)/2^n
+ASSOCIATED_LEGENDRE_P(n,m,x):=(-1)^m*(1-x^2)^(m/2)*DIF(LEGENDRE_P(n,x),x,m)
+HERMITE_H(n,x):=n!*SUM((-1)^m_/(m_!*(n-2*m_)!)*(2*x)^(n-2*m_),m_,0,n/2)
+HERMITE_HE(n,x):=n!*SUM((-1)^m_/(m_!*2^m_*(n-2*m_)!)*x^(n-2*m_),m_,0,n/2)
+WEBER_D(n,x):=#e^(-x^2/4)*HERMITE_HE(n,x)
+GENERALIZED_LAGUERRE(n,a,x):=SUM(COMB(n+a,n-m_)*(-x)^m_/m_!,m_,0,n)
+JACOBI_P(n,a,b,x):=SUM(COMB(n+a,m_)*COMB(n+b,n-m_)*(x-1)^(n-m_)*(x+1)^m_,m_,0,n)/2^n
+GEGENBAUER_C(n,a,x):=SUM((-1)^m_*GAMMA(a+n-m_)/(m_!*(n-2*m_)!)*(2*x)^(n-2*m_),m_,0,n/2)/IF(a=0,1,GAMMA(a))
+
+## derive-3.14-dos/PHYSICAL.MTH
+c_:=299792458*(meter/second)
+g_:=6.6726*10^(-14)*(meter^3/(gram*second^2))
+h_:=6.6260755*10^(-34)*joule*second
+e_:=1.60217733*10^(-19)*coulomb
+alpha:=0.00729735308
+r_inf:=10973731.534/meter
+a0:=5.29177249*10^(-11)*meter
+me:=9.1093898*10^(-28)*gram
+mp:=1.6726231*10^(-24)*gram
+mn:=1.6749286*10^(-24)*gram
+lambda_c:=2.42631058*10^(-12)*meter
+lambda_cp:=1.32141002*10^(-15)*meter
+lambda_cn:=1.3195911*10^(-15)*meter
+re_:=2.81794092*10^(-15)*meter
+na:=6.0221367*10^23/mole
+f_:=96485.309*(coulomb/mole)
+r_:=8.314511*(joule/(mole*degree_kelvin))
+k_:=1.380658*10^(-23)*(joule/degree_kelvin)
+sigma:=5.67051*10^(-8)*watt/(meter^2*degree_kelvin^4)
+gn:=9.80665*(meter/second^2)
+
+## derive-3.14-dos/PLOT2D.MTH
+2*SIN(LN(ABS(x)))
+x^2*SQRT(15-x^2)/10
+SEC(SIN(x))
+x*SIN(2/x)
+ABS(x/2)^ABS(x/2)
+ASIN(ATAN(0.4*x))
+TAN(COS(x))
+ASIN(SIN(x))
+ATAN(TAN(x))
+COTH(SEC(x))+TANH(SEC(x))
+SIGN(COS(x))
+2*SQRT(ABS(SIN(x)))
+-SQRT(ABS(COT(0.8*x)))
+3*SECH(SEC(x))
+2*CSCH(SEC(x))
+4*EXP(-1/ABS(x))-2
+SIN(SIN(x))
+ATAN(ATAN(x))
+
+## derive-3.14-dos/PLOT3D.MTH
+1/(9+x^2+y^2)
+-y/(9+x^2+y^2)
+1/(9+x^2+(y-3)^2)+1/(9+x^2+(y+3)^2)
+7*x^2-y^3
+y^2-x^2
+y^2/5-3*ABS(x)
+(y^2+1/10)/(x^2+y^2+1/10)
+y*(3*x^2-y^2)
+x*y*(SIGN(x+1/10)*SQRT(x^2+y^2)+2*y)/(x^2+y^2+1/10)
+-SQRT(ABS(x*y))
+-SQRT(ABS(x))-SQRT(ABS(y))
+SQRT(ABS(x))-SQRT(ABS(y))
+-y*SQRT(ABS(x))
+50/(50+((x^2+y^2)^(1/2)-37/10)^2)-1
+COS((x^2+y^2)/4)/(3+x^2+y^2)
+EXP(-x/9)*(pi/2-ATAN(y))
+ATAN(-y,x+1/10)
+-COS(3*pi*X/10)*COS(pi*Y/10)
+-COS(3*pi*X/10)*SIN(pi*Y/5)
+
+## derive-3.14-dos/PLOTPARA.MTH
+[t*(t^2-1)/(t^2+1),2*(t^2-1)/(t^2+1)]
+[2*COS(t)^3,2*SIN(t)^3]
+[3*SIN(t),2*SIN(2*t)]
+[t/pi*(12*(t/pi)^2-9),((t/pi)^2-1)*16*(t/pi)^2+2]
+[3/2*COS(t)*(COS(t)+1),2*SIN(2*t)]
+[SIN(2*t)+SIN(t),-COS(2*t)-COS(t)]
+[EXP(t/4)*SIN(2*t),EXP(t/4)*COS(2*t)]
+[2/3*t*COS(7/2*t),2/3*t*SIN(7/2*t)]
+[t-11/10*SIN(3*t),-22/10*COS(3*t)]
+
+## derive-3.14-dos/PROBABIL.MTH
+POCHHAMMER(a,x):=GAMMA(a+x)/GAMMA(a)
+PSI(z):=LN(z)-1/(2*z)-2*INT(t_/((t_^2+z^2)*(#e^(2*pi*t_)-1)),t_,0,inf)
+POLYGAMMA(n,z,m):=IF(n=0,PSI(z),IF(z=1,(-1)^(n+1)*n!*ZETA(n+1),(-1)^(n-1)*n!*(1/(n*(z+m+1/2)^n)+SUM((z+l_)^(-n-1),l_,0,m)),(-1)^(n-1)*n!*(1/(n*(z+m+1/2)^n)+SUM((z+l_)^(-n-1),l_,0,m))))
+INCOMPLETE_GAMMA(z,w):=1/GAMMA(z)*(w^z/z+INT((#e^(-t_)-1)*t_^(z-1),t_,0,w))
+INCOMPLETE_GAMMA_SERIES(z,w,m):=#e^(-w)*w^z*SUM(w^(m-n_)/GAMMA(z+m-n_+1),n_,0,m)
+beta(z,w):=GAMMA(z)*GAMMA(w)/GAMMA(z+w)
+INCOMPLETE_BETA(x,z,w):=(x^z/z+(1-(1-x)^w)/w+INT(t_^(z-1)*((1-t_)^(w-1)-1)-(1-t_)^(w-1),t_,0,x))/beta(z,w)
+POISSON_DENSITY(k,t):=#e^(-t)*t^k/k!
+POISSON_DISTRIBUTION(k,t):=SUM(POISSON_DENSITY(m_,t),m_,0,k)
+BINOMIAL_DENSITY(k,n,p):=COMB(n,k)*p^k*(1-p)^(n-k)
+BINOMIAL_DISTRIBUTION(k,n,p):=SUM(BINOMIAL_DENSITY(m_,n,p),m_,0,MIN(k,n))
+HYPERGEOMETRIC_DENSITY(k,n,m,j):=COMB(m,k)*COMB(j-m,n-k)/COMB(j,n)
+HYPERGEOMETRIC_DISTRIBUTION(k,n,m,j):=SUM(HYPERGEOMETRIC_DENSITY(l_,n,m,j),l_,MAX(0,n-j+m),MIN(k,n,m))
+STUDENT(t,v):=1-INCOMPLETE_BETA(v/(v+t^2),v/2,1/2)
+F_DISTRIBUTION(f_,v1,v2):=INCOMPLETE_BETA(v2/(v2+v1*f_),v2/2,v1/2)
+CHI_SQUARE(x2,v):=INCOMPLETE_GAMMA(v/2,x2/2)
+
+## derive-3.14-dos/RECUREQN.MTH
+LIN1_DIFFERENCE(p,q,x,x0,y0):=PRODUCT(p,x,x0,x-1)*(y0+SUM(q/PRODUCT(p,x,x0,x),x,x0,x-1))
+RECURRENCE1(r,x,y,x0,y0,n):=ITERATES([1+ELEMENT(v_,1),LIM(r,[x,y],v_)],v_,[x0,y0],n)
+GEOMETRIC1(k,p,q,x,x0,y0):=LIM(LIN1_DIFFERENCE(LIM(p,x,k^x),LIM(q,x,k^x),x,LOG(x0,k),y0),x,LOG(x,k))
+CLAIRAUT_DIF(p,q,d,x,y,c):=LIM(p-q,d,c)=0
+LIN_SOLVE(a,b):=ELEMENT(ROW_REDUCE(a,b)`,1+DIMENSION(a))
+LIN2_CCF_HOM_AUX(b,x):=IF(b<0, -COS(pi*x)*(-b)^x, b^x)
+LIN2_CCF_HOM(p,q,d,x):= IF(d=0, [(-p/2)^x, x*(-p/2)^x],    IF(d>0,[LIN2_CCF_HOM_AUX((-p+SQRT(d))/2,x),	    LIN2_CCF_HOM_AUX((-p-SQRT(d))/2,x)],       ((p^2-d)/4)^(x/2)*[SIN(x*ATAN(SQRT(-d),-p)),COS(x*ATAN(SQRT(-d),-p))]),       ((p^2-d)/4)^(x/2)*[SIN(x*ATAN(SQRT(-d),-p)),COS(x*ATAN(SQRT(-d),-p))])
+LIN2_CCF_PARTIC(h,r,x):= h . SUM(r LIM([-ELEMENT(h,2),ELEMENT(h,1)]/DET([h,LIM(h,x,x+1)]),x,x+1),x)
+LIN2_CCF_AUX(h,r,x,c):= c . h + LIN2_CCF_PARTIC(h,r,x)
+LIN2_CCF(p,q,r,x,c1,c2):=  LIN2_CCF_AUX(LIN2_CCF_HOM(p,q,p^2-4q,x),r,x,[c1,c2])
+LIN2_CCF_BV_AUX2(h,p,x,x0,y0,x2,y2):= p + h . LIN_SOLVE([LIM(h,x,x0),LIM(h,x,x2)],[y0-LIM(p,x,x0),y2-LIM(p,x,x2)])
+LIN2_CCF_BV_AUX(h,r,x,x0,y0,x2,y2):= LIN2_CCF_BV_AUX2(h,LIN2_CCF_PARTIC(h,r,x),x,x0,y0,x2,y2)
+LIN2_CCF_BV(p,q,r,x,x0,y0,x2,y2):= LIN2_CCF_BV_AUX(LIN2_CCF_HOM(p,q,p^2-4q,x),r,x,x0,y0,x2,y2)
+
+## derive-3.14-dos/SOLVE.MTH
+NEWTON_AUX(a,x,x0,n):=ITERATES(xk-ELEMENT(ROW_REDUCE(LIM(a,x,xk))`,DIMENSION(a)+1),xk,x0,n)
+NEWTONS(u,x,x0,n):=NEWTON_AUX(APPEND(GRAD(u,x),[u])`,x,x0,n)
+NEWTON(u,x,x0,n):=ITERATES(x-u/DIF(u,x),x,x0,n)
+FIXED_POINT(g,x,x0,n):=ITERATES(LIM(g,x,xk),xk,x0,n)
+TAYLOR_SOLVE_AUX2(x,y,x0,y0,n,aux):=y0+SUM(LIM(ELEMENT(aux,k_),[y,x],[y0,x0])/k_!*(x-x0)^k_,k_,1,n)
+TAYLOR_SOLVE_AUX(x,y,x0,y0,n,v):=TAYLOR_SOLVE_AUX2(x,y,x0,y0,n,ITERATES(DIF(g_,y)*v+DIF(g_,x),g_,v,n-1))
+TAYLOR_SOLVE(u,x,y,x0,y0,n):=TAYLOR_SOLVE_AUX(x,y,x0,y0,n,-DIF(u,x)/DIF(u,y))
+LAGRANGE_EXPANSION(u,x,y,x0,y0,n):=x0+SUM((y-y0)^k_/k_!*LIM(DIF(((x-x0)/(u-y0))^k_,x,k_-1),x,x0),k_,1,n)
+TAYLOR_INVERSE(u,x,y,x0,n):=IF(LIM(DIF(u,x),x,x0)=0,"Taylor expansion of inverse does not exist",LAGRANGE_EXPANSION(TAYLOR(u,x,x0,n),x,y,x0,LIM(u,x,x0),n),LAGRANGE_EXPANSION(TAYLOR(u,x,x0,n),x,y,x0,LIM(u,x,x0),n))
+
+## derive-3.14-dos/TRIG.DMO
+COS (17/6 pi)
+SIN (-30 DEG)
+(SIN x)^3 + SIN x + (COS x)^2 SIN x
+(1 - (COS x)^2)^4 (1 - (SIN x)^2)^3 ((SIN x)^2 + (COS x)^2)^5
+SIN (pi / 4 + a) - SIN (0.25 (pi - 4 a))
+SIN (1.5 pi/2+x) / COS (pi+x) + COS ((3pi-2x)/2) / SIN (pi/2+x)
+SIN (pi - a) / TAN (pi + a) * COT ((pi - 2 a)/2) / TAN (pi / 2 + a) * SIN (1.5 * pi + a) / SIN (- a)
+SIN (6 x) / SIN (3 x)
+1/(1+TAN(a)*TAN(a/2))
+(COS (a/2) + SIN (a/2))^2
+SIN((pi-t)/4)^2*SIN(pi/4+t/4)^2
+CSC (2x) (2 (COS (x/2))^2 - 1)
+(1 + SIN a) * (1 + SEC a) / ((1 + COS a) * (1 + CSC a))
+(TAN a)^2 / (1 + (TAN a)^2) * (1 + (COT a)^2) / (COT a)^2
+ATAN (2 + SQRT 3)
+ATAN (-1, -1)
+ASIN (-1/2)
+ACOS (- 1 / SQRT 2)
+ASIN (x/SQRT(x^2 + 1))
+ATAN (x/SQRT(1-x^2))
+ATAN (x/2 + 3) + ATAN (2/(x + 6))
+TAN ATAN x
+ASEC (1/x)
+CSC ACSC x
+ACOT t + ATAN t
+
+## derive-3.14-dos/USERS/CALLOPTN.DMO
+APPROX(CALL_PRICE(25,23,0.2,160/365,0.8))
+APPROX(STD_DEV(25,23,0.2,160/365,7.0186))
+
+## derive-3.14-dos/USERS/CALLOPTN.MTH
+CALL_PRICE(s,x,rf,t,sigma):=s*NORMAL((LN(s/x)+rf*t)/(sigma*SQRT(t))+sigma*SQRT(t)/2,0,1)-x*#e^(-rf*t)*NORMAL((LN(s/x)+rf*t)/(sigma*SQRT(t))-sigma*SQRT(t)/2,0,1)
+STD_DEV(s,x,rf,t,cp):=RHS((SOLVE(CALL_PRICE(s,x,rf,t,sigma)=cp,sigma)) SUB 1)
+
+## derive-3.14-dos/USERS/CURV_FIT.MTH
+Precision:=Approximate
+PrecisionDigits:=10
+NotationDigits:=6
+TR_1(m_):=VECTOR([m_ SUB k SUB 1,LN(m_ SUB k SUB 2)],k,1,DIMENSION(m_))
+TR_2(m_):=VECTOR([LN(m_ SUB k SUB 1),LN(m_ SUB k SUB 2)],k,1,DIMENSION(m_))
+TR_3(m_):=VECTOR([LN(m_ SUB k SUB 1),m_ SUB k SUB 2],k,1,DIMENSION(m_))
+TR_4(m_):=VECTOR([1/m_ SUB k SUB 1,m_ SUB k SUB 2],k,1,DIMENSION(m_))
+TR_5(m_):=VECTOR([m_ SUB k SUB 1*m_ SUB k SUB 2,m_ SUB k SUB 2],k,1,DIMENSION(m_))
+TR_6(m_):=VECTOR([m_ SUB k SUB 2/m_ SUB k SUB 1,m_ SUB k SUB 2],k,1,DIMENSION(m_))
+LSL(m_,x):=FIT(APPEND([[x,a*x+b]],m_))
+SQUARE_ERROR(m_,r,x):=SUM((m_ SUB k SUB 2-LIM(r,x,m_ SUB k SUB 1,0))^2,k,1,DIMENSION(m_))
+BB(r):=LIM(r,x,0,0)
+AA(r):=LIM(r,x,1,0)-LIM(r,x,0,0)
+G_1(r,t):=#e^BB(r)*#e^(t*AA(r))
+G_2(r,t):=#e^BB(r)*t^AA(r)
+G_3(r,t):=AA(r)*LN(t)+BB(r)
+G_4(r,t):=AA(r)/t+BB(r)
+G_5(r,t):=BB(r)/(1-AA(r)*t)
+G_6(r,t):=BB(r)*t/(t-AA(r))
+ALL_SEVEN(m_):=[LSL(m_,t),G_1(LSL(TR_1(m_),x),t),G_2(LSL(TR_2(m_),x),t),G_3(LSL(TR_3(m_),x),t),G_4(LSL(TR_4(m_),x),t),G_5(LSL(TR_5(m_),x),t),G_6(LSL(TR_6(m_),x),t)]
+V_SQUARE_ERROR(m_,v_):=VECTOR(SQUARE_ERROR(m_,v_ SUB k,t),k,1,DIMENSION(v_))
+
+## derive-3.14-dos/USERS/FIT_.DMO
+[Precision:=Approximate, PrecisionDigits:=6]
+[TAN(x),TAYLOR(TAN(x),x,1,4),PADE(TAN(x),x,1,2,2)]
+vx:=VECTOR(x,x,0,1.5,0.1)
+[TAN(x),FIT_R_POLY_EXPR(TAN(x),x,vx,2,1),FIT_POLY_EXPR(TAN(x),x,vx,3),FIT_POLY_EXPR(TAN(x),x,vx,7)]
+m0:=VECTOR([x,TAN(x)],x,0,1.5,0.1)
+FIT_([x,a*x^3+b*x^2+c*x+d],m0)
+v:=[x,(a*x^2+b*x+c)/(d+x)]
+FIT_(v,m0)
+m2:=VECTOR([x,TAN(x),x^2],x,0,1.5,0.1)
+FIT_(v,m2)
+[[FIT_(v,m0)],[FIT_(v,m0,0)],[FIT_(v,m0,1)]]
+FIT_(v,m0,2)
+AUX_(m):=VECTOR([i-2,m SUB i SUB 2,RHS((SOLVE(DENOMINATOR(m SUB i SUB 3)=0,x,1,2)) SUB 1)-pi/2],i,2,DIMENSION(m))
+AUX_(FIT_(v,m0,2))
+m:=[[[[0,0],[1,1],[1,2]],[[0,0,1],[1,1,1],[1,2,1]]],[[[0,0,1],[1,1,1],[1,2,0]],[[0,0,1],[1,1,0],[1,2,1]]]]
+[[FIT([x,a*x+b],m SUB 1 SUB 1)],[FIT_([x,a*x+b],m SUB 1 SUB 1)],[FIT_([x,a*x+b],m SUB 1 SUB 2)],[FIT_([x,a*x+b],m SUB 2 SUB 1)],[FIT_([x,a*x+b],m SUB 2 SUB 2)]]
+[m SUB 1 SUB 1,x,2 x,1.5 x]
+[[G_FIT(1.5 x,x,m sub 1 sub 1),G_FIT(1.5 x,x,m sub 1 sub 2)],[G_FIT(2 x,x,m sub 2 sub 1),G_FIT(2 x,[x],m sub 2 sub 1)]]
+POLY(z,3)
+POLY(z,3,[d,c,b,a])
+FIT_POLY(x,3,m0)
+FIT_R_POLY(x,2,1,m0)
+FIT_POLY_EXPR(TAN(X),x,vx,3)
+FIT_R_POLY_EXPR(TAN(x),x,vx,2,1)
+THANK_YOU_!!!
+
+## derive-3.14-dos/USERS/FIT_.MTH
+[default1:=1,default1a:=1]
+SUBST_AUX1(u,x):=(SUBST_AUX2(x):=u)
+SUBST(u,x,x0):=[SUBST_AUX1(u,x),SUBST_AUX2(x0)]*[0,1]
+G_FIT_AUX1(u,x,mx,mf,w,dx):=RMS(VECTOR((mf SUB i_-LIM(u,x,mx SUB i_))*w SUB i_,i_,DIMENSION(mx)))
+G_FIT_AUX0(u,x,m,m1,dx):=G_FIT_AUX1(u,x,VECTOR(m1 SUB i_,i_,dx)`,m1 SUB (dx+1),IF(DIMENSION(m1)=dx+1,VECTOR(1,i_,DIMENSION(m)),m1 SUB (dx+2)),dx)
+G_FIT(u,x,m):=IF(NUMBER(DIMENSION(x)),G_FIT_AUX0(u,x,m,m`,DIMENSION(x)),G_FIT_AUX0(u,[x],m,m`,1))
+FIT_AUX6(v,dv,m,dm):=FIT(APPEND(DELETE_ELEMENT(v,dv),[w_,w_*v SUB dv]),APPEND(DELETE_ELEMENT(m`,dv),[VECTOR(m SUB i_ SUB dv*m SUB i_ SUB (dv+1),i_,dm)])`)
+FIT_AUX5(v,m):=IF(DIMENSION(v)=DIMENSION(m SUB 1),FIT(v,m),SUBST(FIT_AUX6(v,DIMENSION(v),m,DIMENSION(m)),w_,1))
+FIT_AUX4(f,y):=SUBST(f,y,0)/(-DIF(f,y))
+FIT_AUX3(x,f,mx,mf,w):=FIT_AUX4([y_:=,FIT_AUX5(APPEND(x,[y_,NUMERATOR(f)-y_*DENOMINATOR(f)]),APPEND(mx`,[mf,VECTOR(0,i_,DIMENSION(w)),w])`)] SUB 2,y_)
+FIT_AUX2(x,f,mx,mf,w,n,s):=ITERATES(FIT_AUX3(x,f,mx,mf,VECTOR(w SUB i_*ABS(LIM(1/DENOMINATOR(u),x,mx SUB i_))^s,i_,DIMENSION(w))),u,FIT_AUX3(x,f,mx,mf,w),n)
+FIT_AUX1(v,m,n,s,dv):=FIT_AUX2(DELETE_ELEMENT(v,dv),v SUB dv,VECTOR(m` SUB i_,i_,dv-1)`,m` SUB dv,IF(DIMENSION(m`)=dv,VECTOR(1,i_,DIMENSION(m)),m` SUB (dv+1)),n,s)
+FIT_AUX0(v,m,t,d1):=IF(d1<2,t SUB (d1+1),APPEND([["Iteration","Goodness_of_Fit","Expression"]],VECTOR([n_-1,G_FIT(t SUB n_,DELETE_ELEMENT(v,DIMENSION(v)),m),t SUB n_],n_,DIMENSION(t))))
+FIT_(v,m,default1,default1a):=IF(NUMBER(DENOMINATOR(v SUB DIMENSION(v))),FIT_AUX5(v,m),FIT_AUX0(v,m,FIT_AUX1(v,m,default1,default1a,DIMENSION(v)),default1))
+POLY(x,n,c_):=SUM(c_ SUB (i+1)*x^i,i,0,n)
+FIT_POLY(x,n,m):=FIT_([x,POLY(x,n)],m)
+FIT_R_POLY(x,nd,dd,m,default1,default1a):=FIT_([x,POLY(x,nd)/(x^dd+POLY(x,dd-1,c__))],m,default1,default1a)
+FIT_POLY_EXPR(u,x,vx,n):=FIT_POLY(x,n,VECTOR([vx SUB k_,LIM(u,x,vx SUB k_)],k_,DIMENSION(vx)))
+FIT_R_POLY_EXPR(u,x,vx,nd,dd,default1,default1a):=FIT_R_POLY(x,nd,dd,VECTOR([vx SUB k_,LIM(u,x,vx SUB k_)],k_,DIMENSION(vx)),default1,default1a)
+
+## derive-3.14-dos/USERS/FUN.MTH
+[ alpha:epsilonReal , fail:=	  , TN(x):=   , Mmu(x):=  , DV(x):=  , IS_1ST(x):=	   , Ybeta(x):=   , UN(x):=   , Wmu(x):=  , JS(x):=  , IS_2ND(x):=	   , I_ERF(x):=   , HN(x):=   , Pmu(x):=  , YS(x):=  , Calpha(x):=	   , JN_X(x):=	  , HE(x):=   , Qmu(x):=  , KS(x):=  , Lalpha(x):=	   , YN_X(x):=	  , PN(x):=   , F11(x):=  , JN(x):=  , Palphabeta(x):=   , IN_X(x):=	  , EN(x):=   , U11(x):=  , YN(x):=  , Yalpha(x):=	   , KN_X(x):=	  , E1(x):=   , F21(x):=  , IN(x):=  , POCHHAMMER(x):=   , E1_(x):=	  , EN_(x):=  , U21(x):=  , KN(x):=   ]
+[ IS_1ST_(x):=	   , Ybeta_(x):=  , UN_(x):=  , JS_(x):=  , KN_(x):= , IS_2ND_(x):=	   , Yalpha_(x):= , Pmu_(x):= , HN_(x):=  , YS_(x):= , Calpha_(x):=	   , I_ERF_(x):=  , Qmu_(x):= , KS_(x):=  , TN_(x):= , Lalpha_(x):=	   , F11_(x):=	  , JN_(x):=  , YN_(x):=  , IN_(x):= , Palphabeta_(x):=  , U11_(x):=	  , F21_(x):= , PN_(x):=  , local:=   ]
+F_00:=[ " The first argument must be an integer ", " The first argument must be a nonnegative integer ", " The second argument must be a nonnegative integer ", " The third argument must be a nonnegative integer ", " The first two arguments must be integers ", " The order of approximation must be a positive integer ", " The first argument must be an integer >-2 "]
+F_01(i):=F_00 SUB i
+F_02(a,f,t,n,z):=1/(a*f)*DIF(t^n*f,z,n)
+F_03(n,z):=SUM(   (-1)^i__*(n+2*i__)!/((2*i__)!*(n-2*i__)!*(2*z)^(2*i__)),   i__,   0,   FLOOR(n/2)   )
+F_04(n,z):=SUM(   (-1)^j__*(n+2*j__+1)!/((2*j__+1)!*(n-2*j__-1)!*(2*z)^(2*j__+1)),   j__,   0,   FLOOR(n/2-1/2)   )
+F_05(n,z):=1/z*(F_03(n,z)*SIN(z-n*pi/2)+F_04(n,z)*COS(z-n*pi/2))
+F_06(n,z):=1/z*(F_03(n,z)*COS(z+n*pi/2)-F_04(n,z)*SIN(z+n*pi/2))
+F_07(a,n):=LIM(GAMMA(k__+n)/GAMMA(k__),k__,a)
+F_08(z):=IF(MOD(z)=0 AND z<1,1,GAMMA(z),GAMMA(z))
+F_09(a,b,z):=(-1)^(b-3/2)*SQRT(pi)*SQRT(z)*GAMMA(b)/((b-3/2)!*GAMMA(a))*DIF(z^(a-1)*#e^z*DIF(#e^(-z)*(ERF(SQRT(-z))/SQRT(-z)),z,b-3/2),z,a-1/2)
+F_0A(a,b,z):=(-1)^(3/2-b)*SQRT(z)*pi^(3/2)/(GAMMA(1-b)*GAMMA(a))*DIF(z^(a-b)*DIF(SQRT(-z)*ERF(SQRT(-z))/SQRT(z),z,3/2-b),z,a-1/2)
+F_0B(a,b,z):=(-1)^(b-3/2)*GAMMA(b)*#e^z*z^(3/2-b)/(-a+b-1)!*DIF(z^(-a+b-1)*DIF(#e^(-z)*(ERF(SQRT(-z))/SQRT(-z)),z,b-3/2),z,1/2-a)
+F_0C(a,b,z):=-pi*z^(1-b)/((1/2-a)!*GAMMA(1-b))*DIF(SQRT(z)*#e^z*DIF(#e^(-z)*z^(1/2-a)*(ERF(SQRT(-z))/SQRT(-z)),z,1/2-a),z,3/2-b)
+F_0D(a,b,z):=IF(a>=1/2,IF(b>=3/2,F_09(a,b,z),F_0A(a,b,z)),IF(b>=3/2,F_0B(a,b,z),F_0C(a,b,z)))
+F_0E(a,b,z):=(-1)^(b-3/2)*SQRT(pi)*(2*b-2)/(2*(a-1)!)*DIF(z^(a-1)*#e^z*DIF(ERF(SQRT(z))/SQRT(z),z,b-3/2),z,a-1)
+F_0F(a,b,z):=(-1)^(1/2-b)*SQRT(pi)*(2^(1-2*b)*(1/2-b)!/((a-1)!*(1-2*b)!))*DIF(z^(a-b)*DIF(#e^z*ERF(SQRT(z)),z,3/2-b),z,a-1)
+F_0G(a,b,z):=(b-1)!/(a-1)!*DIF(z^(a-b)*(#e^z-SUM(z^l__/l__!,l__,0,b-2)),z,a-1)
+F_0H(a,b,z):=1/(a-1)!*DIF(z^(a-b)*#e^z,z,a-1)
+F_0I(a,b,z):=(-a)!/F_07(b,-a)*Lalpha(b-1,-a,z)
+F_0J(a,b,z):=(-1)^(1-b)*(-a)!/((b-a-1)!*(1-b)!)*z^(1-b)*F11(a-b+1,2-b,z)
+F_0K(a,b,z):=GAMMA(a+1/2)*#e^(z/2)*(z/4)^(1/2-a)*IN(a-1/2,z/2)
+F_0L(a,b,z):=IF(  a<1 OR a>=1 AND 2*MOD(b)^2=MOD(b),  IF(    a>=1,    IF(      MOD(b),      IF(b>=2,F_0G(a,b,z),F_0H(a,b,z)),      IF(b>=3/2,F_0E(a,b,z),F_0F(a,b,z))      ),  IF(    MOD(b)/=0 OR b<=a,    F_0I(a,b,z),    IF(a<b<=0,F_0J(a,b,z),fail,fail),    F_0I(a,b,z)    )  ),  F_0K(a,b,z),  F_0K(a,b,z)  )
+F_0M(a,b,z):=(b-1)*#e^z/(b-a-1)!*(z^(b-1)*(GAMMA(b-1)*(-z)^(1-b)-LIM(EN(2-b,m__),m__,-z,0))*DIF(z^(-a)*#e^(-z),z,b-a-1)+SUM(COMB(b-a-1,n__)*DIF(z^(-a)*#e^(-z),z,n__)*DIF(z^(b-2)*#e^z,z,b-a-n__-2),n__,0,b-a-2))
+F_0N(a,b,z):=GAMMA(b)*z^(1-b)/GAMMA(a)*DIF(z^(a-1)*#e^z,z,a-b)
+F_0O(a,b,z):=IF(a<=b-1,F_0M(a,b,z),F_0N(a,b,z))
+F_0P(a,b,z):=IF(  MOD(a-b)=0,  IF(MOD(a)*MOD(b)=0,fail,F_0O(a,b,z),F_0O(a,b,z)),  fail,  fail  )
+F_0Q(a,b,z):=IF(  MOD(a)=0 AND (a<1 OR (b=2*a OR a>=1 AND 2*MOD(b)^2=MOD(b))),  F_0L(a,b,z),  IF(MOD(a-1/2)=0 AND MOD(b-1/2)=0,F_0D(a,b,z),F_0P(a,b,z),F_0P(a,b,z)),  IF(MOD(a-1/2)=0 AND MOD(b-1/2)=0,F_0D(a,b,z),F_0P(a,b,z),F_0P(a,b,z))  )
+F_0R(a,b,z):=IF(  b/=2*a,  IF(    fail=(local:==LIM(F_0Q(b-a,b,o__),o__,-z)),    fail,    #e^z*local,    #e^z*local    ),  fail,  IF(    fail=(local:==LIM(F_0Q(b-a,b,o__),o__,-z)),    fail,    #e^z*local,    #e^z*local    )  )
+F_0S(a,b,z):=(-1)^(b-1/2)*pi*#e^z/((a-1/2)!*GAMMA(a))*DIF(SQRT(z)*#e^(-z)*DIF(z^(a-1)*#e^z*ERFC(SQRT(z)),z,a-1/2),z,b-1/2)
+F_0T(a,b,z):=(-1)^(1/2-b)*pi*z^(1-b)/((a-b)!*GAMMA(a))*DIF(z^(a-1)*#e^z*ERFC(SQRT(z)),z,a-b)
+F_0U(a,b,z):=(-1)^(b-a)*SQRT(pi)*#e^z*z^(3/2-b)*DIF(z^(-a+b-1)*DIF(ERFC(SQRT(z)),z,b-1/2),z,1/2-a)
+F_0V(a,b,z):=(-1)^(-a-b+1)*SQRT(pi)/(1/2-b)!*#e^z*z^(3/2-b)*DIF(#e^(-z)*z^(-a)*DIF(#e^z*ERFC(SQRT(z))/SQRT(z),z,1/2-b),z,1/2-a)
+F_0W(a,b,z):=IF(  a>=1/2,  IF(b>=1/2,F_0S(a,b,z),F_0T(a,b,z)),  IF(b>=1/2,F_0U(a,b,z),F_0V(a,b,z))  )
+F_0X(a,b,z):=(-1)^(b-3/2)*(SQRT(pi)*GAMMA(2-b)/((a-1)!*GAMMA(a-b+1)))*DIF(z^(a-1)*#e^z*DIF(ERFC(SQRT(z))/SQRT(z),z,b-3/2),z,a-1)
+F_0Y(a,b,z):=(-1)^(3/2-b)*SQRT(pi)*(2^(2*a-2*b+1)*(a-b+1/2)!/((a-1)!*(2*a-2*b+1)!))*DIF(z^(a-b)*DIF(#e^z*ERFC(SQRT(z)),z,3/2-b),z,a-1)
+F_0Z(a,b,z):=(-1)^(a+b-3)*(b-a-1)!/((a-1)!*(b-2)!)*DIF(z^(a-1)*#e^z*DIF(#e^(-z)/z,z,b-2),z,a-1)
+F_10(a,b,z):=(-1)^(b-1)*z^(1-b)/((a-1)!*(a-b)!)*(E1(z)*DIF(z^(a-1)*#e^z,z,a-b)-DIF(z^(a-1)*SUM((-1)^p__*p__!/z^(1+p__),p__,0,a-2),z,a-b)-SUM(COMB(a-b,q__)*DIF(z^(a-1)*#e^z,z,q__)*DIF(#e^(-z)/z,z,a-b-1-q__),q__,0,a-b-1))
+F_11(a,b,z):=(-1)^(1-b)/((a-1)!*(a-b)!)*(E1(z)*DIF(z^(a-b)*#e^z,z,a-1)-DIF(z^(a-b)*SUM((-1)^r__*r__!/z^(1+r__),r__,0,-b),z,a-1)-SUM(COMB(a-1,s__)*DIF(z^(a-b)*#e^z,z,s__)*DIF(#e^(-z)/z,z,a-s__-2),s__,0,a-2))
+F_12(a,b,z):=(-1)^(-a)*(-a)!*Lalpha(b-1,-a,z)
+F_13(a,b,z):=IF(b=2*a,1/SQRT(pi)*#e^(z/2)*z^(1/2-a)*KN(a-1/2,z/2),fail,fail)
+F_14(a,b,z):=IF(  a<=0,  F_12(a,b,z),  IF(    MOD(b)=0,    IF(1<=a<=b-1,F_0Z(a,b,z),IF(1<=b-1<a,F_10(a,b,z),F_11(a,b,z))),    IF(b>=3/2,F_0X(a,b,z),F_0Y(a,b,z))    )  )
+F_15(a,b,z):=z^(1-b)/(F_07(b,a-b)*F_07(1,a-b))*(z^(1-b)*EN(b,z)*DIF(z^(a-1)*#e^z,z,a-b)-SUM(COMB(a-b,t__)*DIF(z^(a-1)*#e^z,z,t__)*DIF(z^(-b)*#e^(-z),z,a-b-t__-1),t__,0,a-b-1))
+F_16(a,b,z):=(-1)^(b-a)*#e^z*z*(z^(1-b)*EN(b,z)*DIF(z^(b-a-1),z,b-a)-SUM(    COMB(b-a,u__)*DIF(z^(b-a-1),z,u__)*DIF(z^(-b)*#e^(-z),z,b-a-u__-1),    u__,    0,    b-a-1    ))
+F_17(a,b,z):=IF(a>=b,F_15(a,b,z),F_16(a,b,z))
+F_18(a,b,z):=IF(  MOD(a)=0 AND (a<=0 OR 2*MOD(b)^2=MOD(b)),  F_14(a,b,z),  IF(    MOD(a-1/2)=0 AND MOD(b-1/2)=0,    F_0W(a,b,z),    IF(MOD(a-b)=0,F_17(a,b,z),F_13(a,b,z),F_13(a,b,z)),    IF(MOD(a-b)=0,F_17(a,b,z),F_13(a,b,z),F_13(a,b,z))    ),  IF(    MOD(a-1/2)=0 AND MOD(b-1/2)=0,    F_0W(a,b,z),    IF(MOD(a-b)=0,F_17(a,b,z),F_13(a,b,z),F_13(a,b,z)),    IF(MOD(a-b)=0,F_17(a,b,z),F_13(a,b,z),F_13(a,b,z))    )  )
+F_19(a,b,z):=IF(  b/=1,  IF(    fail=(local:==F_18(1+a-b,2-b,z)),    fail,    z^(1-b)*local,    z^(1-b)*local    ),  fail,  IF(    fail=(local:==F_18(1+a-b,2-b,z)),    fail,    z^(1-b)*local,    z^(1-b)*local    )  )
+F_1A(a,b,c,z):=-(c-1)!/((b-1)!*(c-2)!^2*(a-1)!)*DIF(z^(a-1)*DIF(z^(b-1)*(1-z)^(c-2)*DIF(LN(1-z)/z,z,c-2),z,b-1),z,a-1)
+F_1B(a,b,c,z):=2*SQRT(pi)*(c-1)!/((a-1)!*(b-1)!*(c-2)!^2)*DIF(z^(a-1)*DIF(z^(b-1)*(1-z)^(c-2)*DIF(ASIN(SQRT(z))/SQRT(z),z,c-3/2),z,b-1),z,a-1)
+F_1C(a,b,c,z):=2*(c-1)!/(SQRT(pi)*(a-1)!*(b-1)!)*DIF(z^(a-1)*DIF(z^(b-c)*DIF(ASIN(SQRT(z))/SQRT(1-z),z,3/2-c),z,b-1),z,a-1)
+F_1D(a,b,c,z):=SQRT(pi)*SQRT(z)*(2*c-2)/((a-1)!*(b-1)!*(c-3/2)!)*DIF(z^(a-1)*DIF(z^(b-1)*(1-z)^(c-3/2)*DIF(ATAN(SQRT(-z))/SQRT(-z),z,c-3/2),z,b-1),z,a-1/2)
+F_1E(a,b,c,z):=2*(c-1)!/((a-1)!*(b-1)!)*SQRT(z)*DIF(z^(a-1)*DIF(z^(b-c)*DIF(SQRT(z)*(ATAN(SQRT(-z))/SQRT(-z)),z,3/2-c),z,b-1),z,a-1/2)
+F_1F(a,b,c,z):=(2*c-2)/((b-1)!*(-a+c-1)!)*z^(3/2-c)*(1-z)^(-a-b+c)*DIF(z^(-a+c-1)*(1-z)^(b-c+1/2)*DIF(z^(b-1)*(1-z)^(c-3/2)*DIF(ATAN(SQRT(-z))/SQRT(-z),z,c-3/2),z,b-1),z,1/2-a)
+F_1G(a,b,c,z):=2*(c-1)!*z^(3/2-c)*(1-z)^(-a-b+c)/(SQRT(pi)*(b-1)!*F_07((2*c-1)/2,1/2-a))*DIF(z^(-a+c-1)*(1-z)^(b-c+1/2)*DIF(z^(b-c)*DIF(SQRT(z)*(ATAN(SQRT(-z))/SQRT(-z)),z,3/2-c),z,b-1),z,1/2-a)
+F_1H(a,b,c,z):=z^(1-c)/F_07(c,b-c)*DIF(z^(b-1)*(1-z)^(-a),z,b-c)
+F_1I(a,b,c):=MOD(b-c)=0 AND (b>=c AND (MOD(b)/=0 OR (b<=0 OR NOT(NUMBER(b)))))
+F_1J(a,b,c,z):=IF(  a>=1/2,  IF(c>=3/2,F_1D(a,b,c,z),F_1E(a,b,c,z)),  IF(c>=3/2,F_1F(a,b,c,z),F_1G(a,b,c,z))  )
+F_1K(a,b,c):=MOD(a-1/2)=0 AND (MOD(b)=0 AND (b>=1 AND (MOD(c-1/2)=0 AND NOT(a<c<3/2))))
+F_1L(a,b,c,z):=IF(MOD(c)=0,F_1A(a,b,c,z),IF(c>=3/2,F_1B(a,b,c,z),F_1C(a,b,c,z)))
+F_1M(a,b,c):=MOD(a)=0 AND (a>=1 AND (MOD(b)=0 AND (b>=1 AND (MOD(c-1/2)=0 OR MOD(c) AND c>=2))))
+F_1N(a,b,c,z):=IF(  F_1I(a,b,c),  F_1H(a,b,c,z),  IF(F_1K(a,b,c),F_1J(a,b,c,z),F_1L(a,b,c,z),F_1L(a,b,c,z)),  IF(F_1K(a,b,c),F_1J(a,b,c,z),F_1L(a,b,c,z),F_1L(a,b,c,z))  )
+F_1O(a,b,c,z):=IF(a*b=0,1,F_1N(a,b,c,z),F_1N(a,b,c,z))
+F_1P(a,b,c):=F_1K(a,b,c) OR (F_1M(a,b,c) OR (F_1I(a,b,c) OR a*b=0))
+F_1Q(a,b,c,z):=F_07(1/2,c-1/2)/(F_07(1-b,c-1/2)*F_07(b-1/2,a-b+1/2)*F_07(1/2-b,c-1/2))*z^(3/2-b)*DIF(z^(a-1)*(1-z)^(-2*b+c+1/2)*DIF((1-z)^(b-1/2)*COS((2*b-1)*ATAN(SQRT(-z))),z,c-1/2),z,a-b+1/2)
+F_1R(a,b,c,z):=1/(F_07(c,(1-2*c)/2)*F_07(b-1/2,a-b+1/2))*z^(1-c)*DIF(z^(1-b)*DIF(z^(a-1)*((1-z)^(1/2-b)*COS((2*b-1)*ATAN(SQRT(-z)))),z,a-b+1/2),z,(1-2*c)/2)
+F_1S(a,b,c,z):=F_07(1/2,c-1/2)/(F_07(1-b,-(2*a-2*b+1)/2)*F_07(1/2-b,c-1/2)*F_07((1-2*a)/2,c-1/2))*(1-z)^(-a-b+c)*DIF(z^b*DIF(z^(-a-1/2)*(1-z)^(b-1/2)*COS((2*b-1)*ATAN(SQRT(-z))),z,-(2*a-2*b+1)/2),z,c-1/2)
+F_1T(a,b,c,z):=1/(F_07(c,(1-2*c)/2)*F_07(1-b,-(2*a-2*b+1)/2))*z^(1-c)*DIF(z^(b-1/2)*(1-z)^(-a-b+1/2)*DIF(z^(-a-1/2)*(1-z)^(b-1/2)*COS((2*b-1)*ATAN(SQRT(-z))),z,-(2*a-2*b+1)/2),z,(1-2*c)/2)
+F_1U(a,b,c,z):=F_07(1/2,c-1/2)/(F_07(b+1/2,c-1/2)*F_07(1/2-b,c-1/2)*F_07(-b,a+b))*z^(b+1)*DIF(z^(a-1)*(1-z)^c*DIF(COS(2*b*ASIN(SQRT(z)))/SQRT(1-z),z,c-1/2),z,a+b)
+F_1V(a,b,c,z):=1/(F_07(c,1/2-c)*F_07(-b,a+b))*z^(1-c)*DIF(z^(b+1/2)*DIF(z^(a-1)*COS(2*b*ASIN(SQRT(z))),z,a+b),z,1/2-c)
+F_1W(a,b,c,z):=F_07(1/2,c-1/2)/(F_07(b+1/2,-a-b)*F_07(1/2-b,c-1/2)*F_07(1/2-a,c-1/2))*(1-z)^(-a-b+c)*DIF(z^(1/2-b)*DIF(z^(-a-1/2)*COS(2*b*ASIN(SQRT(z)))/SQRT(1-z),z,-a-b),z,c-1/2)
+F_1X(a,b,c,z):=1/(F_07(c,1/2-c)*F_07(b+1/2,-a-b))*z^(1-c)*DIF(z^(-b)*(1-z)^(-a-b+1/2)*DIF(z^(-a-1/2)*COS(2*b*ASIN(SQRT(z)))/SQRT(1-z),z,-a-b),z,1/2-c)
+F_1Y(a,b,c,z):=F_07(2*b-1,-2*b+c+1)/(F_07(b-1,-2*b+c+1)*F_07(b-1/2,a-b+1/2)*F_07(b-1/2,-2*b+c+1))*z^(3/2-b)*DIF(z^(a-1)*(1-z)^(-2*b+c+1/2)*DIF(((1+SQRT(1-z))/2)^(2*(1-b)),z,-2*b+c+1),z,a-b+1/2)
+F_1Z(a,b,c,z):=1/(F_07(c,2*b-c-1)*F_07(b-1/2,a-b+1/2))*z^(1-c)*DIF(z^(b-1/2)*DIF(z^(a-1)/SQRT(1-z)*((1+SQRT(1-z))/2)^(2*(1-b)),z,a-b+1/2),z,2*b-c-1)
+F_20(a,b,c,z):=F_07(2*b-1,-2*b+c+1)/(F_07(b-1,-2*b+c+1)*F_07(-a+2*b-1,-2*b+c+1)*F_07(b-1/2,-a+b-1/2))*(1-z)^(-a-b+c)*DIF(z^(3/2-b)*DIF(z^(-a+2*b-2)*((1+SQRT(1-z))/2)^(2*(1-b)),z,-a+b-1/2),z,-2*b+c+1)
+F_21(a,b,c,z):=1/(F_07(c,2*b-c-1)*F_07(b-1/2,-a+b-1/2))*z^(1-c)*DIF(z^(b-1/2)*(1-z)^(-a+b-1)*DIF(z^(-a+2*b-2)*((1+SQRT(1-z))/2)^(2*(1-b)),z,-a+b-1/2),z,2*b-c-1)
+F_22(a,b,c,z):=IF(  a-b+1/2>=0,  IF(c-1/2>=0,F_1Q(a,b,c,z),F_1R(a,b,c,z)),  IF(c-1/2>=0,F_1S(a,b,c,z),F_1T(a,b,c,z))  )
+F_23(a,b,c):=MOD(a-b+1/2)=0 AND MOD(c-1/2)=0
+F_24(a,b,c,z):=IF(  a+b>=0,  IF(c-1/2>=0,F_1U(a,b,c,z),F_1V(a,b,c,z)),  IF(c-1/2>=0,F_1W(a,b,c,z),F_1X(a,b,c,z))  )
+F_25(a,b,c):=MOD(a+b)=0 AND MOD(c-1/2)=0
+F_26(a,b,c,z):=IF(  a-b+1/2>=0,  IF(c-2*b+1>=0,F_1Y(a,b,c,z),F_1Z(a,b,c,z)),  IF(c-2*b+1>=0,F_20(a,b,c,z),F_21(a,b,c,z))  )
+F_27(a,b,c):=MOD(a-b+1/2)=0 AND MOD(c-2*b+1)=0
+F_28(a,b,c,z):=IF(  F_23(a,b,c),  F_22(a,b,c,z),  IF(F_25(a,b,c),F_24(a,b,c,z),F_26(a,b,c,z),F_26(a,b,c,z)),  IF(F_25(a,b,c),F_24(a,b,c,z),F_26(a,b,c,z),F_26(a,b,c,z))  )
+F_29(a,b,c):=F_23(a,b,c) OR (F_25(a,b,c) OR F_27(a,b,c))
+F_2A(a,b,c,z):=IF(  MOD(a)=0 AND (a<=0 AND (MOD(c)=0 AND a<c<=0)),  F_07(a,1-c)*F_07(b,1-c)/(1-c)!*z^(1-c)*F21(a-c+1,b-c+1,2-c,z),  F_07(b,1-c)*F_07(a,1-c)/(1-c)!*z^(1-c)*F21(b-c+1,a-c+1,2-c,z),  F_07(b,1-c)*F_07(a,1-c)/(1-c)!*z^(1-c)*F21(b-c+1,a-c+1,2-c,z)  )
+F_2B(a,b,c,z,s):=IF(  c>0 OR (MOD(c)/=0 OR c<=s),  SUM(F_07(a,v__)*F_07(b,v__)/F_07(c,v__)*(z^v__/v__!),v__,0,-s),  F_2A(a,b,c,z),  SUM(F_07(a,v__)*F_07(b,v__)/F_07(c,v__)*(z^v__/v__!),v__,0,-s)  )
+F_2C(a,b,c,z):=IF(MOD(a)=0 AND a<=0,F_2B(a,b,c,z,a),F_2B(a,b,c,z,b),F_2B(a,b,c,z,b))
+F_2D(a,b,c):=MOD(a)=0 AND a<=0 OR MOD(b)=0 AND b<=0
+F_2E(a,b,c,z,u):=GAMMA(c)/(GAMMA(c-a)*GAMMA(a))*INT(u^(a-1)*(1-u)^(c-a-1)*(1-u*z)^(-b),u,0,1)
+F_2F(a,b,c):=0<a<c AND (MOD(b)=0 AND MOD(a)=0 OR (MOD(b)=0 AND MOD(c-a)=0 OR MOD(a)=0 AND MOD(c)=0))
+F_2G(a,b,c,z,u):=IF(  F_2D(a,b,c),  F_2C(a,b,c,z),  IF(F_2F(a,b,c),F_2E(a,b,c,z,u),fail,fail),  IF(F_2F(a,b,c),F_2E(a,b,c,z,u),fail,fail)  )
+F_2H(a,b,c,z,u):=IF(  F_29(a,b,c),  IF(MOD(a)*MOD(a-1/2)=0,fail,F_28(a,b,c,z),F_28(a,b,c,z)),  F_2G(a,b,c,z,u),  F_2G(a,b,c,z,u)  )
+F_2I(a,b,c,z,u):=IF(  F_1P(a,b,c),  F_1O(a,b,c,z),  F_2H(a,b,c,z,u),  F_2H(a,b,c,z,u)  )
+F_2J(a,b,c,z,u):=IF(  F_1P(a,b,c) OR (F_29(a,b,c) OR (F_2D(a,b,c) OR F_2F(a,b,c))),  F_2I(a,b,c,z,u),  fail,  fail  )
+F_2K(a,b,c,z,u):=IF(  fail=(local:==F_2J(c-a,c-b,c,z,u)),  fail,  (1-z)^(c-a-b)*local,  (1-z)^(c-a-b)*local  )
+F_2L(a,b,c,u,f):=f*INT(1/(u^c*(u-1)^(a+b-c+1)*f^2),u)
+F_2M(a,b,c,z,u):=LIM(   IF(     c>0,     F_2L(a,b,c,u,F21(a,b,c,u)),     F_2L(a,b,c,u,u^(1-c)*F21(a+1-c,b+1-c,2-c,u))     ),   u,   z   )
+F_2N(m,v,z,q):=IF(  q=fail OR q=F21_(-v,v+1,1-m,(1-z)/2),  Pmu_(m,v,z),  q*(1+z)^(m/2)/(1-z)^(m/2)/F_08(1-m),  q*(1+z)^(m/2)/(1-z)^(m/2)/F_08(1-m)  )
+F_2O(m,v,z):=F_2N(m,v,z,F21(-v,v+1,1-m,(1-z)/2))
+F_2P(m,v,z):=IF(  m=1/2,  SQRT(2/pi)*(COS((v+1/2)*ACOS(z))/(1-z^2)^(1/4)),  IF(    v=-1/2,    SQRT(2)*(pi-2*ASIN(z))/(2*SQRT(pi)*(1-z^2)^(1/4)),    SQRT(2/pi)*(SIN((v+1/2)*ACOS(z))/((v+1/2)*(1-z^2)^(1/4))),    SQRT(2/pi)*(SIN((v+1/2)*ACOS(z))/((v+1/2)*(1-z^2)^(1/4)))    )  )
+F_2Q(v,z):=2^(-v)*(1-z^2)^(v/2)/F_08(v+1)
+F_2R(m,v,z):=(1+z)^(m/2)/(1-z)^(m/2)*F21(-v,v+1,1-m,(1-z)/2)/F_08(1-m)
+F_2S(m,v,z):=IF(  m=-v OR m^2=1/4,  IF(m=-v,F_2Q(v,z),F_2P(m,v,z),F_2P(m,v,z)),  F_2R(m,v,z),  F_2R(m,v,z)  )
+F_2T(m,v,z):=IF(  MOD(v)=0 AND v>=0 OR (m=-v OR m^2=1/4),  F_2S(m,v,z),  IF(MOD(v)=0 AND v<0,Pmu(m,-v-1,z),F_2O(m,v,z),F_2O(m,v,z)),  IF(MOD(v)=0 AND v<0,Pmu(m,-v-1,z),F_2O(m,v,z),F_2O(m,v,z))  )
+F_2U(m,v,z,f):=IF(  EXPAND(f-F21_((v+m+2)/2,(v+m+1)/2,v+3/2,1/z^2),Trivial)=0,  Qmu_(m,v,z),  SQRT(pi)*F_08(v+m+1)/(2^(v+1)*F_08(v+3/2))*z^(-v-m-1)*(1-z^2)^(m/2)*f,  SQRT(pi)*F_08(v+m+1)/(2^(v+1)*F_08(v+3/2))*z^(-v-m-1)*(1-z^2)^(m/2)*f  )
+F_2V(m,v,z,f,g):=IF(  EXPAND(Pmu_(m,v,z)-f)=0 OR EXPAND(Pmu_(-m,v,z)-g)=0,  F_2U(m,v,z,F21((v+m+2)/2,(v+m+1)/2,v+3/2,1/z^2)),  pi/2*(COT(m*pi)*f-GAMMA(v+m+1)/(SIN(m*pi)*GAMMA(v-m+1))*g),  pi/2*(COT(m*pi)*f-GAMMA(v+m+1)/(SIN(m*pi)*GAMMA(v-m+1))*g)  )
+F_2W(m,v,z):=IF(  MOD(m)=0 OR (MOD(v+m)=0 AND m<=-v-1 OR MOD(v-m)=0 AND m>=v+1),  F_2U(m,v,z,F21((v+m+2)/2,(v+m+1)/2,v+3/2,1/z^2)),  F_2V(m,v,z,Pmu(m,v,z),Pmu(-m,v,z)),  F_2V(m,v,z,Pmu(m,v,z),Pmu(-m,v,z))  )
+F_2X(m,v,z):=-SQRT(pi/2)*(SIN((v+1/2)*ACOS(z))/(1-z^2)^(1/4))
+F_2Y(m,v,z):=SQRT(pi/2)*(COS((v+1/2)*ACOS(z))/((v+1/2)*(1-z^2)^(1/4)))
+F_2Z(m,v,z):=IF(  m=1/2,  IF(    v=-1/2,    -SQRT(2)*SQRT(pi)*ASIN(z)/(2*(1-z^2)^(1/4)),    F_2X(m,v,z),    F_2X(m,v,z)    ),  IF(v=-1/2,2/(SQRT(pi)*(1-z^2)^(1/4)),F_2Y(m,v,z),F_2Y(m,v,z))  )
+F_30(m,v,z):=1/(2^v*v!)*DIF((z^2-1)^v*LN((z+1)/(1-z)),z,v)-1/2*Pmu(0,v,z)*LN((z+1)/(1-z))
+F_31(m,v,z):=(-1)^m*(1-z^2)^(m/2)*DIF(1/(2^v*v!)*DIF((z^2-1)^v*LN((z+1)/(1-z)),z,v)-1/2*Pmu(0,v,z)*LN((z+1)/(1-z)),z,m)
+F_32(v,z,u):=2^(v-1)*(1-z^2)^(v/2)*F_08(v)*INT((1-u^2)^(-v-1),u,0,z)
+F_33(m,v,z,u):=IF(  m=-v,  F_32(v,z,u),  F_2U(m,v,z,F21((v+m+2)/2,(v+m+1)/2,v+3/2,1/z^2)),  F_2U(m,v,z,F21((v+m+2)/2,(v+m+1)/2,v+3/2,1/z^2))  )
+F_34(m,v,z,u):=IF(m=-v,F_32(v,z,u),F_2W(m,v,z),F_2W(m,v,z))
+F_35(m,v,z,u):=IF(  MOD(m)=0 AND (MOD(v)=0 AND (m>=0 AND v>=0 OR m<0 AND v+m<=-2)),  IF(m>=0 AND v>=0,IF(m=0,F_30(m,v,z),F_31(m,v,z)),F_33(m,v,z,u)),  IF(m^2=1/4,F_2Z(m,v,z),F_34(m,v,z,u),F_34(m,v,z,u)),  IF(m^2=1/4,F_2Z(m,v,z),F_34(m,v,z,u),F_34(m,v,z,u))  )
+F_36(a,n,t):=F_02(    (-2)^n*n!*GAMMA(2*a)*GAMMA(a+n+1/2)/(GAMMA(a+1/2)*GAMMA(n+2*a)),    (1-t^2)^(a-1/2),    1-t^2,    n,    t    )
+F_37(a,z,u):=z^(a-1)*INT(u^(-a)*#e^(-u),u,z,inf)
+F_38(a,z,u):=IF(z<=0,0,F_37(a,z,u),F_37(a,z,u))
+F_39(v,z,k):=k^v/GAMMA(v+1)*((COSH(z/k)-1)/(COSH(z/k)+1))^(v/2)*F21(-k,k+1,v+1,(1-COSH(z/k))/2)
+F_3A(v,z,k):=SQRT(pi)*GAMMA(k+v+1)*SECH(z/k)^(k+1)*(1-SECH(z/k)^2)^(v/2)/(2^(k+1)*k^v*GAMMA(k+3/2))*F21((k+v+2)/2,(k+v+1)/2,k+3/2,SECH(z/k)^2)
+POCHHAMMER(a,n):=F_07(a,n)
+I_ERF(n,z):=IF(  MOD(n)=0 AND n>-2,  IF(    n=-1,    2/SQRT(pi)*#e^(-z^2),    2/SQRT(pi)*INT((alpha-z)^n/n!*#e^(-alpha^2),alpha,z,inf)    ),  F_01(7),  I_ERF_(n,z)  )
+PN(n,z):=IF(  MOD(n)=0 AND n>=0,  LIM(F_02((-2)^n*n!,1,1-w__^2,n,w__),w__,z),  F_01(2),  PN_(n,z)  )
+Lalpha(a,n,z):=IF(  MOD(n)=0 AND n>=0,  LIM(F_02(n!,#e^(-x__)*x__^a,x__,n,x__),x__,z),  F_01(3),  Lalpha_(a,n,z)  )
+JS(n,z):=IF(MOD(n)=0,IF(n<0,F_06(-n-1,z),F_05(n,z)),F_01(1),JS_(n,z))
+YS(n,z):=IF(MOD(n)=0,(-1)^(n+1)*IF(n<0,F_05(-n-1,z),F_06(n,z)),F_01(1),YS_(n,z))
+IS_1ST(n,z):=IF(  NUMBER(n),  IF(MOD(n)=0,#e^(-n*pi*#i/2)*JS(n,z*#e^(#i*pi/2)),F_01(1),F_01(1)),  IS_1ST_(n,z),  IS_1ST_(n,z)  )
+IS_2ND(n,z):=IF(  NUMBER(n),  IF(MOD(n)=0,#e^(3*(n+1)*pi*#i/2)*YS(n,z*#e^(#i*pi/2)),F_01(1),F_01(1)),  IS_2ND_(n,z),  IS_2ND_(n,z)  )
+KS(n,z):=IF(  MOD(n)=0,  IF(    n>=0,    pi*#e^(-z)/(2*z)*SUM((n+y__)!/(y__!*(n-y__)!*(2*z)^y__),y__,0,n),    KS(-n-1,z)    ),  F_01(1),  KS_(n,z)  )
+JN(n,z):=IF(  MOD(n-1/2)=0,  SQRT(2*z)/SQRT(pi)*JS(n-1/2,z),  IF(    n>-1/2,    2*(z/2)^n/(SQRT(pi)*GAMMA(n+1/2))*	INT((1-alpha^2)^(n-1/2)*COS(alpha*z),alpha,0,1),    JN_(n,z)    ),  JN_(n,z)  )
+YN(n,z):=IF(  MOD(n-1/2)=0,  SQRT(2*z)/SQRT(pi)*YS(n-1/2,z),  IF(    MOD(n)=0,    YN_(n,z),    LIM((JN(z__,z)*COS(z__*pi)-JN(-z__,z))/SIN(z__*pi),z__,n)    ),  YN_(n,z)  )
+IN(n,z):=IF(  MOD(n-1/2)=0,  SQRT(2*z/pi)*IS_1ST(n-1/2,z),  IF(    n>-1/2,    (z/2)^n/(SQRT(pi)*GAMMA(n+1/2))*	INT((1-alpha^2)^(n-1/2)*#e^(alpha*z),alpha,-1,1),    IN_(n,z)    ),  IN_(n,z)  )
+KN(n,z):=IF(  MOD(n-1/2)=0,  SQRT(2*z)/SQRT(pi)*KS(n-1/2,z),  IF(    n>-1/2,    SQRT(pi)*(z/2)^n/GAMMA(n+1/2)*	  LIM(	     INT((alpha^2-1)^(n-1/2)*#e^(-alpha*a___^2),alpha,1,inf),	     a___,	     SQRT(z)	     ),    KN_(n,z)    ),  KN_(n,z)  )
+Palphabeta(a,b,n,z):=IF(  MOD(n)=0 AND n>=0,  LIM(F_02((-2)^n*n!,(1-b___)^a*(1+b___)^b,1-b___^2,n,b___),b___,z),  F_01(4),  Palphabeta_(a,b,n,z)  )
+HN(n,z):=IF(  MOD(n)=0 AND n>=0,  LIM(F_02((-1)^n,#e^(-c___^2),1,n,c___),c___,z),  F_01(2),  HN_(n,z)  )
+HE(n,z):=2^(-n/2)*HN(n,z/SQRT(2))
+TN(n,z):=IF(  MOD(n)=0 AND n>=0,  LIM(     F_02((-2)^n*GAMMA(n+1/2)/SQRT(pi),(1-d___^2)^(-1/2),1-d___^2,n,d___),     d___,     z     ),  F_01(2),  TN_(n,z)  )
+UN(n,z):=IF(  MOD(n)=0 AND n>=0,  LIM(     F_02(	 2*(-2)^n*GAMMA(n+3/2)/((n+1)*SQRT(pi)),	 (1-e___^2)^(1/2),	 1-e___^2,	 n,	 e___	 ),     e___,     z     ),  F_01(2),  UN_(n,z)  )
+Calpha(a,n,z):=IF(  MOD(n)=0 AND n>=0,  LIM(     IF(a/=0,F_36(a,n,f___),IF(n=0,1,2/n*TN(n,f___)),F_36(a,n,f___)),     f___,     z     ),  F_01(3),  Calpha_(a,n,z)  )
+F11(a,b,z):=LIM(   IF(fail=(local:==F_0Q(a,b,g___)),   IF(fail=(local:==F_0R(a,b,g___)),   F11_(a,b,g___)   ,local,local),local,local),g___,z)
+U11(a,b,z):=LIM(   IF(fail=(local:==F_18(a,b,h___)),   IF(fail=(local:==F_19(a,b,h___)),   U11_(a,b,h___)   ,local,local),local,local),h___,z)
+Mmu(k,m,z):=z^(m+1/2)*#e^(-z/2)*F11(1/2+m-k,1+2*m,z)
+Wmu(k,m,z):=z^(m+1/2)*#e^(-z/2)*U11(1/2+m-k,1+2*m,z)
+DV(v,z):=2^(v/2-1/2)*#e^(-z^2/4)*z*U11(1/2-v/2,3/2,z^2/2)
+F21(a,b,c,z):=LIM(   IF(fail=(local:==F_2J(a,b,c,i___,alpha)),   IF(fail=(local:==F_2K(a,b,c,i___,alpha)),   IF(fail=(local:==IF(		      fail=(local:==F_2J(b,a,c,i___,alpha)),		      fail,		      local,		      local		      )	   ),   F21_(a,b,c,i___)   ,local,local),local,local),local,local),i___,z)
+U21(a,b,c,z):=IF(  MOD(c)/=0 OR (MOD(a)=0 AND (c<=a<=0 OR c>a>0) OR 	MOD(b)=0 AND (c<=b<=0 OR c>b>0)),  z^(1-c)*F21(a+1-c,b+1-c,2-c,z),  F_2M(a,b,c,z,alpha),  IF(    MOD(c)=0,    F_2M(a,b,c,z,alpha),    z^(1-c)*F21(a+1-c,b+1-c,2-c,z),    z^(1-c)*F21(a+1-c,b+1-c,2-c,z)    )  )
+Pmu(m,v,z):=LIM(F_2T(m,v,j___),j___,z)
+Qmu(m,v,z):=LIM(   IF(     MOD(m)=0 AND m<0,     (-1)^m*F_35(-m,v,k___,alpha)*F_08(v+m+1)/F_08(v-m+1),     F_35(m,v,k___,alpha),     F_35(m,v,k___,alpha)     ),   k___,   z   )
+Yalpha(m,n,a,b):=IF(MOD(m)=0 AND MOD(n)=0,COS(m*b)*Pmu(m,n,COS(a)),F_01(5),Yalpha_(m,n,a,b))
+Ybeta(m,n,a,b):=IF(MOD(m)=0 AND MOD(n)=0,SIN(m*b)*Pmu(m,n,COS(a)),F_01(5),Ybeta_(m,n,a,b))
+E1_(z,u):=INT((1-#e^(-u))/u,u,0,z)-LN(z)-euler_gamma
+EN_(a,z):=IF(  MOD(a)=0,  IF(    a<=0,    (-a)!*z^(a-1)*#e^(-z)*SUM(z^l___/l___!,l___,0,-a),    (-z)^(a-1)/(a-1)!*(E1_(z,alpha)-#e^(-z)*	SUM((-1)^l___*l___!/z^(1+l___),l___,0,a-2))    ),  F_38(a,z,alpha),  F_38(a,z,alpha)  )
+JN_X(v,z,k):=IF(  MOD(k)=0 AND k>0,  IF(MOD(v-1/2)=0,JN(v,z),k^v*Pmu(-v,k,COS(z/k)),k^v*Pmu(-v,k,COS(z/k))),  F_01(6),  F_01(6)  )
+YN_X(v,z,k):=IF(  MOD(k)=0 AND k>0,  IF(    MOD(v-1/2)=0,    YN(v,z),    -2/pi*k^v*Qmu(-v,k,COS(z/k)),    -2/pi*k^v*Qmu(-v,k,COS(z/k))    ),  F_01(6),  F_01(6)  )
+IN_X(v,z,k):=IF(  MOD(k)=0 AND k>0,  IF(    MOD(v-1/2)=0,    IN(v,z),    IF(MOD(v)=0 AND v<0,IN_X(-v,z,k),F_39(v,z,k)),    F_39(v,z,k)    ),  F_01(6),  F_01(6)  )
+KN_X(v,z,k):=IF(  MOD(k)=0 AND k>0,  IF(    MOD(v-1/2)=0,    KN(v,z),    IF(MOD(v)=0 AND v<0,KN_X(-v,z,k),F_3A(v,z,k)),    F_3A(v,z,k)    ),  F_01(6),  F_01(6)  )
+WRONSKIAN_(f,g,x):=f*DIF(g,x)-g*DIF(f,x)
+
+## derive-3.14-dos/USERS/HERMITE.MTH
+LAGR_1(m_,i,j,x):=IF(i=j,1,(x-m_ SUB j SUB 1)/(m_ SUB i SUB 1-m_ SUB j SUB 1))
+LAGR_2(m_,i,x):=PRODUCT(LAGR_1(m_,i,j,x),j,1,DIMENSION(m_))
+LAGRANGE(m_,x):=SUM(m_ SUB i SUB 2*LAGR_2(m_,i,x),i,1,DIMENSION(m_))
+HERMITE(m_,x):=VECTOR((1-2*(x-m_ SUB i SUB 1)*LIM(DIF(LAGR_2(m_,i,x),x),x,ELEMENT(m_,i,1),0))*LAGR_2(m_,i,x)^2,i,1,DIMENSION(m_)) . ELEMENT(m_`,2)+VECTOR((x-m_ SUB i SUB 1)*LAGR_2(m_,i,x)^2,i,1,DIMENSION(m_)) . ELEMENT(m_`,3)
+HERMITE_2(m_,x):=VECTOR((1+(-3*LIM(DIF(LAGR_2(m_,i,x),x),x,ELEMENT(m_,i,1),0))*(x-ELEMENT(m_,i,1))+(3/2*(4*LIM(DIF(LAGR_2(m_,i,x),x),x,ELEMENT(m_,i,1),0)^2-LIM(DIF(LAGR_2(m_,i,x),x,2),x,ELEMENT(m_,i,1),0)))*(x-ELEMENT(m_,i,1))^2)*LAGR_2(m_,i,x)^3,i,1,DIMENSION(m_)) . ELEMENT(m_`,2)+VECTOR(((x-ELEMENT(m_,i,1))+(-3*LIM(DIF(LAGR_2(m_,i,x),x),x,ELEMENT(m_,i,1),0))*(x-ELEMENT(m_,i,1))^2)*LAGR_2(m_,i,x)^3,i,1,DIMENSION(m_)) . ELEMENT(m_`,3)+VECTOR((1/2*(x-ELEMENT(m_,i,1))^2)*LAGR_2(m_,i,x)^3,i,1,DIMENSION(m_)) . ELEMENT(m_`,4)
+L_1(m_,i,j,x):=IF(i=j,1,IF(j=1 OR j=DIMENSION(m_),((x-m_ SUB j SUB 1)/(m_ SUB i SUB 1-m_ SUB j SUB 1))^2,(x-m_ SUB j SUB 1)/(m_ SUB i SUB 1-m_ SUB j SUB 1)))
+L_2(m_,i,x):=PRODUCT(L_1(m_,i,j,x),j,1,DIMENSION(m_))
+LEFT_END(m_,z,x):=m_ SUB 1 SUB 2*((1-LIM(DIF(L_2(m_,1,x),x),x,m_ SUB 1 SUB 1,0)*(x-m_ SUB 1 SUB 1))*L_2(m_,1,x))+z*(x-m_ SUB 1 SUB 1)*L_2(m_,1,x)
+RIGHT_END(m_,z,x):=m_ SUB DIMENSION(m_) SUB 2*((1-LIM(DIF(L_2(m_,DIMENSION(m_),x),x),x,m_ SUB DIMENSION(m_) SUB 1,0)*(x-m_ SUB DIMENSION(m_) SUB 1))*L_2(m_,DIMENSION(m_),x))+z*(x-m_ SUB DIMENSION(m_) SUB 1)*L_2(m_,DIMENSION(m_),x)
+H_ENDS(m_,z1,zn,x):=SUM(m_ SUB i SUB 2*L_2(m_,i,x),i,2,DIMENSION(m_)-1)+LEFT_END(m_,z1,x)+RIGHT_END(m_,zn,x)
+
+## derive-3.14-dos/USERS/ODE.DMO
+[phi(x):=,omega(x):=,k:epsilonReal (0, inf),Branch:=Any]
+ODE(y1+phi(x)*y-omega(x)*y^n)
+ODE((x-r)^2*y2+(x-r)*y1+(z^2*(x-r)^(2*k)-v^2)*y)
+ODE(x^2*y2+x*y1+(x^(4/7)-1)*y)
+ODE(x^2*y2+x*(4*x^2+1)*y1+(z^2*x^(2*k)+4*x^4+4*x^2-v^2)*y)
+ODE((x-r)^(2*k+2)*y2+(x-r)^(2*k+1)*y1+(z^2-v^2*(x-r)^(2*k))*y)
+ODE(y1+a^2*y^2=-b^2*x^(2*n-2))
+ODE(3*x^3*y1+x^3*y^2=x^(3/5))
+ODE(2*SIN(x)^2*y2+SIN(2*x)*y1+8*y)
+ODE(y2+x*y1+#e^(-x^2)*y)
+CHANGE_X(x*y2+(x^2-1)*y1+x^3*y-x^3*#e^(-x^2/4))
+CHANGE_X(y2+(8*x^2-1)/x*y1+20*x^2*y-x^2)
+ODE(y2-(b^2*(x-r)^2+2*a*b)*y)
+ODE(y2-(a+z*x^(2*k)/4)*z*k^2*x^(2*k-2)*y)
+ODE(y2+(2-k)/(2*x)*y1-(b^2*z^2*x^(2*k)+a^2*z^2*x^k)/x^2*y)
+ODE((x-r)^2*y2-(x-r)*(a+b-1)*y1+a*b*y)
+ODE(y2+((a+b+1)/(x-s)-(a+b-1)/(x-r))*y1+a*b*(r-s)^2/((x-r)^2*(x-s)^2)*y)
+ODE(y1*(y+#e^(-x)*COS(y))-#e^(-x)*SIN(y))
+ODE(y1-1+y^2)
+ODE(y*y2+y1^2+1)
+ODE(y1-(x-y+1)/(x+3*y-2))
+ODE(y1-TAN(x-y+1)-1)
+ODE((x^3-y^3)*y1-x^2*y+x*y^2)
+ODE(#e^(y/x)+y/x+1-y1)
+ODE(y^2*x^4+1-x^3*y1)
+ODE(y1-1/(y+SQRT(x))-y/(2*x))
+ODE(2*x^2*y1+2*x*y-x^2*y^2+1)
+ODE(y1-SQRT(y)-x)
+ODE(y1-1/y-1/(2*SQRT(x)))
+ODE((x-r)*(1-z*(x-r)^k)*y2+(c-z*(a+b+1)*(x-r)^k)*y1-a*b*z*(x-r)^(k-1)*y)
+ODE(x^2*(1-x)*y2-(3/2*x+x^2)*y1+(3/2+x)*y)
+ODE(x^2*y^3+x*(1+y^2)*y1)
+ODE(y1*(3*x*y+2*x-3*y+1)-x*y-x-1)
+ODE(y1*(2*x*y+2*y^2-4*y+1)+2*x^2+2*x*(y-2)+1)
+ODE(4*x*y+3*y^2-x+(x^2+2*x*y)*y1)
+ODE((x*y+1)*y1-1)
+ODE((x-r)^2*y2+(x-r)*(b-z*(x-r)^k)*y1-a*z*(x-r)^k*y)
+ODE(x^(k+2)*y2+x*(b*x^k-z)*y1-a*z*y)
+ODE(x*y2-x^(1/3)*y1-x^(-2/3)*y)
+ODE(y1*x-2*y1^2-y)
+ODE(x*y1^2-2*y*y1+4*x)
+ODE(y1^3+y1*x-y)
+ODE(phi(x*y1-y)-omega(y1))
+ODE(x*y1^2-2*y*y1+x+2*y)
+ODE(2*y-y1^2-4*x*y1)
+ODE(y2-(a+b)*y1+a*b*y)
+ODE((x-r)^4*y2+(x-r)^2*(2*x+a+b-2*r)*y1+a*b*y)
+ODE(x*y2+y1*(1-2*x*y*y1))
+ODE(y2-(y*y1-x*y1^2)/(x*y))
+ODE(y^2*y1^2+3*x*y1-y)
+ODE(y*(3-4*y)^2*y1^2-4*(1-y))
+ODE(y1^3-4*x^4*y1+8*x^3*y)
+ODE(4*y1^2*x-(3*x-1)^2)
+ODE(x^3*y1^2+x^2*y*y1+1)
+ODE(SQRT(y1^2+1)*(x-y)-(x+y1*y))
+ODE(9*y*y1^2+4)
+ODE((3*y-1)^2*y1^2-4*y)
+ODE(y+x*y1-x^4*y1^2)
+ODE(6*y1^2*y^2+3*y1*x-y)
+ODE((x^2-4)*y1^2-2*x*y*y1-x^2)
+ODE(y1^3*x-2*y1^2*y-16*x^2)
+ODE(y2+k^2*SIN(y))
+ODE(y2-phi(y))
+ODE(y2-1-y1^2)
+ODE(y1*y2-1-y1^2)
+ODE(y2-y*y1)
+ODE(y2*y^3-1)
+ODE(y*y2+y1^2*SQRT(1+y1^2))
+ODE(2*y*y2+y1^2+y1^4)
+ODE(y*y2-y1^2-y^3)
+ODE(y2-x*y1^2)
+ODE(y2-a*(y1^2+1)^(3/2))
+ODE((1+x^2)*y2+2*x*y1-1)
+ODE(y1*y-#e^x+y^2)
+ODE(y2-2*x*phi(x)*y1+2*phi(x)*y)
+ODE(y2-2*phi(x)*y1+k*(2*phi(x)-k)*y)
+ODE(x*y*y2-y*y1+x*y1^2)
+ODE((y-x*y1)^2-x^2*y*y2)
+ODE(x*y*y2-x*y1^2-y*y1)
+ODE(y*y2-(a+1)*y1^2)
+ODE(x^2*y*y2+x*y*y1-x^2*y1^2-y^2)
+ODE(x^2*y2/y-phi(x*y1/y))
+ODE(x*y*y2-y*y1+x*y1^2)
+ODE(x^2*y*y2+x^2*y1^2-5*x*y*y1-4*y^2)
+ODE(x*y2-y1+y/x-(y1-y/x)^2)
+ODE((y1-y/x)^2-x*y2)
+ODE(y2*x+(y1-y/x)^3)
+ODE(y2-(2*x*y+x^3)*y1/x^4+4*y^2/x^4)
+ODE(x*y2+y1+x*y1^2)
+ODE(x*y2+y1+x^2*y1^3)
+ODE(x*y2+y1-x*y*y1^2)
+ODE(x*y2+y1+x*y1^2)
+ODE(x^2*y2-phi(x*y1))
+ODE(y*y2-y^2*#e^(-y1/y)-y1^2)
+ODE(y*y2-y1^2+y^2)
+ODE(y*y2-y1^2-y*y1)
+ODE(y2*y^2+y*y1*y2+y1^3)
+ODE(y2-y*phi(y1/y))
+ODE(y1^2-phi(x)*y*y1-omega(x)*y^2-y*y2)
+ODE(y*y2+(a^2-1)*y1^2=b^2*x^(2*n-2)*y^2)
+ODE(x^4*y*y2+3*x^4*y1^2+4*y^2)
+[k:=,Branch:=Principal]
+
+## derive-3.14-dos/USERS/ODE.MTH
+[ c1_:epsilonReal  , c2_:epsilonReal  , alpha:epsilonReal , fail:=	 , local:=	  , ODE(x):=	     , JN(x):=		 , YN(x):=	 , IN(x):=	  , KN(x):=	     , F11(x):= 	 , U11(x):=	 , F21(x):=	  , U21(x):=	     , WRONSKIAN_(x):=	 , ROOT_(x):=	 , INVERSE_(x):=	  , ELIMINATE(x):=   , RICCATI(x):=	 , GENERAL(x):=  , TRANSFORM_X(x):= , TRANSFORM_Y(x):= , TRANSFORM_P(x):=  , APPLY_IC(x):=  ]
+message_table:=[ " The 1st function must be a non-zero solution of the homogeneous ODE ", " The method does not apply to Nonlinear ODEs ", " The homogeneous solution(s) must be entered as [s1(x),s2(x)] or s1(x) ", " The given ODE is not a Riccati equation ", " This function (2nd argument) is not a solution of the given ODE ", " This is not an Ordinary Differential Equation "]
+MESSAGE(i):=message_table SUB i
+[ ODE_1ST_LINEAR(x):=,ODE_SHORT(x):=,ODE_1ST(x):=, ODE_2ND_1(x):=,ODE_2ND_2(x):=,ODE_2ND_4(x):=,ODE_2ND(x):=]
+SIDE(w):=LHS(w)-RHS(w)
+SIGNUM(x):=IF(SIGN(x)=1,1,-1,1)
+FIX_DIM(a):=IF(DIMENSION(a)=1,a SUB 1,a,a)
+FREE(u,x):=IF(DIMENSION(SELECT(x=a_,a_,VARIABLES(u)))=0,true,false)
+BARE(w,a):=PRODUCT(SELECT(NOT(FREE(b_,a)),b_,FACTORS(FACTOR(SIDE(w),Trivial,a))))
+PARTS_1(a):=[DENOMINATOR(a),NUMERATOR(a)]
+PARTS(f):=PARTS_1(FACTOR(f,Trivial))
+X_TERMS(t,x):=SELECT(NOT(FREE(c_,x)),c_,TERMS(EXPAND(t,x)))
+INVERT_1(v,u,x):=IF(FREE(v,x),u,v)
+INVERT_(f,x):=INVERT_1(ITERATE(f,x,x,-1),INVERSE_(x),x)
+INVERT(f,x):=INVERT_1(ITERATE(f,x,x,-1),fail,x)
+LEAN_1(a,i):=IF(  i=0,  a,  IF(    PRODUCT(a SUB i-a SUB d_,d_,i+1,DIMENSION(a))=0,    LEAN_1(DELETE_ELEMENT(a,i),i),    LEAN_1(a,i-1),    LEAN_1(a,i-1)    )  )
+LEAN(a):=IF(DIMENSION(a),a,LEAN_1(a,DIMENSION(a)-1))
+ROOTS(g,x):=VECTOR(      IF(	DIF(LHS(e_),x)=1 AND FREE(RHS(e_),x),	RHS(e_),	ROOT_(g,x),	ROOT_(g,x)	),      e_,      SOLVE(g,x)      )
+ELIMINATE_1(v,c):=VECTOR(RHS(f_),f_,SELECT(c=LHS(g_) AND FREE(RHS(g_),c),g_,v))
+ELIMINATE_2(v,c):=IF(  c=LHS(v SUB 1) AND (RHS(v SUB 1)=0 AND DIMENSION(v)>1),  DELETE_ELEMENT(ELIMINATE_1(v,c),1),  ELIMINATE_1(v,c),  ELIMINATE_1(v,c)  )
+ELIMINATE_3(a,b,v,x):=IF(  DIMENSION(a)<=DIMENSION(b),  LIM(v SUB 2,x,a SUB 1),  LIM(v SUB 1,x,b SUB 1),  LIM(v SUB 1,x,b SUB 1)  )
+ELIMINATE_4(a,b,v,x):=IF(  DIMENSION(b)=0,  LIM(v SUB 2,x,a SUB 1),  ELIMINATE_3(a,b,v,x),  ELIMINATE_3(a,b,v,x)  )
+ELIMINATE_5(a,b,v,x):=IF(  DIMENSION(a)=0,  LIM(v SUB 1,x,b SUB 1),  ELIMINATE_4(a,b,v,x),  ELIMINATE_4(a,b,v,x)  )
+ELIMINATE_6(a,b,v,x):=IF(  DIMENSION(a)^2+DIMENSION(b)^2=0,  v,  ELIMINATE_5(a,b,v,x),  ELIMINATE_5(a,b,v,x)  )
+ELIMINATE_7(v,x):=IF(  DIMENSION(v)=2,  ELIMINATE_6(	     ELIMINATE_2(SOLVE(BARE(v SUB 1,x),x),x),	     ELIMINATE_2(SOLVE(BARE(v SUB 2,x),x),x),	     v,	     x	     ),  v,  v  )
+ELIMINATE_8(v,x):=IF(  NUMBER(DIMENSION(v SUB 1)) OR NUMBER(DIMENSION(v SUB 2)),  VECTOR(ELIMINATE_7(h_,x),h_,v),  ELIMINATE_7(v,x)  )
+ELIMINATE(v,a):=IF(FREE(v,a),v,IF(NUMBER(DIMENSION(v)),ELIMINATE_8(v,a),v))
+SIMPLE_1(k):=IF(  NUMBER(DIMENSION(k)),  VECTOR(NUMERATOR(FACTOR(SIDE(i_)))=0,i_,k),  NUMERATOR(FACTOR(SIDE(k)))=0  )
+SIMPLE(w,f,d):=IF(  FREE(f,fail),  SIMPLE_1(ELIMINATE([SIDE(f)=0,SIDE(w)=0],d)),  fail  )
+SOLUTION_1(u,v,z):=IF(NUMBER(DIMENSION(u)),v,SOLVE(u,z),SOLVE(u,z))
+SOLUTION(v,x,y):=IF(  DIMENSION(v)=2,  [   (SOLUTION_1(ELIMINATE(v,y),v,x)) SUB 1,   (SOLUTION_1(ELIMINATE(v,x),v,y)) SUB 1  ],  v,  v  )
+REDUCE_1(f,g,x,y,y1):=IF(FREE(f,fail),IF(FREE(g,fail),g,f),f)
+REDUCE(f,x,y,y1):=REDUCE_1(f,ODE_1ST(f,alpha,x,y,y1),x,y,y1)
+SINGULAR_1(s,x,y):=PRODUCT(       SELECT(	     NOT(FREE(j_,y)),	     j_,	     FACTORS(FACTOR(NUMERATOR(FACTOR(s,Trivial)),Trivial))	     )       )
+SINGULAR_2(v):=IF(RHS(v SUB 1)=0 AND DIMENSION(v)>1,RHS(v SUB 2),RHS(v SUB 1),RHS(v SUB 1))
+SINGULAR_3(w,y1,q):=IF(  DIMENSION(q)=2,  LIM(w,y1,SINGULAR_2(q))*LIM(w,y1,SINGULAR_2(REVERSE_VECTOR(q))),  LIM(w,y1,SINGULAR_2(q)),  LIM(w,y1,SINGULAR_2(q))  )
+SINGULAR_4(a):=IF(a>=0,SQRT(a),a,a)
+SINGULAR_5(w,y1,q):=SINGULAR_4(FACTOR(SINGULAR_3(w,y1,q),Trivial))
+SINGULAR_6(w,y1):=EXPAND(SINGULAR_5(w,y1,SOLVE(DIF(w,y1),y1)))
+SINGULAR_7(w,v,x,y,y1):=LIM(w,[y,y1],[v,DIF(v,x)])
+SINGULAR_8(z,v,w,x,y,y1):=IF(  SINGULAR_7(w,v,x,y,y1)=0,  IF(    FREE(v,x),    [SINGULAR_1(y-v,x,y)=0],    [SINGULAR_1(z,x,y)=0]    ),  [],  []  )
+SINGULAR_9(z,w,x,y,y1):=SINGULAR_8(z,RHS((SOLVE(z,y)) SUB 1),w,x,y,y1)
+SINGULAR(w,x,y,y1):=SINGULAR_9(SINGULAR_6(w,y1),w,x,y,y1)
+TRY_FACTOR_1(a,b,n):=[LIM(a,n,RHS(b SUB 2)),LIM(a,n,RHS(b SUB 1)),RHS(b SUB 2),RHS(b SUB 1)]
+TRY_FACTOR(a,x,y,n,c):=TRY_FACTOR_1(a,SOLVE(LIM(a,[x,y],[c,1]),n),n)
+DYNAMIC(a,b,i,c,d):=INT(b*i,c)+INT(a*i-INT(DIF(b*i,d),c),d)=c1_
+TRIVIAL_SET(w,y,a,b,c,d):=IF(  VECTOR(d-LHS(k_),k_,a),  EXPAND(PRODUCT(y-RHS(l_)*b+c,l_,a),y),  y-ROOT_(w,d)*b+c,  y-ROOT_(w,d)*b+c  )
+WRONSKY(m,n,x,q):=IF(fail=q,m*DIF(n,x)-n*DIF(m,x),q,q)
+TRANSFORM_X_1(w,v,x,y,y1,y2):=LIM(w,[x,y,y1,y2],[v SUB 1,y,y1/v SUB 2,y2/v SUB 2^2-y1*v SUB 3/v SUB 2^3])
+TRANSFORM_X(w,u,x,y,y1,y2):=TRANSFORM_X_1(w,[u,DIF(u,x),DIF(u,x,2)],x,y,y1,y2)
+TRANSFORM_Y_1(w,v,y,y1,y2):=LIM(   w,   [y,y1,y2],   [v SUB 1,v SUB 5+y1*v SUB 6,2*y1*v SUB 2+v SUB 3+y1^2*v SUB 4+y2*v SUB 6]   )
+TRANSFORM_Y(w,u,x,y,y1,y2):=TRANSFORM_Y_1(	     w,	     [u,DIF(DIF(u,x),y),DIF(u,x,2),DIF(u,y,2),DIF(u,x),DIF(u,y)],	     y,	     y1,	     y2	     )
+TRANSFORM_P(w,x,y,y1,theta,r,r1):=LIM(   w,   [x,y,y1],   [r*COS(theta),r*SIN(theta),(r+r1*TAN(theta))/(r1-r*TAN(theta))]   )
+RICCATI_1(a,b,c,t,x,y):=IF(  FREE([a,b,c],y),  y=t+#e^(-INT(2*a*t+b,x))/(INT(#e^(-INT(2*a*t+b,x))*a,x)+c1_),  MESSAGE(4)  )
+RICCATI_2(w,t,x,y,y1,d):=IF(  LIM(w,[y,y1],[t,DIF(t,x)])=0,  RICCATI_1(DIF(d,y,2)/2,LIM(DIF(d,y),y,0),LIM(d-y1,y,0),t,x,y),  MESSAGE(5),  MESSAGE(5)  )
+RICCATI_3(w,t,x,y,y1,d):=RICCATI_2(w,t,x,y,y1,w/DIF(w,y1))
+RICCATI(w,t,x,y,y1):=RICCATI_3(SIDE(w),t,x,y,y1)
+GENERAL_1(x,y2,w,v,m,n):=m*INT((w-v)*n/(DIF(v,y2)*WRONSKY(m,n,x,fail)),x)+n*INT((v-w)*m/(DIF(v,y2)*WRONSKY(m,n,x,fail)),x)+c1_*m+c2_*n
+GENERAL_2(x,y1,y2,v,m):=m*INT(#e^(-INT(DIF(v,y1)/DIF(v,y2),x))/m^2,x)
+GENERAL_3(w,x,y,y1,y2,v,m,n):=IF(  WRONSKY(m,n,x,fail)=0,  GENERAL_1(x,y2,w,v,m,GENERAL_2(x,y1,y2,v,m)),  GENERAL_1(x,y2,w,v,m,n),  IF(    LIM(v,[y,y1,y2],[n,DIF(n,x),DIF(n,x,2)])=0,    GENERAL_1(x,y2,w,v,m,n),    GENERAL_1(x,y2,w,v,m,GENERAL_2(x,y1,y2,v,m)),    GENERAL_1(x,y2,w,v,m,GENERAL_2(x,y1,y2,v,m))    )  )
+GENERAL_4(w,x,y,y1,y2,v,m,n):=IF(  LIM(v,[y,y1,y2],[m,DIF(m,x),DIF(m,x,2)])=0,  IF(    GRAD(w-v,[y,y1,y2]),    GENERAL_3(w,x,y,y1,y2,v,m,n),    MESSAGE(2),    MESSAGE(2)    ),  MESSAGE(1),  MESSAGE(1)  )
+GENERAL_5(w,x,y,y1,y2,m,n):=IF(  m=0,  MESSAGE(1),  GENERAL_4(w,x,y,y1,y2,y2*DIF(w,y2)+y1*DIF(w,y1)+y*DIF(w,y),m,n),  GENERAL_4(w,x,y,y1,y2,y2*DIF(w,y2)+y1*DIF(w,y1)+y*DIF(w,y),m,n)  )
+GENERAL(w,s,x,y,y1,y2):=IF(  DIMENSION(s)=2,  GENERAL_5(SIDE(w),x,y,y1,y2,s SUB 1,s SUB 2),  MESSAGE(3),  GENERAL_5(SIDE(w),x,y,y1,y2,s,0)  )
+APPLY_IC_1(i,j,k):=[RHS((SOLVE(ELIMINATE(i,k),j)) SUB 1),RHS((SOLVE(ELIMINATE(i,j),k)) SUB 1)]
+APPLY_IC_2(s,x,a,y,b):=FIX_DIM(SOLVE(LIM(s,c1_,RHS((SOLVE(LIM(s,[x,y],[a,b]),c1_)) SUB 1)),y))
+APPLY_IC_3(s,u,v):=APPLY_IC_2(s,u SUB 1,u SUB 2,v SUB 1,v SUB 2)
+APPLY_IC_4(s,x,a,y,b,c):=APPLY_IC_1(LIM([s,GRAD(s,[x,y]) . [1,c]],[x,y],[a,b]),c1_,c2_)
+APPLY_IC_5(s,c):=LIM(s,[c1_,c2_],[c SUB 1,c SUB 2])
+APPLY_IC_6(s,u,v,t):=APPLY_IC_5(s,APPLY_IC_4(SIDE(s),u SUB 1,u SUB 2,v SUB 1,v SUB 2,t SUB 2))
+APPLY_IC(s,u,v,t):=IF(FREE(s,c2_),APPLY_IC_3(s,u,v),APPLY_IC_6(s,u,v,t))
+BES_SOL(a,b,c,d):=c*[JN(a,b),YN(a,b),2*c/(b*pi)*DIF(b,d)]
+F11_SOL(l,m,n,o,p):=o*[U11(l,m,n),#e^n*U11(m-l,m,-n),o*#e^(pi*#i*(l-m))*#e^n*n^(-m)*DIF(n,p)]
+F21_SOL_1(a,b,g,x):=g*[a,b,g*WRONSKIAN_(a,b,x)]
+F21_SOL_2(a,b,c,z,g,x):=F21_SOL_1(F21(a,b,c,z),z^(1-c)*F21(a+1-c,b+1-c,2-c,z),g,x)
+F21_SOL_3(a,b,c,z,g,x):=IF(  c>0,  F21_SOL_1(F21(a,b,c,z),U21(a,b,c,z),g,x),  F21_SOL_1(z^(1-c)*F21(a+1-c,b+1-c,2-c,z),U21(a,b,c,z),g,x),  F21_SOL_1(F21(a,b,c,z),U21(a,b,c,z),g,x)  )
+F21_SOL(a,b,c,z,g,x):=IF(  MOD(c)/=0 OR (MOD(a)=0 AND (c<=a<=0 OR c>a>0) OR 	MOD(b)=0 AND (c<=b<=0 OR c>b>0)),  F21_SOL_2(a,b,c,z,g,x),  F21_SOL_3(a,b,c,z,g,x),  IF(    MOD(c)=0,    F21_SOL_3(a,b,c,z,g,x),    F21_SOL_2(a,b,c,z,g,x),    F21_SOL_2(a,b,c,z,g,x)    )  )
+EXACT_1ST_1(q,r,x,y):=IF(  DIF(q,x)=DIF(r,y),  DYNAMIC(q,r,1,x,y),  IF(    q^2*DIF(r,x)=r^2*DIF(q,y),    DYNAMIC(1/r,1/q,1,x,y),    fail,    fail    ),  IF(    q^2*DIF(r,x)=r^2*DIF(q,y),    DYNAMIC(1/r,1/q,1,x,y),    fail,    fail    )  )
+EXACT_1ST_2(w,x,y,y1):=EXACT_1ST_1(DIF(w,y1),w-y1*DIF(w,y1),x,y)
+EXACT_1ST(w,x,y,y1):=EXACT_1ST_2(BARE(w,y1),x,y,y1)
+X_FACTOR_1(q,r,x,y,z):=IF(FREE(z,y),DYNAMIC(q,r,#e^(-INT(z,x)),x,y),fail)
+X_FACTOR_2(q,r,x,y):=X_FACTOR_1(q,r,x,y,(CURL([r,q,0],[x,y,y2])) SUB 3/q)
+X_FACTOR_3(q,r,x,y):=IF(fail=(local:==X_FACTOR_2(q,r,x,y)),IF(fail=(local:==X_FACTOR_2(1/r,1/q,x,y)),IF(fail=(local:==X_FACTOR_2(q/r,1,x,y)),X_FACTOR_2(1,r/q,x,y),local,local),local,local),local,local)
+X_FACTOR_4(w,x,y,y1):=X_FACTOR_3(DIF(w,y1),w-y1*DIF(w,y1),x,y)
+X_FACTOR(w,x,y,y1):=X_FACTOR_4(BARE(w,y1),x,y,y1)
+Y_FACTOR_1(q,r,x,y,a):=IF(FREE(a,x),DYNAMIC(q,r,#e^(-INT(a,y)),x,y),fail)
+Y_FACTOR_2(q,r,x,y):=Y_FACTOR_1(q,r,x,y,-(CURL([r,q,0],[x,y,y2])) SUB 3/r)
+Y_FACTOR_3(q,r,x,y):=IF(fail=(local:==Y_FACTOR_2(q,r,x,y)),IF(fail=(local:==Y_FACTOR_2(1/r,1/q,x,y)),IF(fail=(local:==Y_FACTOR_2(q/r,1,x,y)),Y_FACTOR_2(1,r/q,x,y),local,local),local,local),local,local)
+Y_FACTOR_4(w,x,y,y1):=Y_FACTOR_3(DIF(w,y1),w-y1*DIF(w,y1),x,y)
+Y_FACTOR(w,x,y,y1):=Y_FACTOR_4(BARE(w,y1),x,y,y1)
+P_FACTOR_1(v,x,y):=LIM(#e^(-1/2*INT(LIM(v,[x,y],t*[COS(theta),SIN(theta)]),t)),t,x^2+y^2)
+P_FACTOR_2(q,r,v,x,y):=IF(  CURL(v*[x,y,0],[x,y,y2]),  DYNAMIC(q,r,P_FACTOR_1(v,x,y),x,y),  fail,  fail  )
+P_FACTOR_3(q,r,x,y):=P_FACTOR_2(q,r,(DIF(q,x)-DIF(r,y))/(x*q-y*r),x,y)
+P_FACTOR_4(w,x,y,y1):=P_FACTOR_3(DIF(w,y1),w-y1*DIF(w,y1),x,y)
+P_FACTOR(w,x,y,y1):=P_FACTOR_4(BARE(w,y1),x,y)
+L_FACTOR_1(a,b,c,d,n,q,r,x,y):=(d-a)*(a*n+b+c*n^2+d*n)+(DIF(a,y)-DIF(c,y)*n+DIF(a,x)*n-DIF(d,y))*(n*r+q)
+L_FACTOR_2(q,r,n,x,y):=L_FACTOR_1(DIF(q,x),DIF(q,y),DIF(r,x),DIF(r,y),n,q,r,x,y)
+L_FACTOR_3(q,r,x,y):=TRY_FACTOR(L_FACTOR_2(q,r,n,x,y),x,y,n,0)
+L_FACTOR_4(q,r,z,x,y):=LIM(#e^(-INT(LIM((DIF(q,x)-DIF(r,y))/(q+z*r),[x,y],[t,0]),t)),t,x-z*y)
+L_FACTOR_5(q,r,k,x,y):=IF(  k SUB 1=0,  DYNAMIC(q,r,L_FACTOR_4(q,r,k SUB 3,x,y),x,y),  IF(    k SUB 2=0,    DYNAMIC(q,r,L_FACTOR_4(q,r,k SUB 4,x,y),x,y),    fail,    fail    ),  IF(    k SUB 2=0,    DYNAMIC(q,r,L_FACTOR_4(q,r,k SUB 4,x,y),x,y),    fail,    fail    )  )
+L_FACTOR_6(q,r,x,y):=L_FACTOR_5(q,r,L_FACTOR_3(q,r,x,y),x,y)
+L_FACTOR_7(w,x,y,y1):=L_FACTOR_6(DIF(w,y1),w-y1*DIF(w,y1),x,y)
+L_FACTOR(w,x,y,y1):=L_FACTOR_7(BARE(w,y1),x,y,y1)
+E_FACTOR_1(a,b,c,d,n,q,r,x,y):=x*y*((d-a)*(x^2*c*n^2+x*n*(r-y*(a+d))+y*(y*b+n*q))-(n*r*x-q*y)*(n*x*(DIF(c,y)-DIF(a,x))+y*(DIF(a,y)-DIF(d,y))))
+E_FACTOR_2(q,r,n,x,y):=E_FACTOR_1(DIF(q,x),DIF(q,y),DIF(r,x),DIF(r,y),n,q,r,x,y)
+E_FACTOR_3(q,r,x,y):=TRY_FACTOR(E_FACTOR_2(q,r,n,x,y),x,y,n,1)
+E_FACTOR_4(q,r,z,x,y):=LIM(   #e^(-INT(LIM(x*y*(DIF(q,x)-DIF(r,y))/(y*q-z*x*r),[x,y],[t,1])/t,t)),   t,   x*y^z   )
+E_FACTOR_5(q,r,k,x,y):=IF(  k SUB 1=0,  DYNAMIC(q,r,E_FACTOR_4(q,r,k SUB 3,x,y),x,y),  IF(    k SUB 2=0,    DYNAMIC(q,r,E_FACTOR_4(q,r,k SUB 4,x,y),x,y),    fail,    fail    ),  IF(    k SUB 2=0,    DYNAMIC(q,r,E_FACTOR_4(q,r,k SUB 4,x,y),x,y),    fail,    fail    )  )
+E_FACTOR_6(q,r,x,y):=E_FACTOR_5(q,r,E_FACTOR_3(q,r,x,y),x,y)
+E_FACTOR_7(w,x,y,y1):=E_FACTOR_6(DIF(w,y1),w-y1*DIF(w,y1),x,y)
+E_FACTOR(w,x,y,y1):=E_FACTOR_7(BARE(w,y1),x,y,y1)
+FRACTIONAL_1(b,c,y,e):=LIM(#e^INT(1/(y+c),y),y,-b)/e=c1_
+FRACTIONAL_2(a,b,x,y,e):=FRACTIONAL_1(b,LIM(a,y,-(y+LIM(b,y,0))/e),y,e)
+FRACTIONAL_3(a,b,p,x,y):=IF(  [DIF(p SUB 1,x,2),DIF(p SUB 1,y),	DIF(p SUB 2,y,2),DIF(p SUB 2,x),DIF(p SUB 1,x)+DIF(p SUB 2,y)],  FRACTIONAL_2(a,b,x,y,DIF(b,y)),  fail,  fail  )
+FRACTIONAL_4(a,b,x,y):=FRACTIONAL_3(a,b,PARTS(b),x,y)
+FRACTIONAL_5(a,x,y):=FRACTIONAL_4(a,DIF(a,x)/DIF(a,y),x,y)
+FRACTIONAL(w,x,y,y1):=FRACTIONAL_5(w/DIF(w,y1)-y1,x,y)
+FUNCTIONAL_1(b,c,x,y):=LIM(INT(1/(b-c),y),y,y+x*b)=x+c1_
+FUNCTIONAL_2(a,b,x,y):=FUNCTIONAL_1(b,LIM(a,y,y-x*b),x,y)
+FUNCTIONAL_3(a,b,x,y,y1):=IF(GRAD(b,[x,y,y1]),FUNCTIONAL_2(a,b,x,y),fail,fail)
+FUNCTIONAL_4(a,x,y,y1):=FUNCTIONAL_3(a,DIF(a,x)/DIF(a,y),x,y,y1)
+FUNCTIONAL(w,x,y,y1):=FUNCTIONAL_4(w/DIF(w,y1)-y1,x,y,y1)
+HOMOGENEOUS_1(b,c,x,y):=#e^LIM(INT(1/(y*(b-c)),y),y,y*x^b)/x=c1_
+HOMOGENEOUS_2(a,b,x,y,y1):=IF(  FREE(b,x) AND FREE(b,y) AND FREE(b,y1),  HOMOGENEOUS_1(b,LIM(a,y,y/x^b),x,y),  fail  )
+HOMOGENEOUS_3(a,b,x,y,y1):=IF(FREE(a,y),fail,HOMOGENEOUS_2(a,b,x,y,y1))
+HOMOGENEOUS_4(a,x,y,y1):=HOMOGENEOUS_3(a,x*DIF(a,x)/(y*DIF(a,y)),x,y,y1)
+HOMOGENEOUS(w,x,y,y1):=HOMOGENEOUS_4(x/y*(w/DIF(w,y1)-y1),x,y,y1)
+BERNOULLI_1(q,n,d,x,y):=y^(1-n)=d*(c1_+INT(q*(1-n)/d,x))
+BERNOULLI_2(n,p,q,x,y,y1):=IF(  FREE(n,x) AND (FREE(n,y) AND FREE(n,y1)),  IF(    n*(n-1)=0,    fail,    BERNOULLI_1(q,n,#e^INT(p*(n-1),x),x,y),    BERNOULLI_1(q,n,#e^INT(p*(n-1),x),x,y)    ),  fail,  fail  )
+BERNOULLI_3(w,n,p,x,y,y1):=BERNOULLI_2(n,p,(y*p-w+y1)/y^n,x,y,y1)
+BERNOULLI_4(w,p,x,y,y1):=IF(  w=p*y+y1,  fail,  BERNOULLI_3(w,y*DIF(w-y1-y*p,y)/(w-y1-y*p),p,x,y,y1),  BERNOULLI_3(w,y*DIF(w-y1-y*p,y)/(w-y1-y*p),p,x,y,y1)  )
+BERNOULLI_5(w,x,y,y1):=BERNOULLI_4(w,SUM(SELECT(FREE(i,y),i,TERMS(EXPAND((w-y1)/y,y)))),x,y,y1)
+BERNOULLI(w,x,y,y1):=BERNOULLI_5(w/DIF(w,y1),x,y,y1)
+BES_RATIO_1(a,b,s,e,f,g,n,x,y):=y=SQRT(b*s/a)*(x^(n/2)*(JN(f,e)+c1_*YN(f,e))/(JN(g,e)+c1_*YN(g,e)))
+BES_RATIO_2(a,b,s,e,f,g,n,x,y):=y=SQRT(b*s/a)*(x^(n/2)*(IN(f,e)-c1_*KN(f,e))/(IN(g,e)+c1_*KN(g,e)))
+BES_RATIO_3(a,b,s,t,n,x,y):=IF(  a*b<0,  BES_RATIO_1(a,b,s,t,-(n+1)/(n+2),1/(n+2),n,x,y),  BES_RATIO_2(a,b,s,t,-(n+1)/(n+2),1/(n+2),n,x,y),  BES_RATIO_1(a,b,s,t,-(n+1)/(n+2),1/(n+2),n,x,y)  )
+BES_RATIO_4(a,b,s,n,x,y):=BES_RATIO_3(a,b,s,2*SQRT(a*b*s)*x^((n+2)/2)/(n+2),n,x,y)
+BES_RATIO_5(a,b,n,x,y):=BES_RATIO_4(a,b,SIGNUM(a)*SIGNUM(b),n,x,y)
+BES_RATIO_6(w,x,y,y1):=IF(  FREE(DIF(w-y^2-y1,y)/y,y) AND FREE(DIF(w-y^2-y1,y1),y1),  BES_RATIO_5(	     1/2*DIF(w,y,2),	     -LIM(w,[x,y,y1],[1,0,0]),	     LIM(DIF(LN(w),x),[x,y,y1],[1,0,0]),	     x,	     y	     ),  fail  )
+BES_RATIO(w,x,y,y1):=BES_RATIO_6(w/DIF(w,y1),x,y,y1)
+RICCATI_T_1(a,s,x,y):=y=FACTOR(LIM(-DIF(s,x)/(a*s),c1_,c1_*c2_))
+RICCATI_T_2(a,b,c,x,y,y1):=IF(  fail=(local:==ODE_2ND(a*y2-(a*b+DIF(a,x))*y1+a^2*c*y,x,y,y1,y2)),  fail,  RICCATI_T_1(a,RHS((SOLVE(local,y)) SUB 1),x,y),  RICCATI_T_1(a,RHS((SOLVE(local,y)) SUB 1),x,y)  )
+RICCATI_T_3(a,b,c,x,y,y1):=IF(a=0,fail,RICCATI_T_2(a,b,c,x,y,y1),RICCATI_T_2(a,b,c,x,y,y1))
+RICCATI_T_4(r,x,y,y1):=IF(  FREE(DIF(r,y1),y1) AND FREE(DIF(r,y,2),y),  RICCATI_T_3(-DIF(r,y,2)/2,-LIM(DIF(r,y),y,0),y1-LIM(r,y,0),x,y,y1),  fail  )
+RICCATI_T(w,x,y,y1):=RICCATI_T_4(w/DIF(w,y1),x,y,y1)
+LAGRANGE_1(w,v,y1):=IF(  v=ROOT_(DIF(w,y1),y1),  [],  [NUMERATOR(FACTOR(PRODUCT(LIM(w,y1,m_),m_,v),Trivial))=0],  [NUMERATOR(FACTOR(PRODUCT(LIM(w,y1,m_),m_,v),Trivial))=0]  )
+LAGRANGE_2(w,y1):=EXPAND(LAGRANGE_1(w,ROOTS(DIF(w,y1),y1),y1))
+LAGRANGE_3(w,y1):=FIX_DIM(APPEND(SOLVE(LIM(w,y1,c1_),y),LAGRANGE_2(w,y1)))
+LAGRANGE_4(f,d,x,y,i):=IF(1/LIM(f,d,i)=0,1,y-i*x+LIM(f,d,i),y-i*x+LIM(f,d,i))
+LAGRANGE_5(v,f,g,d,x,y):=IF(  v=ROOT_(d+g,d),  [],  [NUMERATOR(FACTOR(PRODUCT(LAGRANGE_4(f,d,x,y,n_),n_,v),Trivial))=0],  [NUMERATOR(FACTOR(PRODUCT(LAGRANGE_4(f,d,x,y,n_),n_,v),Trivial))=0]  )
+LAGRANGE_6(f,g,d,x,y):=LAGRANGE_5(ROOTS(d+g,d),f,g,d,x,y)
+LAGRANGE_7(v):=IF(FREE(v,x) AND FREE(v,y),[],v)
+LAGRANGE_8(f,g,d,x,y):=EXPAND(LAGRANGE_7(LAGRANGE_6(f,g,d,x,y)))
+LAGRANGE_9(w,f,g,a,d,x,y):=FIX_DIM(APPEND([[x=a,y=-g*a-f]],LAGRANGE_8(f,g,d,x,y)))
+LAGRANGE_A(w,f,g,b,d,x,y):=LAGRANGE_9(w,f,g,(c1_-INT(b*DIF(f,d)/(d+g),d))/b,d,x,y)
+LAGRANGE_B(w,g,d,x,y):=LAGRANGE_A(w,w-x*g-y,g,#e^INT(DIF(g,d)/(d+g),d),d,x,y)
+LAGRANGE_C(g,q,w,x,y,y1,d):=IF(g=-d,LAGRANGE_3(w,y1),LAGRANGE_B(q,g,d,x,y),LAGRANGE_B(q,g,d,x,y))
+LAGRANGE_D(q,w,x,y,y1,d):=LAGRANGE_C(DIF(q,x),q,w,x,y,y1,d)
+LAGRANGE_E(w,x,y,y1,d):=LAGRANGE_D(LIM(w,y1,d),w,x,y,y1,d)
+LAGRANGE_F(u,w,x,y,y1,d):=IF(  FREE(DIF(u,x),x) AND DIF(u,y)=1,  LAGRANGE_E(u,x,y,y1,d),  IF(    DIF(w,x)=-y1*DIF(w,y) OR FREE(LIM(w,y,y1*x-y),x),    FIX_DIM(APPEND([LIM(w,y1,c1_)=0],SINGULAR(w,x,y,y1))),    fail,    fail    ),  IF(    DIF(w,x)=-y1*DIF(w,y) OR FREE(LIM(w,y,y1*x-y),x),    FIX_DIM(APPEND([LIM(w,y1,c1_)=0],SINGULAR(w,x,y,y1))),    fail,    fail    )  )
+LAGRANGE(w,x,y,y1,a):=IF(FREE(w,y) OR FREE(w,x),fail,LAGRANGE_F(w/DIF(w,y),w,x,y,y1,a))
+P_SOLVABLE_1(p,i,x,y,y1):=SIDE(ODE_SHORT(SIDE(p SUB i),x,y,y1))
+P_SOLVABLE_2(p,x,y,y1):=NUMERATOR(FACTOR(PRODUCT(P_SOLVABLE_1(p,o_,x,y,y1),o_,1,DIMENSION(p))))=0
+P_SOLVABLE_3(q):=IF(FREE(q,fail),q,fail)
+P_SOLVABLE_4(p,x,y,y1):=P_SOLVABLE_3(P_SOLVABLE_2(p,x,y,y1))
+P_SOLVABLE_5(p,x,y,y1):=IF(VECTOR(y1-LHS(p_),p_,p),P_SOLVABLE_4(p,x,y,y1),fail,fail)
+P_SOLVABLE(w,x,y,y1):=FIX_DIM(APPEND([P_SOLVABLE_5(SOLVE(w,y1),x,y,y1)],SINGULAR(w,x,y,y1)))
+Y_SOLVABLE_1(v,x,y1):=PRODUCT(       SIDE(ODE_1ST_LINEAR(DIF(q_,x)+y2*DIF(q_,y1)-y1,x,y1,y2)),       q_,       VECTOR(RHS(r_),r_,v)       )
+Y_SOLVABLE_2(v,x,y,y1):=IF(VECTOR(y-LHS(s_),s_,v),NUMERATOR(FACTOR(Y_SOLVABLE_1(v,x,y1))),fail,fail)
+Y_SOLVABLE_3(w,x,y,y1):=IF(  FREE(local:==SIMPLE(w,Y_SOLVABLE_2(SOLVE(w,y),x,y,y1),y1),y1),  local,  LIM(local,y1,alpha)  )
+Y_SOLVABLE_4(w,x,y,y1):=FIX_DIM(APPEND([Y_SOLVABLE_3(w,x,y,y1)],SINGULAR(w,x,y,y1)))
+Y_SOLVABLE(w,x,y,y1):=Y_SOLVABLE_4(BARE(w,y1),x,y,y1)
+X_SOLVABLE_1(v,y,y1):=PRODUCT(       SIDE(ODE_1ST_LINEAR(DIF(t_,y)+y2*DIF(t_,y1)-1/y1,y,y1,y2)),       t_,       VECTOR(RHS(u_),u_,v)       )
+X_SOLVABLE_2(v,x,y,y1):=IF(VECTOR(x-LHS(v_),v_,v),NUMERATOR(FACTOR(X_SOLVABLE_1(v,y,y1))),fail,fail)
+X_SOLVABLE_3(w,x,y,y1):=IF(  FREE(local:==SIMPLE(w,X_SOLVABLE_2(SOLVE(w,x),x,y,y1),y1),y1),  local,  LIM(local,y1,alpha)  )
+X_SOLVABLE_4(w,x,y,y1):=FIX_DIM(APPEND([X_SOLVABLE_3(w,x,y,y1)],SINGULAR(w,x,y,y1)))
+X_SOLVABLE(w,x,y,y1):=X_SOLVABLE_4(BARE(w,y1),x,y,y1)
+SOLVABLE_1(w,x,y,y1):=IF(fail=(local:==P_SOLVABLE(w,x,y,y1)),IF(fail=(local:==X_SOLVABLE(w,x,y,y1)),Y_SOLVABLE(w,x,y,y1),local,local),local,local)
+SOLVABLE_2(w,x,y,y1):=IF(  NOT(FREE(w,y)) AND (FREE(DIF(w,y),y) OR FREE(y*DIF(w,y),y)),  Y_SOLVABLE(w,x,y,y1),  SOLVABLE_1(w,x,y,y1)  )
+SOLVABLE_3(w,x,y,y1):=IF(  NOT(FREE(w,x)) AND (FREE(DIF(w,x),x) OR FREE(x*DIF(w,x),x)),  X_SOLVABLE(w,x,y,y1),  SOLVABLE_2(w,x,y,y1)  )
+SOLVABLE_4(w,x,y,y1):=IF(  VECTOR(	GRAD(GRAD(w_,[x,y,y1]),[x,y,y1]),	w_,	FACTORS(FACTOR(w,Rational,y1))	),  SOLVABLE_1(w,x,y,y1),  SOLVABLE_3(w,x,y,y1),  SOLVABLE_3(w,x,y,y1)  )
+SOLVABLE(w,x,y,y1):=SOLVABLE_4(BARE(w,y1),x,y,y1)
+TRIVIAL_1ST_1(w,x,y,y1):=IF(  w*GRAD(DIF(w,y1),[x,y,y2])-DIF(w,y1)*GRAD(w,[x,y,y2]),  w/BARE(w,y1)*TRIVIAL_SET(w,y,SOLVE(w,y1),x,c1_,y1)=0,  fail,  fail  )
+TRIVIAL_1ST(w,x,y,y1):=FIX_DIM(TRIVIAL_1ST_1(w,x,y,y1))
+ODE_1ST_LINEAR(w,x,y,y1):=IF(fail=(local:==HOMOGENEOUS(w,x,y,y1)),IF(fail=(local:==BERNOULLI(w,x,y,y1)),IF(fail=(local:==EXACT_1ST(w,x,y,y1)),IF(fail=(local:==X_FACTOR(w,x,y,y1)),IF(fail=(local:==Y_FACTOR(w,x,y,y1)),IF(fail=(local:==BES_RATIO(w,x,y,y1)),IF(fail=(local:==RICCATI_T(w,x,y,y1)),IF(fail=(local:==L_FACTOR(w,x,y,y1)),IF(fail=(local:==E_FACTOR(w,x,y,y1)),IF(fail=(local:==FUNCTIONAL(w,x,y,y1)),IF(fail=(local:==P_FACTOR(w,x,y,y1)),FRACTIONAL(w,x,y,y1),local,local),local,local),local,local),local,local),local,local),local,local),local,local),local,local),local,local),local,local),local,local)
+ODE_1ST_NONLINEAR(w,x,y,y1,a):=IF(  fail=(local:==LAGRANGE(w,x,y,y1,a)),  FIX_DIM(SOLVABLE(w,x,y,y1)),  local,  local  )
+ODE_EXPLICIT_1(w,x,y,y1,d):=IF(  fail=(local:==TRIVIAL_1ST(w,x,y,y1)),  IF(    DIF(w,y1,2)=0,    ODE_1ST_LINEAR(w,x,y,y1),    ODE_1ST_NONLINEAR(w,x,y,y1,d),    ODE_1ST_NONLINEAR(w,x,y,y1,d)    ),  local,  local  )
+ODE_EXPLICIT(w,x,y,y1,d):=IF(  FREE(w,y1),  MESSAGE(6),  ODE_EXPLICIT_1(w,x,y,y1,d)  )
+ODE_SHORT(w,x,y,y1):=IF(  fail=(local:==TRIVIAL_1ST(w,x,y,y1)),  ODE_1ST_LINEAR(w,x,y,y1),  local,  local  )
+ODE_PARAMETRIC_1(j,v,d,x,y,y1):=IF(  y1=LHS(j),  ELIMINATE([v SUB 1,y=c1_-INT(RHS(j)*DIF(v SUB 1,d)/DIF(v SUB 1,x),d)],d),  fail,  fail  )
+ODE_PARAMETRIC_2(v,d,x,y,y1):=IF(  FREE(v SUB 1,y1) AND FREE(v SUB 2,x),  ODE_PARAMETRIC_1((SOLVE(v SUB 2,y1)) SUB 1,v,d,x,y,y1),  fail  )
+ODE_PARAMETRIC(v,d,x,y,y1):=IF(FREE(v,d),fail,ODE_PARAMETRIC_2(SOLUTION(v,x,y1),d,x,y,y1))
+ODE_1ST_1(v,d,x,y,y1):=IF(  DIMENSION(v SUB 1)=2 AND (NOT(NUMBER(DIMENSION(v SUB 2))) AND 	FREE(v SUB 2,d)),  [ODE_PARAMETRIC(v SUB 1,d,x,y,y1),ODE_EXPLICIT(v SUB 2,x,y,y1,d)],  fail,  fail  )
+ODE_1ST_2(v,d,x,y,y1):=IF(  DIMENSION(v SUB 2)=2 AND (NOT(NUMBER(DIMENSION(v SUB 1))) AND 	FREE(v SUB 1,d)),  [ODE_PARAMETRIC(v SUB 2,d,x,y,y1),ODE_EXPLICIT(v SUB 1,x,y,y1,d)],  fail,  fail  )
+ODE_1ST_3(v,d,x,y,y1):=IF(  NOT(NUMBER(DIMENSION(v SUB 1)) OR NUMBER(DIMENSION(v SUB 2))),  IF(    FREE(v,d),    [ODE_EXPLICIT(v SUB 1,x,y,y1,d),ODE_EXPLICIT(v SUB 2,x,y,y1,d)],    ODE_PARAMETRIC(v,d,x,y,y1)    ),  fail  )
+ODE_1ST_4(v,d,x,y,y1):=IF(fail=(local:==ODE_1ST_1(v,d,x,y,y1)),IF(fail=(local:==ODE_1ST_2(v,d,x,y,y1)),ODE_1ST_3(v,d,x,y,y1),local,local),local,local)
+ODE_1ST_5(v,d,x,y,y1):=IF(DIMENSION(v)=2,ODE_1ST_4(v,d,x,y,y1),fail,ODE_EXPLICIT(v,x,y,y1,d))
+ODE_1ST(w,a,x,y,y1):=ODE_1ST_5(ELIMINATE(w,a),a,x,y,y1)
+EXACT_2ND_1(d,p,q,y1,y2):=[p,q,d-y2*p-y1*q]
+EXACT_2ND_2(d,p,x,y,y1,y2):=EXACT_2ND_1(d,p,DIF(d-y2*p,y1)-DIF(p,x)-y1*DIF(p,y),y1,y2)
+EXACT_2ND_3(w,x,y,y1,y2):=EXACT_2ND_2(w,DIF(w,y2),x,y,y1,y2)
+EXACT_2ND_4(p,q,r,x,y,y1):=INT(r,x)+INT(q-INT(DIF(q,x),x),y)+INT(p-INT(DIF(p,x),x)-INT(DIF(p,y)-INT(DIF(DIF(p,y),x),x),y),y1)+c2_
+EXACT_2ND_5(p,q,r,x,y,y1):=REDUCE(EXACT_2ND_4(p,q,r,x,y,y1),x,y,y1)
+EXACT_2ND_6(a,x,y,y1):=IF(  CURL([a SUB 3,a SUB 2,a SUB 1],[x,y,y1]),  EXACT_2ND_5(a SUB 1,a SUB 2,a SUB 3,x,y,y1),  fail,  fail  )
+EXACT_2ND(w,x,y,y1,y2):=IF(  DIF(w,y2,2)=0,  EXACT_2ND_6(EXACT_2ND_3(w,x,y,y1,y2),x,y,y1),  fail,  fail  )
+EXACT_LINEAR_1(p,q,r,x,y,y1,y2):=LIM(   ODE_2ND_1(p*y2+(2*DIF(p,x)-q)*y1+(DIF(p,x,2)-DIF(q,x)+r)*y,x,y,y1,y2),   [c1_,c2_],   [0,1]   )
+EXACT_LINEAR_2(p,q,r,x,y,y1,y2):=BARE(RHS((SOLVE(EXACT_LINEAR_1(p,q,r,x,y,y1,y2),y)) SUB 1),x)
+EXACT_LINEAR_3(m,p,q,r,f,x,y,y1,y2):=y=m*p*#e^(-INT(q/p,x))*(c1_+INT(#e^INT(q/p,x)*(c2_+INT(m*f,x))/(m*p)^2,x))
+EXACT_LINEAR_4(p,q,r,f,x,y,y1,y2):=IF(  DIF(p,x,2)+r=DIF(q,x),  EXACT_LINEAR_3(1,p,q,r,f,x,y,y1,y2),  IF(    fail=(local:==EXACT_LINEAR_2(p,q,r,x,y,y1,y2)) OR FREE(local,x),    fail,    EXACT_LINEAR_3(local,p,q,r,f,x,y,y1,y2),    EXACT_LINEAR_3(local,p,q,r,f,x,y,y1,y2)    ),  IF(    fail=(local:==EXACT_LINEAR_2(p,q,r,x,y,y1,y2)) OR FREE(local,x),    fail,    EXACT_LINEAR_3(local,p,q,r,f,x,y,y1,y2),    EXACT_LINEAR_3(local,p,q,r,f,x,y,y1,y2)    )  )
+EXACT_LINEAR(w,x,y,y1,y2):=EXACT_LINEAR_4(DIF(w,y2),DIF(w,y1),DIF(w,y),-LIM(w,[y,y1,y2],[0,0,0]),x,y,y1,y2)
+LIOUVILLE_1(f,g,w,x,y,y1,y2):=IF(  FREE(f,y) AND FREE(f,y1) AND FREE(g,x) AND FREE(g,y1) AND 	y2+f*y1+g*y1^2=w,  BARE(INT(#e^INT(g,y),y),y)=c1_*BARE(INT(#e^(-INT(f,x)),x),x)+c2_,  fail,  fail  )
+LIOUVILLE_2(w,x,y,y1,y2):=LIOUVILLE_1(LIM(DIF(w,y1),y1,0),DIF(w,y1,2)/2,w,x,y,y1,y2)
+LIOUVILLE(w,x,y,y1,y2):=LIOUVILLE_2(w/DIF(w,y2),x,y,y1,y2)
+MISSING_X_P_1(f,x,y,y1):=(x+c2_)^2=INT(1/SQRT(c1_-2*INT(f,y)),y)^2
+MISSING_X_P_2(v,x,y,y1,y2):=IF(  VECTOR(y2-LHS(x_),x_,v),  VECTOR(MISSING_X_P_1(-RHS(y_),x,y,y1),y_,v),  fail,  fail  )
+MISSING_X_P_3(q,x,y,y1,y2):=IF(  FREE(q,x) AND FREE(q,y1),  FIX_DIM(MISSING_X_P_2(SOLVE(q,y2),x,y,y1,y2)),  fail  )
+MISSING_X_P(w,x,y,y1,y2):=MISSING_X_P_3(BARE(w,y2),x,y,y1,y2)
+MISSING_Y_P_1(w,v,x,y,y2):=IF(  VECTOR(y2-LHS(z_),z_,v),  VECTOR(y=INT(INT(RHS(a__),x),x)+c1_*x+c2_,a__,v),  [y=INT(INT(ROOT_(w,y2),x),x)+c1_*x+c2_],  [y=INT(INT(ROOT_(w,y2),x),x)+c1_*x+c2_]  )
+MISSING_Y_P_2(q,x,y,y1,y2):=IF(  FREE(q,y) AND FREE(q,y1),  FIX_DIM(MISSING_Y_P_1(q,SOLVE(q,y2),x,y,y2)),  fail  )
+MISSING_Y_P(w,x,y,y1,y2):=MISSING_Y_P_2(BARE(w,y2),x,y,y1,y2)
+MISSING_Y_1(r,s,x,y):=IF(  LHS(r SUB 1)=y,  y=INT(RHS(r SUB 1),x)+c2_,  X_SOLVABLE(LIM(s,[y,c1_],[y1,c2_]),x,y,y1),  X_SOLVABLE(LIM(s,[y,c1_],[y1,c2_]),x,y,y1)  )
+MISSING_Y_2(s,x,y):=IF(FREE(s,fail),MISSING_Y_1(SOLVE(s,y),s,x,y),fail)
+MISSING_Y_3(q,x,y,y1,y2):=MISSING_Y_2(ODE_1ST(LIM(q,[y1,y2],[y,y1]),alpha,x,y,y1),x,y)
+MISSING_Y_4(q,x,y,y1,y2):=IF(FREE(q,y),MISSING_Y_3(q,x,y,y1,y2),fail,fail)
+MISSING_Y(w,x,y,y1,y2):=MISSING_Y_4(BARE(w,y2),x,y,y1,y2)
+MISSING_X_1(r,s,x,y):=IF(  LHS(r SUB 1)=j,  x+c2_=INT(1/RHS(r SUB 1),y),  Y_SOLVABLE(LIM(s,[y,x,c1_],[y1,y,c2_]),x,y,y1),  Y_SOLVABLE(LIM(s,[y,x,c1_],[y1,y,c2_]),x,y,y1)  )
+MISSING_X_2(s,x,y):=IF(  FREE(s,fail),  MISSING_X_1(SOLVE(LIM(s,[y,x],[j,y]),j),s,x,y),  fail  )
+MISSING_X_3(q,x,y,y1,y2):=MISSING_X_2(ODE_1ST(LIM(q,[y,y1,y2],[x,y,y*y1]),alpha,x,y,y1),x,y)
+MISSING_X_4(q,x,y,y1,y2):=IF(FREE(q,x),MISSING_X_3(q,x,y,y1,y2),fail,fail)
+MISSING_X(w,x,y,y1,y2):=MISSING_X_4(BARE(w,y2),x,y,y1,y2)
+SPECIAL_A_1(w,x,y,y1,y2,q,r):=IF(  r*DIF(q,x)^2+DIF(r,x)^2=q*DIF(r,x)*DIF(q,x),  y=GENERAL(	   w,	   #e^(x*IF(		   FREE(SQRT(q^2-4*r)-q,x),		   (SQRT(q^2-4*r)-q)/2,		   -(SQRT(q^2-4*r)+q)/2		   )	      ),	   x,	   y,	   y1,	   y2	   ),  IF(q+x*r=0,y=GENERAL(w,x,x,y,y1,y2),fail,fail),  IF(q+x*r=0,y=GENERAL(w,x,x,y,y1,y2),fail,fail)  )
+SPECIAL_A(w,x,y,y1,y2):=IF(  GRAD(GRAD(w,[y,y1,y2]),[y,y1,y2]),  SPECIAL_A_1(w,x,y,y1,y2,DIF(w/DIF(w,y2),y1),DIF(w/DIF(w,y2),y)),  fail,  fail  )
+DERIVED_1(o,x,y,y1,y2):=IF(  fail=(local:==ODE_2ND_2(o,x,y,y1,y2)),  [],  [LIM(local,c2_,0),LIM(local,c1_,0)],  [LIM(local,c2_,0),LIM(local,c1_,0)]  )
+DERIVED_2(m,o,x,y,y1,y2):=FIX_DIM(APPEND([y=c1_*x^2+c2_*x+(RHS(m)) SUB 1],DERIVED_1(o,x,y,y1,y2)))
+DERIVED_3(n,o,x,y,y1,y2,y3):=IF(  GRAD(GRAD(o,[y,y1,y2]),[y,y1,y2]) AND GRAD(y3*DIF(LN(o),y3),[x,y,y1,y2]),  DERIVED_2(	   SOLVE(LIM(n,[y,y1,y2],[c1_*x^2+c2_*x+u,2*c1_*x+c2_,2*c1_]),u),	   o,	   x,	   y,	   y1,	   y2	   ),  fail,  fail  )
+DERIVED_4(n,x,y,y1,y2,y3):=DERIVED_3(n,GRAD(n,[x,y,y1,y2]) . [1,y1,y2,y3],x,y,y1,y2,y3)
+DERIVED(w,x,y,y1,y2,y3):=DERIVED_4(BARE(w,y2),x,y,y1,y2,y3)
+FACTORED_1(t,y):=IF(  fail^DIMENSION(t)=(local:==PRODUCT(t)),  fail,  NUMERATOR(FACTOR(BARE(local,y)))=0,  NUMERATOR(FACTOR(BARE(local,y)))=0  )
+FACTORED_2(t,x,y,y1,y2):=FACTORED_1(VECTOR(SIDE(ODE_2ND_4(b__,x,y,y1,y2)),b__,t),y)
+FACTORED_3(u,x,y,y1,y2):=IF(  VECTOR(FREE(DIF(c__,y2),y2),c__,u) AND DIMENSION(u)>1,  FACTORED_2(u,x,y,y1,y2),  fail,  fail  )
+FACTORED(w,x,y,y1,y2):=IF(  FREE(DIF(w,y2),y2),  fail,  FACTORED_3(	    SELECT(NOT(FREE(d__,y2)),d__,FACTORS(FACTOR(w,Rational,y2))),	    x,	    y,	    y1,	    y2	    )  )
+CHANGE_X_1(w,x,y,y1,y2,p,q,r,k,i,u):=LIM(ODE_2ND_1(LIM(k*y1-(p*y2+q*y1-r*y2-w)/r,x,i),x,y,y1,y2),x,u)
+CHANGE_X_2(w,x,y,y1,y2,p,q,r,k,i,u):=IF(  i=fail,  fail,  CHANGE_X_1(w,x,y,y1,y2,p,q,r,k,i,u),  CHANGE_X_1(w,x,y,y1,y2,p,q,r,k,i,u)  )
+CHANGE_X_3(w,x,y,y1,y2,p,q,r,k,i,u):=IF(  FREE(k,x) AND 	FREE(	    local:==ODE_2ND_1(			     LIM(k*y1-(p*y2+q*y1-r*y2-w)/r,x,INVERT_(u,x)),			     x,			     y,			     y1,			     y2			     ),	    fail	    ),  LIM(local,x,u),  CHANGE_X_2(w,x,y,y1,y2,p,q,r,k,i,u)  )
+CHANGE_X_4(w,x,y,y1,y2,p,q,r,k,u):=CHANGE_X_3(w,x,y,y1,y2,p,q,r,k,INVERT(u,x),u)
+CHANGE_X_5(w,x,y,y1,y2,p,q,r,k):=CHANGE_X_4(w,x,y,y1,y2,p,q,r,k,INT(SQRT(r/p),x))
+CHANGE_X_6(w,x,y,y1,y2,p,q,r):=CHANGE_X_5(	  w,	  x,	  y,	  y1,	  y2,	  p,	  q,	  r,	  (p*DIF(r,x)-DIF(p,x)*r+2*q*r)/(2*SQRT(p)*r^(3/2))	  )
+CHANGE_X(w,x,y,y1,y2):=CHANGE_X_6(w,x,y,y1,y2,DIF(w,y2),DIF(w,y1),DIF(w,y))
+SYMMETRIC_TEST_1(v):=IF(v=[] OR (v=[a] OR (v=[b] OR (v=[a,b] OR v=[b,a]))),true,false,false)
+SYMMETRIC_TEST_2(v):=SYMMETRIC_TEST_1(VARIABLES(v))
+SYMMETRIC_TEST(c,d,w):=SYMMETRIC_TEST_2(LIM(w,c,d)/w)
+SYMMETRIC_G_1(w,x,y,y1,y2):=ODE_2ND_1(	 BARE(TRANSFORM_Y(TRANSFORM_X(w,#e^x,x,y,y1,y2),#e^y,x,y,y1,y2),y2),	 x,	 y,	 y1,	 y2	 )
+SYMMETRIC_G(w,x,y,y1,y2):=IF(  SYMMETRIC_TEST([x,y,y1,y2],[a*x,b*y,b*y1/a,b*y2/a^2],w),  LIM(SYMMETRIC_G_1(LIM(w,[x,y],[t,u]),t,u,y1,y2),[t,u],[LN(x),LN(y)]),  fail  )
+SYMMETRIC_N_1(n,w,x,y,y1,y2):=ODE_2ND_1(	 BARE(	     TRANSFORM_Y(			TRANSFORM_X(w,#e^x,x,y,y1,y2),			#e^(n*x)*y,			x,			y,			y1,			y2			),	     y2	     ),	 x,	 y,	 y1,	 y2	 )
+SYMMETRIC_N_2(n,w,x,y,y1,y2):=IF(  FREE(n,x) AND FREE(n,y) AND FREE(n,y1) AND FREE(n,y2),  IF(    SYMMETRIC_TEST([x,y,y1,y2],[a*x,a^n*y,a^(n-1)*y1,a^(n-2)*y2],w),    LIM(SYMMETRIC_N_1(n,LIM(w,[x,y],[t,u]),t,u,y1,y2),[t,u],[LN(x),y/x^n]),    fail    ),  fail  )
+SYMMETRIC_N_3(n,w,x,y,y1,y2):=IF(n=0,fail,SYMMETRIC_N_2(n,w,x,y,y1,y2),SYMMETRIC_N_2(n,w,x,y,y1,y2))
+SYMMETRIC_N_4(g,w,x,y,y1,y2):=SYMMETRIC_N_3(([0,y1,2*y2] . g-x*DIF(w,x))/([y,y1,y2] . g),w,x,y,y1,y2)
+SYMMETRIC_N_5(w,x,y,y1,y2):=SYMMETRIC_N_4(GRAD(w,[y,y1,y2]),w,x,y,y1,y2)
+SYMMETRIC_N(w,x,y,y1,y2):=IF(  fail=(local:==SYMMETRIC_N_5(BARE(w,y2),x,y,y1,y2)),  SYMMETRIC_N_5(w,x,y,y1,y2),  local,  local  )
+SYMMETRIC_Y(w,x,y,y1,y2):=IF(  SYMMETRIC_TEST([y,y1,y2],a*[y,y1,y2],w),  LIM(     ODE_2ND_1(BARE(TRANSFORM_Y(LIM(w,y,t),#e^t,x,t,y1,y2),y2),x,t,y1,y2),     t,     LN(y)     ),  fail  )
+SYMMETRIC_X(w,x,y,y1,y2):=IF(  SYMMETRIC_TEST([x,y1,y2],[a*x,y1/a,y2/a^2],w),  LIM(     ODE_2ND_1(BARE(TRANSFORM_X(LIM(w,x,t),#e^t,t,y,y1,y2),y2),t,y,y1,y2),     t,     LN(x)     ),  fail  )
+TRIVIAL_2ND_1(q,w,x,y,y1,y2):=IF(  w*GRAD(DIF(w,y2),[x,y,y1])=DIF(w,y2)*GRAD(w,[x,y,y1]),  APPEND(	IF(	  FREE(w,y1),	  [w*q=0],	  IF(	    fail=(local:==ODE_1ST(w*q,alpha,x,y,y1)),	    [w*q=0],	    IF(NUMBER(DIMENSION(local)),local,[local]),	    IF(NUMBER(DIMENSION(local)),local,[local])	    )	  ),	[TRIVIAL_SET(w,y,SOLVE(w,y2),x^2/2,c1_*x+c2_,y2)=0]	),  fail,  fail  )
+TRIVIAL_2ND(w,x,y,y1,y2):=FIX_DIM(TRIVIAL_2ND_1(1/BARE(w,y2),w,x,y,y1,y2))
+CANONIC_FACTOR(p,q,x):=#e^INT(q/(2*p),x)
+CANONIC_TERM(p,q,r,x):=(2*q*DIF(p,x)-2*p*DIF(q,x)+4*r*p-q^2)/(4*p^2)
+POLES_1(v,u,d,x):=VECTOR(-1/DIF(LN(v SUB (u SUB (d-e__))),x),e__,0,d-1)
+POLES_2(v,u,x):=POLES_1(v,u,DIMENSION(u),x)
+POLES_3(v,x):=POLES_2(v,SELECT(LIM(v SUB f__,x,inf)=0,f__,1,DIMENSION(v)),x)
+POLES_4(t,x):=POLES_3(FACTORS(FACTOR(t,Trivial,x)),x)
+POLES_5(v):=VECTOR(RHS(i),i,v)
+POLES_6(u,x):=POLES_5(       IF(	 DIMENSION(u)/=1,	 ITERATE(		APPEND(SOLVE(u SUB j,x),SOLVE(u SUB DIMENSION(u),x)),		j,		1,		DIMENSION(u)-1		),	 SOLVE(u SUB 1,x),	 SOLVE(u SUB 1,x)	 )       )
+POLES_7(u,x):=IF(DIMENSION(SELECT(x=g__,g__,VARIABLES(u)))=1,POLES_6(u,x),[],[])
+POLES_8(t,x):=LEAN(POLES_7(POLES_4(t,x),x))
+POLES_9(t,v):=IF(  DIMENSION(v)=0,  [0,0],  IF(    DIMENSION(v)=1,    [v SUB 1,0],    v,    v    ),  fail  )
+POLES(t,x):=POLES_9(t,POLES_8(t,x))
+LINEAR_1(t,f,x,r):=IF(  t<0,  [f*#e^SQRT(-t),f*#e^(-SQRT(-t)),fail],  IF(    t=0,    [f,f*(x-r),fail],    [f*COS(SQRT(t)),f*SIN(SQRT(t)),fail],    [f*COS(SQRT(t)),f*SIN(SQRT(t)),fail]    ),  [f*#e^SQRT(-t),f*#e^(-SQRT(-t)),fail]  )
+LINEAR(t,f,x,r):=LINEAR_1((x-r)^2*t,IF(FREE(t,x),1,x-r)/f,x,r)
+EULER_1(t,f,x,r,a,b):=(x-r)/(f*SQRT(b))*IF(  1>a,  [b^(SQRT(1-a)/2),b^(-SQRT(1-a)/2),fail*SQRT(b)*f/(x-r)],  IF(    1=a,    [1,LN(b),fail*SQRT(b)*f/(x-r)],    [COS(SQRT(a-1)/2*LN(b)),SIN(SQRT(a-1)/2*LN(b)),fail*SQRT(b)*f/(x-r)],    [COS(SQRT(a-1)/2*LN(b)),SIN(SQRT(a-1)/2*LN(b)),fail*SQRT(b)*f/(x-r)]    ),  [b^(SQRT(1-a)/2),b^(-SQRT(1-a)/2),fail*SQRT(b)*f/(x-r)]  )
+EULER(t,f,x,r,s):=IF(  r*s=0,  EULER_1(t,f,x,r,4*t*(x-r)^2,x-r),  EULER_1(t,f,x,r,4*t*(x-r)^2*(x-s)^2/(r-s)^2,(x-r)/(x-s)),  EULER_1(t,f,x,r,4*t*(x-r)^2*(x-s)^2/(r-s)^2,(x-r)/(x-s))  )
+BESSEL_1(f,v,z,k,x,r):=BES_SOL(v/k,z*(x-r)^k/k,SQRT(x-r)/f,x)
+BESSEL_2(t,f,z,k,x,r):=BESSEL_1(f,SQRT(4*z^2+1-LIM(t,x,1))/2,z,k,x,r)
+BESSEL(t,f,k,x,r):=BESSEL_2(	t,	f,	SQRT(	    LIM((SELECT(NOT(FREE(h__,x)),h__,TERMS(EXPAND(t,x)))) SUB 1,x,1)	    )/2,	k,	x,	r	)
+KUMMER_1(f,a,b,z,k,x,r):=F11_SOL(a/k,(b+k-1)/k,z*(x-r)^k/k,(x-r)^(b/2)*#e^(-z*(x-r)^k/(2*k))/f,x)
+KUMMER_2(t,f,b,z,k,x,r):=KUMMER_1(f,(b+k-1)/2-z/2-LIM(x*DIF(t,x),x,1)/(4*k*z),b,z,k,x,r)
+KUMMER(t,f,k,x,r):=KUMMER_2(	t,	f,	SQRT(1-IF(SIGNUM(k)=1,LIM(t,x,0),LIM(t,x,inf),LIM(t,x,0)))+1,	SQRT(	     -IF(		SIGNUM(k)=1,		LIM(t*x^(-2*k),x,inf),		LIM(t*x^(-2*k),x,0),		LIM(t*x^(-2*k),x,0)		)	    ),	k,	x,	r	)
+GAUSS_1(f,a,b,c,z,k,x,r):=F21_SOL(       (a+b)/(2*k),       (b-a)/(2*k),       (c+k-1)/k,       z*(x-r)^k,       (x-r)^(c/2)*(z*(x-r)^k-1)^((b-c+1)/(2*k))/f,       x       )
+GAUSS_2(f,q,z,k,x,r):=GAUSS_1(       f,       SQRT(z^2-q SUB 1)/z,       (SQRT(k^2*z^2-z^2*q SUB 3-z*q SUB 2-q SUB 1)+		z*(SQRT(1-q SUB 3)+k))/z,       SQRT(1-q SUB 3)+1,       z,       k,       x,       r       )
+GAUSS_3(f,g,h,i,z,k,x,r):=GAUSS_2(f,[-(g*k-h*k-i)/k,(2*g*k-2*h*k-i)/k,h],z,k,x,r)
+GAUSS_4(u,f,z,k,x,r):=GAUSS_3(f,LIM(u,x,1),LIM(u,x,0),LIM(DIF(u,x),x,1),z,k,x,r)
+GAUSS_5(v,f,z,k,x,r):=GAUSS_4(v*(z*x^k-1)^2,f,z,k,x,r)
+GAUSS(v,f,k,x,r,s):=GAUSS_5(4*v*x^2,f,(s-r)^(-k),k,x,r)
+L_TYPE(t,f,x,r):=IF(FREE(t,x) OR FREE(t*(x-r)^4,x),LINEAR(t,f,x,r),fail)
+E_TYPE(t,f,x,r,s):=IF(  FREE(t*(x-r)^2,x) OR FREE(t*(x-r)^2*(x-s)^2,x),  EULER(t,f,x,r,s),  fail  )
+C_TYPE_1(a,b,t,f,x):=IF(  FREE(b,x) AND NOT(FREE(a,x)),  KUMMER(4*x^2*LIM(t,x,2*x-a/b),f,2,x,x-a/b),  fail  )
+C_TYPE(t,f,x):=C_TYPE_1(DIF(t,x),DIF(t,x,2),t,f,x)
+B_TYPE(v,x):=IF(DIMENSION(v)=1 AND FREE(x*DIF(LN(v SUB 1),x),x),true,false,false)
+K_TYPE(v,x):=IF(  DIMENSION(v)=2 AND (FREE(x*DIF(LN(v SUB 1),x),x) AND 	(FREE(x*DIF(LN(v SUB 2),x),x) AND (FREE(v SUB 1/v SUB 2^2,x) OR 	FREE(v SUB 2/v SUB 1^2,x)))),  true,  false,  false  )
+G_TYPE_1(u,g,f,x,r):=IF(  K_TYPE(u SUB 2,x),  KUMMER(	4*x^2*g,	f,	x*(DIF(LN(u SUB 2 SUB 1),x)+DIF(LN(u SUB 2 SUB 2),x))/3,	x,	r	),  fail,  fail  )
+G_TYPE(u,g,f,x,r):=IF(  u SUB 1=[],  IF(    B_TYPE(u SUB 2,x),    BESSEL(	  4*x^2*g,	  f,	  x/(2*DIMENSION(u SUB 2))*DIF(LN(u SUB 2 SUB 1),x),	  x,	  r	  ),    G_TYPE_1(u,g,f,x,r),    G_TYPE_1(u,g,f,x,r)    ),  fail,  fail  )
+H_TYPE(u,g,f,x,r,s):=IF(  (K_TYPE(u SUB 1,x) AND K_TYPE(u SUB 2,x) OR B_TYPE(u SUB 1,x) AND 	B_TYPE(u SUB 2,x)) AND FREE(u SUB 2 SUB 1/u SUB 1 SUB 1,x),  GAUSS(g,f,x/DIMENSION(u SUB 1)*DIF(LN(u SUB 1 SUB 1),x),x,r,s),  fail,  fail  )
+CANONIC_1(u,g,t,f,x,r,s):=IF(fail=(local:==L_TYPE(t,f,x,r)),IF(fail=(local:==E_TYPE(t,f,x,r,s)),IF(fail=(local:==C_TYPE(t,f,x)),IF(fail=(local:==G_TYPE(u,g,f,x,r)),H_TYPE(u,g,f,x,r,s),local,local),local,local),local,local),local,local)
+CANONIC_2(q,g,t,f,x,r,s):=CANONIC_1([X_TERMS(q SUB 1,x),X_TERMS(q SUB 2,x)],g,t,f,x,r,s)
+CANONIC_3(g,t,f,x,r,s):=CANONIC_2(PARTS(x^2*g),g,t,f,x,r,s)
+CANONIC_4(t,f,x,r,s):=CANONIC_3(LIM(t,x,x+r),t,f,x,r,s)
+CANONIC_5(t,f,x,u):=IF(  1/u SUB 1=0 OR 1/u SUB 2=0,  fail,  CANONIC_4(t,f,x,u SUB 1,u SUB 2),  CANONIC_4(t,f,x,u SUB 1,u SUB 2)  )
+CANONIC_6(t,f,x):=CANONIC_5(t,f,x,POLES(t,x))
+CANONIC_7(w,x,y,y1,y2):=CANONIC_6(	 CANONIC_TERM(DIF(w,y2),DIF(w,y1),DIF(w,y),x),	 CANONIC_FACTOR(DIF(w,y2),DIF(w,y1),x),	 x	 )
+CANONIC_8(g,m,n,q,x):=c1_*BARE(m,x)+c2_*BARE(n,x)-m*INT(n*g/q,x)+n*INT(m*g/q,x)
+CANONIC_9(g,m,n,o,x):=CANONIC_8(g,m,n,WRONSKY(m,n,x,o),x)
+CANONIC_A(w,l,u,x,y,y2):=IF(  fail=u,  fail,  y=CANONIC_9((l-w)/DIF(w,y2),u SUB 1,u SUB 2,u SUB 3,x),  y=CANONIC_9((l-w)/DIF(w,y2),u SUB 1,u SUB 2,u SUB 3,x)  )
+CANONIC_B(w,l,x,y,y1,y2):=CANONIC_A(w,l,CANONIC_7(l,x,y,y1,y2),x,y,y2)
+CANONIC(w,x,y,y1,y2):=IF(  GRAD(GRAD(w,[y,y1,y2]),[y,y1,y2]),  CANONIC_B(w,y2*DIF(w,y2)+y1*DIF(w,y1)+y*DIF(w,y),x,y,y1,y2),  fail,  fail  )
+ODE_2ND_1(w,x,y,y1,y2):=IF(fail=(local:==MISSING_Y_P(w,x,y,y1,y2)),IF(fail=(local:==MISSING_Y(w,x,y,y1,y2)),IF(fail=(local:==CANONIC(w,x,y,y1,y2)),IF(fail=(local:==MISSING_X_P(w,x,y,y1,y2)),IF(fail=(local:==MISSING_X(w,x,y,y1,y2)),IF(fail=(local:==LIOUVILLE(w,x,y,y1,y2)),IF(fail=(local:==EXACT_2ND(w,x,y,y1,y2)),SPECIAL_A(w,x,y,y1,y2),local,local),local,local),local,local),local,local),local,local),local,local),local,local)
+ODE_2ND_2(w,x,y,y1,y2):=IF(fail=(local:==ODE_2ND_1(w,x,y,y1,y2)),IF(fail=(local:==EXACT_LINEAR(w,x,y,y1,y2)),CHANGE_X(w,x,y,y1,y2),local,local),local,local)
+ODE_2ND_3(w,x,y,y1,y2):=IF(fail=(local:==DERIVED(w,x,y,y1,y2,y3)),IF(fail=(local:==SYMMETRIC_G(w,x,y,y1,y2)),IF(fail=(local:==SYMMETRIC_Y(w,x,y,y1,y2)),IF(fail=(local:==SYMMETRIC_X(w,x,y,y1,y2)),IF(fail=(local:==MISSING_Y_P(w,x,y,y1,y2)),IF(fail=(local:==MISSING_Y(w,x,y,y1,y2)),IF(fail=(local:==MISSING_X_P(w,x,y,y1,y2)),IF(fail=(local:==MISSING_X(w,x,y,y1,y2)),IF(fail=(local:==EXACT_2ND(w,x,y,y1,y2)),IF(fail=(local:==LIOUVILLE(w,x,y,y1,y2)),SYMMETRIC_N(w,x,y,y1,y2),local,local),local,local),local,local),local,local),local,local),local,local),local,local),local,local),local,local),local,local)
+ODE_2ND_4(w,x,y,y1,y2):=IF(  GRAD(GRAD(w,[y,y1,y2]),[y,y1,y2]),  ODE_2ND_2(w,x,y,y1,y2),  ODE_2ND_3(w,x,y,y1,y2),  ODE_2ND_3(w,x,y,y1,y2)  )
+ODE_2ND(w,x,y,y1,y2):=IF(fail=(local:==TRIVIAL_2ND(w,x,y,y1,y2)),IF(fail=(local:==FACTORED(w,x,y,y1,y2)),ODE_2ND_4(w,x,y,y1,y2),local,local),local,local)
+ODE_1(w,x,y,y1,y2,a):=IF(  FREE(w,y1) AND FREE(w,y2),  MESSAGE(6),  IF(    FREE(w,y2),    ODE_1ST(w,a,x,y,y1),    ODE_2ND(w,x,y,y1,y2),    ODE_2ND(w,x,y,y1,y2)    )  )
+ODE(w,x,y,y1,y2,alpha):=ODE_1(SIDE(w),x,y,y1,y2,alpha)
+
+## derive-3.14-dos/USERS/PSERIES.DMO
+S1:==TAYLOR_S(SIN(x),x,0,12)
+S2:==TAYLOR_S(COS(x),x,0,12)
+S3:==QUOT_S(S1,S2,x)
+S4:==TAYLOR_S(TAN(x),x,0,12)
+S5:==INV_S(S4,x)
+S6:==FFCT_S(S4,S5,x)
+S7:==TAYLOR_S(SIN(x/2),x,0,12)
+S8:==TAYLOR_S(COS(x/2),x,0,12)
+S9:==2*PROD_S(S7,S8,x)
+POLY(S9)
+
+## derive-3.14-dos/USERS/PSERIES.MTH
+InputMode:=Word
+CaseMode:=Sensitive
+EM1:="Denom.series must have non-zero constant term!"
+EM2:="Second arg.must have zero constant term!"
+EM3:="Series must start with linear term!"
+rPle(e,v,n):=VECTOR(IF(iI=n,e,ELEMENT(v,iI)),iI,DIMENSION(v))
+dGt(T,x):=IF(T=0,0,0,x*DIF(T,x)/T)
+dGp(P,x,n):=IF(P=0,IF(n<0,0,n-1),dGp(DIF(P,x),x,n+1),dGp(DIF(P,x),x,n+1))
+DEGP(P,x):=dGp(P,x,0)
+nZe(A,B,zt,n):=IF(n<1,B,nZe(A,IF(zt=1,APPEND([ELEMENT(A,n)],B),IF(ELEMENT(A,n)=0,B,APPEND([ELEMENT(A,n)],B),APPEND([ELEMENT(A,n)],B))),IF(zt=0,0,IF(ELEMENT(A,n)=0,1,0,0)),n-1))
+CONTR_S(A):=nZe(A,[],IF(ELEMENT(A,DIMENSION(A))=0,1,0,0),DIMENSION(A))
+pSx(P,x,v,n,N):=IF(n>N AND P=0,v,pSx(DIF(P,x),x,APPEND(v,[LIM(P,x)*x^n/n!]),n+1,N),pSx(DIF(P,x),x,APPEND(v,[LIM(P,x)*x^n/n!]),n+1,N))
+SERIES(P,x,N):=CONTR_S(pSx(P,x,[],0,IF(N>0,N,0,0)))
+POLY(S):=IF(DIMENSION(S)=0,0,SUM(ELEMENT(S,iI),iI,DIMENSION(S)),S)
+TAYLOR_S(FCT,x,x0,N):=SERIES(TAYLOR(FCT,x,x0,N),x,N)
+eXts(S,x,E,d,k,n):=IF(k>DIMENSION(S),E,IF(n<d+1,eXts(S,x,APPEND(E,[0]),d,k,n+1),eXts(S,x,APPEND(E,[ELEMENT(S,k)]),dGt(ELEMENT(S,k+1),x),k+1,n+1),eXts(S,x,APPEND(E,[0]),dGt(ELEMENT(S,k+1),x),k+1,n+1)))
+ALLP_S(S,x):=eXts(S,x,[],dGt(ELEMENT(S,1),x),1,1)
+lTs(A,n):=IF(ELEMENT(A,n)=0,lTs(A,n+1),ELEMENT(A,n),ELEMENT(A,n))
+lTi(A,n):=IF(n>DIMENSION(A),n,IF(ELEMENT(A,n)=0,lTi(A,n+1),n,n))
+tRpr(AP1,AP2,N):=VECTOR(SUM(ELEMENT(AP1,iI)*ELEMENT(AP2,nN+1-iI),iI,1,nN),nN,N)
+sUms(A1,A2,x,N):=VECTOR(ELEMENT(A1,iI)+ELEMENT(A2,iI),iI,N)
+SUM_S(S1,S2,x):=CONTR_S(sUms(ALLP_S(S1,x),ALLP_S(S2,x),x,MIN(DIMENSION(ALLP_S(S1,x)),DIMENSION(ALLP_S(S2,x)))))
+pRs(A1,A2,x):=tRpr(A1,A2,MIN(lTi(A1,1)+DIMENSION(A2),lTi(A2,1)+DIMENSION(A1))-1)
+PROD_S(S1,S2,x):=CONTR_S(pRs(ALLP_S(S1,x),ALLP_S(S2,x),x))
+qTs(A,B,C,b0,N,n):=IF(n>N,C,qTs(A,B,APPEND(C,[(ELEMENT(A,n)-SUM(ELEMENT(C,iI)*ELEMENT(B,n+1-iI),iI,n-1))/b0]),b0,N,n+1))
+QUOT_S(S1,S2,x):=IF(dGt(lTs(S2,1),x)=0,CONTR_S(qTs(ALLP_S(S1,x),ALLP_S(S2,x),[],ELEMENT(S2,1),MIN(DIMENSION(ALLP_S(S1,x)),DIMENSION(ALLP_S(S2,x))),1)),EM1,EM1)
+dGs(A,x,d,n):=IF(ELEMENT(A,n)=0,dGs(A,x,d+1,n-1),dGt(ELEMENT(A,n),x)+d,dGt(ELEMENT(A,n),x)+d)
+RECIP_S(S,x):=QUOT_S(APPEND([1],VECTOR(0,iI,dGs(S,x,0,DIMENSION(S)))),S,x)
+fFctr(A,B,x,Bn,T,N,n):=IF(n>N,T,fFctr(A,B,x,tRpr(Bn,B,N),T+ELEMENT(A,n)*Bn/x^(n-1),N,n+1))
+fFct(A,B,x,N):=fFctr(A,B,x,tRpr(B,B,N),rPle(ELEMENT(A,1),ELEMENT(A,2)*VECTOR(ELEMENT(B,jJ),jJ,N)/x,1),N,3)
+FFCT_S(A,B,x):=IF(dGt(lTs(B,1),x)>0,CONTR_S(fFct(ALLP_S(A,x),ALLP_S(B,x),x,MIN(DIMENSION(ALLP_S(A,x)),DIMENSION(ALLP_S(B,x))))),EM2,EM2)
+iNvr(A,x,An,T,C,N,n):=IF(n>N,C,iNvr(A,x,tRpr(An,A,N),T-An*ELEMENT(T,n)/ELEMENT(A,2)^(n-1),APPEND(C,[-ELEMENT(T,n)/ELEMENT(A,2)^(n-1)*x^(n-1)]),N,n+1))
+iNva(A,x,N):=iNvr(A,x,tRpr(A,A,N),x/ELEMENT(A,2)*A,[0,x^2/ELEMENT(A,2)],N,3)
+INV_S(S,x):=IF(dGt(lTs(S,1),x)=1,CONTR_S(iNva(ALLP_S(S,x),x,DIMENSION(ALLP_S(S,x)))),EM3,EM3)
+hGs(a,b,z,T,S,k,K):=IF(k=K,APPEND(S,[T]),hGs(a,b,z,z*T*PRODUCT(ELEMENT(a,iI)+k,iI,DIMENSION(a))/((k+1)*PRODUCT(ELEMENT(b,jJ)+k,jJ,DIMENSION(b))),APPEND(S,[T]),k+1,K))
+GHYP_S(U,L,z,K):=hGs(U,L,z,z*PRODUCT(ELEMENT(U,iI),iI,DIMENSION(U))/PRODUCT(ELEMENT(L,jJ),jJ,DIMENSION(L)),[1],1,K)
+
+## derive-3.14-dos/USERS/ROMB_INT.MTH
+Precision:=Approximate
+PrecisionDigits:=24
+NotationDigits:=10
+F(x):=
+NEW_ROW(v,a):=[2*v SUB 1,v SUB 2/2,v SUB 3/2+v SUB 2/2*SUM(F(a+(k-1/2)*v SUB 2),k,1,v SUB 1)]
+TR(a,b,n):=ITERATES(NEW_ROW(v,a),v,[1,b-a,(b-a)*(F(a)+F(b))/2],n)
+R1(m_,p,i,j,n):=IF(j<n,m_ SUB i SUB j,IF(i<n-2,"***",(2^p*m_ SUB i SUB (j-1)-m_ SUB (i-1) SUB (j-1))/(2^p-1)))
+RICH(m_,p,n):=VECTOR(VECTOR(R1(m_,p,i,j,n),j,1,n),i,1,DIMENSION(m_))
+RAT1(m_,i,j):=(m_ SUB (i-1) SUB j-m_ SUB i SUB j)/(m_ SUB i SUB j-m_ SUB (i+1) SUB j)
+RAT2(m_,i,j,n):=IF(j<3,m_ SUB i SUB j,IF(i=1 OR (i<j-1 OR i=n),"***",IF(m_ SUB i SUB j=m_ SUB (i+1) SUB j,"***",RAT1(m_,i,j))))
+RATIOS(m_):=VECTOR(VECTOR(RAT2(m_,i,j,DIMENSION(m_)),j,1,DIMENSION(ELEMENT(m_,1))),i,1,DIMENSION(m_))
+ROMB(a,b,n):=RICH(RICH(RICH(TR(a,b,n),2,4),4,5),6,6)
+
+## derive-3.14-dos/USERS/SECANT.MTH
+Precision:=Approximate
+PrecisionDigits:=10
+NotationDigits:=8
+F(x):=
+SEC_δ(v_):=IF(v_ SUB 3=v_ SUB 4,0,-v_ SUB 4*v_ SUB 2/(v_ SUB 4-v_ SUB 3),0)
+NEW_SEC_ROW(v_,delta):=[v_ SUB 1+delta,delta,v_ SUB 4,F(v_ SUB 1+delta)]
+SECANT(a,delta,n):=ITERATES(NEW_SEC_ROW(v_,SEC_δ(v_)),v_,[a,delta,F(a-delta),F(a)],n)
+
+## derive-3.14-dos/USERS/SPLINE.MTH
+Precision:=Approximate
+PrecisionDigits:=10
+NotationDigits:=6
+TR1(m_):=[m_ SUB 1 SUB 2,m_ SUB 1 SUB 3,m_ SUB 1 SUB 4,2]
+TR2(m_,v_,k):=[m_ SUB k SUB 2-m_ SUB k SUB 1/v_ SUB 3*v_ SUB 1,m_ SUB k SUB 3,m_ SUB k SUB 4-m_ SUB k SUB 1/v_ SUB 3*m_ SUB (k-1) SUB 3,k+1]
+R_REDUCE(m_):=ITERATES(TR2(m_,v_,v_ SUB 4),v_,TR1(m_),DIMENSION(m_)-1)
+TR3(m_,n):=[m_ SUB n SUB 1/m_ SUB n SUB 3,n-1]
+TR4(m_,v_,k):=[(m_ SUB k SUB 1-m_ SUB k SUB 2*v_ SUB 1)/m_ SUB k SUB 3,k-1]
+BACK_SUB(m_):=ITERATES(TR4(m_,v_,v_ SUB 2),v_,TR3(m_,DIMENSION(m_)),DIMENSION(m_)-1)
+REVERSE(m_):=VECTOR(m_ SUB k SUB 1,k,DIMENSION(m_),1,-1)
+SOLVE_TRI(m_):=REVERSE(BACK_SUB(R_REDUCE(m_)))
+SP1(m_):=VECTOR(m_ SUB (k+1)-m_ SUB k,k,1,DIMENSION(m_)-1)
+SP2(mm):=VECTOR([mm SUB k SUB 1,mm SUB k SUB 2/mm SUB k SUB 1],k,1,DIMENSION(mm))
+SP3(mm,k):=[mm SUB k SUB 1,mm SUB (k+1) SUB 2-mm SUB k SUB 2,mm SUB (k+1) SUB 1,2*(mm SUB k SUB 1+mm SUB (k+1) SUB 1)]
+first_row:=[0,0,0,1]
+last_row:=[0,0,0,1]
+SP4(mm):=APPEND([first_row],VECTOR(SP3(mm,k),k,1,DIMENSION(mm)-1),[last_row])
+SP5(m_):=APPEND(m_`,[SOLVE_TRI(SP4(SP2(SP1(m_))))])`
+SP6(x,y,w,h,p,q,t):=[x+h*t,h^2*t*(q*(t^2-1)+3*w*(t-1))+p*t+y]
+SP7(m,k):=APPEND(m SUB k,m SUB (k+1)-m SUB k)
+SP8(v,t):=SP6(v SUB 1,v SUB 2,v SUB 3,v SUB 4,v SUB 5,v SUB 6,t)
+SPLINE1(m_,t):=VECTOR(SP8(SP7(m_,k),t),k,1,DIMENSION(m_)-1)
+SPLINE(m,t):=SPLINE1(SP5(m),t)
+F(x):=
+DIFFERENCE(cc):=cc-VECTOR([0,F(cc SUB k SUB 1)],k,1,DIMENSION(cc))
+PARA1(s1,s2):=VECTOR([s1 SUB k SUB 2,s2 SUB k SUB 2],k,1,DIMENSION(s1))
+PARA2(m1,m2,t):=PARA1(SPLINE(m1,t),SPLINE(m2,t))
+PARA(m,t):=PARA2(VECTOR([k,m SUB k SUB 1],k,1,DIMENSION(m)),VECTOR([k,m SUB k SUB 2],k,1,DIMENSION(m)),t)
+
+## derive-3.14-dos/USERS/TAY_ODE.MTH
+TAY_ODE1_AUX(z,x,y,x0,y0,h,n,m):=ITERATES([x+h,y+z . VECTOR(h^r/r!,r,1,n)],[x,y],[x0,y0],m)
+TAY_ODE1(f,x,y,x0,y0,h,n,m):=TAY_ODE1_AUX(ITERATES(DIF(w,x)+f*DIF(w,y),w,f,n-1),x,y,x0,y0,h,n,m)
+TAY_ODE2_AUX(z,x,y,v,x0,y0,v0,h,n,m):=ITERATES([x+h,y+h*v+z . VECTOR(h^r/r!,r,2,n+1),v+VECTOR(h^r/r!,r,1,n) . z],[x,y,v],[x0,y0,v0],m)
+TAY_ODE2(f,x,y,v,x0,y0,v0,h,n,m):=TAY_ODE2_AUX(ITERATES(DIF(u,x)+v*DIF(u,y)+f*DIF(u,v),u,f,n-1),x,y,v,x0,y0,v0,h,n,m)
+
+## derive-3.14-dos/USERS/TENSOR.MTH
+InputMode:=Word
+CaseMode:=Sensitive
+lInarx(A,r):=IF(r>1,lInarx(APPEND(A),r-1),A)
+iVlx(L,L1,iv,d,n):=IF(n<1,iv,iVlx(L1,FLOOR(L1,d),APPEND([L+1-d*L1],iv),d,n-1))
+iVl(L,r,d):=iVlx(L-1,FLOOR(L-1,d),[],d,r)
+lOel(v,e,n):=IF(v SUB n=e OR n<1,n,lOel(v,e,n-1),lOel(v,e,n-1))
+vNestx(P,ivP,d,n):=IF(n<1,P,vNestx(VECTOR(P,ivP SUB n,d),ivP,d,n-1))
+aUgvp(v,e):=VECTOR(VECTOR(IF(iIp<jJp,v SUB iIp,IF(iIp>jJp,v SUB (iIp-1),e)),iIp,DIMENSION(v)+1),jJp,DIMENSION(v)+1,1,-1)
+pVae(M,e,P,d,n):=IF(n>d,P,pVae(M,e,APPEND(P,aUgvp(M SUB n,e)),d,n+1))
+pErme(v,P,n):=IF(n>DIMENSION(v),P,pErme(v,pVae(P,v SUB n,[],DIMENSION(P),1),n+1))
+PERM_EL(v):=pErme(v,[[]],1)
+iNdxa:=[iA1_,iA2_,iA3_,iA4_,iA5_,iA6_,iA7_,iA8_,iA9_,iAa_,iAb_,iAc_,iAd_,iAe_,iAf_]
+iVa_(n):=VECTOR(iNdxa SUB iNd_,iNd_,n)
+iNdxb:=[iB1_,iB2_,iB3_,iB4_,iB5_,iB6_,iB7_,iB8_,iB9_,iBa_,iBb_,iBc_,iBd_,iBe_,iBf_]
+iVb_(n):=VECTOR(iNdxb SUB iNd_,iNd_,n)
+EL_D(i,j):=IF(i=j,1,0)
+cEpm(iv1,iv2,pv,m,n):=IF(n>DIMENSION(iv1),pv,IF(iv2 SUB m=iv1 SUB n,cEpm(iv1,iv2,APPEND(pv,[m]),1,n+1),cEpm(iv1,iv2,pv,IF(m<DIMENSION(iv1),m+1,1),IF(m<DIMENSION(iv1),n,m+1))))
+eOpi(v,i,m,n):=IF(n=DIMENSION(v),i,IF(v SUB m=v SUB n,0,eOpi(v,IF(v SUB m>v SUB n,i,-i),IF(m<DIMENSION(v),m+1,n+2),IF(m<DIMENSION(v),n,n+1))))
+eGdx(v,d):=IF(DIMENSION(v)<d,0,eOpi(v,1,2,1))
+EL_GD(iv1,iv2):=eGdx(cEpm(iv1,iv2,[],1,1),DIMENSION(iv1))
+EL_E(iv):=eOpi(iv,1,2,1)
+DIM_T(A):=IF(DIMENSION(A)=4,4,DIMENSION(A),0)
+rNk(A,n):=IF(DIMENSION(A)=0,rNk(A SUB 1,n+1),rNk(A SUB 1,n+1),n)
+RANK_T(A):=rNk(A,0)
+eLt(A,iv,n):=IF(n>DIMENSION(iv),A,eLt(A SUB (iv SUB n),iv,n+1))
+EL_T(A,iv):=eLt(A,iv,1)
+DELTA(dim):=IDENTITY_MATRIX(dim)
+EPS(d):=LIM(vNestx(eOpi(iVa_(d),1,2,1),iVa_(d),dIm,d),dIm,d)
+GDELTA(ncov,d):=LIM(vNestx(eGdx(cEpm(iVa_(ncov),iVb_(ncov),[],1,1),ncov),APPEND(iVa_(ncov),iVb_(ncov)),dIm,2*ncov),dIm,d)
+IP_T(A,ivA,B,ivB,ivP):=vNestx(SUM(eLt(A,ivA,1)*eLt(B,ivB,1),sS,DIMENSION(A)),ivP,DIMENSION(A),DIMENSION(ivP))
+I_T(A,sA,B,sB):=IP_T(A,REPLACE_ELEMENT(sS,iVa_(RANK_T(A)),sA),B,REPLACE_ELEMENT(sS,iVb_(RANK_T(B)),sB),APPEND(DELETE_ELEMENT(iVa_(RANK_T(A)),sA),DELETE_ELEMENT(iVb_(RANK_T(B)),sB)))
+MI_T(A,n,metric):=IP_T(metric,[iNdxa SUB n,sS],A,REPLACE_ELEMENT(sS,iVa_(RANK_T(A)),n),iVa_(RANK_T(A)))
+EL_IP_T(A,ivnA,B,ivnB):=SUM(eLt(A,ivnA,1)*eLt(B,ivnB,1),sS,DIMENSION(A))
+OP_T(A,ivA,B,ivB,ivP):=vNestx(IF(lOel(ivA,ivP SUB DIMENSION(ivP),DIMENSION(ivA))=0,VECTOR(eLt(B,ivB,1),ivP SUB DIMENSION(ivP),DIMENSION(B))*eLt(A,ivA,1),VECTOR(eLt(A,ivA,1),ivP SUB DIMENSION(ivP),DIMENSION(A))*eLt(B,ivB,1)),ivP,DIMENSION(A),DIMENSION(ivP)-1)
+O_T(A,B):=OP_T(A,iVa_(RANK_T(A)),B,iVb_(RANK_T(B)),APPEND(iVa_(RANK_T(A)),iVb_(RANK_T(B))))
+TP_T(A,ivA,ivT):=vNestx(eLt(A,ivA,1),ivT,DIMENSION(A),DIMENSION(ivT))
+CT_T(A,ivA,ivC):=vNestx(SUM(eLt(A,ivA,1),sS,DIMENSION(A)),ivC,DIMENSION(A),DIMENSION(ivC))
+C_T(A,s1,s2):=vNestx(SUM(eLt(A,REPLACE_ELEMENT(sS,REPLACE_ELEMENT(sS,iVa_(RANK_T(A)),s1),s2),1),sS,DIMENSION(A)),IF(s2>s1,DELETE_ELEMENT(DELETE_ELEMENT(iVa_(RANK_T(A)),s2),s1),DELETE_ELEMENT(DELETE_ELEMENT(iVa_(RANK_T(A)),s1),s2)),DIMENSION(A),RANK_T(A)-2)
+CI_T(A,ivA,B,ivB,ivP):=vNestx(SUM(SUM(eLt(A,ivA,1)*eLt(B,ivB,1),sS,DIMENSION(A)),tT,DIMENSION(A)),ivP,DIMENSION(A),DIMENSION(ivP))
+C_I_T(A,sA,tA,B,sB,tB):=CI_T(A,REPLACE_ELEMENT(tT,REPLACE_ELEMENT(sS,iVa_(RANK_T(A)),sA),tA),B,REPLACE_ELEMENT(tT,REPLACE_ELEMENT(sS,iVb_(RANK_T(B)),sB),tB),APPEND(IF(tA>sA,DELETE_ELEMENT(DELETE_ELEMENT(iVa_(RANK_T(A)),tA),sA),DELETE_ELEMENT(DELETE_ELEMENT(iVa_(RANK_T(A)),sA),tA)),IF(tB>sB,DELETE_ELEMENT(DELETE_ELEMENT(iVb_(RANK_T(B)),tB),sB),DELETE_ELEMENT(DELETE_ELEMENT(iVb_(RANK_T(B)),sB),tB))))
+nZel(A1,r,d):=(ITERATE(IF(A1 SUB v1=0,[v2,v1+1],[APPEND(v2,[[iVl(v1,r,d)=A1 SUB v1]]),v1+1],[APPEND(v2,[[iVl(v1,r,d)=A1 SUB v1]]),v1+1]),[v2,v1],[[],1],DIMENSION(A1))) SUB 1
+NZEL_T(A):=nZel(lInarx(A,RANK_T(A)),RANK_T(A),DIMENSION(A))
+iNze(A1):=(ITERATE(IF(A1 SUB v2=0,[v1,v2+1],[APPEND(v1,[v2]),v2+1],[APPEND(v1,[v2]),v2+1]),[v1,v2],[[],1],DIMENSION(A1))) SUB 1
+xNze1(A1,iNz,kEy,r,d):=ITERATE(IF(A1 SUB (iNz SUB v1)=kEy,[APPEND(v3,[iVl(iNz SUB v1,r,d)]),v2,v1+1],IF(A1 SUB (iNz SUB v1)=-kEy,[APPEND(v3,-[iVl(iNz SUB v1,r,d)]),v2,v1+1],[v3,APPEND(v2,[iNz SUB v1]),v1+1]),IF(A1 SUB (iNz SUB v1)=-kEy,[APPEND(v3,-[iVl(iNz SUB v1,r,d)]),v2,v1+1],[v3,APPEND(v2,[iNz SUB v1]),v1+1],[v3,APPEND(v2,[iNz SUB v1]),v1+1])),[v3,v2,v1],[[],[],1],DIMENSION(iNz))
+xNze2(C,Z,kEy):=[APPEND(C SUB 1,[[Z SUB 1=kEy]]),Z SUB 2]
+xNze(A1,C,r,d):=xNze2(C,xNze1(A1,C SUB 2,A1 SUB (C SUB 2 SUB 1),r,d),A1 SUB (C SUB 2 SUB 1))
+gNze1(A1,C,r,d):=IF(DIMENSION(C SUB 2)=0,C SUB 1,gNze1(A1,xNze(A1,C,r,d),r,d))
+gNze(A1,r,d):=gNze1(A1,[[],iNze(A1)],r,d)
+GNZE_T(A):=gNze(lInarx(A,RANK_T(A)),RANK_T(A),DIMENSION(A))
+oDaux(A,ivA,x,d):=vNestx(DIF(eLt(A,ivA,1),x SUB dD_),APPEND(ivA,[dD_]),d,DIMENSION(ivA)+1)
+OD_T(A,x):=LIM(oDaux(A,iVa_(RANK_T(A)),x,dIm),dIm,DIMENSION(x))
+cDaux(A,ncov,weight,x,C_ij_k,rA,iv,ivR,dim):=OD_T(A,x)-SUM(IP_T(A,REPLACE_ELEMENT(sS,iv,iI_),C_ij_k,[iv SUB iI_,kK,sS],ivR),iI_,1,ncov)+SUM(IP_T(A,REPLACE_ELEMENT(sS,iv,jJ_),C_ij_k,[sS,kK,iv SUB jJ_],ivR),jJ_,ncov+1,rA)-IF(weight=0,0,weight*OP_T(A,iv,CT_T(C_ij_k,[iI,sS,sS],[iI]),[kK],ivR))
+CD_T(A,ncov,weight,x,C_ij_k):=cDaux(A,ncov,weight,x,C_ij_k,RANK_T(A),iVa_(RANK_T(A)),APPEND(iVa_(RANK_T(A)),[kK]),DIMENSION(x))
+lDaux(A,v,ncov,weight,x,odv,rA,iv):=IP_T(OD_T(A,x),APPEND(iv,[sS]),v,[sS],iv)+SUM(IP_T(A,REPLACE_ELEMENT(sS,iv,iI_),odv,[sS,iv SUB iI_],iv),iI_,1,ncov)-SUM(IP_T(A,REPLACE_ELEMENT(sS,iv,jJ_),odv,[iv SUB jJ_,sS],iv),jJ_,ncov+1,rA)+IF(weight=0,0,weight*TRACE(odv)*A)
+LD_T(A,v,ncov,weight,x):=lDaux(A,v,ncov,weight,x,OD_T(v,x),RANK_T(A),iVa_(RANK_T(A)))
+dIvt(A,iv_zZ,x):=SUM(DIF(eLt(A,iv_zZ,1),x SUB zZ_),zZ_,DIMENSION(x))
+dVrgx(A,ncov,weight,sA,x,C_ij_k,iv,ivD,C_i):=vNestx(dIvt(A,REPLACE_ELEMENT(zZ_,iv,sA),x),ivD,DIMENSION(x),DIMENSION(ivD))-IF(ncov<1,0,SUM(CI_T(A,REPLACE_ELEMENT(tT,REPLACE_ELEMENT(sS,iv,iI_),sA),C_ij_k,[iv SUB iI_,tT,sS],ivD),iI_,1,ncov))+IF(ncov<0,0,SUM(IF(jJ_=sA,0,CI_T(A,REPLACE_ELEMENT(tT,REPLACE_ELEMENT(sS,iv,jJ_),sA),C_ij_k,[sS,tT,iv SUB jJ_],ivD)),jJ_,ncov+1,DIMENSION(iv)))+IF(weight=1,0,(1-weight)*IP_T(A,REPLACE_ELEMENT(sS,iv,sA),C_i,[sS],ivD))
+DV_T(A,ncov,weight,sA,x,C_ij_k):=dVrgx(A,ncov,weight,sA,x,C_ij_k,iVa_(RANK_T(A)),DELETE_ELEMENT(iVa_(RANK_T(A)),sA),CT_T(C_ij_k,[iI,sS,sS],[iI]))
+eQel(v,i,n):=IF(i>0,n,IF(n<2,0,eQel(v,lOel(v,v SUB n,n-1),n-1)))
+sGnp(v):=SIGN(PRODUCT(PRODUCT(v SUB jJ-v SUB iI,jJ,iI+1,DIMENSION(v)),iI,1,DIMENSION(v)-1))
+dTgc(iv,A,x):=sGnp(iv)*DIF(eLt(A,DELETE_ELEMENT(iv,DIMENSION(iv)),1),x SUB (iv SUB DIMENSION(iv)))
+eLgc(Miv,A,x):=sGnp(Miv SUB 1)*SUM(dTgc(Miv SUB sSp,A,x),sSp,DIMENSION(Miv))
+gCaux(A,x,ivD,r):=LIM(vNestx(IF(eQel(ivD,0,r)>0,0,eLgc(pErme(ivD,[[]],1),A,x)),ivD,dIm,r),dIm,DIMENSION(x))
+GC_T(A,x):=gCaux(A,x,iVa_(RANK_T(A)+1),RANK_T(A)+1)
+JACOB(x,x_):=VECTOR(VECTOR(DIF(x SUB iI,x_ SUB jJ),jJ,DIMENSION(x_)),iI,DIMENSION(x))
+tFidx(A,JC,ivA,ivc,ic):=vNestx(SUM(JC SUB sS SUB ic*eLt(A,ivc,1),sS,DIMENSION(A)),ivA,DIMENSION(A),DIMENSION(ivA))
+tFaux(A,ivA,ncov,JM,JMc,n):=IF(n>DIMENSION(ivA),A,tFaux(tFidx(A,IF(n>ncov,JMc,JM),ivA,REPLACE_ELEMENT(sS,ivA,n),ivA SUB n),ivA,ncov,JM,JMc,n+1))
+TF_T(A,ncov,weight,JM,JM_):=tFaux(A,iVa_(RANK_T(A)),ncov,JM,JM_`,1)*IF(weight=0,1,DET(JM)^weight)
+CHRIS1(g_ij,x):=1/2*VECTOR(VECTOR(VECTOR(DIF(g_ij SUB jJ SUB kK,x SUB iI)+DIF(g_ij SUB kK SUB iI,x SUB jJ)-DIF(g_ij SUB iI SUB jJ,x SUB kK),kK,1,DIMENSION(g_ij)),jJ,1,DIMENSION(g_ij)),iI,1,DIMENSION(g_ij))
+CHRIS2(g_ij,g__ij,x):=VECTOR(1/2*(VECTOR(VECTOR(VECTOR(DIF(g_ij SUB jJ SUB kK,x SUB iI)+DIF(g_ij SUB kK SUB iI,x SUB jJ)-DIF(g_ij SUB iI SUB jJ,x SUB kK),kK,1,DIMENSION(g_ij)),jJ,1,DIMENSION(g_ij)),iI,1,DIMENSION(g_ij))) SUB lL . g__ij,lL,1,DIMENSION(g_ij))
+EL_RIEM1(C_ijk,C_ij_k,x,i,j,k,l):=IF(i=j OR k=l,0,DIF(C_ijk SUB j SUB l SUB i,x SUB k)-DIF(C_ijk SUB j SUB k SUB i,x SUB l)+C_ijk SUB i SUB l . C_ij_k SUB j SUB k-C_ijk SUB i SUB k . C_ij_k SUB j SUB l)
+RIEM1(C_ijk,C_ij_k,x):=VECTOR(VECTOR(VECTOR(VECTOR(EL_RIEM1(C_ijk,C_ij_k,x,iI,jJ,kK,lL),lL,DIMENSION(C_ijk)),kK,DIMENSION(C_ijk)),jJ,DIMENSION(C_ijk)),iI,DIMENSION(C_ijk))
+vT3i1(A1,d,i2,i3):=VECTOR(A1 SUB iI_,iI_,d*(i2-1)+i3,d^3,d^2)
+EL_RIEM2(C_ij_k,x,i,j,k,l):=IF(k=l,0,DIF(C_ij_k SUB j SUB l SUB i,x SUB k)-DIF(C_ij_k SUB j SUB k SUB i,x SUB l)+vT3i1(APPEND(APPEND(C_ij_k)),DIMENSION(x),k,i) . C_ij_k SUB j SUB l-vT3i1(APPEND(APPEND(C_ij_k)),DIMENSION(x),l,i) . C_ij_k SUB j SUB k)
+RIEM2(C_ij_k,x):=VECTOR(VECTOR(VECTOR(VECTOR(IF(kK=lL,0,DIF(C_ij_k SUB jJ SUB lL SUB iI,x SUB kK)-DIF(C_ij_k SUB jJ SUB kK SUB iI,x SUB lL)+vT3i1(APPEND(APPEND(C_ij_k)),DIMENSION(x),kK,iI) . C_ij_k SUB jJ SUB lL-vT3i1(APPEND(APPEND(C_ij_k)),DIMENSION(x),lL,iI) . C_ij_k SUB jJ SUB kK),lL,DIMENSION(x)),kK,DIMENSION(x)),jJ,DIMENSION(x)),iI,DIMENSION(x))
+vT3i2(A1,d,i1,i3):=VECTOR(A1 SUB iI_,iI_,(i1-1)*d^2+i3,i1*d^2+i3-d,d)
+rIcx(C_ij_k,x,T):=VECTOR(VECTOR(DIV(C_ij_k SUB iI SUB jJ,x)-DIF(T SUB iI,x SUB jJ)-SUM(vT3i2(APPEND(APPEND(C_ij_k)),DIMENSION(x),iI,sS) . C_ij_k SUB sS SUB jJ,sS,DIMENSION(x))+C_ij_k SUB iI SUB jJ . T,jJ,DIMENSION(x)),iI,DIMENSION(x))
+RICCI(C_ij_k,x):=rIcx(C_ij_k,x,VECTOR(TRACE(C_ij_k SUB kK),kK,DIMENSION(x)))
+eInstx(R_ij,g_ij,RH):=R_ij-RH*g_ij
+EINST(R_ij,g_ij,g__ij):=eInstx(R_ij,g_ij,TRACE(g__ij . R_ij)/2)
+wEylx(R_ijkl,R_ij,g_ij,R,d):=VECTOR(VECTOR(VECTOR(VECTOR(eLt(R_ijkl,[iI,jJ,kK,lL],1)+(g_ij SUB iI SUB lL*R_ij SUB kK SUB jJ+g_ij SUB jJ SUB kK*R_ij SUB lL SUB iI-g_ij SUB iI SUB kK*R_ij SUB lL SUB jJ-g_ij SUB jJ SUB lL*R_ij SUB kK SUB iI+(g_ij SUB iI SUB kK*g_ij SUB lL SUB jJ-g_ij SUB iI SUB lL*g_ij SUB kK SUB jJ)*R/(d-1))/(d-2),lL,d),kK,d),jJ,d),iI,d)
+WEYL(R_ijkl,R_ij,g_ij):=wEylx(R_ijkl,R_ij,g_ij,TRACE(g_ij^(-1) . R_ij),DIMENSION(g_ij))
+dEcel(v):=VECTOR(v SUB iI-SIGN(v SUB iI),iI,DIMENSION(v))
+DI_NZEL(A):=VECTOR([dEcel(LHS(A SUB kK SUB 1))=RHS(A SUB kK SUB 1)],kK,DIMENSION(A))
+DI_GNZE(A):=VECTOR([VECTOR(dEcel((LHS(A SUB kK SUB 1)) SUB jJ),jJ,DIMENSION(LHS(A SUB kK SUB 1)))=RHS(A SUB kK SUB 1)],kK,DIMENSION(A))
+
+## derive-3.14-dos/USERS/TENSOR1.DMO
+E__ijk:==EPS(3)
+RANK_T(E__ijk)
+DIM_T(E__ijk)
+NZEL_T(E__ijk)
+GNZE_T(E__ijk)
+T_ij:=[[A,B,C],[D,E,F],[G,H,I]]
+T__ij_k:==IP_T(E__ijk,[iI,jJ,sS],T_ij,[kK,sS],[iI,jJ,kK])
+S__i:==CT_T(T__ij_k,[iI,sS,sS],[iI])
+S__i:==CI_T(E__ijk,[iI,sS,tT],T_ij,[sS,tT],[iI])
+x_:=[r,theta,phi]
+x:=[r*SIN(theta)*COS(phi),r*SIN(theta)*SIN(phi),r*COS(theta)]
+JM:==JACOB(x,x_)
+JM_:==JM^-1
+g_ij:==DELTA(3)
+g_ij_:==TF_T(g_ij,2,0,JM,JM_)
+g_ij_:==JM` . JM
+g__ij_:==g_ij_^-1
+C_ijk_:==CHRIS1(g_ij_,x_)
+C_ij_k_:==CHRIS2(g_ij_,g__ij_,x_)
+R_ijkl_:==RIEM1(C_ijk_,C_ij_k_,x_)
+[a:=,b:=,c:=,X:=ELEMENT(x,1)]
+V__i:=[a*X,b,c]
+V__i_:==TF_T(V__i,0,0,JM,JM_)
+V_i_:==TF_T(V__i,1,0,JM,JM_)
+V_i_ . V__i_-V__i . V__i
+DV_ij_:==CD_T(V_i_,1,0,x_,C_ij_k_)
+DV_ij:==TF_T(DV_ij_,2,0,JM_,JM)
+C_jki_:==TP_T(C_ijk_,[jJ,kK,iI],[iI,jJ,kK])
+rhs:==C_ijk_+C_jki_
+g_ijk_:==OD_T(g_ij_,x_)
+lhs:==TP_T(g_ijk_,[iI,kK,jJ],[iI,jJ,kK])
+"                *** NON-EUCLIDIAN SPACE  ***                            ":=" Consider the latitude/longitude coordinates on the earth's surface :   "
+x:=[theta,phi]
+g_ij:=[[R^2,0],[0,R^2*COS(theta)^2]]
+g__ij:==g_ij^-1
+C_ijk:==CHRIS1(g_ij,x)
+C_ij_k:==CHRIS2(g_ij,g__ij,x)
+R_ijkl:==RIEM1(C_ijk,C_ij_k,x)
+
+## derive-3.14-dos/USERS/TENSOR2.DMO
+x:=[r,theta,phi,t]
+g_ij:=[[-1,0,0,0],[0,-r^2,0,0],[0,0,-r^2*SIN(theta)^2,0],[0,0,0,1]]
+[X(r):=,Y(r):=]
+g_ij:=[[-X(r),0,0,0],[0,-r^2,0,0],[0,0,-r^2*SIN(theta)^2,0],[0,0,0,Y(r)]]
+g__ij:==g_ij^(-1)
+R__i_j:==MI_T(R_ij,1,g__ij)
+RR:==EL_T(R__i_j,[4,4])-EL_T(R__i_j,[1,1])
+[a:=,X(r):=a/Y(r)]
+RR
+R__i_j
+DE:==a*r^2*EL_T(R__i_j,[2,2])
+[a:=,b:=,Y(r):=a*(1-b/r)]
+DE
+g_ij
+a:=1
+R_ij
+NZEL_T(R__i_jkl)
+GNZE_T(R__i_jkl)
+
+## derive-3.14-dos/VECTOR.MTH
+i_:=[1,0,0]
+j_:=[0,1,0]
+k_:=[0,0,1]
+OUTER(v,w):=VECTOR([v SUB n_],n_,DIMENSION(v)) . [w]
+KRONECKER(i,j):=IF(i=j,1,0)
+ADJOIN_ELEMENT(e,v):=APPEND([e],v)
+APPEND_COLUMNS(a,b):=APPEND(a`,b`)`
+PARTITION(v,n,d):=IF(NUMBER(d),VECTOR(VECTOR(v SUB m_,m_,n_,n_+n-1),n_,1,1+d*FLOOR(DIMENSION(v)-n,d),d),PARTITION(v,n,n))
+MINOR(a,i,j):=DELETE_ELEMENT(DELETE_ELEMENT(a,i)`,j)`
+SWAP_ELEMENTS(v,i,j):=VECTOR(IF(m_=i,v SUB j,IF(m_=j,v SUB i,v SUB m_)),m_,DIMENSION(v))
+SCALE_ELEMENT(v,i,s):=VECTOR(IF(m_=i,s*v SUB i,v SUB m_),m_,DIMENSION(v))
+default1:=1
+SUBTRACT_ELEMENTS(v,i,j,default1):=VECTOR(IF(m_=i,v SUB i-default1*v SUB j,ELEMENT(v,m_)),m_,DIMENSION(v))
+FORCE0(a,i,j,p):=VECTOR(IF(m_=i,a SUB i-a SUB i SUB j/a SUB p SUB j*a SUB p,a SUB m_),m_,DIMENSION(a))
+PIVOT(a,i,j):=VECTOR(IF(m_<=i,a SUB m_,a SUB m_-a SUB m_ SUB j/a SUB i SUB j*a SUB i),m_,DIMENSION(a))
+MATPROD(a,b,i,j):=SUM(a SUB i SUB n_*b SUB n_ SUB j,n_,1,DIMENSION(b))
+COFACTOR(a,i,j):=COS(pi*(i+j))*DET(MINOR(a,i,j))
+ADJOINT(a):=VECTOR(VECTOR(COFACTOR(a,m_,n_),m_,DIMENSION(a)),n_,DIMENSION(a))
+ZERO_VECTOR(v,i):=IF(i>DIMENSION(v),0,IF(v SUB i=0,ZERO_VECTOR(v,i+1),1,1))
+NONZERO_ROWS(m):=SUM(ZERO_VECTOR(m SUB n_,1),n_,1,DIMENSION(m))
+RANK(m):=NONZERO_ROWS(ROW_REDUCE(m))
+v_:=[x1,x2,x3,x4]
+EXACT_EIGENVECTOR(a,mu):=SOLVE(VECTOR(SUM((a SUB m_ SUB n_-mu*KRONECKER(m_,n_))*[x1,x2,x3,x4] SUB n_,n_,DIMENSION(a)),m_,DIMENSION(a)),VECTOR([x1,x2,x3,x4] SUB n_,n_,DIMENSION(a)))
+APPROX_EIGENVECTOR(a,mu):=SIGN(ROW_REDUCE(a-mu*IDENTITY_MATRIX(DIMENSION(a)),VECTOR(3000*COS(pi*m_)/m_,m_,DIMENSION(a)))` SUB (DIMENSION(a)+1))
+cylindrical:=[[r,theta,z],[1,r,1]]
+spherical:=[[r,theta,phi],[1,r*SIN(phi),r]]
+JACOBIAN(u,alpha):=VECTOR(GRAD(u SUB m_,alpha),m_,DIMENSION(u))
+COVARIANT_METRIC_TENSOR(a):=a` . a
+GEOMETRY_MATRIX(alpha,g):=[alpha,VECTOR(SQRT(g SUB m_ SUB m_),m_,DIMENSION(g))]
+
+## derive-3.14-dos/ZETA.MTH
+HURWITZ_ZETA(s,a,m):=(m+a+1/2)^(1-s)/(s-1)+SUM((k+a)^(-s),k,0,m)
+LERCH_PHI(z,s,a,m):=SUM(z^k/(a+k)^s,k,0,m)
+POLYLOG(n,z,m):=SUM(z^k/k^n,k,1,m)
+DILOG(x):=INT(LN(t)/(1-t),t,1,x)
+
+## hawaii-coursework/add-head.mth
+[SUBST(u,x,a):=,SECANT(u,x,a,h):=,TANGENT(u,x,a):=,CURVEFIT(x,data):=,SPLINE(x,data,m1):=,NEWT(u,x,x0,k):=,DRAW_NEWT(u,x,x0,k):=,DRAW_COMPLEX(v):=,BISECT(u,x,v0,k):=,LEFT(u,x,n,a,b):=,MID(u,x,n,a,b):=,RIGHT(u,x,n,a,b):=,TRAP(u,x,n,a,b):=,SIMP(u,x,n,a,b):=,DRAW_LEFT(u,x,n,a,b):=,DRAW_RIGHT(u,x,n,a,b):=,DRAW_TRAP(u,x,n,a,b):=,DE(p,q,x,y,x0,y0):=,DF(r,x,x0,xm,m,y,y0,yn,n):=,EULER(r,x,y,x0,y0,xn,n):=]
+LOAD("add-util-ver4")
+
+## hawaii-coursework/add-util-ver4.mth
+SUBST(u,x,a):=LIM(u,x,a)
+SECANT(u,x,a,h):=y=(SUBST(u,x,a+h)-SUBST(u,x,a))/h*(x-a)+SUBST(u,x,a)
+TANGENT(u,x,a):=y=SUBST(u,x,a)+SUBST(DIF(u,x),x,a)*(x-a)
+POLY(x,a,n):=SUM(a SUB (i+1)*x^i,i,0,n)
+DPOLY(x,a,n):=SUM(i*a SUB (i+1)*x^(i-1),i,1,n)
+EQNS(data,ddata,a,n):=APPEND(VECTOR(POLY(data SUB i SUB 1,a,n)=data SUB i SUB 2,i,1,DIMENSION(data),1),VECTOR(DPOLY(ddata SUB i SUB 1,a,n)=ddata SUB i SUB 2,i,1,DIMENSION(ddata),1))
+UNK(n):=RHS(VECTOR(SOLVE(upsilon=upsilon,upsilon),i,1,n,1)` SUB 1)
+ANS(x,data,ddata,a,n):=IF(DIMENSION(ans_:=SOLVE(EQNS(data,ddata,a,n),[a]))=0,[],POLY(x,(RHS(ans_)) SUB 1,n))
+CURVEFIT1(x,data):=ANS(x,data,[],UNK(DIMENSION(data)),DIMENSION(data)-1)
+CURVEFIT2(x,data,ddata):=ANS(x,data,ddata,UNK(DIMENSION(data)+DIMENSION(ddata)),DIMENSION(data)+DIMENSION(ddata)-1)
+CURVEFIT(x,data,ddata):=IF(DIMENSION(ddata)>0,CURVEFIT2(x,data,ddata),CURVEFIT1(x,data),CURVEFIT1(x,data))
+SPLINE_AUX(x,data,m):=SUM(CURVEFIT(x,[data SUB k,data SUB (k+1)],[[data SUB k SUB 1,m SUB k SUB 2]])*CHI(data SUB k SUB 1,x,data SUB (k+1) SUB 1),k,1,DIMENSION(data)-1)
+SLOPE(data,m1):=ITERATES([v SUB 1+1,2*(data SUB (v SUB 1+1) SUB 2-data SUB (v SUB 1) SUB 2)/(data SUB (v SUB 1+1) SUB 1-data SUB (v SUB 1) SUB 1)-v SUB 2],v,[1,m1],DIMENSION(data)-1)
+SPLINE(x,data,m1):=SPLINE_AUX(x,data,SLOPE(data,m1))
+NEWT_ITERATES(u,x,x0,k):=ITERATES(x-u/DIF(u,x),x,x0,k)
+NEWT(u,x,x0,k):=IF(k>0,NEWT_ITERATES(u,x,x0,k),?,SUBST(x-u/DIF(u,x),x,x0))
+DRAW_NEWT(u,x,x0,k):=VECTOR([[v,0],[v,SUBST(u,x,v)],[NEWT(u,x,v),0]],v,ITERATES(NEWT(u,x,w),w,x0,k))
+DRAW_COMPLEX(v):=VECTOR([RE(z),IM(z)],z,v)
+BIS_AUX(u,x,a,b):=IF(SUBST(u,x,a)*SUBST(u,x,(a+b)/2)<0,[a,(a+b)/2],[(a+b)/2,b])
+BISECT(u,x,v0,k):=IF(k>0,ITERATES(BIS_AUX(u,x,v SUB 1,v SUB 2),v,v0,k),?,BIS_AUX(u,x,v0 SUB 1,v0 SUB 2))
+LEFT(u,x,n,a,b):=(b-a)/n*SUM(SUBST(u,x,a+k*(b-a)/n),k,0,n-1)
+MID(u,x,n,a,b):=(b-a)/n*SUM(SUBST(u,x,a+(k+0.5)*(b-a)/n),k,0,n-1)
+RIGHT(u,x,n,a,b):=(b-a)/n*SUM(SUBST(u,x,a+k*(b-a)/n),k,1,n)
+TRAP(u,x,n,a,b):=(b-a)/(2*n)*(SUBST(u,x,a)+SUBST(u,x,b)+2*SUM(SUBST(u,x,a+k*(b-a)/n),k,1,n-1))
+SIMP(u,x,n,a,b):=(b-a)/(6*n)*(SUBST(u,x,a)+SUBST(u,x,b)+2*SUM(SUBST(u,x,a+k*(b-a)/n),k,1,n-1)+4*SUM(SUBST(u,x,a+(k+1/2)*(b-a)/n),k,0,n-1))
+D_BOX(x1,y1,x2,y2):=[[x1,y1],[x2,y1],[x2,y2],[x1,y2],[x1,y1]]
+D_TRAP(x1,y1,x2,y2,x3,y3,x4,y4):=[[x1,y1],[x2,y2],[x3,y3],[x4,y4],[x1,y1]]
+DRAW_LEFT(u,x,n,a,b):=VECTOR(D_BOX(t,0,t+(b-a)/n,SUBST(u,x,t)),t,a,b-(b-a)/n,(b-a)/n)
+DRAW_RIGHT(u,x,n,a,b):=VECTOR(D_BOX(t,0,t+(b-a)/n,SUBST(u,x,t+(b-a)/n)),t,a,b-(b-a)/n,(b-a)/n)
+DRAW_TRAP(u,x,n,a,b):=VECTOR(D_TRAP(t,0,t+(b-a)/n,0,t+(b-a)/n,SUBST(u,x,t+(b-a)/n),t,SUBST(u,x,t)),t,a,b-(b-a)/n,(b-a)/n)
+DE(p,q,x,y,x0,y0):=y=(y0+INT(q*#e^INT(p,x,x0,x),x,x0,x))/#e^INT(p,x,x0,x)
+SEG(rc,x,y,δx,δy):=IF(ABS(rc)>1 AND δy<ABS(rc)*δx,[[x-δy/rc,y-δy],[x+δy/rc,y+δy]],[[x-δx,y-rc*δx],[x+δx,y+rc*δx]])
+DF(r,x,x0,xm,m,y,y0,yn,n):=VECTOR(VECTOR(SEG(LIM(r,[x,y],[x0+j*(xm-x0)/m,y0+k*(yn-y0)/n]),x0+j*(xm-x0)/m,y0+k*(yn-y0)/n,(xm-x0)/(4*m),(yn-y0)/(4*n)),j,0,m),k,0,n)
+EULER(r,x,y,x0,y0,xn,n):=ITERATES(v+(xn-x0)/n*[1,LIM(r,[x,y],v)],v,[x0,y0],n)
+
+## hawaii-coursework/add-util.mth
+SECANT(u,x,a,h):=y=(SUBST(u,x,a+h)-SUBST(u,x,a))/h*(x-a)+SUBST(u,x,a)
+TANGENT(u,x,a):=y=SUBST(u,x,a)+SUBST(DIF(u,x),x,a)*(x-a)
+POLY(x,a,n):=SUM(a SUB (i+1)*x^i,i,0,n)
+DPOLY(x,a,n):=SUM(i*a SUB (i+1)*x^(i-1),i,1,n)
+EQNS(data,ddata,a,n):=APPEND(VECTOR(POLY(data SUB i SUB 1,a,n)=data SUB i SUB 2,i,1,DIM(data),1),VECTOR(DPOLY(ddata SUB i SUB 1,a,n)=ddata SUB i SUB 2,i,1,DIM(ddata),1))
+UNK(n):=VECTOR((SOLUTIONS(upsilon=upsilon,upsilon)) SUB 1,i,1,n,1)
+ANS(x,data,ddata,a,n,v):=PROG(v:=SOLUTIONS(EQNS(data,ddata,a,n),a),IF(DIM(v)=0,[],POLY(x,v SUB 1,n)))
+CURVEFIT1(x,data):=ANS(x,data,[],UNK(DIM(data)),DIM(data)-1)
+CURVEFIT2(x,data,ddata):=ANS(x,data,ddata,UNK(DIM(data)+DIM(ddata)),DIM(data)+DIM(ddata)-1)
+CURVEFIT(x,data,ddata):=IF(DIM(ddata)>0,CURVEFIT2(x,data,ddata),CURVEFIT1(x,data),CURVEFIT1(x,data))
+SPLINE_AUX(x,data,m):=SUM(CURVEFIT(x,[data SUB k,data SUB (k+1)],[[data SUB k SUB 1,m SUB k SUB 2]])*CHI(data SUB k SUB 1,x,data SUB (k+1) SUB 1),k,1,DIMENSION(data)-1)
+SLOPE1(data,m1):=ITERATES([v SUB 1+1,2*(data SUB (v SUB 1+1) SUB 2-data SUB (v SUB 1) SUB 2)/(data SUB (v SUB 1+1) SUB 1-data SUB (v SUB 1) SUB 1)-v SUB 2],v,[1,m1],DIM(data)-1)
+SPLINE(x,data,m1):=SPLINE_AUX(x,data,SLOPE1(data,m1))
+NEWT_ITERATES(u,x,x0,k):=ITERATES(x-u/DIF(u,x),x,x0,k)
+NEWT(u,x,x0,k):=IF(k>0,NEWT_ITERATES(u,x,x0,k),?,SUBST(x-u/DIF(u,x),x,x0))
+DRAW_NEWT(u,x,x0,k):=VECTOR([[v,0],[v,SUBST(u,x,v)],[NEWT(u,x,v),0]],v,ITERATES(NEWT(u,x,w),w,x0,k))
+DRAW_COMPLEX(v):=VECTOR([RE(z),IM(z)],z,v)
+BIS_AUX(u,x,a,b):=IF(SUBST(u,x,a)*SUBST(u,x,(a+b)/2)<0,[a,(a+b)/2],[(a+b)/2,b])
+BISECT(u,x,v0,k):=IF(k>0,ITERATES(BIS_AUX(u,x,v SUB 1,v SUB 2),v,v0,k),?,BIS_AUX(u,x,v0 SUB 1,v0 SUB 2))
+LEFT(u,x,n,a,b):=(b-a)/n*SUM(SUBST(u,x,a+k*(b-a)/n),k,0,n-1)
+MID(u,x,n,a,b):=(b-a)/n*SUM(SUBST(u,x,a+(k+0.5)*(b-a)/n),k,0,n-1)
+RIGHT(u,x,n,a,b):=(b-a)/n*SUM(SUBST(u,x,a+k*(b-a)/n),k,1,n)
+TRAP(u,x,n,a,b):=(b-a)/(2*n)*(SUBST(u,x,a)+SUBST(u,x,b)+2*SUM(SUBST(u,x,a+k*(b-a)/n),k,1,n-1))
+SIMP(u,x,n,a,b):=(b-a)/(6*n)*(SUBST(u,x,a)+SUBST(u,x,b)+2*SUM(SUBST(u,x,a+k*(b-a)/n),k,1,n-1)+4*SUM(SUBST(u,x,a+(k+1/2)*(b-a)/n),k,0,n-1))
+D_BOX(x1,y1,x2,y2):=[[x1,y1],[x2,y1],[x2,y2],[x1,y2],[x1,y1]]
+D_TRAP(x1,y1,x2,y2,x3,y3,x4,y4):=[[x1,y1],[x2,y2],[x3,y3],[x4,y4],[x1,y1]]
+DRAW_LEFT(u,x,n,a,b):=VECTOR(D_BOX(t,0,t+(b-a)/n,SUBST(u,x,t)),t,a,b-(b-a)/n,(b-a)/n)
+DRAW_RIGHT(u,x,n,a,b):=VECTOR(D_BOX(t,0,t+(b-a)/n,SUBST(u,x,t+(b-a)/n)),t,a,b-(b-a)/n,(b-a)/n)
+DRAW_TRAP(u,x,n,a,b):=VECTOR(D_TRAP(t,0,t+(b-a)/n,0,t+(b-a)/n,SUBST(u,x,t+(b-a)/n),t,SUBST(u,x,t)),t,a,b-(b-a)/n,(b-a)/n)
+DE(p,q,x,y,x0,y0):=y=(y0+INT(q*#e^INT(p,x,x0,x),x,x0,x))/#e^INT(p,x,x0,x)
+SEG(rc,x,y,δx,δy):=IF(ABS(rc)>1 AND δy<ABS(rc)*δx,[[x-δy/rc,y-δy],[x+δy/rc,y+δy]],[[x-δx,y-rc*δx],[x+δx,y+rc*δx]])
+DF(r,x,x0,xm,m,y,y0,yn,n):=VECTOR(VECTOR(SEG(LIM(r,[x,y],[x0+j*(xm-x0)/m,y0+k*(yn-y0)/n]),x0+j*(xm-x0)/m,y0+k*(yn-y0)/n,(xm-x0)/(4*m),(yn-y0)/(4*n)),j,0,m),k,0,n)
+EULER(r,x,y,x0,y0,xn,n):=ITERATES(v+(xn-x0)/n*[1,LIM(r,[x,y],v)],v,[x0,y0],n)
+DE2(b,c,x,x0,y0,v0):=DSOLVE2_IV(b,c,0,x,x0,y0,v0)
+EXTRACT_2_ELEMENTS(v,p,q):=[v SUB p,v SUB q]
+EXTRACT_2_COLUMNS(a,c1,c2):=EXTRACT_2_ELEMENTS(a`,c1,c2)`
+RK_AUX3(p,v,u_,c1,c2,c3):=(c1+LIM(p,v,u_+c3)+2*(c2+c3))/6
+RK_AUX2(p,v,u_,c1,c2):=RK_AUX3(p,v,u_,c1,c2,LIM(p,v,u_+c2/2))
+RK_AUX1(p,v,u_,c1):=RK_AUX2(p,v,u_,c1,LIM(p,v,u_+c1/2))
+RK_AUX0(p,v,v0,n):=ITERATES(u_+RK_AUX1(p,v,u_,LIM(p,v,u_)),u_,v0,n)
+RK(r,v,v0,h,n):=RK_AUX0(h*APPEND([1],r),v,v0,n)
