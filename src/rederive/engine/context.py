@@ -88,8 +88,13 @@ class Domain:
         return self.low is not None or self.high is not None
 
 
-#: What an undeclared variable is.
+#: What an undeclared variable is, where nothing says otherwise.
 DEFAULT_DOMAIN = Domain()
+
+#: The name that stands for every variable no declaration names. `Declare
+#: Variable` takes it where it asks for a name, and `default :epsilon Complex`
+#: is how the manual has you widen the domain of everything at once.
+DEFAULT_NAME = "default"
 
 
 def domain_of_node(node: Node) -> tuple[str, Domain] | None:
@@ -143,8 +148,15 @@ class Context:
     labels: Mapping[int, Node] = field(default_factory=dict)
 
     def domain(self, name: str) -> Domain:
-        """What is known about the variable `name`. Undeclared means Real."""
-        return self.domains.get(name, DEFAULT_DOMAIN)
+        """What is known about the variable `name`.
+
+        A variable nobody named falls back on whatever `default` was declared,
+        and on Real where that was not declared either.
+        """
+        declared = self.domains.get(name)
+        if declared is not None:
+            return declared
+        return self.domains.get(DEFAULT_NAME, DEFAULT_DOMAIN)
 
     def with_precision(
         self, precision: Precision, digits: int | None = None

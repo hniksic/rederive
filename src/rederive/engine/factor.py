@@ -27,6 +27,7 @@ import sympy as sp
 from rederive.engine.context import Context, Precision
 from rederive.engine.factoring import DEFAULT_AMOUNT, Amount, factored_expression
 from rederive.engine.from_sympy import Result, from_sympy
+from rederive.engine.ordering import main_order
 from rederive.engine.pipeline import approximated, simplified
 from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
@@ -76,9 +77,10 @@ def factored(
 def factor_variables(node: Node, context: Context | None = None) -> tuple[str, ...]:
     """The variables Factor would offer for `node`, in the order it offers them.
 
-    Alphabetical, which is what the original lists: `y^2 - x^2` offers `x,y`.
-    What an assignment has given a value is not among them, since substitution
-    has already replaced it by the time there is anything to factor.
+    Most main first, which is what the original lists: `y^2 - x^2` offers `x,y`
+    and `z^2 - a^2` offers `z,a`. What an assignment has given a value is not
+    among them, since substitution has already replaced it by the time there is
+    anything to factor.
 
     The command needs this before it can ask anything, because whether it asks
     at all depends on the answer: one variable is not a choice, so the original
@@ -92,7 +94,7 @@ def factor_variables(node: Node, context: Context | None = None) -> tuple[str, .
         return ()
     # `type is` rather than `isinstance`: a string literal is a `Symbol`
     # subclass, and a string is data rather than a variable to factor about.
-    return tuple(sorted(s.name for s in symbols if type(s) is sp.Symbol))
+    return main_order(s.name for s in symbols if type(s) is sp.Symbol)
 
 
 def decomposes(node: Node) -> bool:

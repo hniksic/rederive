@@ -541,3 +541,230 @@ async def test_the_history_keys_all_label_the_field(app):
         assert band(app) == [" REMOVE: Start: 2      End: 4"]
         await pilot.press("ctrl+end")
         assert band(app) == [" REMOVE: Start: 4      End: 4"]
+
+
+# -- Declare, whose four commands ask their questions in every form -----------
+#
+# Every screen asserted here was checked against the original.
+
+
+async def test_declare_lists_the_four_things_that_can_be_declared(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d")
+        assert band(app) == [" DECLARE: Function Variable Matrix vectoR"]
+        assert highlighted_menu_option(app) == "Function"
+        assert message(app) == "Enter option"
+
+
+async def test_a_variable_is_named_then_given_a_domain_then_an_interval(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v")
+        assert prompt(app) == ("DECLARE VARIABLE name:", "")
+        assert message(app) == 'Enter name or type "default"'
+        await pilot.press(*"x", "enter")
+        assert band(app) == [
+            " DECLARE VARIABLE: Value Integer Real Complex Nonscalar"
+        ]
+        assert highlighted_menu_option(app) == "Real"
+        assert message(app) == "Select value or domain of x"
+        await pilot.press("r")
+        assert band(app) == [
+            " DECLARE VARIABLE: All Positive Negative nonpoSitive nonneGative Interval"
+        ]
+        assert highlighted_menu_option(app) == "All"
+        assert message(app) == "Select interval of x"
+        await pilot.press("p")
+        assert work_area(app) == ["#1:  x :ε Real (0, ∞)"]
+        assert annotation(app) == "User"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_a_domain_with_no_interval_is_the_last_question(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v")
+        await pilot.press(*"z", "enter", "c")
+        assert entries(app) == ["z :ε Complex"]
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_the_bounds_screen_asks_for_both_ends_and_their_strictness(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v")
+        await pilot.press(*"n", "enter", "i", "i")
+        assert band(app) == [
+            " DECLARE VARIABLE: Bounds: -∞      (<)≤  n  (<)≤   ∞"
+        ]
+        assert message(app) == "Enter left bound"
+        await pilot.press("1", "delete", "tab", "space")
+        # The live field shows both symbols and highlights the one in force;
+        # a field that is not live parenthesizes it instead.
+        assert band(app)[0].endswith("Bounds: 1        < ≤  n  (<)≤   ∞")
+        assert highlighted_menu_option(app) == "≤"
+        await pilot.press("tab")
+        assert message(app) == "Enter right bound"
+        assert band(app)[0].endswith("Bounds: 1        <(≤)  n   < ≤   ∞")
+        await pilot.press("tab", "5", "enter")
+        assert entries(app) == ["n :ε Integer [1, 5)"]
+
+
+async def test_a_bound_that_is_not_a_number_is_not_taken(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v")
+        await pilot.press(*"p", "enter", "r", "i")
+        await pilot.press(*"a+1", "delete", "enter")
+        # The question stays up, with what was typed still on it to correct.
+        assert band(app)[0].startswith(" DECLARE VARIABLE: Bounds: a+1")
+        assert entries(app) == []
+
+
+async def test_a_variable_is_given_a_value_on_a_line_of_its_own(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v")
+        await pilot.press(*"area", "enter", "v")
+        assert prompt(app) == ("DECLARE VARIABLE value:", "")
+        assert message(app) == "Enter expression"
+        await pilot.press(*"pi r^2", "enter")
+        assert entries(app) == ["area := pi r^2"]
+        assert work_area(app)[-1] == "#1:  area := π·r"
+
+
+async def test_the_domain_menu_opens_on_what_the_variable_already_is(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v")
+        await pilot.press(*"area", "enter", "v")
+        await pilot.press(*"5", "enter")
+        await pilot.press("d", "v")
+        await pilot.press(*"area", "enter")
+        assert highlighted_menu_option(app) == "Value"
+
+
+async def test_a_pre_defined_name_is_refused_and_the_question_put_again(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v")
+        await pilot.press(*"sin", "enter")
+        assert prompt(app) == ("DECLARE VARIABLE name:", "")
+        assert message(app) == 'Enter name or type "default"'
+
+
+async def test_a_function_takes_its_parameters_from_its_definition(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "f")
+        assert prompt(app) == ("DECLARE FUNCTION name:", "")
+        assert message(app) == "Enter name"
+        await pilot.press(*"hyp", "enter")
+        assert prompt(app) == ("DECLARE FUNCTION value:", "")
+        assert message(app) == "Enter expression"
+        await pilot.press(*"sqrt(a^2+b^2)", "enter")
+        assert work_area(app)[-1] == "#1:  HYP(a, b) := √(a  + b )"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_a_blank_definition_asks_for_the_variables_instead(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "f")
+        await pilot.press(*"f", "enter", "enter")
+        assert prompt(app) == ("DECLARE FUNCTION variable:", "")
+        assert message(app) == "Enter variable or press ENTER"
+        await pilot.press(*"x", "enter")
+        await pilot.press(*"y", "enter")
+        await pilot.press("enter")
+        assert entries(app) == ["f(x, y) :="]
+        assert work_area(app) == ["#1:  F(x, y) :="]
+
+
+async def test_a_vector_asks_for_a_dimension_then_an_element_at_a_time(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "r")
+        assert band(app) == [" DECLARE VECTOR: Dimension:"]
+        assert message(app) == "Enter number of elements"
+        await pilot.press("3", "enter")
+        assert prompt(app) == ("VECTOR element:", "")
+        assert message(app) == "Enter vector element 1"
+        await pilot.press("1", "enter")
+        assert message(app) == "Enter vector element 2"
+        await pilot.press("2", "enter")
+        await pilot.press(*"x", "enter")
+        assert entries(app) == ["[1, 2, x]"]
+        assert work_area(app) == ["#1:  [1, 2, x]"]
+
+
+async def test_a_matrix_asks_for_its_shape_and_offers_zero_for_every_cell(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "m")
+        assert band(app) == [" DECLARE MATRIX: Rows: 3      Columns: 3"]
+        assert message(app) == "Enter number of rows"
+        await pilot.press("2", "tab", "2", "enter")
+        assert prompt(app) == ("MATRIX element:", "0")
+        assert message(app) == "Enter matrix element (1,1)"
+        await pilot.press("1", "enter")
+        assert message(app) == "Enter matrix element (1,2)"
+        await pilot.press("enter", "enter", "4", "enter")
+        assert entries(app) == ["[[1, 0], [0, 4]]"]
+        assert work_area(app) == ["     ┌ 1  0 ┐", "#1:  │      │", "     └ 0  4 ┘"]
+
+
+async def test_a_shape_is_offered_again_the_next_time_one_is_asked_for(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "m")
+        await pilot.press("2", "tab", "2", "enter")
+        await pilot.press("enter", "enter", "enter", "enter")
+        await pilot.press("d", "m")
+        assert band(app) == [" DECLARE MATRIX: Rows: 2      Columns: 2"]
+        await pilot.press("escape", "escape")
+        await pilot.press("d", "r", "2", "enter")
+        await pilot.press("1", "enter", "2", "enter")
+        await pilot.press("d", "r")
+        assert band(app) == [" DECLARE VECTOR: Dimension: 2"]
+
+
+async def test_an_element_that_does_not_read_leaves_the_line_up(app):
+    async with app.run_test() as pilot:
+        await pilot.press("d", "r", "2", "enter")
+        await pilot.press(*"2+*", "enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert prompt(app) == ("VECTOR element:", "2+*")
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("d", "v"), "the name"),
+        (("d", "v", "x", "enter"), "the domain"),
+        (("d", "v", "x", "enter", "r"), "the interval"),
+        (("d", "v", "x", "enter", "r", "i"), "the bounds"),
+        (("d", "v", "x", "enter", "v"), "the value"),
+        (("d", "f"), "the function name"),
+        (("d", "f", "f", "enter"), "the definition"),
+        (("d", "f", "f", "enter", "enter"), "the function variables"),
+        (("d", "m"), "the shape"),
+        (("d", "m", "enter"), "a matrix element"),
+        (("d", "r"), "the dimension"),
+        (("d", "r", "2", "enter"), "a vector element"),
+    ],
+    ids=str,
+)
+async def test_escape_abandons_declare_from_any_of_its_questions(app, keys, step):
+    """One Esc returns to the Declare menu, whichever question is up."""
+    async with app.run_test() as pilot:
+        await pilot.press(*keys)
+        await pilot.press("escape")
+        assert band(app) == [" DECLARE: Function Variable Matrix vectoR"]
+        assert message(app) == "Enter option"
+        assert entries(app) == []
+        assert (app.declaring, app.defining, app.entering) == (None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("d", "v", "enter"), "no name"),
+        (("d", "f", "enter"), "no function name"),
+        (("d", "r", "2", "enter", "enter"), "no vector element"),
+    ],
+    ids=str,
+)
+async def test_a_blank_answer_that_names_nothing_abandons_the_command(app, keys, step):
+    async with app.run_test() as pilot:
+        await pilot.press(*keys)
+        assert band(app) == [" DECLARE: Function Variable Matrix vectoR"]
+        assert entries(app) == []

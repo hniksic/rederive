@@ -229,11 +229,14 @@ def test_an_assignment_reaches_the_factoring(session):
 # -- what Factor asks before it factors ---------------------------------------
 
 
-def test_the_variables_on_offer_are_alphabetical(session):
+def test_the_variables_on_offer_are_most_main_first(session):
     session.author("y^2 - x^2")
     assert session.factor_variables("#1") == ("x", "y")
     session.author("b a - c^2")
     assert session.factor_variables("#2") == ("a", "b", "c")
+    # The order list is x, y, z, and a variable on it outranks one that is not.
+    session.author("z^2 - a^2")
+    assert session.factor_variables("#3") == ("z", "a")
 
 
 def test_the_variables_on_offer_come_from_the_highlighted_part(session):

@@ -30,6 +30,12 @@ a menu stacked on the command menu. What has been answered so far lives in
 by the time the next one is up. How many questions get asked depends on the
 answers - a number is decomposed without being asked about at all - so the
 sequence is in the handlers rather than in a table.
+
+The Declare commands are the same shape and each keeps its own answers -
+`Declaring`, `Defining`, `Entering` - but their questions replace each other
+rather than stacking, because the original abandons the whole command from
+whichever of them is up. A question answered off a menu therefore pops it
+before putting the next one, and one Esc always lands back on the Declare menu.
 """
 
 from __future__ import annotations
@@ -46,9 +52,16 @@ from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
 from rederive.engine import Amount
+from rederive.model import session as sessions
 from rederive.model import worksheet
 from rederive.model.session import Session
-from rederive.model.settings import ChoiceField, Dialog, DialogEditor, Settings
+from rederive.model.settings import (
+    ChoiceField,
+    Dialog,
+    DialogEditor,
+    Settings,
+    TextField,
+)
 from rederive.syntax import DeriveSyntaxError
 from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
@@ -69,9 +82,27 @@ MODE_FACTOR = "factor"
 MODE_FACTOR_VARIABLE = "factor_variable"
 MODE_FILE = "file"
 MODE_CONFIRM_QUIT = "confirm_quit"
+MODE_VARIABLE_NAME = "variable_name"
+MODE_VARIABLE_VALUE = "variable_value"
+MODE_FUNCTION_NAME = "function_name"
+MODE_FUNCTION_VALUE = "function_value"
+MODE_FUNCTION_VARIABLE = "function_variable"
+MODE_ELEMENT = "element"
 
 #: The modes in which the prompt band has the screen, and the keys with it.
-PROMPT_MODES = (MODE_AUTHOR, MODE_SIMPLIFY, MODE_FACTOR, MODE_FACTOR_VARIABLE, MODE_FILE)
+PROMPT_MODES = (
+    MODE_AUTHOR,
+    MODE_SIMPLIFY,
+    MODE_FACTOR,
+    MODE_FACTOR_VARIABLE,
+    MODE_FILE,
+    MODE_VARIABLE_NAME,
+    MODE_VARIABLE_VALUE,
+    MODE_FUNCTION_NAME,
+    MODE_FUNCTION_VALUE,
+    MODE_FUNCTION_VARIABLE,
+    MODE_ELEMENT,
+)
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
@@ -94,6 +125,27 @@ COMPUTE_TIME = "Compute time: {seconds:.1f} seconds"
 #: What Unremove says when there is nothing to put back. Every other refusal
 #: in either command is the beep alone, but this one has no dialog to leave up.
 BUFFER_EMPTY = "Unremove buffer empty"
+
+# The lines the four Declare commands read, and what the message line asks for
+# on each. `default` is the variable that stands for all the unnamed ones,
+# which is why the name field says so.
+VARIABLE_NAME_PROMPT = " DECLARE VARIABLE name: "
+VARIABLE_VALUE_PROMPT = " DECLARE VARIABLE value: "
+FUNCTION_NAME_PROMPT = " DECLARE FUNCTION name: "
+FUNCTION_VALUE_PROMPT = " DECLARE FUNCTION value: "
+FUNCTION_VARIABLE_PROMPT = " DECLARE FUNCTION variable: "
+VECTOR_ELEMENT_PROMPT = " VECTOR element: "
+MATRIX_ELEMENT_PROMPT = " MATRIX element: "
+ENTER_VARIABLE_NAME = 'Enter name or type "default"'
+ENTER_FUNCTION_NAME = "Enter name"
+ENTER_DEFINITION = "Enter expression"
+ENTER_FUNCTION_VARIABLE = "Enter variable or press ENTER"
+ENTER_VECTOR_ELEMENT = "Enter vector element {number}"
+ENTER_MATRIX_ELEMENT = "Enter matrix element ({row},{column})"
+
+#: What a matrix element comes up offering, so that a sparse matrix is mostly
+#: Enter presses. A vector element is offered nothing, as in the original.
+MATRIX_ZERO = "0"
 
 # The three commands that name a file, and what they ask for. F1 does not list
 # a directory yet, as it does not offer help yet; the wording is the
@@ -126,6 +178,62 @@ class Factoring:
     #: The ones chosen so far, in the order they were, which is what makes the
     #: first of them the primary factorization variable.
     chosen: tuple[str, ...] = ()
+
+
+@dataclass
+class Declaring:
+    """A Declare Variable command part way through its questions.
+
+    The command asks for a name, then for a value or a domain, then - for the
+    two domains that have one - for an interval.
+    """
+
+    name: str
+    #: The domain, once one has been chosen off the menu.
+    kind: str = ""
+
+
+@dataclass
+class Defining:
+    """A Declare Function command part way through its questions.
+
+    It asks for a name and a definition; a definition left blank turns it into
+    an arbitrary function, and it goes on asking for that function's variables
+    until a blank answer ends the list.
+    """
+
+    name: str
+    variables: tuple[str, ...] = ()
+
+
+@dataclass
+class Entering:
+    """A Declare Matrix or Declare vectoR command collecting its elements.
+
+    A vector is one row of elements and says so by carrying no row count.
+    """
+
+    columns: int
+    rows: int | None = None
+    elements: tuple[str, ...] = ()
+
+    @property
+    def wanted(self) -> int:
+        return self.columns * (self.rows or 1)
+
+    @property
+    def place(self) -> tuple[int, int]:
+        """Which element is being asked for, counting rows and columns from 1."""
+        entered = len(self.elements)
+        return entered // self.columns + 1, entered % self.columns + 1
+
+    @property
+    def grid(self) -> list[tuple[str, ...]]:
+        """The elements as rows, which is what a matrix is written from."""
+        return [
+            self.elements[start : start + self.columns]
+            for start in range(0, len(self.elements), self.columns)
+        ]
 
 
 #: What the navigation keys mean inside an Options dialog's number field.
@@ -199,6 +307,16 @@ class RederiveApp(App[None]):
         self.block: tuple[int | None, int | None] = (None, None)
         #: The Factor command's answers so far, while it is asking for them.
         self.factoring: Factoring | None = None
+        #: The same for the three Declare commands that ask more than one
+        #: question, each of which is asking whenever it is not None.
+        self.declaring: Declaring | None = None
+        self.defining: Defining | None = None
+        self.entering: Entering | None = None
+        #: The shape the next Declare Matrix and Declare vectoR offer, which is
+        #: the last one entered. The original starts a matrix at three by three
+        #: and offers no dimension at all until a vector has been entered.
+        self.matrix_size = (3, 3)
+        self.dimension: int | str = ""
         #: The amount menu's own cursor, kept across invocations rather than
         #: made fresh: the original opens it on whatever was chosen last.
         self.amount = MenuCursor(menus.AMOUNT, menus.AMOUNT.words.index("Rational"))
@@ -210,6 +328,10 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Remove"): self._command_remove,
             (ALGEBRA, "Simplify"): self._command_simplify,
             (ALGEBRA, "Unremove"): self._command_unremove,
+            (menus.DECLARE, "Function"): self._command_declare_function,
+            (menus.DECLARE, "Variable"): self._command_declare_variable,
+            (menus.DECLARE, "Matrix"): self._command_declare_matrix,
+            (menus.DECLARE, "vectoR"): self._command_declare_vector,
             (menus.TRANSFER, "Merge"): self._command_merge,
             (menus.TRANSFER_LOAD, "Derive"): self._command_load,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
@@ -317,10 +439,14 @@ class RederiveApp(App[None]):
         return True
 
     def on_key(self, event: Any) -> None:
-        """Keys with no binding: mnemonic letters, digits, and Quit's answer."""
+        """Keys with no binding: mnemonic letters, digits, and Quit's answer.
+
+        A field that holds text takes the rest of the printable characters as
+        well, since an interval bound is written with `-`, `.` and `/`.
+        """
         if self.mode == MODE_MENU:
             character = event.character
-            if character and character.isalnum():
+            if character and (character.isalnum() or self._typing_text(character)):
                 event.stop()
                 event.prevent_default()
                 self._typed(character)
@@ -335,6 +461,15 @@ class RederiveApp(App[None]):
             event.stop()
             event.prevent_default()
             self._end_prompt(done=False)
+
+    def _typing_text(self, character: str) -> bool:
+        """Whether `character` is one the active field takes as text."""
+        editor = self.editor
+        return (
+            character.isprintable()
+            and editor is not None
+            and isinstance(editor.field, TextField)
+        )
 
     def _typed(self, character: str) -> None:
         """A letter or digit while a menu or a dialog is up."""
@@ -385,12 +520,18 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def action_menu_space(self) -> None:
-        """Space steps the highlight, or the active field's value."""
+        """Space steps the highlight, or the active field's value.
+
+        On a field that holds text it is a character like any other, which is
+        how a bound is blanked out before another is typed over it.
+        """
         editor = self.editor
         if editor is None:
             self._move_highlight(1)
         elif editor.lists_choices():
             self.stack.append(MenuCursor(COLORS, _color_index(editor)))
+        elif isinstance(editor.field, TextField):
+            editor.type_character(" ")
         elif not editor.cycle():
             self._beep()
         self.refresh_screen()
@@ -419,14 +560,19 @@ class RederiveApp(App[None]):
             self._commit()
 
     def action_menu_escape(self) -> None:
-        """Leave the submenu or dialog on top, abandoning what it was set to."""
+        """Leave the submenu or dialog on top, abandoning what it was set to.
+
+        A menu that asks a question rather than listing commands is abandoned
+        along with the command that put it up. There is nothing to go back to:
+        the Factor amount is the last thing that command asks for, and the
+        Declare Variable questions are put up one in place of the last, so that
+        Esc leaves any of them for the Declare menu as the original does.
+        """
         if len(self.stack) > 1:
             left = self.stack.pop()
-            # Escaping the amount menu abandons the whole Factor command, since
-            # the amount is the last thing it asks for and there is nothing to
-            # go back to: the original returns straight to the command menu.
             if isinstance(left, MenuCursor) and left.menu is menus.AMOUNT:
                 self.factoring = None
+            self.declaring = None
             self._ask_again()
             self.refresh_screen()
 
@@ -437,7 +583,7 @@ class RederiveApp(App[None]):
         highlight is on.
         """
         if isinstance(self.top, MenuCursor):
-            self.message = self.top.menu.message
+            self.message = self.top.message
 
     def action_nav(self, movement: str) -> None:
         """The arrows walk the history, or a number field's cursor.
@@ -488,6 +634,12 @@ class RederiveApp(App[None]):
             return
         if cursor.menu is menus.AMOUNT:
             self._chose_amount(index)
+            return
+        if cursor.menu is menus.DECLARE_VARIABLE:
+            self._chose_domain(word)
+            return
+        if cursor.menu is menus.DECLARE_INTERVAL:
+            self._chose_interval(word)
             return
         target = menus.TARGETS.get(cursor.menu, {}).get(word)
         if target is not None:
@@ -761,6 +913,247 @@ class RederiveApp(App[None]):
             return
         self._end_prompt(COMPUTE_TIME.format(seconds=time.monotonic() - started))
 
+    # -- Declare -----------------------------------------------------------
+    #
+    # All four commands end the same way: they hand the session what they
+    # collected, it writes the expression and authors it, and the command menu
+    # comes back up. What differs is the questions, and how many of them the
+    # answers call for.
+
+    def _command_declare_variable(self) -> None:
+        self._prompt(MODE_VARIABLE_NAME, VARIABLE_NAME_PROMPT, "", ENTER_VARIABLE_NAME)
+
+    def _variable_name(self, text: str) -> None:
+        """The name is in: ask what to declare it as.
+
+        A blank line names nothing and abandons the command. A name that
+        cannot be declared - a pre-defined function or constant - is refused
+        and the question put again, as the original puts it again.
+        """
+        name = text.strip()
+        if not name:
+            self._end_prompt(done=False)
+            return
+        if not self.session.declarable(name):
+            self._refuse_name()
+            return
+        self.declaring = Declaring(name)
+        self._ask_domain()
+
+    def _ask_domain(self) -> None:
+        """Stack the domain menu, opened on what the variable is already."""
+        pending = self.declaring
+        assert pending is not None
+        self._open_question(
+            menus.DECLARE_VARIABLE,
+            self.session.declared_as(pending.name),
+            menus.SELECT_DOMAIN.format(name=pending.name),
+        )
+
+    def _chose_domain(self, word: str) -> None:
+        """A value, or one of the four domains.
+
+        Complex and Nonscalar have no interval to ask about, so choosing one
+        of them is the last answer the command needs.
+        """
+        pending = self.declaring
+        assert pending is not None
+        self.stack.pop()
+        if word == sessions.VALUE:
+            self._prompt(MODE_VARIABLE_VALUE, VARIABLE_VALUE_PROMPT, "", ENTER_DEFINITION)
+            return
+        pending.kind = word
+        if word not in menus.BOUNDED_DOMAINS:
+            self._declared(lambda: self.session.declare_domain(pending.name, word))
+            return
+        self._open_question(
+            menus.DECLARE_INTERVAL,
+            self.session.declared_interval(pending.name),
+            menus.SELECT_INTERVAL.format(name=pending.name),
+        )
+
+    def _chose_interval(self, word: str) -> None:
+        """One of the named intervals, the whole line, or bounds to be entered."""
+        pending = self.declaring
+        assert pending is not None
+        self.stack.pop()
+        if word == sessions.INTERVAL:
+            self._ask(
+                menus.variable_bounds(pending.name, self.session.bounds_of(pending.name)),
+                self._chose_bounds,
+                self._both_bounds,
+            )
+            return
+        bounds = sessions.NAMED_INTERVALS.get(word)
+        self._declared(
+            lambda: self.session.declare_domain(pending.name, pending.kind, bounds)
+        )
+
+    def _both_bounds(self, values: dict[str, str | int]) -> bool:
+        return all(
+            self.session.is_bound(str(values[setting]))
+            for setting in ("BoundLow", "BoundHigh")
+        )
+
+    def _chose_bounds(self, values: dict[str, str | int]) -> None:
+        pending = self.declaring
+        assert pending is not None
+        bounds = sessions.Bounds(
+            str(values["BoundLow"]),
+            str(values["BoundHigh"]),
+            menus.closed(values["StrictLow"]),
+            menus.closed(values["StrictHigh"]),
+        )
+        self._declared(
+            lambda: self.session.declare_domain(pending.name, pending.kind, bounds)
+        )
+
+    def _variable_value(self, text: str) -> None:
+        """The value, or a blank line to leave the variable unassigned."""
+        pending = self.declaring
+        assert pending is not None
+        self._declared(lambda: self.session.declare_value(pending.name, text))
+
+    def _command_declare_function(self) -> None:
+        self._prompt(MODE_FUNCTION_NAME, FUNCTION_NAME_PROMPT, "", ENTER_FUNCTION_NAME)
+
+    def _function_name(self, text: str) -> None:
+        name = text.strip()
+        if not name:
+            self._end_prompt(done=False)
+            return
+        if not self.session.declarable(name):
+            self._refuse_name()
+            return
+        self.defining = Defining(name)
+        self._prompt(MODE_FUNCTION_VALUE, FUNCTION_VALUE_PROMPT, "", ENTER_DEFINITION)
+
+    def _function_value(self, text: str) -> None:
+        """The definition, or a blank line to declare an arbitrary function."""
+        pending = self.defining
+        assert pending is not None
+        if not text.strip():
+            self._ask_function_variable()
+            return
+        self._declared(lambda: self.session.declare_function(pending.name, text))
+
+    def _ask_function_variable(self) -> None:
+        self._prompt(
+            MODE_FUNCTION_VARIABLE,
+            FUNCTION_VARIABLE_PROMPT,
+            "",
+            ENTER_FUNCTION_VARIABLE,
+        )
+
+    def _function_variable(self, text: str) -> None:
+        """One of an arbitrary function's variables; a blank line ends the list.
+
+        A function with no variables is no function: the original writes
+        `g :=`, which leaves the name an unassigned variable.
+        """
+        pending = self.defining
+        assert pending is not None
+        name = text.strip()
+        if not name:
+            self._declared(
+                lambda: self.session.declare_arbitrary(pending.name, pending.variables)
+            )
+            return
+        if not self.session.declarable(name):
+            self._beep()
+            self._ask_function_variable()
+            return
+        pending.variables += (name,)
+        self._ask_function_variable()
+
+    def _command_declare_matrix(self) -> None:
+        self._ask(menus.matrix_size(*self.matrix_size), self._chose_size)
+
+    def _chose_size(self, values: dict[str, str | int]) -> None:
+        rows, columns = int(values["MatrixRows"]), int(values["MatrixColumns"])
+        self.matrix_size = (rows, columns)
+        self.entering = Entering(columns, rows)
+        self._ask_element()
+
+    def _command_declare_vector(self) -> None:
+        self._ask(menus.vector_dimension(self.dimension), self._chose_dimension)
+
+    def _chose_dimension(self, values: dict[str, str | int]) -> None:
+        dimension = int(values["VectorDimension"])
+        self.dimension = dimension
+        self.entering = Entering(dimension)
+        self._ask_element()
+
+    def _ask_element(self) -> None:
+        """Put up the next element question, one element at a time."""
+        pending = self.entering
+        assert pending is not None
+        row, column = pending.place
+        if pending.rows is None:
+            message = ENTER_VECTOR_ELEMENT.format(number=column)
+            self._prompt(MODE_ELEMENT, VECTOR_ELEMENT_PROMPT, "", message)
+            return
+        message = ENTER_MATRIX_ELEMENT.format(row=row, column=column)
+        self._prompt(MODE_ELEMENT, MATRIX_ELEMENT_PROMPT, MATRIX_ZERO, message)
+
+    def _element(self, text: str) -> None:
+        """One element of the vector or matrix being entered.
+
+        A blank line abandons the whole command, as it does in the original:
+        there is no such thing as a vector with a hole in it.
+        """
+        pending = self.entering
+        assert pending is not None
+        if not text.strip():
+            self._end_prompt(done=False)
+            return
+        try:
+            self.session.reads(text)
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return
+        pending.elements += (text.strip(),)
+        if len(pending.elements) < pending.wanted:
+            self._ask_element()
+            return
+        if pending.rows is None:
+            self._declared(lambda: self.session.declare_vector(pending.elements))
+        else:
+            self._declared(lambda: self.session.declare_matrix(pending.grid))
+
+    def _refuse_name(self) -> None:
+        """Put the name question again, with nothing on the line."""
+        self._beep()
+        self.query_one("#prompt-input", Input).value = ""
+
+    def _declared(self, declare: Callable[[], object]) -> None:
+        """Run one Declare command, and leave the command menu up.
+
+        A line that does not read leaves the prompt up to be corrected, as an
+        authored one does. Only the commands that read a line can raise; the
+        ones answered off a menu cannot, since a name and a bound were judged
+        before they were taken.
+        """
+        try:
+            declare()
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return
+        self._end_prompt()
+
+    def _open_question(self, menu: Menu, word: str, asks: str) -> None:
+        """Stack a menu that asks a question, opened on the word already true.
+
+        It replaces whichever question was up rather than covering it, so that
+        Esc leaves the whole command however far through it is.
+        """
+        self._hide_prompt()
+        self.mode = MODE_MENU
+        index = menu.words.index(word) if word in menu.words else 0
+        self.stack.append(MenuCursor(menu, index, asks))
+        self.message = asks
+        self.refresh_screen()
+
     # -- Transfer ----------------------------------------------------------
 
     def _command_save(self) -> None:
@@ -853,6 +1246,18 @@ class RederiveApp(App[None]):
             self._factor_variable(event.value)
         elif self.mode == MODE_FILE:
             self._named(event.value)
+        elif self.mode == MODE_VARIABLE_NAME:
+            self._variable_name(event.value)
+        elif self.mode == MODE_VARIABLE_VALUE:
+            self._variable_value(event.value)
+        elif self.mode == MODE_FUNCTION_NAME:
+            self._function_name(event.value)
+        elif self.mode == MODE_FUNCTION_VALUE:
+            self._function_value(event.value)
+        elif self.mode == MODE_FUNCTION_VARIABLE:
+            self._function_variable(event.value)
+        elif self.mode == MODE_ELEMENT:
+            self._element(event.value)
         else:
             self._author(event.value)
 
@@ -919,6 +1324,9 @@ class RederiveApp(App[None]):
         leaves that menu where it was, which is what Esc does.
         """
         self.factoring = None
+        self.declaring = None
+        self.defining = None
+        self.entering = None
         self._hide_prompt()
         if done:
             del self.stack[1:]

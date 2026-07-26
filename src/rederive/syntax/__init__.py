@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from rederive.model.expr import Kind, Node
 from rederive.syntax.errors import DeriveSyntaxError
-from rederive.syntax.lexer import Lexer
+from rederive.syntax.lexer import Lexer, is_name
 from rederive.syntax.names import PARSING_SETTINGS
 from rederive.syntax.parser import Parser
 from rederive.syntax.source import Source
@@ -55,6 +55,7 @@ __all__ = [
     "Source",
     "VariableDeclaration",
     "VariableInfo",
+    "is_name",
     "parse_expression",
     "parse_source",
     "source_lines",

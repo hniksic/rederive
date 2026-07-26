@@ -24,8 +24,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 # Simplify over the whole corpus - every shipped utility file, parser case and
 # demo script - takes two minutes where the rest of the suite takes five
-# seconds, so it is opt-in: `uv run pytest -m slow` runs it. Both run across
-# every core; `-n0` turns that off, which a single failing test is easier to
-# read under.
+# seconds, so it is opt-in: `uv run pytest -m slow` runs it. Only run it after
+# changing the engine, which is the only thing it can catch a regression in;
+# a change to the UI or the session cannot move it. Both run across every
+# core; `-n0` turns that off, which a single failing test is easier to read
+# under.
 addopts = "-n auto -m 'not slow'"
 markers = ["slow: Simplify over the whole corpus; run with -m slow"]

@@ -39,6 +39,21 @@ def _is_continuation(char: str) -> bool:
     return char == "_" or unicodedata.category(char) in _CONTINUATION_CATEGORIES
 
 
+def is_name(text: str) -> bool:
+    """Whether `text` is one name and nothing else.
+
+    What a Declare command may declare. The question is lexical rather than
+    grammatical: a declared name may be multi-character even in Character
+    input mode, where `area` on its own would otherwise read as `a*r*e*a`.
+    """
+    normalized = unicodedata.normalize("NFC", text)
+    return bool(
+        normalized
+        and is_letter(normalized[0])
+        and all(_is_continuation(char) for char in normalized[1:])
+    )
+
+
 def _is_mark(char: str) -> bool:
     return unicodedata.category(char) in _MARK_CATEGORIES
 

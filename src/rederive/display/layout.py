@@ -544,7 +544,16 @@ class Engine:
         return row([name, text(glyphs.DOMAIN), span], node, (name, span))
 
     def _interval(self, node: Node, level: int, budget: int | None) -> Box:
+        """`[0, ∞)`, drawn flat however shallow it sits.
+
+        The original writes an interval's bounds in author notation rather
+        than building them up: `x :ε Real (1/2, 5)` is one row, and so is
+        `y :ε Real (2^10, 1/3)`. Drawing them at the level scripts go flat at
+        is what says so, since that is already the level a fraction stops
+        taking a bar at.
+        """
         opening, closing = str(node.value)
+        level = max(level, _LINEAR_SCRIPTS)
         low = self.box(node.children[0], level, budget)
         high = self.box(node.children[1], level, budget)
         return row(

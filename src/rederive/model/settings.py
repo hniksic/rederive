@@ -68,7 +68,13 @@ class NumberField:
     label: str
     message: str
     setting: str
-    default: int
+    default: int | str
+    """What the field opens on; the empty string for one that opens blank.
+
+    Only a dialog that stores nothing can open blank, since a setting always
+    has a value. `Declare vectoR` is the one that does: the original offers no
+    dimension until one has been entered.
+    """
     minimum: int
     maximum: int | None = None
     recorded: bool = True
@@ -81,6 +87,23 @@ class NumberField:
 
     def accepts(self, number: int) -> bool:
         return number >= self.minimum and (self.maximum is None or number <= self.maximum)
+
+
+@dataclass(frozen=True)
+class TextField:
+    """A data entry field holding text, such as an interval bound.
+
+    A number field takes digits and judges them for itself. This one takes
+    whatever is typed and judges nothing: what a bound may say is a question
+    about expressions, so the command that put the dialog up answers it.
+    """
+
+    label: str
+    message: str
+    setting: str
+    default: str
+    width: int
+    recorded: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,7 +125,12 @@ class ChoiceField:
     """What the `Other` choice asks for instead of a word."""
 
 
-Field = ChoiceField | NumberField
+Field = ChoiceField | NumberField | TextField
+
+#: What a dialog line may hold: fields, and plain words printed between them.
+#: The bounds of a variable's domain are shown around the variable's own name,
+#: which is a word on the line and not a field of it.
+Item = Field | str
 
 
 @dataclass(frozen=True)
@@ -110,7 +138,7 @@ class Dialog:
     """One Options screen: a title and fields, grouped into the band's lines."""
 
     title: str
-    lines: tuple[tuple[Field, ...], ...]
+    lines: tuple[tuple[Item, ...], ...]
     stored: bool = True
     """Whether committing writes the fields to the settings.
 
@@ -136,7 +164,9 @@ class Dialog:
 
     @property
     def fields(self) -> tuple[Field, ...]:
-        return tuple(field for line in self.lines for field in line)
+        return tuple(
+            item for line in self.lines for item in line if not isinstance(item, str)
+        )
 
 
 PRECISION = Dialog(
@@ -564,7 +594,7 @@ class DialogEditor:
     # -- what is on the band -----------------------------------------------
 
     @property
-    def lines(self) -> tuple[tuple[Field, ...], ...]:
+    def lines(self) -> tuple[tuple[Item, ...], ...]:
         """The dialog's lines, or the sole `Other` prompt once it is up."""
         if self.prompt is not None:
             return ((self.prompt,),)
@@ -572,7 +602,9 @@ class DialogEditor:
 
     @property
     def fields(self) -> tuple[Field, ...]:
-        return tuple(field for line in self.lines for field in line)
+        return tuple(
+            item for line in self.lines for item in line if not isinstance(item, str)
+        )
 
     @property
     def field(self) -> Field:
@@ -628,7 +660,8 @@ class DialogEditor:
     def _enter_field(self) -> None:
         """Start editing the active field, if it is one that is typed into."""
         field = self.field
-        self.text = str(self.value(field)) if isinstance(field, NumberField) else None
+        typed = isinstance(field, NumberField | TextField)
+        self.text = str(self.value(field)) if typed else None
         self.cursor = 0
 
     def _leave_field(self) -> bool:
@@ -636,10 +669,16 @@ class DialogEditor:
 
         A number the field will not have leaves the field as it is rather than
         putting the old value back, so that a mistyped digit can be corrected
-        instead of retyped.
+        instead of retyped. A text field takes whatever is in it; only the
+        command that put the dialog up knows what it can use.
         """
         field = self.field
-        if self.text is None or not isinstance(field, NumberField):
+        if self.text is None:
+            return True
+        if isinstance(field, TextField):
+            self.values[field.setting] = self.text.strip()
+            return True
+        if not isinstance(field, NumberField):
             return True
         typed = self.text.strip()
         if field.word is not None and typed.lower() == field.word.lower():
@@ -681,14 +720,16 @@ class DialogEditor:
         return isinstance(field, ChoiceField) and not field.inline
 
     def type_character(self, character: str) -> bool:
-        """Type into the active number field, overwriting at the cursor.
+        """Type into the active data entry field, overwriting at the cursor.
 
         Digits only, unless the field takes a word as well - then the letters
         that spell it are typed the same way, and what they spell is judged
-        when the field is left.
+        when the field is left. A text field takes any character at all.
         """
         field = self.field
-        takes_letters = isinstance(field, NumberField) and field.word is not None
+        takes_letters = isinstance(field, TextField) or (
+            isinstance(field, NumberField) and field.word is not None
+        )
         if self.text is None or not (character.isdigit() or takes_letters):
             return False
         self.text = self.text[: self.cursor] + character + self.text[self.cursor + 1 :]

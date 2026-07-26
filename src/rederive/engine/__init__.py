@@ -77,12 +77,14 @@ from rederive.engine.context import (
 from rederive.engine.factor import decomposes, factor, factor_variables
 from rederive.engine.factoring import Amount
 from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
+from rederive.engine.ordering import ORDER_LIST, main_order
 from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
 from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
 
 __all__ = [
+    "ORDER_LIST",
     "Amount",
     "Angle",
     "Branch",
@@ -101,6 +103,7 @@ __all__ = [
     "factor",
     "factor_variables",
     "from_sympy",
+    "main_order",
     "parse_state_for",
     "simplify",
     "substitute",

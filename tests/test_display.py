@@ -450,6 +450,11 @@ SINGLE_ROW = [
     ('"hello"', '"hello"'),
     ("5%+x", "5% + x"),
     ("x:epsilon Real [0,inf)", "x :ε Real [0, ∞)"),
+    # An interval's bounds are written in author notation rather than built
+    # up, so a bound that is a fraction or a power stays on the row.
+    ("x:epsilon Real (1/2, 5)", "x :ε Real (1/2, 5)"),
+    ("y:epsilon Real (2^10, 1/3)", "y :ε Real (2^10, 1/3)"),
+    ("p:epsilon Real [-2/3, 5)", "p :ε Real [- 2/3, 5)"),
     ("90 deg", "90·°"),
 ]
 

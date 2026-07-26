@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rederive.model import settings
+from rederive.model.session import Bounds
 
 MENU_TITLE = "COMMAND:"
 
@@ -27,6 +28,24 @@ ENTER_LABEL_OR_END = 'Enter label number or type "end"'
 
 #: The word that sends the unremoved expressions past the last entry.
 END = "end"
+
+#: What the message line asks for on each field of the Declare dialogs.
+ENTER_ROWS = "Enter number of rows"
+ENTER_COLUMNS = "Enter number of columns"
+ENTER_ELEMENTS = "Enter number of elements"
+ENTER_LEFT_BOUND = "Enter left bound"
+ENTER_RIGHT_BOUND = "Enter right bound"
+
+#: The two symbols a bound is written with: `<` for a bound the variable can
+#: never equal, `≤` for one it can.
+OPEN = "<"
+CLOSED = "≤"
+STRICTNESS = (OPEN, CLOSED)
+
+#: Columns a bound takes, so that the fields beside it do not shift as it is
+#: typed. Wide enough for the widest bound the original shows, `-∞`, and then
+#: some, as the original's own field is.
+_BOUND_WIDTH = 6
 
 
 def mnemonic(word: str) -> str:
@@ -57,10 +76,21 @@ class MenuCursor:
 
     menu: Menu
     index: int = 0
+    asks: str | None = None
+    """What the message line says, when it is not the menu's own prompt.
+
+    The two Declare Variable menus name the variable they are asking about, so
+    their prompt is written when they are put up rather than when they are
+    declared.
+    """
 
     @property
     def word(self) -> str:
         return self.menu.words[self.index]
+
+    @property
+    def message(self) -> str:
+        return self.menu.message if self.asks is None else self.asks
 
     def move(self, step: int) -> None:
         self.index = (self.index + step) % len(self.menu.words)
@@ -104,6 +134,33 @@ AMOUNT = Menu(
     ("Trivial", "Squarefree", "Rational", "raDical", "Complex"),
     message="Select amount of factoring",
 )
+
+DECLARE = Menu("DECLARE:", ("Function", "Variable", "Matrix", "vectoR"))
+
+#: What Declare Variable asks once it has a name, and then once it has a
+#: domain. Both name the variable, which is what the `{name}` is for.
+SELECT_DOMAIN = "Select value or domain of {name}"
+SELECT_INTERVAL = "Select interval of {name}"
+
+#: The two menus Declare Variable puts up. They carry the same title, which is
+#: the original's: the message line is where it says which question is up.
+DECLARE_VARIABLE = Menu(
+    "DECLARE VARIABLE:",
+    ("Value", "Integer", "Real", "Complex", "Nonscalar"),
+    message=SELECT_DOMAIN,
+)
+
+#: The intervals, which only Integer and Real are asked about. `nonpoSitive`
+#: and `nonneGative` carry their capitals late because `N` belongs to Negative.
+DECLARE_INTERVAL = Menu(
+    "DECLARE VARIABLE:",
+    ("All", "Positive", "Negative", "nonpoSitive", "nonneGative", "Interval"),
+    message=SELECT_INTERVAL,
+)
+
+#: The domains that have an interval to ask about. Complex and Nonscalar do
+#: not, so choosing one of those is the last answer the command needs.
+BOUNDED_DOMAINS = ("Integer", "Real")
 
 # `Display` and `Execute` are the two of Derive's nine Options commands that
 # are not here: one chose between text and graphics modes on adapters that no
@@ -202,6 +259,96 @@ def unremove_before(number: int) -> settings.Dialog:
     )
 
 
+def matrix_size(rows: int, columns: int) -> settings.Dialog:
+    """The dialog that asks how big the matrix Declare Matrix is entering is.
+
+    It opens on the last size entered, three by three until one has been, so
+    that a session full of two-by-twos asks about the size once.
+    """
+    return settings.Dialog(
+        "DECLARE MATRIX:",
+        (
+            (
+                settings.NumberField(
+                    "Rows", ENTER_ROWS, "MatrixRows", rows, minimum=1, recorded=False
+                ),
+                settings.NumberField(
+                    "Columns",
+                    ENTER_COLUMNS,
+                    "MatrixColumns",
+                    columns,
+                    minimum=1,
+                    recorded=False,
+                ),
+            ),
+        ),
+        stored=False,
+    )
+
+
+def vector_dimension(dimension: int | str) -> settings.Dialog:
+    """The dialog that asks how many elements Declare vectoR is collecting.
+
+    It opens on the last dimension entered, and on nothing at all until one
+    has been: unlike a matrix, the original offers no size to start from.
+    """
+    return settings.Dialog(
+        "DECLARE VECTOR:",
+        (
+            (
+                settings.NumberField(
+                    "Dimension",
+                    ENTER_ELEMENTS,
+                    "VectorDimension",
+                    dimension,
+                    minimum=1,
+                    recorded=False,
+                ),
+            ),
+        ),
+        stored=False,
+    )
+
+
+def variable_bounds(name: str, bounds: Bounds) -> settings.Dialog:
+    """The dialog that asks for the bounds of a variable's domain.
+
+    One line reading `lower (<)≤ variable (<)≤ upper`, where each strictness
+    field shows both symbols and parenthesizes the one in force. The variable
+    is a word on the line rather than a field: it is what is being bounded,
+    and there is nothing to answer about it.
+    """
+    return settings.Dialog(
+        "DECLARE VARIABLE:",
+        (
+            (
+                settings.TextField(
+                    "Bounds", ENTER_LEFT_BOUND, "BoundLow", bounds.low, _BOUND_WIDTH
+                ),
+                _strictness("StrictLow", ENTER_LEFT_BOUND, bounds.closed_low),
+                name,
+                _strictness("StrictHigh", ENTER_RIGHT_BOUND, bounds.closed_high),
+                settings.TextField(
+                    "", ENTER_RIGHT_BOUND, "BoundHigh", bounds.high, _BOUND_WIDTH
+                ),
+            ),
+        ),
+        stored=False,
+    )
+
+
+def _strictness(setting: str, message: str, closed: bool) -> settings.ChoiceField:
+    """Whether one bound is strict: `<` for a bound the variable cannot reach."""
+    return settings.ChoiceField(
+        "", message, setting, STRICTNESS, CLOSED if closed else OPEN, recorded=False
+    )
+
+
+def closed(value: str | int) -> bool:
+    """Whether a strictness field is set to the nonstrict of the two symbols."""
+    return value == CLOSED
+
+
 #: How each color is spelled on the color menu. Derive asked for a number, so
 #: these mnemonics are the remake's own; every one of the sixteen needs a letter
 #: of its own, which is what pushes `Blue`, `Brown`, `Gray` and `Aqua` off their
@@ -254,7 +401,7 @@ COLOR_TARGETS: dict[str, settings.Dialog] = {
 #: menu it is listed on. A word on none of these lists is a command, and the
 #: app decides whether it has one.
 TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
-    ALGEBRA: {"Options": OPTIONS, "Transfer": TRANSFER},
+    ALGEBRA: {"Declare": DECLARE, "Options": OPTIONS, "Transfer": TRANSFER},
     OPTIONS: OPTIONS_TARGETS,
     COLOR: COLOR_TARGETS,
     TRANSFER: {"Load": TRANSFER_LOAD, "Save": TRANSFER_SAVE},

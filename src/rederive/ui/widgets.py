@@ -13,7 +13,13 @@ from textual.geometry import Region
 from textual.widgets import Static
 
 from rederive.model.session import Entry
-from rederive.model.settings import ChoiceField, DialogEditor, Field, NumberField
+from rederive.model.settings import (
+    ChoiceField,
+    DialogEditor,
+    Field,
+    NumberField,
+    TextField,
+)
 from rederive.ui.menu import Menu
 
 #: Columns the label field takes, and so the column every render starts in.
@@ -30,6 +36,11 @@ _NUMBER_WIDTH = 5
 
 #: Where the status line names the file the session last read or wrote.
 _FILE_COLUMN = 22
+
+
+def _width(field: Field) -> int:
+    """Columns a field's value takes; a text field says for itself."""
+    return field.width if isinstance(field, TextField) else _NUMBER_WIDTH
 
 
 def _label(entry: Entry) -> str:
@@ -202,28 +213,38 @@ class FieldBand(Band):
     A field that is not the active one shows its value in parentheses, the way
     the original distinguishes "this is what it is set to" from "this is what
     you are setting".
+
+    A line may also carry a plain word, which is printed where it stands and is
+    no field: the variable whose bounds `Declare Variable Interval` is asking
+    for stands between the two bounds.
     """
 
     def show(self, editor: DialogEditor) -> None:
         title = editor.dialog.title
         lines, index = [], 0
-        for number, fields in enumerate(editor.lines):
+        for number, items in enumerate(editor.lines):
             prefix = f" {title} " if number == 0 else " " * (len(title) + 2)
             line = Text(prefix, style=self.colors["option"], no_wrap=True)
-            for position, field in enumerate(fields):
+            for position, item in enumerate(items):
                 if position:
                     line.append(_FIELD_GAP)
-                line.append(self._field(editor, field, active=index == editor.active))
+                if isinstance(item, str):
+                    line.append(item, style=self.colors["option"])
+                    continue
+                line.append(self._field(editor, item, active=index == editor.active))
                 index += 1
             lines.append(line)
         self.update(Text("\n").join(lines))
 
     def _field(self, editor: DialogEditor, field: Field, active: bool) -> Text:
         colors = self.colors
-        text = Text(f"{field.label}:", style=colors["option"], no_wrap=True)
+        # A field with no label of its own is printed as its value alone, which
+        # is how the strictness of an interval bound is shown.
+        label = f"{field.label}:" if field.label else ""
+        text = Text(label, style=colors["option"], no_wrap=True)
         current = editor.value(field)
-        if isinstance(field, NumberField):
-            self._number(text, editor, current, active)
+        if isinstance(field, NumberField | TextField):
+            self._typed(text, editor, current, active, _width(field))
         elif not field.inline:
             # Too many choices to print, so only the current one is shown.
             style = colors["option-highlight"] if active else colors["option"]
@@ -235,23 +256,29 @@ class FieldBand(Band):
             self._parenthesized(text, field, current)
         return text
 
-    def _number(
-        self, text: Text, editor: DialogEditor, current: str | int, active: bool
+    def _typed(
+        self,
+        text: Text,
+        editor: DialogEditor,
+        current: str | int,
+        active: bool,
+        width: int,
     ) -> None:
+        """A field that is typed into: its value, and the cursor when it is live."""
         if not active:
-            text.append(f" {str(current).ljust(_NUMBER_WIDTH)}")
+            text.append(f" {str(current).ljust(width)}")
             return
         cursor = self.colors["option-highlight"]
-        digits = editor.text or ""
+        typed = editor.text or ""
         text.append(" ")
-        for position, digit in enumerate(digits):
-            text.append(digit, style=cursor if position == editor.cursor else None)
-        written = len(digits)
-        if editor.cursor >= len(digits):
-            # Past the last digit, the cursor is a cell of its own.
+        for position, character in enumerate(typed):
+            text.append(character, style=cursor if position == editor.cursor else None)
+        written = len(typed)
+        if editor.cursor >= len(typed):
+            # Past the last character, the cursor is a cell of its own.
             text.append(" ", style=cursor)
             written += 1
-        text.append(" " * max(0, _NUMBER_WIDTH - written))
+        text.append(" " * max(0, width - written))
 
     def _choices(self, text: Text, field: ChoiceField, current: str | int) -> None:
         colors = self.colors

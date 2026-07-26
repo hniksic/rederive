@@ -14,6 +14,11 @@ It also owns what the lines have defined - values, function bodies and variable
 domains - because only the tree holds those, and every engine command reads
 them. `Session.context` is that plus the settings, in the form the engine takes.
 
+The Declare commands are how those definitions are made from the menu rather
+than from the author line, and they are thin for that reason: each writes the
+expression the user could have written and authors it, which is what the
+original does and what leaves one path into the symbol table instead of two.
+
 A render is not remade. Switching the times operator or the display format
 changes how later expressions are drawn and leaves the ones already on screen
 alone, which is what the original does: what you see is what it looked like
@@ -43,6 +48,7 @@ from rederive.syntax import (
     ParseState,
     SettingDeclaration,
     Source,
+    is_name,
     parse_expression,
     source_lines,
     write_expression,
@@ -56,6 +62,21 @@ Rect = tuple[int, int, int, int]
 #: What the status line says about a line the user wrote.
 AUTHORED = "User"
 
+#: How a declaration spells the domain operator and an infinite bound. The
+#: parser reads either spelling; these are the ones the original writes.
+DOMAIN_OPERATOR = ":ε"
+INFINITY = "∞"
+
+#: The name behind that glyph, as a tree carries it.
+_INFINITE = "inf"
+
+#: The word the Declare Variable menu offers for a variable that has been
+#: declared without a domain, and the two words its interval menu offers for
+#: an interval that has no name of its own.
+VALUE = "Value"
+ALL = "All"
+INTERVAL = "Interval"
+
 #: A reference to a numbered entry, wherever one is written: in an expression,
 #: and in an annotation such as `Simp(#3)`.
 LABEL = re.compile(r"#(\d+)")
@@ -64,6 +85,41 @@ LABEL = re.compile(r"#(\d+)")
 #: three things and gives back an answer, which is what lets `_command` serve
 #: all of them and know nothing about which one it is running.
 Command = Callable[[Node, "engine.Context", ParseState], "engine.Result"]
+
+
+@dataclass(frozen=True)
+class Bounds:
+    """An interval as a declaration writes it: two bounds, each open or closed.
+
+    The bounds are text rather than trees, because this is what a data entry
+    field holds and what a declaration is written from. The default is the
+    whole real line, which is what the original opens its bounds screen on.
+
+    An infinite bound is always open however it was set, since a variable
+    cannot be declared infinite (manual section 4.10).
+    """
+
+    low: str = f"-{INFINITY}"
+    high: str = INFINITY
+    closed_low: bool = False
+    closed_high: bool = False
+
+    @property
+    def text(self) -> str:
+        """The interval in standard notation, as `(0, ∞)`."""
+        opening = "[" if self.closed_low and not _is_infinite(self.low) else "("
+        closing = "]" if self.closed_high and not _is_infinite(self.high) else ")"
+        return f"{opening}{self.low}, {self.high}{closing}"
+
+
+#: The bounds each word of the interval menu stands for. `All` is not among
+#: them: it is the whole line, which is written as no interval at all.
+NAMED_INTERVALS: dict[str, Bounds] = {
+    "Positive": Bounds("0", INFINITY),
+    "Negative": Bounds(f"-{INFINITY}", "0"),
+    "nonpoSitive": Bounds(f"-{INFINITY}", "0", closed_high=True),
+    "nonneGative": Bounds("0", INFINITY, closed_low=True),
+}
 
 
 @dataclass(frozen=True)
@@ -369,6 +425,180 @@ class Session:
         node = parse_expression(text, self.state).node
         return self._append(text, node, f"{prefix}(#{entry.number}')")
 
+    # -- declaring ---------------------------------------------------------
+    #
+    # Every Declare command comes to the same thing: it writes the expression
+    # the user could have written on the author line, and authors it. That is
+    # what the original does - the manual gives the equivalent authored line
+    # for each of them - and it is why nothing here has to touch the symbol
+    # table, the domains or the definitions: authoring already does all three.
+
+    def declare_domain(self, name: str, kind: str, bounds: Bounds | None = None) -> Entry:
+        """Author `x :ε Real (0, ∞)`: the domain of one variable.
+
+        `kind` is Integer, Real, Complex or Nonscalar, and `bounds` the
+        interval, which only the first two can carry. `default` as the name
+        declares the domain every unnamed variable falls back on.
+        """
+        interval = "" if bounds is None else f" {bounds.text}"
+        return self.author(f"{name} {DOMAIN_OPERATOR} {kind}{interval}")
+
+    def declare_value(self, name: str, value: str = "") -> Entry:
+        """Author `area := π r^2`, or `area :=` to take the value away."""
+        return self.author(f"{name} :={_after(value)}")
+
+    def declare_function(self, name: str, definition: str) -> Entry:
+        """Author `HYP(a, b) := √(a^2 + b^2)`, deriving the parameters.
+
+        The definition's own variables become the parameters, most main first
+        - unlike an authored definition, which is where the manual says to go
+        when the order or the number of them matters. A definition with no
+        variables in it defines no function: `q := 5` is what the original
+        writes for one, and that is a variable with a value.
+        """
+        variables = self.definition_variables(definition)
+        return self.declare_arbitrary(name, variables, definition)
+
+    def declare_arbitrary(
+        self, name: str, variables: Sequence[str], definition: str = ""
+    ) -> Entry:
+        """Author `F(x, y) :=`: a function with parameters and no body.
+
+        Which is what the original calls an arbitrary function. With no
+        parameters there is no function either, and the line is `g :=`.
+        """
+        head = f"{name}({', '.join(variables)})" if variables else name
+        return self.author(f"{head} :={_after(definition)}")
+
+    def declare_vector(self, elements: Sequence[str]) -> Entry:
+        """Author `[1, 2, x]`, one element per answer collected."""
+        return self.author(_vector(elements))
+
+    def declare_matrix(self, rows: Sequence[Sequence[str]]) -> Entry:
+        """Author `[[1, 2], [3, 4]]`: a vector of rows, each of the same width."""
+        return self.author(_vector([_vector(row) for row in rows]))
+
+    # -- what the Declare screens open on ----------------------------------
+
+    def declared_as(self, name: str) -> str:
+        """Which word of the Declare Variable menu `name` is already answered by.
+
+        The domain it was declared with, `Value` for a variable declared
+        without one, and `Real` for a name nothing has declared - which is the
+        domain such a variable has anyway.
+        """
+        known = self.state.variables.get(self._canonical(name))
+        if known is None:
+            return str(engine.DomainKind.REAL)
+        return known.domain or VALUE
+
+    def declared_interval(self, name: str) -> str:
+        """Which word of the interval menu `name`'s domain is already answered by.
+
+        `All` for a domain with no interval, the name of the interval where it
+        has one, and `Interval` for bounds that have no name of their own.
+        """
+        domain = self.domains.get(self._canonical(name))
+        if domain is None or not domain.has_interval:
+            return ALL
+        bounds = self.bounds_of(name)
+        for word, named in NAMED_INTERVALS.items():
+            if named == bounds:
+                return word
+        return INTERVAL
+
+    def bounds_of(self, name: str) -> Bounds:
+        """The bounds the Declare Variable Interval screen opens on.
+
+        The variable's own, where it has an interval; the whole real line
+        where it has not.
+        """
+        domain = self.domains.get(self._canonical(name))
+        if domain is None or not domain.has_interval:
+            return Bounds()
+        low, high = domain.low, domain.high
+        return Bounds(
+            f"-{INFINITY}" if low is None else _bound_text(low),
+            INFINITY if high is None else _bound_text(high),
+            domain.closed_low,
+            domain.closed_high,
+        )
+
+    # -- what the Declare screens will take --------------------------------
+
+    def declarable(self, name: str) -> bool:
+        """Whether `name` may be declared.
+
+        It has to be one name - multi-character even in Character input mode,
+        which is what makes this a lexical question rather than a parse - and
+        it may not be one of the pre-defined functions or constants, which
+        cannot be redeclared (manual sections 4.10 and 4.12).
+
+        A name the session's own lines defined may be declared again, which is
+        how `Declare Variable` turns a user-defined function back into a
+        variable and `Declare Function` turns a variable into a function.
+        """
+        if not is_name(name):
+            return False
+        known = self.state.resolve(name)
+        if known is None or self._is_the_users(known.canonical):
+            return True
+        return not (known.is_function or known.is_constant or known.is_keyword_operator)
+
+    def _is_the_users(self, name: str) -> bool:
+        """Whether `name` is one the session's own lines declared."""
+        return name in self.state.functions or name in self.state.variables
+
+    def _canonical(self, name: str) -> str:
+        """How a name typed on a Declare line is recorded, however it was cased."""
+        return self.state.lookup(name) or name
+
+    def reads(self, text: str) -> None:
+        """Raise `DeriveSyntaxError` unless `text` is an expression.
+
+        What a command that collects expressions one at a time needs: an
+        element of a vector is judged as it is entered rather than when the
+        whole vector has been.
+        """
+        parse_expression(text, self.state)
+
+    def is_bound(self, text: str) -> bool:
+        """Whether `text` is something an interval bound may say.
+
+        A number or an infinity, which is what the original takes: it refuses
+        `a + 1` and accepts `-5`, `1/2` and `2.5`.
+        """
+        try:
+            node = parse_expression(text, self.state).node
+        except DeriveSyntaxError:
+            return False
+        return _is_bound(node)
+
+    def definition_variables(self, definition: str) -> tuple[str, ...]:
+        """The variables in `definition`, most main first.
+
+        What `Declare Function` makes the parameters of the function it is
+        defining. A variable with a value assigned is one of them, since it is
+        still written as a variable; a constant and a function name are not.
+
+        Raises `DeriveSyntaxError` when `definition` does not parse.
+        """
+        if not definition.strip():
+            return ()
+        node = parse_expression(definition, self.state).node
+        return engine.main_order(
+            str(found.value)
+            for found in _subtrees(node)
+            if found.kind is Kind.NAME and self._is_variable(str(found.value))
+        )
+
+    def _is_variable(self, name: str) -> bool:
+        """Whether `name` is free to be a variable, or is a pre-defined name."""
+        known = self.state.resolve(name)
+        return known is None or not (
+            known.is_function or known.is_constant or known.is_keyword_operator
+        )
+
     # -- removing ----------------------------------------------------------
 
     def numbered(self, number: int) -> Entry | None:
@@ -658,6 +888,43 @@ class Session:
 
     def move_last_entry(self) -> bool:
         return self.select_entry(len(self.entries) - 1)
+
+
+def _is_infinite(bound: str) -> bool:
+    """Whether a bound is an infinity, however it was spelled."""
+    return bound.lstrip("+-").strip().lower() in (INFINITY, _INFINITE)
+
+
+def _after(text: str) -> str:
+    """What follows `:=` on a definition line; nothing at all clears it."""
+    return f" {text.strip()}" if text.strip() else ""
+
+
+def _vector(elements: Sequence[str]) -> str:
+    return "[" + ", ".join(elements) + "]"
+
+
+def _is_bound(node: Node) -> bool:
+    """Whether `node` is something an interval bound may say."""
+    if node.kind is Kind.NAME:
+        return str(node.value) == _INFINITE
+    if node.kind is Kind.UNOP and node.value in ("-", "+"):
+        return all(_is_bound(child) for child in node.children)
+    return engine.decomposes(node)
+
+
+def _bound_text(node: Node) -> str:
+    """A bound as a data entry field shows it: on one line, infinity as a glyph.
+
+    A bound is a number or an infinity and nothing else, which is what makes
+    one line enough: a fraction is written `1/2` here and built up only where
+    an expression is drawn.
+    """
+    if node.kind is Kind.UNOP and node.value in ("-", "+"):
+        return str(node.value) + _bound_text(node.children[0])
+    if node.kind is Kind.NAME and str(node.value) == _INFINITE:
+        return INFINITY
+    return write_expression(node)
 
 
 def _text_of(path: Path) -> str:
