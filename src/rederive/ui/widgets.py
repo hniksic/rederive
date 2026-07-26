@@ -195,7 +195,7 @@ class StatusLine(Band):
     annotation = ""
     #: The original's muLISP heap gauge lived here. The slot is kept for
     #: something useful today, such as a busy indicator during long
-    #: computations (REQUIREMENTS 4.1), and stays empty until there is one.
+    #: computations, and stays empty until there is one.
     center = ""
     pane = "Rederive Algebra"
 
