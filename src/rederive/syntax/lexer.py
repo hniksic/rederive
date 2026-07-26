@@ -181,7 +181,7 @@ class Lexer:
         if end < self.limit and self.text[end] == ".":
             raise self.error(end, "a numeral")
         written = self.text[pos:end]
-        value = _number_value(integer, fraction, has_point, base)
+        value = _number_value(integer, fraction, base)
         return Token(TokenKind.NUMBER, pos, end, value, written)
 
     # -- atomic name forms --------------------------------------------------
@@ -422,17 +422,48 @@ class Lexer:
         raise self.error(pos, "an operand")
 
 
-def _number_value(integer: str, fraction: str, has_point: bool, base: int) -> str:
+def _number_value(integer: str, fraction: str, base: int) -> str:
     """The numeral's decimal value, as text.
 
-    Base 10 keeps the digits as written, so that `2.` stays `2.`; a leading
-    radix point gains the zero Derive shows. Other bases are converted.
+    A radix point is spelling rather than value, so `1.0`, `1.` and `1.000`
+    are all the number Derive shows as `1`. Base 10 therefore drops the zeros
+    that say nothing on either side - `007` is `7` and `1.50` is `1.5` - and
+    the point goes with the last of the trailing ones. Other bases are
+    converted.
     """
     if base == 10:
-        return (integer or "0") + ("." + fraction if has_point else "")
+        return _decimal(integer, fraction)
     value = Fraction(int(integer or "0", base))
     for power, digit in enumerate(fraction, start=1):
         value += Fraction(int(digit, base), base**power)
-    if value.denominator == 1:
-        return str(value.numerator)
-    return f"{float(value):g}"
+    return _exact(value)
+
+
+def _decimal(integer: str, fraction: str) -> str:
+    """A base-ten numeral written with none of its redundant zeros."""
+    integer = integer.lstrip("0")
+    fraction = fraction.rstrip("0")
+    return (integer or "0") + ("." + fraction if fraction else "")
+
+
+def _exact(value: Fraction) -> str:
+    """`value` in full: a numeral, or a ratio when no numeral holds it.
+
+    A fraction terminates in base ten exactly when its denominator divides a
+    power of ten, so `0.1` in hexadecimal is the numeral `0.0625` while `0.1`
+    in base three is one third, which no numeral spells. Neither is rounded:
+    the digits a converted numeral is worth are all of them.
+    """
+    denominator, twos, fives = value.denominator, 0, 0
+    while denominator % 2 == 0:
+        denominator, twos = denominator // 2, twos + 1
+    while denominator % 5 == 0:
+        denominator, fives = denominator // 5, fives + 1
+    if denominator != 1:
+        return f"{value.numerator}/{value.denominator}"
+    places = max(twos, fives)
+    scaled = str(value.numerator * 10**places // value.denominator)
+    if not places:
+        return scaled
+    scaled = scaled.rjust(places + 1, "0")
+    return _decimal(scaled[:-places], scaled[-places:])

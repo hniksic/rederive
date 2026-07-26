@@ -113,10 +113,16 @@ def numeral(value: str, base: int) -> str:
     a letter takes a leading zero so that it cannot be read as a variable
     name: fourteen is `0E` in hexadecimal, not `E`. A value carrying a radix
     point is shown as written whatever the base, since converting a fraction
-    would be arithmetic and this layer does none.
+    would be arithmetic and this layer does none. A ratio, which is what a
+    numeral worth no finite decimal carries, has each of its two whole halves
+    converted.
     """
     if base == 10 or "." in value:
         return value
+    return "/".join(_whole(part, base) for part in value.split("/"))
+
+
+def _whole(value: str, base: int) -> str:
     magnitude = int(value)
     text = ""
     while True:

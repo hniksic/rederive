@@ -52,6 +52,20 @@
 370370367    =>    370370367
 .5    =>    0.5
 12.34.5    =>    ERROR@5    # rejection confirmed; offset not machine-checked
+1.0    =>    1    # a radix point is spelling, not value, and so are the zeros around it
+1.    =>    1
+1.000    =>    1
+1.50    =>    1.5
+0.10    =>    0.1
+12.3450    =>    12.345
+100.0    =>    100
+0.0    =>    0
+.0    =>    0
+0.    =>    0
+007    =>    7
+010    =>    10
+00.50    =>    0.5
+-1.0    =>    (neg 1)
 
 ## Group: Number literals in non-decimal radices
 
@@ -60,8 +74,19 @@
 0E    =>    14
 2 A    =>    (juxt 2 a)
 E    =>    e
+0.1    =>    0.0625    # value confirmed by simplifying 0.1 - (1/10) to zero
+1.8    =>    1.5
+0FF.0    =>    255
+0.123456789ABCDEF    =>    0.071111111111111110182070316199087756103835999965667724609375
 [state: InputBase=2]
 2    =>    ERROR@0    # rejection confirmed; offset not machine-checked
+0.1    =>    0.5
+1.1    =>    1.5
+0.001    =>    0.125
+[state: InputBase=3]
+0.1    =>    1/3    # a numeral worth no finite decimal keeps its exact value
+0.2    =>    2/3
+10.1    =>    10/3
 [state: InputBase=10]
 2A    =>    (juxt 2 a)
 
@@ -738,7 +763,7 @@ SIN(pi/4)=    =>    (showvalue (call SIN (/ pi 4)))
 2.3    =>    2.3
 2 . 3    =>    (dot 2 3)
 2 .3    =>    (juxt 2 0.3)
-2. 3    =>    (juxt 2. 3)
+2. 3    =>    (juxt 2 3)
 a . b    =>    (dot a b)
 a.b    =>    (dot a b)
 2x    =>    (juxt 2 x)

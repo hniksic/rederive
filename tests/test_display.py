@@ -553,6 +553,16 @@ def test_a_numeral_with_a_radix_point_is_shown_as_written() -> None:
     assert rendered("1.5", DisplayOptions(output_base=16)) == ["1.5"]
 
 
+@pytest.mark.parametrize(
+    ("value", "base", "expected"),
+    [("1/3", 10, "1/3"), ("1/3", 3, "1/10"), ("10/3", 16, "0A/3")],
+)
+def test_output_radix_of_a_ratio(value: str, base: int, expected: str) -> None:
+    # What a numeral carries when no finite decimal is worth it: `0.1` read in
+    # base three. Both halves are whole, so both convert.
+    assert glyphs.numeral(value, base) == expected
+
+
 # -- the selection tree -----------------------------------------------------
 
 # A route is a tuple of indices into `Region.children`, empty for the whole

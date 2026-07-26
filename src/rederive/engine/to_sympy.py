@@ -285,16 +285,16 @@ class _Converter:
     # -- leaves -------------------------------------------------------------
 
     def _number(self, node: Node) -> sp.Basic:
-        """A numeral. `value` is its decimal spelling, `2.5` and `2.` alike.
+        """A numeral, which `value` spells as `2.5`, as `25` or as `1/3`.
 
         Exact and Mixed read it as the rational it is, so `0.1` is one tenth
-        and not the binary float nearest to it. Approximate reads it as a float
-        of the current precision.
+        and not the binary float nearest to it. Approximate rounds that
+        rational to the current precision.
         """
-        text = str(node.value)
+        value = sp.Rational(str(node.value))
         if self.context.precision is Precision.APPROXIMATE:
-            return sp.Float(text, self.context.precision_digits)
-        return sp.Rational(text)
+            return sp.Float(value, self.context.precision_digits)
+        return value
 
     def _name(self, node: Node) -> sp.Basic:
         name = str(node.value)
