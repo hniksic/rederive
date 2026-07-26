@@ -44,8 +44,20 @@ Two promises hold across every input:
 `approx` is the same pipeline with the precision mode set to Approximate, which
 is what the manual says the approX command is.
 
-`simplify` works on any subtree, not only on a whole authored line, so the
-session can simplify what the user has highlighted and put the answer back.
+`factor(node, context, amount, variables)` is Derive's Factor: the same
+expression written as a product. It is Simplify and then factoring, which is
+what the manual means by saying both commands reach a sufficiently simple form
+and Factor goes further, and it makes the same two promises. `Amount` is how
+far it goes - Trivial, Squarefree, Rational, raDical or Complex, each doing
+everything the one before it does - and `variables` names the factorization
+variables, empty meaning all of them.
+
+The mathematics of it is a file of its own below the pipeline rather than
+above, because `FACTOR(u, amount, x, y, ...)` is an authored line's own way of
+asking for the same thing, and Simplify is what evaluates that.
+
+Both commands work on any subtree, not only on a whole authored line, so the
+session can act on what the user has highlighted and put the answer back.
 """
 
 from __future__ import annotations
@@ -62,6 +74,8 @@ from rederive.engine.context import (
     TrigPower,
     domain_of_node,
 )
+from rederive.engine.factor import factor
+from rederive.engine.factoring import Amount
 from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
 from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
@@ -69,6 +83,7 @@ from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
 
 __all__ = [
+    "Amount",
     "Angle",
     "Branch",
     "Context",
@@ -82,6 +97,7 @@ __all__ = [
     "approx",
     "author_text",
     "domain_of_node",
+    "factor",
     "from_sympy",
     "parse_state_for",
     "simplify",

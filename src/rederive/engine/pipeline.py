@@ -48,6 +48,12 @@ from rederive.engine.context import (
     Precision,
     TrigPower,
 )
+from rederive.engine.factoring import (
+    DEFAULT_AMOUNT,
+    Amount,
+    amount_named,
+    factored_expression,
+)
 from rederive.engine.from_sympy import Result, from_sympy
 from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import (
@@ -62,7 +68,7 @@ from rederive.engine.to_sympy import (
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 
-__all__ = ["approx", "simplified", "simplify"]
+__all__ = ["approx", "approximated", "simplified", "simplify"]
 
 Rewrite = Callable[[sp.Basic], sp.Basic]
 
@@ -233,7 +239,7 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     expression = _rewritten(expression, context)
     if frozen:
         expression = expression.xreplace(frozen)
-    return _approximated(_canonical(expression), context)
+    return approximated(_factorings(_canonical(expression)), context)
 
 
 def _canonical(expression: sp.Basic) -> sp.Basic:
@@ -445,6 +451,55 @@ def _undecided(head: sp.Basic) -> sp.Basic:
             return head
     right, left = sides
     return PlusMinus(right) if right == -left else sp.nan
+
+
+# -- the FACTOR head ---------------------------------------------------------
+
+
+def _factorings(expression: sp.Basic) -> sp.Basic:
+    """Evaluate every `FACTOR` head, innermost first.
+
+    `FACTOR(u, amount, x, y, ...)` is the author-line spelling of the Factor
+    command, so simplifying a line that carries one factors it - which is what
+    the original does, and what makes the function worth having rather than an
+    inert head that prints back as itself.
+
+    Last of the rewrites on purpose, and after `_canonical` as well. Every
+    gate above this one asks whether a candidate is shorter than what it
+    replaces, and a factorization is routinely longer: `_multiplied_out`
+    offered `(x - 3)*(2*x + 1)^2` would happily multiply it back out. And
+    `_canonical` rebuilds every product it can reach, which would multiply a
+    prime decomposition straight back into the integer it decomposes.
+    """
+    try:
+        return expression.replace(_is_factoring, _factoring, simultaneous=False)
+    except Exception:
+        return expression
+
+
+def _is_factoring(expression: sp.Basic) -> bool:
+    return isinstance(expression, AppliedUndef) and type(expression).__name__ == "FACTOR"
+
+
+def _factoring(head: sp.Basic) -> sp.Basic:
+    """One `FACTOR` head, read as its target, its amount and its variables.
+
+    The arguments after the first are a word naming the amount, a list of
+    variables, or both in that order; the manual allows any of them to be left
+    out. A word that names no amount is read as a variable, which is what
+    keeps a call nobody can make sense of - a Derive 6 `FACTOR(u, Turing)` -
+    an expression rather than an error.
+    """
+    target, *rest = head.args
+    amount = DEFAULT_AMOUNT
+    variables = []
+    for argument in rest:
+        named = amount_named(str(argument)) if isinstance(argument, sp.Symbol) else None
+        if named is not None and not variables:
+            amount = named
+        elif isinstance(argument, sp.Symbol):
+            variables.append(argument.name)
+    return factored_expression(target, amount, variables)
 
 
 # -- evaluating what is only a number ----------------------------------------
@@ -731,7 +786,15 @@ def _real_sign(expression: sp.Basic) -> sp.Basic:
 # -- precision ---------------------------------------------------------------
 
 
-def _approximated(expression: sp.Basic, context: Context) -> sp.Basic:
+def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
+    """What the precision mode does to a finished answer.
+
+    The last step of the pipeline, and public because it is the last step of
+    every command's pipeline. Factor runs the rest of this file exactly, then
+    factors, and only then rounds - so that radical factoring reaches `SQRT(2)`
+    first and shows `1.41421` because of this, rather than factoring a number
+    that has already been rounded.
+    """
     digits = context.precision_digits
     match context.precision:
         case Precision.APPROXIMATE:
