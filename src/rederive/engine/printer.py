@@ -15,9 +15,9 @@ is why numerals come out in the context's input base and in the style
 A decimal style bends the first rule, and the original bends it the same way:
 one third written `0.333333` reads back as a different number. Derive shows
 that text on the screen and writes it to an MTH file alike, so what the
-notation cuts is cut from the worksheet too. Where the two differ is behind
-the display: Derive keeps the exact ratio and answers `3·#n` with 1, while an
-entry here *is* its text and answers 0.999999.
+notation cuts is cut from the worksheet too - but not from the value. The
+exact writing is kept beside the shown one, which is `Result.value`, and it is
+what the next command is given; `3·#n` is 1 whatever `#n` is shown as.
 
 `AuthorPrinter` subclasses sympy's `StrPrinter` and overrides one method per
 construct spelled differently: powers, roots, the constants, function names,
@@ -268,8 +268,35 @@ class AuthorPrinter(sp.StrPrinter):
         if isinstance(coefficient, sp.Rational) and coefficient.q != 1:
             written = self._number(Fraction(coefficient.p, coefficient.q))
             if "/" not in written:
-                return written + "*" + self.parenthesize(rest, PRECEDENCE["Mul"])
+                return self._beside(written, rest)
         return super()._print_Mul(expr)
+
+    def _beside(self, written: str, rest) -> str:
+        """A coefficient already written, times the rest of its product.
+
+        The rest keeps whatever denominator it had, so the coefficient of
+        `1/(x - 1)` goes over that rather than beside it. Which factors those
+        are is the one thing this takes over from sympy's product spine: a
+        factor raised to a negative power is a denominator, exactly as
+        `_print_Mul` reads one. Sign extraction and the order of the factors
+        are still sympy's, `as_ordered_factors` being what it prints from.
+        """
+        above, below = [], []
+        for factor in rest.as_ordered_factors():
+            base, power = factor.as_base_exp()
+            if power.is_Rational and power.is_negative:
+                below.append(base if power == -1 else base**-power)
+            else:
+                above.append(factor)
+        text = written
+        for factor in above:
+            text += "*" + self.parenthesize(factor, PRECEDENCE["Mul"])
+        if below:
+            # One denominator, as sympy writes it: `a/(x*y)` and not `a/x/y`,
+            # which is the same number drawn as a fraction inside a fraction.
+            under = below[0] if len(below) == 1 else sp.Mul(*below)
+            text += "/" + self.parenthesize(under, PRECEDENCE["Mul"])
+        return text
 
     def _number(self, value: Fraction) -> str:
         """`value` in the notation `Options Notation` selects.

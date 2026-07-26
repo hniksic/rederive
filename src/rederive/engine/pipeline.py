@@ -34,6 +34,7 @@ command total. Nothing sympy does can turn a valid entry into an error.
 from __future__ import annotations
 
 from collections.abc import Callable
+from fractions import Fraction
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
@@ -41,6 +42,7 @@ from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 from sympy.simplify.fu import TR5, TR6, TR7, TR8
 
+from rederive.engine.approximation import GUARD, simplest
 from rederive.engine.context import (
     Branch,
     Context,
@@ -1124,9 +1126,14 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
     digits = context.precision_digits
     match context.precision:
         case Precision.APPROXIMATE:
-            return _whole(_evalf(expression, digits))
+            # The irrational parts are approximated, then what they make of
+            # each other is exact, and the answer is approximated once more:
+            # `10^7·π` is `10^7·355/113` worked out and then rounded, which is
+            # `31415929` and not the `31415900` that six digits of the product
+            # would leave.
+            return _rounded(_approximated(expression, digits), digits)
         case Precision.MIXED:
-            return _mixed(expression, digits)
+            return _approximated(expression, digits)
     return expression
 
 
@@ -1137,37 +1144,39 @@ def _evalf(expression: sp.Basic, digits: int) -> sp.Basic:
         return expression
 
 
-def _whole(expression: sp.Basic) -> sp.Basic:
-    """A float that is exactly an integer is written as that integer.
+def _rounded(expression: sp.Basic, digits: int) -> sp.Basic:
+    """Every number in `expression` as the simplest rational at this precision.
 
-    Derive's approximate numbers are the simplest rationals accurate to the
-    current precision, and the simplest rational that approximates an integer
-    is the integer. So `2*y*3` is `6*y` in every precision mode, and only the
-    numbers that actually need digits get them.
+    Which is what Derive's approximate numbers are, so this is what makes
+    `2*y*3` come out `6*y` in every precision mode - only the numbers that
+    actually need digits get them - and what leaves an approximate answer an
+    exact value that `Notation := Rational` can write out in full.
     """
     try:
-        return expression.replace(_is_whole_float, _as_integer, simultaneous=False)
+        return expression.replace(
+            lambda part: isinstance(part, sp.Rational | sp.Float),
+            lambda part: _simplest(part, digits),
+            simultaneous=False,
+        )
     except Exception:
         return expression
 
 
-def _is_whole_float(expression: sp.Basic) -> bool:
-    # Compared as the exact binary rational the float is: sympy does not hold
-    # `Float(5.0)` and `Integer(5)` to be the same number.
-    return isinstance(expression, sp.Float) and sp.Rational(expression) == int(expression)
+def _simplest(number: sp.Basic, digits: int) -> sp.Rational:
+    value = sp.Rational(number)
+    return sp.Rational(simplest(Fraction(value.p, value.q), digits))
 
 
-def _as_integer(expression: sp.Basic) -> sp.Basic:
-    return sp.Integer(int(expression))
-
-
-def _mixed(expression: sp.Basic, digits: int) -> sp.Basic:
+def _approximated(expression: sp.Basic, digits: int) -> sp.Basic:
     """Approximate the irrational operations, keep the rational ones exact.
 
     Innermost first, so that a rational subexpression is computed before
     anything near it is rounded: `SQRT(3422357/2313 - 1140443/771)` is exactly
-    `2/3` in Mixed mode, where Approximate rounds the two fractions first and
-    gets `0.666622`.
+    `2/3` in Mixed mode, where Approximate rounds the two fractions on the way
+    in and never reaches it.
+
+    What each irrational is replaced by is a rational, since that is what an
+    approximate number is; the arithmetic around it stays exact.
 
     Best effort, and it says so: whether a number is irrational is a question
     sympy sometimes leaves open, and a number it cannot classify is left
@@ -1175,7 +1184,9 @@ def _mixed(expression: sp.Basic, digits: int) -> sp.Basic:
     """
     try:
         return expression.replace(
-            _is_irrational, lambda e: _evalf(e, digits), simultaneous=False
+            _is_irrational,
+            lambda part: _simplest(_evalf(part, digits + GUARD), digits),
+            simultaneous=False,
         )
     except Exception:
         return expression

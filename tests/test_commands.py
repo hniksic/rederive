@@ -361,7 +361,9 @@ def test_the_settings_are_left_where_they_were(session):
 def test_the_precision_digits_setting_reaches_the_command(session):
     session.author("pi")
     session.settings.assign("PrecisionDigits", 12)
-    assert session.approx("#1").text == "3.14159265359"
+    # Twelve digits of pi, cut rather than rounded, which is what the
+    # original answers here: `3.14159265358`, not `...359`.
+    assert session.approx("#1").text == "3.14159265358"
 
 
 def test_what_has_no_number_in_it_is_simplified_and_no_more(session):

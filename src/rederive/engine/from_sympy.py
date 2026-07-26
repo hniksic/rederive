@@ -9,6 +9,11 @@ work on a result exactly as they work on something the user authored.
 The reparse needs a symbol table - in Character mode `tera` is one name only
 once something has declared it - so the caller may supply a `ParseState`, and
 `parse_state_for` builds one that knows every name the expression mentions.
+
+A result under a decimal notation is written twice: once as it is shown, which
+is what the worksheet draws and saves, and once as the ratios it is made of,
+which is what the next command computes with. `Result.value` is the second,
+and it is None when the two would be the same text.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from dataclasses import dataclass, replace
 import sympy as sp
 from sympy.core.function import AppliedUndef
 
-from rederive.engine.context import Context
+from rederive.engine.context import Context, Notation
 from rederive.engine.printer import author_text, named
 from rederive.engine.to_sympy import FunDef, StringLiteral
 from rederive.model.expr import Kind, Node
@@ -39,10 +44,22 @@ class Result:
     """An expression as the worksheet holds it: the text, and its tree.
 
     `node`'s spans index `text`.
+
+    `value` is the same answer written exactly, which is a different tree only
+    where the notation writes a number as something other than the ratio it
+    is: one third *shown* as `0.333333` is still one third, and three times it
+    is still one. What is shown is what the worksheet saves and draws; what is
+    here is what the next command computes with.
     """
 
     node: Node
     text: str
+    value: Node | None = None
+
+    @property
+    def exact(self) -> Node:
+        """The tree to compute with: the exact one where they differ."""
+        return self.node if self.value is None else self.value
 
 
 def from_sympy(
@@ -61,11 +78,34 @@ def from_sympy(
     else:
         state = _knowing(state, expression, context)
     try:
-        return Result(parse_expression(text, state).node, text)
+        node = parse_expression(text, state).node
     except DeriveSyntaxError:
         # Nothing the engine produces should be unreadable, but a result that
         # is stays inert and legible rather than taking the command down.
         return Result(Node(Kind.STRING, 0, len(text), (), text), text)
+    return Result(node, text, _exact(expression, context, state, text))
+
+
+def _exact(
+    expression: sp.Basic, context: Context, state: ParseState, text: str
+) -> Node | None:
+    """The same answer written as the ratios it is made of, or None if that is
+    what `text` already is.
+
+    A decimal style writes a number to as many digits as it is shown to, and
+    reading that back is reading a different number - which is what the
+    original saves to a file, and not what it goes on computing with. So the
+    exact writing is kept beside the shown one.
+    """
+    if context.notation is Notation.RATIONAL:
+        return None
+    exact = author_text(expression, replace(context, notation=Notation.RATIONAL))
+    if exact == text:
+        return None
+    try:
+        return parse_expression(exact, state).node
+    except DeriveSyntaxError:
+        return None
 
 
 def _knowing(

@@ -13,17 +13,29 @@ which is `test_display`'s business.
 
 from __future__ import annotations
 
+from decimal import Decimal, getcontext
 from fractions import Fraction
 
 import pytest
 import sympy as sp
 
-from rederive.engine import Context, author_text
+from rederive.engine import Context, author_text, to_sympy
+from rederive.engine.approximation import simplest
 from rederive.engine.context import Notation, Precision
 from rederive.engine.notation import decimal, scientific, simple
 from rederive.model.session import Session
+from rederive.syntax import ParseState, parse_expression
+
+getcontext().prec = 40
+
+#: Enough digits of the three irrationals the tests use that cutting them to
+#: any of the digit counts below cuts the value's own digits.
+PI = Decimal("3.141592653589793238462643383279502884197")
+SQRT2 = Decimal("1.414213562373095048801688724209698078570")
+SQRT3 = Decimal("1.732050807568877293527446341505872366943")
 
 x = sp.Symbol("x", real=True)
+y = sp.Symbol("y", real=True)
 
 
 def written(expression, style, digits=6):
@@ -111,6 +123,51 @@ def test_where_scientific_takes_over(digits: int, power: int) -> None:
     assert plain == (-4 <= power <= 3)
 
 
+# -- what an approximate number is -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # The original's own answers: approximate mode holds these rationals.
+        (Fraction(PI), Fraction(355, 113)),
+        (Fraction(3550000000, 113), Fraction(31415929)),
+        # A number needing no digits gets none.
+        (Fraction(2, 3), Fraction(2, 3)),
+        (Fraction(1, 3), Fraction(1, 3)),
+        (Fraction(5), Fraction(5)),
+        (Fraction(1, 10**7), Fraction(1, 10**7)),
+        (Fraction(0), Fraction(0)),
+        (Fraction(-2, 3), Fraction(-2, 3)),
+        # One needing more digits than there are is read as the simplest
+        # rational showing the digits there is room for.
+        (Fraction(123456789, 10000), Fraction(37037, 3)),
+    ],
+)
+def test_simplest(value: Fraction, expected: Fraction) -> None:
+    assert simplest(value, 6) == expected
+
+
+@pytest.mark.parametrize(
+    "value", [Fraction(PI), Fraction(SQRT2), Fraction(SQRT3), Fraction(2, 3)]
+)
+@pytest.mark.parametrize("digits", [3, 6, 12])
+def test_an_approximation_shows_what_it_approximates(
+    value: Fraction, digits: int
+) -> None:
+    """The digits do not move. `SQRT(3)` is `1.73205`, never `1.73204`.
+
+    A simpler rational a little below the value would show a last digit the
+    value does not have, so it is not the one taken.
+    """
+    assert decimal(simplest(value, digits), digits) == decimal(value, digits)
+
+
+def test_one_digit_of_an_irrational_is_a_whole_number() -> None:
+    """And then there is no fraction left to agree about: one digit of pi is 3."""
+    assert simplest(Fraction(PI), 1) == 3
+
+
 # -- what Mixed calls simple -------------------------------------------------
 
 
@@ -166,6 +223,38 @@ def test_the_printer_writes_each_style(
     assert written(expression, "Decimal") == dec
     assert written(expression, "Mixed") == mixed
     assert written(expression, "Scientific") == sci
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (x / 3, "0.333333*x"),
+        (x / (3 * y), "0.333333*x/y"),
+        (sp.sqrt(2) / (3 * x * y), "0.333333*SQRT(2)/(x*y)"),
+        (1 / (3 * x**2 * y), "0.333333/(x^2*y)"),
+        (x / (3 * y**2), "0.333333*x/y^2"),
+        (2 * x * y / 6, "0.333333*x*y"),
+        (-x / 3, "-0.333333*x"),
+    ],
+)
+def test_a_written_coefficient_keeps_the_rest_of_its_product(
+    expression, expected: str
+) -> None:
+    """The rest of a product keeps the denominator it had, all of it.
+
+    `SQRT(2)/(3·x·y)` is one fraction over `x·y`, not a fraction over x
+    multiplied by y, and not one with the `x·y` cleared into the numerator.
+    """
+    written = author_text(expression, Context(notation=Notation.DECIMAL))
+    assert written == expected
+    # And it means what it says: read back, it is the same expression with
+    # one third replaced by the six digits it was written to.
+    state = ParseState()
+    read = to_sympy(parse_expression(written, state).node, Context())
+    wanted = expression.subs(sp.Rational(1, 3), sp.Rational("0.333333")).subs(
+        sp.Rational(1, 7), sp.Rational("0.142857")
+    )
+    assert sp.simplify(read - wanted) == 0
 
 
 def test_a_power_of_ten_fences_itself_where_it_has_to() -> None:
@@ -254,11 +343,10 @@ def test_approx_answers_in_scientific_whatever_the_style(
 
 
 def test_the_value_behind_the_answer_is_the_exact_one() -> None:
-    """A decimal answer is what is written, and what is written is the value.
+    """What a decimal style shows is a view: the value behind it is untouched.
 
-    The original keeps the exact ratio behind a decimal display, so its
-    `3·#n` is 1 where ours is 0.999999. The difference is the worksheet's
-    model: here an entry *is* its text.
+    Read off the original, which answers all three of these the same way: the
+    third is still a third, however few of its digits are on the screen.
     """
     session = Session()
     session.author("Notation := Decimal")
@@ -266,7 +354,12 @@ def test_the_value_behind_the_answer_is_the_exact_one() -> None:
     answer = session.simplify("#2")
     assert answer.text == "0.333333"
     session.author(f"3 * #{answer.number}")
-    assert session.simplify(f"#{answer.number + 1}").text == "0.999999"
+    assert session.simplify(f"#{answer.number + 1}").text == "1"
+    session.author(f"#{answer.number} - 1/3")
+    assert session.simplify(f"#{answer.number + 3}").text == "0"
+    # And asking for it in rational notation shows the ratio it always was.
+    session.author("Notation := Rational")
+    assert session.simplify(f"#{answer.number}").text == "1/3"
 
 
 def test_an_answer_keeps_the_style_it_was_worked_out_in() -> None:

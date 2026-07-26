@@ -23,7 +23,7 @@ SQUAREFREE = Amount.SQUAREFREE
 RATIONAL = Amount.RATIONAL
 RADICAL = Amount.RADICAL
 
-APPROXIMATE = Context(precision=Precision.APPROXIMATE)
+APPROXIMATE = Context().with_precision(Precision.APPROXIMATE)
 
 
 def parse(text, state=None):

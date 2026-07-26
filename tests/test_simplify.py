@@ -53,8 +53,11 @@ def declared(*declarations, **settings):
     return Context(domains=domains, **settings)
 
 
-APPROXIMATE = Context(precision=Precision.APPROXIMATE)
-MIXED = Context(precision=Precision.MIXED)
+# Built the way a session builds them: taking the precision carries the
+# notation with it, so approximate arithmetic is read in the style that
+# suits it rather than as the ratios it is made of.
+APPROXIMATE = Context().with_precision(Precision.APPROXIMATE)
+MIXED = Context().with_precision(Precision.MIXED)
 COMPLEX_X = Context(domains={"x": Domain(DomainKind.COMPLEX)})
 POSITIVE_X = declared("x :epsilon Real (0, inf)")
 
@@ -569,7 +572,9 @@ def test_what_the_engine_has_no_mathematics_for_passes_through(text):
 
 @pytest.mark.parametrize(
     ("text", "expected"),
-    [("pi", "3.14159"), ("SQRT(3)", "1.73205"), ("1/2 + 1/6", "0.666667")],
+    # Two thirds is cut to `0.666666`, not rounded to `0.666667`: the
+    # approximation of it is two thirds, and six digits of that are sixes.
+    [("pi", "3.14159"), ("SQRT(3)", "1.73205"), ("1/2 + 1/6", "0.666666")],
     ids=str,
 )
 def test_approximate_mode(text, expected):
@@ -586,7 +591,7 @@ def test_approx_is_simplify_at_another_precision(text, expected):
 
 
 def test_approx_takes_the_digits_it_is_given():
-    assert approx(parse("pi"), Context(), 12).text == "3.14159265359"
+    assert approx(parse("pi"), Context(), 12).text == "3.14159265358"
 
 
 def test_a_number_that_needs_no_digits_does_not_get_any():
@@ -604,7 +609,8 @@ def test_exact_mode_reads_a_decimal_as_the_fraction_it_is():
 
 def test_mixed_mode_approximates_the_irrational_and_keeps_the_rational_exact():
     assert simp("SQRT(3)", MIXED) == "1.73205"
-    assert simp("1/3 + pi", MIXED) == "3.47493"
+    # Cut, not rounded: the sum is 1178/339, whose six digits are 3.47492.
+    assert simp("1/3 + pi", MIXED) == "3.47492"
     # The manual's own case: the difference of the two fractions is computed
     # exactly, so the root of it is exactly 2/3. Approximate mode rounds them
     # first and loses that.

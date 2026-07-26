@@ -140,6 +140,21 @@ class Entry:
     node: Node
     layout: Layout
     annotation: str = AUTHORED
+    exact: Node | None = None
+    """The value behind the line, where the notation shows less than all of it.
+
+    A decimal style shows one third as `0.333333` and saves it that way, and
+    that text read back is a different number. The original goes on computing
+    with the third, so `3·#n` is 1 and not 0.999999, and this is what makes
+    that so: what is drawn and saved is `node`, what a later command is given
+    is this. None where the two are the same, which is every authored line and
+    every answer under Rational notation.
+    """
+
+    @property
+    def value(self) -> Node:
+        """The tree a later command computes with."""
+        return self.node if self.exact is None else self.exact
 
     @property
     def height(self) -> int:
@@ -209,9 +224,20 @@ class Session:
             self.settings.assignment(setting), self.settings.assignment_node(setting)
         )
 
-    def _append(self, text: str, node: Node, annotation: str = AUTHORED) -> Entry:
+    def _append(
+        self,
+        text: str,
+        node: Node,
+        annotation: str = AUTHORED,
+        exact: Node | None = None,
+    ) -> Entry:
         entry = Entry(
-            self._next_number, text, node, render(node, self.options), annotation
+            self._next_number,
+            text,
+            node,
+            render(node, self.options),
+            annotation,
+            exact,
         )
         self._next_number += 1
         self.entries.append(entry)
@@ -312,7 +338,7 @@ class Session:
             domains=self.domains,
             assignments=self.assignments,
             functions=self.functions,
-            labels={entry.number: entry.node for entry in self.entries},
+            labels={entry.number: entry.value for entry in self.entries},
         )
 
     def simplify(self, request: str) -> Entry:
@@ -431,7 +457,7 @@ class Session:
             return self._answered(node, run, f"{prefix}({AUTHORED})")
         if entry is self.selected_entry and self.route:
             return self._answered_part(entry, run, prefix)
-        return self._answered(entry.node, run, f"{prefix}(#{entry.number})")
+        return self._answered(entry.value, run, f"{prefix}(#{entry.number})")
 
     def _labelled(self, node: Node) -> Entry | None:
         """The entry a bare `#3` names, or None when that is not what this is."""
@@ -445,7 +471,7 @@ class Session:
 
     def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
         result = run(node, self.context, self.state)
-        return self._append(result.text, result.node, annotation)
+        return self._append(result.text, result.node, annotation, result.value)
 
     def _answered_part(self, entry: Entry, run: Command, prefix: str) -> Entry:
         """`entry` again, with the highlighted part of it transformed.

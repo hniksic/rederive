@@ -21,9 +21,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from fractions import Fraction
 
 import sympy as sp
 
+from rederive.engine.approximation import simplest
 from rederive.engine.context import (
     Angle,
     Context,
@@ -289,11 +291,14 @@ class _Converter:
 
         Exact and Mixed read it as the rational it is, so `0.1` is one tenth
         and not the binary float nearest to it. Approximate rounds that
-        rational to the current precision.
+        rational to the current precision, which is where the difference
+        between the two modes comes from: the numbers going in are rounded,
+        and what is done with them afterwards is exact either way.
         """
         value = sp.Rational(str(node.value))
         if self.context.precision is Precision.APPROXIMATE:
-            return sp.Float(value, self.context.precision_digits)
+            digits = self.context.precision_digits
+            return sp.Rational(simplest(Fraction(value.p, value.q), digits))
         return value
 
     def _name(self, node: Node) -> sp.Basic:
