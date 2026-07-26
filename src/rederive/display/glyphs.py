@@ -106,20 +106,42 @@ def operator(canonical: str) -> str:
     return OPERATORS.get(canonical, canonical)
 
 
-def numeral(value: str, base: int) -> str:
+def numeral(value: str, base: int, digits: int) -> str:
     """`value`, decimal text from the parser, in the output base.
 
     Above base ten the digits run A to Z, and a numeral that would begin with
     a letter takes a leading zero so that it cannot be read as a variable
     name: fourteen is `0E` in hexadecimal, not `E`. A value carrying a radix
-    point is shown as written whatever the base, since converting a fraction
-    would be arithmetic and this layer does none. A ratio, which is what a
-    numeral worth no finite decimal carries, has each of its two whole halves
-    converted.
+    point is shown to `digits` significant digits and otherwise as written
+    whatever the base, since converting a fraction would be arithmetic and
+    this layer does none. A ratio, which is what a numeral worth no finite
+    decimal carries, has each of its two whole halves converted.
     """
-    if base == 10 or "." in value:
+    if "." in value:
+        return _fraction(value, digits)
+    if base == 10:
         return value
     return "/".join(_whole(part, base) for part in value.split("/"))
+
+
+def _fraction(value: str, digits: int) -> str:
+    """A numeral with a radix point, cut to `digits` significant digits.
+
+    Cut, never rounded, and never into the whole part: `12345.67891` has spent
+    five of its six digits before it reaches the point, and `1234567.891` all
+    of them, so each keeps the one fractional digit a number written with a
+    point cannot do without. The zeros a small number leads with hold a place
+    rather than say a digit, which is why `0.000123456789` keeps six of its
+    own. Zeros left trailing by the cut say nothing either, and go the way the
+    lexer sends the ones that were written.
+    """
+    integer, _, fraction = value.partition(".")
+    whole = integer.lstrip("0")
+    if whole:
+        keep = max(digits - len(whole), 1)
+    else:
+        keep = digits + len(fraction) - len(fraction.lstrip("0"))
+    return integer + "." + (fraction[:keep].rstrip("0") or "0")
 
 
 def _whole(value: str, base: int) -> str:

@@ -168,8 +168,11 @@ class Engine:
     def _build(self, node: Node, level: int, budget: int | None) -> Box:
         match node.kind:
             case Kind.NUMBER:
-                base = self.options.output_base
-                return text(glyphs.numeral(str(node.value), base), node)
+                options = self.options
+                shown = glyphs.numeral(
+                    str(node.value), options.output_base, options.notation_digits
+                )
+                return text(shown, node)
             case Kind.NAME:
                 return text(glyphs.name(str(node.value)), node)
             case Kind.STRING:

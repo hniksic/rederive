@@ -313,6 +313,21 @@ def test_the_output_radix_reaches_the_renderer():
     assert session.author("26").layout.lines == ("1A",)
 
 
+def test_the_notation_digits_reach_the_renderer():
+    session = Session()
+    assert session.author("0.123456789").layout.lines == ("0.123456",)
+    session.author("NotationDigits := 9")
+    assert session.author("0.123456789").layout.lines == ("0.123456789",)
+
+
+def test_showing_fewer_digits_is_not_keeping_fewer():
+    """A cut render says nothing about the number: the value is the whole of it."""
+    session = Session()
+    assert session.author("0.10000000000000001").layout.lines == ("0.1",)
+    session.author("0.10000000000000001 - 1/10")
+    assert session.simplify("#2").text == "1/100000000000000000"
+
+
 def test_the_times_operator_and_the_format_reach_the_renderer():
     settings = Settings()
     session = Session(settings)

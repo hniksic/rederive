@@ -19,13 +19,15 @@ IMPLICIT = "Implicit"
 class DisplayOptions:
     """The settings a render depends on.
 
-    `compressed` is `DisplayFormat := Compressed`, `height` is the number of
-    rows the pane can show. `None` means lay out freely; a render that would
-    be taller degrades its outermost divisions and matrices to linear forms
-    until it fits.
+    `compressed` is `DisplayFormat := Compressed`, `notation_digits` is
+    `NotationDigits`, the significant digits a number with a radix point is
+    shown to, and `height` is the number of rows the pane can show. `None`
+    means lay out freely; a render that would be taller degrades its outermost
+    divisions and matrices to linear forms until it fits.
     """
 
     times: str = DOT
     compressed: bool = False
     output_base: int = 10
+    notation_digits: int = 6
     height: int | None = None

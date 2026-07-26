@@ -284,6 +284,7 @@ class Session:
             times=str(self.settings["TimesOperator"]),
             compressed=self.settings["DisplayFormat"] == "Compressed",
             output_base=self.settings.base("OutputBase"),
+            notation_digits=int(self.settings["NotationDigits"]),
         )
 
     def _settings_changed(self, changed: frozenset[str]) -> None:

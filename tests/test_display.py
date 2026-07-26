@@ -560,7 +560,46 @@ def test_a_numeral_with_a_radix_point_is_shown_as_written() -> None:
 def test_output_radix_of_a_ratio(value: str, base: int, expected: str) -> None:
     # What a numeral carries when no finite decimal is worth it: `0.1` read in
     # base three. Both halves are whole, so both convert.
-    assert glyphs.numeral(value, base) == expected
+    assert glyphs.numeral(value, base, 6) == expected
+
+
+# -- notation digits --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("0.123456789", "0.123456"),
+        ("12345.67891", "12345.6"),
+        ("1234567.891", "1234567.8"),
+        ("0.000123456789", "0.000123456"),
+        # Cut, not rounded: the digit after the last one shown never carries.
+        ("0.9999999", "0.999999"),
+        ("1.9999999", "1.99999"),
+        # A cut that leaves nothing but zeros leaves the point its one digit.
+        ("0.10000000000000001", "0.1"),
+        ("1.0000001", "1.0"),
+        # A whole number is exact, and is shown in full.
+        ("123456789", "123456789"),
+    ],
+)
+def test_notation_digits(text: str, expected: str) -> None:
+    assert rendered(text) == [expected]
+
+
+def test_a_ratio_is_shown_in_full() -> None:
+    # Rational notation says what it is worth however long that is; there is
+    # nothing to cut, the two halves being whole.
+    assert glyphs.numeral("1/3", 10, 6) == "1/3"
+
+
+@pytest.mark.parametrize(
+    ("digits", "expected"),
+    [(1, "3.1"), (3, "3.14"), (12, "3.14159265358")],
+)
+def test_notation_digits_is_the_setting(digits: int, expected: str) -> None:
+    options = DisplayOptions(notation_digits=digits)
+    assert rendered("3.14159265358979", options) == [expected]
 
 
 # -- the selection tree -----------------------------------------------------
