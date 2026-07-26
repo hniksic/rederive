@@ -1,40 +1,13 @@
 """Smoke tests driving the real app through Textual's pilot."""
 
 import pytest
-from rich.text import Text
-from textual.widgets import Static
+from screen import highlighted, highlighted_expression, message, text_of
 
 from rederive.ui.app import RederiveApp
-from rederive.ui.theme import STYLES
-
-
-def _text(widget):
-    """The Rich text a widget currently shows."""
-    content = getattr(widget, "content", None)
-    return content if isinstance(content, Text) else widget.render()
-
-
-def _styled(widget, style):
-    """The runs of `widget`'s rendered text carrying `style`."""
-    text = _text(widget)
-    return [
-        text.plain[span.start : span.end]
-        for span in text.spans
-        if span.style == style
-    ]
 
 
 def highlighted_menu_option(app):
-    options = _styled(app.query_one("#menu"), STYLES["option-highlight"])
-    return options[0] if options else None
-
-
-def highlighted_expression(app):
-    return "".join(_styled(app.query_one("#work-content", Static), STYLES["selection"]))
-
-
-def message(app):
-    return _text(app.query_one("#message")).plain.strip()
+    return highlighted(app)
 
 
 @pytest.fixture
@@ -73,7 +46,7 @@ async def test_author_appends_and_selects_the_new_entry(app):
         assert [entry.text for entry in app.session.entries] == ["x (x + 1)"]
         assert highlighted_expression(app) == "x (x + 1)"
         assert message(app) == "Enter option"
-        assert _text(app.query_one("#status")).plain.strip().startswith("User")
+        assert text_of(app.query_one("#status")).plain.strip().startswith("User")
 
 
 async def test_escape_abandons_the_author_line(app):

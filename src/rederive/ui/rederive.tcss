@@ -32,6 +32,12 @@ Screen {
     color: $rd-option;
 }
 
+/* Options dialogs stand where the menu does, and are colored like it. */
+#fields {
+    height: 2;
+    color: $rd-option;
+}
+
 #author-band {
     height: 2;
 }

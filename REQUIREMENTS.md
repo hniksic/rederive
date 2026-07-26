@@ -242,18 +242,20 @@ A pane is built from the same four horizontal bands the DOS version used:
 
 Derive colors eight slots, and the remake keeps them: a foreground and
 background for the work area, and Frame, Option, Prompt, Status, Background
-and Border for the chrome. A preset is therefore a table of eight color
-numbers.
+and Border for the chrome. A scheme is therefore a table of eight colors.
 
-- **R-COL1.** Default theme: the original's factory colors - white
+- **R-COL1.** Default scheme: the original's factory colors - white
   expressions on black, red frame, yellow menu, red message line, green
-  status line. Exact numbers in `src/rederive/ui/theme.py`.
-- **R-COL2.** At least one alternate preset: green-phosphor (green on
+  status line.
+- **R-COL2 (deferred).** An alternate preset: green-phosphor (green on
   black).
-- **R-COL3.** A monochrome preset, matching the original's later factory
-  settings: white expressions on black, gray chrome.
+- **R-COL3 (deferred).** A monochrome preset, matching the original's
+  later factory settings: white expressions on black, gray chrome.
 - **R-COL4.** The selected expression is a solid inverse-video block (light
-  background, dark text), as in the screenshots, in every theme.
+  background, dark text), as in the screenshots, in every scheme.
+
+Presets (R-COL2, R-COL3) are deferred: a preset menu has no precedent in the
+original's menu tree, and the per-slot commands cover the same ground.
 
 ### 4.3 Menus and keybindings
 
@@ -715,15 +717,24 @@ worksheets need reordering for readability.
 
 | Command | Original behavior | Disposition |
 |---|---|---|
-| Color | Menu/work-area color settings. | UI, Tier 1 (R-COL1-4) |
-| Display | Text vs. graphics screen mode. | Superseded by R-TYPE1-3; no toggle needed |
-| Execute | Shell out to DOS. | Out |
+| Color | Menu/work-area color settings. | UI, Tier 1 (R-COL1-4). Colors are chosen by name from a submenu, not by the original's EGA number. |
+| Display | Text vs. graphics screen mode. | Superseded by R-TYPE1-3; no toggle needed. Dropped from the menu. |
+| Execute | Shell out to DOS. | Out. Dropped from the menu. |
 | Input | Character vs. Word naming mode; case sensitivity; default arrow-key mode. | Core, Tier 1. Both modes are implemented, with Derive's own defaults: Character mode (`xyz` parses as `x*y*z`) and case-insensitive. Word mode is a user option, not the default. Arrow-key default ties to the `F6` toggle. |
 | Mute | Error beep on/off. | UI, Tier 3 |
 | Notation | Number display style + digits. | Core, Tier 2 (5.6) |
 | Output | Normal/Compressed spacing; multiplication glyph (asterisk/dot/implicit). | UI, Tier 3 |
 | Precision | Exact/Approximate/Mixed + digits. | Core, Tier 1 (5.6) |
 | Radix | Input/output base 2-36. | Core, Tier 3 (5.6) |
+
+- **R-OPT1.** Changing a setting appends a `Name := Value` expression to the
+  history, as the original does, one per changed field and none for `Color`
+  or `Mute`. The same syntax sets the setting from the author line, which is
+  what lets a worksheet replay its own settings (R-WS4).
+- **R-OPT2.** Settings are saved and loaded on request, never written back
+  automatically at exit. Do what the original does: `Transfer Save State`
+  writes the current settings to a file, `Transfer Load State` reads them
+  back, and a settings file found at startup is loaded then.
 
 **Transfer submenu:**
 
@@ -732,7 +743,7 @@ worksheets need reordering for readability.
 | Load Derive / Merge | Replace with, or append, expressions from a `.MTH` file. | File, Tier 1 (R-WS5) |
 | Load Utility | Load definitions without displaying them. | File, Tier 1 (R-LIB1-3) |
 | Load daTa | Load numeric data arrays. | File, Tier 2 |
-| Load/Save State | Settings persistence. | File, Tier 2 (per-worksheet settings, R-WS2) |
+| Load/Save State | Settings persistence. | File, Tier 2 (R-OPT2) |
 | Save Derive | Save the worksheet. | File, Tier 1 (section 7) |
 | Save Basic/C/Fortran/Pascal | Export an expression as source code. | Tier 3, genuinely cheap: sympy ships code printers (`pycode`, `ccode`, `fcode`) |
 | Clear All/Expressions/Functions/Variables | Granular state reset. | UI/File, Tier 2 (R-WS5) |
@@ -809,9 +820,12 @@ worksheet format is a deliberate improvement.
     notes) - Windows-era worksheets used this heavily.
   - Embedded plot definitions, optionally with a cached rendered image so a
     reopened worksheet shows plots without recomputation.
-  - Per-worksheet settings (precision, notation, variable ordering,
-    declared domains). Derive 6 moved settings from global-only to
-    per-worksheet; inherit that model.
+  - Settings, as the ordinary `Name := Value` assignments they already are
+    among the entries (R-OPT1), which is how `.MTH` files carried them: a
+    worksheet restores its own precision, notation and radix by being
+    replayed, with no settings section of its own. Settings that are not
+    recorded that way, such as colors, are not worksheet state; they belong
+    to the settings file of R-OPT2.
   - Function/variable definitions authored in the worksheet.
 - **R-WS3.** Concrete syntax and extension are an implementation decision: a
   lightweight custom text syntax, or a documented structured format
