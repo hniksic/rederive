@@ -57,5 +57,16 @@ def message(app):
     return text_of(app.query_one("#message")).plain.strip()
 
 
+def annotation(app):
+    """The status line's left field: where the selected entry came from."""
+    return text_of(app.query_one("#status")).plain.strip().split("  ")[0]
+
+
+def prompt(app):
+    """The prompt band: what it asks for, and what is on the line."""
+    label = text_of(app.query_one("#prompt-label")).plain
+    return label.strip(), app.query_one("#prompt-input").value
+
+
 def entries(app):
     return [entry.text for entry in app.session.entries]

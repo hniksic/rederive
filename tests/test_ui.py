@@ -2,10 +2,12 @@
 
 import pytest
 from screen import (
+    annotation,
     highlighted,
     highlighted_expression,
     highlighted_rows,
     message,
+    prompt,
     text_of,
     work_area,
 )
@@ -65,7 +67,7 @@ async def test_a_syntax_error_leaves_the_author_line_up(app):
         await pilot.press("enter")
         assert app.session.entries == []
         assert message(app) == "Syntax error detected at cursor"
-        author_input = app.query_one("#author-input")
+        author_input = app.query_one("#prompt-input")
         assert author_input.value == "12.34.5"
         # Positioned where Derive stops reading: the second decimal point.
         assert author_input.cursor_position == 5
@@ -131,6 +133,94 @@ async def test_arrow_keys_walk_the_expression_structure(app):
         assert highlighted_expression(app) == "x·(x + 1)"
         # The menu highlight never moved while the arrows walked the history.
         assert highlighted_menu_option(app) == "Author"
+
+
+async def test_simplify_offers_the_highlighted_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2 (8 + 7) / 3^2")
+        await pilot.press("s")
+        assert prompt(app) == ("SIMPLIFY expression:", "#1")
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        assert work_area(app) == [
+            "      2·(8 + 7)",
+            "     ───────────",
+            "#1:        2",
+            "          3",
+            "",
+            "      10",
+            "#2:  ────",
+            "       3",
+        ]
+        assert highlighted_expression(app) == " 10\n────\n  3"
+        assert message(app).startswith("Compute time:")
+        assert annotation(app) == "Simp(#1)"
+
+
+async def test_simplify_of_a_part_copies_the_rest_of_the_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2 (8 + 7) / 3^2")
+        await pilot.press("right", "right")
+        assert highlighted_rows(app) == [" 2", "3"]
+        await pilot.press("s", "enter")
+        assert [entry.text for entry in app.session.entries][-1] == "2 (8 + 7) / 9"
+        assert highlighted_expression(app) == " 2·(8 + 7)\n───────────\n     9"
+        # The quote says that only part of the expression was simplified.
+        assert annotation(app) == "Simp(#1')"
+
+
+async def test_a_typed_expression_is_simplified_as_the_users_own(app):
+    async with app.run_test() as pilot:
+        await pilot.press("s")
+        # Nothing is highlighted, so nothing is offered.
+        assert prompt(app) == ("SIMPLIFY expression:", "")
+        await pilot.press(*"2+3")
+        await pilot.press("enter")
+        assert work_area(app) == ["#1:  5"]
+        assert annotation(app) == "Simp(User)"
+
+
+async def test_a_typed_label_replaces_the_one_offered(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "3 + 4")
+        await author(pilot, "5 + 6")
+        # The number comes up selected, so typing one replaces it.
+        await pilot.press("s")
+        await pilot.press("1")
+        assert prompt(app) == ("SIMPLIFY expression:", "#1")
+        await pilot.press("enter")
+        assert work_area(app)[-1] == "#3:  7"
+        assert annotation(app) == "Simp(#1)"
+
+
+async def test_the_annotation_follows_the_selection(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2^3")
+        await pilot.press("s", "enter")
+        assert annotation(app) == "Simp(#1)"
+        await pilot.press("up")
+        assert highlighted_expression(app) == " 3\n2"
+        assert annotation(app) == "User"
+
+
+async def test_simplify_leaves_a_line_that_does_not_read_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("s")
+        await pilot.press(*"+")
+        await pilot.press("enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert [entry.text for entry in app.session.entries] == ["x"]
+        await pilot.press("escape")
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_simplify_asks_for_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("s", "enter")
+        assert app.session.entries == []
+        assert message(app) == "Enter option"
 
 
 async def test_quit_asks_before_abandoning_expressions(app):

@@ -42,18 +42,19 @@ Screen {
     color: $rd-option;
 }
 
-#author-band {
+#prompt-band {
     height: 2;
 }
 
-/* The author prompt takes the Option color, not the Prompt color: in Derive it
-   is yellow like the menu, while the message line below it is red. */
-#author-prompt {
+/* The prompt label takes the Option color, not the Prompt color: in the
+   original it is yellow like the menu, while the message line below it is
+   red. */
+#prompt-label {
     width: auto;
     color: $rd-option;
 }
 
-#author-input {
+#prompt-input {
     width: 1fr;
     height: 1;
     border: none;
@@ -63,7 +64,7 @@ Screen {
     color: $rd-work-foreground;
 }
 
-#author-input > .input--cursor {
+#prompt-input > .input--cursor {
     background: $rd-selection-background;
     color: $rd-work-background;
 }

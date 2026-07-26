@@ -1,13 +1,18 @@
 """The Algebra session: the numbered history and what is selected in it.
 
 Pure Python - no Textual, no key names. The UI layer translates key presses
-into calls on `Session` and paints the result. This is the seed of the session
-layer that will later sit between the TUI and the math engine.
+into calls on `Session` and paints the result. This is the session layer, and
+it is where the math engine is reached from: the UI never calls a command
+itself, it asks the session for one.
 
 The session owns the three things an authored line needs: the parse state, so
 that `InputMode`, `CaseMode` and every definition reach the lines that follow;
 the settings, which an authored `Name := Value` writes to exactly as an Options
 dialog does; and the render of each entry, made once when the entry is authored.
+
+It also owns what the lines have defined - values, function bodies and variable
+domains - because only the tree holds those, and every engine command reads
+them. `Session.context` is that plus the settings, in the form the engine takes.
 
 A render is not remade. Switching the times operator or the display format
 changes how later expressions are drawn and leaves the ones already on screen
@@ -17,10 +22,12 @@ when it was entered.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
+from rederive import engine
 from rederive.display import DisplayOptions, Layout, Region, render
-from rederive.model.expr import Node
+from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
 from rederive.syntax import (
     PARSING_SETTINGS,
@@ -35,15 +42,25 @@ from rederive.syntax import (
 Route = tuple[int, ...]
 Rect = tuple[int, int, int, int]
 
+#: What the status line says about a line the user wrote.
+AUTHORED = "User"
+
 
 @dataclass(frozen=True)
 class Entry:
-    """One numbered line of the history: what was authored, and how it looks."""
+    """One numbered line of the history: what was authored, and how it looks.
+
+    `annotation` is where the entry came from, as the status line reports it:
+    `User` for a line that was written, `Simp(#3)` for one a Simplify derived
+    from entry 3, and `Simp(#3')` when only the highlighted part of entry 3
+    was simplified.
+    """
 
     number: int
     text: str
     node: Node
     layout: Layout
+    annotation: str = AUTHORED
 
     @property
     def height(self) -> int:
@@ -69,6 +86,10 @@ class Session:
         self.entries: list[Entry] = []
         self.selected: int | None = None
         self.route: Route = ()
+        #: What the lines so far have defined, for the engine to substitute.
+        self.assignments: dict[str, Node] = {}
+        self.functions: dict[str, engine.Definition] = {}
+        self.domains: dict[str, engine.Domain] = {}
         self._next_number = 1
         self.settings.watch(self._settings_changed)
         self._settings_changed(PARSING_SETTINGS)
@@ -90,6 +111,7 @@ class Session:
         result = parse_expression(text, self.state)
         for declaration in result.declarations:
             self.declare(declaration)
+        self._define(result.node, result.declarations)
         return self._append(text, result.node)
 
     def record(self, setting: str) -> Entry:
@@ -104,13 +126,61 @@ class Session:
             self.settings.assignment(setting), self.settings.assignment_node(setting)
         )
 
-    def _append(self, text: str, node: Node) -> Entry:
-        entry = Entry(self._next_number, text, node, render(node, self.options))
+    def _append(self, text: str, node: Node, annotation: str = AUTHORED) -> Entry:
+        entry = Entry(
+            self._next_number, text, node, render(node, self.options), annotation
+        )
         self._next_number += 1
         self.entries.append(entry)
         self.selected = len(self.entries) - 1
         self.route = ()
         return entry
+
+    def _define(self, node: Node, declarations: Iterable[Declaration]) -> None:
+        """Record what a line defines: a value, a function body, or a domain.
+
+        The parse state knows which names are taken; what they stand for lives
+        in the tree and nowhere else, so this is what carries `x := 5` to the
+        next command. A setting is not a variable: `Notation := Mixed` defines
+        nothing, and the declarations say which names those are.
+        """
+        settings = {
+            declaration.setting
+            for declaration in declarations
+            if isinstance(declaration, SettingDeclaration)
+        }
+        for found in _subtrees(node):
+            match found.kind:
+                case Kind.ASSIGN:
+                    self._assigned(found, settings)
+                case Kind.FUNDEF:
+                    self._defined(found)
+                case Kind.DOMAIN:
+                    declared = engine.domain_of_node(found)
+                    if declared is not None:
+                        self.domains[declared[0]] = declared[1]
+
+    def _assigned(self, node: Node, settings: set[str]) -> None:
+        """`x := 5` gives x a value; `x :=` with nothing after it takes it away."""
+        target = node.children[0]
+        if target.kind is not Kind.NAME:
+            return
+        name = str(target.value)
+        if name in settings:
+            return
+        if len(node.children) > 1:
+            self.assignments[name] = node.children[1]
+        else:
+            self.assignments.pop(name, None)
+
+    def _defined(self, node: Node) -> None:
+        """`F(x) := x^2` gives F a body; `F(x) :=` leaves F an arbitrary function."""
+        name = str(node.value)
+        parameters = tuple(str(child.value) for child in node.children[0].children)
+        if len(node.children) > 1:
+            self.functions[name] = (parameters, node.children[1])
+        else:
+            self.functions.pop(name, None)
 
     def declare(self, declaration: Declaration) -> None:
         """Apply one declaration: a setting to the settings, the rest to the state.
@@ -142,6 +212,77 @@ class Session:
         for setting in changed & PARSING_SETTINGS:
             value = str(self.settings[setting])
             self.state.declare(SettingDeclaration(setting, value))
+
+    # -- commands ----------------------------------------------------------
+
+    @property
+    def context(self) -> engine.Context:
+        """Everything an engine command's answer may depend on.
+
+        The whole history is offered as labels, so `#3` stands for entry 3
+        wherever it is written, and every entry is one whether or not anything
+        refers to it.
+        """
+        return engine.Context.from_settings(
+            self.settings,
+            domains=self.domains,
+            assignments=self.assignments,
+            functions=self.functions,
+            labels={entry.number: entry.node for entry in self.entries},
+        )
+
+    def simplify(self, request: str) -> Entry:
+        """Append the simplified form of the expression `request` names.
+
+        `#3` on its own is entry 3. When that is the entry the selection is in
+        and only part of it is highlighted, that part alone is simplified and
+        the rest of the entry is copied around it; the annotation marks such an
+        entry with a quote. Any other text is an expression in its own right,
+        simplified as it stands, and is annotated as the user's.
+
+        Raises `DeriveSyntaxError` and appends nothing when `request` does not
+        parse.
+        """
+        node = parse_expression(request, self.state).node
+        entry = self._labelled(node)
+        if entry is None:
+            return self._simplified(node, f"Simp({AUTHORED})")
+        if entry is self.selected_entry and self.route:
+            return self._simplify_part(entry)
+        return self._simplified(entry.node, f"Simp(#{entry.number})")
+
+    def _labelled(self, node: Node) -> Entry | None:
+        """The entry a bare `#3` names, or None when that is not what this is."""
+        if node.kind is not Kind.LABEL:
+            return None
+        try:
+            number = int(str(node.value))
+        except ValueError:
+            return None
+        return next((entry for entry in self.entries if entry.number == number), None)
+
+    def _simplified(self, node: Node, annotation: str) -> Entry:
+        result = engine.simplify(node, self.context, self.state)
+        return self._append(result.text, result.node, annotation)
+
+    def _simplify_part(self, entry: Entry) -> Entry:
+        """`entry` again, with the highlighted part of it simplified.
+
+        The answer is spliced into the entry's own text and the whole line read
+        back, so that the new entry's spans index its text exactly as an
+        authored line's do. The splice is fenced unless it is a single atom,
+        and fences the line already carries are left where they are: a pair too
+        many changes nothing about how the line reads or is drawn, since what
+        is drawn comes from the tree, where a fence is a matter of precedence
+        rather than of text. A pair too few would change what the line says.
+        """
+        part = self.selected_node
+        assert part is not None
+        result = engine.simplify(part, self.context, self.state)
+        fragment = result.text if result.node.is_atom else f"({result.text})"
+        text = entry.text[: part.start] + fragment + entry.text[part.end :]
+        node = parse_expression(text, self.state).node
+        return self._append(text, node, f"Simp(#{entry.number}')")
 
     # -- selection ---------------------------------------------------------
 
@@ -257,3 +398,13 @@ class Session:
 
     def move_last_entry(self) -> bool:
         return self.select_entry(len(self.entries) - 1)
+
+
+def _subtrees(node: Node) -> Iterator[Node]:
+    """`node` and everything under it.
+
+    A definition need not be the whole line: `[x := 1, y := 2]` defines both.
+    """
+    yield node
+    for child in node.children:
+        yield from _subtrees(child)

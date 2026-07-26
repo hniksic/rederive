@@ -11,16 +11,22 @@ keystrokes instead.
 Submenus and Options dialogs stack on top of the command menu: Esc pops one
 level, and committing a dialog returns all the way to the command menu, as the
 original does.
+
+A command that needs an expression - Author, Simplify - takes the screen with
+the prompt band instead, which is one Input with a label in front of it. The
+mode says which command the line belongs to, and so what Enter does with it.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Input, Static
+from textual.widgets.input import Selection
 
 from rederive.model.session import Session
 from rederive.model.settings import ChoiceField, Dialog, DialogEditor, Settings
@@ -39,13 +45,21 @@ from rederive.ui.widgets import (
 
 MODE_MENU = "menu"
 MODE_AUTHOR = "author"
+MODE_SIMPLIFY = "simplify"
 MODE_CONFIRM_QUIT = "confirm_quit"
+
+#: The modes in which the prompt band has the screen, and the keys with it.
+PROMPT_MODES = (MODE_AUTHOR, MODE_SIMPLIFY)
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
 ENTER_EXPRESSION = "Enter expression (press F1 for help)"
+ENTER_TO_SIMPLIFY = "Enter expression"
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
+SIMPLIFY_PROMPT = " SIMPLIFY expression: "
+#: What the message line says once an answer is in.
+COMPUTE_TIME = "Compute time: {seconds:.1f} seconds"
 
 #: What the navigation keys mean inside an Options dialog's number field.
 CURSOR_MOVES = {
@@ -109,6 +123,7 @@ class RederiveApp(App[None]):
             "Author": self._command_author,
             "Options": self._command_options,
             "Quit": self._command_quit,
+            "Simplify": self._command_simplify,
         }
 
     # -- composition -------------------------------------------------------
@@ -122,15 +137,17 @@ class RederiveApp(App[None]):
         yield MenuBand(id="menu")
         yield FieldBand(id="fields")
         yield Horizontal(
-            Static(AUTHOR_PROMPT, id="author-prompt"),
-            Input(id="author-input"),
-            id="author-band",
+            Static(AUTHOR_PROMPT, id="prompt-label"),
+            # The prompt decides for itself what comes up selected, which is
+            # the label number alone and never the `#` in front of it.
+            Input(id="prompt-input", select_on_focus=False),
+            id="prompt-band",
         )
         yield MessageLine(id="message")
         yield StatusLine(id="status")
 
     def on_mount(self) -> None:
-        self.query_one("#author-band").display = False
+        self.query_one("#prompt-band").display = False
         self.query_one("#fields").display = False
         self.refresh_screen()
 
@@ -153,7 +170,9 @@ class RederiveApp(App[None]):
             self.session.entries, self.session.selected, self.session.selection_rect()
         )
         editor = self.editor
-        self.query_one("#menu").display = editor is None and self.mode != MODE_AUTHOR
+        self.query_one("#menu").display = (
+            editor is None and self.mode not in PROMPT_MODES
+        )
         self.query_one("#fields").display = editor is not None
         if editor is not None:
             self.query_one(FieldBand).show(editor)
@@ -165,8 +184,10 @@ class RederiveApp(App[None]):
             highlighted = None if self.mode == MODE_CONFIRM_QUIT else cursor.index
             self.query_one(MenuBand).show(cursor.menu, highlighted)
         self.query_one(MessageLine).show(self.message)
-        annotation = "User" if self.session.selected_entry is not None else ""
-        self.query_one(StatusLine).show(annotation)
+        # The annotation belongs to the entry, so it follows the selection: it
+        # says where the expression now highlighted came from.
+        entry = self.session.selected_entry
+        self.query_one(StatusLine).show("" if entry is None else entry.annotation)
 
     def _set_message(self, message: str) -> None:
         self.message = message
@@ -193,7 +214,7 @@ class RederiveApp(App[None]):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Menu and navigation keys only apply while a command band is up.
 
-        While the author line has the screen they all belong to the Input, down
+        While a prompt line has the screen they all belong to the Input, down
         to Space and Backspace.
         """
         if action.startswith("menu_") or action in ("nav", "scroll_work"):
@@ -215,10 +236,10 @@ class RederiveApp(App[None]):
                 self.exit()
             else:
                 self._return_to_menu(ENTER_OPTION)
-        elif self.mode == MODE_AUTHOR and event.key == "escape":
+        elif self.mode in PROMPT_MODES and event.key == "escape":
             event.stop()
             event.prevent_default()
-            self._end_author()
+            self._end_prompt()
 
     def _typed(self, character: str) -> None:
         """A letter or digit while a menu or a dialog is up."""
@@ -403,13 +424,29 @@ class RederiveApp(App[None]):
     # -- commands ----------------------------------------------------------
 
     def _command_author(self) -> None:
-        self.mode = MODE_AUTHOR
+        self._prompt(MODE_AUTHOR, AUTHOR_PROMPT, "", ENTER_EXPRESSION)
+
+    def _command_simplify(self) -> None:
+        """Ask which expression to simplify, offering the highlighted one."""
+        entry = self.session.selected_entry
+        offered = "" if entry is None else f"#{entry.number}"
+        self._prompt(MODE_SIMPLIFY, SIMPLIFY_PROMPT, offered, ENTER_TO_SIMPLIFY)
+
+    def _prompt(self, mode: str, label: str, offered: str, message: str) -> None:
+        """Put the prompt band up for a command that reads an expression.
+
+        What is offered comes up selected, so that typing a label number
+        replaces it and Enter alone accepts it.
+        """
+        self.mode = mode
         self.query_one("#menu").display = False
-        self.query_one("#author-band").display = True
-        author_input = self.query_one("#author-input", Input)
-        author_input.value = ""
-        author_input.focus()
-        self._set_message(ENTER_EXPRESSION)
+        self.query_one("#prompt-band").display = True
+        self.query_one("#prompt-label", Static).update(label)
+        line = self.query_one("#prompt-input", Input)
+        line.value = offered
+        line.selection = Selection(min(1, len(offered)), len(offered))
+        line.focus()
+        self._set_message(message)
 
     def _command_options(self) -> None:
         self._open(menus.OPTIONS)
@@ -423,30 +460,58 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter on the author line: the whole line, wherever the cursor is.
+        """Enter on a prompt line: the whole line, wherever the cursor is."""
+        event.stop()
+        if self.mode == MODE_SIMPLIFY:
+            self._simplify(event.value)
+        else:
+            self._author(event.value)
+
+    def _author(self, text: str) -> None:
+        """Enter the line as a new expression.
 
         A line that does not parse is not entered. Derive says so, beeps, and
         leaves the line up with the cursor where it stopped reading - which may
         be anywhere to the right of the mistake.
         """
-        event.stop()
-        if not event.value.strip():
+        if not text.strip():
             return
         try:
-            self.session.author(event.value)
+            self.session.author(text)
         except DeriveSyntaxError as error:
-            self._beep()
-            self._set_message(str(error))
-            self.query_one("#author-input", Input).cursor_position = error.offset
+            self._refused(error)
             return
-        self._end_author()
+        self._end_prompt()
 
-    def _end_author(self) -> None:
-        self.query_one("#author-input", Input).value = ""
-        self.query_one("#author-band").display = False
+    def _simplify(self, request: str) -> None:
+        """Simplify what the line asks for, and say how long the answer took.
+
+        An empty line asks for nothing, so it leaves the history alone. A line
+        that does not read stays up to be corrected, as an authored one does.
+        """
+        if not request.strip():
+            self._end_prompt()
+            return
+        started = time.monotonic()
+        try:
+            self.session.simplify(request)
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return
+        self._end_prompt(COMPUTE_TIME.format(seconds=time.monotonic() - started))
+
+    def _refused(self, error: DeriveSyntaxError) -> None:
+        """Say where the line stopped reading, and leave it up."""
+        self._beep()
+        self._set_message(str(error))
+        self.query_one("#prompt-input", Input).cursor_position = error.offset
+
+    def _end_prompt(self, message: str = ENTER_OPTION) -> None:
+        self.query_one("#prompt-input", Input).value = ""
+        self.query_one("#prompt-band").display = False
         self.query_one("#menu").display = True
         self.set_focus(None)
-        self._return_to_menu(ENTER_OPTION)
+        self._return_to_menu(message)
 
     def _return_to_menu(self, message: str) -> None:
         self.mode = MODE_MENU
