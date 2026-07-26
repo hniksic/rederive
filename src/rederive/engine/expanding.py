@@ -255,16 +255,26 @@ def _collected(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr
     return sp.Add(
         *(
             sp.Mul(*(base**power for base, power in zip(variables, degrees)))
-            * _coefficient(rest)
+            * _coefficient(rest, degrees)
             for degrees, rest in groups.items()
         )
     )
 
 
-def _coefficient(terms: list[sp.Expr]) -> sp.Expr:
-    """What the terms of one degree carry, with any common factor outside."""
-    if len(terms) == 1:
-        return terms[0]
+def _coefficient(terms: list[sp.Expr], degrees: tuple[sp.Expr, ...]) -> sp.Expr:
+    """What the terms of one degree carry, with any common factor outside.
+
+    Only where there is a degree for them to be the coefficient of. The group
+    at degree zero is everything the expansion variables did not reach, and
+    that is the whole expression when they reach nothing - taking a common
+    factor out of it is not collecting a coefficient, it is factoring, which is
+    the opposite of what this command does. `2*SIN(x) + 2*COS(x)` is left as it
+    stands rather than collected, and `LN(x^2 - x) - LN(x)` is left alone
+    rather than written `LN(x*(x - 1)) - LN(x)`, which is `factor_terms`
+    reaching inside a logarithm to factor its argument.
+    """
+    if len(terms) == 1 or not any(degrees):
+        return sp.Add(*terms)
     return sp.factor_terms(sp.Add(*terms))
 
 

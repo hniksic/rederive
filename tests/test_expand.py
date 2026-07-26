@@ -105,6 +105,22 @@ def test_a_factor_free_of_the_variables_is_not_reached_into():
     assert exp(text, variables=["x"]) == "x^2*(y + 1)^2 + 2*x*(y + 1)^2 + (y + 1)^2"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Collecting these would be factoring, and Expand does not factor.
+        ("2*SIN(x) + 2*COS(x)", "2*SIN(x) + 2*COS(x)"),
+        # And this one factors inside the logarithm, which is worse.
+        ("LN(x^2 - x) - LN(x)", "LN(x^2 - x) - LN(x)"),
+    ],
+    ids=str,
+)
+def test_nothing_is_collected_out_of_the_degree_zero_group(text, expected):
+    """What the expansion variables did not reach is the whole expression when
+    they reach nothing, and it is not a coefficient of anything."""
+    assert exp(text) == expected
+
+
 def test_a_head_that_binds_a_variable_comes_through_as_itself():
     """Not every argument of one is an operand: a derivative carries the
     variable it is taken over and how many times, a substitution the variables
