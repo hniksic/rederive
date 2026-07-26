@@ -61,7 +61,8 @@ def distributed(expression: sp.Basic, leaf: Leaf) -> sp.Basic:
 def attempt(expression: sp.Expr, rewrite: Callable[[sp.Expr], sp.Basic]) -> sp.Expr:
     """`rewrite`, or the expression unchanged if it will not run.
 
-    Unlike Simplify's gate this does not ask whether the answer got shorter.
+    Unlike Simplify's gated rewrites this does not ask whether the answer got
+    shorter.
     The rewrite was asked for by name, and `(x + 2)*(x - 2)` is the answer to
     Factor even though it counts more operations than `x^2 - 4`.
     """

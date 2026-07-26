@@ -26,11 +26,19 @@ about them. The first of them is Simplify.
 
 `simplify(node, context)` promises Derive's Simplify: the sufficiently simple
 form of an expression - no superfluous variables, roots, functions or reducible
-degrees - reached by transforming as little as necessary. It reads only its
-`Context`: precision, branch, the Trigonometry, Trigpower, Exponential and
-Logarithm directions, angle measure, input base, and the domains, assignments,
-function definitions and labels the session has recorded. It has no other state
-and no side effects, so the same tree and context always give the same answer.
+degrees - with every sum in normal form, reached by transforming as little else
+as necessary. It reads only its `Context`: precision, branch, the Trigonometry,
+Trigpower, Exponential and Logarithm directions, angle measure, input base, the
+variable order list, and the domains, assignments, function definitions and
+labels the session has recorded. It has no other state and no side effects, so
+the same tree and context always give the same answer.
+
+The normal form is a sum written as a rational function of the most main
+variable it holds, which the order list is what decides. So `(x + 1)^9 + y` is
+a ninth-degree polynomial in `x`, `(y + 1)^9 + x` is left as it was written,
+and `Manage Ordering` changes both answers. Only sums: a product or a power
+that is not itself a sum is never distributed, which is why `2*x*(x - 3)^2` and
+`(x + 1)*(y + 1)` come back untouched.
 
 Two promises hold across every input:
 

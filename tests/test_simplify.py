@@ -134,6 +134,102 @@ def test_a_polynomial_is_not_factored():
     assert simp("x^2 + 2*x") == "x^2 + 2*x"
 
 
+# -- the normal form ----------------------------------------------------------
+
+#: Every one checked against the original. A sum is written as a rational
+#: function of the most main variable it holds; a product or a power that is
+#: not itself a sum is left exactly as it was written.
+#:
+#: The terms are the original's; the order they are written in is the engine's,
+#: which is sympy's beyond the two rules `printer` keeps. So the original shows
+#: `x + (y + 1)^9` where this records `(y + 1)^9 + x` - the same sum, and the
+#: point of the case either way is that the ninth power was left folded.
+NORMAL_FORM = [
+    # A sum in the primary variable is multiplied out however long it gets,
+    # and a term free of the primary variable is not touched.
+    ("(x + 1)^9 + y", "x^9 + 9*x^8 + 36*x^7 + 84*x^6 + 126*x^5 + 126*x^4 "
+                      "+ 84*x^3 + 36*x^2 + 9*x + y + 1"),
+    ("(y + 1)^9 + x", "(y + 1)^9 + x"),
+    ("(x + 1)^2 + y", "x^2 + 2*x + y + 1"),
+    # No sum to write, so nothing happens - this is not a wholesale expansion.
+    ("(x + 1)^9", "(x + 1)^9"),
+    ("2*x*(x - 3)^2", "2*x*(x - 3)^2"),
+    ("(x + 1)*(y + 1)", "(x + 1)*(y + 1)"),
+    ("(x + 1)*(x + 2)", "(x + 1)*(x + 2)"),
+    ("(x + y)^2", "(x + y)^2"),
+    ("(x + 1)^2/y", "(x + 1)^2/y"),
+    # Wherever the sum stands: inside a product, under a power, under a
+    # function, in a denominator, in an exponent, one element of a vector.
+    ("z*((x + 1)^2 + y)", "z*(x^2 + 2*x + y + 1)"),
+    ("((x + 1)^2 + y)^2", "(x^2 + 2*x + y + 1)^2"),
+    ("SIN((x + 1)^2 + y)", "SIN(x^2 + 2*x + y + 1)"),
+    ("1/((x + 1)^2 + y)", "1/(x^2 + 2*x + y + 1)"),
+    ("1/((y + 1)^2 + x)", "1/((y + 1)^2 + x)"),
+    ("[(x + 1)^2 + y, (y + 1)^2 + x]", "[x^2 + 2*x + y + 1, (y + 1)^2 + x]"),
+    # An exponent that is not a whole number is no polynomial degree.
+    ("(x + 1)^n + y", "y + (x + 1)^n"),
+    # The coefficients are opaque: what is free of the primary variable is one
+    # quantity, so the answer is in powers of `2*y + 1` and not of `y`. The
+    # part that is free of `x` is then written about `y`, its own primary.
+    ("(x + 2*y + 1)^3 + z", "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 "
+                            "+ 8*y^3 + 12*y^2 + 6*y + z + 1"),
+    ("((x + 1)^2 + y)^2 + z", "x^4 + 4*x^3 + 2*x^2*(y + 3) + 4*x*(y + 1) "
+                              "+ y^2 + 2*y + z + 1"),
+    ("x*((y + 1)^2 + z) + w", "x*(y^2 + 2*y + z + 1) + w"),
+    # Off the order list, variables order among themselves alphabetically.
+    ("(a + 1)^2 + b", "a^2 + 2*a + b + 1"),
+    ("(b + 1)^2 + a", "(b + 1)^2 + a"),
+    # The manual's 4.2 exercise.
+    ("(5x - 3x + 1)^7 - x", "128*x^7 + 448*x^6 + 672*x^5 + 560*x^4 "
+                            "+ 280*x^3 + 84*x^2 + 13*x + 1"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), NORMAL_FORM, ids=str)
+def test_a_sum_is_written_about_its_primary_variable(text, expected):
+    assert simp(text) == expected
+
+
+#: The rational half of the same rule, also checked against the original.
+#: Terms holding the primary variable go over a common denominator and long
+#: division takes the polynomial part out, so what is left over the
+#: denominator is proper.
+RATIONAL_FORM = [
+    ("1/(x + 1) + 1/(x + 2) + y", "y + (2*x + 3)/((x + 1)*(x + 2))"),
+    ("1/(x + 1)^2 + 1/(x + 1) + y", "y + (x + 2)/(x + 1)^2"),
+    ("y/(x + 1) + z/(x + 1)", "(y + z)/(x + 1)"),
+    ("(x^3 + 1)/(x + 2) + y", "x^2 - 2*x + y + 4 - 7/(x + 2)"),
+    ("x/(x + 1) + y", "y + 1 - 1/(x + 1)"),
+    ("x^2 + 1/(x + 1) + y", "x^2 + y + 1/(x + 1)"),
+    # The denominator keeps whatever shape it was written in: Derive answers
+    # this with the two factors standing, not with a quartic underneath. It
+    # writes the numerator `2*(x^2 + y^2 + 18)`, which is the same number of
+    # terms with the 2 taken outside.
+    ("1/(9 + x^2 + (y - 3)^2) + 1/(9 + x^2 + (y + 3)^2)",
+     "(2*x^2 + 2*y^2 + 36)/((x^2 + y^2 - 6*y + 18)*(x^2 + y^2 + 6*y + 18))"),
+    # A denominator free of the primary variable belongs to a coefficient, so
+    # it is combined only where more than one term carries it.
+    ("x/y + z", "z + x/y"),
+    ("1/y + z", "z + 1/y"),
+    ("(x + 1)^2/y + z", "(x^2 + y*z + 2*x + 1)/y"),
+    ("x/y + x/z", "x*(1/z + 1/y)"),
+    ("x/(y + 1) + x/(y + 2)", "x*(2*y + 3)/((y + 1)*(y + 2))"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), RATIONAL_FORM, ids=str)
+def test_a_sum_of_ratios_is_written_over_one_denominator(text, expected):
+    assert simp(text) == expected
+
+
+def test_the_order_list_decides_what_gets_multiplied_out():
+    """The manual's 4.3 exercise, as the original answers it: the same entry
+    expands under one order list and comes back as it was written under
+    another, because the primary variable is what the list says it is."""
+    assert simp("(x + 1)^9 + y", Context(order=("x", "y", "z"))).startswith("x^9")
+    assert simp("(x + 1)^9 + y", Context(order=("y", "x", "z"))) == "(x + 1)^9 + y"
+
+
 # -- domains: the whole of "don't guess" --------------------------------------
 
 DOMAINS = [

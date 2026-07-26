@@ -5,6 +5,12 @@ a sympy expression and gives one back, so it sits below `pipeline` and can be
 used by it: the `EXPAND` head an authored line may carry is evaluated during
 Simplify, and the Expand command is `expand.py` on top of both.
 
+Simplify's normal form is built on it too. Writing a sum about the one variable
+that is most main in it is this same operation about one expansion variable,
+and `held_about` and `collected_by` are here for `normal` to use rather than
+reimplement - which is why the rule that everything free of the variables is
+one opaque quantity shows up in both commands' answers.
+
 The manual states the goal as maximizing the number of terms that are
 algebraically independent with respect to the *expansion variables*, and the
 whole of this file follows from taking that literally. Everything free of
@@ -156,6 +162,25 @@ def _expanded(
 # -- polynomial expansion ----------------------------------------------------
 
 
+def held_about(
+    expression: sp.Expr, variable: sp.Symbol
+) -> tuple[sp.Expr, dict[sp.Dummy, sp.Expr]]:
+    """`expression` with everything free of `variable` stood in for, and the map back.
+
+    Public because Simplify's normal form is this same operation about one
+    variable: what is opaque to an expansion is opaque to the normal form too,
+    and both want to work on the frozen expression rather than only on the
+    answer. `xreplace` with the map puts the placeholders back.
+    """
+    held: dict[sp.Dummy, sp.Expr] = {}
+    return _frozen(expression, {variable}, held), held
+
+
+def collected_by(expression: sp.Expr, variable: sp.Symbol) -> sp.Expr:
+    """A multiplied-out sum gathered back up by the powers of `variable`."""
+    return _collected(expression, (variable,))
+
+
 def _polynomial(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr:
     """Multiplied out about `variables`, and collected back by their powers."""
     held: dict[sp.Dummy, sp.Expr] = {}
@@ -177,6 +202,13 @@ def _frozen(
     placeholder rather than one each: that is what leaves `x + 2*y + 1` as
     `x + d`, and so leaves `(x + 2*y + 1)^3` about `x` written in powers of
     `2*y + 1`.
+
+    A product's numeric factor stays outside the placeholder, and a sum's
+    numeric term does not. In a product the number is the coefficient the
+    collecting is meant to find in common, and a `2*x*(a + b)` frozen again
+    with the `2` inside comes back `x*(2*a + 2*b)`; in a sum it is part of the
+    one opaque quantity, and without it `2*y` and `1` would be multiplied out
+    separately and `3*x*(2*y + 1)^2` would come out `3*x*(4*y^2 + 4*y + 1)`.
     """
     if not (expression.free_symbols & variables):
         return _held(expression, held)
@@ -185,6 +217,9 @@ def _frozen(
         for argument in expression.args:
             (involved if argument.free_symbols & variables else free).append(argument)
         parts = [_frozen(argument, variables, held) for argument in involved]
+        if isinstance(expression, sp.Mul):
+            parts.extend(argument for argument in free if argument.is_Number)
+            free = [argument for argument in free if not argument.is_Number]
         if free:
             parts.append(_held(expression.func(*free), held))
         return expression.func(*parts)

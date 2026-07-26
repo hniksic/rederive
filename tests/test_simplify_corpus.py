@@ -43,16 +43,11 @@ CORPUS = Path(__file__).parent / "corpus"
 #:   `_canonical` is not the answer: it settles this one and unsettles two
 #:   others, where sympy then picks the other sign for a cosine's argument or
 #:   multiplies out a term it had left folded.
-#: * `F_0X` and `F_0Z` differentiate a product a symbolic number of times,
-#:   twice over, which gives a sum of sums over bound variables; reading that
-#:   back re-associates a factorial from one factor into another.
 #: * `LIN2_CCF_HOM` writes `(p^2/4 - d/4)^(x/2)` as it stands and
 #:   `(p^2 - d)^(x/2)/2^x` on the second pass: splitting the base did not pay
 #:   until the form it was offered had changed.
 UNSETTLED = (
     "BESSEL_Y_SERIES(",
-    "F_0X(",
-    "F_0Z(",
     "LIN2_CCF_HOM(",
 )
 

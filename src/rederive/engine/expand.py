@@ -10,7 +10,11 @@ fraction reaches `SQRT(2)` before Approximate mode has anything to show as
 The manual is explicit that both commands reach a sufficiently simple form and
 that Expand goes further, and it warns that Simplify is usually faster and
 usually stays closer to what was written. An answer the original prints may
-therefore be Simplify's work and not the expansion's.
+therefore be Simplify's work and not the expansion's - and since Simplify's
+normal form already writes every sum about its own primary variable, over a
+sum in one variable there is nothing left for Expand to do. Where the two part
+company is a second variable, a ratio to split into partial fractions, and a
+product or a power, which Simplify never distributes and Expand does.
 
 `expand` works on any subtree, not only on a whole authored line, so the
 session can expand what the user has highlighted and put the answer back -

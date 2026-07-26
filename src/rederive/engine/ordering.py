@@ -6,15 +6,19 @@ list, which starts out as `x`, `y`, `z`. A variable on the list is more main
 than one after it on the list and more main than one not on the list at all;
 variables off the list are ordered among themselves alphabetically.
 
-What the list reaches here is everywhere a command has to pick a variable to be
-main: the order Factor and Expand offer their variables in, which makes the
-first one chosen the primary variable; the generators an Expand about all of
-them expands about; and the order a `Declare Function` definition's variables
-become the function's parameters in. It does not reach the term order of a
-simplified sum, which is sympy's beyond the two rules `printer` keeps - so the
-manual's own demonstration of the list, resimplifying `(x + 1)^9 + y` under
-`y x z` to keep it from expanding, has nothing to show in Rederive, whose
-Simplify does not expand it under either order.
+What the list reaches is everywhere a command has to pick a variable to be
+main. Simplify's normal form first: every sum is written as a rational function
+of the most main variable it holds, so the list decides which sums get
+multiplied out and which are left folded. That is the manual's own
+demonstration - `(x + 1)^9 + y` is a ninth-degree polynomial under `x y z` and
+comes back as it was written under `y x z`, because the ninth power is then
+free of the primary variable. Then the order Factor and Expand offer their
+variables in, which makes the first one chosen the primary variable; the
+generators an Expand about all of them expands about; and the order a `Declare
+Function` definition's variables become the function's parameters in.
+
+What it does not reach is the term order of a simplified sum, which is sympy's
+beyond the two rules `printer` keeps.
 
 `Manage Ordering` rewrites the list, so the list is session state rather than a
 constant: it travels in the `Context`, alongside everything else a command's

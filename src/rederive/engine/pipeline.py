@@ -2,11 +2,12 @@
 
 Derive's Simplify has two goals at once. Reach a form that is *sufficiently
 simple* - no superfluous variables, roots, functions or reducible degrees - and
-get there by transforming as little as possible. The second goal is why this is
-a deliberate sequence of named rewrites and not a call to `sympy.simplify`: a
-wholesale simplifier decides for itself what a nicer expression is, and Derive
-does not want a nicer expression, it wants the same expression with the slack
-taken out.
+put it in a normal form, so that two ways of writing one thing come back the
+same way. Between the two it transforms as little as it can, which is why this
+is a deliberate sequence of named rewrites and not a call to `sympy.simplify`:
+a wholesale simplifier decides for itself what a nicer expression is, and
+Derive does not want a nicer expression, it wants the same expression with the
+slack taken out.
 
 The sequence is:
 
@@ -19,12 +20,15 @@ The sequence is:
    survives to the output as itself, which is how `INT(#e^(x^2), x)` comes back
    an integral rather than an error.
 4. Offer each remaining rewrite in turn and keep it only if it pays: fewer
-   operations, or one variable fewer. This is the "expand only when it helps"
-   rule, and it is what makes `(x + 1)^2 - x^2` become `2*x + 1` while
-   `(x^2 + 2*x*y + y^2)/(x^2 - y^2)` becomes a ratio rather than a polynomial.
-   A mode set to Collect or Expand is an instruction rather than an option, so
-   those rewrites are applied whether or not they shorten anything.
-5. Approximate, if the precision mode asks for it.
+   operations, or one variable fewer. That gate is what makes
+   `(x^2 + 2*x*y + y^2)/(x^2 - y^2)` come back a ratio rather than a
+   polynomial. A mode set to Collect or Expand is an instruction rather than an
+   option, so those rewrites are applied whether or not they shorten anything.
+5. Write every sum in the normal form `normal_form` is about: a rational
+   function of the most main variable that sum holds. This one is not gated on
+   anything - it is what a normal form means - and it is where `(x + 1)^9 + y`
+   becomes a ninth-degree polynomial while `(y + 1)^9 + x` does not.
+6. Approximate, if the precision mode asks for it.
 
 Every rewrite is offered inside a `try`, and a rewrite that raises is a rewrite
 that was not worth having: the previous form stands. That is what makes the
@@ -58,6 +62,7 @@ from rederive.engine.factoring import (
     factored_expression,
 )
 from rederive.engine.from_sympy import Result, from_sympy
+from rederive.engine.normal import normal_form
 from rederive.engine.substitute import named_as_declared, substitute
 from rederive.engine.to_sympy import (
     Approx,
@@ -270,6 +275,13 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     # that reaches its form only on a second Simplify.
     if expression.has(*_CALCULUS):
         expression = _calculus(expression, context, tried)
+    # The normal form, and the one step that is not gated on getting shorter:
+    # a sum is written about its primary variable whether or not that pays.
+    # Before the placeholders go back, so that a frozen `IF`'s branches - which
+    # nothing else in the pipeline touches either - keep the form they were
+    # written in; and before `_commanded`, so that a factorization a `FACTOR`
+    # head produces is not multiplied straight back out.
+    expression = normal_form(expression, context.order)
     for standing_in in (held, frozen):
         if standing_in:
             expression = expression.xreplace(standing_in)
@@ -699,12 +711,15 @@ def _commanded(expression: sp.Basic, context: Context) -> sp.Basic:
     themselves. Both are matched in one pass so that either may be written
     inside the other.
 
-    Last of the rewrites on purpose, and after `_canonical` as well. Every
-    gate above this one asks whether a candidate is shorter than what it
+    Last of the rewrites on purpose, and after `normal_form` and `_canonical`
+    as well, because everything above this one would undo a factorization.
+    The gated rewrites ask whether a candidate is shorter than what it
     replaces, and a factorization is routinely longer: `_multiplied_out`
-    offered `(x - 3)*(2*x + 1)^2` would happily multiply it back out. And
-    `_canonical` rebuilds every product it can reach, which would multiply a
-    prime decomposition straight back into the integer it decomposes.
+    offered `(x - 3)*(2*x + 1)^2` would happily multiply it back out. The
+    normal form does not ask, and would multiply out any factor that is a sum
+    in the primary variable. And `_canonical` rebuilds every product it can
+    reach, which would multiply a prime decomposition straight back into the
+    integer it decomposes.
     """
     try:
         return expression.replace(
@@ -783,7 +798,7 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     """Every rewrite the settings select, each kept only if it pays."""
     expression = _branch(expression, context)
     expression = _gated(expression, _multiplied_out)
-    expression = _gated(expression, sp.cancel)
+    expression = _gated(expression, _cancelled)
     if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
         expression = _gated(expression, sp.combsimp)
     # Ours rather than sympy's, which collects neither these arcs nor their
@@ -836,6 +851,25 @@ def _pays(candidate: sp.Basic, previous: sp.Basic) -> bool:
         return False
 
 
+def _cancelled(expression: sp.Basic) -> sp.Basic:
+    """`cancel`, except where it would multiply a factored denominator out.
+
+    Cancelling a common factor is what this is for, and it is worth having.
+    Rebuilding the denominator is not: `cancel` writes every ratio over one
+    expanded denominator, and where the normal form has already put a sum over
+    a product of sums that turns the original's own answer into a longer one.
+    `1/(9 + x^2 + (y - 3)^2) + 1/(9 + x^2 + (y + 3)^2)` is
+    `2*(x^2 + y^2 + 18)/((x^2 + y^2 - 6*y + 18)*(x^2 + y^2 + 6*y + 18))` to
+    Derive, and a quartic denominator to `cancel`.
+
+    A denominator of one factor has nothing to lose, which is every sum of
+    ratios that has not been put over a common denominator yet.
+    """
+    if len(sp.Mul.make_args(sp.fraction(expression)[1])) > 1:
+        return expression
+    return sp.cancel(expression)
+
+
 def _multiplied_out(expression: sp.Basic) -> sp.Basic:
     """Multiply out the structure, holding a high power of a sum together.
 
@@ -848,12 +882,14 @@ def _multiplied_out(expression: sp.Basic) -> sp.Basic:
     (a + 1)^20` is the same trick a level up: the square is expanded, the tenth
     power is not, and what is left is `x^2 + 2*x*(a + 1)^10`.
 
-    Below `_FOLDED` the expansion is small enough to be worth having outright,
-    which is what makes `(x + 1)^2 - x^2` reach `2*x + 1`.
+    Below `_FOLDED` the expansion is small enough to be worth having outright.
 
     What is multiplied out gets collected back up while the power is still
     standing in, so that `2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` comes
-    back as the fifth power times what is left of it.
+    back as the fifth power times what is left of it - and that is why this
+    still earns its place beside the normal form, which writes sums and leaves
+    products alone. What this hands back is a product, and the normal form
+    leaves it exactly as it is.
     """
     stood_in: dict[sp.Basic, sp.Symbol] = {}
 

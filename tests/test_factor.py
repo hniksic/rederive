@@ -355,8 +355,9 @@ def test_a_factor_head_is_factored_where_it_stands():
 
 
 def test_nothing_later_undoes_a_factor_head():
-    """The rewrites that ask whether a candidate got shorter all run before
-    this, so none of them is offered the chance to multiply it back out."""
+    """Everything that reshapes a sum - the gated rewrites and the normal form
+    alike - runs before this, so none of them is offered the chance to multiply
+    it back out."""
     assert simplify(parse("FACTOR(x^2 - 4)"), Context()).text == "(x - 2)*(x + 2)"
 
 
