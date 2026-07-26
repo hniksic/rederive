@@ -449,6 +449,200 @@ def test_vectors_and_matrices(text, expected):
     assert simp(text) == expected
 
 
+#: Row echelon form, characteristic polynomial and eigenvalues: the manual's own
+#: examples, and the argument forms each of the three accepts.
+LINEAR_ALGEBRA = [
+    # Both of the manual's augmented examples. The second is singular: its right
+    # column is inconsistent and the one before it is consistent, which is what
+    # the reduced form says by putting the pivot in the last column.
+    ("ROW_REDUCE([[1,2],[5,6]],[[3,4],[7,8]])", "[[1, 0, -1, -2], [0, 1, 2, 3]]"),
+    ("ROW_REDUCE([[1,1],[2,2]],[[1,1],[2,1]])", "[[1, 1, 1, 0], [0, 0, 0, 1]]"),
+    # The manual's exercise, exactly rather than approximately: the augmented
+    # column holds the solution of the 3 x 3 system.
+    (
+        "ROW_REDUCE([[5,3,-7],[2,-8,1],[-1,9,4]],[[4],[6],[5]])",
+        "[[1, 0, 0, 879/302], [0, 1, 0, 53/302], [0, 0, 1, 239/151]]",
+    ),
+    # A vector is adjoined as the column it stands for, so it says the same
+    # thing as a one-column matrix does.
+    (
+        "ROW_REDUCE([[5,3,-7],[2,-8,1],[-1,9,4]],[4,6,5])",
+        "[[1, 0, 0, 879/302], [0, 1, 0, 53/302], [0, 0, 1, 239/151]]",
+    ),
+    # One argument reduces the matrix alone: a nonsingular one reduces to the
+    # identity, and a rank-deficient one keeps a zero row.
+    ("ROW_REDUCE([[1,2],[3,4]])", "[[1, 0], [0, 1]]"),
+    ("ROW_REDUCE([[1,2,3],[4,5,6],[7,8,9]])", "[[1, 0, -1], [0, 1, 2], [0, 0, 0]]"),
+    # Symbolic entries reduce the generic case, the one where no pivot is zero -
+    # the answer the inverse gives for the same system.
+    (
+        "ROW_REDUCE([[a,b],[c,d]],[e,f])",
+        "[[1, 0, (d*e - b*f)/(a*d - b*c)], [0, 1, (a*f - c*e)/(a*d - b*c)]]",
+    ),
+    # The manual's characteristic polynomial. Its middle term is the manual's
+    # `-z*(b + 2)` with the sign moved inside the factor, and the variable
+    # defaults to `w` when none is written.
+    ("CHARPOLY([[2,3],[a,b]],z)", "z^2 + z*(-b - 2) - 3*a + 2*b"),
+    ("CHARPOLY([[2,3],[a,b]])", "w^2 + w*(-b - 2) - 3*a + 2*b"),
+    # `DET(A - z*IDENTITY_MATRIX(3))` is the definition, so the cube is negated
+    # in an odd dimension; the printer leads with the positive term.
+    ("CHARPOLY([[1,2,3],[4,5,6],[7,8,10]],z)", "16*z^2 - z^3 + 12*z - 3"),
+    # Eigenvalues are answered as solved equations. The manual's example, and a
+    # 2 x 2 whose eigenvalues the quadratic formula has to be used on.
+    ("EIGENVALUES([[2,3],[0,b]],z)", "[z = 2, z = b]"),
+    ("EIGENVALUES([[1,2],[3,4]],x)", "[x = 5/2 - SQRT(33)/2, x = 5/2 + SQRT(33)/2]"),
+    # A repeated eigenvalue is one eigenvalue: the multiplicity is the number of
+    # parameters its eigenvector carries, not a second solution.
+    ("EIGENVALUES([[1,0,0],[0,1,0],[0,0,2]],z)", "[z = 1, z = 2]"),
+    # No square matrix, no characteristic polynomial - and no radicals for the
+    # quintic the manual's 5 x 5 exercise leads to, which is the manual's own
+    # account of why exact eigenvalues stop at 4 x 4. Both come back unchanged.
+    ("CHARPOLY([[1,2],[3,4],[5,6]],z)", "CHARPOLY([[1, 2], [3, 4], [5, 6]], z)"),
+    (
+        "EIGENVALUES([[-2,1,1,1,1],[1,-3,-1,0,-1],[1,-1,1,0,-3],[1,0,0,3,0],"
+        "[1,-1,-3,0,2]],z)",
+        "EIGENVALUES([[-2, 1, 1, 1, 1], [1, -3, -1, 0, -1], [1, -1, 1, 0, -3], "
+        "[1, 0, 0, 3, 0], [1, -1, -3, 0, 2]], z)",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), LINEAR_ALGEBRA, ids=str)
+def test_linear_algebra(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    [
+        "[[2,3],[a,b]]",
+        "[[1,2,3],[4,5,6],[7,8,10]]",
+        # The symmetric matrix the manual's last eigenvalue exercise poses.
+        "[[-2,1,1,1,1],[1,-3,-1,0,-1],[1,-1,1,0,-3],[1,0,0,3,0],[1,-1,-3,0,2]]",
+    ],
+    ids=str,
+)
+def test_the_characteristic_polynomial_is_the_determinant_defining_it(matrix):
+    # The manual defines CHARPOLY as the determinant of the difference of the
+    # matrix and a variable times the identity matrix, so the two must agree -
+    # including in odd dimensions, where that determinant is not monic. The
+    # difference is what is asserted rather than the two texts: the polynomial
+    # comes out with its terms collected in the variable and the determinant does
+    # not, which is a spelling and not a disagreement.
+    written_out = f"DET({matrix} - z*IDENTITY_MATRIX(DIMENSION({matrix})))"
+    assert simp(f"CHARPOLY({matrix},z) - {written_out}") == "0"
+
+
+#: Differential and integral vector calculus: the manual's own examples for each
+#: of the six operators, and the argument forms they accept.
+VECTOR_CALCULUS = [
+    # The default coordinate system is three-dimensional Cartesian in x, y, z,
+    # so a gradient written without one has three elements however few variables
+    # the expression mentions.
+    ("GRAD(x*y^2*z^3)", "[y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2]"),
+    ("GRAD(x^2 + y^2)", "[2*x, 2*y, 0]"),
+    # An arbitrary function has an arbitrary gradient, and it is written the way
+    # any other underived derivative is.
+    (
+        "GRAD(F(x, y, z))",
+        "[DIF(F(x, y, z), x), DIF(F(x, y, z), y), DIF(F(x, y, z), z)]",
+    ),
+    # A vector of variables names Cartesian coordinates of the caller's
+    # choosing, and there may be any number of them.
+    ("GRAD(c*w + x^2 + y^3 + z^4, [w, x, y, z])", "[c, 2*x, 3*y^2, 4*z^3]"),
+    ("GRAD(x*y, [x, y])", "[y, x]"),
+    ("DIV([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "6*x*y^2*z + 2*x*z^3"),
+    # The manual factors the same answer as `x*(6*y^2*z + 2*z^3)`; the engine
+    # leaves a sum of two terms expanded, which is where it leaves every other
+    # polynomial. LAPLACIAN is DIV of GRAD, so the two examples agree.
+    ("LAPLACIAN(x*y^2*z^3)", "6*x*y^2*z + 2*x*z^3"),
+    ("CURL([y^2, 2*x*z, 0])", "[-2*x, 0, 2*z - 2*y]"),
+    # The curl of a plane field is one number, not the space vector `[0, 0, w]`
+    # that number is the last element of.
+    ("CURL([v^2, u], [[u, v], [1, 1]])", "1 - 2*v"),
+    ("CURL([-y, x], [u, v])", "0"),
+    # A two-row second argument is a coordinate geometry matrix: variables
+    # above, scale factors below. The manual's spherical example, written out
+    # rather than loaded from VECTOR.MTH, which is where the name lives. The
+    # manual prints the middle element as `COT(phi)*COS(theta)`; a cotangent
+    # comes out of the engine's canonical form as one over a tangent.
+    (
+        "GRAD(r*SIN(theta)*COS(phi), [[r, theta, phi], [1, r*SIN(phi), r]])",
+        "[SIN(theta)*COS(phi), COS(theta)/TAN(phi), -SIN(theta)*SIN(phi)]",
+    ),
+    # Cylindrical coordinates, where the scale factors are what make the answers
+    # differ from the Cartesian ones: `DIV` of a purely radial field grows with
+    # the circumference the flux crosses.
+    ("DIV([r^2, 0, 0], [[r, theta, z], [1, r, 1]])", "3*r"),
+    ("LAPLACIAN(r^2, [[r, theta, z], [1, r, 1]])", "4"),
+    ("CURL([0, r, 0], [[r, theta, z], [1, r, 1]])", "[0, 0, 2]"),
+    ("POTENTIAL([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "x*y^2*z^3"),
+    ("VECTOR_POTENTIAL([x, 0, y - z])", "[-y^2/2, -x*z, 0]"),
+    # The starting coordinates of the line integrals, which default to the
+    # origin. Starting at [1, 1, 1] rather than the origin subtracts the value
+    # the potential would have had there, an additive constant and no more.
+    ("POTENTIAL([2*x, 2*y, 2*z])", "x^2 + y^2 + z^2"),
+    ("POTENTIAL([2*x, 2*y, 2*z], [1, 1, 1])", "x^2 + y^2 + z^2 - 3"),
+    # The manual's warning about a bad starting point, exactly: this field is
+    # infinite at the origin, so the potential from the origin is infinite too,
+    # and 1 is the alternative the manual recommends for a logarithm.
+    ("POTENTIAL([1/x, 1/y], [1, 1])", "LN(x) + LN(y)"),
+    ("POTENTIAL([1/x, 1/y])", "LN(x) + LN(y) + inf"),
+    # Not every field has a potential, and Derive does not check. POTENTIAL
+    # computes one line integral and hands back its value; `[-y, x]` circulates,
+    # so the gradient of that value is not the field it came from. The manual
+    # leaves that comparison to the caller, and CURL is the easier test.
+    ("CURL([-y, x])", "2"),
+    ("POTENTIAL([-y, x])", "x*y"),
+    ("GRAD(POTENTIAL([-y, x]))", "[y, x, 0]"),
+    # The same for a vector potential, whose obstruction is a nonzero
+    # divergence: `[x, 0, 0]` spreads out, and the curl of the answer is not it.
+    ("DIV([x, 0, 0])", "1"),
+    ("VECTOR_POTENTIAL([x, 0, 0])", "[0, -x*z, 0]"),
+    ("CURL(VECTOR_POTENTIAL([x, 0, 0]))", "[x, 0, -z]"),
+    # Arguments the operators can make nothing of: a vector has no gradient, a
+    # single variable is no coordinate system, curl and vector potential are
+    # defined in the plane and in space and nowhere else. Each comes back the
+    # call it was written as.
+    ("GRAD([1, 2])", "GRAD([1, 2])"),
+    ("GRAD(u, x)", "GRAD(u, x)"),
+    ("CURL([a, b, c, d])", "CURL([a, b, c, d])"),
+    ("VECTOR_POTENTIAL([a, b])", "VECTOR_POTENTIAL([a, b])"),
+    ("DIV([1, 2, 3, 4])", "DIV([1, 2, 3, 4])"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), VECTOR_CALCULUS, ids=str)
+def test_vector_calculus(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["[y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2]", "[1, 2*y, 3*z^2]", "[y*z, x*z, x*y]"],
+    ids=str,
+)
+def test_a_conservative_field_is_the_gradient_of_its_potential(field):
+    # What the manual says to check, on fields that pass it: POTENTIAL is only
+    # a line integral, and it answers the question asked of it exactly when the
+    # curl of the field is zero.
+    assert simp(f"CURL({field})") == "[0, 0, 0]"
+    assert simp(f"GRAD(POTENTIAL({field})) - {field}") == "[0, 0, 0]"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["[-2*x, 0, 2*z - 2*y]", "[x, 0, y - z]", "[y, z, x]"],
+    ids=str,
+)
+def test_a_solenoidal_field_is_the_curl_of_its_vector_potential(field):
+    # The same check for VECTOR_POTENTIAL, whose condition is a vanishing
+    # divergence. Two equally valid vector potentials differ by a gradient, so
+    # it is the curl that has to be compared and not the vector itself.
+    assert simp(f"DIV({field})") == "0"
+    assert simp(f"CURL(VECTOR_POTENTIAL({field})) - {field}") == "[0, 0, 0]"
+
+
 #: The four ways of saying which values a generated vector's variable takes.
 #: The first three are the manual's own examples.
 GENERATED = [
@@ -489,6 +683,101 @@ def test_an_element_access_that_could_not_be_taken_is_taken_once_generated():
     # worth making again - which is how the demo's outer product comes out.
     assert simp("VECTOR([[a, b, c] SUB i], i, 3)") == "[[a], [b], [c]]"
     assert simp("VECTOR([a, b, c] SUB i + 1, i, 2)") == "[a + 1, b + 1]"
+
+
+# -- statistics ---------------------------------------------------------------
+
+#: The three forms the statistical functions take - written-out arguments, one
+#: vector, one matrix whose rows are each a sample - and the convention the
+#: manual fixes: the variance is the unbiased sample one, over `n - 1`, and the
+#: standard deviation is its square root.
+STATISTICS = [
+    # Both spellings of one sample, which is the manual's own pair.
+    ("AVERAGE(2, 3, 4)", "3"),
+    ("AVERAGE([2, 3, 4])", "3"),
+    ("RMS([2, 3, 5])", "SQRT(114)/3"),
+    # The manual's matrix example: the statistic of each row, as a vector.
+    ("RMS([[3, 4, 5], [5, 12, 13]])", "[5*SQRT(6)/3, 13*SQRT(6)/3]"),
+    ("AVERAGE([[1, 2], [3, 4]])", "[3/2, 7/2]"),
+    # One sample answered by all four, which is what pins the convention down:
+    # over `n - 1` the variance is 20/3, and over `n` it would be 5.
+    ("AVERAGE(2, 4, 6, 8)", "5"),
+    ("RMS(2, 4, 6, 8)", "SQRT(30)"),
+    ("VAR(2, 4, 6, 8)", "20/3"),
+    ("STDEV(2, 4, 6, 8)", "2*SQRT(15)/3"),
+    # The formulas are written over `n` arguments for any `n`, so a sample of
+    # one is a sample: its mean is itself, and its root mean square is its
+    # magnitude.
+    ("AVERAGE(x)", "x"),
+    ("RMS(x)", "ABS(x)"),
+    # A call nobody could make yet is no sample at all. Reading one as a sample
+    # of one would answer `ABS` of a vector that has not been built, which is
+    # what a definition holding `RMS(VECTOR(...))` would become.
+    ("RMS(VECTOR(u, k, n))", "RMS(VECTOR(u, k, n))"),
+    # A sample of one has an average, but no degree of freedom left to have a
+    # variance with.
+    ("VAR([5])", "VAR([5])"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), STATISTICS, ids=str)
+def test_statistics(text, expected):
+    assert simp(text) == expected
+
+
+# -- what an expression is made of, and a vector rebuilt ----------------------
+
+STRUCTURE = [
+    # Syntactic terms, so the power is not multiplied out: the manual's own
+    # example, and the reason it tells the caller to compose with EXPAND.
+    ("TERMS(x*(a + b)^2 + c)", "[x*(a + b)^2, c]"),
+    ("TERMS(x^2 + x + 1)", "[x^2, x, 1]"),
+    # What is no sum has one term, and a vector distributes.
+    ("TERMS(x*y)", "[x*y]"),
+    ("TERMS([x + 1, y + 2])", "[[x, 1], [y, 2]]"),
+    # Most main to least: the order list `x`, `y`, `z` first and the rest
+    # alphabetically, which is the order every other command offers them in.
+    ("VARIABLES(x^2 + a*y)", "[x, y, a]"),
+    ("VARIABLES(a*b*z)", "[z, a, b]"),
+    ("VARIABLES(5)", "[]"),
+    # NUMBER is a predicate and answers a truth-value whichever way it comes
+    # out. The manual's example is the second pair: true exactly where the sum
+    # of two squares is a perfect square.
+    ("NUMBER(2/3)", "true"),
+    ("NUMBER(x)", "false"),
+    ("NUMBER(SQRT(9))", "true"),
+    ("NUMBER(SQRT(2))", "false"),
+    # Which is what the utility files use it for: an argument still standing as
+    # the variable it was written as is an argument nobody supplied.
+    ("IF(NUMBER(d), d, 1)", "1"),
+    # Counting from 1, and a matrix's elements are its rows.
+    ("DELETE_ELEMENT([a, b, c], 2)", "[a, c]"),
+    ("DELETE_ELEMENT([[1, 2], [3, 4], [5, 6]], 2)", "[[1, 2], [5, 6]]"),
+    ("DELETE_ELEMENT([a], 1)", "[]"),
+    # The value to write in comes first and the vector second; the index
+    # defaults to 1.
+    ("REPLACE_ELEMENT(d, [a, b, c], 2)", "[a, d, c]"),
+    ("REPLACE_ELEMENT(d, [a, b, c])", "[d, b, c]"),
+    ("REPLACE_ELEMENT([7, 8], [[1, 2], [3, 4]], 1)", "[[7, 8], [3, 4]]"),
+    # An index that is no index yet, and one that is past the end: both come
+    # back the call they were written as.
+    ("DELETE_ELEMENT([a, b, c], n)", "DELETE_ELEMENT([a, b, c], n)"),
+    ("DELETE_ELEMENT([a, b, c], 4)", "DELETE_ELEMENT([a, b, c], 4)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), STRUCTURE, ids=str)
+def test_structure(text, expected):
+    assert simp(text) == expected
+
+
+def test_the_utility_files_matrix_minor():
+    # ``MINOR(a,i,j) := DELETE_ELEMENT(DELETE_ELEMENT(a,i)`,j)` ``, VECTOR.MTH's
+    # definition and the exercise the manual sets: delete row `i`, transpose,
+    # delete what was column `j`, transpose back.
+    body = parse("DELETE_ELEMENT(DELETE_ELEMENT(a,i)`,j)`")
+    context = Context(functions={"MINOR": (("a", "i", "j"), body)})
+    assert simp("MINOR([[1,2,3],[4,5,6],[7,8,9]],2,3)", context) == "[[1, 2], [7, 8]]"
 
 
 # -- relations and logic ------------------------------------------------------
@@ -786,6 +1075,17 @@ DEMO_FUNCTIONS = [
     ("SIGN 5", "1"),
     ("ABS (x^2)", "x^2"),
     ("(ABS x)^2", "x^2"),
+    # The statistics the demo closes on. A numeric coefficient distributes, so
+    # the average of three names is written termwise where the manual writes it
+    # as one quotient, and the demo's exact average of 1/1 through 1/10 is the
+    # tenth harmonic number over 10.
+    ("AVERAGE (x, y, z)", "x/3 + y/3 + z/3"),
+    ("AVERAGE (VECTOR (1/k, k, 1, 10))", "7381/25200"),
+    ("RMS ([2, 3, 5])", "SQRT(114)/3"),
+    # The unbiased sample variance of two things is `(x - y)^2/2`, multiplied
+    # out; the deviation is the square root of it, and stays a square root.
+    ("VAR (x, y)", "x^2/2 - x*y + y^2/2"),
+    ("STDEV (x, y)", "SQRT(x^2/2 - x*y + y^2/2)"),
 ]
 
 DEMO_TRIGONOMETRY = [
@@ -861,6 +1161,23 @@ DEMO_MATRICES = [
         "[[a,b],[2,3]]^(-1)",
         "[[3/(3*a - 2*b), -b/(3*a - 2*b)], [-2/(3*a - 2*b), a/(3*a - 2*b)]]",
     ),
+    # A singular system, and a consistent one: the zero row leaves the second
+    # unknown arbitrary, and the row above it reads `x + 2*y = 3`.
+    ("ROW_REDUCE([[2,4],[3,6]],[[6],[9]])", "[[1, 2, 3], [0, 0, 0]]"),
+    ("CHARPOLY([[a,b],[b,a]],z)", "a^2 - 2*a*z - b^2 + z^2"),
+    # No variable given, so the answer is written in `w`, the manual's default.
+    ("EIGENVALUES([[a,b],[b,a]])", "[w = a - b, w = a + b]"),
+    # The demo's vector calculus, in the default Cartesian x, y, z. It closes by
+    # cross-checking itself: the vector it takes the potential of is the curl
+    # computed two lines above, and the answer is the vector that curl was of.
+    # The potential comes out in the engine's term order, leading term first,
+    # where Derive writes the same sum as `x + y^2 + z^3`.
+    ("GRAD(x+y^2+z^3)", "[1, 2*y, 3*z^2]"),
+    ("DIV([1,2*y,3*z^2])", "6*z + 2"),
+    ("LAPLACIAN(x+y^2+z^3)", "6*z + 2"),
+    ("CURL([y^2,2*x*z,0])", "[-2*x, 0, 2*z - 2*y]"),
+    ("POTENTIAL([1,2*y,3*z^2])", "z^3 + y^2 + x"),
+    ("VECTOR_POTENTIAL([-2*x,0,2*z-2*y])", "[y^2, 2*x*z, 0]"),
 ]
 
 DEMO = (
@@ -976,7 +1293,16 @@ EVERY_CASE = [
     *((text, context) for text, _, context in LOGARITHMS),
     *(
         (text, None)
-        for text, _ in CALCULUS + SPECIAL + VECTORS + GENERATED + LOGIC + INERT
+        for text, _ in CALCULUS
+        + SPECIAL
+        + VECTORS
+        + LINEAR_ALGEBRA
+        + VECTOR_CALCULUS
+        + GENERATED
+        + STATISTICS
+        + STRUCTURE
+        + LOGIC
+        + INERT
     ),
     *((text, context) for text, _, context in CONDITIONALS),
     *((text, None) for text in OPAQUE),

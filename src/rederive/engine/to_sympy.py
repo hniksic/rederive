@@ -35,6 +35,7 @@ from rederive.engine.context import (
     Precision,
     domain_of_node,
 )
+from rederive.engine.ordering import main_order
 from rederive.model.expr import Kind, Node
 from rederive.syntax.names import BUILTIN_FUNCTIONS
 
@@ -796,12 +797,134 @@ def _with_unit_default(args: list) -> tuple[sp.Basic, sp.Basic]:
     return first, second
 
 
+def _statistic(over: Callable[[list], sp.Basic]) -> Handler:
+    """A statistic of a sample, in each of the three forms it can be written.
+
+    The sample is the arguments themselves, or the elements of one vector, or -
+    where the one argument is a matrix - the elements of each of its rows, in
+    which case the answers make a vector.
+
+    Which of the three a single argument is depends on what it turned out to be,
+    and one that is still a call nobody could make is none of them yet: the
+    utility files write `RMS(VECTOR(...))`, where nothing generates until the
+    definition is applied, and reading that as a sample of one would answer
+    `ABS` of a vector that has not been built. A sample of one is what anything
+    else is, the formulas being written over `n` arguments for any `n`.
+    """
+
+    def handler(conv: _Converter, args: list) -> sp.Basic:
+        if len(args) == 1:
+            (value,) = args
+            if isinstance(value, AppliedUndef):
+                raise TypeError("no sample yet")
+            if isinstance(value, sp.MatrixBase):
+                if value.rows > 1:
+                    rows = [list(value[row, :]) for row in range(value.rows)]
+                    return _vector_of([over(row) for row in rows])
+                values = list(value)
+            else:
+                values = args
+        else:
+            values = args
+        if not values:
+            raise ValueError("no sample")
+        return over(values)
+
+    return handler
+
+
+def _average(values: list) -> sp.Basic:
+    """The arithmetic mean: the sum over how many were summed."""
+    return sp.Add(*values) / len(values)
+
+
+def _root_mean_square(values: list) -> sp.Basic:
+    return sp.sqrt(sp.Add(*(value**2 for value in values)) / len(values))
+
+
+def _variance(values: list) -> sp.Basic:
+    """The sample variance, which the manual is explicit is the unbiased one.
+
+    Divided by `n - 1` and not by `n`: the deviations are taken from the
+    sample's own average rather than from the distribution's, which makes them
+    smaller than the true ones by just the amount that one degree of freedom
+    accounts for. A sample of one has no such degree left, and no variance.
+    """
+    if len(values) < 2:
+        raise ValueError("no degrees of freedom")
+    mean = _average(values)
+    return sp.Add(*((value - mean) ** 2 for value in values)) / (len(values) - 1)
+
+
+def _standard_deviation(values: list) -> sp.Basic:
+    """The square root of the sample variance, on the same convention."""
+    return sp.sqrt(_variance(values))
+
+
+def _is_number(conv: _Converter, args: list) -> sp.Basic:
+    """`NUMBER(u)`: whether `u` simplified to a number.
+
+    A predicate, and it answers one of the two truth-values however the question
+    comes out, because a test that stayed inert would leave the `IF` or `SELECT`
+    it was written for undecided. That is what the utility files use it for:
+    `NUMBER(d)` is false while `d` is still the parameter it was written as,
+    which is how a definition tells an argument that was supplied from one that
+    was left out.
+
+    A number is an integer or a rational, which is what Derive's exact
+    arithmetic is over, together with the approximation of one that Approximate
+    mode works in. A radical, `#i` and `inf` are not numbers by that reading.
+    """
+    return sp.true if isinstance(_one(args), (sp.Rational, sp.Float)) else sp.false
+
+
 def _numerator(conv: _Converter, args: list) -> sp.Basic:
     return sp.fraction(sp.together(_one(args)))[0]
 
 
 def _denominator(conv: _Converter, args: list) -> sp.Basic:
     return sp.fraction(sp.together(_one(args)))[1]
+
+
+def _terms(conv: _Converter, args: list) -> sp.Basic:
+    """`TERMS(u)`: what `u` is written as the sum of, as a vector.
+
+    Syntactic terms, so nothing is multiplied out first: `TERMS(x*(a + b)^2 + c)`
+    has two of them, and the manual tells the caller to compose with `EXPAND`
+    where that is not what was wanted. An expression that is no sum is one term.
+
+    An order there had to be, and it is the one the terms were already in:
+    descending total degree, which is what the printer writes a sum by.
+
+    A vector distributes, each element contributing its own row - so `TERMS` of
+    a vector of sums is the matrix of their terms wherever those come out the
+    same length.
+    """
+    value = _one(args)
+    if isinstance(value, sp.MatrixBase):
+        return _vector_of([_terms(conv, [element]) for element in _elements_of(value)])
+    if not isinstance(value, sp.Expr):
+        raise TypeError("no terms")
+    return _vector_of(list(value.as_ordered_terms(order="grlex")))
+
+
+def _variables(conv: _Converter, args: list) -> sp.Basic:
+    """`VARIABLES(u)`: the free variables of `u`, from most main to least.
+
+    Most main first is `ordering`'s order and Derive's own: the order list `x`,
+    `y`, `z` ahead of everything else, and everything else alphabetically. An
+    order there had to be - sympy holds the free variables as a set, and an
+    answer the worksheet stores as text has to print the same every time.
+
+    The symbols found are the ones returned, rather than symbols built again
+    from their names, so that each carries the domain it was declared with.
+
+    A string literal is a `Symbol` to sympy and data to Derive, and is no more a
+    free variable of the expression holding it than a numeral is.
+    """
+    found = _one(args).free_symbols
+    by_name = {symbol.name: symbol for symbol in found if type(symbol) is sp.Symbol}
+    return _vector_of([by_name[name] for name in main_order(by_name)])
 
 
 def _dif(conv: _Converter, args: list) -> sp.Basic:
@@ -930,6 +1053,38 @@ def _element_of(conv: _Converter, args: list) -> sp.Basic:
     return _matrix(matrix)[int(row) - 1, int(column) - 1]
 
 
+def _delete_element(conv: _Converter, args: list) -> sp.Basic:
+    """`DELETE_ELEMENT(v, n)`: `v` with its `n`th element gone, counting from 1.
+
+    A matrix's elements are its rows, as they are everywhere else, so what goes
+    is the `n`th row. That is what VECTOR.MTH's `MINOR` is built on: delete a
+    row, transpose, delete what was a column, transpose back.
+    """
+    vector, index = args
+    elements = _elements_of(_matrix(vector))
+    place = _place(index, len(elements))
+    return _vector_of(elements[:place] + elements[place + 1 :])
+
+
+def _replace_element(conv: _Converter, args: list) -> sp.Basic:
+    """`REPLACE_ELEMENT(u, v, n)`: `v` with `u` where its `n`th element was.
+
+    The new value comes first and the vector second, which is the manual's order
+    and the one `INSERT_ELEMENT` shares. `n` defaults to 1.
+    """
+    value, vector, *rest = args
+    elements = _elements_of(_matrix(vector))
+    place = _place(_one(rest) if rest else sp.Integer(1), len(elements))
+    return _vector_of(elements[:place] + [value] + elements[place + 1 :])
+
+
+def _place(index: sp.Basic, count: int) -> int:
+    """Which of `count` elements an index picks out, counting from 1."""
+    if not isinstance(index, sp.Integer) or not 1 <= index <= count:
+        raise ValueError("not an index")
+    return int(index) - 1
+
+
 def _generated_vector(conv: _Converter, args: list) -> sp.Basic:
     """`VECTOR(u, k, ...)`: `u` at each value `k` takes, as a vector.
 
@@ -1018,6 +1173,350 @@ def _cross(conv: _Converter, args: list) -> sp.Basic:
     return _matrix(left).cross(_matrix(right))
 
 
+def _row_reduce(conv: _Converter, args: list) -> sp.Basic:
+    """`ROW_REDUCE(A)`, and `ROW_REDUCE(A, B)` over the augmented matrix.
+
+    The echelon form the manual describes is the reduced one - the first nonzero
+    element of every row is 1 and everything above it is 0 - which is what
+    `rref` computes, by the multiplications and additions of rows that leave a
+    system's solution set alone.
+
+    A second matrix is adjoined to the right of the first and the pair reduced
+    together, which is how `A . X = B` is solved: the columns `B` occupied come
+    out holding `X` wherever `A` was nonsingular. A second argument that is a
+    vector is one such column, `A . X = b` being the everyday case and the one
+    VECTOR.MTH's `APPROX_EIGENVECTOR` is written in terms of.
+    """
+    matrix, *rest = args
+    matrix = _matrix(matrix)
+    if not rest:
+        return matrix.rref()[0]
+    adjoined = _matrix(_one(rest))
+    if adjoined.rows == 1 and matrix.rows != 1:
+        adjoined = adjoined.T
+    return sp.Matrix.hstack(matrix, adjoined).rref()[0]
+
+
+def _characteristic_polynomial(conv: _Converter, args: list) -> sp.Basic:
+    """`CHARPOLY(A, v)`: `DET(A - v*IDENTITY_MATRIX(DIMENSION(A)))`.
+
+    That determinant, and not the monic polynomial textbooks usually mean by the
+    name, because the manual defines the function as the determinant of the
+    difference of the matrix and a variable times the identity matrix. Negating
+    all `n` rows of `v*I - A` multiplies its determinant by `(-1)^n`, so the two
+    agree in even dimensions and differ in sign in odd ones. Sympy computes the
+    monic one - the cheap way, by recurrence rather than by expanding a
+    determinant full of `v` - and the sign puts it back the way Derive reads it.
+
+    The polynomial is computed over a dummy and the variable written in
+    afterwards, because a polynomial canonicalizes its generator into a bare
+    symbol: computed over `v` itself, the answer would hold a `v` stripped of
+    whatever `v` was declared, which is a different variable of the same name and
+    would not cancel against the one the user has.
+    """
+    matrix, variable = _matrix_and_variable(conv, args)
+    polynomial = matrix.charpoly(sp.Dummy()).as_expr(variable)
+    return polynomial if matrix.rows % 2 == 0 else -polynomial
+
+
+def _eigenvalues(conv: _Converter, args: list) -> sp.Basic:
+    """`EIGENVALUES(A, v)`: the zeros of `A`'s characteristic polynomial in `v`.
+
+    Equations rather than bare values, `[z = 2, z = b]`, because what the
+    function does is solve the characteristic equation, and that is how Derive
+    writes a solved equation's answer everywhere else. Each zero is listed once
+    however many times it is a root: a multiplicity says how many parameters the
+    eigenvector carries, and is no second eigenvalue.
+
+    Sympy hands back a set, which has no order, and the answer has to print the
+    same every time. Sympy's own canonical order is the one taken, and it is the
+    order the manual's examples print in: numbers before names, and `a - b`
+    before `a + b`.
+
+    A zero sympy can only name by its index in a polynomial's root list is no
+    answer: the manual solves the characteristic equation by the quadratic,
+    cubic and quartic formulas and says exact eigenvalues are rarely attainable
+    beyond that, so a matrix whose eigenvalues will not come out in radicals
+    comes back the call it was written as.
+    """
+    matrix, variable = _matrix_and_variable(conv, args)
+    zeros = sorted(matrix.eigenvals(), key=sp.default_sort_key)
+    if any(zero.has(sp.CRootOf) for zero in zeros):
+        raise ValueError("no closed form")
+    return _vector_of([sp.Eq(variable, zero, evaluate=False) for zero in zeros])
+
+
+def _matrix_and_variable(conv: _Converter, args: list) -> tuple[sp.MatrixBase, sp.Basic]:
+    """A matrix and the variable to write an answer about it in.
+
+    The variable is optional and defaults to `w`, which is the manual's default
+    and carries whatever `w` has been declared, as a written one would. Whether
+    the matrix is square is sympy's to complain about, and a call it will not
+    take is a call that comes back the way it was written.
+    """
+    matrix, *rest = args
+    variable = _one(rest) if rest else conv.symbol("w")
+    if type(variable) is not sp.Symbol:
+        raise TypeError("not a variable")
+    return _matrix(matrix), variable
+
+
+def _gradient(conv: _Converter, args: list) -> sp.Basic:
+    """`GRAD(u)`, and `GRAD(u, alpha)` in the coordinates `alpha` describes.
+
+    The gradient of a scalar field: the vector whose element `i` says how fast
+    `u` grows per unit of length along coordinate `i`. Per unit of *length*, not
+    per unit of coordinate, which is what the scale factor divides out - in
+    spherical coordinates a radian of colongitude is `r*SIN(phi)` of arc, so the
+    derivative with respect to it has to be divided by that to be a rate the
+    other elements can be compared against.
+
+    A vector has no gradient here: the manual's GRAD takes an expression, and
+    VECTOR.MTH builds the Jacobian of a vector out of one GRAD per element.
+    """
+    expression, *rest = args
+    if isinstance(expression, sp.MatrixBase):
+        raise TypeError("not an expression")
+    variables, scales = _coordinates(conv, rest)
+    return _vector_of(_gradient_of(expression, variables, scales))
+
+
+def _divergence(conv: _Converter, args: list) -> sp.Basic:
+    """`DIV(v)`, and `DIV(v, alpha)`: how much the field `v` spreads out.
+
+    The flux out of an infinitesimal coordinate box per unit of the volume it
+    encloses. That volume is `H = h1*h2*...*hn` times the box's extent in the
+    coordinates, and the pair of faces the field crosses along coordinate `i`
+    has area `H/hi` times theirs - which is the whole of why the scale factors
+    sit where they do, and why they cancel wherever they are all 1.
+    """
+    elements = _field(args[0])
+    variables, scales = _coordinates(conv, args[1:], len(elements))
+    return _divergence_of(elements, variables, scales)
+
+
+def _laplacian(conv: _Converter, args: list) -> sp.Basic:
+    """`LAPLACIAN(u)`, and `LAPLACIAN(u, alpha)`: `DIV(GRAD(u))`.
+
+    Which is what the manual defines it as, so it is computed that way rather
+    than by a formula of its own - the two would have to agree anyway, and one
+    of them would then be a second place to get the scale factors wrong.
+    """
+    expression, *rest = args
+    if isinstance(expression, sp.MatrixBase):
+        raise TypeError("not an expression")
+    variables, scales = _coordinates(conv, rest)
+    gradient = _gradient_of(expression, variables, scales)
+    return _divergence_of(gradient, variables, scales)
+
+
+def _curl(conv: _Converter, args: list) -> sp.Basic:
+    """`CURL(v)`, and `CURL(v, alpha)`, for a vector of two or three elements.
+
+    The circulation around an infinitesimal loop per unit of the area it
+    encloses, one loop per pair of coordinates. In space the three of them are
+    the elements of a vector, each named after the coordinate its loop turns
+    about.
+
+    In the plane there is one loop and so one number, and Derive returns that
+    number rather than the space vector `[0, 0, w]` it is the last element of.
+    The manual calls this the more common convention; it is also the only one
+    that keeps the answer in the plane the question was asked in.
+    """
+    elements = _field(args[0])
+    if len(elements) not in (2, 3):
+        raise ValueError("not a plane or space vector")
+    variables, scales = _coordinates(conv, args[1:], len(elements))
+    if len(elements) == 2:
+        return _circulation(elements, variables, scales, 0, 1)
+    turns = [_circulation(elements, variables, scales, *pair) for pair in _LOOPS]
+    return _vector_of(turns)
+
+
+#: Which pair of coordinates each element of a space curl turns in: the one
+#: after the element's own, cyclically, and the one after that. Taking them in
+#: that order rather than in sorted order is what gives the middle element its
+#: sign, and it is the order that makes the curl a right-handed cross product of
+#: the derivative with the field.
+_LOOPS = ((1, 2), (2, 0), (0, 1))
+
+
+def _potential(conv: _Converter, args: list) -> sp.Basic:
+    """`POTENTIAL(v)`, `POTENTIAL(v, a)` and `POTENTIAL(v, a, alpha)`.
+
+    The line integral of `v` from `a` to the coordinates themselves, along the
+    staircase path that moves one coordinate at a time: leg `i` runs coordinate
+    `i` from `a SUB i` up to where it is, with the coordinates before it already
+    arrived and the ones after it still at `a`. Where `v` is conservative the
+    path does not matter and the result is a scalar whose gradient is `v`.
+
+    Where it is not, the integral still has a value and Derive still returns it.
+    The manual is explicit that POTENTIAL "merely computes a certain line
+    integral" and that checking `GRAD` of the answer against `v` - or, in two
+    and three dimensions, `CURL(v)` against zero - is the caller's job. So there
+    is nothing to detect here and no `?` to answer: a field with no potential
+    gets the integral along that one path, which is a real number and the wrong
+    answer to a question that has none.
+
+    `a` defaults to the origin. The manual warns that this is a choice and not
+    always a good one - a start where the field is infinite gives an infinite
+    potential - and that is what the second argument is for.
+    """
+    elements = _field(args[0])
+    start, rest = _start(args[1:], len(elements))
+    variables, scales = _coordinates(conv, rest, len(elements))
+    walked = sp.Integer(0)
+    for index, element in enumerate(elements):
+        arrived = zip(variables[index + 1 :], start[index + 1 :])
+        along = (scales[index] * element).subs(list(arrived), simultaneous=True)
+        walked += _leg(along, variables[index], start[index])
+    return walked
+
+
+def _vector_potential(conv: _Converter, args: list) -> sp.Basic:
+    """`VECTOR_POTENTIAL(v)`, and the same optional `a` and `alpha`.
+
+    A vector whose curl is `v`, for a three-element `v`. Vector potentials
+    differ by any gradient, so one has to be picked, and the one picked here is
+    the manual's: the third element is zero, and the other two are the line
+    integrals that forces.
+
+    With `A SUB 3` gone, two of the three curl equations are ordinary
+    integrations along the third coordinate, and they fix `h1*A SUB 1` and
+    `h2*A SUB 2` up to a function of the first two coordinates. The third
+    equation then has to hold everywhere, and it is enough to make it hold on
+    the slice `x3 = a SUB 3`, where those integrals vanish - that is the second
+    integral in the first element, and there is nothing left over for the second
+    element to carry.
+
+    As with POTENTIAL, a field with nonzero divergence has no vector potential
+    and gets this vector anyway: the manual leaves comparing `CURL` of the
+    answer against `v` to the caller.
+    """
+    elements = _field(args[0])
+    if len(elements) != 3:
+        raise ValueError("not a space vector")
+    start, rest = _start(args[1:], 3)
+    variables, scales = _coordinates(conv, rest, 3)
+    (x1, x2, x3), (h1, h2, h3) = variables, scales
+    first, second, third = elements
+    lifted = _leg(h1 * h3 * second, x3, start[2])
+    sliced = _leg((h1 * h2 * third).subs(x3, start[2]), x2, start[1])
+    return _vector_of(
+        [
+            (lifted - sliced) / h1,
+            -_leg(h2 * h3 * first, x3, start[2]) / h2,
+            sp.Integer(0),
+        ]
+    )
+
+
+def _gradient_of(expression: sp.Basic, variables: list, scales: list) -> list[sp.Basic]:
+    return [sp.diff(expression, x) / h for x, h in zip(variables, scales)]
+
+
+def _divergence_of(elements: list, variables: list, scales: list) -> sp.Basic:
+    volume = sp.Mul(*scales)
+    faces = zip(elements, variables, scales)
+    flux = sum((sp.diff(volume / h * u, x) for u, x, h in faces), sp.Integer(0))
+    return flux / volume
+
+
+def _circulation(field: list, variables: list, scales: list, j: int, k: int) -> sp.Basic:
+    """The loop in the `j`, `k` coordinate plane, per unit of the area it holds.
+
+    What goes around the loop is the field's component along each side times the
+    length of that side, which is where the scale factors inside the derivatives
+    come from; the area they enclose is where the one outside comes from.
+    """
+    along_k = sp.diff(scales[k] * field[k], variables[j])
+    along_j = sp.diff(scales[j] * field[j], variables[k])
+    return (along_k - along_j) / (scales[j] * scales[k])
+
+
+def _leg(integrand: sp.Basic, variable: sp.Basic, low: sp.Basic) -> sp.Basic:
+    """`INT(integrand, variable, low, variable)`, done rather than held.
+
+    The integration variable is a dummy because the upper limit is the
+    coordinate itself, and an integral sympy cannot do would leave that dummy in
+    the answer under a name no worksheet can read - so it is no answer, and the
+    call it came from comes back the way it was written.
+    """
+    dummy = sp.Dummy()
+    walked = sp.integrate(integrand.subs(variable, dummy), (dummy, low, variable))
+    if walked.has(dummy):
+        raise ValueError("no antiderivative")
+    return walked
+
+
+def _start(rest: list, count: int) -> tuple[list[sp.Basic], list]:
+    """Where the line integrals start, and whatever arguments follow it.
+
+    The origin unless a vector says otherwise, one coordinate per element of the
+    field, which is the manual's default of "a vector of zeros".
+    """
+    if not rest:
+        return [sp.Integer(0)] * count, []
+    given, *remaining = rest
+    start = _field(given)
+    if len(start) != count:
+        raise ValueError("not a starting point")
+    return start, remaining
+
+
+def _coordinates(
+    conv: _Converter, rest: list, count: int | None = None
+) -> tuple[list[sp.Basic], list[sp.Basic]]:
+    """The coordinate system a differential vector operator works in.
+
+    Three-dimensional Cartesian `x`, `y`, `z` when nothing says otherwise, each
+    carrying whatever it has been declared, as a written one would.
+
+    A vector of variables names Cartesian coordinates of the caller's choosing,
+    and there may be any number of them - `GRAD(u, [w, x, y, z])` is a
+    four-element gradient. A two-row matrix is a coordinate geometry matrix:
+    variables above, and below them the scale factors `hi` for which
+    `ds^2 = (h1*dx1)^2 + ... + (hn*dxn)^2`. That is all an orthogonal curvilinear
+    system is, which is why the same three lines of formula serve Cartesian,
+    cylindrical and spherical coordinates alike. Only the matrices themselves are
+    built in; the names `cylindrical` and `spherical` are assignments in
+    VECTOR.MTH.
+
+    `count` is how many coordinates the caller has elements for. Coordinates go
+    with successive elements of a vector, so the extra ones at the end of the
+    default system are simply not among the ones a shorter field is differentiated
+    along; too few is a question that cannot be asked.
+    """
+    if rest:
+        given = _matrix(_one(rest))
+        if given.rows == 1:
+            variables, scales = list(given), [sp.Integer(1)] * given.cols
+        elif given.rows == 2:
+            variables, scales = list(given[0, :]), list(given[1, :])
+        else:
+            raise ValueError("not a coordinate system")
+    else:
+        variables = [conv.symbol(name) for name in ("x", "y", "z")]
+        scales = [sp.Integer(1)] * 3
+    if not variables or any(type(name) is not sp.Symbol for name in variables):
+        raise TypeError("not coordinate variables")
+    if len(set(variables)) != len(variables):
+        raise ValueError("a coordinate twice")
+    if count is None:
+        return variables, scales
+    if len(variables) < count:
+        raise ValueError("too few coordinates")
+    return variables[:count], scales[:count]
+
+
+def _field(value: sp.Basic) -> list[sp.Basic]:
+    """A vector field's components. A matrix holds no field; a vector does."""
+    matrix = _matrix(value)
+    if matrix.rows != 1 or not matrix.cols:
+        raise TypeError("not a vector")
+    return list(matrix)
+
+
 def _matrix(value: sp.Basic) -> sp.MatrixBase:
     if not isinstance(value, sp.MatrixBase):
         raise TypeError("not a matrix")
@@ -1041,8 +1540,15 @@ FUNCTIONS: dict[str, Handler] = {
     "MODS": _mods,
     "GCD": _fold(sp.gcd),
     "LCM": _fold(sp.lcm),
+    "AVERAGE": _statistic(_average),
+    "RMS": _statistic(_root_mean_square),
+    "VAR": _statistic(_variance),
+    "STDEV": _statistic(_standard_deviation),
+    "NUMBER": _is_number,
     "NUMERATOR": _numerator,
     "DENOMINATOR": _denominator,
+    "TERMS": _terms,
+    "VARIABLES": _variables,
     "DIF": _dif,
     "INT": _integral,
     "SUM": _summation,
@@ -1056,9 +1562,20 @@ FUNCTIONS: dict[str, Handler] = {
     "TRACE": _trace,
     "DIMENSION": _dimension,
     "ELEMENT": _element_of,
+    "DELETE_ELEMENT": _delete_element,
+    "REPLACE_ELEMENT": _replace_element,
     "IDENTITY_MATRIX": _identity_matrix,
     "CROSS": _cross,
+    "ROW_REDUCE": _row_reduce,
+    "CHARPOLY": _characteristic_polynomial,
+    "EIGENVALUES": _eigenvalues,
     "VECTOR": _generated_vector,
+    "GRAD": _gradient,
+    "DIV": _divergence,
+    "LAPLACIAN": _laplacian,
+    "CURL": _curl,
+    "POTENTIAL": _potential,
+    "VECTOR_POTENTIAL": _vector_potential,
 }
 
 
