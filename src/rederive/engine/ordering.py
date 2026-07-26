@@ -6,9 +6,10 @@ list, which starts out as `x`, `y`, `z`. A variable on the list is more main
 than one after it on the list and more main than one not on the list at all;
 variables off the list are ordered among themselves alphabetically.
 
-The ordering shows outside the normal form too: it is the order Factor offers
-its factorization variables in, and the order a `Declare Function` definition's
-variables become the function's parameters in.
+The ordering shows outside the normal form too: it is the order Factor and
+Expand offer their variables in, which makes the first one chosen the primary
+variable, and the order a `Declare Function` definition's variables become the
+function's parameters in.
 
 `Manage Ordering`, which lets the user rewrite the list, is not implemented, so
 the list is the initial one and is a constant here.

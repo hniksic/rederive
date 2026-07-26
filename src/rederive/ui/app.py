@@ -21,7 +21,7 @@ block `Remove` takes out, the place `Unremove` puts it back - and gets its
 answer handed to it rather than stored, since it is about the command in hand
 and not about the system.
 
-A command that needs a line of its own - Author, Simplify and Factor an
+A command that needs a line of its own - Author, Simplify, Factor and Expand an
 expression, Jump a label number, the Transfer commands a file name - takes the
 screen with the prompt band instead, which is one Input with a label in front
 of it. The mode says which command the line belongs to, and so what Enter does
@@ -35,13 +35,16 @@ away - leaves the menu up with its highlight off, and `confirm` holds what a Y
 does. A demonstration takes the band outright: the comment above each step
 stands where the menu words go, and any key runs the next step.
 
-Factor asks more than one question, and asks them in both forms: an expression,
-then a factorization variable at a time on the prompt band, then an amount off
-a menu stacked on the command menu. What has been answered so far lives in
-`Factoring` until there is enough to run the command, since each prompt is gone
-by the time the next one is up. How many questions get asked depends on the
-answers - a number is decomposed without being asked about at all - so the
-sequence is in the handlers rather than in a table.
+Factor and Expand ask more than one question, and ask them in both forms: an
+expression, then a variable at a time on the prompt band, then an amount off a
+menu stacked on the command menu. The two are one flow here, `Asking`, because
+the original puts the same questions in the same order for both; a `Command`
+holds what differs, which is the word on the prompts, the amounts on offer,
+when the amount is worth asking about, and what runs at the end. What has been
+answered so far lives in the `Asking` until there is enough to run the command,
+since each prompt is gone by the time the next one is up. How many questions
+get asked depends on the answers - a number is decomposed without being asked
+about at all - so the sequence is in the handlers rather than in a table.
 
 The Declare commands are the same shape and each keeps its own answers -
 `Declaring`, `Defining`, `Entering` - but their questions replace each other
@@ -92,8 +95,9 @@ from rederive.ui.widgets import (
 MODE_MENU = "menu"
 MODE_AUTHOR = "author"
 MODE_SIMPLIFY = "simplify"
-MODE_FACTOR = "factor"
-MODE_FACTOR_VARIABLE = "factor_variable"
+#: The two modes the prompt band is in while Factor or Expand is asking.
+MODE_ASKING = "asking"
+MODE_ASKING_VARIABLE = "asking_variable"
 MODE_JUMP = "jump"
 MODE_FILE = "file"
 MODE_CONFIRM = "confirm"
@@ -109,8 +113,8 @@ MODE_DEMO = "demo"
 PROMPT_MODES = (
     MODE_AUTHOR,
     MODE_SIMPLIFY,
-    MODE_FACTOR,
-    MODE_FACTOR_VARIABLE,
+    MODE_ASKING,
+    MODE_ASKING_VARIABLE,
     MODE_JUMP,
     MODE_FILE,
     MODE_VARIABLE_NAME,
@@ -122,31 +126,31 @@ PROMPT_MODES = (
 )
 
 #: The prompt lines the highlight can still be walked under: every one of them
-#: but Factor's variable line, which takes no notice of those keys. What to
-#: factor has been settled by then, so moving the highlight would say nothing
-#: about what the command is about to do.
-WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode != MODE_FACTOR_VARIABLE)
+#: but the variable line Factor and Expand collect on, which takes no notice of
+#: those keys. What to work on has been settled by then, so moving the
+#: highlight would say nothing about what the command is about to do.
+WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode != MODE_ASKING_VARIABLE)
 
 #: The prompt lines that come up naming an expression, and so take the label of
 #: wherever the walk lands - for as long as the label they offered is still
 #: selected on them. A line typed on is a line the user has taken over. The
 #: Declare lines take an expression too but are offered nothing to begin with,
 #: so there is nothing on them to keep in step with the highlight.
-LABELLED_MODES = (MODE_SIMPLIFY, MODE_FACTOR)
+LABELLED_MODES = (MODE_SIMPLIFY, MODE_ASKING)
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
 ENTER_EXPRESSION = "Enter expression (press F1 for help)"
 ENTER_TO_SIMPLIFY = "Enter expression"
-ENTER_TO_FACTOR = "Enter expression"
+ENTER_TO_DERIVE = "Enter expression"
 #: What Quit and the two Clear commands that throw expressions away both ask.
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
-FACTOR_PROMPT = " FACTOR expression: "
 JUMP_PROMPT = " JUMP to: "
-FACTOR_VARIABLE_PROMPT = " FACTOR variable {number}: "
-#: What the message line offers while Factor is collecting variables. The
+EXPRESSION_PROMPT = " {word} expression: "
+VARIABLE_PROMPT = " {word} variable {number}: "
+#: What the message line offers while the variables are being collected. The
 #: first question may be answered for all of them at once; the ones after it
 #: end the list instead, since something has been chosen by then.
 FIRST_VARIABLE = "Return for all or select 1: {variables}"
@@ -233,19 +237,60 @@ class Demonstration:
         return self.at >= len(self.steps)
 
 
-@dataclass
-class Factoring:
-    """A Factor command part way through its questions.
+@dataclass(frozen=True)
+class Command:
+    """What tells Factor and Expand apart, the questions being the same.
 
-    The command asks for an expression, then for factorization variables, then
-    for an amount, and each answer has to outlive the prompt that collected it.
+    `needs_amount` says whether the amount is worth asking about for the
+    expression in hand, which is a different question for each: Factor asks
+    unless the expression is a number it can only decompose, and Expand asks
+    only where there is a denominator to factor.
     """
 
-    request: str
+    #: The word the prompts are written with, and the menu title's first word.
+    word: str
+    amounts: Menu
+    needs_amount: Callable[[Session, str], bool]
+    run: Callable[[Session, str, Amount, tuple[str, ...]], object]
+
+
+FACTOR = Command(
+    "FACTOR",
+    menus.AMOUNT,
+    lambda session, request: not session.decomposes(request),
+    lambda session, request, amount, variables: session.factor(
+        request, amount, variables
+    ),
+)
+
+EXPAND = Command(
+    "EXPAND",
+    menus.EXPAND_AMOUNT,
+    lambda session, request: session.written_as_ratio(request),
+    lambda session, request, amount, variables: session.expand(
+        request, amount, variables
+    ),
+)
+
+
+#: The menus that answer a question a command asked rather than list commands.
+AMOUNT_MENUS = (FACTOR.amounts, EXPAND.amounts)
+
+
+@dataclass
+class Asking:
+    """A Factor or Expand command part way through its questions.
+
+    The command asks for an expression, then for variables, then for an
+    amount, and each answer has to outlive the prompt that collected it.
+    """
+
+    command: Command
+    request: str = ""
     #: The variables not chosen yet, in the order they are offered.
-    remaining: tuple[str, ...]
+    remaining: tuple[str, ...] = ()
     #: The ones chosen so far, in the order they were, which is what makes the
-    #: first of them the primary factorization variable.
+    #: first of them the primary variable.
     chosen: tuple[str, ...] = ()
 
 
@@ -386,8 +431,8 @@ class RederiveApp(App[None]):
         self.accepts: Callable[[dict[str, str | int]], bool] | None = None
         #: The block of labels the next save writes, when one was asked for.
         self.block: tuple[int | None, int | None] = (None, None)
-        #: The Factor command's answers so far, while it is asking for them.
-        self.factoring: Factoring | None = None
+        #: A Factor or Expand command's answers so far, while it is asking.
+        self.asking: Asking | None = None
         #: The same for the three Declare commands that ask more than one
         #: question, each of which is asking whenever it is not None.
         self.declaring: Declaring | None = None
@@ -404,13 +449,19 @@ class RederiveApp(App[None]):
         self.demo: Demonstration | None = None
         #: The state file last read or written, offered back by both commands.
         self.state_file = STATE_FILE
-        #: The amount menu's own cursor, kept across invocations rather than
+        #: Each amount menu's own cursor, kept across invocations rather than
         #: made fresh: the original opens it on whatever was chosen last.
-        self.amount = MenuCursor(menus.AMOUNT, menus.AMOUNT.words.index("Rational"))
+        self.amounts = {
+            command.amounts: MenuCursor(
+                command.amounts, command.amounts.words.index("Rational")
+            )
+            for command in (FACTOR, EXPAND)
+        }
         # Commands not listed here are present and navigable but inert.
         self.commands: dict[tuple[Menu, str], Callable[[], None]] = {
             (ALGEBRA, "Author"): self._command_author,
-            (ALGEBRA, "Factor"): self._command_factor,
+            (ALGEBRA, "Expand"): lambda: self._command_asking(EXPAND),
+            (ALGEBRA, "Factor"): lambda: self._command_asking(FACTOR),
             (ALGEBRA, "Jump"): self._command_jump,
             (ALGEBRA, "Quit"): self._command_quit,
             (ALGEBRA, "Remove"): self._command_remove,
@@ -682,14 +733,14 @@ class RederiveApp(App[None]):
 
         A menu that asks a question rather than listing commands is abandoned
         along with the command that put it up. There is nothing to go back to:
-        the Factor amount is the last thing that command asks for, and the
-        Declare Variable questions are put up one in place of the last, so that
-        Esc leaves any of them for the Declare menu as the original does.
+        the amount is the last thing Factor and Expand ask for, and the Declare
+        Variable questions are put up one in place of the last, so that Esc
+        leaves any of them for the Declare menu as the original does.
         """
         if len(self.stack) > 1:
             left = self.stack.pop()
-            if isinstance(left, MenuCursor) and left.menu is menus.AMOUNT:
-                self.factoring = None
+            if isinstance(left, MenuCursor) and left.menu in AMOUNT_MENUS:
+                self.asking = None
             self.declaring = None
             self._ask_again()
             self.refresh_screen()
@@ -797,7 +848,7 @@ class RederiveApp(App[None]):
         if cursor.menu is COLORS:
             self._chose_color(index)
             return
-        if cursor.menu is menus.AMOUNT:
+        if cursor.menu in AMOUNT_MENUS:
             self._chose_amount(index)
             return
         if cursor.menu is menus.DECLARE_VARIABLE:
@@ -1005,65 +1056,74 @@ class RederiveApp(App[None]):
         self.session.unremove(None if before == menus.END else int(before))
         self._return_to_menu(ENTER_OPTION)
 
-    # -- Factor ------------------------------------------------------------
+    # -- Factor and Expand -------------------------------------------------
 
-    def _command_factor(self) -> None:
-        """Ask which expression to factor, offering the highlighted one."""
+    def _command_asking(self, command: Command) -> None:
+        """Ask which expression to work on, offering the highlighted one."""
+        self.asking = Asking(command)
         entry = self.session.selected_entry
         offered = "" if entry is None else f"#{entry.number}"
-        self._prompt(MODE_FACTOR, FACTOR_PROMPT, offered, ENTER_TO_FACTOR, keep=1)
+        self._prompt(
+            MODE_ASKING,
+            EXPRESSION_PROMPT.format(word=command.word),
+            offered,
+            ENTER_TO_DERIVE,
+            keep=1,
+        )
 
-    def _factor(self, request: str) -> None:
+    def _asked(self, request: str) -> None:
         """The expression is settled: work out what is left to ask.
 
-        A number has nothing to ask about and is decomposed on the spot. One
-        variable is no choice, so only the amount is asked for. Two or more and
-        the variables are asked for first, one question at a time.
+        Fewer than two variables is no choice, so none is asked for. The
+        amount is asked for only where it would make a difference, which each
+        command decides for itself - so a number is decomposed and a sum is
+        expanded on the spot, with no question put at all.
         """
+        pending = self.asking
+        assert pending is not None
         if not request.strip():
             self._end_prompt()
             return
         try:
-            decomposes = self.session.decomposes(request)
-            variables = self.session.factor_variables(request)
+            needs_amount = pending.command.needs_amount(self.session, request)
+            pending.remaining = self.session.variables(request)
         except DeriveSyntaxError as error:
             self._refused(error)
             return
-        if decomposes:
-            self._factored(request, ())
-            return
-        self.factoring = Factoring(request, variables)
-        if len(variables) < 2:
+        pending.request = request
+        if len(pending.remaining) >= 2:
+            self._ask_variable()
+        elif needs_amount:
             self._ask_amount()
         else:
-            self._ask_variable()
+            self._answer()
 
     def _ask_variable(self) -> None:
-        """Put up the next factorization variable question."""
-        pending = self.factoring
+        """Put up the next variable question."""
+        pending = self.asking
         assert pending is not None
         number = len(pending.chosen) + 1
         offer = FIRST_VARIABLE if number == 1 else NEXT_VARIABLE
         self._prompt(
-            MODE_FACTOR_VARIABLE,
-            FACTOR_VARIABLE_PROMPT.format(number=number),
+            MODE_ASKING_VARIABLE,
+            VARIABLE_PROMPT.format(word=pending.command.word, number=number),
             "",
             offer.format(variables=",".join(pending.remaining)),
         )
 
-    def _factor_variable(self, answer: str) -> None:
-        """One answer to a factorization variable question.
+    def _asked_variable(self, answer: str) -> None:
+        """One answer to a variable question.
 
         An empty line ends the list, and so does choosing the last variable
         there was: either way what is left to ask is the amount. A name that is
         not one of the variables on offer is refused and the question put
         again, which is what the original does with it.
         """
-        pending = self.factoring
+        pending = self.asking
         assert pending is not None
         answer = answer.strip()
         if not answer:
-            self._ask_amount()
+            self._variables_settled()
             return
         chosen = next(
             (name for name in pending.remaining if name.lower() == answer.lower()), None
@@ -1077,32 +1137,48 @@ class RederiveApp(App[None]):
         if pending.remaining:
             self._ask_variable()
         else:
+            self._variables_settled()
+
+    def _variables_settled(self) -> None:
+        """The variables are in: put the amount question, or run the command."""
+        pending = self.asking
+        assert pending is not None
+        if pending.command.needs_amount(self.session, pending.request):
             self._ask_amount()
+        else:
+            self._answer()
 
     def _ask_amount(self) -> None:
         """Stack the amount menu on the command menu, the prompt band done."""
+        pending = self.asking
+        assert pending is not None
         self._hide_prompt()
         self.mode = MODE_MENU
-        self.stack.append(self.amount)
-        self.message = menus.AMOUNT.message
+        self.stack.append(self.amounts[pending.command.amounts])
+        self.message = pending.command.amounts.message
         self.refresh_screen()
 
     def _chose_amount(self, index: int) -> None:
         """The amount is the last question, so choosing one runs the command."""
-        self.amount.index = index
-        self.stack.pop()
-        pending = self.factoring
-        self.factoring = None
+        pending = self.asking
         assert pending is not None
-        self._factored(pending.request, pending.chosen, menus.AMOUNT.words[index])
+        self.amounts[pending.command.amounts].index = index
+        self.stack.pop()
+        self._answer(pending.command.amounts.words[index])
 
-    def _factored(
-        self, request: str, variables: tuple[str, ...], amount: str | None = None
-    ) -> None:
-        """Run Factor, and say how long the answer took."""
+    def _answer(self, amount: str | None = None) -> None:
+        """Run the command, and say how long the answer took."""
+        pending = self.asking
+        assert pending is not None
+        self.asking = None
         started = time.monotonic()
         try:
-            self.session.factor(request, Amount(amount or "Rational"), variables)
+            pending.command.run(
+                self.session,
+                pending.request,
+                Amount(amount or "Rational"),
+                pending.chosen,
+            )
         except DeriveSyntaxError as error:
             # The line parsed when it was collected, so this is all but
             # unreachable; there may be no prompt left to put the cursor in.
@@ -1634,10 +1710,10 @@ class RederiveApp(App[None]):
         event.stop()
         if self.mode == MODE_SIMPLIFY:
             self._simplify(event.value)
-        elif self.mode == MODE_FACTOR:
-            self._factor(event.value)
-        elif self.mode == MODE_FACTOR_VARIABLE:
-            self._factor_variable(event.value)
+        elif self.mode == MODE_ASKING:
+            self._asked(event.value)
+        elif self.mode == MODE_ASKING_VARIABLE:
+            self._asked_variable(event.value)
         elif self.mode == MODE_JUMP:
             self._jumped(event.value)
         elif self.mode == MODE_FILE:
@@ -1719,7 +1795,7 @@ class RederiveApp(App[None]):
         Transfer Save menu it was picked from. Abandoning the line instead
         leaves that menu where it was, which is what Esc does.
         """
-        self.factoring = None
+        self.asking = None
         self.declaring = None
         self.defining = None
         self.entering = None

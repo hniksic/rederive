@@ -375,7 +375,7 @@ async def test_escape_abandons_factor_from_any_of_its_questions(app, keys, step)
         await pilot.press("escape")
         assert message(app) == "Enter option"
         assert highlighted_menu_option(app) == "Author"
-        assert app.factoring is None
+        assert app.asking is None
         assert entries(app) == ["x^2 y^2 - 1"]
 
 
@@ -392,6 +392,134 @@ async def test_factor_leaves_a_line_that_does_not_read_up(app):
 async def test_factor_asks_for_nothing_when_the_history_is_empty(app):
     async with app.run_test() as pilot:
         await pilot.press("f", "enter")
+        assert app.session.entries == []
+        assert message(app) == "Enter option"
+
+
+# -- Expand, which asks the same three questions ------------------------------
+#
+# Every screen asserted here was checked against the original.
+# Expand asks for an amount where Factor asks for one - the two are one flow -
+# but for a different reason and off a menu of its own: only a ratio has a
+# denominator to factor, and Complex is not among the amounts on offer.
+
+
+async def test_expand_asks_for_the_expression_and_answers(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2x(x - 3)^2")
+        await pilot.press("e")
+        assert prompt(app) == ("EXPAND expression:", "#1")
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        assert entries(app)[-1] == "2*x^3 - 12*x^2 + 18*x"
+        assert message(app).startswith("Compute time:")
+        assert annotation(app) == "Expd(#1)"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_expand_asks_for_the_variables_when_there_are_two(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "(x + 2y + 1)^3")
+        await pilot.press("e", "enter")
+        assert prompt(app) == ("EXPAND variable 1:", "")
+        assert message(app) == "Return for all or select 1: x,y"
+        await pilot.press("x", "enter")
+        assert prompt(app) == ("EXPAND variable 2:", "")
+        assert message(app) == "Return for no more or select next: y"
+        # Ending the list leaves y out, which is what keeps 2*y + 1 whole.
+        await pilot.press("enter")
+        assert entries(app)[-1] == (
+            "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 + (2*y + 1)^3"
+        )
+
+
+async def test_a_ratio_is_asked_about_and_a_polynomial_is_not(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "1/(x^2 - 1)")
+        await pilot.press("e", "enter")
+        assert band(app) == [
+            " EXPAND: Amount: Trivial Squarefree Rational raDical"
+        ]
+        assert message(app) == "Select amount of factoring"
+        assert highlighted_menu_option(app) == "Rational"
+        await pilot.press("r")
+        assert entries(app)[-1] == "1/(2*(x - 1)) - 1/(2*(x + 1))"
+
+
+async def test_the_two_amount_menus_remember_separately(app):
+    """The original keeps a choice made on one off the other: Factor left on
+    Trivial still opens Expand on Rational."""
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 - 4")
+        await pilot.press("f", "enter", "t")
+        await author(pilot, "1/(x^2 - 4)")
+        await pilot.press("e", "enter")
+        assert highlighted_menu_option(app) == "Rational"
+        await pilot.press("escape")
+        await author(pilot, "x^2 - 9")
+        await pilot.press("f", "enter")
+        assert highlighted_menu_option(app) == "Trivial"
+
+
+async def test_the_variables_come_before_the_amount(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "(x + 1)^2/(a^2 - 1)")
+        await pilot.press("e", "enter")
+        assert prompt(app) == ("EXPAND variable 1:", "")
+        assert message(app) == "Return for all or select 1: x,a"
+        await pilot.press("x", "enter")
+        # Ending the variable list is what brings the amount menu up.
+        await pilot.press("enter")
+        assert message(app) == "Select amount of factoring"
+        await pilot.press("r")
+        assert entries(app)[-1] == "x^2/(a^2 - 1) + 2*x/(a^2 - 1) + 1/(a^2 - 1)"
+
+
+async def test_expand_of_a_part_copies_the_rest_of_the_expression(app):
+    """The manual's own example of highlighting a subexpression."""
+    async with app.run_test() as pilot:
+        await author(pilot, "2x(x - 3)^2")
+        await pilot.press("right", "end")
+        assert highlighted_expression(app) == "       2\n(x - 3)"
+        await pilot.press("e", "enter")
+        assert work_area(app)[-1] == "#2:  2·x·(x  - 6·x + 9)"
+        assert annotation(app) == "Expd(#1')"
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("e",), "the expression"),
+        (("e", "enter"), "the variables"),
+        (("e", "enter", "enter"), "the amount"),
+    ],
+    ids=str,
+)
+async def test_escape_abandons_expand_from_any_of_its_questions(app, keys, step):
+    """One Esc returns to the command menu, whichever question is up."""
+    async with app.run_test() as pilot:
+        await author(pilot, "1/(x^2 y^2 - 1)")
+        await pilot.press(*keys)
+        await pilot.press("escape")
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+        assert app.asking is None
+        assert entries(app) == ["1/(x^2 y^2 - 1)"]
+
+
+async def test_expand_leaves_a_line_that_does_not_read_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("e")
+        await pilot.press(*"+")
+        await pilot.press("enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert entries(app) == ["x"]
+
+
+async def test_expand_asks_for_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("e", "enter")
         assert app.session.entries == []
         assert message(app) == "Enter option"
 

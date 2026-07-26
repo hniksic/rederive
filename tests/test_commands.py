@@ -231,26 +231,26 @@ def test_an_assignment_reaches_the_factoring(session):
 
 def test_the_variables_on_offer_are_most_main_first(session):
     session.author("y^2 - x^2")
-    assert session.factor_variables("#1") == ("x", "y")
+    assert session.variables("#1") == ("x", "y")
     session.author("b a - c^2")
-    assert session.factor_variables("#2") == ("a", "b", "c")
+    assert session.variables("#2") == ("a", "b", "c")
     # The order list is x, y, z, and a variable on it outranks one that is not.
     session.author("z^2 - a^2")
-    assert session.factor_variables("#3") == ("z", "a")
+    assert session.variables("#3") == ("z", "a")
 
 
 def test_the_variables_on_offer_come_from_the_highlighted_part(session):
     """Only the subexpression is factored, so only its variables are offered."""
     session.author("(x^2 - 1) + SIN(z)")
-    assert session.factor_variables("#1") == ("x", "z")
+    assert session.variables("#1") == ("x", "z")
     part(session, "right")
-    assert session.factor_variables("#1") == ("x",)
+    assert session.variables("#1") == ("x",)
 
 
 def test_an_assigned_name_is_no_longer_a_variable(session):
     session.author("k := 4")
     session.author("x^2 - k")
-    assert session.factor_variables("#2") == ("x",)
+    assert session.variables("#2") == ("x",)
 
 
 def test_a_number_is_recognised_before_anything_is_asked(session):
@@ -266,5 +266,59 @@ def test_a_number_is_recognised_before_anything_is_asked(session):
         # A factorial has a number for a value but is not written as one, and
         # the original asks for an amount for it.
         False,
+        False,
+    ]
+
+
+# -- Expand -------------------------------------------------------------------
+
+
+def test_the_answer_is_appended_as_an_expansion(session):
+    session.author("2 x (x - 3)^2")
+    answer = session.expand("#1")
+    assert texts(session) == ["2 x (x - 3)^2", "2*x^3 - 12*x^2 + 18*x"]
+    assert answer.annotation == "Expd(#1)"
+
+
+def test_expanding_part_of_an_entry_copies_the_rest_of_it(session):
+    """The manual's own example: expanding only the square inside the product
+    leaves the product standing around it."""
+    session.author("2 x (x - 3)^2")
+    part(session, "right", "last_sibling")
+    answer = session.expand("#1")
+    assert answer.layout.lines == ("      2           ", "2·x·(x  - 6·x + 9)")
+    assert answer.annotation == "Expd(#1')"
+
+
+def test_the_expansion_variables_reach_the_command(session):
+    session.author("(x + 2 y + 1)^3")
+    about_x = session.expand("#1", engine.Amount.RATIONAL, ("x",))
+    assert about_x.text == "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 + (2*y + 1)^3"
+
+
+def test_the_amount_reaches_the_expansion(session):
+    session.author("1/(x^2 - 1)")
+    assert session.expand("#1", engine.Amount.TRIVIAL).text == "1/(x^2 - 1)"
+    assert session.expand("#1").text == "1/(2*(x - 1)) - 1/(2*(x + 1))"
+
+
+def test_an_assignment_reaches_the_expansion(session):
+    session.author("k := 3")
+    session.author("(x + k)^2")
+    assert session.expand("#2").text == "x^2 + 6*x + 9"
+
+
+def test_a_ratio_is_recognised_before_an_amount_is_asked_for(session):
+    session.author("1/(x^2 - 1)")
+    session.author("7/12")
+    session.author("x^-1")
+    session.author("2/x + 1/x")
+    assert [session.written_as_ratio(f"#{n}") for n in (1, 2, 3, 4)] == [
+        True,
+        True,
+        # A power, not a quotient, however it is drawn.
+        False,
+        # Its value has a denominator; the expression as written has none, and
+        # the original goes by how it is written.
         False,
     ]

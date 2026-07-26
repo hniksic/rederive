@@ -49,10 +49,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 import sympy as sp
-from sympy.core.relational import Relational
-from sympy.logic.boolalg import Boolean
 
-from rederive.engine.to_sympy import Assign, Declare, FunDef, InertVector, Logical
+from rederive.engine.shape import attempt as _attempt
+from rederive.engine.shape import distributed
 
 __all__ = ["Amount", "amount_named", "factored_expression"]
 
@@ -109,7 +108,8 @@ def factored_expression(
     Total: a rewrite that fails is a rewrite not taken, and nothing here
     raises on anything the conversion layer produced.
     """
-    return _distributed(expression, _Request(amount, tuple(variables), finish))
+    request = _Request(amount, tuple(variables), finish)
+    return distributed(expression, lambda scalar: _leaf(scalar, request))
 
 
 @dataclass(frozen=True)
@@ -121,42 +121,7 @@ class _Request:
     finish: Finish | None
 
 
-# -- by shape ----------------------------------------------------------------
-
-
-def _distributed(expression: sp.Basic, request: _Request) -> sp.Basic:
-    """Factor every scalar this expression is built out of.
-
-    A relation is factored side by side, a vector or matrix element by
-    element, a definition on its value alone - the same distribution Simplify
-    makes, and for the same reason: what makes an entry a definition or a
-    relation must survive for the line to still read as one.
-
-    A boolean beyond a single relation comes back untouched. Derive factors
-    those into conjunctive normal form, which is a different operation
-    sharing a name, and not this milestone's.
-    """
-    def again(part: sp.Basic) -> sp.Basic:
-        return _distributed(part, request)
-
-    if isinstance(expression, Relational):
-        left, right = again(expression.lhs), again(expression.rhs)
-        try:
-            return expression.func(left, right, evaluate=False)
-        except Exception:
-            return expression.func(left, right)
-    if isinstance(expression, Declare):
-        return expression
-    if isinstance(expression, (Assign, FunDef)):
-        head, operator, *value = expression.args
-        return expression.func(head, operator, *(again(part) for part in value))
-    if isinstance(expression, sp.MatrixBase):
-        return expression.applyfunc(again)
-    if isinstance(expression, (InertVector, Logical)):
-        return expression.func(*(again(argument) for argument in expression.args))
-    if isinstance(expression, Boolean):
-        return expression
-    return _leaf(expression, request)
+# -- one scalar --------------------------------------------------------------
 
 
 def _leaf(expression: sp.Basic, request: _Request) -> sp.Basic:
@@ -398,19 +363,3 @@ def _primes(number: sp.Rational) -> sp.Expr:
     ]
     product = sp.UnevaluatedExpr(sp.Mul(*pieces, evaluate=False))
     return -product if number < 0 else product
-
-
-def _attempt(
-    expression: sp.Expr, rewrite: Callable[[sp.Expr], sp.Basic]
-) -> sp.Expr:
-    """`rewrite`, or the expression unchanged if it will not run.
-
-    Unlike Simplify's gate this does not ask whether the answer got shorter.
-    Factoring was asked for by name, and `(x + 2)*(x - 2)` is the answer to
-    that question even though it counts more operations than `x^2 - 4`.
-    """
-    try:
-        candidate = rewrite(expression)
-    except Exception:
-        return expression
-    return candidate if isinstance(candidate, sp.Expr) else expression

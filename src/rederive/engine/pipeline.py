@@ -48,6 +48,7 @@ from rederive.engine.context import (
     Precision,
     TrigPower,
 )
+from rederive.engine.expanding import EXPAND_AMOUNTS, expanded_expression
 from rederive.engine.factoring import (
     DEFAULT_AMOUNT,
     Amount,
@@ -266,7 +267,7 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     for standing_in in (held, frozen):
         if standing_in:
             expression = expression.xreplace(standing_in)
-    return approximated(_factorings(_canonical(expression)), context)
+    return approximated(_commanded(_canonical(expression)), context)
 
 
 def _held(expression: sp.Basic) -> tuple[sp.Basic, dict[sp.Basic, sp.Basic]]:
@@ -662,16 +663,18 @@ def _undecided(head: sp.Basic) -> sp.Basic:
     return sp.zoo if right in (sp.oo, -sp.oo) else PlusMinus(right)
 
 
-# -- the FACTOR head ---------------------------------------------------------
+# -- the FACTOR and EXPAND heads ---------------------------------------------
 
 
-def _factorings(expression: sp.Basic) -> sp.Basic:
-    """Evaluate every `FACTOR` head, innermost first.
+def _commanded(expression: sp.Basic) -> sp.Basic:
+    """Evaluate every `FACTOR` and `EXPAND` head, innermost first.
 
-    `FACTOR(u, amount, x, y, ...)` is the author-line spelling of the Factor
-    command, so simplifying a line that carries one factors it - which is what
-    the original does, and what makes the function worth having rather than an
-    inert head that prints back as itself.
+    `FACTOR(u, amount, x, y, ...)` and `EXPAND(u, amount, x, y, ...)` are the
+    author-line spellings of the two commands, so simplifying a line that
+    carries one runs it - which is what the original does, and what makes the
+    functions worth having rather than inert heads that print back as
+    themselves. Both are matched in one pass so that either may be written
+    inside the other.
 
     Last of the rewrites on purpose, and after `_canonical` as well. Every
     gate above this one asks whether a candidate is shorter than what it
@@ -681,33 +684,41 @@ def _factorings(expression: sp.Basic) -> sp.Basic:
     prime decomposition straight back into the integer it decomposes.
     """
     try:
-        return expression.replace(_is_factoring, _factoring, simultaneous=False)
+        return expression.replace(_is_command, _command, simultaneous=False)
     except Exception:
         return expression
 
 
-def _is_factoring(expression: sp.Basic) -> bool:
-    return isinstance(expression, AppliedUndef) and type(expression).__name__ == "FACTOR"
+def _is_command(expression: sp.Basic) -> bool:
+    return isinstance(expression, AppliedUndef) and type(expression).__name__ in (
+        "FACTOR",
+        "EXPAND",
+    )
 
 
-def _factoring(head: sp.Basic) -> sp.Basic:
-    """One `FACTOR` head, read as its target, its amount and its variables.
+def _command(head: sp.Basic) -> sp.Basic:
+    """One head, read as its target, its amount and its variables.
 
     The arguments after the first are a word naming the amount, a list of
     variables, or both in that order; the manual allows any of them to be left
     out. A word that names no amount is read as a variable, which is what
     keeps a call nobody can make sense of - a Derive 6 `FACTOR(u, Turing)` -
-    an expression rather than an error.
+    an expression rather than an error. `EXPAND(u, Complex)` is such a call:
+    Complex is an amount Factor offers and Expand does not.
     """
+    expanding = type(head).__name__ == "EXPAND"
+    amounts = EXPAND_AMOUNTS if expanding else tuple(Amount)
     target, *rest = head.args
     amount = DEFAULT_AMOUNT
     variables = []
     for argument in rest:
         named = amount_named(str(argument)) if isinstance(argument, sp.Symbol) else None
-        if named is not None and not variables:
+        if named is not None and named in amounts and not variables:
             amount = named
         elif isinstance(argument, sp.Symbol):
             variables.append(argument.name)
+    if expanding:
+        return expanded_expression(target, amount, variables)
     return factored_expression(target, amount, variables)
 
 

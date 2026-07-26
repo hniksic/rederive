@@ -336,12 +336,30 @@ class Session:
 
         return self._command(request, "Fctr", run)
 
+    def expand(
+        self,
+        request: str,
+        amount: engine.Amount = engine.Amount.RATIONAL,
+        variables: Sequence[str] = (),
+    ) -> Entry:
+        """Append the expanded form of the expression `request` names.
+
+        `variables` names the expansion variables, in the order they were
+        chosen, and `amount` is how far the denominator of a ratio is factored
+        on the way to partial fractions; the rest is Simplify's story exactly.
+        """
+
+        def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
+            return engine.expand(node, context, amount, variables, state)
+
+        return self._command(request, "Expd", run)
+
     def target(self, request: str) -> Node:
         """The expression a command for `request` would act on.
 
-        What the command itself resolves, offered on its own because Factor has
-        to look at it before it can ask its questions: which variables it may
-        offer, and whether to ask anything at all.
+        What the command itself resolves, offered on its own because Factor and
+        Expand have to look at it before they can ask their questions: which
+        variables to offer, and whether to ask anything at all.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
@@ -355,15 +373,15 @@ class Session:
                 return part
         return entry.node
 
-    def factor_variables(self, request: str) -> tuple[str, ...]:
-        """The variables Factor would offer for what `request` names.
+    def variables(self, request: str) -> tuple[str, ...]:
+        """The variables Factor or Expand would offer for what `request` names.
 
-        Alphabetical, as the original lists them. Fewer than two is no choice
-        at all, and the original asks nothing then.
+        Most main first, as the original lists them. Fewer than two is no
+        choice at all, and the original asks nothing then.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
-        return engine.factor_variables(self.target(request), self.context)
+        return engine.expression_variables(self.target(request), self.context)
 
     def decomposes(self, request: str) -> bool:
         """Whether what `request` names is a number, which Factor just decomposes.
@@ -371,6 +389,13 @@ class Session:
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
         return engine.decomposes(self.target(request))
+
+    def written_as_ratio(self, request: str) -> bool:
+        """Whether what `request` names is a quotient, which Expand asks about.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        return engine.written_as_ratio(self.target(request))
 
     def _command(self, request: str, prefix: str, run: Command) -> Entry:
         """Run one engine command on what `request` names, and append the answer.

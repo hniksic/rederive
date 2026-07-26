@@ -52,11 +52,24 @@ far it goes - Trivial, Squarefree, Rational, raDical or Complex, each doing
 everything the one before it does - and `variables` names the factorization
 variables, empty meaning all of them.
 
-The mathematics of it is a file of its own below the pipeline rather than
-above, because `FACTOR(u, amount, x, y, ...)` is an authored line's own way of
-asking for the same thing, and Simplify is what evaluates that.
+`expand(node, context, amount, variables)` is Derive's Expand: the same
+expression written as a sum. It is Simplify and then expanding, and it makes
+the same two promises. `variables` names the expansion variables, empty
+meaning all of them, and everything free of them is left alone - which is what
+writes `(x + 2*y + 1)^3` about `x` in powers of `2*y + 1`. A ratio whose
+denominator holds an expansion variable becomes partial fractions instead, and
+`amount` says how far the denominator is factored on the way; Expand offers
+four of the five amounts, `Complex` being Factor's alone.
 
-Both commands work on any subtree, not only on a whole authored line, so the
+The mathematics of both is a file of its own below the pipeline rather than
+above, because `FACTOR(u, amount, x, y, ...)` and `EXPAND(u, amount, x, y,
+...)` are an authored line's own way of asking for the same things, and
+Simplify is what evaluates those.
+
+`expression_variables(node, context)` is what a command offers before it can
+ask anything: the variables the expression holds, most main first.
+
+Every command works on any subtree, not only on a whole authored line, so the
 session can act on what the user has highlighted and put the answer back.
 """
 
@@ -74,7 +87,8 @@ from rederive.engine.context import (
     TrigPower,
     domain_of_node,
 )
-from rederive.engine.factor import decomposes, factor, factor_variables
+from rederive.engine.expand import expand, written_as_ratio
+from rederive.engine.factor import decomposes, factor
 from rederive.engine.factoring import Amount
 from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
 from rederive.engine.ordering import ORDER_LIST, main_order
@@ -82,6 +96,7 @@ from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
 from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
+from rederive.engine.variables import expression_variables
 
 __all__ = [
     "ORDER_LIST",
@@ -100,12 +115,14 @@ __all__ = [
     "author_text",
     "decomposes",
     "domain_of_node",
+    "expand",
+    "expression_variables",
     "factor",
-    "factor_variables",
     "from_sympy",
     "main_order",
     "parse_state_for",
     "simplify",
     "substitute",
     "to_sympy",
+    "written_as_ratio",
 ]

@@ -135,6 +135,16 @@ AMOUNT = Menu(
     message="Select amount of factoring",
 )
 
+#: How much factoring Expand does to the denominator it makes partial
+#: fractions over. The same amounts less `Complex`, which the original leaves
+#: off this menu: a complex factor would put `#i` in an answer nobody asked to
+#: leave the reals for.
+EXPAND_AMOUNT = Menu(
+    "EXPAND: Amount:",
+    tuple(word for word in AMOUNT.words if word != "Complex"),
+    message=AMOUNT.message,
+)
+
 DECLARE = Menu("DECLARE:", ("Function", "Variable", "Matrix", "vectoR"))
 
 #: What Declare Variable asks once it has a name, and then once it has a
