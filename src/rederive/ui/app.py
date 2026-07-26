@@ -58,6 +58,12 @@ since each prompt is gone by the time the next one is up. How many questions
 get asked depends on the answers - a number is decomposed without being asked
 about at all - so the sequence is in the handlers rather than in a table.
 
+The Manage commands that are not settings screens ask in both forms too, and
+one of them asks nothing at all: Renumber runs on the keystroke, Annotate puts
+up a dialog for the label and then a line for the text, and Ordering puts up a
+line carrying the order list. None of the three appends anything to the
+history, so none of them has a compute time to report.
+
 The Declare commands are the same shape and each keeps its own answers -
 `Declaring`, `Defining`, `Entering` - but their questions replace each other
 rather than stacking, because the original abandons the whole command from
@@ -122,6 +128,8 @@ MODE_FUNCTION_NAME = "function_name"
 MODE_FUNCTION_VALUE = "function_value"
 MODE_FUNCTION_VARIABLE = "function_variable"
 MODE_ELEMENT = "element"
+MODE_ANNOTATION = "annotation"
+MODE_ORDER = "order"
 MODE_DEMO = "demo"
 
 #: The modes in which the prompt band has the screen, and the keys with it.
@@ -139,13 +147,19 @@ PROMPT_MODES = (
     MODE_FUNCTION_VALUE,
     MODE_FUNCTION_VARIABLE,
     MODE_ELEMENT,
+    MODE_ANNOTATION,
+    MODE_ORDER,
 )
 
-#: The prompt lines the highlight can still be walked under: every one of them
-#: but the variable line Factor and Expand collect on, which takes no notice of
-#: those keys. What to work on has been settled by then, so moving the
-#: highlight would say nothing about what the command is about to do.
-WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode != MODE_ASKING_VARIABLE)
+#: The prompt lines that take no notice of the keys that walk the history: the
+#: variable line Factor and Expand collect on, and the annotation line. Which
+#: expression is being worked on has been settled by the time either is up, so
+#: moving the highlight would say nothing about what the command will do.
+SETTLED_MODES = (MODE_ASKING_VARIABLE, MODE_ANNOTATION)
+
+#: The prompt lines the highlight can still be walked under, which is every
+#: other one of them.
+WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode not in SETTLED_MODES)
 
 #: The prompt lines that come up naming an expression, and so take the label of
 #: wherever the walk lands - for as long as the label they offered is still
@@ -217,6 +231,17 @@ ENTER_MATRIX_ELEMENT = "Enter matrix element ({row},{column})"
 #: What a matrix element comes up offering, so that a sparse matrix is mostly
 #: Enter presses. A vector element is offered nothing, as in the original.
 MATRIX_ZERO = "0"
+
+# The two Manage commands that read a line. Annotate comes up carrying what the
+# entry says now - `User`, or the `Simp(#3)` a command wrote - and Ordering
+# carries the order list as it stands, both selected so that typing replaces
+# them. The original's line editor overwrites instead, so typing `w` over
+# `x y z` there gives `w y z`; every prefilled line in Rederive comes up
+# selected, and this one is not worth an exception.
+ANNOTATION_PROMPT = " ANNOTATION: "
+ORDER_PROMPT = " MANAGE ORDER variables: "
+ENTER_ANNOTATION = "Enter annotation"
+ENTER_ORDER = "Enter variables in desired order"
 
 # Every command that names a file, and what it asks for. The original offered
 # a directory listing on F1; the line completes what is typed on Tab instead,
@@ -518,6 +543,8 @@ class RederiveApp(App[None]):
         self.declaring: Declaring | None = None
         self.defining: Defining | None = None
         self.entering: Entering | None = None
+        #: The entry `Manage Annotate` is asking about, once it has been named.
+        self.annotating: int | None = None
         #: The shape the next Declare Matrix and Declare vectoR offer, which is
         #: the last one entered. The original starts a matrix at three by three
         #: and offers no dimension at all until a vector has been entered.
@@ -552,6 +579,9 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Simplify"): self._command_simplify,
             (ALGEBRA, "Unremove"): self._command_unremove,
             (ALGEBRA, "approX"): self._command_approx,
+            (menus.MANAGE, "Annotate"): self._command_annotate,
+            (menus.MANAGE, "Ordering"): self._command_ordering,
+            (menus.MANAGE, "Renumber"): self._command_renumber,
             (menus.DECLARE, "Function"): self._command_declare_function,
             (menus.DECLARE, "Variable"): self._command_declare_variable,
             (menus.DECLARE, "Matrix"): self._command_declare_matrix,
@@ -1109,6 +1139,10 @@ class RederiveApp(App[None]):
         """
         self.mode = mode
         self.query_one("#menu").display = False
+        # A dialog may be what asked the question before this one - the label
+        # `Manage Annotate` reads, the size `Declare Matrix` reads - and the
+        # band it was on goes with it.
+        self.query_one("#fields").display = False
         self.query_one("#prompt-band").display = True
         self.query_one("#prompt-label", Static).update(label)
         line = self.query_one("#prompt-input", Input)
@@ -1571,6 +1605,84 @@ class RederiveApp(App[None]):
         self.message = asks
         self.refresh_screen()
 
+    # -- Manage ------------------------------------------------------------
+    #
+    # The three commands here that are not settings screens. None of them
+    # appends anything to the history: renumbering, annotating and ordering are
+    # things done to the session rather than expressions derived from it.
+
+    def _command_renumber(self) -> None:
+        """Put the labels back in sequence. No question, no message, no record.
+
+        It runs on the keystroke and leaves the command menu up. A history
+        already in sequence, and one with nothing in it, come to the same
+        thing: the command runs and there is nothing to see.
+        """
+        self.session.renumber()
+        self._done_with_menu()
+
+    def _command_annotate(self) -> None:
+        """Ask which expression to annotate, offering the highlighted one.
+
+        A history with nothing in it has nothing to annotate, so the command is
+        over before it has asked anything.
+        """
+        entry = self.session.selected_entry
+        if entry is None:
+            self._done_with_menu()
+            return
+        self._ask(menus.annotate_entry(entry.number), self._annotating, self._annotated)
+
+    def _annotated(self, values: dict[str, str | int]) -> bool:
+        return self.session.numbered(int(values["AnnotateExpression"])) is not None
+
+    def _annotating(self, values: dict[str, str | int]) -> None:
+        """The expression is named: ask what to say about it.
+
+        The line comes up carrying what the entry says now, so that Enter alone
+        leaves it as it was and typing replaces it.
+        """
+        number = int(values["AnnotateExpression"])
+        entry = self.session.numbered(number)
+        assert entry is not None
+        self.annotating = number
+        self._prompt(
+            MODE_ANNOTATION, ANNOTATION_PROMPT, entry.annotation, ENTER_ANNOTATION
+        )
+
+    def _annotate(self, text: str) -> None:
+        """Enter on the annotation line: what the entry now says it came from.
+
+        A blank line is a blank annotation and not an abandoned command, there
+        being no other way to take one back; Esc is what abandons, and it
+        leaves the Manage menu up as it does on any prompt line.
+        """
+        number, self.annotating = self.annotating, None
+        assert number is not None
+        self.session.annotate(number, text)
+        self._end_prompt()
+
+    def _command_ordering(self) -> None:
+        """Ask for the variable order list, offering the one in force."""
+        self._prompt(
+            MODE_ORDER, ORDER_PROMPT, " ".join(self.session.order), ENTER_ORDER
+        )
+
+    def _ordered(self, text: str) -> None:
+        """Enter on the ordering line: the variables in the order wanted.
+
+        A line that is not a list of variable names is refused with the beep
+        and left up to be corrected, which is what every refused answer gets.
+        Nothing is recorded: unlike the four Manage screens that set something,
+        this one appends no expression to the history.
+        """
+        names = self.session.order_list(text)
+        if names is None:
+            self._beep()
+            return
+        self.session.order = names
+        self._end_prompt()
+
     # -- Transfer ----------------------------------------------------------
 
     def _command_save(self) -> None:
@@ -1958,6 +2070,10 @@ class RederiveApp(App[None]):
             self._function_variable(value)
         elif self.mode == MODE_ELEMENT:
             self._element(value)
+        elif self.mode == MODE_ANNOTATION:
+            self._annotate(value)
+        elif self.mode == MODE_ORDER:
+            self._ordered(value)
         else:
             self._author(value)
 
@@ -2035,6 +2151,7 @@ class RederiveApp(App[None]):
         self.declaring = None
         self.defining = None
         self.entering = None
+        self.annotating = None
         self._hide_prompt()
         if done:
             del self.stack[1:]

@@ -36,4 +36,6 @@ def expression_variables(node: Node, context: Context | None = None) -> tuple[st
         return ()
     # `type is` rather than `isinstance`: a string literal is a `Symbol`
     # subclass, and a string is data rather than a variable to work about.
-    return main_order(s.name for s in symbols if type(s) is sp.Symbol)
+    return main_order(
+        (s.name for s in symbols if type(s) is sp.Symbol), context.order
+    )

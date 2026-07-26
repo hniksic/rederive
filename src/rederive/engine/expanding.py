@@ -52,8 +52,8 @@ from rederive.engine.factoring import (
     Finish,
     factored_expression,
 )
+from rederive.engine.ordering import ORDER_LIST, main_order
 from rederive.engine.shape import attempt, distributed
-from rederive.engine.ordering import main_order
 
 __all__ = ["EXPAND_AMOUNTS", "expanded_expression"]
 
@@ -66,6 +66,7 @@ def expanded_expression(
     amount: Amount = DEFAULT_AMOUNT,
     variables: Sequence[str] = (),
     finish: Finish | None = None,
+    order: Sequence[str] = ORDER_LIST,
 ) -> sp.Basic:
     """`expression` written as a sum, about `variables`.
 
@@ -73,7 +74,8 @@ def expanded_expression(
     empty meaning all of them - which is the opposite of what empty means to
     `factoring`, where sympy is left to pick its own generators. Expand has
     nowhere to leave the choice: the manual says expansion is with respect to
-    all the variables in the expression when none are named.
+    all the variables in the expression when none are named. `order` is the
+    session's variable order list, which is what "all of them" is ordered by.
 
     Every scalar the expression is built out of is expanded and then passed
     through `finish`, so a caller that rounds can round the terms rather than
@@ -82,7 +84,7 @@ def expanded_expression(
     Total: a rewrite that fails is a rewrite not taken, and nothing here
     raises on anything the conversion layer produced.
     """
-    request = _Request(amount, tuple(variables), finish)
+    request = _Request(amount, tuple(variables), finish, tuple(order))
     return distributed(expression, lambda scalar: _leaf(scalar, request))
 
 
@@ -93,13 +95,14 @@ class _Request:
     amount: Amount
     variables: tuple[str, ...]
     finish: Finish | None
+    order: tuple[str, ...]
 
 
 def _leaf(expression: sp.Basic, request: _Request) -> sp.Basic:
     """One scalar, expanded about whichever of its variables were chosen."""
     if not isinstance(expression, sp.Expr):
         return expression
-    variables = _generators(expression, request.variables)
+    variables = _generators(expression, request.variables, request.order)
     if variables:
         expression = attempt(
             expression, lambda e: _expanded(e, variables, request.amount)
@@ -108,7 +111,7 @@ def _leaf(expression: sp.Basic, request: _Request) -> sp.Basic:
 
 
 def _generators(
-    expression: sp.Expr, variables: Sequence[str]
+    expression: sp.Expr, variables: Sequence[str], order: Sequence[str]
 ) -> tuple[sp.Symbol, ...]:
     """The expansion variables, as the symbols this expression holds.
 
@@ -128,7 +131,7 @@ def _generators(
         for symbol in expression.free_symbols
         if type(symbol) is sp.Symbol
     }
-    chosen = variables if variables else main_order(free)
+    chosen = variables if variables else main_order(free, order)
     return tuple(free[name] for name in chosen if name in free)
 
 

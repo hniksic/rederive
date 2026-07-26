@@ -68,7 +68,11 @@ def expanded(
     context = context or Context()
     expression = simplified(node, context.with_precision(Precision.EXACT))
     return expanded_expression(
-        expression, amount, variables, lambda e: approximated(e, context)
+        expression,
+        amount,
+        variables,
+        lambda e: approximated(e, context),
+        context.order,
     )
 
 

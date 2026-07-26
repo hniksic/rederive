@@ -172,9 +172,10 @@ DECLARE_INTERVAL = Menu(
 #: not, so choosing one of those is the last answer the command needs.
 BOUNDED_DOMAINS = ("Integer", "Real")
 
-# Four of these eight commands set something and are dialogs; the other four
-# act on the history and are not implemented yet. `Trigonometry` goes on a line
-# of its own because all eight will not fit across eighty columns.
+# Four of these eight commands set something and are dialogs; three more act on
+# the session and ask for what they need on a line of their own. Substitute is
+# the one that is not implemented. `Trigonometry` goes on a line of its own
+# because all eight will not fit across eighty columns.
 MANAGE = Menu(
     "MANAGE:",
     (
@@ -289,6 +290,33 @@ def unremove_before(number: int) -> settings.Dialog:
                     minimum=1,
                     recorded=False,
                     word=END,
+                ),
+            ),
+        ),
+        stored=False,
+        tracks_selection=True,
+    )
+
+
+def annotate_entry(number: int) -> settings.Dialog:
+    """The dialog that asks which expression `Manage Annotate` is annotating.
+
+    The one field offers the highlighted entry, and takes the arrow keys the
+    way `Remove` and `Unremove` do, so the expression can be picked rather than
+    numbered. What to say about it is the next question, and that one needs a
+    line rather than a field.
+    """
+    return settings.Dialog(
+        "MANAGE ANNOTATE:",
+        (
+            (
+                settings.NumberField(
+                    "Expression",
+                    ENTER_LABEL,
+                    "AnnotateExpression",
+                    number,
+                    minimum=1,
+                    recorded=False,
                 ),
             ),
         ),
@@ -437,7 +465,7 @@ COLOR_TARGETS: dict[str, settings.Dialog] = {
 
 #: What each word of the Manage menu opens. The four that are missing -
 #: Annotate, Ordering, Renumber and Substitute - are commands rather than
-#: screens, and none of them is implemented.
+#: screens; only Substitute is still unimplemented.
 MANAGE_TARGETS: dict[str, Menu | settings.Dialog] = {
     "Branch": settings.BRANCH,
     "Exponential": settings.EXPONENTIAL,

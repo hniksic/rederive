@@ -273,7 +273,7 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     for standing_in in (held, frozen):
         if standing_in:
             expression = expression.xreplace(standing_in)
-    return approximated(_commanded(_canonical(expression)), context)
+    return approximated(_commanded(_canonical(expression), context), context)
 
 
 def _held(expression: sp.Basic) -> tuple[sp.Basic, dict[sp.Basic, sp.Basic]]:
@@ -689,7 +689,7 @@ def _undecided(head: sp.Basic) -> sp.Basic:
 # -- the FACTOR and EXPAND heads ---------------------------------------------
 
 
-def _commanded(expression: sp.Basic) -> sp.Basic:
+def _commanded(expression: sp.Basic, context: Context) -> sp.Basic:
     """Evaluate every `FACTOR` and `EXPAND` head, innermost first.
 
     `FACTOR(u, amount, x, y, ...)` and `EXPAND(u, amount, x, y, ...)` are the
@@ -707,7 +707,9 @@ def _commanded(expression: sp.Basic) -> sp.Basic:
     prime decomposition straight back into the integer it decomposes.
     """
     try:
-        return expression.replace(_is_command, _command, simultaneous=False)
+        return expression.replace(
+            _is_command, lambda head: _command(head, context), simultaneous=False
+        )
     except Exception:
         return expression
 
@@ -719,7 +721,7 @@ def _is_command(expression: sp.Basic) -> bool:
     )
 
 
-def _command(head: sp.Basic) -> sp.Basic:
+def _command(head: sp.Basic, context: Context) -> sp.Basic:
     """One head, read as its target, its amount and its variables.
 
     The arguments after the first are a word naming the amount, a list of
@@ -741,7 +743,7 @@ def _command(head: sp.Basic) -> sp.Basic:
         elif isinstance(argument, sp.Symbol):
             variables.append(argument.name)
     if expanding:
-        return expanded_expression(target, amount, variables)
+        return expanded_expression(target, amount, variables, order=context.order)
     return factored_expression(target, amount, variables)
 
 

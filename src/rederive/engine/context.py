@@ -11,11 +11,12 @@ A variable nobody declared is a real number, not a complex one;
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TypeVar
 
+from rederive.engine.ordering import ORDER_LIST
 from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
 from rederive.syntax.state import Declaration, DomainDeclaration
@@ -148,7 +149,8 @@ class Context:
     """Everything an engine command's answer may depend on.
 
     The factory values are exact arithmetic to six digits, principal branch,
-    every transformation mode on Auto, radians and base ten.
+    every transformation mode on Auto, radians, base ten, and the variable
+    order list Derive starts with.
     """
 
     precision: Precision = Precision.EXACT
@@ -162,6 +164,15 @@ class Context:
     trigpower: TrigPower = TrigPower.AUTO
     angle: Angle = Angle.RADIAN
     input_base: int = 10
+    order: tuple[str, ...] = ORDER_LIST
+    """The variable order list, most main first, as `Manage Ordering` left it.
+
+    Session state rather than a setting: it is a list of variable names and not
+    a value a dialog field takes, nothing records it as a `Name := Value`, and
+    `Settings` holds exactly what the Options and Manage screens own. What it
+    shares with the settings is that a command's answer depends on it, which is
+    what this class is, so it travels here.
+    """
     domains: Mapping[str, Domain] = field(default_factory=dict)
     assignments: Mapping[str, Node] = field(default_factory=dict)
     functions: Mapping[str, Definition] = field(default_factory=dict)
@@ -206,6 +217,7 @@ class Context:
         settings: Settings,
         declarations: Iterable[Declaration] = (),
         *,
+        order: Sequence[str] | None = None,
         domains: Mapping[str, Domain] | None = None,
         assignments: Mapping[str, Node] | None = None,
         functions: Mapping[str, Definition] | None = None,
@@ -239,6 +251,7 @@ class Context:
             trigpower=_setting(settings, "Trigpower", TrigPower, TrigPower.AUTO),
             angle=_setting(settings, "Angle", Angle, Angle.RADIAN),
             input_base=settings.base("InputBase"),
+            order=ORDER_LIST if order is None else tuple(order),
             domains=declared,
             assignments=dict(assignments or {}),
             functions=dict(functions or {}),

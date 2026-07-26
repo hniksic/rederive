@@ -27,6 +27,12 @@ when it was entered.
 Entries leave the history only through `remove`, which keeps what it took in
 `removed` for `unremove` to put back. That buffer is the whole of what the two
 commands share, and any engine command empties it.
+
+The Manage commands that need no engine command of their own are here for the
+same reason the Declare ones are: `renumber` puts the labels back in sequence
+that removing and unremoving leave out of it, `annotate` edits where an entry
+says it came from, and `order_list` reads the variable order list, which is
+session state the engine hears about through the context.
 """
 
 from __future__ import annotations
@@ -83,6 +89,10 @@ INTERVAL = "Interval"
 #: A reference to a numbered entry, wherever one is written: in an expression,
 #: and in an annotation such as `Simp(#3)`.
 LABEL = re.compile(r"#(\d+)")
+
+#: How a label rewriting names one label: the number to put in its place, or
+#: None to leave it as it is.
+Rename = Callable[[int], int | None]
 
 #: One engine command, as the session calls it. Every command takes the same
 #: three things and gives back an answer, which is what lets `_command` serve
@@ -188,6 +198,8 @@ class Session:
         self.assignments: dict[str, Node] = {}
         self.functions: dict[str, engine.Definition] = {}
         self.domains: dict[str, engine.Domain] = {}
+        #: The variable order list `Manage Ordering` writes, most main first.
+        self.order: tuple[str, ...] = engine.ORDER_LIST
         self._next_number = 1
         self.settings.watch(self._settings_changed)
         self._settings_changed(PARSING_SETTINGS)
@@ -335,6 +347,7 @@ class Session:
         """
         return engine.Context.from_settings(
             self.settings,
+            order=self.order,
             domains=self.domains,
             assignments=self.assignments,
             functions=self.functions,
@@ -654,9 +667,12 @@ class Session:
             return ()
         node = parse_expression(definition, self.state).node
         return engine.main_order(
-            str(found.value)
-            for found in _subtrees(node)
-            if found.kind is Kind.NAME and self._is_variable(str(found.value))
+            (
+                str(found.value)
+                for found in _subtrees(node)
+                if found.kind is Kind.NAME and self._is_variable(str(found.value))
+            ),
+            self.order,
         )
 
     def _is_variable(self, name: str) -> bool:
@@ -744,6 +760,97 @@ class Session:
         self._next_number += 1
         return entry
 
+    # -- managing ----------------------------------------------------------
+
+    def renumber(self) -> None:
+        """Label the entries 1, 2, 3 ... in the order they physically sit.
+
+        Which is what `moVe`, `Remove` and `Unremove` leave out of sequence.
+        Every reference to a label that moved moves with it: in an annotation,
+        which is what the manual promises "provided the numbers are preceded by
+        the # character", and inside an expression, which it says nothing
+        about.
+
+        A `#3` in an expression is rewritten because Rederive keeps such a
+        reference as a reference where the original resolved it as it read the
+        line. Leaving it alone would silently repoint it at whichever entry
+        ends up wearing the number - which is the argument `merge` already
+        makes about a file whose expressions refer to each other.
+
+        An entry whose text changed is drawn again, since what it says has
+        changed; the rest keep the render they were authored with. The
+        selection stays where it is, subexpression and all, relabelling
+        changing no expression's shape.
+
+        The next authored entry comes one past the new last label, so that a
+        renumbered history goes on counting from where it now ends. A history
+        already in sequence is left alone, and an empty one is nothing to
+        renumber.
+        """
+        if not self.entries:
+            return
+        moved = {
+            entry.number: number
+            for number, entry in enumerate(self.entries, start=1)
+            if entry.number != number
+        }
+        self._next_number = len(self.entries) + 1
+        if not moved:
+            return
+        self.entries = [
+            self._renumbered(entry, number, moved)
+            for number, entry in enumerate(self.entries, start=1)
+        ]
+
+    def _renumbered(self, entry: Entry, number: int, moved: dict[int, int]) -> Entry:
+        """`entry` under its new label, its references renamed by `moved`."""
+        annotation = _rewrite_annotation(entry.annotation, moved.get)
+        text = _rewrite_labels(entry.text, entry.node, moved.get)
+        if text == entry.text:
+            return replace(entry, number=number, annotation=annotation)
+        node = parse_expression(text, self.state).node
+        return Entry(number, text, node, render(node, self.options), annotation)
+
+    def annotate(self, number: int, annotation: str) -> None:
+        """Say where the entry labelled `number` came from.
+
+        The automatic `User` and `Simp(#3)` are the same field, so this edits
+        what the status line already shows and what `Transfer Save Derive`
+        already writes above the expression. Nothing is appended and the
+        selection does not move: annotating is a note about an expression and
+        not an expression.
+
+        Raises `KeyError` when `number` names no entry.
+        """
+        index = self._index_of(number)
+        self.entries[index] = replace(
+            self.entries[index], annotation=annotation.strip()
+        )
+
+    def order_list(self, text: str) -> tuple[str, ...] | None:
+        """The variable order list `text` spells, or None when it is not one.
+
+        The words are variable names separated by spaces or commas, and each is
+        recorded as an expression would record it, so `X` goes on the list as
+        `x` unless `CaseMode := Sensitive` says the two are different
+        variables. A word that is not a variable name refuses the whole line,
+        and so does a variable named twice: one variable cannot be in two
+        places in one order. An empty line is an empty list, which leaves every
+        variable to be ordered alphabetically.
+
+        The original takes whatever is typed - `q 2 + w` was stored verbatim -
+        and reproducing that would be a bug rather than fidelity.
+        """
+        names: list[str] = []
+        for word in text.replace(",", " ").split():
+            if not self.declarable(word) or self.state.is_function(word):
+                return None
+            name = self.state.canonical_variable(word)
+            if name in names:
+                return None
+            names.append(name)
+        return tuple(names)
+
     # -- files -------------------------------------------------------------
 
     def save(self, path: Path, first: int | None = None, last: int | None = None) -> int:
@@ -814,21 +921,33 @@ class Session:
         return len(entries)
 
     def save_state(self, path: Path) -> None:
-        """Write every system control setting to `path`.
+        """Write every system control setting to `path`, and the order list.
 
         The session's own file is not touched: a state file is not the
         worksheet, and the status line goes on naming the worksheet.
         """
-        path.write_text(state.write(self.settings), encoding="utf-8")
+        path.write_text(state.write(self.settings, self.order), encoding="utf-8")
 
     def load_state(self, path: Path) -> int:
         """Apply the settings in `path`, and say how many lines would not take.
+
+        The order list comes back with them, judged here rather than in the
+        file's own reader because what a variable name is depends on this
+        session's symbol table. A line of names it will not take is counted
+        like any other line that would not take.
 
         The history is left alone. What a setting change does to the history is
         the same here as anywhere: the entries already drawn keep the render
         they were drawn with, and the next one is drawn the new way.
         """
-        return state.read(worksheet.text_of(path), self.settings)
+        refused, ordering = state.read(worksheet.text_of(path), self.settings)
+        if ordering is None:
+            return refused
+        names = self.order_list(ordering)
+        if names is None:
+            return refused + 1
+        self.order = names
+        return refused
 
     def load(self, path: Path) -> int:
         """Replace the history with the expressions in `path`.
@@ -1225,8 +1344,8 @@ def _bound_text(node: Node) -> str:
     return write_expression(node)
 
 
-def _shift_labels(text: str, node: Node, offset: int) -> str:
-    """`text` with every label it refers to moved on by `offset`.
+def _rewrite_labels(text: str, node: Node, rename: Rename) -> str:
+    """`text` with every label it refers to renamed by `rename`.
 
     Rewritten from the right, so that a span still indexes `text` when its turn
     comes. Going through the tree rather than over the characters is what keeps
@@ -1236,18 +1355,36 @@ def _shift_labels(text: str, node: Node, offset: int) -> str:
         if found.kind is not Kind.LABEL:
             continue
         try:
-            number = int(str(found.value)) + offset
+            written = int(str(found.value))
         except ValueError:
+            continue
+        number = rename(written)
+        if number is None:
             continue
         text = f"{text[: found.start]}#{number}{text[found.end :]}"
     return text
+
+
+def _rewrite_annotation(annotation: str, rename: Rename) -> str:
+    """The same renaming over an annotation, which is text and not a tree."""
+
+    def renamed(found: re.Match[str]) -> str:
+        number = rename(int(found.group(1)))
+        return found.group(0) if number is None else f"#{number}"
+
+    return LABEL.sub(renamed, annotation)
+
+
+def _shift_labels(text: str, node: Node, offset: int) -> str:
+    """`text` with every label it refers to moved on by `offset`."""
+    return _rewrite_labels(text, node, lambda number: number + offset)
 
 
 def _shift_annotation(annotation: str, offset: int) -> str:
     """The same shift over an annotation, which is text and not a tree."""
     if not offset:
         return annotation
-    return LABEL.sub(lambda found: f"#{int(found.group(1)) + offset}", annotation)
+    return _rewrite_annotation(annotation, lambda number: number + offset)
 
 
 def _subtrees(node: Node) -> Iterator[Node]:
