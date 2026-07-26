@@ -848,12 +848,20 @@ def _variance(values: list) -> sp.Basic:
     Divided by `n - 1` and not by `n`: the deviations are taken from the
     sample's own average rather than from the distribution's, which makes them
     smaller than the true ones by just the amount that one degree of freedom
-    accounts for. A sample of one has no such degree left, and no variance.
+    accounts for. A sample of one is the case that leaves, and Derive answers
+    it with the zero its deviations sum to rather than with the `0/0` the
+    formula reads as.
+
+    Each deviation carries a factor of `1/n` from the average inside it, so the
+    sum arrives as `n` separate squares over `n^2` and has to be put back over
+    one denominator to be read: `VAR(x, y)` is `(x - y)^2/2`, which is Derive's
+    answer and not the three terms multiplying it out gives.
     """
-    if len(values) < 2:
-        raise ValueError("no degrees of freedom")
+    if len(values) == 1:
+        return sp.Integer(0)
     mean = _average(values)
-    return sp.Add(*((value - mean) ** 2 for value in values)) / (len(values) - 1)
+    deviations = sp.Add(*((value - mean) ** 2 for value in values))
+    return sp.factor(deviations / (len(values) - 1))
 
 
 def _standard_deviation(values: list) -> sp.Basic:
@@ -1059,10 +1067,12 @@ def _delete_element(conv: _Converter, args: list) -> sp.Basic:
     A matrix's elements are its rows, as they are everywhere else, so what goes
     is the `n`th row. That is what VECTOR.MTH's `MINOR` is built on: delete a
     row, transpose, delete what was a column, transpose back.
+
+    `n` defaults to 1, as it does for the other two element functions.
     """
-    vector, index = args
+    vector, *rest = args
     elements = _elements_of(_matrix(vector))
-    place = _place(index, len(elements))
+    place = _place(_one(rest) if rest else sp.Integer(1), len(elements))
     return _vector_of(elements[:place] + elements[place + 1 :])
 
 
@@ -1482,10 +1492,12 @@ def _coordinates(
     built in; the names `cylindrical` and `spherical` are assignments in
     VECTOR.MTH.
 
-    `count` is how many coordinates the caller has elements for. Coordinates go
-    with successive elements of a vector, so the extra ones at the end of the
-    default system are simply not among the ones a shorter field is differentiated
-    along; too few is a question that cannot be asked.
+    `count` is how many coordinates the field has elements for, and it has to be
+    all of them: a field with fewer elements than the system has coordinates is
+    not a field on that system, and Derive answers `DIV([x, y])` with itself
+    rather than with the divergence of some two-dimensional field it guessed at.
+    A two-element `CURL` is the same question and the same answer - what makes
+    it a planar curl is being given a planar system to work in.
     """
     if rest:
         given = _matrix(_one(rest))
@@ -1502,11 +1514,9 @@ def _coordinates(
         raise TypeError("not coordinate variables")
     if len(set(variables)) != len(variables):
         raise ValueError("a coordinate twice")
-    if count is None:
-        return variables, scales
-    if len(variables) < count:
-        raise ValueError("too few coordinates")
-    return variables[:count], scales[:count]
+    if count is not None and len(variables) != count:
+        raise ValueError("not that many coordinates")
+    return variables, scales
 
 
 def _field(value: sp.Basic) -> list[sp.Basic]:

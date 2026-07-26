@@ -488,8 +488,12 @@ LINEAR_ALGEBRA = [
     # in an odd dimension; the printer leads with the positive term.
     ("CHARPOLY([[1,2,3],[4,5,6],[7,8,10]],z)", "16*z^2 - z^3 + 12*z - 3"),
     # Eigenvalues are answered as solved equations. The manual's example, and a
-    # 2 x 2 whose eigenvalues the quadratic formula has to be used on.
+    # 2 x 2 whose eigenvalues the quadratic formula has to be used on. Where a
+    # pair differs only in the sign of a radical Derive lists the sum first;
+    # this is sympy's canonical order, which agrees with Derive on every other
+    # case and reverses that one.
     ("EIGENVALUES([[2,3],[0,b]],z)", "[z = 2, z = b]"),
+    ("EIGENVALUES([[5,0],[0,2]],z)", "[z = 2, z = 5]"),
     ("EIGENVALUES([[1,2],[3,4]],x)", "[x = 5/2 - SQRT(33)/2, x = 5/2 + SQRT(33)/2]"),
     # A repeated eigenvalue is one eigenvalue: the multiplicity is the number of
     # parameters its eigenvector carries, not a second solution.
@@ -586,15 +590,22 @@ VECTOR_CALCULUS = [
     # The manual's warning about a bad starting point, exactly: this field is
     # infinite at the origin, so the potential from the origin is infinite too,
     # and 1 is the alternative the manual recommends for a logarithm.
-    ("POTENTIAL([1/x, 1/y], [1, 1])", "LN(x) + LN(y)"),
-    ("POTENTIAL([1/x, 1/y])", "LN(x) + LN(y) + inf"),
+    ("POTENTIAL([1/x, 1/y, 1/z], [1, 1, 1])", "LN(x) + LN(y) + LN(z)"),
+    ("POTENTIAL([1/x, 1/y, 1/z])", "LN(x) + LN(y) + LN(z) + inf"),
+    # A field of fewer elements than the system has coordinates is no field on
+    # it, and the default system has three. Two elements are a planar curl only
+    # when a planar system is given to work in.
+    ("CURL([-y, x])", "CURL([-y, x])"),
+    ("DIV([x, y])", "DIV([x, y])"),
+    ("CURL([-y, x], [[x, y], [1, 1]])", "2"),
     # Not every field has a potential, and Derive does not check. POTENTIAL
-    # computes one line integral and hands back its value; `[-y, x]` circulates,
-    # so the gradient of that value is not the field it came from. The manual
-    # leaves that comparison to the caller, and CURL is the easier test.
-    ("CURL([-y, x])", "2"),
-    ("POTENTIAL([-y, x])", "x*y"),
-    ("GRAD(POTENTIAL([-y, x]))", "[y, x, 0]"),
+    # computes one line integral and hands back its value; `[-y, x, 0]`
+    # circulates, so the gradient of that value is not the field it came from.
+    # The manual leaves that comparison to the caller, and CURL is the easier
+    # test.
+    ("CURL([-y, x, 0])", "[0, 0, 2]"),
+    ("POTENTIAL([-y, x, 0])", "x*y"),
+    ("GRAD(POTENTIAL([-y, x, 0]))", "[y, x, 0]"),
     # The same for a vector potential, whose obstruction is a nonzero
     # divergence: `[x, 0, 0]` spreads out, and the curl of the answer is not it.
     ("DIV([x, 0, 0])", "1"),
@@ -714,9 +725,11 @@ STATISTICS = [
     # of one would answer `ABS` of a vector that has not been built, which is
     # what a definition holding `RMS(VECTOR(...))` would become.
     ("RMS(VECTOR(u, k, n))", "RMS(VECTOR(u, k, n))"),
-    # A sample of one has an average, but no degree of freedom left to have a
-    # variance with.
-    ("VAR([5])", "VAR([5])"),
+    # A sample of one deviates from its own average by nothing, and Derive
+    # answers the zero that sums to rather than the `0/0` the formula reads as.
+    ("VAR([5])", "0"),
+    ("VAR(x)", "0"),
+    ("STDEV([5])", "0"),
 ]
 
 
@@ -1082,10 +1095,10 @@ DEMO_FUNCTIONS = [
     ("AVERAGE (x, y, z)", "x/3 + y/3 + z/3"),
     ("AVERAGE (VECTOR (1/k, k, 1, 10))", "7381/25200"),
     ("RMS ([2, 3, 5])", "SQRT(114)/3"),
-    # The unbiased sample variance of two things is `(x - y)^2/2`, multiplied
-    # out; the deviation is the square root of it, and stays a square root.
-    ("VAR (x, y)", "x^2/2 - x*y + y^2/2"),
-    ("STDEV (x, y)", "SQRT(x^2/2 - x*y + y^2/2)"),
+    # The unbiased sample variance of two things, and its square root, which
+    # comes out of the radical because the variance is a square.
+    ("VAR (x, y)", "(x - y)^2/2"),
+    ("STDEV (x, y)", "SQRT(2)*ABS(x - y)/2"),
 ]
 
 DEMO_TRIGONOMETRY = [
@@ -1166,6 +1179,7 @@ DEMO_MATRICES = [
     ("ROW_REDUCE([[2,4],[3,6]],[[6],[9]])", "[[1, 2, 3], [0, 0, 0]]"),
     ("CHARPOLY([[a,b],[b,a]],z)", "a^2 - 2*a*z - b^2 + z^2"),
     # No variable given, so the answer is written in `w`, the manual's default.
+    # Derive lists these the other way round; the pair is the same pair.
     ("EIGENVALUES([[a,b],[b,a]])", "[w = a - b, w = a + b]"),
     # The demo's vector calculus, in the default Cartesian x, y, z. It closes by
     # cross-checking itself: the vector it takes the potential of is the curl
