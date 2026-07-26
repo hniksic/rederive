@@ -718,7 +718,7 @@ worksheets need reordering for readability.
 | Color | Menu/work-area color settings. | UI, Tier 1 (R-COL1-4) |
 | Display | Text vs. graphics screen mode. | Superseded by R-TYPE1-3; no toggle needed |
 | Execute | Shell out to DOS. | Out |
-| Input | Character vs. Word naming mode; case sensitivity; default arrow-key mode. | Tier 3. Default to Word-style multi-character identifiers and case-sensitivity (the modern norm); Character mode (`xyz` parses as `x*y*z`) can be a nostalgia option. Arrow-key default ties to the `F6` toggle. |
+| Input | Character vs. Word naming mode; case sensitivity; default arrow-key mode. | Core, Tier 1. Both modes are implemented, with Derive's own defaults: Character mode (`xyz` parses as `x*y*z`) and case-insensitive. Word mode is a user option, not the default. Arrow-key default ties to the `F6` toggle. |
 | Mute | Error beep on/off. | UI, Tier 3 |
 | Notation | Number display style + digits. | Core, Tier 2 (5.6) |
 | Output | Normal/Compressed spacing; multiplication glyph (asterisk/dot/implicit). | UI, Tier 3 |
