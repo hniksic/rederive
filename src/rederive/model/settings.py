@@ -1,4 +1,9 @@
-"""Derive's system control settings, and the Options screens that change them.
+"""Derive's system control settings, and the screens that change them.
+
+Most of those screens are Options commands; four of them are Manage commands,
+which change how expressions are simplified rather than how the system behaves.
+Both kinds are the same thing here, since a setting is a setting whichever menu
+reaches it.
 
 Every screen described here follows the program itself rather than the manual,
 so the words, the defaults and the message-line prompts are the original's. Two
@@ -323,7 +328,106 @@ RADIX = Dialog(
 )
 
 
-# The one dialog here that is not an Options command. It says how the next
+# -- the Manage screens ------------------------------------------------------
+#
+# The four Manage commands that set something. They say which way the
+# simplifier applies a family of transformations it could apply either way, so
+# the answer is a direction rather than a yes or no.
+
+#: The three directions Exponential, Logarithm and Trigonometry each take.
+#: Collect applies the transformations rightward and Expand leftward; Auto
+#: mixes the two, one way for each transformation of the pair.
+_DIRECTIONS = ("Auto", "Collect", "Expand")
+
+BRANCH = Dialog(
+    "MANAGE BRANCH:",
+    (
+        (
+            # The one selection field in the program with no caption of its
+            # own: there is nothing to say about it that the title has not
+            # already said.
+            ChoiceField(
+                "",
+                "Select preferred branch for roots",
+                "Branch",
+                ("Principal", "Real", "Any"),
+                "Principal",
+            ),
+        ),
+    ),
+)
+
+EXPONENTIAL = Dialog(
+    "MANAGE EXPONENTIAL:",
+    (
+        (
+            # Section 6.1 of the manual says this field starts on Collect,
+            # where the identically worded section 6.2 says Auto of Logarithm.
+            # Collect was the 1.x default - the older DERIVE.INI carries
+            # `*EXP-EXPD* |Collect|` - and 6.1 is a leftover of it: the
+            # original's own DERIVE.INI says `*EXP-EXPD* |Auto|`, and so does
+            # its screen.
+            ChoiceField(
+                "Direction",
+                "Exponential transformations",
+                "Exponential",
+                _DIRECTIONS,
+                "Auto",
+            ),
+        ),
+    ),
+)
+
+LOGARITHM = Dialog(
+    "MANAGE LOGARITHM:",
+    (
+        (
+            ChoiceField(
+                "Direction",
+                "Logarithm transformations",
+                "Logarithm",
+                _DIRECTIONS,
+                "Auto",
+            ),
+        ),
+    ),
+)
+
+# The band says MANAGE TRIGONOMETRY, though the manual's screen reproduction
+# abbreviates it to MANAGE TRIG. The program is right and the manual wrong.
+TRIGONOMETRY = Dialog(
+    "MANAGE TRIGONOMETRY:",
+    (
+        (
+            ChoiceField(
+                "Direction",
+                "Angle sums & multiple angles",
+                "Trigonometry",
+                _DIRECTIONS,
+                "Auto",
+            ),
+            ChoiceField(
+                "Toward",
+                "Trig power transformations",
+                "Trigpower",
+                ("Auto", "Sines", "Cosines"),
+                "Auto",
+            ),
+        ),
+        (
+            ChoiceField(
+                "Angle",
+                "Select angle mode",
+                "Angle",
+                ("Degree", "Radian"),
+                "Radian",
+            ),
+        ),
+    ),
+)
+
+
+# The one dialog here that sets nothing lasting. It says how the next
 # `Transfer Save` writes its file, which is why committing it leaves the
 # Transfer Save menu up rather than returning to the command menu.
 SAVE = Dialog(
@@ -414,6 +518,10 @@ DIALOGS: tuple[Dialog, ...] = (
     OUTPUT,
     MUTE,
     RADIX,
+    BRANCH,
+    EXPONENTIAL,
+    LOGARITHM,
+    TRIGONOMETRY,
     SAVE,
     COLOR_MENU,
     COLOR_WORK,

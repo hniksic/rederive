@@ -172,6 +172,24 @@ DECLARE_INTERVAL = Menu(
 #: not, so choosing one of those is the last answer the command needs.
 BOUNDED_DOMAINS = ("Integer", "Real")
 
+# Four of these eight commands set something and are dialogs; the other four
+# act on the history and are not implemented yet. `Trigonometry` goes on a line
+# of its own because all eight will not fit across eighty columns.
+MANAGE = Menu(
+    "MANAGE:",
+    (
+        "Annotate",
+        "Branch",
+        "Exponential",
+        "Logarithm",
+        "Ordering",
+        "Renumber",
+        "Substitute",
+        "Trigonometry",
+    ),
+    first_line=7,
+)
+
 # `Display` and `Execute` are the two of Derive's nine Options commands that
 # are not here: one chose between text and graphics modes on adapters that no
 # longer exist, the other shelled out to DOS.
@@ -417,11 +435,27 @@ COLOR_TARGETS: dict[str, settings.Dialog] = {
     "Work": settings.COLOR_WORK,
 }
 
+#: What each word of the Manage menu opens. The four that are missing -
+#: Annotate, Ordering, Renumber and Substitute - are commands rather than
+#: screens, and none of them is implemented.
+MANAGE_TARGETS: dict[str, Menu | settings.Dialog] = {
+    "Branch": settings.BRANCH,
+    "Exponential": settings.EXPONENTIAL,
+    "Logarithm": settings.LOGARITHM,
+    "Trigonometry": settings.TRIGONOMETRY,
+}
+
 #: Every word that opens another screen rather than doing something, by the
 #: menu it is listed on. A word on none of these lists is a command, and the
 #: app decides whether it has one.
 TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
-    ALGEBRA: {"Declare": DECLARE, "Options": OPTIONS, "Transfer": TRANSFER},
+    ALGEBRA: {
+        "Declare": DECLARE,
+        "Manage": MANAGE,
+        "Options": OPTIONS,
+        "Transfer": TRANSFER,
+    },
+    MANAGE: MANAGE_TARGETS,
     OPTIONS: OPTIONS_TARGETS,
     COLOR: COLOR_TARGETS,
     TRANSFER: {

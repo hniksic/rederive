@@ -238,7 +238,7 @@ class Context:
             ),
             trigpower=_setting(settings, "Trigpower", TrigPower, TrigPower.AUTO),
             angle=_setting(settings, "Angle", Angle, Angle.RADIAN),
-            input_base=_base(settings),
+            input_base=settings.base("InputBase"),
             domains=declared,
             assignments=dict(assignments or {}),
             functions=dict(functions or {}),
@@ -257,28 +257,14 @@ def _choice(enum: type[_Choice], value: str, fallback: _Choice) -> _Choice:
 def _setting(
     settings: Settings, name: str, enum: type[_Choice], fallback: _Choice
 ) -> _Choice:
-    """Read one setting, tolerating a store that does not carry it.
+    """Read one setting as the member of `enum` that spells it.
 
-    Angle, Branch and the transformation modes have no Options screen yet, so
-    a missing name is the factory value rather than an error.
+    Every setting read here is owned by a dialog field, so the store carries
+    it; the fallback is for a value that field's choices do not name.
     """
-    try:
-        value = settings[name]
-    except KeyError:
-        return fallback
-    return _choice(enum, str(value), fallback)
+    return _choice(enum, str(settings[name]), fallback)
 
 
 def _number(settings: Settings, name: str, fallback: int) -> int:
-    try:
-        value = settings[name]
-    except KeyError:
-        return fallback
+    value = settings[name]
     return value if isinstance(value, int) else fallback
-
-
-def _base(settings: Settings) -> int:
-    try:
-        return settings.base("InputBase")
-    except KeyError:
-        return 10

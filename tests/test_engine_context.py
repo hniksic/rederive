@@ -99,8 +99,26 @@ def test_a_context_is_built_from_the_settings_store():
     assert context.input_base == 16
 
 
-def test_a_setting_no_dialog_owns_yet_keeps_its_factory_value():
-    assert Context.from_settings(Settings()).angle is Angle.RADIAN
+def test_the_manage_settings_reach_the_context():
+    settings = Settings()
+    assert Context.from_settings(settings).angle is Angle.RADIAN
+    settings.apply(
+        {
+            "Branch": "Real",
+            "Exponential": "Collect",
+            "Logarithm": "Expand",
+            "Trigonometry": "Expand",
+            "Trigpower": "Sines",
+            "Angle": "Degree",
+        }
+    )
+    context = Context.from_settings(settings)
+    assert context.branch is Branch.REAL
+    assert context.exponential is Direction.COLLECT
+    assert context.logarithm is Direction.EXPAND
+    assert context.trigonometry is Direction.EXPAND
+    assert context.trigpower is TrigPower.SINES
+    assert context.angle is Angle.DEGREE
 
 
 def test_declarations_become_domains():

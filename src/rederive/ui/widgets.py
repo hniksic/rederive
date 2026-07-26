@@ -17,6 +17,7 @@ from rederive.model.settings import (
     ChoiceField,
     DialogEditor,
     Field,
+    Item,
     NumberField,
     TextField,
 )
@@ -41,6 +42,15 @@ _FILE_COLUMN = 22
 def _width(field: Field) -> int:
     """Columns a field's value takes; a text field says for itself."""
     return field.width if isinstance(field, TextField) else _NUMBER_WIDTH
+
+
+def _captioned(item: Item) -> bool:
+    """Whether a dialog line's item prints something of its own in front.
+
+    A plain word does, and so does any field with a label. A field without one
+    starts with the space that goes before its value.
+    """
+    return isinstance(item, str) or bool(item.label)
 
 
 def _label(entry: Entry) -> str:
@@ -232,6 +242,13 @@ class FieldBand(Band):
         lines, index = [], 0
         for number, items in enumerate(editor.lines):
             prefix = f" {title} " if number == 0 else " " * (len(title) + 2)
+            if not _captioned(items[0]):
+                # A field with no caption prints a space in front of its
+                # value, and that space is the one the title would print, so
+                # the title goes without: `MANAGE BRANCH: Principal Real Any`.
+                # The value still begins in the column the next line indents
+                # to, which is what keeps the two lines square.
+                prefix = prefix[:-1]
             line = Text(prefix, style=self.colors["option"], no_wrap=True)
             for position, item in enumerate(items):
                 if position:
