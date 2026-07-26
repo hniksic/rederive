@@ -172,17 +172,27 @@ OPTIONS = Menu(
 
 COLOR = Menu("OPTIONS COLOR:", ("Menu", "Work"))
 
-# The Transfer menus, word for word as the original lists them. Only the
-# commands that move expressions between the worksheet and a file do anything:
-# `Print` is paper, `Demo` is a scripted replay, `State` is the settings file,
-# and the languages under Save write source code for programs to compile.
-TRANSFER = Menu("TRANSFER:", ("Load", "Save", "Merge", "Clear", "Demo", "Print"))
+# The Transfer menus. `Print` is the one word of the original's that is gone:
+# its four commands are a printer driver - printer type, paper size, PCL font
+# strings - and paper is a non-goal, the way `Options Display` and `Options
+# Execute` are.
+TRANSFER = Menu("TRANSFER:", ("Load", "Save", "Merge", "Clear", "Demo"))
 
 TRANSFER_LOAD = Menu("TRANSFER LOAD:", ("Derive", "State", "daTa", "Utility"))
 
+# The original's four targets were Basic, C, Fortran and Pascal, the languages
+# a 1990s reader would paste an expression into. The command is the same
+# command; only the list is dated, so it is dated forward. Every word still
+# carries a mnemonic of its own, which is what the menu needs of it.
 TRANSFER_SAVE = Menu(
     "TRANSFER SAVE:",
-    ("Derive", "Basic", "C", "Fortran", "Pascal", "Options", "State"),
+    ("Derive", "C", "Python", "Rust", "Julia", "Options", "State"),
+)
+
+# Alphabetical, and so with the widest command first, exactly as the original
+# lists it.
+TRANSFER_CLEAR = Menu(
+    "TRANSFER CLEAR:", ("All", "Expressions", "Functions", "Variables")
 )
 
 
@@ -404,7 +414,11 @@ TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
     ALGEBRA: {"Declare": DECLARE, "Options": OPTIONS, "Transfer": TRANSFER},
     OPTIONS: OPTIONS_TARGETS,
     COLOR: COLOR_TARGETS,
-    TRANSFER: {"Load": TRANSFER_LOAD, "Save": TRANSFER_SAVE},
+    TRANSFER: {
+        "Load": TRANSFER_LOAD,
+        "Save": TRANSFER_SAVE,
+        "Clear": TRANSFER_CLEAR,
+    },
     TRANSFER_SAVE: {"Options": settings.SAVE},
 }
 

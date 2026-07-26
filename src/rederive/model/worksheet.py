@@ -30,6 +30,11 @@ from pathlib import Path
 #: What a file is called when the name typed has no extension of its own.
 SUFFIX = ".mth"
 
+#: The two other extensions Transfer reads, for the two commands that read
+#: something else: a demonstration script and a file of numbers.
+DEMO_SUFFIX = ".dmo"
+DATA_SUFFIX = ".dat"
+
 COMMENT = ";"
 CONTINUATION = "~"
 
@@ -53,14 +58,23 @@ class Record:
 
 
 def write(
-    records: Iterable[Record], length: int = LINE_LENGTH, annotations: bool = True
+    records: Iterable[Record],
+    length: int | None = LINE_LENGTH,
+    annotations: bool = True,
+    comment: str = COMMENT,
 ) -> str:
-    """The file text for `records`, one record per paragraph."""
+    """The file text for `records`, one record per paragraph.
+
+    `comment` is what an annotation is written behind, and `length` None asks
+    for no continuation at all. Both are for the source files `Transfer Save C`
+    and its neighbours write: those carry the same records behind the target
+    language's own comment marker, and none of the four minds a long line.
+    """
     lines: list[str] = []
     for record in records:
         if annotations and record.annotation:
-            lines.append(COMMENT + record.annotation)
-        lines.extend(_continued(record.text, length))
+            lines.append(comment + record.annotation)
+        lines.extend([record.text] if length is None else _continued(record.text, length))
         lines.append("")
     return "\n".join(lines)
 
@@ -101,12 +115,55 @@ def annotations_of(text: str) -> dict[int, str]:
     return found
 
 
-def path_of(name: str) -> Path:
+def text_of(path: Path) -> str:
+    """A file's text. Raises, as reading a file does, before anything changes.
+
+    UTF-8 is what Rederive writes. A file the original wrote is code page 437,
+    which only shows in one where a glyph left ASCII - a Greek variable name,
+    almost always - and that is what the fallback reads. Code page 437 decodes
+    any byte at all, so a file is never refused for what is in it.
+    """
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp437")
+
+
+def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
+    """The steps of a demonstration file: each comment with the line under it.
+
+    A demonstration file is a math file whose comments carry the script rather
+    than an annotation, so it is read the same way and the comments are what is
+    kept. A `~` continuation still joins its lines, and a step with no comment
+    above it is one whose band is blank.
+    """
+    text = text_of(path)
+    comments = annotations_of(text)
+    steps = []
+    pending: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(COMMENT):
+            continue
+        pending.append(stripped)
+        if stripped.endswith(CONTINUATION):
+            pending[-1] = stripped[: -len(CONTINUATION)]
+            continue
+        # The comment belongs to the line the expression started on.
+        start = number - len(pending) + 1
+        steps.append((comments.get(start, ""), "".join(pending)))
+        pending = []
+    return tuple(steps)
+
+
+def path_of(name: str, suffix: str = SUFFIX) -> Path:
     """The file a typed name asks for.
 
-    A name with no extension gets `.mth`, the way the original supplied MTH.
-    A leading `~` is the shell's home directory here, never a continuation:
-    the tilde only continues lines inside a file.
+    A name with no extension gets `suffix`, the way the original supplied MTH,
+    DAT, INI or the extension of whichever language was being saved. A leading
+    `~` is the shell's home directory here, never a continuation: the tilde
+    only continues lines inside a file.
     """
     path = Path(name.strip()).expanduser()
-    return path if path.suffix else path.with_suffix(SUFFIX)
+    return path if path.suffix else path.with_suffix(suffix)

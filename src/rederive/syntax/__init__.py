@@ -7,6 +7,10 @@ names re-exported here.
 because they are one contract: what the writer writes, the parser reads back as
 the same tree.
 
+`write_source` is the same job against another notation - a tree in, a line of
+C, Python, Rust or Julia out - and has no such contract, nothing here being
+able to read those back. It lives here because it is a writer.
+
 Parsing produces no mathematics. `2+3` yields a sum node, never `5`: authored
 expressions stay inert until the user asks for a Simplify.
 """
@@ -18,6 +22,7 @@ from dataclasses import dataclass
 
 from rederive.model.expr import Kind, Node
 from rederive.syntax.errors import DeriveSyntaxError
+from rederive.syntax.languages import LANGUAGES, Language, write_source
 from rederive.syntax.lexer import Lexer, is_name
 from rederive.syntax.names import PARSING_SETTINGS
 from rederive.syntax.parser import Parser
@@ -47,6 +52,8 @@ __all__ = [
     "FunctionInfo",
     "InputMode",
     "Kind",
+    "LANGUAGES",
+    "Language",
     "Node",
     "PARSING_SETTINGS",
     "ParseResult",
@@ -60,6 +67,7 @@ __all__ = [
     "parse_source",
     "source_lines",
     "write_expression",
+    "write_source",
 ]
 
 

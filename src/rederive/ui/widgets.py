@@ -177,6 +177,14 @@ class MessageLine(Band):
 class MenuBand(Band):
     """A menu of words, one of them highlighted in inverse video."""
 
+    def say(self, text: str) -> None:
+        """Put one line of plain text on the band in place of a menu.
+
+        What a demonstration's script is shown on: the comment above the
+        expression it has just run stands where the menu words go.
+        """
+        self.update(Text(f" {text}", style=self.colors["option"], no_wrap=True))
+
     def show(self, menu: Menu, highlighted: int | None) -> None:
         """Render `menu`; `None` highlights nothing, as while Quit asks."""
         break_at = min(menu.first_line, len(menu.words))

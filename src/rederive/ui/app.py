@@ -29,6 +29,12 @@ with it. A command that runs is finished with, so it leaves the command menu up
 rather than the submenu it was picked from; Esc, which abandons the line
 instead, leaves that submenu where it was.
 
+Two commands take the band for something other than a menu. A question with a
+Y or N for an answer - Quit, and the two Clear commands that throw expressions
+away - leaves the menu up with its highlight off, and `confirm` holds what a Y
+does. A demonstration takes the band outright: the comment above each step
+stands where the menu words go, and any key runs the next step.
+
 Factor asks more than one question, and asks them in both forms: an expression,
 then a factorization variable at a time on the prompt band, then an amount off
 a menu stacked on the command menu. What has been answered so far lives in
@@ -49,6 +55,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
@@ -60,7 +67,7 @@ from textual.widgets.input import Selection
 
 from rederive.engine import Amount
 from rederive.model import session as sessions
-from rederive.model import worksheet
+from rederive.model import state, worksheet
 from rederive.model.session import Session
 from rederive.model.settings import (
     ChoiceField,
@@ -69,7 +76,7 @@ from rederive.model.settings import (
     Settings,
     TextField,
 )
-from rederive.syntax import DeriveSyntaxError
+from rederive.syntax import LANGUAGES, DeriveSyntaxError, Language
 from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
 from rederive.ui.theme import COLOR_SETTINGS, Palette
@@ -89,13 +96,14 @@ MODE_FACTOR = "factor"
 MODE_FACTOR_VARIABLE = "factor_variable"
 MODE_JUMP = "jump"
 MODE_FILE = "file"
-MODE_CONFIRM_QUIT = "confirm_quit"
+MODE_CONFIRM = "confirm"
 MODE_VARIABLE_NAME = "variable_name"
 MODE_VARIABLE_VALUE = "variable_value"
 MODE_FUNCTION_NAME = "function_name"
 MODE_FUNCTION_VALUE = "function_value"
 MODE_FUNCTION_VARIABLE = "function_variable"
 MODE_ELEMENT = "element"
+MODE_DEMO = "demo"
 
 #: The modes in which the prompt band has the screen, and the keys with it.
 PROMPT_MODES = (
@@ -131,6 +139,7 @@ LABELLED_MODES = (MODE_SIMPLIFY, MODE_FACTOR)
 ENTER_EXPRESSION = "Enter expression (press F1 for help)"
 ENTER_TO_SIMPLIFY = "Enter expression"
 ENTER_TO_FACTOR = "Enter expression"
+#: What Quit and the two Clear commands that throw expressions away both ask.
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
@@ -174,12 +183,18 @@ ENTER_MATRIX_ELEMENT = "Enter matrix element ({row},{column})"
 #: Enter presses. A vector element is offered nothing, as in the original.
 MATRIX_ZERO = "0"
 
-# The three commands that name a file, and what they ask for. F1 does not list
-# a directory yet, as it does not offer help yet; the wording is the
-# original's, kept so the screen reads right.
+# Every command that names a file, and what it asks for. F1 does not list a
+# directory yet, as it does not offer help yet; the wording is the original's,
+# kept so the screen reads right.
 LOAD_PROMPT = " TRANSFER LOAD DERIVE file: "
+LOAD_STATE_PROMPT = " TRANSFER LOAD STATE file: "
+LOAD_DATA_PROMPT = " TRANSFER LOAD DATA file: "
+LOAD_UTILITY_PROMPT = " TRANSFER LOAD UTILITY file: "
 MERGE_PROMPT = " TRANSFER MERGE file: "
 SAVE_PROMPT = " TRANSFER SAVE DERIVE file: "
+SAVE_SOURCE_PROMPT = " TRANSFER SAVE {word} file: "
+SAVE_STATE_PROMPT = " TRANSFER SAVE STATE file: "
+DEMO_PROMPT = " TRANSFER DEMO file: "
 ENTER_FILE = "Enter filename"
 ENTER_FILE_TO_READ = "Enter filename (press F1 for list)"
 FILE_NOT_FOUND = "File not found"
@@ -189,6 +204,33 @@ CANNOT_WRITE = "Cannot write file"
 #: The original drops such a line without a word; saying so is cheap, and a
 #: worksheet quietly missing an expression is worth knowing about.
 UNREADABLE = "{count} expression{s} could not be read"
+#: The same for a state file, whose lines are settings rather than expressions.
+UNSET = "{count} setting{s} could not be read"
+#: What the state prompts offer when nothing has been read or written yet.
+STATE_FILE = "rederive.ini"
+#: What the message line says between two steps of a demonstration.
+PRESS_ANY_KEY = "Press any key to continue"
+
+
+@dataclass
+class Demonstration:
+    """A demonstration file part way through.
+
+    A DMO file is a math file whose comments are the script: each expression is
+    authored and then simplified, with the comment above it on the band where
+    the menu goes, and the demonstration waits there for a key. Esc leaves it
+    where it is, which is what `at` is for - naming the same file again picks
+    the demonstration up rather than starting it over.
+    """
+
+    path: Path
+    #: The comment and the expression of each step, in file order.
+    steps: tuple[tuple[str, str], ...]
+    at: int = 0
+
+    @property
+    def done(self) -> bool:
+        return self.at >= len(self.steps)
 
 
 @dataclass
@@ -356,6 +398,12 @@ class RederiveApp(App[None]):
         #: and offers no dimension at all until a vector has been entered.
         self.matrix_size = (3, 3)
         self.dimension: int | str = ""
+        #: What a Y answers, while a command is asking for one.
+        self.confirm: Callable[[], None] | None = None
+        #: The demonstration under way, running or suspended.
+        self.demo: Demonstration | None = None
+        #: The state file last read or written, offered back by both commands.
+        self.state_file = STATE_FILE
         #: The amount menu's own cursor, kept across invocations rather than
         #: made fresh: the original opens it on whatever was chosen last.
         self.amount = MenuCursor(menus.AMOUNT, menus.AMOUNT.words.index("Rational"))
@@ -372,10 +420,25 @@ class RederiveApp(App[None]):
             (menus.DECLARE, "Variable"): self._command_declare_variable,
             (menus.DECLARE, "Matrix"): self._command_declare_matrix,
             (menus.DECLARE, "vectoR"): self._command_declare_vector,
+            (menus.TRANSFER, "Demo"): self._command_demo,
             (menus.TRANSFER, "Merge"): self._command_merge,
+            (menus.TRANSFER_CLEAR, "All"): self._command_clear_all,
+            (menus.TRANSFER_CLEAR, "Expressions"): self._command_clear_expressions,
+            (menus.TRANSFER_CLEAR, "Functions"): self._command_clear_functions,
+            (menus.TRANSFER_CLEAR, "Variables"): self._command_clear_variables,
             (menus.TRANSFER_LOAD, "Derive"): self._command_load,
+            (menus.TRANSFER_LOAD, "State"): self._command_load_state,
+            (menus.TRANSFER_LOAD, "daTa"): self._command_load_data,
+            (menus.TRANSFER_LOAD, "Utility"): self._command_load_utility,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
+            (menus.TRANSFER_SAVE, "State"): self._command_save_state,
         }
+        # The four language saves differ only in which language they write, so
+        # they are one command told which one off the menu word.
+        for language in LANGUAGES:
+            self.commands[(menus.TRANSFER_SAVE, language.word)] = partial(
+                self._command_save_source, language
+            )
 
     # -- composition -------------------------------------------------------
 
@@ -428,11 +491,15 @@ class RederiveApp(App[None]):
         if editor is not None:
             self.query_one(FieldBand).show(editor)
             self.message = editor.message
+        elif self.mode == MODE_DEMO:
+            # A demonstration takes the band for its own script, the comment
+            # above the expression it has just run standing where the menu was.
+            self.query_one(MenuBand).say(self._demo_comment())
         else:
             cursor = self.top
             assert isinstance(cursor, MenuCursor)
-            # Quit's confirmation takes the highlight off the menu entirely.
-            highlighted = None if self.mode == MODE_CONFIRM_QUIT else cursor.index
+            # A confirmation takes the highlight off the menu entirely.
+            highlighted = None if self.mode == MODE_CONFIRM else cursor.index
             self.query_one(MenuBand).show(cursor.menu, highlighted)
         self.query_one(MessageLine).show(self.message)
         # The annotation belongs to the entry, so it follows the selection: it
@@ -485,7 +552,7 @@ class RederiveApp(App[None]):
         return True
 
     def on_key(self, event: Any) -> None:
-        """Keys with no binding: mnemonic letters, digits, and Quit's answer.
+        """Keys with no binding: mnemonics, digits, and the answers to a question.
 
         A field that holds text takes the rest of the printable characters as
         well, since an interval bound is written with `-`, `.` and `/`.
@@ -496,13 +563,18 @@ class RederiveApp(App[None]):
                 event.stop()
                 event.prevent_default()
                 self._typed(character)
-        elif self.mode == MODE_CONFIRM_QUIT:
+        elif self.mode == MODE_CONFIRM:
             event.stop()
             event.prevent_default()
-            if event.character and event.character.lower() == "y":
-                self.exit()
+            self._answer_confirm(bool(event.character) and event.character.lower() == "y")
+        elif self.mode == MODE_DEMO:
+            # Any key steps the demonstration; Esc suspends it where it is.
+            event.stop()
+            event.prevent_default()
+            if event.key == "escape":
+                self._suspend_demo()
             else:
-                self._return_to_menu(ENTER_OPTION)
+                self._demo_step()
         elif self.mode in PROMPT_MODES and event.key == "escape":
             event.stop()
             event.prevent_default()
@@ -1282,7 +1354,28 @@ class RederiveApp(App[None]):
     # -- Transfer ----------------------------------------------------------
 
     def _command_save(self) -> None:
-        """Write the worksheet, asking first which block of it when Some.
+        """Write the worksheet as a math file, asking the block first when Some."""
+        self._begin_save(SAVE_PROMPT, self._save)
+
+    def _chose_block(
+        self, label: str, command: Callable[[str], None], values: dict[str, str | int]
+    ) -> None:
+        self.block = (int(values["SaveFirst"]), int(values["SaveLast"]))
+        self._ask_file(label, ENTER_FILE, command)
+
+    def _command_save_source(self, language: Language) -> None:
+        """Write the worksheet as source code, asking the block first when Some.
+
+        The same command as `Transfer Save Derive` down to the block it writes;
+        only the notation and the extension differ.
+        """
+        self._begin_save(
+            SAVE_SOURCE_PROMPT.format(word=language.word.upper()),
+            partial(self._save_source, language),
+        )
+
+    def _begin_save(self, label: str, command: Callable[[str], None]) -> None:
+        """Ask for a save's block if the Range option says Some, then its name.
 
         A history with nothing in it is nothing to write, and the original
         simply declines: no prompt, no message, just the beep.
@@ -1292,14 +1385,13 @@ class RederiveApp(App[None]):
             return
         if self.settings["SaveRange"] != "Some":
             self.block = (None, None)
-            self._ask_file(SAVE_PROMPT, ENTER_FILE, self._save)
+            self._ask_file(label, ENTER_FILE, command)
             return
         numbers = [entry.number for entry in self.session.entries]
-        self._ask(menus.save_block(numbers[0], numbers[-1]), self._chose_block)
-
-    def _chose_block(self, values: dict[str, str | int]) -> None:
-        self.block = (int(values["SaveFirst"]), int(values["SaveLast"]))
-        self._ask_file(SAVE_PROMPT, ENTER_FILE, self._save)
+        self._ask(
+            menus.save_block(numbers[0], numbers[-1]),
+            partial(self._chose_block, label, command),
+        )
 
     def _command_load(self) -> None:
         self._ask_file(LOAD_PROMPT, ENTER_FILE_TO_READ, self._load)
@@ -1307,23 +1399,65 @@ class RederiveApp(App[None]):
     def _command_merge(self) -> None:
         self._ask_file(MERGE_PROMPT, ENTER_FILE_TO_READ, self._merge)
 
-    def _ask_file(self, label: str, message: str, command: Callable[[str], None]) -> None:
+    def _command_load_data(self) -> None:
+        self._ask_file(LOAD_DATA_PROMPT, ENTER_FILE_TO_READ, self._load_data)
+
+    def _command_load_utility(self) -> None:
+        self._ask_file(LOAD_UTILITY_PROMPT, ENTER_FILE_TO_READ, self._load_utility)
+
+    def _command_save_state(self) -> None:
+        self._ask_file(
+            SAVE_STATE_PROMPT, ENTER_FILE, self._save_state, offered=self.state_file
+        )
+
+    def _command_load_state(self) -> None:
+        self._ask_file(
+            LOAD_STATE_PROMPT,
+            ENTER_FILE_TO_READ,
+            self._load_state,
+            offered=self.state_file,
+        )
+
+    def _ask_file(
+        self,
+        label: str,
+        message: str,
+        command: Callable[[str], None],
+        offered: str | None = None,
+    ) -> None:
         """Put the prompt band up for a command that names a file.
 
         The file the session last used comes up on the line, as it does in the
-        original, so that saving twice over the same name is one keystroke.
+        original, so that saving twice over the same name is one keystroke. The
+        two State commands offer their own file instead: a settings file is not
+        the worksheet, and neither is a name for the other.
         """
         self.file_command = command
-        offered = "" if self.session.file is None else str(self.session.file)
+        if offered is None:
+            offered = "" if self.session.file is None else str(self.session.file)
         self._prompt(MODE_FILE, label, offered, message)
 
     def _save(self, name: str) -> None:
+        self._written(lambda: self.session.save(worksheet.path_of(name), *self.block))
+
+    def _save_source(self, language: Language, name: str) -> None:
+        path = worksheet.path_of(name, language.suffix)
+        self._written(lambda: self.session.save_source(path, language, *self.block))
+
+    def _save_state(self, name: str) -> None:
+        path = worksheet.path_of(name, state.SUFFIX)
+        if self._written(lambda: self.session.save_state(path)):
+            self.state_file = str(path)
+
+    def _written(self, write: Callable[[], object]) -> bool:
+        """Run a save, leaving the name up to be corrected if it will not write."""
         try:
-            self.session.save(worksheet.path_of(name), *self.block)
+            write()
         except OSError:
             self._refuse_file(CANNOT_WRITE)
-            return
+            return False
         self._end_prompt()
+        return True
 
     def _load(self, name: str) -> None:
         self._read(name, self.session.load)
@@ -1331,34 +1465,169 @@ class RederiveApp(App[None]):
     def _merge(self, name: str) -> None:
         self._read(name, self.session.merge)
 
-    def _read(self, name: str, command: Callable[[Path], int]) -> None:
-        """Read a file into the history, leaving the line up if it cannot be."""
+    def _load_data(self, name: str) -> None:
+        self._read(name, self.session.load_data, worksheet.DATA_SUFFIX)
+
+    def _load_utility(self, name: str) -> None:
+        self._read(name, self.session.load_utility)
+
+    def _load_state(self, name: str) -> None:
+        if self._read(name, self.session.load_state, state.SUFFIX, UNSET):
+            self.state_file = str(worksheet.path_of(name, state.SUFFIX))
+
+    def _read(
+        self,
+        name: str,
+        command: Callable[[Path], int],
+        suffix: str = worksheet.SUFFIX,
+        refused: str = UNREADABLE,
+    ) -> bool:
+        """Read a file into the session, leaving the line up if it cannot be."""
+        path = worksheet.path_of(name, suffix)
         try:
-            skipped = command(worksheet.path_of(name))
+            skipped = command(path)
         except FileNotFoundError:
             self._refuse_file(FILE_NOT_FOUND)
-            return
+            return False
         except OSError:
             self._refuse_file(CANNOT_READ)
-            return
+            return False
         self._end_prompt(
             ENTER_OPTION
             if not skipped
-            else UNREADABLE.format(count=skipped, s="" if skipped == 1 else "s")
+            else refused.format(count=skipped, s="" if skipped == 1 else "s")
         )
+        return True
 
     def _refuse_file(self, message: str) -> None:
         """Say what went wrong and leave the name up to be corrected."""
         self._beep()
         self._set_message(message)
 
+    # -- Transfer Clear ----------------------------------------------------
+
+    def _command_clear_expressions(self) -> None:
+        self._clearing(self.session.clear_expressions)
+
+    def _command_clear_all(self) -> None:
+        self._clearing(self.session.clear_all)
+
+    def _command_clear_variables(self) -> None:
+        """Forget every assigned value. Nothing on screen goes, so nothing asks."""
+        self.session.clear_variables()
+        self._done_with_menu()
+
+    def _command_clear_functions(self) -> None:
+        self.session.clear_functions()
+        self._done_with_menu()
+
+    def _clearing(self, clear: Callable[[], None]) -> None:
+        """Throw the history away, having asked first.
+
+        The two commands that take expressions out ask before they do, in the
+        same words Quit asks in. A history with nothing in it is nothing to
+        lose, so there is nothing to ask about.
+        """
+        if not self.session.entries:
+            clear()
+            self._done_with_menu()
+            return
+        self._ask_confirm(lambda: (clear(), self._done_with_menu()))
+
+    # -- Transfer Demo -----------------------------------------------------
+
+    def _command_demo(self) -> None:
+        self._ask_file(DEMO_PROMPT, ENTER_FILE_TO_READ, self._demo)
+
+    def _demo(self, name: str) -> None:
+        """Start the demonstration in `name`, or pick up the suspended one.
+
+        Naming the file a suspended demonstration came from resumes it where it
+        stopped, which is what the manual means by issuing another Demo command
+        to carry on. Any other name starts that file from its first step.
+        """
+        path = worksheet.path_of(name, worksheet.DEMO_SUFFIX)
+        if self.demo is None or self.demo.path != path or self.demo.done:
+            try:
+                steps = worksheet.demonstration(path)
+            except FileNotFoundError:
+                self._refuse_file(FILE_NOT_FOUND)
+                return
+            except OSError:
+                self._refuse_file(CANNOT_READ)
+                return
+            self.demo = Demonstration(path, steps)
+        self._hide_prompt()
+        del self.stack[1:]
+        self._demo_step()
+
+    def _demo_step(self) -> None:
+        """Author and simplify the next expression, and wait on it.
+
+        A step that does not parse is passed over rather than stopping the
+        demonstration: a script is not a worksheet, and there is nothing on the
+        line to correct.
+        """
+        demo = self.demo
+        assert demo is not None
+        while not demo.done:
+            _, text = demo.steps[demo.at]
+            demo.at += 1
+            try:
+                self.session.author(text)
+                self.session.simplify(f"#{self.session.entries[-1].number}")
+            except DeriveSyntaxError:
+                continue
+            self.mode = MODE_DEMO
+            self.message = PRESS_ANY_KEY
+            self.refresh_screen()
+            return
+        self._end_demo()
+
+    def _suspend_demo(self) -> None:
+        """Esc leaves the demonstration where it is, to be picked up later."""
+        self._end_demo()
+
+    def _end_demo(self) -> None:
+        self.mode = MODE_MENU
+        self.query_one("#menu").display = True
+        self._return_to_menu(ENTER_OPTION)
+
+    def _demo_comment(self) -> str:
+        """The comment of the step now showing, which is the band's whole line."""
+        demo = self.demo
+        if demo is None or not demo.at:
+            return ""
+        return demo.steps[demo.at - 1][0]
+
+    # -- confirmations -----------------------------------------------------
+
+    def _ask_confirm(self, confirmed: Callable[[], None]) -> None:
+        """Put a Y/N question up, and say what a Y does."""
+        self.confirm = confirmed
+        self.mode = MODE_CONFIRM
+        self.message = ABANDON_PROMPT
+        self.refresh_screen()
+
+    def _answer_confirm(self, yes: bool) -> None:
+        """Y runs the command; anything else leaves the menu it was picked from."""
+        confirmed, self.confirm = self.confirm, None
+        self.mode = MODE_MENU
+        if yes and confirmed is not None:
+            confirmed()
+            return
+        self._return_to_menu(ENTER_OPTION)
+
+    def _done_with_menu(self) -> None:
+        """A command that ran is finished with, and so is the path to it."""
+        del self.stack[1:]
+        self._return_to_menu(ENTER_OPTION)
+
     def _command_quit(self) -> None:
         if not self.session.entries:
             self.exit()
             return
-        self.mode = MODE_CONFIRM_QUIT
-        self.message = ABANDON_PROMPT
-        self.refresh_screen()
+        self._ask_confirm(self.exit)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter on a prompt line: the whole line, wherever the cursor is."""

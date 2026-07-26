@@ -38,13 +38,15 @@ from pathlib import Path
 
 from rederive import engine
 from rederive.display import DisplayOptions, Layout, Region, render
-from rederive.model import worksheet
+from rederive.model import data, state, worksheet
 from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
 from rederive.syntax import (
     PARSING_SETTINGS,
+    ClearWhat,
     Declaration,
     DeriveSyntaxError,
+    Language,
     ParseState,
     SettingDeclaration,
     Source,
@@ -52,6 +54,7 @@ from rederive.syntax import (
     parse_expression,
     source_lines,
     write_expression,
+    write_source,
 )
 
 #: A route into an entry's selection tree: indices into `Region.children`,
@@ -693,9 +696,7 @@ class Session:
         """
         records = [
             worksheet.Record(write_expression(entry.node), self._noted(entry))
-            for entry in self.entries
-            if (first is None or entry.number >= first)
-            and (last is None or entry.number <= last)
+            for entry in self._block(first, last)
         ]
         text = worksheet.write(
             records,
@@ -706,10 +707,64 @@ class Session:
         self.file = path
         return len(records)
 
+    def _block(self, first: int | None, last: int | None) -> Iterator[Entry]:
+        """The entries a save writes: the label numbers `first` to `last`."""
+        return (
+            entry
+            for entry in self.entries
+            if (first is None or entry.number >= first)
+            and (last is None or entry.number <= last)
+        )
+
     @staticmethod
     def _noted(entry: Entry) -> str:
         """What to write above `entry`; a line the user wrote needs nothing."""
         return "" if entry.annotation == AUTHORED else entry.annotation
+
+    def save_source(
+        self,
+        path: Path,
+        language: Language,
+        first: int | None = None,
+        last: int | None = None,
+    ) -> int:
+        """Write the history to `path` as `language` source, and say how many went.
+
+        The same records `save` writes, spelled in another notation: the Range
+        block and the annotation option apply exactly as they do to a math
+        file, and the line length does not, none of the four targets minding a
+        long line. An annotation goes behind the target's own comment marker.
+        """
+        entries = list(self._block(first, last))
+        text = worksheet.write(
+            [
+                worksheet.Record(write_source(entry.node, language), self._noted(entry))
+                for entry in entries
+            ],
+            length=None,
+            annotations=self.settings["SaveAnnotation"] == "Save",
+            comment=f"{language.comment} ",
+        )
+        path.write_text(text, encoding="utf-8")
+        self.file = path
+        return len(entries)
+
+    def save_state(self, path: Path) -> None:
+        """Write every system control setting to `path`.
+
+        The session's own file is not touched: a state file is not the
+        worksheet, and the status line goes on naming the worksheet.
+        """
+        path.write_text(state.write(self.settings), encoding="utf-8")
+
+    def load_state(self, path: Path) -> int:
+        """Apply the settings in `path`, and say how many lines would not take.
+
+        The history is left alone. What a setting change does to the history is
+        the same here as anywhere: the entries already drawn keep the render
+        they were drawn with, and the next one is drawn the new way.
+        """
+        return state.read(worksheet.text_of(path), self.settings)
 
     def load(self, path: Path) -> int:
         """Replace the history with the expressions in `path`.
@@ -725,7 +780,7 @@ class Session:
         to be nothing costs nothing: what is on screen is still there to try
         again from.
         """
-        text = _text_of(path)
+        text = worksheet.text_of(path)
         self.entries = []
         self.selected = None
         self.route = ()
@@ -741,7 +796,47 @@ class Session:
         such a reference as it reads, which comes to the same thing; Rederive
         keeps the reference, so it is the reference that has to move.
         """
-        return self._read(path, _text_of(path))
+        return self._read(path, worksheet.text_of(path))
+
+    def load_utility(self, path: Path) -> int:
+        """Take the definitions in `path` without showing them.
+
+        A utility file is a library: the point of loading one is that its
+        functions and variables are available afterwards, not that two hundred
+        definitions land on screen. So nothing is appended, no numbering moves,
+        and the session goes on naming the worksheet it already had.
+
+        Returns how many of the file's expressions did not parse.
+        """
+        source = Source.from_file(worksheet.text_of(path), str(path))
+        skipped = 0
+        for start, stop in source_lines(source):
+            try:
+                result = parse_expression(source.text[start:stop].strip(), self.state)
+            except DeriveSyntaxError:
+                skipped += 1
+                continue
+            for declaration in result.declarations:
+                self.declare(declaration)
+            self._define(result.node, result.declarations)
+        return skipped
+
+    def load_data(self, path: Path) -> int:
+        """Append the matrices in `path`, and say how many blocks would not read.
+
+        A data file appends rather than replaces, as the original's does: the
+        numbers are something to work on beside what is already there, not a
+        worksheet of their own. A block holding something that is not a number
+        is left out and counted, as an unreadable line of a math file is.
+        """
+        skipped = 0
+        for block in data.blocks(worksheet.text_of(path)):
+            try:
+                self.author(data.matrix(block))
+            except (ValueError, DeriveSyntaxError):
+                skipped += 1
+        self.file = path
+        return skipped
 
     def _read(self, path: Path, text: str) -> int:
         """Append what `path` holds, and say how many lines would not parse.
@@ -773,6 +868,52 @@ class Session:
             self.declare(declaration)
         self._define(result.node, result.declarations)
         self._append(text, result.node, _shift_annotation(annotation, offset))
+
+    # -- clearing ----------------------------------------------------------
+
+    def clear_expressions(self) -> None:
+        """Empty the history, and start the numbering again at one.
+
+        What the expressions defined is left standing: clearing a value is its
+        own command, and the manual is explicit that these are four commands
+        rather than degrees of one. The unremove buffer goes with the history -
+        there is nothing left for a restored entry to go back among.
+        """
+        self.entries = []
+        self.removed = []
+        self.selected = None
+        self.route = ()
+        self._next_number = 1
+
+    def clear_variables(self) -> None:
+        """Forget every value and domain a line has assigned.
+
+        The expressions that assigned them stay on screen; what goes is what
+        they mean to the next command, so a `v` that stood for 7 is a free
+        variable again.
+        """
+        self.assignments.clear()
+        self.domains.clear()
+        self.state.clear(ClearWhat.VARIABLES)
+
+    def clear_functions(self) -> None:
+        """Forget every function a line has defined.
+
+        The name goes from the symbol table as well as the body, so a later
+        `F(3)` is a call on a function nothing has defined - stuck, rather than
+        nine. The original goes one step further and reads it as `f*3`, its
+        Character-mode lexer making a product of a name it has never heard of;
+        Rederive reads an undefined call as a call whether or not anything was
+        ever cleared, and this command does not change that.
+        """
+        self.functions.clear()
+        self.state.clear(ClearWhat.FUNCTIONS)
+
+    def clear_all(self) -> None:
+        """The other three at once, which is what the fourth command is."""
+        self.clear_expressions()
+        self.clear_variables()
+        self.clear_functions()
 
     # -- selection ---------------------------------------------------------
 
@@ -1018,21 +1159,6 @@ def _bound_text(node: Node) -> str:
     if node.kind is Kind.NAME and str(node.value) == _INFINITE:
         return INFINITY
     return write_expression(node)
-
-
-def _text_of(path: Path) -> str:
-    """A file's text. Raises, as reading a file does, before anything changes.
-
-    UTF-8 is what Rederive writes. A file the original wrote is code page 437,
-    which only shows in one where a glyph left ASCII - a Greek variable name,
-    almost always - and that is what the fallback reads. Code page 437 decodes
-    any byte at all, so a file is never refused for what is in it.
-    """
-    data = path.read_bytes()
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return data.decode("cp437")
 
 
 def _shift_labels(text: str, node: Node, offset: int) -> str:
