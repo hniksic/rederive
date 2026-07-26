@@ -51,6 +51,34 @@ async def test_mnemonic_invokes_without_moving_the_highlight(app):
         assert highlighted_menu_option(app) == "Author"
 
 
+async def test_a_menu_comes_back_up_on_its_first_word(app):
+    async with app.run_test() as pilot:
+        await pilot.press(*["tab"] * 10)
+        assert highlighted_menu_option(app) == "Options"
+        await pilot.press("enter")
+        assert highlighted_menu_option(app) == "Color"
+        # Leaving the submenu forgets where Tab left the highlight below it.
+        await pilot.press("escape")
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_a_command_that_ran_leaves_the_highlight_where_it_starts(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "1+1")
+        await pilot.press(*["shift+tab"] * 6)
+        assert highlighted_menu_option(app) == "Simplify"
+        await pilot.press("enter", "enter")
+        assert entries(app) == ["1+1", "2"]
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_an_abandoned_command_leaves_the_highlight_alone(app):
+    async with app.run_test() as pilot:
+        await pilot.press(*["shift+tab"] * 6)
+        await pilot.press("enter", "escape")
+        assert highlighted_menu_option(app) == "Simplify"
+
+
 async def test_author_appends_and_selects_the_new_entry(app):
     async with app.run_test() as pilot:
         await author(pilot, "x (x + 1)")

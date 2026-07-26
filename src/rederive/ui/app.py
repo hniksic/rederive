@@ -747,6 +747,7 @@ class RederiveApp(App[None]):
             if isinstance(left, MenuCursor) and left.menu in AMOUNT_MENUS:
                 self.asking = None
             self.declaring = None
+            self._restart_menu()
             self._ask_again()
             self.refresh_screen()
 
@@ -758,6 +759,17 @@ class RederiveApp(App[None]):
         """
         if isinstance(self.top, MenuCursor):
             self.message = self.top.message
+
+    def _restart_menu(self) -> None:
+        """Highlight the first word of the menu that has just come back up.
+
+        The original draws a menu afresh every time it appears, so where Tab
+        left the highlight is forgotten as soon as an option is entered: what
+        a command or a submenu comes back to is Author.
+        """
+        cursor = self.top
+        if isinstance(cursor, MenuCursor):
+            cursor.index = 0
 
     def action_nav(self, movement: str) -> None:
         """The arrows walk the history, or a number field's cursor.
@@ -941,6 +953,7 @@ class RederiveApp(App[None]):
             self.stack.pop()
         else:
             del self.stack[1:]
+        self._restart_menu()
         self.settings.apply(values)
         # Recorded after the change, so that the record itself is written the
         # way the new settings say to write it.
@@ -1640,6 +1653,7 @@ class RederiveApp(App[None]):
             self.demo = Demonstration(path, steps)
         self._hide_prompt()
         del self.stack[1:]
+        self._restart_menu()
         self._demo_step()
 
     def _demo_step(self) -> None:
@@ -1702,6 +1716,7 @@ class RederiveApp(App[None]):
     def _done_with_menu(self) -> None:
         """A command that ran is finished with, and so is the path to it."""
         del self.stack[1:]
+        self._restart_menu()
         self._return_to_menu(ENTER_OPTION)
 
     def _command_quit(self) -> None:
@@ -1807,6 +1822,7 @@ class RederiveApp(App[None]):
         self._hide_prompt()
         if done:
             del self.stack[1:]
+            self._restart_menu()
         self._return_to_menu(message)
 
     def _return_to_menu(self, message: str) -> None:
