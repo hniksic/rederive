@@ -576,9 +576,11 @@ def test_output_radix_of_a_ratio(value: str, base: int, expected: str) -> None:
         # Cut, not rounded: the digit after the last one shown never carries.
         ("0.9999999", "0.999999"),
         ("1.9999999", "1.99999"),
-        # A cut that leaves nothing but zeros leaves the point its one digit.
-        ("0.10000000000000001", "0.1"),
-        ("1.0000001", "1.0"),
+        # Zeros the cut leaves behind are shown: they stand for the digits
+        # that follow. A tenth, whose digits run out, is shown as `0.1`.
+        ("0.10000000000000001", "0.100000"),
+        ("1.0000001", "1.00000"),
+        ("0.1", "0.1"),
         # A whole number is exact, and is shown in full.
         ("123456789", "123456789"),
     ],

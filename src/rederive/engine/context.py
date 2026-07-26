@@ -29,6 +29,15 @@ class Precision(StrEnum):
     MIXED = "Mixed"
 
 
+class Notation(StrEnum):
+    """How a number the engine works out is written. See `engine.notation`."""
+
+    DECIMAL = "Decimal"
+    MIXED = "Mixed"
+    RATIONAL = "Rational"
+    SCIENTIFIC = "Scientific"
+
+
 class Branch(StrEnum):
     PRINCIPAL = "Principal"
     REAL = "Real"
@@ -88,6 +97,15 @@ class Domain:
         return self.low is not None or self.high is not None
 
 
+#: The notation each precision mode selects. Options Precision moves Options
+#: Notation with it, so that approximate arithmetic is read in the style that
+#: suits it; the original does this silently, recording only the precision.
+NOTATION_FOR: dict[Precision, Notation] = {
+    Precision.EXACT: Notation.RATIONAL,
+    Precision.APPROXIMATE: Notation.SCIENTIFIC,
+    Precision.MIXED: Notation.MIXED,
+}
+
 #: What an undeclared variable is, where nothing says otherwise.
 DEFAULT_DOMAIN = Domain()
 
@@ -135,6 +153,8 @@ class Context:
 
     precision: Precision = Precision.EXACT
     precision_digits: int = 6
+    notation: Notation = Notation.RATIONAL
+    notation_digits: int = 6
     branch: Branch = Branch.PRINCIPAL
     exponential: Direction = Direction.AUTO
     logarithm: Direction = Direction.AUTO
@@ -161,11 +181,23 @@ class Context:
     def with_precision(
         self, precision: Precision, digits: int | None = None
     ) -> Context:
-        """The same context evaluated at another precision, as approX asks for."""
+        """The same context evaluated at another precision, as approX asks for.
+
+        The notation goes with it, style and digits both. Changing the
+        precision changes the style numbers are written in, and asking for a
+        number of digits asks for that many to be shown - the manual says both,
+        and the original does both. That is what makes approX answer in
+        scientific notation however the notation is set (`approX 10^7·π` is
+        `3.14159·10⁷` under Rational too), and what makes approX to twelve
+        digits show twelve. The style an answer was written in is the style it
+        keeps, since a render is never remade.
+        """
         return replace(
             self,
             precision=precision,
             precision_digits=self.precision_digits if digits is None else digits,
+            notation=NOTATION_FOR[precision],
+            notation_digits=self.notation_digits if digits is None else digits,
         )
 
     @classmethod
@@ -196,6 +228,8 @@ class Context:
         return cls(
             precision=_setting(settings, "Precision", Precision, Precision.EXACT),
             precision_digits=_number(settings, "PrecisionDigits", 6),
+            notation=_setting(settings, "Notation", Notation, Notation.RATIONAL),
+            notation_digits=_number(settings, "NotationDigits", 6),
             branch=_setting(settings, "Branch", Branch, Branch.PRINCIPAL),
             exponential=_setting(settings, "Exponential", Direction, Direction.AUTO),
             logarithm=_setting(settings, "Logarithm", Direction, Direction.AUTO),

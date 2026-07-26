@@ -9,7 +9,15 @@ produced the expression.
 Two rules govern the output. It must reparse to the same expression - the
 printer never leans on juxtaposition and parenthesises wherever the grammar
 needs it - and it must be written in the notation the session is using, which
-is why numerals come out in the context's input base.
+is why numerals come out in the context's input base and in the style
+`Options Notation` selects. `engine.notation` holds that second part.
+
+A decimal style bends the first rule, and the original bends it the same way:
+one third written `0.333333` reads back as a different number. Derive shows
+that text on the screen and writes it to an MTH file alike, so what the
+notation cuts is cut from the worksheet too. Where the two differ is behind
+the display: Derive keeps the exact ratio and answers `3·#n` with 1, while an
+entry here *is* its text and answers 0.999999.
 
 `AuthorPrinter` subclasses sympy's `StrPrinter` and overrides one method per
 construct spelled differently: powers, roots, the constants, function names,
@@ -37,12 +45,14 @@ sympy printer dispatches on the class name, so `_print_PlusMinus` finds
 from __future__ import annotations
 
 from decimal import Decimal
+from fractions import Fraction
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
 from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES
 
-from rederive.engine.context import Context
+from rederive.engine import notation
+from rederive.engine.context import Context, Notation
 from rederive.syntax.names import GREEK_GLYPHS
 
 # How tightly the inert heads bind. Sympy's `parenthesize` reads these by class
@@ -225,25 +235,79 @@ class AuthorPrinter(sp.StrPrinter):
     # -- numbers ------------------------------------------------------------
 
     def _print_Integer(self, expr):
-        return numeral(int(expr), self.context.input_base)
+        return self._number(Fraction(int(expr)))
 
     def _print_Rational(self, expr):
-        base = self.context.input_base
-        if expr.q == 1:
-            return numeral(expr.p, base)
-        return f"{numeral(expr.p, base)}/{numeral(expr.q, base)}"
+        return self._number(Fraction(expr.p, expr.q))
 
     def _print_Float(self, expr):
-        """A float at the context's precision, and always as plain digits.
+        """A float at the context's precision, written as the notation says.
 
-        There is no exponent notation to reparse, so a very large or very
-        small float is written out in full, and a whole one keeps its point so
-        that it does not read back as an integer.
+        Rational notation leaves it as plain digits: an approximation is a
+        float here where the original holds a ratio, so there is no ratio to
+        write it as. There is no exponent notation to reparse either, so a
+        very large or very small float is written out in full, and a whole one
+        keeps its point so that it does not read back as an integer.
         """
         text = super()._print_Float(sp.Float(expr, self.context.precision_digits))
         if "e" in text or "E" in text:
             text = format(Decimal(text), "f")
+        if self.context.notation is not Notation.RATIONAL:
+            return self._number(Fraction(Decimal(text)))
         return text if "." in text else text + "."
+
+    def _print_Mul(self, expr):
+        """A product led by a ratio the notation does not write as a ratio.
+
+        sympy prices `x/3` as an x over a 3 and prints the denominator, which
+        is right while a ratio is written as one. Under a decimal style the
+        coefficient is a number like any other and goes in front, which is
+        where the original puts it: `x/3` is `0.333333·x`.
+        """
+        coefficient, rest = expr.as_coeff_Mul()
+        if isinstance(coefficient, sp.Rational) and coefficient.q != 1:
+            written = self._number(Fraction(coefficient.p, coefficient.q))
+            if "/" not in written:
+                return written + "*" + self.parenthesize(rest, PRECEDENCE["Mul"])
+        return super()._print_Mul(expr)
+
+    def _number(self, value: Fraction) -> str:
+        """`value` in the notation `Options Notation` selects.
+
+        Rational notation, and Mixed over a number simple enough for it, write
+        the ratio; the numerals of a ratio are written in the session's base,
+        as every whole number is. The decimal styles are base ten, the base
+        being the one thing a decimal point numeral cannot carry.
+        """
+        style, digits = self.context.notation, self.context.notation_digits
+        if style is Notation.RATIONAL or (
+            style is Notation.MIXED and notation.simple(value)
+        ):
+            base = self.context.input_base
+            if value.denominator == 1:
+                return numeral(value.numerator, base)
+            return f"{numeral(value.numerator, base)}/{numeral(value.denominator, base)}"
+        if style is Notation.DECIMAL:
+            return notation.decimal(value, digits)
+        return notation.scientific(value, digits)
+
+    def parenthesize(self, item, level, strict=False):
+        """Fence a number the notation wrote as a power of ten.
+
+        `1.23456*10^8` is a product where sympy prices a number as an atom, so
+        nothing else would fence it: `x^123456789` has to come out with the
+        exponent in parentheses to read back as itself. A product does not
+        need them, `1.23456*10^8*x` associating the way it is meant to.
+        """
+        text = super().parenthesize(item, level, strict)
+        if (
+            isinstance(item, sp.Number)
+            and level > PRECEDENCE["Mul"]
+            and not text.startswith("(")
+            and ("*" in text or "^" in text)
+        ):
+            return f"({text})"
+        return text
 
     # -- constants and special values ---------------------------------------
 

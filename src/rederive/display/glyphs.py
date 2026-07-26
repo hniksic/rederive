@@ -132,8 +132,9 @@ def _fraction(value: str, digits: int) -> str:
     of them, so each keeps the one fractional digit a number written with a
     point cannot do without. The zeros a small number leads with hold a place
     rather than say a digit, which is why `0.000123456789` keeps six of its
-    own. Zeros left trailing by the cut say nothing either, and go the way the
-    lexer sends the ones that were written.
+    own. Zeros the cut leaves trailing are kept: they stand for the digits
+    that follow, so `0.10000000000000001` is shown `0.100000` where a tenth,
+    whose digits run out, is shown `0.1`.
     """
     integer, _, fraction = value.partition(".")
     whole = integer.lstrip("0")
@@ -141,7 +142,7 @@ def _fraction(value: str, digits: int) -> str:
         keep = max(digits - len(whole), 1)
     else:
         keep = digits + len(fraction) - len(fraction.lstrip("0"))
-    return integer + "." + (fraction[:keep].rstrip("0") or "0")
+    return integer + "." + fraction[:keep]
 
 
 def _whole(value: str, base: int) -> str:

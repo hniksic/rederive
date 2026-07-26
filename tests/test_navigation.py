@@ -323,7 +323,7 @@ def test_the_notation_digits_reach_the_renderer():
 def test_showing_fewer_digits_is_not_keeping_fewer():
     """A cut render says nothing about the number: the value is the whole of it."""
     session = Session()
-    assert session.author("0.10000000000000001").layout.lines == ("0.1",)
+    assert session.author("0.10000000000000001").layout.lines == ("0.100000",)
     session.author("0.10000000000000001 - 1/10")
     assert session.simplify("#2").text == "1/100000000000000000"
 

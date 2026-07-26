@@ -58,6 +58,18 @@ BASES: dict[str, int] = {"Binary": 2, "Octal": 8, "Decimal": 10, "Hexadecimal": 
 #: The choice that prompts for a number rather than standing for one.
 OTHER = "Other"
 
+#: What each arithmetic mode sets the notation style to, and the digit count
+#: that follows the precision's. Options Precision carries Options Notation
+#: with it - the manual says so, and the original does it - so that
+#: approximate arithmetic is read in the style and the length that suit it.
+#: The move is silent: only the field the user changed is recorded.
+#: `engine.context.NOTATION_FOR` is the same rule for a temporary context.
+NOTATION_FOR: dict[str, str] = {
+    "Exact": "Rational",
+    "Approximate": "Scientific",
+    "Mixed": "Mixed",
+}
+
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
@@ -458,7 +470,12 @@ class Settings:
         self._watchers.append(callback)
 
     def apply(self, values: Mapping[str, str | int]) -> tuple[str, ...]:
-        """Store `values`, and return the names of those that actually changed."""
+        """Store `values`, and return the names of those that actually changed.
+
+        A precision setting brings its notation setting along, unless the same
+        call sets that one too. See `NOTATION_FOR`.
+        """
+        values = _with_notation(values)
         changed = tuple(
             setting for setting, value in values.items() if self._values[setting] != value
         )
@@ -807,6 +824,17 @@ class DialogEditor:
             for field in self.dialog.fields
             if self.values[field.setting] != settings[field.setting]
         )
+
+
+def _with_notation(values: Mapping[str, str | int]) -> dict[str, str | int]:
+    """`values` plus the notation settings a precision setting carries along."""
+    carried = dict(values)
+    style = NOTATION_FOR.get(str(values.get("Precision", "")))
+    if style is not None and "Notation" not in carried:
+        carried["Notation"] = style
+    if "PrecisionDigits" in values and "NotationDigits" not in carried:
+        carried["NotationDigits"] = values["PrecisionDigits"]
+    return carried
 
 
 def _as_number(value: str | int) -> int:

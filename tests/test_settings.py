@@ -52,12 +52,45 @@ def test_defaults_are_the_originals(settings):
 def test_watchers_hear_which_settings_changed(settings):
     heard = []
     settings.watch(heard.append)
+    # Notation is in there because the precision carries it along.
     changed = settings.apply({"Precision": "Mixed", "PrecisionDigits": 6})
-    assert changed == ("Precision",)
-    assert heard == [frozenset({"Precision"})]
+    assert changed == ("Precision", "Notation")
+    assert heard == [frozenset({"Precision", "Notation"})]
     # Applying the same values again is not a change, and says nothing.
     assert settings.apply({"Precision": "Mixed"}) == ()
     assert len(heard) == 1
+
+
+def test_the_precision_carries_the_notation_along(settings):
+    """What Options Precision does to Options Notation, silently.
+
+    As in the original: taking the precision approximate leaves the Options
+    Notation screen showing Scientific, and asking for seventeen digits of
+    precision leaves it showing seventeen. Neither is recorded - only the
+    field the user changed is - which is why this happens in `apply` rather
+    than in the dialog.
+    """
+    settings.apply({"Precision": "Approximate"})
+    assert settings["Notation"] == "Scientific"
+    settings.apply({"PrecisionDigits": 17})
+    assert settings["NotationDigits"] == 17
+    settings.apply({"Precision": "Exact"})
+    assert settings["Notation"] == "Rational"
+    # A call that says what the notation is to be keeps what it says.
+    settings.apply({"Precision": "Approximate", "Notation": "Decimal"})
+    assert settings["Notation"] == "Decimal"
+
+
+def test_the_notation_can_be_set_after_the_precision(settings):
+    """The manual's own instruction: notation last, when you want your own.
+
+    `Precision := Approximate` then `Notation := Rational` leaves Rational
+    standing, which is the order the manual tells you to use.
+    """
+    settings.assign("Precision", "Approximate")
+    settings.assign("Notation", "Rational")
+    assert settings["Notation"] == "Rational"
+    assert settings["Precision"] == "Approximate"
 
 
 def test_choosing_a_value_moves_on_to_the_next_field(settings):
