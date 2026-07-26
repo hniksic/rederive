@@ -105,6 +105,28 @@ def test_a_factor_free_of_the_variables_is_not_reached_into():
     assert exp(text, variables=["x"]) == "x^2*(y + 1)^2 + 2*x*(y + 1)^2 + (y + 1)^2"
 
 
+def test_a_head_that_binds_a_variable_comes_through_as_itself():
+    """Not every argument of one is an operand: a derivative carries the
+    variable it is taken over and how many times, a substitution the variables
+    it binds and the points they take. Rewriting those reads them as something
+    else, so what Expand has nothing to expand it hands back untouched - which
+    is exactly what Simplify already answers."""
+    text = "DIF(LIM(F(y), y, 2*x - y), y)"
+    assert exp(text) == simplify(parse(text), Context()).text
+    assert "SUBS(DIF(LIM(F(y), xi_2, 2*x - y), xi_2), [xi_2], [y])" in exp(text)
+
+
+def test_an_integrand_stays_inside_its_integral():
+    """The limits of an integral are not an operand, and standing in for them
+    lets the integrand out: `t` is bound by the integral and means nothing
+    outside it, so `t^(a - 1)*(...)*INT(1, t, 0, 1/2)` is not another way of
+    writing this - it is a different expression."""
+    text = "INT(t^(a-1)*((1-t)^(b-a-1)*#e^(t*z) - 1), t, 0, 1/2)"
+    assert exp(text, variables=["z"]) == (
+        "INT(t^(a - 1)*((1 - t)^(b - a - 1)*#e^(t*z) - 1), t, 0, 1/2)"
+    )
+
+
 # -- partial fraction expansion -----------------------------------------------
 
 FRACTIONS = [

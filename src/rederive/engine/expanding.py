@@ -197,11 +197,29 @@ def _frozen(
         if not exponent.is_Number:
             exponent = _held(exponent, held)
         return sp.Pow(_frozen(base, variables, held), exponent)
+    if isinstance(expression, _BOUND):
+        return _held(expression, held)
     if expression.args:
         return expression.func(
             *(_frozen(argument, variables, held) for argument in expression.args)
         )
     return expression
+
+
+#: The heads that bind a variable of their own. Each is stood in for whole,
+#: expansion variables and all, for two reasons.
+#:
+#: Not every argument of one is an operand: a derivative carries the variable it
+#: is taken over and how many times, a substitution the variables it binds and
+#: the points they take. Those travel as tuples, and rebuilding the head from
+#: rewritten arguments reads them as something else - `DIF(u, xi)` comes back
+#: `DIF(u, [xi, 1])` and `SUBS(u, [xi], [y])` comes back `SUBS(u, [[xi]], [y])`.
+#:
+#: And what is inside one is not being expanded anyway. `sp.expand` goes deep,
+#: so an integrand would be multiplied out where nobody asked - which splits the
+#: integral into one per term, and an integral that had no answer can end up
+#: beside one that does.
+_BOUND = (sp.Derivative, sp.Integral, sp.Sum, sp.Product, sp.Limit, sp.Subs)
 
 
 def _held(expression: sp.Expr, held: dict[sp.Dummy, sp.Expr]) -> sp.Expr:
