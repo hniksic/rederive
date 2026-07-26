@@ -25,6 +25,7 @@ from rederive.engine.to_sympy import (
     PlusMinus,
     StringLiteral,
     Subscript,
+    Taylor,
     Transposed,
 )
 from rederive.model.expr import Kind
@@ -178,6 +179,16 @@ def test_a_dot_product_of_vectors_is_a_number():
     assert convert("[2, 3] . [4, 5]") == sp.Integer(23)
 
 
+def test_a_dot_of_conforming_matrices_is_their_product():
+    assert convert("[[1, 2], [3, 4]] . [[5], [6]]") == sp.Matrix([[17], [39]])
+    assert convert("[[1], [2]] . [[3, 4]]") == sp.Matrix([[3, 4], [6, 8]])
+
+
+def test_a_dot_of_shapes_that_will_not_multiply_stays_inert():
+    assert type(convert("[[1, 2], [3, 4]] . [1, 2, 3]")).__name__ == "Dot"
+    assert type(convert("a . b")).__name__ == "Dot"
+
+
 def test_multiplying_two_vectors_is_their_dot_product():
     # Nothing else can be meant, and sympy will not multiply the shapes.
     assert convert("[2, 3] * [4, 5]") == sp.Integer(23)
@@ -305,12 +316,74 @@ def test_a_calculus_head_converts_unevaluated():
     assert isinstance(convert("SUM(k, k, 1, 5)"), sp.Sum)
     assert isinstance(convert("PRODUCT(k, k, 1, 5)"), sp.Product)
     assert isinstance(convert("LIM(SIN(x)/x, x, 0)"), sp.Limit)
+    # A series has no sympy head to be held in, so the engine has one, and it
+    # waits where the rest of them wait.
+    assert isinstance(convert("TAYLOR(SIN(x), x, 0, 3)"), Taylor)
+    assert convert("TAYLOR(SIN(x), x, 0, 3)").doit() == convert("x - x^3/6")
 
 
 def test_a_two_sided_limit_stays_two_sided_and_a_side_is_kept():
     assert convert("LIM(SIGN(x), x, 0)").args[3] == sp.Symbol("+-")
     assert convert("LIM(SIGN(x), x, 0, 1)").args[3] == sp.Symbol("+")
     assert convert("LIM(SIGN(x), x, 0, -1)").args[3] == sp.Symbol("-")
+
+
+def test_a_conditional_converts_to_the_case_split_sympy_writes_it_as():
+    """The way back from a `Piecewise`, which is what makes a result settle.
+
+    Sympy answers a conditional integral with a `Piecewise` and the printer
+    writes it as the `IF` the notation has; reading that back as anything else
+    would leave a result whose written form changed on the next pass.
+    """
+    conditional = convert("IF(x > 0, 1, -1)")
+    assert isinstance(conditional, sp.Piecewise)
+    assert conditional == sp.Piecewise((1, sp.Symbol("x", real=True) > 0), (-1, True))
+    assert convert("IF(x > 0, 1)") == sp.Piecewise((1, sp.Symbol("x", real=True) > 0))
+
+
+def test_a_substitution_converts_back_from_the_vectors_it_is_written_as():
+    # Sympy holds a derivative taken at a point as a `Subs`, and it is the head
+    # that says the derivative inside is not to be evaluated.
+    y = sp.Symbol("y", real=True)
+    substitution = convert("SUBS(DIF(F(v), v), [v], [y])")
+    assert isinstance(substitution, sp.Subs)
+    assert substitution.point == (y,)
+
+
+def test_a_hypergeometric_head_converts_back_from_the_vectors_it_is_written_as():
+    assert convert("HYPER([1, 2], [3], x)") == sp.hyper(
+        (1, 2), (3,), sp.Symbol("x", real=True)
+    )
+
+
+def test_a_sympy_head_the_printer_named_converts_back_to_that_head():
+    """The inverse of writing a sympy function as its name upper-cased.
+
+    A Bessel series comes back carrying heads the notation was never given a
+    spelling for, and reading them as inert would leave the same mathematics
+    under a different object - one that sorts by another name, so the answer
+    would settle only on a second Simplify.
+    """
+    z = sp.Symbol("z", real=True)
+    assert convert("BESSELI(1, z)") == sp.besseli(1, z)
+    assert convert("EI(z)") == sp.Ei(z)
+    assert convert("LOWERGAMMA(1, z)") == sp.lowergamma(1, z)
+
+
+@pytest.mark.parametrize(
+    "name", ["SOLVE", "FIT", "ITERATE", "TRUTH_TABLE", "RANDOM"], ids=str
+)
+def test_a_name_derive_defines_is_not_displaced_by_a_sympy_head(name):
+    # The inventory has a reading of its own for each of these, or is
+    # deliberately inert; nothing found among sympy's classes may take one.
+    assert isinstance(convert(f"{name}(x, 2)"), AppliedUndef)
+
+
+def test_the_arbitrary_point_on_the_unit_circle_carries_no_assumptions():
+    # Real is exactly what it is not: 1, -1, #i and -#i are all of them points
+    # on it, so nothing that needs a real variable may fire on it.
+    assert convert("unit_circle").is_real is None
+    assert written("SQRT(unit_circle^2)") == "SQRT(unit_circle^2)"
 
 
 def test_an_arbitrary_function_is_an_opaque_head_that_can_be_differentiated():
@@ -453,9 +526,11 @@ UNCHANGED = [
     "PRODUCT(F(k), k, 1, n)",
     "LIM(F(x), x, 0)",
     "LIM(F(x), x, 0, 1)",
+    "TAYLOR(F(x), x, 0, 3)",
     "SOLVE(x^2 = 1, x)",
     "IF(x > 0, 1, -1)",
-    "TAYLOR(SIN(x), x, 0, 3)",
+    "IF(x > 0, 1)",
+    "HYPER([1, 2], [3], x)",
     "MY_FUNCTION(x, 2)",
 ]
 
@@ -489,8 +564,9 @@ def test_every_node_kind_is_covered_by_a_round_trip_case():
         ("u :==", "u :=="),
         ("[[1, 2], [3]]", "[[1, 2], [3]]"),
         ("SOLVE(x^2 = 1, x)", "SOLVE(x^2 = 1, x)"),
-        ("TAYLOR(SIN(x), x, 0, 3)", "TAYLOR(SIN(x), x, 0, 3)"),
-        ("IF(x > 0, 1, -1)", "IF(x > 0, 1, -1)"),
+        # Four arguments, the last of them the value where the test cannot be
+        # decided: no `Piecewise` holds that, and the head stays inert.
+        ("IF(x > 0, 1, -1, 0)", "IF(x > 0, 1, -1, 0)"),
     ],
     ids=str,
 )

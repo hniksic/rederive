@@ -517,6 +517,22 @@ P2(a,u,x,c,m,n):=P3(a,NV(a,u,m,n),u,x,c,m,n)
 P1(a,x,c,m,n):=P2(a,DV(a,m,n),x,c,m,n)
 PADE(y,x,x0,n,d):=P1(VECTOR(LIM(DIF(y,x,m_),x,x0)/m_!,m_,0,n+d+1),x,x0,n,d)
 
+## derive-3.14-dos/ARITH.DMO
+5 (9 - 3) / 2
+1/2 + 1/6
+5^99
+54!
+SQRT 9
+(2/27)^(2/3)
+SQRT (4 - 2 * SQRT (3))
+SQRT (5 + SQRT 24) + SQRT (5 - SQRT 24)
+SQRT (-1)
+(1 + 2 #i) (3 + #i)
+(2 + #i) / (#i + 1)
+(-8)^(1/3)
+SQRT (55/36 + 4/3 #i)
+inf + inf + 5
+
 ## derive-3.14-dos/BESSEL.MTH
 BESSEL_J3(v):=v/(v SUB 1+2*SUM(v SUB (2*k_+1),k_,1,DIMENSION(v)/2-1))
 BESSEL_J2(v):=BESSEL_J3(VECTOR(v SUB (2*j_),j_,1,DIMENSION(v)/2))
@@ -654,6 +670,52 @@ FRESNEL_AUX_F(z):=1/(pi*z)-3/(pi^3*z^5)
 FRESNEL_AUX_G(z):=1/(pi^2*z^3)-15/(pi^4*z^7)
 FRESNEL_SIN_ASYMP(z):=1/2-FRESNEL_AUX_F(z)*COS(pi*z^2/2)-FRESNEL_AUX_G(z)*SIN(pi*z^2/2)
 FRESNEL_COS_ASYMP(z):=1/2+FRESNEL_AUX_F(z)*SIN(pi*z^2/2)-FRESNEL_AUX_G(z)*COS(pi*z^2/2)
+
+## derive-3.14-dos/FUNCTION.DMO
+LN 1
+LN 6 - LN 2
+LN 16 / LN 8
+LN (1 + #i)
+LN(x^2)/LN(x^(-2))
+LOG (10^3, 10)
+LOG x
+EXP LN x
+LN EXP x
+LN (2 x^3 EXP y)
+EXP x
+#e^(3 x LN y)
+#e^(2x(y+1)+y) - #e^(2 x y+2x+y)
+4 (2^z)^2 - 4^(z+1)
+a^(x+1) - a a^x
+#e^(1 + pi/4 #i)
+COSH x
+ASINH x
+SIGN 5
+SIGN -3
+SIGN (3 + 4 #i)
+SIGN 0
+SIGN SIGN z
+SIGN ATAN x
+SIGN LN (1 + COS x)
+ABS z SIGN z
+ABS (x^2)
+(ABS x)^2
+COS ABS x
+ABS (x ATAN x)
+ABS (1 + COS x)
+ABS x / SIGN x
+GAMMA (x+1)
+(1/2) !
+(- 1/2) !
+(n+2)!/(n-1)!
+PERM (m, n)
+COMB (m, n)
+AVERAGE (x, y, z)
+AVERAGE (VECTOR (1/k, k, 1, 10))
+RMS ([2, 3, 5])
+VAR (x, y)
+STDEV (x, y)
+PMT (10%/12, 2*12, 12000)
 
 ## derive-3.14-dos/GRAPHICS.MTH
 axes:=[[-t_,-t_/2],[t_,-t_/2],[0,t_]]

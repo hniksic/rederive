@@ -142,6 +142,13 @@ DOMAINS = [
     ("SQRT(x)*SQRT(y)", "SQRT(x)*SQRT(y)", None),
     ("(-1)^(2*n)", "1", declared("n :epsilon Integer")),
     ("(-1)^(2*n)", "(-1)^(2*n)", None),
+    # `#e^(k*LN(y))` is `y^k` for positive `y` and not otherwise. Derive
+    # answers it whatever `y` is; where nothing declares it, the expression is
+    # the answer.
+    ("#e^(3*x*LN(y))", "#e^(3*x*LN(y))", None),
+    ("#e^(3*x*LN(y))", "y^(3*x)", declared("y :epsilon Real (0, inf)")),
+    # `pi/2` only for positive `t`, and Derive answers it regardless.
+    ("ACOT(t) + ATAN(t)", "ACOT(t) + ATAN(t)", None),
 ]
 
 
@@ -164,6 +171,16 @@ TRIGONOMETRY = [
     ("SIN(6*x)/SIN(3*x)", "2*COS(3*x)", None),
     ("ATAN(2 + SQRT(3))", "5*pi/12", None),
     ("ATAN(1, 1)", "pi/4", None),
+    # Complementary arcs of one argument are a right angle. The tangent pair
+    # is the one that needs a domain, being `-pi/2` below zero.
+    ("ASIN(x) + ACOS(x)", "pi/2", None),
+    ("ASEC(x) + ACSC(x)", "pi/2", None),
+    ("2*ASIN(x) + 2*ACOS(x)", "pi", None),
+    ("ASIN(x) + ACOS(x) + y", "y + pi/2", None),
+    ("ASIN(x) + ACOS(x)", "90", Context(angle=Angle.DEGREE)),
+    ("ACOT(t) + ATAN(t)", "pi/2", declared("t :epsilon Real (0, inf)")),
+    ("ACOT(t) + ATAN(t)", "-pi/2", declared("t :epsilon Real (-inf, 0)")),
+    ("ASIN(x) + ACOS(y)", "ACOS(y) + ASIN(x)", None),
     ("SIN(45)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
     ("ASIN(1/2)", "30", Context(angle=Angle.DEGREE)),
     # `deg` is the constant pi/180, so degrees work in radian mode too.
@@ -268,6 +285,10 @@ CALCULUS = [
     ("LIM(SIN(x)/x, x, 0)", "1"),
     ("LIM(SIGN(x), x, 0, 1)", "1"),
     ("LIM(SIGN(x), x, 0, -1)", "-1"),
+    # The order is the maximum degree, and a derivative that simplifies to zero
+    # at the expansion point costs a term: this one has no even powers.
+    ("TAYLOR(c*SIN(x), x, 0, 6)", "c*x^5/120 - c*x^3/6 + c*x"),
+    ("TAYLOR(1/(1 - x), x, 0, 3)", "x^3 + x^2 + x + 1"),
 ]
 
 
@@ -276,10 +297,67 @@ def test_a_calculus_head_is_evaluated(text, expected):
     assert simp(text) == expected
 
 
+def test_an_integral_a_rewrite_leaves_behind_is_evaluated_too():
+    # Cancelling this integrand splits it in two, and the part that is an
+    # integral of `x` is evaluated as well: an answer still holding
+    # `INT(x, x)` would not be a simplified one.
+    assert simp("INT((x*G(x) + F(x))/G(x), x)") == "x^2/2 + INT(F(x)/G(x), x)"
+
+
 def test_an_integral_that_will_not_evaluate_survives_as_itself():
     # Derive leaves the INT node standing, and so must we: an error here would
     # lose the entry the user authored.
     assert simp("INT(SIN(x)/LN(x), x)") == "INT(SIN(x)/LN(x), x)"
+
+
+def test_a_taylor_polynomial_that_does_not_exist_survives_as_itself():
+    """No polynomial, no answer.
+
+    The derivatives of `SQRT(x)` at zero are not finite, so there is no first
+    order Taylor polynomial; Derive answers such a case with complex infinity
+    or `?`, and the expansion the head stands for comes back instead. What
+    sympy has for it - the series `SQRT(x)`, which is no polynomial - would be
+    an answer to a different question.
+    """
+    assert simp("TAYLOR(SQRT(x), x, 0, 1)") == "TAYLOR(SQRT(x), x, 0, 1)"
+    assert simp("TAYLOR(LN(x), x, 0, 2)") == "TAYLOR(LN(x), x, 0, 2)"
+    # An order that is no order to expand to leaves the head alone as well.
+    assert simp("TAYLOR(SIN(x), x, 0, n)") == "TAYLOR(SIN(x), x, 0, n)"
+
+
+def test_a_derivative_a_substitution_binds_is_not_evaluated():
+    """What sympy holds under a `SUBS` is held on purpose.
+
+    Differentiating a limit whose endpoint moves gives the slope of `F` at a
+    point, written as a derivative over a bound variable and a substitution
+    into it. That derivative looks like the derivative of a constant and is
+    not one, so nothing inside the substitution is evaluated - and the answer
+    is the same on the second pass as on the first.
+    """
+    once = simplify(parse("DIF(LIM(F(y), y, 2*x - y), y)"), Context())
+    assert "SUBS(DIF(LIM(F(y), xi_2, 2*x - y), xi_2), [xi_2], [y])" in once.text
+    assert simplify(once.node, Context()).text == once.text
+
+
+def test_a_conditional_whose_branches_are_vectors_simplifies_elementwise():
+    # The clause taken is a vector, and a vector is simplified element by
+    # element whether it was written or arrived at.
+    taken = "IF(a > 0, [1, 2], [3, 4], [SQRT(b)*SQRT(b), 2*b/b])"
+    assert simp(taken) == simp("[SQRT(b)*SQRT(b), 2*b/b]") == "[b, 2]"
+
+
+def test_a_parametrised_integral_of_an_affordable_shape_is_answered():
+    """The heuristic method, where its ansatz is measured to be small.
+
+    A product of powers of polynomials is one generator per base and nothing
+    composed on top, so `heurisch` answers this in under a second where the
+    bounded methods have nothing for it. Derive answers it as the incomplete
+    beta function; sympy's spelling is the hypergeometric it is defined by.
+    """
+    start = time.monotonic()
+    answer = simp("INT(x^(a-1)*(1-x)^(b-1), x)")
+    assert time.monotonic() - start < 5
+    assert answer == "x^a*HYPER([a, 1 - b], [a + 1], x*EXP_POLAR(2*#i*pi))/a"
 
 
 def test_a_parametrised_integral_is_answered_or_left_alone_promptly():
@@ -353,6 +431,11 @@ VECTORS = [
     ("DIMENSION([1, 2, 3])", "3"),
     ("[[1, 2], [3, 4]]`", "[[1, 3], [2, 4]]"),
     ("SUM([1, 2, 3])", "6"),
+    ("[[1, 2], [3, 4]] . [[a], [b]]", "[[a + 2*b], [3*a + 4*b]]"),
+    # Shapes that will not multiply keep the operator, unevaluated: better the
+    # expression back than a guess at which product was meant.
+    ("[[1, 2], [3, 4]] . [1, 2, 3]", "[[1, 2], [3, 4]] . [1, 2, 3]"),
+    ("a . b", "a . b"),
     # Ragged: no matrix to be, and nothing to do to it either.
     ("[[1, 2], [3]]", "[[1, 2], [3]]"),
 ]
@@ -468,7 +551,6 @@ def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
 OPAQUE = [
     "SOLVE(x^2 = 1, x)",
     "RANDOM(10)",
-    "TAYLOR(SIN(x), x, 0, 3)",
     "ITERATE(x^2, x, 2, 3)",
     "FIT([x, 1], [[1, 2], [3, 4]])",
     "TRUTH_TABLE(p, q)",
@@ -551,6 +633,26 @@ def test_a_defined_function_is_replaced_by_its_body():
     assert simp("ACCELERATION(6)", context) == "6/m"
 
 
+def test_two_spellings_of_one_variable_are_one_variable():
+    """Case-insensitively, `x` and `X` name the same thing.
+
+    Which spelling a line carries depends on what had been declared when it was
+    read: `X := ELEMENT(x, 1)` declares `X` and mentions `x` before that
+    declaration exists, so the tree holds both. The session's symbol table is
+    what says they are one, and the answer is written under the spelling it
+    records.
+    """
+    state = ParseState()
+    parsed = parse_expression("[a:=, b:=, c:=, X := ELEMENT(x, 1)]", state)
+    for declaration in parsed.declarations:
+        state.declare(declaration)
+    answer = simplify(parsed.node, Context(), state)
+    assert answer.text == "[a :=, b :=, c :=, X := ELEMENT(X, 1)]"
+    # And with no symbol table there is nothing to resolve them against, so
+    # the tree stands as it was read.
+    assert simplify(parsed.node, Context()).text.endswith("X := ELEMENT(x, 1)]")
+
+
 def test_a_label_is_replaced_by_what_it_names():
     context = Context(labels={3: parse("x + 1")})
     assert simp("#3*2", context) == "2*x + 2"
@@ -616,6 +718,12 @@ DEMO_ALGEBRA = [
         "/((p*x^2+(k+t)*x+r)^2-(p*x^2+(k-t)*x+r)^2)",
         "-s/t",
     ),
+    # The fifth power common to both terms is collected back out, and the
+    # cofactor - not the factors' order, which is sympy's - is the answer.
+    (
+        "2 (x^2 - y^2)^6 - (x^2 - y^2)^5(2 x^2 - 3)",
+        "(3 - 2*y^2)*(x^2 - y^2)^5",
+    ),
 ]
 
 DEMO_FUNCTIONS = [
@@ -664,6 +772,8 @@ DEMO_CALCULUS = [
         "INT (x^2 COS (a x^3 + b), x)",
         "IF(a /= 0, SIN(a*x^3 + b)/(3*a), x^3*COS(b)/3)",
     ),
+    ("TAYLOR (#e^x, x, 0, 5)", "x^5/120 + x^4/24 + x^3/6 + x^2/2 + x + 1"),
+    ("TAYLOR (LN COS (a x), x, 0, 7)", "-a^6*x^6/45 - a^4*x^4/12 - a^2*x^2/2"),
     ("SUM (k, k, 0, n)", "n^2/2 + n/2"),
     ("SUM (k^3, k, 0, n)", "n^4/4 + n^3/2 + n^2/4"),
     ("SUM (2^-k, k, 0, inf)", "2"),
@@ -674,6 +784,20 @@ DEMO_MATRICES = [
     ("[[a,b,c],[1,2,3]] SUB 1 SUB 2", "b"),
     ("[[a,b,c],[1,2,3]] SUB 2", "[1, 2, 3]"),
     ("2*[[a,2],[3,b]]+[[1,3],[a,-b]]", "[[2*a + 1, 7], [a + 6, b]]"),
+    ("[2,a,5] . [2*a,3,-1]", "7*a - 5"),
+    # `.` is the matrix product wherever the shapes conform; the dot product is
+    # the case of it the operator is named after.
+    ("[[a,b],[c,d]] . [[x],[y]]", "[[a*x + b*y], [c*x + d*y]]"),
+    ("[[a,b],[c,d]] . [[a,b],[c,d]]^(-1)", "[[1, 0], [0, 1]]"),
+    (
+        "[[a,b],[c,d]]^(-1) . [[e],[f]]",
+        "[[(d*e - b*f)/(a*d - b*c)], [(a*f - c*e)/(a*d - b*c)]]",
+    ),
+    # The outer product, which the demo builds out of the same operator.
+    (
+        "[[a],[b],[c]] . [[2,3,4]]",
+        "[[2*a, 3*a, 4*a], [2*b, 3*b, 4*b], [2*c, 3*c, 4*c]]",
+    ),
     ("CROSS([1,2,3],[a,b,c])", "[2*c - 3*b, 3*a - c, b - 2*a]"),
     ("DET([[2,3],[a,b]])", "2*b - 3*a"),
     ("TRACE([[a,b],[1,2]])", "a + 2"),
@@ -697,37 +821,6 @@ DEMO = (
 @pytest.mark.parametrize(("text", "expected"), DEMO, ids=str)
 def test_a_case_from_the_demo_scripts(text, expected):
     assert simp(text) == expected
-
-
-@pytest.mark.parametrize(
-    ("text", "expected", "reason"),
-    [
-        (
-            "2 (x^2 - y^2)^6 - (x^2 - y^2)^5(2 x^2 - 3)",
-            "(x^2 - y^2)^5*(3 - 2*y^2)",
-            "no collecting of a common folded power out of a sum",
-        ),
-        (
-            "[[a,b],[c,d]] . [[x],[y]]",
-            "[[a*x + b*y], [c*x + d*y]]",
-            "`.` reads as a dot product, not yet as a matrix product",
-        ),
-        (
-            "ACOT t + ATAN t",
-            "pi/2",
-            "true for positive t only; Derive answers it anyway, we do not guess",
-        ),
-        (
-            "#e^(3 x LN y)",
-            "y^(3*x)",
-            "needs y positive; Derive assumes it, we do not",
-        ),
-    ],
-    ids=str,
-)
-def test_a_demo_case_the_engine_does_not_reach_yet(text, expected, reason):
-    if simp(text) != expected:
-        pytest.skip(reason)
 
 
 # -- totality -----------------------------------------------------------------
@@ -850,30 +943,5 @@ def test_a_nested_cube_root_is_denested():
     assert simp("(243*SQRT(5) - 294*SQRT(3))^(1/3)") == "3*SQRT(5) - 2*SQRT(3)"
 
 
-@pytest.mark.parametrize(
-    ("text", "reason"),
-    [
-        (
-            "LINEAR1_GEN(p,q,x,y,c):=y=(c+INT(q*#e^INT(p,x),x))/#e^INT(p,x)",
-            "a conditional answer sorts differently once it has been read back",
-        ),
-        (
-            "BESSEL_J_SERIES(n,z,m):=(z/2)^n*SUM((-z^2/4)^k_/(k_!*(n+k_)!),k_,0,m)",
-            "a sympy-only head such as HYPER reads back as an inert call, and sorts"
-            " differently from the head it was written from",
-        ),
-    ],
-    ids=str,
-)
-def test_a_result_whose_form_settles_only_on_the_second_pass(text, reason):
-    """Known gap: the answer is right, its written order takes a pass to settle.
-
-    Both cases print a correct expression whose reparse is a differently
-    ordered - not a different - expression, because the head it is written as
-    is not the head it converts back to. Simplifying again is a fixed point
-    from there on. Closing it means teaching `to_sympy` the way back from
-    `Piecewise` and `hyper`, which is a conversion-layer change.
-    """
-    once = simplify(parse(text), Context())
-    if simplify(once.node, Context()).text != once.text:
-        pytest.skip(reason)
+#: The expressions the corpus holds that settle only on a second pass are
+#: recorded in `test_simplify_corpus.py`, beside the sweep that finds them.

@@ -55,7 +55,7 @@ from rederive.engine.factoring import (
     factored_expression,
 )
 from rederive.engine.from_sympy import Result, from_sympy
-from rederive.engine.substitute import substitute
+from rederive.engine.substitute import named_as_declared, substitute
 from rederive.engine.to_sympy import (
     Assign,
     Declare,
@@ -63,6 +63,7 @@ from rederive.engine.to_sympy import (
     InertVector,
     Logical,
     PlusMinus,
+    Taylor,
     to_sympy,
 )
 from rederive.model.expr import Node
@@ -73,12 +74,19 @@ __all__ = ["approx", "approximated", "simplified", "simplify"]
 Rewrite = Callable[[sp.Basic], sp.Basic]
 
 #: The heads that stand for a computation nobody has asked for yet.
-_CALCULUS = (sp.Derivative, sp.Integral, sp.Sum, sp.Product, sp.Limit)
+_CALCULUS = (sp.Derivative, sp.Integral, sp.Sum, sp.Product, sp.Limit, Taylor)
 
 #: What `combsimp` is for. It is offered only where one of these appears,
 #: because on an ordinary polynomial it factors - `x^2 + 2*x` becomes
 #: `x*(x + 2)` - and factoring is the Factor command's business, not Simplify's.
 _COMBINATORIAL = (sp.factorial, sp.factorial2, sp.binomial, sp.gamma, sp.ff, sp.rf)
+
+#: And only on an expression this size or under. `combsimp` compares every pair
+#: of factorials it can see, and over Derive's own `F_0M` - a hundred and two
+#: operations, half of them factorials of symbolic arguments - it takes
+#: twenty-three seconds. Measured over every combinatorial expression in the
+#: corpus: at this size and below, none costs more than a fifth of a second.
+_COMBSIMP = 60
 
 
 def simplify(
@@ -92,6 +100,7 @@ def simplify(
     working in a non-default input or case mode must pass its own.
     """
     context = context or Context()
+    node = named_as_declared(node, state)
     return from_sympy(simplified(node, context), context, state)
 
 
@@ -234,12 +243,63 @@ def _oriented(solved: sp.Basic) -> sp.Basic:
 def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     """An ordinary expression, through the whole sequence."""
     expression, frozen = _conditionals(expression, context)
-    expression = _calculus(expression)
+    if not frozen and isinstance(expression, sp.MatrixBase):
+        # A conditional whose branches are vectors is a vector once it has been
+        # taken, and a vector is simplified element by element - the same
+        # answer whether the matrix was written or arrived at.
+        return _transform(expression, context)
+    expression, held = _held(expression)
+    tried: set[sp.Basic] = set()
+    expression = _calculus(expression, tried)
     expression = _numeric(expression)
     expression = _rewritten(expression, context)
-    if frozen:
-        expression = expression.xreplace(frozen)
+    # The rewrites can leave a head where none stood: `cancel` splits a single
+    # integrand into a sum, and each part is an integral of its own. Those have
+    # been offered to nothing yet, and an answer still holding `INT(x, x)` is
+    # not a simplified one. Asked before walking, since most expressions have
+    # no such head at all. Not cheap where it does run - a rewrite can reshape
+    # a derivative without changing what it means, and expanding it again is
+    # most of what Derive's `F_1A` costs - but the alternative is an answer
+    # that reaches its form only on a second Simplify.
+    if expression.has(*_CALCULUS):
+        expression = _calculus(expression, tried)
+    for standing_in in (held, frozen):
+        if standing_in:
+            expression = expression.xreplace(standing_in)
     return approximated(_factorings(_canonical(expression)), context)
+
+
+def _held(expression: sp.Basic) -> tuple[sp.Basic, dict[sp.Basic, sp.Basic]]:
+    """Every `Subs` set aside, with what to put back in its place.
+
+    A `Subs` is sympy's way of writing "this derivative, at this point", and
+    the derivative in one is unevaluated on purpose: the slope of `F` at `y` is
+    not the slope of a constant, though it looks like one once the variable it
+    is taken over has been bound. Evaluating inside would answer zero, so
+    nothing inside is touched at all.
+    """
+    if not expression.has(sp.Subs):
+        return expression, {}
+    held: dict[sp.Basic, sp.Basic] = {}
+
+    def hold(head: sp.Basic) -> sp.Basic:
+        placeholder = _placeholder(head, len(held) + _SUBSTITUTIONS)
+        held[placeholder] = head
+        return placeholder
+
+    try:
+        return expression.replace(_is_substitution, hold, simultaneous=False), held
+    except Exception:
+        return expression, {}
+
+
+#: Where the placeholders for held substitutions start, so that they cannot
+#: collide with the ones a frozen conditional uses.
+_SUBSTITUTIONS = 1000
+
+
+def _is_substitution(expression: sp.Basic) -> bool:
+    return isinstance(expression, sp.Subs)
 
 
 def _canonical(expression: sp.Basic) -> sp.Basic:
@@ -280,12 +340,19 @@ def _rebuilt(run: sp.Basic) -> sp.Basic:
 def _conditionals(
     expression: sp.Basic, context: Context
 ) -> tuple[sp.Basic, dict[sp.Symbol, sp.Basic]]:
-    """Resolve every `IF` whose test can be decided, innermost first.
+    """Resolve every conditional whose test can be decided, innermost first.
 
     Deciding the test is the whole of it. A true test leaves only the then
     clause to simplify, a false one only the else clause - `?` when there is
     none - and an undecidable test takes the unknown clause if the author wrote
     one.
+
+    A conditional is an authored `IF` or the `Piecewise` it converts to, and
+    the two are resolved alike: a `Piecewise` is what sympy answers a
+    conditional integral with, and what an `IF` reads back as, so a rule that
+    held for only one of them would make an answer depend on which pass it came
+    from. Only the four-argument `IF`, whose fourth argument is the value where
+    the test cannot be decided, has no `Piecewise` to be.
 
     With no unknown clause an undecidable `IF` comes back untouched, branches
     and all, which is Derive's behaviour and a deliberate one: simplifying a
@@ -301,7 +368,15 @@ def _conditionals(
     """
     frozen: dict[sp.Basic, sp.Basic] = {}
 
+    def freeze(head: sp.Basic) -> sp.Basic:
+        placeholder = _placeholder(head, len(frozen))
+        frozen[placeholder] = head
+        return placeholder
+
     def resolve(head: sp.Basic) -> sp.Basic:
+        if isinstance(head, sp.Piecewise):
+            settled = _cases(head, context)
+            return freeze(settled) if isinstance(settled, sp.Piecewise) else settled
         test, *branches = head.args
         decided = _decide(test, context)
         if decided is True:
@@ -310,9 +385,7 @@ def _conditionals(
             return branches[1] if len(branches) > 1 else sp.nan
         if len(branches) > 2:
             return branches[2]
-        placeholder = _placeholder(head, len(frozen))
-        frozen[placeholder] = head
-        return placeholder
+        return freeze(head)
 
     try:
         resolved = expression.replace(_is_conditional, resolve, simultaneous=False)
@@ -330,11 +403,40 @@ def _placeholder(head: sp.Basic, index: int) -> sp.Basic:
 
 
 def _is_conditional(expression: sp.Basic) -> bool:
+    if isinstance(expression, sp.Piecewise):
+        return True
     return (
         isinstance(expression, AppliedUndef)
         and type(expression).__name__ == "IF"
         and 2 <= len(expression.args) <= 4
     )
+
+
+def _cases(head: sp.Piecewise, context: Context) -> sp.Basic:
+    """A case split with every case its condition decides taken out.
+
+    A case whose condition is decidably false drops out, and where a decidably
+    true one is reached the split ends there - which is the then and the else
+    clause of an `IF` under another name. What is left is the split from the
+    first undecidable case on, or `?` where every case was ruled out, since
+    outside all of its conditions a `Piecewise` has no value.
+    """
+    remaining: list[tuple[sp.Basic, sp.Basic]] = []
+    for value, condition in head.args:
+        decided = _decide(condition, context)
+        if decided is False:
+            continue
+        remaining.append((value, sp.true if decided else condition))
+        if decided:
+            break
+    if not remaining:
+        return sp.nan
+    try:
+        # One case left over that always holds is no longer a split, and sympy
+        # collapses it to its value on the way through.
+        return sp.Piecewise(*remaining)
+    except Exception:
+        return head
 
 
 def _decide(test: sp.Basic, context: Context) -> bool | None:
@@ -366,20 +468,57 @@ def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
 # -- the calculus heads ------------------------------------------------------
 
 
-def _calculus(expression: sp.Basic) -> sp.Basic:
-    """`.doit()` on every calculus head, innermost first."""
-    try:
-        return expression.replace(
-            lambda e: isinstance(e, _CALCULUS), _evaluate, simultaneous=False
-        )
-    except Exception:
-        return expression
+def _calculus(expression: sp.Basic, tried: set[sp.Basic] | None = None) -> sp.Basic:
+    """`.doit()` on every calculus head, innermost first, until none is new.
+
+    Evaluating one head can hand back others: sympy answers an integral of a
+    sum with a sum of integrals, and those have been offered to nothing yet.
+    So the rounds go on while heads keep appearing, and a head that has already
+    been tried and stood is not tried again - which is what ends them, and what
+    keeps a hard integral from being attempted twice.
+
+    `tried` is that record, and a caller running this more than once over one
+    expression passes its own so that the second run inherits it.
+    """
+    if tried is None:
+        tried = set()
+
+    def pending(head: sp.Basic) -> bool:
+        return isinstance(head, _CALCULUS) and head not in tried
+
+    for _ in range(_ROUNDS):
+        # What this round offers is remembered only once the round is over, so
+        # that a head standing in two places is evaluated in both - and so that
+        # one sympy hands back inside its own answer, as it does for a sum it
+        # can only do under a condition, is not offered again and again.
+        offered: set[sp.Basic] = set()
+
+        def evaluate(head: sp.Basic) -> sp.Basic:
+            offered.add(head)
+            return _evaluate(head)
+
+        try:
+            rewritten = expression.replace(pending, evaluate, simultaneous=False)
+        except Exception:
+            return expression
+        tried |= offered
+        if rewritten == expression:
+            return rewritten
+        expression = rewritten
+    return expression
+
+
+#: How many times the heads are offered. Two rounds are what the cases in hand
+#: need; the third is there so that a rewrite feeding itself cannot spin.
+_ROUNDS = 3
 
 
 def _evaluate(head: sp.Basic) -> sp.Basic:
     """One head evaluated, or the head itself if it will not evaluate."""
     if isinstance(head, sp.Integral):
         return _integral(head)
+    if isinstance(head, (sp.Sum, sp.Product)) and not _searchable(head):
+        return head
     try:
         value = head.doit(deep=False)
     except Exception:
@@ -398,26 +537,24 @@ def _integral(head: sp.Basic) -> sp.Basic:
     """An integral, by the bounded methods first.
 
     The heuristic Risch algorithm is what finds the integrals nothing else
-    does, and its cost grows with the number of symbolic parameters in the
-    integrand: it builds an ansatz over every generator it can see and solves
-    for the coefficients. With no parameters to carry it is quick.
-    `INT(t^(a-1)*(#e^(z*t)*(1-t)^(b-a-1) - 1), t, 0, 1/2)` - a real line out of
-    the Kummer function in Derive's own utility library - carries three, and
-    sympy spends most of a minute and gigabytes of memory on it before
-    answering, correctly, that it does not know. Simplify must not do that: a
-    minute is not an answer, and the same integral comes back unevaluated
-    either way.
+    does, and its cost grows with the generators of the integrand: it builds an
+    ansatz over every one it can see and solves for the coefficients. With
+    nothing symbolic to carry it is quick. `INT(t^(a-1)*(#e^(z*t)*(1-t)^(b-a-1)
+    - 1), t, 0, 1/2)` - a real line out of the Kummer function in Derive's own
+    utility library - carries three parameters over four generators, and sympy
+    spends most of a minute and gigabytes of memory before answering, correctly,
+    that it does not know. Simplify must not do that: a minute is not an answer,
+    and the same integral comes back unevaluated either way.
 
-    So the expensive method is asked only where it is known to be affordable,
-    and an integral over a parametrised integrand that the bounded methods
-    cannot do comes back unevaluated. That is a real gap - sympy given all day
-    does solve some of them - and it is deliberate: an unevaluated `INT` is a
-    documented answer, and a minute of thrashing is not.
+    So over a parametrised integrand the expensive method is asked only where
+    the ansatz is small enough to be affordable, which `_affordable` is the
+    measured rule for. Everything else comes back unevaluated, which is a
+    documented answer where a minute of thrashing is not.
     """
     bounded = _attempt(head, lambda h: h.doit(deep=False, **_BOUNDED))
     if bounded is not None and not bounded.has(sp.Integral):
         return bounded
-    if _parametrised(head):
+    if _parametrised(head) and not _affordable(head):
         return head if bounded is None else bounded
     full = _attempt(head, lambda h: h.doit(deep=False))
     return head if full is None else full
@@ -431,6 +568,74 @@ def _parametrised(head: sp.Basic) -> bool:
     """
     variables = {limit[0] for limit in head.limits}
     return bool(head.function.free_symbols - variables)
+
+
+#: How many bases may carry a symbolic exponent before the ansatz is too big.
+#: Two is `INT(x^(a-1)*(1-x)^(b-1), x)`, which sympy answers in under a second;
+#: `INT(x^(a-1)*(1-x)^(c-a-1)*(1-x*z)^(-b), x)` is the same shape with a third,
+#: and does not finish. Measured over every parametrised integral in Derive's
+#: utility library: under this rule each one either answers within a second or
+#: is refused, and no refusal loses an answer the rule would have found.
+_ANSATZ = 2
+
+
+def _affordable(head: sp.Basic) -> bool:
+    """Whether the heuristic method can be asked about a parametrised integrand.
+
+    Cheap where the integrand is algebraic - a product of powers of polynomials
+    in the variable - because each base is one generator and nothing composes
+    to make more. `#e^(z*COS(t))*COS(n*t)` is where that stops being true: the
+    exponential of a cosine is a generator built on another, and sympy does not
+    finish. Neither does a product of three powers with symbolic exponents, so
+    the count is bounded as well.
+    """
+    variables = [limit[0] for limit in head.limits]
+    symbolic = 0
+    for factor in sp.Mul.make_args(head.function):
+        base, exponent = factor.as_base_exp()
+        if exponent.has(*variables) or base.is_polynomial(*variables) is not True:
+            return False
+        if exponent.free_symbols:
+            symbolic += 1
+    return symbolic <= _ANSATZ
+
+
+#: The heads a closed form is searched for through: sympy recognises a
+#: hypergeometric term by their ratios, and that is the search that costs.
+_TERMS = (sp.factorial, sp.factorial2, sp.gamma, sp.rf, sp.ff)
+
+
+def _searchable(head: sp.Basic) -> bool:
+    """Whether looking for a closed form of this sum is known to come back.
+
+    A limit that is not a number sends sympy looking for one by Gosper's
+    algorithm. Over a summand carrying a factorial of the index scaled by more
+    than one - `(n - 2*k)!`, which is how every classical polynomial family is
+    written - that search does not come back at all: `SUM((-1)^k*(n - k)!/(k!*
+    (n - 2*k)!)*(2*x)^(n - 2*k), k, 0, n/2)` is Chebyshev's, out of Derive's
+    own utility library, and it was still running after forty minutes. There is
+    no closed form to be had there, and the sum written out is the answer.
+
+    Narrow on purpose. `SUM(COMB(n, k), k, 0, n)` is `2^n` and `SUM((-1)^k*
+    COMB(n, k)*COMB(2*n - 2*k, n)*x^(n - 2*k), k, 0, n/2)` is Legendre's, which
+    sympy answers in half a second; neither is refused.
+    """
+    for limit in head.limits:
+        if len(limit) < 3 or all(bound.is_number for bound in limit[1:]):
+            continue
+        if _scaled_term(head.function, limit[0]):
+            return False
+    return True
+
+
+def _scaled_term(function: sp.Basic, index: sp.Basic) -> bool:
+    """Whether a factorial in `function` scales `index` by more than one."""
+    for call in function.atoms(*_TERMS):
+        for argument in call.args:
+            coefficient = argument.coeff(index)
+            if coefficient.is_number and abs(coefficient) > 1:
+                return True
+    return False
 
 
 def _undecided(head: sp.Basic) -> sp.Basic:
@@ -450,7 +655,11 @@ def _undecided(head: sp.Basic) -> sp.Basic:
         except Exception:
             return head
     right, left = sides
-    return PlusMinus(right) if right == -left else sp.nan
+    if right != -left:
+        return sp.nan
+    # Two infinite sides that are each other's negation are unsigned infinity,
+    # which sympy has an object of its own for and the notation writes `±inf`.
+    return sp.zoo if right in (sp.oo, -sp.oo) else PlusMinus(right)
 
 
 # -- the FACTOR head ---------------------------------------------------------
@@ -539,8 +748,12 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     expression = _branch(expression, context)
     expression = _gated(expression, _multiplied_out)
     expression = _gated(expression, sp.cancel)
-    if expression.has(*_COMBINATORIAL):
+    if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
         expression = _gated(expression, sp.combsimp)
+    # Ours rather than sympy's, which collects neither these arcs nor their
+    # tangents. Offered in every mode: a pair of them adding to a right angle
+    # is an identity, not a direction to rewrite in.
+    expression = _gated(expression, _complementary_arcs)
     expression = _trigonometry(expression, context)
     expression = _logarithms(expression, context)
     expression = _exponentials(expression, context)
@@ -601,6 +814,10 @@ def _multiplied_out(expression: sp.Basic) -> sp.Basic:
 
     Below `_FOLDED` the expansion is small enough to be worth having outright,
     which is what makes `(x + 1)^2 - x^2` reach `2*x + 1`.
+
+    What is multiplied out gets collected back up while the power is still
+    standing in, so that `2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` comes
+    back as the fifth power times what is left of it.
     """
     stood_in: dict[sp.Basic, sp.Symbol] = {}
 
@@ -611,8 +828,32 @@ def _multiplied_out(expression: sp.Basic) -> sp.Basic:
         return symbol**power.exp
 
     hidden = expression.replace(_is_folded_power, hide, simultaneous=False)
-    expanded = sp.expand(hidden)
+    expanded = _collected(sp.expand(hidden), set(stood_in.values()))
     return expanded.xreplace({symbol: base for base, symbol in stood_in.items()})
+
+
+def _collected(expression: sp.Basic, standing_in: set[sp.Symbol]) -> sp.Basic:
+    """A sum with a standing-in power common to its terms taken back out.
+
+    `factor_terms` is the collecting, and it is offered here only where a power
+    that was stood in for comes out with it. On anything else it factors -
+    `x^2 + 2*x` becomes `x*(x + 2)` - and factoring is the Factor command's
+    business, not Simplify's.
+    """
+    if not (standing_in and isinstance(expression, sp.Add)):
+        return expression
+    candidate = _attempt(expression, sp.factor_terms)
+    if not isinstance(candidate, sp.Mul):
+        return expression
+    if not any(_stands_in(factor, standing_in) for factor in candidate.args):
+        return expression
+    return candidate
+
+
+def _stands_in(factor: sp.Basic, standing_in: set[sp.Symbol]) -> bool:
+    """Whether `factor` is one of the stood-in sums, or a power of one."""
+    base = factor.base if isinstance(factor, sp.Pow) else factor
+    return base in standing_in
 
 
 #: The exponent from which a power of a sum is left folded up.
@@ -675,6 +916,80 @@ def _trigonometry(expression: sp.Basic, context: Context) -> sp.Basic:
         case TrigPower.COSINES:
             return _forced(expression, TR5)
     return expression
+
+
+#: The inverse functions that pair off, each with the one it complements.
+#: `ASIN(u) + ACOS(u)` is a right angle wherever both are defined, and so are
+#: the secant pair and - for a positive argument - the tangent pair.
+_COMPLEMENT = {
+    sp.asin: sp.acos,
+    sp.acos: sp.asin,
+    sp.asec: sp.acsc,
+    sp.acsc: sp.asec,
+    sp.atan: sp.acot,
+    sp.acot: sp.atan,
+}
+
+
+def _complementary_arcs(expression: sp.Basic) -> sp.Basic:
+    """Two complementary arcs of one argument, added up, wherever they occur."""
+    return expression.replace(
+        lambda e: _right_angle(e) is not None,
+        lambda e: _right_angle(e),
+        simultaneous=False,
+    )
+
+
+def _right_angle(expression: sp.Basic) -> sp.Basic | None:
+    """This sum with a complementary pair of arcs replaced by what it is.
+
+    The pair has to carry the same coefficient as well as the same argument,
+    which is what lets the rule hold in degree measure: there each arc comes
+    out multiplied by `180/pi`, and the two of them add to `90`.
+    """
+    if not isinstance(expression, sp.Add):
+        return None
+    arcs: dict[tuple, int] = {}
+    for index, term in enumerate(expression.args):
+        arc, coefficient = _arc(term)
+        if arc is not None:
+            arcs[(type(arc), coefficient, arc.args[0])] = index
+    for (func, coefficient, argument), index in arcs.items():
+        other = arcs.get((_COMPLEMENT[func], coefficient, argument))
+        if other is None or other == index:
+            continue
+        angle = _quarter_turn(func, argument)
+        if angle is None:
+            continue
+        rest = [t for i, t in enumerate(expression.args) if i not in (index, other)]
+        return sp.Add(coefficient * angle, *rest)
+    return None
+
+
+def _arc(term: sp.Basic) -> tuple[sp.Basic | None, sp.Basic]:
+    """The one complementable arc in `term`, and what multiplies it."""
+    arc, others = None, []
+    for factor in sp.Mul.make_args(term):
+        if arc is None and type(factor) in _COMPLEMENT:
+            arc = factor
+        else:
+            others.append(factor)
+    return arc, sp.Mul(*others)
+
+
+def _quarter_turn(func: type, argument: sp.Basic) -> sp.Basic | None:
+    """What the pair adds to, or None where nothing says which right angle.
+
+    The tangent pair is the one that needs a domain: `ATAN(t) + ACOT(t)` is
+    `pi/2` for positive `t` and `-pi/2` for negative, so an undeclared `t` -
+    which is real and could be either - leaves the sum as it stands. Derive
+    answers `pi/2` regardless, and is wrong for the negative half.
+    """
+    if func in (sp.atan, sp.acot):
+        if argument.is_positive:
+            return sp.pi / 2
+        return -sp.pi / 2 if argument.is_negative else None
+    return sp.pi / 2
 
 
 def _phase_angles(expression: sp.Basic) -> sp.Basic:

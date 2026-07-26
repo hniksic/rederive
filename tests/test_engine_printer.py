@@ -211,7 +211,8 @@ REREAD = [
 #: path is a printer and not a formatter, so they are read back too.
 INERT = [
     PlusMinus(x),
-    PlusMinus(sp.oo),
+    # `PlusMinus(oo)` is absent on purpose: `±inf` is the notation for unsigned
+    # infinity, and reading it back gives sympy's own object for that.
     StringLiteral("note"),
     Subscript(x + 1, 2),
     Subscript(x, -1),
@@ -292,17 +293,47 @@ def test_a_sympy_bound_variable_is_written_as_an_ordinary_name():
     assert written(sp.Dummy("xi_2") + 1) == "xi_2 + 1"
 
 
+def test_two_bound_variables_of_one_name_are_written_apart():
+    """Sympy tells its invented variables apart by an identity text cannot hold.
+
+    Differentiating a product `n` times twice over gives two of them, both
+    called `k1`, and writing both as `k1` would produce text that reads back as
+    an expression in one variable where there were two. The names are also what
+    the terms of a sum are ordered by, so a name kept for two things would make
+    the written order depend on which of them came first.
+    """
+    first, second = sp.Dummy("k1"), sp.Dummy("k1")
+    assert written(first + 2 * second) in ("k1_ + 2*k1", "k1 + 2*k1_")
+    # And a name already in use is not taken over.
+    assert written(sp.Dummy("k1") + sp.Symbol("k1", real=True)) == "k1 + k1_"
+
+
+def test_a_dot_product_keeps_its_parentheses_inside_a_negated_product():
+    # `-x*a . b` reads as `(-x*a) . b`: `.` and `*` are one level in the
+    # grammar, and the left operand would swallow the factor in front.
+    a, b = sp.symbols("a b", real=True)
+    assert written(-x * Dot(a, b)) == "-x*(a . b)"
+    assert written(x * Dot(a, b)) == "x*(a . b)"
+
+
+def test_a_power_of_a_matrix_is_written_in_author_notation():
+    # Sympy writes this one `Matrix(...)**(1/2)`, and `**` is no operator here:
+    # the text would read back as a product with an empty factor.
+    assert written(sp.sqrt(sp.Matrix(1, 1, [sp.Rational(1, 12)]))) == "SQRT([1/12])"
+
+
 def test_an_inert_head_is_parenthesised_by_what_it_is_written_as():
     """`±u` is written like a sum, not like a call.
 
     `#e^±inf*z` would read back as `(#e^±inf)*z`, which is a different
-    expression. What comes back is not `zoo` - `±inf` is the notation for
-    unsigned infinity, and reading it gives the `±` head - but it is the same
-    exponent, whole.
+    expression, and `±inf*z` as `±(inf*z)`: the plus-or-minus takes a whole
+    product, so unsigned infinity standing in one needs its parentheses.
+    `±inf` is the notation for unsigned infinity, and comes back as that.
     """
-    assert written(sp.exp(sp.zoo * z)) == "#e^(±inf*z)"
-    exponent = to_sympy(from_sympy(sp.exp(sp.zoo * z)).node).args[0]
-    assert exponent == PlusMinus(sp.oo * z)
+    assert written(sp.exp(sp.zoo * z)) == "#e^((±inf)*z)"
+    assert to_sympy(from_sympy(sp.exp(sp.zoo * z)).node).args[0] == sp.zoo * z
+    # A plus-or-minus over anything else is the head it is written as.
+    assert to_sympy(from_sympy(PlusMinus(sp.oo * z)).node) == PlusMinus(sp.oo * z)
 
 
 @pytest.mark.parametrize(

@@ -19,7 +19,7 @@ import sympy as sp
 from sympy.core.function import AppliedUndef
 
 from rederive.engine.context import Context
-from rederive.engine.printer import author_text
+from rederive.engine.printer import author_text, named
 from rederive.engine.to_sympy import FunDef, StringLiteral
 from rederive.model.expr import Kind, Node
 from rederive.syntax import (
@@ -52,6 +52,9 @@ def from_sympy(
 ) -> Result:
     """Write `expression` as author notation, and read it back as a tree."""
     context = context or Context()
+    # Named first, so that the symbol table below is built from the names the
+    # text actually carries rather than from the dummies behind them.
+    expression = named(expression)
     text = author_text(expression, context)
     if state is None:
         state = parse_state_for(expression, context)

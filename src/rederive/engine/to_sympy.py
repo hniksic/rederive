@@ -33,6 +33,7 @@ from rederive.engine.context import (
     domain_of_node,
 )
 from rederive.model.expr import Kind, Node
+from rederive.syntax.names import BUILTIN_FUNCTIONS
 
 __all__ = [
     "Assign",
@@ -44,6 +45,7 @@ __all__ = [
     "PlusMinus",
     "StringLiteral",
     "Subscript",
+    "Taylor",
     "Transposed",
     "to_sympy",
 ]
@@ -76,7 +78,7 @@ class StringLiteral(sp.Symbol):
 
 
 class Dot(sp.Function):
-    """`u . v` where the operands are not both matrices."""
+    """`u . v` where the shapes will not multiply."""
 
     nargs = 2
 
@@ -122,6 +124,41 @@ class Declare(sp.Function):
     """`x :epsilon Real [0, inf)`, which simplifies to itself."""
 
 
+# -- a computation held back until a pipeline asks for it --------------------
+
+
+class Taylor(sp.Function):
+    """`TAYLOR(u, x, a, n)`, unevaluated until `.doit()`.
+
+    Sympy computes a series but has no head to hold an uncomputed one, so this
+    is that head: it converts like the other calculus heads, waits where they
+    wait, and prints back as the call it was authored as when it will not
+    evaluate.
+    """
+
+    nargs = 4
+
+    def doit(self, deep: bool = False, **hints) -> sp.Basic:
+        """The Taylor polynomial, or this head where there is none.
+
+        Derive's order is the maximum degree, and sympy's is the exponent the
+        expansion is cut off before, so the order asked for is one less than
+        the one passed on. The order term goes: a Taylor polynomial is a
+        polynomial, which is also the test of whether one was found - a series
+        in fractional powers, or one with a logarithm in it, is not one, and
+        the head stays as it was written rather than answer with something that
+        is no polynomial.
+        """
+        expression, variable, point, order = self.args
+        if not (order.is_Integer and order >= 0):
+            return self
+        try:
+            series = expression.series(variable, point, int(order) + 1).removeO()
+        except Exception:
+            return self
+        return series if series.is_polynomial(variable) else self
+
+
 # -- the constant table -----------------------------------------------------
 
 #: `e` and `i` are ordinary variables; only `#e` and `#i` are the constants.
@@ -135,6 +172,13 @@ CONSTANTS: dict[str, sp.Basic] = {
     "true": sp.true,
     "false": sp.false,
     "euler_gamma": sp.EulerGamma,
+    # An arbitrary point on the complex unit circle, which is what Derive
+    # answers `|z| = 2` with: `z = 2*unit_circle`. Sympy has no such object, so
+    # it is a symbol - but a bare one, carrying none of the assumptions an
+    # undeclared variable gets. Real is exactly what it is not, and `SQRT(x^2)
+    # -> ABS(x)` firing on it would be a guess. The arithmetic Derive gives it,
+    # `unit_circle*inf` for complex infinity above all, is out of scope.
+    "unit_circle": sp.Symbol("unit_circle"),
 }
 
 _RELATIONS: dict[str, Callable[..., sp.Basic]] = {
@@ -384,11 +428,22 @@ class _Converter:
         return self._dot(left, right)
 
     def _dot(self, left: sp.Basic, right: sp.Basic) -> sp.Basic:
+        """`u . v`: the matrix product, of which the dot product is one case.
+
+        Two flat vectors are the case the notation is named after, and their
+        product is the number `[2, 3] . [4, 5]` is worth rather than the one by
+        one matrix holding it. Everything else conforms or it does not: `n` by
+        `m` times `m` by `p` is the matrix product, and shapes that will not
+        multiply keep the operator itself, unevaluated.
+        """
         if isinstance(left, sp.MatrixBase) and isinstance(right, sp.MatrixBase):
             try:
-                return left.dot(right)
+                if left.rows == 1 and right.rows == 1:
+                    return left.dot(right)
+                if left.cols == right.rows:
+                    return left * right
             except Exception:
-                return Dot(left, right)
+                pass
         return Dot(left, right)
 
     def _unop(self, node: Node) -> sp.Basic:
@@ -397,6 +452,10 @@ class _Converter:
             case "-":
                 return -operand
             case "+-":
+                # `±inf` is the notation for unsigned infinity, and the way
+                # back from what the printer writes `zoo` as.
+                if operand in (sp.oo, -sp.oo):
+                    return sp.zoo
                 return PlusMinus(operand)
         return operand
 
@@ -534,13 +593,13 @@ class _Converter:
     # -- calls --------------------------------------------------------------
 
     def call(self, name: str, args: Sequence[sp.Basic]) -> sp.Basic:
-        """A function call, by the function table, opaque where it is not.
+        """A function call, by the function tables, opaque where it is not.
 
-        A call the table cannot make sense of - the wrong number of arguments,
+        A call the tables cannot make sense of - the wrong number of arguments,
         a matrix where a number belongs - falls back to the inert head, which
         is the "return it unchanged rather than guess" rule in miniature.
         """
-        handler = FUNCTIONS.get(name)
+        handler = FUNCTIONS.get(name) or SYMPY_HEADS.get(name)
         if handler is None:
             return self.opaque(name, args)
         try:
@@ -775,6 +834,63 @@ def _product(conv: _Converter, args: list) -> sp.Basic:
     return sp.Product(expression, (index, low, high))
 
 
+def _taylor(conv: _Converter, args: list) -> sp.Basic:
+    """`TAYLOR(u, x, a, n)`, unevaluated. Computing it is a pipeline's call."""
+    return Taylor(*args)
+
+
+def _conditional(conv: _Converter, args: list) -> sp.Basic:
+    """`IF(c, u)` and `IF(c, u, v)` as the case split sympy writes them as.
+
+    Which branch a case split is worth is the pipeline's business, and it is
+    the same question for a `Piecewise` that came back from an integral. What
+    has no `Piecewise` is Derive's fourth argument, the value where the test
+    cannot be decided at all; that form stays an inert head, and the pipeline
+    resolves the two alike.
+    """
+    if len(args) == 2:
+        test, then = args
+        return sp.Piecewise((then, _test(test)))
+    test, then, otherwise = args
+    return sp.Piecewise((then, _test(test)), (otherwise, sp.true))
+
+
+def _test(test: sp.Basic) -> sp.Basic:
+    """A condition as sympy reads one: a relation evaluated, not held.
+
+    Everywhere else a relation is assembled undecided, because whether one
+    holds is no question of Simplify's. The test of a conditional is the one
+    place where it is, and `Piecewise` is entitled to answer it - an
+    unevaluated relation is also the one form of a condition it mishandles.
+    """
+    if test.is_Relational:
+        return test.func(test.lhs, test.rhs)
+    return test
+
+
+def _substitution(conv: _Converter, args: list) -> sp.Basic:
+    """`SUBS(u, [x, ...], [a, ...])`, the way the printer writes sympy's `Subs`.
+
+    The way back matters more here than legibility. A `Subs` holds a derivative
+    that is only meaningful unevaluated - `d/dv f(v)` at `v = y` is not the
+    derivative of a constant - and reading one back as an inert head would put
+    that derivative where the pipeline evaluates it, to zero.
+    """
+    expression, variables, points = args
+    return sp.Subs(expression, tuple(_matrix(variables)), tuple(_matrix(points)))
+
+
+def _hyper(conv: _Converter, args: list) -> sp.Basic:
+    """`HYPER([a, ...], [b, ...], z)`, the way the printer writes `hyper`.
+
+    Sympy's head carries tuples, which the notation has no spelling for, so it
+    is written over vectors - and this is the way back, without which a result
+    holding one would not read back as the expression it was printed from.
+    """
+    top, bottom, argument = args
+    return sp.hyper(tuple(_matrix(top)), tuple(_matrix(bottom)), argument)
+
+
 def _limit(conv: _Converter, args: list) -> sp.Basic:
     """`LIM(u, x, a)` is two-sided; a fourth argument picks a side."""
     if len(args) == 3:
@@ -850,6 +966,10 @@ FUNCTIONS: dict[str, Handler] = {
     "SUM": _summation,
     "PRODUCT": _product,
     "LIM": _limit,
+    "TAYLOR": _taylor,
+    "IF": _conditional,
+    "SUBS": _substitution,
+    "HYPER": _hyper,
     "DET": _determinant,
     "TRACE": _trace,
     "DIMENSION": _dimension,
@@ -857,3 +977,35 @@ FUNCTIONS: dict[str, Handler] = {
     "IDENTITY_MATRIX": _identity_matrix,
     "CROSS": _cross,
 }
+
+
+def _sympy_heads() -> dict[str, Handler]:
+    """The way back from a sympy head nobody in Derive has a name for.
+
+    A result can carry a function the notation was never given a spelling for -
+    `BESSELI` and `EXP_POLAR` come out of a Bessel series, `EI` out of an
+    exponential integral - and the printer writes each as its sympy class name
+    upper-cased, because that is a name the grammar can read. Without the way
+    back such a name reads as an inert head: the same mathematics, a different
+    object, which sorts by another name and makes the answer settle only on a
+    second Simplify. So the printer's rule is inverted here, over sympy's own
+    function classes.
+
+    Only names Derive does not define itself. Everything in the inventory has a
+    reading of its own, or is deliberately inert - `SOLVE` and `FIT` must stay
+    that way - and nothing here may displace one. What is left is names no
+    Derive worksheet can mean anything else by.
+    """
+    reserved = set(FUNCTIONS) | BUILTIN_FUNCTIONS
+    heads: dict[str, Handler] = {}
+    for name in dir(sp.functions):
+        head = getattr(sp.functions, name)
+        if isinstance(head, sp.FunctionClass) and name.upper() not in reserved:
+            heads.setdefault(name.upper(), _direct(head))
+    return heads
+
+
+#: What each such name converts to. A call these cannot take - the wrong number
+#: of arguments, a vector where a tuple belongs, as `MEIJERG` carries - raises
+#: and falls back to the inert head, like any other entry.
+SYMPY_HEADS: dict[str, Handler] = _sympy_heads()

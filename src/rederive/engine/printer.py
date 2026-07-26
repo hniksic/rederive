@@ -49,8 +49,16 @@ from rederive.syntax.names import GREEK_GLYPHS
 # name, and without an entry it takes any `Function` for a call as tight as
 # `SIN(x)` - which would write `#e^(±inf*z)` as `#e^±inf*z`, a different
 # expression. Each is registered as the operator it is written as.
+#
+# `Dot` sits below `Add` rather than at `Mul`, where it belongs: `.` and `*` are
+# one precedence level in the grammar and associate to the left, so `x*(a . b)`
+# needs its parentheses to keep from reading as `(x*a) . b` - and sympy prices a
+# negated product at the `Add` level, so an entry at `Mul` would lose them again
+# in `-x*(a . b)`. Complex infinity is written with the plus-or-minus operator
+# and binds as loosely as one.
 PRECEDENCE_VALUES.setdefault("PlusMinus", PRECEDENCE["Add"])
-PRECEDENCE_VALUES.setdefault("Dot", PRECEDENCE["Mul"])
+PRECEDENCE_VALUES.setdefault("ComplexInfinity", PRECEDENCE["Add"])
+PRECEDENCE_VALUES.setdefault("Dot", PRECEDENCE["Add"] - 1)
 PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -94,7 +102,49 @@ _LOGICAL_HEADS = {
 
 def author_text(expression: sp.Basic, context: Context | None = None) -> str:
     """Write `expression` the way the author line would."""
-    return AuthorPrinter(context).doprint(expression)
+    return AuthorPrinter(context).doprint(named(expression))
+
+
+def named(expression: sp.Basic) -> sp.Basic:
+    """The same expression with sympy's invented variables named as ours.
+
+    A `Dummy` is an ordinary variable by the time it reaches the worksheet -
+    the bound variable the Leibniz rule introduces is written `k1` and read
+    back as the variable `k1`. Two of them can carry one name, though, which
+    sympy tells apart by an identity no text can hold, so they are renamed
+    apart from each other and from every name already in use before anything
+    is written. Without that, `SUM(SUM(f(k1), k1, 0, n), k1, 0, n)` is written
+    from an expression with two variables and read back as one with one.
+
+    Order needs it too: a `Dummy` sorts by its identity where a symbol sorts by
+    its name, so a sum holding one is written in one order and reads back in
+    another - the answer would settle only on a second pass.
+    """
+    dummies = sorted(expression.atoms(sp.Dummy), key=sp.default_sort_key)
+    if not dummies:
+        return expression
+    taken = {
+        symbol.name
+        for symbol in expression.atoms(sp.Symbol)
+        if not isinstance(symbol, sp.Dummy)
+    }
+    renamed = {}
+    for dummy in dummies:
+        name = _plain(dummy.name)
+        while name in taken:
+            name += "_"
+        taken.add(name)
+        renamed[dummy] = sp.Symbol(name, **dummy.assumptions0)
+    try:
+        return expression.xreplace(renamed)
+    except Exception:
+        return expression
+
+
+def _plain(name: str) -> str:
+    """A dummy's name as the lexer would read one back."""
+    stripped = name.lstrip("_")
+    return stripped if stripped[:1].isalpha() else f"v{stripped}"
 
 
 def numeral(number: int, base: int = 10) -> str:
@@ -166,12 +216,11 @@ class AuthorPrinter(sp.StrPrinter):
 
         Sympy marks a `Dummy` apart by writing it with a leading underscore,
         and the author line has no such name: `_k1` does not lex, so a result
-        carrying one would come back unreadable. The bound variable that
-        differentiating a product or taking a `SUBS` introduces is an ordinary
-        variable by the time it reaches the worksheet, and is written as one.
+        carrying one would come back unreadable. `named` has normally renamed
+        these away before printing starts; one printed on its own is written
+        the same way.
         """
-        name = self._print_Symbol(expr)
-        return name if name[:1].isalpha() else "v" + name.lstrip("_")
+        return _plain(self._print_Symbol(expr))
 
     # -- numbers ------------------------------------------------------------
 
@@ -244,6 +293,15 @@ class AuthorPrinter(sp.StrPrinter):
         base = self.parenthesize(expr.base, level)
         exponent = self.parenthesize(expr.exp, level)
         return f"{base}^{exponent}"
+
+    def _print_MatPow(self, expr):
+        """A power of a matrix, written like any other power.
+
+        `SQRT` of a matrix is one of these, and sympy's own spelling for it is
+        `m**(1/2)` - which the grammar reads as a product with an empty factor
+        in it, so the answer would come back as a different expression.
+        """
+        return self._print_Pow(expr)
 
     def _print_exp(self, expr):
         """`#e^u`, never `EXP(u)`: the constant is how the notation spells it."""

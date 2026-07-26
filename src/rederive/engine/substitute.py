@@ -36,8 +36,46 @@ from dataclasses import dataclass, field, replace
 
 from rederive.engine.context import Context
 from rederive.model.expr import Kind, Node
+from rederive.syntax import ParseState
 
-__all__ = ["substitute"]
+__all__ = ["named_as_declared", "substitute"]
+
+
+def named_as_declared(node: Node, state: ParseState | None) -> Node:
+    """`node` with every name spelled the way the symbol table records it.
+
+    Case-insensitively - which is the default - `x` and `X` are one variable,
+    and which of the two a line carries depends on what had been declared when
+    it was read. `X := ELEMENT(x, 1)` declares `X` and mentions `x` before that
+    declaration exists, so the line comes back holding both spellings; the
+    engine has to see one name for one variable, or the answer holds two and
+    reading it back turns them into one.
+
+    Without a symbol table nothing can be resolved and the tree stands as it
+    is, which is what a caller with no session of its own gets.
+    """
+    if state is None:
+        return node
+    return _named(node, state)
+
+
+def _named(node: Node, state: ParseState) -> Node:
+    """The walk. A call's head is a name of another kind and is left alone.
+
+    What the table records for a variable is the spelling to write it under,
+    and for anything else it is the spelling of something else entirely: the
+    setting value `Exact` for `EXACT(...)`, the letter `δ` for `DELTA(...)`.
+    Neither reads back as the call it was written as.
+    """
+    head = node.children[0] if node.kind in (Kind.CALL, Kind.APPLY) else None
+    children = tuple(
+        child if child is head else _named(child, state) for child in node.children
+    )
+    if node.kind is Kind.NAME:
+        known = state.resolve(str(node.value))
+        if known is not None and not known.is_function and known.canonical != node.value:
+            return replace(node, value=known.canonical, children=children)
+    return replace(node, children=children) if children != node.children else node
 
 
 @dataclass(frozen=True)
