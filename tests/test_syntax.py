@@ -161,6 +161,27 @@ def test_a_setting_is_reported_rather_than_applied():
     assert state.input_base == 10
 
 
+def test_a_setting_value_stands_where_its_function_could_not():
+    """`NORMAL` and `EXPAND` are built-in functions and setting values too.
+
+    The original takes all of these and rejects a bare `SIN`.
+    """
+    assert parse("DisplayFormat := Normal").declarations == (
+        SettingDeclaration("DisplayFormat", "Normal"),
+    )
+    assert sexpr("Trigonometry := Expand") == "(:= Trigonometry Expand)"
+    # However it was spelled, and wherever a value can stand.
+    assert parse("DisplayFormat := NORMAL").declarations == (
+        SettingDeclaration("DisplayFormat", "Normal"),
+    )
+    assert sexpr("x := Normal") == "(:= x Normal)"
+    assert sexpr("2 + Normal") == "(+ 2 Normal)"
+    # Given an argument list it is the function again.
+    assert sexpr("Normal(3)") == "(call NORMAL 3)"
+    with pytest.raises(DeriveSyntaxError):
+        parse("SIN")
+
+
 def test_the_parameters_of_a_definition_stay_declared():
     # The one deliberate exception: the body cannot be lexed otherwise, and
     # the registration persists, so a later bare `mx+mf` is not `m*x + m*f`.

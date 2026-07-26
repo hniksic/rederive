@@ -35,6 +35,7 @@ from rederive.syntax.state import (
     FunctionDeclaration,
     SettingDeclaration,
     VariableDeclaration,
+    fold,
 )
 from rederive.syntax.tokens import Token, TokenKind
 
@@ -48,6 +49,10 @@ _SIGNS = ("-", "+", "+-")
 _POSTFIX = ("!", "%", "`")
 _RELATIONS = ("=", "/=", "<", "<=", ">", ">=")
 _CLOSERS = (",", "]", ")")
+#: The values a setting takes, indexed by their folded spelling. `NORMAL` and
+#: `EXPAND` are built-in function names as well, so a name met with nothing to
+#: apply to is looked up here before it is read as an application.
+_SETTING_VALUES = {fold(value): value for value in names.SETTING_VALUES}
 _LOGICAL_KINDS = {
     "OR": Kind.OR,
     "XOR": Kind.XOR,
@@ -322,6 +327,9 @@ class Parser:
                     return self.call(token)
                 if _is_op(following, "^"):
                     return self.function_power(token)
+                keyword = self.setting_keyword(token, following)
+                if keyword is not None:
+                    return keyword
                 return self.bare_application(token)
             if _is_op(following, "("):
                 parsed = self.argument_list_on_a_variable(token, following)
@@ -370,6 +378,25 @@ class Parser:
             self.arguments()
         self.expect(")", "')'")
         raise self.error(self.pos, "a function name")
+
+    def setting_keyword(self, token: Token, following: Token) -> _Parsed | None:
+        """A setting's value where the function of that name could not stand.
+
+        `Normal` and `Expand` are values Options takes and built-in functions
+        as well. Given an argument list they are the function; given nothing to
+        apply to they are the value, which is an operand in its own right. The
+        original accepts `DisplayFormat := Normal` and a bare `Normal`, and
+        rejects a bare `SIN`, which is exactly this rule.
+        """
+        if self.starts_operand(following):
+            return None
+        written = token.surface or token.value
+        spelled = _SETTING_VALUES.get(fold(written))
+        if spelled is None:
+            return None
+        self.advance()
+        surface = None if written == spelled else written
+        return _Parsed.of(Node(Kind.NAME, token.start, token.end, (), spelled, surface))
 
     def bare_application(self, name: Token) -> _Parsed:
         """`SIN x`: exactly one operand, and `^` and `!` bind outside it."""

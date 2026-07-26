@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from rederive.model.expr import Kind, Node
 from rederive.syntax.errors import DeriveSyntaxError
 from rederive.syntax.lexer import Lexer
+from rederive.syntax.names import PARSING_SETTINGS
 from rederive.syntax.parser import Parser
 from rederive.syntax.source import Source
 from rederive.syntax.state import (
@@ -42,6 +43,7 @@ __all__ = [
     "InputMode",
     "Kind",
     "Node",
+    "PARSING_SETTINGS",
     "ParseResult",
     "ParseState",
     "SettingDeclaration",

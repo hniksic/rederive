@@ -24,6 +24,7 @@ from textual.widgets import Input, Static
 
 from rederive.model import Session
 from rederive.model.settings import ChoiceField, Dialog, DialogEditor, Settings
+from rederive.syntax import DeriveSyntaxError
 from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
 from rederive.ui.theme import COLOR_SETTINGS, Palette
@@ -63,9 +64,6 @@ class RederiveApp(App[None]):
     AUTO_FOCUS = None
     # Nothing on screen belongs to anything but the pane itself.
     ENABLE_COMMAND_PALETTE = False
-    # TODO(display): Ctrl-Right and Ctrl-Left scroll the work area
-    # horizontally by half a pane. They move no selection, so they are not nav
-    # actions.
     BINDINGS = [
         Binding("tab", "menu_next", "Next option", priority=True, show=False),
         Binding("space", "menu_space", "Next option", priority=True, show=False),
@@ -84,16 +82,23 @@ class RederiveApp(App[None]):
         Binding("end", "nav('last_sibling')", "End", priority=True, show=False),
         Binding("ctrl+home", "nav('first_entry')", "Top", priority=True, show=False),
         Binding("ctrl+end", "nav('last_entry')", "Bottom", priority=True, show=False),
+        # Ctrl-Right and Ctrl-Left scroll the work area sideways over a render
+        # too wide for the pane. They move no selection, so they are not nav.
+        Binding("ctrl+right", "scroll_work(1)", "Right", priority=True, show=False),
+        Binding("ctrl+left", "scroll_work(-1)", "Left", priority=True, show=False),
     ]
 
     def __init__(
         self, session: Session | None = None, settings: Settings | None = None
     ) -> None:
         # Before the base class, which asks for the CSS variables as it starts.
-        self.settings = settings if settings is not None else Settings()
+        # A session brings its own settings, there being only one store.
+        if settings is None:
+            settings = session.settings if session is not None else Settings()
+        self.settings = settings
         self.palette = Palette(self.settings)
         super().__init__()
-        self.session = session if session is not None else Session()
+        self.session = session if session is not None else Session(self.settings)
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
         #: The command menu, plus whatever submenu or dialog is stacked on it.
@@ -144,9 +149,8 @@ class RederiveApp(App[None]):
 
     def refresh_screen(self) -> None:
         """Push the whole model state at the widgets."""
-        # TODO(display): pass the rendered layouts and the selection rectangle.
         self.query_one(WorkArea).show(
-            self.session.entries, self.session.selected, self.session.selection_span()
+            self.session.entries, self.session.selected, self.session.selection_rect()
         )
         editor = self.editor
         self.query_one("#menu").display = editor is None and self.mode != MODE_AUTHOR
@@ -169,10 +173,12 @@ class RederiveApp(App[None]):
         self.query_one(MessageLine).show(message)
 
     def _settings_changed(self, changed: frozenset[str]) -> None:
-        """React to settings that other parts of the screen are built from."""
-        # TODO(display): DisplayFormat, TimesOperator and OutputBase decide how
-        # expressions render, so a change to any of them has to re-render the
-        # work area the way COLOR_SETTINGS repaints it.
+        """React to settings that other parts of the screen are built from.
+
+        Color is a property of painting, so a color change repaints everything.
+        The settings that decide how an expression is drawn are not: an entry
+        keeps the render it was authored with, as it does in the original.
+        """
         if changed & COLOR_SETTINGS:
             self.refresh_css()
             self.refresh_screen()
@@ -190,7 +196,7 @@ class RederiveApp(App[None]):
         While the author line has the screen they all belong to the Input, down
         to Space and Backspace.
         """
-        if action.startswith("menu_") or action == "nav":
+        if action.startswith("menu_") or action in ("nav", "scroll_work"):
             return self.mode == MODE_MENU
         return True
 
@@ -325,6 +331,10 @@ class RederiveApp(App[None]):
             self._beep()
         self.refresh_screen()
 
+    def action_scroll_work(self, direction: int) -> None:
+        """Ctrl-Right and Ctrl-Left, over a render wider than the pane."""
+        self.query_one(WorkArea).scroll_half_pane(direction)
+
     def _move_highlight(self, step: int) -> None:
         cursor = self.top
         assert isinstance(cursor, MenuCursor)
@@ -387,7 +397,7 @@ class RederiveApp(App[None]):
         # way the new settings say to write it.
         for field in changed:
             if field.recorded:
-                self.session.author(self.settings.assignment(field.setting))
+                self.session.record(field.setting)
         self._return_to_menu(ENTER_OPTION)
 
     # -- commands ----------------------------------------------------------
@@ -413,11 +423,22 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter on the author line: the whole line, wherever the cursor is.
+
+        A line that does not parse is not entered. Derive says so, beeps, and
+        leaves the line up with the cursor where it stopped reading - which may
+        be anywhere to the right of the mistake.
+        """
         event.stop()
-        text = event.value.strip()
-        if not text:
+        if not event.value.strip():
             return
-        self.session.author(text)
+        try:
+            self.session.author(event.value)
+        except DeriveSyntaxError as error:
+            self._beep()
+            self._set_message(str(error))
+            self.query_one("#author-input", Input).cursor_position = error.offset
+            return
         self._end_author()
 
     def _end_author(self) -> None:

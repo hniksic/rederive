@@ -16,21 +16,71 @@ from rederive.model import Entry
 from rederive.model.settings import ChoiceField, DialogEditor, Field, NumberField
 from rederive.ui.menu import Menu
 
-#: Lines a single history entry occupies, including the blank line after it.
-# TODO(display): an entry is as tall as its render plus the blank line after
-# it, so this becomes a per-entry height and the scroll target has to be
-# computed from the running total.
-_LINES_PER_ENTRY = 2
+#: Columns the label field takes, and so the column every render starts in.
+#: `#1:` and `#10:` both leave the expression at column 5, as they do in the
+#: original; a number too long for the field pushes it right.
+_LABEL_WIDTH = 5
 
 #: Blanks between two fields of an Options dialog.
 _FIELD_GAP = "  "
 
 
 def _label(entry: Entry) -> str:
-    # TODO(display): the label sits on the vertically centred row of the
-    # entry's render, biased downward when the height is even, not on its first
-    # row.
-    return f" #{entry.number}:  "
+    return f"#{entry.number}:"
+
+
+def _indent(entry: Entry) -> int:
+    return max(_LABEL_WIDTH, len(_label(entry)) + 1)
+
+
+def _label_row(entry: Entry) -> int:
+    """The row of the entry's render the label sits on.
+
+    Vertically centred, biased downward when the height is even: a four-row
+    fraction carries its label on the third row.
+    """
+    return entry.height // 2
+
+
+def _painted(entry: Entry) -> list[str]:
+    """The entry's render, each line prefixed with the label field."""
+    indent = _indent(entry)
+    label = _label(entry).ljust(indent)
+    blank = " " * indent
+    on = _label_row(entry)
+    return [
+        (label if row == on else blank) + line
+        for row, line in enumerate(entry.layout.lines)
+    ]
+
+
+def _offsets(lines: list[str]) -> list[int]:
+    """Where each line begins once the lines are joined with newlines."""
+    offsets: list[int] = []
+    position = 0
+    for line in lines:
+        offsets.append(position)
+        position += len(line) + 1
+    return offsets
+
+
+def _invert(
+    text: Text,
+    offsets: list[int],
+    first: int,
+    indent: int,
+    rect: tuple[int, int, int, int],
+    style: str,
+) -> None:
+    """Highlight the selection, one row of its rectangle at a time.
+
+    The rectangle covers the blanks inside it, so the highlight over a built-up
+    fraction is a solid block rather than a ragged outline.
+    """
+    top, left, height, width = rect
+    for row in range(top, top + height):
+        begin = offsets[first + row] + indent + left
+        text.stylize(style, begin, begin + width)
 
 
 class Band(Static):
@@ -42,7 +92,17 @@ class Band(Static):
 
 
 class WorkArea(VerticalScroll):
-    """The numbered expression history, scrolled to keep the selection visible."""
+    """The numbered expression history, scrolled to keep the selection visible.
+
+    Each entry is painted as the lines of its own render, labelled down the
+    left edge and separated by one blank line, and the entries stack upward
+    from the bottom of the pane.
+
+    Nothing here wraps or reflows: a render is as wide as it is, and one wider
+    than the pane is clipped at the right edge until Ctrl-Right scrolls it into
+    view. That is what keeps the guarantee the selection depends on - one
+    subexpression, one rectangle.
+    """
 
     can_focus = False
 
@@ -53,34 +113,40 @@ class WorkArea(VerticalScroll):
         self,
         entries: list[Entry],
         selected: int | None,
-        span: tuple[int, int] | None,
+        rect: tuple[int, int, int, int] | None,
     ) -> None:
-        # TODO(display): take a Layout per entry rather than raw text, paint
-        # its lines, and stylize the selection rectangle row by row.
-
-        # TODO(display): the work area neither wraps nor reflows. A render
-        # wider than the pane is clipped at the right edge, and Ctrl-Right and
-        # Ctrl-Left scroll it by half a pane without moving the selection.
-        # Entries stack upward from the bottom of the pane.
         styles = self.app.palette.styles
-        text = Text(style=styles["work"], no_wrap=True)
+        lines: list[str] = []
+        # For each entry, the line it starts on and the column its render does.
+        starts: list[int] = []
+        indents: list[int] = []
         for index, entry in enumerate(entries):
             if index:
-                text.append("\n\n")
-            label = _label(entry)
-            text.append(label)
-            start = len(text.plain)
-            text.append(entry.text)
-            if index == selected and span is not None:
-                text.stylize(styles["selection"], start + span[0], start + span[1])
+                lines.append("")
+            starts.append(len(lines))
+            indents.append(_indent(entry))
+            lines.extend(_painted(entry))
+        text = Text("\n".join(lines), style=styles["work"], no_wrap=True)
+        if selected is not None and rect is not None:
+            _invert(
+                text,
+                _offsets(lines),
+                starts[selected],
+                indents[selected],
+                rect,
+                styles["selection"],
+            )
         self.query_one("#work-content", Static).update(text)
         if selected is not None:
             # After the refresh, so the new content has been laid out and the
             # scrollable region knows how tall it is.
-            line = selected * _LINES_PER_ENTRY
-            self.call_after_refresh(
-                self.scroll_to_region, Region(0, line, 1, 1), animate=False
-            )
+            region = Region(0, starts[selected], 1, entries[selected].height)
+            self.call_after_refresh(self.scroll_to_region, region, animate=False)
+
+    def scroll_half_pane(self, direction: int) -> None:
+        """Scroll sideways, which moves no selection and reveals no new entry."""
+        half = max(1, self.size.width // 2)
+        self.scroll_relative(x=direction * half, animate=False)
 
 
 class MessageLine(Band):

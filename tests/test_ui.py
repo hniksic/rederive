@@ -1,7 +1,14 @@
 """Smoke tests driving the real app through Textual's pilot."""
 
 import pytest
-from screen import highlighted, highlighted_expression, message, text_of
+from screen import (
+    highlighted,
+    highlighted_expression,
+    highlighted_rows,
+    message,
+    text_of,
+    work_area,
+)
 
 from rederive.ui.app import RederiveApp
 
@@ -44,9 +51,57 @@ async def test_author_appends_and_selects_the_new_entry(app):
     async with app.run_test() as pilot:
         await author(pilot, "x (x + 1)")
         assert [entry.text for entry in app.session.entries] == ["x (x + 1)"]
-        assert highlighted_expression(app) == "x (x + 1)"
+        # Typed as juxtaposition, drawn with the times operator.
+        assert work_area(app) == ["#1:  x·(x + 1)"]
+        assert highlighted_expression(app) == "x·(x + 1)"
         assert message(app) == "Enter option"
         assert text_of(app.query_one("#status")).plain.strip().startswith("User")
+
+
+async def test_a_syntax_error_leaves_the_author_line_up(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.press(*"12.34.5")
+        await pilot.press("enter")
+        assert app.session.entries == []
+        assert message(app) == "Syntax error detected at cursor"
+        author_input = app.query_one("#author-input")
+        assert author_input.value == "12.34.5"
+        # Positioned where Derive stops reading: the second decimal point.
+        assert author_input.cursor_position == 5
+        # The line is still there to be corrected and entered again.
+        await pilot.press("delete")
+        await pilot.press("enter")
+        assert [entry.text for entry in app.session.entries] == ["12.345"]
+        assert message(app) == "Enter option"
+
+
+async def test_a_built_up_render_is_painted_and_labelled(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "(x+1)/(x^2+2x+3)")
+        # The label sits on the vertically centred row, biased downward, and
+        # the render's own rows are indented to the same column.
+        assert work_area(app) == [
+            "          x + 1",
+            "     ──────────────",
+            "#1:    2",
+            "      x  + 2·x + 3",
+        ]
+
+
+async def test_the_selection_is_a_rectangle_over_the_render(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "(x+1)/(x^2+2x+3)")
+        assert highlighted_rows(app) == [
+            "     x + 1",
+            "──────────────",
+            "  2",
+            " x  + 2·x + 3",
+        ]
+        await pilot.press("right")
+        assert highlighted_rows(app) == ["x + 1"]
+        await pilot.press("right")
+        assert highlighted_rows(app) == [" 2", "x  + 2·x + 3"]
 
 
 async def test_escape_abandons_the_author_line(app):
@@ -63,9 +118,9 @@ async def test_arrow_keys_walk_the_expression_structure(app):
         await author(pilot, "x (x + 1)")
         await author(pilot, "x y")
         await author(pilot, "x x x")
-        assert highlighted_expression(app) == "x x x"
+        assert highlighted_expression(app) == "x·x·x"
         await pilot.press("up", "up")
-        assert highlighted_expression(app) == "x (x + 1)"
+        assert highlighted_expression(app) == "x·(x + 1)"
         await pilot.press("right")
         assert highlighted_expression(app) == "x"
         await pilot.press("right")
@@ -73,7 +128,7 @@ async def test_arrow_keys_walk_the_expression_structure(app):
         await pilot.press("down")
         assert highlighted_expression(app) == "x"
         await pilot.press("up", "up")
-        assert highlighted_expression(app) == "x (x + 1)"
+        assert highlighted_expression(app) == "x·(x + 1)"
         # The menu highlight never moved while the arrows walked the history.
         assert highlighted_menu_option(app) == "Author"
 

@@ -1,18 +1,28 @@
 """The settings model and the dialog editor, with no UI involved."""
 
 import pytest
+from sexpr import to_sexpr
 
 from rederive.model.settings import (
     COLOR_MENU,
     COLORS,
+    DIALOGS,
     INPUT,
     MUTE,
     NOTATION,
+    OTHER,
     OUTPUT,
     PRECISION,
     RADIX,
+    ChoiceField,
     DialogEditor,
     Settings,
+)
+from rederive.syntax import (
+    DeriveSyntaxError,
+    ParseState,
+    SettingDeclaration,
+    parse_expression,
 )
 
 
@@ -135,6 +145,40 @@ def test_a_record_is_written_the_way_the_settings_say_to_write_it(settings):
     assert settings.assignment("DisplayFormat") == "DisplayFormat:=Compressed"
     settings.apply({"OutputBase": "Octal", "NotationDigits": 12})
     assert settings.assignment("NotationDigits") == "NotationDigits:=14"
+
+
+def test_a_record_is_the_expression_the_parser_would_have_read(settings):
+    """A record is built, not parsed, but the two must not disagree.
+
+    Every value of every recorded field goes round: the parser reads the record
+    back as the setting it records, and as the same expression. `Normal` and
+    `Expand` are the ones this catches - both are built-in functions too.
+    """
+    for dialog in DIALOGS:
+        for field in dialog.fields:
+            if not field.recorded or not isinstance(field, ChoiceField):
+                continue
+            for choice in field.choices:
+                if choice == OTHER:
+                    continue
+                settings.apply({field.setting: choice})
+                text = settings.assignment(field.setting)
+                result = parse_expression(text, ParseState())
+                assert result.declarations == (
+                    SettingDeclaration(field.setting, choice),
+                ), text
+                assert result.node == settings.assignment_node(field.setting), text
+
+
+def test_a_numeric_record_is_built_because_it_may_not_lex(settings):
+    # `InputBase := 7` is written in base ten and read in base seven, where 7
+    # is not a digit. The record is the expression, and it says seven.
+    settings.apply({"InputBase": 7})
+    node = settings.assignment_node("InputBase")
+    assert settings.assignment("InputBase") == "InputBase := 7"
+    assert to_sexpr(node) == '(:= InputBase 7)'
+    with pytest.raises(DeriveSyntaxError):
+        parse_expression("InputBase := 7", ParseState(input_base=7))
 
 
 def test_numerals_take_a_leading_zero_when_they_start_with_a_letter(settings):

@@ -23,6 +23,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from rederive.model.expr import Kind, Node
+
 #: The colors a color slot can take, in the order Derive's Options Color
 #: commands numbered them: EGA text attributes 0 through 15. Derive asked for
 #: the number; these names are the remake's own. The intensified half is named
@@ -309,6 +311,32 @@ DEFAULTS: dict[str, str | int] = {
     field.setting: field.default for dialog in DIALOGS for field in dialog.fields
 }
 
+#: The field that owns each setting, for reading an authored `Name := Value`.
+FIELDS: dict[str, Field] = {
+    field.setting: field for dialog in DIALOGS for field in dialog.fields
+}
+
+
+def _read(field: Field, value: str) -> str | int | None:
+    """What an authored `Name := Value` sets `field` to, or None if nothing.
+
+    A choice is matched however it was capitalised, and a number is read where
+    the field takes one: `Options Radix` accepts `InputBase := 7` for the same
+    reason its `Other` choice prompts for a base.
+    """
+    if isinstance(field, ChoiceField):
+        for choice in field.choices:
+            if choice != OTHER and choice.lower() == value.lower():
+                return choice
+        if field.prompt is None:
+            return None
+        field = field.prompt
+    try:
+        number = int(value)
+    except ValueError:
+        return None
+    return number if field.accepts(number) else None
+
 
 class Settings:
     """Every system control setting, and whom to tell when one changes.
@@ -342,6 +370,23 @@ class Settings:
             watcher(names)
         return changed
 
+    def assign(self, setting: str, value: str) -> bool:
+        """Apply an authored `Name := Value`, and say whether it took.
+
+        Authoring `InputMode := Word` changes the mode exactly as the Options
+        Input dialog does, and the dialog then shows Word: the original keeps
+        one store, reached from either side. A setting no dialog owns, or a
+        value no field takes, changes nothing.
+        """
+        field = FIELDS.get(setting)
+        if field is None:
+            return False
+        wanted = _read(field, value)
+        if wanted is None:
+            return False
+        self.apply({setting: wanted})
+        return True
+
     # -- writing values out ------------------------------------------------
 
     def assignment(self, setting: str) -> str:
@@ -353,6 +398,30 @@ class Settings:
         """
         space = "" if self._values["DisplayFormat"] == "Compressed" else " "
         return f"{setting}{space}:={space}{self.written(self._values[setting])}"
+
+    def assignment_node(self, setting: str) -> Node:
+        """The same record as an expression, built rather than parsed.
+
+        Derive constructs the expression it records; it does not write the
+        record out and read it back. `InputBase := 7` is why that matters: its
+        text no longer lexes once the base it selects is in force, `7` not
+        being a digit in base seven.
+
+        The spans index `assignment(setting)`, so the two agree character for
+        character. A number carries its decimal value and the digits it was
+        written in, exactly as the lexer would have reported them.
+        """
+        value = self._values[setting]
+        written = self.written(value)
+        text = self.assignment(setting)
+        start = len(text) - len(written)
+        name = Node(Kind.NAME, 0, len(setting), (), setting)
+        if isinstance(value, int):
+            surface = None if written == str(value) else written
+            right = Node(Kind.NUMBER, start, len(text), (), str(value), surface)
+        else:
+            right = Node(Kind.NAME, start, len(text), (), written)
+        return Node(Kind.ASSIGN, 0, len(text), (name, right), ":=")
 
     def written(self, value: str | int) -> str:
         """`value` as it appears in an expression."""

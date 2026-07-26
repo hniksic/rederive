@@ -15,11 +15,15 @@ Screen {
     align-vertical: bottom;
     background: $rd-work-background;
     color: $rd-work-foreground;
+    /* A render never wraps, so one too wide for the pane is clipped and
+       Ctrl-Right scrolls to the rest of it. */
+    overflow-x: auto;
     scrollbar-size: 0 0;
 }
 
 #work-content {
     height: auto;
+    width: auto;
 }
 
 #rule {

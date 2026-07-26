@@ -36,9 +36,21 @@ def highlighted(app):
     return options[0] if options else None
 
 
-def highlighted_expression(app):
+def highlighted_rows(app):
+    """The rows of the selection rectangle, trailing blanks stripped."""
     style = app.palette.styles["selection"]
-    return "".join(styled(app.query_one("#work-content", Static), style))
+    return [row.rstrip() for row in styled(app.query_one("#work-content", Static), style)]
+
+
+def highlighted_expression(app):
+    """The selected subexpression as it is drawn, one line per row."""
+    return "\n".join(highlighted_rows(app))
+
+
+def work_area(app):
+    """The work area as lines of text, stripped of trailing blanks."""
+    text = text_of(app.query_one("#work-content", Static))
+    return [line.rstrip() for line in text.plain.splitlines()]
 
 
 def message(app):

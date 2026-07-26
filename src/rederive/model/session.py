@@ -1,78 +1,147 @@
 """The Algebra session: the numbered history and what is selected in it.
 
-Pure Python - no Textual, no rendering, no key names. The UI layer translates
-key presses into calls on `Session` and renders the result. This is the seed of
-the session layer that will later sit between the TUI and the math engine.
+Pure Python - no Textual, no key names. The UI layer translates key presses
+into calls on `Session` and paints the result. This is the seed of the session
+layer that will later sit between the TUI and the math engine.
+
+The session owns the three things an authored line needs: the parse state, so
+that `InputMode`, `CaseMode` and every definition reach the lines that follow;
+the settings, which an authored `Name := Value` writes to exactly as an Options
+dialog does; and the render of each entry, made once when the entry is authored.
+
+A render is not remade. Switching the times operator or the display format
+changes how later expressions are drawn and leaves the ones already on screen
+alone, which is what the original does: what you see is what it looked like
+when it was entered.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
-from rederive.model.tree import Node
+from rederive.display import DisplayOptions, Layout, Region, render
+from rederive.model.expr import Node
+from rederive.model.settings import Settings
+from rederive.syntax import (
+    PARSING_SETTINGS,
+    Declaration,
+    ParseState,
+    SettingDeclaration,
+    parse_expression,
+)
 
-Span = tuple[int, int]
-Path = tuple[int, ...]
-
-
-def _default_parse(text: str) -> Node:
-    """Shape an authored line with the placeholder parser.
-
-    Imported at call time: the parser is scaffolding that depends on the model,
-    not the other way round, and a caller can pass its own parse function.
-    """
-    # TODO(display): parse with rederive.syntax.parse_expression instead. The
-    # session has to own one ParseState for its whole life and apply each
-    # accepted expression's declarations to it, because InputMode, CaseMode and
-    # every definition change how later lines lex.
-    from rederive.placeholder_parser import parse
-
-    return parse(text)
+#: A route into an entry's selection tree: indices into `Region.children`,
+#: empty for the whole expression.
+Route = tuple[int, ...]
+Rect = tuple[int, int, int, int]
 
 
 @dataclass(frozen=True)
 class Entry:
-    """One numbered line of the history."""
-
-    # TODO(display): an entry also needs its Layout, rendered from the current
-    # display options, and re-rendered when those options change.
+    """One numbered line of the history: what was authored, and how it looks."""
 
     number: int
     text: str
-    tree: Node
+    node: Node
+    layout: Layout
+
+    @property
+    def height(self) -> int:
+        return self.layout.height
 
 
 class Session:
     """The expression history plus the selection cursor over it.
 
-    The selection is an entry index together with a path into that entry's
-    tree; an empty path means the entry is selected as a whole. Every
+    The selection is an entry index together with a route into that entry's
+    render; an empty route means the entry is selected as a whole. Every
     navigation method returns whether it moved the selection, so the UI can
     beep or stay quiet accordingly.
+
+    Navigation goes through the render rather than through the parse, because
+    the original's rule is that you select what you see: `a + b - c` offers
+    three terms, and `SIN(x + 1)` offers its argument and never its name.
     """
 
-    def __init__(self, parse: Callable[[str], Node] = _default_parse) -> None:
-        self._parse = parse
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings if settings is not None else Settings()
+        self.state = ParseState()
         self.entries: list[Entry] = []
         self.selected: int | None = None
-        self.path: Path = ()
+        self.route: Route = ()
         self._next_number = 1
+        self.settings.watch(self._settings_changed)
+        self._settings_changed(PARSING_SETTINGS)
 
     # -- authoring ---------------------------------------------------------
 
     def author(self, text: str) -> Entry:
-        """Append `text` verbatim as a new entry and select it as a whole.
+        """Parse `text`, append it as a new entry, and select it as a whole.
 
-        Nothing is simplified or validated (R-HIST1) and label numbers only
-        ever increase (R-HIST2).
+        Raises `DeriveSyntaxError` and appends nothing when the line does not
+        parse. Nothing is simplified: an accepted expression is inert until the
+        user asks for something to be done to it (R-HIST1), and label numbers
+        only ever increase (R-HIST2).
+
+        What the line declares is applied before it is drawn, so a hand-written
+        `DisplayFormat := Compressed` prints itself compressed, as it does in
+        the original.
         """
-        entry = Entry(self._next_number, text, self._parse(text))
+        result = parse_expression(text, self.state)
+        for declaration in result.declarations:
+            self.declare(declaration)
+        return self._append(text, result.node)
+
+    def record(self, setting: str) -> Entry:
+        """Append the `Name := Value` a settings change records.
+
+        The expression is built rather than parsed, because the settings have
+        already changed by the time it is written: `InputBase := 7` does not
+        lex in base seven, and Derive records the expression it constructs
+        rather than reading its own record back.
+        """
+        return self._append(
+            self.settings.assignment(setting), self.settings.assignment_node(setting)
+        )
+
+    def _append(self, text: str, node: Node) -> Entry:
+        entry = Entry(self._next_number, text, node, render(node, self.options))
         self._next_number += 1
         self.entries.append(entry)
         self.selected = len(self.entries) - 1
-        self.path = ()
+        self.route = ()
         return entry
+
+    def declare(self, declaration: Declaration) -> None:
+        """Apply one declaration: a setting to the settings, the rest to the state.
+
+        A setting never goes straight to the parse state. It is applied to the
+        settings, which mirror it back, so that a value no field takes cannot
+        leave the two disagreeing about what base a numeral is written in.
+        """
+        if isinstance(declaration, SettingDeclaration):
+            self.settings.assign(declaration.setting, declaration.value)
+            return
+        self.state.declare(declaration)
+
+    @property
+    def options(self) -> DisplayOptions:
+        """The display options the settings currently call for."""
+        return DisplayOptions(
+            times=str(self.settings["TimesOperator"]),
+            compressed=self.settings["DisplayFormat"] == "Compressed",
+            output_base=self.settings.base("OutputBase"),
+        )
+
+    def _settings_changed(self, changed: frozenset[str]) -> None:
+        """Keep the parse state's modes level with the settings.
+
+        The settings are the one store; the parse state mirrors the three of
+        them that decide how a line lexes.
+        """
+        for setting in changed & PARSING_SETTINGS:
+            value = str(self.settings[setting])
+            self.state.declare(SettingDeclaration(setting, value))
 
     # -- selection ---------------------------------------------------------
 
@@ -83,64 +152,54 @@ class Session:
         return self.entries[self.selected]
 
     @property
+    def selected_region(self) -> Region | None:
+        """The region the route points at, or None when nothing is selected."""
+        entry = self.selected_entry
+        if entry is None:
+            return None
+        return entry.layout.at(self.route)
+
+    @property
     def selected_node(self) -> Node | None:
-        """The node the path points at, or None when nothing is selected."""
-        entry = self.selected_entry
-        if entry is None:
-            return None
-        return self._node_at(entry, self.path)
+        """The subexpression that is selected. What an operation would act on."""
+        region = self.selected_region
+        return region.node if region is not None else None
 
-    def selection_span(self) -> Span | None:
-        """Source span to highlight, or None when the history is empty.
+    def selection_rect(self) -> Rect | None:
+        """The rectangle to invert, in the selected entry's own render.
 
-        An entry selected as a whole highlights all of its text, even when the
-        parse dropped enclosing parentheses from the root node's span.
+        Rows and columns index that entry's `layout.lines`; the work area
+        offsets them by where it drew the entry.
         """
-        # TODO(display): a built-up render makes the selection a rectangle
-        # rather than a character span. Add selection_rect(), returning
-        # Layout.at(self.route), and retire this once the work area paints
-        # layouts.
+        region = self.selected_region
+        return region.rect if region is not None else None
+
+    def _siblings(self) -> tuple[Region, ...]:
+        """The regions the selection sits among, empty at the top level."""
         entry = self.selected_entry
-        if entry is None:
-            return None
-        if not self.path:
-            return (0, len(entry.text))
-        node = self._node_at(entry, self.path)
-        return (node.start, node.end)
-
-    @staticmethod
-    def _node_at(entry: Entry, path: Path) -> Node:
-        node = entry.tree
-        for index in path:
-            node = node.children[index]
-        return node
-
-    def _siblings(self, entry: Entry) -> tuple[Node, ...]:
-        return self._node_at(entry, self.path[:-1]).children
+        if entry is None or not self.route:
+            return ()
+        parent = entry.layout.at(self.route[:-1])
+        return parent.children if parent is not None else ()
 
     # -- navigation --------------------------------------------------------
-
-    # TODO(display): the selection is a route into Layout.root, not a path into
-    # the parse tree, so Right and Left step Region.children and Up and Down
-    # move between a region and its parent or first child. Region.node is how
-    # an operation gets from the selection back to the subexpression.
 
     def select_entry(self, index: int) -> bool:
         """Select entry `index` as a whole, clamped to the history."""
         if not self.entries:
             return False
         index = max(0, min(index, len(self.entries) - 1))
-        moved = index != self.selected or bool(self.path)
+        moved = index != self.selected or bool(self.route)
         self.selected = index
-        self.path = ()
+        self.route = ()
         return moved
 
     def move_up(self) -> bool:
         """Previous entry, or one level up towards the whole expression."""
         if self.selected is None:
             return False
-        if self.path:
-            self.path = self.path[:-1]
+        if self.route:
+            self.route = self.route[:-1]
             return True
         return self.select_entry(self.selected - 1)
 
@@ -148,12 +207,11 @@ class Session:
         """Next entry, or one level down into the first operand."""
         if self.selected is None:
             return False
-        if self.path:
-            node = self.selected_node
-            assert node is not None
-            if node.is_atom:
+        if self.route:
+            region = self.selected_region
+            if region is None or not region.children:
                 return False
-            self.path += (0,)
+            self.route += (0,)
             return True
         return self.select_entry(self.selected + 1)
 
@@ -162,38 +220,36 @@ class Session:
         entry = self.selected_entry
         if entry is None:
             return False
-        if not self.path:
-            if entry.tree.is_atom:
+        if not self.route:
+            if not entry.layout.root.children:
                 return False
-            self.path = (0,)
+            self.route = (0,)
             return True
-        if self.path[-1] + 1 >= len(self._siblings(entry)):
+        if self.route[-1] + 1 >= len(self._siblings()):
             return False
-        self.path = self.path[:-1] + (self.path[-1] + 1,)
+        self.route = self.route[:-1] + (self.route[-1] + 1,)
         return True
 
     def move_left(self) -> bool:
         """Previous sibling; a whole expression has none."""
-        if self.selected_entry is None or not self.path or self.path[-1] == 0:
+        if self.selected_entry is None or not self.route or self.route[-1] == 0:
             return False
-        self.path = self.path[:-1] + (self.path[-1] - 1,)
+        self.route = self.route[:-1] + (self.route[-1] - 1,)
         return True
 
     def move_first_sibling(self) -> bool:
-        entry = self.selected_entry
-        if entry is None or not self.path:
+        if self.selected_entry is None or not self.route:
             return False
-        moved = self.path[-1] != 0
-        self.path = self.path[:-1] + (0,)
+        moved = self.route[-1] != 0
+        self.route = self.route[:-1] + (0,)
         return moved
 
     def move_last_sibling(self) -> bool:
-        entry = self.selected_entry
-        if entry is None or not self.path:
+        if self.selected_entry is None or not self.route:
             return False
-        last = len(self._siblings(entry)) - 1
-        moved = self.path[-1] != last
-        self.path = self.path[:-1] + (last,)
+        last = len(self._siblings()) - 1
+        moved = self.route[-1] != last
+        self.route = self.route[:-1] + (last,)
         return moved
 
     def move_first_entry(self) -> bool:
