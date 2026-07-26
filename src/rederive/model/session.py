@@ -825,6 +825,33 @@ class Session:
         self.route = ()
         return moved
 
+    def jump(self, number: int) -> bool:
+        """Select the entry labelled `number`, and say whether one was found.
+
+        A label the history no longer holds - one that was removed, or one from
+        below where the numbering now starts - lands on the entry above it: the
+        one with the smallest label of those left over. So `0` always lands on
+        the first entry, and a label past the last one names nothing at all,
+        which is what the original refuses to jump to.
+
+        It is the label that is looked up and not the position, so a history an
+        unremove has left out of numerical order is jumped around the way its
+        labels read rather than the way it is stacked.
+
+        Landing on the entry already selected leaves the route alone, so
+        jumping to the expression you are inside of keeps the subexpression
+        highlighted. Any other entry is selected as a whole.
+        """
+        above = [
+            index for index, entry in enumerate(self.entries) if entry.number >= number
+        ]
+        if not above:
+            return False
+        index = min(above, key=lambda index: self.entries[index].number)
+        if index != self.selected:
+            self.select_entry(index)
+        return True
+
     def move_up(self) -> bool:
         """Previous entry, or one level up towards the whole expression."""
         if self.selected is None:

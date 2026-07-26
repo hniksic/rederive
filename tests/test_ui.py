@@ -768,3 +768,85 @@ async def test_a_blank_answer_that_names_nothing_abandons_the_command(app, keys,
         await pilot.press(*keys)
         assert band(app) == [" DECLARE: Function Variable Matrix vectoR"]
         assert entries(app) == []
+
+
+# -- Jump ---------------------------------------------------------------------
+#
+# Every screen asserted here was checked against the original.
+
+
+async def test_jump_asks_for_a_label_and_highlights_what_it_names(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("j")
+        # Nothing is offered: the command is for going somewhere else, so the
+        # label of where the highlight already is would be no use.
+        assert prompt(app) == ("JUMP to:", "")
+        assert message(app) == "Enter label number"
+        await pilot.press("1", "enter")
+        assert highlighted_expression(app) == "x"
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_a_label_no_expression_carries_lands_on_the_one_above_it(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("r", "2", "tab", "2", "enter")
+        await pilot.press("j", "2", "enter")
+        assert highlighted_expression(app) == "z"
+
+
+async def test_a_label_past_the_last_one_leaves_the_line_up(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("j", "9", "enter")
+        assert prompt(app) == ("JUMP to:", "9")
+        assert message(app) == "Enter label number"
+        assert highlighted_expression(app) == "y"
+        # The line is still there to be corrected and entered again.
+        await pilot.press("backspace", "1", "enter")
+        assert highlighted_expression(app) == "x"
+
+
+async def test_a_line_that_is_no_label_number_is_refused(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("j")
+        await pilot.press(*"1x", "enter")
+        assert prompt(app) == ("JUMP to:", "1x")
+        assert highlighted_expression(app) == "y"
+
+
+async def test_a_jump_line_with_nothing_on_it_leaves_the_highlight_alone(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("j", "enter")
+        assert highlighted_expression(app) == "y"
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_escape_abandons_the_jump_line(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("j", "1")
+        await pilot.press("escape")
+        assert highlighted_expression(app) == "y"
+        assert message(app) == "Enter option"
+
+
+async def test_jumping_to_the_expression_you_are_inside_of_keeps_the_part(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x (x + 1)")
+        await pilot.press("right", "right")
+        assert highlighted_expression(app) == "x + 1"
+        await pilot.press("j", "1", "enter")
+        assert highlighted_expression(app) == "x + 1"
+
+
+async def test_jump_asks_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("j")
+        assert band(app)[0].startswith(" COMMAND:")
+        assert message(app) == "Enter option"

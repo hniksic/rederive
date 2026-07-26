@@ -16,12 +16,12 @@ answer handed to it rather than stored, since it is about the command in hand
 and not about the system.
 
 A command that needs a line of its own - Author, Simplify and Factor an
-expression, the Transfer commands a file name - takes the screen with the
-prompt band instead, which is one Input with a label in front of it. The mode
-says which command the line belongs to, and so what Enter does with it. A
-command that runs is finished with, so it leaves the command menu up rather
-than the submenu it was picked from; Esc, which abandons the line instead,
-leaves that submenu where it was.
+expression, Jump a label number, the Transfer commands a file name - takes the
+screen with the prompt band instead, which is one Input with a label in front
+of it. The mode says which command the line belongs to, and so what Enter does
+with it. A command that runs is finished with, so it leaves the command menu up
+rather than the submenu it was picked from; Esc, which abandons the line
+instead, leaves that submenu where it was.
 
 Factor asks more than one question, and asks them in both forms: an expression,
 then a factorization variable at a time on the prompt band, then an amount off
@@ -40,6 +40,7 @@ before putting the next one, and one Esc always lands back on the Declare menu.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +81,7 @@ MODE_AUTHOR = "author"
 MODE_SIMPLIFY = "simplify"
 MODE_FACTOR = "factor"
 MODE_FACTOR_VARIABLE = "factor_variable"
+MODE_JUMP = "jump"
 MODE_FILE = "file"
 MODE_CONFIRM_QUIT = "confirm_quit"
 MODE_VARIABLE_NAME = "variable_name"
@@ -95,6 +97,7 @@ PROMPT_MODES = (
     MODE_SIMPLIFY,
     MODE_FACTOR,
     MODE_FACTOR_VARIABLE,
+    MODE_JUMP,
     MODE_FILE,
     MODE_VARIABLE_NAME,
     MODE_VARIABLE_VALUE,
@@ -113,6 +116,7 @@ ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
 FACTOR_PROMPT = " FACTOR expression: "
+JUMP_PROMPT = " JUMP to: "
 FACTOR_VARIABLE_PROMPT = " FACTOR variable {number}: "
 #: What the message line offers while Factor is collecting variables. The
 #: first question may be answered for all of them at once; the ones after it
@@ -121,6 +125,10 @@ FIRST_VARIABLE = "Return for all or select 1: {variables}"
 NEXT_VARIABLE = "Return for no more or select next: {variables}"
 #: What the message line says once an answer is in.
 COMPUTE_TIME = "Compute time: {seconds:.1f} seconds"
+
+#: All Jump takes on its line: a label number, spaces around it allowed. A sign
+#: is not refused, since the original does not refuse one either.
+LABEL_NUMBER = re.compile(r"[-+]?[0-9]+")
 
 #: What Unremove says when there is nothing to put back. Every other refusal
 #: in either command is the beep alone, but this one has no dialog to leave up.
@@ -324,6 +332,7 @@ class RederiveApp(App[None]):
         self.commands: dict[tuple[Menu, str], Callable[[], None]] = {
             (ALGEBRA, "Author"): self._command_author,
             (ALGEBRA, "Factor"): self._command_factor,
+            (ALGEBRA, "Jump"): self._command_jump,
             (ALGEBRA, "Quit"): self._command_quit,
             (ALGEBRA, "Remove"): self._command_remove,
             (ALGEBRA, "Simplify"): self._command_simplify,
@@ -758,6 +767,38 @@ class RederiveApp(App[None]):
         line.selection = Selection(min(keep, len(offered)), len(offered))
         line.focus()
         self._set_message(message)
+
+    # -- Jump --------------------------------------------------------------
+
+    def _command_jump(self) -> None:
+        """Ask which expression to highlight.
+
+        Nothing is offered on the line: the command is for going somewhere
+        else, so the label of where the highlight already is would be no use.
+
+        A history with nothing in it has nothing to jump to, and the original
+        asks nothing at all: no line, no message, just the beep.
+        """
+        if not self.session.entries:
+            self._beep()
+            return
+        self._prompt(MODE_JUMP, JUMP_PROMPT, "", menus.ENTER_LABEL)
+
+    def _jumped(self, answer: str) -> None:
+        """Enter on the jump line: a label number and nothing else.
+
+        A line with nothing on it asks for nothing, and leaves the highlight
+        where it was. Anything that is not a number, and any number past the
+        last label, is refused: the beep, and the line left up to be corrected.
+        """
+        answer = answer.strip()
+        if not answer:
+            self._end_prompt()
+            return
+        if not LABEL_NUMBER.fullmatch(answer) or not self.session.jump(int(answer)):
+            self._beep()
+            return
+        self._end_prompt()
 
     # -- Remove and Unremove -----------------------------------------------
 
@@ -1244,6 +1285,8 @@ class RederiveApp(App[None]):
             self._factor(event.value)
         elif self.mode == MODE_FACTOR_VARIABLE:
             self._factor_variable(event.value)
+        elif self.mode == MODE_JUMP:
+            self._jumped(event.value)
         elif self.mode == MODE_FILE:
             self._named(event.value)
         elif self.mode == MODE_VARIABLE_NAME:

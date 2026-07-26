@@ -161,6 +161,64 @@ def test_a_selection_is_the_rectangle_a_subexpression_covers():
     assert selected_text(session) == " b\n───\n c"
 
 
+# -- Jump ---------------------------------------------------------------------
+#
+# Every rule asserted here was checked against the original.
+
+
+def test_jumping_selects_the_entry_a_label_names(session):
+    assert session.jump(1)
+    assert session.selected_entry.number == 1
+    assert selected_text(session) == "x·(x + 1)"
+
+
+def test_a_label_no_entry_carries_lands_on_the_one_above_it(session):
+    session.remove(2, 2)
+    assert session.jump(2)
+    assert session.selected_entry.number == 3
+
+
+def test_zero_lands_on_the_first_entry(session):
+    session.remove(1, 1)
+    assert session.jump(0)
+    assert session.selected_entry.number == 2
+
+
+def test_a_label_past_the_last_one_names_nothing(session):
+    session.select_entry(0)
+    assert not session.jump(4)
+    assert session.selected_entry.number == 1
+
+
+def test_it_is_the_label_that_is_looked_up_and_not_the_position(session):
+    session.remove(1, 1)
+    session.unremove()
+    # The history now reads #2 #3 #1, which is not the order its labels read.
+    assert [entry.number for entry in session.entries] == [2, 3, 1]
+    assert session.jump(1)
+    assert session.selected == 2
+
+
+def test_jumping_to_the_entry_you_are_inside_of_keeps_the_subexpression(session):
+    session.move_first_entry()
+    session.move_right()
+    assert selected_text(session) == "x"
+    assert session.jump(1)
+    assert selected_text(session) == "x"
+
+
+def test_jumping_to_any_other_entry_selects_it_whole(session):
+    session.move_first_entry()
+    session.move_right()
+    session.jump(2)
+    session.jump(1)
+    assert selected_text(session) == "x·(x + 1)"
+
+
+def test_an_empty_history_has_nothing_to_jump_to():
+    assert not Session().jump(1)
+
+
 # -- what the settings reach ------------------------------------------------
 
 
