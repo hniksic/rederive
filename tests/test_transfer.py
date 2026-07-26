@@ -8,7 +8,16 @@ that pins the difference says why.
 """
 
 import pytest
-from screen import annotation, band, entries, highlighted, message, prompt, text_of
+from screen import (
+    annotation,
+    band,
+    entries,
+    highlighted,
+    highlighted_expression,
+    message,
+    prompt,
+    text_of,
+)
 
 from rederive.model import worksheet
 from rederive.model.session import Session
@@ -321,6 +330,19 @@ async def test_the_file_last_used_is_offered_back(app, file):
         # All of it is selected, so a name typed over it replaces it whole.
         await pilot.press("q")
         assert prompt(app)[1] == "q"
+
+
+async def test_the_history_keys_walk_without_touching_the_name(app, file):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x", "enter")
+        await pilot.press("a", *"y", "enter")
+        await pilot.press("t", "s", "d", *str(file), "enter")
+        await pilot.press("t", "s", "d")
+        await pilot.press("up")
+        # The highlight walks, as it does under any prompt line, but a file
+        # name is no label and is left exactly as it was offered.
+        assert highlighted_expression(app) == "x"
+        assert prompt(app) == ("TRANSFER SAVE DERIVE file:", str(file))
 
 
 async def test_a_history_with_nothing_in_it_is_not_written(app):

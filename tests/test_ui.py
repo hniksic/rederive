@@ -850,3 +850,130 @@ async def test_jump_asks_nothing_when_the_history_is_empty(app):
         await pilot.press("j")
         assert band(app)[0].startswith(" COMMAND:")
         assert message(app) == "Enter option"
+
+
+# -- walking the history with a question up -----------------------------------
+#
+# The keys that move the highlight from one expression to another go on doing
+# it while a prompt line has the screen; the ones that move a cursor along the
+# line belong to the line. Every screen asserted here was checked against the
+# original.
+
+
+async def test_the_history_keys_walk_while_a_prompt_line_is_up(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "2 + 3", "y", "z")
+        await pilot.press("s")
+        assert prompt(app) == ("SIMPLIFY expression:", "#3")
+        # The line takes the label of wherever the highlight lands, which is
+        # what the manual recommends over typing the number.
+        await pilot.press("up")
+        assert prompt(app)[1] == "#2"
+        assert highlighted_expression(app) == "y"
+        await pilot.press("ctrl+home")
+        assert prompt(app)[1] == "#1"
+        await pilot.press("enter")
+        assert numbered(app)[-1] == "#4: 5"
+        assert annotation(app) == "Simp(#1)"
+
+
+async def test_a_label_walked_onto_is_selected_as_the_offered_one_was(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("s", "up")
+        assert prompt(app)[1] == "#2"
+        # Typing replaces it, exactly as it replaces the label first offered.
+        await pilot.press("3")
+        assert prompt(app)[1] == "#3"
+
+
+async def test_a_line_that_was_typed_on_is_left_as_it_is(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("s")
+        await pilot.press(*"2+3")
+        assert prompt(app)[1] == "#2+3"
+        await pilot.press("up")
+        # The highlight moved; the line is the user's now, so it stands.
+        assert highlighted_expression(app) == "y"
+        assert prompt(app)[1] == "#2+3"
+
+
+async def test_a_cursor_key_hands_the_line_over_for_good(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("s")
+        # End collapses the selection the offered label came up with, and the
+        # line stops taking labels from then on.
+        await pilot.press("end", "up")
+        assert highlighted_expression(app) == "y"
+        assert prompt(app)[1] == "#3"
+
+
+async def test_the_cursor_keys_move_no_highlight_while_a_line_is_up(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "x (x + 1)")
+        await pilot.press("s")
+        for key in ("left", "right", "home", "end"):
+            await pilot.press(key)
+            assert highlighted_expression(app) == "x·(x + 1)"
+
+
+async def test_the_author_line_walks_but_is_never_labelled(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("a")
+        await pilot.press(*"w")
+        await pilot.press("up")
+        assert highlighted_expression(app) == "y"
+        assert prompt(app) == ("AUTHOR expression:", "w")
+
+
+async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("j")
+        await pilot.press("up", "up")
+        assert highlighted_expression(app) == "x"
+        assert prompt(app)[1] == ""
+        await pilot.press("enter")
+        assert highlighted_expression(app) == "x"
+        assert message(app) == "Enter option"
+
+
+async def test_factors_variable_line_takes_no_notice_of_them(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "x^2 - y^2")
+        await pilot.press("f", "enter")
+        assert prompt(app)[0] == "FACTOR variable 1:"
+        # What to factor has been settled by now, so the highlight stays put.
+        for key in ("up", "down", "ctrl+home", "ctrl+end"):
+            await pilot.press(key)
+            assert highlighted_expression(app) == " 2    2\nx  - y"
+
+
+@pytest.mark.parametrize(
+    ("keys", "line"),
+    [
+        (("d", "v"), "DECLARE VARIABLE name:"),
+        (("d", "v", *"a", "enter", "v"), "DECLARE VARIABLE value:"),
+        (("d", "f"), "DECLARE FUNCTION name:"),
+        (("d", "f", *"g", "enter"), "DECLARE FUNCTION value:"),
+        (("d", "f", *"g", "enter", "enter"), "DECLARE FUNCTION variable:"),
+        (("d", "r", "2", "enter"), "VECTOR element:"),
+        (("d", "m", "2", "tab", "2", "enter"), "MATRIX element:"),
+    ],
+    ids=str,
+)
+async def test_the_declare_lines_walk_but_are_never_labelled(app, keys, line):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press(*keys)
+        offered = prompt(app)[1]
+        assert prompt(app)[0] == line
+        await pilot.press("up")
+        assert highlighted_expression(app) == "y"
+        await pilot.press("ctrl+home")
+        assert highlighted_expression(app) == "x"
+        # None of them names an expression, so none takes the label walked onto.
+        assert prompt(app) == (line, offered)

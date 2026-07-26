@@ -8,6 +8,12 @@ the work area. So the menu keys are app-level priority bindings, switched off
 by `check_action` whenever the author line is up and the Input should get the
 keystrokes instead.
 
+The keys that move the highlight from one expression to another are the
+exception: they keep working while a prompt line has the screen, since a line
+of text has nothing vertical for them to do. The ones that move a cursor along
+the line - Left, Right, Home, End - belong to the line while it is up, and to
+the highlight when it is not.
+
 Submenus and Options dialogs stack on top of the command menu: Esc pops one
 level, and committing a dialog returns all the way to the command menu, as the
 original does. A command with a question of its own puts up a dialog too - the
@@ -106,6 +112,19 @@ PROMPT_MODES = (
     MODE_FUNCTION_VARIABLE,
     MODE_ELEMENT,
 )
+
+#: The prompt lines the highlight can still be walked under: every one of them
+#: but Factor's variable line, which takes no notice of those keys. What to
+#: factor has been settled by then, so moving the highlight would say nothing
+#: about what the command is about to do.
+WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode != MODE_FACTOR_VARIABLE)
+
+#: The prompt lines that come up naming an expression, and so take the label of
+#: wherever the walk lands - for as long as the label they offered is still
+#: selected on them. A line typed on is a line the user has taken over. The
+#: Declare lines take an expression too but are offered nothing to begin with,
+#: so there is nothing on them to keep in step with the highlight.
+LABELLED_MODES = (MODE_SIMPLIFY, MODE_FACTOR)
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
@@ -252,8 +271,9 @@ CURSOR_MOVES = {
     "last_sibling": "end",
 }
 
-#: The movements that walk the history rather than a field, on the dialogs
-#: whose fields name expressions. The rest still move the field's own cursor.
+#: The movements that walk the history rather than the line or the field they
+#: are pressed on: on a prompt line, and on the dialogs whose fields name
+#: expressions. The rest move the cursor of whatever is up.
 ENTRY_MOVES = ("up", "down", "first_entry", "last_entry")
 
 
@@ -440,11 +460,17 @@ class RederiveApp(App[None]):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Menu and navigation keys only apply while a command band is up.
 
-        While a prompt line has the screen they all belong to the Input, down
-        to Space and Backspace.
+        While a prompt line has the screen they belong to the Input, down to
+        Space and Backspace. The movements that walk the history are the
+        exception: a line of text has nothing vertical for them to do, so they
+        go on moving the highlight with the question still up.
         """
-        if action.startswith("menu_") or action in ("nav", "scroll_work"):
+        if action.startswith("menu_") or action == "scroll_work":
             return self.mode == MODE_MENU
+        if action == "nav":
+            return self.mode == MODE_MENU or (
+                self.mode in WALKED_MODES and parameters[0] in ENTRY_MOVES
+            )
         return True
 
     def on_key(self, event: Any) -> None:
@@ -597,6 +623,10 @@ class RederiveApp(App[None]):
     def action_nav(self, movement: str) -> None:
         """The arrows walk the history, or a number field's cursor.
 
+        With a prompt line up, only the movements that walk the history get
+        here at all: the rest are the line's own, and `check_action` leaves
+        them to it.
+
         A dialog's selection fields take no arrow keys at all in the original,
         which falls out of this: there is no cursor in them to move.
 
@@ -605,6 +635,9 @@ class RederiveApp(App[None]):
         whatever they land on - which the manual recommends over typing the
         number, as being harder to get wrong.
         """
+        if self.mode in WALKED_MODES:
+            self._walk_prompt(movement)
+            return
         editor = self.editor
         if editor is None:
             getattr(self.session, f"move_{movement}")()
@@ -613,6 +646,35 @@ class RederiveApp(App[None]):
         elif not editor.move_cursor(CURSOR_MOVES.get(movement)):
             self._beep()
         self.refresh_screen()
+
+    def _walk_prompt(self, movement: str) -> None:
+        """Move the highlight while a prompt line has the screen.
+
+        The question stays up and the line keeps what is on it, so this is how
+        the history is looked around with a command part way through asking:
+        the manual's own advice for naming an expression is to move the
+        highlight onto it rather than to type its number.
+        """
+        getattr(self.session, f"move_{movement}")()
+        if self.mode in LABELLED_MODES:
+            self._relabel_prompt()
+        self.refresh_screen()
+
+    def _relabel_prompt(self) -> None:
+        """Put the label of where the highlight landed on the prompt line.
+
+        Only while the label the line was offered is still selected on it. A
+        cursor key collapses that selection and typing replaces it, and either
+        way the line is the user's from then on and is left as it stands.
+        """
+        entry = self.session.selected_entry
+        line = self.query_one("#prompt-input", Input)
+        start, end = sorted(line.selection)
+        if entry is None or start == end:
+            return
+        number = str(entry.number)
+        line.value = f"{line.value[:start]}{number}{line.value[end:]}"
+        line.selection = Selection(start, start + len(number))
 
     def _walk_history(self, editor: DialogEditor, movement: str) -> None:
         """Move the selection, and label the active field with where it landed."""
