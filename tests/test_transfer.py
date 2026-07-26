@@ -121,6 +121,63 @@ def test_a_name_with_no_extension_is_a_math_file():
     assert str(worksheet.path_of("notes.txt")).endswith("notes.txt")
 
 
+# -- completing a half-typed name --------------------------------------------
+
+
+def test_a_name_completes_to_the_file_it_could_be(tmp_path):
+    (tmp_path / "work.mth").touch()
+    assert worksheet.completions(f"{tmp_path}/wo") == [f"{tmp_path}/work.mth"]
+
+
+def test_every_name_on_offer_comes_back_in_order(tmp_path):
+    for name in ("beta.mth", "alpha.mth"):
+        (tmp_path / name).touch()
+    assert worksheet.completions(f"{tmp_path}/") == [
+        f"{tmp_path}/alpha.mth",
+        f"{tmp_path}/beta.mth",
+    ]
+
+
+def test_only_the_files_the_command_can_use_are_offered(tmp_path):
+    (tmp_path / "work.txt").touch()
+    (tmp_path / "work.dat").touch()
+    assert worksheet.completions(f"{tmp_path}/wo") == []
+    offered = worksheet.completions(f"{tmp_path}/wo", worksheet.DATA_SUFFIX)
+    assert offered == [f"{tmp_path}/work.dat"]
+
+
+def test_an_extension_is_matched_however_it_is_cased(tmp_path):
+    """The files the original shipped are named in capitals."""
+    (tmp_path / "TRIG.MTH").touch()
+    assert worksheet.completions(f"{tmp_path}/TR") == [f"{tmp_path}/TRIG.MTH"]
+
+
+def test_a_directory_completes_with_the_separator_after_it(tmp_path):
+    (tmp_path / "utility").mkdir()
+    assert worksheet.completions(f"{tmp_path}/uti") == [f"{tmp_path}/utility/"]
+
+
+def test_a_name_nothing_could_grow_from_completes_to_nothing(tmp_path):
+    (tmp_path / "work.mth").touch()
+    # Typed out in full, no file starting with it, and no directory to look in.
+    assert worksheet.completions(f"{tmp_path}/work.mth") == []
+    assert worksheet.completions(f"{tmp_path}/nothing") == []
+    assert worksheet.completions(f"{tmp_path}/gone/wo") == []
+
+
+def test_a_hidden_name_is_offered_only_to_a_dot(tmp_path):
+    (tmp_path / ".hidden.mth").touch()
+    assert worksheet.completions(f"{tmp_path}/") == []
+    assert worksheet.completions(f"{tmp_path}/.") == [f"{tmp_path}/.hidden.mth"]
+
+
+def test_what_was_typed_is_kept_as_it_was_typed(tmp_path, monkeypatch):
+    """A `~` is completed from without being written out."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "work.mth").touch()
+    assert worksheet.completions("~/wo") == ["~/work.mth"]
+
+
 # -- loading -----------------------------------------------------------------
 
 
@@ -476,7 +533,7 @@ async def test_saving_asks_for_a_name_and_writes_the_file(app, file):
         await pilot.press("a", *"x^2+1", "enter")
         await pilot.press("t", "s", "d")
         assert prompt(app) == ("TRANSFER SAVE DERIVE file:", "")
-        assert message(app) == "Enter filename"
+        assert message(app) == "Enter filename (press TAB to complete)"
         await pilot.press(*str(file), "enter")
         assert file.read_text() == "x^2+1\n"
         assert message(app) == "Enter option"
@@ -551,7 +608,7 @@ async def test_loading_replaces_what_is_on_screen(app, file):
         await pilot.press("a", *"z", "enter")
         await pilot.press("t", "l", "d")
         assert prompt(app) == ("TRANSFER LOAD DERIVE file:", "")
-        assert message(app) == "Enter filename (press F1 for list)"
+        assert message(app) == "Enter filename (press TAB to complete)"
         await pilot.press(*str(file), "enter")
         assert entries(app) == ["a", "b"]
         assert message(app) == "Enter option"
@@ -625,6 +682,129 @@ async def test_a_name_with_no_extension_gets_the_one_its_command_reads(app, tmp_
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "t", *str(tmp_path / "grid"), "enter")
         assert entries(app) == ["[1,2]"]
+
+
+# -- completing a name on the line -------------------------------------------
+
+
+async def test_tab_completes_the_name_and_the_file_reads(app, file):
+    file.write_text("a\n\nb\n")
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{file.parent}/wo", "tab")
+        assert prompt(app)[1] == str(file)
+        await pilot.press("enter")
+        assert entries(app) == ["a", "b"]
+
+
+async def test_tab_writes_out_what_the_names_share_and_lists_them(app, tmp_path):
+    for name in ("workbook.mth", "worksheet.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/w", "tab")
+        assert prompt(app)[1] == f"{tmp_path}/work"
+        assert message(app) == "workbook.mth worksheet.mth"
+
+
+async def test_tab_after_that_steps_through_the_names_one_at_a_time(app, tmp_path):
+    for name in ("workbook.mth", "worksheet.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/work", "tab")
+        assert prompt(app)[1] == f"{tmp_path}/workbook.mth"
+        await pilot.press("tab")
+        assert prompt(app)[1] == f"{tmp_path}/worksheet.mth"
+        # The list is a ring: the name after the last one is the first again.
+        await pilot.press("tab")
+        assert prompt(app)[1] == f"{tmp_path}/workbook.mth"
+        await pilot.press("enter")
+        assert app.session.file == tmp_path / "workbook.mth"
+
+
+async def test_typing_on_a_stepped_name_asks_the_files_again(app, tmp_path):
+    for name in ("alpha.mth", "beta.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab", "tab")
+        assert prompt(app)[1] == f"{tmp_path}/beta.mth"
+        await pilot.press("backspace", "backspace", "backspace", "backspace")
+        await pilot.press("tab")
+        assert prompt(app)[1] == f"{tmp_path}/beta.mth"
+
+
+async def test_a_list_too_long_for_the_pane_is_cut_short(app, tmp_path):
+    for number in range(40):
+        (tmp_path / f"utility{number:02}.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab")
+        assert message(app).endswith("...")
+        assert len(message(app)) < app.query_one("#message").size.width
+
+
+async def test_tab_completes_a_directory_and_then_inside_it(app, tmp_path):
+    (tmp_path / "utility").mkdir()
+    (tmp_path / "utility" / "trig.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/uti", "tab")
+        assert prompt(app)[1] == f"{tmp_path}/utility/"
+        await pilot.press("tab")
+        assert prompt(app)[1] == f"{tmp_path}/utility/trig.mth"
+
+
+async def test_a_name_that_completes_to_nothing_is_the_beep(app, tmp_path):
+    async with app.run_test() as pilot:
+        beeps = []
+        app.bell = lambda: beeps.append("beep")
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/nothing", "tab")
+        assert beeps == ["beep"]
+        assert prompt(app)[1] == f"{tmp_path}/nothing"
+
+
+async def test_a_command_completes_to_the_files_it_reads(app, tmp_path):
+    """Load Derive offers no data file, and daTa offers nothing else."""
+    (tmp_path / "numbers.dat").touch()
+    (tmp_path / "numbers.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/num", "tab")
+        assert prompt(app)[1] == f"{tmp_path}/numbers.mth"
+        await pilot.press("escape")
+        await pilot.press("t")
+        await pilot.press(*f"{tmp_path}/num", "tab")
+        assert prompt(app)[1] == f"{tmp_path}/numbers.dat"
+
+
+async def test_a_name_being_saved_completes_too(app, file):
+    """Over a file that is already there, which is what the name is for."""
+    file.write_text("a\n")
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"z", "enter")
+        await pilot.press("t", "s", "d")
+        await pilot.press(*f"{file.parent}/wo", "tab", "enter")
+        assert file.read_text() == "z\n"
+
+
+async def test_tab_on_a_line_that_names_no_file_leaves_it_alone(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x+1", "tab")
+        assert prompt(app) == ("AUTHOR expression:", "x+1")
+
+
+async def test_the_line_offers_the_completion_as_it_is_typed(app, file):
+    """The offer stands past the cursor, dimmed, and Right takes it as well."""
+    file.write_text("a\n")
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{file.parent}/wo")
+        await pilot.pause()
+        await pilot.press("right")
+        assert prompt(app)[1] == str(file)
 
 
 # -- saving source code ------------------------------------------------------
@@ -787,7 +967,7 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
     async with app.run_test() as pilot:
         await pilot.press("t", "d")
         assert prompt(app) == ("TRANSFER DEMO file:", "")
-        assert message(app) == "Enter filename (press F1 for list)"
+        assert message(app) == "Enter filename (press TAB to complete)"
         await pilot.press(*str(demo), "enter")
         # The comment takes the band the menu was on, and it waits there.
         assert band(app) == [" adds two numbers"]

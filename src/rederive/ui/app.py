@@ -34,6 +34,13 @@ on every line an expression is entered from. It is one key in two spellings:
 Ctrl-J is what a terminal sends for it unless it speaks the keyboard protocol
 that tells the two apart.
 
+A line that names a file completes what is typed on it. The first name the
+letters so far could grow into stands past the cursor, dimmed, and Right takes
+it; Tab writes out as much of the names as they all share, puts the names
+themselves on the message line - the original's F1 file list, in the room there
+is for it - and steps through them one at a time from there. Tab has nothing
+else to do on such a line, the menu it steps being off the screen.
+
 Two commands take the band for something other than a menu. A question with a
 Y or N for an answer - Quit, and the two Clear commands that throw expressions
 away - leaves the menu up with its highlight off, and `confirm` holds what a Y
@@ -64,12 +71,14 @@ import re
 import time
 from dataclasses import dataclass
 from functools import partial
+from os.path import commonprefix
 from pathlib import Path
 from typing import Any, Callable
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.suggester import Suggester
 from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
@@ -205,9 +214,9 @@ ENTER_MATRIX_ELEMENT = "Enter matrix element ({row},{column})"
 #: Enter presses. A vector element is offered nothing, as in the original.
 MATRIX_ZERO = "0"
 
-# Every command that names a file, and what it asks for. F1 does not list a
-# directory yet, as it does not offer help yet; the wording is the original's,
-# kept so the screen reads right.
+# Every command that names a file, and what it asks for. The original offered
+# a directory listing on F1; the line completes what is typed on Tab instead,
+# which answers the same question without taking the screen.
 LOAD_PROMPT = " TRANSFER LOAD DERIVE file: "
 LOAD_STATE_PROMPT = " TRANSFER LOAD STATE file: "
 LOAD_DATA_PROMPT = " TRANSFER LOAD DATA file: "
@@ -217,8 +226,9 @@ SAVE_PROMPT = " TRANSFER SAVE DERIVE file: "
 SAVE_SOURCE_PROMPT = " TRANSFER SAVE {word} file: "
 SAVE_STATE_PROMPT = " TRANSFER SAVE STATE file: "
 DEMO_PROMPT = " TRANSFER DEMO file: "
-ENTER_FILE = "Enter filename"
-ENTER_FILE_TO_READ = "Enter filename (press F1 for list)"
+ENTER_FILE = "Enter filename (press TAB to complete)"
+#: What ends a list of names too long for the message line.
+ELLIPSIS = "..."
 FILE_NOT_FOUND = "File not found"
 CANNOT_READ = "Cannot read file"
 CANNOT_WRITE = "Cannot write file"
@@ -232,6 +242,27 @@ UNSET = "{count} setting{s} could not be read"
 STATE_FILE = "rederive.ini"
 #: What the message line says between two steps of a demonstration.
 PRESS_ANY_KEY = "Press any key to continue"
+
+
+class FileNames(Suggester):
+    """What a file prompt offers as it is typed: the first name on offer.
+
+    Textual prints the rest of that name past the cursor, dimmed, and takes it
+    on Right or End; Tab writes out what every name on offer shares instead,
+    and steps through them from there. Nothing is cached: files come and go
+    while the program runs, and a name that is offered but no longer there is
+    worse than no offer at all.
+    """
+
+    def __init__(self, suffix: str) -> None:
+        # Names are matched as they are typed, this being a filesystem that
+        # tells `Work.mth` from `work.mth`.
+        super().__init__(use_cache=False, case_sensitive=True)
+        self.suffix = suffix
+
+    async def get_suggestion(self, value: str) -> str | None:
+        found = worksheet.completions(value, self.suffix)
+        return found[0] if found else None
 
 
 @dataclass
@@ -395,6 +426,10 @@ class RederiveApp(App[None]):
     # Nothing on screen belongs to anything but the pane itself.
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
+        # Tab completes the name where a file is being named, and steps the
+        # menu everywhere else; `check_action` picks between the two, which
+        # leaves the second binding to take the key when the first declines it.
+        Binding("tab", "complete_file", "Complete filename", priority=True, show=False),
         Binding("tab", "menu_next", "Next option", priority=True, show=False),
         Binding("space", "menu_space", "Next option", priority=True, show=False),
         Binding(
@@ -459,6 +494,13 @@ class RederiveApp(App[None]):
         self.message = ENTER_OPTION
         #: What to do with the file the prompt line is naming.
         self.file_command: Callable[[str], None] | None = None
+        #: The extension that command supplies, and so what Tab completes to.
+        self.file_suffix = worksheet.SUFFIX
+        #: The names Tab last offered, and which of them is on the line - None
+        #: while the line holds what they all share rather than any one of
+        #: them. Together they are what makes one Tab step to the next name.
+        self.completions: list[str] = []
+        self.completed: int | None = None
         #: What to do with the values of the dialog that stores none.
         self.answer: Callable[[dict[str, str | int]], None] | None = None
         #: What that dialog's command will take, when it is choosy about it.
@@ -634,7 +676,12 @@ class RederiveApp(App[None]):
 
         Ctrl-Enter is the other exception: it is a form of Enter, so it applies
         wherever Enter does - on a menu, on a dialog, and on a prompt line.
+
+        Tab is a third: it completes the name on a file prompt, and steps the
+        menu everywhere else.
         """
+        if action == "complete_file":
+            return self.mode == MODE_FILE
         if action.startswith("menu_") or action == "scroll_work":
             return self.mode == MODE_MENU
         if action == "nav":
@@ -1047,6 +1094,8 @@ class RederiveApp(App[None]):
         self.query_one("#prompt-band").display = True
         self.query_one("#prompt-label", Static).update(label)
         line = self.query_one("#prompt-input", Input)
+        # A file prompt puts its own back; nothing else on a line completes.
+        line.suggester = None
         line.value = offered
         line.selection = Selection(min(keep, len(offered)), len(offered))
         line.focus()
@@ -1508,13 +1557,17 @@ class RederiveApp(App[None]):
 
     def _command_save(self) -> None:
         """Write the worksheet as a math file, asking the block first when Some."""
-        self._begin_save(SAVE_PROMPT, self._save)
+        self._begin_save(SAVE_PROMPT, self._save, worksheet.SUFFIX)
 
     def _chose_block(
-        self, label: str, command: Callable[[str], None], values: dict[str, str | int]
+        self,
+        label: str,
+        command: Callable[[str], None],
+        suffix: str,
+        values: dict[str, str | int],
     ) -> None:
         self.block = (int(values["SaveFirst"]), int(values["SaveLast"]))
-        self._ask_file(label, ENTER_FILE, command)
+        self._ask_file(label, command, suffix)
 
     def _command_save_source(self, language: Language) -> None:
         """Write the worksheet as source code, asking the block first when Some.
@@ -1525,9 +1578,12 @@ class RederiveApp(App[None]):
         self._begin_save(
             SAVE_SOURCE_PROMPT.format(word=language.word.upper()),
             partial(self._save_source, language),
+            language.suffix,
         )
 
-    def _begin_save(self, label: str, command: Callable[[str], None]) -> None:
+    def _begin_save(
+        self, label: str, command: Callable[[str], None], suffix: str
+    ) -> None:
         """Ask for a save's block if the Range option says Some, then its name.
 
         A history with nothing in it is nothing to write, and the original
@@ -1538,44 +1594,41 @@ class RederiveApp(App[None]):
             return
         if self.settings["SaveRange"] != "Some":
             self.block = (None, None)
-            self._ask_file(label, ENTER_FILE, command)
+            self._ask_file(label, command, suffix)
             return
         numbers = [entry.number for entry in self.session.entries]
         self._ask(
             menus.save_block(numbers[0], numbers[-1]),
-            partial(self._chose_block, label, command),
+            partial(self._chose_block, label, command, suffix),
         )
 
     def _command_load(self) -> None:
-        self._ask_file(LOAD_PROMPT, ENTER_FILE_TO_READ, self._load)
+        self._ask_file(LOAD_PROMPT, self._load)
 
     def _command_merge(self) -> None:
-        self._ask_file(MERGE_PROMPT, ENTER_FILE_TO_READ, self._merge)
+        self._ask_file(MERGE_PROMPT, self._merge)
 
     def _command_load_data(self) -> None:
-        self._ask_file(LOAD_DATA_PROMPT, ENTER_FILE_TO_READ, self._load_data)
+        self._ask_file(LOAD_DATA_PROMPT, self._load_data, worksheet.DATA_SUFFIX)
 
     def _command_load_utility(self) -> None:
-        self._ask_file(LOAD_UTILITY_PROMPT, ENTER_FILE_TO_READ, self._load_utility)
+        self._ask_file(LOAD_UTILITY_PROMPT, self._load_utility)
 
     def _command_save_state(self) -> None:
         self._ask_file(
-            SAVE_STATE_PROMPT, ENTER_FILE, self._save_state, offered=self.state_file
+            SAVE_STATE_PROMPT, self._save_state, state.SUFFIX, offered=self.state_file
         )
 
     def _command_load_state(self) -> None:
         self._ask_file(
-            LOAD_STATE_PROMPT,
-            ENTER_FILE_TO_READ,
-            self._load_state,
-            offered=self.state_file,
+            LOAD_STATE_PROMPT, self._load_state, state.SUFFIX, offered=self.state_file
         )
 
     def _ask_file(
         self,
         label: str,
-        message: str,
         command: Callable[[str], None],
+        suffix: str = worksheet.SUFFIX,
         offered: str | None = None,
     ) -> None:
         """Put the prompt band up for a command that names a file.
@@ -1584,11 +1637,80 @@ class RederiveApp(App[None]):
         original, so that saving twice over the same name is one keystroke. The
         two State commands offer their own file instead: a settings file is not
         the worksheet, and neither is a name for the other.
+
+        The line completes what is typed on it, offering the files the command
+        can use - the ones ending in `suffix` - and the directories to look in.
         """
         self.file_command = command
+        self.file_suffix = suffix
+        self.completions, self.completed = [], None
         if offered is None:
             offered = "" if self.session.file is None else str(self.session.file)
-        self._prompt(MODE_FILE, label, offered, message)
+        self._prompt(MODE_FILE, label, offered, ENTER_FILE)
+        self.query_one("#prompt-input", Input).suggester = FileNames(suffix)
+
+    def action_complete_file(self) -> None:
+        """Tab on a file prompt: write the name out as far as the files agree.
+
+        What every name on offer starts with goes on the line, and the names
+        themselves go on the message line, which is what the original's F1 file
+        list was for. Where the letters run out - because the names differ from
+        there on - Tab takes them one at a time instead, so that the whole list
+        can be walked through and any of it entered.
+
+        A directory is written with its separator after it, which leaves the
+        next Tab completing inside it. Nothing on offer is the beep, as a key
+        with no command is.
+        """
+        line = self.query_one("#prompt-input", Input)
+        if self._stepping(line.value):
+            assert self.completed is not None
+            self.completed = (self.completed + 1) % len(self.completions)
+            self._complete(line, self.completions[self.completed])
+            return
+        found = worksheet.completions(line.value, self.file_suffix)
+        if not found:
+            self._beep()
+            return
+        # What the names share goes on the line first; only once there is
+        # nothing left to share does Tab start taking them one at a time.
+        shared = commonprefix(found)
+        grown = len(shared) > len(line.value)
+        self.completions = found
+        self.completed = None if grown else 0
+        self._complete(line, shared if grown else found[0])
+        if len(found) > 1:
+            self._set_message(self._listed(found))
+
+    def _stepping(self, value: str) -> bool:
+        """Whether Tab is stepping the list rather than starting a new one.
+
+        Only while the line still holds the name Tab last put there, and only
+        where there is another name to step to: typing on the line, or taking a
+        directory it offered, asks the files again.
+        """
+        return (
+            self.completed is not None
+            and len(self.completions) > 1
+            and value == self.completions[self.completed]
+        )
+
+    def _complete(self, line: Input, name: str) -> None:
+        line.value = name
+        line.cursor_position = len(name)
+
+    def _listed(self, found: list[str]) -> str:
+        """The names on offer as the message line shows them.
+
+        Each without the directory in front of it, which is on the line
+        already, and the line cut short where the pane runs out. A directory
+        keeps the separator that says it is one.
+        """
+        names = " ".join(_last_name(name) for name in found)
+        room = max(len(ELLIPSIS), self.query_one(MessageLine).size.width - 1)
+        if len(names) <= room:
+            return names
+        return names[: room - len(ELLIPSIS)].rstrip() + ELLIPSIS
 
     def _save(self, name: str) -> None:
         self._written(lambda: self.session.save(worksheet.path_of(name), *self.block))
@@ -1690,7 +1812,7 @@ class RederiveApp(App[None]):
     # -- Transfer Demo -----------------------------------------------------
 
     def _command_demo(self) -> None:
-        self._ask_file(DEMO_PROMPT, ENTER_FILE_TO_READ, self._demo)
+        self._ask_file(DEMO_PROMPT, self._demo, worksheet.DEMO_SUFFIX)
 
     def _demo(self, name: str) -> None:
         """Start the demonstration in `name`, or pick up the suspended one.
@@ -1924,6 +2046,12 @@ class RederiveApp(App[None]):
         self.mode = MODE_MENU
         self.message = message
         self.refresh_screen()
+
+
+def _last_name(name: str) -> str:
+    """A completion's last component, the directory separator kept if it has one."""
+    trimmed = name.rstrip("/")
+    return trimmed.rpartition("/")[2] + name[len(trimmed) :]
 
 
 def _color_index(editor: DialogEditor) -> int:

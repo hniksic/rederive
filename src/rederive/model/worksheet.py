@@ -167,3 +167,40 @@ def path_of(name: str, suffix: str = SUFFIX) -> Path:
     """
     path = Path(name.strip()).expanduser()
     return path if path.suffix else path.with_suffix(suffix)
+
+
+def completions(name: str, suffix: str = SUFFIX) -> list[str]:
+    """Every name `name` could grow into, in order, each one longer than it is.
+
+    What a file prompt completes a half-typed name from. Only what the command
+    can use is on offer - files whose extension is `suffix`, matched however it
+    is cased, since the original's own files are named in capitals - along with
+    every directory, offered with the separator after it so that completing
+    again carries on inside it. A name beginning with a dot is offered only to
+    letters that begin with one, as a shell does.
+
+    What was typed is kept as it stands, `~` and all: only the last component
+    grows, so any of the answers can go straight back on the line. A name
+    already typed out in full is no completion of itself and is not among them.
+    """
+    head, separator, typed = name.rpartition("/")
+    directory = Path(head + separator).expanduser() if separator else Path()
+    try:
+        found = sorted(entry.name for entry in directory.iterdir())
+    except OSError:
+        return []
+    offered = []
+    for entry in found:
+        if not entry.startswith(typed):
+            continue
+        if entry.startswith(".") and not typed.startswith("."):
+            continue
+        if (directory / entry).is_dir():
+            grown = f"{head}{separator}{entry}/"
+        elif entry.lower().endswith(suffix.lower()):
+            grown = f"{head}{separator}{entry}"
+        else:
+            continue
+        if len(grown) > len(name):
+            offered.append(grown)
+    return offered
