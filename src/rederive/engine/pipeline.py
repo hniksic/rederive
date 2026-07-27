@@ -63,6 +63,7 @@ from rederive.engine.factoring import (
     factored_expression,
 )
 from rederive.engine.from_sympy import Result, from_sympy
+from rederive.engine.intervals import decided, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.substitute import named_as_declared, substitute
 from rederive.engine.to_sympy import (
@@ -265,6 +266,10 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     tried: set[sp.Basic] = set()
     expression = _calculus(expression, context, tried)
     expression = _numeric(expression)
+    # Before the rewrites rather than after, so that what the declared
+    # intervals settle is settled for them too: `ABS(x) + ABS(x - 1)` over
+    # `(0, 1)` is a sum that cancels, and only once both bars are off.
+    expression = settled(expression, context)
     expression = _rewritten(expression, context)
     # The rewrites can leave a head where none stood: `cancel` splits a single
     # integrand into a sum, and each part is an integral of its own. Those have
@@ -464,14 +469,16 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
 
     A relation reaches here undecided, so it is offered again evaluated - which
     is where the declared domains do their work - and then with its two sides
-    brought together by the same rewrites the rest of the pipeline uses.
+    brought together by the same rewrites the rest of the pipeline uses. What
+    none of those settles is put to the declared intervals, which are the one
+    thing a symbol could not carry into the evaluation itself.
     """
     for candidate in _truths(test, context):
         if candidate is sp.true:
             return True
         if candidate is sp.false:
             return False
-    return None
+    return decided(test, context)
 
 
 def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:

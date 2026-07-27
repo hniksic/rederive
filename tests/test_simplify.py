@@ -265,6 +265,66 @@ DOMAINS = [
     ("ACOT(x) + ATAN(x)", "ACOT(x) + ATAN(x)", COMPLEX_X),
 ]
 
+#: What a declaration's interval is worth past the sign of it. A symbol can
+#: carry "above zero" and nothing else, so everything here is a question the
+#: bounds answer and the converted expression cannot.
+INTERVALS = [
+    ("ABS(x - 1)", "1 - x", "x :epsilon Real (0, 1)"),
+    ("ABS(x - 1)", "1 - x", "x :epsilon Real [0, 1]"),
+    ("ABS(x - 1)", "ABS(x - 1)", "x :epsilon Real (0, 2)"),
+    ("ABS(x - 1)", "ABS(x - 1)", "x :epsilon Real (0, inf)"),
+    ("SQRT((x - 1)^2)", "1 - x", "x :epsilon Real (0, 1)"),
+    # Both bars come off, and then the sum cancels.
+    ("ABS(x) + ABS(x - 1)", "1", "x :epsilon Real (0, 1)"),
+    # `SIGN` is the one that needs the strict question: it has a third answer
+    # at zero, where an absolute value has the same answer either way.
+    ("SIGN(x - 1)", "-1", "x :epsilon Real (0, 1)"),
+    ("SIGN(x - 1)", "SIGN(x - 1)", "x :epsilon Real (0, 1]"),
+    ("ABS(x - 1)", "1 - x", "x :epsilon Real (0, 1]"),
+    ("MAX(x, 1)", "1", "x :epsilon Real (0, 1)"),
+    ("MIN(x, 1)", "x", "x :epsilon Real (0, 1)"),
+    ("MAX(x, 1)", "MAX(1, x)", "x :epsilon Real (0, 2)"),
+    # An integer variable is asked about through a real stand-in, sympy having
+    # no answer at all about one bounded by a relation.
+    ("ABS(n - 7)", "7 - n", "n :epsilon Integer [2, 5]"),
+    ("ABS(n - 7)", "ABS(n - 7)", "n :epsilon Integer [2, 9]"),
+    # The test of an `IF`, which is the one place Simplify asks whether a
+    # relation holds. The relation on its own is still soLve's business.
+    ("IF(x < 1, a, b)", "a", "x :epsilon Real (0, 1)"),
+    ("IF(x > 1, a, b)", "b", "x :epsilon Real (0, 1)"),
+    ("IF(x <= 1, a, b)", "a", "x :epsilon Real (0, 1]"),
+    ("IF(x = 1, a, b)", "b", "x :epsilon Real (0, 1)"),
+    ("IF(x /= 1, a, b)", "a", "x :epsilon Real (0, 1)"),
+    ("IF(x < 1, a, b)", "IF(x < 1, a, b)", "x :epsilon Real (0, 2)"),
+    ("x < 1", "x < 1", "x :epsilon Real (0, 1)"),
+    # As far as the reasoning reaches, which is about as far as the bounds are
+    # linear in. A square of a bounded variable is bounded and sympy does not
+    # see it; the answer to a question nobody can settle is the expression.
+    ("ABS(x^2 - 1)", "ABS(x^2 - 1)", "x :epsilon Real (0, 1)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected", "declaration"), INTERVALS, ids=str)
+def test_an_interval_settles_what_a_sign_alone_cannot(text, expected, declaration):
+    assert simp(text, declared(declaration)) == expected
+
+
+def test_two_declared_intervals_are_asked_together():
+    # One box over both variables, so a question about the pair is answerable
+    # where neither bound answers it alone.
+    box = declared("x :epsilon Real (0, 1)", "y :epsilon Real (2, 3)")
+    assert simp("ABS(x - y)", box) == "y - x"
+    assert simp("MAX(x, y)", box) == "y"
+    assert simp("IF(x < y, a, b)", box) == "a"
+
+
+def test_an_interval_costs_nothing_where_nothing_is_declared():
+    # The box is built only where a bound says something the symbol could not,
+    # so an undeclared variable reaches none of this.
+    assert simp("ABS(x - 1)") == "ABS(x - 1)"
+    assert simp("MAX(x, 1)") == "MAX(1, x)"
+    assert simp("IF(x < 1, a, b)") == "IF(x < 1, a, b)"
+
 
 @pytest.mark.parametrize(("text", "expected", "context"), DOMAINS, ids=str)
 def test_a_rewrite_needs_a_domain_that_justifies_it(text, expected, context):
