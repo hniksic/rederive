@@ -74,6 +74,12 @@ above, because `FACTOR(u, amount, x, y, ...)` and `EXPAND(u, amount, x, y,
 ...)` are an authored line's own way of asking for the same things, and
 Simplify is what evaluates those.
 
+`replace(node, replacements, state)` is Derive's Manage Substitute, and it is
+the one command that computes nothing: each replacement is a subtree to look
+for and what to write in its place, every match is replaced at once, and the
+answer is written out unsimplified. It is not `substitute`, which is the
+pre-pass every other command runs to write in what a name already stands for.
+
 `expression_variables(node, context)` is what a command offers before it can
 ask anything: the variables the expression holds, most main first.
 
@@ -102,6 +108,7 @@ from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
 from rederive.engine.ordering import ORDER_LIST, main_order
 from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
+from rederive.engine.replacing import Replacement, replace
 from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
 from rederive.engine.variables import expression_variables
@@ -117,6 +124,7 @@ __all__ = [
     "Domain",
     "DomainKind",
     "Precision",
+    "Replacement",
     "Result",
     "TrigPower",
     "approx",
@@ -129,6 +137,7 @@ __all__ = [
     "from_sympy",
     "main_order",
     "parse_state_for",
+    "replace",
     "simplify",
     "substitute",
     "to_sympy",

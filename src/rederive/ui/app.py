@@ -64,6 +64,13 @@ up a dialog for the label and then a line for the text, and Ordering puts up a
 line carrying the order list. None of the three appends anything to the
 history, so none of them has a compute time to report.
 
+Substitute is the fourth and the only one that derives an expression. It asks
+the way Factor and Expand do - an expression, then a line per answer - and
+what it asks for depends on what is highlighted: a value for each variable of
+a whole expression, or one replacement for a highlighted subexpression. It
+appends what it was given without simplifying it, so Ctrl-Enter on the last
+value is worth pressing, and the lines it collects are `Substituting`.
+
 The Declare commands are the same shape and each keeps its own answers -
 `Declaring`, `Defining`, `Entering` - but their questions replace each other
 rather than stacking, because the original abandons the whole command from
@@ -130,6 +137,9 @@ MODE_FUNCTION_VARIABLE = "function_variable"
 MODE_ELEMENT = "element"
 MODE_ANNOTATION = "annotation"
 MODE_ORDER = "order"
+#: The two modes the prompt band is in while Manage Substitute is asking.
+MODE_SUBSTITUTE = "substitute"
+MODE_SUBSTITUTE_VALUE = "substitute_value"
 MODE_DEMO = "demo"
 
 #: The modes in which the prompt band has the screen, and the keys with it.
@@ -149,13 +159,16 @@ PROMPT_MODES = (
     MODE_ELEMENT,
     MODE_ANNOTATION,
     MODE_ORDER,
+    MODE_SUBSTITUTE,
+    MODE_SUBSTITUTE_VALUE,
 )
 
 #: The prompt lines that take no notice of the keys that walk the history: the
-#: variable line Factor and Expand collect on, and the annotation line. Which
-#: expression is being worked on has been settled by the time either is up, so
-#: moving the highlight would say nothing about what the command will do.
-SETTLED_MODES = (MODE_ASKING_VARIABLE, MODE_ANNOTATION)
+#: variable line Factor and Expand collect on, the value line Substitute
+#: collects on, and the annotation line. Which expression is being worked on
+#: has been settled by the time any of them is up, so moving the highlight
+#: would say nothing about what the command will do.
+SETTLED_MODES = (MODE_ASKING_VARIABLE, MODE_ANNOTATION, MODE_SUBSTITUTE_VALUE)
 
 #: The prompt lines the highlight can still be walked under, which is every
 #: other one of them.
@@ -166,19 +179,22 @@ WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode not in SETTLED_MODES)
 #: selected on them. A line typed on is a line the user has taken over. The
 #: Declare lines take an expression too but are offered nothing to begin with,
 #: so there is nothing on them to keep in step with the highlight.
-LABELLED_MODES = (MODE_SIMPLIFY, MODE_APPROX, MODE_ASKING)
+LABELLED_MODES = (MODE_SIMPLIFY, MODE_APPROX, MODE_ASKING, MODE_SUBSTITUTE)
 
 #: The prompt lines an expression is entered on, and so the ones Ctrl-Enter
 #: says something on: it enters the line and simplifies what the command
 #: entered. The lines that derive an expression instead - Simplify, approX, and
 #: the expression Factor and Expand ask for - have simplified it already, and
 #: Jump enters nothing at all, so on those Ctrl-Enter is Enter and nothing more.
+#: Substitute's value line is one of these: it derives an expression and
+#: deliberately leaves it unsimplified, so there is something left to ask for.
 ENTERING_MODES = (
     MODE_AUTHOR,
     MODE_VARIABLE_VALUE,
     MODE_FUNCTION_VALUE,
     MODE_ELEMENT,
     MODE_FILE,
+    MODE_SUBSTITUTE_VALUE,
 )
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
@@ -242,6 +258,15 @@ ANNOTATION_PROMPT = " ANNOTATION: "
 ORDER_PROMPT = " MANAGE ORDER variables: "
 ENTER_ANNOTATION = "Enter annotation"
 ENTER_ORDER = "Enter variables in desired order"
+
+# Manage Substitute, which reads a line for the expression and one for each
+# value. A variable's line comes up carrying the variable's own name, so that
+# Enter alone leaves it alone; a subexpression has no name to offer and its
+# line comes up empty, the message line saying what is being replaced.
+SUBSTITUTE_PROMPT = " MANAGE SUBSTITUTE expression: "
+SUBSTITUTE_VALUE_PROMPT = " MANAGE SUBSTITUTE value: "
+ENTER_REPLACEMENT = "Enter replacement for {name}"
+SUBEXPRESSION = "subexpression"
 
 # Every command that names a file, and what it asks for. The original offered
 # a directory listing on F1; the line completes what is typed on Tab instead,
@@ -370,6 +395,25 @@ class Asking:
     #: The ones chosen so far, in the order they were, which is what makes the
     #: first of them the primary variable.
     chosen: tuple[str, ...] = ()
+
+
+@dataclass
+class Substituting:
+    """A Manage Substitute command part way through its questions.
+
+    It asks for an expression and then for what to write into it: one value
+    per variable, or the one replacement a highlighted subexpression takes.
+    `part` says which of the two, since a subexpression has no variables to
+    count and no name to ask under.
+    """
+
+    request: str = ""
+    part: bool = False
+    #: The variables not answered yet, most main first, which is the order the
+    #: original asks about them in.
+    remaining: tuple[str, ...] = ()
+    #: What has been answered so far: one value per variable answered.
+    values: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -538,6 +582,8 @@ class RederiveApp(App[None]):
         self.block: tuple[int | None, int | None] = (None, None)
         #: A Factor or Expand command's answers so far, while it is asking.
         self.asking: Asking | None = None
+        #: A Manage Substitute's answers so far, while it is asking.
+        self.substituting: Substituting | None = None
         #: The same for the three Declare commands that ask more than one
         #: question, each of which is asking whenever it is not None.
         self.declaring: Declaring | None = None
@@ -582,6 +628,7 @@ class RederiveApp(App[None]):
             (menus.MANAGE, "Annotate"): self._command_annotate,
             (menus.MANAGE, "Ordering"): self._command_ordering,
             (menus.MANAGE, "Renumber"): self._command_renumber,
+            (menus.MANAGE, "Substitute"): self._command_substitute,
             (menus.DECLARE, "Function"): self._command_declare_function,
             (menus.DECLARE, "Variable"): self._command_declare_variable,
             (menus.DECLARE, "Matrix"): self._command_declare_matrix,
@@ -1607,9 +1654,10 @@ class RederiveApp(App[None]):
 
     # -- Manage ------------------------------------------------------------
     #
-    # The three commands here that are not settings screens. None of them
-    # appends anything to the history: renumbering, annotating and ordering are
-    # things done to the session rather than expressions derived from it.
+    # The four commands here that are not settings screens. Three of them append
+    # nothing to the history: renumbering, annotating and ordering are things
+    # done to the session rather than expressions derived from it. Substitute is
+    # the one that derives one, and it asks the way Factor and Expand do.
 
     def _command_renumber(self) -> None:
         """Put the labels back in sequence. No question, no message, no record.
@@ -1682,6 +1730,106 @@ class RederiveApp(App[None]):
             return
         self.session.order = names
         self._end_prompt()
+
+    def _command_substitute(self) -> None:
+        """Ask which expression to substitute into, offering the highlighted one."""
+        self.substituting = Substituting()
+        entry = self.session.selected_entry
+        offered = "" if entry is None else f"#{entry.number}"
+        self._prompt(
+            MODE_SUBSTITUTE, SUBSTITUTE_PROMPT, offered, ENTER_TO_DERIVE, keep=1
+        )
+
+    def _substitute_expression(self, request: str) -> None:
+        """The expression is settled: work out what is left to ask.
+
+        A highlighted subexpression is one question, whatever it holds. A whole
+        expression is one question per variable - and an expression with no
+        variables in it leaves nothing to ask and nothing to append, so the
+        command is over where it stands, the Manage menu still up.
+        """
+        pending = self.substituting
+        assert pending is not None
+        if not request.strip():
+            self._end_prompt()
+            return
+        try:
+            pending.part = self.session.substitutes_part(request)
+            pending.remaining = () if pending.part else self.session.variables(request)
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return
+        pending.request = request
+        if pending.part or pending.remaining:
+            self._ask_value()
+        else:
+            self._end_prompt(done=False)
+
+    def _ask_value(self) -> None:
+        """Put up the next value question.
+
+        A variable's own name is what its line offers, so that Enter alone
+        leaves that variable standing. A subexpression is offered nothing:
+        there is no name for it, and the message line says what is being
+        replaced instead.
+        """
+        pending = self.substituting
+        assert pending is not None
+        name = SUBEXPRESSION if pending.part else pending.remaining[0]
+        self._prompt(
+            MODE_SUBSTITUTE_VALUE,
+            SUBSTITUTE_VALUE_PROMPT,
+            "" if pending.part else name,
+            ENTER_REPLACEMENT.format(name=name),
+        )
+
+    def _substitute_value(self, text: str) -> None:
+        """One answer to a value question.
+
+        A line that does not read is refused and left up to be corrected, as an
+        authored one is. A blank line leaves that variable alone and asks about
+        the next; on the subexpression question, where there is nothing else to
+        ask, it abandons the command rather than appending a copy.
+        """
+        pending = self.substituting
+        assert pending is not None
+        blank = not text.strip()
+        if not blank:
+            try:
+                self.session.reads(text)
+            except DeriveSyntaxError as error:
+                self._refused(error)
+                return
+        if pending.part:
+            if blank:
+                self._end_prompt(done=False)
+            else:
+                self._substituted(
+                    lambda: self.session.substitute_part(pending.request, text)
+                )
+            return
+        name, *rest = pending.remaining
+        pending.values += ((name, text),)
+        pending.remaining = tuple(rest)
+        if pending.remaining:
+            self._ask_value()
+        else:
+            self._substituted(
+                lambda: self.session.substitute(pending.request, dict(pending.values))
+            )
+
+    def _substituted(self, run: Callable[[], object]) -> None:
+        """Write the values in, and say how long the answer took."""
+        self.substituting = None
+        started = time.monotonic()
+        try:
+            run()
+        except DeriveSyntaxError as error:
+            # Every line was read as it was collected, so this is all but
+            # unreachable; there may be no prompt left to put the cursor in.
+            self._end_prompt(str(error))
+            return
+        self._end_prompt(COMPUTE_TIME.format(seconds=time.monotonic() - started))
 
     # -- Transfer ----------------------------------------------------------
 
@@ -2074,6 +2222,10 @@ class RederiveApp(App[None]):
             self._annotate(value)
         elif self.mode == MODE_ORDER:
             self._ordered(value)
+        elif self.mode == MODE_SUBSTITUTE:
+            self._substitute_expression(value)
+        elif self.mode == MODE_SUBSTITUTE_VALUE:
+            self._substitute_value(value)
         else:
             self._author(value)
 
@@ -2148,6 +2300,7 @@ class RederiveApp(App[None]):
         leaves that menu where it was, which is what Esc does.
         """
         self.asking = None
+        self.substituting = None
         self.declaring = None
         self.defining = None
         self.entering = None

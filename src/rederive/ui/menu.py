@@ -172,10 +172,10 @@ DECLARE_INTERVAL = Menu(
 #: not, so choosing one of those is the last answer the command needs.
 BOUNDED_DOMAINS = ("Integer", "Real")
 
-# Four of these eight commands set something and are dialogs; three more act on
-# the session and ask for what they need on a line of their own. Substitute is
-# the one that is not implemented. `Trigonometry` goes on a line of its own
-# because all eight will not fit across eighty columns.
+# Four of these eight commands set something and are dialogs; the other four
+# act on the session and ask for what they need on a line of their own.
+# `Trigonometry` goes on a line of its own because all eight will not fit
+# across eighty columns.
 MANAGE = Menu(
     "MANAGE:",
     (
@@ -465,7 +465,7 @@ COLOR_TARGETS: dict[str, settings.Dialog] = {
 
 #: What each word of the Manage menu opens. The four that are missing -
 #: Annotate, Ordering, Renumber and Substitute - are commands rather than
-#: screens; only Substitute is still unimplemented.
+#: screens, and the app is where they live.
 MANAGE_TARGETS: dict[str, Menu | settings.Dialog] = {
     "Branch": settings.BRANCH,
     "Exponential": settings.EXPONENTIAL,

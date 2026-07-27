@@ -33,12 +33,17 @@ same reason the Declare ones are: `renumber` puts the labels back in sequence
 that removing and unremoving leave out of it, `annotate` edits where an entry
 says it came from, and `order_list` reads the variable order list, which is
 session state the engine hears about through the context.
+
+`substitute` is the one that does need an engine command. It is beside the
+other three rather than among them because what it appends is derived from the
+whole entry however little of it was highlighted: the substitution happens
+inside the entry, so there is no part to splice an answer back into.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -406,6 +411,64 @@ class Session:
 
         return self._command(request, "Expd", run)
 
+    def substitute(self, request: str, values: Mapping[str, str]) -> Entry:
+        """Append what `request` names with a value written in for each variable.
+
+        `values` holds one replacement per variable name. A blank one leaves
+        that variable alone, which is what Enter on the name the prompt offers
+        comes to. They all go in at once, so answering `y` for `x` and `x` for
+        `y` interchanges the two rather than writing one of them twice.
+
+        Nothing is simplified, which is the point of the command: `a*x^2 + b*x
+        + c` with 2, 3 and 5 written in is appended as `3*2^2 + 5*2 + c`, for
+        the user to look at before asking for a Simplify.
+
+        Raises `DeriveSyntaxError` and appends nothing when `request` or one of
+        the values does not parse.
+        """
+        entry, target = self._requested(request)
+        replacements = [
+            (Node(Kind.NAME, 0, 0, (), name), parse_expression(text, self.state).node)
+            for name, text in values.items()
+            if text.strip()
+        ]
+        return self._substituted(target, replacements, entry)
+
+    def substitute_part(self, request: str, value: str) -> Entry:
+        """Append the entry `request` names with the highlighted part replaced.
+
+        Every exact match of that part in the whole entry goes, matching being
+        structural: substituting for `t^3` leaves the `t^6` beside it alone. A
+        blank value replaces nothing.
+
+        The answer is derived from the whole entry, since the substitution
+        happens inside it, so the annotation carries no quote - unlike a
+        Simplify of the same part, which transforms the part alone.
+
+        Raises `DeriveSyntaxError` and appends nothing when `request` or
+        `value` does not parse.
+        """
+        entry, target = self._requested(request)
+        part = self._highlighted_in(entry)
+        replacements = (
+            []
+            if part is None or not value.strip()
+            else [(part, parse_expression(value, self.state).node)]
+        )
+        return self._substituted(target, replacements, entry)
+
+    def substitutes_part(self, request: str) -> bool:
+        """Whether a Substitute for what `request` names would replace a part.
+
+        Which is what decides what the command asks for: a highlighted part is
+        one question offering nothing, and a whole expression is one question
+        per variable.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        entry, _ = self._requested(request)
+        return self._highlighted_in(entry) is not None
+
     def target(self, request: str) -> Node:
         """The expression a command for `request` would act on.
 
@@ -419,11 +482,8 @@ class Session:
         entry = self._labelled(node)
         if entry is None:
             return node
-        if entry is self.selected_entry and self.route:
-            part = self.selected_node
-            if part is not None:
-                return part
-        return entry.node
+        part = self._highlighted_in(entry)
+        return entry.node if part is None else part
 
     def variables(self, request: str) -> tuple[str, ...]:
         """The variables Factor or Expand would offer for what `request` names.
@@ -468,7 +528,7 @@ class Session:
         entry = self._labelled(node)
         if entry is None:
             return self._answered(node, run, f"{prefix}({AUTHORED})")
-        if entry is self.selected_entry and self.route:
+        if self._highlighted_in(entry) is not None:
             return self._answered_part(entry, run, prefix)
         return self._answered(entry.value, run, f"{prefix}(#{entry.number})")
 
@@ -481,6 +541,46 @@ class Session:
         except ValueError:
             return None
         return self.numbered(number)
+
+    def _requested(self, request: str) -> tuple[Entry | None, Node]:
+        """The entry `request` labels, if it labels one, and the whole of it.
+
+        What a substitution works on, which is the whole entry even where part
+        of it is highlighted: the part says what to replace, not what to
+        replace it in.
+        """
+        node = parse_expression(request, self.state).node
+        entry = self._labelled(node)
+        return entry, node if entry is None else entry.node
+
+    def _highlighted_in(self, entry: Entry | None) -> Node | None:
+        """The part of `entry` the selection has highlighted, if it has one.
+
+        Naming `#3` while a subexpression of entry 3 is highlighted names that
+        subexpression; any other entry is named whole, wherever the highlight
+        happens to be.
+        """
+        if entry is None or entry is not self.selected_entry or not self.route:
+            return None
+        return self.selected_node
+
+    def _substituted(
+        self,
+        node: Node,
+        replacements: Sequence[engine.Replacement],
+        entry: Entry | None,
+    ) -> Entry:
+        """Append `node` with `replacements` written into it, unsimplified.
+
+        `entry` is where it came from, for the annotation to say so; None is a
+        line the user typed on the prompt rather than a label.
+        """
+        # Deriving an expression empties the unremove buffer, as every other
+        # engine command does.
+        self.removed = []
+        result = engine.replace(node, replacements, self.state)
+        source = AUTHORED if entry is None else f"#{entry.number}"
+        return self._append(result.text, result.node, f"Sub({source})")
 
     def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
         result = run(node, self.context, self.state)
