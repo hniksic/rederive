@@ -47,8 +47,8 @@ async def test_menu_highlight_cycles_and_wraps(app):
 
 async def test_mnemonic_invokes_without_moving_the_highlight(app):
     async with app.run_test() as pilot:
-        await pilot.press("b")
-        assert message(app) == "Build: not implemented yet"
+        await pilot.press("h")
+        assert message(app) == "Help: not implemented yet"
         assert highlighted_menu_option(app) == "Author"
 
 
@@ -1146,6 +1146,420 @@ async def test_a_blank_answer_that_names_nothing_abandons_the_command(app, keys,
         assert band(app) == [" DECLARE: Function Variable Matrix vectoR"]
         assert entries(app) == []
 
+
+# -- Build, which asks for operands and operators until Done ------------------
+#
+# Every screen asserted here was checked against the original.
+
+
+async def test_build_asks_for_an_operand_then_an_operator_then_another(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("b")
+        assert prompt(app) == ("BUILD first expression:", "#1")
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        operators = "+ - * / ^ . ` = Minus Recip Ln Exp Tan Sin Cos Atan ! % Done"
+        assert band(app) == [f" BUILD: Operator: {operators}"]
+        assert message(app) == "Select operator"
+        assert highlighted(app) == "+"
+        await pilot.press("+")
+        assert prompt(app) == ("BUILD next expression:", "#1")
+        await pilot.press("enter")
+        # An operand answered leaves the menu open on the word that finishes.
+        assert highlighted(app) == "Done"
+        await pilot.press("d")
+        assert entries(app) == ["x^2*y", "x^2*y+x^2*y"]
+        assert annotation(app) == "#1+#1"
+        assert band(app)[0].startswith(" COMMAND:")
+
+
+async def test_a_unary_operator_asks_for_nothing_more(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("b", "enter")
+        await pilot.press("s")
+        assert band(app)[0].startswith(" BUILD: Operator:")
+        assert highlighted(app) == "Done"
+        await pilot.press("d")
+        assert entries(app) == ["x", "SIN(x)"]
+        assert annotation(app) == "SIN(#1)"
+
+
+async def test_the_operators_chain_until_done(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2")
+        await author(pilot, "3")
+        await author(pilot, "4")
+        await pilot.press("b", "up", "up", "enter")
+        await pilot.press("+", "down", "enter")
+        await pilot.press("*", "down", "enter")
+        await pilot.press("d")
+        # Left to right, with the fences the grouping calls for - and an
+        # annotation written flat, which is how the original writes it.
+        assert entries(app)[-1] == "(2+3)*4"
+        assert annotation(app) == "#1+#2*#3"
+
+
+async def test_unary_operators_nest(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("b", "enter", "s", "c", "d")
+        assert entries(app)[-1] == "COS(SIN(x))"
+        assert annotation(app) == "COS(SIN(#1))"
+
+
+async def test_the_symbols_are_their_own_mnemonics(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("b", "enter", "!")
+        assert highlighted(app) == "Done"
+        await pilot.press("d")
+        assert entries(app)[-1] == "x!"
+
+
+async def test_space_steps_the_operator_menu(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("b", "enter")
+        await pilot.press("space", "space")
+        assert highlighted(app) == "*"
+
+
+async def test_the_arrow_keys_pick_the_operand_off_the_screen(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2")
+        await author(pilot, "3")
+        await pilot.press("b")
+        assert prompt(app) == ("BUILD first expression:", "#2")
+        await pilot.press("up")
+        assert prompt(app) == ("BUILD first expression:", "#1")
+
+
+async def test_a_highlighted_part_is_what_is_built_from(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "SIN(a*x^2) + 5")
+        await pilot.press("f6", "right", "down")
+        assert highlighted_expression(app) == "   2\na·x"
+        await pilot.press("b")
+        # The line still names the entry; the part is what it stands for.
+        assert prompt(app) == ("BUILD first expression:", "#1")
+        await pilot.press("enter", "d")
+        assert entries(app)[-1] == "a*x^2"
+        assert annotation(app) == "#1'"
+
+
+async def test_build_takes_a_typed_expression_too(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("b")
+        await pilot.press("backspace", "backspace")
+        await pilot.press(*"2+3", "enter")
+        await pilot.press("d")
+        assert entries(app)[-1] == "2+3"
+        assert annotation(app) == "User"
+
+
+async def test_a_line_that_does_not_read_stays_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("b")
+        await pilot.press("backspace", "backspace")
+        await pilot.press(*"2+*", "enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert prompt(app) == ("BUILD first expression:", "2+*")
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("b",), "the first operand"),
+        (("b", "enter"), "the operator"),
+        (("b", "enter", "+"), "the second operand"),
+        (("b", "enter", "+", "enter"), "the operator again"),
+    ],
+    ids=str,
+)
+async def test_escape_abandons_the_whole_build(app, keys, step):
+    """There is nothing to step back to: one Esc gives the command menu back."""
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press(*keys)
+        await pilot.press("escape")
+        assert band(app)[0].startswith(" COMMAND:")
+        assert entries(app) == ["x"]
+        assert app.building is None
+
+
+async def test_a_blank_operand_line_abandons_the_build(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("b")
+        await pilot.press("backspace", "backspace", "enter")
+        assert band(app)[0].startswith(" COMMAND:")
+        assert entries(app) == ["x"]
+
+
+async def test_build_asks_the_same_question_of_an_empty_history(app):
+    async with app.run_test() as pilot:
+        await pilot.press("b")
+        assert prompt(app) == ("BUILD first expression:", "")
+        assert message(app) == "Enter expression"
+
+
+async def test_ctrl_enter_on_done_enters_one_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("b", "enter", "+", "enter")
+        await pilot.press("ctrl+j")
+        # One entry, not two: what was built never reaches the history, and
+        # the annotation says both what it was and that it was taken.
+        assert entries(app) == ["x^2*y", "2*x^2*y"]
+        assert annotation(app) == "Simp(#1+#1)"
+
+
+# -- Calculus, whose seven commands ask an expression, a variable, and a line -
+
+
+async def test_the_calculus_menu_lists_seven_commands(app):
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        assert band(app) == [
+            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
+        ]
+        assert message(app) == "Enter option"
+        assert highlighted(app) == "Differentiate"
+
+
+async def test_differentiate_asks_expression_then_variable_then_order(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "d")
+        assert prompt(app) == ("CALCULUS DIFFERENTIATE expression:", "#1")
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "x")
+        assert message(app) == "Enter variable"
+        await pilot.press("enter")
+        assert band(app) == [" CALCULUS DIFFERENTIATE: Order: 1"]
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        assert work_area(app)[-3:] == ["     d    2", "#2:  ── (x ·y)", "     dx"]
+        assert entries(app)[-1] == "DIF(x^2*y,x)"
+        assert annotation(app) == "Dif(#1,x)"
+        assert band(app)[0].startswith(" COMMAND:")
+
+
+@pytest.mark.parametrize(
+    ("key", "line"),
+    [
+        ("i", " CALCULUS INTEGRATE: Lower limit:                    Upper limit:"),
+        ("l", " CALCULUS LIMIT: Point: 0                  From:(Both)Left Right"),
+        ("p", " CALCULUS PRODUCT: Lower limit: 1                  Upper limit: n"),
+        ("s", " CALCULUS SUM: Lower limit: 1                  Upper limit: n"),
+        ("t", " CALCULUS TAYLOR: Degree: 5                  Point: 0"),
+        ("v", " CALCULUS VECTOR: Start: 1               End:                 Step: 1"),
+    ],
+    ids=str,
+)
+async def test_each_command_finishes_on_a_line_of_its_own(app, key, line):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", key, "enter", "enter")
+        assert band(app) == [line]
+
+
+@pytest.mark.parametrize(
+    ("keys", "text", "note"),
+    [
+        (("d", "enter"), "DIF(x^2*y,x)", "the order is left off when it is one"),
+        (("d", "3", "enter"), "DIF(x^2*y,x,3)", "and written when it is not"),
+        (("i", "enter"), "INT(x^2*y,x)", "no limits is the indefinite integral"),
+        (("i", "0", "enter", "1", "enter"), "INT(x^2*y,x,0,1)", "both is definite"),
+        (("l", "enter"), "LIM(x^2*y,x,0,0)", "Both is written as a zero"),
+        (("l", "tab", "l", "enter"), "LIM(x^2*y,x,0,-1)", "Left as a minus one"),
+        (("l", "tab", "r", "enter"), "LIM(x^2*y,x,0,1)", "Right as a one"),
+        (("s", "enter"), "SUM(x^2*y,x,1,n)", "the limits offered are 1 to n"),
+        (
+            ("s", "delete", "tab", "delete", "enter"),
+            "SUM(x^2*y,x)",
+            "and blanking both asks for the antidifference",
+        ),
+        (("p", "enter"), "PRODUCT(x^2*y,x,1,n)", "a product asks the same"),
+        (("t", "enter"), "TAYLOR(x^2*y,x,0,5)", "the point is written first"),
+        (("t", "3", "tab", "1", "enter"), "TAYLOR(x^2*y,x,1,3)", "though asked last"),
+        (("v", "5", "enter"), "VECTOR(x^2*y,x,1,5)", "the step is left off at one"),
+        (("v", "5", "tab", "2", "enter"), "VECTOR(x^2*y,x,1,5,2)", "and written at two"),
+    ],
+    ids=str,
+)
+async def test_what_each_command_enters(app, keys, text, note):
+    """The linear forms come from the original's own Transfer Save."""
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", *keys[:1], "enter", "enter", *keys[1:])
+        assert entries(app)[-1] == text
+
+
+async def test_the_limit_direction_is_chosen_off_the_line(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "l", "enter", "enter")
+        assert message(app) == "Enter limit point"
+        await pilot.press("tab")
+        assert band(app) == [
+            " CALCULUS LIMIT: Point: 0                  From: Both Left Right"
+        ]
+        assert message(app) == "Select approach direction"
+        assert highlighted(app) == "Both"
+        await pilot.press("space")
+        assert highlighted(app) == "Left"
+        # A mnemonic chooses and hands the line back to the point.
+        await pilot.press("r")
+        assert band(app) == [
+            " CALCULUS LIMIT: Point: 0                  From: Both Left(Right)"
+        ]
+        assert message(app) == "Enter limit point"
+
+
+async def test_the_taylor_line_says_which_field_it_is_asking_about(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "t", "enter", "enter")
+        assert message(app) == "Enter maximum degree"
+        await pilot.press("tab")
+        assert message(app) == "Enter expansion point"
+
+
+async def test_the_vector_line_opens_on_the_field_it_cannot_do_without(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "v", "enter", "enter")
+        await pilot.press("7")
+        assert band(app) == [
+            " CALCULUS VECTOR: Start: 1               End: 7               Step: 1"
+        ]
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("v", "enter"), "an end the vector has to run to"),
+        (("d", "delete", "enter"), "an order to differentiate to"),
+        (("l", "delete", "enter"), "a point to take the limit at"),
+    ],
+    ids=str,
+)
+async def test_a_field_that_has_to_be_answered_refuses_to_commit(app, keys, step):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", *keys[:1], "enter", "enter", *keys[1:])
+        assert entries(app) == ["x^2*y"]
+        assert band(app)[0].startswith(" CALCULUS ")
+
+
+async def test_one_limit_of_a_pair_sends_the_line_to_the_other(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "i", "enter", "enter")
+        await pilot.press("0", "enter")
+        # Neither taken nor refused outright: the empty half is what is asked
+        # for now, and answering it commits.
+        assert entries(app) == ["x^2*y"]
+        assert band(app) == [
+            " CALCULUS INTEGRATE: Lower limit: 0                  Upper limit:"
+        ]
+        await pilot.press("1", "enter")
+        assert entries(app)[-1] == "INT(x^2*y,x,0,1)"
+
+
+async def test_the_variable_offered_is_the_primary_one(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "SIN(a*x^2)")
+        await pilot.press("c", "d", "enter")
+        assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "x")
+
+
+async def test_a_bound_variable_leaves_the_line_empty(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "INT(x^2, x, 0, 1)")
+        await pilot.press("c", "d", "enter")
+        assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "")
+
+
+async def test_a_line_that_names_no_variable_is_refused_without_a_word(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "d", "enter")
+        await pilot.press("backspace")
+        await pilot.press(*"2+3", "enter")
+        assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "2+3")
+        assert message(app) == "Enter variable"
+        assert entries(app) == ["x^2*y"]
+
+
+async def test_a_highlighted_part_is_what_is_taken(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "SIN(a*x^2) + 5")
+        await pilot.press("f6", "right", "down")
+        assert highlighted_expression(app) == "   2\na·x"
+        await pilot.press("c", "d", "enter", "enter", "enter")
+        # Extraction, not substitution: the part alone is what the head goes
+        # round, and the entry it came out of is left as it was.
+        assert entries(app)[-1] == "DIF(a*x^2,x)"
+        assert annotation(app) == "Dif(#1',x)"
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("c", "d"), "the expression"),
+        (("c", "d", "enter"), "the variable"),
+        (("c", "d", "enter", "enter"), "the order"),
+        (("c", "v", "enter", "enter"), "the values a vector runs over"),
+    ],
+    ids=str,
+)
+async def test_escape_abandons_the_command_for_the_calculus_menu(app, keys, step):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press(*keys)
+        await pilot.press("escape")
+        assert band(app) == [
+            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
+        ]
+        assert entries(app) == ["x^2*y"]
+        assert app.calculating is None
+
+
+async def test_a_blank_expression_line_abandons_the_command(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "d")
+        await pilot.press("backspace", "backspace", "enter")
+        assert band(app) == [
+            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
+        ]
+        assert entries(app) == ["x^2*y"]
+
+
+async def test_ctrl_enter_on_the_last_field_enters_one_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "d", "enter", "enter")
+        await pilot.press("ctrl+j")
+        assert entries(app) == ["x^2*y", "2*x*y"]
+        assert annotation(app) == "Simp(Dif(#1,x))"
+
+
+async def test_nothing_is_computed_until_a_simplify_asks_for_it(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "d", "enter", "enter", "enter")
+        assert entries(app)[-1] == "DIF(x^2*y,x)"
+        await pilot.press("s", "enter")
+        assert entries(app)[-1] == "2*x*y"
+        assert annotation(app) == "Simp(#2)"
 
 # -- Jump ---------------------------------------------------------------------
 #

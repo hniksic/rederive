@@ -427,6 +427,124 @@ CALCULUS = [
         └dx┘
         """,
     ),
+    # `d/dx` reaches less far to the right than the other forms that end in a
+    # body: it fences a product and a sign where `Σ`, `lim` and `∫` leave both
+    # bare. A quotient is nobody's exception to fence: the bar delimits it.
+    (
+        "DIF(x*y,x)",
+        """
+        d
+        ── (x·y)
+        dx
+        """,
+    ),
+    (
+        "DIF(-x,x)",
+        """
+        d
+        ── (-x)
+        dx
+        """,
+    ),
+    (
+        "DIF(x/y,x)",
+        """
+        d   x
+        ── ───
+        dx  y
+        """,
+    ),
+    (
+        "DIF(SIN(x),x)",
+        """
+        d
+        ── SIN(x)
+        dx
+        """,
+    ),
+    (
+        "DIF(x*y,x,3)",
+        """
+        ┌d ┐3
+        │──│  (x·y)
+        └dx┘
+        """,
+    ),
+    (
+        "SUM(x*y,x,1,n)",
+        """
+         n
+         Σ  x·y
+        x=1
+        """,
+    ),
+    (
+        "SUM(-x,x,1,n)",
+        """
+         n
+         Σ  -x
+        x=1
+        """,
+    ),
+    (
+        "LIM(x*y,x,0)",
+        """
+        lim x·y
+        x→0
+        """,
+    ),
+    (
+        "INT(-x,x)",
+        """
+        ⌠
+        ⌡ -x dx
+        """,
+    ),
+    # The antidifference and the antiquotient, which `Calculus Sum` and
+    # `Calculus Product` build when both limits are left blank: the index
+    # stands under the sign alone, with nothing over it.
+    (
+        "SUM(k^2,k)",
+        """
+           2
+        Σ k
+        k
+        """,
+    ),
+    (
+        "PRODUCT(k^2,k)",
+        """
+           2
+        Π k
+        k
+        """,
+    ),
+    # The direction `Calculus Limit` writes: a sign against the point, and
+    # nothing at all for the two-sided limit it writes as a zero.
+    (
+        "LIM((SIN x)/x,x,0,0)",
+        """
+             SIN(x)
+        lim ────────
+        x→0     x
+        """,
+    ),
+    (
+        "LIM(ABS(x)/x,x,0,-1)",
+        """
+              │x│
+         lim ─────
+        x→0-   x
+        """,
+    ),
+    (
+        "LIM(ABS(x)/x,x,0,1)",
+        """
+              │x│
+         lim ─────
+        x→0+   x
+        """,
+    ),
 ]
 
 CORPUS = FRACTIONS + SCRIPTS + FENCES + VECTORS + CALCULUS
@@ -738,6 +856,10 @@ def test_a_head_is_not_an_operand() -> None:
         ("SUM(k^2,k,1,n)", ["(^ k 2)", "k", "1", "n"]),
         ("PRODUCT(k,k,1,n)", ["k", "k", "1", "n"]),
         ("LIM((SIN x)/x,x,0)", ["(/ (apply SIN x) x)", "x", "0"]),
+        # The direction is drawn as a sign, so it is no operand of its own.
+        ("LIM((SIN x)/x,x,0,1)", ["(/ (apply SIN x) x)", "x", "0"]),
+        ("SUM(k^2,k)", ["(^ k 2)", "k"]),
+        ("PRODUCT(k^2,k)", ["(^ k 2)", "k"]),
         ("DIF(x^3,x,2)", ["(^ x 3)", "x", "2"]),
         ("DIF(x,x)", ["x", "x"]),
         ("SQRT(x+1)", ["(+ x 1)"]),
@@ -747,6 +869,17 @@ def test_a_head_is_not_an_operand() -> None:
 )
 def test_a_special_form_names_its_own_operands(text: str, expected: list[str]) -> None:
     assert operands(text) == expected
+
+
+def test_a_limit_whose_direction_is_no_direction_prints_as_a_call() -> None:
+    """`LIM(u, x, a, d)` draws its fourth argument as a sign or not at all.
+
+    A fourth argument that is neither is nothing the drawn form can show, so
+    the head is written out as the call it is rather than drawn as a limit
+    that has lost part of what it says.
+    """
+    assert rendered("LIM(x,x,0,z)") == ["LIM(x, x, 0, z)"]
+    assert rendered("LIM(x,x,0,0)") == ["lim x", "x→0"]
 
 
 @pytest.mark.parametrize(

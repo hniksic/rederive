@@ -545,12 +545,103 @@ class Session:
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
+        return self.named_target(request)[0]
+
+    def named_target(self, request: str) -> tuple[Node, str]:
+        """That expression, and what an annotation calls it.
+
+        `#3` for a whole entry, `#3'` for the highlighted part of one, and
+        `User` for a line the user wrote out instead - which is what Build and
+        the Calculus commands write their annotations from, both of them
+        naming their operands rather than describing what was done to them.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
         node = parse_expression(request, self.state).node
         entry = self._labelled(node)
         if entry is None:
-            return node
+            return node, AUTHORED
         part = self._highlighted_in(entry)
-        return entry.node if part is None else part
+        if part is None:
+            return entry.node, f"#{entry.number}"
+        return part, f"#{entry.number}'"
+
+    def is_variable(self, text: str) -> bool:
+        """Whether `text` is a single variable name and nothing else.
+
+        All the Calculus variable fields take: the variable to differentiate
+        by, to integrate over, or to run a sum's index over. It need not be a
+        variable of the expression - differentiating by a name that is not in
+        it is a legitimate way to get zero - but it does have to be a name, and
+        one that stands for nothing else already.
+        """
+        try:
+            node = parse_expression(text, self.state).node
+        except DeriveSyntaxError:
+            return False
+        return node.kind is Kind.NAME and self._is_variable(str(node.value))
+
+    def build(self, node: Node, annotation: str, simplified: bool = False) -> Entry:
+        """Append a built expression, unsimplified, as Build leaves it.
+
+        `node` is hung together from operands the command resolved as it
+        collected them, so its spans index nothing; it is written out and read
+        back here, which is what gives the entry spans into the text it shows.
+
+        `simplified` is Ctrl-Enter on the operator menu's `Done`, and it
+        appends one entry rather than two: the original enters the simplified
+        expression alone, the built form it came from never reaching the
+        history, and says so by wrapping the annotation - `Simp(#1+#1)`.
+        """
+        return self._derived(node, annotation, simplified)
+
+    def calculus(
+        self,
+        head: str,
+        prefix: str,
+        request: str,
+        arguments: Sequence[str],
+        simplified: bool = False,
+    ) -> Entry:
+        """Append `HEAD(u, ...)` over what `request` names, unsimplified.
+
+        The Calculus commands compute nothing: `Calculus Differentiate` leaves
+        a `DIF` standing for the derivative, and taking it is what a Simplify
+        after it is for. That is the whole of the command - which is why one
+        method serves all seven, told the head to write and the word the
+        annotation is spelled with.
+
+        `arguments` are the arguments after the expression, already in the
+        order the head takes them and with the ones the command leaves off
+        left off. The annotation names only the expression and the variable,
+        as the original's does: `Dif(#1,x)` says nothing about the order.
+
+        Raises `DeriveSyntaxError` and appends nothing when `request` or one of
+        the arguments does not parse.
+        """
+        target, source = self.named_target(request)
+        parsed = [parse_expression(text, self.state).node for text in arguments]
+        name = Node(Kind.NAME, 0, 0, (), head)
+        call = Node(Kind.CALL, 0, 0, (name, target, *parsed))
+        variable = arguments[0] if arguments else ""
+        return self._derived(call, f"{prefix}({source},{variable})", simplified)
+
+    def _derived(self, node: Node, annotation: str, simplified: bool = False) -> Entry:
+        """Append a tree built rather than computed, written out and read back.
+
+        Deriving an expression empties the unremove buffer, which every other
+        command that appends an answer does with it.
+
+        A command taken with Ctrl-Enter simplifies what it built instead of
+        appending it, so that one entry comes of it and not two, and the
+        annotation records both steps: `Simp(Dif(#1,x))` is the derivative of
+        entry 3, taken.
+        """
+        self.removed = []
+        result = engine.replace(node, (), self.state)
+        if not simplified:
+            return self._append(result.text, result.node, annotation)
+        return self._answered(result.node, self.runner.simplify, f"Simp({annotation})")
 
     def variables(self, request: str) -> tuple[str, ...]:
         """The variables Factor or Expand would offer for what `request` names.

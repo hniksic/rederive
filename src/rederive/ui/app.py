@@ -94,12 +94,35 @@ The Declare commands are the same shape and each keeps its own answers -
 rather than stacking, because the original abandons the whole command from
 whichever of them is up. A question answered off a menu therefore pops it
 before putting the next one, and one Esc always lands back on the Declare menu.
+
+Build is the one command with no end to its questions: an operand on a line, an
+operator off a menu, another operand where the operator takes one, and round
+again until `Done`. What it has put together lives in a `Building` and is one
+tree however many operators have gone into it, since each of them folds the
+last into a new node. The menu comes down rather than aside whenever an operand
+is asked for, so that Esc on that line abandons the whole command as the
+original does, and goes back up on `Done` and after every unary operator.
+
+The seven Calculus commands are one flow the other way about: the same two
+lines - an expression, then the variable, offered as the primary variable of
+what was named - and then a dialog that differs. A `Calculus` holds what
+differs, which is the head to write, the word the annotation is spelled with,
+the dialog, and how what comes back off it becomes the arguments after the
+variable. None of them computes: each appends the head unevaluated for a
+Simplify after it to take.
+
+Both of them take Ctrl-Enter on their last question and neither uses the
+general path for it. The original enters one expression and not two - the built
+form never reaches the history - so the mark Ctrl-Enter left is taken back off
+and the command simplifies what it built instead of appending it, which is what
+`Simp(#1+#1)` and `Simp(Dif(#1,x))` say.
 """
 
 from __future__ import annotations
 
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
 from os.path import commonprefix
@@ -114,8 +137,9 @@ from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
 from rederive.engine import Amount, EngineAborted
+from rederive.model import building, state, worksheet
 from rederive.model import session as sessions
-from rederive.model import state, worksheet
+from rederive.model.expr import Node
 from rederive.model.session import Session
 from rederive.model.settings import (
     ChoiceField,
@@ -146,6 +170,13 @@ MODE_APPROX = "approx"
 #: The two modes the prompt band is in while Factor or Expand is asking.
 MODE_ASKING = "asking"
 MODE_ASKING_VARIABLE = "asking_variable"
+#: The two lines Build reads an operand on, the second of which comes back
+#: after every binary operator.
+MODE_BUILD = "build"
+MODE_BUILD_NEXT = "build_next"
+#: The two lines every Calculus command reads before the one that is its own.
+MODE_CALCULUS = "calculus"
+MODE_CALCULUS_VARIABLE = "calculus_variable"
 MODE_JUMP = "jump"
 MODE_FILE = "file"
 MODE_CONFIRM = "confirm"
@@ -173,6 +204,10 @@ PROMPT_MODES = (
     MODE_APPROX,
     MODE_ASKING,
     MODE_ASKING_VARIABLE,
+    MODE_BUILD,
+    MODE_BUILD_NEXT,
+    MODE_CALCULUS,
+    MODE_CALCULUS_VARIABLE,
     MODE_JUMP,
     MODE_FILE,
     MODE_VARIABLE_NAME,
@@ -192,7 +227,12 @@ PROMPT_MODES = (
 #: collects on, and the annotation line. Which expression is being worked on
 #: has been settled by the time any of them is up, so moving the highlight
 #: would say nothing about what the command will do.
-SETTLED_MODES = (MODE_ASKING_VARIABLE, MODE_ANNOTATION, MODE_SUBSTITUTE_VALUE)
+SETTLED_MODES = (
+    MODE_ASKING_VARIABLE,
+    MODE_CALCULUS_VARIABLE,
+    MODE_ANNOTATION,
+    MODE_SUBSTITUTE_VALUE,
+)
 
 #: The prompt lines the highlight can still be walked under, which is every
 #: other one of them.
@@ -203,7 +243,15 @@ WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode not in SETTLED_MODES)
 #: selected on them. A line typed on is a line the user has taken over. The
 #: Declare lines take an expression too but are offered nothing to begin with,
 #: so there is nothing on them to keep in step with the highlight.
-LABELLED_MODES = (MODE_SIMPLIFY, MODE_APPROX, MODE_ASKING, MODE_SUBSTITUTE)
+LABELLED_MODES = (
+    MODE_SIMPLIFY,
+    MODE_APPROX,
+    MODE_ASKING,
+    MODE_BUILD,
+    MODE_BUILD_NEXT,
+    MODE_CALCULUS,
+    MODE_SUBSTITUTE,
+)
 
 #: The prompt lines an expression is entered on, and so the ones Ctrl-Enter
 #: says something on: it enters the line and simplifies what the command
@@ -221,12 +269,16 @@ ENTERING_MODES = (
     MODE_SUBSTITUTE_VALUE,
 )
 
-#: The prompt lines an expression is written on, which are those same lines
-#: less the one that names a file. F3 and F4 write onto any of them: the manual
-#: gives them for the author line and then says of the Declare value lines and
-#: of Substitute's that they take "all the normal line editing features
-#: provided by the Author command", these two by name.
-EXPRESSION_LINES = tuple(mode for mode in ENTERING_MODES if mode != MODE_FILE)
+#: The prompt lines an expression is written on. F3 and F4 write onto any of
+#: them: the manual gives them for the author line and then says of the Declare
+#: value lines and of Substitute's that they take "all the normal line editing
+#: features provided by the Author command", these two by name. Build's two
+#: operand lines are here because the original takes F3 on them, which is worth
+#: having where an operand is half an expression the history already holds.
+EXPRESSION_LINES = tuple(mode for mode in ENTERING_MODES if mode != MODE_FILE) + (
+    MODE_BUILD,
+    MODE_BUILD_NEXT,
+)
 
 #: What each Alt key writes. The original held these in the IBM PC character
 #: set and offered the Alt keys as a second way in beside spelling the name
@@ -280,6 +332,14 @@ APPROX_PROMPT = " APPROX expression: "
 JUMP_PROMPT = " JUMP to: "
 EXPRESSION_PROMPT = " {word} expression: "
 VARIABLE_PROMPT = " {word} variable {number}: "
+#: What Build asks on each of its two operand lines. The first names what is
+#: being built from; the second comes back after every binary operator.
+BUILD_PROMPT = " BUILD first expression: "
+BUILD_NEXT_PROMPT = " BUILD next expression: "
+#: What every Calculus command asks first, and then second.
+CALCULUS_PROMPT = " CALCULUS {word} expression: "
+CALCULUS_VARIABLE_PROMPT = " CALCULUS {word} variable: "
+ENTER_VARIABLE = "Enter variable"
 #: What the message line offers while the variables are being collected. The
 #: first question may be answered for all of them at once; the ones after it
 #: end the list instead, since something has been chosen by then.
@@ -480,6 +540,138 @@ EXPAND = Command(
 AMOUNT_MENUS = (FACTOR.amounts, EXPAND.amounts)
 
 
+def _text(values: Mapping[str, str | int], setting: str) -> str:
+    """One answer off a Calculus dialog, which is always an expression or blank."""
+    return str(values[setting]).strip()
+
+
+def _filled(values: Mapping[str, str | int], *settings: str) -> str | None:
+    """The first of `settings` left blank while another was filled in.
+
+    What the paired limits refuse: both blank asks for the indefinite form and
+    both filled for the definite one, so a half-answered pair is the one thing
+    that is neither, and the original puts the highlight on the empty half
+    rather than taking it.
+    """
+    blank = [setting for setting in settings if not _text(values, setting)]
+    return blank[0] if blank and len(blank) < len(settings) else None
+
+
+def _needed(values: Mapping[str, str | int], *settings: str) -> str | None:
+    """The first of `settings` left blank, for the fields that must be answered."""
+    return next((setting for setting in settings if not _text(values, setting)), None)
+
+
+def _limits(values: Mapping[str, str | int], setting: str) -> tuple[str, ...]:
+    """A pair of limits as arguments: both of them, or neither."""
+    low, high = _text(values, f"{setting}Lower"), _text(values, f"{setting}Upper")
+    return (low, high) if low and high else ()
+
+
+@dataclass(frozen=True)
+class Calculus:
+    """What tells the seven Calculus commands apart.
+
+    All of them ask the same two questions - which expression, and which
+    variable - and then one line of their own, which is `dialog`. What comes
+    back off that line becomes the arguments after the variable, in the order
+    the head takes them rather than the order the line asks them in: `Taylor`
+    asks for the degree first and writes the point first.
+
+    None of them computes. Each appends `head(u, x, ...)` for a later Simplify
+    to take, and `prefix` is how the status line names that: `Dif(#1,x)`.
+    """
+
+    word: str
+    head: str
+    prefix: str
+    dialog: Dialog
+    arguments: Callable[[Mapping[str, str | int]], tuple[str, ...]]
+    refuses: Callable[[Mapping[str, str | int]], str | None] = lambda values: None
+
+
+def _order(values: Mapping[str, str | int]) -> tuple[str, ...]:
+    """The order of a derivative, left off when it is the first.
+
+    The original writes `DIF(u, x)` for a first derivative and `DIF(u, x, n)`
+    for any other, so a field still reading `1` writes no argument at all. It
+    is the text that is compared and not what it is worth: the field takes an
+    expression, and `2 - 1` is not the answer `1` is.
+    """
+    order = _text(values, "DifferentiateOrder")
+    return () if order == "1" else (order,)
+
+
+def _vector_values(values: Mapping[str, str | int]) -> tuple[str, ...]:
+    """Where a `Vector` index starts, ends, and steps - the step if it is not one."""
+    step = _text(values, "VectorStep")
+    arguments = (_text(values, "VectorStart"), _text(values, "VectorEnd"))
+    return arguments if step == "1" else (*arguments, step)
+
+
+CALCULUS_COMMANDS: dict[str, Calculus] = {
+    "Differentiate": Calculus(
+        "DIFFERENTIATE",
+        "DIF",
+        "Dif",
+        menus.DIFFERENTIATE,
+        _order,
+        lambda values: _needed(values, "DifferentiateOrder"),
+    ),
+    "Integrate": Calculus(
+        "INTEGRATE",
+        "INT",
+        "Int",
+        menus.INTEGRATE,
+        partial(_limits, setting="Integrate"),
+        lambda values: _filled(values, "IntegrateLower", "IntegrateUpper"),
+    ),
+    "Limit": Calculus(
+        "LIMIT",
+        "LIM",
+        "Lim",
+        menus.LIMIT,
+        lambda values: (
+            _text(values, "LimitPoint"),
+            menus.DIRECTIONS[str(values["LimitDirection"])],
+        ),
+        lambda values: _needed(values, "LimitPoint"),
+    ),
+    "Product": Calculus(
+        "PRODUCT",
+        "PRODUCT",
+        "Product",
+        menus.PRODUCT,
+        partial(_limits, setting="Product"),
+        lambda values: _filled(values, "ProductLower", "ProductUpper"),
+    ),
+    "Sum": Calculus(
+        "SUM",
+        "SUM",
+        "Sum",
+        menus.SUM,
+        partial(_limits, setting="Sum"),
+        lambda values: _filled(values, "SumLower", "SumUpper"),
+    ),
+    "Taylor": Calculus(
+        "TAYLOR",
+        "TAYLOR",
+        "Taylor",
+        menus.TAYLOR,
+        lambda values: (_text(values, "TaylorPoint"), _text(values, "TaylorDegree")),
+        lambda values: _needed(values, "TaylorDegree", "TaylorPoint"),
+    ),
+    "Vector": Calculus(
+        "VECTOR",
+        "VECTOR",
+        "Vector",
+        menus.VECTOR,
+        _vector_values,
+        lambda values: _needed(values, "VectorEnd", "VectorStart", "VectorStep"),
+    ),
+}
+
+
 @dataclass
 class Asking:
     """A Factor or Expand command part way through its questions.
@@ -495,6 +687,40 @@ class Asking:
     #: The ones chosen so far, in the order they were, which is what makes the
     #: first of them the primary variable.
     chosen: tuple[str, ...] = ()
+
+
+@dataclass
+class Building:
+    """A Build command part way through, which is one expression and its name.
+
+    Every operator folds what has been built so far into a new tree, so there
+    is never more than the one expression to carry: `#1 + #2` becomes the sum,
+    and a `*` after it multiplies that sum by whatever comes next. `annotation`
+    is built the same way, out of what each operand was called - and it is
+    written flat, as the original writes it, so `#1+#2*#3` names an expression
+    that is `(#1 + #2)·#3`.
+
+    `operator` is the binary operator waiting on its right operand, and None
+    whenever the operator menu is what is up.
+    """
+
+    node: Node | None = None
+    annotation: str = ""
+    operator: building.Operator | None = None
+
+
+@dataclass
+class Calculating:
+    """A Calculus command part way through its questions.
+
+    The expression and the variable are collected on lines of their own and
+    have to outlive them; everything else is answered at once, on the dialog
+    the command finishes on.
+    """
+
+    command: Calculus
+    request: str = ""
+    variable: str = ""
 
 
 @dataclass
@@ -806,6 +1032,10 @@ class RederiveApp(App[None]):
         self.block: tuple[int | None, int | None] = (None, None)
         #: A Factor or Expand command's answers so far, while it is asking.
         self.asking: Asking | None = None
+        #: What a Build has put together so far, while it is building.
+        self.building: Building | None = None
+        #: A Calculus command's answers so far, while it is asking.
+        self.calculating: Calculating | None = None
         #: A Manage Substitute's answers so far, while it is asking.
         self.substituting: Substituting | None = None
         #: The same for the three Declare commands that ask more than one
@@ -861,6 +1091,7 @@ class RederiveApp(App[None]):
         # Commands not listed here are present and navigable but inert.
         self.commands: dict[tuple[Menu, str], Callable[[], None]] = {
             (ALGEBRA, "Author"): self._command_author,
+            (ALGEBRA, "Build"): self._command_build,
             (ALGEBRA, "Expand"): lambda: self._command_asking(EXPAND),
             (ALGEBRA, "Factor"): lambda: self._command_asking(FACTOR),
             (ALGEBRA, "Jump"): self._command_jump,
@@ -891,6 +1122,12 @@ class RederiveApp(App[None]):
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
             (menus.TRANSFER_SAVE, "State"): self._command_save_state,
         }
+        # The seven Calculus commands differ only in what they write and what
+        # their last line asks, so they are one command told which off the word.
+        for word, calculus in CALCULUS_COMMANDS.items():
+            self.commands[(menus.CALCULUS, word)] = partial(
+                self._command_calculus, calculus
+            )
         # The four language saves differ only in which language they write, so
         # they are one command told which one off the menu word.
         for language in LANGUAGES:
@@ -1187,7 +1424,11 @@ class RederiveApp(App[None]):
                 self._abort()
         elif self.mode == MODE_MENU:
             character = event.character
-            if character and (character.isalnum() or self._typing_text(character)):
+            if character and (
+                character.isalnum()
+                or self._typing_text(character)
+                or self._menu_takes(character)
+            ):
                 event.stop()
                 event.prevent_default()
                 self._typed(character)
@@ -1224,6 +1465,18 @@ class RederiveApp(App[None]):
             and editor is not None
             and isinstance(editor.field, TextField)
         )
+
+    def _menu_takes(self, character: str) -> bool:
+        """Whether the menu on top has a word `character` invokes.
+
+        Letters and digits are offered to whatever is up whatever it is; this
+        is for the ones that are neither, which only the Build operator menu
+        answers to - there `+` and `!` are mnemonics like any other.
+        """
+        cursor = self.top
+        if not isinstance(cursor, MenuCursor):
+            return False
+        return character.lower() in cursor.menu.mnemonics
 
     def _typed(self, character: str) -> None:
         """A letter or digit while a menu or a dialog is up."""
@@ -1327,12 +1580,28 @@ class RederiveApp(App[None]):
         in the history is simplified after it. On the lines that enter nothing
         of their own, and everywhere a menu or a dialog is up, it is Enter.
         """
-        if self.mode in ENTERING_MODES:
+        if self.mode in ENTERING_MODES or self._enters_expression():
             self.simplifying = tuple(self.session.entries)
         if self.mode == MODE_MENU:
             self.action_menu_invoke()
         else:
             self._submitted(self.query_one("#prompt-input", Input).value)
+
+    def _enters_expression(self) -> bool:
+        """Whether Enter on what is up would append an expression to simplify.
+
+        Which is what makes Ctrl-Enter worth pressing somewhere other than on a
+        prompt line: the `Done` of Build's operator menu, and the dialog each
+        Calculus command finishes on. Both append an expression nobody has
+        asked to have taken any further, so both leave something for a
+        Simplify after them to do.
+        """
+        if self.mode != MODE_MENU:
+            return False
+        top = self.top
+        if isinstance(top, DialogEditor):
+            return top.dialog.enters
+        return top.menu is menus.BUILD_OPERATOR and top.word == building.DONE
 
     def action_menu_escape(self) -> None:
         """Leave the submenu or dialog on top, abandoning what it was set to.
@@ -1347,6 +1616,8 @@ class RederiveApp(App[None]):
             left = self.stack.pop()
             if isinstance(left, MenuCursor) and left.menu in AMOUNT_MENUS:
                 self.asking = None
+            self.building = None
+            self.calculating = None
             self.declaring = None
             self._restart_menu()
             self._ask_again()
@@ -1518,6 +1789,9 @@ class RederiveApp(App[None]):
             return
         if cursor.menu in AMOUNT_MENUS:
             self._chose_amount(index)
+            return
+        if cursor.menu is menus.BUILD_OPERATOR:
+            self._chose_operator(word)
             return
         if cursor.menu is menus.DECLARE_VARIABLE:
             self._chose_domain(word)
@@ -1938,10 +2212,10 @@ class RederiveApp(App[None]):
                 Amount(amount or "Rational"),
                 pending.chosen,
             ),
-            self._answered_asking,
+            self._appended,
         )
 
-    def _answered_asking(self, outcome: Outcome) -> None:
+    def _appended(self, outcome: Outcome) -> None:
         """The answer is in, or the reason there is none.
 
         A refusal is reported rather than corrected: the line parsed when it
@@ -1949,6 +2223,262 @@ class RederiveApp(App[None]):
         prompt left to put the cursor in.
         """
         self._end_prompt(_reported(outcome))
+
+    # -- Build -------------------------------------------------------------
+
+    def _command_build(self) -> None:
+        """Ask for the first operand, offering the highlighted expression."""
+        self.building = Building()
+        self._ask_operand(MODE_BUILD, BUILD_PROMPT)
+
+    def _ask_operand(self, mode: str, label: str) -> None:
+        """Put up one of the two operand lines, offering what is highlighted.
+
+        Which is the whole of what makes Build worth having: the label comes up
+        already on the line, the arrow keys move it to another expression, and
+        F6 walks into one - so an operand buried in an expression costs no
+        typing at all.
+        """
+        entry = self.session.selected_entry
+        offered = "" if entry is None else f"#{entry.number}"
+        self._prompt(mode, label, offered, ENTER_TO_DERIVE, keep=1)
+
+    def _build_operand(self, text: str) -> None:
+        """The first operand: resolve what it names, and ask for an operator."""
+        pending = self.building
+        assert pending is not None
+        resolved = self._resolved(text)
+        if resolved is None:
+            return
+        pending.node, pending.annotation = resolved
+        self._ask_operator(0)
+
+    def _build_next(self, text: str) -> None:
+        """The right operand of the binary operator that asked for it."""
+        pending = self.building
+        assert pending is not None
+        operator = pending.operator
+        assert operator is not None and pending.node is not None
+        resolved = self._resolved(text)
+        if resolved is None:
+            return
+        node, name = resolved
+        pending.node = operator.build(pending.node, node)
+        pending.annotation = operator.annotate(pending.annotation, name)
+        pending.operator = None
+        self._ask_operator(len(building.WORDS) - 1)
+
+    def _resolved(self, text: str) -> tuple[Node, str] | None:
+        """What an operand line names, and what an annotation calls it.
+
+        None when there is nothing to go on with: a line with nothing on it
+        abandons the whole command, as it does on the author line, and one that
+        does not read is left up to be corrected.
+        """
+        if not text.strip():
+            self._end_prompt(done=False)
+            return None
+        try:
+            return self.session.named_target(text)
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return None
+
+    def _ask_operator(self, index: int) -> None:
+        """Stack the operator menu, the prompt band done with for now.
+
+        It opens on `+` the first time and on `Done` from then on, which is
+        where the original leaves it: an operand has just been settled, so the
+        likeliest next word is the one that finishes.
+        """
+        self._hide_prompt()
+        self.mode = MODE_MENU
+        cursor = self.top
+        if isinstance(cursor, MenuCursor) and cursor.menu is menus.BUILD_OPERATOR:
+            cursor.index = index
+        else:
+            self.stack.append(MenuCursor(menus.BUILD_OPERATOR, index))
+        self.message = menus.BUILD_OPERATOR.message
+        self.refresh_screen()
+
+    def _chose_operator(self, word: str) -> None:
+        """One word off the operator menu: apply it, or finish the expression.
+
+        A unary operator has everything it needs and folds the expression on
+        the spot, leaving the menu up for another. A binary one takes the menu
+        down and asks for its right operand - down rather than aside, so that
+        Esc on that line abandons the command as the original does, instead of
+        stepping back to the menu.
+        """
+        pending = self.building
+        assert pending is not None and pending.node is not None
+        operator = building.operator(word)
+        if operator is None:
+            self._built(pending)
+            return
+        if operator.arity == 1:
+            pending.node = operator.build(pending.node)
+            pending.annotation = operator.annotate(pending.annotation)
+            self._ask_operator(len(building.WORDS) - 1)
+            return
+        pending.operator = operator
+        self.stack.pop()
+        self._ask_operand(MODE_BUILD_NEXT, BUILD_NEXT_PROMPT)
+
+    def _built(self, pending: Building) -> None:
+        """Done: append what was built, unsimplified, and give the menu back."""
+        assert pending.node is not None
+        node, annotation = pending.node, pending.annotation
+        self.building = None
+        if self._wanted_simplified():
+            self._compute(
+                SIMPLIFYING,
+                partial(self.session.build, node, annotation, True),
+                self._appended,
+            )
+            return
+        started = time.monotonic()
+        try:
+            self.session.build(node, annotation)
+        except DeriveSyntaxError as error:
+            # All but unreachable: every operand was read as it was collected,
+            # and what is written here is what they were read from.
+            self._end_prompt(str(error))
+            return
+        took = _elapsed(time.monotonic() - started)
+        self._end_prompt(COMPUTE_TIME.format(elapsed=took))
+
+    def _wanted_simplified(self) -> bool:
+        """Whether the key that finished the command was Ctrl-Enter.
+
+        Answered here rather than left to the general path, because these two
+        commands do not append an expression and then simplify it. The
+        original enters one expression and not two: what Build put together is
+        simplified instead of being appended, and the annotation records both
+        steps at once. So the mark Ctrl-Enter left is taken back off, and there
+        is nothing for the return to the menu to find.
+        """
+        if self.simplifying is None:
+            return False
+        self.simplifying = None
+        return True
+
+    # -- Calculus ----------------------------------------------------------
+
+    def _command_calculus(self, command: Calculus) -> None:
+        """Ask which expression to work on, offering the highlighted one."""
+        self.calculating = Calculating(command)
+        entry = self.session.selected_entry
+        offered = "" if entry is None else f"#{entry.number}"
+        self._prompt(
+            MODE_CALCULUS,
+            CALCULUS_PROMPT.format(word=command.word),
+            offered,
+            ENTER_TO_DERIVE,
+            keep=1,
+        )
+
+    def _calculus_expression(self, request: str) -> None:
+        """The expression is settled: work out which variable to offer.
+
+        The one the original offers is the primary variable of what was named,
+        which is the engine's answer rather than a walk over the tree - and so
+        is asked for the way Factor asks for the same list, on the computing
+        thread. An expression with no variables in it is offered none, and the
+        line comes up empty.
+        """
+        pending = self.calculating
+        assert pending is not None
+        if not request.strip():
+            self._end_prompt(done=False)
+            return
+        try:
+            self.session.reads(request)
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return
+        pending.request = request
+        self._compute(
+            READING,
+            partial(self.session.variables, request),
+            self._calculus_variables,
+        )
+
+    def _calculus_variables(self, outcome: Outcome) -> None:
+        """The variables are known: ask which one, offering the most main."""
+        pending = self.calculating
+        assert pending is not None
+        if isinstance(outcome.error, DeriveSyntaxError):
+            self._refused(outcome.error)
+            return
+        if outcome.error is not None:
+            self._end_prompt(_reported(outcome))
+            return
+        variables: tuple[str, ...] = outcome.value  # type: ignore[assignment]
+        self._prompt(
+            MODE_CALCULUS_VARIABLE,
+            CALCULUS_VARIABLE_PROMPT.format(word=pending.command.word),
+            variables[0] if variables else "",
+            ENTER_VARIABLE,
+        )
+
+    def _calculus_variable(self, text: str) -> None:
+        """The variable, which has to be one: anything else is not an answer.
+
+        The original refuses such a line without saying anything at all - no
+        message, no beep - and leaves it up with the cursor back at the start,
+        so that the name can be typed over.
+        """
+        pending = self.calculating
+        assert pending is not None
+        if not self.session.is_variable(text):
+            line = self.query_one("#prompt-input", Input)
+            line.focus()
+            line.cursor_position = 0
+            return
+        pending.variable = text.strip()
+        self._hide_prompt()
+        self.mode = MODE_MENU
+        self._ask(pending.command.dialog, self._calculus_answered, self._calculus_refuses)
+
+    def _calculus_refuses(self, values: dict[str, str | int]) -> str | None:
+        """Which field of the last line the command in hand will not take."""
+        pending = self.calculating
+        assert pending is not None
+        return pending.command.refuses(values)
+
+    def _calculus_answered(self, values: dict[str, str | int]) -> None:
+        """The last line is answered: write the expression and append it.
+
+        Nothing is computed, so nothing goes to the computing thread: the
+        command writes a head around what was named and stops, which is what
+        leaves a Simplify after it something to do.
+        """
+        pending = self.calculating
+        assert pending is not None
+        self.calculating = None
+        command = pending.command
+        arguments = (pending.variable, *command.arguments(values))
+        run = partial(
+            self.session.calculus,
+            command.head,
+            command.prefix,
+            pending.request,
+            arguments,
+        )
+        if self._wanted_simplified():
+            self._compute(SIMPLIFYING, partial(run, simplified=True), self._appended)
+            return
+        started = time.monotonic()
+        try:
+            run()
+        except DeriveSyntaxError as error:
+            # What a field holding something that is not an expression comes
+            # to. The line is gone by now, so this is said and not corrected.
+            self._end_prompt(str(error))
+            return
+        took = _elapsed(time.monotonic() - started)
+        self._end_prompt(COMPUTE_TIME.format(elapsed=took))
 
     # -- Declare -----------------------------------------------------------
     #
@@ -2894,6 +3424,14 @@ class RederiveApp(App[None]):
             self._asked(value)
         elif self.mode == MODE_ASKING_VARIABLE:
             self._asked_variable(value)
+        elif self.mode == MODE_BUILD:
+            self._build_operand(value)
+        elif self.mode == MODE_BUILD_NEXT:
+            self._build_next(value)
+        elif self.mode == MODE_CALCULUS:
+            self._calculus_expression(value)
+        elif self.mode == MODE_CALCULUS_VARIABLE:
+            self._calculus_variable(value)
         elif self.mode == MODE_JUMP:
             self._jumped(value)
         elif self.mode == MODE_FILE:
@@ -3008,6 +3546,8 @@ class RederiveApp(App[None]):
         leaves that menu where it was, which is what Esc does.
         """
         self.asking = None
+        self.building = None
+        self.calculating = None
         self.substituting = None
         self.declaring = None
         self.defining = None

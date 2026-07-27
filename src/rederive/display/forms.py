@@ -81,12 +81,56 @@ def application(node: Node) -> tuple[Node, tuple[Node, ...]]:
     return node.children[0], node.children[1:]
 
 
+def side_of(node: Node) -> str | None:
+    """The sign a limit's direction argument draws as, or None if it draws none.
+
+    Derive writes `0` for the two-sided limit, a negative number for one
+    approached from the left and a positive one for the right; the screen
+    shows the sign against the point, or nothing at all for the two-sided one.
+    Anything else says no direction this can draw.
+    """
+    negated = node.kind is Kind.UNOP and str(node.value) == "-"
+    number = node.children[0] if negated else node
+    if number.kind is not Kind.NUMBER:
+        return None
+    try:
+        value = float(str(number.surface or number.value))
+    except ValueError:
+        return None
+    if not value:
+        return "" if not negated else None
+    return "-" if negated else "+"
+
+
 def special(node: Node) -> Callable[..., Box] | None:
     """The form `node` renders as, or None if it prints as an ordinary call."""
     if node.kind not in _APPLICATIONS:
         return None
     name, arguments = application(node)
-    return FORMS.get((str(name.value), len(arguments)))
+    key = (str(name.value), len(arguments))
+    form = FORMS.get(key)
+    guard = _GUARDS.get(key)
+    if form is None or (guard is not None and not guard(arguments)):
+        return None
+    return form
+
+
+def is_quotient(node: Node) -> bool:
+    return node.kind is Kind.BINOP and node.value == "/"
+
+
+def body(engine, node: Node, level: int, budget: int | None, required: int) -> Box:
+    """A form's body, fenced where the form's reach calls for it.
+
+    A quotient drawn built-up is the exception, however tightly the form
+    around it binds: the bar delimits it already, so the original writes
+    `d/dx a/b` with the fraction bare where it fences `d/dx (a·b)`. Drawn
+    linearly - which is where a fraction goes inside a script, or where the
+    pane is too short for it - it is an operand like any other.
+    """
+    if is_quotient(node) and engine.built_up(node, level, budget):
+        return engine.box(node, level, budget)
+    return engine.operand(node, level, budget, required)
 
 
 def body_precedence(node: Node) -> int | None:
@@ -167,7 +211,7 @@ def integral(engine, node, arguments, level, budget) -> Box:
     """
     # The ` dx` is a terminator rather than something the integrand runs into,
     # so nothing follows it for fencing purposes.
-    integrand = engine.operand(arguments[0], level, budget, MUL)
+    integrand = body(engine, arguments[0], level, budget, MUL)
     variable = engine.box(arguments[1], level, budget)
     below = integrand.below
     above = max(integrand.above, 1 - below)
@@ -203,36 +247,58 @@ def multiplication(engine, node, arguments, level, budget) -> Box:
 
 
 def _big_operator(engine, node, arguments, level, budget, glyph: str) -> Box:
-    """`Σ` or `Π` on the baseline, `k=a` below it and `b` above it."""
-    body = engine.operand(arguments[0], level, budget, MUL)
+    """`Σ` or `Π` on the baseline, `k=a` below it and `b` above it.
+
+    The two-argument form has no values to run between - it is the
+    antidifference, or the antiquotient, which is what `Calculus Sum` builds
+    when both limits are left blank - so its index stands under the sign alone
+    and nothing stands over it.
+    """
+    inner = body(engine, arguments[0], level, budget, MUL)
     index = engine.box(arguments[1], level, budget)
-    start = engine.box(arguments[2], level, budget)
-    # The index and its first value print tight, as one label.
-    lower = row([index, text("="), start])
-    upper = engine.box(arguments[3], level, budget)
+    if len(arguments) == 2:
+        lower, upper = index, None
+        operands = (inner, index)
+    else:
+        start = engine.box(arguments[2], level, budget)
+        # The index and its first value print tight, as one label.
+        lower = row([index, text("="), start])
+        upper = engine.box(arguments[3], level, budget)
+        operands = (inner, index, start, upper)
     sign = text(glyph)
-    width = max(sign.width, lower.width, upper.width)
+    width = max(sign.width, lower.width, 0 if upper is None else upper.width)
+    placed = [
+        Placed(sign, centered(width, sign.width), 0),
+        Placed(lower, centered(width, lower.width), 1 + lower.above),
+    ]
+    if upper is not None:
+        placed.append(Placed(upper, centered(width, upper.width), -1 - upper.below))
     head = Box(
         width,
-        upper.height,
+        0 if upper is None else upper.height,
         lower.height,
         None,
         "",
-        (
-            Placed(sign, centered(width, sign.width), 0),
-            Placed(upper, centered(width, upper.width), -1 - upper.below),
-            Placed(lower, centered(width, lower.width), 1 + lower.above),
-        ),
+        tuple(placed),
     )
-    return row([head, text(" "), body], node, (body, index, start, upper))
+    return row([head, text(" "), inner], node, operands)
 
 
 def limit(engine, node, arguments, level, budget) -> Box:
-    """`lim` on the baseline with `x→a` centred below it."""
-    body = engine.operand(arguments[0], level, budget, MUL)
+    """`lim` on the baseline with `x→a` centred below it.
+
+    A fourth argument says which side the point is approached from, and is
+    drawn as the sign the original draws rather than as the number it is:
+    `x→2-` from the left, `x→2+` from the right, and nothing at all for the
+    two-sided limit, which the original writes as a `0` and the menu calls
+    Both. That number is no operand of its own: what is on the screen is a
+    sign, and there is nothing there to step onto.
+    """
+    inner = body(engine, arguments[0], level, budget, MUL)
     variable = engine.box(arguments[1], level, budget)
     target = engine.box(arguments[2], level, budget)
-    approach = row([variable, text(glyphs.ARROW), target])
+    side = "" if len(arguments) == 3 else side_of(arguments[3])
+    approach = row([variable, text(glyphs.ARROW), target, text(side)])
     sign = text(glyphs.LIMIT)
     width = max(sign.width, approach.width)
     head = Box(
@@ -246,7 +312,7 @@ def limit(engine, node, arguments, level, budget) -> Box:
             Placed(approach, centered(width, approach.width), 1 + approach.above),
         ),
     )
-    return row([head, text(" "), body], node, (body, variable, target))
+    return row([head, text(" "), inner], node, (inner, variable, target))
 
 
 def derivative(engine, node, arguments, level, budget) -> Box:
@@ -255,8 +321,13 @@ def derivative(engine, node, arguments, level, budget) -> Box:
     The bar is the one that gets no padding, and the two `d`s are flush left
     rather than centred so that they line up with each other. The fences are
     there to carry the order, so the two-argument form goes without them.
+
+    Of the forms that end in a body, this is the one that reaches least far to
+    the right: a product is fenced where `Σ` and `lim` leave one bare, and so
+    is a sign - `d/dx (a·b)` and `d/dx (-a)` against `Σ a·b` and `lim -a`.
+    Only what binds at least as tightly as a power stands without fences.
     """
-    operand = engine.operand(arguments[0], level, budget, MUL)
+    operand = body(engine, arguments[0], level, budget, POW)
     variable = engine.box(arguments[1], level, budget)
     numerator = text(glyphs.DERIVATIVE)
     denominator = row([text(glyphs.DERIVATIVE), variable])
@@ -287,9 +358,21 @@ FORMS: dict[tuple[str, int], Callable[..., Box]] = {
     ("ABS", 1): absolute_value,
     ("INT", 2): integral,
     ("INT", 4): integral,
+    ("SUM", 2): summation,
     ("SUM", 4): summation,
+    ("PRODUCT", 2): multiplication,
     ("PRODUCT", 4): multiplication,
     ("LIM", 3): limit,
+    ("LIM", 4): limit,
     ("DIF", 2): derivative,
     ("DIF", 3): derivative,
+}
+
+#: What a limit's fourth argument has to say before the head draws as a limit.
+#: `Calculus Limit` writes one of three numbers there and the form draws each
+#: as a sign, so a fourth argument that is not one of them is not a direction:
+#: such a head is written out as the call it is, rather than drawn as a limit
+#: with something the screen has no way to show.
+_GUARDS: dict[tuple[str, int], Callable[[tuple[Node, ...]], bool]] = {
+    ("LIM", 4): lambda arguments: side_of(arguments[3]) is not None,
 }

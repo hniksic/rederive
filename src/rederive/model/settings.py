@@ -178,6 +178,18 @@ class Dialog:
     `Unremove` let the arrow keys pick an expression instead of its label
     number, which the manual recommends as the less error prone of the two.
     """
+    opens_on: str = ""
+    """The setting of the field the highlight starts on, when it is not the first.
+
+    `Calculus Vector` is the one that is not: its three fields are Start, End
+    and Step, and the original opens on End - the only one of them it offers
+    no default for, and so the only one that has to be answered.
+    """
+    enters: bool = False
+    """Whether committing enters an expression, and so whether Ctrl-Enter says
+    anything on it: the Calculus dialogs each finish a command that appends an
+    unevaluated expression, which is exactly what there is left to simplify.
+    """
 
     @property
     def fields(self) -> tuple[Field, ...]:
@@ -698,7 +710,14 @@ class DialogEditor:
             field.setting: settings[field.setting] if dialog.stored else field.default
             for field in dialog.fields
         }
-        self.active = 0
+        self.active = next(
+            (
+                index
+                for index, field in enumerate(dialog.fields)
+                if field.setting == dialog.opens_on
+            ),
+            0,
+        )
         self.prompt: NumberField | None = None
         self.text: str | None = None
         """The digits of a number field being typed into, if that is the field."""

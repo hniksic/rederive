@@ -9,6 +9,7 @@ brings the rest of it along.
 import pytest
 
 from rederive import engine
+from rederive.model import building
 from rederive.model.session import Session
 from rederive.syntax import DeriveSyntaxError
 
@@ -382,3 +383,209 @@ def test_an_assignment_reaches_the_approximation(session):
     session.author("k := 2")
     session.author("SQRT(k)")
     assert session.approx("#2").text == "1.41421"
+
+
+# -- Build --------------------------------------------------------------------
+
+
+def built(session, word, *requests):
+    """Build one operator over the expressions `requests` names."""
+    operator = building.operator(word)
+    resolved = [session.named_target(request) for request in requests]
+    node = operator.build(*(node for node, _ in resolved))
+    return session.build(node, operator.annotate(*(name for _, name in resolved)))
+
+
+def test_a_built_expression_is_appended_unsimplified(session):
+    session.author("2 + 3")
+    answer = built(session, "*", "#1", "#1")
+    assert answer.text == "(2+3)*(2+3)"
+    assert answer.annotation == "#1*#1"
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("+", "x^2*y+x^2*y"),
+        ("-", "x^2*y-x^2*y"),
+        ("=", "x^2*y=x^2*y"),
+        ("Minus", "-x^2*y"),
+        ("Recip", "1/(x^2*y)"),
+        ("Sin", "SIN(x^2*y)"),
+        ("Ln", "LN(x^2*y)"),
+        ("!", "(x^2*y)!"),
+        ("%", "(x^2*y)%"),
+        ("`", "(x^2*y)`"),
+    ],
+    ids=str,
+)
+def test_each_operator_writes_what_the_original_writes(session, word, expected):
+    """The forms the original's own Transfer Save writes."""
+    session.author("x^2*y")
+    operator = building.operator(word)
+    requests = ["#1"] * operator.arity
+    assert built(session, word, *requests).text == expected
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [("+", "#1+#1"), ("Minus", "-(#1)"), ("Recip", "1/(#1)"), ("Sin", "SIN(#1)")],
+    ids=str,
+)
+def test_the_annotation_names_the_operands(session, word, expected):
+    session.author("x^2*y")
+    operator = building.operator(word)
+    assert built(session, word, *["#1"] * operator.arity).annotation == expected
+
+
+def test_a_typed_operand_is_the_users_own(session):
+    session.author("x")
+    assert built(session, "+", "#1", "2 + 3").annotation == "#1+User"
+
+
+def test_a_highlighted_part_is_the_operand_and_carries_a_quote(session):
+    session.author("SIN(a*x^2) + 5")
+    part(session, "right", "down")
+    answer = built(session, "Sin", "#1")
+    # Extraction, not substitution: what is built is the part alone, and the
+    # rest of the entry it came out of is left where it was.
+    assert answer.text == "SIN(a*x^2)"
+    assert answer.annotation == "SIN(#1')"
+
+
+def test_building_a_part_alone_extracts_it(session):
+    session.author("SIN(a*x^2) + 5")
+    part(session, "right", "down")
+    node, name = session.named_target("#1")
+    assert session.build(node, name).text == "a*x^2"
+    assert session.entries[-1].annotation == "#1'"
+
+
+def test_operators_chain_left_to_right(session):
+    """`#1 + #2` then `* #3` is `(#1 + #2)·#3`, and the annotation is flat."""
+    for text in ("2", "3", "4"):
+        session.author(text)
+    first = built(session, "+", "#1", "#2")
+    operator = building.operator("*")
+    node = operator.build(first.node, session.target("#3"))
+    answer = session.build(node, operator.annotate(first.annotation, "#3"))
+    assert answer.text == "(2+3)*4"
+    assert answer.annotation == "#1+#2*#3"
+
+
+def test_a_build_taken_with_ctrl_enter_appends_one_entry(session):
+    session.author("x^2*y")
+    node, name = session.named_target("#1")
+    operator = building.operator("+")
+    built_node = operator.build(node, node)
+    answer = session.build(built_node, operator.annotate(name, name), True)
+    assert texts(session) == ["x^2*y", "2*x^2*y"]
+    assert answer.annotation == "Simp(#1+#1)"
+
+
+# -- Calculus -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("head", "prefix", "arguments", "expected"),
+    [
+        ("DIF", "Dif", ("x",), "DIF(x^2*y,x)"),
+        ("DIF", "Dif", ("x", "3"), "DIF(x^2*y,x,3)"),
+        ("INT", "Int", ("x",), "INT(x^2*y,x)"),
+        ("INT", "Int", ("x", "0", "1"), "INT(x^2*y,x,0,1)"),
+        ("LIM", "Lim", ("x", "0", "0"), "LIM(x^2*y,x,0,0)"),
+        ("LIM", "Lim", ("x", "2", "-1"), "LIM(x^2*y,x,2,-1)"),
+        ("SUM", "Sum", ("x",), "SUM(x^2*y,x)"),
+        ("SUM", "Sum", ("x", "1", "n"), "SUM(x^2*y,x,1,n)"),
+        ("PRODUCT", "Product", ("x", "1", "n"), "PRODUCT(x^2*y,x,1,n)"),
+        ("TAYLOR", "Taylor", ("x", "1", "3"), "TAYLOR(x^2*y,x,1,3)"),
+        ("VECTOR", "Vector", ("x", "1", "5"), "VECTOR(x^2*y,x,1,5)"),
+        ("VECTOR", "Vector", ("x", "1", "5", "2"), "VECTOR(x^2*y,x,1,5,2)"),
+    ],
+    ids=str,
+)
+def test_each_head_is_written_as_the_original_writes_it(
+    session, head, prefix, arguments, expected
+):
+    """The linear forms come from the original's own Transfer Save."""
+    session.author("x^2*y")
+    assert session.calculus(head, prefix, "#1", arguments).text == expected
+
+
+def test_nothing_is_computed(session):
+    """The point of the command: a Simplify after it is what takes the answer."""
+    session.author("x^2*y")
+    session.calculus("DIF", "Dif", "#1", ("x",))
+    assert texts(session) == ["x^2*y", "DIF(x^2*y,x)"]
+    assert session.simplify("#2").text == "2*x*y"
+
+
+def test_the_annotation_names_the_expression_and_the_variable(session):
+    session.author("x^2*y")
+    # The order is not in it: `DIF(u, x, 3)` is annotated as the first
+    # derivative is.
+    assert session.calculus("DIF", "Dif", "#1", ("x", "3")).annotation == "Dif(#1,x)"
+
+
+def test_a_typed_expression_is_calculated_as_the_users_own(session):
+    assert session.calculus("INT", "Int", "SIN(z)", ("z",)).annotation == "Int(User,z)"
+
+
+def test_a_highlighted_part_is_taken_alone_and_carries_a_quote(session):
+    session.author("SIN(a*x^2) + 5")
+    part(session, "right", "down")
+    answer = session.calculus("DIF", "Dif", "#1", ("x",))
+    assert answer.text == "DIF(a*x^2,x)"
+    assert answer.annotation == "Dif(#1',x)"
+
+
+def test_a_calculus_command_taken_with_ctrl_enter_appends_one_entry(session):
+    session.author("x^2*y")
+    answer = session.calculus("DIF", "Dif", "#1", ("x",), True)
+    assert texts(session) == ["x^2*y", "2*x*y"]
+    assert answer.annotation == "Simp(Dif(#1,x))"
+
+
+def test_an_argument_that_does_not_parse_appends_nothing(session):
+    session.author("x")
+    with pytest.raises(DeriveSyntaxError):
+        session.calculus("DIF", "Dif", "#1", ("x", "2 +"))
+    assert texts(session) == ["x"]
+
+
+def test_a_two_sided_limit_is_written_with_the_direction_the_menu_chose(session):
+    """`Calculus Limit` writes `0` for Both, and `0` is two-sided."""
+    session.author("ABS(x)/x")
+    both = session.calculus("LIM", "Lim", "#1", ("x", "0", "0"))
+    assert both.text == "LIM(ABS(x)/x,x,0,0)"
+    assert session.simplify("#2").text == "±1"
+    right = session.calculus("LIM", "Lim", "#1", ("x", "0", "1"))
+    assert right.text == "LIM(ABS(x)/x,x,0,1)"
+    assert session.simplify("#4").text == "1"
+
+
+# -- what a Calculus variable field takes -------------------------------------
+
+
+def test_the_variable_offered_is_the_primary_one(session):
+    session.author("SIN(a*x^2)")
+    assert session.variables("#1")[0] == "x"
+
+
+def test_a_bound_variable_is_not_offered(session):
+    session.author("INT(x^2*y, x, 0, 1)")
+    assert session.variables("#1") == ("y",)
+
+
+@pytest.mark.parametrize("text", ["x", "k", " x "], ids=str)
+def test_a_name_is_a_variable(session, text):
+    assert session.is_variable(text)
+
+
+# `abc` is three names under the Character input mode the session starts in,
+# which is a product and so no answer to a question that wants one variable.
+@pytest.mark.parametrize(
+    "text", ["", "2 + 3", "2", "SIN", "#e", "x +", "abc"], ids=str
+)
+def test_anything_that_is_not_one_name_is_not(session, text):
+    assert not session.is_variable(text)

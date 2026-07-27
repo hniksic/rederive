@@ -1352,10 +1352,18 @@ def _hyper(conv: _Converter, args: list) -> sp.Basic:
 
 
 def _limit(conv: _Converter, args: list) -> sp.Basic:
-    """`LIM(u, x, a)` is two-sided; a fourth argument picks a side."""
+    """`LIM(u, x, a)` is two-sided; a fourth argument picks a side.
+
+    A zero picks neither, and is the two-sided limit again: that is what
+    `Calculus Limit` writes for the direction it calls Both, and it writes the
+    argument whichever direction was chosen, so the four-argument form is the
+    only one that command ever builds.
+    """
     if len(args) == 3:
         return sp.Limit(*args, dir="+-")
     expression, variable, point, side = args
+    if not side:
+        return sp.Limit(expression, variable, point, dir="+-")
     return sp.Limit(expression, variable, point, dir="+" if side > 0 else "-")
 
 

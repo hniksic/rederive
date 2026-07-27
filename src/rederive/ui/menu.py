@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rederive.model import settings
+from rederive.model import building, settings
 from rederive.model.session import Bounds
 
 MENU_TITLE = "COMMAND:"
@@ -28,6 +28,24 @@ ENTER_LABEL_OR_END = 'Enter label number or type "end"'
 
 #: The word that sends the unremoved expressions past the last entry.
 END = "end"
+
+#: What the message line asks for on a field that takes an expression, which is
+#: every field the Calculus commands ask about: the order of a derivative is an
+#: expression like any other, and `DIF(u, x, n + 1)` is a legitimate answer.
+ENTER_ANY = "Enter expression"
+
+#: What it asks for on a pair of limits that may be left empty. Both blank is
+#: an answer: an indefinite integral, an antidifference, an antiquotient.
+ENTER_OR_SKIP = "Enter expression or press Enter"
+
+#: What the two fields of `Calculus Limit` ask for.
+ENTER_POINT = "Enter limit point"
+SELECT_DIRECTION = "Select approach direction"
+
+#: What the two fields of `Calculus Taylor` ask for. It is the one command
+#: whose last line says something different on each of them.
+ENTER_DEGREE = "Enter maximum degree"
+ENTER_EXPANSION_POINT = "Enter expansion point"
 
 #: What the message line asks for on each field of the Declare dialogs.
 ENTER_ROWS = "Enter number of rows"
@@ -143,6 +161,139 @@ EXPAND_AMOUNT = Menu(
     "EXPAND: Amount:",
     tuple(word for word in AMOUNT.words if word != "Complex"),
     message=AMOUNT.message,
+)
+
+#: The seven Calculus commands. Every word carries its own initial, there
+#: being no clash among them, and every one of them asks the same first two
+#: questions - an expression and a variable - before the one line that is its
+#: own. Derive 6 grew a `Table` command; the DOS releases have no such option
+#: and neither has this.
+CALCULUS = Menu(
+    "CALCULUS:",
+    ("Differentiate", "Integrate", "Limit", "Product", "Sum", "Taylor", "Vector"),
+)
+
+#: The operators `Build` offers, on one line, `Done` last. The symbols are
+#: their own mnemonics; the words carry their initials.
+BUILD_OPERATOR = Menu(
+    "BUILD: Operator:",
+    building.WORDS,
+    message="Select operator",
+    first_line=len(building.WORDS),
+)
+
+#: Columns a Calculus field takes. Wide enough that a limit or a point of any
+#: ordinary length stands without the fields beside it shifting, which is what
+#: the original's own fields are sized for. The three of `Vector` are narrower,
+#: three of them having to fit across the line where the others fit two.
+_FIELD_WIDTH = 17
+_NARROW_WIDTH = 14
+
+#: The three ways a limit may be approached, and what each is worth as the
+#: fourth argument of `LIM`. The original writes the argument whichever is
+#: chosen, so a two-sided limit built here is `LIM(u, x, a, 0)` and never the
+#: three-argument form.
+DIRECTIONS: dict[str, str] = {"Both": "0", "Left": "-1", "Right": "1"}
+
+
+def _expression_field(
+    label: str, setting: str, default: str, message: str, width: int = _FIELD_WIDTH
+) -> settings.TextField:
+    """One Calculus field, which holds an expression and judges none of it."""
+    return settings.TextField(label, message, setting, default, width)
+
+
+def _limits(title: str, setting: str, low: str, high: str) -> settings.Dialog:
+    """The `Lower limit`/`Upper limit` line three of the commands share.
+
+    Both blank is an answer rather than a refusal - it asks for the indefinite
+    form - so the command that put the dialog up is what judges the pair, and
+    it only refuses the half-answered one.
+    """
+    return settings.Dialog(
+        title,
+        (
+            (
+                _expression_field(
+                    "Lower limit", f"{setting}Lower", low, ENTER_OR_SKIP
+                ),
+                _expression_field(
+                    "Upper limit", f"{setting}Upper", high, ENTER_OR_SKIP
+                ),
+            ),
+        ),
+        stored=False,
+        enters=True,
+    )
+
+
+#: What `Calculus Differentiate` asks last. The order defaults to one, and a
+#: negative one asks for an antiderivative (manual 7.4).
+DIFFERENTIATE = settings.Dialog(
+    "CALCULUS DIFFERENTIATE:",
+    ((_expression_field("Order", "DifferentiateOrder", "1", ENTER_ANY),),),
+    stored=False,
+    enters=True,
+)
+
+#: The bounds of an integral, blank for the indefinite one.
+INTEGRATE = _limits("CALCULUS INTEGRATE:", "Integrate", "", "")
+
+#: The bounds of a sum and of a product, which unlike an integral's come up
+#: filled in: the original offers `1` to `n`.
+SUM = _limits("CALCULUS SUM:", "Sum", "1", "n")
+PRODUCT = _limits("CALCULUS PRODUCT:", "Product", "1", "n")
+
+#: The point a limit is taken at, and which side it is approached from.
+LIMIT = settings.Dialog(
+    "CALCULUS LIMIT:",
+    (
+        (
+            _expression_field("Point", "LimitPoint", "0", ENTER_POINT),
+            settings.ChoiceField(
+                "From",
+                SELECT_DIRECTION,
+                "LimitDirection",
+                tuple(DIRECTIONS),
+                "Both",
+                recorded=False,
+            ),
+        ),
+    ),
+    stored=False,
+    enters=True,
+)
+
+#: How far a Taylor series goes, and where it is expanded about. The line asks
+#: for the degree first and `TAYLOR` takes the point first, so the two are not
+#: in the same order; the command puts them back in the head's.
+TAYLOR = settings.Dialog(
+    "CALCULUS TAYLOR:",
+    (
+        (
+            _expression_field("Degree", "TaylorDegree", "5", ENTER_DEGREE),
+            _expression_field("Point", "TaylorPoint", "0", ENTER_EXPANSION_POINT),
+        ),
+    ),
+    stored=False,
+    enters=True,
+)
+
+#: The values a `Calculus Vector` index runs over. `End` is the one field with
+#: no default and the one the command cannot do without, which is why the
+#: original opens the line on it rather than on the leftmost.
+VECTOR = settings.Dialog(
+    "CALCULUS VECTOR:",
+    (
+        (
+            _expression_field("Start", "VectorStart", "1", ENTER_ANY, _NARROW_WIDTH),
+            _expression_field("End", "VectorEnd", "", ENTER_ANY, _NARROW_WIDTH),
+            _expression_field("Step", "VectorStep", "1", ENTER_ANY, _NARROW_WIDTH),
+        ),
+    ),
+    stored=False,
+    opens_on="VectorEnd",
+    enters=True,
 )
 
 DECLARE = Menu("DECLARE:", ("Function", "Variable", "Matrix", "vectoR"))
@@ -512,6 +663,7 @@ MANAGE_TARGETS: dict[str, Menu | settings.Dialog] = {
 #: app decides whether it has one.
 TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
     ALGEBRA: {
+        "Calculus": CALCULUS,
         "Declare": DECLARE,
         "Manage": MANAGE,
         "Options": OPTIONS,

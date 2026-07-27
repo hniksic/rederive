@@ -39,9 +39,10 @@ uv run pytest
 ## Layout
 
 - `src/rederive/model/` - pure Python, no Textual: the expression tree, the
-  system control settings, the file formats a `Transfer` command reads or
-  writes, and the session, which holds the history, the parse state, each
-  entry's render, and all navigation rules.
+  operators `Build` hangs one together from, the system control settings, the
+  file formats a `Transfer` command reads or writes, and the session, which
+  holds the history, the parse state, each entry's render, and all navigation
+  rules.
 - `src/rederive/syntax/` - Derive expression text to expression trees, and back
   out again - as Derive notation, or as C, Python, Rust or Julia source. It
   does no mathematics: `2+3` is a sum node, never `5`.
