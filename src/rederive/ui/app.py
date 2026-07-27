@@ -633,8 +633,16 @@ def _elapsed(seconds: float) -> str:
     `10m 8s` or `2h 10m 8s` once there are minutes and hours to count.
     """
     tenths = f"{seconds:.1f}"
-    if float(tenths) < 10:
-        return f"{tenths}s"
+    return f"{tenths}s" if float(tenths) < 10 else _whole(seconds)
+
+
+def _whole(seconds: float) -> str:
+    """How long something has been running, counted in whole seconds.
+
+    A figure that is still climbing has no use for a tenth that is out of date
+    the moment it is read, so the running clock counts `3s`, `42s`, `10m 8s`
+    and `2h 10m 8s` and leaves the decimal to the time finally reported.
+    """
     minutes, second = divmod(round(seconds), 60)
     if not minutes:
         return f"{second}s"
@@ -1085,15 +1093,15 @@ class RederiveApp(App[None]):
 
         Not before there is a wait worth reporting, and not where the figure
         has not moved: a command that answers at once leaves the message line
-        as it found it, and past ten seconds the figure changes once a second
-        however often it is read.
+        as it found it, and a clock counted in whole seconds changes once a
+        second however often it is read.
         """
         if self.computing is None:
             return
         running = time.monotonic() - self.started
         if running < CLOCK_AFTER:
             return
-        said = COMPUTING.format(command=self.computing, elapsed=_elapsed(running))
+        said = COMPUTING.format(command=self.computing, elapsed=_whole(running))
         if said != self.message:
             self._set_message(said)
 

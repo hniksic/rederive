@@ -23,6 +23,7 @@ from rederive.ui.app import (
     SIMPLIFYING,
     RederiveApp,
     _elapsed,
+    _whole,
 )
 
 #: How long anything here waits for a thread to get where it is going.
@@ -110,6 +111,23 @@ def app(runner):
 )
 def test_an_elapsed_time_is_written_as_coarsely_as_it_can_be(seconds, written):
     assert _elapsed(seconds) == written
+
+
+@pytest.mark.parametrize(
+    ("seconds", "written"),
+    [
+        (0, "0s"),
+        (3.14, "3s"),
+        (9.94, "10s"),
+        (42.4, "42s"),
+        (60, "1m 0s"),
+        (608, "10m 8s"),
+        (7808, "2h 10m 8s"),
+    ],
+    ids=str,
+)
+def test_a_running_clock_counts_whole_seconds(seconds, written):
+    assert _whole(seconds) == written
 
 
 def _refused(said):
