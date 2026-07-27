@@ -1437,25 +1437,50 @@ def _approximated(expression: sp.Basic, digits: int) -> sp.Basic:
 
     What each irrational is replaced by is a rational, since that is what an
     approximate number is; the arithmetic around it stays exact.
-
-    Best effort, and it says so: whether a number is irrational is a question
-    sympy sometimes leaves open, and a number it cannot classify is left
-    exact.
     """
     try:
         return expression.replace(
-            _is_irrational,
-            lambda part: _simplest(_evalf(part, digits + GUARD), digits),
+            _needs_digits,
+            lambda part: _approximate(part, digits),
             simultaneous=False,
         )
     except Exception:
         return expression
 
 
-def _is_irrational(expression: sp.Basic) -> bool:
+def _needs_digits(expression: sp.Basic) -> bool:
+    """Whether this number has to be worked out before it can be written down.
+
+    Every number does, unless sympy can show that it is rational: a rational
+    is already what an approximate number is, and anything else stands for
+    digits nothing has computed yet.
+
+    The question is which way round to ask it, and the answer is not the
+    obvious one. `is_irrational` has a third answer besides yes and no, and
+    that third answer is the common one - sympy leaves a product of surds open,
+    since irrationals can multiply to a rational - so asking for a proof of
+    irrationality leaves everything unprovable exact, and approximating a
+    wholly numeric expression can then answer with radicals still standing in
+    it. Asking for a proof of rationality instead sends the unprovable cases
+    the other way, and a number can only come out a number.
+    """
     return (
         expression.is_number
-        and expression.is_irrational is True
+        and expression.is_rational is not True
         and expression.is_finite is True
         and not isinstance(expression, sp.Float)
     )
+
+
+def _approximate(part: sp.Basic, digits: int) -> sp.Basic:
+    """The approximate number `part` stands for, or `part` where there is none.
+
+    A number whose value is not real - `SQRT(-2)` and everything else that
+    evaluates with an `I` in it - has no rational standing in for it, and is
+    left as it is rather than failing the approximation of everything around
+    it.
+    """
+    value = _evalf(part, digits + GUARD)
+    if not isinstance(value, sp.Float) and not value.is_Rational:
+        return part
+    return _simplest(value, digits)
