@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from fractions import Fraction
+from itertools import product
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
@@ -40,6 +41,7 @@ from rederive.model.expr import Kind, Node
 from rederive.syntax.names import BUILTIN_FUNCTIONS
 
 __all__ = [
+    "Approx",
     "Assign",
     "Declare",
     "Dot",
@@ -161,6 +163,22 @@ class Taylor(sp.Function):
         except Exception:
             return self
         return series if series.is_polynomial(variable) else self
+
+
+class Approx(sp.Function):
+    """`APPROX(u, n)`: `u` rounded to `n` digits, held until it can be.
+
+    Rounding is the last thing a command does, and what it has to round is the
+    answer and not the question: `APPROX(INT(u, x))` must see the value that
+    integral came out as. So this waits where the calculus heads wait, and the
+    pipeline that evaluates those evaluates this one after them - which the
+    conversion cannot do itself, having no pipeline to call.
+
+    The head carries its digit count even where the call left it out, because
+    what precision the caller was working at is known here and nowhere later.
+    """
+
+    nargs = 2
 
 
 # -- the constant table -----------------------------------------------------
@@ -757,9 +775,49 @@ def _step(conv: _Converter, args: list) -> sp.Basic:
     return sp.Heaviside(_one(args), sp.Rational(1, 2))
 
 
+def _chi(conv: _Converter, args: list) -> sp.Basic:
+    """`CHI(a, x, b)`: the indicator of the interval between `a` and `b`.
+
+    One difference of signs, `SIGN(x - a)/2 - SIGN(x - b)/2`, which is the
+    equivalent the manual gives for the case where the comparisons cannot be
+    made - and, as the original shows, the answer in every other case too.
+    Nothing here has to rule on where `x` lies, because the signs do: between
+    the two the difference is 1, outside it is 0, and beyond a reversed pair it
+    is -1, which is the manual's `CHI(a, x, b) = -CHI(b, x, a)`.
+
+    The endpoints follow from the same formula rather than from a rule of their
+    own. `SIGN(0)` is `±1`, so `CHI(0, 0, 1)` is `±1/2 + 1/2`: the indicator is
+    undecided exactly on the edge of the interval it indicates.
+
+    `a` defaults to 0 and `b` to 1, so `CHI(x)` indicates the unit interval.
+    """
+    if len(args) == 1:
+        low, value, high = sp.Integer(0), args[0], sp.Integer(1)
+    elif len(args) == 2:
+        low, value, high = args[0], args[1], sp.Integer(1)
+    else:
+        low, value, high = args
+    return (_sign(conv, [value - low]) - _sign(conv, [value - high])) / 2
+
+
 def _log(conv: _Converter, args: list) -> sp.Basic:
     """`LOG(z)` is the natural logarithm; `LOG(z, w)` is `LN(z)/LN(w)`."""
     return sp.log(*args)
+
+
+def _normal(conv: _Converter, args: list) -> sp.Basic:
+    """`NORMAL(z, m, s)`: the normal distribution of mean `m` and deviation `s`.
+
+    The statistical function, which is what Derive means by the name - nothing
+    to do with normal form, and nothing a pipeline is needed for. The manual
+    writes it over the error function as `(ERF(√2·z/(2·s) - √2·m/(2·s)) + 1)/2`,
+    and with `m` defaulting to 0 and `s` to 1 that leaves `NORMAL(z)` the
+    cumulative distribution `Φ(z)` of the standard Gaussian.
+    """
+    value, *rest = args
+    mean = rest[0] if rest else sp.Integer(0)
+    deviation = rest[1] if len(rest) > 1 else sp.Integer(1)
+    return (sp.erf((value - mean) / (deviation * sp.sqrt(2))) + 1) / 2
 
 
 def _atan(conv: _Converter, args: list) -> sp.Basic:
@@ -886,6 +944,37 @@ def _is_number(conv: _Converter, args: list) -> sp.Basic:
     return sp.true if isinstance(_one(args), (sp.Rational, sp.Float)) else sp.false
 
 
+def _is_prime(conv: _Converter, args: list) -> sp.Basic:
+    """`PRIME(m)`: whether `m` is a prime number.
+
+    A predicate like `NUMBER`, and answering one of the two truth-values is the
+    whole of what it is for: `SELECT(PRIME(k), k, 1, 100)` has nothing to select
+    on from anything else. What is no integer is no prime, but neither is it
+    false - `PRIME(k)` with `k` still a variable is a question nobody has asked
+    yet - so that call comes back as it was written.
+
+    The manual's second argument is how many rounds of a probabilistic test to
+    run before believing the answer. The test here is not probabilistic, so the
+    count is accepted and makes no difference.
+    """
+    value, *rounds = args
+    if not isinstance(value, sp.Integer):
+        raise TypeError("not an integer")
+    return sp.true if sp.isprime(int(value)) else sp.false
+
+
+def _next_prime(conv: _Converter, args: list) -> sp.Basic:
+    """`NEXT_PRIME(m)`: the first prime above `m`, which need be no integer.
+
+    Strictly above, so `NEXT_PRIME(7)` is 11. A repeat count is accepted and
+    ignored, as it is for `PRIME`.
+    """
+    value, *rounds = args
+    if not isinstance(value, sp.Rational):
+        raise TypeError("not a number")
+    return sp.Integer(sp.nextprime(int(sp.floor(value))))
+
+
 def _numerator(conv: _Converter, args: list) -> sp.Basic:
     return sp.fraction(sp.together(_one(args)))[0]
 
@@ -914,6 +1003,134 @@ def _terms(conv: _Converter, args: list) -> sp.Basic:
     if not isinstance(value, sp.Expr):
         raise TypeError("no terms")
     return _vector_of(list(value.as_ordered_terms(order="grlex")))
+
+
+def _factors(conv: _Converter, args: list) -> sp.Basic:
+    """`FACTORS(u)`: what `u` is written as the product of, as a vector.
+
+    `TERMS`'s counterpart, and syntactic in the same way: nothing is factored
+    first, so `FACTORS(x^2 - 1)` is one factor and the manual tells the caller
+    to compose with `FACTOR` where that is not what was wanted. A number is one
+    factor too - `FACTORS(12)` is `[12]`, not the prime factorisation, which is
+    what `FACTOR` is for.
+
+    The order is Derive's, which is by the factors' bases and not their
+    exponents: most main first, `main_order`'s reading of most main, so
+    `FACTORS(2*x*y)` is `[x, y, 2]` with the number - main in nothing - last.
+    Among factors over the same main variable the compound comes before the
+    simple, `[(x + 1)^2, x]` and `[SIN(x), x]`, which is descending in sympy's
+    own ordering of them.
+
+    A vector distributes, each element contributing its own row, exactly as
+    `TERMS` does.
+    """
+    value = _one(args)
+    if isinstance(value, sp.MatrixBase):
+        return _vector_of([_factors(conv, [element]) for element in _elements_of(value)])
+    if not isinstance(value, sp.Expr):
+        raise TypeError("no factors")
+    factors = value.as_ordered_factors() if value.is_Mul else [value]
+    return _vector_of(_by_mainness(factors))
+
+
+def _by_mainness(pieces: list) -> list:
+    """`pieces` from most main to least, which is Derive's ordering of them.
+
+    Most main is `main_order`'s reading of the variable a piece is mainly
+    about, and the compound comes before the simple where two are about the
+    same variable: `SIN(x)` ahead of `x`, `(x + 1)^2` ahead of `x`. That second
+    part is descending in sympy's own ordering, which is the one that puts the
+    plain symbol first. What mentions no variable at all is main in nothing and
+    goes last, which is where a product's numeric coefficient belongs.
+    """
+    order = main_order(name for piece in pieces for name in _named_in(piece))
+
+    def rank(numbered: tuple[int, sp.Basic]) -> tuple[int, int]:
+        position, piece = numbered
+        names = _named_in(piece)
+        return min((order.index(name) for name in names), default=len(order)), -position
+
+    return [piece for _, piece in sorted(enumerate(pieces), key=rank)]
+
+
+def _named_in(value: sp.Basic) -> set[str]:
+    """The variables `value` mentions. A string literal is data, not one."""
+    return {symbol.name for symbol in value.free_symbols if type(symbol) is sp.Symbol}
+
+
+def _side(index: int) -> Handler:
+    """`LHS(u)` and `RHS(u)`: one side of a relation.
+
+    A vector distributes, which is the manual's own reason for the pair:
+    `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is the vector of roots. What is no
+    relation has no sides to take and answers with itself, both ways - Derive
+    gives `LHS(2*x + 3)` back as `2*x + 3`.
+    """
+
+    def handler(conv: _Converter, args: list) -> sp.Basic:
+        value = _one(args)
+        if isinstance(value, sp.MatrixBase):
+            return _vector_of([handler(conv, [e]) for e in _elements_of(value)])
+        if isinstance(value, InertVector):
+            # Which is what a vector of relations is: sympy holds no matrix of
+            # them, and a vector of relations is exactly what has sides worth
+            # taking.
+            return _vector_of([handler(conv, [e]) for e in value.args])
+        if value.is_Relational:
+            return value.args[index]
+        return value
+
+    return handler
+
+
+def _quotient(conv: _Converter, args: list) -> sp.Basic:
+    """`QUOTIENT(u, v)`: how many times `v` goes into `u`."""
+    return _divided(args)[0]
+
+
+def _remainder(conv: _Converter, args: list) -> sp.Basic:
+    """`REMAINDER(u, v)`: what is left of `u` when `v` has gone into it."""
+    return _divided(args)[1]
+
+
+def _divided(args: list) -> tuple[sp.Basic, sp.Basic]:
+    """Polynomial division, in the main variable and over everything else.
+
+    The division is with respect to one variable, and the other variables ride
+    along in the coefficients as a field would: `QUOTIENT(x*y + 1, y)` is
+    `x + 1/y` with nothing left over, because as polynomials in `x` the divisor
+    is a constant and a constant divides exactly.
+
+    Two numbers have no variable to divide in, and are a field on their own:
+    the quotient is the fraction and the remainder is nothing, so
+    `QUOTIENT(7, 2)` is `7/2` rather than 3. That is Derive's answer, and the
+    manual's "`u` and `v` should be rational numbers or polynomials" is the
+    same statement - the rationals are where its division is exact.
+
+    What the main one is, sympy's own reading of what the two are polynomials
+    in, ordered by `_by_mainness`: usually a variable, and a kernel where the
+    expression is a polynomial in one. `QUOTIENT(SIN(x), SIN(x)^2)` is 0 with
+    `SIN(x)` left over, which only makes sense in `SIN(x)`; `QUOTIENT(SIN(x),
+    x)` is `SIN(x)/x` in the same reading, the divisor being a coefficient
+    there. Both are Derive's answers.
+    """
+    numerator, denominator = args
+    try:
+        generators = sp.parallel_poly_from_expr((numerator, denominator))[1].gens
+    except sp.PolificationFailed:
+        # Two numbers, which are a field on their own.
+        return numerator / denominator, sp.Integer(0)
+    return sp.div(numerator, denominator, _by_mainness(list(generators))[0])
+
+
+def _polynomial_gcd(conv: _Converter, args: list) -> sp.Basic:
+    """`POLY_GCD(u, v)`: the greatest common divisor of two polynomials.
+
+    `GCD` over a wider domain rather than a different function, and numbers are
+    the polynomials of no variables: `POLY_GCD(12, 18)` is 6.
+    """
+    left, right = args
+    return sp.gcd(left, right)
 
 
 def _variables(conv: _Converter, args: list) -> sp.Basic:
@@ -976,6 +1193,24 @@ def _taylor(conv: _Converter, args: list) -> sp.Basic:
     return Taylor(*args)
 
 
+def _approximation(conv: _Converter, args: list) -> sp.Basic:
+    """`APPROX(u)` at the session's precision, `APPROX(u, n)` at `n` digits.
+
+    Unevaluated, for the reason `Approx` gives: the rounding waits for the
+    pipeline. The digit count is filled in here because this is the last place
+    that knows what the caller was working at.
+
+    The number that comes back carries the digits it was asked for, but the
+    printer writes every float at the session's precision, so a count above
+    that one is computed and not shown.
+    """
+    value, *rest = args
+    digits = _one(rest) if rest else sp.Integer(conv.context.precision_digits)
+    if not (isinstance(digits, sp.Integer) and digits > 0):
+        raise ValueError("not a precision")
+    return Approx(value, digits)
+
+
 def _conditional(conv: _Converter, args: list) -> sp.Basic:
     """`IF(c, u)` and `IF(c, u, v)` as the case split sympy writes them as.
 
@@ -1003,6 +1238,47 @@ def _test(test: sp.Basic) -> sp.Basic:
     if test.is_Relational:
         return test.func(test.lhs, test.rhs)
     return test
+
+
+def _truth_table(conv: _Converter, args: list) -> sp.Basic:
+    """`TRUTH_TABLE(p, q, ..., b1, b2, ...)`: the table, as a matrix.
+
+    The leading arguments that are bare variables are the truth variables and
+    everything after them is an expression to evaluate; a call that is nothing
+    but variables is the table of the assignments themselves, which is what
+    `TRUTH_TABLE(p, q)` answers with.
+
+    The first row names the columns exactly as they were written, and the rows
+    under it run through every assignment with the last variable changing
+    fastest and `true` before `false` - the order the manual prints its table
+    in, which is the binary numbers counted down from all-ones.
+
+    Every expression has to come out true or false at every assignment. One
+    that does not is no Boolean expression, and the call comes back as written
+    rather than a table with a hole in it.
+    """
+    variables: list[sp.Basic] = []
+    for value in args:
+        if type(value) is not sp.Symbol:
+            break
+        variables.append(value)
+    expressions = args[len(variables) :]
+    if not variables:
+        raise ValueError("no truth variables")
+    rows = [InertVector(*args)]
+    for assignment in product([sp.true, sp.false], repeat=len(variables)):
+        written = dict(zip(variables, assignment, strict=True))
+        values = [_decided(expression, written) for expression in expressions]
+        rows.append(InertVector(*assignment, *values))
+    return _vector_of(rows)
+
+
+def _decided(expression: sp.Basic, assignment: dict) -> sp.Basic:
+    """One cell: an expression at one assignment of its variables."""
+    value = _test(expression.subs(assignment))
+    if value not in (sp.true, sp.false):
+        raise TypeError("not a boolean")
+    return value
 
 
 def _substitution(conv: _Converter, args: list) -> sp.Basic:
@@ -1088,6 +1364,46 @@ def _replace_element(conv: _Converter, args: list) -> sp.Basic:
     return _vector_of(elements[:place] + [value] + elements[place + 1 :])
 
 
+def _insert_element(conv: _Converter, args: list) -> sp.Basic:
+    """`INSERT_ELEMENT(u, v, n)`: `v` with `u` written in before its `n`th.
+
+    The new value first and the vector second, the order `REPLACE_ELEMENT`
+    has, and `n` defaults to 1. One past the end is an index here where it is
+    none anywhere else, because that is how an element is added to the end:
+    `INSERT_ELEMENT(d, [a, b, c], 4)` is `[a, b, c, d]`.
+    """
+    value, vector, *rest = args
+    elements = _elements_of(_matrix(vector))
+    place = _place(_one(rest) if rest else sp.Integer(1), len(elements) + 1)
+    return _vector_of(elements[:place] + [value] + elements[place:])
+
+
+def _reversed_vector(conv: _Converter, args: list) -> sp.Basic:
+    """`REVERSE_VECTOR(v)`: `v` with its elements back to front.
+
+    A matrix's elements are its rows, so a matrix comes back with its rows in
+    the opposite order and each row as it was.
+    """
+    return _vector_of(_elements_of(_matrix(_one(args)))[::-1])
+
+
+def _appended(conv: _Converter, args: list) -> sp.Basic:
+    """`APPEND(v, w, ...)`: the elements of each, run together into one vector.
+
+    A matrix's elements are its rows, so appending matrices stacks them - which
+    is what the manual's `APPEND_COLUMNS` exercise turns on: transpose the two,
+    append, transpose back. A single matrix is the exception the manual names
+    separately, and it flattens: `APPEND([[a, b], [c, d]])` is `[a, b, c, d]`,
+    not the matrix it started as.
+    """
+    if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
+        return _vector_of(list(args[0]))
+    elements: list[sp.Basic] = []
+    for vector in args:
+        elements.extend(_elements_of(_matrix(vector)))
+    return _vector_of(elements)
+
+
 def _place(index: sp.Basic, count: int) -> int:
     """Which of `count` elements an index picks out, counting from 1."""
     if not isinstance(index, sp.Integer) or not 1 <= index <= count:
@@ -1128,6 +1444,183 @@ def _steps(rest: list) -> list[sp.Basic]:
     step = rest[2] if len(rest) == 3 else sp.Integer(1)
     count = int(sp.floor((high - low) / step)) + 1
     return [low + step * offset for offset in range(max(count, 0))]
+
+
+def _selected(conv: _Converter, args: list) -> sp.Basic:
+    """`SELECT(u, k, ...)`: the values of `k` for which `u(k)` holds.
+
+    Which values those are is said in the same four ways `VECTOR` says it, and
+    `_steps` reads them the same. What comes back is the values themselves and
+    not anything computed from them, which is the whole difference between the
+    two: `SELECT(PRIME(k), k, 1, 100)` is the primes under a hundred.
+
+    Every test has to come out true or false. One that stays a relation nobody
+    can decide would silently drop the element it was asked about, so the call
+    comes back as it was written instead - which is also what keeps a `SELECT`
+    inside a definition intact until the definition is applied.
+    """
+    body, index, *rest = args
+    if type(index) is not sp.Symbol:
+        raise TypeError("not a variable")
+    chosen = []
+    for value in _steps(rest):
+        held = _test(_retried(conv, body.subs(index, value)))
+        if held is sp.true:
+            chosen.append(value)
+        elif held is not sp.false:
+            raise ValueError("undecided")
+    return _vector_of(chosen)
+
+
+def _iterates(conv: _Converter, args: list) -> sp.Basic:
+    """`ITERATES(u, x, x0)` and `ITERATES(u, x, x0, n)`: the sequence, as a vector.
+
+    `x0`, `u(x0)`, `u(u(x0))` and so on: `n` updates make `n + 1` elements, and
+    a count left out means "until a value comes round again".
+    """
+    return _vector_of(_sequence(conv, args))
+
+
+def _iterate(conv: _Converter, args: list) -> sp.Basic:
+    """`ITERATE(...)`: the same sequence's last element, and nothing else.
+
+    Counted, that is the `n`th update and there is no more to ask. Uncounted,
+    the sequence ended by repeating something, and only a value that repeated
+    *itself* is a value the iteration arrived at: a longer cycle converges to
+    nothing, and the manual's answer for that is `?`.
+    """
+    sequence = _sequence(conv, args)
+    if len(args) > 3:
+        return sequence[-1]
+    return sequence[-1] if sequence[-1] == sequence[-2] else sp.nan
+
+
+def _sequence(conv: _Converter, args: list) -> list[sp.Basic]:
+    """The iterates, however many were asked for.
+
+    A negative count iterates the inverse of `u` instead, `|n|` times, which is
+    what `MISC.MTH` defines `INVERSE(u, x) := ITERATE(u, x, x, -1)` on.
+    """
+    body, variable, start, *rest = args
+    names, values = _iterated_over(variable, start)
+    if not rest:
+        return _until_repeated(conv, body, names, values)
+    count = _one(rest)
+    if not isinstance(count, sp.Integer):
+        raise TypeError("not a count")
+    if count < 0:
+        body, count = _inverted(body, names), -count
+    iterates = [_state(names, values)]
+    for _ in range(int(count)):
+        values = _updated(conv, body, names, values)
+        iterates.append(_state(names, values))
+    return iterates
+
+
+def _until_repeated(
+    conv: _Converter, body: sp.Basic, names: list, values: list
+) -> list[sp.Basic]:
+    """The sequence run out to where it comes round.
+
+    The repeated value is the last element rather than being dropped, so
+    `ITERATES(1/x, x, 2)` is `[2, 1/2, 2]` - which is what tells `ITERATE`
+    whether the cycle it found has length one.
+
+    What Derive does when nothing ever repeats is iterate until memory is gone.
+    That is no answer an engine can give, so an iteration that has not come
+    round within the bounds below comes back the call it was written as.
+    """
+    iterates = [_state(names, values)]
+    for _ in range(_ITERATIONS):
+        values = _updated(conv, body, names, values)
+        iterates.append(_state(names, values))
+        if iterates[-1] in iterates[:-1]:
+            return iterates
+        if _outsized(iterates[-1]):
+            break
+    raise ValueError("comes round to nothing")
+
+
+#: How far an uncounted iteration is run before it is given up on, and how big
+#: an iterate may get on the way. Both bounds are needed: a sequence that does
+#: not come round usually runs away instead, and it runs away faster than any
+#: count can catch - repeated squaring passes thirty thousand digits in
+#: seventeen steps. Neither bound is near anything a converging iteration
+#: reaches.
+_ITERATIONS = 100
+_ITERATE_BITS = 100_000
+_ITERATE_OPERATIONS = 1000
+
+
+def _outsized(value: sp.Basic) -> bool:
+    """Whether an iterate has grown past what carrying it any further is worth."""
+    if sp.count_ops(value) > _ITERATE_OPERATIONS:
+        return True
+    return any(
+        int(number).bit_length() > _ITERATE_BITS for number in value.atoms(sp.Integer)
+    )
+
+
+def _iterated_over(variable: sp.Basic, start: sp.Basic) -> tuple[list, list]:
+    """The variables an iteration updates, and the values they start at.
+
+    One variable and one value, or - the form the manual writes Fibonacci in -
+    a vector of variables and a vector of their values, so that an iteration
+    remembering more than one previous iterate needs no subscripts:
+    `ITERATE([k, j + k], [j, k], [0, 1], n)`.
+    """
+    if isinstance(variable, sp.MatrixBase):
+        names = _elements_of(variable)
+        values = _elements_of(_matrix(start))
+        if len(names) != len(values):
+            raise ValueError("not that many values")
+    else:
+        names, values = [variable], [start]
+    if any(type(name) is not sp.Symbol for name in names):
+        raise TypeError("not a variable")
+    return names, values
+
+
+def _state(names: list, values: list) -> sp.Basic:
+    """One iterate: the value the variable took, or the vector they all took."""
+    return values[0] if len(names) == 1 else _vector_of(values)
+
+
+def _updated(conv: _Converter, body: sp.Basic, names: list, values: list) -> list:
+    """The variables' next values: the body where they stand now.
+
+    Every one written in at once, since the update of a system reads all of the
+    previous iterate and none of the one being built. The heads that could not
+    be read while the variables were variables are read again, as they are for
+    a generated vector's elements, and a system's update has to come back as
+    many values as it consumed.
+    """
+    written = body.subs(dict(zip(names, values, strict=True)), simultaneous=True)
+    written = _retried(conv, written)
+    if len(names) == 1:
+        return [written]
+    elements = _elements_of(_matrix(written))
+    if len(elements) != len(names):
+        raise ValueError("not that many values")
+    return elements
+
+
+def _inverted(body: sp.Basic, names: list) -> sp.Basic:
+    """The function that undoes `body`, for an iteration counted backwards.
+
+    Solving `u(x) = t` for `x`: `ITERATES(TAN(x), x, x, -1)` is `[x, ATAN(x)]`.
+    A function it is only where the solution is the one it has, so anything
+    with a choice of inverses has none here, and a system of variables has none
+    at all.
+    """
+    if len(names) != 1:
+        raise ValueError("no inverse of a system")
+    (name,) = names
+    point = sp.Dummy("t")
+    solutions = sp.solve(sp.Eq(body, point), name)
+    if len(solutions) != 1:
+        raise ValueError("not invertible")
+    return solutions[0].subs(point, name)
 
 
 def _elements_of(matrix: sp.MatrixBase) -> list[sp.Basic]:
@@ -1548,6 +2041,8 @@ FUNCTIONS: dict[str, Handler] = {
     "FLOOR": _floor,
     "MOD": _mod,
     "MODS": _mods,
+    "CHI": _chi,
+    "NORMAL": _normal,
     "GCD": _fold(sp.gcd),
     "LCM": _fold(sp.lcm),
     "AVERAGE": _statistic(_average),
@@ -1555,9 +2050,17 @@ FUNCTIONS: dict[str, Handler] = {
     "VAR": _statistic(_variance),
     "STDEV": _statistic(_standard_deviation),
     "NUMBER": _is_number,
+    "PRIME": _is_prime,
+    "NEXT_PRIME": _next_prime,
     "NUMERATOR": _numerator,
     "DENOMINATOR": _denominator,
     "TERMS": _terms,
+    "FACTORS": _factors,
+    "LHS": _side(0),
+    "RHS": _side(1),
+    "QUOTIENT": _quotient,
+    "REMAINDER": _remainder,
+    "POLY_GCD": _polynomial_gcd,
     "VARIABLES": _variables,
     "DIF": _dif,
     "INT": _integral,
@@ -1565,7 +2068,9 @@ FUNCTIONS: dict[str, Handler] = {
     "PRODUCT": _product,
     "LIM": _limit,
     "TAYLOR": _taylor,
+    "APPROX": _approximation,
     "IF": _conditional,
+    "TRUTH_TABLE": _truth_table,
     "SUBS": _substitution,
     "HYPER": _hyper,
     "DET": _determinant,
@@ -1574,12 +2079,18 @@ FUNCTIONS: dict[str, Handler] = {
     "ELEMENT": _element_of,
     "DELETE_ELEMENT": _delete_element,
     "REPLACE_ELEMENT": _replace_element,
+    "INSERT_ELEMENT": _insert_element,
+    "REVERSE_VECTOR": _reversed_vector,
+    "APPEND": _appended,
     "IDENTITY_MATRIX": _identity_matrix,
     "CROSS": _cross,
     "ROW_REDUCE": _row_reduce,
     "CHARPOLY": _characteristic_polynomial,
     "EIGENVALUES": _eigenvalues,
     "VECTOR": _generated_vector,
+    "SELECT": _selected,
+    "ITERATE": _iterate,
+    "ITERATES": _iterates,
     "GRAD": _gradient,
     "DIV": _divergence,
     "LAPLACIAN": _laplacian,

@@ -29,7 +29,14 @@ from rederive.engine import (
     simplify,
     to_sympy,
 )
-from rederive.engine.context import Angle, Branch, Direction, Precision, TrigPower
+from rederive.engine.context import (
+    Angle,
+    Branch,
+    Direction,
+    Notation,
+    Precision,
+    TrigPower,
+)
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, VariableDeclaration, parse_expression
 from rederive.syntax.names import BUILTIN_FUNCTIONS
@@ -58,6 +65,9 @@ def declared(*declarations, **settings):
 # suits it rather than as the ratios it is made of.
 APPROXIMATE = Context().with_precision(Precision.APPROXIMATE)
 MIXED = Context().with_precision(Precision.MIXED)
+# Exact arithmetic read as digits, which is where an approximation made inside
+# an exact line shows what it is worth.
+DECIMAL = Context(notation=Notation.DECIMAL)
 COMPLEX_X = Context(domains={"x": Domain(DomainKind.COMPLEX)})
 POSITIVE_X = declared("x :epsilon Real (0, inf)")
 
@@ -411,6 +421,40 @@ def test_a_special_value(text, expected):
     assert simp(text) == expected
 
 
+# -- the indicator function and the normal distribution ------------------------
+
+#: Two of Section 6's functions that are a closed form rather than a rule:
+#: whatever else is known about the arguments, the answer is the formula.
+INDICATOR_AND_NORMAL = [
+    # One difference of signs: 1 between the bounds and 0 outside them.
+    ("CHI(0, 1/2, 1)", "1"),
+    ("CHI(0, 2, 1)", "0"),
+    ("CHI(0, -1, 1)", "0"),
+    # Bounds the wrong way round give -1, which is the manual's
+    # `CHI(a, x, b) = -CHI(b, x, a)`.
+    ("CHI(1, 1/2, 0)", "-1"),
+    # `a` defaults to 0 and `b` to 1, so both of these indicate the unit
+    # interval, and the formula is the answer where nothing can be compared.
+    ("CHI(x)", "SIGN(x)/2 - SIGN(x - 1)/2"),
+    ("CHI(0, x)", "SIGN(x)/2 - SIGN(x - 1)/2"),
+    ("CHI(2, x, 1)", "SIGN(x - 2)/2 - SIGN(x - 1)/2"),
+    # On the edge the indicator is undecided, `SIGN(0)` being `±1`. Written
+    # `(±1)/2` where Derive writes `±1/2`: the same number, this printer's
+    # spelling of it.
+    ("CHI(0, 0, 1)", "(±1)/2 + 1/2"),
+    # The cumulative normal distribution, over the error function. Derive
+    # writes it `(ERF(√2*z/2) + 1)/2`; sympy distributes the half.
+    ("NORMAL(z)", "ERF(SQRT(2)*z/2)/2 + 1/2"),
+    ("NORMAL(0)", "1/2"),
+    ("NORMAL(z, m, s)", "ERF(SQRT(2)*(z - m)/(2*s))/2 + 1/2"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), INDICATOR_AND_NORMAL, ids=str)
+def test_the_indicator_and_the_normal_distribution(text, expected):
+    assert simp(text) == expected
+
+
 def test_plus_or_minus_simplifies_its_argument_and_seals_it_in():
     assert simp("±(2 + 3)") == "±5"
     # Arithmetic does not propagate the ambiguity outward; that is out of scope
@@ -688,6 +732,71 @@ def test_generated_vectors(text, expected):
     assert simp(text) == expected
 
 
+#: `SELECT` says which values in the same four ways, and answers with the
+#: values themselves rather than with anything computed from them.
+SELECTED = [
+    # The manual's own two examples.
+    ("SELECT(PRIME(k), k, [3, 5, 7, 9, 11])", "[3, 5, 7, 11]"),
+    ("SELECT(PRIME(k), k, 1, 20)", "[2, 3, 5, 7, 11, 13, 17, 19]"),
+    # A count, and a range with a step.
+    ("SELECT(k > 1, k, 5)", "[2, 3, 4, 5]"),
+    ("SELECT(k > 1, k, 1, 10, 3)", "[4, 7, 10]"),
+    ("SELECT(k^2 > 5, k, 1, 5)", "[3, 4, 5]"),
+    ("SELECT(k > 5, k, 1, 3)", "[]"),
+    # A second argument that is no variable binds nothing, and a test nobody
+    # can decide is no answer: both come back the call they were written as.
+    # Derive answers the second with the empty vector, having dropped the
+    # element it could not judge; this engine would rather say so.
+    ("SELECT(k > 1, 5, [1, 2])", "SELECT(k > 1, 5, [1, 2])"),
+    ("SELECT(PRIME(k), k, x, x + 2)", "SELECT(PRIME(k), k, x, x + 2)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SELECTED, ids=str)
+def test_selected_elements(text, expected):
+    assert simp(text) == expected
+
+
+#: The two iteration functions, which differ only in how much of the sequence
+#: they answer with.
+ITERATION = [
+    # `n` updates make `n + 1` iterates; ITERATE keeps the last of them.
+    ("ITERATES(x^2, x, 2, 3)", "[2, 4, 16, 256]"),
+    ("ITERATE(x^2, x, 2, 3)", "256"),
+    ("ITERATES(x^2, x, 2, 0)", "[2]"),
+    # The manual's POWER: `n` copies of `x` multiplied into an accumulator.
+    ("ITERATE(a*x, a, 1, 3)", "x^3"),
+    # Uncounted, the sequence runs until a value comes round, and the repeat is
+    # the last element. ITERATE wants a cycle of length one and answers `?`
+    # where it finds a longer one.
+    ("ITERATES(1/x, x, 2)", "[2, 1/2, 2]"),
+    ("ITERATE(1/x, x, 2)", "?"),
+    # A vector of variables and a vector of their starting values, which is how
+    # the manual writes Fibonacci without subscripts.
+    ("ITERATE([k, j + k], [j, k], [0, 1], 10)", "[55, 89]"),
+    ("ITERATES([k, j + k], [j, k], [0, 1], 3)", "[[0, 1], [1, 1], [1, 2], [2, 3]]"),
+    # A negative count iterates the inverse, which is what MISC.MTH defines
+    # `INVERSE(u, x) := ITERATE(u, x, x, -1)` on.
+    ("ITERATES(TAN(x), x, x, -1)", "[x, ATAN(x)]"),
+    ("ITERATES(x + 1, x, 0, -2)", "[0, -1, -2]"),
+    # Where there is a choice of inverses there is no inverse function, and the
+    # call comes back as written. Derive takes the principal one and answers
+    # `[2, SQRT(2)]`; choosing among roots is soLve's business, not this
+    # engine's, and soLve is deliberately inert here.
+    ("ITERATES(x^2, x, 2, -1)", "ITERATES(x^2, x, 2, -1)"),
+    # An iteration that neither comes round nor was counted comes back as
+    # written: Derive runs one until memory is gone, which is no answer to
+    # give. Neither is a count that is still a name.
+    ("ITERATES(x^2, x, 2)", "ITERATES(x^2, x, 2)"),
+    ("ITERATE(a*x, a, 1, n)", "ITERATE(a*x, a, 1, n)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), ITERATION, ids=str)
+def test_iteration(text, expected):
+    assert simp(text) == expected
+
+
 def test_an_element_access_that_could_not_be_taken_is_taken_once_generated():
     # An access into a vector converts before the index is a number, and becomes
     # an inert one. Each generated element has a number for it, so the access is
@@ -776,12 +885,120 @@ STRUCTURE = [
     # back the call they were written as.
     ("DELETE_ELEMENT([a, b, c], n)", "DELETE_ELEMENT([a, b, c], n)"),
     ("DELETE_ELEMENT([a, b, c], 4)", "DELETE_ELEMENT([a, b, c], 4)"),
+    # Inserted before the nth element, and the index defaults to 1. One past
+    # the end is an index here where it is none above, because that is how an
+    # element is added to the end.
+    ("INSERT_ELEMENT(d, [a, b, c], 2)", "[a, d, b, c]"),
+    ("INSERT_ELEMENT(d, [a, b, c])", "[d, a, b, c]"),
+    ("INSERT_ELEMENT(d, [a, b, c], 4)", "[a, b, c, d]"),
+    # Two past it is no index at all, and the call comes back as written -
+    # DELETE_ELEMENT's rule above, and this engine's throughout. Derive answers
+    # `[a, b, c]`, quietly dropping the element it was asked to insert.
+    ("INSERT_ELEMENT(d, [a, b, c], 5)", "INSERT_ELEMENT(d, [a, b, c], 5)"),
+    # Reversed, and a matrix's elements are its rows there as everywhere.
+    ("REVERSE_VECTOR([a, b, c])", "[c, b, a]"),
+    ("REVERSE_VECTOR([[1, 2], [3, 4]])", "[[3, 4], [1, 2]]"),
+    # Concatenation: the elements of each vector, run together. Matrices stack,
+    # their elements being their rows - except for a single matrix, which the
+    # manual makes the exception and flattens.
+    ("APPEND([a, b], [c, d], [e, f])", "[a, b, c, d, e, f]"),
+    ("APPEND([[a, b], [c, d], [e, f]])", "[a, b, c, d, e, f]"),
+    ("APPEND([[a, b], [c, d]], [[e, f], [g, h]])", "[[a, b], [c, d], [e, f], [g, h]]"),
+    ("APPEND([a, b])", "[a, b]"),
 ]
 
 
 @pytest.mark.parametrize(("text", "expected"), STRUCTURE, ids=str)
 def test_structure(text, expected):
     assert simp(text) == expected
+
+
+#: Section 6.14's other decomposition functions: what an expression is written
+#: as the product of, which side of a relation is which, and the polynomial
+#: division and gcd that sit beside `TERMS` in the manual.
+DECOMPOSITION = [
+    # Syntactic factors, `TERMS`'s counterpart: nothing is factored first, so a
+    # sum is one factor and so is a number - `FACTOR` is what factors.
+    ("FACTORS(3*x*(x + 1)^2)", "[(x + 1)^2, x, 3]"),
+    ("FACTORS(x^2 - 1)", "[x^2 - 1]"),
+    ("FACTORS(12)", "[12]"),
+    ("FACTORS(2/3)", "[2/3]"),
+    ("FACTORS(x/y)", "[x, 1/y]"),
+    # Most main first, and the compound before the simple where two are about
+    # the same variable.
+    ("FACTORS(3*x*y)", "[x, y, 3]"),
+    ("FACTORS(x^2*y^3)", "[x^2, y^3]"),
+    ("FACTORS(x*SIN(x))", "[SIN(x), x]"),
+    ("FACTORS((x + 1)*(x + 2))", "[x + 2, x + 1]"),
+    # A vector distributes, as it does for TERMS.
+    ("FACTORS([x*y, 2*z])", "[[x, y], [z, 2]]"),
+    # The sides of a relation, and a vector of them - which is what makes
+    # `RHS(SOLVE(u, x))` the vector of roots.
+    ("LHS(2*x + 3 = 5)", "2*x + 3"),
+    ("RHS(2*x + 3 = 5)", "5"),
+    ("LHS([x = 1, y = 2])", "[x, y]"),
+    ("RHS([x = 1, y = 2])", "[1, 2]"),
+    # What is no relation has no sides to take and answers with itself.
+    ("LHS(2*x + 3)", "2*x + 3"),
+    ("RHS(3)", "3"),
+    # Division in the main variable: the manual's own pair.
+    ("QUOTIENT(x^4 + 3*x^3 + 5*x + 6, x^2 - 5)", "x^2 + 3*x + 5"),
+    ("REMAINDER(x^4 + 3*x^3 + 5*x + 6, x^2 - 5)", "20*x + 31"),
+    ("QUOTIENT(x, x^2)", "0"),
+    ("REMAINDER(x, x^2)", "x"),
+    # The other variables ride along in the coefficients as a field would: in
+    # `x` the divisor is a constant, and a constant divides exactly.
+    ("QUOTIENT(x*y + 1, y)", "x + 1/y"),
+    ("REMAINDER(x*y + 1, y)", "0"),
+    # Two numbers have no variable to divide in and are a field on their own,
+    # so the quotient is the fraction and nothing is left over.
+    ("QUOTIENT(7, 2)", "7/2"),
+    ("REMAINDER(7, 2)", "0"),
+    ("QUOTIENT(-7, 2)", "-7/2"),
+    # And what is a polynomial in a kernel is divided in the kernel.
+    ("QUOTIENT(SIN(x), SIN(x)^2)", "0"),
+    ("REMAINDER(SIN(x), SIN(x)^2)", "SIN(x)"),
+    ("QUOTIENT(SIN(x), x)", "SIN(x)/x"),
+    # The manual's gcd example, and the same function over numbers.
+    ("POLY_GCD(x^3 + 3*x^2 + 5*x + 6, x^3 + 2*x - 3)", "x^2 + x + 3"),
+    ("POLY_GCD(12, 18)", "6"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), DECOMPOSITION, ids=str)
+def test_what_an_expression_decomposes_into(text, expected):
+    assert simp(text) == expected
+
+
+#: The two number-theoretic functions, both of them predicates over the
+#: integers in the sense that they answer rather than compute.
+NUMBER_THEORY = [
+    ("PRIME(7)", "true"),
+    ("PRIME(8)", "false"),
+    ("PRIME(1)", "false"),
+    # The manual's second argument is how many rounds of a probabilistic test
+    # to run. This test is not probabilistic, so the count changes nothing.
+    ("PRIME(7, 20)", "true"),
+    # What is no integer is not false but undecided, and comes back as written.
+    ("PRIME(x)", "PRIME(x)"),
+    # Strictly larger, and the argument need be no integer.
+    ("NEXT_PRIME(1000)", "1009"),
+    ("NEXT_PRIME(7)", "11"),
+    ("NEXT_PRIME(7/2)", "5"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), NUMBER_THEORY, ids=str)
+def test_number_theory(text, expected):
+    assert simp(text) == expected
+
+
+def test_the_utility_files_appended_columns():
+    # ``APPEND_COLUMNS(A, B) := APPEND(A`, B`)` ``, VECTOR.MTH's definition and
+    # the exercise the manual sets. It works only because appending two
+    # matrices stacks their rows rather than flattening them.
+    columns = "APPEND([[a, b], [c, d]]`, [[e, f], [g, h]]`)`"
+    assert simp(columns) == "[[a, b, e, f], [c, d, g, h]]"
 
 
 def test_the_utility_files_matrix_minor():
@@ -827,6 +1044,34 @@ LOGIC = [
 
 @pytest.mark.parametrize(("text", "expected"), LOGIC, ids=str)
 def test_logic(text, expected):
+    assert simp(text) == expected
+
+
+#: A truth table: the columns as they were written, then one row per
+#: assignment, the last variable changing fastest and `true` before `false`.
+TRUTH_TABLES = [
+    (
+        "TRUTH_TABLE(p, q, p AND q, p OR q, p XOR q, p IMP q)",
+        "[[p, q, p AND q, p OR q, p XOR q, p IMP q], "
+        "[true, true, true, true, false, true], "
+        "[true, false, false, true, true, false], "
+        "[false, true, false, true, true, true], "
+        "[false, false, false, false, false, true]]",
+    ),
+    # Nothing but variables is the table of the assignments themselves.
+    ("TRUTH_TABLE(p)", "[[p], [true], [false]]"),
+    (
+        "TRUTH_TABLE(p, q)",
+        "[[p, q], [true, true], [true, false], [false, true], [false, false]]",
+    ),
+    ("TRUTH_TABLE(p, NOT p)", "[[p, NOT p], [true, false], [false, true]]"),
+    # A leading argument that is no variable leaves nothing to vary.
+    ("TRUTH_TABLE(3, p)", "TRUTH_TABLE(3, p)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), TRUTH_TABLES, ids=str)
+def test_truth_tables(text, expected):
     assert simp(text) == expected
 
 
@@ -898,9 +1143,7 @@ def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
 OPAQUE = [
     "SOLVE(x^2 = 1, x)",
     "RANDOM(10)",
-    "ITERATE(x^2, x, 2, 3)",
     "FIT([x, 1], [[1, 2], [3, 4]])",
-    "TRUTH_TABLE(p, q)",
     "PMT(1/100, 12, 1000)",
     "MY_FUNCTION(x, 2)",
 ]
@@ -936,6 +1179,59 @@ def test_approx_is_simplify_at_another_precision(text, expected):
 
 def test_approx_takes_the_digits_it_is_given():
     assert approx(parse("pi"), Context(), 12).text == "3.14159265358"
+
+
+APPROXIMATED = [
+    # The function, not the command: it approximates what it holds and leaves
+    # the line around it alone, and it does so in Exact mode like any other.
+    # What it leaves is a rational, since that is what an approximate number
+    # is, so a rational notation writes the ratio the digits stand for.
+    ("APPROX(pi)", "355/113"),
+    ("APPROX([1/3, pi])", "[1/3, 355/113]"),
+    ("1/2 + APPROX(1/3)", "5/6"),
+    # A whole number needs no digits, here as everywhere else.
+    ("APPROX(2 + 3)", "5"),
+    # Nothing to approximate is nothing done.
+    ("APPROX(x + 1)", "x + 1"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), APPROXIMATED, ids=str)
+def test_the_approx_function_approximates_where_it_stands(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("APPROX(pi)", "3.14159"),
+        ("APPROX([1/3, pi])", "[0.333333, 3.14159]"),
+        ("1/2 + APPROX(1/3)", "0.833333"),
+    ],
+    ids=str,
+)
+def test_what_the_approx_function_leaves_shows_its_digits(text, expected):
+    # The same values as above, under a notation that writes them as digits:
+    # what an approximation is and how it is written are two questions, and
+    # the function answers only the first.
+    assert simp(text, DECIMAL) == expected
+
+
+def test_the_approx_function_takes_the_digits_it_is_given():
+    # Twelve digits of pi, which is a nearer rational than six digits' 355/113.
+    assert simp("APPROX(pi, 12)") == "833719/265381"
+
+
+def test_approx_waits_for_the_value_it_is_asked_to_approximate():
+    """Which is why the head is held back rather than rounded on conversion.
+
+    What has to be approximated is the answer and not the question: the
+    integral is evaluated first, and `APPROX` sees the number it came out as -
+    a logarithm here, so that an answer standing at the exact value would be
+    visibly a different one.
+    """
+    assert simp("APPROX(INT(1/x, x, 1, 2))") == "1143/1649"
+    assert simp("INT(1/x, x, 1, 2)") == "LN(2)"
 
 
 def test_a_number_that_needs_no_digits_does_not_get_any():
@@ -1313,10 +1609,17 @@ EVERY_CASE = [
         + LINEAR_ALGEBRA
         + VECTOR_CALCULUS
         + GENERATED
+        + SELECTED
+        + ITERATION
         + STATISTICS
         + STRUCTURE
+        + DECOMPOSITION
+        + NUMBER_THEORY
+        + INDICATOR_AND_NORMAL
         + LOGIC
+        + TRUTH_TABLES
         + INERT
+        + APPROXIMATED
     ),
     *((text, context) for text, _, context in CONDITIONALS),
     *((text, None) for text in OPAQUE),

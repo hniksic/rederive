@@ -60,6 +60,7 @@ from rederive.engine.factoring import (
 from rederive.engine.from_sympy import Result, from_sympy
 from rederive.engine.substitute import named_as_declared, substitute
 from rederive.engine.to_sympy import (
+    Approx,
     Assign,
     Declare,
     FunDef,
@@ -76,8 +77,11 @@ __all__ = ["approx", "approximated", "simplified", "simplify"]
 
 Rewrite = Callable[[sp.Basic], sp.Basic]
 
-#: The heads that stand for a computation nobody has asked for yet.
-_CALCULUS = (sp.Derivative, sp.Integral, sp.Sum, sp.Product, sp.Limit, Taylor)
+#: The heads that stand for a computation nobody has asked for yet: the
+#: calculus ones, and `APPROX`, which waits for the same reason and in the same
+#: place. It has to round the value an integral came out as rather than the
+#: integral, and evaluating innermost first is exactly what gives it that.
+_CALCULUS = (sp.Derivative, sp.Integral, sp.Sum, sp.Product, sp.Limit, Taylor, Approx)
 
 #: What `combsimp` is for. It is offered only where one of these appears,
 #: because on an ordinary polynomial it factors - `x^2 + 2*x` becomes
@@ -253,7 +257,7 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
         return _transform(expression, context)
     expression, held = _held(expression)
     tried: set[sp.Basic] = set()
-    expression = _calculus(expression, tried)
+    expression = _calculus(expression, context, tried)
     expression = _numeric(expression)
     expression = _rewritten(expression, context)
     # The rewrites can leave a head where none stood: `cancel` splits a single
@@ -265,7 +269,7 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     # most of what Derive's `F_1A` costs - but the alternative is an answer
     # that reaches its form only on a second Simplify.
     if expression.has(*_CALCULUS):
-        expression = _calculus(expression, tried)
+        expression = _calculus(expression, context, tried)
     for standing_in in (held, frozen):
         if standing_in:
             expression = expression.xreplace(standing_in)
@@ -471,7 +475,9 @@ def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
 # -- the calculus heads ------------------------------------------------------
 
 
-def _calculus(expression: sp.Basic, tried: set[sp.Basic] | None = None) -> sp.Basic:
+def _calculus(
+    expression: sp.Basic, context: Context, tried: set[sp.Basic] | None = None
+) -> sp.Basic:
     """`.doit()` on every calculus head, innermost first, until none is new.
 
     Evaluating one head can hand back others: sympy answers an integral of a
@@ -498,7 +504,7 @@ def _calculus(expression: sp.Basic, tried: set[sp.Basic] | None = None) -> sp.Ba
 
         def evaluate(head: sp.Basic) -> sp.Basic:
             offered.add(head)
-            return _evaluate(head)
+            return _evaluate(head, context)
 
         try:
             rewritten = expression.replace(pending, evaluate, simultaneous=False)
@@ -516,8 +522,10 @@ def _calculus(expression: sp.Basic, tried: set[sp.Basic] | None = None) -> sp.Ba
 _ROUNDS = 3
 
 
-def _evaluate(head: sp.Basic) -> sp.Basic:
+def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
     """One head evaluated, or the head itself if it will not evaluate."""
+    if isinstance(head, Approx):
+        return _approximation(head, context)
     if isinstance(head, sp.Integral):
         return _integral(head)
     if isinstance(head, (sp.Sum, sp.Product)) and not _searchable(head):
@@ -527,6 +535,19 @@ def _evaluate(head: sp.Basic) -> sp.Basic:
     except Exception:
         return _undecided(head)
     return head if value is None else value
+
+
+def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
+    """`APPROX(u, n)`: `u` as approximate arithmetic at `n` digits leaves it.
+
+    Exactly what the approX command does to a whole entry, at the digit count
+    the call asked for rather than the one the session is set to, and whatever
+    precision that is. So the same rules hold inside a call as outside one: a
+    number that needs no digits gets none, and `APPROX(2 + 3)` is 5.
+    """
+    value, digits = head.args
+    approximate = context.with_precision(Precision.APPROXIMATE, int(digits))
+    return approximated(value, approximate)
 
 
 #: Integration by the methods whose cost is bounded: sympy's tables, the

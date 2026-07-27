@@ -367,7 +367,9 @@ def test_a_word_that_names_no_amount_is_not_an_amount():
 
 
 def test_only_factor_is_evaluated():
-    assert simplify(parse("FACTORS(10!)"), Context()).text == "FACTORS(3628800)"
+    # FACTORS is the syntactic decomposition and not this command under another
+    # name: a number is one factor, however many primes it is a product of.
+    assert simplify(parse("FACTORS(10!)"), Context()).text == "[3628800]"
 
 
 def test_a_subtree_is_factored_on_its_own():
