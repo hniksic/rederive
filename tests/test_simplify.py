@@ -543,7 +543,15 @@ INDICATOR_AND_NORMAL = [
     # writes it `(ERF(√2*z/2) + 1)/2`; sympy distributes the half.
     ("NORMAL(z)", "ERF(SQRT(2)*z/2)/2 + 1/2"),
     ("NORMAL(0)", "1/2"),
-    ("NORMAL(z, m, s)", "ERF(SQRT(2)*(z - m)/(2*s))/2 + 1/2"),
+    # The normal form reaches inside the error function's argument and writes it
+    # about `z`, which divides the `2*s` into each term: Derive answers
+    # `(ERF(√2*z/(2*s) - √2*m/(2*s)) + 1)/2`, not the folded `(z - m)/(2*s)`.
+    # `ERF` is odd, so sympy carries the negation outside the call rather than
+    # inside the argument; the two are the same number.
+    (
+        "NORMAL(z, m, s)",
+        "1/2 - ERF(SQRT(2)*m/(2*s) - SQRT(2)*z/(2*s))/2",
+    ),
 ]
 
 
@@ -621,10 +629,17 @@ LINEAR_ALGEBRA = [
         "[[1, 0, (d*e - b*f)/(a*d - b*c)], [0, 1, (a*f - c*e)/(a*d - b*c)]]",
     ),
     # The manual's characteristic polynomial. Its middle term is the manual's
-    # `-z*(b + 2)` with the sign moved inside the factor, and the variable
-    # defaults to `w` when none is written.
+    # `-z*(b + 2)` with the sign moved inside the factor.
     ("CHARPOLY([[2,3],[a,b]],z)", "z^2 + z*(-b - 2) - 3*a + 2*b"),
-    ("CHARPOLY([[2,3],[a,b]])", "w^2 + w*(-b - 2) - 3*a + 2*b"),
+    # The variable defaults to `w` when none is written, and `w` is not on the
+    # order list, so the most main variable of the answer is `a` and the normal
+    # form takes `-3*a` off and writes what is left about `b`. Derive answers
+    # `(2 - w)*(b - w) - 3*a`: its determinant of `[[2 - w, 3], [a, b - w]]`
+    # stays folded, and a product is not a sum for the normal form to touch.
+    # Sympy computes the characteristic polynomial by recurrence and hands back
+    # a multiplied-out one, which no longer folds. Given that multiplied-out sum
+    # Derive answers exactly as this does.
+    ("CHARPOLY([[2,3],[a,b]])", "b*(2 - w) + w^2 - 3*a - 2*w"),
     # `DET(A - z*IDENTITY_MATRIX(3))` is the definition, so the cube is negated
     # in an odd dimension; the printer leads with the positive term.
     ("CHARPOLY([[1,2,3],[4,5,6],[7,8,10]],z)", "16*z^2 - z^3 + 12*z - 3"),
@@ -696,11 +711,18 @@ VECTOR_CALCULUS = [
     # choosing, and there may be any number of them.
     ("GRAD(c*w + x^2 + y^3 + z^4, [w, x, y, z])", "[c, 2*x, 3*y^2, 4*z^3]"),
     ("GRAD(x*y, [x, y])", "[y, x]"),
-    ("DIV([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "6*x*y^2*z + 2*x*z^3"),
-    # The manual factors the same answer as `x*(6*y^2*z + 2*z^3)`; the engine
-    # leaves a sum of two terms expanded, which is where it leaves every other
-    # polynomial. LAPLACIAN is DIV of GRAD, so the two examples agree.
-    ("LAPLACIAN(x*y^2*z^3)", "6*x*y^2*z + 2*x*z^3"),
+    ("DIV([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "2*x*(3*y^2*z + z^3)"),
+    # Degree one in the primary variable, so the normal form writes it as `x`
+    # times its coefficient. The manual, and Derive, answer
+    # `x*(6*y^2*z + 2*z^3)`, leaving the coefficient's numeric content where it
+    # stands; the collecting here takes the `2` outside. Which of the two Derive
+    # writes depends on how the sum was built rather than on what it is - the
+    # same coefficient `2*y + 6` comes back `x*(2*y + 6)` authored as
+    # `2*x*y + 6*x` and `2*x^2*(y + 3)` when it falls out of expanding
+    # `((x + 1)^2 + y)^2`, both taken from the original - so there is no one
+    # form to match. The same quantity either way. LAPLACIAN is DIV of GRAD, so
+    # the two examples agree.
+    ("LAPLACIAN(x*y^2*z^3)", "2*x*(3*y^2*z + z^3)"),
     ("CURL([y^2, 2*x*z, 0])", "[-2*x, 0, 2*z - 2*y]"),
     # The curl of a plane field is one number, not the space vector `[0, 0, w]`
     # that number is the last element of.
