@@ -1497,8 +1497,9 @@ class RederiveApp(App[None]):
             editor.retype(str(entry.number))
 
     def action_scroll_work(self, direction: int) -> None:
-        """Ctrl-Right and Ctrl-Left, over a render wider than the pane."""
-        self.query_one(WorkArea).scroll_half_pane(direction)
+        """Ctrl-Right and Ctrl-Left, over a selected render wider than the pane."""
+        self.query_one(WorkArea).scroll_across(direction)
+        self.refresh_screen()
 
     def _move_highlight(self, step: int) -> None:
         cursor = self.top

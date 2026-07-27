@@ -30,6 +30,17 @@ from rederive.ui.menu import Menu
 #: original; a number too long for the field pushes it right.
 _LABEL_WIDTH = 5
 
+#: Share of the showable width one Ctrl-Right or Ctrl-Left takes, as the
+#: original steps it: a third at a time leaves two thirds of the render
+#: standing still, which is what makes it readable as a slide rather than as a
+#: new screen.
+_SCROLL_SHARE = 3
+
+#: Columns of the render kept on show to either side of a highlight the pane
+#: has scrolled to follow. The original keeps two, which is what says that the
+#: expression goes on past the edge rather than ending there.
+_SCROLL_MARGIN = 2
+
 #: Blanks between two fields of an Options dialog.
 _FIELD_GAP = "  "
 
@@ -79,14 +90,19 @@ def _label_row(entry: Entry) -> int:
     return entry.height // 2
 
 
-def _painted(entry: Entry) -> list[str]:
-    """The entry's render, each line prefixed with the label field."""
+def _painted(entry: Entry, offset: int = 0) -> list[str]:
+    """The entry's render, each line prefixed with the label field.
+
+    `offset` is how far the render has been scrolled sideways. The label field
+    does not move with it: the number stays where it can be read whatever part
+    of a wide expression is on show.
+    """
     indent = _indent(entry)
     label = _label(entry).ljust(indent)
     blank = " " * indent
     on = _label_row(entry)
     return [
-        (label if row == on else blank) + line
+        (label if row == on else blank) + line[offset:]
         for row, line in enumerate(entry.layout.lines)
     ]
 
@@ -108,16 +124,22 @@ def _invert(
     indent: int,
     rect: tuple[int, int, int, int],
     style: str,
+    offset: int = 0,
 ) -> None:
     """Highlight the selection, one row of its rectangle at a time.
 
     The rectangle covers the blanks inside it, so the highlight over a built-up
-    fraction is a solid block rather than a ragged outline.
+    fraction is a solid block rather than a ragged outline. `offset` is how far
+    the render has been scrolled sideways; the part of the selection that has
+    gone off the left edge is not painted, and one scrolled away entirely is
+    not painted at all.
     """
     top, left, height, width = rect
     for row in range(top, top + height):
-        begin = offsets[first + row] + indent + left
-        text.stylize(style, begin, begin + width)
+        line = offsets[first + row] + indent
+        begin, end = line + left - offset, line + left + width - offset
+        if end > max(begin, line):
+            text.stylize(style, max(begin, line), end)
 
 
 class Band(Static):
@@ -139,9 +161,28 @@ class WorkArea(VerticalScroll):
     than the pane is clipped at the right edge until Ctrl-Right scrolls it into
     view. That is what keeps the guarantee the selection depends on - one
     subexpression, one rectangle.
+
+    Scrolling sideways moves the selected entry alone, as the original's does.
+    The rest of the history is a column of numbered expressions to read down,
+    and shifting all of it to see the end of one line would take the others out
+    from under their own numbers. Ctrl-Right and Ctrl-Left scroll it by hand,
+    and a highlight walking off either edge takes it along.
     """
 
     can_focus = False
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        #: Columns the selected entry's render is currently shifted left by.
+        self.shift = 0
+        #: The selection the shift was last brought into view for, so that a
+        #: highlight standing still is not chased and a scrolled pane stays
+        #: where the user put it.
+        self._followed: object = None
+        #: The selected entry's width and label field, as the last render saw
+        #: them, which is what a shift has to stay inside.
+        self._widest = 0
+        self._indent = _LABEL_WIDTH
 
     def compose(self):
         yield Static(id="work-content")
@@ -153,6 +194,7 @@ class WorkArea(VerticalScroll):
         rect: tuple[int, int, int, int] | None,
     ) -> None:
         styles = self.app.palette.styles
+        self._follow(entries, selected, rect)
         lines: list[str] = []
         # For each entry, the line it starts on and the column its render does.
         starts: list[int] = []
@@ -162,7 +204,7 @@ class WorkArea(VerticalScroll):
                 lines.append("")
             starts.append(len(lines))
             indents.append(_indent(entry))
-            lines.extend(_painted(entry))
+            lines.extend(_painted(entry, self.shift if index == selected else 0))
         text = Text("\n".join(lines), style=styles["work"], no_wrap=True)
         if selected is not None and rect is not None:
             _invert(
@@ -172,6 +214,7 @@ class WorkArea(VerticalScroll):
                 indents[selected],
                 rect,
                 styles["selection"],
+                self.shift,
             )
         self.query_one("#work-content", Static).update(text)
         if selected is not None:
@@ -180,10 +223,63 @@ class WorkArea(VerticalScroll):
             region = Region(0, starts[selected], 1, entries[selected].height)
             self.call_after_refresh(self.scroll_to_region, region, animate=False)
 
-    def scroll_half_pane(self, direction: int) -> None:
-        """Scroll sideways, which moves no selection and reveals no new entry."""
-        half = max(1, self.size.width // 2)
-        self.scroll_relative(x=direction * half, animate=False)
+    @property
+    def showable(self) -> int:
+        """Columns the pane has for a render, once the label field is taken."""
+        return max(1, self.size.width - self._indent)
+
+    def _inside(self, shift: int) -> int:
+        """A shift clipped to the render it scrolls.
+
+        Neither end has anything to show past it, and a pane full of blanks is
+        a worse answer than one that has stopped.
+        """
+        return max(0, min(shift, self._widest - self.showable))
+
+    def _follow(
+        self,
+        entries: list[Entry],
+        selected: int | None,
+        rect: tuple[int, int, int, int] | None,
+    ) -> None:
+        """Take in what a shift needs, and bring a moved highlight into view.
+
+        The render moves as little as it takes and only when the highlight has
+        moved, so a pane scrolled by hand stays where it was put until the
+        selection walks off it. A couple of columns are kept on show to either
+        side, since a subexpression flush against the edge reads as one that
+        has been cut off.
+
+        The two ends cannot both be honored for a selection wider than the pane,
+        and the left one wins: that is where an expression is read from.
+        """
+        if selected is None:
+            self.shift, self._widest, self._indent = 0, 0, _LABEL_WIDTH
+            return
+        entry = entries[selected]
+        self._widest, self._indent = entry.layout.width, _indent(entry)
+        # Before there is a pane to measure there is nothing to bring into it,
+        # and the selection stays unfollowed rather than followed wrongly.
+        if rect is None or not self.size.width:
+            return
+        at = (selected, rect)
+        moved, self._followed = at != self._followed, at
+        if moved:
+            _, left, _, width = rect
+            most = left - _SCROLL_MARGIN
+            least = left + width + _SCROLL_MARGIN - self.showable
+            self.shift = min(max(self.shift, least), most)
+        self.shift = self._inside(self.shift)
+
+    def scroll_across(self, direction: int) -> None:
+        """Scroll sideways, which moves no selection and reveals no new entry.
+
+        A third of the showable width at a time, which leaves two thirds of the
+        render standing still for the eye to carry across.
+        """
+        self.shift = self._inside(
+            self.shift + direction * max(1, self.showable // _SCROLL_SHARE)
+        )
 
 
 class MessageLine(Band):

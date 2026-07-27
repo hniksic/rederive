@@ -1600,3 +1600,143 @@ async def test_the_declare_lines_walk_but_are_never_labelled(app, keys, line):
         assert highlighted_expression(app) == "x"
         # None of them names an expression, so none takes the label walked onto.
         assert prompt(app) == (line, offered)
+
+
+#: A render far wider than the eighty-column pane, drawn exactly as authored,
+#: so the columns on show can be read off it by slicing.
+WIDE = " + ".join(str(number) for number in range(100, 130))
+
+#: Columns a render has to itself in an eighty-column pane, the label field
+#: holding the other five, and what one Ctrl-Right takes: a third of them.
+SHOWABLE = 75
+STEP = 25
+
+#: Columns kept on show beyond a highlight the pane has scrolled to follow.
+MARGIN = 2
+
+
+def from_the_right(term):
+    """The shift that brings `term` in from the right edge, and no more."""
+    return WIDE.index(term) + len(term) + MARGIN - SHOWABLE
+
+
+async def scrolled(pilot, keys):
+    """A worksheet with the wide entry in the middle, selected and scrolled."""
+    await author(pilot, "x+1")
+    await author(pilot, WIDE)
+    await author(pilot, "x+1")
+    await pilot.press("up")
+    await pilot.press(*keys)
+
+
+async def test_scrolling_sideways_moves_the_selected_entry_alone(app):
+    async with app.run_test() as pilot:
+        await scrolled(pilot, ["ctrl+right"])
+        assert work_area(app) == [
+            "#1:  x + 1",
+            "",
+            "#2:  " + WIDE[STEP:],
+            "",
+            "#3:  x + 1",
+        ]
+        # The highlight goes with it, cut off where the render now starts.
+        assert highlighted_expression(app) == WIDE[STEP:]
+
+
+async def test_each_step_sideways_is_a_third_of_what_the_pane_shows(app):
+    async with app.run_test() as pilot:
+        await scrolled(pilot, ["ctrl+right", "ctrl+right"])
+        assert work_area(app)[2] == "#2:  " + WIDE[2 * STEP :]
+        await pilot.press("ctrl+left")
+        assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
+
+
+async def test_a_scroll_stops_at_either_end_of_the_render(app):
+    async with app.run_test() as pilot:
+        await scrolled(pilot, ["ctrl+right"] * 10)
+        # The last column of the render, and no blanks past it.
+        assert work_area(app)[2] == "#2:  " + WIDE[len(WIDE) - 75 :]
+        await pilot.press(*["ctrl+left"] * 10)
+        assert work_area(app)[2] == "#2:  " + WIDE
+
+
+async def test_a_narrow_entry_has_nowhere_to_scroll_to(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x+1")
+        await pilot.press("ctrl+right")
+        assert work_area(app) == ["#1:  x + 1"]
+
+
+async def test_a_highlight_that_moves_brings_the_render_back_with_it(app):
+    async with app.run_test() as pilot:
+        await scrolled(pilot, ["ctrl+right"])
+        # Down to the entry below and back up. The entry comes back selected
+        # whole, which is a selection starting at the left edge of its render.
+        await pilot.press("down", "up")
+        assert work_area(app)[2] == "#2:  " + WIDE
+        # And a move to the first part of it asks for the same thing.
+        await pilot.press("ctrl+right")
+        assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
+        await pilot.press("right")
+        assert work_area(app)[2] == "#2:  " + WIDE
+        assert highlighted_expression(app) == "100"
+
+
+async def test_a_highlight_walking_off_the_right_takes_the_render_with_it(app):
+    async with app.run_test() as pilot:
+        # Twelve terms in, the render still reaches the highlight unscrolled.
+        await scrolled(pilot, ["right"] * 12)
+        assert highlighted_expression(app) == "111"
+        assert work_area(app)[2] == "#2:  " + WIDE
+        # The thirteenth is past the edge, so the render moves - by the two
+        # columns that bring it in with a margin, and by no more than that.
+        await pilot.press("right")
+        assert highlighted_expression(app) == "112"
+        assert from_the_right("112") == MARGIN
+        assert work_area(app)[2] == "#2:  " + WIDE[MARGIN:]
+        await pilot.press("right")
+        assert work_area(app)[2] == "#2:  " + WIDE[from_the_right("113") :]
+
+
+async def test_a_highlight_walking_back_left_brings_the_render_back(app):
+    async with app.run_test() as pilot:
+        await scrolled(pilot, ["right"] * 25)
+        assert highlighted_expression(app) == "124"
+        assert work_area(app)[2] == "#2:  " + WIDE[from_the_right("124") :]
+        # Walking back, the render follows once the highlight reaches its edge,
+        # and stops with the same margin standing in front of it.
+        await pilot.press(*["left"] * 12)
+        assert highlighted_expression(app) == "112"
+        assert work_area(app)[2] == "#2:  " + WIDE[WIDE.index("112") - MARGIN :]
+        await pilot.press("home")
+        assert highlighted_expression(app) == "100"
+        assert work_area(app)[2] == "#2:  " + WIDE
+
+
+async def test_a_highlight_already_on_show_moves_no_render(app):
+    async with app.run_test() as pilot:
+        # Scrolled by hand, with the highlight still inside what is on show:
+        # the pane stays where it was put rather than snapping to the highlight.
+        await scrolled(pilot, ["right"] * 11 + ["ctrl+right"])
+        assert highlighted_expression(app) == "110"
+        assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
+        await pilot.press("right")
+        assert highlighted_expression(app) == "111"
+        assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
+
+
+async def test_a_selection_too_wide_to_show_is_shown_from_its_left(app):
+    async with app.run_test() as pilot:
+        # The whole entry is wider than the pane, so its two ends cannot both
+        # be brought in. The end it is read from wins.
+        await scrolled(pilot, ["ctrl+right", "down", "up"])
+        assert work_area(app)[2] == "#2:  " + WIDE
+
+
+async def test_a_highlight_scrolled_off_the_left_is_not_painted(app):
+    async with app.run_test() as pilot:
+        await scrolled(pilot, ["right"])
+        assert highlighted_expression(app) == "100"
+        await pilot.press("ctrl+right")
+        assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
+        assert highlighted_expression(app) == ""

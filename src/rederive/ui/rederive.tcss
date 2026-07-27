@@ -15,9 +15,10 @@ Screen {
     align-vertical: bottom;
     background: $rd-work-background;
     color: $rd-work-foreground;
-    /* A render never wraps, so one too wide for the pane is clipped and
-       Ctrl-Right scrolls to the rest of it. */
-    overflow-x: auto;
+    /* A render never wraps, so one too wide for the pane is clipped at the
+       edge. Ctrl-Right scrolls to the rest of it by shifting the selected
+       entry alone, which is a repaint rather than a scroll of the pane. */
+    overflow-x: hidden;
     scrollbar-size: 0 0;
 }
 
