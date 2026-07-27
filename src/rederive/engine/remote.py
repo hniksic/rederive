@@ -1,4 +1,4 @@
-"""The app side of the engine worker: five calls, one pipe, one recovery path.
+"""The app side of the engine worker: six calls, one pipe, one recovery path.
 
 `RemoteEngine` has the signatures `Session` calls the engine by, so a session
 handed one computes in a child process without knowing it. Each call ships the
@@ -145,7 +145,7 @@ def default_cap() -> int:
 
 
 class RemoteEngine:
-    """The five engine calls, answered by a child process that can be killed.
+    """The six engine calls, answered by a child process that can be killed.
 
     One request is in flight at a time, which is what the lock is for: the
     session is single-threaded and the worker holds nothing between requests,
@@ -227,6 +227,16 @@ class RemoteEngine:
         state: ParseState | None = None,
     ) -> Result:
         return self._ask("expand", (node, context, amount, tuple(variables), state))
+
+    def solve(
+        self,
+        node: Node,
+        context: Context,
+        variables: Sequence[str] = (),
+        bounds: tuple[Node, Node] | None = None,
+        state: ParseState | None = None,
+    ) -> tuple[Result, ...]:
+        return self._ask("solve", (node, context, tuple(variables), bounds, state))
 
     def expression_variables(
         self, node: Node, context: Context | None = None

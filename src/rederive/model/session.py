@@ -5,7 +5,7 @@ into calls on `Session` and paints the result. This is the session layer, and
 it is where the math engine is reached from: the UI never calls a command
 itself, it asks the session for one.
 
-Which engine answers is the one thing a session takes from outside. The five
+Which engine answers is the one thing a session takes from outside. The six
 calls that can cost anything go through `runner`, which is the `engine` module
 itself unless something hands in another - and what the app hands in is a proxy
 to a child process, so that a computation can be killed. Every command here
@@ -47,6 +47,13 @@ session state the engine hears about through the context.
 other three rather than among them because what it appends is derived from the
 whole entry however little of it was highlighted: the substitution happens
 inside the entry, so there is no part to splice an answer back into.
+
+`solve` is the one command that does not go through `_command` at all, because
+`_command` appends exactly one entry and soLve appends none, one, or several -
+one per solution. It names the whole entry for the same reason Substitute does,
+and it owns one piece of state besides the history: `arbitrary`, the counter
+the `@n` values come out of, which climbs past every one that reaches the
+worksheet and never goes back.
 """
 
 from __future__ import annotations
@@ -105,6 +112,11 @@ INTERVAL = "Interval"
 #: and in an annotation such as `Simp(#3)`.
 LABEL = re.compile(r"#(\d+)")
 
+#: An arbitrary value, as soLve writes one and as an authored `SOLVE` can mint
+#: one through a plain Simplify. The session watches every entry for these so
+#: that its counter never hands the same one out twice.
+ARBITRARY = re.compile(r"@(\d+)")
+
 #: How a label rewriting names one label: the number to put in its place, or
 #: None to leave it as it is.
 Rename = Callable[[int], int | None]
@@ -116,11 +128,11 @@ Command = Callable[[Node, "engine.Context", ParseState], "engine.Result"]
 
 
 class Runner(Protocol):
-    """The five engine calls that can cost anything, as the session makes them.
+    """The six engine calls that can cost anything, as the session makes them.
 
     Everything else the session asks the engine for - whether a tree is a
     quotient, what its main variable is, how to write it - is a walk over a
-    tree and costs nothing, so it stays a direct call on the module. These five
+    tree and costs nothing, so it stays a direct call on the module. These six
     convert to sympy, and converting alone can hang: `10^10^10` never finishes
     being built.
 
@@ -159,6 +171,15 @@ class Runner(Protocol):
         variables: Sequence[str] = ...,
         state: ParseState | None = ...,
     ) -> engine.Result: ...
+
+    def solve(
+        self,
+        node: Node,
+        context: engine.Context,
+        variables: Sequence[str] = ...,
+        bounds: tuple[Node, Node] | None = ...,
+        state: ParseState | None = ...,
+    ) -> tuple[engine.Result, ...]: ...
 
     def expression_variables(
         self, node: Node, context: engine.Context | None = ...
@@ -253,7 +274,7 @@ class Session:
         self, settings: Settings | None = None, runner: Runner | None = None
     ) -> None:
         self.settings = settings if settings is not None else Settings()
-        #: Who answers the five engine calls that can cost something. The
+        #: Who answers the six engine calls that can cost something. The
         #: module by default, which computes here and cannot be interrupted;
         #: the app hands in a proxy to a child process instead, so that a
         #: computation can be aborted and its appetite capped.
@@ -272,6 +293,10 @@ class Session:
         self.domains: dict[str, engine.Domain] = {}
         #: The variable order list `Manage Ordering` writes, most main first.
         self.order: tuple[str, ...] = engine.ORDER_LIST
+        #: The next free `@n`, which soLve mints its arbitrary values from.
+        #: Session-global and monotone: solving `x = x` three times gives `@1`,
+        #: `@2` and `@3`, and nothing is ever reused.
+        self.arbitrary = 1
         self._next_number = 1
         self.settings.watch(self._settings_changed)
         self._settings_changed(PARSING_SETTINGS)
@@ -305,6 +330,7 @@ class Session:
         other.functions = dict(self.functions)
         other.domains = dict(self.domains)
         other.order = self.order
+        other.arbitrary = self.arbitrary
         other._next_number = self._next_number
         return other
 
@@ -365,10 +391,23 @@ class Session:
             exact,
         )
         self._next_number += 1
+        self._minted(text)
         self.entries.append(entry)
         self.selected = len(self.entries) - 1
         self.route = ()
         return entry
+
+    def _minted(self, text: str) -> None:
+        """Put the arbitrary-value counter past every `@n` this entry carries.
+
+        Every entry and not only a soLve's, because a `SOLVE` written on the
+        author line mints them too and reaches the history through a plain
+        Simplify - and because a worksheet read from a file carries whatever
+        the session that wrote it had minted. The counter only ever climbs, so
+        no two arbitrary values in one worksheet can stand for one quantity.
+        """
+        for found in ARBITRARY.finditer(text):
+            self.arbitrary = max(self.arbitrary, int(found.group(1)) + 1)
 
     def _define(self, node: Node, declarations: Iterable[Declaration]) -> None:
         """Record what a line defines: a value, a function body, or a domain.
@@ -461,6 +500,7 @@ class Session:
         return engine.Context.from_settings(
             self.settings,
             order=self.order,
+            arbitrary_index=self.arbitrary,
             domains=self.domains,
             assignments=self.assignments,
             functions=self.functions,
@@ -518,6 +558,80 @@ class Session:
             return self.runner.expand(node, context, amount, variables, state)
 
         return self._command(request, "Expd", run)
+
+    def solve(
+        self,
+        request: str,
+        variables: Sequence[str] = (),
+        bounds: tuple[str, str] | None = None,
+    ) -> list[Entry]:
+        """Append one entry per solution of the expression `request` names.
+
+        The one command that appends any number of entries rather than exactly
+        one: two roots make two, a system makes one holding the solution
+        vector, and no solutions make none at all - which is what the UI turns
+        into its message, there being nothing on the worksheet to say it with.
+        The entries come back in the order they were appended, so the selection
+        is left on the last of them.
+
+        Unlike Simplify, soLve acts on the whole entry even where part of it is
+        highlighted: a solution of a subexpression is not something there is
+        any way to splice back around the rest, so `#3` names entry 3 and
+        nothing else. `variables` is what to solve for, in the order the user
+        chose, and `bounds` the pair of expressions Approximate precision asks
+        for.
+
+        Raises `DeriveSyntaxError` and appends nothing when `request` or one of
+        the bounds does not parse.
+        """
+        entry, target = self._requested(request)
+        interval = (
+            None
+            if bounds is None
+            else (
+                parse_expression(bounds[0], self.state).node,
+                parse_expression(bounds[1], self.state).node,
+            )
+        )
+        # Deriving an expression empties the unremove buffer, as every other
+        # engine command does.
+        self.removed = []
+        source = AUTHORED if entry is None else f"#{entry.number}"
+        results = self.runner.solve(
+            target if entry is None else entry.value,
+            self.context,
+            variables,
+            interval,
+            self.state,
+        )
+        return [
+            self._append(result.text, result.node, f"Solve({source})", result.value)
+            for result in results
+        ]
+
+    def solve_variables(self, request: str) -> tuple[str, ...]:
+        """The variables soLve would offer for what `request` names.
+
+        `variables` is not enough on its own: soLve names the whole entry where
+        the other commands name a highlighted part of it, so the list has to be
+        read off the same expression the command will act on.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        _, target = self._requested(request)
+        return self.runner.expression_variables(target, self.context)
+
+    def equations(self, request: str) -> int:
+        """How many equations what `request` names is a system of, or zero.
+
+        Which is what decides how many variables soLve asks about: a system of
+        E equations in more than E variables is asked about E times, and a
+        scalar at most once.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        _, target = self._requested(request)
+        return engine.equations_in(target)
 
     def substitute(self, request: str, values: Mapping[str, str]) -> Entry:
         """Append what `request` names with a value written in for each variable.

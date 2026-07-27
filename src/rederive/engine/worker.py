@@ -17,7 +17,7 @@ The tty belongs to the app. Nothing the worker writes may land on it, so
 stdout and stderr go to a log file named after the process, which is where a
 traceback the parent could not carry back is to be read.
 
-Two private methods sit in the table beside the five public ones, so that the
+Two private methods sit in the table beside the six public ones, so that the
 parent's abort and memory tests do not have to find a real computation slow
 enough or hungry enough to test with.
 """
@@ -197,6 +197,7 @@ def _methods() -> dict[str, Callable[..., Any]]:
         "approx": engine.approx,
         "factor": engine.factor,
         "expand": engine.expand,
+        "solve": engine.solve,
         "expression_variables": engine.expression_variables,
         "hang": _hang,
         "allocate": _allocate,

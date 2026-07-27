@@ -77,7 +77,7 @@ def mortal():
         engine.shutdown()
 
 
-# -- the five answers --------------------------------------------------------
+# -- the six answers ---------------------------------------------------------
 
 
 def test_simplify_comes_back_from_the_child(remote):
@@ -94,6 +94,17 @@ def test_factor_comes_back_from_the_child(remote):
 
 def test_expand_comes_back_from_the_child(remote):
     assert remote.expand(tree("(x + 1)^2"), Context()).text == "x^2 + 2*x + 1"
+
+
+def test_solve_comes_back_from_the_child(remote):
+    """Several results down one pipe, which is what makes soLve unlike the
+    other five: a tuple crosses where the others send one answer."""
+    answers = remote.solve(tree("x^2 - 5*x + 6 = 0"), Context())
+    assert [answer.text for answer in answers] == ["x = 2", "x = 3"]
+
+
+def test_a_solve_with_no_solutions_comes_back_empty(remote):
+    assert remote.solve(tree("x = x + 1"), Context()) == ()
 
 
 def test_the_variables_come_back_from_the_child(remote):

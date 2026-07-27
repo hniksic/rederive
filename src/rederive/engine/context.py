@@ -173,6 +173,15 @@ class Context:
     shares with the settings is that a command's answer depends on it, which is
     what this class is, so it travels here.
     """
+    arbitrary_index: int = 1
+    """The next free `@n`, which soLve mints its arbitrary values from.
+
+    Session state, like the order list: `x = x` solves to `x = @1` and the
+    counter never goes back, so no two solves in one worksheet can mint the
+    same constant. It travels here because a command's answer depends on it,
+    which is what makes the answer a function of the tree and the context
+    alone.
+    """
     domains: Mapping[str, Domain] = field(default_factory=dict)
     assignments: Mapping[str, Node] = field(default_factory=dict)
     functions: Mapping[str, Definition] = field(default_factory=dict)
@@ -218,6 +227,7 @@ class Context:
         declarations: Iterable[Declaration] = (),
         *,
         order: Sequence[str] | None = None,
+        arbitrary_index: int = 1,
         domains: Mapping[str, Domain] | None = None,
         assignments: Mapping[str, Node] | None = None,
         functions: Mapping[str, Definition] | None = None,
@@ -252,6 +262,7 @@ class Context:
             angle=_setting(settings, "Angle", Angle, Angle.RADIAN),
             input_base=settings.base("InputBase"),
             order=ORDER_LIST if order is None else tuple(order),
+            arbitrary_index=arbitrary_index,
             domains=declared,
             assignments=dict(assignments or {}),
             functions=dict(functions or {}),

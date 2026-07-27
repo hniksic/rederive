@@ -995,8 +995,8 @@ ITERATION = [
     ("ITERATES(x + 1, x, 0, -2)", "[0, -1, -2]"),
     # Where there is a choice of inverses there is no inverse function, and the
     # call comes back as written. Derive takes the principal one and answers
-    # `[2, SQRT(2)]`; choosing among roots is soLve's business, not this
-    # engine's, and soLve is deliberately inert here.
+    # `[2, SQRT(2)]`; choosing among roots is soLve's business, and an
+    # iteration is not going to make that choice on its own.
     ("ITERATES(x^2, x, 2, -1)", "ITERATES(x^2, x, 2, -1)"),
     # An iteration that neither comes round nor was counted comes back as
     # written: Derive runs one until memory is gone, which is no answer to
@@ -1238,9 +1238,19 @@ def test_relations_joined_over_one_variable_are_solved():
     assert simp("x < 1 AND x > 3") == "false"
 
 
+def test_a_range_is_written_as_the_chain_the_original_writes():
+    """Two bounds on one variable are a range, and a range has a spelling of
+    its own that the grammar reads back. The two strictnesses are independent,
+    so a half-open range is a chain too."""
+    assert simp("x > -2 AND x < 2") == "-2 < x < 2"
+    assert simp("x >= -2 AND x < 2") == "-2 <= x < 2"
+
+
 def test_a_conjunction_it_cannot_solve_keeps_its_shape():
     assert simp("x >= 1 OR x <= -1") == "x >= 1 OR x <= -1"
-    assert simp("x < y AND y < 1") == "x < y AND y < 1"
+    # Nothing is solved here - two variables are two unknowns - and the pair is
+    # still a range around `y`, which is written as the chain it is.
+    assert simp("x < y AND y < 1") == "x < y < 1"
 
 
 LOGIC = [
@@ -1384,7 +1394,6 @@ def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
 #: as it went in, so that a worksheet holding one is not damaged by simplifying
 #: it.
 OPAQUE = [
-    "SOLVE(x^2 = 1, x)",
     "RANDOM(10)",
     "FIT([x, 1], [[1, 2], [3, 4]])",
     "PMT(1/100, 12, 1000)",

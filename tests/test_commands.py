@@ -325,6 +325,115 @@ def test_a_ratio_is_recognised_before_an_amount_is_asked_for(session):
     ]
 
 
+# -- soLve --------------------------------------------------------------------
+#
+# The engine's own answers are tested in `test_solve`. What matters here is the
+# one thing soLve does that no other command does: it appends any number of
+# entries, none of them included.
+
+
+def test_every_solution_is_an_entry_and_the_last_is_selected(session):
+    session.author("x^2 - 5 x + 6 = 0")
+    appended = session.solve("#1")
+    assert [entry.text for entry in appended] == ["x = 2", "x = 3"]
+    assert texts(session) == ["x^2 - 5 x + 6 = 0", "x = 2", "x = 3"]
+    assert session.selected_entry is appended[-1]
+    assert session.route == ()
+
+
+def test_a_solution_is_annotated_with_where_it_came_from(session):
+    session.author("2 x = 8")
+    assert session.solve("#1")[0].annotation == "Solve(#1)"
+    assert session.solve("3 x = 9")[0].annotation == "Solve(User)"
+
+
+def test_no_solutions_appends_nothing_and_leaves_the_highlight(session):
+    session.author("x^2 - 4")
+    session.author("x = x + 1")
+    session.select_entry(0)
+    assert session.solve("#2") == []
+    assert texts(session) == ["x^2 - 4", "x = x + 1"]
+    assert session.selected == 0
+
+
+def test_solving_the_same_equation_twice_appends_duplicates(session):
+    """No reuse and no warning: the original appends the answer again."""
+    session.author("2 x = 8")
+    session.solve("#1")
+    session.solve("#1")
+    assert texts(session) == ["2 x = 8", "x = 4", "x = 4"]
+
+
+def test_a_system_appends_one_entry(session):
+    session.author("[x + y = 3, x - y = 1]")
+    assert [entry.text for entry in session.solve("#1")] == ["[x = 2, y = 1]"]
+
+
+def test_solve_names_the_whole_entry_even_where_a_part_is_highlighted(session):
+    """Solving a subexpression gives nothing there is any way to splice back
+    around the rest, so the highlight says nothing about what soLve acts on."""
+    session.author("(x^2 - 4) = 0")
+    part(session, "right")
+    answer = session.solve("#1")
+    assert [entry.text for entry in answer] == ["x = -2", "x = 2"]
+    assert answer[0].annotation == "Solve(#1)"
+
+
+def test_the_arbitrary_counter_survives_across_commands(session):
+    session.author("x = x")
+    assert session.solve("#1")[0].text == "x = @1"
+    session.author("2 y = y + y")
+    assert session.solve("#3")[0].text == "y = @2"
+    assert session.solve("#1")[0].text == "x = @3"
+
+
+def test_an_authored_arbitrary_value_moves_the_counter_past_itself(session):
+    """A `SOLVE` on the author line mints them too, and reaches the history
+    through a plain Simplify; the counter watches every entry for that."""
+    session.author("SOLVE(z = z, z)")
+    assert session.simplify("#1").text == "[z = @1]"
+    session.author("x = x")
+    assert session.solve("#3")[0].text == "x = @2"
+
+
+def test_the_bounds_reach_the_command(session):
+    session.author("Precision := Approximate")
+    session.author("x^2 - 5 x + 6 = 0")
+    assert [e.text for e in session.solve("#2", (), ("0", "2.5"))] == ["x = 2"]
+    assert [e.text for e in session.solve("#2", (), ("10", "20"))] == []
+
+
+def test_the_solution_variables_reach_the_command(session):
+    session.author("a x + b = 0")
+    assert [e.text for e in session.solve("#1", ("a",))] == ["a = -b/x"]
+    assert [e.text for e in session.solve("#1", ("x",))] == ["x = -b/a"]
+
+
+def test_a_line_that_does_not_parse_solves_nothing(session):
+    session.author("x")
+    with pytest.raises(DeriveSyntaxError):
+        session.solve("x +")
+    assert texts(session) == ["x"]
+
+
+# -- what soLve asks before it solves -----------------------------------------
+
+
+def test_the_variables_on_offer_are_the_whole_entrys(session):
+    """Unlike Factor's, which come from the highlighted part: soLve acts on the
+    entry whatever is highlighted, so it has to offer the entry's own."""
+    session.author("(x^2 - 1) + SIN(z)")
+    part(session, "right")
+    assert session.solve_variables("#1") == ("x", "z")
+
+
+def test_a_system_is_counted_before_anything_is_computed(session):
+    session.author("[x + y = 3, x - y = 1]")
+    session.author("x^2 - 4 = 0")
+    session.author("[1, 2, 3]")
+    assert [session.equations(f"#{n}") for n in (1, 2, 3)] == [2, 0, 0]
+
+
 # -- approX -------------------------------------------------------------------
 #
 # Simplify with the precision temporarily approximate, and nothing else: the

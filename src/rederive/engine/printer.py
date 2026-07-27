@@ -32,6 +32,11 @@ form difference, never a meaning difference, and both forms reparse to the same
 tree. `_print_Pow` follows the same convention for a power standing alone, so
 that one expression does not print two ways.
 
+One construct is written shorter than sympy holds it. A conjunction of two
+relations that bound one variable is a range, and a range is written as the
+chain `-2 < x < 2` - which is how the original writes one, how the author line
+reads one back, and how the layout draws one. Everything else keeps its `AND`.
+
 Of the ordering only the two rules the original is recognisable by are ours:
 terms run by descending degree, and a sum does not begin with a minus sign
 unless every term is negated, so that a sum is written `x^2 + c` and
@@ -49,6 +54,7 @@ from fractions import Fraction
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
+from sympy.core.relational import Relational
 from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES
 
 from rederive.engine import notation
@@ -84,6 +90,13 @@ _PLUS_MINUS = "±"
 
 #: How each relation is written. Everything not here is written as it is.
 _RELATIONS = {"==": "=", "!=": "/="}
+
+#: The two operators that put a bound below their subject, and how each is
+#: written once the chain has turned it round: `x > -2` is `-2 < x`.
+_FROM_BELOW = {">": "<", ">=": "<="}
+
+#: The operators a chain can be built out of at all.
+_ORDERINGS = ("<", "<=", ">", ">=")
 
 #: sympy heads whose author-notation name is not just their name upper-cased.
 _FUNCTION_NAMES = {
@@ -150,6 +163,49 @@ def named(expression: sp.Basic) -> sp.Basic:
         return expression.xreplace(renamed)
     except Exception:
         return expression
+
+
+#: One reading of a relation: the variable it is about, which way it goes, and
+#: what it bounds that variable by.
+_Bound = tuple[sp.Basic, str, sp.Basic]
+
+
+def _bounds(relation: sp.Basic) -> list[_Bound]:
+    """Every way of reading a relation as a bound on one of its variables.
+
+    `-3 < x` and `x > -3` are the same bound written two ways, so both come
+    back as the second; `x < y` is a bound on either of them, and which one it
+    is about is not decided until it is put beside the relation it is chained
+    with.
+    """
+    if not isinstance(relation, Relational) or relation.rel_op not in _ORDERINGS:
+        return []
+    left, right = relation.lhs, relation.rhs
+    readings = []
+    if isinstance(left, sp.Symbol) and not right.has(left):
+        readings.append((left, relation.rel_op, right))
+    if isinstance(right, sp.Symbol) and not left.has(right):
+        readings.append((right, relation.reversed.rel_op, left))
+    return readings
+
+
+def _bracket(
+    first: list[_Bound], second: list[_Bound]
+) -> tuple[sp.Basic, tuple[str, sp.Basic], tuple[str, sp.Basic]] | None:
+    """The variable two relations bracket, with its bound from each side.
+
+    None where they bracket nothing: two variables bounded apart, or one
+    bounded twice from the same side. Where more than one reading brackets
+    something the first is taken, the readings being the same statement.
+    """
+    for subject, one, value in first:
+        for other, two, bound in second:
+            if other != subject or (one in _FROM_BELOW) == (two in _FROM_BELOW):
+                continue
+            if one in _FROM_BELOW:
+                return subject, (one, value), (two, bound)
+            return subject, (two, bound), (one, value)
+    return None
 
 
 def _plain(name: str) -> str:
@@ -525,7 +581,33 @@ class AuthorPrinter(sp.StrPrinter):
     # -- logic ---------------------------------------------------------------
 
     def _print_And(self, expr):
-        return self._infix("AND", expr.args)
+        chained = self._chain(expr)
+        return chained if chained is not None else self._infix("AND", expr.args)
+
+    def _chain(self, expr) -> str | None:
+        """Two bounds on one variable, written as the chain `-2 < x < 2`.
+
+        Which is how the original writes a range, and how a range is written on
+        the author line: `AND` is for statements that are not one range, and a
+        conjunction that is one has a shorter spelling the grammar reads back.
+        The two strictnesses are independent, so `-2 < x <= 2` is a chain too.
+        """
+        if len(expr.args) != 2:
+            return None
+        found = _bracket(*(_bounds(operand) for operand in expr.args))
+        if found is None:
+            return None
+        subject, (lower, low), (upper, high) = found
+        level = PRECEDENCE["Relational"]
+        return " ".join(
+            (
+                self.parenthesize(low, level),
+                _FROM_BELOW[lower],
+                self.parenthesize(subject, level),
+                upper,
+                self.parenthesize(high, level),
+            )
+        )
 
     def _print_Or(self, expr):
         return self._infix("OR", expr.args)

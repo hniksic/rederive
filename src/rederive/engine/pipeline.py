@@ -65,8 +65,10 @@ from rederive.engine.factoring import (
 from rederive.engine.from_sympy import Result, from_sympy
 from rederive.engine.intervals import decided, settled
 from rederive.engine.normal import normal_form
+from rederive.engine.solving import oriented, solutions
 from rederive.engine.substitute import named_as_declared, substitute
 from rederive.engine.to_sympy import (
+    COMMAND_HEADS,
     Approx,
     Assign,
     Declare,
@@ -75,6 +77,7 @@ from rederive.engine.to_sympy import (
     Logical,
     PlusMinus,
     Taylor,
+    reread,
     to_sympy,
 )
 from rederive.model.expr import Node
@@ -235,20 +238,7 @@ def _reduced(expression: Boolean) -> sp.Basic | None:
         return None
     if not isinstance(solved, sp.Basic):
         return None
-    return _oriented(solved)
-
-
-def _oriented(solved: sp.Basic) -> sp.Basic:
-    """A solved relation with the variable on the left.
-
-    `reduce_inequalities` answers `-3 < x`; the answer to a question about `x`
-    is written `x > -3`.
-    """
-    if isinstance(solved, sp.And | sp.Or):
-        return solved.func(*(_oriented(part) for part in solved.args))
-    if isinstance(solved, Relational) and solved.lhs.is_number:
-        return solved.reversed
-    return solved
+    return oriented(solved)
 
 
 # -- the pipeline proper -----------------------------------------------------
@@ -706,18 +696,18 @@ def _undecided(head: sp.Basic) -> sp.Basic:
     return sp.zoo if right in (sp.oo, -sp.oo) else PlusMinus(right)
 
 
-# -- the FACTOR and EXPAND heads ---------------------------------------------
+# -- the FACTOR, EXPAND and SOLVE heads ---------------------------------------
 
 
 def _commanded(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Evaluate every `FACTOR` and `EXPAND` head, innermost first.
+    """Evaluate every `FACTOR`, `EXPAND` and `SOLVE` head, innermost first.
 
-    `FACTOR(u, amount, x, y, ...)` and `EXPAND(u, amount, x, y, ...)` are the
-    author-line spellings of the two commands, so simplifying a line that
-    carries one runs it - which is what the original does, and what makes the
-    functions worth having rather than inert heads that print back as
-    themselves. Both are matched in one pass so that either may be written
-    inside the other.
+    `FACTOR(u, amount, x, y, ...)`, `EXPAND(u, amount, x, y, ...)` and
+    `SOLVE(u, x)` are the author-line spellings of three of the commands, so
+    simplifying a line that carries one runs it - which is what the original
+    does, and what makes the functions worth having rather than inert heads
+    that print back as themselves. All three are matched in one pass so that
+    any of them may be written inside another.
 
     Last of the rewrites on purpose, and after `normal_form` and `_canonical`
     as well, because everything above this one would undo a factorization.
@@ -728,23 +718,39 @@ def _commanded(expression: sp.Basic, context: Context) -> sp.Basic:
     in the primary variable. And `_canonical` rebuilds every product it can
     reach, which would multiply a prime decomposition straight back into the
     integer it decomposes.
+
+    Anything applied *to* one of these heads was left inert by the conversion,
+    there being nothing yet to apply it to, so what has changed is offered to
+    the function tables again: `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is a vector
+    of roots only once the `SOLVE` inside it has become a vector.
     """
     try:
-        return expression.replace(
+        commanded = expression.replace(
             _is_command, lambda head: _command(head, context), simultaneous=False
         )
     except Exception:
         return expression
+    if commanded == expression:
+        return commanded
+    try:
+        return reread(commanded, context)
+    except Exception:
+        return commanded
 
 
 def _is_command(expression: sp.Basic) -> bool:
     return isinstance(expression, AppliedUndef) and type(expression).__name__ in (
-        "FACTOR",
-        "EXPAND",
+        COMMAND_HEADS
     )
 
 
 def _command(head: sp.Basic, context: Context) -> sp.Basic:
+    if type(head).__name__ == "SOLVE":
+        return _solve_head(head, context)
+    return _factor_head(head, context)
+
+
+def _factor_head(head: sp.Basic, context: Context) -> sp.Basic:
     """One head, read as its target, its amount and its variables.
 
     The arguments after the first are a word naming the amount, a list of
@@ -768,6 +774,46 @@ def _command(head: sp.Basic, context: Context) -> sp.Basic:
     if expanding:
         return expanded_expression(target, amount, variables, order=context.order)
     return factored_expression(target, amount, variables)
+
+
+def _solve_head(head: sp.Basic, context: Context) -> sp.Basic:
+    """`SOLVE(u, x)` and its longer forms, as the vector of what they solve to.
+
+    This is the 3.x and 4.x shape and it is the one worth having: the answer is
+    a *vector* of relations, which `DIMENSION` counts and `RHS` distributes
+    over, and which the shipped libraries are written against. Derive 5 turned
+    it into a disjunction of equations; that form says the same thing and no
+    Derive 4 worksheet can read it.
+
+    Each element is one of the entries the command would have appended, in the
+    same order - so a system contributes one inner vector per solution, and an
+    equation with no solutions gives the empty vector.
+
+    `SOLVE(u = v, x, a, b)` searches `[a, b]` numerically. It does so in every
+    precision mode: Derive's help says "if in approximate mode", the shipped
+    files use it as though it always applied, and always-numeric is both the
+    more useful reading and the one that makes the call mean one thing.
+    """
+    target, *rest = head.args
+    variables = _solved_for(rest[0]) if rest else ()
+    bounds = (rest[1], rest[2]) if len(rest) >= 3 else None
+    answers = solutions(target, context, variables, bounds)
+    if not answers:
+        return sp.Matrix(0, 0, [])
+    return InertVector(*answers)
+
+
+def _solved_for(argument: sp.Basic) -> tuple[str, ...]:
+    """The variables a `SOLVE` head names: one, or a vector of them."""
+    if isinstance(argument, sp.Symbol):
+        return (argument.name,)
+    if isinstance(argument, sp.MatrixBase):
+        elements = list(argument)
+    elif isinstance(argument, InertVector):
+        elements = list(argument.args)
+    else:
+        return ()
+    return tuple(e.name for e in elements if isinstance(e, sp.Symbol))
 
 
 # -- evaluating what is only a number ----------------------------------------

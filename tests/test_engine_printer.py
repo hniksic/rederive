@@ -141,6 +141,32 @@ def test_a_logical_operator_is_written_with_its_keyword():
     assert written(sp.Not(sp.And(p, q))) == "NOT (p AND q)"
 
 
+def test_two_bounds_on_one_variable_are_written_as_a_chain():
+    """A conjunction that is a range has a shorter spelling, and it is the one
+    the original writes: `-2 < x < 2`. Either bound may be written the other
+    way round and either strictness may be either way."""
+    x, y = sp.symbols("x y", real=True)
+    assert written(sp.And(x > -2, x < 2)) == "-2 < x < 2"
+    assert written(sp.And(sp.Lt(-2, x), sp.Le(x, 2))) == "-2 < x <= 2"
+    assert written(sp.And(x < 2, x >= -2)) == "-2 <= x < 2"
+    assert written(sp.And(x > -2, x < 2 * y)) == "-2 < x < 2*y"
+
+
+def test_a_pair_that_brackets_nothing_keeps_its_keyword():
+    """One variable bounded twice from the same side is no range, and neither
+    is a pair whose variables never meet. The one they have in common decides
+    which of them the chain is about, so `x < y AND y < 1` is a range around
+    `y` however it was written."""
+    x, y, z = sp.symbols("x y z", real=True)
+    assert written(sp.And(x < y, y < 1)) == "x < y < 1"
+    assert written(sp.And(x < 1, y < 1)) == "x < 1 AND y < 1"
+    assert written(sp.And(x > -2, x > 1)) == "x > -2 AND x > 1"
+    assert written(sp.And(x < y, y < z)) == "x < y < z"
+    # `/=` bounds nothing, so the pair is two statements. The order is sympy's
+    # own, a conjunction being commutative.
+    assert written(sp.And(sp.Ne(x, 1), x < 2)) == "x < 2 AND x /= 1"
+
+
 # -- numerals ----------------------------------------------------------------
 
 

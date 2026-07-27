@@ -111,6 +111,17 @@ last into a new node. The menu comes down rather than aside whenever an operand
 is asked for, so that Esc on that line abandons the whole command as the
 original does, and goes back up on `Done` and after every unary operator.
 
+soLve asks in both forms as well, and is the one command that appends any
+number of expressions rather than exactly one: an expression on a line, then a
+variable at a time for as many as the expression leaves undecided, then - in
+Approximate precision alone - the interval to search, off a dialog. What has
+been answered so far lives in a `Solving`. How many variable questions get
+asked is worked out from two numbers the session supplies before anything is
+computed, the variables of the target and how many equations it is, so the
+sequence is again in the handlers. An answer of no solutions at all appends
+nothing and says so on the message line, that being the whole of what the
+original does with one.
+
 The seven Calculus commands are one flow the other way about: the same two
 lines - an expression, then the variable, offered as the primary variable of
 what was named - and then a dialog that differs. A `Calculus` holds what
@@ -188,6 +199,9 @@ MODE_BUILD_NEXT = "build_next"
 #: The two lines every Calculus command reads before the one that is its own.
 MODE_CALCULUS = "calculus"
 MODE_CALCULUS_VARIABLE = "calculus_variable"
+#: The two lines soLve reads before the interval Approximate precision asks for.
+MODE_SOLVE = "solve"
+MODE_SOLVE_VARIABLE = "solve_variable"
 MODE_JUMP = "jump"
 MODE_FILE = "file"
 MODE_CONFIRM = "confirm"
@@ -219,6 +233,8 @@ PROMPT_MODES = (
     MODE_BUILD_NEXT,
     MODE_CALCULUS,
     MODE_CALCULUS_VARIABLE,
+    MODE_SOLVE,
+    MODE_SOLVE_VARIABLE,
     MODE_JUMP,
     MODE_FILE,
     MODE_VARIABLE_NAME,
@@ -241,6 +257,7 @@ PROMPT_MODES = (
 SETTLED_MODES = (
     MODE_ASKING_VARIABLE,
     MODE_CALCULUS_VARIABLE,
+    MODE_SOLVE_VARIABLE,
     MODE_ANNOTATION,
     MODE_SUBSTITUTE_VALUE,
 )
@@ -261,6 +278,7 @@ LABELLED_MODES = (
     MODE_BUILD,
     MODE_BUILD_NEXT,
     MODE_CALCULUS,
+    MODE_SOLVE,
     MODE_SUBSTITUTE,
 )
 
@@ -351,6 +369,14 @@ BUILD_NEXT_PROMPT = " BUILD next expression: "
 CALCULUS_PROMPT = " CALCULUS {word} expression: "
 CALCULUS_VARIABLE_PROMPT = " CALCULUS {word} variable: "
 ENTER_VARIABLE = "Enter variable"
+#: What soLve asks on its two lines. The variable line carries no number: the
+#: original asks it once per variable it wants and never says which one this is.
+SOLVE_PROMPT = " SOLVE expression: "
+SOLVE_VARIABLE_PROMPT = " SOLVE variable: "
+#: What the message line says when a solve found nothing. Nothing is appended
+#: and the highlight stays where it was, so the message is the whole of the
+#: answer.
+NO_SOLUTIONS = "No solutions found"
 #: What the message line offers while the variables are being collected. The
 #: first question may be answered for all of them at once; the ones after it
 #: end the list instead, since something has been chosen by then.
@@ -367,6 +393,7 @@ ABORTED = "Aborted after {elapsed}"
 #: How each command that computes names itself while it runs.
 SIMPLIFYING = "Simplifying"
 APPROXIMATING = "Approximating"
+SOLVING = "Solving"
 #: What a command is doing while it works out which variables to offer, which
 #: is a question for the engine and so can cost something, though it hardly
 #: ever does.
@@ -735,6 +762,27 @@ class Calculating:
 
 
 @dataclass
+class Solving:
+    """A soLve command part way through its questions.
+
+    It asks for an expression, then for as many variables as the expression
+    leaves undecided, then - in Approximate precision alone - for the interval
+    to search. `wanted` is how many variable answers are still owed, which is
+    one for a scalar the expression does not settle and one per equation for an
+    underdetermined system.
+    """
+
+    request: str = ""
+    #: How many variables are still to be answered for.
+    wanted: int = 0
+    #: The ones not chosen yet, most main first, which is the order the
+    #: defaults walk in.
+    remaining: tuple[str, ...] = ()
+    #: The ones chosen so far, in the order they were.
+    chosen: tuple[str, ...] = ()
+
+
+@dataclass
 class Substituting:
     """A Manage Substitute command part way through its questions.
 
@@ -830,6 +878,19 @@ PAGE_MOVES = ("page_up", "page_down")
 def _takes_anything(values: dict[str, str | int]) -> str | None:
     """What a dialog whose command judges none of its fields refuses: nothing."""
     return None
+
+
+def _variables_wanted(equations: int, variables: int) -> int:
+    """How many variables soLve asks about, given what it was handed.
+
+    A scalar - no equations counted, the expression being no vector of them -
+    asks once unless it holds exactly one variable, which settles it. A system
+    asks once per equation, and only where there are more variables than
+    equations: with as many or fewer there is nothing to choose.
+    """
+    if not equations:
+        return 0 if variables == 1 else 1
+    return equations if variables > equations else 0
 
 
 @dataclass(frozen=True)
@@ -1066,6 +1127,8 @@ class RederiveApp(App[None]):
         self.building: Building | None = None
         #: A Calculus command's answers so far, while it is asking.
         self.calculating: Calculating | None = None
+        #: A soLve command's answers so far, while it is asking.
+        self.solving: Solving | None = None
         #: A Manage Substitute's answers so far, while it is asking.
         self.substituting: Substituting | None = None
         #: The same for the three Declare commands that ask more than one
@@ -1134,6 +1197,7 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Quit"): self._command_quit,
             (ALGEBRA, "Remove"): self._command_remove,
             (ALGEBRA, "Simplify"): self._command_simplify,
+            (ALGEBRA, "soLve"): self._command_solve,
             (ALGEBRA, "Unremove"): self._command_unremove,
             (ALGEBRA, "moVe"): self._command_move,
             (ALGEBRA, "approX"): self._command_approx,
@@ -1727,6 +1791,7 @@ class RederiveApp(App[None]):
                 self.asking = None
             self.building = None
             self.calculating = None
+            self.solving = None
             self.declaring = None
             self._restart_menu()
             self._ask_again()
@@ -2589,6 +2654,138 @@ class RederiveApp(App[None]):
             return
         took = _elapsed(time.monotonic() - started)
         self._end_prompt(COMPUTE_TIME.format(elapsed=took))
+
+    # -- soLve -------------------------------------------------------------
+    #
+    # Up to three questions, and how many of them get asked depends on the
+    # answers rather than on a table: an expression, then a variable at a time
+    # for as many as the expression leaves undecided, then the interval - in
+    # Approximate precision alone, that being the one mode that searches.
+    #
+    # The count of variable questions is the one thing here that is not Factor
+    # under another name. A scalar equation in one variable settles it and asks
+    # nothing; in none or in several it asks once. A system asks once per
+    # equation, and only where there are more variables than equations to go
+    # round - a square or overdetermined system has no choice to offer.
+
+    def _command_solve(self) -> None:
+        """Ask which expression to solve, offering the highlighted one."""
+        self.solving = Solving()
+        entry = self.session.selected_entry
+        offered = "" if entry is None else f"#{entry.number}"
+        self._prompt(MODE_SOLVE, SOLVE_PROMPT, offered, ENTER_TO_DERIVE, keep=1)
+
+    def _solve_expression(self, request: str) -> None:
+        """The expression is settled: work out what is left to ask.
+
+        How many equations it is comes off the tree and costs nothing; which
+        variables it holds is the engine's answer, and goes to the computing
+        thread for the reason Factor's does - converting an expression is where
+        a hostile one detonates.
+        """
+        pending = self.solving
+        assert pending is not None
+        if not request.strip():
+            self._end_prompt()
+            return
+        try:
+            equations = self.session.equations(request)
+        except DeriveSyntaxError as error:
+            self._refused(error)
+            return
+        pending.request = request
+        self._compute(
+            READING,
+            partial(self.session.solve_variables, request),
+            partial(self._solve_planned, equations),
+        )
+
+    def _solve_planned(self, equations: int, outcome: Outcome) -> None:
+        """The variables are known: put the next question, or run the command."""
+        pending = self.solving
+        assert pending is not None
+        if isinstance(outcome.error, DeriveSyntaxError):
+            self._refused(outcome.error)
+            return
+        if outcome.error is not None:
+            self._end_prompt(_reported(outcome))
+            return
+        variables: tuple[str, ...] = outcome.value  # type: ignore[assignment]
+        pending.remaining = variables
+        pending.wanted = _variables_wanted(equations, len(variables))
+        if pending.wanted:
+            self._ask_solve_variable()
+        else:
+            self._solve_bounds()
+
+    def _ask_solve_variable(self) -> None:
+        """Put up the variable line, offering the most main one still free."""
+        pending = self.solving
+        assert pending is not None
+        offered = pending.remaining[0] if pending.remaining else ""
+        self._prompt(
+            MODE_SOLVE_VARIABLE, SOLVE_VARIABLE_PROMPT, offered, ENTER_VARIABLE
+        )
+
+    def _solve_variable(self, text: str) -> None:
+        """One answer to a variable question.
+
+        A line that is not a variable is refused the way every other variable
+        line refuses one: in silence, with the cursor back at the start so the
+        name can be typed over.
+        """
+        pending = self.solving
+        assert pending is not None
+        if not self.session.is_variable(text):
+            line = self.query_one("#prompt-input", Input)
+            line.focus()
+            line.cursor_position = 0
+            return
+        chosen = text.strip()
+        pending.chosen += (chosen,)
+        pending.remaining = tuple(n for n in pending.remaining if n != chosen)
+        if len(pending.chosen) < pending.wanted:
+            self._ask_solve_variable()
+        else:
+            self._solve_bounds()
+
+    def _solve_bounds(self) -> None:
+        """The interval, which only Approximate precision has anything to do with."""
+        if str(self.settings["Precision"]) != "Approximate":
+            self._run_solve()
+            return
+        self._hide_prompt()
+        self.mode = MODE_MENU
+        self._ask(menus.SOLVE_BOUNDS, self._solve_bounded, self._solve_refuses)
+
+    def _solve_refuses(self, values: dict[str, str | int]) -> str | None:
+        """Neither bound may be left blank: an interval needs two ends."""
+        return _needed(values, "SolveLower", "SolveUpper")
+
+    def _solve_bounded(self, values: dict[str, str | int]) -> None:
+        self._run_solve((_text(values, "SolveLower"), _text(values, "SolveUpper")))
+
+    def _run_solve(self, bounds: tuple[str, str] | None = None) -> None:
+        pending = self.solving
+        assert pending is not None
+        self.solving = None
+        self._compute(
+            SOLVING,
+            partial(self.session.solve, pending.request, pending.chosen, bounds),
+            self._solved,
+        )
+
+    def _solved(self, outcome: Outcome) -> None:
+        """The solutions are in, or there were none.
+
+        No solutions appends nothing and leaves the highlight where it was, so
+        the message line is what says so - there being no beep machinery here
+        and, in the original, nothing else said either.
+        """
+        if outcome.error is None and not outcome.value:
+            self._end_prompt(NO_SOLUTIONS)
+            return
+        self._appended(outcome)
 
     # -- Declare -----------------------------------------------------------
     #
@@ -3721,6 +3918,10 @@ class RederiveApp(App[None]):
             self._calculus_expression(value)
         elif self.mode == MODE_CALCULUS_VARIABLE:
             self._calculus_variable(value)
+        elif self.mode == MODE_SOLVE:
+            self._solve_expression(value)
+        elif self.mode == MODE_SOLVE_VARIABLE:
+            self._solve_variable(value)
         elif self.mode == MODE_JUMP:
             self._jumped(value)
         elif self.mode == MODE_FILE:
@@ -3837,6 +4038,7 @@ class RederiveApp(App[None]):
         self.asking = None
         self.building = None
         self.calculating = None
+        self.solving = None
         self.substituting = None
         self.declaring = None
         self.defining = None

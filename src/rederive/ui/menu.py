@@ -47,6 +47,10 @@ SELECT_DIRECTION = "Select approach direction"
 ENTER_DEGREE = "Enter maximum degree"
 ENTER_EXPANSION_POINT = "Enter expansion point"
 
+#: What both fields of soLve's interval ask for, in the one precision mode
+#: that asks at all.
+ENTER_BOUND = "Enter bound on solution"
+
 #: What the message line asks for on each field of the Declare dialogs.
 ENTER_ROWS = "Enter number of rows"
 ENTER_COLUMNS = "Enter number of columns"
@@ -303,6 +307,22 @@ VECTOR = settings.Dialog(
     stored=False,
     opens_on="VectorEnd",
     enters=True,
+)
+
+#: The interval soLve confines a numeric search to. Asked for in Approximate
+#: precision and in neither of the other two, which solve exactly and have no
+#: interval to be told about; the original opens it on the whole of `[-10, 10]`.
+#: Nothing here enters an expression, the command deriving its own, so
+#: Ctrl-Enter says nothing on this line.
+SOLVE_BOUNDS = settings.Dialog(
+    "SOLVE:",
+    (
+        (
+            _expression_field("Lower", "SolveLower", "-10", ENTER_BOUND),
+            _expression_field("Upper", "SolveUpper", "10", ENTER_BOUND),
+        ),
+    ),
+    stored=False,
 )
 
 DECLARE = Menu("DECLARE:", ("Function", "Variable", "Matrix", "vectoR"))

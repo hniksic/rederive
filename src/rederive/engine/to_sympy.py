@@ -26,6 +26,7 @@ from itertools import product
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
+from sympy.core.relational import Relational
 
 from rederive.engine.approximation import simplest
 from rederive.engine.context import (
@@ -41,6 +42,7 @@ from rederive.model.expr import Kind, Node
 from rederive.syntax.names import BUILTIN_FUNCTIONS
 
 __all__ = [
+    "COMMAND_HEADS",
     "Approx",
     "Assign",
     "Declare",
@@ -54,8 +56,17 @@ __all__ = [
     "Subscript",
     "Taylor",
     "Transposed",
+    "reread",
     "to_sympy",
 ]
+
+#: The heads a conversion deliberately leaves standing for the pipeline to
+#: evaluate: the author-line spellings of Factor, Expand and soLve. Their
+#: answers depend on a simplified operand, so they cannot be worked out here,
+#: and a call over one of them cannot be worked out either - `DIMENSION` of a
+#: `SOLVE` is a number nobody knows yet. Such a call stays inert too, and
+#: `reread` is what offers it again once the head inside it is gone.
+COMMAND_HEADS = ("EXPAND", "FACTOR", "SOLVE")
 
 
 #: How big a number raising to a power may build before the engine declines to
@@ -586,9 +597,33 @@ class _Converter:
             return InertVector(*elements)
 
     def _relation(self, node: Node) -> sp.Basic:
-        """Assembled unevaluated: the engine never decides a bare relation."""
-        left, right = self._children(node)
+        """Assembled unevaluated: the engine never decides a bare relation.
+
+        A chain nests to the left in the grammar and means the conjunction of
+        its links: `1 <= a <= b - 1` is `1 <= a AND a <= b - 1`, which is how
+        the shipped library writes `c <= a <= 0`. Reading it as written would
+        be comparing the truth value of the first link with a number, which is
+        not a statement anybody made.
+        """
+        links, _ = self._chain(node)
+        if len(links) == 1:
+            return links[0]
+        try:
+            return sp.And(*(_settled(link) for link in links))
+        except Exception:
+            return Logical(sp.Symbol("AND"), *links)
+
+    def _chain(self, node: Node) -> tuple[list[sp.Basic], sp.Basic]:
+        """The links of a relation chain, and the operand it ends on."""
+        left_node, right_node = node.children
         relation = _RELATIONS[str(node.value)]
+        right = self.convert(right_node)
+        if left_node.kind is Kind.REL:
+            links, previous = self._chain(left_node)
+            return [*links, self._related(relation, previous, right)], right
+        return [self._related(relation, self.convert(left_node), right)], right
+
+    def _related(self, relation, left: sp.Basic, right: sp.Basic) -> sp.Basic:
         try:
             return relation(left, right, evaluate=False)
         except Exception:
@@ -603,7 +638,7 @@ class _Converter:
             except TypeError:
                 pass
         try:
-            return _BOOLEAN[node.kind](*operands)
+            return _BOOLEAN[node.kind](*(_settled(o) for o in operands))
         except Exception:
             return Logical(sp.Symbol(_LOGICAL_NAMES[node.kind]), *operands)
 
@@ -647,7 +682,15 @@ class _Converter:
         A call the tables cannot make sense of - the wrong number of arguments,
         a matrix where a number belongs - falls back to the inert head, which
         is the "return it unchanged rather than guess" rule in miniature.
+
+        A call over an unevaluated command head is such a call, and it is one
+        the pipeline will come back to: `RHS(SOLVE(u, x))` has no relation to
+        take a side of until the `SOLVE` has become the vector it stands for.
+        The head may stand anywhere inside the argument, `RHS(SOLVE(z, y) SUB
+        1)` being how the shipped ODE library reads a solution out.
         """
+        if any(_holds_command(argument) for argument in args):
+            return self.opaque(name, args)
         handler = FUNCTIONS.get(name) or SYMPY_HEADS.get(name)
         if handler is None:
             return self.opaque(name, args)
@@ -1376,20 +1419,42 @@ def _trace(conv: _Converter, args: list) -> sp.Basic:
 
 
 def _dimension(conv: _Converter, args: list) -> sp.Basic:
-    """How many elements a vector has, or how many rows a matrix has."""
-    matrix = _matrix(_one(args))
+    """How many elements a vector has, or how many rows a matrix has.
+
+    A vector of relations is a vector too, and counting one is what the shipped
+    libraries do to a `SOLVE`: how many solutions there are is the question
+    they branch on, and no solutions is an empty vector rather than an error.
+    """
+    value = _one(args)
+    if isinstance(value, InertVector):
+        return sp.Integer(len(value.args))
+    matrix = _matrix(value)
     return sp.Integer(matrix.cols if matrix.rows == 1 else matrix.rows)
 
 
 def _element_of(conv: _Converter, args: list) -> sp.Basic:
-    """`ELEMENT(v, i)` and `ELEMENT(m, i, j)`, counting from 1."""
+    """`ELEMENT(v, i)` and `ELEMENT(m, i, j)`, counting from 1.
+
+    A vector of relations is a vector too, and taking one out of it is how the
+    shipped ODE library reads a solution: `RHS((SOLVE(z, y)) SUB 1)`.
+    """
     if len(args) == 2:
-        element = _element(_matrix(args[0]), args[1])
+        element = _at(args[0], args[1])
         if element is None:
             raise ValueError("not an index")
         return element
     matrix, row, column = args
     return _matrix(matrix)[int(row) - 1, int(column) - 1]
+
+
+def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
+    """One element of a vector however the vector is held."""
+    if not isinstance(value, InertVector):
+        return _element(_matrix(value), index)
+    if not isinstance(index, sp.Integer):
+        return None
+    number = int(index)
+    return value.args[number - 1] if 1 <= number <= len(value.args) else None
 
 
 def _delete_element(conv: _Converter, args: list) -> sp.Basic:
@@ -1717,6 +1782,69 @@ def _retried(conv: _Converter, value: sp.Basic) -> sp.Basic:
         lambda found: isinstance(found, AppliedUndef),
         lambda found: conv.call(type(found).__name__, found.args),
     )
+
+
+def _settled(operand: sp.Basic) -> sp.Basic:
+    """One operand of a boolean, written the one way a boolean can hold it.
+
+    A conjunction holds its operands in a set, so which of them comes first is
+    decided by how each is spelled rather than by how it was written - and one
+    statement has two spellings, `a >= b` and `b <= a`. That matters because a
+    range is *printed* as a chain, which turns the first into the second on the
+    way out: without a canonical form the same statement would come back in a
+    different order every time it was read.
+
+    Nothing is decided here and nothing is simplified. `x >= 1` is already
+    canonical; what changes is only which side a relation nobody is comparing
+    was written from.
+    """
+    return operand.canonical if isinstance(operand, Relational) else operand
+
+
+def _is_command_head(value: sp.Basic) -> bool:
+    """Whether this is a command the pipeline has yet to evaluate."""
+    return isinstance(value, AppliedUndef) and type(value).__name__ in COMMAND_HEADS
+
+
+def _holds_command(value: sp.Basic) -> bool:
+    """Whether such a head stands anywhere inside `value`."""
+    if _is_command_head(value):
+        return True
+    return any(_is_command_head(found) for found in value.atoms(AppliedUndef))
+
+
+def reread(expression: sp.Basic, context: Context) -> sp.Basic:
+    """Every head the tables know, offered to them again.
+
+    The pipeline calls this once it has evaluated a `FACTOR`, `EXPAND` or
+    `SOLVE`, because a call written *around* one of those was left inert by the
+    conversion: there was nothing to apply it to yet. Now there is, so the same
+    tables get a second look at it, and `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))`
+    becomes the vector of roots the manual says it is.
+
+    A subscript is offered too where its base has turned into a vector, `u SUB
+    i` being `ELEMENT(u, i)` under another spelling.
+
+    Only the names the tables define. A user's own function is inert because it
+    is a user's own function, and offering it again would say nothing.
+    """
+    conv = _Converter(context)
+    return expression.replace(
+        _is_rereadable, lambda found: _reoffered(conv, found), simultaneous=False
+    )
+
+
+def _is_rereadable(found: sp.Basic) -> bool:
+    if isinstance(found, AppliedUndef):
+        return type(found).__name__ in FUNCTIONS
+    return isinstance(found, Subscript) and isinstance(
+        found.args[0], (sp.MatrixBase, InertVector)
+    )
+
+
+def _reoffered(conv: _Converter, found: sp.Basic) -> sp.Basic:
+    name = "ELEMENT" if isinstance(found, Subscript) else type(found).__name__
+    return conv.call(name, found.args)
 
 
 def _identity_matrix(conv: _Converter, args: list) -> sp.Basic:
@@ -2082,9 +2210,10 @@ def _matrix(value: sp.Basic) -> sp.MatrixBase:
 
 
 #: What each function name converts to. A name absent from here converts to an
-#: inert head over its converted arguments, which is what keeps `SOLVE`,
-#: `RANDOM`, the financial functions and every arbitrary user function alive
-#: through a round trip - and what makes `DIF(F(x)^3, x)` differentiable.
+#: inert head over its converted arguments, which is what keeps `RANDOM`, the
+#: financial functions and every arbitrary user function alive through a round
+#: trip - and what makes `DIF(F(x)^3, x)` differentiable. `SOLVE` is absent for
+#: a different reason: it is `COMMAND_HEADS`, and the pipeline evaluates it.
 FUNCTIONS: dict[str, Handler] = {
     **{name: _trig(func) for name, func in _TRIGONOMETRIC.items()},
     **{name: _arctrig(func) for name, func in _INVERSE_TRIGONOMETRIC.items()},
@@ -2168,9 +2297,9 @@ def _sympy_heads() -> dict[str, Handler]:
     function classes.
 
     Only names Derive does not define itself. Everything in the inventory has a
-    reading of its own, or is deliberately inert - `SOLVE` and `FIT` must stay
-    that way - and nothing here may displace one. What is left is names no
-    Derive worksheet can mean anything else by.
+    reading of its own, waits for the pipeline as `SOLVE` does, or is
+    deliberately inert as `FIT` is - and nothing here may displace one. What is
+    left is names no Derive worksheet can mean anything else by.
     """
     reserved = set(FUNCTIONS) | BUILTIN_FUNCTIONS
     heads: dict[str, Handler] = {}

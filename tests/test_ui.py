@@ -589,6 +589,197 @@ async def test_expand_asks_for_nothing_when_the_history_is_empty(app):
         assert message(app) == "Enter option"
 
 
+# -- soLve, which asks up to three questions and appends any number of answers -
+#
+# Every screen asserted here was checked against the original. The variable
+# line carries no number, the original asking it once per variable it wants
+# and never saying which one is up, and the interval comes up only in
+# Approximate precision.
+
+
+async def test_solve_asks_for_the_expression_and_appends_every_solution(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 - 5x + 6 = 0")
+        await pilot.press("l")
+        assert prompt(app) == ("SOLVE expression:", "#1")
+        assert message(app) == "Enter expression"
+        await pilot.press("enter")
+        assert entries(app) == ["x^2 - 5x + 6 = 0", "x = 2", "x = 3"]
+        assert message(app).startswith("Compute time:")
+        assert annotation(app) == "Solve(#1)"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_the_highlight_lands_on_the_last_solution(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 - 5x + 6 = 0")
+        await pilot.press("l", "enter")
+        assert highlighted_expression(app) == "x = 3"
+
+
+async def test_one_variable_settles_the_question_so_none_is_asked(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2x + 3 = 7")
+        await pilot.press("l", "enter")
+        assert entries(app)[-1] == "x = 2"
+
+
+async def test_two_variables_bring_the_variable_line_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "a x + b = 0")
+        await pilot.press("l", "enter")
+        # The most main variable is offered, and typing replaces it.
+        assert prompt(app) == ("SOLVE variable:", "x")
+        assert message(app) == "Enter variable"
+        await pilot.press("enter")
+        assert entries(app)[-1] == "x = -b/a"
+
+
+async def test_the_offered_variable_can_be_typed_over(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "a x + b = 0")
+        await pilot.press("l", "enter")
+        await pilot.press("a", "enter")
+        assert entries(app)[-1] == "a = -b/x"
+
+
+async def test_an_underdetermined_system_is_asked_about_once_per_equation(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "[x + y + z = 1, x - y = 0]")
+        await pilot.press("l", "enter")
+        assert prompt(app) == ("SOLVE variable:", "x")
+        await pilot.press("enter")
+        # The default walks the pool, the chosen one having left it.
+        assert prompt(app) == ("SOLVE variable:", "y")
+        await pilot.press("enter")
+        assert entries(app)[-1] == "[x = (1 - z)/2, y = (1 - z)/2]"
+
+
+async def test_a_square_system_is_asked_nothing(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "[x + y = 3, x - y = 1]")
+        await pilot.press("l", "enter")
+        assert entries(app)[-1] == "[x = 2, y = 1]"
+
+
+async def test_a_name_that_is_no_variable_leaves_the_line_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "a x + b = 0")
+        await pilot.press("l", "enter")
+        await pilot.press("backspace", *"2", "enter")
+        assert prompt(app) == ("SOLVE variable:", "2")
+        assert entries(app) == ["a x + b = 0"]
+
+
+async def test_approximate_precision_asks_for_the_interval(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "Precision := Approximate")
+        await author(pilot, "x^5 - x + 1 = 0")
+        await pilot.press("l", "enter")
+        assert band(app) == [" SOLVE: Lower: -10                Upper: 10"]
+        assert message(app) == "Enter bound on solution"
+        await pilot.press("enter")
+        assert entries(app)[-1] == "x = -1.16730"
+
+
+async def test_the_other_two_precisions_never_ask_for_an_interval(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "Precision := Mixed")
+        await author(pilot, "3^x = x^2")
+        await pilot.press("l", "enter")
+        assert entries(app)[-1] == "x = -0.686026"
+
+
+async def test_no_solutions_appends_nothing_and_says_so(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2 - 4")
+        await author(pilot, "x = x + 1")
+        await pilot.press("l", "enter")
+        assert message(app) == "No solutions found"
+        assert entries(app) == ["x^2 - 4", "x = x + 1"]
+        # Nothing was appended, so nothing moved the highlight off #2.
+        assert highlighted_expression(app) == "x = x + 1"
+
+
+async def test_a_typed_expression_is_solved_as_the_users_own(app):
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        assert prompt(app) == ("SOLVE expression:", "")
+        await pilot.press(*"2x=8")
+        await pilot.press("enter")
+        assert entries(app) == ["x = 4"]
+        assert annotation(app) == "Solve(User)"
+
+
+@pytest.mark.parametrize(
+    ("keys", "step"),
+    [
+        (("l",), "the expression"),
+        (("l", "enter"), "the variable"),
+        (("l", "enter", "enter"), "the second variable"),
+    ],
+    ids=str,
+)
+async def test_escape_abandons_solve_from_any_of_its_questions(app, keys, step):
+    """One Esc returns to the command menu, whichever question is up, and the
+    worksheet is untouched."""
+    async with app.run_test() as pilot:
+        await author(pilot, "[x + y + z = 1, x - y = 0]")
+        await pilot.press(*keys)
+        await pilot.press("escape")
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+        assert app.solving is None
+        assert entries(app) == ["[x + y + z = 1, x - y = 0]"]
+
+
+async def test_escape_abandons_solve_from_the_interval(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "Precision := Approximate")
+        await author(pilot, "x^5 - x + 1 = 0")
+        await pilot.press("l", "enter")
+        await pilot.press("escape")
+        assert message(app) == "Enter option"
+        assert app.solving is None
+        assert entries(app)[-1] == "x^5 - x + 1 = 0"
+
+
+async def test_solve_leaves_a_line_that_does_not_read_up(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await pilot.press("l")
+        await pilot.press(*"+")
+        await pilot.press("enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert entries(app) == ["x"]
+
+
+async def test_solve_asks_for_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("l", "enter")
+        assert app.session.entries == []
+        assert message(app) == "Enter option"
+
+
+async def test_solving_twice_appends_the_answer_twice(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2x = 8")
+        await pilot.press("l", "enter")
+        await pilot.press("ctrl+home")
+        await pilot.press("l", "enter")
+        assert entries(app) == ["2x = 8", "x = 4", "x = 4"]
+
+
+async def test_the_arbitrary_counter_runs_across_the_session(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x = x")
+        await pilot.press("l", "enter")
+        assert entries(app)[-1] == "x = @1"
+        await author(pilot, "2y = y + y")
+        await pilot.press("l", "enter")
+        assert entries(app)[-1] == "y = @2"
+
+
 # -- approX, which asks the one question Simplify asks ------------------------
 #
 # Every screen asserted here was checked against the original. The command is

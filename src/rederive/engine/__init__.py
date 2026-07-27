@@ -69,10 +69,31 @@ denominator holds an expansion variable becomes partial fractions instead, and
 `amount` says how far the denominator is factored on the way; Expand offers
 four of the five amounts, `Complex` being Factor's alone.
 
-The mathematics of both is a file of its own below the pipeline rather than
-above, because `FACTOR(u, amount, x, y, ...)` and `EXPAND(u, amount, x, y,
-...)` are an authored line's own way of asking for the same things, and
-Simplify is what evaluates those.
+`solve(node, context, variables, bounds)` is Derive's soLve, and it is the one
+command whose answer is not one expression. It is Simplify and then solving,
+and what comes back is a *tuple* of results, one per solution, each of them a
+relation with the variable alone on the left: `x^2 - 5*x + 6 = 0` solves to two
+of them, a system solves to one holding the whole solution vector, and an
+interval solves to one chained relation `-2 < x < 2`. Three answers are not
+solutions and are told apart on purpose - the empty tuple is "no solutions
+found", an equation that holds everywhere answers with the arbitrary value
+`x = @1` that `Context.arbitrary_index` mints, and an equation nothing can
+solve answers with its own residual equation, `3^x - x^2 = 0`. None of them is
+an exception: this makes the same two promises the others do.
+
+`variables` names what to solve for, empty meaning the one variable of a
+scalar or the most main of a system's; `bounds` confines a numeric search to an
+interval, which is what Approximate precision asks the user for and what the
+other two modes never do. Unlike every other command this one works on a whole
+entry rather than on any subtree: solving half an expression produces something
+there is no sensible way to splice back into the other half.
+
+The mathematics of all three is a file of its own below the pipeline rather
+than above, because `FACTOR(u, amount, x, y, ...)`, `EXPAND(u, amount, x, y,
+...)` and `SOLVE(u, x)` are an authored line's own way of asking for the same
+things, and Simplify is what evaluates those. `SOLVE` evaluates to a vector of
+relations, which is the Derive 3 and 4 shape and the one the shipped libraries
+count with `DIMENSION` and take apart with `RHS`.
 
 `replace(node, replacements, state)` is Derive's Manage Substitute, and it is
 the one command that computes nothing: each replacement is a subtree to look
@@ -90,7 +111,7 @@ None of these promises covers what a computation costs. Simplify of `1000000!`
 finishes eventually and `10^10^10` does not finish at all, and neither can be
 interrupted from the inside, sympy having no cooperative cancellation to ask
 for. So the engine also ships with a way to run it at arm's length:
-`RemoteEngine` offers the five heavy calls with the signatures the session
+`RemoteEngine` offers the six heavy calls with the signatures the session
 already uses and answers them out of a child process that can be killed, which
 is what makes Esc an abort and a memory cap enforceable. A session given one
 computes remotely; a session given nothing computes here, which is what every
@@ -128,6 +149,7 @@ from rederive.engine.remote import (
     RemoteEngine,
 )
 from rederive.engine.replacing import Replacement, replace
+from rederive.engine.solve import equations_in, solve, solved
 from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
 from rederive.engine.variables import expression_variables
@@ -157,6 +179,7 @@ __all__ = [
     "author_text",
     "decomposes",
     "domain_of_node",
+    "equations_in",
     "expand",
     "expression_variables",
     "factor",
@@ -165,6 +188,8 @@ __all__ = [
     "parse_state_for",
     "replace",
     "simplify",
+    "solve",
+    "solved",
     "substitute",
     "to_sympy",
     "written_as_ratio",

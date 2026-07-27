@@ -218,6 +218,21 @@ def test_a_relation_is_assembled_and_not_decided():
     assert convert("x /= 1").rel_op == "!="
 
 
+def test_a_relation_chain_is_the_conjunction_it_means():
+    """`1 <= a <= b` says two things about `a`, which is what the shipped
+    library writes it for. Reading it as the grammar nests it would be
+    comparing the truth value of the first link with `b`.
+
+    The links are held in canonical form, a conjunction holding its operands in
+    a set: `1 <= a` and `a >= 1` have to be one object or the order the pair
+    comes back in would depend on which of the two spellings was written."""
+    a, b, c = sp.symbols("a b c", real=True)
+    assert convert("1 <= a <= b") == sp.And(sp.Ge(a, 1), sp.Le(a, b))
+    assert convert("a >= 1 AND a <= b") == convert("1 <= a <= b")
+    assert convert("a < b < c") == sp.And(sp.Lt(a, b), sp.Lt(b, c))
+    assert convert("a = b = c") == sp.And(sp.Eq(a, b), sp.Eq(b, c))
+
+
 def test_a_boolean_operator_on_booleans_is_boolean():
     assert convert("NOT NOT p") == sp.Symbol("p", real=True)
     assert convert("p AND q") == sp.And(*sp.symbols("p q", real=True))
