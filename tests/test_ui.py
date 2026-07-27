@@ -1305,6 +1305,61 @@ async def test_the_author_line_walks_but_is_never_labelled(app):
         assert prompt(app) == ("AUTHOR expression:", "w")
 
 
+async def test_f3_writes_the_highlighted_expression_onto_the_author_line(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1", "y")
+        await pilot.press("a", "f3")
+        assert prompt(app) == ("AUTHOR expression:", "y")
+        # Walking under the line is what picks what F3 takes.
+        await pilot.press("up", "f3")
+        assert prompt(app)[1] == "yx + 1"
+
+
+async def test_f4_fences_what_it_writes(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1")
+        await pilot.press("a", *"2", "f4", "enter")
+        assert numbered(app)[-1] == "#2: 2(x + 1)"
+
+
+async def test_f3_writes_at_the_cursor_and_leaves_it_after(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1")
+        await pilot.press("a", *"ab", "left", "f3")
+        assert prompt(app)[1] == "ax + 1b"
+        # The cursor sits after what was written, so the next thing typed
+        # follows it rather than landing back where the line was.
+        await pilot.press(*"c")
+        assert prompt(app)[1] == "ax + 1cb"
+
+
+async def test_f3_takes_only_the_highlighted_part(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x (x + 1)")
+        # Descending happens before the line goes up: with a prompt line on
+        # screen the sideways keys are the line's own.
+        await pilot.press("right", "right")
+        assert highlighted_expression(app) == "x + 1"
+        await pilot.press("a", "f3")
+        assert prompt(app)[1] == "x + 1"
+
+
+async def test_f3_writes_nothing_on_any_other_line(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        for keys, line in ((("s",), "#2"), (("j",), ""), (("d", "v"), "")):
+            await pilot.press(*keys)
+            await pilot.press("f3", "f4")
+            assert prompt(app)[1] == line
+            await pilot.press("escape")
+
+
+async def test_f3_on_an_empty_worksheet_writes_nothing(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", "f3", "f4")
+        assert prompt(app) == ("AUTHOR expression:", "")
+
+
 async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x", "y", "z")

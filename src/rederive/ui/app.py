@@ -657,6 +657,13 @@ class RederiveApp(App[None]):
             priority=True,
             show=False,
         ),
+        # F3 writes the highlighted expression onto the author line and F4
+        # writes it fenced, so that a new expression can be built out of ones
+        # already on the worksheet without any of it being typed again. The
+        # arrows still walk the highlight with the line up, which is what makes
+        # the pair worth having: move onto what is wanted, then take it.
+        Binding("f3", "insert_highlighted(0)", "Insert", priority=True, show=False),
+        Binding("f4", "insert_highlighted(1)", "Insert ()", priority=True, show=False),
         Binding("escape", "menu_escape", "Go back", priority=True, show=False),
         Binding("up", "nav('up')", "Up", priority=True, show=False),
         Binding("down", "nav('down')", "Down", priority=True, show=False),
@@ -1002,7 +1009,10 @@ class RederiveApp(App[None]):
         Tab is a third: it completes the name on a file prompt, and steps the
         menu everywhere else.
 
-        The keys that walk the list of names are the fourth, and they only
+        F3 and F4 are a fourth: they write onto the author line, and there is
+        no other line for them to write onto.
+
+        The keys that walk the list of names are the fifth, and they only
         apply while that list is open. Closed, Up and Down go on walking the
         history from a file prompt as they do from any other, so opening the
         list is what decides which of the two they mean - and the list is on
@@ -1026,6 +1036,8 @@ class RederiveApp(App[None]):
             )
         if action == "enter_and_simplify":
             return self.mode == MODE_MENU or self.mode in PROMPT_MODES
+        if action == "insert_highlighted":
+            return self.mode == MODE_AUTHOR
         return True
 
     def on_key(self, event: Any) -> None:
@@ -1286,6 +1298,29 @@ class RederiveApp(App[None]):
         number = str(entry.number)
         line.value = f"{line.value[:start]}{number}{line.value[end:]}"
         line.selection = Selection(start, start + len(number))
+
+    def action_insert_highlighted(self, fenced: int) -> None:
+        """F3 and F4: write the highlighted expression onto the author line.
+
+        What goes on the line is what is highlighted, which is the whole of an
+        expression selected whole and just the part when the highlight is
+        inside one. F4 fences what it writes, since the line it lands on is
+        being built out of other things: `x + 1` dropped beside a factor would
+        otherwise read as two terms, and the fence is what keeps it one.
+
+        It goes in at the cursor, over whatever is selected on the line, and
+        the cursor is left after it so that another can follow.
+        """
+        text = self.session.highlighted_text
+        if text is None:
+            self._beep()
+            return
+        if fenced:
+            text = f"({text})"
+        line = self.query_one("#prompt-input", Input)
+        start, end = sorted(line.selection)
+        line.value = f"{line.value[:start]}{text}{line.value[end:]}"
+        line.cursor_position = start + len(text)
 
     def _move_selection(self, movement: str) -> bool:
         """One movement of the highlight, and whether it moved anything.

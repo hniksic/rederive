@@ -1327,6 +1327,24 @@ class Session:
         region = self.selected_region
         return region.node if region is not None else None
 
+    @property
+    def highlighted_text(self) -> str | None:
+        """What is highlighted, written as it stands in the entry's own text.
+
+        The whole entry where it is selected whole, and just the span of the
+        subexpression where the route points inside one. Taking the text rather
+        than reprinting the node is what makes this exact: the spans index the
+        text the entry was built from, so what comes back is what is on the
+        screen, down to how it was spelled. None when nothing is selected.
+        """
+        entry = self.selected_entry
+        if entry is None:
+            return None
+        node = self.selected_node
+        if node is None or not self.route:
+            return entry.text
+        return entry.text[node.start : node.end]
+
     def selection_rect(self) -> Rect | None:
         """The rectangle to invert, in the selected entry's own render.
 
