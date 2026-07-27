@@ -158,9 +158,12 @@ def _shared(total: sp.Basic) -> sp.Basic:
         return total
     seen: dict[sp.Basic, int] = {}
     for term in total.args:
-        # A sum can carry something that is no expression at all - a branch of
-        # an undecided `IF` is a truth value - and asking that for a numerator
-        # and a denominator is asking the wrong question.
+        # Nothing that is not an expression has a numerator and a denominator,
+        # and sympy answers the question anyway by building a `Mul` it warns
+        # about. Where that is actually reached is `pipeline._cancelled`, which
+        # is offered whatever an undecidable four-argument `IF` left standing;
+        # no sum in the corpus carries one, and this is here so that the rule
+        # is the same wherever the question is asked.
         if not isinstance(term, sp.Expr):
             return total
         denominator = sp.fraction(term)[1]

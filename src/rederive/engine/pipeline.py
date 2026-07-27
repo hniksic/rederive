@@ -864,7 +864,15 @@ def _cancelled(expression: sp.Basic) -> sp.Basic:
 
     A denominator of one factor has nothing to lose, which is every sum of
     ratios that has not been put over a common denominator yet.
+
+    What arrives here is not always an expression. An undecidable four-argument
+    `IF` simplifies to its unknown clause, and `IF(u, true, false, false)` has a
+    truth value for one; asking that for a numerator and a denominator is asking
+    the wrong question, and sympy answers it by building a `Mul` out of a
+    `BooleanFalse`, which it warns is on its way to being an error.
     """
+    if not isinstance(expression, sp.Expr):
+        return expression
     if len(sp.Mul.make_args(sp.fraction(expression)[1])) > 1:
         return expression
     return sp.cancel(expression)

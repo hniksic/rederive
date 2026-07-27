@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import time
+import warnings
 
 import pytest
 from sexpr import to_sexpr
@@ -1211,6 +1212,35 @@ def test_an_undecidable_conditional_keeps_the_variables_it_depends_on():
 def test_a_decided_conditional_simplifies_the_branch_it_took():
     assert simp("IF(2 = 2, (x + 1)^2 - x^2, -1)") == "2*x + 1"
     assert simp("1 + IF(2 = 2, 3, 4)") == "4"
+
+
+#: What an undecidable four-argument `IF` leaves standing where the rest of the
+#: pipeline expects an expression: the unknown clause is whatever was written.
+#: Both shapes reach the gated rewrites, and both are in Derive's own utility
+#: files - the truth value in `SYMMETRIC_TEST_1` and `B_TYPE`, the relation in
+#: `CLAIRAUT`, all three in ODE.MTH.
+NOT_EXPRESSIONS = [
+    ("IF(v = [] OR v = [a], true, false, false)", "false"),
+    ("IF(x > 0, y = 1, y = 2, y = 3)", "y = 3"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), NOT_EXPRESSIONS, ids=str)
+def test_a_rewrite_is_not_asked_about_something_that_is_no_expression(text, expected):
+    """A truth value has no numerator and no denominator.
+
+    Every gated rewrite is offered whatever the conditional left behind, and
+    that is not always an expression. Asking sympy to split a truth value into
+    a ratio builds a `Mul` out of a `BooleanFalse`, which it warns about and
+    says it will one day refuse - so the answer must arrive without a word from
+    sympy. A warning is not an exception, and the `try` around every rewrite
+    would not have caught it.
+    """
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        answer = simp(text)
+    assert answer == expected
+    assert [str(w.message) for w in raised] == []
 
 
 # -- definitions and declarations are inert -----------------------------------
