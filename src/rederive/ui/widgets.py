@@ -8,9 +8,10 @@ command repaints simply by asking for another render.
 from __future__ import annotations
 
 from rich.text import Text
+from textual import events
 from textual.containers import VerticalScroll
 from textual.geometry import Region
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from rederive import memory
 from rederive.model.session import Entry
@@ -190,6 +191,31 @@ class MessageLine(Band):
 
     def show(self, message: str) -> None:
         self.update(Text(f" {message}", style=self.colors["prompt"]))
+
+
+class PromptLine(Input):
+    """The line every command that reads a line reads on.
+
+    Textual's own line inserts and never overwrites, so the original's second
+    text input mode is added here: with `overwrite` set, a character typed
+    stands on the one at the cursor instead of pushing it right. The key has to
+    be taken before the base class sees it, since that is where the insertion
+    would happen; a typed character over a selection replaces the selection in
+    either mode, which is what the base class does anyway.
+    """
+
+    overwrite = False
+
+    async def _on_key(self, event: events.Key) -> None:
+        if not (self.overwrite and event.is_printable and self.selection.is_empty):
+            await super()._on_key(event)
+            return
+        assert event.character is not None
+        event.stop()
+        event.prevent_default()
+        self._restart_blink()
+        at = self.cursor_position
+        self.replace(event.character, at, at + 1)
 
 
 class CompletionList(Band):
@@ -449,6 +475,12 @@ class StatusLine(Band):
     #: holds, which is the closest thing a hosted program can report, and stays
     #: empty on a platform that will not say.
     center = ""
+    #: The mode words that stand beside the memory field: `Ins` while the text
+    #: input mode is insert rather than overwrite, `Lin` while the arrow keys
+    #: belong to the line being edited rather than to the highlight. Each is
+    #: named only when it is on, so the line stays quiet in the other state -
+    #: which is the original's rule for both of them.
+    flags = ""
     pane = "Rederive Algebra"
 
     def on_mount(self) -> None:
@@ -462,10 +494,22 @@ class StatusLine(Band):
             self.center = center
             self.refresh()
 
-    def show(self, annotation: str, file: str = "") -> None:
+    def show(self, annotation: str, file: str = "", flags: str = "") -> None:
         self.annotation = annotation
         self.file = file
+        self.flags = flags
         self.refresh()
+
+    def indicate(self, flags: str) -> None:
+        """Set the mode words alone, the rest of the line standing as it is.
+
+        A key that changes how the line being typed behaves changes nothing
+        else on screen, and a whole refresh would have to know what band the
+        command it interrupted had up.
+        """
+        if flags != self.flags:
+            self.flags = flags
+            self.refresh()
 
     def render(self) -> Text:
         style = self.colors["status"]
@@ -482,6 +526,10 @@ class StatusLine(Band):
         text.append(" " * (center_at - used))
         text.append(self.center, style=style)
         used = center_at + len(self.center)
+        if self.flags:
+            text.append(" ")
+            text.append(self.flags, style=style)
+            used += 1 + len(self.flags)
         pane_at = max(used + 1, width - 1 - len(self.pane))
         text.append(" " * (pane_at - used))
         text.append(self.pane, style=style)

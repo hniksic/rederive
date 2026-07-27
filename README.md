@@ -15,6 +15,21 @@ expression input, and arrow-key movement across expressions and subexpressions
 uv run rederive
 ```
 
+Files named on the command line are read before the first frame, as the
+original reads them. An extension says what a file is - `.mth` a math file,
+`.dat` a data file, `.dmo` a demonstration - and a name given without one is
+looked for under each in turn, so `uv run rederive arith` starts on
+`arith.dmo`. A switch overrides that for the names after it, which is the only
+way to say that a math file is to be read as a utility library:
+
+```sh
+uv run rederive -u number -m plot2d -d algebra
+```
+
+`-m` math, `-u` utility, `-t` data, `-d` demonstration. The original spelled
+these after the name and behind a slash (`NUMBER/U`); a slash cannot mean that
+here.
+
 ## Testing
 
 ```sh

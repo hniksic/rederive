@@ -62,6 +62,12 @@ def annotation(app):
     return text_of(app.query_one("#status")).plain.strip().split("  ")[0]
 
 
+def flags(app):
+    """The mode words the status line shows beside the memory field."""
+    said = text_of(app.query_one("#status")).plain
+    return [word for word in ("Ins", "Lin") if f" {word}" in said]
+
+
 def prompt(app):
     """The prompt band: what it asks for, and what is on the line."""
     label = text_of(app.query_one("#prompt-label")).plain

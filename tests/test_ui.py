@@ -5,6 +5,7 @@ from screen import (
     annotation,
     band,
     entries,
+    flags,
     highlighted,
     highlighted_expression,
     highlighted_rows,
@@ -1344,7 +1345,38 @@ async def test_f3_takes_only_the_highlighted_part(app):
         assert prompt(app)[1] == "x + 1"
 
 
-async def test_f3_writes_nothing_on_any_other_line(app):
+@pytest.mark.parametrize(
+    ("keys", "line"),
+    [
+        (("a",), "AUTHOR expression:"),
+        (("d", "v", *"a", "enter", "v"), "DECLARE VARIABLE value:"),
+        (("d", "f", *"g", "enter"), "DECLARE FUNCTION value:"),
+        (("d", "r", "2", "enter"), "VECTOR element:"),
+    ],
+    ids=str,
+)
+async def test_f3_writes_onto_every_line_an_expression_is_written_on(app, keys, line):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1")
+        await pilot.press(*keys)
+        assert prompt(app)[0] == line
+        await pilot.press("f3")
+        assert prompt(app)[1] == "x + 1"
+
+
+async def test_f3_writes_onto_the_substitute_value_line(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1", "a")
+        await pilot.press("m", "s", "enter")
+        assert prompt(app)[0] == "MANAGE SUBSTITUTE value:"
+        # The manual gives F3 for this line by name: the value put in the place
+        # of a variable is as often an expression already on screen as it is
+        # something typed.
+        await pilot.press("f3")
+        assert prompt(app)[1] == "a"
+
+
+async def test_f3_writes_nothing_on_a_line_that_names_rather_than_writes(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x", "y")
         for keys, line in ((("s",), "#2"), (("j",), ""), (("d", "v"), "")):
@@ -1358,6 +1390,122 @@ async def test_f3_on_an_empty_worksheet_writes_nothing(app):
     async with app.run_test() as pilot:
         await pilot.press("a", "f3", "f4")
         assert prompt(app) == ("AUTHOR expression:", "")
+
+
+async def test_the_alt_keys_write_glyphs_onto_the_line(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.press("alt+a", "alt+p", "alt+0", "alt+q", "alt+e", "alt+i")
+        assert prompt(app)[1] == "απ∞√#e#i"
+
+
+async def test_alt_minus_writes_the_plus_or_minus_operator(app):
+    async with app.run_test() as pilot:
+        # The key needs a terminal that tells a modifier from an Escape, which
+        # is what the keyboard protocol Textual asks for is for.
+        await pilot.press("a", "alt+minus", *"x", "enter")
+        assert numbered(app)[-1] == "#1: ±x"
+
+
+async def test_a_glyph_written_by_an_alt_key_parses(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", "alt+p", "enter")
+        assert numbered(app)[-1] == "#1: π"
+        # The subscript operator is a word here and a glyph in the original, so
+        # the key writes it spaced the way the printer spaces it.
+        await pilot.press("a", *"x", "alt+v", "2", "enter")
+        assert numbered(app)[-1] == "#2: x SUB 2"
+
+
+async def test_the_alt_keys_write_on_any_line_but_not_at_the_menu(app):
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        assert prompt(app)[0] == "TRANSFER LOAD DERIVE file:"
+        await pilot.press("alt+p")
+        assert prompt(app)[1].endswith("π")
+        await pilot.press("escape", "escape", "escape")
+        # At the menu the letter under Alt is not a mnemonic either: nothing
+        # runs, and the menu is where it was.
+        await pilot.press("alt+p")
+        assert highlighted_menu_option(app) == "Author"
+        assert message(app) == "Enter option"
+
+
+async def test_f6_hands_the_sideways_keys_to_the_highlight_and_back(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x (x + 1)")
+        await pilot.press("a")
+        assert flags(app) == ["Ins", "Lin"]
+        await pilot.press("f6")
+        assert flags(app) == ["Ins"]
+        await pilot.press("right", "right")
+        assert highlighted_expression(app) == "x + 1"
+        await pilot.press("f3")
+        assert prompt(app)[1] == "x + 1"
+        # Back in line-edit mode the same keys are the cursor's again.
+        await pilot.press("f6")
+        assert flags(app) == ["Ins", "Lin"]
+        await pilot.press("home", *"2")
+        assert prompt(app)[1] == "2x + 1"
+        assert highlighted_expression(app) == "x + 1"
+
+
+async def test_the_arrow_key_setting_says_which_mode_a_line_starts_in(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1")
+        await author(pilot, "ArrowKeyMode := Subexpression")
+        await pilot.press("a")
+        assert flags(app) == ["Ins"]
+        # F6 is for the line in hand only: the next one starts where the
+        # setting says again.
+        await pilot.press("f6")
+        assert flags(app) == ["Ins", "Lin"]
+        await pilot.press("escape", "a")
+        assert flags(app) == ["Ins"]
+
+
+async def test_no_line_up_means_no_arrow_key_mode_to_report(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x")
+        assert flags(app) == ["Ins"]
+
+
+async def test_ins_and_ctrl_v_toggle_overwrite(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"abc", "home")
+        assert flags(app) == ["Ins", "Lin"]
+        await pilot.press("insert")
+        assert flags(app) == ["Lin"]
+        await pilot.press(*"XY")
+        assert prompt(app)[1] == "XYc"
+        # At the end of the line there is nothing to stand on, so it grows.
+        await pilot.press("end", *"d")
+        assert prompt(app)[1] == "XYcd"
+        await pilot.press("ctrl+v")
+        assert flags(app) == ["Ins", "Lin"]
+        await pilot.press("home", *"Z")
+        assert prompt(app)[1] == "ZXYcd"
+
+
+async def test_overwrite_stands_until_it_is_turned_back(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", "insert", "escape")
+        # It is how the user is typing rather than what a command asked, so it
+        # outlives the line it was set on.
+        assert flags(app) == []
+        await pilot.press("a", *"abc", "home", *"X")
+        assert prompt(app)[1] == "Xbc"
+
+
+async def test_overwrite_replaces_what_is_selected_as_inserting_does(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("insert", "s")
+        # The offered label comes up selected, and typing takes it away whole
+        # rather than standing on its first character.
+        assert prompt(app)[1] == "#2"
+        await pilot.press("1")
+        assert prompt(app)[1] == "#1"
 
 
 async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):

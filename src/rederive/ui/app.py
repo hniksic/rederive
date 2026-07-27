@@ -134,6 +134,7 @@ from rederive.ui.widgets import (
     MenuBand,
     MenuRule,
     MessageLine,
+    PromptLine,
     StatusLine,
     WorkArea,
 )
@@ -219,6 +220,51 @@ ENTERING_MODES = (
     MODE_FILE,
     MODE_SUBSTITUTE_VALUE,
 )
+
+#: The prompt lines an expression is written on, which are those same lines
+#: less the one that names a file. F3 and F4 write onto any of them: the manual
+#: gives them for the author line and then says of the Declare value lines and
+#: of Substitute's that they take "all the normal line editing features
+#: provided by the Author command", these two by name.
+EXPRESSION_LINES = tuple(mode for mode in ENTERING_MODES if mode != MODE_FILE)
+
+#: What each Alt key writes. The original held these in the IBM PC character
+#: set and offered the Alt keys as a second way in beside spelling the name
+#: out; the names still work, so this is a shorthand and never the only way to
+#: write any of them.
+#:
+#: Where the original's table and ours disagree on a letter's case - it has
+#: `Θ`, `Φ` and `Ω` because those were the only forms its character set held -
+#: the key writes the spelling this program prints, so that what is typed and
+#: what comes back read alike. `#e` and `#i` are written as the names rather
+#: than as their glyphs for the same reason.
+#:
+#: Alt-minus needs a terminal that speaks the keyboard protocol telling a key
+#: and its modifiers apart; without one the key arrives as an Escape and a
+#: hyphen and nothing here sees it. The letters do not: those come through
+#: either way. `±` is written `+-` where the key does not land.
+ALT_GLYPHS = {
+    "a": "α",
+    "b": "β",
+    "d": "δ",
+    "n": "ε",
+    "h": "θ",
+    "m": "μ",
+    "p": "π",
+    "s": "σ",
+    "t": "τ",
+    "f": "φ",
+    "o": "ω",
+    "g": "Γ",
+    "q": "√",
+    "e": "#e",
+    "i": "#i",
+    "0": "∞",
+    "minus": "±",
+    # The subscript operator, which is a glyph in the original and a word here.
+    # It is spaced, as the printer spaces it.
+    "v": " SUB ",
+}
 
 # F1 does nothing yet: Help is not part of this milestone. The wording is the
 # original's, kept so the screen reads right.
@@ -664,6 +710,22 @@ class RederiveApp(App[None]):
         # the pair worth having: move onto what is wanted, then take it.
         Binding("f3", "insert_highlighted(0)", "Insert", priority=True, show=False),
         Binding("f4", "insert_highlighted(1)", "Insert ()", priority=True, show=False),
+        # F6 hands the sideways keys back and forth between the line and the
+        # highlight; Ins and Ctrl-V do the same for making room and standing on
+        # what is there.
+        Binding("f6", "toggle_arrow_mode", "Arrow keys", priority=True, show=False),
+        Binding("insert", "toggle_inserting", "Insert mode", priority=True, show=False),
+        Binding("ctrl+v", "toggle_inserting", "Insert mode", priority=True, show=False),
+        *[
+            Binding(
+                f"alt+{key}",
+                f"insert_glyph({key!r})",
+                "Glyph",
+                priority=True,
+                show=False,
+            )
+            for key in ALT_GLYPHS
+        ],
         Binding("escape", "menu_escape", "Go back", priority=True, show=False),
         Binding("up", "nav('up')", "Up", priority=True, show=False),
         Binding("down", "nav('down')", "Down", priority=True, show=False),
@@ -687,8 +749,20 @@ class RederiveApp(App[None]):
     ]
 
     def __init__(
-        self, session: Session | None = None, settings: Settings | None = None
+        self,
+        session: Session | None = None,
+        settings: Settings | None = None,
+        demo: Path | None = None,
+        opening: str = "",
     ) -> None:
+        """`demo` and `opening` are what the command line asked for.
+
+        A demonstration named there is started as soon as there is a screen to
+        run it on; anything the reading of the other files had to say stands on
+        the message line in place of the usual invitation, since the user has
+        not been asked anything yet and a count of lines that would not parse
+        is the more useful thing to be told.
+        """
         # Before the base class, which asks for the CSS variables as it starts.
         # A session brings its own settings, there being only one store.
         if settings is None:
@@ -701,7 +775,9 @@ class RederiveApp(App[None]):
         self.mode = MODE_MENU
         #: The command menu, plus whatever submenu or dialog is stacked on it.
         self.stack: list[MenuCursor | DialogEditor] = [MenuCursor(ALGEBRA)]
-        self.message = ENTER_OPTION
+        self.message = opening or ENTER_OPTION
+        #: The demonstration the command line named, until it has been started.
+        self.opening_demo = demo
         #: What to do with the file the prompt line is naming.
         self.file_command: Callable[[str], None] | None = None
         #: The extension that command supplies, and so what Tab completes to.
@@ -736,6 +812,16 @@ class RederiveApp(App[None]):
         #: and offers no dimension at all until a vector has been entered.
         self.matrix_size = (3, 3)
         self.dimension: int | str = ""
+        #: Whether the arrow keys belong to the line being edited rather than
+        #: to the highlight. Set from `ArrowKeyMode` each time a line goes up
+        #: and toggled under it by F6, so that the setting says where every
+        #: command starts and the key says where this one goes on.
+        self.line_edit = True
+        #: Whether a character typed on a line makes room for itself. Off is
+        #: the original's overwrite mode, and unlike the arrow key mode it is
+        #: not reset per command: it is how the user is typing, not what the
+        #: command asked.
+        self.inserting = True
         #: What a Y answers, while a command is asking for one.
         self.confirm: Callable[[], None] | None = None
         #: The history as it stood when Ctrl-Enter was pressed, or None while no
@@ -821,7 +907,7 @@ class RederiveApp(App[None]):
             Static(AUTHOR_PROMPT, id="prompt-label"),
             # The prompt decides for itself what comes up selected, which is
             # the label number alone and never the `#` in front of it.
-            Input(id="prompt-input", select_on_focus=False),
+            PromptLine(id="prompt-input", select_on_focus=False),
             id="prompt-band",
         )
         yield MessageLine(id="message")
@@ -832,6 +918,11 @@ class RederiveApp(App[None]):
         self.query_one("#fields").display = False
         self.query_one("#completions").display = False
         self.refresh_screen()
+        # After the first render, so that the demonstration's first step has a
+        # screen to happen on rather than one still being put together.
+        if self.opening_demo is not None:
+            demo, self.opening_demo = self.opening_demo, None
+            self._demo(str(demo))
 
     # -- what is on top ----------------------------------------------------
 
@@ -878,8 +969,27 @@ class RederiveApp(App[None]):
         entry = self.session.selected_entry
         file = self.session.file
         self.query_one(StatusLine).show(
-            "" if entry is None else entry.annotation, "" if file is None else file.name
+            "" if entry is None else entry.annotation,
+            "" if file is None else file.name,
+            self._flags(),
         )
+
+    def _flags(self) -> str:
+        """The mode words for the status line, in the order the original has.
+
+        `Ins` stands whenever a character typed would make room for itself,
+        which is a way of typing rather than something a command asks for, so
+        it stands at the menu too. `Lin` says the arrow keys are the line's,
+        and there is no line to say it of until one is up.
+        """
+        words = ["Ins"] if self.inserting else []
+        if self.line_edit and self.mode in WALKED_MODES:
+            words.append("Lin")
+        return " ".join(words)
+
+    def _show_flags(self) -> None:
+        """Put the mode words up without disturbing the rest of the screen."""
+        self.query_one(StatusLine).indicate(self._flags())
 
     def _set_message(self, message: str) -> None:
         self.message = message
@@ -1001,7 +1111,10 @@ class RederiveApp(App[None]):
         While a prompt line has the screen they belong to the Input, down to
         Space and Backspace. The movements that walk the history are the
         exception: a line of text has nothing vertical for them to do, so they
-        go on moving the highlight with the question still up.
+        go on moving the highlight with the question still up. In subexpression
+        arrow mode the sideways ones go the same way, leaving the line no
+        movements at all - which is the trade the mode is: the cursor for the
+        run of the expression tree.
 
         Ctrl-Enter is the other exception: it is a form of Enter, so it applies
         wherever Enter does - on a menu, on a dialog, and on a prompt line.
@@ -1009,8 +1122,10 @@ class RederiveApp(App[None]):
         Tab is a third: it completes the name on a file prompt, and steps the
         menu everywhere else.
 
-        F3 and F4 are a fourth: they write onto the author line, and there is
-        no other line for them to write onto.
+        F3 and F4 are a fourth: they write onto the lines an expression is
+        written on, and nowhere else. F6 goes with them, on the lines the
+        highlight can be walked under; the Alt keys and the two that toggle
+        insert mode apply to every line, since they are about the text.
 
         The keys that walk the list of names are the fifth, and they only
         apply while that list is open. Closed, Up and Down go on walking the
@@ -1031,13 +1146,19 @@ class RederiveApp(App[None]):
         if action.startswith("menu_") or action == "scroll_work":
             return self.mode == MODE_MENU
         if action == "nav":
-            return self.mode == MODE_MENU or (
-                self.mode in WALKED_MODES and parameters[0] in ENTRY_MOVES
+            if self.mode == MODE_MENU:
+                return True
+            return self.mode in WALKED_MODES and (
+                not self.line_edit or parameters[0] in ENTRY_MOVES
             )
         if action == "enter_and_simplify":
             return self.mode == MODE_MENU or self.mode in PROMPT_MODES
         if action == "insert_highlighted":
-            return self.mode == MODE_AUTHOR
+            return self.mode in EXPRESSION_LINES
+        if action == "toggle_arrow_mode":
+            return self.mode in WALKED_MODES
+        if action in ("insert_glyph", "toggle_inserting"):
+            return self.mode in PROMPT_MODES
         return True
 
     def on_key(self, event: Any) -> None:
@@ -1317,10 +1438,36 @@ class RederiveApp(App[None]):
             return
         if fenced:
             text = f"({text})"
-        line = self.query_one("#prompt-input", Input)
-        start, end = sorted(line.selection)
-        line.value = f"{line.value[:start]}{text}{line.value[end:]}"
-        line.cursor_position = start + len(text)
+        self._write_on_line(text)
+
+    def action_insert_glyph(self, key: str) -> None:
+        """An Alt key: write the glyph it stands for onto the line."""
+        self._write_on_line(ALT_GLYPHS[key])
+
+    def _write_on_line(self, text: str) -> None:
+        """Put `text` in at the cursor, over whatever is selected.
+
+        The cursor is left after it, so that what follows goes on after it
+        rather than back where the line was.
+        """
+        line = self.query_one("#prompt-input", PromptLine)
+        line.replace(text, *sorted(line.selection))
+
+    def action_toggle_arrow_mode(self) -> None:
+        """F6: hand the sideways keys to the line, or to the highlight.
+
+        Which way it starts is the `Options Input` setting, read afresh each
+        time a line goes up; this is how it is changed for the line in hand
+        without changing what the next command starts in.
+        """
+        self.line_edit = not self.line_edit
+        self._show_flags()
+
+    def action_toggle_inserting(self) -> None:
+        """Ins and Ctrl-V: make room for what is typed, or stand on it."""
+        self.inserting = not self.inserting
+        self.query_one("#prompt-input", PromptLine).overwrite = not self.inserting
+        self._show_flags()
 
     def _move_selection(self, movement: str) -> bool:
         """One movement of the highlight, and whether it moved anything.
@@ -1508,8 +1655,13 @@ class RederiveApp(App[None]):
         alone accepts it. `keep` is how much of it stands outside the
         selection: the `#` of a label number, which typing a digit should not
         take away, and nothing at all of a file name.
+
+        The arrow key mode is read from the settings here rather than kept from
+        the last command, because that setting says what a command starts in
+        and F6 says where it goes on from there.
         """
         self.mode = mode
+        self.line_edit = self.settings["ArrowKeyMode"] == "LineEdit"
         self.query_one("#menu").display = False
         # A dialog may be what asked the question before this one - the label
         # `Manage Annotate` reads, the size `Declare Matrix` reads - and the
@@ -1517,14 +1669,16 @@ class RederiveApp(App[None]):
         self.query_one("#fields").display = False
         self.query_one("#prompt-band").display = True
         self.query_one("#prompt-label", Static).update(label)
-        line = self.query_one("#prompt-input", Input)
+        line = self.query_one("#prompt-input", PromptLine)
         # A file prompt puts its own back; nothing else on a line completes.
         line.suggester = None
+        line.overwrite = not self.inserting
         self._close_list()
         line.value = offered
         line.selection = Selection(min(keep, len(offered)), len(offered))
         line.focus()
         self._set_message(message)
+        self._show_flags()
 
     # -- Jump --------------------------------------------------------------
 
