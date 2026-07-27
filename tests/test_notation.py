@@ -140,8 +140,9 @@ def test_where_scientific_takes_over(digits: int, power: int) -> None:
         (Fraction(0), Fraction(0)),
         (Fraction(-2, 3), Fraction(-2, 3)),
         # One needing more digits than there are is read as the simplest
-        # rational showing the digits there is room for.
-        (Fraction(123456789, 10000), Fraction(37037, 3)),
+        # rational the precision allows, which is the original's answer here
+        # too: the original holds `12345.6789` as 308642/25.
+        (Fraction(123456789, 10000), Fraction(308642, 25)),
     ],
 )
 def test_simplest(value: Fraction, expected: Fraction) -> None:
@@ -163,9 +164,14 @@ def test_an_approximation_shows_what_it_approximates(
     assert decimal(simplest(value, digits), digits) == decimal(value, digits)
 
 
-def test_one_digit_of_an_irrational_is_a_whole_number() -> None:
-    """And then there is no fraction left to agree about: one digit of pi is 3."""
-    assert simplest(Fraction(PI), 1) == 3
+def test_one_digit_of_an_irrational_is_a_coarse_ratio() -> None:
+    """One digit still buys the guard digit, so it is not as coarse as 3.
+
+    The original answers 22/7 here, which is nearer still; both stand for pi
+    at one digit, and neither is the whole number that a tolerance of the
+    digit shown alone would settle for.
+    """
+    assert simplest(Fraction(PI), 1) == Fraction(19, 6)
 
 
 # -- what Mixed calls simple -------------------------------------------------

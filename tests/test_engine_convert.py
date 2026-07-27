@@ -93,17 +93,17 @@ def test_e_and_i_are_variables():
 
 
 def test_a_decimal_is_rounded_to_the_precision_in_approximate_mode():
-    """An approximate number is a rational: the simplest one showing its digits.
+    """An approximate number is a rational: the simplest one the precision allows.
 
-    One tenth shows its own digits, so it approximates itself. A number that
-    needs more digits than there are does not: six of them cannot tell
-    `123456789/10000` from `37037/3`, so that is what approximate mode reads
-    it as, and it is the rounding on the way in that makes approximate
-    arithmetic approximate.
+    One tenth needs no digits, so it approximates itself. A number that needs
+    more digits than there are does not: six of them cannot tell
+    `123456789/10000` from `308642/25`, so that is what approximate mode reads
+    it as - the original's own answer - and it is the rounding on the way in
+    that makes approximate arithmetic approximate.
     """
     approximate = Context(precision=Precision.APPROXIMATE)
     assert convert("0.1", approximate) == sp.Rational(1, 10)
-    assert convert("12345.6789", approximate) == sp.Rational(37037, 3)
+    assert convert("12345.6789", approximate) == sp.Rational(308642, 25)
 
 
 def test_a_string_is_inert_and_is_not_the_variable_of_that_name():

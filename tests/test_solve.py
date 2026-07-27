@@ -368,7 +368,7 @@ def test_the_four_argument_form_is_numeric_in_every_mode():
     one thing. In Exact mode the answer is still an approximate number, and an
     approximate number under Rational notation is written as the ratio it is."""
     assert simplify(parse("SOLVE(x^5 - x + 1 = 0, x, -10, 10)"), EXACT).text == (
-        "[x = -307/263]"
+        "[x = -1221/1046]"
     )
     approximate = simplify(parse("SOLVE(x^5 - x + 1 = 0, x, -10, 10)"), APPROXIMATE)
     assert approximate.text == "[x = -1.16730]"

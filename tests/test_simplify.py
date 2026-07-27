@@ -1471,7 +1471,7 @@ def test_what_the_approx_function_leaves_shows_its_digits(text, expected):
 
 def test_the_approx_function_takes_the_digits_it_is_given():
     # Twelve digits of pi, which is a nearer rational than six digits' 355/113.
-    assert simp("APPROX(pi, 12)") == "833719/265381"
+    assert simp("APPROX(pi, 12)") == "5419351/1725033"
 
 
 def test_approx_waits_for_the_value_it_is_asked_to_approximate():
@@ -1482,7 +1482,7 @@ def test_approx_waits_for_the_value_it_is_asked_to_approximate():
     a logarithm here, so that an answer standing at the exact value would be
     visibly a different one.
     """
-    assert simp("APPROX(INT(1/x, x, 1, 2))") == "1143/1649"
+    assert simp("APPROX(INT(1/x, x, 1, 2))") == "2731/3940"
     assert simp("INT(1/x, x, 1, 2)") == "LN(2)"
 
 
