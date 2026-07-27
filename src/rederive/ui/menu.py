@@ -298,6 +298,40 @@ def unremove_before(number: int) -> settings.Dialog:
     )
 
 
+def move_block(number: int) -> settings.Dialog:
+    """The dialog that asks which block of expressions moVe rearranges, and where.
+
+    All three fields offer the highlighted entry, so the command opens on a
+    move of that one expression to where it already is. Only the destination
+    takes `end`, which sends the block past the last entry; a block has to be
+    delimited by labels that name something.
+    """
+    return settings.Dialog(
+        "MOVE:",
+        (
+            (
+                settings.NumberField(
+                    "Before",
+                    ENTER_LABEL_OR_END,
+                    "MoveBefore",
+                    number,
+                    minimum=1,
+                    recorded=False,
+                    word=END,
+                ),
+                settings.NumberField(
+                    "Start", ENTER_LABEL, "MoveFirst", number, minimum=1, recorded=False
+                ),
+                settings.NumberField(
+                    "End", ENTER_LABEL, "MoveLast", number, minimum=1, recorded=False
+                ),
+            ),
+        ),
+        stored=False,
+        tracks_selection=True,
+    )
+
+
 def annotate_entry(number: int) -> settings.Dialog:
     """The dialog that asks which expression `Manage Annotate` is annotating.
 

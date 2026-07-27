@@ -26,7 +26,8 @@ when it was entered.
 
 Entries leave the history only through `remove`, which keeps what it took in
 `removed` for `unremove` to put back. That buffer is the whole of what the two
-commands share, and any engine command empties it.
+commands share, and any engine command empties it. `move_block` rearranges the
+history without taking anything out of it, so it leaves that buffer alone.
 
 The Manage commands that need no engine command of their own are here for the
 same reason the Declare ones are: `renumber` puts the labels back in sequence
@@ -859,6 +860,46 @@ class Session:
         entry = replace(entry, number=self._next_number)
         self._next_number += 1
         return entry
+
+    # -- moving ------------------------------------------------------------
+
+    def move_block(self, before: int | None, first: int, last: int) -> int:
+        """Put the block `first` and `last` delimit in front of `before`.
+
+        None puts it after the last entry, which is what typing `end` in the
+        field asks for. The block is read the way `remove` reads one: a
+        physically contiguous run, either end first, one label twice for one
+        entry.
+
+        The entries keep their labels, so a move leaves them out of sequence
+        for `renumber` to put back. Nothing is removed, so the unremove buffer
+        is left alone.
+
+        A destination inside the block itself is nothing to do, and the
+        original does nothing about it: no beep, no message, and the highlight
+        left where it was. Everywhere else the highlight lands on the entry the
+        block went in front of, or on the last of the moved ones when they went
+        at the end.
+
+        Says how many entries moved, which is none in that one case.
+
+        Raises `KeyError` when any of the three labels names no entry.
+        """
+        start = self._index_of(first)
+        stop = self._index_of(last)
+        if start > stop:
+            start, stop = stop, start
+        at = len(self.entries) if before is None else self._index_of(before)
+        if start <= at <= stop:
+            return 0
+        block = self.entries[start : stop + 1]
+        del self.entries[start : stop + 1]
+        if at > stop:
+            at -= len(block)
+        self.entries[at:at] = block
+        self.selected = len(self.entries) - 1 if before is None else at + len(block)
+        self.route = ()
+        return len(block)
 
     # -- managing ----------------------------------------------------------
 

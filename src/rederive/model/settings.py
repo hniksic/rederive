@@ -759,6 +759,18 @@ class DialogEditor:
         self._enter_field()
         return True
 
+    def focus(self, setting: str) -> None:
+        """Put the highlight on the field holding `setting`, ready to be retyped.
+
+        Which is where the original leaves it when Enter is refused: on the
+        first field the answer was wrong in, with what was typed still in it.
+        """
+        for index, field in enumerate(self.fields):
+            if field.setting == setting:
+                self.active = index
+                self._enter_field()
+                return
+
     def open_prompt(self) -> bool:
         """Ask for a number, if the active field has been left on `Other`.
 

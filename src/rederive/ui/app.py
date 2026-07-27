@@ -504,6 +504,11 @@ ENTRY_MOVES = ("up", "down", "page_up", "page_down", "first_entry", "last_entry"
 PAGE_MOVES = ("page_up", "page_down")
 
 
+def _takes_anything(values: dict[str, str | int]) -> str | None:
+    """What a dialog whose command judges none of its fields refuses: nothing."""
+    return None
+
+
 class RederiveApp(App[None]):
     """A single full-screen Algebra pane."""
 
@@ -606,8 +611,9 @@ class RederiveApp(App[None]):
         self.completed: int | None = None
         #: What to do with the values of the dialog that stores none.
         self.answer: Callable[[dict[str, str | int]], None] | None = None
-        #: What that dialog's command will take, when it is choosy about it.
-        self.accepts: Callable[[dict[str, str | int]], bool] | None = None
+        #: Which of that dialog's fields its command will not take, when it is
+        #: choosy about them.
+        self.refuses: Callable[[dict[str, str | int]], str | None] = _takes_anything
         #: The block of labels the next save writes, when one was asked for.
         self.block: tuple[int | None, int | None] = (None, None)
         #: A Factor or Expand command's answers so far, while it is asking.
@@ -654,6 +660,7 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Remove"): self._command_remove,
             (ALGEBRA, "Simplify"): self._command_simplify,
             (ALGEBRA, "Unremove"): self._command_unremove,
+            (ALGEBRA, "moVe"): self._command_move,
             (ALGEBRA, "approX"): self._command_approx,
             (menus.MANAGE, "Annotate"): self._command_annotate,
             (menus.MANAGE, "Ordering"): self._command_ordering,
@@ -1137,30 +1144,48 @@ class RederiveApp(App[None]):
         self,
         dialog: Dialog,
         answer: Callable[[dict[str, str | int]], None],
-        accepts: Callable[[dict[str, str | int]], bool] | None = None,
+        refuses: Callable[[dict[str, str | int]], str | None] = _takes_anything,
     ) -> None:
         """Stack a dialog that stores nothing, and say who wants its values.
 
-        `accepts` is what the command will not take, for the answers a field
-        cannot rule out on its own: a label number is a number whatever the
-        history holds, so only the command knows whether it names anything.
+        `refuses` names the first field the command cannot use, for the answers
+        a field cannot rule out on its own: a label number is a number whatever
+        the history holds, so only the command knows whether it names anything.
         """
         self.answer = answer
-        self.accepts = accepts
+        self.refuses = refuses
         self._open(dialog)
 
     def _answered(self, values: dict[str, str | int]) -> None:
         """Give such a dialog's values to the command that put it up."""
-        if self.accepts is not None and not self.accepts(values):
+        refused = self.refuses(values)
+        if refused is not None:
             # The original says nothing about an answer it will not take: the
-            # question stays up, with what was typed still on it to correct.
+            # question stays up, with what was typed still on it to correct,
+            # and the highlight back on the field that was wrong.
+            editor = self.editor
+            assert editor is not None
+            editor.focus(refused)
             self._beep()
             self.refresh_screen()
             return
         self.stack.pop()
-        answer, self.answer, self.accepts = self.answer, None, None
+        answer, self.answer = self.answer, None
+        self.refuses = _takes_anything
         assert answer is not None
         answer(values)
+
+    def _names_nothing(self, values: dict[str, str | int], *settings: str) -> str | None:
+        """The first of `settings` whose label names no entry, if any does not.
+
+        The one answer that names no entry and is still an answer is `end`,
+        which stands for the place past the last one rather than for an entry.
+        """
+        for setting in settings:
+            value = values[setting]
+            if value != menus.END and self.session.numbered(int(value)) is None:
+                return setting
+        return None
 
     def _chose_color(self, index: int) -> None:
         """A color picked off the color menu belongs to the dialog beneath it."""
@@ -1297,11 +1322,8 @@ class RederiveApp(App[None]):
             return
         self._ask(menus.remove_block(entry.number), self._remove, self._both_labels)
 
-    def _both_labels(self, values: dict[str, str | int]) -> bool:
-        return all(
-            self.session.numbered(int(values[setting])) is not None
-            for setting in ("RemoveFirst", "RemoveLast")
-        )
+    def _both_labels(self, values: dict[str, str | int]) -> str | None:
+        return self._names_nothing(values, "RemoveFirst", "RemoveLast")
 
     def _remove(self, values: dict[str, str | int]) -> None:
         self.session.remove(int(values["RemoveFirst"]), int(values["RemoveLast"]))
@@ -1323,13 +1345,38 @@ class RederiveApp(App[None]):
             return
         self._ask(menus.unremove_before(entry.number), self._unremove, self._one_label)
 
-    def _one_label(self, values: dict[str, str | int]) -> bool:
-        before = values["UnremoveBefore"]
-        return before == menus.END or self.session.numbered(int(before)) is not None
+    def _one_label(self, values: dict[str, str | int]) -> str | None:
+        return self._names_nothing(values, "UnremoveBefore")
 
     def _unremove(self, values: dict[str, str | int]) -> None:
         before = values["UnremoveBefore"]
         self.session.unremove(None if before == menus.END else int(before))
+        self._return_to_menu(ENTER_OPTION)
+
+    # -- moVe --------------------------------------------------------------
+
+    def _command_move(self) -> None:
+        """Ask which block to rearrange and where to put it.
+
+        A history with nothing in it has no block to name, and the original
+        asks nothing at all: no dialog, no message, just the beep.
+        """
+        entry = self.session.selected_entry
+        if entry is None:
+            self._beep()
+            return
+        self._ask(menus.move_block(entry.number), self._move, self._move_labels)
+
+    def _move_labels(self, values: dict[str, str | int]) -> str | None:
+        return self._names_nothing(values, "MoveBefore", "MoveFirst", "MoveLast")
+
+    def _move(self, values: dict[str, str | int]) -> None:
+        before = values["MoveBefore"]
+        self.session.move_block(
+            None if before == menus.END else int(before),
+            int(values["MoveFirst"]),
+            int(values["MoveLast"]),
+        )
         self._return_to_menu(ENTER_OPTION)
 
     # -- Factor and Expand -------------------------------------------------
@@ -1538,10 +1585,14 @@ class RederiveApp(App[None]):
             lambda: self.session.declare_domain(pending.name, pending.kind, bounds)
         )
 
-    def _both_bounds(self, values: dict[str, str | int]) -> bool:
-        return all(
-            self.session.is_bound(str(values[setting]))
-            for setting in ("BoundLow", "BoundHigh")
+    def _both_bounds(self, values: dict[str, str | int]) -> str | None:
+        return next(
+            (
+                setting
+                for setting in ("BoundLow", "BoundHigh")
+                if not self.session.is_bound(str(values[setting]))
+            ),
+            None,
         )
 
     def _chose_bounds(self, values: dict[str, str | int]) -> None:
@@ -1732,8 +1783,8 @@ class RederiveApp(App[None]):
             return
         self._ask(menus.annotate_entry(entry.number), self._annotating, self._annotated)
 
-    def _annotated(self, values: dict[str, str | int]) -> bool:
-        return self.session.numbered(int(values["AnnotateExpression"])) is not None
+    def _annotated(self, values: dict[str, str | int]) -> str | None:
+        return self._names_nothing(values, "AnnotateExpression")
 
     def _annotating(self, values: dict[str, str | int]) -> None:
         """The expression is named: ask what to say about it.

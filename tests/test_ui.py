@@ -821,6 +821,104 @@ async def test_the_history_keys_all_label_the_field(app):
         assert band(app) == [" REMOVE: Start: 4      End: 4"]
 
 
+# -- moVe ---------------------------------------------------------------------
+#
+# Every screen asserted here matches the original.
+
+
+async def test_move_offers_the_highlighted_expression_in_all_three_fields(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z", "w", "v")
+        await pilot.press("v")
+        assert band(app) == [" MOVE: Before: 5      Start: 5      End: 5"]
+        assert message(app) == 'Enter label number or type "end"'
+        await pilot.press("1", "tab", "3", "tab", "4", "enter")
+        assert numbered(app) == ["#3: z", "#4: w", "#1: x", "#2: y", "#5: v"]
+        assert highlighted_expression(app) == "x"
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_only_the_destination_field_asks_for_a_word(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("v", "tab")
+        assert message(app) == "Enter label number"
+        await pilot.press("tab")
+        assert message(app) == "Enter label number"
+        await pilot.press("tab")
+        assert message(app) == 'Enter label number or type "end"'
+
+
+async def test_end_sends_the_block_past_the_last_expression(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("v")
+        await pilot.press(*"END", "tab", "1", "tab", "2", "enter")
+        assert numbered(app) == ["#3: z", "#1: x", "#2: y"]
+        assert highlighted_expression(app) == "y"
+
+
+async def test_enter_alone_moves_the_highlighted_expression_nowhere(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("v", "enter")
+        assert numbered(app) == ["#1: x", "#2: y", "#3: z"]
+        assert highlighted_expression(app) == "z"
+
+
+async def test_the_arrows_walk_the_history_and_label_the_move_field(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z", "w")
+        await pilot.press("v", "up", "up", "up")
+        # The highlight moved with the key, and the Before field took it.
+        assert band(app) == [" MOVE: Before: 1      Start: 4      End: 4"]
+        assert highlighted_expression(app) == "x"
+        await pilot.press("enter")
+        assert numbered(app) == ["#4: w", "#1: x", "#2: y", "#3: z"]
+
+
+async def test_a_label_that_names_no_expression_leaves_the_move_question_up(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("v", "9", "tab", "1", "tab", "1", "enter")
+        assert band(app) == [" MOVE: Before: 9      Start: 1      End: 1"]
+        # The refusal takes the highlight back to the field that was wrong,
+        # so the correction is typed where the mistake is.
+        assert message(app) == 'Enter label number or type "end"'
+        await pilot.press("2")
+        assert band(app) == [" MOVE: Before: 2      Start: 1      End: 1"]
+        assert numbered(app) == ["#1: x", "#2: y"]
+
+
+async def test_the_field_a_move_was_refused_over_is_the_one_it_goes_back_to(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("v", "1", "tab", "9", "tab", "3", "enter")
+        assert message(app) == "Enter label number"
+        await pilot.press("3")
+        assert band(app) == [" MOVE: Before: 1      Start: 3      End: 3"]
+        await pilot.press("enter")
+        assert numbered(app) == ["#3: z", "#1: x", "#2: y"]
+
+
+async def test_escape_abandons_move_and_leaves_the_history_alone(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("v", "1", "tab", "2", "tab", "2")
+        await pilot.press("escape")
+        assert numbered(app) == ["#1: x", "#2: y"]
+        assert message(app) == "Enter option"
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_move_asks_nothing_when_the_history_is_empty(app):
+    async with app.run_test() as pilot:
+        await pilot.press("v")
+        assert band(app)[0].startswith(" COMMAND:")
+        assert message(app) == "Enter option"
+
+
 # -- Declare, whose four commands ask their questions in every form -----------
 #
 # Every screen asserted here was checked against the original.
