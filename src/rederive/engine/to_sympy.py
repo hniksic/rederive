@@ -49,12 +49,21 @@ __all__ = [
     "InertVector",
     "Logical",
     "PlusMinus",
+    "Power",
     "StringLiteral",
     "Subscript",
     "Taylor",
     "Transposed",
     "to_sympy",
 ]
+
+
+#: How big a number raising to a power may build before the engine declines to
+#: build it: sixteen megabits, about five million decimal digits and two
+#: megabytes of them. Generous by design, since it must never fire on
+#: legitimate work - `2^1000000` is under it, and `10000!` is a power of
+#: nothing - and far below what makes a machine swap.
+POWER_BITS = 1 << 24
 
 
 # -- inert heads ------------------------------------------------------------
@@ -105,6 +114,19 @@ class Transposed(sp.Function):
     """``u` `` where `u` is not a matrix."""
 
     nargs = 1
+
+
+class Power(sp.Function):
+    """`u^v` whose value is a number too big to be worth building.
+
+    A head of its own rather than a `Pow` built with `evaluate=False`, because
+    that is not durable: `together` and `as_numer_denom` rebuild a power from
+    its parts, and rebuilding is exactly the evaluation being refused. This
+    carries the same two operands and no sympy routine can talk it into
+    multiplying them out. See `_explodes` for what makes one.
+    """
+
+    nargs = 2
 
 
 class InertVector(sp.Function):
@@ -446,6 +468,8 @@ class _Converter:
                 except Exception:
                     return sp.Mul(left, sp.Pow(right, -1, evaluate=False))
             case "^":
+                if _explodes(left, right):
+                    return Power(left, right)
                 try:
                     return left**right
                 except Exception:
@@ -650,6 +674,29 @@ class _Converter:
         if self.context.angle is Angle.DEGREE:
             return value * 180 / sp.pi
         return value
+
+
+def _explodes(base: sp.Basic, exponent: sp.Basic) -> bool:
+    """Whether `base^exponent` is a number too big to be worth building.
+
+    Sympy evaluates `Integer**Integer` as the power is constructed, so this is
+    the only place the question can be asked: by the time `10^10^10` exists it
+    is ten billion digits of it, four gigabytes, and an OOM kill rather than an
+    answer - and the kill takes the worksheet with it. Refusing beforehand is
+    what Derive does with what it cannot do: the expression comes back as it
+    was written, an inert power that prints and saves as `10^10^10`.
+
+    Only exact rationals are judged. A float power costs the working precision
+    whatever the exponent, and a symbolic one is not a number to build.
+    """
+    # By class rather than by assumption: not everything raised to a power is
+    # a number with assumptions to ask about, a matrix least of all.
+    if not (isinstance(exponent, sp.Integer) and isinstance(base, sp.Rational)):
+        return False
+    if base.is_zero:
+        return False
+    bits = max(abs(base.p).bit_length(), abs(base.q).bit_length())
+    return bits * abs(int(exponent)) > POWER_BITS
 
 
 def _nameable(value: sp.Basic) -> bool:

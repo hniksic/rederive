@@ -1,123 +1,74 @@
-"""How much memory this process is holding, asked of the platform directly.
+"""How much memory the program is holding, asked of the platform directly.
 
 The status line shows the figure where the original showed its muLISP heap
-gauge. A number that only decorates a status line is not worth a dependency,
-so each platform is asked the cheapest way it answers: a line of `/proc` on
-Linux, one `task_info` call on macOS, one `GetProcessMemoryInfo` call on
-Windows. Anywhere else, and anywhere a call fails, the answer is None and the
-field stays empty rather than showing a figure that might be wrong.
+gauge. psutil is what asks: it is already a dependency for the engine worker's
+memory cap, and one library that answers on Linux, macOS and Windows is worth
+more than three hand-written ways of asking. Where a platform will not answer,
+or a reading fails, the answer is None and the field stays empty rather than
+showing a figure that might be wrong.
+
+The program is two processes once the engine worker is up, and the gauge is
+about the program: `register_worker` says which process the second one is, and
+the reading is the two added together. A worker that has died or has not been
+spawned yet contributes nothing, silently - a gauge is not worth an error.
 """
 
 from __future__ import annotations
 
-import ctypes
-import os
-import sys
+import psutil
 
 #: Bytes in the units a size is written in, largest first. Resident sets are
 #: measured in megabytes on every machine this runs on, but a small one reads
 #: better in kilobytes and a large one in gigabytes.
 _UNITS = (("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10))
 
-
-class _MachTaskBasicInfo(ctypes.Structure):
-    """macOS `mach_task_basic_info`, of which only `resident_size` is wanted."""
-
-    _fields_ = [
-        ("virtual_size", ctypes.c_uint64),
-        ("resident_size", ctypes.c_uint64),
-        ("resident_size_max", ctypes.c_uint64),
-        ("user_time", ctypes.c_int32 * 2),
-        ("system_time", ctypes.c_int32 * 2),
-        ("policy", ctypes.c_int32),
-        ("suspend_count", ctypes.c_int32),
-    ]
+#: The engine worker, once one has been spawned. Module state because the
+#: status line reads the gauge and the engine proxy owns the worker, and
+#: neither has any business knowing about the other.
+_worker: int | None = None
 
 
-#: The `task_info` flavor that fills in the structure above.
-_MACH_TASK_BASIC_INFO = 20
+def register_worker(pid: int | None) -> None:
+    """Say which process the engine worker is, or None once it is gone."""
+    global _worker
+    _worker = pid
 
 
-class _ProcessMemoryCounters(ctypes.Structure):
-    """Windows `PROCESS_MEMORY_COUNTERS`, of which `WorkingSetSize` is wanted."""
+def process_bytes(pid: int | None = None) -> int | None:
+    """One process's resident set, or None where it will not be read.
 
-    _fields_ = [
-        ("cb", ctypes.c_uint32),
-        ("page_fault_count", ctypes.c_uint32),
-        ("peak_working_set_size", ctypes.c_size_t),
-        ("working_set_size", ctypes.c_size_t),
-        ("quota_peak_paged_pool_usage", ctypes.c_size_t),
-        ("quota_paged_pool_usage", ctypes.c_size_t),
-        ("quota_peak_non_paged_pool_usage", ctypes.c_size_t),
-        ("quota_non_paged_pool_usage", ctypes.c_size_t),
-        ("pagefile_usage", ctypes.c_size_t),
-        ("peak_pagefile_usage", ctypes.c_size_t),
-    ]
-
-
-def _from_proc() -> int | None:
-    """Resident pages from `/proc/self/statm`, on Linux and kin.
-
-    The second field is the resident set in pages, which is the one number
-    wanted and the cheapest of the several places `/proc` keeps it.
+    None covers both a platform that does not report a resident set and a
+    process that is no longer there, which are the same thing to a caller: no
+    figure to show.
     """
     try:
-        with open("/proc/self/statm", "rb") as handle:
-            fields = handle.read().split()
-        return int(fields[1]) * os.sysconf("SC_PAGE_SIZE")
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def _from_mach() -> int | None:
-    """Resident bytes from the mach kernel, on macOS."""
-    try:
-        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
-        libc.mach_task_self.restype = ctypes.c_uint32
-        info = _MachTaskBasicInfo()
-        count = ctypes.c_uint32(ctypes.sizeof(info) // ctypes.sizeof(ctypes.c_uint32))
-        failed = libc.task_info(
-            libc.mach_task_self(),
-            ctypes.c_uint32(_MACH_TASK_BASIC_INFO),
-            ctypes.byref(info),
-            ctypes.byref(count),
-        )
-        return None if failed else int(info.resident_size)
-    except (OSError, AttributeError, ValueError):
-        return None
-
-
-def _from_psapi() -> int | None:
-    """The working set, which is what Windows calls a resident set."""
-    try:
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-        counters = _ProcessMemoryCounters()
-        counters.cb = ctypes.sizeof(counters)
-        # Vista onward exports the call from kernel32 under a K32 name; the
-        # older home is psapi, still there for programs that ask for it.
-        try:
-            call = kernel32.K32GetProcessMemoryInfo
-        except AttributeError:
-            call = ctypes.WinDLL("psapi", use_last_error=True).GetProcessMemoryInfo  # type: ignore[attr-defined]
-        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
-        ok = call(
-            ctypes.c_void_p(kernel32.GetCurrentProcess()),
-            ctypes.byref(counters),
-            ctypes.sizeof(counters),
-        )
-        return int(counters.working_set_size) if ok else None
-    except (OSError, AttributeError, ValueError):
+        return psutil.Process(pid).memory_info().rss
+    except (psutil.Error, OSError, ValueError, AttributeError):
         return None
 
 
 def resident_bytes() -> int | None:
-    """This process's resident set, or None where the platform will not say."""
-    if sys.platform == "darwin":
-        return _from_mach()
-    if sys.platform == "win32":
-        return _from_psapi()
-    # Linux, and any other system that mounts a Linux-shaped `/proc`.
-    return _from_proc()
+    """What the program holds: this process, plus the worker where there is one.
+
+    None when this process will not be read at all. A worker that will not be
+    read is simply left out, since the figure without it is still true about
+    the program and better than no figure.
+    """
+    own = process_bytes()
+    if own is None:
+        return None
+    if _worker is None:
+        return own
+    worker = process_bytes(_worker)
+    return own if worker is None else own + worker
+
+
+def total_bytes() -> int | None:
+    """How much physical memory the machine has, or None where that is unknown."""
+    try:
+        return psutil.virtual_memory().total
+    except (psutil.Error, OSError, ValueError, AttributeError):
+        return None
 
 
 def written(size: int) -> str:

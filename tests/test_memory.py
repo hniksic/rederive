@@ -1,5 +1,6 @@
 """The status line's memory field: the reading, and how it is written."""
 
+import os
 import re
 import sys
 
@@ -35,6 +36,35 @@ def test_this_process_holds_a_plausible_amount():
 )
 def test_a_size_is_written_in_its_largest_whole_unit(size, written):
     assert memory.written(size) == written
+
+
+def test_the_gauge_counts_the_worker_in_where_there_is_one():
+    """The gauge is about the program, and the program is two processes.
+
+    This one stands in for the worker as its own worker, which is the one
+    process certain to be there and certain to be readable.
+    """
+    alone = memory.resident_bytes()
+    if alone is None:
+        pytest.skip(f"{sys.platform} does not report a resident set")
+    memory.register_worker(os.getpid())
+    try:
+        assert memory.resident_bytes() > alone
+    finally:
+        memory.register_worker(None)
+    assert memory.resident_bytes() <= alone * 1.5
+
+
+def test_a_worker_that_is_gone_is_left_out_rather_than_refused():
+    alone = memory.resident_bytes()
+    if alone is None:
+        pytest.skip(f"{sys.platform} does not report a resident set")
+    # A pid nothing answers to: the figure is still true about the app.
+    memory.register_worker(-1)
+    try:
+        assert memory.resident_bytes() == pytest.approx(alone, rel=0.5)
+    finally:
+        memory.register_worker(None)
 
 
 async def test_the_status_line_shows_what_the_process_holds():

@@ -85,6 +85,16 @@ ask anything: the variables the expression holds, most main first.
 
 Every command works on any subtree, not only on a whole authored line, so the
 session can act on what the user has highlighted and put the answer back.
+
+None of these promises covers what a computation costs. Simplify of `1000000!`
+finishes eventually and `10^10^10` does not finish at all, and neither can be
+interrupted from the inside, sympy having no cooperative cancellation to ask
+for. So the engine also ships with a way to run it at arm's length:
+`RemoteEngine` offers the five heavy calls with the signatures the session
+already uses and answers them out of a child process that can be killed, which
+is what makes Esc an abort and a memory cap enforceable. A session given one
+computes remotely; a session given nothing computes here, which is what every
+test and every direct caller wants.
 """
 
 from __future__ import annotations
@@ -108,6 +118,15 @@ from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
 from rederive.engine.ordering import ORDER_LIST, main_order
 from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
+from rederive.engine.remote import (
+    EngineAborted,
+    EngineBug,
+    EngineDied,
+    EngineDown,
+    EngineError,
+    EngineMemoryExceeded,
+    RemoteEngine,
+)
 from rederive.engine.replacing import Replacement, replace
 from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import to_sympy
@@ -123,7 +142,14 @@ __all__ = [
     "Direction",
     "Domain",
     "DomainKind",
+    "EngineAborted",
+    "EngineBug",
+    "EngineDied",
+    "EngineDown",
+    "EngineError",
+    "EngineMemoryExceeded",
     "Precision",
+    "RemoteEngine",
     "Replacement",
     "Result",
     "TrigPower",

@@ -70,6 +70,7 @@ PRECEDENCE_VALUES.setdefault("PlusMinus", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("ComplexInfinity", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Dot", PRECEDENCE["Add"] - 1)
 PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
+PRECEDENCE_VALUES.setdefault("Power", PRECEDENCE["Pow"])
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -563,6 +564,14 @@ class AuthorPrinter(sp.StrPrinter):
 
     def _print_StringLiteral(self, expr):
         return f'"{expr.name}"'
+
+    def _print_Power(self, expr):
+        base, exponent = expr.args
+        level = PRECEDENCE["Pow"]
+        # The exponent is not parenthesized at its own level, `^` associating
+        # to the right: `10^10^10` reads back as the same tower it prints.
+        written = self.parenthesize(base, level, strict=True)
+        return f"{written}^{self.parenthesize(exponent, level)}"
 
     def _print_Transposed(self, expr):
         return f"{self.parenthesize(expr.args[0], PRECEDENCE['Func'])}`"

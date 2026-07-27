@@ -5,6 +5,14 @@ into calls on `Session` and paints the result. This is the session layer, and
 it is where the math engine is reached from: the UI never calls a command
 itself, it asks the session for one.
 
+Which engine answers is the one thing a session takes from outside. The five
+calls that can cost anything go through `runner`, which is the `engine` module
+itself unless something hands in another - and what the app hands in is a proxy
+to a child process, so that a computation can be killed. Every command here
+stays synchronous whichever it is: the session appends an answer only once the
+call has returned, so a call that dies leaves the worksheet exactly as the
+command found it.
+
 The session owns the three things an authored line needs: the parse state, so
 that `InputMode`, `CaseMode` and every definition reach the lines that follow;
 the settings, which an authored `Name := Value` writes to exactly as an Options
@@ -47,6 +55,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Protocol
 
 from rederive import engine
 from rederive.display import DisplayOptions, Layout, Region, render
@@ -104,6 +113,56 @@ Rename = Callable[[int], int | None]
 #: three things and gives back an answer, which is what lets `_command` serve
 #: all of them and know nothing about which one it is running.
 Command = Callable[[Node, "engine.Context", ParseState], "engine.Result"]
+
+
+class Runner(Protocol):
+    """The five engine calls that can cost anything, as the session makes them.
+
+    Everything else the session asks the engine for - whether a tree is a
+    quotient, what its main variable is, how to write it - is a walk over a
+    tree and costs nothing, so it stays a direct call on the module. These five
+    convert to sympy, and converting alone can hang: `10^10^10` never finishes
+    being built.
+
+    The `rederive.engine` module satisfies this as it stands, which is what the
+    session uses when it is given nothing else. `engine.RemoteEngine` satisfies
+    it too, and answers out of a child process that can be killed, which is how
+    the app makes Esc mean something.
+    """
+
+    def simplify(
+        self, node: Node, context: engine.Context, state: ParseState | None = ...
+    ) -> engine.Result: ...
+
+    def approx(
+        self,
+        node: Node,
+        context: engine.Context,
+        digits: int | None = ...,
+        state: ParseState | None = ...,
+    ) -> engine.Result: ...
+
+    def factor(
+        self,
+        node: Node,
+        context: engine.Context,
+        amount: engine.Amount = ...,
+        variables: Sequence[str] = ...,
+        state: ParseState | None = ...,
+    ) -> engine.Result: ...
+
+    def expand(
+        self,
+        node: Node,
+        context: engine.Context,
+        amount: engine.Amount = ...,
+        variables: Sequence[str] = ...,
+        state: ParseState | None = ...,
+    ) -> engine.Result: ...
+
+    def expression_variables(
+        self, node: Node, context: engine.Context | None = ...
+    ) -> tuple[str, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -190,8 +249,15 @@ class Session:
     three terms, and `SIN(x + 1)` offers its argument and never its name.
     """
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, runner: Runner | None = None
+    ) -> None:
         self.settings = settings if settings is not None else Settings()
+        #: Who answers the five engine calls that can cost something. The
+        #: module by default, which computes here and cannot be interrupted;
+        #: the app hands in a proxy to a child process instead, so that a
+        #: computation can be aborted and its appetite capped.
+        self.runner: Runner = runner if runner is not None else engine
         self.state = ParseState()
         self.entries: list[Entry] = []
         self.selected: int | None = None
@@ -362,7 +428,7 @@ class Session:
 
     def simplify(self, request: str) -> Entry:
         """Append the simplified form of the expression `request` names."""
-        return self._command(request, "Simp", engine.simplify)
+        return self._command(request, "Simp", self.runner.simplify)
 
     def approx(self, request: str) -> Entry:
         """Append the approximated form of the expression `request` names.
@@ -372,7 +438,7 @@ class Session:
         """
 
         def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
-            return engine.approx(node, context, None, state)
+            return self.runner.approx(node, context, None, state)
 
         return self._command(request, "Approx", run)
 
@@ -390,7 +456,7 @@ class Session:
         """
 
         def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
-            return engine.factor(node, context, amount, variables, state)
+            return self.runner.factor(node, context, amount, variables, state)
 
         return self._command(request, "Fctr", run)
 
@@ -408,7 +474,7 @@ class Session:
         """
 
         def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
-            return engine.expand(node, context, amount, variables, state)
+            return self.runner.expand(node, context, amount, variables, state)
 
         return self._command(request, "Expd", run)
 
@@ -494,7 +560,7 @@ class Session:
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
-        return engine.expression_variables(self.target(request), self.context)
+        return self.runner.expression_variables(self.target(request), self.context)
 
     def decomposes(self, request: str) -> bool:
         """Whether what `request` names is a number, which Factor just decomposes.

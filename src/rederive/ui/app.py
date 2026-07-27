@@ -49,6 +49,16 @@ hidden position to keep track of, and every one of them has a key that undoes
 it. That is the whole difference from the original's F1 file listing, which
 could only be read and never walked.
 
+A command that reaches the math engine does not run on the event loop. It is
+handed to a thread, and the screen goes into a mode of its own until the answer
+comes back: the worksheet is neither read nor repainted, since the thread owns
+the session until it is done, and the only key that means anything is Esc,
+which aborts. What does keep moving is the message line, saying which command
+is running and how long it has been, and the status line's memory gauge - which
+together are how a user decides whether this one is worth waiting for. Every
+dispatch site goes through one helper, and every one of them finishes in a
+completion handler rather than in the line that started it.
+
 Two commands take the band for something other than a menu. A question with a
 Y or N for an answer - Quit, and the two Clear commands that throw expressions
 away - leaves the menu up with its highlight off, and `confirm` holds what a Y
@@ -103,7 +113,7 @@ from textual.suggester import Suggester
 from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
-from rederive.engine import Amount
+from rederive.engine import Amount, EngineAborted
 from rederive.model import session as sessions
 from rederive.model import state, worksheet
 from rederive.model.session import Session
@@ -150,6 +160,10 @@ MODE_ORDER = "order"
 MODE_SUBSTITUTE = "substitute"
 MODE_SUBSTITUTE_VALUE = "substitute_value"
 MODE_DEMO = "demo"
+#: The mode a computation holds the screen in. Modal on purpose: the thread
+#: running the command owns the session until it is done, so nothing may read
+#: the worksheet and no key but Esc means anything.
+MODE_COMPUTE = "compute"
 
 #: The modes in which the prompt band has the screen, and the keys with it.
 PROMPT_MODES = (
@@ -226,7 +240,29 @@ VARIABLE_PROMPT = " {word} variable {number}: "
 FIRST_VARIABLE = "Return for all or select 1: {variables}"
 NEXT_VARIABLE = "Return for no more or select next: {variables}"
 #: What the message line says once an answer is in.
-COMPUTE_TIME = "Compute time: {seconds:.1f} seconds"
+COMPUTE_TIME = "Compute time: {elapsed}"
+#: What it says while one is being worked out: which command is running, how
+#: long it has been running, and the one key that will stop it.
+COMPUTING = "{command}: {elapsed}   ESC aborts"
+#: And what it says when that key was pressed. The original reported the time a
+#: command took whether or not it finished, and so does this.
+ABORTED = "Aborted after {elapsed}"
+#: How each command that computes names itself while it runs.
+SIMPLIFYING = "Simplifying"
+APPROXIMATING = "Approximating"
+#: What a command is doing while it works out which variables to offer, which
+#: is a question for the engine and so can cost something, though it hardly
+#: ever does.
+READING = "Reading expression"
+#: Seconds between two readings of the elapsed time. Fast enough that the
+#: figure looks like a clock rather than a series of guesses.
+TICK = 0.1
+#: How long a computation has to run before it says anything at all. Nearly
+#: every command answers within this, and a clock that appears and vanishes
+#: inside a tenth of a second is a flicker rather than a reading - so the
+#: message line is left saying what it said until there is a wait worth
+#: reporting.
+CLOCK_AFTER = 1.0
 
 #: All Jump takes on its line: a label number, spaces around it allowed. A sign
 #: is not refused, since the original does not refuse one either.
@@ -366,6 +402,8 @@ class Command:
 
     #: The word the prompts are written with, and the menu title's first word.
     word: str
+    #: How the message line names the command while it is running.
+    running: str
     amounts: Menu
     needs_amount: Callable[[Session, str], bool]
     run: Callable[[Session, str, Amount, tuple[str, ...]], object]
@@ -373,6 +411,7 @@ class Command:
 
 FACTOR = Command(
     "FACTOR",
+    "Factoring",
     menus.AMOUNT,
     lambda session, request: not session.decomposes(request),
     lambda session, request, amount, variables: session.factor(
@@ -382,6 +421,7 @@ FACTOR = Command(
 
 EXPAND = Command(
     "EXPAND",
+    "Expanding",
     menus.EXPAND_AMOUNT,
     lambda session, request: session.written_as_ratio(request),
     lambda session, request, amount, variables: session.expand(
@@ -507,6 +547,63 @@ PAGE_MOVES = ("page_up", "page_down")
 def _takes_anything(values: dict[str, str | int]) -> str | None:
     """What a dialog whose command judges none of its fields refuses: nothing."""
     return None
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """What became of one session command, whichever thread it ran on.
+
+    Every way a command can end arrives here rather than as an exception up
+    the stack, because the stack the command ran on is not the one that has to
+    report it: a computation that is killed mid-bignum has no return path of
+    its own.
+    """
+
+    value: object = None
+    error: Exception | None = None
+    seconds: float = 0.0
+
+
+def _ran(run: Callable[[], object]) -> Outcome:
+    """Run one session command and time it, however it ends.
+
+    Everything is caught. A refusal, a death of the engine worker and a bug
+    that got past the engine's promises are all things the message line can
+    say, and none of them is worth taking the app down for.
+    """
+    started = time.monotonic()
+    try:
+        return Outcome(run(), None, time.monotonic() - started)
+    except Exception as error:
+        return Outcome(None, error, time.monotonic() - started)
+
+
+def _elapsed(seconds: float) -> str:
+    """How long something took, said as coarsely as it can be said truthfully.
+
+    A tenth of a second is worth knowing about a command that takes a moment
+    and is noise about one that takes an hour, so the unit follows the figure:
+    `3.1s` while a decimal still says something, `42s` past ten of them, and
+    `10m 8s` or `2h 10m 8s` once there are minutes and hours to count.
+    """
+    tenths = f"{seconds:.1f}"
+    if float(tenths) < 10:
+        return f"{tenths}s"
+    minutes, second = divmod(round(seconds), 60)
+    if not minutes:
+        return f"{second}s"
+    hours, minute = divmod(minutes, 60)
+    return f"{minute}m {second}s" if not hours else f"{hours}h {minute}m {second}s"
+
+
+def _reported(outcome: Outcome) -> str:
+    """What the message line says about a command that has finished."""
+    error = outcome.error
+    if error is None:
+        return COMPUTE_TIME.format(elapsed=_elapsed(outcome.seconds))
+    if isinstance(error, EngineAborted):
+        return ABORTED.format(elapsed=_elapsed(outcome.seconds))
+    return str(error)
 
 
 class RederiveApp(App[None]):
@@ -640,6 +737,16 @@ class RederiveApp(App[None]):
         self.simplifying: tuple[sessions.Entry, ...] | None = None
         #: The demonstration under way, running or suspended.
         self.demo: Demonstration | None = None
+        #: How the message line names the computation now running, or None
+        #: while none is.
+        self.computing: str | None = None
+        #: When it started, and the timer that writes the elapsed time out.
+        self.started = 0.0
+        self.ticker: Any = None
+        #: The mode to go back to once it has finished, which is the one the
+        #: command was dispatched from: a refused line has to find its prompt
+        #: still up and still its own.
+        self.resumed = MODE_MENU
         #: The state file last read or written, offered back by both commands.
         self.state_file = STATE_FILE
         #: Each amount menu's own cursor, kept across invocations rather than
@@ -787,6 +894,98 @@ class RederiveApp(App[None]):
         if self.settings["Mute"] == "No":
             self.bell()
 
+    # -- computing ---------------------------------------------------------
+    #
+    # Every command that reaches the math engine goes through here, and the
+    # screen is modal while one does. The thread running the command owns the
+    # session, so the worksheet is neither read nor repainted until the answer
+    # is in and the completion handler puts it back; what does keep moving is
+    # the message line's elapsed time and the status line's memory gauge, which
+    # together are how a user decides whether this one is worth waiting for.
+
+    @property
+    def _abortable(self) -> bool:
+        """Whether the engine behind the session can be stopped once started."""
+        return hasattr(self.session.runner, "abort")
+
+    def _compute(
+        self,
+        label: str,
+        run: Callable[[], object],
+        done: Callable[[Outcome], None],
+    ) -> None:
+        """Run one session command, and hand what became of it to `done`.
+
+        The command goes on a thread wherever the engine can be aborted: the
+        call blocks that thread on a pipe and leaves the event loop free to
+        repaint and to hear Esc. An engine computing in this process can be
+        neither aborted nor watched, so putting the screen into a mode with no
+        way out of it would be a lie; that one runs inline, and `done` is
+        called before this returns.
+        """
+        if not self._abortable:
+            done(_ran(run))
+            return
+        self.resumed = self.mode
+        self.mode = MODE_COMPUTE
+        self.computing = label
+        self.started = time.monotonic()
+        # The line being computed from keeps the screen, and loses the keys:
+        # with nothing focused every key reaches the app, where all but Esc are
+        # dropped.
+        self.set_focus(None)
+        # Nothing is written now: the clock starts only if the command is still
+        # running a second from here, which almost none of them are.
+        self.ticker = self.set_interval(TICK, self._tick)
+        self.run_worker(partial(self._computing_thread, run, done), thread=True)
+
+    def _computing_thread(
+        self, run: Callable[[], object], done: Callable[[Outcome], None]
+    ) -> None:
+        """The thread side: block on the engine, then hand back to the loop."""
+        outcome = _ran(run)
+        self.call_from_thread(self._computed, done, outcome)
+
+    def _computed(self, done: Callable[[Outcome], None], outcome: Outcome) -> None:
+        """Back on the event loop: stop the clock and let the command finish.
+
+        The mode goes back to the one the command was dispatched from before
+        the handler runs, since a handler that leaves its prompt up - a line
+        that would not read - is leaving the mode that prompt belongs to. The
+        focus is not put back here: Textual applies a focus on the next beat,
+        and a handler that takes the prompt down in this one would leave a
+        hidden line holding the keyboard.
+        """
+        if self.ticker is not None:
+            self.ticker.stop()
+            self.ticker = None
+        self.computing = None
+        self.mode = self.resumed
+        done(outcome)
+
+    def _tick(self) -> None:
+        """Write the elapsed time out, which is the whole of the repainting.
+
+        Not before there is a wait worth reporting, and not where the figure
+        has not moved: a command that answers at once leaves the message line
+        as it found it, and past ten seconds the figure changes once a second
+        however often it is read.
+        """
+        if self.computing is None:
+            return
+        running = time.monotonic() - self.started
+        if running < CLOCK_AFTER:
+            return
+        said = COMPUTING.format(command=self.computing, elapsed=_elapsed(running))
+        if said != self.message:
+            self._set_message(said)
+
+    def _abort(self) -> None:
+        """Esc while a computation runs: take the engine away from under it."""
+        abort = getattr(self.session.runner, "abort", None)
+        if abort is not None:
+            abort()
+
     # -- key routing -------------------------------------------------------
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -808,7 +1007,13 @@ class RederiveApp(App[None]):
         history from a file prompt as they do from any other, so opening the
         list is what decides which of the two they mean - and the list is on
         screen saying so.
+
+        A computation under way answers none of them. It is modal down to the
+        last key: only Esc means anything, and it is handled where the keys
+        with no binding are.
         """
+        if self.mode == MODE_COMPUTE:
+            return False
         if action == "complete_file":
             return self.mode == MODE_FILE
         if action.startswith("browse_"):
@@ -828,8 +1033,18 @@ class RederiveApp(App[None]):
 
         A field that holds text takes the rest of the printable characters as
         well, since an interval bound is written with `-`, `.` and `/`.
+
+        While a computation runs there is one key: Esc, which aborts it. Every
+        other key is swallowed rather than queued, so that a handful pressed at
+        a frozen-looking screen does not all happen at once when the answer
+        arrives.
         """
-        if self.mode == MODE_MENU:
+        if self.mode == MODE_COMPUTE:
+            event.stop()
+            event.prevent_default()
+            if event.key == "escape":
+                self._abort()
+        elif self.mode == MODE_MENU:
             character = event.character
             if character and (character.isalnum() or self._typing_text(character)):
                 event.stop()
@@ -1401,6 +1616,12 @@ class RederiveApp(App[None]):
         amount is asked for only where it would make a difference, which each
         command decides for itself - so a number is decomposed and a sum is
         expanded on the spot, with no question put at all.
+
+        Which variables the expression holds is the engine's answer and not a
+        walk over the tree, so even this question goes through the computing
+        thread: converting an expression is where a hostile one detonates, and
+        it would detonate here as readily as in the command itself. It is a
+        round trip of well under a millisecond on anything sane.
         """
         pending = self.asking
         assert pending is not None
@@ -1409,11 +1630,27 @@ class RederiveApp(App[None]):
             return
         try:
             needs_amount = pending.command.needs_amount(self.session, request)
-            pending.remaining = self.session.variables(request)
         except DeriveSyntaxError as error:
             self._refused(error)
             return
         pending.request = request
+        self._compute(
+            READING,
+            partial(self.session.variables, request),
+            partial(self._asked_variables, needs_amount),
+        )
+
+    def _asked_variables(self, needs_amount: bool, outcome: Outcome) -> None:
+        """The variables are known: put the next question, or run the command."""
+        pending = self.asking
+        assert pending is not None
+        if isinstance(outcome.error, DeriveSyntaxError):
+            self._refused(outcome.error)
+            return
+        if outcome.error is not None:
+            self._end_prompt(_reported(outcome))
+            return
+        pending.remaining = outcome.value  # type: ignore[assignment]
         if len(pending.remaining) >= 2:
             self._ask_variable()
         elif needs_amount:
@@ -1494,20 +1731,26 @@ class RederiveApp(App[None]):
         pending = self.asking
         assert pending is not None
         self.asking = None
-        started = time.monotonic()
-        try:
-            pending.command.run(
+        self._compute(
+            pending.command.running,
+            partial(
+                pending.command.run,
                 self.session,
                 pending.request,
                 Amount(amount or "Rational"),
                 pending.chosen,
-            )
-        except DeriveSyntaxError as error:
-            # The line parsed when it was collected, so this is all but
-            # unreachable; there may be no prompt left to put the cursor in.
-            self._end_prompt(str(error))
-            return
-        self._end_prompt(COMPUTE_TIME.format(seconds=time.monotonic() - started))
+            ),
+            self._answered_asking,
+        )
+
+    def _answered_asking(self, outcome: Outcome) -> None:
+        """The answer is in, or the reason there is none.
+
+        A refusal is reported rather than corrected: the line parsed when it
+        was collected, so one is all but unreachable, and there may be no
+        prompt left to put the cursor in.
+        """
+        self._end_prompt(_reported(outcome))
 
     # -- Declare -----------------------------------------------------------
     #
@@ -1857,12 +2100,31 @@ class RederiveApp(App[None]):
             return
         try:
             pending.part = self.session.substitutes_part(request)
-            pending.remaining = () if pending.part else self.session.variables(request)
         except DeriveSyntaxError as error:
             self._refused(error)
             return
         pending.request = request
-        if pending.part or pending.remaining:
+        if pending.part:
+            self._ask_value()
+            return
+        self._compute(
+            READING,
+            partial(self.session.variables, request),
+            self._substitute_variables,
+        )
+
+    def _substitute_variables(self, outcome: Outcome) -> None:
+        """The variables are known: ask about the first, or find none to ask about."""
+        pending = self.substituting
+        assert pending is not None
+        if isinstance(outcome.error, DeriveSyntaxError):
+            self._refused(outcome.error)
+            return
+        if outcome.error is not None:
+            self._end_prompt(_reported(outcome))
+            return
+        pending.remaining = outcome.value  # type: ignore[assignment]
+        if pending.remaining:
             self._ask_value()
         else:
             self._end_prompt(done=False)
@@ -1931,7 +2193,8 @@ class RederiveApp(App[None]):
             # unreachable; there may be no prompt left to put the cursor in.
             self._end_prompt(str(error))
             return
-        self._end_prompt(COMPUTE_TIME.format(seconds=time.monotonic() - started))
+        took = _elapsed(time.monotonic() - started)
+        self._end_prompt(COMPUTE_TIME.format(elapsed=took))
 
     # -- Transfer ----------------------------------------------------------
 
@@ -2307,11 +2570,13 @@ class RederiveApp(App[None]):
         self._demo_step()
 
     def _demo_step(self) -> None:
-        """Author and simplify the next expression, and wait on it.
+        """Author the next expression and set its Simplify going.
 
         A step that does not parse is passed over rather than stopping the
         demonstration: a script is not a worksheet, and there is nothing on the
-        line to correct.
+        line to correct. The Simplify is dispatched rather than run, so the
+        step's own computation is as abortable as any other; what happens when
+        it lands is `_demo_simplified`.
         """
         demo = self.demo
         assert demo is not None
@@ -2320,23 +2585,42 @@ class RederiveApp(App[None]):
             demo.at += 1
             try:
                 self.session.author(text)
-                self.session.simplify(f"#{self.session.entries[-1].number}")
             except DeriveSyntaxError:
                 continue
-            self.mode = MODE_DEMO
-            self.message = PRESS_ANY_KEY
-            self.refresh_screen()
+            request = f"#{self.session.entries[-1].number}"
+            self._compute(
+                SIMPLIFYING,
+                partial(self.session.simplify, request),
+                self._demo_simplified,
+            )
             return
         self._end_demo()
+
+    def _demo_simplified(self, outcome: Outcome) -> None:
+        """The step's answer is in: show it and wait on a key.
+
+        A refusal passes the step over as an unparsable one does. Anything
+        else - an abort above all - ends the demonstration where it stands,
+        which is where a suspended one is picked up from.
+        """
+        if isinstance(outcome.error, DeriveSyntaxError):
+            self._demo_step()
+            return
+        if outcome.error is not None:
+            self._end_demo(_reported(outcome))
+            return
+        self.mode = MODE_DEMO
+        self.message = PRESS_ANY_KEY
+        self.refresh_screen()
 
     def _suspend_demo(self) -> None:
         """Esc leaves the demonstration where it is, to be picked up later."""
         self._end_demo()
 
-    def _end_demo(self) -> None:
+    def _end_demo(self, message: str = ENTER_OPTION) -> None:
         self.mode = MODE_MENU
         self.query_one("#menu").display = True
-        self._return_to_menu(ENTER_OPTION)
+        self._return_to_menu(message)
 
     def _demo_comment(self) -> str:
         """The comment of the step now showing, which is the band's whole line."""
@@ -2465,34 +2749,47 @@ class RederiveApp(App[None]):
 
     def _simplify(self, request: str) -> None:
         """Simplify what the line asks for."""
-        self._derive(request, self.session.simplify)
+        self._derive(request, self.session.simplify, SIMPLIFYING)
 
     def _approx(self, request: str) -> None:
         """Approximate what the line asks for."""
-        self._derive(request, self.session.approx)
+        self._derive(request, self.session.approx, APPROXIMATING)
 
-    def _derive(self, request: str, run: Callable[[str], object]) -> None:
+    def _derive(
+        self, request: str, run: Callable[[str], object], label: str
+    ) -> None:
         """Run `run` on what the line asks for, and say how long it took.
 
         An empty line asks for nothing, so it leaves the history alone. A line
-        that does not read stays up to be corrected, as an authored one does.
+        that does not read stays up to be corrected, as an authored one does -
+        which is why the refusal is judged where the answer is, rather than
+        here: the line is not read until the command runs, and by then the
+        command is on a thread of its own.
         """
         if not request.strip():
             self._end_prompt()
             return
-        started = time.monotonic()
-        try:
-            run(request)
-        except DeriveSyntaxError as error:
-            self._refused(error)
+        self._compute(label, partial(run, request), self._derived)
+
+    def _derived(self, outcome: Outcome) -> None:
+        """The answer is in, or the reason there is none."""
+        if isinstance(outcome.error, DeriveSyntaxError):
+            self._refused(outcome.error)
             return
-        self._end_prompt(COMPUTE_TIME.format(seconds=time.monotonic() - started))
+        self._end_prompt(_reported(outcome))
 
     def _refused(self, error: DeriveSyntaxError) -> None:
-        """Say where the line stopped reading, and leave it up."""
+        """Say where the line stopped reading, and leave it up.
+
+        The line is focused as well as pointed at, because a command that ran
+        on a thread took the keyboard off it while it ran, and a refused line
+        is the user's again.
+        """
         self._beep()
         self._set_message(str(error))
-        self.query_one("#prompt-input", Input).cursor_position = error.offset
+        line = self.query_one("#prompt-input", Input)
+        line.focus()
+        line.cursor_position = error.offset
 
     def _hide_prompt(self) -> None:
         """Give the screen back to the menu band, whatever comes next."""
@@ -2522,36 +2819,55 @@ class RederiveApp(App[None]):
             self._restart_menu()
         self._return_to_menu(message)
 
-    def _simplify_entered(self) -> str | None:
-        """Simplify what the command entered, for a line taken with Ctrl-Enter.
+    def _entered_to_simplify(self) -> list[sessions.Entry]:
+        """What the command entered, for a line taken with Ctrl-Enter.
 
-        What its compute time says, or None when there is nothing to simplify:
-        the line was taken with Enter, or the command entered no expression
-        after all. A command that enters more than one - a Transfer that reads
-        a file - has every one of them simplified, in the order they came in.
+        Empty when there is nothing to simplify: the line was taken with Enter,
+        or the command entered no expression after all. A command that enters
+        more than one - a Transfer that reads a file - has every one of them
+        simplified, in the order they came in.
 
         What is new is told by identity rather than by label, since `Transfer
         Load` starts the numbering again and a number proves nothing.
         """
         before, self.simplifying = self.simplifying, None
         if before is None:
-            return None
+            return []
         known = {id(entry) for entry in before}
-        entered = [entry for entry in self.session.entries if id(entry) not in known]
-        if not entered:
-            return None
-        started = time.monotonic()
+        return [entry for entry in self.session.entries if id(entry) not in known]
+
+    def _simplify_entered(self, entered: list[sessions.Entry]) -> None:
+        """Simplify each of them in turn, on the computing thread.
+
+        An abort lands in the middle of the list and is left there: what has
+        already been simplified stands, and the rest is abandoned, which is the
+        same bargain every other abort makes.
+        """
         for entry in entered:
             self.session.simplify(f"#{entry.number}")
-        return COMPUTE_TIME.format(seconds=time.monotonic() - started)
 
     def _return_to_menu(self, message: str) -> None:
+        entered = self._entered_to_simplify()
+        if not entered:
+            self._menu_again(message)
+            return
+        self._compute(
+            SIMPLIFYING,
+            partial(self._simplify_entered, entered),
+            partial(self._simplified_entered, message),
+        )
+
+    def _simplified_entered(self, message: str, outcome: Outcome) -> None:
         # Simplifying is the last thing that happened, so its compute time is
         # what the message line says - unless the command has something of its
-        # own to say, as a file that would not all read has.
-        simplified = self._simplify_entered()
-        if simplified is not None and message == ENTER_OPTION:
-            message = simplified
+        # own to say, as a file that would not all read has. Going wrong is
+        # always worth saying, whatever the command had in mind.
+        if message == ENTER_OPTION or outcome.error is not None:
+            message = _reported(outcome)
+        self._menu_again(message)
+
+    def _menu_again(self, message: str) -> None:
+        """The command menu has the screen again, with something to say."""
         self.mode = MODE_MENU
         self.message = message
         self.refresh_screen()

@@ -32,4 +32,19 @@ uv run pytest
   does no mathematics: `2+3` is a sum node, never `5`.
 - `src/rederive/display/` - expression trees to built-up, multi-row terminal
   renders, plus the rectangle each subexpression lands on.
+- `src/rederive/engine/` - the mathematics: expression trees to sympy and back,
+  and the commands built on that pair. `worker.py` is the child process the
+  engine runs in and `remote.py` the proxy the app reaches it through, which is
+  what makes a computation abortable with Esc and capped in the memory it may
+  hold; a session given neither computes in this process, which is what the
+  tests and every direct caller want.
+- `src/rederive/memory.py` - what the program is holding, for the status line
+  gauge: this process plus the engine worker, or nothing where the platform
+  will not say.
 - `src/rederive/ui/` - the Textual layer: theme, menu data, widgets, app.
+
+## Dependencies
+
+`textual` for the screen, `sympy` for the mathematics, and `psutil` for the
+memory readings - the status line gauge, and the cap the engine worker is
+watched against.

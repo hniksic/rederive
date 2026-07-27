@@ -39,9 +39,12 @@ _NUMBER_WIDTH = 5
 #: Where the status line names the file the session last read or wrote.
 _FILE_COLUMN = 22
 
-#: Seconds between readings of the memory field. Often enough that a long
-#: computation's appetite shows while it runs, rarely enough to cost nothing.
-_MEMORY_PERIOD = 2.0
+#: Seconds between readings of the memory field. The figure is the app plus
+#: the engine worker, and the worker is where it moves: a computation that is
+#: eating the machine has to show it while there is still time to press Esc,
+#: which is a gauge that keeps up rather than one that catches up. Two readings
+#: a second cost two `psutil` calls and repaint only when the figure moves.
+_MEMORY_PERIOD = 0.5
 
 
 def _width(field: Field) -> int:

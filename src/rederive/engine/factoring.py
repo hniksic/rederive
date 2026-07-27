@@ -55,6 +55,18 @@ from rederive.engine.shape import distributed
 
 __all__ = ["Amount", "amount_named", "factored_expression"]
 
+#: How far the integer factorizer is allowed to look for a divisor before it
+#: gives the number back as it found it. Bounded because factoring is the one
+#: thing here with no upper cost: a sixty-digit semiprime pegs a core
+#: indefinitely, and a user watching `FACTOR 12` take forever has learned
+#: nothing. The bound is on trial division, and the other methods sympy tries
+#: are bounded with it, so every divisor below it is still found - and the ones
+#: above it usually are too, since a hopeless number is what the bound is for.
+#: Generous: no factor a worksheet writes on purpose is anywhere near it, and a
+#: number this will not factor comes back written as itself, which is what
+#: Derive does with what it cannot do.
+FACTOR_LIMIT = 100_000
+
 #: What to put a factored scalar through afterwards, if anything. The precision
 #: mode is the only caller so far, and it is a callback rather than a `Context`
 #: because rounding belongs to `pipeline`, which sits above this file.
@@ -355,8 +367,12 @@ def _primes(number: sp.Rational) -> sp.Expr:
     the number and not just the factors, six significant digits of
     `1234567890` being a different integer. Sealing it here means every caller
     is exempt without having to know it needs to be.
+
+    A number the search gives up on comes back whole, as one factor of itself:
+    `FACTOR_LIMIT` is what makes the search end, and a product of one number is
+    that number, so the refusal needs no code of its own.
     """
-    powers = sp.factorrat(abs(number))
+    powers = sp.factorrat(abs(number), limit=FACTOR_LIMIT)
     pieces = [
         sp.Integer(prime) if power == 1 else sp.Pow(prime, power, evaluate=False)
         for prime, power in sorted(powers.items())
