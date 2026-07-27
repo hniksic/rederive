@@ -2734,11 +2734,13 @@ class RederiveApp(App[None]):
     def _author(self, text: str) -> None:
         """Enter the line as a new expression.
 
-        A line that does not parse is not entered. Derive says so, beeps, and
-        leaves the line up with the cursor where it stopped reading - which may
-        be anywhere to the right of the mistake.
+        A line with nothing on it enters nothing and gives the menu back, the
+        way Esc does. A line that does not parse is not entered. Derive says
+        so, beeps, and leaves the line up with the cursor where it stopped
+        reading - which may be anywhere to the right of the mistake.
         """
         if not text.strip():
+            self._end_prompt(done=False)
             return
         try:
             self.session.author(text)
