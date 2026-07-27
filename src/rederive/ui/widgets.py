@@ -12,6 +12,7 @@ from textual.containers import VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Static
 
+from rederive import memory
 from rederive.model.session import Entry
 from rederive.model.settings import (
     ChoiceField,
@@ -37,6 +38,10 @@ _NUMBER_WIDTH = 5
 
 #: Where the status line names the file the session last read or wrote.
 _FILE_COLUMN = 22
+
+#: Seconds between readings of the memory field. Often enough that a long
+#: computation's appetite shows while it runs, rarely enough to cost nothing.
+_MEMORY_PERIOD = 2.0
 
 
 def _width(field: Field) -> int:
@@ -336,11 +341,23 @@ class StatusLine(Band):
 
     annotation = ""
     file = ""
-    #: The original's muLISP heap gauge lived here. The slot is kept for
-    #: something useful today, such as a busy indicator during long
-    #: computations, and stays empty until there is one.
+    #: The original's muLISP heap gauge lived here, saying how much of its
+    #: workspace was still free. The slot now says how much memory the process
+    #: holds, which is the closest thing a hosted program can report, and stays
+    #: empty on a platform that will not say.
     center = ""
     pane = "Rederive Algebra"
+
+    def on_mount(self) -> None:
+        self._read_memory()
+        self.set_interval(_MEMORY_PERIOD, self._read_memory)
+
+    def _read_memory(self) -> None:
+        """Take the memory field's reading, repainting only when it moves."""
+        center = memory.label()
+        if center != self.center:
+            self.center = center
+            self.refresh()
 
     def show(self, annotation: str, file: str = "") -> None:
         self.annotation = annotation
