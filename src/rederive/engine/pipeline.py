@@ -43,8 +43,9 @@ from fractions import Fraction
 import sympy as sp
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
+from sympy.functions.elementary.trigonometric import TrigonometricFunction
 from sympy.logic.boolalg import Boolean
-from sympy.simplify.fu import TR5, TR6, TR7, TR8
+from sympy.simplify.fu import TR2, TR5, TR6, TR7, TR8, TR11
 
 from rederive.engine.approximation import GUARD, simplest
 from rederive.engine.context import (
@@ -802,9 +803,16 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
         expression = _gated(expression, sp.combsimp)
     # Ours rather than sympy's, which collects neither these arcs nor their
-    # tangents. Offered in every mode: a pair of them adding to a right angle
-    # is an identity, not a direction to rewrite in.
-    expression = _gated(expression, _complementary_arcs)
+    # tangents, writes none of them about a shorter argument, and has no rule
+    # that spans two angles at once. All three are offered in every mode: an
+    # identity is not a direction to rewrite in. The complementary pair is the
+    # one taken whatever it costs, because what a pair of arcs adds up to is a
+    # fact about them and not an economy - `ATAN(t) + ACOT(t)` and
+    # `pi*SIGN(t)/2` are three operations either way, and gating that would
+    # keep the pair and throw the answer away.
+    expression = _gated(expression, _simpler_arcs)
+    expression = _forced(expression, _complementary_arcs)
+    expression = _gated(expression, _half_angles)
     expression = _trigonometry(expression, context)
     expression = _logarithms(expression, context)
     expression = _exponentials(expression, context)
@@ -999,8 +1007,9 @@ def _trigonometry(expression: sp.Basic, context: Context) -> sp.Basic:
 
 
 #: The inverse functions that pair off, each with the one it complements.
-#: `ASIN(u) + ACOS(u)` is a right angle wherever both are defined, and so are
-#: the secant pair and - for a positive argument - the tangent pair.
+#: `ASIN(u) + ACOS(u)` is a right angle wherever both are defined, and so is
+#: the secant pair; the tangent pair is a right angle turned the way its
+#: argument is signed.
 _COMPLEMENT = {
     sp.asin: sp.acos,
     sp.acos: sp.asin,
@@ -1058,18 +1067,149 @@ def _arc(term: sp.Basic) -> tuple[sp.Basic | None, sp.Basic]:
 
 
 def _quarter_turn(func: type, argument: sp.Basic) -> sp.Basic | None:
-    """What the pair adds to, or None where nothing says which right angle.
+    """What the pair adds to, or None where it is no right angle at all.
 
-    The tangent pair is the one that needs a domain: `ATAN(t) + ACOT(t)` is
-    `pi/2` for positive `t` and `-pi/2` for negative, so an undeclared `t` -
-    which is real and could be either - leaves the sum as it stands. Derive
-    answers `pi/2` regardless, and is wrong for the negative half.
+    The tangent pair is the one that turns: `ATAN(t) + ACOT(t)` is `pi/2` above
+    zero and `-pi/2` below, which is `pi*SIGN(t)/2`. That is an answer rather
+    than a guess - both halves are written down, and neither is assumed - where
+    Derive answers `pi/2` regardless and is wrong for the negative half.
+
+    Zero is the one point the turn cannot speak for. `ACOT(0)` is `pi/2` by the
+    convention sympy and Derive share, so the sum there is `pi/2` where `SIGN`
+    would say nothing at all. An argument that cannot be negative is therefore
+    answered `pi/2` outright, which is exact over the whole of it; what is left
+    over disagrees at the single point its `ACOT` jumps over, and agrees
+    everywhere else.
+
+    Complex arguments are no part of this: `SIGN(z)` is `z/|z|` off the real
+    line, and the identity does not hold there anyway - at `#i/2` the sum is
+    `-pi/2`. A pair nothing declares real stays as it was written.
     """
     if func in (sp.atan, sp.acot):
-        if argument.is_positive:
+        if not argument.is_real:
+            return None
+        if argument.is_nonnegative:
             return sp.pi / 2
-        return -sp.pi / 2 if argument.is_negative else None
+        if argument.is_negative:
+            return -sp.pi / 2
+        return sp.pi * sp.sign(argument) / 2
     return sp.pi / 2
+
+
+def _simpler_arcs(expression: sp.Basic) -> sp.Basic:
+    """Every arc rewritten about a shorter argument, wherever one is there."""
+    return expression.replace(
+        lambda e: _shorter_arc(e) is not None,
+        lambda e: _shorter_arc(e),
+        simultaneous=False,
+    )
+
+
+def _shorter_arc(expression: sp.Basic) -> sp.Basic | None:
+    """This arc as the arc of one side of the triangle it describes.
+
+    A right triangle with legs `u` and `1` has hypotenuse `SQRT(u^2 + 1)`, so
+    the angle whose sine is `u/SQRT(u^2 + 1)` is the angle whose tangent is
+    `u`; the same triangle read off the other way makes the angle whose tangent
+    is `u/SQRT(1 - u^2)` the angle whose sine is `u`. Either way the ratio is a
+    longer way of writing an argument the triangle already holds.
+
+    Both hold for a real `u` alone - the root has a branch cut a complex
+    argument crosses, and the two sides then disagree by a period - so an
+    argument nothing declares real is left as it stands.
+
+    The reciprocal arcs are the other half of it, and need no domain: `ASEC(u)`
+    is the angle whose cosine is `1/u` by definition, whatever `u` is.
+    """
+    if isinstance(expression, (sp.asec, sp.acsc)):
+        return _reciprocal_arc(expression)
+    if not isinstance(expression, (sp.asin, sp.atan)):
+        return None
+    sides = _over_a_root(expression.args[0])
+    if sides is None:
+        return None
+    leg, square = sides
+    if not leg.is_real:
+        return None
+    if isinstance(expression, sp.asin) and _vanishes(square - leg**2 - 1):
+        return sp.atan(leg)
+    if isinstance(expression, sp.atan) and _vanishes(square + leg**2 - 1):
+        return sp.asin(leg)
+    return None
+
+
+def _over_a_root(argument: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
+    """`u` and `v` where `argument` is `u/SQRT(v)`."""
+    numerator, denominator = sp.fraction(sp.together(argument))
+    if not (isinstance(denominator, sp.Pow) and denominator.exp is sp.S.Half):
+        return None
+    return numerator, denominator.base
+
+
+def _vanishes(difference: sp.Basic) -> bool:
+    """Whether this difference is zero once it has been multiplied out.
+
+    The hypotenuse is written however the author wrote it, so recognising the
+    triangle behind `(x + 1)/SQRT(x^2 + 2*x + 2)` means expanding the square
+    rather than comparing two trees.
+    """
+    return bool(sp.expand(difference).is_zero)
+
+
+def _reciprocal_arc(expression: sp.Basic) -> sp.Basic | None:
+    """`ASEC(1/u)` as `ACOS(u)`, where the reciprocal is the shorter argument.
+
+    Which is what keeps `ASEC(x)` as it was written: the rewrite is offered in
+    both directions and taken only in the one that shortens the argument.
+    """
+    argument = expression.args[0]
+    reciprocal = 1 / argument
+    if sp.count_ops(reciprocal) >= sp.count_ops(argument):
+        return None
+    complement = sp.acos if isinstance(expression, sp.asec) else sp.asin
+    return complement(reciprocal)
+
+
+def _half_angles(expression: sp.Basic) -> sp.Basic:
+    """Every trigonometric call rewritten about the one angle they all share.
+
+    `1/(1 + TAN(a)*TAN(a/2))` is `COS(a)`, and no rule that looks at one call
+    at a time can see it: what cancels here is the relation between the two
+    arguments, and sympy's rules each rewrite a call by itself. Written about
+    the half angle both are multiples of, the tangents cancel and what is left
+    is a cosine.
+
+    The angle is the greatest common measure of the arguments, so nothing is
+    expanded further than it has to be.
+    """
+    measure = _common_angle(expression)
+    if measure is None:
+        return expression
+    return sp.trigsimp(TR11(TR2(expression), base=measure))
+
+
+def _common_angle(expression: sp.Basic) -> sp.Basic | None:
+    """The greatest angle every trigonometric argument is a multiple of.
+
+    None where there is no such angle - arguments built on different things, or
+    one that is no rational multiple of anything - and none where every
+    argument is a whole multiple of it. That last case is the multiple-angle
+    expansion `trigsimp` already offers, and this rule has nothing to add to
+    it; a fractional multiple is what nothing else handles.
+    """
+    calls = expression.atoms(TrigonometricFunction)
+    if not calls:
+        return None
+    measure, angles = None, set()
+    for call in calls:
+        coefficient, angle = call.args[0].as_coeff_Mul()
+        if not coefficient.is_Rational:
+            return None
+        angles.add(angle)
+        measure = coefficient if measure is None else sp.gcd(measure, coefficient)
+    if len(angles) != 1 or measure.is_Integer:
+        return None
+    return measure * angles.pop()
 
 
 def _phase_angles(expression: sp.Basic) -> sp.Basic:

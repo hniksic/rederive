@@ -257,8 +257,12 @@ DOMAINS = [
     # the answer.
     ("#e^(3*x*LN(y))", "#e^(3*x*LN(y))", None),
     ("#e^(3*x*LN(y))", "y^(3*x)", declared("y :epsilon Real (0, inf)")),
-    # `pi/2` only for positive `t`, and Derive answers it regardless.
-    ("ACOT(t) + ATAN(t)", "ACOT(t) + ATAN(t)", None),
+    # The tangent pair adds to a right angle turned the way its argument is
+    # signed, which is an answer and not a guess: both halves are written down.
+    # Off the real line it is neither - `SIGN` is no longer `±1` there, and the
+    # identity does not hold - so the pair stands as it was written.
+    ("ACOT(t) + ATAN(t)", "pi*SIGN(t)/2", None),
+    ("ACOT(x) + ATAN(x)", "ACOT(x) + ATAN(x)", COMPLEX_X),
 ]
 
 
@@ -281,16 +285,47 @@ TRIGONOMETRY = [
     ("SIN(6*x)/SIN(3*x)", "2*COS(3*x)", None),
     ("ATAN(2 + SQRT(3))", "5*pi/12", None),
     ("ATAN(1, 1)", "pi/4", None),
-    # Complementary arcs of one argument are a right angle. The tangent pair
-    # is the one that needs a domain, being `-pi/2` below zero.
+    # Complementary arcs of one argument are a right angle. The tangent pair is
+    # the one that turns with the sign of its argument, and answers the turn
+    # itself where nothing decides the sign; a declaration that decides it, or
+    # an argument that cannot be negative, gets the constant outright.
     ("ASIN(x) + ACOS(x)", "pi/2", None),
     ("ASEC(x) + ACSC(x)", "pi/2", None),
     ("2*ASIN(x) + 2*ACOS(x)", "pi", None),
     ("ASIN(x) + ACOS(x) + y", "y + pi/2", None),
     ("ASIN(x) + ACOS(x)", "90", Context(angle=Angle.DEGREE)),
+    ("ACOT(t) + ATAN(t)", "pi*SIGN(t)/2", None),
+    ("ATAN(t) + ACOT(t) + y", "y + pi*SIGN(t)/2", None),
+    ("2*ACOT(t) + 2*ATAN(t)", "pi*SIGN(t)", None),
+    ("ACOT(t) + ATAN(t)", "90*SIGN(t)", Context(angle=Angle.DEGREE)),
     ("ACOT(t) + ATAN(t)", "pi/2", declared("t :epsilon Real (0, inf)")),
     ("ACOT(t) + ATAN(t)", "-pi/2", declared("t :epsilon Real (-inf, 0)")),
+    # `ACOT(0)` is `pi/2`, so a square - which is a right angle's worth above
+    # zero and `pi/2` at it - is the constant and not the turn.
+    ("ACOT(x^2) + ATAN(x^2)", "pi/2", None),
+    ("ACOT(x^2 + 1) + ATAN(x^2 + 1)", "pi/2", None),
+    ("ACOT(3) + ATAN(3)", "pi/2", None),
     ("ASIN(x) + ACOS(y)", "ACOS(y) + ASIN(x)", None),
+    # An arc of a ratio is the arc of a side of the right triangle the ratio
+    # describes, however the hypotenuse was written. The root has a branch cut,
+    # so a complex argument keeps the ratio it came in as.
+    ("ASIN(x/SQRT(x^2 + 1))", "ATAN(x)", None),
+    ("ASIN(-x/SQRT(x^2 + 1))", "-ATAN(x)", None),
+    ("ASIN((x + 1)/SQRT(x^2 + 2*x + 2))", "ATAN(x + 1)", None),
+    ("ATAN(x/SQRT(1 - x^2))", "ASIN(x)", None),
+    ("ASIN(x/SQRT(x^2 + 1))", "ASIN(x/SQRT(x^2 + 1))", COMPLEX_X),
+    ("ATAN(x/SQRT(1 - x^2))", "ATAN(x/SQRT(1 - x^2))", COMPLEX_X),
+    # A reciprocal arc needs no domain, being the definition of the arc rather
+    # than an identity over the reals, and is written about whichever of the
+    # two arguments is the shorter - which is what keeps `ASEC(x)` as it is.
+    ("ASEC(1/x)", "ACOS(x)", None),
+    ("ACSC(1/x)", "ASIN(x)", None),
+    ("ASEC(1/x)", "ACOS(x)", COMPLEX_X),
+    ("ASEC(x)", "ASEC(x)", None),
+    # Two angles a factor apart cancel once both are written about the angle
+    # they are multiples of; a whole factor apart is `SIN(6*x)/SIN(3*x)` above,
+    # which needs none of that.
+    ("1/(1 + TAN(a)*TAN(a/2))", "COS(a)", None),
     ("SIN(45)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
     ("ASIN(1/2)", "30", Context(angle=Angle.DEGREE)),
     # `deg` is the constant pi/180, so degrees work in radian mode too.
@@ -1553,6 +1588,7 @@ DEMO_TRIGONOMETRY = [
         "SIN(x)^8*COS(x)^6",
     ),
     ("(COS (a/2) + SIN (a/2))^2", "SIN(a) + 1"),
+    ("1/(1+TAN(a)*TAN(a/2))", "COS(a)"),
     ("CSC (2x) (2 (COS (x/2))^2 - 1)", "1/(2*SIN(x))"),
     ("(1 + SIN a) * (1 + SEC a) / ((1 + COS a) * (1 + CSC a))", "TAN(a)"),
     ("(TAN a)^2 / (1 + (TAN a)^2) * (1 + (COT a)^2) / (COT a)^2", "TAN(a)^2"),
@@ -1560,6 +1596,9 @@ DEMO_TRIGONOMETRY = [
     ("ATAN (-1, -1)", "-3*pi/4"),
     ("ASIN (-1/2)", "-pi/6"),
     ("ACOS (- 1 / SQRT 2)", "3*pi/4"),
+    ("ASIN (x/SQRT(x^2 + 1))", "ATAN(x)"),
+    ("ATAN (x/SQRT(1-x^2))", "ASIN(x)"),
+    ("ASEC (1/x)", "ACOS(x)"),
 ]
 
 DEMO_CALCULUS = [
