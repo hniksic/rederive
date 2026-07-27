@@ -276,6 +276,47 @@ class Session:
         self.settings.watch(self._settings_changed)
         self._settings_changed(PARSING_SETTINGS)
 
+    def copy(self) -> "Session":
+        """This session again, as splitting a window gives the new half one.
+
+        The two share their settings, which are the system's and not a
+        window's, and the engine that answers for them. Everything else is
+        copied, so the histories fork: what is authored in one window from
+        here on is nothing to the other, down to the label numbers.
+
+        Entries are shared rather than copied because nothing ever edits one -
+        annotating replaces the entry in the list - so two histories may hold
+        the same entry and neither can change it under the other.
+        """
+        other = Session(self.settings, self.runner)
+        other.state = replace(
+            self.state,
+            functions=dict(self.state.functions),
+            variables=dict(self.state.variables),
+            _index={},
+            _index_stamp=(-1,),
+        )
+        other.entries = list(self.entries)
+        other.selected = self.selected
+        other.route = self.route
+        other.file = self.file
+        other.removed = list(self.removed)
+        other.assignments = dict(self.assignments)
+        other.functions = dict(self.functions)
+        other.domains = dict(self.domains)
+        other.order = self.order
+        other._next_number = self._next_number
+        return other
+
+    def discard(self) -> None:
+        """Stop listening to the settings, which a closed window's session must.
+
+        A session mirrors three of the settings into its parse state and stays
+        subscribed for as long as it lives. Closing the window it belonged to
+        is where that ends.
+        """
+        self.settings.unwatch(self._settings_changed)
+
     # -- authoring ---------------------------------------------------------
 
     def author(self, text: str) -> Entry:

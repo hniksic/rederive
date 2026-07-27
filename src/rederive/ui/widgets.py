@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from rich.text import Text
 from textual import events
-from textual.containers import VerticalScroll
+from textual.containers import Container, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Input, Static
 
@@ -23,6 +23,7 @@ from rederive.model.settings import (
     NumberField,
     TextField,
 )
+from rederive.model.windows import Drawing
 from rederive.ui.menu import Menu
 
 #: Columns the label field takes, and so the column every render starts in.
@@ -172,7 +173,14 @@ class WorkArea(VerticalScroll):
     can_focus = False
 
     def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+        # Built here rather than composed, because a pane is made when its
+        # window is and painted in the same breath - before Textual has got
+        # round to composing it.
+        #
+        # A class rather than an id: there is one of these per window, and an
+        # id would have to be unique across all of them.
+        self.content = Static(classes="work-content")
+        super().__init__(self.content, *args, **kwargs)
         #: Columns the selected entry's render is currently shifted left by.
         self.shift = 0
         #: The selection the shift was last brought into view for, so that a
@@ -184,8 +192,12 @@ class WorkArea(VerticalScroll):
         self._widest = 0
         self._indent = _LABEL_WIDTH
 
-    def compose(self):
-        yield Static(id="work-content")
+    def reset(self) -> None:
+        """Forget where this pane stands, as a pane handed to a new window must."""
+        self.shift = 0
+        self._followed = None
+        self._widest = 0
+        self._indent = _LABEL_WIDTH
 
     def show(
         self,
@@ -216,7 +228,7 @@ class WorkArea(VerticalScroll):
                 styles["selection"],
                 self.shift,
             )
-        self.query_one("#work-content", Static).update(text)
+        self.content.update(text)
         if selected is not None:
             # After the refresh, so the new content has been laid out and the
             # scrollable region knows how tall it is.
@@ -554,15 +566,66 @@ class FieldBand(Band):
                 text.append(f" {choice}")
 
 
-class MenuRule(Static):
-    """The horizontal rule separating the work area from the command bands."""
+class Panes(Container):
+    """The region the windows are drawn in: their borders and their contents.
+
+    The work areas are placed over it absolutely, one per window, and the
+    frame beneath them draws what is between. Both are asked for again
+    whenever this is resized, since where a divider falls is a question about
+    how much room there is.
+    """
+
+    def drawing(self) -> Drawing:
+        """The border as it stands, one row longer than this widget is tall."""
+        return self.app.windows.frame(self.size.height, self.size.width)
+
+    def on_resize(self) -> None:
+        self.app.place_windows()
+
+
+class Frame(Band):
+    """The borders around and between the windows.
+
+    Blank while there is one window, which is how the original draws an
+    unsplit screen: no frame at all, and the whole 80 by 20 for expressions.
+    The number in each window's upper left corner is drawn here too, and the
+    active window's is the one cell of the frame in inverse video - which is
+    the only mark on screen saying which window a command would act on.
+    """
 
     def render(self) -> Text:
-        return Text("─" * self.size.width, no_wrap=True)
+        drawing = self.screen.query_one(Panes).drawing()
+        colors = self.colors
+        text = Text("\n".join(drawing.rows[:-1]), style=colors["frame"], no_wrap=True)
+        active = self.app.windows.number - 1
+        if active < len(drawing.numbers):
+            row, column, width = drawing.numbers[active]
+            at = sum(len(line) + 1 for line in drawing.rows[:row]) + column
+            text.stylize(colors["selection"], at, at + width)
+        return text
+
+
+class MenuRule(Band):
+    """The rule between the work area and the command bands.
+
+    It is the window frame's bottom edge, so it carries the corners and the
+    feet of every vertical divider once the screen has been split, and is a
+    plain rule while it has nothing to join.
+    """
+
+    def render(self) -> Text:
+        rule = self.screen.query_one(Panes).drawing().rows[-1]
+        return Text(rule[: self.size.width], style=self.colors["frame"], no_wrap=True)
 
 
 class StatusLine(Band):
-    """Bottom line: selection annotation, current file, memory field, pane type."""
+    """Bottom line: selection annotation, current file, memory field, pane type.
+
+    Everything on it belongs to the active window: the annotation is the one
+    on the expression highlighted there, and the pane field names that
+    window's type. One line for however many windows are open, as the original
+    has it.
+    """
 
     annotation = ""
     file = ""
@@ -590,10 +653,14 @@ class StatusLine(Band):
             self.center = center
             self.refresh()
 
-    def show(self, annotation: str, file: str = "", flags: str = "") -> None:
+    def show(
+        self, annotation: str, file: str = "", flags: str = "", pane: str = ""
+    ) -> None:
         self.annotation = annotation
         self.file = file
         self.flags = flags
+        if pane:
+            self.pane = pane
         self.refresh()
 
     def indicate(self, flags: str) -> None:

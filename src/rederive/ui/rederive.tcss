@@ -8,10 +8,32 @@ Screen {
     layout: vertical;
 }
 
-/* The history grows upwards from the rule: with a few entries the work area
-   is empty at the top, and the newest entry always sits against the bottom. */
-#work {
+/* Everything above the rule: one work area per window, placed by hand over a
+   frame that draws what is between them. The frame is a layer of its own and
+   underneath, so a work area covers only its own window's interior and the
+   borders show through around it. */
+#panes {
     height: 1fr;
+    layers: frame panes;
+    background: $rd-work-background;
+}
+
+#frame {
+    layer: frame;
+    position: absolute;
+    offset: 0 0;
+    width: 100%;
+    height: 100%;
+    color: $rd-frame;
+}
+
+/* The history grows upwards from the bottom of its window: with a few entries
+   the work area is empty at the top, and the newest entry always sits against
+   the bottom. Where each one is and how big it is are set as the windows are
+   placed, which is why no size is given here. */
+.work {
+    layer: panes;
+    position: absolute;
     align-vertical: bottom;
     background: $rd-work-background;
     color: $rd-work-foreground;
@@ -22,7 +44,7 @@ Screen {
     scrollbar-size: 0 0;
 }
 
-#work-content {
+.work-content {
     height: auto;
     width: auto;
 }

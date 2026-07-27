@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rederive.model import building, settings
+from rederive.model import building, settings, windows
 from rederive.model.session import Bounds
 
 MENU_TITLE = "COMMAND:"
@@ -54,6 +54,11 @@ ENTER_ELEMENTS = "Enter number of elements"
 ENTER_LEFT_BOUND = "Enter left bound"
 ENTER_RIGHT_BOUND = "Enter right bound"
 
+#: What the two Window commands that name a window ask for, and what the two
+#: that make one ask for.
+ENTER_WINDOW = "Enter window number"
+ENTER_WINDOW_TYPE = "Enter window type"
+
 #: The two symbols a bound is written with: `<` for a bound the variable can
 #: never equal, `≤` for one it can.
 OPEN = "<"
@@ -67,9 +72,13 @@ _BOUND_WIDTH = 6
 
 
 def mnemonic(word: str) -> str:
-    """The lower-cased capital letter that invokes `word`, e.g. `l` for soLve."""
+    """The lower-cased capital letter that invokes `word`, e.g. `l` for soLve.
+
+    A digit counts as a capital, which is how `2D-plot` and `3D-plot` are
+    told apart: they share their first letter and nothing else would.
+    """
     for character in word:
-        if character.isupper():
+        if character.isupper() or character.isdigit():
             return character.lower()
     return word[:1].lower()
 
@@ -375,6 +384,99 @@ TRANSFER_CLEAR = Menu(
     "TRANSFER CLEAR:", ("All", "Expressions", "Functions", "Variables")
 )
 
+# The eight window commands. Every one of them starts with a letter no other
+# one starts with, so none needs a capital anywhere but in front.
+WINDOW = Menu(
+    "WINDOW:",
+    ("Close", "Designate", "Flip", "Goto", "Next", "Open", "Previous", "Split"),
+)
+
+WINDOW_SPLIT = Menu("WINDOW SPLIT:", ("Horizontal", "Vertical"))
+
+#: The titles of the four Window commands that ask for something.
+WINDOW_CLOSE = "WINDOW CLOSE:"
+WINDOW_DESIGNATE = "WINDOW DESIGNATE:"
+WINDOW_GOTO = "WINDOW GOTO:"
+WINDOW_OPEN = "WINDOW OPEN:"
+
+
+def window_number(title: str, number: int, count: int) -> settings.Dialog:
+    """The dialog `Window Close` and `Window Goto` each ask a number on.
+
+    Close offers the active window and Goto the next one, which is the whole
+    difference between them: the number a command is most likely to want is
+    the one it opens on.
+    """
+    return settings.Dialog(
+        title,
+        (
+            (
+                settings.NumberField(
+                    "Window",
+                    ENTER_WINDOW,
+                    "WindowNumber",
+                    number,
+                    minimum=1,
+                    maximum=count,
+                    recorded=False,
+                ),
+            ),
+        ),
+        stored=False,
+    )
+
+
+def window_split(vertical: bool, at: int, low: int, high: int) -> settings.Dialog:
+    """The dialog that asks where a split falls.
+
+    The line or column is counted from the window's own corner, so the answer
+    means the same thing wherever the window being split is. Both bounds come
+    from how big that window is now, which is what makes a window too small to
+    split refuse the command rather than accept an answer it cannot honor.
+    """
+    word = "column" if vertical else "line"
+    return settings.Dialog(
+        f"WINDOW SPLIT {'VERTICAL' if vertical else 'HORIZONTAL'}:",
+        (
+            (
+                settings.NumberField(
+                    f"At {word}",
+                    f"Enter {word} number",
+                    "SplitAt",
+                    at,
+                    minimum=low,
+                    maximum=high,
+                    recorded=False,
+                ),
+            ),
+        ),
+        stored=False,
+    )
+
+
+def window_type(title: str, kind: str) -> settings.Dialog:
+    """The selection field `Window Designate` and `Window Open` share.
+
+    It opens on `kind`: the window's own type for Designate, which is what the
+    original highlights, and Algebra for Open.
+    """
+    return settings.Dialog(
+        title,
+        (
+            (
+                settings.ChoiceField(
+                    "Type",
+                    ENTER_WINDOW_TYPE,
+                    "WindowType",
+                    windows.KINDS,
+                    kind,
+                    recorded=False,
+                ),
+            ),
+        ),
+        stored=False,
+    )
+
 
 def save_block(first: int, last: int) -> settings.Dialog:
     """The dialog that asks which block of expressions a save writes.
@@ -668,7 +770,9 @@ TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
         "Manage": MANAGE,
         "Options": OPTIONS,
         "Transfer": TRANSFER,
+        "Window": WINDOW,
     },
+    WINDOW: {"Split": WINDOW_SPLIT},
     MANAGE: MANAGE_TARGETS,
     OPTIONS: OPTIONS_TARGETS,
     COLOR: COLOR_TARGETS,

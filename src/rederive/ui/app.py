@@ -89,6 +89,14 @@ a whole expression, or one replacement for a highlighted subexpression. It
 appends what it was given without simplifying it, so Ctrl-Enter on the last
 value is worth pressing, and the lines it collects are `Substituting`.
 
+The `Window` commands are the one group that works on more than one worksheet.
+`self.session` is the active window's, so every command in this file goes on
+reading and writing one session and knows nothing about the rest; what the
+window commands do is change which one that is, or make another. The screen
+follows: one work area per window, placed over a frame that draws what is
+between them, and a frame with nothing to draw while there is one window -
+which is the original's unsplit screen, borderless and eighty columns wide.
+
 The Declare commands are the same shape and each keeps its own answers -
 `Declaring`, `Defining`, `Entering` - but their questions replace each other
 rather than stacking, because the original abandons the whole command from
@@ -137,7 +145,7 @@ from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
 from rederive.engine import Amount, EngineAborted
-from rederive.model import building, state, worksheet
+from rederive.model import building, state, windows, worksheet
 from rederive.model import session as sessions
 from rederive.model.expr import Node
 from rederive.model.session import Session
@@ -148,6 +156,7 @@ from rederive.model.settings import (
     Settings,
     TextField,
 )
+from rederive.model.windows import Window, Windows
 from rederive.syntax import LANGUAGES, DeriveSyntaxError, Language
 from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
@@ -155,9 +164,11 @@ from rederive.ui.theme import COLOR_SETTINGS, Palette
 from rederive.ui.widgets import (
     CompletionList,
     FieldBand,
+    Frame,
     MenuBand,
     MenuRule,
     MessageLine,
+    Panes,
     PromptLine,
     StatusLine,
     WorkArea,
@@ -944,6 +955,18 @@ class RederiveApp(App[None]):
         # the pair worth having: move onto what is wanted, then take it.
         Binding("f3", "insert_highlighted(0)", "Insert", priority=True, show=False),
         Binding("f4", "insert_highlighted(1)", "Insert ()", priority=True, show=False),
+        # F1 and F2 are the Window commands worth a key of their own: the next
+        # window, and the next of a window's overlays. They apply at the
+        # command menu and nowhere else, the original giving F1 to Help on
+        # every line that is being typed.
+        Binding("f1", "window_step(1)", "Next window", priority=True, show=False),
+        Binding(
+            "shift+f1", "window_step(-1)", "Previous window", priority=True, show=False
+        ),
+        Binding("f2", "window_flip(1)", "Next overlay", priority=True, show=False),
+        Binding(
+            "shift+f2", "window_flip(-1)", "Previous overlay", priority=True, show=False
+        ),
         # F6 hands the sideways keys back and forth between the line and the
         # highlight; Ins and Ctrl-V do the same for making room and standing on
         # what is there.
@@ -1004,7 +1027,14 @@ class RederiveApp(App[None]):
         self.settings = settings
         self.palette = Palette(self.settings)
         super().__init__()
-        self.session = session if session is not None else Session(self.settings)
+        #: Every window there is. `session` is whichever one is active, which
+        #: is what every command in this file works on.
+        self.windows = Windows(session if session is not None else Session(self.settings))
+        #: The work area each window is drawn in, made as windows are and kept
+        #: for reuse once they close: which window a widget belongs to has to
+        #: hold still, since the sideways scroll of a pane is the window's.
+        self.panes: dict[Window, WorkArea] = {}
+        self.spare: list[WorkArea] = []
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
         #: The command menu, plus whatever submenu or dialog is stacked on it.
@@ -1062,6 +1092,12 @@ class RederiveApp(App[None]):
         self.inserting = True
         #: What a Y answers, while a command is asking for one.
         self.confirm: Callable[[], None] | None = None
+        #: Whether that question has the dialog it came from standing under it,
+        #: which is the one thing an answer has to put away either way.
+        self.confirmed_over = False
+        #: The dialog `_ask` last put up, so that a command can show it again
+        #: with its answer settled on it.
+        self.asked: Dialog | None = None
         #: The history as it stood when Ctrl-Enter was pressed, or None while no
         #: line has been taken that way. Whatever the command adds to it is what
         #: gets simplified once the command is done.
@@ -1121,6 +1157,17 @@ class RederiveApp(App[None]):
             (menus.TRANSFER_LOAD, "Utility"): self._command_load_utility,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
             (menus.TRANSFER_SAVE, "State"): self._command_save_state,
+            (menus.WINDOW, "Close"): self._command_window_close,
+            (menus.WINDOW, "Designate"): self._command_window_designate,
+            (menus.WINDOW, "Flip"): self._command_window_flip,
+            (menus.WINDOW, "Goto"): self._command_window_goto,
+            (menus.WINDOW, "Next"): partial(self._command_window_step, 1),
+            (menus.WINDOW, "Open"): self._command_window_open,
+            (menus.WINDOW, "Previous"): partial(self._command_window_step, -1),
+            (menus.WINDOW_SPLIT, "Horizontal"): partial(
+                self._command_window_split, False
+            ),
+            (menus.WINDOW_SPLIT, "Vertical"): partial(self._command_window_split, True),
         }
         # The seven Calculus commands differ only in what they write and what
         # their last line asks, so they are one command told which off the word.
@@ -1140,8 +1187,18 @@ class RederiveApp(App[None]):
     def get_css_variables(self) -> dict[str, str]:
         return {**super().get_css_variables(), **self.palette.css_variables()}
 
+    @property
+    def session(self) -> Session:
+        """The active window's worksheet, which is the one commands act on."""
+        return self.windows.session
+
+    @property
+    def work_area(self) -> WorkArea:
+        """The active window's pane."""
+        return self.panes[self.windows.active]
+
     def compose(self) -> ComposeResult:
-        yield WorkArea(id="work")
+        yield Panes(Frame(id="frame"), id="panes")
         # Above the line it belongs to and below the work area it borrows its
         # rows from, so that the names and the name being typed read together.
         yield CompletionList(id="completions")
@@ -1182,11 +1239,53 @@ class RederiveApp(App[None]):
 
     # -- rendering ---------------------------------------------------------
 
+    def place_windows(self) -> None:
+        """Give every window a pane, put it where the window is, and paint it.
+
+        Panes are made as they are needed and set aside rather than destroyed
+        when a window closes, so that a widget once made can be handed to the
+        next window that wants one.
+
+        Every window paints its own selection, active or not: the original
+        shows the highlight in every pane at once, and what says which window
+        a command would act on is its number in the frame.
+
+        A computation under way is why the painting is conditional. A resize
+        reaches here at any moment, and while a command is running the thread
+        running it owns the worksheet - so the panes are moved to where the
+        windows now are and left showing what they showed.
+        """
+        panes = self.query_one(Panes)
+        height, width = panes.size.height, panes.size.width
+        areas = self.windows.areas(height, width)
+        framed = self.windows.framed
+        painting = self.mode != MODE_COMPUTE
+        for window in self.windows.windows:
+            pane = self.panes.get(window)
+            if pane is None:
+                pane = self.spare.pop() if self.spare else WorkArea(classes="work")
+                pane.reset()
+                self.panes[window] = pane
+                if pane.parent is None:
+                    panes.mount(pane)
+            pane.display = True
+            rect = windows.interior(areas[window], framed)
+            pane.styles.offset = (rect.left, rect.top)
+            pane.styles.width = rect.width
+            pane.styles.height = rect.height
+            if painting:
+                session = window.session
+                pane.show(session.entries, session.selected, session.selection_rect())
+        for window in [window for window in self.panes if window not in areas]:
+            spare = self.panes.pop(window)
+            spare.display = False
+            self.spare.append(spare)
+        self.query_one(Frame).refresh()
+        self.query_one(MenuRule).refresh()
+
     def refresh_screen(self) -> None:
         """Push the whole model state at the widgets."""
-        self.query_one(WorkArea).show(
-            self.session.entries, self.session.selected, self.session.selection_rect()
-        )
+        self.place_windows()
         editor = self.editor
         self.query_one("#menu").display = (
             editor is None and self.mode not in PROMPT_MODES
@@ -1194,7 +1293,11 @@ class RederiveApp(App[None]):
         self.query_one("#fields").display = editor is not None
         if editor is not None:
             self.query_one(FieldBand).show(editor)
-            self.message = editor.message
+            # Unless the dialog is standing there answered while its command
+            # asks whether it may throw expressions away: then the question is
+            # what the message line has to say, not the field.
+            if self.mode != MODE_CONFIRM:
+                self.message = editor.message
         elif self.mode == MODE_DEMO:
             # A demonstration takes the band for its own script, the comment
             # above the expression it has just run standing where the menu was.
@@ -1217,6 +1320,7 @@ class RederiveApp(App[None]):
             "" if entry is None else entry.annotation,
             "" if file is None else file.name,
             self._flags(),
+            f"{self.TITLE} {self.windows.kind}",
         )
 
     def _flags(self) -> str:
@@ -1390,6 +1494,11 @@ class RederiveApp(App[None]):
             return self.browsing
         if action.startswith("menu_") or action == "scroll_work":
             return self.mode == MODE_MENU
+        if action.startswith("window_"):
+            # At the command menu and nowhere else, not even under a Window
+            # submenu: switching windows out from under a half-answered
+            # question is not something the original offers.
+            return self.mode == MODE_MENU and len(self.stack) == 1
         if action == "nav":
             if self.mode == MODE_MENU:
                 return True
@@ -1755,7 +1864,7 @@ class RederiveApp(App[None]):
         far it goes is however many expressions are on screen.
         """
         if movement in PAGE_MOVES:
-            rows = max(1, self.query_one(WorkArea).size.height)
+            rows = max(1, self.work_area.size.height)
             return getattr(self.session, f"move_{movement}")(rows)
         return getattr(self.session, f"move_{movement}")()
 
@@ -1769,7 +1878,7 @@ class RederiveApp(App[None]):
 
     def action_scroll_work(self, direction: int) -> None:
         """Ctrl-Right and Ctrl-Left, over a selected render wider than the pane."""
-        self.query_one(WorkArea).scroll_across(direction)
+        self.work_area.scroll_across(direction)
         self.refresh_screen()
 
     def _move_highlight(self, step: int) -> None:
@@ -1834,6 +1943,7 @@ class RederiveApp(App[None]):
         """
         self.answer = answer
         self.refuses = refuses
+        self.asked = dialog
         self._open(dialog)
 
     def _answered(self, values: dict[str, str | int]) -> None:
@@ -3357,6 +3467,161 @@ class RederiveApp(App[None]):
             return ""
         return demo.steps[demo.at - 1][0]
 
+    # -- Window ------------------------------------------------------------
+    #
+    # Eight commands over a tree of windows, of which the app owns only the
+    # screen half: which pane a window is drawn in, and how big. The tree
+    # itself, the numbering and the geometry are `model.windows`.
+    #
+    # Two of them can throw a worksheet away - Close, and Designate, which
+    # makes a window over rather than converting it - so both ask before they
+    # do, with the answered field still on the band.
+    #
+    # A window of a plot type is offered because the original offers it on the
+    # same field, and refused because this program draws no plots. Everything
+    # else works for every window: splitting copies the worksheet, and the two
+    # copies are two derivations from there on.
+
+    def _command_window_split(self, vertical: bool) -> None:
+        """Ask where to cut the active window in two."""
+        size = self._active_size(vertical)
+        low, high = windows.split_range(vertical, size)
+        if high < low:
+            # Nowhere left to put a divider. The original refuses in silence.
+            self._beep()
+            return
+        self._ask(
+            menus.window_split(vertical, windows.split_default(size), low, high),
+            partial(self._split_window, vertical),
+        )
+
+    def _split_window(self, vertical: bool, values: dict[str, str | int]) -> None:
+        self.windows.split(vertical, int(values["SplitAt"]), self.session.copy())
+        self._done_with_menu()
+
+    def _command_window_close(self) -> None:
+        """Ask which window to close, offering the active one."""
+        count = len(self.windows.windows)
+        if count == 1 and not self.windows.active.stacked:
+            # There has to be a window. The original refuses outright: no
+            # prompt, no message, the Window menu still up.
+            self._beep()
+            return
+        self._ask(
+            menus.window_number(menus.WINDOW_CLOSE, self.windows.number, count),
+            self._close_window,
+        )
+
+    def _close_window(self, values: dict[str, str | int]) -> None:
+        window = self.windows.numbered(int(values["WindowNumber"]))
+        assert window is not None
+        closing = partial(self._drop_window, window)
+        if window.session.entries:
+            self._confirm_over(values, closing)
+            return
+        closing()
+
+    def _drop_window(self, window: Window) -> None:
+        for dropped in self.windows.close(window):
+            dropped.discard()
+        self._done_with_menu()
+
+    def _command_window_goto(self) -> None:
+        """Ask which window to make active, offering the next one."""
+        count = len(self.windows.windows)
+        self._ask(
+            menus.window_number(
+                menus.WINDOW_GOTO, self.windows.number % count + 1, count
+            ),
+            self._goto_window,
+        )
+
+    def _goto_window(self, values: dict[str, str | int]) -> None:
+        self.windows.goto(int(values["WindowNumber"]))
+        self._done_with_menu()
+
+    def _command_window_step(self, direction: int) -> None:
+        """Next and Previous, which ask nothing and run on the keystroke."""
+        self.windows.step(direction)
+        self._done_with_menu()
+
+    def _command_window_flip(self, direction: int = 1) -> None:
+        """Flip, which brings the next overlay of the active window up."""
+        self.windows.active.flip(direction)
+        self._done_with_menu()
+
+    def _command_window_designate(self) -> None:
+        """Ask what type to make the active window, opening on what it is."""
+        self._ask(
+            menus.window_type(menus.WINDOW_DESIGNATE, self.windows.kind),
+            self._designate_window,
+        )
+
+    def _designate_window(self, values: dict[str, str | int]) -> None:
+        kind = str(values["WindowType"])
+        if kind != windows.ALGEBRA:
+            self._unplotted(kind)
+            return
+        if self.session.entries:
+            self._confirm_over(values, partial(self._redesignate, kind))
+            return
+        self._redesignate(kind)
+
+    def _redesignate(self, kind: str) -> None:
+        """Make the active window over as a fresh window of `kind`.
+
+        Which empties it: a type is not something a window is converted to,
+        it is what a new window in the same rectangle would be.
+        """
+        for dropped in self.windows.designate(kind, self._new_session()):
+            dropped.discard()
+        self._done_with_menu()
+
+    def _command_window_open(self) -> None:
+        """Ask what type to overlay on the active window, offering Algebra."""
+        self._ask(
+            menus.window_type(menus.WINDOW_OPEN, windows.ALGEBRA), self._open_window
+        )
+
+    def _open_window(self, values: dict[str, str | int]) -> None:
+        kind = str(values["WindowType"])
+        if kind != windows.ALGEBRA:
+            self._unplotted(kind)
+            return
+        self.windows.open(kind, self._new_session())
+        self._done_with_menu()
+
+    def _unplotted(self, kind: str) -> None:
+        """Refuse a plot window, which is a window with nothing to put in it."""
+        self.message = f"{kind}: not implemented yet"
+        self.refresh_screen()
+
+    def _new_session(self) -> Session:
+        """An empty worksheet for a window that has just been made.
+
+        It shares the settings, which belong to the system and not to a window,
+        and the engine, which is the one child process every window computes in.
+        """
+        return Session(self.settings, self.session.runner)
+
+    def _active_size(self, vertical: bool) -> int:
+        """How wide or tall the active window's interior is on screen now."""
+        panes = self.query_one(Panes)
+        rect = self.windows.interior(
+            self.windows.active, panes.size.height, panes.size.width
+        )
+        return rect.width if vertical else rect.height
+
+    def action_window_step(self, direction: int) -> None:
+        """F1 and Shift-F1: the next and the previous window, without the menu."""
+        self.windows.step(direction)
+        self.refresh_screen()
+
+    def action_window_flip(self, direction: int) -> None:
+        """F2 and Shift-F2: the next and the previous overlay of this window."""
+        self.windows.active.flip(direction)
+        self.refresh_screen()
+
     # -- confirmations -----------------------------------------------------
 
     def _ask_confirm(self, confirmed: Callable[[], None]) -> None:
@@ -3366,10 +3631,33 @@ class RederiveApp(App[None]):
         self.message = ABANDON_PROMPT
         self.refresh_screen()
 
+    def _confirm_over(
+        self, values: dict[str, str | int], confirmed: Callable[[], None]
+    ) -> None:
+        """Ask the question with the dialog that was just answered still up.
+
+        Which is where the original leaves it: the window number or the type
+        entered stands on the band, in the parentheses that say it is settled
+        rather than being typed, while the message line asks whether the
+        expressions may go.
+        """
+        assert self.asked is not None
+        editor = DialogEditor(self.asked, self.settings)
+        editor.values.update(values)
+        # No field is live, so every one of them prints the way a field that is
+        # not the active one does.
+        editor.active = -1
+        self.stack.append(editor)
+        self.confirmed_over = True
+        self._ask_confirm(confirmed)
+
     def _answer_confirm(self, yes: bool) -> None:
         """Y runs the command; anything else leaves the menu it was picked from."""
         confirmed, self.confirm = self.confirm, None
         self.mode = MODE_MENU
+        if self.confirmed_over:
+            self.confirmed_over = False
+            self.stack.pop()
         if yes and confirmed is not None:
             confirmed()
             return
@@ -3382,7 +3670,8 @@ class RederiveApp(App[None]):
         self._return_to_menu(ENTER_OPTION)
 
     def _command_quit(self) -> None:
-        if not self.session.entries:
+        """Leave, asking once for all the windows rather than once for each."""
+        if not any(session.entries for session in self.windows.sessions()):
             self.exit()
             return
         self._ask_confirm(self.exit)

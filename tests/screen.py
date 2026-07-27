@@ -36,21 +36,38 @@ def highlighted(app):
     return options[0] if options else None
 
 
-def highlighted_rows(app):
+def content(app, number=None):
+    """The Static holding a window's expressions; the active window's by default."""
+    pane = app.work_area if number is None else app.panes[app.windows.numbered(number)]
+    return pane.query_one(".work-content", Static)
+
+
+def highlighted_rows(app, number=None):
     """The rows of the selection rectangle, trailing blanks stripped."""
     style = app.palette.styles["selection"]
-    return [row.rstrip() for row in styled(app.query_one("#work-content", Static), style)]
+    return [row.rstrip() for row in styled(content(app, number), style)]
 
 
-def highlighted_expression(app):
+def highlighted_expression(app, number=None):
     """The selected subexpression as it is drawn, one line per row."""
-    return "\n".join(highlighted_rows(app))
+    return "\n".join(highlighted_rows(app, number))
 
 
-def work_area(app):
-    """The work area as lines of text, stripped of trailing blanks."""
-    text = text_of(app.query_one("#work-content", Static))
+def work_area(app, number=None):
+    """A window's expressions as lines of text, stripped of trailing blanks."""
+    text = text_of(content(app, number))
     return [line.rstrip() for line in text.plain.splitlines()]
+
+
+def frame(app):
+    """The window borders as lines of text, the rule below them included."""
+    lines = text_of(app.query_one("#frame")).plain.splitlines()
+    return lines + [text_of(app.query_one("#rule")).plain]
+
+
+def window_type(app):
+    """The status line's right field: the product name and the window's type."""
+    return text_of(app.query_one("#status")).plain.rstrip().split("  ")[-1].strip()
 
 
 def message(app):

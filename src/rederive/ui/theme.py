@@ -43,12 +43,12 @@ NUMBER: dict[str, int] = {color: number for number, color in enumerate(COLORS)}
 SLOTS: dict[str, str] = {
     "work-foreground": "WorkColor",  # expressions in the work area
     "work-background": "WorkBackgroundColor",
-    "frame": "FrameColor",  # the rule above the command bands
+    "frame": "FrameColor",  # the window borders, and the rule that is one
     "option": "OptionColor",  # the COMMAND: label and the menu words
     "prompt": "PromptColor",  # the message line
     "status": "StatusColor",  # the whole status line
     "menu-background": "MenuBackgroundColor",
-    "border": "BorderColor",  # pane borders, unused until there are panes
+    "border": "BorderColor",  # the background behind those borders, unused
 }
 
 #: The settings a repaint has to watch for.

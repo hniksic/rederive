@@ -589,6 +589,11 @@ class Settings:
         """Call `callback` with the names of the settings that just changed."""
         self._watchers.append(callback)
 
+    def unwatch(self, callback: Callable[[frozenset[str]], None]) -> None:
+        """Stop calling `callback`, which a closed window's session wants."""
+        if callback in self._watchers:
+            self._watchers.remove(callback)
+
     def apply(self, values: Mapping[str, str | int]) -> tuple[str, ...]:
         """Store `values`, and return the names of those that actually changed.
 
