@@ -189,6 +189,106 @@ class MessageLine(Band):
         self.update(Text(f" {message}", style=self.colors["prompt"]))
 
 
+class CompletionList(Band):
+    """The names a half-typed filename could mean, as a list to look through.
+
+    It opens above the line being typed, one name per row, the name the line is
+    currently showing highlighted in inverse video. A directory keeps the
+    separator that says it is one, so that the list reads as a place to go into
+    rather than a file to open.
+
+    The list is a window onto the names rather than all of them: `MAX_ROWS`
+    rows at a time, scrolled to keep the highlighted one inside, with the count
+    in the border title saying how much is out of sight. That is what makes it
+    a thing to look around a directory tree with, which a line of text cut
+    short at the pane's edge never was.
+    """
+
+    #: The most rows the list takes from the work area above it. Ten is enough
+    #: for a directory to be taken in at a glance and still leaves the newest
+    #: expressions on screen at the sizes a terminal usually comes in.
+    MAX_ROWS = 10
+
+    #: What the screen owes to everything that is not a name in this list: its
+    #: own two border rows, then the rule, the two the prompt band takes, the
+    #: message line, the status line, and one row of work area. The line being
+    #: typed is the one thing a list of names for it can never be worth
+    #: covering, so on a short terminal the list gives up rows rather than the
+    #: screen giving up the line.
+    ROWS_ELSEWHERE = 8
+
+    def __init__(self, *arguments: object, **named: object) -> None:
+        super().__init__(*arguments, **named)
+        #: What the list is currently showing, kept so that a resize can draw
+        #: it again: both the highlight bar and the title are cut to the width,
+        #: and the width is not known until the widget has been laid out.
+        self._showing: tuple[list[str], int | None, str] = ([], None, "")
+
+    def visible_rows(self, count: int) -> int:
+        """How many of `count` names show at once: as many as there is room for."""
+        room = self.app.size.height - self.ROWS_ELSEWHERE
+        return max(1, min(count, self.MAX_ROWS, room))
+
+    def rows_for(self, count: int) -> int:
+        """How tall the list stands to show `count` names, borders included."""
+        return self.visible_rows(count) + 2
+
+    def on_resize(self) -> None:
+        """Draw again for the new width, and for the new number of rows.
+
+        A terminal that has just become short is why the height is set here as
+        well as when the list is filled: the rows the list may take have
+        changed, and the list is the one that has to give them up.
+        """
+        names, at, where = self._showing
+        if names:
+            self.styles.height = self.rows_for(len(names))
+        self.show(names, at, where)
+
+    def show(self, names: list[str], at: int | None, where: str) -> None:
+        """Draw the names, `at` highlighted, under a title naming `where`."""
+        self._showing = (names, at, where)
+        if not names:
+            return
+        rows = self.visible_rows(len(names))
+        first = self._first_shown(len(names), at, rows)
+        shown = names[first : first + rows]
+        text = Text(style=self.colors["work"])
+        for row, name in enumerate(shown):
+            highlight = at is not None and first + row == at
+            style = self.colors["selection"] if highlight else self.colors["work"]
+            # Every row is padded to the full width so that the highlight reads
+            # as a bar across the list rather than a box around a word.
+            width = max(self.size.width - 2, len(name) + 1)
+            text.append(f" {name}".ljust(width) + "\n", style=style)
+        self.border_title = self._title(where, len(names), first, len(shown))
+        self.update(text)
+
+    def _first_shown(self, count: int, at: int | None, rows: int) -> int:
+        """The name the window starts at, chosen to keep `at` inside it."""
+        if at is None or count <= rows:
+            return 0
+        # Centre the highlighted name where there is room on both sides, so
+        # that what is coming up is as visible as what has gone by.
+        return max(0, min(at - rows // 2, count - rows))
+
+    def _title(self, where: str, count: int, first: int, shown: int) -> str:
+        """What the border says: the directory, and how much of it is showing.
+
+        The count is kept whole and the directory is cut to fit around it,
+        from the left: the end of a path says where it is, and the start of one
+        is usually the part that was the same for everything on offer anyway.
+        """
+        seen = f"{first + 1}-{first + shown}"
+        tally = f"{count}" if shown >= count else f"{seen} of {count}"
+        # The title sits in the top border, between the corners, and carries
+        # the dashes, the spaces and the dividing hyphen around the two parts.
+        room = self.size.width - len(tally) - 10
+        if room > 0 and len(where) > room:
+            where = "..." + where[-(room - 3) :]
+        return f" {where} - {tally} "
+
+
 class MenuBand(Band):
     """A menu of words, one of them highlighted in inverse video."""
 

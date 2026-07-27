@@ -42,6 +42,20 @@ Screen {
     color: $rd-option;
 }
 
+/* The list of names a file prompt opens. It sits between the work area and
+   the line being typed, and takes its rows from the work area rather than
+   floating over it: the expressions it covers are the oldest on screen, and
+   nothing has to be drawn in two layers. The height is set as the list is
+   filled, which is why none is given here. */
+#completions {
+    border: round $rd-frame;
+    border-title-color: $rd-option;
+    background: $rd-work-background;
+    color: $rd-work-foreground;
+    padding: 0;
+    overflow: hidden;
+}
+
 #prompt-band {
     height: 2;
 }

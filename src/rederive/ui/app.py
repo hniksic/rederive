@@ -34,12 +34,20 @@ on every line an expression is entered from. It is one key in two spellings:
 Ctrl-J is what a terminal sends for it unless it speaks the keyboard protocol
 that tells the two apart.
 
-A line that names a file completes what is typed on it. The first name the
-letters so far could grow into stands past the cursor, dimmed, and Right takes
-it; Tab writes out as much of the names as they all share, puts the names
-themselves on the message line - the original's F1 file list, in the room there
-is for it - and steps through them one at a time from there. Tab has nothing
-else to do on such a line, the menu it steps being off the screen.
+A line that names a file completes what is typed on it, and opens a list of the
+names on offer to look through. The first name the letters so far could grow
+into stands past the cursor, dimmed, and Right takes it - that is the fast path,
+for a name half known. Tab is the other one: it writes out as much of the names
+as they all share and opens the list above the line, where Up and Down walk the
+names with the one in hand highlighted, Enter goes into a directory or takes a
+file, Esc puts the list away, and typing narrows it. Tab has nothing else to do
+on such a line, the menu it steps being off the screen.
+
+The list is what makes a file worth looking for rather than only worth typing:
+every key that moves the highlight moves the line with it, so there is never a
+hidden position to keep track of, and every one of them has a key that undoes
+it. That is the whole difference from the original's F1 file listing, which
+could only be read and never walked.
 
 Two commands take the band for something other than a menu. A question with a
 Y or N for an answer - Quit, and the two Clear commands that throw expressions
@@ -111,6 +119,7 @@ from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
 from rederive.ui.theme import COLOR_SETTINGS, Palette
 from rederive.ui.widgets import (
+    CompletionList,
     FieldBand,
     MenuBand,
     MenuRule,
@@ -280,9 +289,10 @@ SAVE_PROMPT = " TRANSFER SAVE DERIVE file: "
 SAVE_SOURCE_PROMPT = " TRANSFER SAVE {word} file: "
 SAVE_STATE_PROMPT = " TRANSFER SAVE STATE file: "
 DEMO_PROMPT = " TRANSFER DEMO file: "
-ENTER_FILE = "Enter filename (press TAB to complete)"
-#: What ends a list of names too long for the message line.
-ELLIPSIS = "..."
+ENTER_FILE = "Enter filename (TAB completes, opens the list)"
+#: What the message line says while that list is open, being the keys that are
+#: worth knowing there and are not the ones the line itself already answers.
+BROWSING_FILES = "↑↓ choose   ENTER open   ESC close"
 FILE_NOT_FOUND = "File not found"
 CANNOT_READ = "Cannot read file"
 CANNOT_WRITE = "Cannot write file"
@@ -302,10 +312,14 @@ class FileNames(Suggester):
     """What a file prompt offers as it is typed: the first name on offer.
 
     Textual prints the rest of that name past the cursor, dimmed, and takes it
-    on Right or End; Tab writes out what every name on offer shares instead,
-    and steps through them from there. Nothing is cached: files come and go
-    while the program runs, and a name that is offered but no longer there is
-    worse than no offer at all.
+    on Right or End. That is the shortest way to a name already half known, and
+    it stands alongside the list Tab opens rather than instead of it: the offer
+    costs no keys and no screen, and the list is for when one name is not
+    enough to go on. Only what would grow the line is offered, so the dimmed
+    text is never empty and never repeats what has been typed.
+
+    Nothing is cached: files come and go while the program runs, and a name
+    that is offered but no longer there is worse than no offer at all.
     """
 
     def __init__(self, suffix: str) -> None:
@@ -502,14 +516,28 @@ class RederiveApp(App[None]):
         # Tab completes the name where a file is being named, and steps the
         # menu everywhere else; `check_action` picks between the two, which
         # leaves the second binding to take the key when the first declines it.
+        # Shift-Tab and the arrows pair off the same way: on a file prompt with
+        # the list open they walk it, and everywhere else they do what they
+        # always did.
         Binding("tab", "complete_file", "Complete filename", priority=True, show=False),
         Binding("tab", "menu_next", "Next option", priority=True, show=False),
         Binding("space", "menu_space", "Next option", priority=True, show=False),
         Binding(
+            "shift+tab", "browse_previous", "Previous name", priority=True, show=False
+        ),
+        Binding(
             "shift+tab", "menu_previous", "Previous option", priority=True, show=False
         ),
+        Binding("down", "browse_next", "Next name", priority=True, show=False),
+        Binding("up", "browse_previous", "Previous name", priority=True, show=False),
+        Binding("pagedown", "browse_page(1)", "Next page", priority=True, show=False),
+        Binding("pageup", "browse_page(-1)", "Previous page", priority=True, show=False),
         Binding("backspace", "menu_erase", "Previous option", priority=True, show=False),
         Binding("delete", "menu_delete", "Delete", priority=True, show=False),
+        # Enter on an open list takes the name it points at rather than the
+        # command: the file is not read until the list is out of the way, so
+        # looking around can never load something by accident.
+        Binding("enter", "browse_take", "Take name", priority=True, show=False),
         Binding("enter", "menu_invoke", "Invoke option", priority=True, show=False),
         # Ctrl-Enter reaches a terminal as Ctrl-J, unless it speaks the keyboard
         # protocol that tells the two apart; both spell the same command.
@@ -569,9 +597,11 @@ class RederiveApp(App[None]):
         self.file_command: Callable[[str], None] | None = None
         #: The extension that command supplies, and so what Tab completes to.
         self.file_suffix = worksheet.SUFFIX
-        #: The names Tab last offered, and which of them is on the line - None
-        #: while the line holds what they all share rather than any one of
-        #: them. Together they are what makes one Tab step to the next name.
+        #: The names the open list is showing, and which of them has been taken
+        #: onto the line - None while the list is open but the line is still
+        #: the user's own typing. The list is closed when `completions` is
+        #: empty. Keeping the two together is what stops the line and the list
+        #: from ever disagreeing about which name is being talked about.
         self.completions: list[str] = []
         self.completed: int | None = None
         #: What to do with the values of the dialog that stores none.
@@ -660,6 +690,9 @@ class RederiveApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield WorkArea(id="work")
+        # Above the line it belongs to and below the work area it borrows its
+        # rows from, so that the names and the name being typed read together.
+        yield CompletionList(id="completions")
         yield MenuRule(id="rule")
         yield MenuBand(id="menu")
         yield FieldBand(id="fields")
@@ -676,6 +709,7 @@ class RederiveApp(App[None]):
     def on_mount(self) -> None:
         self.query_one("#prompt-band").display = False
         self.query_one("#fields").display = False
+        self.query_one("#completions").display = False
         self.refresh_screen()
 
     # -- what is on top ----------------------------------------------------
@@ -761,9 +795,17 @@ class RederiveApp(App[None]):
 
         Tab is a third: it completes the name on a file prompt, and steps the
         menu everywhere else.
+
+        The keys that walk the list of names are the fourth, and they only
+        apply while that list is open. Closed, Up and Down go on walking the
+        history from a file prompt as they do from any other, so opening the
+        list is what decides which of the two they mean - and the list is on
+        screen saying so.
         """
         if action == "complete_file":
             return self.mode == MODE_FILE
+        if action.startswith("browse_"):
+            return self.browsing
         if action.startswith("menu_") or action == "scroll_work":
             return self.mode == MODE_MENU
         if action == "nav":
@@ -801,7 +843,15 @@ class RederiveApp(App[None]):
         elif self.mode in PROMPT_MODES and event.key == "escape":
             event.stop()
             event.prevent_default()
-            self._end_prompt(done=False)
+            # An open list of names is what Esc puts away first, the name it
+            # left on the line and all. Only once the line is on its own does
+            # the next Esc abandon the command, so backing out of looking
+            # around is not the same key press as backing out of the command.
+            if self.browsing:
+                self._close_list()
+                self._set_message(ENTER_FILE)
+            else:
+                self._end_prompt(done=False)
 
     def _typing_text(self, character: str) -> bool:
         """Whether `character` is one the active field takes as text."""
@@ -1195,6 +1245,7 @@ class RederiveApp(App[None]):
         line = self.query_one("#prompt-input", Input)
         # A file prompt puts its own back; nothing else on a line completes.
         line.suggester = None
+        self._close_list()
         line.value = offered
         line.selection = Selection(min(keep, len(offered)), len(offered))
         line.focus()
@@ -1921,74 +1972,160 @@ class RederiveApp(App[None]):
         """
         self.file_command = command
         self.file_suffix = suffix
-        self.completions, self.completed = [], None
+        self._close_list()
         if offered is None:
             offered = "" if self.session.file is None else str(self.session.file)
         self._prompt(MODE_FILE, label, offered, ENTER_FILE)
         self.query_one("#prompt-input", Input).suggester = FileNames(suffix)
 
+    # -- naming a file: completing it, and looking around for it -------------
+
+    @property
+    def browsing(self) -> bool:
+        """Whether the list of names is open over the line being typed."""
+        return bool(self.completions)
+
     def action_complete_file(self) -> None:
-        """Tab on a file prompt: write the name out as far as the files agree.
+        """Tab on a file prompt: fill the name in as far as it goes, then look.
 
-        What every name on offer starts with goes on the line, and the names
-        themselves go on the message line, which is what the original's F1 file
-        list was for. Where the letters run out - because the names differ from
-        there on - Tab takes them one at a time instead, so that the whole list
-        can be walked through and any of it entered.
+        Tab does one thing at a time and leaves the screen saying which. It
+        writes out as much of the matching names as they all share and opens
+        the list of them; where one name matches and nothing else does, it
+        takes that name outright and there is nothing to open. With the list
+        already up and nothing left to share, it steps to the next name in it.
 
-        A directory is written with its separator after it, which leaves the
-        next Tab completing inside it. Nothing on offer is the beep, as a key
-        with no command is.
+        So Tab only ever moves forward, and what it will do next is on the
+        screen rather than in a mode nobody can see. Nothing on offer is the
+        beep, as a key with no command is.
         """
         line = self.query_one("#prompt-input", Input)
-        if self._stepping(line.value):
-            assert self.completed is not None
-            self.completed = (self.completed + 1) % len(self.completions)
-            self._complete(line, self.completions[self.completed])
+        if self.browsing:
+            # Typing can narrow an open list to names that share more than the
+            # line does; writing that out comes before stepping through them.
+            shared = commonprefix(self.completions)
+            if self.completed is None and len(shared) > len(line.value):
+                self._put(line, shared)
+            else:
+                self.action_browse_next()
             return
-        found = worksheet.completions(line.value, self.file_suffix)
-        if not found:
+        found = worksheet.matches(line.value, self.file_suffix)
+        if not found or found == [line.value]:
             self._beep()
             return
-        # What the names share goes on the line first; only once there is
-        # nothing left to share does Tab start taking them one at a time.
+        if len(found) == 1:
+            # One name and one only: take it, and if it is a directory, look
+            # straight inside it rather than asking for another Tab first.
+            self._take(line, found[0])
+            return
         shared = commonprefix(found)
-        grown = len(shared) > len(line.value)
-        self.completions = found
-        self.completed = None if grown else 0
-        self._complete(line, shared if grown else found[0])
-        if len(found) > 1:
-            self._set_message(self._listed(found))
+        if len(shared) > len(line.value):
+            self._put(line, shared)
+        self._open_list(found, self._at_in(found, line.value))
 
-    def _stepping(self, value: str) -> bool:
-        """Whether Tab is stepping the list rather than starting a new one.
+    def action_browse_next(self) -> None:
+        """Down, or Tab with the list up: the next name, wrapping round."""
+        self._highlight(0 if self.completed is None else self.completed + 1)
 
-        Only while the line still holds the name Tab last put there, and only
-        where there is another name to step to: typing on the line, or taking a
-        directory it offered, asks the files again.
+    def action_browse_previous(self) -> None:
+        """Up or Shift-Tab: the previous name, wrapping round.
+
+        The key the old completion never had. Overshooting the name wanted no
+        longer means going the whole way round the list to reach it again.
         """
-        return (
-            self.completed is not None
-            and len(self.completions) > 1
-            and value == self.completions[self.completed]
+        self._highlight(-1 if self.completed is None else self.completed - 1)
+
+    def action_browse_take(self) -> None:
+        """Enter on an open list: take the name it points at.
+
+        A directory is gone into and the list stays up on what is inside it,
+        which is how the tree is walked down. A file closes the list and stands
+        on the line, where the next Enter is the one that reads it - so no file
+        is ever opened by the same keystroke that chose it.
+        """
+        at = 0 if self.completed is None else self.completed
+        self._take(self.query_one("#prompt-input", Input), self.completions[at])
+
+    def action_browse_page(self, by: int) -> None:
+        """Page Up and Page Down: a screenful of names at a time.
+
+        They stop at the ends rather than wrapping, so that a long directory
+        can be paged through without falling off either end of it.
+        """
+        at = 0 if self.completed is None else self.completed
+        rows = self.query_one(CompletionList).visible_rows(len(self.completions))
+        self._highlight(at + by * rows, wrap=False)
+
+    def _highlight(self, at: int, wrap: bool = True) -> None:
+        """Point the list at one of its names, and put that name on the line.
+
+        Every name in the list starts with what was typed - that is what put it
+        there - so writing one onto the line only ever carries the line
+        further, and never takes back a letter the user chose.
+        """
+        count = len(self.completions)
+        self.completed = at % count if wrap else max(0, min(at, count - 1))
+        self._put(
+            self.query_one("#prompt-input", Input), self.completions[self.completed]
+        )
+        self._draw_list()
+
+    def _take(self, line: Input, name: str) -> None:
+        """Accept `name` onto the line, going on inside it if it is a directory.
+
+        Taking a directory reopens the list on what is in it, which is what
+        walking down a tree is: one key per level, each level on the screen.
+        """
+        self._put(line, name)
+        self._close_list()
+        self._set_message(ENTER_FILE)
+        if not name.endswith("/"):
+            return
+        found = worksheet.matches(name, self.file_suffix)
+        if found:
+            self._open_list(found, None)
+        else:
+            # A directory holding nothing this command can read is a dead end,
+            # and the beep is what says so: the list would otherwise just go.
+            self._beep()
+
+    def _at_in(self, found: list[str], value: str) -> int | None:
+        """Which name a freshly opened list points at, if it points at one.
+
+        A line typed out into one of the names exactly points at that name, so
+        that the list says where the line already is. Anything shorter points
+        at nothing: the list is open to be looked at, and the line stays the
+        user's until a key takes a name from it.
+        """
+        return found.index(value) if value in found else None
+
+    def _open_list(self, found: list[str], at: int | None) -> None:
+        self.completions, self.completed = found, at
+        self._draw_list()
+        self._set_message(BROWSING_FILES)
+
+    def _draw_list(self) -> None:
+        listing = self.query_one(CompletionList)
+        listing.display = True
+        listing.styles.height = listing.rows_for(len(self.completions))
+        listing.show(
+            [_last_name(name) for name in self.completions],
+            self.completed,
+            # Every name in the list is in the same directory, so any of them
+            # says which one the list is showing.
+            _directory_of(self.completions[0]),
         )
 
-    def _complete(self, line: Input, name: str) -> None:
+    def _close_list(self) -> None:
+        """Put the list away, whatever became of the name it was offering."""
+        self.completions, self.completed = [], None
+        listing = self.query(CompletionList)
+        if listing:
+            listing.first().display = False
+
+    def _put(self, line: Input, name: str) -> None:
+        """Write a name onto the line, the cursor after it, ready to go on."""
         line.value = name
         line.cursor_position = len(name)
-
-    def _listed(self, found: list[str]) -> str:
-        """The names on offer as the message line shows them.
-
-        Each without the directory in front of it, which is on the line
-        already, and the line cut short where the pane runs out. A directory
-        keeps the separator that says it is one.
-        """
-        names = " ".join(_last_name(name) for name in found)
-        room = max(len(ELLIPSIS), self.query_one(MessageLine).size.width - 1)
-        if len(names) <= room:
-            return names
-        return names[: room - len(ELLIPSIS)].rstrip() + ELLIPSIS
 
     def _save(self, name: str) -> None:
         self._written(lambda: self.session.save(worksheet.path_of(name), *self.block))
@@ -2187,6 +2324,28 @@ class RederiveApp(App[None]):
             return
         self._ask_confirm(self.exit)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Typing on a file prompt with the list open: narrow it to what fits.
+
+        The list follows the line rather than going stale on it, so a letter
+        cuts it down and a Backspace opens it back out. Backspacing over a
+        separator is what walks back up the tree, the list showing the parent
+        directory again as soon as the separator is gone.
+
+        The names this widget writes come back through here too; they are the
+        ones the list is already pointing at, and nothing needs doing for them.
+        """
+        if not self.browsing:
+            return
+        if self.completed is not None and event.value == self.completions[self.completed]:
+            return
+        found = worksheet.matches(event.value, self.file_suffix)
+        if found:
+            self._open_list(found, self._at_in(found, event.value))
+        else:
+            self._close_list()
+            self._set_message(ENTER_FILE)
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter on a prompt line: the whole line, wherever the cursor is."""
         event.stop()
@@ -2286,6 +2445,7 @@ class RederiveApp(App[None]):
 
     def _hide_prompt(self) -> None:
         """Give the screen back to the menu band, whatever comes next."""
+        self._close_list()
         self.query_one("#prompt-input", Input).value = ""
         self.query_one("#prompt-band").display = False
         self.query_one("#menu").display = True
@@ -2350,6 +2510,17 @@ def _last_name(name: str) -> str:
     """A completion's last component, the directory separator kept if it has one."""
     trimmed = name.rstrip("/")
     return trimmed.rpartition("/")[2] + name[len(trimmed) :]
+
+
+def _directory_of(name: str) -> str:
+    """The directory a completion is in, as the list's title names it.
+
+    What the names in the list have in common, which is the part of the path
+    the list does not repeat down its rows. A name with no directory in front
+    of it is in the one the program was started in.
+    """
+    head = name.rstrip("/").rpartition("/")[0]
+    return f"{head}/" if head else "./"
 
 
 def _color_index(editor: DialogEditor) -> int:

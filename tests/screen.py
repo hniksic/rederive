@@ -68,5 +68,24 @@ def prompt(app):
     return label.strip(), app.query_one("#prompt-input").value
 
 
+def completions(app):
+    """The names the file prompt's list is showing, or None if it is closed."""
+    listing = app.query_one("#completions")
+    if not listing.display:
+        return None
+    return [row.strip() for row in text_of(listing).plain.splitlines()]
+
+
+def chosen(app):
+    """The name that list is pointing at, or None while it points at none."""
+    rows = styled(app.query_one("#completions"), app.palette.styles["selection"])
+    return rows[0].strip() if rows else None
+
+
+def listing_title(app):
+    """What the border of that list says: the directory, and how much shows."""
+    return app.query_one("#completions").border_title.strip()
+
+
 def entries(app):
     return [entry.text for entry in app.session.entries]

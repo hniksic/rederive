@@ -169,19 +169,20 @@ def path_of(name: str, suffix: str = SUFFIX) -> Path:
     return path if path.suffix else path.with_suffix(suffix)
 
 
-def completions(name: str, suffix: str = SUFFIX) -> list[str]:
-    """Every name `name` could grow into, in order, each one longer than it is.
+def matches(name: str, suffix: str = SUFFIX) -> list[str]:
+    """Every name `name` could mean, in order, itself included.
 
-    What a file prompt completes a half-typed name from. Only what the command
-    can use is on offer - files whose extension is `suffix`, matched however it
-    is cased, since the original's own files are named in capitals - along with
-    every directory, offered with the separator after it so that completing
-    again carries on inside it. A name beginning with a dot is offered only to
+    What a file prompt browses and completes from. Only what the command can
+    use is on offer - files whose extension is `suffix`, matched however it is
+    cased, since the original's own files are named in capitals - along with
+    every directory, offered with the separator after it so that going on from
+    there carries on inside it. A name beginning with a dot is offered only to
     letters that begin with one, as a shell does.
 
     What was typed is kept as it stands, `~` and all: only the last component
-    grows, so any of the answers can go straight back on the line. A name
-    already typed out in full is no completion of itself and is not among them.
+    grows, so any of the answers can go straight back on the line. A name that
+    is already one of them is among them, which is what lets the list stay up
+    and stay honest once a name has been taken from it.
     """
     head, separator, typed = name.rpartition("/")
     directory = Path(head + separator).expanduser() if separator else Path()
@@ -196,11 +197,17 @@ def completions(name: str, suffix: str = SUFFIX) -> list[str]:
         if entry.startswith(".") and not typed.startswith("."):
             continue
         if (directory / entry).is_dir():
-            grown = f"{head}{separator}{entry}/"
+            offered.append(f"{head}{separator}{entry}/")
         elif entry.lower().endswith(suffix.lower()):
-            grown = f"{head}{separator}{entry}"
-        else:
-            continue
-        if len(grown) > len(name):
-            offered.append(grown)
+            offered.append(f"{head}{separator}{entry}")
     return offered
+
+
+def completions(name: str, suffix: str = SUFFIX) -> list[str]:
+    """The matches that would grow `name`, which is what completing it can use.
+
+    `matches` less the name itself: a name typed out in full is no completion
+    of itself, and offering it as one would let a keystroke look like it had
+    done nothing.
+    """
+    return [grown for grown in matches(name, suffix) if len(grown) > len(name)]

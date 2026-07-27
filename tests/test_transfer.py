@@ -11,9 +11,12 @@ import pytest
 from screen import (
     annotation,
     band,
+    chosen,
+    completions,
     entries,
     highlighted,
     highlighted_expression,
+    listing_title,
     message,
     prompt,
     text_of,
@@ -176,6 +179,33 @@ def test_what_was_typed_is_kept_as_it_was_typed(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / "work.mth").touch()
     assert worksheet.completions("~/wo") == ["~/work.mth"]
+
+
+def test_a_name_typed_out_in_full_is_still_one_of_the_matches(tmp_path):
+    """What the list shows and what completing can use are two questions.
+
+    A name already typed out completes to nothing - there is nothing to add -
+    but it is still a name the line could mean, and the list has to keep
+    showing it, or taking a name from the list would empty the list.
+    """
+    for name in ("work.mth", "workbook.mth"):
+        (tmp_path / name).touch()
+    assert worksheet.matches(f"{tmp_path}/work.mth") == [f"{tmp_path}/work.mth"]
+    assert worksheet.completions(f"{tmp_path}/work.mth") == []
+    assert worksheet.matches(f"{tmp_path}/work") == [
+        f"{tmp_path}/work.mth",
+        f"{tmp_path}/workbook.mth",
+    ]
+
+
+def test_matches_answers_the_same_questions_completions_does(tmp_path):
+    """Everything but the name itself is decided once, for both of them."""
+    (tmp_path / "utility").mkdir()
+    (tmp_path / "work.txt").touch()
+    (tmp_path / ".hidden.mth").touch()
+    assert worksheet.matches(f"{tmp_path}/") == [f"{tmp_path}/utility/"]
+    assert worksheet.matches(f"{tmp_path}/.") == [f"{tmp_path}/.hidden.mth"]
+    assert worksheet.matches(f"{tmp_path}/gone/wo") == []
 
 
 # -- loading -----------------------------------------------------------------
@@ -533,7 +563,7 @@ async def test_saving_asks_for_a_name_and_writes_the_file(app, file):
         await pilot.press("a", *"x^2+1", "enter")
         await pilot.press("t", "s", "d")
         assert prompt(app) == ("TRANSFER SAVE DERIVE file:", "")
-        assert message(app) == "Enter filename (press TAB to complete)"
+        assert message(app) == "Enter filename (TAB completes, opens the list)"
         await pilot.press(*str(file), "enter")
         assert file.read_text() == "x^2+1\n"
         assert message(app) == "Enter option"
@@ -608,7 +638,7 @@ async def test_loading_replaces_what_is_on_screen(app, file):
         await pilot.press("a", *"z", "enter")
         await pilot.press("t", "l", "d")
         assert prompt(app) == ("TRANSFER LOAD DERIVE file:", "")
-        assert message(app) == "Enter filename (press TAB to complete)"
+        assert message(app) == "Enter filename (TAB completes, opens the list)"
         await pilot.press(*str(file), "enter")
         assert entries(app) == ["a", "b"]
         assert message(app) == "Enter option"
@@ -697,63 +727,241 @@ async def test_tab_completes_the_name_and_the_file_reads(app, file):
         assert entries(app) == ["a", "b"]
 
 
-async def test_tab_writes_out_what_the_names_share_and_lists_them(app, tmp_path):
+async def test_tab_writes_out_what_the_names_share_and_opens_the_list(app, tmp_path):
+    """The line goes as far as the names agree, and the list shows the rest."""
     for name in ("workbook.mth", "worksheet.mth"):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
         await pilot.press(*f"{tmp_path}/w", "tab")
         assert prompt(app)[1] == f"{tmp_path}/work"
-        assert message(app) == "workbook.mth worksheet.mth"
+        assert completions(app) == ["workbook.mth", "worksheet.mth"]
+        # Opening the list takes nothing: the line is still what was typed.
+        assert chosen(app) is None
 
 
-async def test_tab_after_that_steps_through_the_names_one_at_a_time(app, tmp_path):
+async def test_the_list_says_which_directory_it_is_showing(app, tmp_path):
+    for name in ("alpha.mth", "beta.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab")
+        where, _, count = listing_title(app).rpartition(" - ")
+        assert count == "2"
+        # A directory too long for the border is cut from the left, the end of
+        # it being the part that says which directory it is.
+        assert f"{tmp_path}/".endswith(where.removeprefix("..."))
+
+
+async def test_tab_with_the_list_up_steps_through_it(app, tmp_path):
     for name in ("workbook.mth", "worksheet.mth"):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
         await pilot.press(*f"{tmp_path}/work", "tab")
-        assert prompt(app)[1] == f"{tmp_path}/workbook.mth"
+        assert chosen(app) is None
         await pilot.press("tab")
-        assert prompt(app)[1] == f"{tmp_path}/worksheet.mth"
+        assert (chosen(app), prompt(app)[1]) == (
+            "workbook.mth",
+            f"{tmp_path}/workbook.mth",
+        )
+        await pilot.press("tab")
+        assert (chosen(app), prompt(app)[1]) == (
+            "worksheet.mth",
+            f"{tmp_path}/worksheet.mth",
+        )
         # The list is a ring: the name after the last one is the first again.
         await pilot.press("tab")
-        assert prompt(app)[1] == f"{tmp_path}/workbook.mth"
+        assert chosen(app) == "workbook.mth"
+
+
+async def test_shift_tab_steps_back_through_the_list(app, tmp_path):
+    """The key the old completion never had: overshooting is one press to undo."""
+    for name in ("alpha.mth", "beta.mth", "gamma.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab", "tab", "tab", "tab")
+        assert chosen(app) == "gamma.mth"
+        await pilot.press("shift+tab")
+        assert (chosen(app), prompt(app)[1]) == ("beta.mth", f"{tmp_path}/beta.mth")
+        await pilot.press("shift+tab")
+        assert chosen(app) == "alpha.mth"
+        # Backwards off the front is the last name, the ring turning either way.
+        await pilot.press("shift+tab")
+        assert chosen(app) == "gamma.mth"
+
+
+async def test_the_arrows_walk_the_list_the_same_way(app, tmp_path):
+    for name in ("alpha.mth", "beta.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab", "down")
+        assert chosen(app) == "alpha.mth"
+        await pilot.press("down")
+        assert chosen(app) == "beta.mth"
+        await pilot.press("up")
+        assert chosen(app) == "alpha.mth"
+
+
+async def test_the_arrows_still_walk_the_history_with_no_list_up(app, tmp_path):
+    """Up and Down only belong to the list while the list is on the screen."""
+    (tmp_path / "work.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x", "enter")
+        await pilot.press("a", *"y", "enter")
+        await pilot.press("t", "l", "d")
+        assert completions(app) is None
+        await pilot.press("up")
+        assert highlighted_expression(app) == "x"
+
+
+async def test_enter_goes_into_a_directory_and_the_list_follows(app, tmp_path):
+    """Walking down a tree: one key a level, each level on the screen."""
+    (tmp_path / "utility").mkdir()
+    (tmp_path / "utility" / "trig.mth").touch()
+    (tmp_path / "utility" / "vector.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/uti", "tab")
+        # One name and one only, so Tab takes it and looks straight inside.
+        assert prompt(app)[1] == f"{tmp_path}/utility/"
+        assert completions(app) == ["trig.mth", "vector.mth"]
+        await pilot.press("down", "enter")
+        assert prompt(app)[1] == f"{tmp_path}/utility/trig.mth"
+        # A file taken from the list closes it, and does not read the file.
+        assert completions(app) is None
+        assert app.session.file is None
         await pilot.press("enter")
-        assert app.session.file == tmp_path / "workbook.mth"
+        assert app.session.file == tmp_path / "utility" / "trig.mth"
 
 
-async def test_typing_on_a_stepped_name_asks_the_files_again(app, tmp_path):
+async def test_enter_on_a_directory_in_the_list_opens_it(app, tmp_path):
+    (tmp_path / "math").mkdir()
+    (tmp_path / "math" / "algebra").mkdir()
+    (tmp_path / "math" / "algebra" / "groups.mth").touch()
+    (tmp_path / "notes.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab")
+        assert completions(app) == ["math/", "notes.mth"]
+        await pilot.press("down", "enter")
+        assert completions(app) == ["algebra/"]
+        await pilot.press("enter")
+        assert completions(app) == ["groups.mth"]
+        assert prompt(app)[1] == f"{tmp_path}/math/algebra/"
+
+
+async def test_typing_narrows_the_list_without_taking_the_line(app, tmp_path):
+    """The list follows what is typed; what is typed is never overwritten."""
+    for name in ("alpha.mth", "beta.mth", "berry.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab")
+        assert completions(app) == ["alpha.mth", "berry.mth", "beta.mth"]
+        await pilot.press("b")
+        assert completions(app) == ["berry.mth", "beta.mth"]
+        assert prompt(app)[1] == f"{tmp_path}/b"
+        await pilot.press("e", "t")
+        assert completions(app) == ["beta.mth"]
+        assert prompt(app)[1] == f"{tmp_path}/bet"
+
+
+async def test_backspacing_opens_the_list_back_out(app, tmp_path):
+    """Which is how the tree is walked back up, a separator at a time."""
+    (tmp_path / "utility").mkdir()
+    (tmp_path / "utility" / "trig.mth").touch()
+    (tmp_path / "work.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/uti", "tab")
+        assert completions(app) == ["trig.mth"]
+        await pilot.press("backspace")
+        assert completions(app) == ["utility/"]
+        await pilot.press(*["backspace"] * 7)
+        assert prompt(app)[1] == f"{tmp_path}/"
+        assert completions(app) == ["utility/", "work.mth"]
+
+
+async def test_a_name_the_list_has_no_match_for_closes_it(app, tmp_path):
+    for name in ("alpha.mth", "beta.mth"):
+        (tmp_path / name).touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab")
+        assert completions(app) == ["alpha.mth", "beta.mth"]
+        await pilot.press("z")
+        assert completions(app) is None
+        assert message(app) == "Enter filename (TAB completes, opens the list)"
+
+
+async def test_one_name_and_no_other_is_taken_with_no_list_to_look_at(app, tmp_path):
+    """Nothing to choose between is nothing to open a list for."""
+    (tmp_path / "alpha.mth").touch()
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*f"{tmp_path}/", "tab")
+        assert prompt(app)[1] == f"{tmp_path}/alpha.mth"
+        assert completions(app) is None
+
+
+async def test_escape_puts_the_list_away_before_it_leaves_the_command(app, tmp_path):
+    """Backing out of looking around is not the same press as backing out."""
     for name in ("alpha.mth", "beta.mth"):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
         await pilot.press(*f"{tmp_path}/", "tab", "tab")
-        assert prompt(app)[1] == f"{tmp_path}/beta.mth"
-        await pilot.press("backspace", "backspace", "backspace", "backspace")
-        await pilot.press("tab")
-        assert prompt(app)[1] == f"{tmp_path}/beta.mth"
+        assert completions(app) == ["alpha.mth", "beta.mth"]
+        await pilot.press("escape")
+        # The list goes; the name it left on the line stays, and so does the
+        # question, so a name browsed to is not lost by closing the list.
+        assert completions(app) is None
+        assert prompt(app)[1] == f"{tmp_path}/alpha.mth"
+        await pilot.press("escape")
+        assert band(app)[0].startswith(" TRANSFER LOAD:")
 
 
-async def test_a_list_too_long_for_the_pane_is_cut_short(app, tmp_path):
+async def test_a_long_list_scrolls_and_says_how_much_is_showing(app, tmp_path):
     for number in range(40):
         (tmp_path / f"utility{number:02}.mth").touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
         await pilot.press(*f"{tmp_path}/", "tab")
-        assert message(app).endswith("...")
-        assert len(message(app)) < app.query_one("#message").size.width
+        rows = completions(app)
+        assert rows == [f"utility{number:02}.mth" for number in range(10)]
+        assert listing_title(app).endswith("1-10 of 40")
+        # Page Down moves a screenful and the window follows the highlight.
+        await pilot.press("pagedown")
+        assert chosen(app) == "utility10.mth"
+        assert chosen(app) in completions(app)
+        # Paging stops at the end rather than turning round it.
+        await pilot.press(*["pagedown"] * 6)
+        assert chosen(app) == "utility39.mth"
+        assert listing_title(app).endswith("31-40 of 40")
 
 
-async def test_tab_completes_a_directory_and_then_inside_it(app, tmp_path):
-    (tmp_path / "utility").mkdir()
-    (tmp_path / "utility" / "trig.mth").touch()
-    async with app.run_test() as pilot:
+@pytest.mark.parametrize("height", [24, 16, 12, 10])
+async def test_the_list_gives_up_rows_rather_than_the_line(app, tmp_path, height):
+    """A short terminal shortens the list; it never costs the line or a band."""
+    for number in range(40):
+        (tmp_path / f"utility{number:02}.mth").touch()
+    async with app.run_test(size=(80, height)) as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/uti", "tab")
-        assert prompt(app)[1] == f"{tmp_path}/utility/"
-        await pilot.press("tab")
-        assert prompt(app)[1] == f"{tmp_path}/utility/trig.mth"
+        await pilot.press(*f"{tmp_path}/", "tab")
+        assert completions(app)
+        # Everything below the list is still on the screen and still its own
+        # height, which is what says the list did not push any of it off.
+        for identifier, rows in (
+            ("#prompt-band", 2),
+            ("#message", 1),
+            ("#status", 1),
+        ):
+            assert app.query_one(identifier).size.height == rows, identifier
+        listing = app.query_one("#completions")
+        assert listing.region.bottom <= app.query_one("#rule").region.y
 
 
 async def test_a_name_that_completes_to_nothing_is_the_beep(app, tmp_path):
@@ -967,7 +1175,7 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
     async with app.run_test() as pilot:
         await pilot.press("t", "d")
         assert prompt(app) == ("TRANSFER DEMO file:", "")
-        assert message(app) == "Enter filename (press TAB to complete)"
+        assert message(app) == "Enter filename (TAB completes, opens the list)"
         await pilot.press(*str(demo), "enter")
         # The comment takes the band the menu was on, and it waits there.
         assert band(app) == [" adds two numbers"]
