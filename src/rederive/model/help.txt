@@ -51,7 +51,7 @@ moVe has changed what stands where.
 Exact before approximate:
   Simplify   work an expression out exactly, however long the answer
   approX     work it out as a number, to the precision now set
-  Options Precision   which of the two an ordinary Simplify does
+  Options Precision   which of the two Simplify does
 
 An answer is kept exact wherever it can be, so Simplify of 1/3 + 1/6 is 1/2
 and not 0.5, and the square root of 2 stays a square root. approX is how a
@@ -70,7 +70,7 @@ Files, screen and settings:
   Transfer Load    read one back in
   Transfer Clear   start again with nothing
   Options          how numbers are read, worked out and printed
-  Manage           which way the simplifier applies a transformation
+  Manage           which transformations the simplifier applies
   Window           split the screen, so two parts of one session show at once
   Help             this help
   Quit             leave, after asking whether that was meant
@@ -110,10 +110,10 @@ Expression highlighting commands. These go on working while a line is being
 typed, a line of text having nothing vertical to do with them, which is what
 makes it possible to move onto an expression and then take it with F3:
   Up, Down            the previous, the next expression
-  PgUp, PgDn          a paneful back, a paneful on
+  PgUp, PgDn          a paneful back, a paneful forward
   Ctrl-Home, Ctrl-End the first, the last expression
   Ctrl-PgUp, Ctrl-PgDn  the same two
-  Ctrl-Left, Ctrl-Right slide a highlighted expression too wide for the pane
+  Ctrl-Left, Ctrl-Right scroll sideways over an expression wider than the pane
 
 Sub-expression highlighting commands. Press F6, or set Options Input Use to
 Subexpression, and the sideways keys walk into the highlighted expression
@@ -183,7 +183,7 @@ Relational operators:
   u < v, u <= v      less than, not greater than
   u > v, u >= v      greater than, not less than
 
-Boolean operator and functions:
+Boolean operators and functions:
   NOT u              negation
   u AND v, u OR v    conjunction, disjunction
   u XOR v            exclusive disjunction
@@ -192,7 +192,7 @@ Boolean operator and functions:
 
 Solving equations and relations:
   SOLVE(u, x)        solve u for x, which is what the soLve command writes
-  LHS(u), RHS(u)     one side of a relation; over a vector, of each of them
+  LHS(u), RHS(u)     the sides of a relation, or of each relation in a vector
 
 Exponential and logarithmic functions:
   EXP(z)             #e raised to z
@@ -224,14 +224,14 @@ Piecewise continuous functions:
   STEP(z)            0 below zero and 1 above it
   CHI(a, z, b)       1 between a and b, 0 outside them
   IF(test, u, v)     u where the test holds, v where it does not
-  FLOOR(u), FLOOR(u, v)  the greatest integer not above u, or above u/v
+  FLOOR(u), FLOOR(u, v)  the greatest integer not above u, or not above u/v
   MOD(u, v)          the remainder of u on division by v
   MODS(u, v)         the same, taken symmetrically about zero
   MAX(...), MIN(...) the largest, the smallest of the arguments
 
 Complex variable functions:
   RE(z), IM(z)       the real and the imaginary part
-  ABS(z)             the magnitude, and the absolute value of a real number
+  ABS(z)             the magnitude, and so the absolute value of a real z
   CONJ(z)            the complex conjugate
   PHASE(z)           the angle z makes with the positive real axis
 
@@ -261,8 +261,8 @@ Expression decomposition functions:
   NUMERATOR(u), DENOMINATOR(u)   the two halves of a quotient
   TERMS(u)           what u is written as the sum of, as a vector
   FACTORS(u)         what u is written as the product of, as a vector
-  VARIABLES(u)       the free variables of u, most main first
-  NUMBER(u)          whether u simplified to a number
+  VARIABLES(u)       the free variables of u, the main one first
+  NUMBER(u)          whether u simplifies to a number
   APPROX(u), APPROX(u, n)  u as a number, at the set precision or at n digits
 
 Calculus functions:
@@ -325,18 +325,18 @@ abandons a command that has begun to ask questions.
 
 Author        enter an expression as the next numbered entry, unsimplified
 Build         put an expression together from ones already on the screen
-Calculus      write a calculus expression, for a Simplify to work out
+Calculus      write a calculus expression for Simplify to work out
   Differentiate  the derivative, to any order; a negative order integrates
   Integrate      the integral, definite between two limits or indefinite
   Limit          the limit at a point, approached from the left, right or both
   Product        the product of an expression over a range of an index
-  Sum            the sum over the same
+  Sum            the sum over the same range
   Taylor         the Taylor polynomial about a point, to a given degree
   Vector         the vector of an expression over a range of an index
 
 Declare       give a name a meaning
   Function       define a function of any number of variables
-  Variable       give a variable a value, or a domain to be simplified over
+  Variable       give a variable a value, or a domain to simplify over
   Matrix         enter a matrix element by element
   vectoR         enter a vector element by element
 
@@ -346,44 +346,44 @@ Help          this help
 Jump          move the highlight to a numbered expression
 soLve         solve an expression for its unknowns
 
-Manage        how an expression is held and how it is simplified
+Manage        how expressions are kept, and how they are simplified
   Annotate       change what the status line says an expression came from
-  Branch         which root of several a radical is taken to mean
+  Branch         which of several roots a radical stands for
   Exponential    whether exponentials are collected or expanded
   Logarithm      whether logarithms are collected or expanded
-  Ordering       which variable counts as the main one, for printing and order
+  Ordering       the order the variables are taken in, the main one first
   Renumber       number the expressions again from one
   Substitute     put a value in place of a variable, or of a subexpression
   Trigonometry   angle sums, multiple angles, powers, and degrees or radians
 
-Options       how numbers are read, computed and printed
+Options       how numbers are read, worked out and printed
   Color          the colors of the menu bands and of the work area
   Input          typing over or inserting, case sensitivity, arrow key mode
   Mute           whether a refused key beeps
-  Notation       the style and the digit count answers are printed in
+  Notation       the style answers are printed in, and how many digits
   Output         built-up or compressed display, and the times operator
   Precision      exact, approximate or mixed arithmetic, and its digit count
   Radix          the number system input and output are written in
 
-Plot          not in this version; there is nothing yet to plot
+Plot          no plot window in this version
 Quit          leave the program, after asking whether that was meant
 Remove        take a block of expressions out of the worksheet
-Simplify      work an expression out, exactly where the precision says exactly
+Simplify      work an expression out, exactly unless Precision says otherwise
 
-Transfer      files, and starting again
+Transfer      reading and writing files, and starting over
   Load           read a worksheet, settings, data or a utility file back in
   Save           write a worksheet, settings or source code out
-  Merge          read a worksheet in after what is already there
+  Merge          read a worksheet in after the expressions already there
   Clear          throw expressions, functions or variables away
-  Demo           run a demonstration file, a step to a keystroke
+  Demo           run a demonstration file, one step per keystroke
 
-Unremove      put the last block Remove took out back, wherever is wanted
+Unremove      put the last block Remove took out back, wherever it is wanted
 moVe          move a block of expressions elsewhere in the worksheet
 
 Window        split the screen, and move between the pieces
-  Close          close a window, its neighbour taking the room
+  Close          close a window; its neighbour takes the room it leaves
   Designate      change what kind of window this one is
-  Flip           bring the next window overlaid on this one to the top
+  Flip           bring the next of this window's overlays to the top
   Goto           make a numbered window the active one
   Next           make the next window active
   Open           open another window over this one
@@ -392,7 +392,7 @@ Window        split the screen, and move between the pieces
     Horizontal     one above the other
     Vertical       one beside the other
 
-approX        work an expression out as a number, to the precision set
+approX        work an expression out as a number, to the precision now set
 
 Transfer Load Utility reads a file of definitions without numbering what it
 reads, which is how a library of functions is brought into a session. The
@@ -404,12 +404,12 @@ a highlighted expression out as C, Python, Rust or Julia source.
 Algebra window function key commands:
   F1           the next window; help, while a line is being typed
   Shift-F1     the previous window
-  F2           bring the next window overlaid on this one to the top
+  F2           bring the next of this window's overlays to the top
   Shift-F2     the previous one
   F3           write the highlighted expression onto the line being typed
   F4           write it onto that line inside parentheses
   F6           hand the sideways arrow keys to the line, or to the highlight
-  Esc          abandon what is being asked; stop a computation that is running
+  Esc          abandon the question being asked; stop a running computation
 
 A command that reaches the engine says on the message line how long it has
 been running, and Esc stops it. What it had computed is thrown away and the
