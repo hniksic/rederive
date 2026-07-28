@@ -15,6 +15,7 @@ from screen import (
     work_area,
 )
 
+from rederive.ui import menu as menus
 from rederive.ui.app import RederiveApp
 
 
@@ -132,6 +133,71 @@ async def test_an_abandoned_command_leaves_the_highlight_alone(app):
         await pilot.press(*["shift+tab"] * 6)
         await pilot.press("enter", "escape")
         assert highlighted_menu_option(app) == "Simplify"
+
+
+# -- the band across a terminal that is not eighty columns --------------------
+
+
+async def resized(pilot, app, width, height):
+    """Resize the terminal, and wait for the new size to reach the band."""
+    await pilot.resize_terminal(width, height)
+    for _ in range(20):
+        if app.query_one("#menu").size.width == width:
+            return
+        await pilot.pause()
+    raise AssertionError("the resize never reached the band")
+
+
+async def test_eighty_columns_break_the_menu_where_the_menu_says(app):
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert band(app) == [
+            " COMMAND: Author Build Calculus Declare Expand Factor Help Jump soLve Manage",
+            "          Options Plot Quit Remove Simplify Transfer Unremove moVe Window"
+            " approX",
+        ]
+
+
+@pytest.mark.parametrize("width", [70, 60, 45, 30], ids=str)
+async def test_a_narrow_terminal_keeps_every_word_of_the_menu(app, width):
+    async with app.run_test(size=(width, 24)) as pilot:
+        lines = band(app)
+        assert " ".join(line.strip() for line in lines).split() == [
+            "COMMAND:",
+            *menus.ALGEBRA.words,
+        ]
+        # Every row is a row of the band, so none of them is a wrap of the one
+        # above it and none has fallen off the bottom.
+        assert app.query_one("#menu").size.height == len(lines)
+        assert max(len(line) for line in lines) <= width
+
+
+async def test_a_narrow_terminal_keeps_both_lines_of_a_dialog(app):
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.press("o", "r")
+        await pilot.pause()
+        lines = band(app)
+        assert lines[0].startswith(" OPTIONS RADIX: Input:")
+        assert lines[-1].strip().startswith("Output:")
+        assert app.query_one("#fields").size.height == len(lines)
+
+
+async def test_a_resized_terminal_lays_the_menu_out_again(app):
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert len(band(app)) == 2
+        await resized(pilot, app, 60, 24)
+        assert len(band(app)) == 3
+        await resized(pilot, app, 80, 24)
+        assert len(band(app)) == 2
+
+
+async def test_a_terminal_too_short_for_the_menu_keeps_its_other_lines(app):
+    async with app.run_test(size=(30, 10)) as pilot:
+        # Five rows go to the rule, the message and status lines and two rows
+        # of expressions; the menu takes what is left and is cut off there.
+        assert len(band(app)) == 5
+        assert message(app) == "Enter option"
+        await pilot.pause()
+        assert app.work_area.size.height == 2
 
 
 async def test_author_appends_and_selects_the_new_entry(app):

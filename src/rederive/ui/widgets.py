@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.containers import Container, VerticalScroll
@@ -46,6 +47,20 @@ _SCROLL_MARGIN = 2
 
 #: Blanks between two fields of an Options dialog.
 _FIELD_GAP = "  "
+
+#: Blanks between two words of a menu.
+_WORD_GAP = 1
+
+#: Rows a command band takes when what is on it fits in fewer, which is the
+#: two the original reserves for a menu however short it is.
+_BAND_ROWS = 2
+
+#: Rows a band leaves the rest of the screen when it grows to fit a narrow
+#: terminal: the rule above it, the message and status lines below it, and two
+#: for the expressions. A screen too short to hold the whole menu as well is
+#: one the band gives way on, rather than one it pushes the lines below it off
+#: the bottom of.
+_BAND_RESERVE = 5
 
 #: Columns a number field's value takes, so that the field beside it does not
 #: shift as digits are typed. The original reserves the same width.
@@ -145,12 +160,69 @@ def _invert(
             text.stylize(style, max(begin, line), end)
 
 
+def _packed(
+    widths: list[int],
+    items: range,
+    room: int,
+    gap: int,
+    tails: list[int] | None = None,
+) -> list[list[int]]:
+    """Which of `items` go on each row of `room` columns, `gap` between them.
+
+    An item too wide to share a row with what is already there opens the next
+    one; one too wide for a row of its own is left to be clipped, there being
+    nowhere else to put it.
+
+    `tails` is how wide each item is where it ends a row, which is where the
+    blanks a field is padded with cost nothing: they are what the field beside
+    it stands clear of, and at the end of a row nothing stands beside it.
+    """
+    tails = widths if tails is None else tails
+    rows: list[list[int]] = []
+    for index in items:
+        taken = sum(widths[at] + gap for at in rows[-1]) if rows else 0
+        if not rows or taken + tails[index] > room:
+            rows.append([])
+        rows[-1].append(index)
+    return rows
+
+
 class Band(Static):
-    """A widget that colors itself from the palette the app is showing."""
+    """A widget that colors itself from the palette the app is showing.
+
+    The two bands that carry commands - the menu and the Options dialog that
+    stands where it does - lay themselves out for the width there is rather
+    than for the eighty columns the original had. A line too long for the
+    terminal is broken again and the band grows a row, which it takes from the
+    work area above: the alternative is the row falling off the band, and a
+    command nobody can see is a command nobody can reach.
+    """
 
     @property
     def colors(self) -> dict[str, str]:
         return self.app.palette.styles
+
+    @property
+    def width(self) -> int:
+        """Columns the band has. Before the first layout, the screen's."""
+        return self.size.width or self.app.size.width
+
+    def room(self, prefix: int) -> int:
+        """Columns a row has for its contents, past a prefix that wide."""
+        return max(1, self.width - prefix)
+
+    def put(self, rows: list[Text]) -> None:
+        """Show `rows`, the band standing as tall as there are rows to show."""
+        limit = max(_BAND_ROWS, self.app.size.height - _BAND_RESERVE)
+        rows = rows[:limit]
+        for row in rows:
+            # A row wider than the band is wrapped by the widget, and a
+            # wrapped row takes two of the rows the band has - which pushes
+            # the last of them off it. Cutting at the edge is what makes the
+            # band show the rows it was laid out with and no others.
+            row.truncate(self.width)
+        self.styles.height = max(_BAND_ROWS, len(rows))
+        self.update(Text("\n").join(rows))
 
 
 class WorkArea(VerticalScroll):
@@ -472,38 +544,71 @@ class CompletionList(Band):
 class MenuBand(Band):
     """A menu of words, one of them highlighted in inverse video."""
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        #: The menu on the band, so that a resize can lay it out again.
+        self._showing: tuple[Menu, int | None] | None = None
+
     def say(self, text: str) -> None:
         """Put one line of plain text on the band in place of a menu.
 
         What a demonstration's script is shown on: the comment above the
         expression it has just run stands where the menu words go.
         """
-        self.update(Text(f" {text}", style=self.colors["option"], no_wrap=True))
+        self._showing = None
+        self.put([Text(f" {text}", style=self.colors["option"], no_wrap=True)])
 
     def show(self, menu: Menu, highlighted: int | None) -> None:
         """Render `menu`; `None` highlights nothing, as while Quit asks."""
+        self._showing = (menu, highlighted)
+        prefix = f" {menu.title} "
+        indent = " " * len(prefix)
+        self.put(
+            [
+                self._line(menu, prefix if number == 0 else indent, group, highlighted)
+                for number, group in enumerate(self._rows(menu, len(prefix)))
+            ]
+        )
+
+    def on_resize(self) -> None:
+        """Lay the menu out again for the width the terminal now has."""
+        if self._showing is not None:
+            self.show(*self._showing)
+
+    def _rows(self, menu: Menu, prefix: int) -> list[list[int]]:
+        """Which words go on each row, as indices into the menu.
+
+        Every row carries the same prefix - the title, or the indent that
+        stands under it - so all of them have the same room for words.
+
+        The break the menu names is kept while both of its lines fit, which is
+        what keeps eighty columns showing what the original shows. Once one of
+        them does not, that break is a convention about a width this terminal
+        has not got, and the words are packed across the rows instead: fewer
+        rows than breaking each line separately takes, and none half empty.
+        """
+        room, widths = self.room(prefix), [len(word) for word in menu.words]
         break_at = min(menu.first_line, len(menu.words))
-        first = self._line(menu, f" {menu.title} ", 0, break_at, highlighted)
-        if break_at == len(menu.words):
-            self.update(first)
-            return
-        indent = " " * (len(menu.title) + 2)
-        rest = self._line(menu, indent, break_at, len(menu.words), highlighted)
-        self.update(Text("\n").join([first, rest]))
+        named = [
+            _packed(widths, range(0, break_at), room, _WORD_GAP),
+            _packed(widths, range(break_at, len(widths)), room, _WORD_GAP),
+        ]
+        if all(len(rows) <= 1 for rows in named):
+            return [row for rows in named for row in rows]
+        return _packed(widths, range(len(widths)), room, _WORD_GAP)
 
     def _line(
         self,
         menu: Menu,
         prefix: str,
-        start: int,
-        stop: int,
+        indices: list[int],
         highlighted: int | None,
     ) -> Text:
         colors = self.colors
         text = Text(prefix, style=colors["option"], no_wrap=True)
-        for index in range(start, stop):
-            if index > start:
-                text.append(" ")
+        for position, index in enumerate(indices):
+            if position:
+                text.append(" " * _WORD_GAP)
             highlight = index == highlighted
             style = colors["option-highlight"] if highlight else colors["option"]
             text.append(menu.words[index], style=style)
@@ -522,11 +627,18 @@ class FieldBand(Band):
     for stands between the two bounds.
     """
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        #: The dialog on the band, so that a resize can lay it out again.
+        self._showing: DialogEditor | None = None
+
     def show(self, editor: DialogEditor) -> None:
+        self._showing = editor
         title = editor.dialog.title
-        lines, index = [], 0
+        indent = " " * (len(title) + 2)
+        rows, index = [], 0
         for number, items in enumerate(editor.lines):
-            prefix = f" {title} " if number == 0 else " " * (len(title) + 2)
+            prefix = f" {title} " if number == 0 else indent
             if not _captioned(items[0]):
                 # A field with no caption prints a space in front of its
                 # value, and that space is the one the title would print, so
@@ -534,17 +646,39 @@ class FieldBand(Band):
                 # The value still begins in the column the next line indents
                 # to, which is what keeps the two lines square.
                 prefix = prefix[:-1]
-            line = Text(prefix, style=self.colors["option"], no_wrap=True)
-            for position, item in enumerate(items):
-                if position:
-                    line.append(_FIELD_GAP)
+            drawn = []
+            for item in items:
                 if isinstance(item, str):
-                    line.append(item, style=self.colors["option"])
+                    drawn.append(Text(item, style=self.colors["option"], no_wrap=True))
                     continue
-                line.append(self._field(editor, item, active=index == editor.active))
+                drawn.append(self._field(editor, item, active=index == editor.active))
                 index += 1
-            lines.append(line)
-        self.update(Text("\n").join(lines))
+            # A line too wide for the terminal is broken between its fields
+            # and carried on under the title, the same way a menu too wide for
+            # it is. A field is never split: what is asked and what stands as
+            # the answer belong beside each other.
+            widths = [item.cell_len for item in drawn]
+            tails = [cell_len(item.plain.rstrip()) for item in drawn]
+            room = self.room(len(indent))
+            for row, group in enumerate(
+                _packed(widths, range(len(drawn)), room, len(_FIELD_GAP), tails)
+            ):
+                line = Text(
+                    prefix if row == 0 else indent,
+                    style=self.colors["option"],
+                    no_wrap=True,
+                )
+                for position, at in enumerate(group):
+                    if position:
+                        line.append(_FIELD_GAP)
+                    line.append(drawn[at])
+                rows.append(line)
+        self.put(rows)
+
+    def on_resize(self) -> None:
+        """Lay the dialog out again for the width the terminal now has."""
+        if self._showing is not None:
+            self.show(self._showing)
 
     def _field(self, editor: DialogEditor, field: Field, active: bool) -> Text:
         colors = self.colors

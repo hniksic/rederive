@@ -410,9 +410,9 @@ async def test_a_resized_terminal_lays_the_windows_out_again(app):
         await pilot.press("w", "s", "h", "enter")
         await resized(pilot, app, 60, 20)
         drawn = frame(app)
-        # Five rows below the work area: the rule, the two menu rows, the
-        # message line and the status line.
-        assert len(drawn) == 16
+        # Six rows below the work area: the rule, the three rows the menu
+        # takes across sixty columns, the message line and the status line.
+        assert len(drawn) == 15
         assert drawn[0] == "1" + "═" * 58 + "╕"
         assert drawn[10] == "2" + "═" * 58 + "╡"
         assert drawn[-1] == "╘" + "═" * 58 + "╛"
