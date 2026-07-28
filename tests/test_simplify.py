@@ -223,6 +223,36 @@ def test_a_sum_of_ratios_is_written_over_one_denominator(text, expected):
     assert simp(text) == expected
 
 
+def test_a_sum_over_two_powers_of_one_thing_is_written_over_the_higher():
+    """The lower power divides the higher, so the sum is one ratio.
+
+    All four match the original. The rule is what its derivatives need: sympy
+    differentiates a quotient into a sum over two powers of the denominator,
+    where the original writes one ratio - and the numerator of that ratio is
+    often what the whole answer turns on, `1` in the first case here.
+
+    Only where it shortens the sum. `1/SQRT(x) + 1/x` over `x^(3/2)` is longer
+    than it was and the original leaves it alone, as it does the first case's
+    sum authored as it stands - two fixed points for the one expression, and
+    this takes the answer it gives to the question that was asked.
+    """
+    assert simp("DIF(x/SQRT(1 - x^2), x)") == "1/(1 - x^2)^(3/2)"
+    assert simp("DIF(x^3/SQRT(x^2 + 1), x)") == "x^2*(2*x^2 + 3)/(x^2 + 1)^(3/2)"
+    assert simp("1/(x + 1)^(3/2) + 1/SQRT(x + 1)") == "(x + 2)/(x + 1)^(3/2)"
+    assert simp("1/SQRT(x) + 1/x") == "1/x + 1/SQRT(x)"
+
+
+def test_no_denominator_carries_a_denominator_of_its_own():
+    """A compound fraction is cleared however long that makes it.
+
+    Against the original: `DIF(ATAN(x/a), x)` is `a/(x^2 + a^2)` there and
+    `1/(a + x^2/a)` to sympy, and the two are the same number of operations - so
+    the rule cannot be a count. It is a shape the original never writes.
+    """
+    assert simp("DIF(ATAN(x/a), x)") == "a/(a^2 + x^2)"
+    assert simp("1/(1 + 1/x)") == "x/(x + 1)"
+
+
 def test_the_order_list_decides_what_gets_multiplied_out():
     """The manual's 4.3 exercise, as the original answers it: the same entry
     expands under one order list and comes back as it was written under
@@ -448,6 +478,11 @@ LOGARITHMS = [
     ("LN(x) + LN(y)", "LN(x) + LN(y)", Context(logarithm=Direction.COLLECT)),
     ("#e^(x + y)", "#e^x*#e^y", Context(exponential=Direction.EXPAND)),
     ("#e^x*#e^y", "#e^(x + y)", Context(exponential=Direction.COLLECT)),
+    # Powers of one base collect in Auto too, and not because they are shorter:
+    # `DIF(x^n, x)` is `n*x^n/x` to sympy, which counts the same and is a form
+    # the original does not write.
+    ("x^n/x", "x^(n - 1)", None),
+    ("DIF(x^n, x)", "n*x^(n - 1)", None),
 ]
 
 
@@ -580,6 +615,88 @@ def test_a_parametrised_integral_is_answered_or_left_alone_promptly():
     answer = simp(text)
     assert time.monotonic() - start < 10
     assert answer.startswith("INT(")
+
+
+def test_an_antiderivative_is_written_with_no_constant_added():
+    """An indefinite integral is one antiderivative out of many.
+
+    Which one is printed is a choice, and the original's choice is the one with
+    nothing constant added. The original answers this line - the quadratic
+    formula's root integrated over its own middle coefficient - with
+
+        b*(SQRT(b^2 - 4*a*c) - b)/(4*a) - c*LN(SQRT(b^2 - 4*a*c) + b)
+
+    where sympy's antiderivative is over `LN(2*b + 2*SQRT(b^2 - 4*a*c))`. The
+    two differ by `c*LN(2)`, which is a constant of integration and no part of
+    the answer. The terms below are the original's; only the order and the `b`
+    left inside the numerator are the engine's.
+    """
+    answer = simp("INT((SQRT(b^2 - 4*a*c) - b)/(2*a), b)")
+    assert answer == (
+        "b*SQRT(b^2 - 4*a*c)/(4*a) - c*LN(b + SQRT(b^2 - 4*a*c)) - b^2/(4*a)"
+    )
+
+
+def test_a_case_split_over_one_antiderivative_is_no_split():
+    """Sympy splits where its table has two forms for one function.
+
+    Both of these come back as an `ATAN` where the parameter is positive and a
+    pair of logarithms elsewhere, and the two cases are the same function up to
+    a constant - so the split says nothing, and the original prints the `ATAN`
+    for every parameter. Its answers: `ATAN(x/SQRT(a))/SQRT(a)` and
+    `x - SQRT(a)*ATAN(x/SQRT(a))`.
+    """
+    assert simp("INT(1/(x^2 + a), x)") == "ATAN(x/SQRT(a))/SQRT(a)"
+    assert simp("INT(x^2/(x^2 + a), x)") == "x - SQRT(a)*ATAN(x/SQRT(a))"
+
+
+def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
+    """Derive prints no inverse hyperbolic in an antiderivative.
+
+    It writes each one as the logarithm it is, `ASINH(x)` authored on its own
+    coming back `LN(SQRT(x^2 + 1) + x)`. The cases of this integral are an
+    `ASINH` where `a` is nonzero and that same logarithm elsewhere, and the
+    arc is the shorter of the two; the original answers with the logarithm,
+    and so does this.
+    """
+    assert simp("INT(SQRT(x^2 + a^2), x)") == (
+        "a^2*LN(x + SQRT(a^2 + x^2))/2 + x*SQRT(a^2 + x^2)/2"
+    )
+
+
+def test_a_case_split_between_two_antiderivatives_is_kept():
+    """Where the cases are different functions the split is doing real work.
+
+    `SIN(a*x^3 + b)/(3*a)` is an antiderivative for every `a` it is defined for,
+    which is every `a` but zero, and at zero the integrand is `x^2*COS(b)`. So
+    the case that holds unconditionally is the one the split has to be checked
+    against, and here it is `x^3*COS(b)/3`, which is no antiderivative anywhere
+    else. The original prints the first case alone; the conditional answer is
+    this engine's, and it is the more informative of the two.
+    """
+    assert simp("INT(x^2*COS(a*x^3 + b), x)") == (
+        "IF(a /= 0, SIN(a*x^3 + b)/(3*a), x^3*COS(b)/3)"
+    )
+
+
+def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
+    """Sympy's Risch implementation answers some of these wrongly.
+
+    `INT(1/(x^2 + a), x)` comes back zero over a real `a` and
+    `INT(x^2/(x^2 + a), x)` comes back `x`, and neither is refused. An answer
+    that provably does not differentiate back to the integrand is no answer, so
+    the integral is asked again by the rules a calculus course teaches, which do
+    not reach that algorithm - and what those give does differentiate back, as
+    the two lines below are here to say.
+
+    Only a proven no counts, which is what keeps the answers that cannot be
+    checked either way: nothing differentiates a hypergeometric series back to
+    `1/SQRT(1 - x^4)`, and refusing what cannot be checked would throw away the
+    only answer there is.
+    """
+    assert simp("DIF(ATAN(x/SQRT(a))/SQRT(a), x)") == "1/(x^2 + a)"
+    assert simp("DIF(x - SQRT(a)*ATAN(x/SQRT(a)), x)") == "x^2/(x^2 + a)"
+    assert simp("INT(1/SQRT(1 - x^4), x)").startswith("x*HYPER(")
 
 
 def test_the_interior_singularity_derive_missed():

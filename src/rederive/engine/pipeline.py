@@ -587,11 +587,182 @@ def _integral(head: sp.Basic) -> sp.Basic:
     """
     bounded = _attempt(head, lambda h: h.doit(deep=False, **_BOUNDED))
     if bounded is not None and not bounded.has(sp.Integral):
-        return bounded
+        return _antiderivative(head, bounded)
     if _parametrised(head) and not _affordable(head):
         return head if bounded is None else bounded
     full = _attempt(head, lambda h: h.doit(deep=False))
-    return head if full is None else full
+    return head if full is None else _antiderivative(head, full)
+
+
+def _antiderivative(head: sp.Basic, value: sp.Basic) -> sp.Basic:
+    """An indefinite integral's answer in the form Derive writes it in.
+
+    An indefinite integral is one antiderivative out of many: any two of them
+    differ by a constant, and which one is printed is a choice rather than a
+    result. Derive prints the one with no constant added and never a case split
+    where a single antiderivative serves everywhere. Sympy's tables make the
+    other choice both times, so the choice is made here.
+
+    Nothing is taken out of a definite integral, where a constant does not
+    cancel but is part of the answer, nor out of an integral that was not done:
+    neither has an antiderivative in hand to choose among.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1 or value.has(sp.Integral):
+        return value
+    variable, integrand = head.limits[0][0], head.function
+    if _refuted(value, integrand, variable):
+        value = _by_the_manual_rules(head, integrand, variable) or value
+    return _without_constants(_single_case(value, integrand, variable), variable)
+
+
+def _refuted(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
+    """Whether this is provably not an antiderivative of the integrand.
+
+    Sympy's Risch implementation answers `INT(1/(x^2 + a), x)` with zero over a
+    real `a`, and `INT(x^2/(x^2 + a), x)` with `x`. Both are wrong and neither is
+    refused, so an answer is checked rather than trusted.
+
+    Only a decided no counts. `equals` settles what it can and says nothing
+    about the rest, and the rest is where the answers this cannot check live: a
+    nonelementary integral comes back as the hypergeometric series it is, and
+    nothing differentiates that back to the integrand.
+    """
+    difference = _attempt(value, lambda v: sp.diff(v, variable) - integrand)
+    if difference is None:
+        return False
+    try:
+        return difference.equals(0) is False
+    except Exception:
+        return False
+
+
+def _by_the_manual_rules(
+    head: sp.Basic, integrand: sp.Basic, variable: sp.Basic
+) -> sp.Basic | None:
+    """The integral again by the rules a calculus course teaches, or None.
+
+    They are the one method that does not reach the algorithm the wrong answers
+    come out of, and their answer is put to the same check: what cannot be
+    differentiated back is no improvement on what was already in hand.
+    """
+    manual = _attempt(head, lambda h: h.doit(deep=False, manual=True))
+    if manual is None or manual.has(sp.Integral):
+        return None
+    if _refuted(manual, integrand, variable):
+        return None
+    return manual
+
+
+def _single_case(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> sp.Basic:
+    """A split over antiderivatives narrowed to the one worth printing.
+
+    Sympy splits where its table has more than one form to offer: the integral
+    of `(SQRT(b^2 - 4*a*c) - b)/(2*a)` comes back an `ASINH` where `a*c` is
+    negative and a logarithm elsewhere, and the two are the same function up to
+    a constant, so the split distinguishes nothing. What settles that is the
+    unconditional case, the one sympy writes last: where it differentiates back
+    to the integrand with no condition attached it is an antiderivative wherever
+    it is defined, and so are the cases that agree with it.
+
+    That case has to be the one that holds, but it need not be the one printed.
+    A conditional case is worth the whole domain where it differentiates back
+    just as unconditionally and says it shorter - `INT(1/(x^2 + a), x)` splits
+    into an `ATAN` where `a` is positive and a pair of logarithms elsewhere, and
+    the `ATAN` is the answer Derive gives for every `a`.
+
+    Where the unconditional case does not hold the split is doing real work and
+    is left alone: `INT(x^2*COS(a*x^3 + b), x)` splits on whether `a` is zero,
+    and `SIN(a*x^3 + b)/(3*a)` is the answer for every `a` it is defined for -
+    which is every `a` but the one the other case is there for.
+    """
+    folded = _attempt(value, sp.piecewise_fold)
+    if not isinstance(folded, sp.Piecewise):
+        return value
+    best, condition = folded.args[-1]
+    if condition is not sp.true or not _holds(best, integrand, variable):
+        return value
+    for case, _ in folded.args[:-1]:
+        if case.has(*_INVERSE_HYPERBOLIC) and not best.has(*_INVERSE_HYPERBOLIC):
+            continue
+        if _pays(case, best) and _holds(case, integrand, variable):
+            best = case
+    return best
+
+
+#: Not what an antiderivative is printed over. Derive writes every one of these
+#: as the logarithm it is - `ASINH(x)` authored on its own comes back
+#: `LN(SQRT(x^2 + 1) + x)` - so `INT(SQRT(x^2 + a^2), x)`, whose cases are an
+#: `ASINH` where `a` is nonzero and that same logarithm elsewhere, is printed
+#: over the logarithm however much shorter the arc is.
+_INVERSE_HYPERBOLIC = (sp.asinh, sp.acosh, sp.atanh, sp.acoth, sp.asech, sp.acsch)
+
+
+def _holds(case: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
+    """Whether this case is an antiderivative with no condition attached.
+
+    Proof, not evidence: a case is about to be given a domain it was not handed,
+    so the derivative has to come back to the integrand symbolically rather than
+    at sampled points.
+    """
+    if case.has(sp.Piecewise):
+        return False
+    difference = _attempt(case, lambda c: sp.simplify(sp.diff(c, variable) - integrand))
+    return difference == 0
+
+
+def _without_constants(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
+    """The antiderivative with every constant of integration taken out of it.
+
+    A term free of the variable is such a constant, and so is a factor free of
+    the variable inside a logarithm, `LN(k*u)` being `LN(u)` plus a constant.
+    Sympy leaves both: the integral above comes back over `LN(2*b + 2*SQRT(b^2 -
+    4*a*c))`, where Derive's answer is over `LN(b + SQRT(b^2 - 4*a*c))`.
+
+    A constant deeper in than that is no constant of integration - it is part of
+    whatever holds it - so only the terms of the answer itself are looked at,
+    through a factor common to all of them where there is one.
+    """
+    bare = _attempt(
+        value,
+        lambda v: v.replace(
+            lambda e: isinstance(e, sp.log) and len(e.args) == 1,
+            lambda e: _bare_logarithm(e, variable),
+            simultaneous=False,
+        ),
+    )
+    if bare is None:
+        bare = value
+    coefficient, terms = _split(bare, variable)
+    if not isinstance(terms, sp.Add):
+        return bare
+    return coefficient * sp.Add(*(term for term in terms.args if term.has(variable)))
+
+
+def _bare_logarithm(call: sp.Basic, variable: sp.Basic) -> sp.Basic:
+    """`LN(k*u)` as `LN(u)`, where `k` is free of the variable.
+
+    The factor has to be looked for: sympy writes the argument out, so what is
+    there to find is `2*b + 2*SQRT(b^2 - 4*a*c)` rather than the product it
+    collects to.
+    """
+    argument = _attempt(call.args[0], sp.factor_terms)
+    if argument is None:
+        return call
+    coefficient, rest = _split(argument, variable)
+    if coefficient == 1 or not rest.has(variable):
+        return call
+    return sp.log(rest)
+
+
+def _split(expression: sp.Basic, variable: sp.Basic) -> tuple[sp.Basic, sp.Basic]:
+    """`expression` as a factor free of the variable times the rest of it.
+
+    `as_independent` asked for a product takes the terms of a sum for factors -
+    `1 - x` comes back as `1` times `-x` - so only a product is put to it.
+    """
+    if not isinstance(expression, sp.Mul):
+        return sp.S.One, expression
+    return expression.as_independent(variable, as_Mul=True)
 
 
 def _parametrised(head: sp.Basic) -> bool:
@@ -900,16 +1071,41 @@ def _pays(candidate: sp.Basic, previous: sp.Basic) -> bool:
 
     One variable fewer always counts, however long the answer: a superfluous
     variable is the first thing the manual says a simplified expression does
-    not have. Failing that, it has to be shorter.
+    not have. One denominator fewer under another counts the same way, being
+    the other thing a simplified expression does not have. Failing both, the
+    rewrite has to be shorter.
     """
     try:
         if candidate == previous:
             return False
         if len(candidate.free_symbols) < len(previous.free_symbols):
             return True
+        if _compound(candidate) != _compound(previous):
+            return _compound(previous)
         return sp.count_ops(candidate) < sp.count_ops(previous)
     except Exception:
         return False
+
+
+def _compound(expression: sp.Basic) -> bool:
+    """Whether a denominator in `expression` has a denominator of its own.
+
+    Which is the one thing Derive never leaves standing whatever it costs:
+    `DIF(ATAN(x/a), x)` is `1/(a + x^2/a)` to sympy and `a/(a^2 + x^2)` to the
+    original, and the two are the same length, so nothing that counts
+    operations can tell them apart.
+
+    A number underneath is not a denominator of this kind. `x + 1/2` is a sum
+    of a variable and a number wherever it stands, and putting it over two is
+    the longer way to write it.
+    """
+    for power in expression.atoms(sp.Pow):
+        if not power.exp.is_negative:
+            continue
+        for inner in power.base.atoms(sp.Pow):
+            if inner.exp.is_negative and not inner.base.is_number:
+                return True
+    return False
 
 
 def _cancelled(expression: sp.Basic) -> sp.Basic:
@@ -1319,7 +1515,13 @@ def _exponentials(expression: sp.Basic, context: Context) -> sp.Basic:
     `(#e^z)^k -> #e^(k*z)` needs an integer `k` or a strip constraint on `z`;
     `powsimp` and `expand_power_base` know that, so the validity gate is
     theirs and the direction is ours.
+
+    One base written twice collects whatever it costs, in every mode. It is not
+    an economy but a normal form: `DIF(x^n, x)` is `n*x^n/x` to sympy and
+    `n*x^(n - 1)` to the original, and the two are the same length, so a gate
+    that counts operations would keep the first.
     """
+    expression = _forced(expression, _collected_powers)
     match context.exponential:
         case Direction.COLLECT:
             return _forced(expression, sp.powsimp)
@@ -1329,6 +1531,16 @@ def _exponentials(expression: sp.Basic, context: Context) -> sp.Basic:
     expression = _gated(expression, sp.powsimp)
     expression = _gated(expression, sp.expand_power_exp)
     return _gated(expression, sp.expand_power_base)
+
+
+def _collected_powers(expression: sp.Basic) -> sp.Basic:
+    """Powers of one base in a product added, and nothing else.
+
+    `combine="exp"` is the exponent rule on its own: it leaves two bases under
+    one exponent alone, which is the part of `powsimp` that is a direction to
+    rewrite in rather than a normal form.
+    """
+    return sp.powsimp(expression, combine="exp")
 
 
 def _branch(expression: sp.Basic, context: Context) -> sp.Basic:

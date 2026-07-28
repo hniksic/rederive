@@ -130,7 +130,7 @@ def _as_rational(total: sp.Basic, order: Sequence[str]) -> sp.Basic:
     free = [term for term in total.args if primary not in term.free_symbols]
     written = _rational_in(sp.Add(*holding), primary)
     if written is None:
-        return total
+        return _over_one_denominator(total)
     polynomial, proper = written
     # The polynomial's constant term is free of the primary variable, and so
     # belongs with the terms that were free of it all along: they are one sum,
@@ -173,6 +173,43 @@ def _shared(total: sp.Basic) -> sp.Basic:
         return total
     combined = _attempt(total, sp.together)
     return total if combined is None else combined
+
+
+def _over_one_denominator(total: sp.Basic) -> sp.Basic:
+    """A sum whose every term is over powers of one thing, written over it.
+
+    Where the sum is no rational function of its primary variable there is
+    nothing to divide out, and a denominator standing twice is still worth
+    combining: the lower power divides the higher, so what comes out is one
+    ratio. `x^2/(1 - x^2)^(3/2) + 1/SQRT(1 - x^2)` is `1/(1 - x^2)^(3/2)`, which
+    is what Derive answers `DIF(x/SQRT(1 - x^2), x)` with - and authored as it
+    stands, that same sum comes back as it stands. Two fixed points for the one
+    expression, as the original has for a common factor; this takes the answer it
+    gives to the question that was asked.
+
+    Every term has to carry the denominator, and combining has to shorten the
+    sum. A term with nothing underneath would have the denominator multiplied
+    into it, which is what `b*SQRT(b^2 - 4*a*c)/(4*a) - c*LN(b + SQRT(b^2 -
+    4*a*c)) - b^2/(4*a)` - Derive's own answer to an integral - is here to rule
+    out; and `1/SQRT(x) + 1/x` over `x^(3/2)` is longer than it was, which is
+    why the original leaves that one alone as well.
+    """
+    if not _is_sum(total):
+        return total
+    bases = set()
+    for term in total.args:
+        if not isinstance(term, sp.Expr):
+            return total
+        denominator = sp.fraction(term)[1]
+        if denominator == 1:
+            return total
+        bases.add(denominator.as_base_exp()[0])
+    if len(bases) != 1:
+        return total
+    combined = _attempt(total, sp.together)
+    if combined is None or sp.count_ops(combined) >= sp.count_ops(total):
+        return total
+    return combined
 
 
 def _attempt(expression: sp.Basic, rewrite) -> sp.Basic | None:
