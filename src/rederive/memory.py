@@ -72,10 +72,19 @@ def total_bytes() -> int | None:
 
 
 def written(size: int) -> str:
-    """A byte count in the largest unit that leaves at least one whole digit."""
+    """A byte count in the largest unit that leaves at least one whole digit.
+
+    A figure in gigabytes carries a decimal, since whole gigabytes are a coarse
+    enough step that the gauge would sit still while the program grew. Past ten
+    gigabytes the decimal is dropped again: that much is a figure to read at a
+    glance, not to watch.
+    """
     for unit, scale in _UNITS:
         if size >= scale:
-            return f"{size / scale:.0f}{unit}"
+            value = size / scale
+            if unit == "G" and round(value, 1) < 10:
+                return f"{value:.1f}{unit}"
+            return f"{value:.0f}{unit}"
     return f"{size}B"
 
 
