@@ -1109,7 +1109,7 @@ def _compound(expression: sp.Basic) -> bool:
 
 
 def _cancelled(expression: sp.Basic) -> sp.Basic:
-    """`cancel`, except where it would multiply a factored denominator out.
+    """`cancel`, except where it would multiply something out for nothing.
 
     Cancelling a common factor is what this is for, and it is worth having.
     Rebuilding the denominator is not: `cancel` writes every ratio over one
@@ -1122,6 +1122,15 @@ def _cancelled(expression: sp.Basic) -> sp.Basic:
     A denominator of one factor has nothing to lose, which is every sum of
     ratios that has not been put over a common denominator yet.
 
+    Nothing divided is nothing to cancel. Over a polynomial `cancel` can only
+    multiply out, which is what `_multiplied_out` has just declined to do, and
+    over a high power of a sum it builds every term of an expansion `_pays`
+    then throws away: `(v + w + x + y + z)^60` is six hundred thousand of them,
+    a minute and half a gigabyte to reach the answer it was written as. Asked by
+    `is_polynomial` rather than by the denominator above, since `fraction`
+    reads a sum of ratios as having no denominator at all. Derive returns that
+    power unchanged and returns it at once, which is the behaviour being kept.
+
     What arrives here is not always an expression. An undecidable four-argument
     `IF` simplifies to its unknown clause, and `IF(u, true, false, false)` has a
     truth value for one; asking that for a numerator and a denominator is asking
@@ -1130,7 +1139,11 @@ def _cancelled(expression: sp.Basic) -> sp.Basic:
     """
     if not isinstance(expression, sp.Expr):
         return expression
+    if expression.is_polynomial():
+        return expression
     if len(sp.Mul.make_args(sp.fraction(expression)[1])) > 1:
+        return expression
+    if _expanded_terms(expression) > _EXPANSION:
         return expression
     return sp.cancel(expression)
 
@@ -1147,7 +1160,11 @@ def _multiplied_out(expression: sp.Basic) -> sp.Basic:
     (a + 1)^20` is the same trick a level up: the square is expanded, the tenth
     power is not, and what is left is `x^2 + 2*x*(a + 1)^10`.
 
-    Below `_FOLDED` the expansion is small enough to be worth having outright.
+    Below `_FOLDED` the expansion is small enough to be worth having outright,
+    one power of one sum at a time. Enough of them multiplied together is not:
+    a dozen squared binomials come to half a million terms with no power held
+    at all, so what the standing-in leaves is counted before it is built, and
+    an expansion past `_EXPANSION` terms is declined the way a folded power is.
 
     What is multiplied out gets collected back up while the power is still
     standing in, so that `2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` comes
@@ -1165,6 +1182,8 @@ def _multiplied_out(expression: sp.Basic) -> sp.Basic:
         return symbol**power.exp
 
     hidden = expression.replace(_is_folded_power, hide, simultaneous=False)
+    if _expanded_terms(hidden) > _EXPANSION:
+        return expression
     expanded = _collected(sp.expand(hidden), set(stood_in.values()))
     return expanded.xreplace({symbol: base for base, symbol in stood_in.items()})
 
@@ -1206,6 +1225,61 @@ def _is_folded_power(expression: sp.Basic) -> bool:
         and bool(expression.exp.is_Integer)
         and abs(int(expression.exp)) >= _FOLDED
     )
+
+
+#: How many terms an expansion may come to before the rewrite that would build
+#: it is not offered at all. A rewrite is kept only where it pays, and one that
+#: does not pay still costs everything it took to build and to measure - which
+#: for a high power of a sum is minutes and gigabytes for an answer thrown
+#: away. Measured over every expression in the corpus: the largest expansion
+#: any rewrite is offered there is a hundred and twenty terms, kept or not, so
+#: this stands two orders of magnitude above anything a worksheet asks for.
+_EXPANSION = 20_000
+
+
+def _expanded_terms(expression: sp.Basic) -> int:
+    """How many terms multiplying `expression` out would come to, at most.
+
+    A bound and not a count: terms that would collect are counted apart, and
+    over a limit whose purpose is to decline the expansions nobody asked for
+    that is the safe direction to be wrong in. Counted no higher than the limit
+    it is measured against, so that a power of a power cannot make the estimate
+    the expensive thing.
+    """
+    if isinstance(expression, sp.Add):
+        return min(sum(_expanded_terms(term) for term in expression.args), _CEILING)
+    if isinstance(expression, sp.Mul):
+        total = 1
+        for factor in expression.args:
+            total = min(total * _expanded_terms(factor), _CEILING)
+        return total
+    if isinstance(expression, sp.Pow):
+        return _power_terms(expression)
+    return 1
+
+
+#: What `_expanded_terms` counts up to, one term past what it is asked about.
+_CEILING = _EXPANSION + 1
+
+
+def _power_terms(power: sp.Pow) -> int:
+    """The terms a power of a sum comes to, one where it is not one.
+
+    `(u_1 + ... + u_k)^n` has `C(n + k - 1, k - 1)` terms in it, built here as
+    the product it is rather than as a binomial, so that a count already past
+    the ceiling can stop where it gets there: the number itself is not wanted,
+    only which side of the limit it falls.
+    """
+    terms = _expanded_terms(power.base)
+    if terms <= 1 or not power.exp.is_Integer or power.exp <= 0:
+        return 1
+    exponent = int(power.exp)
+    count = 1.0
+    for index in range(1, terms):
+        count *= (exponent + index) / index
+        if count > _EXPANSION:
+            return _CEILING
+    return round(count)
 
 
 def _denested(expression: sp.Basic) -> sp.Basic:

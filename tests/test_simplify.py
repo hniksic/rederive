@@ -135,6 +135,17 @@ def test_a_polynomial_is_not_factored():
     assert simp("x^2 + 2*x") == "x^2 + 2*x"
 
 
+def test_a_high_power_of_a_sum_is_not_multiplied_out_to_be_thrown_away():
+    # Derive answers both of these unchanged, and answers at once. The
+    # sixtieth power is six hundred thousand terms multiplied out, which no
+    # rewrite here keeps and every rewrite that builds it pays for, so the
+    # expansion is counted before it is built and declined. The ratio is the
+    # case a polynomial test does not cover: `cancel` is worth offering where
+    # something really is divided, and not at this size.
+    assert simp("(v + w + x + y + z)^60") == "(v + w + x + y + z)^60"
+    assert simp("(v + w + x + y + z)^60/q") == "(v + w + x + y + z)^60/q"
+
+
 # -- the normal form ----------------------------------------------------------
 
 #: Every one checked against the original. A sum is written as a rational
