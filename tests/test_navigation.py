@@ -108,6 +108,114 @@ def test_sibling_movement_stops_at_the_ends(session):
     assert not session.move_right()
 
 
+# -- stepping in --------------------------------------------------------------
+#
+# Every rule asserted here was checked against the original, key by key.
+
+
+def test_either_horizontal_arrow_steps_into_a_whole_expression():
+    """A whole expression has nothing to either side, so both arrows go in."""
+    session = Session()
+    session.author("(a + b) (c + d)")
+    assert session.move_left()
+    assert selected_text(session) == "a + b"
+    session.move_up()
+    assert session.move_right()
+    assert selected_text(session) == "a + b"
+
+
+def test_stepping_back_in_returns_to_the_operand_you_left():
+    session = Session()
+    session.author("(a + b) (c + d)")
+    session.move_right()
+    session.move_right()
+    assert selected_text(session) == "c + d"
+    session.move_up()
+    assert selected_text(session) == "(a + b)·(c + d)"
+    session.move_right()
+    assert selected_text(session) == "c + d"
+    # Whichever arrow steps in, and however deep it was left.
+    session.move_down()
+    session.move_right()
+    assert selected_text(session) == "d"
+    session.move_up()
+    session.move_up()
+    session.move_left()
+    assert selected_text(session) == "c + d"
+    session.move_down()
+    assert selected_text(session) == "d"
+
+
+def test_each_operand_remembers_its_own_place():
+    """The place is the node's own, so a detour through a sibling keeps it."""
+    session = Session()
+    session.author("(p + q) (r + s)")
+    session.move_right()
+    session.move_down()
+    session.move_right()
+    assert selected_text(session) == "q"
+    session.move_up()
+    session.move_right()
+    session.move_down()
+    # An operand not stepped into before starts at the first, and not wherever
+    # its sibling happens to stand.
+    assert selected_text(session) == "r"
+    session.move_up()
+    session.move_left()
+    session.move_down()
+    assert selected_text(session) == "q"
+
+
+def test_end_leaves_a_place_to_return_to(session):
+    session.author("a + b + c")
+    session.move_right()
+    session.move_last_sibling()
+    session.move_up()
+    session.move_right()
+    assert selected_text(session) == "c"
+
+
+def test_only_one_expression_remembers_at_a_time():
+    """Stepping into another expression is what takes the memory over.
+
+    Selecting one as a whole on the way past does not, which is what makes
+    looking down the history and coming back land where it left off.
+    """
+    session = Session()
+    session.author("(a + b) (c + d)")
+    session.author("(p + q) (r + s)")
+    session.move_up()
+    session.move_right()
+    session.move_right()
+    assert selected_text(session) == "c + d"
+    session.move_up()
+    # Down to the second expression and back, without stepping into it.
+    session.move_down()
+    session.move_up()
+    session.move_right()
+    assert selected_text(session) == "c + d"
+    # Now step into it, and the first expression has forgotten.
+    session.move_up()
+    session.move_down()
+    session.move_right()
+    assert selected_text(session) == "p + q"
+    session.move_up()
+    session.move_up()
+    session.move_right()
+    assert selected_text(session) == "a + b"
+
+
+def test_a_new_expression_starts_at_its_first_operand():
+    session = Session()
+    session.author("(a + b) (c + d)")
+    session.move_right()
+    session.move_right()
+    assert selected_text(session) == "c + d"
+    session.author("(p + q) (r + s)")
+    session.move_right()
+    assert selected_text(session) == "p + q"
+
+
 def test_home_and_end_move_between_siblings(session):
     session.author("a + b + c")
     session.move_right()
@@ -231,6 +339,15 @@ def test_a_page_selects_the_expression_it_lands_on_whole(session):
     assert selected_text(session) == "x"
     session.move_page_down(20)
     assert session.route == ()
+
+
+def test_a_page_that_cannot_move_keeps_the_subexpression(session):
+    """A page with nowhere to go moves nothing at all, the route included."""
+    session.move_first_entry()
+    session.move_right()
+    assert selected_text(session) == "x"
+    assert not session.move_page_up(20)
+    assert selected_text(session) == "x"
 
 
 def test_an_empty_history_has_nothing_to_page():

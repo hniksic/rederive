@@ -268,6 +268,11 @@ class Session:
     Navigation goes through the render rather than through the parse, because
     the original's rule is that you select what you see: `a + b - c` offers
     three terms, and `SIN(x + 1)` offers its argument and never its name.
+
+    Stepping into an expression is not a walk from the left: each node
+    remembers the operand the selection last stood on under it, and stepping
+    back in returns there rather than to the first. One expression carries that
+    memory at a time - see `_preferred`.
     """
 
     def __init__(
@@ -283,6 +288,12 @@ class Session:
         self.entries: list[Entry] = []
         self.selected: int | None = None
         self.route: Route = ()
+        #: Which operand each node of the expression being explored was last
+        #: left on, keyed by the route to the node. What stepping in returns
+        #: to. Only one expression has it at a time: `_preferred_owner` says
+        #: which, and stepping into any other throws it away.
+        self._preferred: dict[Route, int] = {}
+        self._preferred_owner: Entry | None = None
         #: The file this session was last saved to or read from, if any.
         self.file: Path | None = None
         #: What the last Remove took out, for an Unremove to put back.
@@ -1608,6 +1619,36 @@ class Session:
         parent = entry.layout.at(self.route[:-1])
         return parent.children if parent is not None else ()
 
+    def _descend(self, route: Route) -> bool:
+        """Step from `route` into the operand it was last left on.
+
+        The first operand where it has not been stepped into before. A node
+        with no operands to offer is where this refuses, which is what makes an
+        atom the bottom.
+
+        The original keeps one such memory rather than one per entry, so
+        stepping into a second expression forgets the first: that one starts
+        from the left, and so does the expression left behind when the
+        highlight comes back to it. Passing over an expression as a whole is
+        not stepping in and leaves the memory alone, which is what lets the
+        history be looked down and returned from.
+        """
+        entry = self.selected_entry
+        if entry is None:
+            return False
+        region = entry.layout.at(route)
+        if region is None or not region.children:
+            return False
+        if self._preferred_owner is not entry:
+            self._preferred = {}
+            self._preferred_owner = entry
+        self.route = route + (self._preferred.get(route, 0),)
+        return True
+
+    def _remember(self) -> None:
+        """Record where the selection stands as its parent's operand to return to."""
+        self._preferred[self.route[:-1]] = self.route[-1]
+
     # -- navigation --------------------------------------------------------
 
     def select_entry(self, index: int) -> bool:
@@ -1657,37 +1698,51 @@ class Session:
         return self.select_entry(self.selected - 1)
 
     def move_down(self) -> bool:
-        """Next entry, or one level down into the first operand."""
+        """Next entry, or one level down into the operands.
+
+        Only a whole expression counts as being on the history: from inside one
+        this goes deeper, and a leaf is where it stops rather than carrying on
+        to the expression below.
+        """
         if self.selected is None:
             return False
         if self.route:
-            region = self.selected_region
-            if region is None or not region.children:
-                return False
-            self.route += (0,)
-            return True
+            return self._descend(self.route)
         return self.select_entry(self.selected + 1)
 
     def move_right(self) -> bool:
-        """First operand of the whole expression, or the next sibling."""
-        entry = self.selected_entry
-        if entry is None:
+        """Into the expression, or on to the next operand.
+
+        Whole, either horizontal arrow steps in; the difference between them
+        only shows once inside, where this is the one that goes forward. The
+        last operand is where it stops: there is no wrapping round to the
+        first, and no climbing back out.
+        """
+        if self.selected_entry is None:
             return False
         if not self.route:
-            if not entry.layout.root.children:
-                return False
-            self.route = (0,)
-            return True
+            return self._descend(())
         if self.route[-1] + 1 >= len(self._siblings()):
             return False
         self.route = self.route[:-1] + (self.route[-1] + 1,)
+        self._remember()
         return True
 
     def move_left(self) -> bool:
-        """Previous sibling; a whole expression has none."""
-        if self.selected_entry is None or not self.route or self.route[-1] == 0:
+        """Into the expression, or back to the previous operand.
+
+        A whole expression has no operand to the left of it, so the arrow does
+        there what its opposite does: it steps in. Inside, the first operand is
+        where it stops.
+        """
+        if self.selected_entry is None:
+            return False
+        if not self.route:
+            return self._descend(())
+        if self.route[-1] == 0:
             return False
         self.route = self.route[:-1] + (self.route[-1] - 1,)
+        self._remember()
         return True
 
     def move_first_sibling(self) -> bool:
@@ -1695,6 +1750,7 @@ class Session:
             return False
         moved = self.route[-1] != 0
         self.route = self.route[:-1] + (0,)
+        self._remember()
         return moved
 
     def move_last_sibling(self) -> bool:
@@ -1703,6 +1759,7 @@ class Session:
         last = len(self._siblings()) - 1
         moved = self.route[-1] != last
         self.route = self.route[:-1] + (last,)
+        self._remember()
         return moved
 
     def move_first_entry(self) -> bool:
@@ -1722,7 +1779,7 @@ class Session:
         if self.selected is None:
             return False
         first, _ = self._pane(rows)
-        return self.select_entry(first if first < self.selected else self.selected - 1)
+        return self._page_to(first if first < self.selected else self.selected - 1)
 
     def move_page_down(self, rows: int) -> bool:
         """Select the expression at the bottom of a pane of `rows`.
@@ -1735,8 +1792,21 @@ class Session:
             return False
         _, last = self._pane(rows)
         if last > self.selected:
-            return self.select_entry(last)
-        return self.select_entry(self._paneful_below(rows))
+            return self._page_to(last)
+        return self._page_to(self._paneful_below(rows))
+
+    def _page_to(self, index: int) -> bool:
+        """Select entry `index` whole, unless the page had nowhere to go.
+
+        A page that runs into the end of the history moves nothing at all, and
+        that includes the route: an expression the highlight is inside of keeps
+        the subexpression highlighted rather than closing up to the whole.
+        """
+        assert self.selected is not None
+        index = max(0, min(index, len(self.entries) - 1))
+        if index == self.selected:
+            return False
+        return self.select_entry(index)
 
     def _pane(self, rows: int) -> tuple[int, int]:
         """The entries a pane of `rows` holds, the first and the last.
