@@ -7,6 +7,8 @@ command repaints simply by asking for another render.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from rich.text import Text
 from textual import events
 from textual.containers import Container, VerticalScroll
@@ -259,6 +261,22 @@ class WorkArea(VerticalScroll):
             text.stylize(styles["selection"], begin, len(page[0]))
         self.content.update(text)
         self.call_after_refresh(self.scroll_to, 0, 0, animate=False)
+
+    def show_greeting(self, lines: Sequence[str], rows: int, width: int) -> None:
+        """Paint the opening notice where this window's expressions will stand.
+
+        Centred across the pane and down it, and padded out to the pane's full
+        height so that it reads from the middle rather than being pushed against
+        the bottom the way a history is. A pane too short for the whole of it
+        loses the last lines, there being nothing better to give up.
+        """
+        styles = self.app.palette.styles
+        page = [line.center(width).rstrip()[:width] for line in lines]
+        above = max(0, (rows - len(page)) // 2)
+        page = ([""] * above + page)[:rows]
+        page += [""] * (rows - len(page))
+        text = Text("\n".join(page), style=styles["work"], no_wrap=True)
+        self.content.update(text)
 
     @property
     def showable(self) -> int:

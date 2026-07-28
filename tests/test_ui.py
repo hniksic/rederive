@@ -33,6 +33,60 @@ async def author(pilot, text):
     await pilot.press("enter")
 
 
+# -- the opening notice --------------------------------------------------------
+
+# The original's notice is a painting rather than a state: it survives a menu
+# opened and escaped, a dialog committed and a line abandoned, and is gone for
+# good the moment anything else draws the work area - an expression, a help
+# page, a window command, a Clear. These say the same of this one.
+
+
+async def test_the_opening_notice_stands_in_the_middle_of_the_empty_pane(app):
+    async with app.run_test():
+        shown = work_area(app)
+        said = [line.strip() for line in shown if line]
+        assert said == [
+            "R E D E R I V E",
+            "A Mathematical Assistant",
+            "Press H for help",
+        ]
+        # Centred across the pane, and clear of the top of it and the bottom.
+        width = app.query_one("#panes").size.width
+        assert all(line == line.strip().center(width).rstrip() for line in shown if line)
+        assert shown[0] == "" and shown[-1] == ""
+
+
+async def test_the_opening_notice_gives_the_pane_up_for_the_first_expression(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        assert work_area(app) == ["#1:  x"]
+        # A worksheet emptied later is an empty worksheet, not a program that
+        # has just started, so the notice does not come back.
+        await pilot.press("t", "c", "e", "y")
+        assert work_area(app) == []
+
+
+async def test_a_split_takes_the_opening_notice_off_both_panes(app):
+    async with app.run_test(size=(80, 25)) as pilot:
+        await pilot.press("w", "s", "h", "enter")
+        assert work_area(app, 1) == [] and work_area(app, 2) == []
+
+
+async def test_a_clear_with_nothing_to_clear_takes_the_opening_notice_away(app):
+    async with app.run_test() as pilot:
+        await pilot.press("t", "c", "e")
+        assert work_area(app) == []
+
+
+async def test_a_menu_and_a_dialog_leave_the_opening_notice_standing(app):
+    async with app.run_test() as pilot:
+        # A menu opened and escaped, a dialog committed, and a line abandoned.
+        await pilot.press("w", "escape")
+        await pilot.press("o", "n", "enter")
+        await pilot.press("a", "escape")
+        assert "Press H for help" in "\n".join(work_area(app))
+
+
 async def test_menu_highlight_cycles_and_wraps(app):
     async with app.run_test() as pilot:
         assert highlighted_menu_option(app) == "Author"

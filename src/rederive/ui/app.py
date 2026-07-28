@@ -501,6 +501,17 @@ STATE_FILE = "rederive.ini"
 #: What the message line says between two steps of a demonstration.
 PRESS_ANY_KEY = "Press any key to continue"
 
+#: The opening notice, standing in the middle of the pane until something else
+#: is drawn there. The original filled its screen with a version, an address, a
+#: fax number and a plea not to copy the diskettes; what is worth keeping of
+#: that is the name, what the program is, and where the help is.
+GREETING = (
+    "R E D E R I V E",
+    "A Mathematical Assistant",
+    "",
+    "Press H for help",
+)
+
 
 class FileNames(Suggester):
     """What a file prompt offers as it is typed: the first name on offer.
@@ -1138,6 +1149,14 @@ class RederiveApp(App[None]):
         #: hold still, since the sideways scroll of a pane is the window's.
         self.panes: dict[Window, WorkArea] = {}
         self.spare: list[WorkArea] = []
+        #: The worksheet the program opened on, and whether the opening notice
+        #: still stands over it. The original painted its notice once and gave
+        #: it up to whatever drew the work area next - an expression, a help
+        #: page, a window command, a Clear - while a menu opened and escaped or
+        #: a dialog committed left it standing, and nothing ever brought it
+        #: back. `_opening_screen` is that rule.
+        self.opening_session = self.windows.session
+        self.greeting = True
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
         #: The command menu, plus whatever submenu or dialog is stacked on it.
@@ -1369,6 +1388,10 @@ class RederiveApp(App[None]):
         areas = self.windows.areas(height, width)
         framed = self.windows.framed
         painting = self.mode != MODE_COMPUTE
+        # The sessions are read only while nothing is computing: while a command
+        # runs the thread running it owns them.
+        if painting and not self._opening_screen():
+            self.greeting = False
         for window in self.windows.windows:
             pane = self.panes.get(window)
             if pane is None:
@@ -1389,6 +1412,10 @@ class RederiveApp(App[None]):
                 # so every other pane goes on showing its own worksheet.
                 page, titled = self._help_page(rect.height, rect.width)
                 pane.show_help(page, rect.height, rect.width, titled)
+            elif self.greeting:
+                # Which is the one window there is: the notice stands only
+                # while the screen is the one the program opened with.
+                pane.show_greeting(GREETING, rect.height, rect.width)
             else:
                 session = window.session
                 pane.show(session.entries, session.selected, session.selection_rect())
@@ -1398,6 +1425,25 @@ class RederiveApp(App[None]):
             self.spare.append(spare)
         self.query_one(Frame).refresh()
         self.query_one(MenuRule).refresh()
+
+    def _opening_screen(self) -> bool:
+        """Whether the work area is still the one the program started with.
+
+        Which is what the opening notice stands on: the window the program
+        opened, that window's own worksheet, nothing in it, and no help page
+        over it. Everything the original gave the notice up to shows here as
+        one of those - an expression to draw, a help page, a second session a
+        split or an overlay made, another worksheet Designate put in the window
+        - bar the two Clear commands, which draw over it without changing any
+        of them and so put it away themselves.
+        """
+        sessions = self.windows.sessions()
+        return (
+            self.helping is None
+            and len(sessions) == 1
+            and sessions[0] is self.opening_session
+            and not sessions[0].entries
+        )
 
     def refresh_screen(self) -> None:
         """Push the whole model state at the widgets."""
@@ -3768,7 +3814,12 @@ class RederiveApp(App[None]):
         The two commands that take expressions out ask before they do, in the
         same words Quit asks in. A history with nothing in it is nothing to
         lose, so there is nothing to ask about.
+
+        Either way the pane is drawn empty afterwards, which is what takes the
+        opening notice off a worksheet that had nothing to clear: the original's
+        Clear drew over its notice too.
         """
+        self.greeting = False
         if not self.session.entries:
             clear()
             self._done_with_menu()
