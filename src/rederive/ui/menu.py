@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rederive.model import building, settings, windows
+from rederive.model import help as helps
 from rederive.model.session import Bounds
 
 MENU_TITLE = "COMMAND:"
@@ -720,6 +721,26 @@ def _strictness(setting: str, message: str, closed: bool) -> settings.ChoiceFiel
 def closed(value: str | int) -> bool:
     """Whether a strictness field is set to the nonstrict of the two symbols."""
     return value == CLOSED
+
+
+#: The subjects help is divided into, and the word that leaves help. Help
+#: stands where the expressions do rather than over them, so its menu is a
+#: menu like any other: this one chooses a subject, and one of those below
+#: turns the pages of the subject chosen.
+HELP = Menu("HELP:", tuple(topic.word for topic in helps.TOPICS) + (helps.RESUME,))
+
+#: The menu a subject is read under, one per subject because each is titled
+#: with its own name. `Next` past the last page goes back to the subject menu
+#: rather than round to the first, which is the original's own way out.
+HELP_PAGES: dict[str, Menu] = {
+    topic.word: Menu(
+        f"HELP {topic.word.upper()}:", (helps.NEXT, helps.PREVIOUS, helps.RESUME)
+    )
+    for topic in helps.TOPICS
+}
+
+#: Which subject each of those menus reads, for the app to look one up by.
+HELP_TOPICS: dict[Menu, str] = {menu: word for word, menu in HELP_PAGES.items()}
 
 
 #: How each color is spelled on the color menu. Derive asked for a number, so

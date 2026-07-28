@@ -235,6 +235,31 @@ class WorkArea(VerticalScroll):
             region = Region(0, starts[selected], 1, entries[selected].height)
             self.call_after_refresh(self.scroll_to_region, region, animate=False)
 
+    def show_help(self, lines: list[str], rows: int, width: int, titled: bool) -> None:
+        """Paint a help page over this window's expressions.
+
+        Help is not an overlay: it stands where the expressions stand, in the
+        window it was asked from and in no other, with that window's border
+        still drawn around it and every other window still showing its own
+        worksheet. There is no border of its own, no scrollbar and no shadow,
+        which is how the original drew it.
+
+        The page is padded out to the pane's full height, so that a document
+        shorter than the pane reads from the top rather than being pushed
+        against the bottom the way a history is. A titled page carries its
+        title on the first row in inverse video, over the title's own columns
+        and no further.
+        """
+        styles = self.app.palette.styles
+        page = [line[:width] for line in lines[:rows]]
+        page += [""] * (rows - len(page))
+        text = Text("\n".join(page), style=styles["work"], no_wrap=True)
+        if titled and page[0].strip():
+            begin = len(page[0]) - len(page[0].lstrip())
+            text.stylize(styles["selection"], begin, len(page[0]))
+        self.content.update(text)
+        self.call_after_refresh(self.scroll_to, 0, 0, animate=False)
+
     @property
     def showable(self) -> int:
         """Columns the pane has for a render, once the label field is taken."""

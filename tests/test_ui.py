@@ -47,8 +47,8 @@ async def test_menu_highlight_cycles_and_wraps(app):
 
 async def test_mnemonic_invokes_without_moving_the_highlight(app):
     async with app.run_test() as pilot:
-        await pilot.press("h")
-        assert message(app) == "Help: not implemented yet"
+        await pilot.press("p")
+        assert message(app) == "Plot: not implemented yet"
         assert highlighted_menu_option(app) == "Author"
 
 

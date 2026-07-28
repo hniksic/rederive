@@ -44,7 +44,9 @@ uv run pytest
   the history, the parse state, each entry's render, and all navigation rules,
   and the windows the `Window` command splits, opens and closes - a tree of
   them, each holding a whole session of its own, plus where each one lands on
-  the screen.
+  the screen. `help.py` and `help.txt` are the help document and how a pageful
+  of it is laid out for whatever window it is being read in; the subject
+  listing the system settings is generated from the settings themselves.
 - `src/rederive/syntax/` - Derive expression text to expression trees, and back
   out again - as Derive notation, or as C, Python, Rust or Julia source. It
   does no mathematics: `2+3` is a sum node, never `5`.

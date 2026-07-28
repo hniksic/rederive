@@ -1,0 +1,420 @@
+The help document. Each subject starts with a %topic line carrying, between
+bars, the option the HELP menu line shows, the line the Help Menu lists, and
+the title every page of the subject is headed with. Everything after it is the
+text, in blocks separated by blank lines; a block is kept whole on a page
+wherever it fits on one. Lines are written for eighty columns and wrapped to
+whatever the window turns out to be, so a table row that has to break keeps
+its own indent. The one subject whose body is the %settings directive is
+generated from the settings themselves and is written nowhere.
+
+%topic Basics | the Basics of Rederive | Rederive Basics
+
+Rederive is a worksheet rather than a calculator. An expression is entered
+with the Author command and numbered as it arrives, and nothing at all is
+worked out until a command is aimed at it. Every answer becomes a new numbered
+expression of its own, so a session reads down the screen as a record of what
+was asked and what came of it. Nothing a command computes replaces what it was
+computed from.
+
+Driving a menu:
+  Space, Tab            move the highlight to the next option
+  Backspace, Shift-Tab  move it back
+  Enter                 run the highlighted option
+  a capital letter      run the option that letter names, from anywhere
+  Esc                   leave a submenu, or abandon the command being answered
+
+Every option carries exactly one capital letter, and that letter invokes it
+wherever the highlight happens to be standing. Usually it is the first letter:
+A authors, S simplifies, Q quits. Where two options of one menu would want the
+same letter the capital moves along the word instead, which is why the command
+menu reads soLve, moVe and approX.
+
+A first session:
+  press A, type x^3 - x, press Enter
+  press F for Factor, then Enter at each question it asks
+  press S for Simplify, then Enter
+
+Every question a command asks comes up with an answer already on it, so a
+command is usually carried through by pressing Enter as many times as it asks.
+
+Naming an expression:
+  the arrow keys   move the highlight from one expression to the next
+  #3               expression 3, wherever it now stands on the screen
+  Jump             move the highlight to a numbered expression at once
+
+A command that wants an expression opens with the label of the highlighted one
+already on its line, so Enter alone answers it. Moving the highlight while
+that line is up takes the label along with it. The label is the safer of the
+two ways to answer: it goes on meaning the same expression after a Remove or a
+moVe has changed what stands where.
+
+Exact before approximate:
+  Simplify   work an expression out exactly, however long the answer
+  approX     work it out as a number, to the precision now set
+  Options Precision   which of the two an ordinary Simplify does
+
+An answer is kept exact wherever it can be, so Simplify of 1/3 + 1/6 is 1/2
+and not 0.5, and the square root of 2 stays a square root. approX is how a
+number is asked for.
+
+Not guessing:
+  Declare Variable   give a variable a value, or a domain to simplify over
+  Declare Function   define a function of your own
+
+A simplification that would only be right for some values of a variable waits
+until something says which values those are. Until then the expression stands
+as it is, which is the honest answer rather than a wrong one.
+
+Files, screen and settings:
+  Transfer Save    write the worksheet out
+  Transfer Load    read one back in
+  Transfer Clear   start again with nothing
+  Options          how numbers are read, worked out and printed
+  Manage           which way the simplifier applies a transformation
+  Window           split the screen, so two parts of one session show at once
+  Help             this help
+  Quit             leave, after asking whether that was meant
+
+%topic Editing | line Editing commands | Line Editing Commands
+
+The keys below apply to every line the program reads: the Author line, the
+lines the Declare and Calculus commands read, the value lines of Manage
+Substitute, the operand lines of Build and the lines that name a file.
+
+Special key commands:
+  F1           display this help; the line being typed is kept
+  F3           write the highlighted expression onto the line
+  F4           write it onto the line inside parentheses
+  F6           hand the sideways arrow keys to the line, or to the highlight
+  Ins, Ctrl-V  switch between making room for a character and typing over one
+  Tab          on a line naming a file, complete the name and open the list
+  Enter        accept the line
+  Ctrl-Enter   accept it, and simplify the expression the command enters
+  Esc          abandon the command; on an open list of names, close the list
+
+Cursor movement commands:
+  Left, Right  one character along the line
+  Home         to the start of the line
+  End          to the end of it
+
+Text deletion commands:
+  Backspace    delete the character before the cursor
+  Delete       delete the character under it
+
+The status line says which of the two typing modes is in force: Ins stands
+there while a character typed makes room for itself, and nothing stands there
+while it types over what is already at the cursor. Lin stands beside it while
+the sideways arrow keys belong to the line rather than to the highlight.
+
+Expression highlighting commands. These go on working while a line is being
+typed, a line of text having nothing vertical to do with them, which is what
+makes it possible to move onto an expression and then take it with F3:
+  Up, Down            the previous, the next expression
+  PgUp, PgDn          a paneful back, a paneful on
+  Ctrl-Home, Ctrl-End the first, the last expression
+  Ctrl-PgUp, Ctrl-PgDn  the same two
+  Ctrl-Left, Ctrl-Right slide a highlighted expression too wide for the pane
+
+Sub-expression highlighting commands. Press F6, or set Options Input Use to
+Subexpression, and the sideways keys walk into the highlighted expression
+instead of along the line:
+  Right   into the expression, or on to the part beside the one highlighted
+  Left    back to the part before it
+  Down    deeper into the highlighted part
+  Up      back out to the part holding it
+  Home    the first part alongside
+  End     the last part alongside
+
+What is highlighted is what a command acts on, so a subexpression can be
+factored, approximated or substituted for on its own without the expression
+around it being disturbed.
+
+Entering Greek letters, special constants and operators:
+  Alt-A  alpha     Alt-B  beta      Alt-D  delta     Alt-N  epsilon
+  Alt-H  theta     Alt-M  mu        Alt-P  pi        Alt-S  sigma
+  Alt-T  tau       Alt-F  phi       Alt-O  omega     Alt-G  Gamma
+  Alt-Q  the square root sign       Alt-0  infinity
+  Alt-E  the base of natural logarithms, #e
+  Alt-I  the square root of -1, #i
+  Alt-minus  the plus-or-minus sign
+  Alt-V  the subscript operator, SUB
+
+Every one of them can be spelled out instead - alpha, pi, inf, sqrt, #e, #i -
+and the spelling is what the program prints back either way, so nothing has to
+be entered with an Alt key. Alt-minus needs a terminal that reports a modified
+key; where it does not, plus-or-minus is written +-.
+
+%topic Functions | Functions and constants | Functions, Constants, and Operators
+
+A name is a function where it is followed by an argument list and a variable
+where it is not. Case is ignored unless Options Input Case says otherwise, so
+SIN, Sin and sin are one function. Nothing here computes when it is authored:
+what is entered is entered as written, and Simplify or approX is what works it
+out.
+
+Constants:
+  pi                 the ratio of a circle's circumference to its diameter
+  #e                 the base of the natural logarithms
+  #i                 the square root of -1
+  inf                infinity; -inf is the other end
+  deg                one degree, so 90 deg is a right angle
+  euler_gamma        Euler's constant
+  true, false        the two truth values
+  ?                  an unknown value
+
+Operators:
+  u + v, u - v       sum and difference
+  u*v, u v           product; a space or nothing between multiplies too
+  u/v                quotient
+  u^v                power
+  u!                 factorial
+  u%                 u divided by a hundred
+  -u                 negation
+  u.v                dot product of two vectors, or product of two matrices
+  u`                 transpose of a matrix
+  u SUB v            element v of the vector u, or a subscripted name
+  u +- v             both u + v and u - v at once
+  x := u             give the variable x the value u
+  f(x) := u          define a function
+  x :epsilon Real    declare what x ranges over
+
+Relational operators:
+  u = v, u /= v      equal, not equal
+  u < v, u <= v      less than, not greater than
+  u > v, u >= v      greater than, not less than
+
+Boolean operator and functions:
+  NOT u              negation
+  u AND v, u OR v    conjunction, disjunction
+  u XOR v            exclusive disjunction
+  u IMP v            implication
+  TRUTH_TABLE(p, q, ..., u, ...)  the table of u over the variables named
+
+Solving equations and relations:
+  SOLVE(u, x)        solve u for x, which is what the soLve command writes
+  LHS(u), RHS(u)     one side of a relation; over a vector, of each of them
+
+Exponential and logarithmic functions:
+  EXP(z)             #e raised to z
+  LN(z)              the natural logarithm
+  LOG(z), LOG(z, w)  the natural logarithm, and the logarithm to base w
+  SQRT(z)            the square root
+
+Trigonometric functions:
+  SIN(z), COS(z), TAN(z)     sine, cosine, tangent
+  COT(z), SEC(z), CSC(z)     cotangent, secant, cosecant
+
+Inverse trigonometric functions:
+  ASIN(z), ACOS(z), ATAN(z)  the inverses of the first three
+  ATAN(y, x)                 the angle of the point (x, y), by quadrant
+  ACOT(z), ASEC(z), ACSC(z)  the inverses of the other three
+
+The angle mode set by Manage Trigonometry Angle says whether an argument is
+read, and an answer written, in radians or in degrees.
+
+Hyperbolic functions:
+  SINH(z), COSH(z), TANH(z)  hyperbolic sine, cosine, tangent
+  COTH(z), SECH(z), CSCH(z)  hyperbolic cotangent, secant, cosecant
+
+Inverse hyperbolic functions:
+  ASINH(z), ACOSH(z), ATANH(z), ACOTH(z), ASECH(z), ACSCH(z)
+
+Piecewise continuous functions:
+  SIGN(z)            -1, 0 or 1 by the sign of z; SIGN(0) is +-1
+  STEP(z)            0 below zero and 1 above it
+  CHI(a, z, b)       1 between a and b, 0 outside them
+  IF(test, u, v)     u where the test holds, v where it does not
+  FLOOR(u), FLOOR(u, v)  the greatest integer not above u, or above u/v
+  MOD(u, v)          the remainder of u on division by v
+  MODS(u, v)         the same, taken symmetrically about zero
+  MAX(...), MIN(...) the largest, the smallest of the arguments
+
+Complex variable functions:
+  RE(z), IM(z)       the real and the imaginary part
+  ABS(z)             the magnitude, and the absolute value of a real number
+  CONJ(z)            the complex conjugate
+  PHASE(z)           the angle z makes with the positive real axis
+
+Probability and statistical functions:
+  COMB(n, k)         the number of combinations of n things taken k at a time
+  PERM(n, k)         the number of permutations
+  AVERAGE(...)       the mean of the arguments, or of a vector's elements
+  RMS(...)           the root mean square
+  VAR(...)           the variance
+  STDEV(...)         the standard deviation
+  NORMAL(z), NORMAL(z, m, s)  the normal distribution, standard or not
+
+Error and special functions:
+  ERF(z), ERFC(z)    the error function and its complement
+  GAMMA(z)           the gamma function
+  ZETA(z)            the Riemann zeta function
+
+Number theory functions:
+  GCD(...), LCM(...) the greatest common divisor, the least common multiple
+  PRIME(n)           whether n is prime
+  NEXT_PRIME(n)      the least prime above n
+  QUOTIENT(u, v)     how many times v goes into u
+  REMAINDER(u, v)    what is left of u when v has gone into it
+  POLY_GCD(u, v)     the greatest common divisor of two polynomials
+
+Expression decomposition functions:
+  NUMERATOR(u), DENOMINATOR(u)   the two halves of a quotient
+  TERMS(u)           what u is written as the sum of, as a vector
+  FACTORS(u)         what u is written as the product of, as a vector
+  VARIABLES(u)       the free variables of u, most main first
+  NUMBER(u)          whether u simplified to a number
+  APPROX(u), APPROX(u, n)  u as a number, at the set precision or at n digits
+
+Calculus functions:
+  DIF(u, x), DIF(u, x, n)      the derivative, to the first or the nth order
+  INT(u, x)                    the indefinite integral
+  INT(u, x, a, b)              the definite integral between a and b
+  LIM(u, x, a), LIM(u, x, a, d)  the limit at a; d says from which side
+  SUM(u, k, a, b)              the sum over k from a to b
+  PRODUCT(u, k, a, b)          the product over the same range
+  TAYLOR(u, x, a, n)           the Taylor polynomial of degree n about a
+
+Generating vectors and matrices:
+  VECTOR(u, k, ...)  u at each value k takes, as a vector
+  SELECT(u, k, ...)  the values of k for which the test u holds
+  ITERATES(u, x, a), ITERATES(u, x, a, n)  a, u(a), u(u(a)), as a vector
+  ITERATE(u, x, a), ITERATE(u, x, a, n)    the last element of that sequence
+  IDENTITY_MATRIX(n) the n by n identity matrix
+
+The values an index runs over are said in four ways, and VECTOR, SELECT and
+ITERATES all read them alike: a count on its own, a first and a last, a first
+and a last and a step, or a vector of the values themselves.
+
+Vector manipulation functions:
+  DIMENSION(v)               how many elements v has
+  ELEMENT(v, i)              element i, counting from one
+  ELEMENT(m, i, j)           element j of row i of a matrix
+  APPEND(v, w, ...)          the elements of each, run into one vector
+  REVERSE_VECTOR(v)          the elements in the other order
+  INSERT_ELEMENT(u, v, n)    v with u written in before its nth element
+  DELETE_ELEMENT(v, n)       v with its nth element gone
+  REPLACE_ELEMENT(u, v, n)   v with u where its nth element was
+
+A matrix is a vector of its rows, so every one of these takes a matrix and
+works on rows.
+
+Vector and matrix operations:
+  u.v                the dot product, or the matrix product
+  CROSS(u, v)        the cross product of two three-element vectors
+  DET(m)             the determinant
+  TRACE(m)           the trace
+  ROW_REDUCE(m), ROW_REDUCE(m, b)  the reduced echelon form
+  CHARPOLY(m, z)     the characteristic polynomial in z
+  EIGENVALUES(m, z)  its zeros, written as equations in z
+
+Vector calculus:
+  GRAD(u), GRAD(u, a)          the gradient of a scalar field
+  DIV(v), DIV(v, a)            the divergence of a vector field
+  CURL(v), CURL(v, a)          the curl
+  LAPLACIAN(u), LAPLACIAN(u, a)  the divergence of the gradient
+  POTENTIAL(v), POTENTIAL(v, p)  a scalar whose gradient is v
+  VECTOR_POTENTIAL(v), VECTOR_POTENTIAL(v, p)  a vector whose curl is v
+Each of the six takes an optional vector of coordinates, so the same function
+serves cartesian, cylindrical and spherical coordinates.
+
+%topic Algebra | Algebra window commands | Algebra Window Command Menu
+
+Move the highlight with Space or Tab and press Enter, or type the one capital
+letter the option carries. Esc leaves a submenu without choosing anything, and
+abandons a command that has begun to ask questions.
+
+Author        enter an expression as the next numbered entry, unsimplified
+Build         put an expression together from ones already on the screen
+Calculus      write a calculus expression, for a Simplify to work out
+  Differentiate  the derivative, to any order; a negative order integrates
+  Integrate      the integral, definite between two limits or indefinite
+  Limit          the limit at a point, approached from the left, right or both
+  Product        the product of an expression over a range of an index
+  Sum            the sum over the same
+  Taylor         the Taylor polynomial about a point, to a given degree
+  Vector         the vector of an expression over a range of an index
+
+Declare       give a name a meaning
+  Function       define a function of any number of variables
+  Variable       give a variable a value, or a domain to be simplified over
+  Matrix         enter a matrix element by element
+  vectoR         enter a vector element by element
+
+Expand        expand an expression over the variables named, into a sum
+Factor        factor an expression over the variables named, into a product
+Help          this help
+Jump          move the highlight to a numbered expression
+soLve         solve an expression for its unknowns
+
+Manage        how an expression is held and how it is simplified
+  Annotate       change what the status line says an expression came from
+  Branch         which root of several a radical is taken to mean
+  Exponential    whether exponentials are collected or expanded
+  Logarithm      whether logarithms are collected or expanded
+  Ordering       which variable counts as the main one, for printing and order
+  Renumber       number the expressions again from one
+  Substitute     put a value in place of a variable, or of a subexpression
+  Trigonometry   angle sums, multiple angles, powers, and degrees or radians
+
+Options       how numbers are read, computed and printed
+  Color          the colors of the menu bands and of the work area
+  Input          typing over or inserting, case sensitivity, arrow key mode
+  Mute           whether a refused key beeps
+  Notation       the style and the digit count answers are printed in
+  Output         built-up or compressed display, and the times operator
+  Precision      exact, approximate or mixed arithmetic, and its digit count
+  Radix          the number system input and output are written in
+
+Plot          not in this version; there is nothing yet to plot
+Quit          leave the program, after asking whether that was meant
+Remove        take a block of expressions out of the worksheet
+Simplify      work an expression out, exactly where the precision says exactly
+
+Transfer      files, and starting again
+  Load           read a worksheet, settings, data or a utility file back in
+  Save           write a worksheet, settings or source code out
+  Merge          read a worksheet in after what is already there
+  Clear          throw expressions, functions or variables away
+  Demo           run a demonstration file, a step to a keystroke
+
+Unremove      put the last block Remove took out back, wherever is wanted
+moVe          move a block of expressions elsewhere in the worksheet
+
+Window        split the screen, and move between the pieces
+  Close          close a window, its neighbour taking the room
+  Designate      change what kind of window this one is
+  Flip           bring the next window overlaid on this one to the top
+  Goto           make a numbered window the active one
+  Next           make the next window active
+  Open           open another window over this one
+  Previous       make the previous window active
+  Split          divide this window in two
+    Horizontal     one above the other
+    Vertical       one beside the other
+
+approX        work an expression out as a number, to the precision set
+
+Transfer Load Utility reads a file of definitions without numbering what it
+reads, which is how a library of functions is brought into a session. The
+utility files written for the original Derive can be read this way.
+
+Transfer Save writes a worksheet in this program's own format, and also writes
+a highlighted expression out as C, Python, Rust or Julia source.
+
+Algebra window function key commands:
+  F1           the next window; help, while a line is being typed
+  Shift-F1     the previous window
+  F2           bring the next window overlaid on this one to the top
+  Shift-F2     the previous one
+  F3           write the highlighted expression onto the line being typed
+  F4           write it onto that line inside parentheses
+  F6           hand the sideways arrow keys to the line, or to the highlight
+  Esc          abandon what is being asked; stop a computation that is running
+
+A command that reaches the engine says on the message line how long it has
+been running, and Esc stops it. What it had computed is thrown away and the
+worksheet stands as it did.
+
+%topic State | current State of system | System Control Settings
+
+%settings

@@ -157,6 +157,7 @@ from textual.widgets.input import Selection
 
 from rederive.engine import Amount, EngineAborted
 from rederive.model import building, state, windows, worksheet
+from rederive.model import help as helps
 from rederive.model import session as sessions
 from rederive.model.expr import Node
 from rederive.model.session import Session
@@ -221,6 +222,18 @@ MODE_DEMO = "demo"
 #: running the command owns the session until it is done, so nothing may read
 #: the worksheet and no key but Esc means anything.
 MODE_COMPUTE = "compute"
+#: The mode help holds the screen in. A menu mode like the command menu - the
+#: same keys move the same highlight - but the work area is showing a document
+#: rather than a worksheet, so the keys that walk the history turn pages here.
+MODE_HELP = "help"
+
+#: The two modes a menu band is being driven in.
+MENU_MODES = (MODE_MENU, MODE_HELP)
+
+#: Which way each movement turns a page of help. The keys are the ones that
+#: walk the history everywhere else, which is what makes them the ones a reader
+#: reaches for.
+HELP_PAGING = {"down": 1, "page_down": 1, "up": -1, "page_up": -1}
 
 #: The modes in which the prompt band has the screen, and the keys with it.
 PROMPT_MODES = (
@@ -347,8 +360,9 @@ ALT_GLYPHS = {
     "v": " SUB ",
 }
 
-# F1 does nothing yet: Help is not part of this milestone. The wording is the
-# original's, kept so the screen reads right.
+# The Author line is the one line the original advertises help on, and F1 is
+# the key it advertises. Every other line takes the key too; only this one says
+# so, there being nowhere to say it that is not the message line.
 ENTER_EXPRESSION = "Enter expression (press F1 for help)"
 #: What every command that derives an expression from another asks for, the
 #: help the Author line offers being left off theirs.
@@ -711,6 +725,29 @@ CALCULUS_COMMANDS: dict[str, Calculus] = {
 
 
 @dataclass
+class Helping:
+    """The help now on screen, and what leaving it goes back to.
+
+    `topic` is None while the subject menu is showing, which is the level Esc
+    and `Resume` fall back to from a subject and out of altogether from there.
+    `pages` is how many pages the subject came to when it was last laid out -
+    a number that belongs to the pane's size and not to the document, so it is
+    written each time the page is painted and read by the keys that turn one.
+
+    `resume` and `message` are what the screen was doing when help was asked
+    for. Help can be asked for from a line half typed, and that line has to
+    come back with its text and its question intact, so what the message line
+    said goes with it.
+    """
+
+    resume: str = MODE_MENU
+    message: str = ENTER_OPTION
+    topic: helps.Topic | None = None
+    page: int = 0
+    pages: int = 1
+
+
+@dataclass
 class Asking:
     """A Factor or Expand command part way through its questions.
 
@@ -1024,6 +1061,11 @@ class RederiveApp(App[None]):
         Binding(
             "shift+f1", "window_step(-1)", "Previous window", priority=True, show=False
         ),
+        # The other half of F1: on a line being typed there is no window to
+        # step to that would not take the line with it, and the key is help
+        # instead. The two never apply at once, so which of the bindings takes
+        # the key is `check_action`'s to say.
+        Binding("f1", "help", "Help", priority=True, show=False),
         Binding("f2", "window_flip(1)", "Next overlay", priority=True, show=False),
         Binding(
             "shift+f2", "window_flip(-1)", "Previous overlay", priority=True, show=False
@@ -1165,6 +1207,8 @@ class RederiveApp(App[None]):
         #: line has been taken that way. Whatever the command adds to it is what
         #: gets simplified once the command is done.
         self.simplifying: tuple[sessions.Entry, ...] | None = None
+        #: The help on screen, or None while the worksheet has the work area.
+        self.helping: Helping | None = None
         #: The demonstration under way, running or suspended.
         self.demo: Demonstration | None = None
         #: How the message line names the computation now running, or None
@@ -1192,6 +1236,7 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Author"): self._command_author,
             (ALGEBRA, "Build"): self._command_build,
             (ALGEBRA, "Expand"): lambda: self._command_asking(EXPAND),
+            (ALGEBRA, "Help"): self._command_help,
             (ALGEBRA, "Factor"): lambda: self._command_asking(FACTOR),
             (ALGEBRA, "Jump"): self._command_jump,
             (ALGEBRA, "Quit"): self._command_quit,
@@ -1337,7 +1382,14 @@ class RederiveApp(App[None]):
             pane.styles.offset = (rect.left, rect.top)
             pane.styles.width = rect.width
             pane.styles.height = rect.height
-            if painting:
+            if not painting:
+                continue
+            if self.helping is not None and window is self.windows.active:
+                # Help stands in the window it was asked from and in no other,
+                # so every other pane goes on showing its own worksheet.
+                page, titled = self._help_page(rect.height, rect.width)
+                pane.show_help(page, rect.height, rect.width, titled)
+            else:
                 session = window.session
                 pane.show(session.entries, session.selected, session.selection_rect())
         for window in [window for window in self.panes if window not in areas]:
@@ -1556,8 +1608,15 @@ class RederiveApp(App[None]):
             return self.mode == MODE_FILE
         if action.startswith("browse_"):
             return self.browsing
-        if action.startswith("menu_") or action == "scroll_work":
+        if action.startswith("menu_"):
+            return self.mode in MENU_MODES
+        if action == "scroll_work":
             return self.mode == MODE_MENU
+        if action == "help":
+            # F1 is help on a line and the next window everywhere else, which
+            # is the original's split. Asking for help from inside help would
+            # have nowhere to go back to.
+            return self.mode in PROMPT_MODES
         if action.startswith("window_"):
             # At the command menu and nowhere else, not even under a Window
             # submenu: switching windows out from under a half-answered
@@ -1566,6 +1625,14 @@ class RederiveApp(App[None]):
         if action == "nav":
             if self.mode == MODE_MENU:
                 return True
+            if self.mode == MODE_HELP:
+                # The keys that walk the history turn the pages of a subject,
+                # and there are no pages to turn on the subject menu.
+                return (
+                    self.helping is not None
+                    and self.helping.topic is not None
+                    and parameters[0] in HELP_PAGING
+                )
             return self.mode in WALKED_MODES and (
                 not self.line_edit or parameters[0] in ENTRY_MOVES
             )
@@ -1595,7 +1662,7 @@ class RederiveApp(App[None]):
             event.prevent_default()
             if event.key == "escape":
                 self._abort()
-        elif self.mode == MODE_MENU:
+        elif self.mode in MENU_MODES:
             character = event.character
             if character and (
                 character.isalnum()
@@ -1784,7 +1851,13 @@ class RederiveApp(App[None]):
         the amount is the last thing Factor and Expand ask for, and the Declare
         Variable questions are put up one in place of the last, so that Esc
         leaves any of them for the Declare menu as the original does.
+
+        In help Esc is `Resume`: up one level from a subject, and out of help
+        from the subject menu.
         """
+        if self.mode == MODE_HELP:
+            self._help_back()
+            return
         if len(self.stack) > 1:
             left = self.stack.pop()
             if isinstance(left, MenuCursor) and left.menu in AMOUNT_MENUS:
@@ -1820,6 +1893,9 @@ class RederiveApp(App[None]):
     def action_nav(self, movement: str) -> None:
         """The arrows walk the history, or a number field's cursor.
 
+        In help they turn pages instead: there is no history on the screen to
+        walk, and paging is what a reader wants those keys for.
+
         With a prompt line up, only the movements that walk the history get
         here at all: the rest are the line's own, and `check_action` leaves
         them to it.
@@ -1832,6 +1908,9 @@ class RederiveApp(App[None]):
         whatever they land on - which the manual recommends over typing the
         number, as being harder to get wrong.
         """
+        if self.mode == MODE_HELP:
+            self._turn_help(HELP_PAGING[movement])
+            return
         if self.mode in WALKED_MODES:
             self._walk_prompt(movement)
             return
@@ -1966,6 +2045,14 @@ class RederiveApp(App[None]):
             return
         if cursor.menu is menus.BUILD_OPERATOR:
             self._chose_operator(word)
+            return
+        # The two help menus choose a subject and turn its pages; neither
+        # picks a command, and both are answered where help is kept.
+        if cursor.menu is menus.HELP:
+            self._chose_subject(word)
+            return
+        if cursor.menu in menus.HELP_TOPICS:
+            self._read_help(word)
             return
         if cursor.menu is menus.DECLARE_VARIABLE:
             self._chose_domain(word)
@@ -2137,6 +2224,121 @@ class RederiveApp(App[None]):
         line.focus()
         self._set_message(message)
         self._show_flags()
+
+    # -- Help --------------------------------------------------------------
+    #
+    # Help stands where the expressions stand, in the window it was asked from
+    # and in no other: no border of its own, nothing overlaid and nothing
+    # dimmed underneath. It has two levels and no more - a menu of subjects,
+    # and a subject read a page at a time - so the whole of the navigation is
+    # Next, Previous and Resume. There is nothing to search and no link to
+    # follow, which is the original's bargain: a reference to read, not a web
+    # to walk.
+    #
+    # Both menus go on the stack every other menu goes on, so leaving one
+    # uncovers whatever asked for help - the command menu, or the submenu a
+    # half-answered command was picked from. The prompt line is not on that
+    # stack, and what it was asking is remembered in the `Helping` instead.
+
+    def _command_help(self) -> None:
+        """The Help command: the subject menu, over the worksheet."""
+        self._open_help(MODE_MENU, ENTER_OPTION)
+
+    def action_help(self) -> None:
+        """F1 on a line being typed, which keeps the line for the way back."""
+        self._open_help(self.mode, self.message)
+
+    def _open_help(self, resume: str, message: str) -> None:
+        """Put help up, over whatever the screen was doing."""
+        self.helping = Helping(resume, message)
+        self.mode = MODE_HELP
+        self.stack.append(MenuCursor(menus.HELP))
+        # A line goes off the screen with its text intact: nothing is read off
+        # it until it comes back, and nothing writes to it while it is gone. An
+        # open list of names goes for good, since it stands in the rows help is
+        # about to take and the name it was offering is already on the line.
+        self._close_list()
+        self.query_one("#prompt-band").display = False
+        self.set_focus(None)
+        self.message = ENTER_OPTION
+        self.refresh_screen()
+
+    def _chose_subject(self, word: str) -> None:
+        """A subject off the subject menu, or the Resume at the end of it."""
+        assert self.helping is not None
+        if word == helps.RESUME:
+            self._help_back()
+            return
+        self.helping.topic = helps.BY_WORD[word]
+        self.helping.page = 0
+        self.stack.append(MenuCursor(menus.HELP_PAGES[word]))
+        self.refresh_screen()
+
+    def _read_help(self, word: str) -> None:
+        """Next, Previous or Resume, off the menu a subject is read under."""
+        if word == helps.RESUME:
+            self._help_back()
+        else:
+            self._turn_help(1 if word == helps.NEXT else -1)
+
+    def _turn_help(self, step: int) -> None:
+        """Turn a page; past the last one is out to the subject menu.
+
+        Which is the original's way out and worth keeping: a subject read
+        through ends where it was started from, with no key pressed to leave
+        it. The other end stops instead - there is nothing before the first
+        page, and coming round to the last would be a jump and not a turn.
+        """
+        assert self.helping is not None
+        page = self.helping.page + step
+        if page >= self.helping.pages:
+            self._help_back()
+            return
+        self.helping.page = max(0, page)
+        self.refresh_screen()
+
+    def _help_back(self) -> None:
+        """Resume: up one level, and out of help from the top one."""
+        assert self.helping is not None
+        self.stack.pop()
+        if self.helping.topic is not None:
+            self.helping.topic = None
+            self.helping.page = 0
+            self._restart_menu()
+            self.refresh_screen()
+            return
+        resume, message = self.helping.resume, self.helping.message
+        self.helping = None
+        self.mode = resume
+        if resume in PROMPT_MODES:
+            # The line comes back as it was left, down to where the cursor
+            # stood in it: only the band was taken away.
+            self.query_one("#prompt-band").display = True
+            self.query_one("#prompt-input", Input).focus()
+        else:
+            self._restart_menu()
+        self.message = message
+        self.refresh_screen()
+
+    def _help_page(self, rows: int, width: int) -> tuple[list[str], bool]:
+        """The page now showing, laid out for a pane this size, and its title.
+
+        How a subject paginates is a question about the pane and not about the
+        document, so it is answered here, as the page is painted: a window
+        that has just been split or resized re-wraps and paginates again, and
+        the page in hand is held inside whatever the new size came to. The
+        flag says whether the first row is a title, the subject menu carrying
+        its own heading inside a centred document rather than above one.
+        """
+        assert self.helping is not None
+        topic = self.helping.topic
+        if topic is None:
+            self.helping.pages = 1
+            return helps.menu_page(rows, width), False
+        pages = helps.pages(topic, self.settings, rows, width)
+        self.helping.pages = len(pages)
+        self.helping.page = min(self.helping.page, len(pages) - 1)
+        return pages[self.helping.page], True
 
     # -- Jump --------------------------------------------------------------
 
