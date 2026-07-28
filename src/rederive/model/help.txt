@@ -79,7 +79,9 @@ Files, screen and settings:
 
 The keys below apply to every line the program reads: the Author line, the
 lines the Declare and Calculus commands read, the value lines of Manage
-Substitute, the operand lines of Build and the lines that name a file.
+Substitute, the operand lines of Build and the lines that name a file. F3, F4
+and F6 are about an expression, so they apply to the lines that take one and
+not to a line collecting a variable, a file name or an annotation.
 
 Special key commands:
   F1           display this help; the line being typed is kept
@@ -108,7 +110,9 @@ the sideways arrow keys belong to the line rather than to the highlight.
 
 Expression highlighting commands. These go on working while a line is being
 typed, a line of text having nothing vertical to do with them, which is what
-makes it possible to move onto an expression and then take it with F3:
+makes it possible to move onto an expression and then take it with F3. The
+variable line Factor and Expand read is the one line that holds the highlight
+still:
   Up, Down            the previous, the next expression
   PgUp, PgDn          a paneful back, a paneful forward
   Ctrl-Home, Ctrl-End the first, the last expression

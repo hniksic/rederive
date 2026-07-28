@@ -2101,14 +2101,43 @@ async def test_f3_writes_onto_the_substitute_value_line(app):
         assert prompt(app)[1] == "a"
 
 
-async def test_f3_writes_nothing_on_a_line_that_names_rather_than_writes(app):
+async def test_the_substitute_value_line_takes_what_the_highlight_walks_onto(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x (x + 1)", "a + b")
+        await pilot.press("m", "s", "enter")
+        assert prompt(app) == ("MANAGE SUBSTITUTE value:", "a")
+        # Which expression is being substituted into is settled, but what goes
+        # in the variable's place is not, and this is how it is found: walk to
+        # it, walk into it, and take it.
+        await pilot.press("up")
+        assert highlighted_expression(app) == "x·(x + 1)"
+        await pilot.press("f6", "right", "right")
+        assert highlighted_expression(app) == "x + 1"
+        await pilot.press("f3")
+        assert prompt(app)[1] == "x + 1"
+
+
+async def test_f3_writes_nothing_on_a_line_that_takes_no_expression(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x", "y")
-        for keys, line in ((("s",), "#2"), (("j",), ""), (("d", "v"), "")):
+        # Jump takes a label number, Declare a variable's name: neither is an
+        # expression, so neither takes what F3 would write.
+        for keys in (("j",), ("d", "v")):
             await pilot.press(*keys)
             await pilot.press("f3", "f4")
-            assert prompt(app)[1] == line
+            assert prompt(app)[1] == ""
             await pilot.press("escape")
+
+
+async def test_f3_takes_the_offered_label_hash_and_all(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("s")
+        assert prompt(app) == ("SIMPLIFY expression:", "#2")
+        # The `#` stands outside the selection a typed digit replaces, but what
+        # F3 writes is an expression and there is no `#` in front of one.
+        await pilot.press("f3")
+        assert prompt(app)[1] == "y"
 
 
 async def test_f3_on_an_empty_worksheet_writes_nothing(app):
@@ -2298,6 +2327,53 @@ async def test_factors_variable_line_takes_no_notice_of_them(app):
         for key in ("up", "down", "pageup", "pagedown", "ctrl+home", "ctrl+end"):
             await pilot.press(key)
             assert highlighted_expression(app) == " 2    2\nx  - y"
+
+
+@pytest.mark.parametrize(
+    ("keys", "line"),
+    [
+        (("c", "d", "enter"), "CALCULUS DIFFERENTIATE variable:"),
+        (("l", "enter"), "SOLVE variable:"),
+        (("m", "a", "enter"), "ANNOTATION:"),
+        (("m", "s", "enter"), "MANAGE SUBSTITUTE value:"),
+    ],
+    ids=str,
+)
+async def test_the_lines_that_collect_a_name_walk_under_it_too(app, keys, line):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "a z + b")
+        await pilot.press(*keys)
+        offered = prompt(app)[1]
+        assert prompt(app)[0] == line
+        await pilot.press("up")
+        assert highlighted_expression(app) == "y"
+        await pilot.press("ctrl+home")
+        assert highlighted_expression(app) == "x"
+        # None of them names an expression, so none takes the label walked onto.
+        assert prompt(app) == (line, offered)
+
+
+async def test_a_line_that_takes_no_expression_is_offered_no_f6(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x (x + 1)", "y")
+        await pilot.press("m", "a", "enter")
+        assert prompt(app)[0] == "ANNOTATION:"
+        # There is no expression on this line to walk, so there is no mode to
+        # be in and nothing for the status line to say.
+        assert flags(app) == ["Ins"]
+        await pilot.press("f6")
+        assert flags(app) == ["Ins"]
+
+
+async def test_subexpression_mode_leaves_such_a_line_its_sideways_keys(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "ArrowKeyMode := Subexpression")
+        await worksheet(pilot, "x (x + 1)")
+        await pilot.press("c", "d", "enter")
+        assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "x")
+        await pilot.press("end", *"y")
+        assert prompt(app)[1] == "xy"
+        assert highlighted_expression(app) == "x·(x + 1)"
 
 
 @pytest.mark.parametrize(

@@ -262,18 +262,13 @@ PROMPT_MODES = (
     MODE_SUBSTITUTE_VALUE,
 )
 
-#: The prompt lines that take no notice of the keys that walk the history: the
-#: variable line Factor and Expand collect on, the value line Substitute
-#: collects on, and the annotation line. Which expression is being worked on
-#: has been settled by the time any of them is up, so moving the highlight
-#: would say nothing about what the command will do.
-SETTLED_MODES = (
-    MODE_ASKING_VARIABLE,
-    MODE_CALCULUS_VARIABLE,
-    MODE_SOLVE_VARIABLE,
-    MODE_ANNOTATION,
-    MODE_SUBSTITUTE_VALUE,
-)
+#: The one prompt line that takes no notice of the keys that walk the history:
+#: the variable line Factor and Expand collect on, where the original holds the
+#: highlight still. Under every other line it goes on walking, whatever that
+#: line is collecting. Which expression is being worked on may be settled by
+#: then, but naming it is not all the highlight is for: it is also where a
+#: value is found, and F3 is how it is taken onto the line.
+SETTLED_MODES = (MODE_ASKING_VARIABLE,)
 
 #: The prompt lines the highlight can still be walked under, which is every
 #: other one of them.
@@ -311,15 +306,19 @@ ENTERING_MODES = (
     MODE_SUBSTITUTE_VALUE,
 )
 
-#: The prompt lines an expression is written on. F3 and F4 write onto any of
-#: them: the manual gives them for the author line and then says of the Declare
-#: value lines and of Substitute's that they take "all the normal line editing
-#: features provided by the Author command", these two by name. Build's two
-#: operand lines are here because the original takes F3 on them, which is worth
-#: having where an operand is half an expression the history already holds.
-EXPRESSION_LINES = tuple(mode for mode in ENTERING_MODES if mode != MODE_FILE) + (
-    MODE_BUILD,
-    MODE_BUILD_NEXT,
+#: The prompt lines an expression is written on or named on, which is where the
+#: keys that work on an expression apply: F3 and F4 write onto them, and F6
+#: hands them their sideways keys. The manual gives F3 for the author line and
+#: then says of the Declare value lines and of Substitute's that they take "all
+#: the normal line editing features provided by the Author command"; the lines
+#: that name an expression take them too, and the original marks exactly this
+#: set with the `Lin` flag on the status line.
+#:
+#: The lines left out are the ones collecting something that is not an
+#: expression - a variable, a file name, a label number, an annotation - and
+#: there the sideways keys stay the line's whatever the arrow key setting says.
+EXPRESSION_LINES = (
+    tuple(mode for mode in ENTERING_MODES if mode != MODE_FILE) + LABELLED_MODES
 )
 
 #: What each Alt key writes. The original held these in the IBM PC character
@@ -1491,10 +1490,11 @@ class RederiveApp(App[None]):
         `Ins` stands whenever a character typed would make room for itself,
         which is a way of typing rather than something a command asks for, so
         it stands at the menu too. `Lin` says the arrow keys are the line's,
-        and there is no line to say it of until one is up.
+        which is only worth saying where they could have been the highlight's:
+        on a line an expression is written on, and on no other.
         """
         words = ["Ins"] if self.inserting else []
-        if self.line_edit and self.mode in WALKED_MODES:
+        if self.line_edit and self.mode in EXPRESSION_LINES:
             words.append("Lin")
         return " ".join(words)
 
@@ -1622,10 +1622,11 @@ class RederiveApp(App[None]):
         While a prompt line has the screen they belong to the Input, down to
         Space and Backspace. The movements that walk the history are the
         exception: a line of text has nothing vertical for them to do, so they
-        go on moving the highlight with the question still up. In subexpression
-        arrow mode the sideways ones go the same way, leaving the line no
-        movements at all - which is the trade the mode is: the cursor for the
-        run of the expression tree.
+        go on moving the highlight with the question still up - on every line
+        but the one Factor and Expand collect a variable on. On a line an
+        expression is written on, subexpression arrow mode sends the sideways
+        ones the same way, leaving the line no movements at all - which is the
+        trade the mode is: the cursor for the run of the expression tree.
 
         Ctrl-Enter is the other exception: it is a form of Enter, so it applies
         wherever Enter does - on a menu, on a dialog, and on a prompt line.
@@ -1634,9 +1635,10 @@ class RederiveApp(App[None]):
         menu everywhere else.
 
         F3 and F4 are a fourth: they write onto the lines an expression is
-        written on, and nowhere else. F6 goes with them, on the lines the
-        highlight can be walked under; the Alt keys and the two that toggle
-        insert mode apply to every line, since they are about the text.
+        written on, and nowhere else. F6 goes with them, there being nothing
+        for it to hand the sideways keys to on a line collecting a name; the
+        Alt keys and the two that toggle insert mode apply to every line, since
+        they are about the text.
 
         The keys that walk the list of names are the fifth, and they only
         apply while that list is open. Closed, Up and Down go on walking the
@@ -1679,15 +1681,17 @@ class RederiveApp(App[None]):
                     and self.helping.topic is not None
                     and parameters[0] in HELP_PAGING
                 )
-            return self.mode in WALKED_MODES and (
-                not self.line_edit or parameters[0] in ENTRY_MOVES
-            )
+            if self.mode not in WALKED_MODES:
+                return False
+            if parameters[0] in ENTRY_MOVES:
+                return True
+            return self.mode in EXPRESSION_LINES and not self.line_edit
         if action == "enter_and_simplify":
             return self.mode == MODE_MENU or self.mode in PROMPT_MODES
         if action == "insert_highlighted":
             return self.mode in EXPRESSION_LINES
         if action == "toggle_arrow_mode":
-            return self.mode in WALKED_MODES
+            return self.mode in EXPRESSION_LINES
         if action in ("insert_glyph", "toggle_inserting"):
             return self.mode in PROMPT_MODES
         return True
@@ -2009,6 +2013,10 @@ class RederiveApp(App[None]):
 
         It goes in at the cursor, over whatever is selected on the line, and
         the cursor is left after it so that another can follow.
+
+        On a line offering a label the `#` goes too, though it stands outside
+        the selection a typed digit replaces: what F3 writes is an expression,
+        and a `#` in front of one says nothing.
         """
         text = self.session.highlighted_text
         if text is None:
@@ -2016,7 +2024,22 @@ class RederiveApp(App[None]):
             return
         if fenced:
             text = f"({text})"
+        self._take_offered_label()
         self._write_on_line(text)
+
+    def _take_offered_label(self) -> None:
+        """Widen the selection over the `#` of a label the line still offers.
+
+        Only while the whole of the offering is still selected, which is what
+        says the line is as the command put it up rather than as the user has
+        left it.
+        """
+        if self.mode not in LABELLED_MODES:
+            return
+        line = self.query_one("#prompt-input", PromptLine)
+        start, end = sorted(line.selection)
+        if start == 1 and end == len(line.value) and line.value.startswith("#"):
+            line.selection = Selection(0, end)
 
     def action_insert_glyph(self, key: str) -> None:
         """An Alt key: write the glyph it stands for onto the line."""
