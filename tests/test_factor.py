@@ -205,6 +205,20 @@ def test_the_decomposition_is_the_number_it_came_from():
     assert simplify(parse(fact("54!"))).text == str(math.factorial(54))
 
 
+def test_a_numeral_longer_than_the_interpreter_converts_by_default():
+    """A number the printer can write is one the parser can read back.
+
+    CPython converts at most 4300 digits between an int and a numeral unless it
+    is told otherwise, and `5000!` runs to 16326 of them. Factor is where the
+    ceiling shows: Simplify reaches the number from a numeral short enough to
+    convert, and factoring the answer it printed has to read the whole of it
+    back in.
+    """
+    written = simplify(parse("5000!")).text
+    assert written == str(math.factorial(5000))
+    assert fact(written) == fact("5000!")
+
+
 def test_a_number_that_is_no_rational_has_no_decomposition():
     assert fact("SQRT(2)") == "SQRT(2)"
     assert fact("pi") == "pi"
