@@ -15,6 +15,7 @@ from screen import (
     work_area,
 )
 
+from rederive import __version__
 from rederive.ui import menu as menus
 from rederive.ui.app import RederiveApp
 
@@ -42,19 +43,25 @@ async def author(pilot, text):
 # page, a window command, a Clear. These say the same of this one.
 
 
-async def test_the_opening_notice_stands_in_the_middle_of_the_empty_pane(app):
+async def test_the_opening_notice_stands_across_the_empty_pane(app):
     async with app.run_test():
         shown = work_area(app)
         said = [line.strip() for line in shown if line]
         assert said == [
             "R E D E R I V E",
             "A Mathematical Assistant",
+            f"Version {__version__}",
             "Press H for help",
         ]
         # Centred across the pane, and clear of the top of it and the bottom.
         width = app.query_one("#panes").size.width
         assert all(line == line.strip().center(width).rstrip() for line in shown if line)
         assert shown[0] == "" and shown[-1] == ""
+        # The name block stands high and the help line low, with the pane's
+        # empty middle between them rather than a single blank row.
+        rows = [at for at, line in enumerate(shown) if line]
+        assert rows[0] < len(shown) // 3 < rows[-1]
+        assert rows[-1] - rows[-2] > 1
 
 
 async def test_the_opening_notice_gives_the_pane_up_for_the_first_expression(app):

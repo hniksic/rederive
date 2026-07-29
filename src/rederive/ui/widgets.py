@@ -334,18 +334,27 @@ class WorkArea(VerticalScroll):
         self.content.update(text)
         self.call_after_refresh(self.scroll_to, 0, 0, animate=False)
 
-    def show_greeting(self, lines: Sequence[str], rows: int, width: int) -> None:
+    def show_greeting(
+        self, lines: Sequence[str], footer: str, rows: int, width: int
+    ) -> None:
         """Paint the opening notice where this window's expressions will stand.
 
-        Centred across the pane and down it, and padded out to the pane's full
-        height so that it reads from the middle rather than being pushed against
-        the bottom the way a history is. A pane too short for the whole of it
-        loses the last lines, there being nothing better to give up.
+        Centred across the pane and spread down it: the name block stands in
+        the upper third and the footer a couple of rows off the bottom, which
+        is how a title page is spaced and how the original spaced this one.
+        The whole of it is padded out to the pane's full height, so that it
+        reads as a page rather than being pushed against the bottom the way a
+        history is. A pane too short for both gives up the tail of the block
+        rather than the footer, that being the line with a key in it.
         """
         styles = self.app.palette.styles
-        page = [line.center(width).rstrip()[:width] for line in lines]
-        above = max(0, (rows - len(page)) // 2)
-        page = ([""] * above + page)[:rows]
+        centred = [line.center(width).rstrip()[:width] for line in lines]
+        above = max(1, (rows - len(centred) - 3) // 3)
+        page = ([""] * above + centred)[: max(0, rows - 2)]
+        at = max(len(page), rows - 3)
+        page += [""] * (at - len(page))
+        if len(page) < rows:
+            page.append(footer.center(width).rstrip()[:width])
         page += [""] * (rows - len(page))
         text = Text("\n".join(page), style=styles["work"], no_wrap=True)
         self.content.update(text)

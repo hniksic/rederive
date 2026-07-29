@@ -155,6 +155,7 @@ from textual.suggester import Suggester
 from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
+from rederive import __version__
 from rederive.engine import Amount, EngineAborted
 from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
@@ -500,16 +501,20 @@ STATE_FILE = "rederive.ini"
 #: What the message line says between two steps of a demonstration.
 PRESS_ANY_KEY = "Press any key to continue"
 
-#: The opening notice, standing in the middle of the pane until something else
-#: is drawn there. The original filled its screen with a version, an address, a
-#: fax number and a plea not to copy the diskettes; what is worth keeping of
-#: that is the name, what the program is, and where the help is.
+#: The opening notice, standing across the pane until something else is drawn
+#: there. The original filled its screen with a version, an address, a fax
+#: number and a plea not to copy the diskettes; what is worth keeping of that
+#: is the name, what the program is, which version it is, and where the help
+#: is. The name block sits high and the help line low, as the original spaced
+#: them, so the pane reads as a title page rather than a huddle in the middle.
 GREETING = (
     "R E D E R I V E",
     "A Mathematical Assistant",
     "",
-    "Press H for help",
+    f"Version {__version__}",
 )
+#: The line the notice stands at the foot of the pane, away from the name.
+GREETING_FOOTER = "Press H for help"
 
 
 class FileNames(Suggester):
@@ -1414,7 +1419,7 @@ class RederiveApp(App[None]):
             elif self.greeting:
                 # Which is the one window there is: the notice stands only
                 # while the screen is the one the program opened with.
-                pane.show_greeting(GREETING, rect.height, rect.width)
+                pane.show_greeting(GREETING, GREETING_FOOTER, rect.height, rect.width)
             else:
                 session = window.session
                 pane.show(session.entries, session.selected, session.selection_rect())
