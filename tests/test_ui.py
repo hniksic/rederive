@@ -2269,6 +2269,110 @@ async def test_overwrite_replaces_what_is_selected_as_inserting_does(app):
         assert prompt(app)[1] == "#1"
 
 
+# -- the kill ring: what a deletion took out, and Ctrl-Y putting it back ------
+
+
+async def test_ctrl_y_puts_back_what_ctrl_u_took_out(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x + 1")
+        await pilot.press("ctrl+u")
+        assert prompt(app)[1] == ""
+        await pilot.press("ctrl+y")
+        assert prompt(app) == ("AUTHOR expression:", "x + 1")
+        await pilot.press("enter")
+        assert entries(app) == ["x + 1"]
+
+
+async def test_a_kill_is_put_back_at_the_cursor_and_the_cursor_follows_it(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"a + b", "home")
+        # Ctrl-K takes the line from the cursor on, so the whole of it here.
+        await pilot.press("ctrl+k", *"2 (", "ctrl+y", *")")
+        assert prompt(app)[1] == "2 (a + b)"
+
+
+async def test_what_one_line_deleted_comes_back_on_the_next(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"sin(x)/x", "ctrl+u", "escape")
+        # The ring belongs to the line rather than to the command, so a line
+        # abandoned altogether still leaves what it deleted to be put back.
+        await pilot.press("a", "ctrl+y", "enter")
+        assert entries(app) == ["sin(x)/x"]
+        # And on a line another command reads, not only on another Author: the
+        # label Simplify offers is taken out and the expression put in instead.
+        await pilot.press("s", "ctrl+u", "ctrl+y", "enter")
+        assert entries(app) == ["sin(x)/x", "SIN(x)/x"]
+
+
+async def test_deletions_that_follow_one_another_come_back_as_one(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"a + b + c")
+        # Three words taken a word at a time are one kill, as Emacs and bash
+        # join theirs, so the line comes back whole rather than a word of it.
+        await pilot.press("ctrl+w", "ctrl+w")
+        assert prompt(app)[1] == "a + "
+        await pilot.press("ctrl+w")
+        assert prompt(app)[1] == ""
+        await pilot.press("ctrl+y")
+        assert prompt(app)[1] == "a + b + c"
+
+
+async def test_a_deletion_after_something_else_starts_a_kill_of_its_own(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"a b", "ctrl+w", *"c", "ctrl+w")
+        assert prompt(app)[1] == "a "
+        # Typing between the two says they are separate deletions, so the last
+        # of them is what Ctrl-Y puts back.
+        await pilot.press("ctrl+y")
+        assert prompt(app)[1] == "a c"
+
+
+async def test_alt_y_walks_back_through_the_kills_before_the_last(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"first", "ctrl+u", *"second", "ctrl+u")
+        await pilot.press("ctrl+y")
+        assert prompt(app)[1] == "second"
+        await pilot.press("alt+y")
+        assert prompt(app)[1] == "first"
+        # Past the oldest it comes round to the newest again.
+        await pilot.press("alt+y")
+        assert prompt(app)[1] == "second"
+
+
+async def test_alt_y_takes_the_place_of_the_yank_and_leaves_the_rest(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"one", "ctrl+u", *"two", "ctrl+u")
+        await pilot.press(*"f(", "ctrl+y", *")")
+        assert prompt(app)[1] == "f(two)"
+        # The cursor has moved on since the yank, so there is nothing left to
+        # reconsider: what Alt-Y would have swapped stands as it is.
+        await pilot.press("alt+y")
+        assert prompt(app)[1] == "f(two)"
+
+
+async def test_alt_y_says_nothing_when_the_last_key_was_not_a_yank(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x", "ctrl+u", *"y")
+        await pilot.press("alt+y")
+        assert prompt(app)[1] == "y"
+
+
+async def test_ctrl_y_on_a_line_that_deleted_nothing_writes_nothing(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x")
+        await pilot.press("ctrl+y", "alt+y")
+        assert prompt(app)[1] == "x"
+
+
+async def test_a_character_deleted_on_its_own_is_not_kept(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"ab", "ctrl+u", *"cd", "backspace", "delete")
+        # Backspace and Delete are corrections rather than kills, so the line
+        # Ctrl-U took is still what comes back.
+        await pilot.press("ctrl+y")
+        assert prompt(app)[1] == "cab"
+
+
 async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x", "y", "z")

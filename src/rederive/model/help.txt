@@ -102,6 +102,14 @@ Cursor movement commands:
 Text deletion commands:
   Backspace    delete the character before the cursor
   Delete       delete the character under it
+  Ctrl-W       delete the word before the cursor
+  Ctrl-U       delete the line before the cursor
+  Ctrl-K       delete the line from the cursor on
+  Ctrl-Y       put back what the last deletion took out
+  Alt-Y        after Ctrl-Y, put back an earlier deletion instead
+
+What was deleted stands until the program is left, so Ctrl-Y is also how a
+piece of one line is carried onto another.
 
 The status line says which of the two typing modes is in force: Ins stands
 there while a character typed makes room for itself, and nothing stands there

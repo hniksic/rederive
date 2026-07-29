@@ -7,11 +7,13 @@ command repaints simply by asking for another render.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from rich.cells import cell_len
 from rich.text import Text
 from textual import events
+from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Input, Static
@@ -68,6 +70,12 @@ _NUMBER_WIDTH = 5
 
 #: Where the status line names the file the session last read or wrote.
 _FILE_COLUMN = 22
+
+#: Kills the prompt line keeps for Ctrl-Y to put back. Bash keeps ten and
+#: Emacs keeps far more; ten is more than a line of algebra is ever taken
+#: apart into, and the oldest going is what keeps a long session from holding
+#: on to every scrap of text it was ever asked to delete.
+_KILLS_KEPT = 10
 
 #: Seconds between readings of the memory field. The figure is the app plus
 #: the engine worker, and the worker is where it moves: a computation that is
@@ -434,9 +442,42 @@ class PromptLine(Input):
     be taken before the base class sees it, since that is where the insertion
     would happen; a typed character over a selection replaces the selection in
     either mode, which is what the base class does anyway.
+
+    The other addition is a kill ring, as Emacs, bash and every line editor
+    descended from them have: the deletions that take a run of text rather than
+    a character - Ctrl-U, Ctrl-K, Ctrl-W and Alt-Backspace - keep what they
+    took, Ctrl-Y puts the last of it back at the cursor, and Alt-Y straight
+    after a Ctrl-Y swaps that for the kill before it and keeps going back
+    through the ring. Deletions that follow one another with nothing in between
+    join into one kill, so a line taken apart a word at a time comes back
+    whole. The ring belongs to the line rather than to the command that put it
+    up, and the line is one widget for the whole run of the program: what was
+    deleted from an Author line can be put back on the next one, or on a
+    Substitute value, for as long as the session lasts.
     """
 
+    BINDINGS = [
+        Binding("ctrl+y", "yank", "Restore deleted text", show=False),
+        Binding("alt+y", "yank_pop", "Restore an earlier deletion", show=False),
+    ]
+
     overwrite = False
+
+    def __init__(self, **arguments: Any) -> None:
+        super().__init__(**arguments)
+        #: What the deletions have taken out, oldest first.
+        self.kills: list[str] = []
+        #: Which way the deletion under way runs - -1 for one that takes text
+        #: before the cursor, 1 for one that takes text after it - or None
+        #: while what is being deleted is not a kill at all.
+        self._killing: int | None = None
+        #: The line and cursor the last kill left, which is what says whether
+        #: the next one carries straight on from it.
+        self._killed_at: tuple[str, int] | None = None
+        #: What the last yank put in: which kill it was, where it went, and
+        #: the line it left behind. Alt-Y needs all three, to tell a yank
+        #: still standing as it landed from one since typed over.
+        self._yanked: tuple[int, int, int, str] | None = None
 
     async def _on_key(self, event: events.Key) -> None:
         if not (self.overwrite and event.is_printable and self.selection.is_empty):
@@ -448,6 +489,107 @@ class PromptLine(Input):
         self._restart_blink()
         at = self.cursor_position
         self.replace(event.character, at, at + 1)
+
+    # -- deleting, and putting back what was deleted ------------------------
+
+    def action_delete_left_all(self) -> None:
+        """Ctrl-U: take out the line before the cursor, and keep it."""
+        self._kill(-1, super().action_delete_left_all)
+
+    def action_delete_left_word(self) -> None:
+        """Ctrl-W: take out the word before the cursor, and keep it."""
+        self._kill(-1, super().action_delete_left_word)
+
+    def action_delete_right_all(self) -> None:
+        """Ctrl-K: take out the line from the cursor on, and keep it."""
+        self._kill(1, super().action_delete_right_all)
+
+    def action_delete_right_word(self) -> None:
+        """Alt-Backspace: take out the word after the cursor, and keep it."""
+        self._kill(1, super().action_delete_right_word)
+
+    def _kill(self, direction: int, delete: Callable[[], None]) -> None:
+        """Run `delete`, and take what it removes as a kill running `direction`.
+
+        The base class works out for itself how far each of them reaches, and
+        one of them falls back on another, so the reach is not read here: the
+        flag says only that whatever `delete` takes out is worth keeping.
+        """
+        was, self._killing = self._killing, direction
+        try:
+            delete()
+        finally:
+            self._killing = was
+
+    def delete(self, start: int, end: int) -> None:
+        """Take out the text between `start` and `end`, keeping any kill.
+
+        Every deletion the line makes comes through here, which is what makes
+        this the one place the killed text can be caught. Backspace and Delete
+        come through it too and pass straight on: a character taken out one at
+        a time is a correction rather than something to put back later.
+        """
+        if self._killing is None:
+            super().delete(start, end)
+            return
+        start, end = sorted((max(0, start), min(len(self.value), end)))
+        taken = self.value[start:end]
+        before = (self.value, self.cursor_position)
+        super().delete(start, end)
+        if not taken or self.value == before[0]:
+            # A kill with nothing in reach - Ctrl-K at the end of the line -
+            # leaves the run it was part of standing, so that the kills to
+            # either side of it still join.
+            return
+        self._keep(taken, joins=before == self._killed_at)
+        self._killed_at = (self.value, self.cursor_position)
+
+    def _keep(self, taken: str, joins: bool) -> None:
+        """Put `taken` on the ring, or onto the end of the kill before it.
+
+        A kill that starts where the last one finished is a continuation of
+        it, so the two are kept as one: three words taken one at a time come
+        back as three words. Which end of the kill it joins is which way the
+        deletion ran, so text taken leftwards goes in front of what is there.
+        """
+        if joins and self.kills:
+            last = self.kills[-1]
+            self.kills[-1] = last + taken if self._killing == 1 else taken + last
+            return
+        self.kills.append(taken)
+        del self.kills[:-_KILLS_KEPT]
+
+    def action_yank(self) -> None:
+        """Ctrl-Y: put the last kill back in at the cursor.
+
+        Over whatever is selected, as a typed character is, and with the
+        cursor left after it so that the line goes on from where the restored
+        text now ends.
+        """
+        if self.kills:
+            self._put(len(self.kills) - 1, *sorted(self.selection))
+
+    def action_yank_pop(self) -> None:
+        """Alt-Y: swap what Ctrl-Y just put in for the kill before it.
+
+        Only straight after a yank, with what it put in still standing where
+        it landed: anything typed since, or the cursor moved off the end of
+        it, and there is no yank left to reconsider. Pressed again it goes on
+        back through the ring, and round to the newest again past the oldest.
+        """
+        if self._yanked is None:
+            return
+        index, start, end, line = self._yanked
+        if line != self.value or self.cursor_position != end:
+            self._yanked = None
+            return
+        self._put((index - 1) % len(self.kills), start, end)
+
+    def _put(self, index: int, start: int, end: int) -> None:
+        """Write kill `index` over the text between `start` and `end`."""
+        text = self.kills[index]
+        self.replace(text, start, end)
+        self._yanked = (index, start, start + len(text), self.value)
 
 
 class CompletionList(Band):
