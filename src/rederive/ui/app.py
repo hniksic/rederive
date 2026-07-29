@@ -34,6 +34,14 @@ on every line an expression is entered from. It is one key in two spellings:
 Ctrl-J is what a terminal sends for it unless it speaks the keyboard protocol
 that tells the two apart.
 
+An expression moves by way of the clipboard: Ctrl-C hands what is highlighted to
+the terminal, which passes it to the system clipboard where it can, and Ctrl-V
+writes the copy kept here onto the line being typed. Text copied in another
+program comes the other way by the terminal's own paste key, arriving as if it
+had been typed: a terminal hands over the clipboard when its user asks and not
+when a program does. The original's F3 and F4, which write the highlight onto
+the line directly, still work; the help offers copy and paste instead.
+
 A line that names a file completes what is typed on it, and opens a list of the
 names on offer to look through. The first name the letters so far could grow
 into stands past the cursor, dimmed, and Right takes it - that is the fast path,
@@ -268,7 +276,7 @@ PROMPT_MODES = (
 #: highlight still. Under every other line it goes on walking, whatever that
 #: line is collecting. Which expression is being worked on may be settled by
 #: then, but naming it is not all the highlight is for: it is also where a
-#: value is found, and F3 is how it is taken onto the line.
+#: value is found, and copying is how it is taken onto the line.
 SETTLED_MODES = (MODE_ASKING_VARIABLE,)
 
 #: The prompt lines the highlight can still be walked under, which is every
@@ -429,6 +437,12 @@ LABEL_NUMBER = re.compile(r"[-+]?[0-9]+")
 #: What Unremove says when there is nothing to put back. Every other refusal
 #: in either command is the beep alone, but this one has no dialog to leave up.
 BUFFER_EMPTY = "Unremove buffer empty"
+
+#: What the message line says when Ctrl-C has taken a copy. A clipboard leaves
+#: no mark on the screen, so this is the whole of the receipt. What was copied
+#: is not quoted back: the message line is one line, and an expression is as
+#: long as it likes.
+COPIED = "Copied the highlighted expression"
 
 # The lines the four Declare commands read, and what the message line asks for
 # on each. `default` is the variable that stands for all the unnamed ones,
@@ -1061,11 +1075,18 @@ class RederiveApp(App[None]):
             priority=True,
             show=False,
         ),
-        # F3 writes the highlighted expression onto the author line and F4
-        # writes it fenced, so that a new expression can be built out of ones
-        # already on the worksheet without any of it being typed again. The
-        # arrows still walk the highlight with the line up, which is what makes
-        # the pair worth having: move onto what is wanted, then take it.
+        # Ctrl-C takes a copy of the highlighted expression and Ctrl-V puts it
+        # back on the line being typed, which is how a new expression is built
+        # out of ones already on the worksheet without any of it being typed
+        # again. The arrows still walk the highlight with a line up, which is
+        # what makes the pair worth having: move onto what is wanted, copy it,
+        # and paste it where it is going.
+        Binding("ctrl+c", "copy_highlighted", "Copy", priority=True, show=False),
+        Binding("ctrl+v", "paste_clipboard", "Paste", priority=True, show=False),
+        # The original's keys for the same thing, kept because a session driven
+        # from the manual still reaches for them: F3 writes the highlighted
+        # expression straight onto the line, and F4 writes it fenced. Neither is
+        # advertised in the help, copy and paste being what a reader now expects.
         Binding("f3", "insert_highlighted(0)", "Insert", priority=True, show=False),
         Binding("f4", "insert_highlighted(1)", "Insert ()", priority=True, show=False),
         # F1 and F2 are the Window commands worth a key of their own: the next
@@ -1086,11 +1107,11 @@ class RederiveApp(App[None]):
             "shift+f2", "window_flip(-1)", "Previous overlay", priority=True, show=False
         ),
         # F6 hands the sideways keys back and forth between the line and the
-        # highlight; Ins and Ctrl-V do the same for making room and standing on
-        # what is there.
+        # highlight; Ins does the same for making room and standing on what is
+        # there. The original spelled Ins as Ctrl-V too, which that key can no
+        # longer be: pasting is what it means everywhere else.
         Binding("f6", "toggle_arrow_mode", "Arrow keys", priority=True, show=False),
         Binding("insert", "toggle_inserting", "Insert mode", priority=True, show=False),
-        Binding("ctrl+v", "toggle_inserting", "Insert mode", priority=True, show=False),
         *[
             Binding(
                 f"alt+{key}",
@@ -1642,8 +1663,13 @@ class RederiveApp(App[None]):
         F3 and F4 are a fourth: they write onto the lines an expression is
         written on, and nowhere else. F6 goes with them, there being nothing
         for it to hand the sideways keys to on a line collecting a name; the
-        Alt keys and the two that toggle insert mode apply to every line, since
-        they are about the text.
+        Alt keys, Ctrl-V and the key that toggles insert mode apply to every
+        line, since they are about the text.
+
+        Ctrl-C is not about a line at all: what it copies is the highlighted
+        expression, so it applies at the menu as well as under every line, and
+        only where the worksheet is the thing on screen - not in help, and not
+        over a demonstration.
 
         The keys that walk the list of names are the fifth, and they only
         apply while that list is open. Closed, Up and Down go on walking the
@@ -1697,7 +1723,9 @@ class RederiveApp(App[None]):
             return self.mode in EXPRESSION_LINES
         if action == "toggle_arrow_mode":
             return self.mode in EXPRESSION_LINES
-        if action in ("insert_glyph", "toggle_inserting"):
+        if action == "copy_highlighted":
+            return self.mode == MODE_MENU or self.mode in PROMPT_MODES
+        if action in ("insert_glyph", "toggle_inserting", "paste_clipboard"):
             return self.mode in PROMPT_MODES
         return True
 
@@ -2007,6 +2035,47 @@ class RederiveApp(App[None]):
         line.value = f"{line.value[:start]}{number}{line.value[end:]}"
         line.selection = Selection(start, start + len(number))
 
+    def action_copy_highlighted(self) -> None:
+        """Ctrl-C: take a copy of the highlighted expression.
+
+        What is copied is what is highlighted: the whole of an expression
+        selected whole, and just the part when the highlight is inside one. It
+        is the entry's own text rather than the two-dimensional render, so what
+        comes back is something a line will take again.
+
+        The copy is offered to the terminal as well as kept here, which is what
+        carries an expression out to another program. Whether the terminal
+        passes it on to the system clipboard is the terminal's to say, and
+        nothing comes back either way, so the receipt on the message line is
+        what says the key landed.
+        """
+        text = self.session.highlighted_text
+        if text is None:
+            self._beep()
+            return
+        self.copy_to_clipboard(text)
+        self._set_message(COPIED)
+
+    def action_paste_clipboard(self) -> None:
+        """Ctrl-V: put the copy back on the line being typed.
+
+        In at the cursor, over whatever is selected, with the cursor left after
+        it, as everything else that writes on the line does. A line offering a
+        label gives up its `#` as well: what is pasted stands where an
+        expression goes, and a `#` in front of one says nothing.
+
+        What comes back is the copy this program holds. Text copied in another
+        program arrives instead by the terminal's own paste key, as if it had
+        been typed: a terminal hands over the clipboard when its user asks and
+        not when a program does.
+        """
+        text = self.clipboard
+        if not text:
+            self._beep()
+            return
+        self._take_offered_label()
+        self._write_on_line(text)
+
     def action_insert_highlighted(self, fenced: int) -> None:
         """F3 and F4: write the highlighted expression onto the author line.
 
@@ -2070,7 +2139,7 @@ class RederiveApp(App[None]):
         self._show_flags()
 
     def action_toggle_inserting(self) -> None:
-        """Ins and Ctrl-V: make room for what is typed, or stand on it."""
+        """Ins: make room for what is typed, or stand on it."""
         self.inserting = not self.inserting
         self.query_one("#prompt-input", PromptLine).overwrite = not self.inserting
         self._show_flags()

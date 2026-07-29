@@ -79,16 +79,16 @@ Files, screen and settings:
 
 The keys below apply to every line the program reads: the Author line, the
 lines the Declare and Calculus commands read, the value lines of Manage
-Substitute, the operand lines of Build and the lines that name a file. F3, F4
-and F6 are about an expression, so they apply to the lines that take one and
-not to a line collecting a variable, a file name or an annotation.
+Substitute, the operand lines of Build and the lines that name a file. F6 is
+about an expression, so it applies to the lines that take one and not to a line
+collecting a variable, a file name or an annotation.
 
 Special key commands:
   F1           display this help; the line being typed is kept
-  F3           write the highlighted expression onto the line
-  F4           write it onto the line inside parentheses
   F6           hand the sideways arrow keys to the line, or to the highlight
-  Ins, Ctrl-V  switch between making room for a character and typing over one
+  Ctrl-C       copy the highlighted expression
+  Ctrl-V       paste what was copied onto the line
+  Ins          switch between making room for a character and typing over one
   Tab          on a line naming a file, complete the name and open the list
   Enter        accept the line
   Ctrl-Enter   accept it, and simplify the expression the command enters
@@ -118,7 +118,7 @@ the sideways arrow keys belong to the line rather than to the highlight.
 
 Expression highlighting commands. These go on working while a line is being
 typed, a line of text having nothing vertical to do with them, which is what
-makes it possible to move onto an expression and then take it with F3. The
+makes it possible to move onto an expression and then copy it onto the line. The
 variable line Factor and Expand read is the one line that holds the highlight
 still:
   Up, Down            the previous, the next expression
@@ -413,14 +413,14 @@ utility files written for the original Derive can be read this way.
 Transfer Save writes a worksheet in this program's own format, and also writes
 a highlighted expression out as C, Python, Rust or Julia source.
 
-Algebra window function key commands:
+Algebra window key commands:
   F1           the next window; help, while a line is being typed
   Shift-F1     the previous window
   F2           bring the next of this window's overlays to the top
   Shift-F2     the previous one
-  F3           write the highlighted expression onto the line being typed
-  F4           write it onto that line inside parentheses
   F6           hand the sideways arrow keys to the line, or to the highlight
+  Ctrl-C       copy the highlighted expression
+  Ctrl-V       paste what was copied onto the line being typed
   Esc          abandon the question being asked; stop a running computation
 
 A command that reaches the engine says on the message line how long it has

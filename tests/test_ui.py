@@ -2038,6 +2038,105 @@ async def test_the_author_line_walks_but_is_never_labelled(app):
         assert prompt(app) == ("AUTHOR expression:", "w")
 
 
+# -- copying an expression and pasting it -------------------------------------
+#
+# Ctrl-C takes what is highlighted and Ctrl-V puts it back on the line being
+# typed. The copy goes to the terminal's clipboard as well as to the program's
+# own; what the terminal does with it is nothing a test can see, so these check
+# the copy that is kept here.
+
+
+async def test_ctrl_c_copies_the_highlighted_expression_and_ctrl_v_pastes_it(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1", "y")
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "y"
+        # Text handed to a clipboard leaves no other mark, so the message line
+        # is what says the key landed.
+        assert message(app) == "Copied the highlighted expression"
+        await pilot.press("a", "ctrl+v")
+        assert prompt(app) == ("AUTHOR expression:", "y")
+
+
+async def test_ctrl_c_copies_only_the_highlighted_part(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x (x + 1)")
+        await pilot.press("right", "right")
+        assert highlighted_expression(app) == "x + 1"
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "x + 1"
+
+
+async def test_the_highlight_can_be_walked_and_copied_under_a_line(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1", "y")
+        # Which is the point of the pair: build a new expression out of one
+        # already on screen without leaving the line it is being built on.
+        await pilot.press("a", *"2 (")
+        await pilot.press("up")
+        assert highlighted_expression(app) == "x + 1"
+        await pilot.press("ctrl+c", "ctrl+v", *")", "enter")
+        assert numbered(app)[-1] == "#3: 2 (x + 1)"
+
+
+async def test_a_copy_outlives_the_line_it_was_pasted_on(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "sin(x)")
+        await pilot.press("ctrl+c")
+        await pilot.press("a", "ctrl+v", "escape")
+        # The clipboard belongs to the program rather than to the command that
+        # read the line, so it is still there for the next one.
+        await pilot.press("a", "ctrl+v", "ctrl+v")
+        assert prompt(app)[1] == "sin(x)sin(x)"
+
+
+async def test_pasting_takes_the_offered_label_hash_and_all(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("ctrl+c")
+        await pilot.press("s")
+        assert prompt(app) == ("SIMPLIFY expression:", "#2")
+        # As F3 does: what is pasted stands where an expression goes, and a `#`
+        # in front of one says nothing.
+        await pilot.press("ctrl+v")
+        assert prompt(app)[1] == "y"
+
+
+async def test_ctrl_v_pastes_onto_any_line_but_not_at_the_menu(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "work")
+        await pilot.press("ctrl+c")
+        await pilot.press("t", "s", "d")
+        assert prompt(app)[0] == "TRANSFER SAVE DERIVE file:"
+        # Pasting is about the text on the line, so it applies to the lines that
+        # collect something other than an expression too.
+        await pilot.press("ctrl+v")
+        assert prompt(app)[1] == "work"
+        await pilot.press("escape", "escape", "escape")
+        await pilot.press("ctrl+v")
+        assert highlighted_menu_option(app) == "Author"
+
+
+async def test_ctrl_c_with_nothing_highlighted_copies_nothing(app):
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+c")
+        assert app.clipboard == ""
+        assert message(app) == "Enter option"
+
+
+async def test_ctrl_v_with_nothing_copied_writes_nothing(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", "ctrl+v")
+        assert prompt(app) == ("AUTHOR expression:", "")
+
+
+# -- F3 and F4, the original's keys for the same thing -------------------------
+#
+# They write the highlighted expression onto the line directly. Copy and paste
+# are what the help offers, but a session driven from the manual still reaches
+# for these, so they go on working.
+
+
 async def test_f3_writes_the_highlighted_expression_onto_the_author_line(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x + 1", "y")
@@ -2231,7 +2330,7 @@ async def test_no_line_up_means_no_arrow_key_mode_to_report(app):
         assert flags(app) == ["Ins"]
 
 
-async def test_ins_and_ctrl_v_toggle_overwrite(app):
+async def test_ins_toggles_overwrite(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"abc", "home")
         assert flags(app) == ["Ins", "Lin"]
@@ -2242,10 +2341,14 @@ async def test_ins_and_ctrl_v_toggle_overwrite(app):
         # At the end of the line there is nothing to stand on, so it grows.
         await pilot.press("end", *"d")
         assert prompt(app)[1] == "XYcd"
-        await pilot.press("ctrl+v")
+        await pilot.press("insert")
         assert flags(app) == ["Ins", "Lin"]
         await pilot.press("home", *"Z")
         assert prompt(app)[1] == "ZXYcd"
+        # The original spelled Ins as Ctrl-V too; that key pastes here, so it
+        # leaves the mode alone.
+        await pilot.press("ctrl+v")
+        assert flags(app) == ["Ins", "Lin"]
 
 
 async def test_overwrite_stands_until_it_is_turned_back(app):
