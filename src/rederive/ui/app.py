@@ -1511,15 +1511,19 @@ class RederiveApp(App[None]):
         )
 
     def _flags(self) -> str:
-        """The mode words for the status line, in the order the original has.
+        """The mode words for the status line, in the slot the original has.
 
-        `Ins` stands whenever a character typed would make room for itself,
-        which is a way of typing rather than something a command asks for, so
-        it stands at the menu too. `Lin` says the arrow keys are the line's,
-        which is only worth saying where they could have been the highlight's:
-        on a line an expression is written on, and on no other.
+        Both are about a line being typed, so neither is said where there is no
+        line. `Ovr` stands where a character typed would stand on what is under
+        the cursor: the original named insert instead, but making room is how
+        every line starts and how it is left, so overwrite is the state worth
+        naming. `Lin` says the arrow keys are the line's, which is only worth
+        saying where they could have been the highlight's: on a line an
+        expression is written on, and on no other.
         """
-        words = ["Ins"] if self.inserting else []
+        if self.mode not in PROMPT_MODES:
+            return ""
+        words = [] if self.inserting else ["Ovr"]
         if self.line_edit and self.mode in EXPRESSION_LINES:
             words.append("Lin")
         return " ".join(words)

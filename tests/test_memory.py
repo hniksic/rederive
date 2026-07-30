@@ -23,18 +23,18 @@ def test_this_process_holds_a_plausible_amount():
 @pytest.mark.parametrize(
     ("size", "written"),
     [
-        (0, "0B"),
-        (999, "999B"),
-        (1 << 10, "1K"),
-        (99 << 10, "99K"),
-        (1 << 20, "1M"),
-        ((3 << 20) + (512 << 10), "4M"),
-        (150 << 20, "150M"),
-        (1 << 30, "1.0G"),
-        ((1 << 30) + (100 << 20), "1.1G"),
-        (9 << 30, "9.0G"),
-        (10 << 30, "10G"),
-        (64 << 30, "64G"),
+        (0, "0 B"),
+        (999, "999 B"),
+        (1 << 10, "1 KiB"),
+        (99 << 10, "99 KiB"),
+        (1 << 20, "1 MiB"),
+        ((3 << 20) + (512 << 10), "4 MiB"),
+        (150 << 20, "150 MiB"),
+        (1 << 30, "1.0 GiB"),
+        ((1 << 30) + (100 << 20), "1.1 GiB"),
+        (9 << 30, "9.0 GiB"),
+        (10 << 30, "10 GiB"),
+        (64 << 30, "64 GiB"),
     ],
     ids=str,
 )
@@ -78,4 +78,4 @@ async def test_the_status_line_shows_what_the_process_holds():
         if memory.resident_bytes() is None:
             assert "Memory:" not in status
         else:
-            assert re.search(r"Memory:\d+(\.\d)?[BKMG]", status)
+            assert re.search(r"Memory: \d+(\.\d)? (B|KiB|MiB|GiB)", status)

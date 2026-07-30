@@ -2295,16 +2295,16 @@ async def test_f6_hands_the_sideways_keys_to_the_highlight_and_back(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x (x + 1)")
         await pilot.press("a")
-        assert flags(app) == ["Ins", "Lin"]
+        assert flags(app) == ["Lin"]
         await pilot.press("f6")
-        assert flags(app) == ["Ins"]
+        assert flags(app) == []
         await pilot.press("right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("f3")
         assert prompt(app)[1] == "x + 1"
         # Back in line-edit mode the same keys are the cursor's again.
         await pilot.press("f6")
-        assert flags(app) == ["Ins", "Lin"]
+        assert flags(app) == ["Lin"]
         await pilot.press("home", *"2")
         assert prompt(app)[1] == "2x + 1"
         assert highlighted_expression(app) == "x + 1"
@@ -2315,40 +2315,44 @@ async def test_the_arrow_key_setting_says_which_mode_a_line_starts_in(app):
         await worksheet(pilot, "x + 1")
         await author(pilot, "ArrowKeyMode := Subexpression")
         await pilot.press("a")
-        assert flags(app) == ["Ins"]
+        assert flags(app) == []
         # F6 is for the line in hand only: the next one starts where the
         # setting says again.
         await pilot.press("f6")
-        assert flags(app) == ["Ins", "Lin"]
+        assert flags(app) == ["Lin"]
         await pilot.press("escape", "a")
-        assert flags(app) == ["Ins"]
+        assert flags(app) == []
 
 
-async def test_no_line_up_means_no_arrow_key_mode_to_report(app):
+async def test_no_line_up_means_no_mode_words_to_report(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x")
-        assert flags(app) == ["Ins"]
+        assert flags(app) == []
+        # Overwrite outlives the line it was set on, but there is no line for
+        # the status line to say it of.
+        await pilot.press("a", "insert", "escape")
+        assert flags(app) == []
 
 
 async def test_ins_toggles_overwrite(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"abc", "home")
-        assert flags(app) == ["Ins", "Lin"]
-        await pilot.press("insert")
         assert flags(app) == ["Lin"]
+        await pilot.press("insert")
+        assert flags(app) == ["Ovr", "Lin"]
         await pilot.press(*"XY")
         assert prompt(app)[1] == "XYc"
         # At the end of the line there is nothing to stand on, so it grows.
         await pilot.press("end", *"d")
         assert prompt(app)[1] == "XYcd"
         await pilot.press("insert")
-        assert flags(app) == ["Ins", "Lin"]
+        assert flags(app) == ["Lin"]
         await pilot.press("home", *"Z")
         assert prompt(app)[1] == "ZXYcd"
         # The original spelled Ins as Ctrl-V too; that key pastes here, so it
         # leaves the mode alone.
         await pilot.press("ctrl+v")
-        assert flags(app) == ["Ins", "Lin"]
+        assert flags(app) == ["Lin"]
 
 
 async def test_overwrite_stands_until_it_is_turned_back(app):
@@ -2356,15 +2360,15 @@ async def test_overwrite_stands_until_it_is_turned_back(app):
         await pilot.press("a", "insert", "escape")
         # It is how the user is typing rather than what a command asked, so it
         # outlives the line it was set on.
-        assert flags(app) == []
         await pilot.press("a", *"abc", "home", *"X")
+        assert flags(app) == ["Ovr", "Lin"]
         assert prompt(app)[1] == "Xbc"
 
 
 async def test_overwrite_replaces_what_is_selected_as_inserting_does(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x", "y")
-        await pilot.press("insert", "s")
+        await pilot.press("s", "insert")
         # The offered label comes up selected, and typing takes it away whole
         # rather than standing on its first character.
         assert prompt(app)[1] == "#2"
@@ -2574,9 +2578,9 @@ async def test_a_line_that_takes_no_expression_is_offered_no_f6(app):
         assert prompt(app)[0] == "ANNOTATION:"
         # There is no expression on this line to walk, so there is no mode to
         # be in and nothing for the status line to say.
-        assert flags(app) == ["Ins"]
+        assert flags(app) == []
         await pilot.press("f6")
-        assert flags(app) == ["Ins"]
+        assert flags(app) == []
 
 
 async def test_subexpression_mode_leaves_such_a_line_its_sideways_keys(app):

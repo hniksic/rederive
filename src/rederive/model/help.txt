@@ -111,10 +111,11 @@ Text deletion commands:
 What was deleted stands until the program is left, so Ctrl-Y is also how a
 piece of one line is carried onto another.
 
-The status line says which of the two typing modes is in force: Ins stands
-there while a character typed makes room for itself, and nothing stands there
-while it types over what is already at the cursor. Lin stands beside it while
-the sideways arrow keys belong to the line rather than to the highlight.
+The status line says which of the two typing modes is in force: Ovr stands
+there while a character typed types over what is already at the cursor, and
+nothing stands there while it makes room for itself. Lin stands beside it while
+the sideways arrow keys belong to the line rather than to the highlight. Both
+words are about the line being typed, so neither stands there without one.
 
 Expression highlighting commands. These go on working while a line is being
 typed, a line of text having nothing vertical to do with them, which is what

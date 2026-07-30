@@ -82,7 +82,7 @@ def annotation(app):
 def flags(app):
     """The mode words the status line shows beside the memory field."""
     said = text_of(app.query_one("#status")).plain
-    return [word for word in ("Ins", "Lin") if f" {word}" in said]
+    return [word for word in ("Ovr", "Lin") if f" {word}" in said]
 
 
 def prompt(app):

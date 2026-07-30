@@ -18,9 +18,10 @@ from __future__ import annotations
 import psutil
 
 #: Bytes in the units a size is written in, largest first. Resident sets are
-#: measured in megabytes on every machine this runs on, but a small one reads
-#: better in kilobytes and a large one in gigabytes.
-_UNITS = (("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10))
+#: measured in mebibytes on every machine this runs on, but a small one reads
+#: better in kibibytes and a large one in gibibytes. The units are the binary
+#: ones and are named as such, since that is what the figure counts.
+_UNITS = (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10))
 
 #: The engine worker, once one has been spawned. Module state because the
 #: status line reads the gauge and the engine proxy owns the worker, and
@@ -74,21 +75,21 @@ def total_bytes() -> int | None:
 def written(size: int) -> str:
     """A byte count in the largest unit that leaves at least one whole digit.
 
-    A figure in gigabytes carries a decimal, since whole gigabytes are a coarse
+    A figure in gibibytes carries a decimal, since whole gibibytes are a coarse
     enough step that the gauge would sit still while the program grew. Past ten
-    gigabytes the decimal is dropped again: that much is a figure to read at a
+    gibibytes the decimal is dropped again: that much is a figure to read at a
     glance, not to watch.
     """
     for unit, scale in _UNITS:
         if size >= scale:
             value = size / scale
-            if unit == "G" and round(value, 1) < 10:
-                return f"{value:.1f}{unit}"
-            return f"{value:.0f}{unit}"
-    return f"{size}B"
+            if unit == "GiB" and round(value, 1) < 10:
+                return f"{value:.1f} {unit}"
+            return f"{value:.0f} {unit}"
+    return f"{size} B"
 
 
 def label() -> str:
     """The status line's memory field, empty where there is no figure to show."""
     size = resident_bytes()
-    return "" if size is None else f"Memory:{written(size)}"
+    return "" if size is None else f"Memory: {written(size)}"

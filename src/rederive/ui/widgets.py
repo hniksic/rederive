@@ -962,11 +962,12 @@ class StatusLine(Band):
     #: holds, which is the closest thing a hosted program can report, and stays
     #: empty on a platform that will not say.
     center = ""
-    #: The mode words that stand beside the memory field: `Ins` while the text
-    #: input mode is insert rather than overwrite, `Lin` while the arrow keys
+    #: The mode words that stand beside the memory field: `Ovr` while the text
+    #: input mode is overwrite rather than insert, `Lin` while the arrow keys
     #: belong to the line being edited rather than to the highlight. Each is
-    #: named only when it is on, so the line stays quiet in the other state -
-    #: which is the original's rule for both of them.
+    #: named only in the state that is the odd one out, so the line stays quiet
+    #: where a line behaves as it usually does, and quiet altogether where
+    #: there is no line being typed.
     flags = ""
     pane = "Rederive Algebra"
 
