@@ -467,6 +467,23 @@ LOGARITHMS = [
     # `e` and `i` are ordinary variables; only `#e` and `#i` are the constants.
     ("LN(e)", "LN(e)", None),
     ("i^2", "i^2", None),
+    # Auto is 6.2's mixed direction: a sum of logarithms collects into one, and
+    # a logarithm of a power comes apart. The second is the direction the
+    # longer answer lies in, and it is taken anyway - what `LN(256)` is to
+    # `8*LN(2)` is what `SQRT(12)` is to `2*SQRT(3)`. Collect is the setting
+    # that keeps the power where it stands.
+    ("LN(256)", "8*LN(2)", None),
+    ("8*LN(2)", "8*LN(2)", None),
+    ("LN(256)", "LN(256)", Context(logarithm=Direction.COLLECT)),
+    ("LN(4/9)", "2*LN(2/3)", None),
+    # Nothing comes out of an argument that is no whole power of anything, and
+    # the sum still collects over one that is not: Derive answers `LN(40)`.
+    ("LN(12)", "LN(12)", None),
+    ("3*LN(2) + LN(5)", "LN(40)", None),
+    # The rule wants a nonnegative base, or an exponent within one of zero.
+    ("LN(x^8)", "LN(x^8)", None),
+    ("LN(x^8)", "8*LN(x)", declared("x :epsilon Real [0, inf)")),
+    ("LN(SQRT(z))", "LN(z)/2", None),
     ("LN(x*y)", "LN(x*y)", Context(logarithm=Direction.EXPAND)),
     (
         "LN(x*y)",

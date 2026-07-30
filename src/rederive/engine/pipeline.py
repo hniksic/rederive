@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from fractions import Fraction
+from math import gcd
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
@@ -1569,6 +1570,13 @@ def _logarithms(expression: sp.Basic, context: Context) -> sp.Basic:
     every argument positive. It is not used, in either direction: `LN(x^2 - x)
     - LN(x)` collects only once `x` has been declared away from the values that
     would make it false.
+
+    Auto is the mixed direction 6.2 describes, the sum rule rightward and the
+    power rule leftward: `3*LN(2) + LN(5)` collects to `LN(40)` and `LN(256)`
+    comes apart into `8*LN(2)`. The second half is not gated on getting
+    shorter, because the shorter form is the one it gives up: a power is taken
+    out of a logarithm the way it is taken out from under a radical, where
+    `SQRT(12)` is `2*SQRT(3)` and counts no less.
     """
     match context.logarithm:
         case Direction.COLLECT:
@@ -1576,7 +1584,57 @@ def _logarithms(expression: sp.Basic, context: Context) -> sp.Basic:
         case Direction.EXPAND:
             return _forced(expression, sp.expand_log)
     expression = _gated(expression, sp.logcombine)
-    return _gated(expression, sp.expand_log)
+    return _forced(expression, _extracted_powers)
+
+
+def _extracted_powers(expression: sp.Basic) -> sp.Basic:
+    """`LN(z^k)` written as `k*LN(z)`, everywhere the rule holds."""
+    return expression.replace(
+        lambda e: _extracted_power(e) is not None,
+        lambda e: _extracted_power(e),
+        simultaneous=False,
+    )
+
+
+def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
+    """`k*LN(z)`, if `expression` is a logarithm of `z^k` that may be taken apart.
+
+    6.2 gives the rule as `k*LN(x) <-> LN(x^k)` for a rational `k` where `x` is
+    nonnegative, and for any `x` where `-1 < k <= 1`.
+    """
+    if not isinstance(expression, sp.log) or len(expression.args) != 1:
+        return None
+    argument = expression.args[0]
+    if argument.is_Rational and argument.is_positive:
+        power = _perfect_power(argument)
+        return None if power is None else power[1] * sp.log(power[0])
+    if not argument.is_Pow:
+        return None
+    base, exponent = argument.args
+    if not exponent.is_Rational:
+        return None
+    if not (base.is_nonnegative or bool(-1 < exponent <= 1)):
+        return None
+    return exponent * sp.log(base)
+
+
+def _perfect_power(number: sp.Rational) -> tuple[sp.Rational, sp.Integer] | None:
+    """`(z, k)` where `number` is `z^k`, for the largest whole `k` above one.
+
+    A positive rational is a power of itself whenever its numerator and its
+    denominator are powers to a common exponent: 256 is 2^8 and 4/9 is (2/3)^2,
+    while 12 and 4/3 are powers of nothing but themselves.
+    """
+    parts = [sp.perfect_power(whole) or (whole, 1) for whole in (number.p, number.q)]
+    exponents = [exponent for base, exponent in parts if base > 1]
+    if not exponents:
+        return None
+    exponent = gcd(*exponents)
+    if exponent < 2:
+        return None
+    (top, above), (bottom, below) = parts
+    root = sp.Rational(top ** (above // exponent), bottom ** (below // exponent))
+    return root, sp.Integer(exponent)
 
 
 def _exponentials(expression: sp.Basic, context: Context) -> sp.Basic:
