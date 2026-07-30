@@ -1663,11 +1663,15 @@ class Session:
         region = entry.layout.at(route)
         if region is None or not region.children:
             return False
+        self._owns(entry)
+        self.route = route + (self._preferred.get(route, 0),)
+        return True
+
+    def _owns(self, entry: Entry) -> None:
+        """Point the operand memory at `entry`, forgetting another entry's."""
         if self._preferred_owner is not entry:
             self._preferred = {}
             self._preferred_owner = entry
-        self.route = route + (self._preferred.get(route, 0),)
-        return True
 
     def _remember(self) -> None:
         """Record where the selection stands as its parent's operand to return to."""
@@ -1684,6 +1688,51 @@ class Session:
         self.selected = index
         self.route = ()
         return moved
+
+    def select_at(self, index: int, row: int, column: int) -> bool:
+        """Select what entry `index` draws at that cell of its own render.
+
+        Where the mouse points at another entry, that entry is selected whole:
+        the pointer has said which expression, and the arrows and the further
+        clicks are what go on to say which part of it.
+
+        Inside the entry already selected, the click goes one level towards
+        what it points at rather than all the way down to it, the way Right and
+        Down step in. So a click on the `x` of `(x + 1)/y` takes the numerator
+        and the next click takes the `x`, which is what makes a term of a long
+        sum reachable without hitting the one character it is drawn as. A click
+        pointing into a different branch takes that branch at the level the two
+        part company, and one pointing at something the selection is inside of -
+        the `+` between two terms belongs to the sum, not to either term - goes
+        back out to it.
+
+        A cell no subexpression covers, the label field included, selects the
+        whole expression: the number in front of a render names all of it.
+        """
+        if not 0 <= index < len(self.entries):
+            return False
+        entry = self.entries[index]
+        if index != self.selected:
+            return self.select_entry(index)
+        pointed = entry.layout.route_at(row, column)
+        if pointed is None:
+            return self.select_entry(index)
+        # How much of the way there the selection already is, which is what says
+        # what one level further means: a step down where the cell is inside the
+        # selection, and a step across where the two have parted.
+        shared = 0
+        for mine, theirs in zip(self.route, pointed):
+            if mine != theirs:
+                break
+            shared += 1
+        route = pointed if shared == len(pointed) else pointed[: shared + 1]
+        if route == self.route:
+            return False
+        self._owns(entry)
+        self.route = route
+        if route:
+            self._remember()
+        return True
 
     def jump(self, number: int) -> bool:
         """Select the entry labelled `number`, and say whether one was found.

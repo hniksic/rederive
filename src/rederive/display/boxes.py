@@ -82,6 +82,13 @@ class Region:
     def rect(self) -> tuple[int, int, int, int]:
         return (self.top, self.left, self.height, self.width)
 
+    def holds(self, row: int, column: int) -> bool:
+        """Whether the cell at `row`, `column` is one this region covers."""
+        return (
+            self.top <= row < self.top + self.height
+            and self.left <= column < self.left + self.width
+        )
+
 
 @dataclass(frozen=True)
 class Layout:
@@ -118,6 +125,32 @@ class Layout:
                 return None
             region = region.children[index]
         return region
+
+    def route_at(self, row: int, column: int) -> tuple[int, ...] | None:
+        """The route to the smallest region drawn over a cell of `lines`.
+
+        Which is what the mouse points at: the pointer names a cell, and the
+        subexpression it is inside of is the innermost one whose rectangle
+        covers it. None where the cell is outside the render altogether - the
+        label field, or the blanks past the end of a short line - there being
+        no subexpression there to name.
+
+        Sibling regions never overlap, since each is the rectangle one operand
+        was drawn in, so descending into the first that covers the cell always
+        finds the same route the eye does.
+        """
+        if not self.root.holds(row, column):
+            return None
+        route: list[int] = []
+        region = self.root
+        while True:
+            for index, child in enumerate(region.children):
+                if child.holds(row, column):
+                    route.append(index)
+                    region = child
+                    break
+            else:
+                return tuple(route)
 
 
 # -- building boxes ---------------------------------------------------------

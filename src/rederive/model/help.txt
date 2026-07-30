@@ -48,6 +48,19 @@ that line is up takes the label along with it. The label is the safer of the
 two ways to answer: it goes on meaning the same expression after a Remove or a
 moVe has changed what stands where.
 
+Using the mouse:
+  a menu option    click it to run it, as its own capital letter does
+  an expression    click it to highlight it, again to go one part deeper
+  a value          click it to set it, on an Options screen or any question
+  the wheel        scrolls the history; with Shift held, sideways over an
+                   expression too wide for the pane
+  another window   click in it to make it the active one
+
+Every gesture stands for a key, so nothing here needs the mouse and nothing is
+reachable only with it. Text swept out with the button held down is the
+terminal's own selection rather than an expression, and Ctrl-C copies that
+while it stands.
+
 Exact before approximate:
   Simplify   work an expression out exactly, however long the answer
   approX     work it out as a number, to the precision now set
@@ -141,6 +154,15 @@ instead of along the line:
 What is highlighted is what a command acts on, so a subexpression can be
 factored, approximated or substituted for on its own without the expression
 around it being disturbed.
+
+A click walks the same tree from the other end. The first one highlights the
+expression it lands on and each one after it goes a part deeper towards what
+the pointer is over, so a term of a long sum is reached without having to hit
+the single character it is drawn as. A click on a part of the expression
+holding the one highlighted - the operator between two terms belongs to the sum
+and to neither term - goes back out to it, and a click on the number in front
+of the expression highlights the whole of it again. The arrow key mode does not
+apply: a click reaches a subexpression whichever way F6 has left the keys.
 
 Entering Greek letters, special constants and operators:
   Alt-A  alpha     Alt-B  beta      Alt-D  delta     Alt-N  epsilon

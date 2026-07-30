@@ -14,6 +14,18 @@ of text has nothing vertical for them to do. The ones that move a cursor along
 the line - Left, Right, Home, End - belong to the line while it is up, and to
 the highlight when it is not.
 
+The mouse is a second way in to the same two cursors, and never a third thing
+to learn: a click on a menu word runs what that word's letter runs, a click on
+an expression moves the highlight the arrows move - one level further in each
+time, so a term of a long sum is reachable without hitting the single character
+it is drawn as - and the wheel scrolls the pane the history stands in. Every
+gesture applies exactly where its key applies, so nothing can be reached by
+mouse that the keyboard cannot reach and nothing can be done under a
+half-answered question that a key would not do. Sweeping text out with the
+mouse is the terminal's own gesture and is left to Textual, which copies cells
+off the screen; that is a different thing from the highlight over one
+subexpression, and Ctrl-C copies whichever of the two was pointed at last.
+
 Submenus and Options dialogs stack on top of the command menu: Esc pops one
 level, and committing a dialog returns all the way to the command menu, as the
 original does. A command with a question of its own puts up a dialog too - the
@@ -156,10 +168,13 @@ from os.path import commonprefix
 from pathlib import Path
 from typing import Any, Callable
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.errors import NoWidget
 from textual.suggester import Suggester
+from textual.widget import Widget
 from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
@@ -443,6 +458,8 @@ BUFFER_EMPTY = "Unremove buffer empty"
 #: is not quoted back: the message line is one line, and an expression is as
 #: long as it likes.
 COPIED = "Copied the highlighted expression"
+#: And what it says when what was copied is a sweep of the screen instead.
+COPIED_TEXT = "Copied the selected text"
 
 # The lines the four Declare commands read, and what the message line asks for
 # on each. `default` is the variable that stands for all the unnamed ones,
@@ -943,6 +960,21 @@ PAGE_MOVES = ("page_up", "page_down")
 
 def _takes_anything(values: dict[str, str | int]) -> str | None:
     """What a dialog whose command judges none of its fields refuses: nothing."""
+    return None
+
+
+def _pane_of(widget: Widget | None) -> WorkArea | None:
+    """The work area `widget` is, or is inside, if it is either.
+
+    A pane paints its expressions into a widget of its own, so the pointer lands
+    on that rather than on the pane, and the pane is what a click has to be
+    answered against.
+    """
+    if widget is None:
+        return None
+    for node in widget.ancestors_with_self:
+        if isinstance(node, WorkArea):
+            return node
     return None
 
 
@@ -1835,6 +1867,224 @@ class RederiveApp(App[None]):
         else:
             self.refresh_screen()
 
+    # -- mouse routing -----------------------------------------------------
+    #
+    # The mouse is a second way in to what the keys already do, and every
+    # gesture ends in the handler the equivalent key ends in: a click on a menu
+    # word invokes what that word's own letter invokes, a click on an expression
+    # moves the highlight the arrows move, a click on a value of an Options
+    # dialog sets it the way typing its letter would. Nothing is reachable with
+    # the mouse that is not reachable from the keyboard, and a gesture applies
+    # exactly where its key applies - a click cannot switch windows out from
+    # under a half-answered question any more than F1 can.
+    #
+    # Where the pointer is is the one thing worth reading off a mouse event.
+    # Only a click carries the widget it landed on, and the two command bands
+    # lay themselves out for the width there is rather than to fixed columns, so
+    # each of them is asked what it drew at the cell rather than told.
+    #
+    # Sweeping text out with the mouse is Textual's, and left to it: it copies
+    # cells off the screen, which is a different thing from the highlight over
+    # one subexpression, and the two never disagree because a click clears a
+    # sweep and a sweep moves no highlight.
+
+    def on_click(self, event: events.Click) -> None:
+        """A click, routed to whatever it was pointing at.
+
+        A computation under way answers none of them, as it answers no key but
+        Esc, and a demonstration takes a click the way it takes any key: as the
+        cue for the next step.
+        """
+        if self.mode == MODE_COMPUTE:
+            return
+        if self.mode == MODE_DEMO:
+            self._demo_step()
+            return
+        widget = self._under(event)
+        if isinstance(widget, CompletionList):
+            self._clicked_name(widget, event)
+        elif isinstance(widget, MenuBand):
+            self._clicked_word(widget, event)
+        elif isinstance(widget, FieldBand):
+            self._clicked_field(widget, event)
+        else:
+            pane = _pane_of(widget)
+            if pane is not None:
+                self._clicked_entry(pane, event)
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self._wheel(1, event)
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self._wheel(-1, event)
+
+    def on_mouse_scroll_right(self, event: events.MouseScrollRight) -> None:
+        self._wheel_across(1, event)
+
+    def on_mouse_scroll_left(self, event: events.MouseScrollLeft) -> None:
+        self._wheel_across(-1, event)
+
+    def _under(self, event: events.MouseEvent) -> Widget | None:
+        """The widget the pointer is over, whatever the event was delivered to.
+
+        Read off the pointer's own position rather than off the event: the wheel
+        events do not say what they landed on, and the answer has to be the same
+        for all of them.
+        """
+        try:
+            widget, _ = self.get_widget_at(*event.screen_offset)
+        except NoWidget:
+            return None
+        return widget
+
+    def _clicked_word(self, band: MenuBand, event: events.Click) -> None:
+        """A click on a menu word: what that word's own letter would invoke.
+
+        The highlight is left where it is, as it is when a mnemonic letter is
+        typed: what a menu word means is its command, and running one is not
+        stepping to it. Only while a menu is what the band is showing - a dialog
+        stands on the same band, and a confirmation leaves the menu up with
+        nothing on it to pick.
+        """
+        if self.mode not in MENU_MODES or self.editor is not None:
+            return
+        index = band.word_at(event.screen_offset)
+        if index is not None:
+            self.invoke_command(index)
+
+    def _clicked_field(self, band: FieldBand, event: events.Click) -> None:
+        """A click on an Options dialog: the field, or the value, it landed on.
+
+        A value is set the way typing its own letter sets it - the field takes
+        it and the highlight moves on, and a dialog with one field settles there
+        and then. Anywhere else on a field moves the highlight onto it and no
+        more, which is what Tab does; the cursor lands at the start of what is
+        there, since that is where entering a field always puts it.
+        """
+        editor = self.editor
+        if editor is None or self.mode != MODE_MENU:
+            return
+        found = band.field_at(event.screen_offset)
+        if found is None:
+            return
+        index, choice = found
+        if not editor.activate(index):
+            self._beep()
+        elif choice is not None and editor.choose(choice) and editor.settles_on_choice:
+            self._commit()
+            return
+        self.refresh_screen()
+
+    def _clicked_name(self, listing: CompletionList, event: events.Click) -> None:
+        """A click on the list of names: point at that name, and take it.
+
+        Which is what Enter on it does: a directory is gone into and the list
+        stays up on what is inside it, and a file lands on the line where the
+        next Enter is the one that reads it. So a click never opens a file
+        either.
+        """
+        if not self.browsing:
+            return
+        at = listing.name_at(event.screen_offset)
+        if at is None or at >= len(self.completions):
+            return
+        self._highlight(at)
+        self.action_browse_take()
+
+    def _clicked_entry(self, pane: WorkArea, event: events.Click) -> None:
+        """A click in a window's history: select what it was pointing at.
+
+        A click in a window that is not the active one makes that window active
+        first, which is Window Goto and so is offered where that command is: at
+        the command menu, with nothing half answered standing on it.
+
+        In the active window it moves the highlight, and applies wherever the
+        keys that walk the history apply - under every prompt line but the one
+        Factor and Expand collect a variable on, and under a dialog only where
+        that dialog is one whose fields name expressions. Either kind of line
+        takes the label of where the click landed, exactly as it does when an
+        arrow key moves the highlight there.
+
+        Unlike the arrows, a click reaches a subexpression whatever the arrow
+        key mode says. That mode is about a key two things want; nothing else
+        wants the mouse.
+        """
+        window = next((each for each in self.panes if self.panes[each] is pane), None)
+        if window is None or self.mode == MODE_HELP:
+            return
+        if event.chain > 1:
+            # Textual reads a second click in quick succession as "select all
+            # the text of this widget". Here a repeated click means one level
+            # further in, so what the double click swept up is put back.
+            self.screen.clear_selection()
+        editor = self.editor
+        if window is not self.windows.active:
+            if self.mode != MODE_MENU or len(self.stack) > 1:
+                return
+            self.windows.goto(self.windows.windows.index(window) + 1)
+        elif self.mode == MODE_MENU:
+            if editor is not None and not editor.dialog.tracks_selection:
+                return
+        elif self.mode not in WALKED_MODES:
+            return
+        pointed = pane.pointed(event.screen_offset)
+        if pointed is not None:
+            self.session.select_at(*pointed)
+        if editor is not None:
+            entry = self.session.selected_entry
+            if entry is not None:
+                editor.retype(str(entry.number))
+        elif self.mode in LABELLED_MODES:
+            self._relabel_prompt()
+        self.refresh_screen()
+
+    def _wheel(self, direction: int, event: events.MouseEvent) -> None:
+        """The wheel, over whatever it is pointing at.
+
+        A pane with more history than fits scrolls itself, Textual having done
+        it before this is reached; the highlight stays where it was, the way a
+        pane scrolled sideways by hand stays where it was put. What is left for
+        here is the wheel over something that does not scroll itself - a list of
+        names to walk, a page of help to turn - and the sideways scroll, which
+        is a repaint of one entry rather than a scroll of the pane.
+        """
+        if self.mode == MODE_COMPUTE:
+            return
+        if event.shift or event.ctrl:
+            self._wheel_across(direction, event)
+            return
+        widget = self._under(event)
+        if isinstance(widget, CompletionList):
+            if self.browsing:
+                # Down and Up, which is what a wheel over a list of things is.
+                if direction > 0:
+                    self.action_browse_next()
+                else:
+                    self.action_browse_previous()
+            return
+        if _pane_of(widget) is not self.work_area or self.helping is None:
+            return
+        if self.helping.topic is not None:
+            # The keys that walk the history turn the pages of a subject, and
+            # the wheel is the same movement by another means. The subject menu
+            # has no pages to turn.
+            self._turn_help(direction)
+
+    def _wheel_across(self, direction: int, event: events.MouseEvent) -> None:
+        """The wheel sideways, over a render too wide for the pane it is in.
+
+        Which pane it scrolls is the one under the pointer, that being the one
+        whose expression is being read; no selection moves and no window becomes
+        active, exactly as with Ctrl-Right and Ctrl-Left.
+        """
+        if self.mode == MODE_COMPUTE:
+            return
+        pane = _pane_of(self._under(event))
+        if pane is None:
+            return
+        pane.scroll_across(direction)
+        self.refresh_screen()
+
     # -- menu actions ------------------------------------------------------
 
     def action_menu_next(self) -> None:
@@ -2040,12 +2290,18 @@ class RederiveApp(App[None]):
         line.selection = Selection(start, start + len(number))
 
     def action_copy_highlighted(self) -> None:
-        """Ctrl-C: take a copy of the highlighted expression.
+        """Ctrl-C: take a copy of the highlighted expression, or of swept text.
 
         What is copied is what is highlighted: the whole of an expression
         selected whole, and just the part when the highlight is inside one. It
         is the entry's own text rather than the two-dimensional render, so what
         comes back is something a line will take again.
+
+        Text swept out with the mouse is the exception. While a sweep stands it
+        is what the key copies and what it clears, that being the thing pointed
+        at last; nothing is swept in the ordinary way of working, so the
+        expression is what the key means the rest of the time. The two never
+        disagree: one click anywhere clears a sweep.
 
         The copy is offered to the terminal as well as kept here, which is what
         carries an expression out to another program. Whether the terminal
@@ -2053,6 +2309,12 @@ class RederiveApp(App[None]):
         nothing comes back either way, so the receipt on the message line is
         what says the key landed.
         """
+        swept = self.screen.get_selected_text()
+        if swept:
+            self.copy_to_clipboard(swept)
+            self.screen.clear_selection()
+            self._set_message(COPIED_TEXT)
+            return
         text = self.session.highlighted_text
         if text is None:
             self._beep()

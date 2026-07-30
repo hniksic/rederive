@@ -8,6 +8,7 @@ command repaints simply by asking for another render.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from rich.cells import cell_len
@@ -15,7 +16,7 @@ from rich.text import Text
 from textual import events
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
-from textual.geometry import Region
+from textual.geometry import Offset, Region
 from textual.widgets import Input, Static
 
 from rederive import memory
@@ -83,6 +84,23 @@ _KILLS_KEPT = 10
 #: which is a gauge that keeps up rather than one that catches up. Two readings
 #: a second cost two `psutil` calls and repaint only when the figure moves.
 _MEMORY_PERIOD = 0.5
+
+
+@dataclass(frozen=True)
+class _Place:
+    """Where one field of a dialog was drawn, and what can be picked off it.
+
+    The columns are the band's own, so `start` and `end` are what a click on
+    that row is measured against. `choices` are the values the field offers,
+    each with the columns it took; a field that offers none carries an empty
+    tuple.
+    """
+
+    row: int
+    start: int
+    end: int
+    index: int
+    choices: tuple[tuple[str, int, int], ...]
 
 
 def _width(field: Field) -> int:
@@ -219,8 +237,12 @@ class Band(Static):
         """Columns a row has for its contents, past a prefix that wide."""
         return max(1, self.width - prefix)
 
-    def put(self, rows: list[Text]) -> None:
-        """Show `rows`, the band standing as tall as there are rows to show."""
+    def put(self, rows: list[Text]) -> int:
+        """Show `rows`, the band standing as tall as there are rows to show.
+
+        How many of them it had room for comes back, since a row dropped off
+        the bottom carries nothing a click can land on.
+        """
         limit = max(_BAND_ROWS, self.app.size.height - _BAND_RESERVE)
         rows = rows[:limit]
         for row in rows:
@@ -231,6 +253,11 @@ class Band(Static):
             row.truncate(self.width)
         self.styles.height = max(_BAND_ROWS, len(rows))
         self.update(Text("\n").join(rows))
+        return len(rows)
+
+    def within(self, offset: Offset) -> Offset:
+        """The screen cell `offset` as a row and column of this band's contents."""
+        return offset - self.content_region.offset
 
 
 class WorkArea(VerticalScroll):
@@ -250,6 +277,11 @@ class WorkArea(VerticalScroll):
     and shifting all of it to see the end of one line would take the others out
     from under their own numbers. Ctrl-Right and Ctrl-Left scroll it by hand,
     and a highlight walking off either edge takes it along.
+
+    Scrolling up and down is Textual's own, since the pane really is a scrollable
+    region: the wheel moves it and nothing here has to know. What this does have
+    to answer is where a click landed, which only the pane can say - it is the
+    one that knows what row each entry was painted on.
     """
 
     can_focus = False
@@ -273,6 +305,14 @@ class WorkArea(VerticalScroll):
         #: them, which is what a shift has to stay inside.
         self._widest = 0
         self._indent = _LABEL_WIDTH
+        #: Where the last render put each entry: the row its render starts on,
+        #: the column the render starts in, and how many rows it took. What a
+        #: click is read against, there being nothing else on screen that says
+        #: which expression a row belongs to.
+        self._drawn: list[tuple[int, int, int]] = []
+        #: Which of them was drawn shifted, since the shift is the selected
+        #: entry's alone and a click on it has to be read past the shift.
+        self._shifted: int | None = None
 
     def reset(self) -> None:
         """Forget where this pane stands, as a pane handed to a new window must."""
@@ -280,6 +320,8 @@ class WorkArea(VerticalScroll):
         self._followed = None
         self._widest = 0
         self._indent = _LABEL_WIDTH
+        self._drawn = []
+        self._shifted = None
 
     def show(
         self,
@@ -299,6 +341,11 @@ class WorkArea(VerticalScroll):
             starts.append(len(lines))
             indents.append(_indent(entry))
             lines.extend(_painted(entry, self.shift if index == selected else 0))
+        self._drawn = [
+            (start, indent, entries[index].height)
+            for index, (start, indent) in enumerate(zip(starts, indents, strict=True))
+        ]
+        self._shifted = selected
         text = Text("\n".join(lines), style=styles["work"], no_wrap=True)
         if selected is not None and rect is not None:
             _invert(
@@ -333,6 +380,7 @@ class WorkArea(VerticalScroll):
         and no further.
         """
         styles = self.app.palette.styles
+        self._drawn, self._shifted = [], None
         page = [line[:width] for line in lines[:rows]]
         page += [""] * (rows - len(page))
         text = Text("\n".join(page), style=styles["work"], no_wrap=True)
@@ -356,6 +404,7 @@ class WorkArea(VerticalScroll):
         rather than the footer, that being the line with a key in it.
         """
         styles = self.app.palette.styles
+        self._drawn, self._shifted = [], None
         centred = [line.center(width).rstrip()[:width] for line in lines]
         above = max(1, (rows - len(centred) - 3) // 3)
         page = ([""] * above + centred)[: max(0, rows - 2)]
@@ -366,6 +415,27 @@ class WorkArea(VerticalScroll):
         page += [""] * (rows - len(page))
         text = Text("\n".join(page), style=styles["work"], no_wrap=True)
         self.content.update(text)
+
+    def pointed(self, offset: Offset) -> tuple[int, int, int] | None:
+        """Which entry the screen cell `offset` is on, and where in its render.
+
+        The row and the column are the entry's own: they index the lines the
+        layout painted, so what the caller does with them is a question about
+        the expression rather than about the pane. A column left of the render
+        comes back negative, which is what a click on the label field is - a
+        cell that names the whole expression and no part of it.
+
+        None where the cell is on no entry at all: the blank row between two of
+        them, or the space above a history too short to fill the pane.
+        """
+        column, row = offset - self.content.region.offset
+        for index, (start, indent, height) in enumerate(self._drawn):
+            if start <= row < start + height:
+                across = column - indent
+                if across >= 0 and index == self._shifted:
+                    across += self.shift
+                return index, row - start, across
+        return None
 
     @property
     def showable(self) -> int:
@@ -626,6 +696,9 @@ class CompletionList(Band):
         #: it again: both the highlight bar and the title are cut to the width,
         #: and the width is not known until the widget has been laid out.
         self._showing: tuple[list[str], int | None, str] = ([], None, "")
+        #: Which name the top row is showing, since the list is a window onto
+        #: the names and a click names a row rather than a name.
+        self._first = 0
 
     def visible_rows(self, count: int) -> int:
         """How many of `count` names show at once: as many as there is room for."""
@@ -654,7 +727,7 @@ class CompletionList(Band):
         if not names:
             return
         rows = self.visible_rows(len(names))
-        first = self._first_shown(len(names), at, rows)
+        first = self._first = self._first_shown(len(names), at, rows)
         shown = names[first : first + rows]
         text = Text(style=self.colors["work"])
         for row, name in enumerate(shown):
@@ -666,6 +739,22 @@ class CompletionList(Band):
             text.append(f" {name}".ljust(width) + "\n", style=style)
         self.border_title = self._title(where, len(names), first, len(shown))
         self.update(text)
+
+    def name_at(self, offset: Offset) -> int | None:
+        """Which name the screen cell `offset` is on, if it is on one.
+
+        A row is one name across the whole width of the list, the highlight bar
+        being drawn that way, so only the row is asked about. None where the
+        cell is on the border or past the last name.
+        """
+        names, _, _ = self._showing
+        if not names:
+            return None
+        point = self.within(offset)
+        if not 0 <= point.x < self.content_region.width:
+            return None
+        at = self._first + point.y
+        return at if 0 <= point.y < self.visible_rows(len(names)) else None
 
     def _first_shown(self, count: int, at: int | None, rows: int) -> int:
         """The name the window starts at, chosen to keep `at` inside it."""
@@ -693,12 +782,20 @@ class CompletionList(Band):
 
 
 class MenuBand(Band):
-    """A menu of words, one of them highlighted in inverse video."""
+    """A menu of words, one of them highlighted in inverse video.
+
+    Where each word was drawn is kept as it is drawn, so that a click can be
+    answered with the word it landed on. The words are the only thing on the
+    band a mouse has any business with: the title is a caption.
+    """
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         #: The menu on the band, so that a resize can lay it out again.
         self._showing: tuple[Menu, int | None] | None = None
+        #: The columns each word took, as row, first column, last column and
+        #: which word of the menu it is.
+        self._words: list[tuple[int, int, int, int]] = []
 
     def say(self, text: str) -> None:
         """Put one line of plain text on the band in place of a menu.
@@ -707,6 +804,7 @@ class MenuBand(Band):
         expression it has just run stands where the menu words go.
         """
         self._showing = None
+        self._words = []
         self.put([Text(f" {text}", style=self.colors["option"], no_wrap=True)])
 
     def show(self, menu: Menu, highlighted: int | None) -> None:
@@ -714,12 +812,25 @@ class MenuBand(Band):
         self._showing = (menu, highlighted)
         prefix = f" {menu.title} "
         indent = " " * len(prefix)
-        self.put(
-            [
-                self._line(menu, prefix if number == 0 else indent, group, highlighted)
-                for number, group in enumerate(self._rows(menu, len(prefix)))
-            ]
-        )
+        rows: list[Text] = []
+        words: list[tuple[int, int, int, int]] = []
+        for group in self._rows(menu, len(prefix)):
+            row = len(rows)
+            line, placed = self._line(
+                menu, prefix if row == 0 else indent, group, highlighted
+            )
+            words += [(row, start, end, index) for start, end, index in placed]
+            rows.append(line)
+        shown = self.put(rows)
+        self._words = [word for word in words if word[0] < shown]
+
+    def word_at(self, offset: Offset) -> int | None:
+        """Which word of the menu the screen cell `offset` is on, if any is."""
+        point = self.within(offset)
+        for row, start, end, index in self._words:
+            if row == point.y and start <= point.x < end:
+                return index
+        return None
 
     def on_resize(self) -> None:
         """Lay the menu out again for the width the terminal now has."""
@@ -754,16 +865,20 @@ class MenuBand(Band):
         prefix: str,
         indices: list[int],
         highlighted: int | None,
-    ) -> Text:
+    ) -> tuple[Text, list[tuple[int, int, int]]]:
+        """One row of the menu, and the columns each word on it took."""
         colors = self.colors
         text = Text(prefix, style=colors["option"], no_wrap=True)
+        placed = []
         for position, index in enumerate(indices):
             if position:
                 text.append(" " * _WORD_GAP)
             highlight = index == highlighted
             style = colors["option-highlight"] if highlight else colors["option"]
+            at = len(text.plain)
             text.append(menu.words[index], style=style)
-        return text
+            placed.append((at, len(text.plain), index))
+        return text, placed
 
 
 class FieldBand(Band):
@@ -776,18 +891,28 @@ class FieldBand(Band):
     A line may also carry a plain word, which is printed where it stands and is
     no field: the variable whose bounds `Declare Variable Interval` is asking
     for stands between the two bounds.
+
+    Where every field and every one of its choices was drawn is kept as it is
+    drawn, so that a click can be answered with what it landed on: the field, or
+    the one value of it the pointer is over. A dialog laid out for the width
+    there is has no fixed columns to compute them from afterwards.
     """
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         #: The dialog on the band, so that a resize can lay it out again.
         self._showing: DialogEditor | None = None
+        #: Where each field went, as its row, the columns it took, which field
+        #: of the dialog it is, and the columns each of its choices took.
+        self._places: list[_Place] = []
 
     def show(self, editor: DialogEditor) -> None:
         self._showing = editor
         title = editor.dialog.title
         indent = " " * (len(title) + 2)
-        rows, index = [], 0
+        rows: list[Text] = []
+        places: list[_Place] = []
+        index = 0
         for number, items in enumerate(editor.lines):
             prefix = f" {title} " if number == 0 else indent
             if not _captioned(items[0]):
@@ -797,12 +922,21 @@ class FieldBand(Band):
                 # The value still begins in the column the next line indents
                 # to, which is what keeps the two lines square.
                 prefix = prefix[:-1]
-            drawn = []
+            drawn: list[Text] = []
+            # Which field each of them is, and where its choices are inside it;
+            # a plain word is neither and belongs to no field at all.
+            owners: list[int | None] = []
+            choices: list[tuple[tuple[str, int, int], ...]] = []
             for item in items:
                 if isinstance(item, str):
                     drawn.append(Text(item, style=self.colors["option"], no_wrap=True))
+                    owners.append(None)
+                    choices.append(())
                     continue
-                drawn.append(self._field(editor, item, active=index == editor.active))
+                text, offered = self._field(editor, item, active=index == editor.active)
+                drawn.append(text)
+                owners.append(index)
+                choices.append(offered)
                 index += 1
             # A line too wide for the terminal is broken between its fields
             # and carried on under the title, the same way a menu too wide for
@@ -822,16 +956,58 @@ class FieldBand(Band):
                 for position, at in enumerate(group):
                     if position:
                         line.append(_FIELD_GAP)
+                    column = len(line.plain)
                     line.append(drawn[at])
+                    owner = owners[at]
+                    if owner is not None:
+                        places.append(
+                            _Place(
+                                len(rows),
+                                column,
+                                len(line.plain),
+                                owner,
+                                tuple(
+                                    (value, column + start, column + end)
+                                    for value, start, end in choices[at]
+                                ),
+                            )
+                        )
                 rows.append(line)
-        self.put(rows)
+        shown = self.put(rows)
+        self._places = [place for place in places if place.row < shown]
+
+    def field_at(self, offset: Offset) -> tuple[int, str | None] | None:
+        """What the screen cell `offset` is on: which field, and which choice.
+
+        The choice is None where the cell is on the field but on no value of it
+        - a label, or the blanks a number field is padded out to - which is a
+        cell that says which field without saying what to set it to. None
+        altogether where the cell is on no field: a plain word, or the title.
+        """
+        point = self.within(offset)
+        for place in self._places:
+            if place.row != point.y or not place.start <= point.x < place.end:
+                continue
+            for value, start, end in place.choices:
+                if start <= point.x < end:
+                    return place.index, value
+            return place.index, None
+        return None
 
     def on_resize(self) -> None:
         """Lay the dialog out again for the width the terminal now has."""
         if self._showing is not None:
             self.show(self._showing)
 
-    def _field(self, editor: DialogEditor, field: Field, active: bool) -> Text:
+    def _field(
+        self, editor: DialogEditor, field: Field, active: bool
+    ) -> tuple[Text, tuple[tuple[str, int, int], ...]]:
+        """A field as it is drawn, and where each choice of it went inside that.
+
+        The columns are the field's own; the caller offsets them by where it
+        put the field. A field with nothing to pick from - one that is typed
+        into, or one whose choices are too many to print - offers none.
+        """
         colors = self.colors
         # A field with no label of its own is printed as its value alone, which
         # is how the strictness of an interval bound is shown.
@@ -846,10 +1022,10 @@ class FieldBand(Band):
             text.append(" ")
             text.append(str(current), style=style)
         elif active:
-            self._choices(text, field, current)
+            return text, self._choices(text, field, current)
         else:
-            self._parenthesized(text, field, current)
-        return text
+            return text, self._parenthesized(text, field, current)
+        return text, ()
 
     def _typed(
         self,
@@ -875,23 +1051,40 @@ class FieldBand(Band):
             written += 1
         text.append(" " * max(0, width - written))
 
-    def _choices(self, text: Text, field: ChoiceField, current: str | int) -> None:
+    def _choices(
+        self, text: Text, field: ChoiceField, current: str | int
+    ) -> tuple[tuple[str, int, int], ...]:
         colors = self.colors
+        offered = []
         for choice in field.choices:
             text.append(" ")
             style = colors["option-highlight"] if choice == current else colors["option"]
+            at = len(text.plain)
             text.append(choice, style=style)
+            offered.append((choice, at, len(text.plain)))
+        return tuple(offered)
 
     @staticmethod
-    def _parenthesized(text: Text, field: ChoiceField, current: str | int) -> None:
-        """`Mode:(Character)Word` - the parentheses eat the spaces beside them."""
+    def _parenthesized(
+        text: Text, field: ChoiceField, current: str | int
+    ) -> tuple[tuple[str, int, int], ...]:
+        """`Mode:(Character)Word` - the parentheses eat the spaces beside them.
+
+        Each choice takes the blank in front of it as well, so that every column
+        of the field belongs to the word it stands beside and a click between
+        two of them lands on one rather than on neither.
+        """
+        offered = []
         for index, choice in enumerate(field.choices):
+            at = len(text.plain)
             if choice == current:
                 text.append(f"({choice})")
             elif index and field.choices[index - 1] == current:
                 text.append(choice)
             else:
                 text.append(f" {choice}")
+            offered.append((choice, at, len(text.plain)))
+        return tuple(offered)
 
 
 class Panes(Container):

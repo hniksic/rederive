@@ -783,6 +783,32 @@ class DialogEditor:
         self._enter_field()
         return True
 
+    def activate(self, index: int) -> bool:
+        """Put the highlight on field `index`, as a Tab onto it would.
+
+        Which is what a click on the field is: what was typed in the field being
+        left is stored, and a number that field will not have keeps the
+        highlight where it is - a mistyped digit is corrected in the field it
+        was typed in, whether Tab or the mouse tried to leave it. A field left
+        on `Other` puts its number prompt up instead of being left, again as Tab
+        does, and the click has gone as far as it goes.
+
+        Clicking the field the highlight is already on is not a move and does
+        nothing: there is nothing to store that is not already stored, and
+        nothing to refuse.
+        """
+        if not 0 <= index < len(self.fields):
+            return False
+        if index == self.active:
+            return True
+        if self.open_prompt():
+            return True
+        if not self._leave_field():
+            return False
+        self.active = index
+        self._enter_field()
+        return True
+
     def focus(self, setting: str) -> None:
         """Put the highlight on the field holding `setting`, ready to be retyped.
 
