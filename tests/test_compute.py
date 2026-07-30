@@ -13,8 +13,8 @@ import time
 import pytest
 from screen import entries, message, prompt
 
-from rederive import engine
-from rederive.engine import EngineAborted
+from rederive.engine import computing
+from rederive.engine.client import EngineAborted
 from rederive.model.session import Session
 from rederive.ui.app import (
     ENTER_TO_DERIVE,
@@ -63,23 +63,23 @@ class Blocking:
 
     def simplify(self, node, context, state=None):
         self._wait()
-        return engine.simplify(node, context, state)
+        return computing.simplify(node, context, state)
 
     def approx(self, node, context, digits=None, state=None):
         self._wait()
-        return engine.approx(node, context, digits, state)
+        return computing.approx(node, context, digits, state)
 
     def factor(self, node, context, amount=None, variables=(), state=None):
         self._wait()
-        return engine.factor(node, context, amount, variables, state)
+        return computing.factor(node, context, amount, variables, state)
 
     def expand(self, node, context, amount=None, variables=(), state=None):
         self._wait()
-        return engine.expand(node, context, amount, variables, state)
+        return computing.expand(node, context, amount, variables, state)
 
     def expression_variables(self, node, context=None):
         self._wait()
-        return engine.expression_variables(node, context)
+        return computing.expression_variables(node, context)
 
 
 @pytest.fixture

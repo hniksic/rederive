@@ -52,12 +52,8 @@ from dataclasses import dataclass
 
 import sympy as sp
 
-from rederive.engine.factoring import (
-    DEFAULT_AMOUNT,
-    Amount,
-    Finish,
-    factored_expression,
-)
+from rederive.engine.boundary import DEFAULT_AMOUNT, Amount
+from rederive.engine.factoring import Finish, factored_expression
 from rederive.engine.ordering import ORDER_LIST, main_order
 from rederive.engine.shape import attempt, distributed
 

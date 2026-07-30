@@ -1,8 +1,23 @@
 """The math engine: expression trees in, expression trees out.
 
-Nothing outside this package may import from inside it except through the
-names re-exported here, and nothing inside it may import from the UI. What
-crosses the boundary is a `Node` tree and a `Context`; what comes back is a
+This file is documentation and nothing else - it exports no names, because the
+package has two halves and a caller has to say which one it is entitled to.
+Nothing inside the package may import from the UI, and nothing outside it may
+import from inside except through one of the two:
+
+* `client` is what anyone may hold: the `RemoteEngine` proxy, the vocabulary that
+  crosses the pipe, and the questions a tree answers by itself. It imports no
+  sympy, and the app process holds this and nothing more.
+* `computing` is the mathematics, and importing it means importing sympy. The
+  worker holds this, and so does anything that computes in place - every test,
+  every direct caller. Everything `client` offers it offers too, so a caller who
+  may compute writes one import.
+
+The import line is therefore the whole of the rule, which is why there is no third
+way in: a module that names a command has said in its imports that it is allowed
+to. `tests/test_packages.py` is what holds the app side to its half.
+
+What crosses the boundary is a `Node` tree and a `Context`; what comes back is a
 `Result` carrying both the answer's text and its reparsed tree.
 
 Two doors, shared by every command the engine will ever grow:
@@ -117,80 +132,3 @@ is what makes Esc an abort and a memory cap enforceable. A session given one
 computes remotely; a session given nothing computes here, which is what every
 test and every direct caller wants.
 """
-
-from __future__ import annotations
-
-from rederive.engine.context import (
-    Angle,
-    Branch,
-    Context,
-    Definition,
-    Direction,
-    Domain,
-    DomainKind,
-    Precision,
-    TrigPower,
-    domain_of_node,
-)
-from rederive.engine.expand import expand, written_as_ratio
-from rederive.engine.factor import decomposes, factor
-from rederive.engine.factoring import Amount
-from rederive.engine.from_sympy import Result, from_sympy, parse_state_for
-from rederive.engine.ordering import ORDER_LIST, main_order
-from rederive.engine.pipeline import approx, simplify
-from rederive.engine.printer import author_text
-from rederive.engine.remote import (
-    EngineAborted,
-    EngineBug,
-    EngineDied,
-    EngineDown,
-    EngineError,
-    EngineMemoryExceeded,
-    RemoteEngine,
-)
-from rederive.engine.replacing import Replacement, replace
-from rederive.engine.solve import equations_in, solve, solved
-from rederive.engine.substitute import substitute
-from rederive.engine.to_sympy import to_sympy
-from rederive.engine.variables import expression_variables
-
-__all__ = [
-    "ORDER_LIST",
-    "Amount",
-    "Angle",
-    "Branch",
-    "Context",
-    "Definition",
-    "Direction",
-    "Domain",
-    "DomainKind",
-    "EngineAborted",
-    "EngineBug",
-    "EngineDied",
-    "EngineDown",
-    "EngineError",
-    "EngineMemoryExceeded",
-    "Precision",
-    "RemoteEngine",
-    "Replacement",
-    "Result",
-    "TrigPower",
-    "approx",
-    "author_text",
-    "decomposes",
-    "domain_of_node",
-    "equations_in",
-    "expand",
-    "expression_variables",
-    "factor",
-    "from_sympy",
-    "main_order",
-    "parse_state_for",
-    "replace",
-    "simplify",
-    "solve",
-    "solved",
-    "substitute",
-    "to_sympy",
-    "written_as_ratio",
-]

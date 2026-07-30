@@ -18,7 +18,7 @@ import math
 
 import pytest
 
-from rederive.engine import Amount, Context, factor, simplify
+from rederive.engine.computing import Amount, Context, factor, simplify
 from rederive.engine.context import Precision
 from rederive.syntax import ParseState, parse_expression
 

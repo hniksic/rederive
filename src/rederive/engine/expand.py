@@ -28,15 +28,15 @@ from collections.abc import Sequence
 
 import sympy as sp
 
+from rederive.engine.boundary import DEFAULT_AMOUNT, Amount, Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.expanding import expanded_expression
-from rederive.engine.factoring import DEFAULT_AMOUNT, Amount
-from rederive.engine.from_sympy import Result, from_sympy
+from rederive.engine.from_sympy import from_sympy
 from rederive.engine.pipeline import approximated, simplified
-from rederive.model.expr import Kind, Node
+from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 
-__all__ = ["expand", "expanded", "written_as_ratio"]
+__all__ = ["expand", "expanded"]
 
 
 def expand(
@@ -78,20 +78,3 @@ def expanded(
         lambda e: approximated(e, context),
         context.order,
     )
-
-
-def written_as_ratio(node: Node) -> bool:
-    """Whether `node` is written as a quotient, and so has a denominator to factor.
-
-    Which is the question the original asks before it asks for an amount: only
-    a ratio can become partial fractions, and only partial fractions need a
-    denominator factored. The test is on how the expression is written and not
-    on what it is worth, which is the original's own rule and an unforgiving
-    one - it asks for an amount for `x^2/x`, whose value has no denominator at
-    all, and asks for none for `2/x + 1/x`, whose value does. `x^-1` is a
-    power and not a quotient, so it is not asked about either.
-
-    An amount changes nothing where there is no denominator to factor. What it
-    changes is how many questions are put.
-    """
-    return node.kind is Kind.BINOP and node.value == "/"

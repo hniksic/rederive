@@ -20,7 +20,7 @@ import warnings
 import pytest
 from sexpr import to_sexpr
 
-from rederive.engine import (
+from rederive.engine.computing import (
     Context,
     Domain,
     DomainKind,

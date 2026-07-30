@@ -25,15 +25,16 @@ from collections.abc import Sequence
 
 import sympy as sp
 
+from rederive.engine.boundary import Result
 from rederive.engine.context import Context, Precision
-from rederive.engine.from_sympy import Result, from_sympy
+from rederive.engine.from_sympy import from_sympy
 from rederive.engine.pipeline import approximated, simplified
 from rederive.engine.solving import solutions
 from rederive.engine.to_sympy import to_sympy
-from rederive.model.expr import Kind, Node
+from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 
-__all__ = ["equations_in", "solve", "solved"]
+__all__ = ["solve", "solved"]
 
 
 def solve(
@@ -83,19 +84,3 @@ def solved(
         approximated(answer, context)
         for answer in solutions(expression, context, variables, interval)
     )
-
-
-def equations_in(node: Node) -> int:
-    """How many equations `node` is a system of, zero where it is no system.
-
-    Which is the question the UI has to answer before it can ask anything: a
-    system of E equations in more than E variables is asked about E times, and
-    a scalar equation at most once. Syntactic, like `decomposes`: a system is a
-    vector of relations as it was written, and reading that off the tree costs
-    nothing.
-    """
-    if node.kind is not Kind.VECTOR or not node.children:
-        return 0
-    if not all(child.kind is Kind.REL for child in node.children):
-        return 0
-    return len(node.children)

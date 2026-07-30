@@ -48,6 +48,7 @@ from sympy.logic.boolalg import Boolean
 from sympy.simplify.fu import TR2, TR5, TR6, TR7, TR8, TR11
 
 from rederive.engine.approximation import GUARD, simplest
+from rederive.engine.boundary import DEFAULT_AMOUNT, Amount, Result
 from rederive.engine.context import (
     Branch,
     Context,
@@ -56,13 +57,8 @@ from rederive.engine.context import (
     TrigPower,
 )
 from rederive.engine.expanding import EXPAND_AMOUNTS, expanded_expression
-from rederive.engine.factoring import (
-    DEFAULT_AMOUNT,
-    Amount,
-    amount_named,
-    factored_expression,
-)
-from rederive.engine.from_sympy import Result, from_sympy
+from rederive.engine.factoring import amount_named, factored_expression
+from rederive.engine.from_sympy import from_sympy
 from rederive.engine.intervals import decided, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.solving import oriented, solutions

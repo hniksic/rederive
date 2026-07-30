@@ -188,17 +188,19 @@ def _methods() -> dict[str, Callable[..., Any]]:
 
     The engine is imported here rather than at module scope: importing sympy is
     the second-costliest thing the worker ever does, and it must happen after
-    the log and the limits are in place.
+    the log and the limits are in place. `computing` rather than `client` is the
+    worker saying which half of the engine it is: it is the half that computes,
+    and it is the only process that may be.
     """
-    from rederive import engine
+    from rederive.engine import computing
 
     return {
-        "simplify": engine.simplify,
-        "approx": engine.approx,
-        "factor": engine.factor,
-        "expand": engine.expand,
-        "solve": engine.solve,
-        "expression_variables": engine.expression_variables,
+        "simplify": computing.simplify,
+        "approx": computing.approx,
+        "factor": computing.factor,
+        "expand": computing.expand,
+        "solve": computing.solve,
+        "expression_variables": computing.expression_variables,
         "hang": _hang,
         "allocate": _allocate,
     }

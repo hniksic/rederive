@@ -6,12 +6,14 @@ it is where the math engine is reached from: the UI never calls a command
 itself, it asks the session for one.
 
 Which engine answers is the one thing a session takes from outside. The six
-calls that can cost anything go through `runner`, which is the `engine` module
+calls that can cost anything go through `runner`, which is `engine.computing`
 itself unless something hands in another - and what the app hands in is a proxy
-to a child process, so that a computation can be killed. Every command here
-stays synchronous whichever it is: the session appends an answer only once the
-call has returned, so a call that dies leaves the worksheet exactly as the
-command found it.
+to a child process, so that a computation can be killed. Everything else this
+module asks the engine for costs nothing and is asked of `engine.client`, the
+half that holds no mathematics: that is what lets the app process draw a
+worksheet without sympy in it. Every command here stays synchronous whichever it
+is: the session appends an answer only once the call has returned, so a call that
+dies leaves the worksheet exactly as the command found it.
 
 The session owns the three things an authored line needs: the parse state, so
 that `InputMode`, `CaseMode` and every definition reach the lines that follow;
@@ -64,8 +66,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
-from rederive import engine
 from rederive.display import DisplayOptions, Layout, Region, render
+
+# The client half of the engine, under the name the mathematics goes by, because a
+# session names the engine constantly and holds none of it: what it may reach for is
+# the proxy, the vocabulary and the questions a tree answers by itself. Naming the
+# half is what makes that a rule rather than a habit - an `engine.simplify` written
+# below does not resolve, and the one place that does need the other half says so in
+# an import of its own, which is `_computing_here`.
+from rederive.engine import client as engine
 from rederive.model import data, state, worksheet
 from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
@@ -136,10 +145,10 @@ class Runner(Protocol):
     convert to sympy, and converting alone can hang: `10^10^10` never finishes
     being built.
 
-    The `rederive.engine` module satisfies this as it stands, which is what the
-    session uses when it is given nothing else. `engine.RemoteEngine` satisfies
-    it too, and answers out of a child process that can be killed, which is how
-    the app makes Esc mean something.
+    The `rederive.engine.computing` module satisfies this as it stands, which is
+    what `_computing_here` gives a session that is handed nothing else.
+    `engine.RemoteEngine` satisfies it too, and answers out of a child process
+    that can be killed, which is how the app makes Esc mean something.
     """
 
     def simplify(
@@ -184,6 +193,21 @@ class Runner(Protocol):
     def expression_variables(
         self, node: Node, context: engine.Context | None = ...
     ) -> tuple[str, ...]: ...
+
+
+def _computing_here() -> Runner:
+    """The engine itself, for a session that was handed no proxy to compute through.
+
+    The one place the session layer reaches past the client half, and a function
+    rather than an import so that reaching happens when a session is made and not
+    when this module is read. What it costs is sympy, some four hundred modules of
+    it, which is why the app never takes this door: it hands in a `RemoteEngine`, and
+    the process that draws the screen goes on knowing no mathematics at all. Tests
+    and direct callers take it, and want exactly what it does.
+    """
+    from rederive.engine import computing
+
+    return computing
 
 
 @dataclass(frozen=True)
@@ -283,7 +307,7 @@ class Session:
         #: module by default, which computes here and cannot be interrupted;
         #: the app hands in a proxy to a child process instead, so that a
         #: computation can be aborted and its appetite capped.
-        self.runner: Runner = runner if runner is not None else engine
+        self.runner: Runner = runner if runner is not None else _computing_here()
         self.state = ParseState()
         self.entries: list[Entry] = []
         self.selected: int | None = None

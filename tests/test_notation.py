@@ -19,8 +19,8 @@ from fractions import Fraction
 import pytest
 import sympy as sp
 
-from rederive.engine import Context, author_text, to_sympy
 from rederive.engine.approximation import simplest
+from rederive.engine.computing import Context, author_text, to_sympy
 from rederive.engine.context import Notation, Precision
 from rederive.engine.notation import decimal, scientific, simple
 from rederive.model.session import Session

@@ -52,9 +52,8 @@ from typing import Any
 
 from rederive import memory
 from rederive.engine import worker
+from rederive.engine.boundary import Amount, Result
 from rederive.engine.context import Context
-from rederive.engine.factoring import Amount
-from rederive.engine.from_sympy import Result
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 

@@ -46,14 +46,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 
 import sympy as sp
 
+from rederive.engine.boundary import DEFAULT_AMOUNT, Amount
 from rederive.engine.shape import attempt as _attempt
 from rederive.engine.shape import distributed
 
-__all__ = ["Amount", "amount_named", "factored_expression"]
+__all__ = ["amount_named", "factored_expression"]
 
 #: How far the integer factorizer is allowed to look for a divisor before it
 #: gives the number back as it found it. Bounded because factoring is the one
@@ -71,24 +71,6 @@ FACTOR_LIMIT = 100_000
 #: mode is the only caller so far, and it is a callback rather than a `Context`
 #: because rounding belongs to `pipeline`, which sits above this file.
 Finish = Callable[[sp.Expr], sp.Expr]
-
-
-class Amount(StrEnum):
-    """How hard Factor tries, in the words the menu spells them with.
-
-    `raDical` carries its capital because that is where its mnemonic letter is
-    - `R` belongs to Rational - and the menu reads the letter off the word.
-    """
-
-    TRIVIAL = "Trivial"
-    SQUAREFREE = "Squarefree"
-    RATIONAL = "Rational"
-    RADICAL = "raDical"
-    COMPLEX = "Complex"
-
-
-#: What the amount is when nobody says. The manual's default, and the menu's.
-DEFAULT_AMOUNT = Amount.RATIONAL
 
 
 def amount_named(word: str) -> Amount | None:

@@ -20,7 +20,13 @@ from __future__ import annotations
 import pytest
 import sympy as sp
 
-from rederive.engine import Context, domain_of_node, simplify, solve, to_sympy
+from rederive.engine.computing import (
+    Context,
+    domain_of_node,
+    simplify,
+    solve,
+    to_sympy,
+)
 from rederive.engine.context import Angle, Precision
 from rederive.syntax import ParseState, parse_expression
 

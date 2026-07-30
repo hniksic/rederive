@@ -18,11 +18,12 @@ and it is None when the two would be the same text.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
 
+from rederive.engine.boundary import Result
 from rederive.engine.context import Context, Notation
 from rederive.engine.printer import author_text, named
 from rederive.engine.to_sympy import FunDef, StringLiteral
@@ -37,29 +38,6 @@ from rederive.syntax import (
 
 #: What joins a subscripted symbol's parts in its name.
 _SUBSCRIPT = " SUB "
-
-
-@dataclass(frozen=True)
-class Result:
-    """An expression as the worksheet holds it: the text, and its tree.
-
-    `node`'s spans index `text`.
-
-    `value` is the same answer written exactly, which is a different tree only
-    where the notation writes a number as something other than the ratio it
-    is: one third *shown* as `0.333333` is still one third, and three times it
-    is still one. What is shown is what the worksheet saves and draws; what is
-    here is what the next command computes with.
-    """
-
-    node: Node
-    text: str
-    value: Node | None = None
-
-    @property
-    def exact(self) -> Node:
-        """The tree to compute with: the exact one where they differ."""
-        return self.node if self.value is None else self.value
 
 
 def from_sympy(

@@ -14,7 +14,13 @@ import sympy as sp
 from sexpr import to_sexpr
 from sympy.core.function import AppliedUndef
 
-from rederive.engine import Context, Domain, DomainKind, from_sympy, to_sympy
+from rederive.engine.computing import (
+    Context,
+    Domain,
+    DomainKind,
+    from_sympy,
+    to_sympy,
+)
 from rederive.engine.context import Angle, Precision
 from rederive.engine.to_sympy import (
     FUNCTIONS,

@@ -8,7 +8,7 @@ brings the rest of it along.
 
 import pytest
 
-from rederive import engine
+from rederive.engine.client import Amount
 from rederive.model import building
 from rederive.model.session import Session
 from rederive.syntax import DeriveSyntaxError
@@ -202,15 +202,15 @@ def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
 
 def test_the_amount_reaches_the_command(session):
     session.author("2 x^3 - 12 x^2 + 18 x")
-    assert session.factor("#1", engine.Amount.TRIVIAL).text == "2*x*(x^2 - 6*x + 9)"
-    assert session.factor("#1", engine.Amount.SQUAREFREE).text == "2*x*(x - 3)^2"
+    assert session.factor("#1", Amount.TRIVIAL).text == "2*x*(x^2 - 6*x + 9)"
+    assert session.factor("#1", Amount.SQUAREFREE).text == "2*x*(x - 3)^2"
 
 
 def test_the_factorization_variables_reach_the_command(session):
     session.author("x^2 y^2 - x^2 - y^4 + y^2")
-    whole = session.factor("#1", engine.Amount.RATIONAL, ("x", "y"))
+    whole = session.factor("#1", Amount.RATIONAL, ("x", "y"))
     assert whole.text == "(x - y)*(x + y)*(y - 1)*(y + 1)"
-    about_x = session.factor("#1", engine.Amount.RATIONAL, ("x",))
+    about_x = session.factor("#1", Amount.RATIONAL, ("x",))
     assert about_x.text == "(x - y)*(x + y)*(y^2 - 1)"
 
 
@@ -293,13 +293,13 @@ def test_expanding_part_of_an_entry_copies_the_rest_of_it(session):
 
 def test_the_expansion_variables_reach_the_command(session):
     session.author("(x + 2 y + 1)^3")
-    about_x = session.expand("#1", engine.Amount.RATIONAL, ("x",))
+    about_x = session.expand("#1", Amount.RATIONAL, ("x",))
     assert about_x.text == "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 + (2*y + 1)^3"
 
 
 def test_the_amount_reaches_the_expansion(session):
     session.author("1/(x^2 - 1)")
-    assert session.expand("#1", engine.Amount.TRIVIAL).text == "1/(x^2 - 1)"
+    assert session.expand("#1", Amount.TRIVIAL).text == "1/(x^2 - 1)"
     assert session.expand("#1").text == "1/(2*(x - 1)) - 1/(2*(x + 1))"
 
 

@@ -23,7 +23,7 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from rederive.engine import RemoteEngine
+from rederive.engine.client import RemoteEngine
 from rederive.model import worksheet
 from rederive.model.session import Session
 from rederive.ui.app import RederiveApp

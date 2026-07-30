@@ -12,7 +12,7 @@ import pytest
 import sympy as sp
 from sexpr import to_sexpr
 
-from rederive.engine import Context, author_text, from_sympy, to_sympy
+from rederive.engine.computing import Context, author_text, from_sympy, to_sympy
 from rederive.engine.context import Precision
 from rederive.engine.printer import numeral
 from rederive.engine.to_sympy import (

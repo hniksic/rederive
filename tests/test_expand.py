@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import pytest
 
-from rederive.engine import Amount, Context, expand, simplify, written_as_ratio
+from rederive.engine.computing import (
+    Amount,
+    Context,
+    expand,
+    simplify,
+    written_as_ratio,
+)
 from rederive.engine.context import Precision
 from rederive.syntax import ParseState, parse_expression
 

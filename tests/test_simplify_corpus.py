@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from rederive.engine import Context, from_sympy, simplify, to_sympy
+from rederive.engine.computing import Context, from_sympy, simplify, to_sympy
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 CORPUS = Path(__file__).parent / "corpus"

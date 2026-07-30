@@ -164,7 +164,7 @@ from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
 from rederive import __version__
-from rederive.engine import Amount, EngineAborted
+from rederive.engine.client import Amount, EngineAborted
 from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
 from rederive.model import session as sessions

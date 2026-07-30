@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from rederive.engine.from_sympy import Result
+from rederive.engine.boundary import Result
 from rederive.model.expr import Node
 from rederive.syntax import ParseState, parse_expression, write_expression
 

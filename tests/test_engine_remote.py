@@ -16,8 +16,8 @@ import time
 
 import pytest
 
-from rederive.engine import Context
 from rederive.engine import worker as worker_module
+from rederive.engine.client import Context
 from rederive.engine.remote import (
     STARTS_BEFORE_DOWN,
     EngineAborted,
