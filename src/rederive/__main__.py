@@ -15,6 +15,13 @@ what they asked for.
 Nothing at import time may have an effect, and nothing may run outside the
 guard below. A spawned worker re-imports whatever this module is, and a side
 effect here would start a second copy of the app inside the child.
+
+That re-import is also why the screen is imported inside `main` and not here.
+Spawning runs the parent's `__main__` again in the child, and the `rederive`
+script is a wrapper whose own first line imports this module, so everything
+this module's body names is loaded a second time in a process that computes
+and never paints. What the body may name is therefore the command line and
+nothing else; Textual is reached in `main`, which the child does not call.
 """
 
 from __future__ import annotations
@@ -22,11 +29,12 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from rederive.engine.client import RemoteEngine
 from rederive.model import worksheet
-from rederive.model.session import Session
-from rederive.ui.app import RederiveApp
+
+if TYPE_CHECKING:
+    from rederive.model.session import Session
 
 USAGE = "usage: rederive [-m|-u|-t|-d] FILE ..."
 
@@ -159,14 +167,27 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     The command line is looked at before the worker is started, so that a line
     that says nothing usable costs nothing to find out about.
+
+    The imports are spread through here rather than gathered at the top of the
+    module, and their order is the point. The worker is put up as soon as there
+    is something to put it up for, and the screen is imported after that, so the
+    child's sympy and the parent's Textual are loaded at the same time instead
+    of one behind the other. Only the engine proxy is needed to start a worker,
+    and it is the cheap half.
     """
     try:
         files = named(sys.argv[1:] if arguments is None else arguments)
     except Usage as refused:
         return _refused(refused)
+
+    from rederive.engine.client import RemoteEngine
+
     runner = RemoteEngine()
     runner.start()
     try:
+        from rederive.model.session import Session
+        from rederive.ui.app import RederiveApp
+
         session = Session(runner=runner)
         try:
             demo, message = read(session, files)

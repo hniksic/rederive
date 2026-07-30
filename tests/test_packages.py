@@ -64,6 +64,22 @@ def test_the_app_side_imports_no_sympy(module: str) -> None:
     assert imported.stdout.strip() == "False", f"{module} imports sympy"
 
 
+def test_the_entry_point_imports_no_screen() -> None:
+    """`rederive.__main__`'s body may name the command line and nothing more.
+
+    The mirror of the rule above, and it costs the same to break. Spawning re-runs
+    the parent's `__main__` in the child, and the `rederive` script imports this
+    module at its top, so whatever the body names is loaded again in the worker -
+    which paints nothing. Textual there is thirty-odd megabytes and a tenth of a
+    second the computing half spends on a screen it does not have.
+    """
+    program = "import sys, rederive.__main__; print('textual' in sys.modules)"
+    imported = subprocess.run(
+        [sys.executable, "-c", program], check=True, capture_output=True, text=True
+    )
+    assert imported.stdout.strip() == "False", "rederive.__main__ imports textual"
+
+
 def test_the_computing_half_offers_everything_the_client_half_does() -> None:
     """One import for whoever may compute, which is what makes the pair a pair.
 
