@@ -238,14 +238,6 @@ NOT_YET_HELD = {
     "4', <Amount.RATIONAL: 'Rational'>)-(x + 2)*(x - 2)*(x + 1)^2]",
     "test_the_first_order_equation_the_manual_solves",
     "test_the_generated_vectors_of_the_manual[ABS([a, b, c])-SQRT(a^2 + b^2 + c^2)]",
-    "test_the_hyperbolic_functions_become_exponentials[COSH(z)-#e^z/2 + #e^(-z)/2]",
-    "test_the_hyperbolic_functions_become_exponentials[COTH(z)-(#e^(2*z"
-    ") + 1)/(#e^(2*z) - 1)]",
-    "test_the_hyperbolic_functions_become_exponentials[CSCH(z)-2*#e^z/(#e^(2*z) - 1)]",
-    "test_the_hyperbolic_functions_become_exponentials[SECH(z)-2*#e^z/(#e^(2*z) + 1)]",
-    "test_the_hyperbolic_functions_become_exponentials[SINH(z)-#e^z/2 - #e^(-z)/2]",
-    "test_the_hyperbolic_functions_become_exponentials[TANH(z)-(#e^(2*z"
-    ") - 1)/(#e^(2*z) + 1)]",
     "test_the_integral_the_manual_does_by_substitution",
     "test_the_integrals_of_the_manual[INT(1/x^2, x, -1, 1)--2]",
     "test_the_integrals_of_the_manual[INT(1/x^3, x, -1, 2)-3/8]",
@@ -255,8 +247,6 @@ NOT_YET_HELD = {
     "N((z + 1)/(z - 1))/2]",
     "test_the_inverse_hyperbolic_functions_become_logarithms[ASINH(z)-L"
     "N(SQRT(z^2 + 1) + z)]",
-    "test_the_inverse_hyperbolic_functions_become_logarithms[ATANH(z)-L"
-    "N(z + 1)/2 - LN(1 - z)/2]",
     "test_the_inverse_of_the_manuals_function",
     "test_the_iterates_of_the_manuals_fixed_point",
     "test_the_least_squares_fit_of_the_manuals_parabola",
@@ -333,8 +323,6 @@ NOT_YET_HELD = {
     "test_trigonometry[ACOT(z)-pi/2 - ATAN(z)]",
     "test_trigonometry[ACSC(z)-ASIN(1/z)]",
     "test_trigonometry[ASEC(z)-ACOS(1/z)]",
-    "test_trigonometry[CSC(z)-1/SIN(z)]",
-    "test_trigonometry[SEC(z)-1/COS(z)]",
     "test_which_variable_is_main_decides_whether_a_power_is_multiplied_out",
 }
 

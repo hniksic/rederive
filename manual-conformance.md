@@ -48,9 +48,9 @@ those cases exercise the real `.MTH` sources rather than a transcription of them
 
 ## Result
 
-**239 pass, 155 do not**, in about 17 seconds.
+**248 pass, 146 do not**, in about 17 seconds.
 
-The 155 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
+The 146 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
 `tests/test_manual.py`. They run rather than being skipped, so one that starts holding is
 reported as an unexpected pass and can be struck off the list. The suite is therefore
 green, and the manifest is the list of what the manual promises and the engine does not
@@ -71,7 +71,7 @@ rather than in interruptible Python.
 
 Both are now asked through `RemoteEngine` with a 15 second bound, which is the half of
 the program Esc can stop, so they fail saying "no answer in 15 seconds" rather than
-wedging the suite. They are counted among the 155.
+wedging the suite. They are counted among the 146.
 
 ## What the failures are
 
@@ -86,7 +86,8 @@ functional gaps.
 - Argument order under commutative operators: `#e^(w + z)` for `#e^(z + w)`,
   `#e^w*#e^z` for `#e^z*#e^w`.
 - `ABS(x)` where the manual writes `|x|`; `FLOOR(m/n)` where it writes `FLOOR(m, n)`.
-- `-1/COS(x)^2` for `-TAN(x)^2 - 1`; `1 - 1/2^m` for `1 - 2^(-m)`.
+- `-1/COS(x)^2` for `-TAN(x)^2 - 1`; `1 - 1/2^m` for `1 - 2^(-m)`;
+  `LN(z + SQRT(z^2 + 1))` for `LN(SQRT(z^2 + 1) + z)`.
 - Results that are computed correctly but grouped differently, e.g. BERNOULLI_POLY and
   EULER_POLY come back expanded where the manual prints them over a common denominator.
 
@@ -94,10 +95,15 @@ functional gaps.
 
 The expression comes back unchanged.
 
-- All six hyperbolic functions and all six inverse hyperbolics, which section 6.5 and 6.6
-  say become exponentials and logarithms.
-- `SEC` -> `1/COS`, `CSC` -> `1/SIN`, `ACOT` -> `pi/2 - ATAN`, `ACOS` -> `pi/2 - ASIN`,
-  `ASEC` -> `ACOS(1/z)`, `ACSC` -> `ASIN(1/z)`.
+- `ACOSH` and `ACOTH`, which do become logarithms but not the ones section 6.6 prints:
+  `LN(SQRT(z - 1)*SQRT(z + 1) + z)` for `2*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)`, and
+  `LN(1 + 1/z)/2 - LN(1 - 1/z)/2` for `LN((z + 1)/(z - 1))/2`. The same value, an
+  uncollected form.
+- `ACOT` -> `pi/2 - ATAN`, `ACOS` -> `pi/2 - ASIN`, `ASEC` -> `ACOS(1/z)`,
+  `ACSC` -> `ASIN(1/z)`. Note that the first two and the last two compose into each
+  other: applying both leaves `ASEC(z)` as `pi/2 - ASIN(1/z)`, which is neither of the
+  forms 6.4 prints, so what Derive does with the pair wants checking against the program
+  rather than the page.
 - `GAMMA(z)` -> `(z - 1)!`, `PERM`, `COMB`, `ERF(z, w)`, `ERFC`, `NORMAL`.
 - The symbolic forms of `MIN`, `MAX`, `STEP` and `CHI`.
 

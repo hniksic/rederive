@@ -519,6 +519,34 @@ def test_logarithms_and_exponentials(text, expected, context):
     assert simp(text, context) == expected
 
 
+# -- the functions that are spellings for something else ----------------------
+
+BY_DEFINITION = [
+    # 6.4: the two reciprocal circular functions.
+    ("SEC(z)", "1/COS(z)"),
+    ("CSC(z)", "1/SIN(z)"),
+    # 6.5: every hyperbolic is an exponential.
+    ("SINH(z)", "#e^z/2 - #e^(-z)/2"),
+    ("COSH(z)", "#e^z/2 + #e^(-z)/2"),
+    ("TANH(z)", "(#e^(2*z) - 1)/(#e^(2*z) + 1)"),
+    ("COTH(z)", "(#e^(2*z) + 1)/(#e^(2*z) - 1)"),
+    ("SECH(z)", "2*#e^z/(#e^(2*z) + 1)"),
+    ("CSCH(z)", "2*#e^z/(#e^(2*z) - 1)"),
+    # 6.6: every inverse hyperbolic is the logarithm that inverts it.
+    ("ATANH(z)", "LN(z + 1)/2 - LN(1 - z)/2"),
+    ("ASINH(z)", "LN(z + SQRT(z^2 + 1))"),
+    # A circular function beside a hyperbolic one keeps the form it was written
+    # in: only the head that has a definition is written out by it.
+    ("SIN(z) + SINH(z)", "#e^z/2 + SIN(z) - #e^(-z)/2"),
+    ("SIN(z)", "SIN(z)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), BY_DEFINITION, ids=str)
+def test_the_functions_that_are_spellings_for_something_else(text, expected):
+    assert simp(text) == expected
+
+
 # -- the branch setting -------------------------------------------------------
 
 

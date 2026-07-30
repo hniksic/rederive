@@ -1018,6 +1018,7 @@ def _as_gamma(expression: sp.Basic) -> sp.Basic:
 
 def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     """Every rewrite the settings select, each kept only if it pays."""
+    expression = _by_definition(expression)
     expression = _branch(expression, context)
     expression = _gated(expression, _multiplied_out)
     expression = _gated(expression, _cancelled)
@@ -1039,6 +1040,46 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     expression = _exponentials(expression, context)
     expression = _gated(expression, _denested)
     return _gated(expression, sp.radsimp)
+
+
+#: The hyperbolics, which are exponentials by 6.5 the way their inverses are
+#: logarithms by 6.6.
+_HYPERBOLIC = (sp.sinh, sp.cosh, sp.tanh, sp.coth, sp.sech, sp.csch)
+
+#: What each function that Derive keeps no answer in is written over. `SEC` and
+#: `CSC` are the reciprocals 6.4 names them for, and the twelve hyperbolics are
+#: the exponentials and logarithms of 6.5 and 6.6.
+_DEFINED_OVER: dict[type, type] = {
+    sp.sec: sp.cos,
+    sp.csc: sp.sin,
+    **{head: sp.exp for head in _HYPERBOLIC},
+    **{head: sp.log for head in _INVERSE_HYPERBOLIC},
+}
+
+
+def _by_definition(expression: sp.Basic) -> sp.Basic:
+    """The functions that are spellings for something else, spelled out.
+
+    None of these is a direction to rewrite in, so none is gated or offered as
+    a setting: an answer holding a `SECH` is one Derive never writes. What they
+    turn into is left to sympy, whose forms are the manual's - `TANH(z)` is
+    `(#e^(2*z) - 1)/(#e^(2*z) + 1)` in both.
+    """
+    for head, over in _DEFINED_OVER.items():
+        if not expression.has(head):
+            continue
+        expression = _forced(expression, lambda e, h=head, o=over: _defined(e, h, o))
+    return expression
+
+
+def _defined(expression: sp.Basic, head: type, over: type) -> sp.Basic:
+    """Every `head` in `expression` written over `over`, and nothing else.
+
+    Head by head rather than over the whole expression, because `rewrite` takes
+    everything it can reach with it: a `SIN` beside a `SINH` would go to
+    exponentials too, and one asked for in `#e` is not one asked for in `#i`.
+    """
+    return expression.replace(head, lambda *args: head(*args).rewrite(over))
 
 
 def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
