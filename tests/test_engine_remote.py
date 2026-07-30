@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from rederive import memory
 from rederive.engine import worker as worker_module
 from rederive.engine.client import Context
 from rederive.engine.remote import (
@@ -156,7 +157,10 @@ def test_a_worker_over_the_cap_is_taken_away(mortal):
     engine.start()
     with pytest.raises(EngineMemoryExceeded) as raised:
         engine._ask("allocate", (2 * SMALL_CAP >> 20,))
-    assert "300M" in str(raised.value)
+    # The refusal says what the cap was, written the way every other size the
+    # program reports is written. How that reads is `test_memory` to pin; what
+    # this one is about is that the figure named is the cap in force.
+    assert memory.written(SMALL_CAP) in str(raised.value)
     assert engine.simplify(tree("1 + 1"), Context()).text == "2"
 
 
