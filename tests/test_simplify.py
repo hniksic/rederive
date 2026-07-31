@@ -1551,7 +1551,26 @@ def test_a_conjunction_it_cannot_solve_keeps_its_shape():
 LOGIC = [
     ("NOT NOT p", "p"),
     ("NOT p", "NOT p"),
-    ("p AND (q OR p)", "p AND (p OR q)"),
+    # The algebra: absorption, the operators that are spellings for the other
+    # three, a variable and its negation, and a conjunct common to every
+    # disjunct. A product of sums is left folded, which is where the algebra
+    # stops - Derive does not multiply one out into a sum of products.
+    ("p AND (q OR p)", "p"),
+    ("p OR NOT p", "true"),
+    ("p AND NOT p", "false"),
+    ("p IMP q", "NOT p OR q"),
+    ("p XOR q", "NOT p AND q OR p AND NOT q"),
+    ("NOT (p AND q)", "NOT p OR NOT q"),
+    ("p AND (q OR r)", "p AND (q OR r)"),
+    ("p AND r OR p AND q", "p AND (q OR r)"),
+    # Operands are put in the order list's order, a term sorting by the
+    # variable it leads with, and a negated literal coming first on a tie.
+    ("s AND r OR q AND p", "p AND q OR r AND s"),
+    ("c OR b AND a", "a AND b OR c"),
+    ("p AND q OR NOT p AND r", "NOT p AND r OR p AND q"),
+    # Six variables is past where the algebra pays: both normal forms are read
+    # off a truth table, and this one comes back longer than it went in.
+    ("a XOR b XOR c XOR d XOR e XOR f", "a XOR b XOR c XOR d XOR e XOR f"),
     # Boolean on booleans, bitwise on integers.
     ("3 OR 5", "7"),
     ("NOT 5", "-6"),
@@ -2209,7 +2228,16 @@ def test_printing_a_result_is_a_fixed_point(text, context):
     assert to_sexpr(twice.node) == to_sexpr(once.node)
 
 
-@pytest.mark.parametrize(("text", "context"), EVERY_CASE, ids=str)
+#: The one shape a second Simplify is allowed to change, and the test below
+#: this one says what it changes it to.
+HEADED = {text for text, _ in TRUTH_TABLES}
+
+
+@pytest.mark.parametrize(
+    ("text", "context"),
+    [case for case in EVERY_CASE if case[0] not in HEADED],
+    ids=str,
+)
 def test_simplifying_a_result_again_changes_nothing(text, context):
     """Simplify is idempotent, which is what "sufficiently simple" means.
 
@@ -2218,6 +2246,18 @@ def test_simplifying_a_result_again_changes_nothing(text, context):
     context = context or Context()
     once = simplify(parse(text), context)
     assert simplify(once.node, context).text == once.text
+
+
+def test_a_heading_heads_its_column_only_while_it_is_a_heading():
+    """A truth table names its columns with the expressions they are about, and
+    a name is not a claim: the heading stands unsimplified over the values it
+    was worked out into. That holds while the heading is inside the table. Once
+    the table is on the worksheet it is a matrix of expressions like any other,
+    and a second Simplify answers `p XOR q` there as it would anywhere."""
+    once = simplify(parse("TRUTH_TABLE(p, q, p XOR q)"), Context())
+    assert once.text.startswith("[[p, q, p XOR q], ")
+    again = simplify(once.node, Context())
+    assert again.text.startswith("[[p, q, NOT p AND q OR p AND NOT q], ")
 
 
 # -- what the engine does not do yet ------------------------------------------

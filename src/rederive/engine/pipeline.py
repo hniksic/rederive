@@ -115,6 +115,15 @@ _COMBINATORIAL = (sp.factorial, sp.factorial2, sp.binomial, sp.gamma, sp.ff, sp.
 #: corpus: at this size and below, none costs more than a fifth of a second.
 _COMBSIMP = 60
 
+#: How many truths a boolean expression may be about before the algebra is
+#: left undone. Both normal forms are read off a truth table, so the work and
+#: the answer alike double with every variable added: a chain of six `XOR`s
+#: comes back as a hundred and twenty-nine operations, which is a longer
+#: expression than the one asked about and no simplification of it. Sympy has
+#: a limit of its own at eight, and eight is already past the point where the
+#: answer stops being worth having.
+_BOOLEAN_VARIABLES = 5
+
 
 def simplify(
     node: Node, context: Context | None = None, state: ParseState | None = None
@@ -213,20 +222,73 @@ def _definition(expression: sp.Basic, context: Context) -> sp.Basic:
 
 
 def _boolean(expression: Boolean, context: Context) -> sp.Basic:
-    """Relations joined by boolean operators, solved where they can be.
+    """Relations joined by boolean operators, solved and simplified.
 
     `6 >= -2*x AND 3*x /= -9` is a statement about one variable, and its
     simplest form is the range it describes. Where that does not work - more
-    than one variable, an operand that is no relation - the operands are
-    simplified and the shape is kept.
+    than one variable, an operand that is no relation - the boolean algebra
+    runs instead: `p XOR q` is written out of the three operators that are
+    left, `p OR NOT p` is `true`, and a conjunct standing in every disjunct is
+    taken out. Whatever survives that keeps its shape, with its operands
+    simplified.
     """
     solved = _reduced(expression)
     if solved is not None:
         return solved
+    expression = _algebra(expression)
+    if not isinstance(expression, Boolean) or not expression.args:
+        # `p OR NOT p` is `true` and `p AND (p OR q)` is `p`: an atom is the
+        # whole answer, and there is nothing left to simplify inside it.
+        # Handing it back to `_transform` would only arrive here again.
+        return expression
     try:
         return expression.func(*(_transform(a, context) for a in expression.args))
     except Exception:
         return expression
+
+
+def _algebra(expression: Boolean) -> sp.Basic:
+    """`expression` in the shorter of the two normal forms boolean algebra has.
+
+    A sum of products and a product of sums are computed both, and the shorter
+    of the two is the answer - which is the preference the manual states, and
+    what leaves `p AND (q OR r)` alone where a simplifier committed to sums of
+    products would multiply it out. `NOT` is driven inward on the way, `XOR`
+    and `IMP` are written out of the operators that remain, and a conjunct
+    every disjunct holds is taken outside. A tie goes to the form asked for
+    first, which is how `p XOR q` comes back as a sum of products.
+
+    Relations are opaque to it: each one stands for a variable of its own, and
+    what is inside is the business of the operand's own simplification.
+
+    Three forms are asked for and not two. Sympy answers a request for a named
+    form that the expression is already written in with the expression itself,
+    so `p OR NOT p` asked for as a sum of products comes back as it went in;
+    the unnamed request is the one that always does the algebra, and it leads
+    the list so that it also settles a tie.
+    """
+    if _predicates(expression) > _BOOLEAN_VARIABLES:
+        return expression
+    forms = []
+    for form in (None, "dnf", "cnf"):
+        try:
+            forms.append(sp.logic.boolalg.simplify_logic(expression, form, deep=False))
+        except Exception:
+            pass
+    if not forms:
+        return expression
+    return min(forms, key=sp.count_ops)
+
+
+def _predicates(expression: Boolean) -> int:
+    """How many independent truths the expression is a statement about.
+
+    A relation is one of them however many variables it names, `x > 1 AND
+    x < 2` being two statements and not one.
+    """
+    relations = expression.atoms(Relational)
+    inside = {symbol for relation in relations for symbol in relation.free_symbols}
+    return len(relations) + len(expression.free_symbols - inside)
 
 
 def _reduced(expression: Boolean) -> sp.Basic | None:

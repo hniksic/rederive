@@ -136,9 +136,27 @@ def test_a_logical_operator_is_written_with_its_keyword():
     assert written(sp.Not(p)) == "NOT p"
     assert written(sp.And(p, q)) == "p AND q"
     assert written(sp.Implies(p, q)) == "p IMP q"
-    # An operand that binds more loosely takes parentheses.
-    assert written(sp.And(sp.Or(p, q), r)) == "r AND (p OR q)"
+    # An operand that binds more loosely takes parentheses. The operands of a
+    # commutative operator are written in the order list's order, by the
+    # variable each leads with, so this one leads with the group.
+    assert written(sp.And(sp.Or(p, q), r)) == "(p OR q) AND r"
     assert written(sp.Not(sp.And(p, q))) == "NOT (p AND q)"
+
+
+def test_the_operands_of_a_commutative_operator_are_put_in_order():
+    """`AND` and `OR` have no order of their own, so one is chosen, and it is
+    the one the original writes in: by leading variable, negated first on a
+    tie. `IMP` is not commutative and keeps the order it is held in."""
+    p, q, r, s = sp.symbols("p q r s")
+    assert written(sp.Or(r, q, p)) == "p OR q OR r"
+    assert written(sp.Or(sp.And(s, r), sp.And(q, p))) == "p AND q OR r AND s"
+    assert written(sp.Or(q, sp.Not(p))) == "NOT p OR q"
+    assert written(sp.Or(sp.And(p, q), sp.And(sp.Not(p), r))) == (
+        "NOT p AND r OR p AND q"
+    )
+    # The order list leads, and everything off it follows alphabetically.
+    assert written(sp.And(*sp.symbols("a z x"))) == "x AND z AND a"
+    assert written(sp.Implies(q, p)) == "q IMP p"
 
 
 def test_two_bounds_on_one_variable_are_written_as_a_chain():

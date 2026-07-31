@@ -1680,12 +1680,34 @@ def _truth_table(conv: _Converter, args: list) -> sp.Basic:
     expressions = args[len(variables) :]
     if not variables:
         raise ValueError("no truth variables")
-    rows = [InertVector(*args)]
+    rows = [InertVector(*(_as_written(value) for value in args))]
     for assignment in product([sp.true, sp.false], repeat=len(variables)):
         written = dict(zip(variables, assignment, strict=True))
         values = [_decided(expression, written) for expression in expressions]
         rows.append(InertVector(*assignment, *values))
     return _vector_of(rows)
+
+
+#: The sympy head each logical operator lives under, and the word it is
+#: written with. `Logical` is the inert one, so a heading held under it is a
+#: heading Simplify walks past.
+_HEADINGS = {sp.And: "AND", sp.Or: "OR", sp.Xor: "XOR", sp.Implies: "IMP", sp.Not: "NOT"}
+
+
+def _as_written(expression: sp.Basic) -> sp.Basic:
+    """A column heading: the expression as a name for itself rather than a claim.
+
+    A heading is what the column is about, and `p XOR q` heads the column of
+    what `p XOR q` comes to at each assignment. Left live, Simplify would
+    answer it - and a column headed `NOT p AND q OR p AND NOT q` names its
+    rows no better for being right. The inert head keeps the operator standing
+    where it was written; the rows below it are where the operator is applied.
+    """
+    word = _HEADINGS.get(type(expression))
+    if word is None:
+        return expression
+    operands = [_as_written(operand) for operand in expression.args]
+    return Logical(sp.Symbol(word), *operands)
 
 
 def _decided(expression: sp.Basic, assignment: dict) -> sp.Basic:

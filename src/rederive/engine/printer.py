@@ -37,10 +37,12 @@ relations that bound one variable is a range, and a range is written as the
 chain `-2 < x < 2` - which is how the original writes one, how the author line
 reads one back, and how the layout draws one. Everything else keeps its `AND`.
 
-Of the ordering only the two rules the original is recognisable by are ours:
-terms run by descending degree, and a sum does not begin with a minus sign
-unless every term is negated, so that a sum is written `x^2 + c` and
-`SQRT(3) - 1`. Beyond those two, term order is sympy's.
+Of the ordering only the rules the original is recognisable by are ours: terms
+run by descending degree, and a sum does not begin with a minus sign unless
+every term is negated, so that a sum is written `x^2 + c` and `SQRT(3) - 1`.
+Beyond those two, term order in a sum is sympy's. The operands of `AND` and
+`OR` are ours as well, and by the same order list the rest of the engine takes
+its variables in: `c OR b AND a` is written `a AND b OR c`.
 
 The inert heads of `to_sympy` are printed by name rather than by import: a
 sympy printer dispatches on the class name, so `_print_PlusMinus` finds
@@ -49,6 +51,7 @@ sympy printer dispatches on the class name, so `_print_PlusMinus` finds
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 from fractions import Fraction
 
@@ -59,6 +62,7 @@ from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES
 
 from rederive.engine import notation
 from rederive.engine.context import Context, Notation
+from rederive.engine.ordering import main_order
 from rederive.syntax.names import GREEK_GLYPHS
 
 # How tightly the inert heads bind. Sympy's `parenthesize` reads these by class
@@ -124,6 +128,56 @@ _LOGICAL_HEADS = {
     "Implies": "IMP",
     "Not": "NOT",
 }
+
+
+def _logical_order(operands, order: Sequence[str]) -> list[sp.Basic]:
+    """The operands of a conjunction or a disjunction, in the original's order.
+
+    A commutative operator has no order of its own, so one is chosen, and the
+    one chosen is the order list's: `r OR q OR p` is written `p OR q OR r`,
+    and `c OR b AND a` is written `a AND b OR c`. A term sorts by the variable
+    it leads with rather than by any later one, which is why the conjuncts are
+    put in order first and the disjuncts after. `NOT` does not move a term -
+    `q OR NOT p` is `NOT p OR q` - but it does decide a tie, a negated literal
+    coming before the same variable unnegated.
+    """
+    return sorted(operands, key=lambda operand: _logical_key(operand, order))
+
+
+def _logical_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
+    """Where one operand sorts: its literals, in order, each with its sign.
+
+    Always a tuple of literal keys, whether the operand is one literal or a
+    whole subexpression, so that any two operands compare.
+    """
+    if isinstance(operand, (sp.And, sp.Or, sp.Xor)):
+        return tuple(
+            sorted(
+                literal
+                for argument in operand.args
+                for literal in _logical_key(argument, order)
+            )
+        )
+    negated = isinstance(operand, sp.Not)
+    inner = operand.args[0] if negated else operand
+    return ((_variable_key(inner, order), 0 if negated else 1),)
+
+
+def _variable_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
+    """The most main variable of one literal, as something sortable.
+
+    A variable on the order list is more main than one after it and than one
+    off the list altogether; the rest go alphabetically. A literal that names
+    no variable at all - a truth value, a numeral - sorts by how it is
+    written, which is arbitrary but the same every time.
+    """
+    names = main_order((symbol.name for symbol in operand.free_symbols), order)
+    if not names:
+        return (2, str(operand))
+    name = names[0]
+    if name in order:
+        return (0, order.index(name))
+    return (1, name)
 
 
 def author_text(expression: sp.Basic, context: Context | None = None) -> str:
@@ -679,12 +733,16 @@ class AuthorPrinter(sp.StrPrinter):
         return self._infix("XOR", expr.args)
 
     def _print_Implies(self, expr):
-        return self._infix("IMP", expr.args)
+        # `IMP` is the one that is not commutative: which operand implies which
+        # is the whole statement, so this one keeps the order it is held in.
+        return self._infix("IMP", expr.args, order=False)
 
     def _print_Not(self, expr):
         return f"NOT {self._logical_operand(expr.args[0], 'NOT')}"
 
-    def _infix(self, word: str, operands) -> str:
+    def _infix(self, word: str, operands, order: bool = True) -> str:
+        if order:
+            operands = _logical_order(operands, self.context.order)
         return f" {word} ".join(
             self._logical_operand(operand, word) for operand in operands
         )
@@ -735,11 +793,17 @@ class AuthorPrinter(sp.StrPrinter):
         return self._vector(expr.args)
 
     def _print_Logical(self, expr):
+        """The operator sympy declined, with its operands as they were written.
+
+        Nothing here has been simplified - that is what the head is for - so
+        nothing here is in a normal form either, and the order the operands
+        were written in is the only one they have: `3 AND p` is not `p AND 3`.
+        """
         word = str(expr.args[0])
         operands = expr.args[1:]
         if len(operands) == 1:
             return f"{word} {self._logical_operand(operands[0], word)}"
-        return self._infix(word, operands)
+        return self._infix(word, operands, order=False)
 
     def _print_Assign(self, expr):
         target, operator, *value = expr.args
