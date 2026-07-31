@@ -48,7 +48,8 @@ those cases exercise the real `.MTH` sources rather than a transcription of them
 
 ## Result
 
-**258 pass, 136 do not**, in about 17 seconds.
+**286 pass, 108 do not**, in about 17 seconds. It was 258 and 136 before the work the last
+section describes.
 
 The 136 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
 `tests/test_manual.py`. They run rather than being skipped, so one that starts holding is
@@ -68,6 +69,12 @@ carries the notation digits it was given rather than the ones already standing. 
 contexts therefore showed six digits whatever they computed to. Passing the digits to
 `with_precision`, the way Options Precision does, is what three of the cases above were
 waiting for.
+
+A third has since been found in the original itself: the `XOR` case expected
+`(NOT p AND q) OR (p AND NOT q)`, the form section 4.16 prints, where Derive itself
+answers `NOT p AND q OR p AND NOT q`. The page fences that form for its reader; the
+program relies on AND binding tighter than OR. The case now asserts what the program
+does, and remains unmet either way.
 
 ## Two of the manual's own sessions do not terminate
 
@@ -98,6 +105,8 @@ functional gaps.
 - Results that are computed correctly but grouped differently, e.g. BERNOULLI_POLY and
   EULER_POLY come back expanded where the manual prints them over a common denominator.
 
+The first two are one rule, not a scattering; the original, below, gives it.
+
 ### Transformations the manual states, not performed
 
 The expression comes back unchanged.
@@ -111,20 +120,97 @@ The expression comes back unchanged.
   other: applying both leaves `ASEC(z)` as `pi/2 - ASIN(1/z)`, which is neither of the
   forms 6.4 prints, so what Derive does with the pair wants checking against the program
   rather than the page.
-- `GAMMA(z)` -> `(z - 1)!`, `PERM`, `COMB`, `ERF(z, w)`, `ERFC`, `NORMAL`.
+- `PERM`, `COMB`, `ERF(z, w)`, `ERFC`, `NORMAL`.
 - The symbolic forms of `MIN`, `MAX`, `STEP` and `CHI`.
 
-### Features that are absent
+### Features that were absent
 
-- `FIT`, the least squares fit of section 6.10, in all three of the manual's examples.
-- The antiquotient form of `PRODUCT`, and the antidifference form of `SUM`.
-- All nine of the nonscalar algebra rules of section 8.8.
-- Boolean simplification: `p OR NOT p`, and the `XOR` and `IMP` normal forms.
-- Recursive user functions do not unfold: `FACT(5)` comes back as `5*FACT(4)`.
-- Consequently most utility file functions, since they are built on `ITERATE`, `ITERATES`
-  and `IF`: ADJOINT, JACOBIAN, GEOMETRY_MATRIX, TAYLOR_SOLVE, TAYLOR_ODE1, TAYLOR_ODE2,
-  PICARD, EULER, LIN1_DIFFERENCE, CONVERGENT, CONTINUED_FRACTION, INVERSE, NTH_PRIME and
-  others.
+All five have been built. Where a case still fails, the reason is named.
+
+- `FIT`, the least squares fit of section 6.10. Two of the manual's three examples hold
+  exactly, the plane down to its last printed digit. The third computes the manual's
+  coefficients and prints them in a different term order.
+- The antidifference of `SUM` and the antiquotient of `PRODUCT`, both without limits, and
+  with them the `GAMMA(z)` rule `PRODUCT(n^2, n)` was waiting on. Only hypergeometric
+  summands are reachable, so the engine refuses where Derive would answer a general
+  telescoping sum. `SUM(n^2, n)` comes back unfactored, which is the program's own form.
+- All nine of the nonscalar algebra rules of section 8.8. A name declared nonscalar is a
+  matrix now, so eight of the nine hold by construction, and the two distributive rules
+  are applied whether or not they shorten anything. A scalar's transpose is the scalar,
+  which section 8.5 says and nothing implemented.
+- Boolean simplification, all four cases, in the program's spelling not the page's.
+- Recursive user functions unfold: Simplify runs its pass again while a user call is still
+  standing, bounded by the size guard `ITERATE` already used. `FACT(64)` arrives in well
+  under a second. Where the bound is reached, what has been worked out so far stands as
+  the answer, which is not what Derive does - it exhausts memory and returns nothing.
+
+Two things inside the last of those were left deliberately:
+
+- **The arms of an undecidable conditional are still simplified**, where Derive leaves
+  them exactly as written. That needs unevaluated conversion, authored-order printing,
+  and keeping the canonical rebuild away from a frozen conditional - three coupled changes
+  to the printing path.
+- **A derivative of a call not yet unfolded is taken too early.** `DIF(F(n - 1), mu)` sees
+  an opaque head carrying no free `mu` and differentiates it to zero before a later pass
+  can unfold it. An outside-in loop is structurally wrong for that shape, and deferring
+  the calculus step does not terminate on its own, since the pre-pass unfolds
+  unconditionally and a call is present at every pass in the branch about to be discarded.
+
+### The utility files, again
+
+The claim that most utility file functions follow from the recursion gap, "since they are
+built on `ITERATE`, `ITERATES` and `IF`", did not hold. Of the thirteen named, one was a
+recursion problem. NTH_PRIME answered correctly all along - `NTH_PRIME(1000)` is 7919 -
+and PICARD differed from the manual only in term order.
+
+Four of the real causes are fixed. Inert heads were re-read only once, so a nest resolved
+one layer per pass; `Logical` was never re-read at all, which is why a test of
+`PRIME(n) AND PRIME(n + 2)` froze where the same search without the `AND` succeeded;
+frozen conditionals leaked as `IF0(1) + IF0(2)` wherever a finite sum expanded around
+them; and `ITERATE` did not survive the spelling that holds a vector in one variable and
+reads it back by subscript.
+
+What stops the rest has nothing to do with any of that: `LIM` over a vector of variables
+is unimplemented, which is what stops TAYLOR_SOLVE, TAYLOR_ODE1, TAYLOR_ODE2 and EULER;
+`GRAD` misbinds its arguments, stopping JACOBIAN; and `FLOOR` does not map over a vector,
+stopping CONTINUED_FRACTION.
+
+## What the original does
+
+Some of the above is about what Derive *prints*, which a typeset page cannot settle.
+Those points follow the original's own output, which agrees with the manual
+except where noted.
+
+- **Operand order.** Authoring preserves what was typed; Simplify sorts. Variables order
+  `x`, `y`, `z` first and the rest alphabetically, which is the `*VARIABLE-ORDER*`
+  default; a term sorts on its leading variable, not a later one; `NOT` does not move a
+  term, but a negated literal precedes a positive one on a tie. This is the rule behind
+  the first two entries under results written differently.
+- **The author line is redrawn, not canonicalised.** `(NOT p) OR (q AND r)` is put up as
+  `NOT p OR q AND r` and `x+y` as `x + y`, but `q OR p` stays `q OR p`. The two precedence
+  cases in the manifest are therefore not a parenthesisation bug: they fail because an
+  entry here hands back the typed string rather than one drawn from its parse tree.
+- **Nonscalars.** `a . a^-1` does not simplify at all, so no identity matrix of unknown
+  dimension ever arises. An undeclared variable's transpose collapses at the first
+  backquote: `x`` is `x`. The original right-nests `((a . b) . c) . d` to
+  `a . (b . (c . d))` and prints the parentheses.
+- **Closed forms.** `SUM(n^2, n)` is printed unfactored as `n^3/3 - n^2/2 + n/6`, not
+  gathered over a denominator, which is the form the engine now reaches too.
+  `PRODUCT(2, n)` is `2^n`, which does not agree with the base point
+  `PRODUCT(n^2, n) -> (n - 1)!^2` implies; the engine gives `2^(n - 1)` and nothing tests
+  it, so the program is inconsistent here and was not followed.
+- **`IF(0, a, b)` is `a`** and `IF(5, a, b)` is `b`, section 10.3's rule that a
+  non-relational test is read as `test = 0`. The engine answered `b` for the first and
+  now does what the program does.
+- **The arms of an undecidable conditional are untouched.** `IF(x > 0, 2 + 3, 4 + 5)`
+  comes back with the arithmetic undone, not as `IF(x > 0, 5, 9)`.
+- Confirmed in passing: `GAMMA(z)` is `(z - 1)!`, `SUM(IF(PRIME(n)), n, 1, 100)` is `25`,
+  and `FACT(-1)` says `Memory Full` and adds no entry at all, leaving no partial result,
+  as section 4.2 describes.
+- **Function terms do not sort alphabetically.** The observed chain is
+  `ABS < ASIN < ATAN < LN < COS < TAN < SIN`, an internal ordinal rather than a rule that
+  can be read off a name, and the variable outranks the head: all `t` terms precede all
+  `u` terms whatever the function. This is what the third `FIT` example waits on.
 
 ### Three cases worth naming individually
 
