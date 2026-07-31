@@ -85,7 +85,7 @@ def test_worked_example(session):
 def test_the_selection_names_the_subexpression_it_covers(session):
     """`selected_node` is how an operation gets back to what is selected."""
     session.move_first_entry()
-    assert to_sexpr(session.selected_node) == "(juxt x (+ x 1))"
+    assert to_sexpr(session.selected_node) == "(* x (+ x 1))"
     session.move_right()
     session.move_right()
     assert to_sexpr(session.selected_node) == "(+ x 1)"

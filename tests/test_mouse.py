@@ -562,7 +562,7 @@ async def test_a_click_steps_a_demonstration(app, tmp_path):
         assert band(app) == [" adds two numbers"]
         await pilot.click(content(app), offset=(2, 0))
         assert band(app) == [" and a symbolic one"]
-        assert entries(app) == ["2 + 3", "5", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2+3", "5", "(x+1)^2", "(x + 1)^2"]
 
 
 # -- copying -------------------------------------------------------------------

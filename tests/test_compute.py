@@ -285,10 +285,10 @@ async def test_a_demonstration_waits_on_the_step_it_dispatched(app, runner, demo
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         assert app.mode == MODE_COMPUTE
-        assert entries(app) == ["2 + 3"]
+        assert entries(app) == ["2+3"]
         runner.release()
         assert await settle(pilot, lambda: message(app) == "Press any key to continue")
-        assert entries(app) == ["2 + 3", "5"]
+        assert entries(app) == ["2+3", "5"]
 
 
 async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo):
@@ -300,7 +300,7 @@ async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo
         await pilot.press("escape")
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
         assert message(app).startswith("Aborted after")
-        assert entries(app) == ["2 + 3"]
+        assert entries(app) == ["2+3"]
         # Suspended rather than lost: naming the file again picks it up.
         await pilot.press("t", "d")
         await pilot.press(*str(demo))
@@ -308,7 +308,7 @@ async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo
         assert await settle(pilot, runner.running.is_set)
         runner.release()
         assert await settle(pilot, lambda: message(app) == "Press any key to continue")
-        assert entries(app) == ["2 + 3", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2+3", "(x+1)^2", "(x + 1)^2"]
 
 
 async def test_control_enter_aborted_leaves_what_it_entered_standing(app, runner):

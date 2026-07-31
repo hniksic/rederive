@@ -265,10 +265,12 @@ def test_the_conventions_of_a_file_the_original_wrote_are_read(session, file):
 
 def test_a_file_written_in_code_page_437_reads(session, file):
     """Rederive writes UTF-8. The original wrote code page 437, where 0xE9 is
-    the capital theta a variable in its own GRAPHICS.MTH is named for."""
+    the capital theta a variable in its own GRAPHICS.MTH is named for. The
+    entry spells it as the symbol table does, which under the default
+    case-insensitive mode is lower case."""
     file.write_bytes(b"\xe9n + 1\r\n\x1a")
     assert session.load(file) == 0
-    assert texts(session) == ["Θn + 1"]
+    assert texts(session) == ["θ*n+1"]
 
 
 def test_a_line_that_does_not_parse_is_left_out_and_counted(session, file):
@@ -360,7 +362,7 @@ def test_clearing_variables_leaves_the_expressions(session):
     session.author("v := 7")
     session.author("v + 1")
     session.clear_variables()
-    assert texts(session) == ["v := 7", "v + 1"]
+    assert texts(session) == ["v:=7", "v+1"]
     assert session.simplify("#2").text == "v + 1"
 
 
@@ -428,9 +430,9 @@ def test_a_block_of_one_line_is_a_vector(session, file):
 
 def test_a_data_file_appends_to_what_is_already_there(session, file):
     file.write_text("1 2\n")
-    session.author("marker")
+    session.author("z")
     session.load_data(file)
-    assert texts(session) == ["marker", "[1,2]"]
+    assert texts(session) == ["z", "[1,2]"]
 
 
 def test_numbers_may_be_parted_by_spaces_or_commas_or_both(session, file):
@@ -444,7 +446,7 @@ def test_an_exponent_becomes_the_power_it_means(session, file):
     `-2.325E-7` has to be written as the power it stands for."""
     file.write_text("-2.325E-7 1.5D3 4.5\n")
     session.load_data(file)
-    assert texts(session) == ["[-2.325*10^-7,1.5*10^3,4.5]"]
+    assert texts(session) == ["[-2.325*10^(-7),1.5*10^3,4.5]"]
 
 
 def test_a_block_that_is_not_numbers_is_left_out_and_counted(session, file):
@@ -649,7 +651,7 @@ async def test_ctrl_enter_simplifies_every_expression_it_reads(app, file):
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d", *str(file))
         await pilot.press("ctrl+j")
-        assert entries(app) == ["2+3", "4 5", "5", "20"]
+        assert entries(app) == ["2+3", "4*5", "5", "20"]
         assert message(app).startswith("Compute time:")
 
 
@@ -1180,10 +1182,10 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
         # The comment takes the band the menu was on, and it waits there.
         assert band(app) == [" adds two numbers"]
         assert message(app) == "Press any key to continue"
-        assert entries(app) == ["2 + 3", "5"]
+        assert entries(app) == ["2+3", "5"]
         await pilot.press("space")
         assert band(app) == [" and a symbolic one"]
-        assert entries(app) == ["2 + 3", "5", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2+3", "5", "(x+1)^2", "(x + 1)^2"]
         # The last step done, the command is over.
         await pilot.press("space")
         assert band(app)[0].startswith(" COMMAND:")
@@ -1199,7 +1201,7 @@ async def test_escape_suspends_a_demonstration_where_it_stands(app, demo):
         await pilot.press("a", *"z", "enter")
         await pilot.press("t", "d", *str(demo), "enter")
         assert band(app) == [" and a symbolic one"]
-        assert entries(app) == ["2 + 3", "5", "z", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2+3", "5", "z", "(x+1)^2", "(x + 1)^2"]
 
 
 async def test_a_demonstration_that_has_run_out_starts_over(app, demo):

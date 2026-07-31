@@ -276,7 +276,7 @@ def test_renumber_moves_a_reference_inside_an_expression(session):
     session.remove(2, 2)
     session.author("#3 + 1")
     session.renumber()
-    assert labels(session) == ["#1: x", "#2: z", "#3: #2 + 1"]
+    assert labels(session) == ["#1: x", "#2: z", "#3: #2+1"]
     # And it still names the same expression it named before.
     assert session.simplify("#3").text == "z + 1"
 
@@ -507,7 +507,7 @@ async def test_the_order_list_reaches_the_variables_factor_offers(app):
 def test_the_order_list_decides_a_declared_functions_parameters(session):
     session.order = ("y", "x", "z")
     entry = session.declare_function("F", "x^2 + y")
-    assert entry.text == "F(y, x) := x^2 + y"
+    assert entry.text == "F(y,x):=x^2+y"
 
 
 # -- Manage Substitute -------------------------------------------------------
@@ -694,7 +694,7 @@ async def test_an_expression_with_nothing_in_it_to_replace_asks_nothing(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"2 + 3", "enter")
         await manage(pilot, "s", "enter")
-        assert entries(app) == ["2 + 3"]
+        assert entries(app) == ["2+3"]
         assert band(app)[0].startswith(" MANAGE: ")
 
 
@@ -716,7 +716,7 @@ async def test_a_value_that_does_not_read_leaves_the_line_up(app):
         await manage(pilot, "s", "enter")
         await pilot.press(*"2 +", "enter")
         assert message(app) == "Syntax error detected at cursor"
-        assert entries(app) == ["x + 1"]
+        assert entries(app) == ["x+1"]
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "2 +")
 
 
@@ -728,7 +728,7 @@ async def test_escape_abandons_substitute_from_either_question(app, keys, step):
         await pilot.press("a", *"x + 1", "enter")
         await manage(pilot, *keys)
         await pilot.press("escape")
-        assert entries(app) == ["x + 1"]
+        assert entries(app) == ["x+1"]
         assert app.substituting is None
         # One Esc lands on the Manage menu, as it does from any of its lines.
         assert band(app)[0].startswith(" MANAGE: ")

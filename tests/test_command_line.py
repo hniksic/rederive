@@ -92,13 +92,13 @@ def test_the_files_are_read_into_the_session(session, files):
     demo, message = read(session, named(["work.mth"]))
     assert demo is None
     assert message == ""
-    assert [entry.text for entry in session.entries] == ["x + 1", "2 x"]
+    assert [entry.text for entry in session.entries] == ["x+1", "2*x"]
 
 
 def test_a_second_math_file_adds_to_the_first(session, files):
     read(session, named(["work", "more"]))
     # Merged rather than loaded, so naming two does not leave only the last.
-    assert [entry.text for entry in session.entries] == ["x + 1", "2 x", "y"]
+    assert [entry.text for entry in session.entries] == ["x+1", "2*x", "y"]
 
 
 def test_a_utility_file_is_read_without_being_shown(session, files):
@@ -134,7 +134,7 @@ def test_lines_that_will_not_parse_are_counted(session, files, tmp_path):
     (tmp_path / "bent.mth").write_text("x + 1\n2 +\n) (\n", encoding="utf-8")
     _, message = read(session, named(["bent"]))
     assert message == "2 lines not read"
-    assert [entry.text for entry in session.entries] == ["x + 1"]
+    assert [entry.text for entry in session.entries] == ["x+1"]
 
 
 def test_one_such_line_is_counted_in_the_singular(session, files, tmp_path):
@@ -156,7 +156,7 @@ def opened(arguments):
 async def test_the_worksheet_is_on_screen_from_the_first_frame(files):
     app = opened(["work"])
     async with app.run_test():
-        assert entries(app) == ["x + 1", "2 x"]
+        assert entries(app) == ["x+1", "2*x"]
         assert message(app) == "Enter option"
 
 
@@ -172,7 +172,7 @@ async def test_a_demonstration_runs_as_soon_as_there_is_a_screen(files):
     async with app.run_test() as pilot:
         # Already on its first step, with no Transfer Demo command issued.
         assert band(app) == [" adding up"]
-        assert entries(app) == ["1 + 1", "2"]
+        assert entries(app) == ["1+1", "2"]
         await pilot.press("space")
         assert band(app)[0].startswith(" COMMAND:")
 
@@ -180,4 +180,4 @@ async def test_a_demonstration_runs_as_soon_as_there_is_a_screen(files):
 async def test_files_read_first_are_there_for_the_demonstration_to_use(files):
     app = opened(["work", "arith"])
     async with app.run_test():
-        assert entries(app) == ["x + 1", "2 x", "1 + 1", "2"]
+        assert entries(app) == ["x+1", "2*x", "1+1", "2"]

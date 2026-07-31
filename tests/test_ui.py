@@ -210,7 +210,7 @@ async def test_a_terminal_too_short_for_the_menu_keeps_its_other_lines(app):
 async def test_author_appends_and_selects_the_new_entry(app):
     async with app.run_test() as pilot:
         await author(pilot, "x (x + 1)")
-        assert [entry.text for entry in app.session.entries] == ["x (x + 1)"]
+        assert [entry.text for entry in app.session.entries] == ["x*(x+1)"]
         # Typed as juxtaposition, drawn with the times operator.
         assert work_area(app) == ["#1:  x·(x + 1)"]
         assert highlighted_expression(app) == "x·(x + 1)"
@@ -251,7 +251,7 @@ async def test_a_vector_is_entered_and_simplified_at_once(app):
         await pilot.press("1", "enter")
         await pilot.press(*"2+3")
         await pilot.press("ctrl+j")
-        assert entries(app) == ["[1, 2+3]", "[1, 5]"]
+        assert entries(app) == ["[1,2+3]", "[1, 5]"]
 
 
 async def test_a_syntax_error_leaves_the_author_line_up(app):
@@ -357,7 +357,7 @@ async def test_simplify_of_a_part_copies_the_rest_of_the_expression(app):
         await pilot.press("right", "right")
         assert highlighted_rows(app) == [" 2", "3"]
         await pilot.press("s", "enter")
-        assert [entry.text for entry in app.session.entries][-1] == "2 (8 + 7) / 9"
+        assert [entry.text for entry in app.session.entries][-1] == "2*(8+7)/9"
         assert highlighted_expression(app) == " 2·(8 + 7)\n───────────\n     9"
         # The quote says that only part of the expression was simplified.
         assert annotation(app) == "Simp(#1')"
@@ -568,7 +568,7 @@ async def test_escape_abandons_factor_from_any_of_its_questions(app, keys, step)
         assert message(app) == "Enter option"
         assert highlighted_menu_option(app) == "Author"
         assert app.asking is None
-        assert entries(app) == ["x^2 y^2 - 1"]
+        assert entries(app) == ["x^2*y^2-1"]
 
 
 async def test_factor_leaves_a_line_that_does_not_read_up(app):
@@ -696,7 +696,7 @@ async def test_escape_abandons_expand_from_any_of_its_questions(app, keys, step)
         assert message(app) == "Enter option"
         assert highlighted_menu_option(app) == "Author"
         assert app.asking is None
-        assert entries(app) == ["1/(x^2 y^2 - 1)"]
+        assert entries(app) == ["1/(x^2*y^2-1)"]
 
 
 async def test_expand_leaves_a_line_that_does_not_read_up(app):
@@ -731,7 +731,7 @@ async def test_solve_asks_for_the_expression_and_appends_every_solution(app):
         assert prompt(app) == ("SOLVE expression:", "#1")
         assert message(app) == "Enter expression"
         await pilot.press("enter")
-        assert entries(app) == ["x^2 - 5x + 6 = 0", "x = 2", "x = 3"]
+        assert entries(app) == ["x^2-5*x+6=0", "x = 2", "x = 3"]
         assert message(app).startswith("Compute time:")
         assert annotation(app) == "Solve(#1)"
         assert highlighted_menu_option(app) == "Author"
@@ -795,7 +795,7 @@ async def test_a_name_that_is_no_variable_leaves_the_line_up(app):
         await pilot.press("l", "enter")
         await pilot.press("backspace", *"2", "enter")
         assert prompt(app) == ("SOLVE variable:", "2")
-        assert entries(app) == ["a x + b = 0"]
+        assert entries(app) == ["a*x+b=0"]
 
 
 async def test_approximate_precision_asks_for_the_interval(app):
@@ -823,7 +823,7 @@ async def test_no_solutions_appends_nothing_and_says_so(app):
         await author(pilot, "x = x + 1")
         await pilot.press("l", "enter")
         assert message(app) == "No solutions found"
-        assert entries(app) == ["x^2 - 4", "x = x + 1"]
+        assert entries(app) == ["x^2-4", "x=x+1"]
         # Nothing was appended, so nothing moved the highlight off #2.
         assert highlighted_expression(app) == "x = x + 1"
 
@@ -857,7 +857,7 @@ async def test_escape_abandons_solve_from_any_of_its_questions(app, keys, step):
         assert message(app) == "Enter option"
         assert highlighted_menu_option(app) == "Author"
         assert app.solving is None
-        assert entries(app) == ["[x + y + z = 1, x - y = 0]"]
+        assert entries(app) == ["[x+y+z=1,x-y=0]"]
 
 
 async def test_escape_abandons_solve_from_the_interval(app):
@@ -868,7 +868,7 @@ async def test_escape_abandons_solve_from_the_interval(app):
         await pilot.press("escape")
         assert message(app) == "Enter option"
         assert app.solving is None
-        assert entries(app)[-1] == "x^5 - x + 1 = 0"
+        assert entries(app)[-1] == "x^5-x+1=0"
 
 
 async def test_solve_leaves_a_line_that_does_not_read_up(app):
@@ -894,7 +894,7 @@ async def test_solving_twice_appends_the_answer_twice(app):
         await pilot.press("l", "enter")
         await pilot.press("ctrl+home")
         await pilot.press("l", "enter")
-        assert entries(app) == ["2x = 8", "x = 4", "x = 4"]
+        assert entries(app) == ["2*x=8", "x = 4", "x = 4"]
 
 
 async def test_the_arbitrary_counter_runs_across_the_session(app):
@@ -994,7 +994,11 @@ async def test_an_abandoned_approx_leaves_the_history_alone(app):
 
 
 def numbered(app):
-    """The history as the work area labels it."""
+    """The history as text: each entry's label, and the notation it holds.
+
+    Not what the work area draws, which is built up from the same tree and
+    written in glyphs; `work_area` is what asks for that.
+    """
     return [f"#{entry.number}: {entry.text}" for entry in app.session.entries]
 
 
@@ -1278,7 +1282,7 @@ async def test_a_domain_with_no_interval_is_the_last_question(app):
     async with app.run_test() as pilot:
         await pilot.press("d", "v")
         await pilot.press(*"z", "enter", "c")
-        assert entries(app) == ["z :ε Complex"]
+        assert work_area(app) == ["#1:  z :ε Complex"]
         assert highlighted_menu_option(app) == "Author"
 
 
@@ -1299,7 +1303,7 @@ async def test_the_bounds_screen_asks_for_both_ends_and_their_strictness(app):
         assert message(app) == "Enter right bound"
         assert band(app)[0].endswith("Bounds: 1        <(≤)  n   < ≤   ∞")
         await pilot.press("tab", "5", "enter")
-        assert entries(app) == ["n :ε Integer [1, 5)"]
+        assert work_area(app) == ["#1:  n :ε Integer [1, 5)"]
 
 
 async def test_a_bound_that_is_not_a_number_is_not_taken(app):
@@ -1319,7 +1323,7 @@ async def test_a_variable_is_given_a_value_on_a_line_of_its_own(app):
         assert prompt(app) == ("DECLARE VARIABLE value:", "")
         assert message(app) == "Enter expression"
         await pilot.press(*"pi r^2", "enter")
-        assert entries(app) == ["area := pi r^2"]
+        assert entries(app) == ["area:=pi*r^2"]
         assert work_area(app)[-1] == "#1:  area := π·r"
 
 
@@ -1363,7 +1367,7 @@ async def test_a_blank_definition_asks_for_the_variables_instead(app):
         await pilot.press(*"x", "enter")
         await pilot.press(*"y", "enter")
         await pilot.press("enter")
-        assert entries(app) == ["f(x, y) :="]
+        assert entries(app) == ["F(x,y):="]
         assert work_area(app) == ["#1:  F(x, y) :="]
 
 
@@ -1379,7 +1383,7 @@ async def test_a_vector_asks_for_a_dimension_then_an_element_at_a_time(app):
         assert message(app) == "Enter vector element 2"
         await pilot.press("2", "enter")
         await pilot.press(*"x", "enter")
-        assert entries(app) == ["[1, 2, x]"]
+        assert entries(app) == ["[1,2,x]"]
         assert work_area(app) == ["#1:  [1, 2, x]"]
 
 
@@ -1394,7 +1398,7 @@ async def test_a_matrix_asks_for_its_shape_and_offers_zero_for_every_cell(app):
         await pilot.press("1", "enter")
         assert message(app) == "Enter matrix element (1,2)"
         await pilot.press("enter", "enter", "4", "enter")
-        assert entries(app) == ["[[1, 0], [0, 4]]"]
+        assert entries(app) == ["[[1,0],[0,4]]"]
         assert work_area(app) == ["     ┌ 1  0 ┐", "#1:  │      │", "     └ 0  4 ┘"]
 
 
@@ -2065,7 +2069,7 @@ async def test_ctrl_c_copies_only_the_highlighted_part(app):
         await pilot.press("right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("ctrl+c")
-        assert app.clipboard == "x + 1"
+        assert app.clipboard == "x+1"
 
 
 async def test_the_highlight_can_be_walked_and_copied_under_a_line(app):
@@ -2077,7 +2081,7 @@ async def test_the_highlight_can_be_walked_and_copied_under_a_line(app):
         await pilot.press("up")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("ctrl+c", "ctrl+v", *")", "enter")
-        assert numbered(app)[-1] == "#3: 2 (x + 1)"
+        assert numbered(app)[-1] == "#3: 2*(x+1)"
 
 
 async def test_a_copy_outlives_the_line_it_was_pasted_on(app):
@@ -2088,7 +2092,7 @@ async def test_a_copy_outlives_the_line_it_was_pasted_on(app):
         # The clipboard belongs to the program rather than to the command that
         # read the line, so it is still there for the next one.
         await pilot.press("a", "ctrl+v", "ctrl+v")
-        assert prompt(app)[1] == "sin(x)sin(x)"
+        assert prompt(app)[1] == "SIN(x)SIN(x)"
 
 
 async def test_pasting_takes_the_offered_label_hash_and_all(app):
@@ -2105,14 +2109,14 @@ async def test_pasting_takes_the_offered_label_hash_and_all(app):
 
 async def test_ctrl_v_pastes_onto_any_line_but_not_at_the_menu(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "work")
+        await worksheet(pilot, "x")
         await pilot.press("ctrl+c")
         await pilot.press("t", "s", "d")
         assert prompt(app)[0] == "TRANSFER SAVE DERIVE file:"
         # Pasting is about the text on the line, so it applies to the lines that
         # collect something other than an expression too.
         await pilot.press("ctrl+v")
-        assert prompt(app)[1] == "work"
+        assert prompt(app)[1] == "x"
         await pilot.press("escape", "escape", "escape")
         await pilot.press("ctrl+v")
         assert highlighted_menu_option(app) == "Author"
@@ -2145,25 +2149,25 @@ async def test_f3_writes_the_highlighted_expression_onto_the_author_line(app):
         assert prompt(app) == ("AUTHOR expression:", "y")
         # Walking under the line is what picks what F3 takes.
         await pilot.press("up", "f3")
-        assert prompt(app)[1] == "yx + 1"
+        assert prompt(app)[1] == "yx+1"
 
 
 async def test_f4_fences_what_it_writes(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x + 1")
         await pilot.press("a", *"2", "f4", "enter")
-        assert numbered(app)[-1] == "#2: 2(x + 1)"
+        assert numbered(app)[-1] == "#2: 2*(x+1)"
 
 
 async def test_f3_writes_at_the_cursor_and_leaves_it_after(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x + 1")
         await pilot.press("a", *"ab", "left", "f3")
-        assert prompt(app)[1] == "ax + 1b"
+        assert prompt(app)[1] == "ax+1b"
         # The cursor sits after what was written, so the next thing typed
         # follows it rather than landing back where the line was.
         await pilot.press(*"c")
-        assert prompt(app)[1] == "ax + 1cb"
+        assert prompt(app)[1] == "ax+1cb"
 
 
 async def test_f3_takes_only_the_highlighted_part(app):
@@ -2174,7 +2178,7 @@ async def test_f3_takes_only_the_highlighted_part(app):
         await pilot.press("right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("a", "f3")
-        assert prompt(app)[1] == "x + 1"
+        assert prompt(app)[1] == "x+1"
 
 
 @pytest.mark.parametrize(
@@ -2193,7 +2197,7 @@ async def test_f3_writes_onto_every_line_an_expression_is_written_on(app, keys, 
         await pilot.press(*keys)
         assert prompt(app)[0] == line
         await pilot.press("f3")
-        assert prompt(app)[1] == "x + 1"
+        assert prompt(app)[1] == "x+1"
 
 
 async def test_f3_writes_onto_the_substitute_value_line(app):
@@ -2221,7 +2225,7 @@ async def test_the_substitute_value_line_takes_what_the_highlight_walks_onto(app
         await pilot.press("f6", "right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("f3")
-        assert prompt(app)[1] == "x + 1"
+        assert prompt(app)[1] == "x+1"
 
 
 async def test_f3_writes_nothing_on_a_line_that_takes_no_expression(app):
@@ -2265,13 +2269,16 @@ async def test_alt_minus_writes_the_plus_or_minus_operator(app):
         # The key needs a terminal that tells a modifier from an Escape, which
         # is what the keyboard protocol Textual asks for is for.
         await pilot.press("a", "alt+minus", *"x", "enter")
-        assert numbered(app)[-1] == "#1: ±x"
+        # The glyph is drawn, and written `"+-"` - the spelling the original
+        # writes it in, quotes and all - where the entry is text.
+        assert work_area(app) == ["#1:  ±x"]
+        assert numbered(app)[-1] == '#1: "+-"x'
 
 
 async def test_a_glyph_written_by_an_alt_key_parses(app):
     async with app.run_test() as pilot:
         await pilot.press("a", "alt+p", "enter")
-        assert numbered(app)[-1] == "#1: π"
+        assert work_area(app) == ["#1:  π"]
         # The subscript operator is a word here and a glyph in the original, so
         # the key writes it spaced the way the printer spaces it.
         await pilot.press("a", *"x", "alt+v", "2", "enter")
@@ -2302,12 +2309,12 @@ async def test_f6_hands_the_sideways_keys_to_the_highlight_and_back(app):
         await pilot.press("right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("f3")
-        assert prompt(app)[1] == "x + 1"
+        assert prompt(app)[1] == "x+1"
         # Back in line-edit mode the same keys are the cursor's again.
         await pilot.press("f6")
         assert flags(app) == ["Lin"]
         await pilot.press("home", *"2")
-        assert prompt(app)[1] == "2x + 1"
+        assert prompt(app)[1] == "2x+1"
         assert highlighted_expression(app) == "x + 1"
 
 
@@ -2388,7 +2395,7 @@ async def test_ctrl_y_puts_back_what_ctrl_u_took_out(app):
         await pilot.press("ctrl+y")
         assert prompt(app) == ("AUTHOR expression:", "x + 1")
         await pilot.press("enter")
-        assert entries(app) == ["x + 1"]
+        assert entries(app) == ["x+1"]
 
 
 async def test_a_kill_is_put_back_at_the_cursor_and_the_cursor_follows_it(app):
@@ -2405,11 +2412,11 @@ async def test_what_one_line_deleted_comes_back_on_the_next(app):
         # The ring belongs to the line rather than to the command, so a line
         # abandoned altogether still leaves what it deleted to be put back.
         await pilot.press("a", "ctrl+y", "enter")
-        assert entries(app) == ["sin(x)/x"]
+        assert entries(app) == ["SIN(x)/x"]
         # And on a line another command reads, not only on another Author: the
         # label Simplify offers is taken out and the expression put in instead.
         await pilot.press("s", "ctrl+u", "ctrl+y", "enter")
-        assert entries(app) == ["sin(x)/x", "SIN(x)/x"]
+        assert entries(app) == ["SIN(x)/x", "SIN(x)/x"]
 
 
 async def test_deletions_that_follow_one_another_come_back_as_one(app):

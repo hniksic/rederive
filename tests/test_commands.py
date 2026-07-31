@@ -36,7 +36,7 @@ def part(session, *route):
 def test_the_answer_is_appended_and_selected_as_a_whole(session):
     session.author("2 (8 + 7) / 3^2")
     answer = session.simplify("#1")
-    assert texts(session) == ["2 (8 + 7) / 3^2", "10/3"]
+    assert texts(session) == ["2*(8+7)/3^2", "10/3"]
     assert answer.number == 2
     assert session.selected == 1 and session.route == ()
     assert answer.annotation == "Simp(#1)"
@@ -75,7 +75,7 @@ def test_simplifying_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("2 (8 + 7) / 3^2")
     assert part(session, "right", "right").value == "^"
     answer = session.simplify("#1")
-    assert answer.text == "2 (8 + 7) / 9"
+    assert answer.text == "2*(8+7)/9"
     # The quote is what says that only part of the entry was simplified.
     assert answer.annotation == "Simp(#1')"
 
@@ -84,7 +84,7 @@ def test_a_spliced_answer_is_fenced_where_the_line_needs_it(session):
     session.author("x := y + 1")
     session.author("2 x")
     part(session, "right", "right")
-    assert session.simplify("#2").text == "2 (y + 1)"
+    assert session.simplify("#2").text == "2*(y + 1)"
 
 
 def test_a_spliced_line_reads_back_as_the_text_it_shows(session):
@@ -94,7 +94,7 @@ def test_a_spliced_line_reads_back_as_the_text_it_shows(session):
     answer = session.simplify("#1")
     # The fences the line was written with stay, and are drawn as precedence
     # asks rather than as they were typed.
-    assert answer.text == "(15) (x + 1)"
+    assert answer.text == "(15)*(x+1)"
     assert answer.layout.lines == ("15·(x + 1)",)
     session.move_right()
     assert answer.text[session.selected_node.start : session.selected_node.end] == "15"
@@ -179,7 +179,7 @@ def test_the_precision_setting_reaches_the_command(session):
 def test_a_factored_answer_is_appended_and_annotated(session):
     session.author("x^2 - 4")
     answer = session.factor("#1")
-    assert texts(session) == ["x^2 - 4", "(x - 2)*(x + 2)"]
+    assert texts(session) == ["x^2-4", "(x - 2)*(x + 2)"]
     assert answer.annotation == "Fctr(#1)"
 
 
@@ -195,7 +195,7 @@ def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
     # The splice is fenced and the line's own fences stay, so the text carries
     # a pair more than it needs. What is drawn comes from the tree, where a
     # fence is a matter of precedence, so the extra pair shows up nowhere.
-    assert answer.text == "(((x - 1)*(x + 1))) + SIN(z)"
+    assert answer.text == "(((x - 1)*(x + 1)))+SIN(z)"
     assert answer.layout.lines == ("(x - 1)·(x + 1) + SIN(z)",)
     assert answer.annotation == "Fctr(#1')"
 
@@ -277,7 +277,7 @@ def test_a_number_is_recognised_before_anything_is_asked(session):
 def test_the_answer_is_appended_as_an_expansion(session):
     session.author("2 x (x - 3)^2")
     answer = session.expand("#1")
-    assert texts(session) == ["2 x (x - 3)^2", "2*x^3 - 12*x^2 + 18*x"]
+    assert texts(session) == ["2*x*(x-3)^2", "2*x^3 - 12*x^2 + 18*x"]
     assert answer.annotation == "Expd(#1)"
 
 
@@ -336,7 +336,7 @@ def test_every_solution_is_an_entry_and_the_last_is_selected(session):
     session.author("x^2 - 5 x + 6 = 0")
     appended = session.solve("#1")
     assert [entry.text for entry in appended] == ["x = 2", "x = 3"]
-    assert texts(session) == ["x^2 - 5 x + 6 = 0", "x = 2", "x = 3"]
+    assert texts(session) == ["x^2-5*x+6=0", "x = 2", "x = 3"]
     assert session.selected_entry is appended[-1]
     assert session.route == ()
 
@@ -352,7 +352,7 @@ def test_no_solutions_appends_nothing_and_leaves_the_highlight(session):
     session.author("x = x + 1")
     session.select_entry(0)
     assert session.solve("#2") == []
-    assert texts(session) == ["x^2 - 4", "x = x + 1"]
+    assert texts(session) == ["x^2-4", "x=x+1"]
     assert session.selected == 0
 
 
@@ -361,7 +361,7 @@ def test_solving_the_same_equation_twice_appends_duplicates(session):
     session.author("2 x = 8")
     session.solve("#1")
     session.solve("#1")
-    assert texts(session) == ["2 x = 8", "x = 4", "x = 4"]
+    assert texts(session) == ["2*x=8", "x = 4", "x = 4"]
 
 
 def test_a_system_appends_one_entry(session):

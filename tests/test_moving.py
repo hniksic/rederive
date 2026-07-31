@@ -136,7 +136,7 @@ def test_a_whole_expression_moves_however_little_of_it_was_highlighted(session):
     session.move_right()
     assert session.route == (0,)
     session.move_block(1, 2, 2)
-    assert labels(session) == ["#2: y + z", "#1: x"]
+    assert labels(session) == ["#2: y+z", "#1: x"]
     assert session.route == ()
 
 
@@ -144,7 +144,7 @@ def test_an_annotation_travels_with_its_expression(session):
     session.author("2 + 3")
     session.simplify("#1")
     session.move_block(1, 2, 2)
-    assert labels(session) == ["#2: 5", "#1: 2 + 3"]
+    assert labels(session) == ["#2: 5", "#1: 2+3"]
     assert session.entries[0].annotation == "Simp(#1)"
 
 

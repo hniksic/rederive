@@ -84,6 +84,7 @@ from rederive.syntax import (
     Declaration,
     DeriveSyntaxError,
     Language,
+    ParseResult,
     ParseState,
     SettingDeclaration,
     Source,
@@ -249,6 +250,13 @@ NAMED_INTERVALS: dict[str, Bounds] = {
 class Entry:
     """One numbered line of the history: what was authored, and how it looks.
 
+    `text` is the expression in author notation and not the line that was
+    typed: an authored line is written back out from its tree, so `x (x + 1)`
+    is held as `x*(x+1)` and `(NOT p) OR (q AND r)` as `NOT p OR q AND r`.
+    `node`'s spans index that text, which is what lets a subexpression be taken
+    out of the line and put back into it. What the user sees is `layout`, drawn
+    from the same tree in the glyphs the screen has.
+
     `annotation` is where the entry came from, as the status line reports it:
     `User` for a line that was written, `Simp(#3)` for one a Simplify derived
     from entry 3, and `Simp(#3')` when only the highlighted part of entry 3
@@ -388,15 +396,43 @@ class Session:
         user asks for something to be done to it (R-HIST1), and label numbers
         only ever increase (R-HIST2).
 
+        What goes up is the expression rather than the line - see `_redrawn` -
+        so what the entry says is what was parsed and not how it was spelled.
+
         What the line declares is applied before it is drawn, so a hand-written
         `DisplayFormat := Compressed` prints itself compressed, as it does in
         the original.
         """
-        result = parse_expression(text, self.state)
+        result = self._redrawn(parse_expression(text, self.state))
         for declaration in result.declarations:
             self.declare(declaration)
         self._define(result.node, result.declarations)
-        return self._append(text, result.node)
+        return self._append(result.source.text, result.node)
+
+    def _redrawn(self, result: ParseResult) -> ParseResult:
+        """`result` written back out from its tree and read again.
+
+        What lands on the worksheet is the expression rather than the line that
+        was typed, which is what the original puts up: `(NOT p) OR (q AND r)`
+        goes up as `NOT p OR q AND r`, the fences the grammar does not need
+        being gone. Nothing is reordered - `q OR p` stays `q OR p` - because
+        writing is the parser run backwards and not a normal form.
+
+        It is read again rather than only written, so that the tree's spans
+        index the text the entry carries: that is what lets a subexpression be
+        copied out of the line and spliced back into it.
+
+        The reading is under the state the writing was read under, before what
+        the line declares is applied, or `InputBase := 16` would come back as
+        twenty-two. A tree the round trip does not return unchanged keeps the
+        line as it was typed, since an entry has to say what the user wrote
+        before it says it tidily.
+        """
+        try:
+            written = parse_expression(write_expression(result.node), self.state)
+        except DeriveSyntaxError:
+            return result
+        return written if _same_tree(written.node, result.node) else result
 
     def record(self, setting: str) -> Entry:
         """Append the `Name := Value` a settings change records.
@@ -1531,15 +1567,24 @@ class Session:
         return skipped
 
     def _entered(self, text: str, annotation: str, offset: int) -> None:
-        """Append one line of a file as an entry, its references moved on."""
+        """Append one line of a file as an entry, its references moved on.
+
+        Redrawn as an authored line is, so that a file written by hand comes up
+        as the expressions it holds rather than as the spellings it holds them
+        in. A file this program wrote is already in that form and comes back
+        unchanged.
+        """
         result = parse_expression(text, self.state)
         if offset:
             text = _shift_labels(text, result.node, offset)
             result = parse_expression(text, self.state)
+        result = self._redrawn(result)
         for declaration in result.declarations:
             self.declare(declaration)
         self._define(result.node, result.declarations)
-        self._append(text, result.node, _shift_annotation(annotation, offset))
+        self._append(
+            result.source.text, result.node, _shift_annotation(annotation, offset)
+        )
 
     # -- clearing ----------------------------------------------------------
 
@@ -2000,6 +2045,36 @@ def _shift_annotation(annotation: str, offset: int) -> str:
     if not offset:
         return annotation
     return _rewrite_annotation(annotation, lambda number: number + offset)
+
+
+def _same_tree(one: Node, other: Node) -> bool:
+    """Whether two trees say the same thing, spans and spelling aside.
+
+    Two nodes compare unequal when they cover different text, which every
+    rewritten line does, and how a product's gaps were written is no part of
+    what it means: `x y` and `x*y` are one expression. A numeral's surface is
+    its digits and does count, since `0FF` and `255` are the same value under
+    only one base.
+    """
+    return _shape(one) == _shape(other)
+
+
+def _shape(node: Node) -> tuple:
+    """`node` as what it means, under the three normalizations writing makes.
+
+    A bare application is a call and `|u|` is `ABS(u)` - the forms the writer
+    puts them in, which the display draws the same way either way - and a
+    numeral keeps its digits, those being the one surface spelling that says
+    something the value does not.
+    """
+    kind, children = node.kind, node.children
+    if kind is Kind.APPLY:
+        kind = Kind.CALL
+    elif kind is Kind.ABS:
+        kind = Kind.CALL
+        children = (Node(Kind.NAME, 0, 0, (), "ABS"), *children)
+    surface = node.surface if kind is Kind.NUMBER else None
+    return (kind, node.value, surface, tuple(_shape(child) for child in children))
 
 
 def _subtrees(node: Node) -> Iterator[Node]:

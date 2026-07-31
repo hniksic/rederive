@@ -166,7 +166,6 @@ NOT_YET_HELD = {
     "test_an_expression_typed_with_a_trailing_equals_shows_both_sides",
     "test_an_iteration_count_bounds_the_iterates",
     "test_an_undecidable_condition_keeps_the_whole_conditional",
-    "test_and_binds_tighter_than_or",
     "test_approx_takes_the_digits_it_is_given",
     "test_arithmetic_on_a_whole_equation[(x^2 + 5*x + 6 = 0) - 6-x^2 + 5*x = -6]",
     "test_arithmetic_on_a_whole_equation[4*(x^2 + 5*x + 6 = 0)-4*x^2 + 20*x + 24 = 0]",
@@ -185,7 +184,6 @@ NOT_YET_HELD = {
     "x^2 - y^4 + y^2', ('x',))-(x + y)*(x - y)*(y^2 - 1)]",
     "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
     "test_newtons_finds_the_manuals_nonlinear_solution",
-    "test_not_binds_tighter_than_and_and_and_tighter_than_or",
     "test_reapproximating_an_approximation_keeps_its_error",
     "test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone",
     "test_square_brackets_make_a_vector_rather_than_a_group",
@@ -310,7 +308,9 @@ def test_the_operators_group_the_way_the_manual_says(text, expected):
 def test_the_manuals_first_arithmetic_is_not_simplified_until_asked(session):
     # 3.1 p.27: authoring `2 (8 + 7)/3^2` displays it built up, unsimplified.
     entry = session.author("2 (8 + 7) / 3^2")
-    assert entry.text == "2 (8 + 7) / 3^2"
+    assert entry.text == "2*(8+7)/3^2"
+    lines = (" 2·(8 + 7) ", "───────────", "      2    ", "     3     ")
+    assert entry.layout.lines == lines
     # 3.2 p.28: Simplify answers 10/3, and says which line it came from.
     simplified = session.simplify("#1")
     assert simplified.text == "10/3"
