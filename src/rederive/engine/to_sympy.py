@@ -1104,7 +1104,6 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
     "IM": sp.im,
     "CONJ": sp.conjugate,
     "PHASE": sp.arg,
-    "ERF": sp.erf,
     "ERFC": sp.erfc,
     "ZETA": sp.zeta,
     "SINH": sp.sinh,
@@ -1324,6 +1323,30 @@ def _atan(conv: _Converter, args: list) -> sp.Basic:
     if len(args) == 2:
         return conv.angle_out(sp.atan2(args[0], args[1]))
     return conv.angle_out(sp.atan(_one(args)))
+
+
+def _acot(conv: _Converter, args: list) -> sp.Basic:
+    """`ACOT(x, y)` is `ATAN(y, x)`, which section 6.4 says it is.
+
+    Two arguments name the two legs of the triangle rather than their ratio, so
+    the cotangent of the pair is the tangent of the same pair read the other way
+    round - and the quadrant comes with it, which is the whole point of writing
+    the legs down separately.
+    """
+    if len(args) == 2:
+        return conv.angle_out(sp.atan2(args[1], args[0]))
+    return conv.angle_out(sp.acot(_one(args)))
+
+
+def _erf(conv: _Converter, args: list) -> sp.Basic:
+    """`ERF(z, w)` is `ERF(w) - ERF(z)`: the error function between the two.
+
+    One argument is the error function itself, which is the same integral taken
+    from zero.
+    """
+    if len(args) == 2:
+        return sp.erf(args[1]) - sp.erf(args[0])
+    return sp.erf(_one(args))
 
 
 def _floor(conv: _Converter, args: list) -> sp.Basic:
@@ -2922,6 +2945,8 @@ FUNCTIONS: dict[str, Handler] = {
     **{name: _arctrig(func) for name, func in _INVERSE_TRIGONOMETRIC.items()},
     **{name: _direct(func) for name, func in _DIRECT.items()},
     "ATAN": _atan,
+    "ACOT": _acot,
+    "ERF": _erf,
     "SIGN": _sign,
     "STEP": _step,
     "LOG": _log,

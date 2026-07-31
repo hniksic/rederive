@@ -685,6 +685,29 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Max(self, expr):
         return f"MAX({self.stringify(expr.args, ', ')})"
 
+    def _print_floor(self, expr):
+        """`FLOOR(m, n)` where the argument is a quotient, `FLOOR(u)` where not.
+
+        The notation's floor takes the numerator and the denominator apart, and
+        that is the spelling section 6.7 prints: `MOD(m, n)` is
+        `m - n*FLOOR(m, n)`. So a quotient is written back as the pair it was
+        authored as, which is what makes `FLOOR(m, n)` a fixed point of
+        printing rather than a form the reader is never shown again.
+
+        A number underneath is no such pair. `FLOOR(x/2)` divides by two the
+        way any other expression does, and `FLOOR(x, 2)` would be the longer
+        way to say it - so the pair is written only where the denominator holds
+        a variable, and a numeric factor of that denominator goes back into the
+        numerator, `FLOOR(m/n + 1/2)` being `FLOOR(m + n/2, n)` and not
+        `FLOOR(2*m + n, 2*n)`.
+        """
+        numerator, denominator = sp.fraction(sp.together(expr.args[0]))
+        if denominator.is_number:
+            return f"FLOOR({self._print(expr.args[0])})"
+        coefficient, denominator = denominator.as_coeff_Mul()
+        over = self._print(denominator)
+        return f"FLOOR({self._print(numerator / coefficient)}, {over})"
+
     def _print_Heaviside(self, expr):
         """`STEP(u)`. The value at zero is ours, not the author's."""
         return f"STEP({self._print(expr.args[0])})"

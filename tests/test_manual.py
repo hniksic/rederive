@@ -190,8 +190,6 @@ NOT_YET_HELD = {
     "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
     "test_newtons_finds_the_manuals_nonlinear_solution",
     "test_not_binds_tighter_than_and_and_and_tighter_than_or",
-    "test_probability_and_statistics[COMB(z, w)-z!/(w!*(z - w)!)]",
-    "test_probability_and_statistics[PERM(z, w)-z!/(z - w)!]",
     "test_reapproximating_an_approximation_keeps_its_error",
     "test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone",
     "test_square_brackets_make_a_vector_rather_than_a_group",
@@ -204,8 +202,6 @@ NOT_YET_HELD = {
     "test_the_continued_fraction_of_e",
     "test_the_derivatives_of_the_manual[DIF(LN(COS(x)), x, 2)--TAN(x)^2 - 1]",
     "test_the_difference_equation_the_manual_solves",
-    "test_the_error_and_zeta_functions[ERF(z, w)-ERF(w) - ERF(z)]",
-    "test_the_error_and_zeta_functions[ERFC(z)-1 - ERF(z)]",
     "test_the_error_and_zeta_functions[NORMAL(z, m, "
     "s)-(ERF(SQRT(2)*z/(2*s) - SQRT(2)*m/(2*s)) + 1)/2]",
     "test_the_euler_steps_the_manual_takes",
@@ -224,8 +220,6 @@ NOT_YET_HELD = {
     "test_the_integrals_of_the_manual[INT(1/x^3, x, -1, 2)-3/8]",
     "test_the_inverse_hyperbolic_functions_become_logarithms[ACOSH(z)-2"
     "*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)]",
-    "test_the_inverse_hyperbolic_functions_become_logarithms[ACOTH(z)-L"
-    "N((z + 1)/(z - 1))/2]",
     "test_the_inverse_hyperbolic_functions_become_logarithms[ASINH(z)-L"
     "N(SQRT(z^2 + 1) + z)]",
     "test_the_inverse_of_the_manuals_function",
@@ -246,9 +240,6 @@ NOT_YET_HELD = {
     "test_the_picard_iterate_of_the_manuals_equation",
     "test_the_piecewise_functions[MAX(x, y)-|x - y|/2 + (x + y)/2]",
     "test_the_piecewise_functions[MIN(x, y)-(x + y)/2 - |x - y|/2]",
-    "test_the_piecewise_functions[MOD(m, n)-m - n*FLOOR(m, n)]",
-    "test_the_piecewise_functions[MODS(m, n)-m - n*FLOOR(m + n/2, n)]",
-    "test_the_piecewise_functions[STEP(x)-SIGN(x)/2 + 1/2]",
     "test_the_quadratic_formula_as_a_radical_factoring",
     "test_the_series_inverse_of_a_function_that_has_no_closed_one",
     "test_the_series_solution_of_an_equation_that_has_no_closed_one",
@@ -275,10 +266,7 @@ NOT_YET_HELD = {
     "test_the_worked_examples_of_the_vector_utility_file[RANK([[2, 3, "
     "5], [4, 6, 10], [1, 2, 3]])-2]",
     "test_trigonometry[ACOS(z)-pi/2 - ASIN(z)]",
-    "test_trigonometry[ACOT(x, y)-ATAN(y, x)]",
     "test_trigonometry[ACOT(z)-pi/2 - ATAN(z)]",
-    "test_trigonometry[ACSC(z)-ASIN(1/z)]",
-    "test_trigonometry[ASEC(z)-ACOS(1/z)]",
     "test_which_variable_is_main_decides_whether_a_power_is_multiplied_out",
 }
 
@@ -535,7 +523,15 @@ TRIGONOMETRY = [
     # 6.3 p.107.
     ("SIN(pi/4)", "SQRT(2)/2"),
     ("ASIN(1/2)", "pi/6"),
-    # 6.4 p.108.
+    # 6.4 p.108. A table of equivalences rather than a rewrite system: the
+    # `ACOS` line applied to the `ASEC` line's answer leaves `pi/2 -
+    # ASIN(1/z)`, which is neither form the section prints. The engine keeps
+    # `ASIN`, `ACOS` and `ATAN` and writes the reciprocal arcs over them, so
+    # the two lines about reciprocals hold and the `ACOS` line does not.
+    #
+    # The `ACOT` line is about a branch this engine does not use: its `ACOT` is
+    # the odd one, where `ACOT(-1)` is `-pi/4`, and `pi/2 - ATAN(z)` is the
+    # other one - the two agree above zero and are a half turn apart below it.
     ("ACOT(z)", "pi/2 - ATAN(z)"),
     ("ACOT(x, y)", "ATAN(y, x)"),
     ("ACOS(z)", "pi/2 - ASIN(z)"),

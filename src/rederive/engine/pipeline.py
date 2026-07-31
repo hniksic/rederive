@@ -1319,16 +1319,66 @@ def _as_gamma(expression: sp.Basic) -> sp.Basic:
     return sp.gamma(expression.args[0] + 1)
 
 
-def _factorials(expression: sp.Basic) -> sp.Basic:
-    """`GAMMA(z)` written as `(z - 1)!`, which section 6.9 says it is.
+def _as_binomial(whole: sp.Basic, part: sp.Basic) -> sp.Basic:
+    return sp.factorial(whole) / (sp.factorial(part) * sp.factorial(whole - part))
 
-    The factorial is the notation's own spelling and the gamma is the one it
-    falls back on, so an answer that reached a gamma has not been written yet.
-    Not gated on getting shorter - `(z - 1)!` is one operation more than
-    `GAMMA(z)` and is still the form asked for - and after the rewrites rather
-    than before, since `combsimp` is where most of the gammas come from.
+
+def _as_falling(whole: sp.Basic, part: sp.Basic) -> sp.Basic:
+    return sp.factorial(whole) / sp.factorial(whole - part)
+
+
+#: The two heads section 6.9 writes as a ratio of factorials: `COMB(z, w)` is
+#: `z!/(w!*(z - w)!)` and `PERM(z, w)` is `z!/(z - w)!`.
+_AS_FACTORIALS: dict[type, Callable[..., sp.Basic]] = {
+    sp.binomial: _as_binomial,
+    sp.ff: _as_falling,
+}
+
+
+def _ratios(expression: sp.Basic) -> sp.Basic:
+    """`_AS_FACTORIALS` written out, everywhere but under a calculus head.
+
+    A `COMB` inside a sum that has already declined to evaluate is left as it
+    is. Written out it makes a summand nobody has offered to sympy yet, so the
+    search for a closed form runs again - and over a ratio of factorials of the
+    index it does not come back: `SUM(COMB(n, k), k, 0, n)` is `2^n` above zero
+    and the sum itself elsewhere, and the sum it is left with would be searched
+    forever. That is `_searchable`'s point, one head further out.
+    """
+    written = _AS_FACTORIALS.get(type(expression))
+    if written is not None:
+        return written(*expression.args)
+    if isinstance(expression, _CALCULUS) or not expression.args:
+        return expression
+    arguments = [_ratios(argument) for argument in expression.args]
+    if all(written is argument for written, argument in zip(arguments, expression.args)):
+        # The expression itself, and not a rebuild of it: rebuilding is what
+        # `replace` does too, and it is a normalization of everything it walks
+        # through - a matrix inverse comes back a power of a matrix - so
+        # nothing that holds none of these heads is put through it.
+        return expression
+    return expression.func(*arguments)
+
+
+def _factorials(expression: sp.Basic) -> sp.Basic:
+    """The heads section 6.9 writes as factorials, written as factorials.
+
+    `GAMMA(z)` is `(z - 1)!`, and the two of `_AS_FACTORIALS` are ratios. The
+    factorial is the notation's own spelling and these are the ones it falls
+    back on, so an answer that reached one of them has not been written yet.
+    Not gated on getting shorter - every one of the three is longer written
+    out, and is still the form asked for.
+
+    After the rewrites, because `combsimp` is where most of the gammas come
+    from and where the other two come back: a ratio of three factorials is a
+    binomial to it, and a shorter expression than the ratio. The ratios are
+    written out before it as well, in `_by_definition`, so that one it can
+    shorten is shortened - `COMB(x, 2)` is `x*(x - 1)/2` and not a ratio of
+    factorials that only the next Simplify would reduce.
     """
     try:
+        if expression.has(*_AS_FACTORIALS):
+            expression = _ratios(expression)
         return expression.replace(sp.gamma, _as_factorial, simultaneous=False)
     except Exception:
         return expression
@@ -1399,12 +1449,58 @@ def _is_matrix_product(expression: sp.Basic) -> bool:
 #: logarithms by 6.6.
 _HYPERBOLIC = (sp.sinh, sp.cosh, sp.tanh, sp.coth, sp.sech, sp.csch)
 
+def _as_arc_cosh(argument: sp.Basic) -> sp.Basic:
+    """`ACOSH(z)` as `2*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)`, which 6.6 says.
+
+    Sympy's own rewrite reaches `LN(SQRT(z - 1)*SQRT(z + 1) + z)` - the same
+    value in an uncollected form, and nothing downstream collects it. The two
+    agree over the whole plane: `(SQRT(z + 1) + SQRT(z - 1))^2` is
+    `2*(z + SQRT(z - 1)*SQRT(z + 1))`, and each root has an argument in
+    `(-pi/2, pi/2]`, so their sum does too and doubling its logarithm crosses
+    no cut.
+
+    A number is left to sympy, which works the roots out and reaches the
+    shorter answer for it: `ACOSH(2)` is `LN(SQRT(3) + 2)` there and
+    `LN((SQRT(3) + 1)^2/2)` here, the same number written longer.
+    """
+    if argument.is_number:
+        return sp.acosh(argument)
+    return 2 * sp.log(sp.sqrt(argument + 1) + sp.sqrt(argument - 1)) - sp.log(2)
+
+
+def _as_arc_coth(argument: sp.Basic) -> sp.Basic:
+    """`ACOTH(z)` as `LN((z + 1)/(z - 1))/2`, which section 6.6 says it is.
+
+    Sympy's own rewrite reaches `LN(1 + 1/z)/2 - LN(1 - 1/z)/2`, which is one
+    logarithm short of it and nothing downstream collects either. The quotient
+    `(1 + 1/z)/(1 - 1/z)` is `(z + 1)/(z - 1)` wherever either side is written.
+    """
+    return sp.log((argument + 1) / (argument - 1)) / 2
+
+
+#: The heads written out here rather than left to sympy's own `rewrite`, which
+#: reaches the right value in a form the manual does not print.
+_WRITTEN_AS: dict[type, Callable[..., sp.Basic]] = {
+    sp.acosh: _as_arc_cosh,
+    sp.acoth: _as_arc_coth,
+}
+
 #: What each function that Derive keeps no answer in is written over. `SEC` and
-#: `CSC` are the reciprocals 6.4 names them for, and the twelve hyperbolics are
-#: the exponentials and logarithms of 6.5 and 6.6.
+#: `CSC` are the reciprocals 6.4 names them for and `ASEC` and `ACSC` the arcs
+#: of those reciprocals, the twelve hyperbolics are the exponentials and
+#: logarithms of 6.5 and 6.6, and `ERFC` is the complement 6.11 names it for.
+#: `STEP`, `MIN` and `MAX` are the closed forms of 6.7, where a step is half a
+#: sign away from a half and the two extremes are the midpoint of a pair give
+#: or take half the distance between them.
 _DEFINED_OVER: dict[type, type] = {
     sp.sec: sp.cos,
     sp.csc: sp.sin,
+    sp.asec: sp.acos,
+    sp.acsc: sp.asin,
+    sp.erfc: sp.erf,
+    sp.Heaviside: sp.sign,
+    sp.Min: sp.Abs,
+    sp.Max: sp.Abs,
     **{head: sp.exp for head in _HYPERBOLIC},
     **{head: sp.log for head in _INVERSE_HYPERBOLIC},
 }
@@ -1414,10 +1510,23 @@ def _by_definition(expression: sp.Basic) -> sp.Basic:
     """The functions that are spellings for something else, spelled out.
 
     None of these is a direction to rewrite in, so none is gated or offered as
-    a setting: an answer holding a `SECH` is one Derive never writes. What they
-    turn into is left to sympy, whose forms are the manual's - `TANH(z)` is
-    `(#e^(2*z) - 1)/(#e^(2*z) + 1)` in both.
+    a setting: an answer holding a `SECH` is one Derive never writes, and
+    neither is one holding an `ERFC` or a `MAX`. Several of them lengthen what
+    they replace - `MIN(x, y)` is two operations and its answer is seven - and
+    the gate would decline every one of those.
+
+    What a head turns into is left to sympy wherever sympy's form is the
+    manual's - `TANH(z)` is `(#e^(2*z) - 1)/(#e^(2*z) + 1)` in both - and
+    written out by `_WRITTEN_AS` where it is not. The factorial ratios are
+    written out here as well as in `_factorials`, before `combsimp` rather than
+    after, so that one it can shorten is shortened.
     """
+    for head, written in _WRITTEN_AS.items():
+        if not expression.has(head):
+            continue
+        expression = _forced(expression, lambda e, h=head, w=written: e.replace(h, w))
+    if expression.has(*_AS_FACTORIALS):
+        expression = _forced(expression, _ratios)
     for head, over in _DEFINED_OVER.items():
         if not expression.has(head):
             continue
@@ -1721,14 +1830,13 @@ def _trigonometry(expression: sp.Basic, context: Context) -> sp.Basic:
 
 
 #: The inverse functions that pair off, each with the one it complements.
-#: `ASIN(u) + ACOS(u)` is a right angle wherever both are defined, and so is
-#: the secant pair; the tangent pair is a right angle turned the way its
-#: argument is signed.
+#: `ASIN(u) + ACOS(u)` is a right angle wherever both are defined; the tangent
+#: pair is a right angle turned the way its argument is signed. The secant pair
+#: is here by way of the first: `ASEC` and `ACSC` are written over `ACOS` and
+#: `ASIN` before any of this is offered, and add up through them.
 _COMPLEMENT = {
     sp.asin: sp.acos,
     sp.acos: sp.asin,
-    sp.asec: sp.acsc,
-    sp.acsc: sp.asec,
     sp.atan: sp.acot,
     sp.acot: sp.atan,
 }
@@ -1831,12 +1939,7 @@ def _shorter_arc(expression: sp.Basic) -> sp.Basic | None:
     Both hold for a real `u` alone - the root has a branch cut a complex
     argument crosses, and the two sides then disagree by a period - so an
     argument nothing declares real is left as it stands.
-
-    The reciprocal arcs are the other half of it, and need no domain: `ASEC(u)`
-    is the angle whose cosine is `1/u` by definition, whatever `u` is.
     """
-    if isinstance(expression, (sp.asec, sp.acsc)):
-        return _reciprocal_arc(expression)
     if not isinstance(expression, (sp.asin, sp.atan)):
         return None
     sides = _over_a_root(expression.args[0])
@@ -1868,20 +1971,6 @@ def _vanishes(difference: sp.Basic) -> bool:
     rather than comparing two trees.
     """
     return bool(sp.expand(difference).is_zero)
-
-
-def _reciprocal_arc(expression: sp.Basic) -> sp.Basic | None:
-    """`ASEC(1/u)` as `ACOS(u)`, where the reciprocal is the shorter argument.
-
-    Which is what keeps `ASEC(x)` as it was written: the rewrite is offered in
-    both directions and taken only in the one that shortens the argument.
-    """
-    argument = expression.args[0]
-    reciprocal = 1 / argument
-    if sp.count_ops(reciprocal) >= sp.count_ops(argument):
-        return None
-    complement = sp.acos if isinstance(expression, sp.asec) else sp.asin
-    return complement(reciprocal)
 
 
 def _half_angles(expression: sp.Basic) -> sp.Basic:

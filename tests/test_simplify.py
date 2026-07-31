@@ -120,6 +120,18 @@ COMBINATORIAL = [
     ("(n + 2)!/(n - 1)!", "n*(n + 1)*(n + 2)"),
     ("COMB(5, 2)", "10"),
     ("PERM(5, 2)", "20"),
+    # Section 6.9 writes both as ratios of factorials, and a ratio that reduces
+    # is reduced rather than left standing: `COMB(x, 2)` is `x!/(2*(x - 2)!)`
+    # written out and `x*(x - 1)/2` once the two factorials have cancelled.
+    ("COMB(x, 2)", "x*(x - 1)/2"),
+    ("PERM(x, 2)", "x*(x - 1)"),
+    # A head that declined to evaluate keeps its `COMB`. Written out it would
+    # be a summand nobody has offered to sympy yet, and the search for a closed
+    # form over a ratio of factorials of the index does not come back.
+    (
+        "SUM(COMB(n, k), k, 0, n)",
+        "IF(n > 0 OR -1 < n <= 0, 2^n, SUM(COMB(n, k), k, 0, n))",
+    ),
 ]
 
 
@@ -325,7 +337,11 @@ INTERVALS = [
     ("ABS(x - 1)", "1 - x", "x :epsilon Real (0, 1]"),
     ("MAX(x, 1)", "1", "x :epsilon Real (0, 1)"),
     ("MIN(x, 1)", "x", "x :epsilon Real (0, 1)"),
-    ("MAX(x, 1)", "MAX(1, x)", "x :epsilon Real (0, 2)"),
+    # The bounds are asked before `MAX` is written out as the closed form of
+    # 6.7, so a bound that decides which argument is the greater answers with
+    # that argument; one that does not leaves the formula, whose bars are
+    # undecidable over the same interval for the same reason.
+    ("MAX(x, 1)", "x/2 + ABS(x - 1)/2 + 1/2", "x :epsilon Real (0, 2)"),
     # An integer variable is asked about through a real stand-in, sympy having
     # no answer at all about one bounded by a relation.
     ("ABS(n - 7)", "7 - n", "n :epsilon Integer [2, 5]"),
@@ -364,7 +380,7 @@ def test_an_interval_costs_nothing_where_nothing_is_declared():
     # The box is built only where a bound says something the symbol could not,
     # so an undeclared variable reaches none of this.
     assert simp("ABS(x - 1)") == "ABS(x - 1)"
-    assert simp("MAX(x, 1)") == "MAX(1, x)"
+    assert simp("MAX(x, 1)") == "x/2 + ABS(x - 1)/2 + 1/2"
     assert simp("IF(x < 1, a, b)") == "IF(x < 1, a, b)"
 
 
@@ -417,13 +433,13 @@ TRIGONOMETRY = [
     ("ATAN(x/SQRT(1 - x^2))", "ASIN(x)", None),
     ("ASIN(x/SQRT(x^2 + 1))", "ASIN(x/SQRT(x^2 + 1))", COMPLEX_X),
     ("ATAN(x/SQRT(1 - x^2))", "ATAN(x/SQRT(1 - x^2))", COMPLEX_X),
-    # A reciprocal arc needs no domain, being the definition of the arc rather
-    # than an identity over the reals, and is written about whichever of the
-    # two arguments is the shorter - which is what keeps `ASEC(x)` as it is.
+    # The reciprocal arcs are 6.4's definitions rather than identities over the
+    # reals, so they need no domain: `ASEC(z)` is `ACOS(1/z)` whatever `z` is,
+    # and `ACSC(z)` is `ASIN(1/z)`. Neither head is kept in an answer.
     ("ASEC(1/x)", "ACOS(x)", None),
     ("ACSC(1/x)", "ASIN(x)", None),
     ("ASEC(1/x)", "ACOS(x)", COMPLEX_X),
-    ("ASEC(x)", "ASEC(x)", None),
+    ("ASEC(x)", "ACOS(1/x)", None),
     # Two angles a factor apart cancel once both are written about the angle
     # they are multiples of; a whole factor apart is `SIN(6*x)/SIN(3*x)` above,
     # which needs none of that.
