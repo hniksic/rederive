@@ -104,7 +104,7 @@ def _knowing(
     known = replace(
         state, functions=dict(state.functions), variables=dict(state.variables)
     )
-    for symbol in expression.atoms(sp.Symbol):
+    for symbol in expression.atoms(sp.Symbol, sp.MatrixSymbol):
         if isinstance(symbol, StringLiteral):
             continue
         for part in symbol.name.split(_SUBSCRIPT):
@@ -132,8 +132,9 @@ def parse_state_for(expression: sp.Basic, context: Context) -> ParseState:
     """
     state = ParseState(input_base=context.input_base)
     # Every symbol, not only the free ones: the index of a sum and the
-    # variable of a limit have to lex as themselves too.
-    for symbol in expression.atoms(sp.Symbol):
+    # variable of a limit have to lex as themselves too. A declared nonscalar
+    # is a `MatrixSymbol` and no `Symbol`, and its name has to lex as well.
+    for symbol in expression.atoms(sp.Symbol, sp.MatrixSymbol):
         if isinstance(symbol, StringLiteral):
             continue
         for part in symbol.name.split(_SUBSCRIPT):

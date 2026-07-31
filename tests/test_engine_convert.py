@@ -23,6 +23,7 @@ from rederive.engine.computing import (
 )
 from rederive.engine.context import Angle, Precision
 from rederive.engine.to_sympy import (
+    DIMENSION,
     FUNCTIONS,
     Assign,
     Declare,
@@ -184,9 +185,20 @@ def test_a_subscript_on_a_matrix_selects_a_row():
     assert convert("[[1, 2], [3, 4]] SUB 2") == sp.Matrix(1, 2, [3, 4])
 
 
-def test_a_transpose_of_a_matrix_is_a_matrix_and_of_anything_else_is_inert():
+def test_a_transpose_of_a_matrix_is_a_matrix_and_of_a_scalar_is_the_scalar():
+    # 8.5 p.205: the transpose of a scalar is the scalar, and everything not
+    # declared nonscalar is one. What is no expression at all keeps the head.
     assert convert("[[1, 2], [3, 4]]`") == sp.Matrix([[1, 3], [2, 4]])
-    assert convert("a`") == Transposed(sp.Symbol("a", real=True))
+    assert convert("a`") == sp.Symbol("a", real=True)
+    assert convert("a``") == sp.Symbol("a", real=True)
+    assert convert("(x = 1)`") == Transposed(sp.Eq(sp.Symbol("x", real=True), 1))
+
+
+def test_a_transpose_of_a_declared_nonscalar_is_held_as_one():
+    nonscalar = Context(domains={"a": Domain(DomainKind.NONSCALAR)})
+    matrix = sp.MatrixSymbol("a", DIMENSION, DIMENSION)
+    assert convert("a`", nonscalar) == matrix.T
+    assert convert("a``", nonscalar) == matrix
 
 
 def test_a_dot_product_of_vectors_is_a_number():
@@ -525,7 +537,7 @@ UNCHANGED = [
     "x SUB 1",
     "x SUB (i + 1)",
     "(x + 1) SUB 2",
-    "a`",
+    "(x = 1)`",
     "a . b",
     "±x",
     '"note"',

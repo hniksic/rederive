@@ -988,6 +988,71 @@ def test_vectors_and_matrices(text, expected):
     assert simp(text) == expected
 
 
+# -- declared nonscalars ------------------------------------------------------
+
+NONSCALAR = declared(*(f"{name} :epsilon Nonscalar" for name in "abcd"))
+
+#: What a declared nonscalar is worth past the nine rules section 8.8 states.
+#: Every one of these comes from the original and none of them is in the manual.
+NONSCALARS = [
+    # 8.4: multiplication between two matrices is the matrix product, however
+    # it was written.
+    ("a*b", "a . b"),
+    # A matrix beside its own inverse is left exactly as it was written. There
+    # is no notation for an identity matrix of unknown dimension, so an answer
+    # holding one could not be shown at all.
+    ("a . a^-1", "a . a^-1"),
+    ("a^-1 . a", "a^-1 . a"),
+    # A longer product nests to the right, and the parentheses are printed.
+    # `a . (b . c)` is the fixed point; `(a . b) . c` is not.
+    ("((a . b) . c) . d", "a . (b . (c . d))"),
+    ("a . b . c . d", "a . (b . (c . d))"),
+    ("a . (b . c)", "a . (b . c)"),
+    # Which is the associativity rule of 8.8, seen from the other side.
+    ("a . (b . c) - (a . b) . c", "0"),
+    # The determinant of a product, which the manual states only for an
+    # inverse.
+    ("DET(a . b)", "DET(a)*DET(b)"),
+    ("TRACE(a + b)", "TRACE(a) + TRACE(b)"),
+    # Distribution reaches inside a longer product too.
+    ("a . (b + c) . a", "a . (b . a) + a . (c . a)"),
+    # A scalar commutes with everything, so a negated product needs no
+    # parentheses and a difference of two of them reads like any other sum.
+    ("a . b - b . a", "a . b - b . a"),
+    ("-(a . b)", "-a . b"),
+    # Dividing by a matrix is multiplying by its inverse, that being the only
+    # reading the notation has for it.
+    ("1/a", "a^-1"),
+    ("x/a", "x*a^-1"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), NONSCALARS, ids=str)
+def test_the_algebra_of_a_declared_nonscalar(text, expected):
+    assert simp(text, NONSCALAR) == expected
+
+
+def test_a_scalars_transpose_collapses_at_the_first_backquote():
+    # 8.5: the transpose of a scalar is the scalar, and everything no
+    # declaration calls nonscalar is one.
+    assert simp("x`") == "x"
+    assert simp("x``") == "x"
+    assert simp("(x + y)`") == "x + y"
+    # A nonscalar's does not, and takes two to come back.
+    assert simp("a`", NONSCALAR) == "a`"
+    assert simp("a``", NONSCALAR) == "a"
+
+
+def test_a_default_domain_of_nonscalar_does_not_make_every_variable_a_matrix():
+    # `default :epsilon Nonscalar` widens the domain of everything at once,
+    # and everything includes the argument of every function: a matrix there
+    # would convert and mean nothing. So the default is worth its assumptions
+    # and not the shape a declared name gets.
+    default = declared("default :epsilon Nonscalar")
+    assert simp("SIN(x)", default) == "SIN(x)"
+    assert simp("x . y", default) == "x . y"
+
+
 #: Row echelon form, characteristic polynomial and eigenvalues: the manual's own
 #: examples, and the argument forms each of the three accepts.
 LINEAR_ALGEBRA = [

@@ -46,6 +46,7 @@ from rederive.syntax.names import BUILTIN_FUNCTIONS
 
 __all__ = [
     "COMMAND_HEADS",
+    "DIMENSION",
     "Antidifference",
     "Antiquotient",
     "Approx",
@@ -81,6 +82,17 @@ COMMAND_HEADS = ("EXPAND", "FACTOR", "SOLVE", "RATE")
 #: legitimate work - `2^1000000` is under it, and `10000!` is a power of
 #: nothing - and far below what makes a machine swap.
 POWER_BITS = 1 << 24
+
+
+#: The dimension every declared nonscalar has. A nonscalar is a `MatrixSymbol`,
+#: which needs a shape, and one shared square shape is the only one that lets
+#: `a . b` be built at all - two matrices multiply only where their dimensions
+#: agree, and a declaration says nothing about dimensions. A `Dummy` rather than
+#: a name, because it must not be a variable: `Symbol("n")` would be the user's
+#: own `n`, and substituting `n := 3` would silently reshape every matrix in the
+#: worksheet. It stays out of `free_symbols`, so nothing that counts variables
+#: sees it either.
+DIMENSION = sp.Dummy("n", positive=True, integer=True)
 
 
 # -- inert heads ------------------------------------------------------------
@@ -403,7 +415,9 @@ class _Converter:
             case Kind.SUB:
                 return self._sub(node)
             case Kind.ABS:
-                return sp.Abs(self.convert(node.children[0]))
+                # The bars and the call are one head, so that what one of them
+                # declines to make of a matrix the other declines too.
+                return self.call("ABS", [self.convert(node.children[0])])
             case Kind.CALL | Kind.APPLY:
                 return self.call(str(node.children[0].value), self._children(node)[1:])
             case Kind.FUNCPOW:
@@ -458,11 +472,24 @@ class _Converter:
 
         A degenerate interval declares a value rather than a range, so `x
         :epsilon Real [7, 7]` makes `x` the number 7.
+
+        A name declared nonscalar is a matrix, which is what section 8.8's
+        algebra is the algebra of: transposition reverses a product, an inverse
+        reverses one, and a determinant of an inverse is a reciprocal. Sympy
+        knows all of that about a `MatrixSymbol` and none of it about a symbol
+        that is merely noncommutative, so a declared nonscalar is one.
+
+        Only a name a declaration reaches by name. `default :epsilon Nonscalar`
+        widens the domain of everything at once, and everything includes the
+        argument of every `SIN` - a matrix there converts and means nothing. So
+        the default domain is worth its assumptions and not its shape.
         """
         domain = self.context.domain(name)
         value = self._degenerate(domain)
         if value is not None:
             return value
+        if domain.kind is DomainKind.NONSCALAR and name in self.context.domains:
+            return sp.MatrixSymbol(name, DIMENSION, DIMENSION)
         return sp.Symbol(name, **self.assumptions(domain))
 
     def assumptions(self, domain: Domain) -> dict[str, bool]:
@@ -545,18 +572,25 @@ class _Converter:
         Multiplication of two vectors is the dot product where the shapes
         leave no other reading, which is why a run that sympy will not
         multiply is folded factor by factor rather than abandoned.
+
+        A run holding a declared nonscalar is folded that way from the start:
+        section 8.4 says `a*b` is the matrix product where `a` and `b` are
+        matrices, and `_dot` is where that product is built.
         """
         factors = self._children(node)
-        try:
-            return sp.Mul(*factors)
-        except Exception:
-            pass
+        if not any(_symbolic_matrix(factor) for factor in factors):
+            try:
+                return sp.Mul(*factors)
+            except Exception:
+                pass
         result = factors[0]
         for factor in factors[1:]:
             result = self._times(result, factor)
         return result
 
     def _times(self, left: sp.Basic, right: sp.Basic) -> sp.Basic:
+        if _symbolic_matrix(left) or _symbolic_matrix(right):
+            return self._dot(left, right)
         try:
             return left * right
         except Exception:
@@ -566,6 +600,11 @@ class _Converter:
         left, right = self._children(node)
         match str(node.value):
             case "/":
+                # Dividing by a matrix is multiplying by its inverse, which is
+                # the only reading the notation has for it. Sympy declines the
+                # division itself.
+                if _symbolic_matrix(right):
+                    return self._times(left, _matrix_power(right, sp.Integer(-1)))
                 try:
                     return left / right
                 except Exception:
@@ -573,6 +612,8 @@ class _Converter:
             case "^":
                 if _explodes(left, right):
                     return Power(left, right)
+                if _symbolic_matrix(left):
+                    return _matrix_power(left, right)
                 try:
                     return left**right
                 except Exception:
@@ -592,7 +633,13 @@ class _Converter:
         have to be, and what comes back is flat again: the matrix's rows dotted
         with the vector, one number each. A column written as a column keeps
         its shape instead, `[[2], [3]]` being a matrix and not a vector.
+
+        A declared nonscalar is a matrix whose elements nobody knows, and the
+        product of two of those is symbolic: sympy holds it and rewrites it by
+        the rules of section 8.8.
         """
+        if _symbolic_matrix(left) or _symbolic_matrix(right):
+            return _symbolic_product(left, right)
         if isinstance(left, sp.MatrixBase) and isinstance(right, sp.MatrixBase):
             try:
                 if left.rows == 1 and right.rows == 1:
@@ -619,6 +666,14 @@ class _Converter:
         return operand
 
     def _postop(self, node: Node) -> sp.Basic:
+        """`u!`, `u%` and ``u` ``.
+
+        Section 8.5: the transpose of a scalar is the scalar, so ``x` `` is `x`
+        wherever `x` is one - which is everything not declared nonscalar. A
+        matrix's transpose is the matrix transposed, and sympy does both. What
+        is neither - an inert head, a relation - keeps the operator as it was
+        written.
+        """
         operand = self.convert(node.children[0])
         match str(node.value):
             case "!":
@@ -627,7 +682,10 @@ class _Converter:
                 return operand / 100
         if isinstance(operand, sp.MatrixBase):
             return operand.T
-        return Transposed(operand)
+        if _symbolic_matrix(operand):
+            return sp.Transpose(operand).doit()
+        collapsed = _transposed_scalar(operand)
+        return Transposed(operand) if collapsed is None else collapsed
 
     def _sub(self, node: Node) -> sp.Basic:
         """Element access on a vector, a subscripted variable otherwise.
@@ -822,6 +880,98 @@ class _Converter:
         return value
 
 
+def _symbolic_product(left: sp.Basic, right: sp.Basic) -> sp.Basic:
+    """`u . v` where one side at least is a matrix nobody knows the elements of.
+
+    Sympy's own product is what does most of section 8.8: it flattens a run of
+    them, so `(a . b) . c` and `a . (b . c)` are the one expression, and it
+    knows the rules that reverse a product under transposition and under
+    inversion.
+
+    The one thing it does that Derive does not is cancel a matrix against its
+    own inverse. `a . a^-1` comes back from the original exactly as it was
+    written - the identity of an unknown dimension is not something the
+    notation can spell, so an answer holding one could not be shown at all.
+    Where the factors would cancel the product is built unevaluated instead,
+    which leaves it written as it stands and cancels nothing later either.
+    """
+    factors = [*_matrix_factors(left), *_matrix_factors(right)]
+    try:
+        if _cancelling(factors):
+            return sp.MatMul(*factors)
+        return left * right
+    except Exception:
+        return Dot(left, right)
+
+
+def _transposed_scalar(value: sp.Basic) -> sp.Basic | None:
+    """`value` where its transpose is itself, None where that is not settled.
+
+    Section 8.5 says the transpose of a scalar is the scalar, and sympy is
+    what decides which quantities are scalars. What it will not decide it
+    hands back as a transpose of its own, and that is no answer: an inert head
+    is no more a scalar than it is a matrix, so `VECTOR(u, i, 1, n)`` keeps
+    the operator it was written with.
+    """
+    if not isinstance(value, sp.Expr):
+        return None
+    try:
+        transposed = sp.Transpose(value).doit()
+    except Exception:
+        return None
+    return None if isinstance(transposed, sp.Transpose) else transposed
+
+
+def _matrix_power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
+    """`u^n` where `u` is a matrix nobody knows the elements of.
+
+    A zero exponent is the identity matrix, and that is one thing the notation
+    cannot write down: an identity of unknown dimension has no spelling, so the
+    power is kept as it was authored rather than answered with something
+    unshowable. Everything else is sympy's, which is where `(a . b)^-1` becomes
+    `b^-1 . a^-1`.
+    """
+    if exponent == 0:
+        return sp.MatPow(base, exponent)
+    try:
+        return base**exponent
+    except Exception:
+        return sp.MatPow(base, exponent)
+
+
+def _matrix_factors(value: sp.Basic) -> list[sp.Basic]:
+    """A product's factors, so that a run of them is folded flat."""
+    return list(value.args) if isinstance(value, sp.MatMul) else [value]
+
+
+def _symbolic_matrix(value: sp.Basic) -> bool:
+    """Whether `value` is a matrix held as an expression, not as its elements.
+
+    A matrix written out is both a `MatrixBase` and, when it is immutable, a
+    `MatrixExpr`, and everything written out is worked out rather than kept
+    symbolic. What is left is what has no elements to work with: a declared
+    nonscalar and whatever is built over one.
+    """
+    return isinstance(value, sp.MatrixExpr) and not isinstance(value, sp.MatrixBase)
+
+
+def _cancelling(factors: Sequence[sp.Basic]) -> bool:
+    """Whether these factors hold a matrix beside its own inverse.
+
+    Read off the exponents rather than off adjacency, `a . b . a^-1` being a
+    product sympy cancels too once it has sorted what commutes.
+    """
+    exponents: dict[sp.Basic, sp.Basic] = {}
+    for factor in factors:
+        base, exponent = (
+            factor.args if isinstance(factor, sp.MatPow) else (factor, sp.S.One)
+        )
+        if not _symbolic_matrix(base):
+            continue
+        exponents[base] = exponents.get(base, sp.S.Zero) + exponent
+    return any(total == 0 for total in exponents.values())
+
+
 def _explodes(base: sp.Basic, exponent: sp.Basic) -> bool:
     """Whether `base^exponent` is a number too big to be worth building.
 
@@ -881,7 +1031,21 @@ def _one(args: list) -> sp.Basic:
 
 
 def _direct(func: Callable[..., sp.Basic]) -> Handler:
-    return lambda conv, args: func(*args)
+    """A head that is its sympy counterpart applied to its arguments.
+
+    Not over a matrix nobody knows the elements of. Sympy answers `ABS(a)`
+    there with the square root of `a . CONJ(a)` that defines it and `RE(a)`
+    with the half sum of `a` and its conjugate that defines it, which is true,
+    is no simplification, and is written with heads the notation has no
+    spelling for. Such a call comes back as it was written.
+    """
+
+    def handler(conv: _Converter, args: list) -> sp.Basic:
+        if any(_symbolic_matrix(argument) for argument in args):
+            raise TypeError("not a scalar")
+        return func(*args)
+
+    return handler
 
 
 def _trig(func: Callable[..., sp.Basic]) -> Handler:
@@ -1782,11 +1946,23 @@ def _iterated_limit(args: list) -> sp.Basic:
 
 
 def _determinant(conv: _Converter, args: list) -> sp.Basic:
-    return _matrix(_one(args)).det()
+    """`DET(u)`: the number, or what section 8.8 says a symbolic one is worth.
+
+    A matrix of numbers has a determinant to work out. A matrix nobody knows
+    the elements of has the identities instead - `DET(a^-1)` is `1/DET(a)` and
+    `DET(a . b)` is `DET(a)*DET(b)` - and sympy knows both.
+    """
+    value = _one(args)
+    if _symbolic_matrix(value):
+        return sp.Determinant(value).doit()
+    return _matrix(value).det()
 
 
 def _trace(conv: _Converter, args: list) -> sp.Basic:
-    return _matrix(_one(args)).trace()
+    value = _one(args)
+    if _symbolic_matrix(value):
+        return sp.Trace(value).doit()
+    return _matrix(value).trace()
 
 
 def _dimension(conv: _Converter, args: list) -> sp.Basic:

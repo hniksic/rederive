@@ -362,9 +362,16 @@ def _unsolved(expression: sp.Basic, context: Context) -> tuple[sp.Basic, ...]:
     that says exactly what was asked without pretending to have answered it.
     The operator is kept, so an inequality nobody could solve comes back an
     inequality - moving everything to the left of a `<` does not make it an `=`.
+
+    Where the two sides will not even subtract - a matrix set equal to a
+    number - there is no residual to write, and the relation as it stands says
+    as much as is known about it.
     """
     func = expression.func if isinstance(expression, Relational) else sp.Eq
-    residual = normal_form(_residual(expression), context.order)
+    try:
+        residual = normal_form(_residual(expression), context.order)
+    except Exception:
+        return (expression,)
     return (_relation(func, residual, sp.Integer(0)),)
 
 

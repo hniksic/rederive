@@ -260,7 +260,10 @@ INERT = [
     StringLiteral("note"),
     Subscript(x + 1, 2),
     Subscript(x, -1),
-    Transposed(sp.Symbol("a", real=True)),
+    # The transpose of anything sympy will transpose is what sympy makes of
+    # it - a scalar's is the scalar - so the inert head is left holding what is
+    # no expression at all.
+    Transposed(sp.Eq(x, 1)),
     Dot(sp.Symbol("a", real=True), sp.Symbol("b", real=True)),
     InertVector(sp.Matrix(1, 2, [1, 2]), sp.Matrix(1, 1, [3])),
     Logical(sp.Symbol("AND"), sp.Integer(3), sp.Symbol("p", real=True)),

@@ -37,6 +37,13 @@ relations that bound one variable is a range, and a range is written as the
 chain `-2 < x < 2` - which is how the original writes one, how the author line
 reads one back, and how the layout draws one. Everything else keeps its `AND`.
 
+One is written longer. Sympy holds a matrix product flat and the original
+nests it to the right, parentheses and all: `((a . b) . c) . d` comes back
+`a . (b . (c . d))`, which is where the original's own canonical form puts
+them, so `_print_MatMul` writes the nesting rather than the chain. An inverse
+goes with it - there is no `1/u` for a matrix, and `u^-1` is the whole of the
+notation for one.
+
 Of the ordering only the rules the original is recognisable by are ours: terms
 run by descending degree, and a sum does not begin with a minus sign unless
 every term is negated, so that a sum is written `x^2 + c` and `SQRT(3) - 1`.
@@ -76,9 +83,15 @@ from rederive.syntax.names import GREEK_GLYPHS
 # negated product at the `Add` level, so an entry at `Mul` would lose them again
 # in `-x*(a . b)`. Complex infinity is written with the plus-or-minus operator
 # and binds as loosely as one.
+#
+# `MatMul` is the same operator over the matrices sympy does know how to
+# multiply, and sits at `Add` rather than below it: a matrix product is written
+# without parentheses inside a sum - `a . b + a . c` - and with them inside a
+# power or a transpose.
 PRECEDENCE_VALUES.setdefault("PlusMinus", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("ComplexInfinity", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Dot", PRECEDENCE["Add"] - 1)
+PRECEDENCE_VALUES.setdefault("MatMul", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 PRECEDENCE_VALUES.setdefault("Power", PRECEDENCE["Pow"])
 
@@ -199,8 +212,13 @@ def named(expression: sp.Basic) -> sp.Basic:
     Order needs it too: a `Dummy` sorts by its identity where a symbol sorts by
     its name, so a sum holding one is written in one order and reads back in
     another - the answer would settle only on a second pass.
+
+    A matrix's dimensions are the exception. They are never written, so they
+    need no name, and giving one to a declared nonscalar's shape would put a
+    variable on the worksheet that the user could then substitute for.
     """
-    dummies = sorted(expression.atoms(sp.Dummy), key=sp.default_sort_key)
+    shapes = _shapes(expression)
+    dummies = sorted(expression.atoms(sp.Dummy) - shapes, key=sp.default_sort_key)
     if not dummies:
         return expression
     taken = {
@@ -219,6 +237,23 @@ def named(expression: sp.Basic) -> sp.Basic:
         return expression.xreplace(renamed)
     except Exception:
         return expression
+
+
+def _shapes(expression: sp.Basic) -> set[sp.Dummy]:
+    """The invented variables that only give a matrix its dimensions.
+
+    A matrix written out has its dimensions as plain counts; only a symbolic
+    one - a declared nonscalar - carries a variable there.
+    """
+    if not expression.has(sp.MatrixSymbol):
+        return set()
+    return {
+        symbol
+        for matrix in expression.atoms(sp.MatrixSymbol)
+        for dimension in matrix.shape
+        if isinstance(dimension, sp.Basic)
+        for symbol in dimension.atoms(sp.Dummy)
+    }
 
 
 #: One reading of a relation: the variable it is about, which way it goes, and
@@ -365,6 +400,10 @@ class AuthorPrinter(sp.StrPrinter):
         the same way.
         """
         return _plain(self._print_Symbol(expr))
+
+    def _print_MatrixSymbol(self, expr):
+        """A declared nonscalar, written like the variable it is."""
+        return self._print_Symbol(expr)
 
     # -- numbers ------------------------------------------------------------
 
@@ -565,8 +604,61 @@ class AuthorPrinter(sp.StrPrinter):
         `SQRT` of a matrix is one of these, and sympy's own spelling for it is
         `m**(1/2)` - which the grammar reads as a product with an empty factor
         in it, so the answer would come back as a different expression.
+
+        A negative exponent stays on the line. There is no `1/u` for a matrix,
+        `u^-1` being the notation's whole spelling for an inverse, and it is
+        written without parentheses round the exponent: `a^-1`, as the original
+        writes one.
         """
+        if expr.exp.is_Number and expr.exp.is_negative:
+            base = self.parenthesize(expr.base, PRECEDENCE["Pow"])
+            return f"{base}^{self._print(expr.exp)}"
         return self._print_Pow(expr)
+
+    def _print_Inverse(self, expr):
+        """`a^-1`, which is the same power sympy keeps under its own head."""
+        return self._print_MatPow(expr)
+
+    def _print_MatMul(self, expr):
+        """A matrix product, as the dot operator section 8.4 writes one with.
+
+        Derive nests a run of them to the right and prints the parentheses:
+        `((a . b) . c) . d` comes back `a . (b . (c . d))`, and `a . (b . c)`
+        is a fixed point. So a flat product is written that way rather than as
+        the chain `a . b . c` that the left-associating grammar would read
+        differently.
+
+        A scalar coefficient multiplies the whole run, `-2*(a . b)`, and stands
+        in front of it the way it does in any other product. A negated product
+        needs no parentheses: a scalar commutes with everything, so `-a . b`
+        and `-(a . b)` are the one expression, and the shorter spelling is what
+        lets a sum be written `a . b - b . a`.
+        """
+        coefficient, matrices = expr.as_coeff_matrices()
+        if not matrices:
+            return self._print(coefficient)
+        product = self._nested(matrices)
+        if coefficient == 1:
+            return product
+        if coefficient == -1:
+            return f"-{product}"
+        if len(matrices) > 1:
+            product = f"({product})"
+        return f"{self.parenthesize(coefficient, PRECEDENCE['Mul'])}*{product}"
+
+    def _nested(self, matrices) -> str:
+        """A run of matrices as the right-nested chain the original writes."""
+        level = PRECEDENCE["Mul"]
+        text = self.parenthesize(matrices[-1], level)
+        for index in range(len(matrices) - 2, -1, -1):
+            if index < len(matrices) - 2:
+                text = f"({text})"
+            text = f"{self.parenthesize(matrices[index], level)} . {text}"
+        return text
+
+    def _print_Transpose(self, expr):
+        """``u` ``, the same operator the inert head is written with."""
+        return f"{self.parenthesize(expr.arg, PRECEDENCE['Func'])}`"
 
     def _print_exp(self, expr):
         """`#e^u`, never `EXP(u)`: the constant is how the notation spells it."""
@@ -596,6 +688,17 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Heaviside(self, expr):
         """`STEP(u)`. The value at zero is ours, not the author's."""
         return f"STEP({self._print(expr.args[0])})"
+
+    def _print_Determinant(self, expr):
+        """`DET(u)` over a matrix sympy holds rather than works out.
+
+        A head of its own rather than a `Function`, so the name it is written
+        under is this and not `function_name`'s upper-casing.
+        """
+        return f"DET({self._print(expr.arg)})"
+
+    def _print_Trace(self, expr):
+        return f"TRACE({self._print(expr.arg)})"
 
     def _print_Piecewise(self, expr):
         """A case split, as the nested `IF` the notation has for one.

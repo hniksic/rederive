@@ -1146,6 +1146,8 @@ def _as_factorial(argument: sp.Basic) -> sp.Basic:
 
 def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     """Every rewrite the settings select, each kept only if it pays."""
+    if expression.has(sp.MatrixExpr):
+        return _forced(expression, _distributed)
     expression = _by_definition(expression)
     expression = _branch(expression, context)
     expression = _gated(expression, _multiplied_out)
@@ -1168,6 +1170,32 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     expression = _exponentials(expression, context)
     expression = _gated(expression, _denested)
     return _gated(expression, sp.radsimp)
+
+
+def _distributed(expression: sp.Basic) -> sp.Basic:
+    """Every matrix product multiplied over the sums inside it.
+
+    `a . (b + c)` is `a . b + a . c` and `(b + c) . a` is `b . a + c . a`,
+    which section 8.8 states as rules and not as economies: distributing adds
+    an operation, so the gate would decline both, and the manual asks for them
+    anyway. `_complementary_arcs` is forced for the same reason.
+
+    This is the whole of the rewrite stage for an expression holding a matrix,
+    and deliberately so. The rest of it is written for scalars and mangles a
+    matrix rather than simplifying it - `radsimp` hands back a plain product of
+    two matrices, which is no expression sympy can go on working with - and
+    what the rules of section 8.8 do is done by sympy's own construction long
+    before anything here is offered.
+    """
+    return expression.replace(
+        _is_matrix_product, lambda product: product.expand(), simultaneous=False
+    )
+
+
+def _is_matrix_product(expression: sp.Basic) -> bool:
+    return isinstance(expression, sp.MatMul) and any(
+        isinstance(factor, sp.MatAdd) for factor in expression.args
+    )
 
 
 #: The hyperbolics, which are exponentials by 6.5 the way their inverses are
