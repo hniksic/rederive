@@ -48,9 +48,9 @@ those cases exercise the real `.MTH` sources rather than a transcription of them
 
 ## Result
 
-**248 pass, 146 do not**, in about 17 seconds.
+**254 pass, 140 do not**, in about 17 seconds.
 
-The 146 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
+The 140 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
 `tests/test_manual.py`. They run rather than being skipped, so one that starts holding is
 reported as an unexpected pass and can be struck off the list. The suite is therefore
 green, and the manifest is the list of what the manual promises and the engine does not
@@ -71,7 +71,7 @@ rather than in interruptible Python.
 
 Both are now asked through `RemoteEngine` with a 15 second bound, which is the half of
 the program Esc can stop, so they fail saying "no answer in 15 seconds" rather than
-wedging the suite. They are counted among the 146.
+wedging the suite. They are counted among the 140.
 
 ## What the failures are
 
@@ -112,10 +112,7 @@ The expression comes back unchanged.
 - `FIT`, the least squares fit of section 6.10, in all three of the manual's examples.
 - The five financial functions of section 6.12.
 - `RANDOM`.
-- `LIM` over a vector of variables; `SUM` and `PRODUCT` over a vector of index values;
-  the antiquotient form of `PRODUCT`.
-- Matrix times vector dot products; `CROSS` of two-element vectors; `ELEMENT` with a
-  vector index.
+- The antiquotient form of `PRODUCT`, and the antidifference form of `SUM`.
 - All nine of the nonscalar algebra rules of section 8.8.
 - Boolean simplification: `p OR NOT p`, and the `XOR` and `IMP` normal forms.
 - Recursive user functions do not unfold: `FACT(5)` comes back as `5*FACT(4)`.

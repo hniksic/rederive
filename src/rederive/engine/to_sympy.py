@@ -495,6 +495,11 @@ class _Converter:
         one matrix holding it. Everything else conforms or it does not: `n` by
         `m` times `m` by `p` is the matrix product, and shapes that will not
         multiply keep the operator itself, unevaluated.
+
+        A flat vector to the right of a matrix stands for the column it would
+        have to be, and what comes back is flat again: the matrix's rows dotted
+        with the vector, one number each. A column written as a column keeps
+        its shape instead, `[[2], [3]]` being a matrix and not a vector.
         """
         if isinstance(left, sp.MatrixBase) and isinstance(right, sp.MatrixBase):
             try:
@@ -502,6 +507,8 @@ class _Converter:
                     return left.dot(right)
                 if left.cols == right.rows:
                     return left * right
+                if right.rows == 1 and left.cols == right.cols:
+                    return (left * right.T).T
             except Exception:
                 pass
         return Dot(left, right)
@@ -531,11 +538,15 @@ class _Converter:
         return Transposed(operand)
 
     def _sub(self, node: Node) -> sp.Basic:
-        """Element access on a vector, a subscripted variable otherwise."""
+        """Element access on a vector, a subscripted variable otherwise.
+
+        An index that is a vector reaches through as many dimensions as it
+        holds, `m SUB [2, 3]` being `m SUB 2 SUB 3`.
+        """
         base, index = self._children(node)
         if not isinstance(base, sp.MatrixBase):
             return self._subscript(node.children[0], base, index)
-        element = _element(base, index)
+        element = _at(base, index)
         if element is None:
             # An index that is no index yet: the access itself survives.
             return self.opaque("ELEMENT", [base, index])
@@ -1261,21 +1272,42 @@ def _integral(conv: _Converter, args: list) -> sp.Basic:
 def _summation(conv: _Converter, args: list) -> sp.Basic:
     """`SUM(u, k, a, b)`, and `SUM(v)` over the elements of a vector.
 
+    A third argument that is a vector is the values `k` takes, rather than the
+    ends of a range it runs through.
+
     An indefinite `SUM(u, k)` has no sympy object to be, so it stays inert
     until a pipeline knows what to do with it.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Add(*args[0])
+    if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
+        return sp.Add(*_over_values(conv, args))
     expression, index, low, high = args
     return sp.Sum(expression, (index, low, high))
 
 
 def _product(conv: _Converter, args: list) -> sp.Basic:
-    """`PRODUCT(u, k, a, b)`, and `PRODUCT(v)` over a vector's elements."""
+    """`PRODUCT(u, k, a, b)`, and `PRODUCT(v)` over a vector's elements.
+
+    A third argument that is a vector names the values, as it does for `SUM`.
+    """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Mul(*args[0])
+    if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
+        return sp.Mul(*_over_values(conv, args))
     expression, index, low, high = args
     return sp.Product(expression, (index, low, high))
+
+
+def _over_values(conv: _Converter, args: list) -> list[sp.Basic]:
+    """The body of a sum or a product at each value its index is given."""
+    expression, index, values = args
+    if type(index) is not sp.Symbol:
+        raise TypeError("not a variable")
+    return [
+        _retried(conv, expression.subs(index, value))
+        for value in _elements_of(values)
+    ]
 
 
 def _taylor(conv: _Converter, args: list) -> sp.Basic:
@@ -1401,13 +1433,37 @@ def _limit(conv: _Converter, args: list) -> sp.Basic:
     `Calculus Limit` writes for the direction it calls Both, and it writes the
     argument whichever direction was chosen, so the four-argument form is the
     only one that command ever builds.
+
+    A vector of variables against a vector of points is the limits taken one
+    after another, in the order written, which is the form the manual offers
+    for substituting where substitution alone would divide by zero. Iterated
+    and not multivariate: `LIM(u, [x, y], [a, b])` need not agree with
+    `LIM(u, [y, x], [b, a])`, and the manual says so.
     """
+    if isinstance(args[1], sp.MatrixBase):
+        return _iterated_limit(args)
     if len(args) == 3:
         return sp.Limit(*args, dir="+-")
     expression, variable, point, side = args
     if not side:
         return sp.Limit(expression, variable, point, dir="+-")
     return sp.Limit(expression, variable, point, dir="+" if side > 0 else "-")
+
+
+def _iterated_limit(args: list) -> sp.Basic:
+    """`LIM(u, [x, y], [a, b])`: the limit in `x`, and then in `y`.
+
+    The first variable is approached innermost, so that the outer limit is
+    taken of what the inner one came to.
+    """
+    expression, variables, points = args
+    names = _elements_of(variables)
+    values = _elements_of(points)
+    if len(names) != len(values):
+        raise ValueError("not a point for every variable")
+    for name, value in zip(names, values, strict=True):
+        expression = sp.Limit(expression, name, value, dir="+-")
+    return expression
 
 
 def _determinant(conv: _Converter, args: list) -> sp.Basic:
@@ -1437,6 +1493,9 @@ def _element_of(conv: _Converter, args: list) -> sp.Basic:
 
     A vector of relations is a vector too, and taking one out of it is how the
     shipped ODE library reads a solution: `RHS((SOLVE(z, y)) SUB 1)`.
+
+    An index that is itself a vector is the indices in turn, so that
+    `m SUB [2, 3]` reaches what `m SUB 2 SUB 3` reaches.
     """
     if len(args) == 2:
         element = _at(args[0], args[1])
@@ -1449,6 +1508,12 @@ def _element_of(conv: _Converter, args: list) -> sp.Basic:
 
 def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
     """One element of a vector however the vector is held."""
+    if isinstance(index, sp.MatrixBase):
+        for step in _elements_of(index):
+            value = _at(value, step)
+            if value is None:
+                return None
+        return value
     if not isinstance(value, InertVector):
         return _element(_matrix(value), index)
     if not isinstance(index, sp.Integer):
@@ -1855,8 +1920,15 @@ def _identity_matrix(conv: _Converter, args: list) -> sp.Basic:
 
 
 def _cross(conv: _Converter, args: list) -> sp.Basic:
-    left, right = args
-    return _matrix(left).cross(_matrix(right))
+    """`CROSS(u, v)` over three elements each, or over two.
+
+    The plane's case is the third component of the space's, the one the other
+    two come to zero in, and it is that number rather than a vector holding it.
+    """
+    left, right = (_matrix(argument) for argument in args)
+    if left.shape == right.shape == (1, 2):
+        return left[0, 0] * right[0, 1] - left[0, 1] * right[0, 0]
+    return left.cross(right)
 
 
 def _row_reduce(conv: _Converter, args: list) -> sp.Basic:

@@ -252,7 +252,6 @@ NOT_YET_HELD = {
     "test_the_least_squares_fit_of_the_manuals_parabola",
     "test_the_least_squares_fit_of_the_manuals_plane",
     "test_the_least_squares_fit_that_is_not_linear_in_its_data_variable",
-    "test_the_limits_of_the_manual[LIM(x^2 + y^2, [x, y], [2, 3])-13]",
     "test_the_manuals_accumulating_fibonacci",
     "test_the_manuals_fibonacci_by_iteration",
     "test_the_manuals_mutual_recursion_written_with_accumulators",
@@ -282,22 +281,15 @@ NOT_YET_HELD = {
     "test_the_series_solution_of_the_manuals_first_order_equation",
     "test_the_series_solution_of_the_manuals_second_order_equation",
     "test_the_sign_of_a_complex_number_is_its_point_on_the_unit_circle",
-    "test_the_sums_and_products_of_the_manual[PRODUCT(k^2, k, [2, 3, "
-    "5, 7, 11])-5336100]",
     "test_the_sums_and_products_of_the_manual[PRODUCT(n^2, n)-(n - 1)!^2]",
     "test_the_sums_and_products_of_the_manual[SUM(1/2^n, n)--2^(1 - n)]",
     "test_the_sums_and_products_of_the_manual[SUM(1/2^n, n, 1, m)-1 - 2^(-m)]",
-    "test_the_sums_and_products_of_the_manual[SUM(k^2, k, [2, 3, 5, 7, 11])-208]",
     "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 0)-0]",
     "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 2)-?]",
     "test_the_three_modes_on_an_expression_worth_one_half",
     "test_the_vector_calculus_of_the_manual[DIV([y^2*z^3, 2*x*y*z^3, "
     "3*x*y^2*z^2])-x*(6*y^2*z + 2*z^3)]",
     "test_the_vector_calculus_of_the_manual[LAPLACIAN(x*y^2*z^3)-x*(6*y^2*z + 2*z^3)]",
-    "test_the_vector_manipulation_functions[[[2, 3, 5], [7, 1, 4]] SUB [2, 3]-4]",
-    "test_the_vector_operations_of_the_manual[CROSS([1, 2], [a, b])-b - 2*a]",
-    "test_the_vector_operations_of_the_manual[[[a, b], [c, d]] . [2, "
-    "3]-[2*a + 3*b, 2*c + 3*d]]",
     "test_the_worked_examples_of_the_number_theory_file[BERNOULLI_POLY("
     "10, x)-(66*x^10 - 330*x^9 + 495*x^8 - 462*x^6 + 330*x^4 - 99*x^2 + 5)/66]",
     "test_the_worked_examples_of_the_number_theory_file[CONVERGENT([2, "

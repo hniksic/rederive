@@ -578,9 +578,17 @@ CALCULUS = [
     ("SUM(1/k^2, k, 1, 5)", "5269/3600"),
     ("SUM(k^2, k, 1, m)", "m^3/3 + m^2/2 + m/6"),
     ("PRODUCT(n^2, n, 1, m)", "m!^2"),
+    # A third argument that is a vector names the values the index takes
+    # instead of the ends of a range, for both heads.
+    ("SUM(k^2, k, [2, 3, 5, 7, 11])", "208"),
+    ("PRODUCT(k^2, k, [2, 3, 5, 7, 11])", "5336100"),
     ("LIM(SIN(x)/x, x, 0)", "1"),
     ("LIM(SIGN(x), x, 0, 1)", "1"),
     ("LIM(SIGN(x), x, 0, -1)", "-1"),
+    # A vector of variables against a vector of points is the limits taken one
+    # after another, which is the substitution `x = 0` alone cannot make.
+    ("LIM(x^2 + y^2, [x, y], [2, 3])", "13"),
+    ("LIM(SIN(x)/x + y, [x, y], [0, 1])", "2"),
     # The order is the maximum degree, and a derivative that simplifies to zero
     # at the expansion point costs a term: this one has no even powers.
     ("TAYLOR(c*SIN(x), x, 0, 6)", "c*x^5/120 - c*x^3/6 + c*x"),
@@ -852,6 +860,19 @@ VECTORS = [
     ("[[1, 2], [3, 4]]`", "[[1, 3], [2, 4]]"),
     ("SUM([1, 2, 3])", "6"),
     ("[[1, 2], [3, 4]] . [[a], [b]]", "[[a + 2*b], [3*a + 4*b]]"),
+    # A flat vector to the right of a matrix is the column it stands for, and
+    # the answer is flat again; written as a column it stays one.
+    ("[[a, b], [c, d]] . [2, 3]", "[2*a + 3*b, 2*c + 3*d]"),
+    ("[2, 3] . [[a, b], [c, d]]", "[2*a + 3*c, 2*b + 3*d]"),
+    # The cross product of two vectors of three elements, and of two of two:
+    # the second is the third component of the first, the one the other two
+    # come to zero in, and it is a number rather than a vector.
+    ("CROSS([1, 2, 3], [a, b, c])", "[2*c - 3*b, 3*a - c, b - 2*a]"),
+    ("CROSS([1, 2], [a, b])", "b - 2*a"),
+    # An index that is a vector reaches through as many dimensions as it holds.
+    ("[[2, 3, 5], [7, 1, 4]] SUB [2, 3]", "4"),
+    ("ELEMENT([[2, 3, 5], [7, 1, 4]], [2, 3])", "4"),
+    ("[[2, 3, 5], [7, 1, 4]] SUB [2]", "[7, 1, 4]"),
     # Shapes that will not multiply keep the operator, unevaluated: better the
     # expression back than a guess at which product was meant.
     ("[[1, 2], [3, 4]] . [1, 2, 3]", "[[1, 2], [3, 4]] . [1, 2, 3]"),
