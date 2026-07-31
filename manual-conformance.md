@@ -48,9 +48,9 @@ those cases exercise the real `.MTH` sources rather than a transcription of them
 
 ## Result
 
-**286 pass, 108 do not**, in about 17 seconds. It was 258 and 136 before the work below.
+**307 pass, 87 do not**, in about 24 seconds. It was 258 and 136 before the work below.
 
-The 108 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
+The 87 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
 `tests/test_manual.py`. They run rather than being skipped, so one that starts holding is
 reported as an unexpected pass and can be struck off the list. The suite is therefore
 green, and the manifest is the list of what the manual promises and the engine does not
@@ -83,33 +83,41 @@ functional gaps.
 
 ### The same value, written differently
 
-- Factor order: `(x - 2)*(x + 2)` for the manual's `(x + 2)*(x - 2)`, and similarly for
-  every other multi-factor result.
-- Argument order under commutative operators: `#e^(w + z)` for `#e^(z + w)`,
-  `#e^w*#e^z` for `#e^z*#e^w`.
-- `ABS(x)` where the manual writes `|x|`; `FLOOR(m/n)` where it writes `FLOOR(m, n)`.
-- `-1/COS(x)^2` for `-TAN(x)^2 - 1`; `1 - 1/2^m` for `1 - 2^(-m)`;
-  `LN(z + SQRT(z^2 + 1))` for `LN(SQRT(z^2 + 1) + z)`.
-- Results that are computed correctly but grouped differently, e.g. BERNOULLI_POLY and
-  EULER_POLY come back expanded where the manual prints them over a common denominator.
+Sums are now written in the order list's order, so what remains here is narrower than it
+was.
 
-The first two are one rule, not a scattering; the original, below, gives it.
+- Factor order in a *product*: `(x - 2)*(x + 2)` for the manual's `(x + 2)*(x - 2)`. Four
+  cases, all differences of squares, and `(x + 2)*(x - 2)*(x + 1)^2` shows the exponent
+  interacts with whatever the rule is. Too little evidence to write one.
+- `ABS(x)` where the manual writes `|x|`. Left alone deliberately: `ABS(ABS(x) - y)` would
+  print `|y - |x||`, which the bars cannot be read back out of.
+- `-1/COS(x)^2` for `-TAN(x)^2 - 1`.
+- The argument of a logarithm: `LN(z + SQRT(z^2 + 1))` for `LN(SQRT(z^2 + 1) + z)`.
+  Ordering that one wants a compound factor to lend its variables outward, and the
+  expansion `(x + 2*y + 1)^3` the manual states wants the opposite. Both cannot hold.
+- Results computed correctly but grouped differently: BERNOULLI_POLY and EULER_POLY come
+  back expanded where the manual gathers over a common denominator, and `NORMAL` gives
+  `1/2 - ERF(...)/2` where the manual writes `(ERF(...) + 1)/2`.
 
 ### Transformations the manual states, not performed
 
-The expression comes back unchanged.
+Most of this list has been written; `ASEC`, `ACSC`, the two-argument `ACOT`, `ACOSH`,
+`ACOTH`, `PERM`, `COMB`, `ERFC`, the two-argument `ERF`, `STEP`, `MIN` and `MAX` all hold
+now, and `MOD` and `MODS` turned out to be the `FLOOR(m, n)` spelling rather than a
+missing rule. `CHI` was already right. What is left is one rule and one caveat.
 
-- `ACOSH` and `ACOTH`, which do become logarithms but not the ones section 6.6 prints:
-  `LN(SQRT(z - 1)*SQRT(z + 1) + z)` for `2*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)`, and
-  `LN(1 + 1/z)/2 - LN(1 - 1/z)/2` for `LN((z + 1)/(z - 1))/2`. The same value, an
-  uncollected form.
-- `ACOT` -> `pi/2 - ATAN`, `ACOS` -> `pi/2 - ASIN`, `ASEC` -> `ACOS(1/z)`,
-  `ACSC` -> `ASIN(1/z)`. Note that the first two and the last two compose into each
-  other: applying both leaves `ASEC(z)` as `pi/2 - ASIN(1/z)`, which is neither of the
-  forms 6.4 prints, so what Derive does with the pair wants checking against the program
-  rather than the page.
-- `PERM`, `COMB`, `ERF(z, w)`, `ERFC`, `NORMAL`.
-- The symbolic forms of `MIN`, `MAX`, `STEP` and `CHI`.
+**`ACOT(z) -> pi/2 - ATAN(z)` is not done, and should not be.** This engine's `ACOT` is
+sympy's odd branch, where `ACOT(-1)` is `-pi/4`; the manual's identity belongs to the
+other branch and is false on the negative reals here. `pipeline.py` already documents
+that divergence as deliberate, with tests asserting `ATAN(t) + ACOT(t)` is `pi*SIGN(t)/2`
+rather than the manual's `pi/2`.
+
+**The five arc rules of 6.4 are a table of equivalences, not a rewrite system.** Applying
+`ACOS -> pi/2 - ASIN` and `ASEC -> ACOS(1/z)` together leaves `ASEC(z)` as
+`pi/2 - ASIN(1/z)`, which is neither form the section prints, and the first answer would
+re-simplify into something else on a second Simplify. The engine keeps `ASIN`, `ACOS` and
+`ATAN` and writes the reciprocal arcs over them, which is what the manual's own printed
+answer `ACOS(1/z)` shows Derive doing.
 
 ### Features that were absent
 
@@ -200,12 +208,14 @@ except where noted.
 - **Operand order.** Authoring preserves what was typed; Simplify sorts. Variables order
   `x`, `y`, `z` first and the rest alphabetically, which is the `*VARIABLE-ORDER*`
   default; a term sorts on its leading variable, not a later one; `NOT` does not move a
-  term, but a negated literal precedes a positive one on a tie. This is the rule behind
-  the first two entries under results written differently.
+  term, but a negated literal precedes a positive one on a tie. Sums are written this way
+  now.
 - **The author line is redrawn, not canonicalised.** `(NOT p) OR (q AND r)` is put up as
-  `NOT p OR q AND r` and `x+y` as `x + y`, but `q OR p` stays `q OR p`. The two precedence
-  cases in the manifest are therefore not a parenthesisation bug: they fail because an
-  entry here hands back the typed string rather than one drawn from its parse tree.
+  `NOT p OR q AND r` and `x+y` as `x + y`, but `q OR p` stays `q OR p`: Derive
+  pretty-prints the line it parsed without reordering it. An entry here now holds what it
+  parsed rather than what was typed. Note that the *screen* was never the problem - the
+  layout has always been drawn from the tree - it was the textual record behind Ctrl-C,
+  F3, splicing and Transfer Save that echoed the keystrokes.
 - **Nonscalars.** `a . a^-1` does not simplify at all, so no identity matrix of unknown
   dimension ever arises. An undeclared variable's transpose collapses at the first
   backquote: `x`` is `x`. The original right-nests `((a . b) . c) . d` to
@@ -226,7 +236,21 @@ except where noted.
 - **Function terms do not sort alphabetically.** The observed chain is
   `ABS < ASIN < ATAN < LN < COS < TAN < SIN`, an internal ordinal rather than a rule that
   can be read off a name, and the variable outranks the head: all `t` terms precede all
-  `u` terms whatever the function. This is what the third `FIT` example waits on.
+  `u` terms whatever the function. Those seven are placed; every other head sorts behind
+  them alphabetically, which is an assumption and marked as one in the code.
+
+### What is still worth asking the program
+
+One case contradicts the readings above rather than merely going unmet.
+COVARIANT_METRIC_TENSOR is printed `[[w^2 + v^2, ...]]` in section 9, but `w + a -> a + w`
+shows `w` is off the order list and `b + a -> a + b` shows off-list names go
+alphabetically, which together give `v^2 + w^2`. One of the three readings is not the rule
+it looks like, and the tensor case was left failing rather than fitted with a rule made up
+for it. Worth settling against the original.
+
+Two smaller ones, both untested here: whether `(a . b)/2` is printed that way or as
+`(1/2)*(a . b)`, and what governs factor order in a product, where the four cases in the
+suite are all differences of squares and settle nothing on their own.
 
 ## Collected sessions
 
