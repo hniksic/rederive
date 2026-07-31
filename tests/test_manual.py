@@ -153,7 +153,6 @@ NOT_YET_HELD = {
     "COS(w)-(SIN(z - w) + SIN(z + w))/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
     "SIN(w)-(COS(z - w) - COS(z + w))/2]",
-    "test_a_random_integer_lands_inside_the_range_it_names",
     "test_a_reversed_characteristic_interval_changes_sign",
     "test_a_sine_of_a_sixteenth_of_pi_expands_into_radicals",
     "test_a_singular_matrix_has_no_inverse_to_answer_with",
@@ -171,7 +170,6 @@ NOT_YET_HELD = {
     "test_an_undecidable_condition_keeps_the_whole_conditional",
     "test_and_binds_tighter_than_or",
     "test_approx_takes_the_digits_it_is_given",
-    "test_approximate_mode_gives_the_digits_the_precision_asks_for",
     "test_arithmetic_on_a_whole_equation[(x^2 + 5*x + 6 = 0) - 6-x^2 + 5*x = -6]",
     "test_arithmetic_on_a_whole_equation[4*(x^2 + 5*x + 6 = 0)-4*x^2 + 20*x + 24 = 0]",
     "test_arithmetic_on_a_whole_equation[EXP(LN(x) = 5)-x = #e^5]",
@@ -210,7 +208,6 @@ NOT_YET_HELD = {
     "test_the_algebra_of_declared_nonscalars[DET(a^-1)-1/DET(a)]",
     "test_the_algebra_of_declared_nonscalars[a . (b + c)-a . b + a . c]",
     "test_the_algebra_of_declared_nonscalars[a``-a]",
-    "test_the_balance_on_the_manuals_savings_account",
     "test_the_boolean_operators[p AND (p AND q OR r)-p AND (q OR r)]",
     "test_the_boolean_operators[p IMP q-NOT p OR q]",
     "test_the_boolean_operators[p OR NOT p-true]",
@@ -268,7 +265,6 @@ NOT_YET_HELD = {
     "3*a*x-2*x^2 - 3*a*x + 5*y^3]",
     "test_the_pair_of_the_manuals_nonlinear_system_that_solve_can_take",
     "test_the_partial_fraction_expansion_of_the_manual",
-    "test_the_payment_on_the_manuals_car_loan",
     "test_the_picard_iterate_of_the_manuals_equation",
     "test_the_piecewise_functions[MAX(x, y)-|x - y|/2 + (x + y)/2]",
     "test_the_piecewise_functions[MIN(x, y)-(x + y)/2 - |x - y|/2]",
@@ -430,8 +426,8 @@ def test_an_exact_power_of_a_fraction_is_the_whole_ratio():
 # does in the program and the way section 3.9 says it does: approximate
 # arithmetic is read in the style that suits it.
 APPROXIMATE_6 = Context().with_precision(Precision.APPROXIMATE)
-APPROXIMATE_10 = Context(precision_digits=10).with_precision(Precision.APPROXIMATE)
-APPROXIMATE_100 = Context(precision_digits=100).with_precision(Precision.APPROXIMATE)
+APPROXIMATE_10 = Context().with_precision(Precision.APPROXIMATE, 10)
+APPROXIMATE_100 = Context().with_precision(Precision.APPROXIMATE, 100)
 MIXED = Context().with_precision(Precision.MIXED)
 
 

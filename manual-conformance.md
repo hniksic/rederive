@@ -48,9 +48,9 @@ those cases exercise the real `.MTH` sources rather than a transcription of them
 
 ## Result
 
-**254 pass, 140 do not**, in about 17 seconds.
+**258 pass, 136 do not**, in about 17 seconds.
 
-The 140 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
+The 136 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
 `tests/test_manual.py`. They run rather than being skipped, so one that starts holding is
 reported as an unexpected pass and can be struck off the list. The suite is therefore
 green, and the manifest is the list of what the manual promises and the engine does not
@@ -62,6 +62,13 @@ built without letting the precision carry the notation with it (section 3.9 says
 Precision moves it, and `Context.with_precision` implements that), and plus-or-minus was
 spelled `+-` where both the manual and the program write `±`.
 
+The first of those was fixed only halfway: `APPROXIMATE_10` and `APPROXIMATE_100` set the
+precision digits in the constructor and then asked `with_precision` for none, which
+carries the notation digits it was given rather than the ones already standing. Both
+contexts therefore showed six digits whatever they computed to. Passing the digits to
+`with_precision`, the way Options Precision does, is what three of the cases above were
+waiting for.
+
 ## Two of the manual's own sessions do not terminate
 
 `ITERATES(#e^(-x/20), x, 1)` approximated (10.1) and `INT_SUBST(t·SIN(t²), t, t²)` from
@@ -71,7 +78,7 @@ rather than in interruptible Python.
 
 Both are now asked through `RemoteEngine` with a 15 second bound, which is the half of
 the program Esc can stop, so they fail saying "no answer in 15 seconds" rather than
-wedging the suite. They are counted among the 140.
+wedging the suite. They are counted among the 136.
 
 ## What the failures are
 
@@ -110,8 +117,6 @@ The expression comes back unchanged.
 ### Features that are absent
 
 - `FIT`, the least squares fit of section 6.10, in all three of the manual's examples.
-- The five financial functions of section 6.12.
-- `RANDOM`.
 - The antiquotient form of `PRODUCT`, and the antidifference form of `SUM`.
 - All nine of the nonscalar algebra rules of section 8.8.
 - Boolean simplification: `p OR NOT p`, and the `XOR` and `IMP` normal forms.

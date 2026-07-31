@@ -458,7 +458,7 @@ async def test_ordering_takes_a_new_list_and_records_nothing(app):
 
 
 async def test_a_line_that_is_not_variables_is_refused(app):
-    """Derive stores `q 2 + w` verbatim; reproducing that would be a bug."""
+    """The original stores `q 2 + w` verbatim; reproducing that would be a bug."""
     async with app.run_test() as pilot:
         await manage(pilot, "o", *"q 2 + w", "enter")
         assert app.session.order == ("x", "y", "z")

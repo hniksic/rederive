@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 import time
 import warnings
+from fractions import Fraction
 
 import pytest
 from sexpr import to_sexpr
@@ -686,7 +687,8 @@ def test_an_antiderivative_is_written_with_no_constant_added():
 
     Which one is printed is a choice, and the original's choice is the one with
     nothing constant added. The original answers this line - the quadratic
-    formula's root integrated over its own middle coefficient - with
+    formula's
+    root integrated over its own middle coefficient - with
 
         b*(SQRT(b^2 - 4*a*c) - b)/(4*a) - c*LN(SQRT(b^2 - 4*a*c) + b)
 
@@ -719,9 +721,9 @@ def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
 
     It writes each one as the logarithm it is, `ASINH(x)` authored on its own
     coming back `LN(SQRT(x^2 + 1) + x)`. The cases of this integral are an
-    `ASINH` where `a` is nonzero and that same logarithm elsewhere, and the
-    arc is the shorter of the two; the original answers with the logarithm,
-    and so does this.
+    `ASINH` where `a` is nonzero and that same logarithm elsewhere, and the arc
+    is the shorter of the two; the original answers with the logarithm, and so
+    does this.
     """
     assert simp("INT(SQRT(x^2 + a^2), x)") == (
         "a^2*LN(x + SQRT(a^2 + x^2))/2 + x*SQRT(a^2 + x^2)/2"
@@ -735,8 +737,8 @@ def test_a_case_split_between_two_antiderivatives_is_kept():
     which is every `a` but zero, and at zero the integrand is `x^2*COS(b)`. So
     the case that holds unconditionally is the one the split has to be checked
     against, and here it is `x^3*COS(b)/3`, which is no antiderivative anywhere
-    else. The original prints the first case alone; the conditional answer is
-    this engine's, and it is the more informative of the two.
+    else. The original prints the first case alone; the conditional answer is this
+    engine's, and it is the more informative of the two.
     """
     assert simp("INT(x^2*COS(a*x^3 + b), x)") == (
         "IF(a /= 0, SIN(a*x^3 + b)/(3*a), x^3*COS(b)/3)"
@@ -834,6 +836,105 @@ INDICATOR_AND_NORMAL = [
 @pytest.mark.parametrize(("text", "expected"), INDICATOR_AND_NORMAL, ids=str)
 def test_the_indicator_and_the_normal_distribution(text, expected):
     assert simp(text) == expected
+
+
+# -- the financial functions --------------------------------------------------
+
+#: Section 6.12's annuity, solved for one of its own each time. The original
+#: answers every one of these.
+ANNUITIES = [
+    # The four closed forms, in the arrangement the original writes them in.
+    ("PMT(i, n, v)", "i*v*(i + 1)^n/(1 - (i + 1)^n)"),
+    ("PMT(i, n, v, f, t)", "i*(v*(i + 1)^n + f)/((1 - (i + 1)^n)*(i*t + 1))"),
+    ("NPER(i, p, v, f, t)", "LN((p*(i*t + 1) - f*i)/(i*(p*t + v) + p))/LN(i + 1)"),
+    # Undefined where there is no interest to compound, the payment term
+    # dividing by the rate. The original answers `?` and takes no limit to
+    # rescue it.
+    ("PMT(0, 10, 1000)", "?"),
+    # Too few arguments to say what the contract is, or more than the function
+    # takes, and the call is worth no more than itself.
+    ("PMT(3)", "PMT(3)"),
+    ("PMT(1, 2, 3, 4, 5, 6)", "PMT(1, 2, 3, 4, 5, 6)"),
+    # The rate is the one of the five that is no closed form. It is searched
+    # for between bounds instead, and the bounds are part of the answer: the
+    # original writes in the [0, 1] it looks between when it is given none.
+    ("RATE(n, p, v)", "RATE(n, p, v, 0, 0, 0, 1)"),
+    ("RATE(n, p, v, f, t)", "RATE(n, p, v, f, t, 0, 1)"),
+    ("RATE(36, -300, 9000)", "402/39383"),
+    ("RATE(36, -300, 9000, 0, 0, 0, 1)", "402/39383"),
+    # An interval holding no rate answers nothing, and a search that finds
+    # nothing leaves the call it was asked as. Bounds are wanted in pairs: six
+    # arguments name a lower bound and no upper one, which is no contract.
+    ("RATE(36, -300, 9000, 0, 0, 0.5, 1)", "RATE(36, -300, 9000, 0, 0, 1/2, 1)"),
+    ("RATE(3)", "RATE(3)"),
+    ("RATE(1, 2, 3, 4, 5, 6)", "RATE(1, 2, 3, 4, 5, 6)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), ANNUITIES, ids=str)
+def test_the_financial_functions(text, expected):
+    assert simp(text) == expected
+
+
+#: 6.12's annuity with one of its own left to be filled in, which is what each
+#: financial function computes. Whichever one goes back in, the equation holds.
+ANNUITY = "{0}*(1 + i)^n + {1}*(1 + i*t)*((1 + i)^n - 1)/i + {2}"
+
+
+@pytest.mark.parametrize(
+    "equation",
+    [
+        ANNUITY.format("PVAL(i, n, p, f, t)", "p", "f"),
+        ANNUITY.format("v", "p", "FVAL(i, n, p, v, t)"),
+        ANNUITY.format("v", "PMT(i, n, v, f, t)", "f"),
+    ],
+    ids=("PVAL", "FVAL", "PMT"),
+)
+def test_a_contract_is_worth_what_the_annuity_equation_says(equation):
+    assert simp(equation) == "0"
+
+
+def test_a_contract_approximates_to_the_digits_the_original_gives():
+    """Four contracts the original answers, which the manual gives no example of."""
+    ten = Context().with_precision(Precision.APPROXIMATE, 10)
+    assert simp("PVAL(5%/12, 24, -200, 1000, 1)", ten) == "3672.749170"
+    assert simp("FVAL(5%/12, 24, -200, 1000, 1)", ten) == "3953.231038"
+    assert simp("NPER(5%/12, -200, 4000, 1000, 1)", ten) == "25.77406754"
+    assert simp("RATE(10, 100, -500)", ten) == "0.1509841447"
+
+
+def test_a_random_number_is_a_number():
+    """Section 6.13's four cases, asked for what kind of answer each gives.
+
+    What is drawn cannot be pinned and is not tried: the seed is the one thing
+    here with an answer of its own, and what the rest have to be is numbers of
+    the right kind in the right place.
+    """
+    assert simp("RANDOM(6)") in {"0", "1", "2", "3", "4", "5"}
+    assert 0 <= Fraction(simp("RANDOM(1)")) < 1
+    assert simp("RANDOM(-5)") == "5"
+    assert Fraction(simp("RANDOM(0)")) >= 0
+    # A whole number of outcomes or nothing, and nothing is the call itself.
+    assert simp("RANDOM(6.5)") == "RANDOM(13/2)"
+    assert simp("RANDOM(x)") == "RANDOM(x)"
+
+
+def test_a_seeded_generator_draws_what_it_drew_before():
+    seeded = [simp("RANDOM(-20)")] + [simp("RANDOM(1000)") for _ in range(5)]
+    again = [simp("RANDOM(-20)")] + [simp("RANDOM(1000)") for _ in range(5)]
+    assert seeded == again
+
+
+def test_a_searched_rate_is_as_close_as_the_search_it_came_from():
+    """A rate is bisected for, so the last digits belong to the search.
+
+    They are not the original's: it answers `0.01020744896` where this answers
+    `0.01020744900`, and moving the bounds moves its answer too - between
+    `0.005` and `0.02` it says `0.01020744901`. What both agree on is the rate,
+    to every digit the equation itself decides.
+    """
+    ten = Context().with_precision(Precision.APPROXIMATE, 10)
+    assert simp("RATE(36, -300, 9000)", ten).startswith("0.010207449")
 
 
 def test_plus_or_minus_simplifies_its_argument_and_seals_it_in():
@@ -1588,9 +1689,7 @@ def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
 #: as it went in, so that a worksheet holding one is not damaged by simplifying
 #: it.
 OPAQUE = [
-    "RANDOM(10)",
     "FIT([x, 1], [[1, 2], [3, 4]])",
-    "PMT(1/100, 12, 1000)",
     "MY_FUNCTION(x, 2)",
 ]
 

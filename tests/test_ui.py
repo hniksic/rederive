@@ -1467,7 +1467,8 @@ async def test_a_blank_answer_that_names_nothing_abandons_the_command(app, keys,
 
 # -- Build, which asks for operands and operators until Done ------------------
 #
-# Every screen asserted here was checked against the original.
+# Every screen asserted here was checked against the original, whose versions
+# draw all of them the same way.
 
 
 async def test_build_asks_for_an_operand_then_an_operator_then_another(app):

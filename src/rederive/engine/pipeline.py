@@ -68,6 +68,7 @@ from rederive.engine.to_sympy import (
     COMMAND_HEADS,
     Approx,
     Assign,
+    annuity,
     Declare,
     FunDef,
     InertVector,
@@ -913,8 +914,11 @@ def _is_command(expression: sp.Basic) -> bool:
 
 
 def _command(head: sp.Basic, context: Context) -> sp.Basic:
-    if type(head).__name__ == "SOLVE":
-        return _solve_head(head, context)
+    match type(head).__name__:
+        case "SOLVE":
+            return _solve_head(head, context)
+        case "RATE":
+            return _rate_head(head, context)
     return _factor_head(head, context)
 
 
@@ -958,7 +962,7 @@ def _solve_head(head: sp.Basic, context: Context) -> sp.Basic:
     equation with no solutions gives the empty vector.
 
     `SOLVE(u = v, x, a, b)` searches `[a, b]` numerically. It does so in every
-    precision mode: Derive's help says "if in approximate mode", the shipped
+    precision mode: the original's help says "if in approximate mode", the shipped
     files use it as though it always applied, and always-numeric is both the
     more useful reading and the one that makes the call mean one thing.
     """
@@ -969,6 +973,36 @@ def _solve_head(head: sp.Basic, context: Context) -> sp.Basic:
     if not answers:
         return sp.Matrix(0, 0, [])
     return InertVector(*answers)
+
+
+#: The name the rate is searched for under. Nothing can collide with it: the
+#: search is only run over a contract whose every argument is a number, so the
+#: equation holds no other name at all.
+_RATE = "i"
+
+
+def _rate_head(head: sp.Basic, context: Context) -> sp.Basic:
+    """`RATE(n, p, v, f, t, a, b)`: the rate between `a` and `b` the contract implies.
+
+    The one financial function that is no closed form, and so the one done
+    here rather than in the conversion: it is the bounded `SOLVE` above,
+    applied to the annuity `PVAL` and the rest are read off, and it inherits
+    that search whole - the interval decides which rate is found, and a
+    contract of symbols is one no search can start on.
+
+    Where the interval holds no rate the call stays as it stands, which is
+    what the original leaves behind: `RATE(36, -300, 9000, 0, 0, 0.5, 1)` is
+    worth nothing better than itself.
+    """
+    if not all(argument.is_number for argument in head.args):
+        return head
+    periods, payment, present, future, when, low, high = head.args
+    rate = sp.Symbol(_RATE)
+    equation = sp.Eq(annuity(rate, periods, payment, present, future, when), 0)
+    answers = solutions(equation, context, (_RATE,), (low, high))
+    if len(answers) != 1 or not isinstance(answers[0], Relational):
+        return head
+    return answers[0].rhs
 
 
 def _solved_for(argument: sp.Basic) -> tuple[str, ...]:

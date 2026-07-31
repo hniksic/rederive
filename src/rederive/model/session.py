@@ -1327,7 +1327,8 @@ class Session:
         variable to be ordered alphabetically.
 
         The original takes whatever is typed - `q 2 + w` was stored verbatim -
-        and reproducing that would be a bug rather than fidelity.
+        and
+        reproducing that would be a bug rather than fidelity.
         """
         names: list[str] = []
         for word in text.replace(",", " ").split():

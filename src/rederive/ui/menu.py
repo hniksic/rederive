@@ -180,8 +180,8 @@ EXPAND_AMOUNT = Menu(
 #: The seven Calculus commands. Every word carries its own initial, there
 #: being no clash among them, and every one of them asks the same first two
 #: questions - an expression and a variable - before the one line that is its
-#: own. Derive 6 grew a `Table` command; the DOS releases have no such option
-#: and neither has this.
+#: own. Derive 6 grew a `Table` command; the DOS versions have no such option and
+#: neither has this.
 CALCULUS = Menu(
     "CALCULUS:",
     ("Differentiate", "Integrate", "Limit", "Product", "Sum", "Taylor", "Vector"),

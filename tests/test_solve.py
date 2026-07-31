@@ -369,7 +369,8 @@ def test_a_degenerate_solve_head_mints_an_arbitrary_value():
 
 
 def test_the_four_argument_form_is_numeric_in_every_mode():
-    """Derive's help says "if in approximate mode"; the shipped files use it as
+    """The original's help says "if in approximate mode"; the shipped files use
+    it as
     though it always applied, and always-numeric is what makes the call mean
     one thing. In Exact mode the answer is still an approximate number, and an
     approximate number under Rational notation is written as the ratio it is."""

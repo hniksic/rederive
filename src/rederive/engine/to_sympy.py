@@ -19,6 +19,8 @@ pre-pass: `to_sympy` works on an unsubstituted tree just as well.
 
 from __future__ import annotations
 
+import random
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from fractions import Fraction
@@ -61,12 +63,13 @@ __all__ = [
 ]
 
 #: The heads a conversion deliberately leaves standing for the pipeline to
-#: evaluate: the author-line spellings of Factor, Expand and soLve. Their
+#: evaluate: the author-line spellings of Factor, Expand and soLve, and `RATE`,
+#: which is a bounded soLve of section 6.12's annuity under another name. Their
 #: answers depend on a simplified operand, so they cannot be worked out here,
 #: and a call over one of them cannot be worked out either - `DIMENSION` of a
 #: `SOLVE` is a number nobody knows yet. Such a call stays inert too, and
 #: `reread` is what offers it again once the head inside it is gone.
-COMMAND_HEADS = ("EXPAND", "FACTOR", "SOLVE")
+COMMAND_HEADS = ("EXPAND", "FACTOR", "SOLVE", "RATE")
 
 
 #: How big a number raising to a power may build before the engine declines to
@@ -919,6 +922,146 @@ def _normal(conv: _Converter, args: list) -> sp.Basic:
     mean = rest[0] if rest else sp.Integer(0)
     deviation = rest[1] if len(rest) > 1 else sp.Integer(1)
     return (sp.erf((value - mean) / (deviation * sp.sqrt(2))) + 1) / 2
+
+
+# -- the annuity of section 6.12 ---------------------------------------------
+#
+# `v*(1 + i)^n + p*(1 + i*t)*((1 + i)^n - 1)/i + f = 0` is the contract the
+# financial functions describe: a present value `v` earning a periodic rate `i`
+# over `n` periods against a fixed payment `p`, ending at a future value `f`,
+# where `t` says where in the period the payment falls. Each function below is
+# that equation solved for one of its own.
+#
+# Every one of them divides by the rate, so every one is undefined where there
+# is no rate: `PMT(0, 10, 1000)` is `?`, and the original takes no limit to
+# rescue it.
+#
+# Four of the five are solved for here. The rate is not one of them: no
+# rearrangement isolates `i`, and what the original does instead is search for
+# it, which is why `RATE` fills its arguments in here and is answered by the
+# pipeline, where a solver can be reached.
+
+
+def annuity(
+    rate: sp.Basic,
+    periods: sp.Basic,
+    payment: sp.Basic,
+    present: sp.Basic,
+    future: sp.Basic,
+    when: sp.Basic,
+) -> sp.Basic:
+    """Section 6.12's contract, worth zero when its six terms agree."""
+    return (
+        present * (1 + rate) ** periods
+        + payment * (1 + rate * when) * ((1 + rate) ** periods - 1) / rate
+        + future
+    )
+
+
+def _financial(args: list, count: int) -> list:
+    """The arguments of a financial function, with the ones it lets go filled in.
+
+    The two values a contract can do without default to zero, and so does the
+    time of payment, which is the end of the period. Fewer arguments than say
+    what the contract is, or more than the function takes, and there is nothing
+    to compute: the call stays inert, as any other unreadable one does.
+    """
+    if not 2 <= len(args) <= count:
+        raise TypeError("not a financial contract")
+    return args + [sp.Integer(0)] * (count - len(args))
+
+
+def _present_value(conv: _Converter, args: list) -> sp.Basic:
+    """`PVAL(i, n, p, f, t)`: what the contract is worth now."""
+    rate, periods, payment, future, when = _financial(args, 5)
+    due = payment * (rate * when + 1)
+    return ((due - future * rate) / (1 + rate) ** periods - due) / rate
+
+
+def _future_value(conv: _Converter, args: list) -> sp.Basic:
+    """`FVAL(i, n, p, v, t)`: what the contract will be worth."""
+    rate, periods, payment, present, when = _financial(args, 5)
+    due = payment * (rate * when + 1)
+    grown = (1 + rate) ** periods * (rate * (payment * when + present) + payment)
+    return (due - grown) / rate
+
+
+def _payment(conv: _Converter, args: list) -> sp.Basic:
+    """`PMT(i, n, v, f, t)`: what is paid each period."""
+    rate, periods, present, future, when = _financial(args, 5)
+    growth = (1 + rate) ** periods
+    return rate * (present * growth + future) / ((1 - growth) * (rate * when + 1))
+
+
+def _periods(conv: _Converter, args: list) -> sp.Basic:
+    """`NPER(i, p, v, f, t)`: how many periods it runs for."""
+    rate, payment, present, future, when = _financial(args, 5)
+    due = payment * (rate * when + 1)
+    return sp.log(
+        (due - future * rate) / (rate * (payment * when + present) + payment)
+    ) / sp.log(1 + rate)
+
+
+#: The generator `RANDOM` draws from. Its own rather than the module's, so
+#: that seeding it says something about this program and not about whatever
+#: else in the process wanted a random number.
+_GENERATOR = random.Random()
+
+#: When the program started, which is what `RANDOM(0)` reports the distance
+#: from, and the outcomes a number in [0, 1) is drawn from. The original draws
+#: a rational rather than a decimal - `RANDOM(1)` answers 242469/1540430 - and
+#: a power of two divided out is the same kind of number, reduced the same way.
+_STARTED = time.monotonic()
+_OUTCOMES = 2**32
+
+
+def _random(conv: _Converter, args: list) -> sp.Basic:
+    """`RANDOM(n)`: a pseudo-random number, or the seed one is drawn from next.
+
+    Section 6.13 gives four cases and lets the size of a whole `n` choose
+    between them: above 1 an integer in [0, n), at 1 a number in [0, 1), below
+    0 a seed of `-n` which it answers with, and at 0 a seed taken from the
+    clock, answered with the reading it was taken from. `n` is a whole number
+    of outcomes or it is nothing: `RANDOM(6.5)` chooses no case and stays as it
+    stands.
+
+    One draw per call written, which is where this parts company with the
+    original: a generated vector substitutes into a body already converted, so
+    `VECTOR(RANDOM(6), n, 1, 100)` is one throw shown a hundred times rather
+    than the manual's hundred throws. Drawing later instead would cost the
+    other half of it, two dice in one sum being one inert call to sympy however
+    many times it is written.
+    """
+    number = _one(args)
+    if not number.is_Integer:
+        raise TypeError("not a whole number of outcomes")
+    outcomes = int(number)
+    if outcomes > 1:
+        return sp.Integer(_GENERATOR.randrange(outcomes))
+    if outcomes == 1:
+        return sp.Rational(_GENERATOR.randrange(_OUTCOMES), _OUTCOMES)
+    if outcomes < 0:
+        _GENERATOR.seed(-outcomes)
+        return sp.Integer(-outcomes)
+    centiseconds = int((time.monotonic() - _STARTED) * 100)
+    _GENERATOR.seed(centiseconds)
+    return sp.Integer(centiseconds)
+
+
+def _rate(conv: _Converter, args: list) -> sp.Basic:
+    """`RATE(n, p, v, f, t)`: the rate the contract implies, and where to look.
+
+    The original shows the search rather than performing it silently: this
+    simplifies to `RATE(n, p, v, f, t, 0, 1)`, the last two arguments being the
+    bounds it looks between, and a rate that is negative or above 100% has to
+    be given bounds of its own as the sixth and seventh. Filling those in is
+    all that happens here, and doing it again to the filled-in form changes
+    nothing.
+    """
+    if len(args) == 6 or len(args) > 7:
+        raise TypeError("not a financial contract")
+    bounds = args[5:7] or [sp.Integer(0), sp.Integer(1)]
+    return conv.opaque("RATE", _financial(args[:5], 5) + bounds)
 
 
 def _atan(conv: _Converter, args: list) -> sp.Basic:
@@ -2282,10 +2425,10 @@ def _matrix(value: sp.Basic) -> sp.MatrixBase:
 
 
 #: What each function name converts to. A name absent from here converts to an
-#: inert head over its converted arguments, which is what keeps `RANDOM`, the
-#: financial functions and every arbitrary user function alive through a round
-#: trip - and what makes `DIF(F(x)^3, x)` differentiable. `SOLVE` is absent for
-#: a different reason: it is `COMMAND_HEADS`, and the pipeline evaluates it.
+#: inert head over its converted arguments, which is what keeps `FIT` and every
+#: arbitrary user function alive through a round trip - and what makes
+#: `DIF(F(x)^3, x)` differentiable. `SOLVE` is absent for a different reason:
+#: it is `COMMAND_HEADS`, and the pipeline evaluates it.
 FUNCTIONS: dict[str, Handler] = {
     **{name: _trig(func) for name, func in _TRIGONOMETRIC.items()},
     **{name: _arctrig(func) for name, func in _INVERSE_TRIGONOMETRIC.items()},
@@ -2299,6 +2442,12 @@ FUNCTIONS: dict[str, Handler] = {
     "MODS": _mods,
     "CHI": _chi,
     "NORMAL": _normal,
+    "PVAL": _present_value,
+    "FVAL": _future_value,
+    "PMT": _payment,
+    "NPER": _periods,
+    "RATE": _rate,
+    "RANDOM": _random,
     "GCD": _fold(sp.gcd),
     "LCM": _fold(sp.lcm),
     "AVERAGE": _statistic(_average),
