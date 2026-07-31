@@ -115,7 +115,7 @@ def test_a_factor_free_of_the_variables_is_not_reached_into():
     ("text", "expected"),
     [
         # Collecting these would be factoring, and Expand does not factor.
-        ("2*SIN(x) + 2*COS(x)", "2*SIN(x) + 2*COS(x)"),
+        ("2*SIN(x) + 2*COS(x)", "2*COS(x) + 2*SIN(x)"),
         # And this one factors inside the logarithm, which is worse.
         ("LN(x^2 - x) - LN(x)", "LN(x^2 - x) - LN(x)"),
     ],

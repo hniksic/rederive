@@ -248,22 +248,64 @@ def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
 
 
 def _kernel_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
-    """Where one factor of a term sorts: its place, then its power.
+    """Where one factor of a term sorts: its place, its power, then its head.
 
     The variable comes first because it outranks everything else about a
-    factor, and the power is negated so that a sum of powers of one variable
-    runs by descending degree.
+    factor - `COS(u) + SIN(t)` is written `SIN(t) + COS(u)`, all the `t` terms
+    ahead of all the `u` terms whatever function wraps them. The power is
+    negated after it, so that a sum of powers of one variable runs by
+    descending degree, and the head decides what the first two leave tied.
 
     A sum or a product raised to a power is one factor and not the variables
     inside it: `(x + 1)^3` is where the bracket is, not where an `x` is.
     """
     base, exponent = factor.as_base_exp()
     if factor is sp.I:
-        return ((_IMAGINARY,), _degree(sp.S.One))
+        return ((_IMAGINARY,), _degree(sp.S.One), _NO_HEAD)
     if base.free_symbols and isinstance(base, (sp.Add, sp.Mul)):
-        return ((_COMPOUND,), _degree(exponent))
+        return ((_COMPOUND,), _degree(exponent), _NO_HEAD)
     place, within = _variable_key(factor, order)
-    return ((_PLACES[place], within), _degree(exponent))
+    return ((_PLACES[place], within), _degree(exponent), _head_key(base))
+
+
+#: How far from the front of a sum a function head puts a term, among terms of
+#: one variable that the variable and the power have left tied. Checked against
+#: the original, every pair tried both ways round and a fixed point one way
+#: only: `LN` before `COS` and `TAN` before `SIN` are not alphabetical, so this
+#: is an order of the original's own rather than a spelling of one.
+#:
+#: These seven are the whole of what has been read. Every other head sorts
+#: behind them and among those alphabetically, which is a place to put them and
+#: not a reading of where the original puts them.
+_HEAD_ORDER = ("ABS", "ASIN", "ATAN", "LN", "COS", "TAN", "SIN")
+
+#: Where a factor that is no function call sorts, which is ahead of every one
+#: that is. Unread as well: nothing seen puts `x` beside `SIN(x)`.
+_NO_HEAD = (0, 0)
+
+
+def _head_key(base: sp.Basic) -> tuple:
+    """Where the head of a factor sorts once its variable and power have tied."""
+    if not isinstance(base, sp.Function):
+        return _NO_HEAD
+    name = function_name(base)
+    if name in _HEAD_ORDER:
+        return (1, _HEAD_ORDER.index(name))
+    return (2, name)
+
+
+def function_name(expression: sp.Basic) -> str:
+    """What a function head is called in author notation.
+
+    An inert head keeps the name it was authored with; a sympy head is
+    upper-cased, which is the spelling of a function name.
+    """
+    name = type(expression).__name__
+    if name in _FUNCTION_NAMES:
+        return _FUNCTION_NAMES[name]
+    if isinstance(expression, AppliedUndef):
+        return name
+    return name.upper()
 
 
 def _degree(exponent: sp.Basic) -> tuple:
@@ -764,7 +806,7 @@ class AuthorPrinter(sp.StrPrinter):
     # -- functions ----------------------------------------------------------
 
     def _print_Function(self, expr):
-        return f"{self.function_name(expr)}({self.stringify(expr.args, ', ')})"
+        return f"{function_name(expr)}({self.stringify(expr.args, ', ')})"
 
     def _print_Min(self, expr):
         return f"MIN({self.stringify(expr.args, ', ')})"
@@ -829,18 +871,6 @@ class AuthorPrinter(sp.StrPrinter):
             text = f"IF({', '.join(parts)})"
         return "?" if text is None else text
 
-    def function_name(self, expression: sp.Basic) -> str:
-        """What a function head is called in author notation.
-
-        An inert head keeps the name it was authored with; a sympy head is
-        upper-cased, which is the spelling of a function name.
-        """
-        name = type(expression).__name__
-        if name in _FUNCTION_NAMES:
-            return _FUNCTION_NAMES[name]
-        if isinstance(expression, AppliedUndef):
-            return name
-        return name.upper()
 
     # -- calculus heads that reached the output unevaluated -----------------
 

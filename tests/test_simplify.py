@@ -316,7 +316,7 @@ DOMAINS = [
     # Off the real line it is neither - `SIGN` is no longer `±1` there, and the
     # identity does not hold - so the pair stands as it was written.
     ("ACOT(t) + ATAN(t)", "pi*SIGN(t)/2", None),
-    ("ACOT(x) + ATAN(x)", "ACOT(x) + ATAN(x)", COMPLEX_X),
+    ("ACOT(x) + ATAN(x)", "ATAN(x) + ACOT(x)", COMPLEX_X),
 ]
 
 #: What a declaration's interval is worth past the sign of it. A symbol can
@@ -742,7 +742,7 @@ def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
     does this.
     """
     assert simp("INT(SQRT(x^2 + a^2), x)") == (
-        "a^2*LN(x + SQRT(x^2 + a^2))/2 + x*SQRT(x^2 + a^2)/2"
+        "x*SQRT(x^2 + a^2)/2 + a^2*LN(x + SQRT(x^2 + a^2))/2"
     )
 
 

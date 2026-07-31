@@ -159,6 +159,56 @@ def test_the_operands_of_a_commutative_operator_are_put_in_order():
     assert written(sp.Implies(q, p)) == "q IMP p"
 
 
+def test_the_terms_of_a_sum_are_put_in_order():
+    """A sum has no order of its own either, and the one chosen is the order
+    list's: a term sorts by the variable it leads with, terms of one variable
+    run by descending degree, and a term holding no variable goes last."""
+    a, x, y, z = sp.symbols("a x y z")
+    assert written(5 * y**3 + 2 * x**2 - 3 * a * x) == "2*x^2 - 3*a*x + 5*y^3"
+    assert written(a + z) == "z + a"
+    assert written(sp.Symbol("w") + x) == "x + w"
+    assert written(x**2 + sp.Symbol("c") + 1) == "x^2 + c + 1"
+    # The real part of a complex number leads, whatever else it is beside.
+    assert written(7 * sp.I + 1) == "1 + 7*#i"
+
+
+#: The order the original writes terms of one variable in when the variable and
+#: the degree leave them tied, checked against it a pair at a time. It is not
+#: alphabetical: `LN` comes before `COS` and `TAN` before `SIN`.
+HEADS = {
+    "ABS": sp.Abs,
+    "ASIN": sp.asin,
+    "ATAN": sp.atan,
+    "LN": sp.log,
+    "COS": sp.cos,
+    "TAN": sp.tan,
+    "SIN": sp.sin,
+}
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (first, second)
+        for index, first in enumerate(HEADS)
+        for second in list(HEADS)[index + 1 :]
+    ],
+    ids=str,
+)
+def test_which_function_head_leads_a_sum_of_two(first, second):
+    """Either way round, the sum is written the one way."""
+    z = sp.Symbol("z")
+    expected = f"{first}(z) + {second}(z)"
+    assert written(HEADS[first](z) + HEADS[second](z)) == expected
+    assert written(HEADS[second](z) + HEADS[first](z)) == expected
+
+
+def test_the_variable_of_a_term_outranks_its_head():
+    """All the `t` terms before all the `u` terms, whatever wraps them."""
+    t, u = sp.symbols("t u")
+    assert written(sp.cos(u) + sp.sin(t)) == "SIN(t) + COS(u)"
+
+
 def test_two_bounds_on_one_variable_are_written_as_a_chain():
     """A conjunction that is a range has a shorter spelling, and it is the one
     the original writes: `-2 < x < 2`. Either bound may be written the other
