@@ -2366,11 +2366,67 @@ def _retried(conv: _Converter, value: sp.Basic) -> sp.Basic:
     index to take and became the inert `ELEMENT(v, i)`. Now that it has one, the
     call is worth making. A head the tables still cannot make sense of comes
     back the head it was.
+
+    A boolean sympy declined is offered again too. `PRIME(n) AND PRIME(n + 2)`
+    is a conjunction of two things sympy will not call statements, so it was
+    held inert; once the calls under it have answered, the conjunction is one
+    sympy can hold and decide.
     """
-    return value.replace(
-        lambda found: isinstance(found, AppliedUndef),
-        lambda found: conv.call(type(found).__name__, found.args),
-    )
+    return _until_settled(value, _is_retriable, lambda found: _reread_head(conv, found))
+
+
+def _is_retriable(found: sp.Basic) -> bool:
+    if isinstance(found, (AppliedUndef, Logical)):
+        return True
+    return _is_rereadable(found)
+
+
+def _reread_head(conv: _Converter, found: sp.Basic) -> sp.Basic:
+    if isinstance(found, Logical):
+        return _relogical(found)
+    return _reoffered(conv, found)
+
+
+def _relogical(found: Logical) -> sp.Basic:
+    """A held boolean operator, offered to sympy again over its operands now."""
+    word, *operands = found.args
+    head = _BOOLEAN_HEADS.get(str(word))
+    if head is None:
+        return found
+    try:
+        return head(*(_settled(operand) for operand in operands))
+    except Exception:
+        return found
+
+
+#: The sympy head each operator word a `Logical` carries stands for, which is
+#: `_HEADINGS` read the other way round.
+_BOOLEAN_HEADS = {word: head for head, word in _HEADINGS.items()}
+
+
+def _until_settled(
+    value: sp.Basic,
+    query: Callable,
+    rewrite: Callable,
+    simultaneous: bool = True,
+    passes: int = 8,
+) -> sp.Basic:
+    """`replace` offered over and over, until nothing more changes.
+
+    One `replace` resolves one layer. Sympy rebuilds a parent from arguments
+    that were still inert when the parent's own query ran, so an outer head
+    made readable by an inner one answering is not seen on that pass: `[[1, 2],
+    [3, 4]] SUB m SUB m` takes the inner subscript and leaves the outer one
+    standing. Repeating until the expression stops moving finishes the whole
+    nest; the pass cap is there because a rewrite that oscillates would
+    otherwise never end.
+    """
+    for _ in range(passes):
+        rewritten = value.replace(query, rewrite, simultaneous=simultaneous)
+        if rewritten == value:
+            return rewritten
+        value = rewritten
+    return value
 
 
 def _settled(operand: sp.Basic) -> sp.Basic:
@@ -2418,20 +2474,34 @@ def reread(expression: sp.Basic, context: Context) -> sp.Basic:
     is a user's own function, and offering it again would say nothing.
     """
     conv = _Converter(context)
-    return expression.replace(
-        _is_rereadable, lambda found: _reoffered(conv, found), simultaneous=False
+    return _until_settled(
+        expression,
+        _is_rereadable,
+        lambda found: _reoffered(conv, found),
+        simultaneous=False,
     )
 
 
 def _is_rereadable(found: sp.Basic) -> bool:
     if isinstance(found, AppliedUndef):
         return type(found).__name__ in FUNCTIONS
+    if isinstance(found, Transposed):
+        return isinstance(found.args[0], sp.MatrixBase)
     return isinstance(found, Subscript) and isinstance(
         found.args[0], (sp.MatrixBase, InertVector)
     )
 
 
 def _reoffered(conv: _Converter, found: sp.Basic) -> sp.Basic:
+    """One held head, offered to the tables now that its operand has a value.
+
+    A transpose is one of them. ``DELETE_ELEMENT(a, i)` `` was written over
+    something that was no matrix while `a` was a variable, so the operator
+    stayed where it stood; once the call under it answers a matrix there is a
+    transpose to take.
+    """
+    if isinstance(found, Transposed):
+        return found.args[0].T
     name = "ELEMENT" if isinstance(found, Subscript) else type(found).__name__
     return conv.call(name, found.args)
 

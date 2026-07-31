@@ -234,7 +234,6 @@ NOT_YET_HELD = {
     "test_the_least_squares_fit_that_is_not_linear_in_its_data_variable",
     "test_the_manuals_fibonacci_by_iteration",
     "test_the_manuals_mutual_recursion_written_with_accumulators",
-    "test_the_manuals_search_for_the_first_prime_pair_above_a_hundred_thousand",
     "test_the_manuals_three_by_three_system_solved_by_inversion",
     "test_the_matrix_operations_of_the_manual[CHARPOLY([[2, 3], [a, "
     "b]], z)-z^2 - z*(b + 2) - 3*a + 2*b]",
@@ -271,13 +270,8 @@ NOT_YET_HELD = {
     "x)-x*(x^9 - 5*x^8 + 30*x^6 - 126*x^4 + 255*x^2 - 155)]",
     "test_the_worked_examples_of_the_number_theory_file[FIBONACCI(10)-55]",
     "test_the_worked_examples_of_the_number_theory_file[PARTS(4)-5]",
-    "test_the_worked_examples_of_the_vector_utility_file[ADJOINT([[2, "
-    "x], [1, 3]])-[[3, -x], [-1, 2]]]",
     "test_the_worked_examples_of_the_vector_utility_file[COVARIANT_METR"
     "IC_TENSOR([[w, -v], [v, w]])-[[w^2 + v^2, 0], [0, w^2 + v^2]]]",
-    "test_the_worked_examples_of_the_vector_utility_file[GEOMETRY_MATRI"
-    "X([u, v], [[u^2 + v^2, 0], [0, u^2 + v^2]])-[[u, v], [SQRT(u^2 + v^2), SQRT(u^2 + "
-    "v^2)]]]",
     "test_the_worked_examples_of_the_vector_utility_file[JACOBIAN([(w^2"
     " - v^2)/2, w*v], [w, v])-[[w, -v], [v, w]]]",
     "test_the_worked_examples_of_the_vector_utility_file[RANK([[2, 3, "
