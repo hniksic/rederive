@@ -30,6 +30,7 @@ import sympy as sp
 from sympy.concrete.gosper import gosper_term
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
+from sympy.logic.boolalg import Boolean
 
 from rederive.engine.approximation import simplest
 from rederive.engine.context import (
@@ -62,6 +63,8 @@ __all__ = [
     "Subscript",
     "Taylor",
     "Transposed",
+    "as_condition",
+    "outsized",
     "reread",
     "to_sympy",
 ]
@@ -1791,19 +1794,43 @@ def _approximation(conv: _Converter, args: list) -> sp.Basic:
 
 
 def _conditional(conv: _Converter, args: list) -> sp.Basic:
-    """`IF(c, u)` and `IF(c, u, v)` as the case split sympy writes them as.
+    """`IF(c)`, `IF(c, u)` and `IF(c, u, v)` as the case split sympy writes them as.
 
     Which branch a case split is worth is the pipeline's business, and it is
     the same question for a `Piecewise` that came back from an integral. What
     has no `Piecewise` is Derive's fourth argument, the value where the test
     cannot be decided at all; that form stays an inert head, and the pipeline
     resolves the two alike.
+
+    A conditional with nothing but a test is the test as a number, one or zero,
+    which is what makes `SUM(IF(PRIME(n)), n, 1, 100)` count the primes it
+    finds rather than collect them.
     """
+    if len(args) == 1:
+        return sp.Piecewise(
+            (sp.Integer(1), as_condition(args[0])), (sp.Integer(0), sp.true)
+        )
     if len(args) == 2:
         test, then = args
-        return sp.Piecewise((then, _test(test)))
+        return sp.Piecewise((then, as_condition(test)))
     test, then, otherwise = args
-    return sp.Piecewise((then, _test(test)), (otherwise, sp.true))
+    return sp.Piecewise((then, as_condition(test)), (otherwise, sp.true))
+
+
+def as_condition(test: sp.Basic) -> sp.Basic:
+    """The test of a conditional, read the way Derive reads one.
+
+    A relation, or a truth-value built out of relations, asks what it says -
+    including one written with an operator sympy declined, which is a question
+    about truth however it is spelled. Any other expression is a comparison
+    with zero that was written short: `IF(0, a, b)` is `a` and `IF(5, a, b)` is
+    `b`, because the test Derive reads there is `test = 0`. Passing such a test
+    on as it stands would instead put its truthiness to sympy, which reads it
+    the other way round.
+    """
+    if isinstance(test, (Boolean, Logical)):
+        return _test(test)
+    return sp.Eq(test, 0)
 
 
 def _test(test: sp.Basic) -> sp.Basic:
@@ -2212,7 +2239,7 @@ def _until_repeated(
         iterates.append(_state(names, values))
         if iterates[-1] in iterates[:-1]:
             return iterates
-        if _outsized(iterates[-1]):
+        if outsized(iterates[-1]):
             break
     raise ValueError("comes round to nothing")
 
@@ -2228,8 +2255,14 @@ _ITERATE_BITS = 100_000
 _ITERATE_OPERATIONS = 1000
 
 
-def _outsized(value: sp.Basic) -> bool:
-    """Whether an iterate has grown past what carrying it any further is worth."""
+def outsized(value: sp.Basic) -> bool:
+    """Whether a value has grown past what carrying it any further is worth.
+
+    The bound an uncounted iteration stops at, and the same bound the pipeline
+    stops unfolding a recursive definition at: both are computations that run
+    until something says they have gone far enough, and how big the thing they
+    are carrying has grown is what says it.
+    """
     if sp.count_ops(value) > _ITERATE_OPERATIONS:
         return True
     return any(

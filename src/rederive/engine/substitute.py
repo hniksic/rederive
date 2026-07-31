@@ -6,13 +6,18 @@ function body is a tree with its parameters written in, not a closure sympy
 could hold. Simplify runs this first, and so will Expand, Factor, approX and
 the rest; nothing in it belongs to any one of them.
 
-Three rules make it terminate and stay honest:
+Four rules make it terminate and stay honest:
 
 * A variable is expanded at most once along a branch. `pn := pn + 1` therefore
   simplifies to `pn + 1` rather than spinning, and the name that could not be
   expanded again is left standing.
 * A function is likewise expanded at most once along a branch, so a recursive
-  definition leaves its own call in place.
+  definition leaves its own call in place. Nothing here could unfold one twice
+  and be any wiser for it: this is a walk over a tree with no evaluator behind
+  it, so `n - 1` is a subtraction rather than a number and a second unfolding
+  of `FACT` would only write out a test that still decides nothing. Carrying a
+  recursion further is Simplify's business, and `pipeline.simplified` runs a
+  whole pass for every unfolding for exactly that reason.
 * A call with fewer arguments than the definition has parameters substitutes
   the leading parameters only. `ACCELERATION(f, m) := f/m` applied to one
   argument gives `6/m`: the parameters nobody supplied stay as the names they

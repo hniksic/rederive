@@ -202,7 +202,6 @@ NOT_YET_HELD = {
     "test_the_characteristic_variable_defaults_to_w",
     "test_the_clairaut_difference_equation_the_manual_solves",
     "test_the_clairaut_equation_the_manual_solves",
-    "test_the_conditional_defaults_the_manual_documents",
     "test_the_continued_fraction_of_e",
     "test_the_derivatives_of_the_manual[DIF(LN(COS(x)), x, 2)--TAN(x)^2 - 1]",
     "test_the_difference_equation_the_manual_solves",
@@ -233,10 +232,8 @@ NOT_YET_HELD = {
     "test_the_inverse_of_the_manuals_function",
     "test_the_iterates_of_the_manuals_fixed_point",
     "test_the_least_squares_fit_that_is_not_linear_in_its_data_variable",
-    "test_the_manuals_accumulating_fibonacci",
     "test_the_manuals_fibonacci_by_iteration",
     "test_the_manuals_mutual_recursion_written_with_accumulators",
-    "test_the_manuals_recursive_factorial",
     "test_the_manuals_search_for_the_first_prime_pair_above_a_hundred_thousand",
     "test_the_manuals_three_by_three_system_solved_by_inversion",
     "test_the_matrix_operations_of_the_manual[CHARPOLY([[2, 3], [a, "
@@ -269,8 +266,6 @@ NOT_YET_HELD = {
     "test_the_vector_calculus_of_the_manual[LAPLACIAN(x*y^2*z^3)-x*(6*y^2*z + 2*z^3)]",
     "test_the_worked_examples_of_the_number_theory_file[BERNOULLI_POLY("
     "10, x)-(66*x^10 - 330*x^9 + 495*x^8 - 462*x^6 + 330*x^4 - 99*x^2 + 5)/66]",
-    "test_the_worked_examples_of_the_number_theory_file[CONVERGENT([2, "
-    "1, 2, 1, 1, 4, 1, 1, 6])-1264/465]",
     "test_the_worked_examples_of_the_number_theory_file[DISTINCT_PARTS(4)-2]",
     "test_the_worked_examples_of_the_number_theory_file[EULER_POLY(10, "
     "x)-x*(x^9 - 5*x^8 + 30*x^6 - 126*x^4 + 255*x^2 - 155)]",

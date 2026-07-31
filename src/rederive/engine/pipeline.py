@@ -30,6 +30,12 @@ The sequence is:
    becomes a ninth-degree polynomial while `(y + 1)^9 + x` does not.
 6. Approximate, if the precision mode asks for it.
 
+The sequence runs again while a user function is still standing as a call,
+because one pass unfolds a definition once and a recursion needs the pass
+between two unfoldings: it is where the test of the `IF` is decided and where
+the arithmetic on the counted-down argument is done. A size bound ends the
+passes for a recursion that never arrives.
+
 Every rewrite is offered inside a `try`, and a rewrite that raises is a rewrite
 that was not worth having: the previous form stands. That is what makes the
 command total. Nothing sympy does can turn a valid entry into an error.
@@ -77,6 +83,8 @@ from rederive.engine.to_sympy import (
     Logical,
     PlusMinus,
     Taylor,
+    as_condition,
+    outsized,
     reread,
     to_sympy,
 )
@@ -163,8 +171,35 @@ def simplified(node: Node, context: Context | None = None) -> sp.Basic:
     The sympy-level entry point. `simplify` is this plus `from_sympy`; a later
     command that wants to keep computing has no reason to print and reparse in
     between.
+
+    A pass that leaves a user function still called is run again, because that
+    is what makes a recursive definition arrive anywhere. `substitute` writes a
+    body in once and then declines, so `FACT(5)` comes out of one pass as
+    `5*FACT(4)`; only a whole further pass can decide the next `IF` and do the
+    next multiplication, since the pre-pass has no evaluator and `n - 1` is a
+    tree to it rather than a number. So the recursion lives here, around the
+    pass, where deciding the test and doing the arithmetic have already
+    happened.
     """
     context = context or Context()
+    result = _once(node, context)
+    for _ in range(_UNFOLDS - 1):
+        if not _unfolds_further(result, context):
+            break
+        try:
+            following = _once(from_sympy(result, context).exact, context)
+        except Exception:
+            break
+        if following == result:
+            # The call that is left is one nothing can write in: a definition
+            # line, or a name applied to arguments it has no body for.
+            break
+        result = following
+    return result
+
+
+def _once(node: Node, context: Context) -> sp.Basic:
+    """One pass: substitute, convert, and transform by shape."""
     expression = to_sympy(substitute(node, context), context)
     try:
         return _transform(expression, context)
@@ -172,6 +207,40 @@ def simplified(node: Node, context: Context | None = None) -> sp.Basic:
         # Whatever went wrong, the faithful translation of the input is still
         # a correct answer to "simplify this".
         return expression
+
+
+def _unfolds_further(result: sp.Basic, context: Context) -> bool:
+    """Whether another pass over `result` is worth running.
+
+    A pass is worth running while a function the session defined is still
+    standing as a call, and while what has been worked out so far is small
+    enough to keep working out. The size bound is `ITERATE`'s, and for the same
+    reason: a recursion that does not come round runs away instead, and it runs
+    away faster than any count of passes can catch.
+
+    What happens when a bound trips is that the unfinished expression stands as
+    the answer. `FACT(-1)` comes back as a product of everything counted down
+    so far times a `FACT` of a number heading away from zero - which is a true
+    rewriting of what was asked, and one that shows why it will not finish.
+    Derive itself exhausts memory there and answers nothing at all; an engine
+    that is total everywhere else has no reason to have one hole in it.
+    """
+    if not context.functions:
+        return False
+    try:
+        calls = result.atoms(AppliedUndef)
+    except Exception:
+        return False
+    if not any(type(call).__name__ in context.functions for call in calls):
+        return False
+    return not outsized(result)
+
+
+#: How many passes a recursion is given. Each is a whole Simplify, so the count
+#: is a real cost - but a small one buys nothing: the manual's own
+#: `RAISE(b, 256)` takes two hundred and fifty-seven of them, and Derive's
+#: recursions are written to count down one at a time.
+_UNFOLDS = 300
 
 
 # -- by shape ----------------------------------------------------------------
@@ -467,6 +536,11 @@ def _conditionals(
             return freeze(settled) if isinstance(settled, sp.Piecewise) else settled
         test, *branches = head.args
         decided = _decide(test, context)
+        if not branches:
+            # A test and nothing else is that test as a number, one or zero.
+            if decided is None:
+                return freeze(head)
+            return sp.Integer(1) if decided else sp.Integer(0)
         if decided is True:
             return branches[0]
         if decided is False:
@@ -496,7 +570,7 @@ def _is_conditional(expression: sp.Basic) -> bool:
     return (
         isinstance(expression, AppliedUndef)
         and type(expression).__name__ == "IF"
-        and 2 <= len(expression.args) <= 4
+        and 1 <= len(expression.args) <= 4
     )
 
 
@@ -535,7 +609,12 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
     brought together by the same rewrites the rest of the pipeline uses. What
     none of those settles is put to the declared intervals, which are the one
     thing a symbol could not carry into the evaluation itself.
+
+    A test that is no relation at all is a comparison with zero written short,
+    the same reading the conversion gives one, so that the inert four-argument
+    `IF` decides its test by the rule the rest of them do.
     """
+    test = as_condition(test)
     for candidate in _truths(test, context):
         if candidate is sp.true:
             return True
