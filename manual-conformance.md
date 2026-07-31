@@ -48,33 +48,21 @@ those cases exercise the real `.MTH` sources rather than a transcription of them
 
 ## Result
 
-**286 pass, 108 do not**, in about 17 seconds. It was 258 and 136 before the work the last
-section describes.
+**286 pass, 108 do not**, in about 17 seconds. It was 258 and 136 before the work below.
 
-The 136 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
+The 108 are marked `xfail` through `NOT_YET_HELD`, a manifest of test ids at the top of
 `tests/test_manual.py`. They run rather than being skipped, so one that starts holding is
 reported as an unexpected pass and can be struck off the list. The suite is therefore
 green, and the manifest is the list of what the manual promises and the engine does not
 do yet.
 
-Two mistakes in the tests themselves were found and fixed before counting, and are worth
-naming so the number is not read as worse than it is: the approximate-mode contexts were
-built without letting the precision carry the notation with it (section 3.9 says Options
-Precision moves it, and `Context.with_precision` implements that), and plus-or-minus was
-spelled `+-` where both the manual and the program write `±`.
-
-The first of those was fixed only halfway: `APPROXIMATE_10` and `APPROXIMATE_100` set the
-precision digits in the constructor and then asked `with_precision` for none, which
-carries the notation digits it was given rather than the ones already standing. Both
-contexts therefore showed six digits whatever they computed to. Passing the digits to
-`with_precision`, the way Options Precision does, is what three of the cases above were
-waiting for.
-
-A third has since been found in the original itself: the `XOR` case expected
-`(NOT p AND q) OR (p AND NOT q)`, the form section 4.16 prints, where Derive itself
-answers `NOT p AND q OR p AND NOT q`. The page fences that form for its reader; the
-program relies on AND binding tighter than OR. The case now asserts what the program
-does, and remains unmet either way.
+Three mistakes were in the tests rather than the engine, and are worth naming so the
+number is not read as worse than it is. Two were found before counting: the
+approximate-mode contexts did not let the precision carry the notation with it (section
+3.9 says Options Precision moves it), and plus-or-minus was spelled `+-` where both the
+manual and the program write `±`. The third was caught against the original - the `XOR`
+case expected the fenced form section 4.16 prints, where Derive answers
+`NOT p AND q OR p AND NOT q`, relying on AND binding tighter than OR.
 
 ## Two of the manual's own sessions do not terminate
 
@@ -175,6 +163,34 @@ is unimplemented, which is what stops TAYLOR_SOLVE, TAYLOR_ODE1, TAYLOR_ODE2 and
 `GRAD` misbinds its arguments, stopping JACOBIAN; and `FLOOR` does not map over a vector,
 stopping CONTINUED_FRACTION.
 
+### Three cases worth naming individually
+
+These three were previously grouped under a heading calling them "documented
+divergences". That was wrong: nothing had documented them, and the three are not alike.
+Checked against the repository, they stand as follows.
+
+**The initial Exponential direction: the manual is wrong, and the repository
+already knew it.** `src/rederive/model/settings.py:377-381` records the
+research: section 6.1 says the field starts on Collect where the identically
+worded section 6.2 says Auto of Logarithm; Collect was the 1.x default, its
+DERIVE.INI carries `*EXP-EXPD* |Collect|`, and the original's own DERIVE.INI
+says `*EXP-EXPD* |Auto|`, as does its screen. So `Auto` is right and section
+6.1 is a leftover. The test asserted the erratum; it now asserts `Auto` and
+carries that reasoning, which is why 157 became 156. It is the only place in
+the suite where the manual is treated as wrong rather than as unmet.
+
+**`(-8)^(1/3)`: a printing difference, with the current form already pinned elsewhere.**
+rederive answers `2*(-1)^(1/3)` where section 4.5 prints `1 + √3·î`. These are the same
+number. `tests/test_simplify.py:510` already pins `2*(-1)^(1/3)` as the principal-branch
+answer, and `src/rederive/engine/pipeline.py:1636` notes in passing that sympy hands back
+that form. Neither takes a position on section 4.5's statement that complex results are
+put in rectangular form, so what is untested is the printing promise, not the value.
+
+**`∫(-1 to 2) 1/x³ dx`: a gap with no prior record.** The manual documents `3/8`, the
+Cauchy principal value, and is explicit that this is what it means by it. rederive
+answers `?`. Nothing in `src/` or `tests/` mentions Cauchy principal values at all. This
+test is the first record of the difference.
+
 ## What the original does
 
 Some of the above is about what Derive *prints*, which a typeset page cannot settle.
@@ -211,34 +227,6 @@ except where noted.
   `ABS < ASIN < ATAN < LN < COS < TAN < SIN`, an internal ordinal rather than a rule that
   can be read off a name, and the variable outranks the head: all `t` terms precede all
   `u` terms whatever the function. This is what the third `FIT` example waits on.
-
-### Three cases worth naming individually
-
-These three were previously grouped under a heading calling them "documented
-divergences". That was wrong: nothing had documented them, and the three are not alike.
-Checked against the repository, they stand as follows.
-
-**The initial Exponential direction: the manual is wrong, and the repository
-already knew it.** `src/rederive/model/settings.py:377-381` records the
-research: section 6.1 says the field starts on Collect where the identically
-worded section 6.2 says Auto of Logarithm; Collect was the 1.x default, its
-DERIVE.INI carries `*EXP-EXPD* |Collect|`, and the original's own DERIVE.INI
-says `*EXP-EXPD* |Auto|`, as does its screen. So `Auto` is right and section
-6.1 is a leftover. The test asserted the erratum; it now asserts `Auto` and
-carries that reasoning, which is why 157 became 156. It is the only place in
-the suite where the manual is treated as wrong rather than as unmet.
-
-**`(-8)^(1/3)`: a printing difference, with the current form already pinned elsewhere.**
-rederive answers `2*(-1)^(1/3)` where section 4.5 prints `1 + √3·î`. These are the same
-number. `tests/test_simplify.py:510` already pins `2*(-1)^(1/3)` as the principal-branch
-answer, and `src/rederive/engine/pipeline.py:1636` notes in passing that sympy hands back
-that form. Neither takes a position on section 4.5's statement that complex results are
-put in rectangular form, so what is untested is the printing promise, not the value.
-
-**`∫(-1 to 2) 1/x³ dx`: a gap with no prior record.** The manual documents `3/8`, the
-Cauchy principal value, and is explicit that this is what it means by it. rederive
-answers `?`. Nothing in `src/` or `tests/` mentions Cauchy principal values at all. This
-test is the first record of the difference.
 
 ## Collected sessions
 
