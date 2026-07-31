@@ -155,8 +155,8 @@ def test_a_high_power_of_a_sum_is_not_multiplied_out_to_be_thrown_away():
     # expansion is counted before it is built and declined. The ratio is the
     # case a polynomial test does not cover: `cancel` is worth offering where
     # something really is divided, and not at this size.
-    assert simp("(v + w + x + y + z)^60") == "(v + w + x + y + z)^60"
-    assert simp("(v + w + x + y + z)^60/q") == "(v + w + x + y + z)^60/q"
+    assert simp("(v + w + x + y + z)^60") == "(x + y + z + v + w)^60"
+    assert simp("(v + w + x + y + z)^60/q") == "(x + y + z + v + w)^60/q"
 
 
 # -- the normal form ----------------------------------------------------------
@@ -165,16 +165,16 @@ def test_a_high_power_of_a_sum_is_not_multiplied_out_to_be_thrown_away():
 #: function of the most main variable it holds; a product or a power that is
 #: not itself a sum is left exactly as it was written.
 #:
-#: The terms are the original's; the order they are written in is the engine's,
-#: which is sympy's beyond the two rules `printer` keeps. So the original shows
-#: `x + (y + 1)^9` where this records `(y + 1)^9 + x` - the same sum, and the
-#: point of the case either way is that the ninth power was left folded.
+#: The terms are the original's and so is the order they are written in, the
+#: order list deciding both which sums get multiplied out and which term of a
+#: sum leads. The point of each case is the first of those: what was left
+#: folded because the primary variable is not in it.
 NORMAL_FORM = [
     # A sum in the primary variable is multiplied out however long it gets,
     # and a term free of the primary variable is not touched.
     ("(x + 1)^9 + y", "x^9 + 9*x^8 + 36*x^7 + 84*x^6 + 126*x^5 + 126*x^4 "
                       "+ 84*x^3 + 36*x^2 + 9*x + y + 1"),
-    ("(y + 1)^9 + x", "(y + 1)^9 + x"),
+    ("(y + 1)^9 + x", "x + (y + 1)^9"),
     ("(x + 1)^2 + y", "x^2 + 2*x + y + 1"),
     # No sum to write, so nothing happens - this is not a wholesale expansion.
     ("(x + 1)^9", "(x + 1)^9"),
@@ -189,8 +189,8 @@ NORMAL_FORM = [
     ("((x + 1)^2 + y)^2", "(x^2 + 2*x + y + 1)^2"),
     ("SIN((x + 1)^2 + y)", "SIN(x^2 + 2*x + y + 1)"),
     ("1/((x + 1)^2 + y)", "1/(x^2 + 2*x + y + 1)"),
-    ("1/((y + 1)^2 + x)", "1/((y + 1)^2 + x)"),
-    ("[(x + 1)^2 + y, (y + 1)^2 + x]", "[x^2 + 2*x + y + 1, (y + 1)^2 + x]"),
+    ("1/((y + 1)^2 + x)", "1/(x + (y + 1)^2)"),
+    ("[(x + 1)^2 + y, (y + 1)^2 + x]", "[x^2 + 2*x + y + 1, x + (y + 1)^2]"),
     # An exponent that is not a whole number is no polynomial degree.
     ("(x + 1)^n + y", "y + (x + 1)^n"),
     # The coefficients are opaque: what is free of the primary variable is one
@@ -203,7 +203,7 @@ NORMAL_FORM = [
     ("x*((y + 1)^2 + z) + w", "x*(y^2 + 2*y + z + 1) + w"),
     # Off the order list, variables order among themselves alphabetically.
     ("(a + 1)^2 + b", "a^2 + 2*a + b + 1"),
-    ("(b + 1)^2 + a", "(b + 1)^2 + a"),
+    ("(b + 1)^2 + a", "a + (b + 1)^2"),
     # The manual's 4.2 exercise.
     ("(5x - 3x + 1)^7 - x", "128*x^7 + 448*x^6 + 672*x^5 + 560*x^4 "
                             "+ 280*x^3 + 84*x^2 + 13*x + 1"),
@@ -223,8 +223,8 @@ RATIONAL_FORM = [
     ("1/(x + 1) + 1/(x + 2) + y", "y + (2*x + 3)/((x + 1)*(x + 2))"),
     ("1/(x + 1)^2 + 1/(x + 1) + y", "y + (x + 2)/(x + 1)^2"),
     ("y/(x + 1) + z/(x + 1)", "(y + z)/(x + 1)"),
-    ("(x^3 + 1)/(x + 2) + y", "x^2 - 2*x + y + 4 - 7/(x + 2)"),
-    ("x/(x + 1) + y", "y + 1 - 1/(x + 1)"),
+    ("(x^3 + 1)/(x + 2) + y", "x^2 - 2*x + y - 7/(x + 2) + 4"),
+    ("x/(x + 1) + y", "y - 1/(x + 1) + 1"),
     ("x^2 + 1/(x + 1) + y", "x^2 + y + 1/(x + 1)"),
     # The denominator keeps whatever shape it was written in: Derive answers
     # this with the two factors standing, not with a quartic underneath. It
@@ -234,10 +234,10 @@ RATIONAL_FORM = [
      "(2*x^2 + 2*y^2 + 36)/((x^2 + y^2 - 6*y + 18)*(x^2 + y^2 + 6*y + 18))"),
     # A denominator free of the primary variable belongs to a coefficient, so
     # it is combined only where more than one term carries it.
-    ("x/y + z", "z + x/y"),
-    ("1/y + z", "z + 1/y"),
-    ("(x + 1)^2/y + z", "(x^2 + y*z + 2*x + 1)/y"),
-    ("x/y + x/z", "x*(1/z + 1/y)"),
+    ("x/y + z", "x/y + z"),
+    ("1/y + z", "1/y + z"),
+    ("(x + 1)^2/y + z", "(x^2 + 2*x + y*z + 1)/y"),
+    ("x/y + x/z", "x*(1/y + 1/z)"),
     ("x/(y + 1) + x/(y + 2)", "x*(2*y + 3)/((y + 1)*(y + 2))"),
 ]
 
@@ -263,7 +263,7 @@ def test_a_sum_over_two_powers_of_one_thing_is_written_over_the_higher():
     assert simp("DIF(x/SQRT(1 - x^2), x)") == "1/(1 - x^2)^(3/2)"
     assert simp("DIF(x^3/SQRT(x^2 + 1), x)") == "x^2*(2*x^2 + 3)/(x^2 + 1)^(3/2)"
     assert simp("1/(x + 1)^(3/2) + 1/SQRT(x + 1)") == "(x + 2)/(x + 1)^(3/2)"
-    assert simp("1/SQRT(x) + 1/x") == "1/x + 1/SQRT(x)"
+    assert simp("1/SQRT(x) + 1/x") == "1/SQRT(x) + 1/x"
 
 
 def test_no_denominator_carries_a_denominator_of_its_own():
@@ -273,7 +273,7 @@ def test_no_denominator_carries_a_denominator_of_its_own():
     `1/(a + x^2/a)` to sympy, and the two are the same number of operations - so
     the rule cannot be a count. It is a shape the original never writes.
     """
-    assert simp("DIF(ATAN(x/a), x)") == "a/(a^2 + x^2)"
+    assert simp("DIF(ATAN(x/a), x)") == "a/(x^2 + a^2)"
     assert simp("1/(1 + 1/x)") == "x/(x + 1)"
 
 
@@ -282,7 +282,7 @@ def test_the_order_list_decides_what_gets_multiplied_out():
     expands under one order list and comes back as it was written under
     another, because the primary variable is what the list says it is."""
     assert simp("(x + 1)^9 + y", Context(order=("x", "y", "z"))).startswith("x^9")
-    assert simp("(x + 1)^9 + y", Context(order=("y", "x", "z"))) == "(x + 1)^9 + y"
+    assert simp("(x + 1)^9 + y", Context(order=("y", "x", "z"))) == "y + (x + 1)^9"
 
 
 # -- domains: the whole of "don't guess" --------------------------------------
@@ -423,7 +423,7 @@ TRIGONOMETRY = [
     ("ACOT(x^2) + ATAN(x^2)", "pi/2", None),
     ("ACOT(x^2 + 1) + ATAN(x^2 + 1)", "pi/2", None),
     ("ACOT(3) + ATAN(3)", "pi/2", None),
-    ("ASIN(x) + ACOS(y)", "ACOS(y) + ASIN(x)", None),
+    ("ASIN(x) + ACOS(y)", "ASIN(x) + ACOS(y)", None),
     # An arc of a ratio is the arc of a side of the right triangle the ratio
     # describes, however the hypotenuse was written. The root has a branch cut,
     # so a complex argument keeps the ratio it came in as.
@@ -554,7 +554,7 @@ BY_DEFINITION = [
     ("ASINH(z)", "LN(z + SQRT(z^2 + 1))"),
     # A circular function beside a hyperbolic one keeps the form it was written
     # in: only the head that has a definition is written out by it.
-    ("SIN(z) + SINH(z)", "#e^z/2 + SIN(z) - #e^(-z)/2"),
+    ("SIN(z) + SINH(z)", "SIN(z) + #e^z/2 - #e^(-z)/2"),
     ("SIN(z)", "SIN(z)"),
 ]
 
@@ -742,7 +742,7 @@ def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
     does this.
     """
     assert simp("INT(SQRT(x^2 + a^2), x)") == (
-        "a^2*LN(x + SQRT(a^2 + x^2))/2 + x*SQRT(a^2 + x^2)/2"
+        "a^2*LN(x + SQRT(x^2 + a^2))/2 + x*SQRT(x^2 + a^2)/2"
     )
 
 
@@ -861,7 +861,7 @@ def test_the_indicator_and_the_normal_distribution(text, expected):
 ANNUITIES = [
     # The four closed forms, in the arrangement the original writes them in.
     ("PMT(i, n, v)", "i*v*(i + 1)^n/(1 - (i + 1)^n)"),
-    ("PMT(i, n, v, f, t)", "i*(v*(i + 1)^n + f)/((1 - (i + 1)^n)*(i*t + 1))"),
+    ("PMT(i, n, v, f, t)", "i*(f + v*(i + 1)^n)/((1 - (i + 1)^n)*(i*t + 1))"),
     ("NPER(i, p, v, f, t)", "LN((p*(i*t + 1) - f*i)/(i*(p*t + v) + p))/LN(i + 1)"),
     # Undefined where there is no interest to compound, the payment term
     # dividing by the rate. The original answers `?` and takes no limit to
@@ -1110,7 +1110,7 @@ LINEAR_ALGEBRA = [
     # Sympy computes the characteristic polynomial by recurrence and hands back
     # a multiplied-out one, which no longer folds. Given that multiplied-out sum
     # Derive answers exactly as this does.
-    ("CHARPOLY([[2,3],[a,b]])", "b*(2 - w) + w^2 - 3*a - 2*w"),
+    ("CHARPOLY([[2,3],[a,b]])", "b*(2 - w) - 3*a + w^2 - 2*w"),
     # `DET(A - z*IDENTITY_MATRIX(3))` is the definition, so the cube is negated
     # in an odd dimension; the printer leads with the positive term.
     ("CHARPOLY([[1,2,3],[4,5,6],[7,8,10]],z)", "16*z^2 - z^3 + 12*z - 3"),
@@ -1121,7 +1121,7 @@ LINEAR_ALGEBRA = [
     # case and reverses that one.
     ("EIGENVALUES([[2,3],[0,b]],z)", "[z = 2, z = b]"),
     ("EIGENVALUES([[5,0],[0,2]],z)", "[z = 2, z = 5]"),
-    ("EIGENVALUES([[1,2],[3,4]],x)", "[x = 5/2 - SQRT(33)/2, x = 5/2 + SQRT(33)/2]"),
+    ("EIGENVALUES([[1,2],[3,4]],x)", "[x = 5/2 - SQRT(33)/2, x = SQRT(33)/2 + 5/2]"),
     # A repeated eigenvalue is one eigenvalue: the multiplicity is the number of
     # parameters its eigenvector carries, not a second solution.
     ("EIGENVALUES([[1,0,0],[0,1,0],[0,0,2]],z)", "[z = 1, z = 2]"),
@@ -2014,9 +2014,9 @@ DEMO_NUMBERS = [
 ]
 
 DEMO_ALGEBRA = [
-    ("(x+a)^2-2*a*x", "a^2 + x^2"),
+    ("(x+a)^2-2*a*x", "x^2 + a^2"),
     # The tenth power stays folded while the square around it is expanded.
-    ("(x + (a + 1)^10)^2 - (a + 1)^20", "2*x*(a + 1)^10 + x^2"),
+    ("(x + (a + 1)^10)^2 - (a + 1)^20", "x^2 + 2*x*(a + 1)^10"),
     (
         "((a*n + b*m)^2 + (a*m - b*n)^2) / ((a*p + b*q)^2 + (a*q - b*p)^2)",
         "(m^2 + n^2)/(p^2 + q^2)",
@@ -2139,7 +2139,7 @@ DEMO_MATRICES = [
     # A singular system, and a consistent one: the zero row leaves the second
     # unknown arbitrary, and the row above it reads `x + 2*y = 3`.
     ("ROW_REDUCE([[2,4],[3,6]],[[6],[9]])", "[[1, 2, 3], [0, 0, 0]]"),
-    ("CHARPOLY([[a,b],[b,a]],z)", "a^2 - 2*a*z - b^2 + z^2"),
+    ("CHARPOLY([[a,b],[b,a]],z)", "z^2 - 2*a*z + a^2 - b^2"),
     # No variable given, so the answer is written in `w`, the manual's default.
     # Derive lists these the other way round; the pair is the same pair.
     ("EIGENVALUES([[a,b],[b,a]])", "[w = a - b, w = a + b]"),
@@ -2152,7 +2152,7 @@ DEMO_MATRICES = [
     ("DIV([1,2*y,3*z^2])", "6*z + 2"),
     ("LAPLACIAN(x+y^2+z^3)", "6*z + 2"),
     ("CURL([y^2,2*x*z,0])", "[-2*x, 0, 2*z - 2*y]"),
-    ("POTENTIAL([1,2*y,3*z^2])", "z^3 + y^2 + x"),
+    ("POTENTIAL([1,2*y,3*z^2])", "x + y^2 + z^3"),
     ("VECTOR_POTENTIAL([-2*x,0,2*z-2*y])", "[y^2, 2*x*z, 0]"),
 ]
 

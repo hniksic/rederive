@@ -142,7 +142,6 @@ def answered_within(session, engine, ask, patience=PATIENCE):
 #: - and some are the same value written another way; `manual-conformance.md`
 #: sorts them out. Nothing here says the manual is wrong.
 NOT_YET_HELD = {
-    "test_a_collected_product_of_exponentials_is_one_exponential",
     "test_a_complex_result_is_written_in_rectangular_form",
     "test_a_logarithm_difference_waits_for_a_domain_that_justifies_it",
     "test_a_negative_order_of_differentiation_is_an_antiderivative",
@@ -178,9 +177,6 @@ NOT_YET_HELD = {
     "test_exact_mode_denests_the_manuals_radicals[SQRT(5 + "
     "2*SQRT(6))-SQRT(3) + SQRT(2)]",
     "test_expanding_about_the_variables_the_manual_chooses[('(x + 2*y "
-    "+ 1)^3', ('x', 'y'))-x^3 + 6*x^2*y + 3*x^2 + 12*x*y^2 + 12*x*y + 3*x + 8*y^3 + "
-    "12*y^2 + 6*y + 1]",
-    "test_expanding_about_the_variables_the_manual_chooses[('(x + 2*y "
     "+ 1)^3', ('y', 'x'))-8*y^3 + 12*y^2*x + 12*y^2 + 6*y*x^2 + 12*y*x + 6*y + x^3 + "
     "3*x^2 + 3*x + 1]",
     "test_factoring_about_the_variables_the_manual_chooses[('x^2*y^2 - "
@@ -197,7 +193,6 @@ NOT_YET_HELD = {
     "test_substitutions_for_variables_are_made_all_at_once",
     "test_the_branch_the_manual_starts_on_is_the_principal_one",
     "test_the_characteristic_variable_defaults_to_w",
-    "test_the_clairaut_difference_equation_the_manual_solves",
     "test_the_clairaut_equation_the_manual_solves",
     "test_the_continued_fraction_of_e",
     "test_the_derivatives_of_the_manual[DIF(LN(COS(x)), x, 2)--TAN(x)^2 - 1]",
@@ -229,15 +224,10 @@ NOT_YET_HELD = {
     "test_the_manuals_three_by_three_system_solved_by_inversion",
     "test_the_matrix_operations_of_the_manual[CHARPOLY([[2, 3], [a, "
     "b]], z)-z^2 - z*(b + 2) - 3*a + 2*b]",
-    "test_the_matrix_operations_of_the_manual[[[2, 3], [a, b]]^2-[[3*a "
-    "+ 4, 3*b + 6], [a*(b + 2), 3*a + b^2]]]",
     "test_the_number_theory_functions[LCM([6, 15, 14])-210]",
     "test_the_number_theory_functions[LCM(m, n)-|m*n|/GCD(n, m)]",
-    "test_the_order_the_manual_writes_a_result_in[5*y^3 + 2*x^2 - "
-    "3*a*x-2*x^2 - 3*a*x + 5*y^3]",
     "test_the_pair_of_the_manuals_nonlinear_system_that_solve_can_take",
     "test_the_partial_fraction_expansion_of_the_manual",
-    "test_the_picard_iterate_of_the_manuals_equation",
     "test_the_piecewise_functions[MAX(x, y)-|x - y|/2 + (x + y)/2]",
     "test_the_piecewise_functions[MIN(x, y)-(x + y)/2 - |x - y|/2]",
     "test_the_quadratic_formula_as_a_radical_factoring",
@@ -267,7 +257,6 @@ NOT_YET_HELD = {
     "5], [4, 6, 10], [1, 2, 3]])-2]",
     "test_trigonometry[ACOS(z)-pi/2 - ASIN(z)]",
     "test_trigonometry[ACOT(z)-pi/2 - ATAN(z)]",
-    "test_which_variable_is_main_decides_whether_a_power_is_multiplied_out",
 }
 
 

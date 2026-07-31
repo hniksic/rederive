@@ -17,8 +17,11 @@ variables in, which makes the first one chosen the primary variable; the
 generators an Expand about all of them expands about; and the order a `Declare
 Function` definition's variables become the function's parameters in.
 
-What it does not reach is the term order of a simplified sum, which is sympy's
-beyond the two rules `printer` keeps.
+It reaches the order a sum is written in too. A term sorts by the variable it
+leads with, so `5*y^3 + 2*x^2 - 3*a*x` is written `2*x^2 - 3*a*x + 5*y^3`; that
+is `printer`'s work rather than this module's, and it is a spelling and not a
+normal form - which sum is written which way round says nothing about what the
+sum is. Terms the list says nothing about keep the order sympy had them in.
 
 `Manage Ordering` rewrites the list, so the list is session state rather than a
 constant: it travels in the `Context`, alongside everything else a command's

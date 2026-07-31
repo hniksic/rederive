@@ -44,12 +44,16 @@ them, so `_print_MatMul` writes the nesting rather than the chain. An inverse
 goes with it - there is no `1/u` for a matrix, and `u^-1` is the whole of the
 notation for one.
 
-Of the ordering only the rules the original is recognisable by are ours: terms
-run by descending degree, and a sum does not begin with a minus sign unless
-every term is negated, so that a sum is written `x^2 + c` and `SQRT(3) - 1`.
-Beyond those two, term order in a sum is sympy's. The operands of `AND` and
-`OR` are ours as well, and by the same order list the rest of the engine takes
-its variables in: `c OR b AND a` is written `a AND b OR c`.
+The order a sum is written in is ours, and it is the order list's - the same
+list the rest of the engine takes its variables in. A term sorts by the
+variable it leads with rather than by any later one, and terms of one variable
+run by descending degree, so `5*y^3 + 2*x^2 - 3*a*x` is written
+`2*x^2 - 3*a*x + 5*y^3`. A term holding no variable goes last, `x^2 + c + 1`,
+and a sum does not begin with a minus sign unless every term is negated, so
+that a sum is written `SQRT(3) - 1`. Where the list says nothing the terms keep
+whatever order sympy already had them in, which is at least the same order
+every time. The operands of `AND` and `OR` are ours by the same list:
+`c OR b AND a` is written `a AND b OR c`.
 
 The inert heads of `to_sympy` are printed by name rather than by import: a
 sympy printer dispatches on the class name, so `_print_PlusMinus` finds
@@ -191,6 +195,88 @@ def _variable_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
     if name in order:
         return (0, order.index(name))
     return (1, name)
+
+
+#: The places a factor of a term can sort in, nearest the front of the sum
+#: first. A variable named by the order list leads, then one not named by it,
+#: then a factor built out of variables rather than being one - a power of a
+#: sum stays where its own bracket puts it and does not lend its variables to
+#: the term around it, which is what writes an expansion about `y` alone
+#: `8*y^3 + 12*y^2*(x + 1) + 6*y*(x + 1)^2 + (x + 1)^3`. Then a factor holding
+#: no variable, such as `SQRT(3)`, so that a sum is written `SQRT(3) - 1`.
+#:
+#: The last two are not factors. `_NOTHING` closes every term, so that a term
+#: made of nothing but a number sorts behind every term that is not; and `#i`
+#: sorts behind even that, so that the real part of a complex number is written
+#: first - `1 + 7*#i`, `4/3 + #i/2`.
+_ON_LIST, _OFF_LIST, _COMPOUND, _CONSTANT, _NOTHING, _IMAGINARY = range(6)
+
+#: Where each of `_variable_key`'s three answers sits on that ladder.
+_PLACES = (_ON_LIST, _OFF_LIST, _CONSTANT)
+
+#: What stands at the end of every term's key.
+_AFTER_EVERY_KERNEL = ((_NOTHING,),)
+
+
+def _term_order(terms: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
+    """The terms of a sum, in the original's order.
+
+    A stable sort over the order sympy already put them in, so that terms the
+    order list says nothing about keep an arrangement that is at least the same
+    every time - which is what makes printing a fixed point.
+    """
+    return sorted(terms, key=lambda term: _term_key(term, order))
+
+
+def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
+    """Where one term of a sum sorts: the factors it is made of, most main
+    first.
+
+    A term sorts by the variable it leads with rather than by any later one, so
+    `2*x^2 - 3*a*x + 5*y^3` runs the two x terms first however high the power of
+    `y` beside them is, and among terms of one variable the higher power leads.
+    Both fall out of comparing the factors in order: the leading factor decides
+    unless the two terms lead with the same variable at the same power, and then
+    the factor after it does.
+    """
+    kernels = sorted(
+        _kernel_key(factor, order)
+        for factor in sp.Mul.make_args(term)
+        if not factor.is_Number
+    )
+    return (*kernels, _AFTER_EVERY_KERNEL)
+
+
+def _kernel_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
+    """Where one factor of a term sorts: its place, then its power.
+
+    The variable comes first because it outranks everything else about a
+    factor, and the power is negated so that a sum of powers of one variable
+    runs by descending degree.
+
+    A sum or a product raised to a power is one factor and not the variables
+    inside it: `(x + 1)^3` is where the bracket is, not where an `x` is.
+    """
+    base, exponent = factor.as_base_exp()
+    if factor is sp.I:
+        return ((_IMAGINARY,), _degree(sp.S.One))
+    if base.free_symbols and isinstance(base, (sp.Add, sp.Mul)):
+        return ((_COMPOUND,), _degree(exponent))
+    place, within = _variable_key(factor, order)
+    return ((_PLACES[place], within), _degree(exponent))
+
+
+def _degree(exponent: sp.Basic) -> tuple:
+    """A power as something sortable, descending.
+
+    A symbolic exponent has no size to compare with a numeric one, and none to
+    compare with another symbolic one either, so all of those are one place -
+    behind every numeric power, and among themselves in whatever order they
+    were already in.
+    """
+    if exponent.is_Rational:
+        return (0, -Fraction(int(exponent.p), int(exponent.q)))
+    return (1, Fraction(0))
 
 
 def author_text(expression: sp.Basic, context: Context | None = None) -> str:
@@ -357,7 +443,8 @@ class AuthorPrinter(sp.StrPrinter):
     # -- sums ---------------------------------------------------------------
 
     def _as_ordered_terms(self, expr, order=None):
-        """The terms of a sum, led by one that is not negated.
+        """The terms of a sum, in the order list's order and led by one that is
+        not negated.
 
         `SQRT(3) - 1` and `SIN(x) - x*COS(x)`, not `-1 + SQRT(3)` and
         `-x*COS(x) + SIN(x)`: a sum is written starting with a term it can be
@@ -365,7 +452,7 @@ class AuthorPrinter(sp.StrPrinter):
         begins with a minus sign. The first such term moves to the front and
         nothing else changes order.
         """
-        terms = super()._as_ordered_terms(expr, order)
+        terms = _term_order(super()._as_ordered_terms(expr, order), self.context.order)
         leading = next(
             (
                 index

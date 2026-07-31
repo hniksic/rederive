@@ -115,7 +115,7 @@ def test_the_reals_reach_further_than_one_quadratic():
     # Derive prints the same two quadratics, its `x` coefficients written
     # `1/2 - SQRT(5)/2` where the engine writes the one fraction.
     assert fact("x^5 - 1", RADICAL) == (
-        "(x - 1)*(x^2 + x*(1 - SQRT(5))/2 + 1)*(x^2 + x*(1 + SQRT(5))/2 + 1)"
+        "(x - 1)*(x^2 + x*(1 - SQRT(5))/2 + 1)*(x^2 + x*(SQRT(5) + 1)/2 + 1)"
     )
 
 

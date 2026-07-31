@@ -48,7 +48,7 @@ POLYNOMIALS = [
     ("x*(x + 1)*(x + 2)", "x^3 + 3*x^2 + 2*x"),
     ("(x + 1)^3", "x^3 + 3*x^2 + 3*x + 1"),
     ("(a + b + c)^2", "a^2 + 2*a*b + 2*a*c + b^2 + 2*b*c + c^2"),
-    ("SQRT(x)*(SQRT(x) + 1)", "SQRT(x) + x"),
+    ("SQRT(x)*(SQRT(x) + 1)", "x + SQRT(x)"),
     # Not a polynomial in anything, and left alone rather than refused.
     ("SIN(x + y)", "SIN(x + y)"),
     ("#e^(x + y)", "#e^(x + y)"),
@@ -88,9 +88,9 @@ def test_one_variable_leaves_the_others_as_they_stand():
 
 
 def test_every_variable_leaves_nothing_unexpanded():
-    """The same terms the original prints; the order is the printer's."""
+    """The same terms the original prints, and in the order it prints them."""
     assert exp(CUBE) == (
-        "x^3 + 6*x^2*y + 12*x*y^2 + 8*y^3 + 3*x^2 + 12*x*y + 12*y^2 + 3*x + 6*y + 1"
+        "x^3 + 6*x^2*y + 3*x^2 + 12*x*y^2 + 12*x*y + 3*x + 8*y^3 + 12*y^2 + 6*y + 1"
     )
 
 
@@ -178,7 +178,7 @@ def test_an_improper_ratio_is_divided_out_first():
     """The quotient is expanded and the proper part decomposed; the order the
     two are printed in is the printer's."""
     assert exp("(x^4 + 1)/(x^2 - 1)", variables=["x"]) == (
-        "x^2 + 1 - 1/(x + 1) + 1/(x - 1)"
+        "x^2 - 1/(x + 1) + 1/(x - 1) + 1"
     )
 
 
@@ -188,7 +188,7 @@ def test_the_manual_s_worked_partial_fraction():
     term is not split because its numerator holds no expansion variable."""
     text = "(25*x^4 + 81*a*x^2 + 324*a*x + 324*a)/(x^3 + x^2 - 8*x - 12)"
     assert exp(text, variables=["x"]) == (
-        "25*x + 81*(a + 1)/(x - 3) - 25 + 144/(x + 2) - 80/(x + 2)^2"
+        "25*x + 81*(a + 1)/(x - 3) + 144/(x + 2) - 80/(x + 2)^2 - 25"
     )
 
 
