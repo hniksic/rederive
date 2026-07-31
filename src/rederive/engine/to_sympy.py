@@ -2273,10 +2273,15 @@ def outsized(value: sp.Basic) -> bool:
 def _iterated_over(variable: sp.Basic, start: sp.Basic) -> tuple[list, list]:
     """The variables an iteration updates, and the values they start at.
 
-    One variable and one value, or - the form the manual writes Fibonacci in -
-    a vector of variables and a vector of their values, so that an iteration
-    remembering more than one previous iterate needs no subscripts:
-    `ITERATE([k, j + k], [j, k], [0, 1], n)`.
+    One variable and one value, or - one of the two forms the manual writes
+    Fibonacci in - a vector of variables and a vector of their values, so that
+    an iteration remembering more than one previous iterate needs no
+    subscripts: `ITERATE([k, j + k], [j, k], [0, 1], n)`.
+
+    The other form is one variable holding the whole vector, read back with
+    subscripts: `ITERATE([v SUB 2, v SUB 1 + v SUB 2], v, [0, 1], n)`. That is
+    one name and one value here, and `_bindings` is where its subscripts are
+    written in.
     """
     if isinstance(variable, sp.MatrixBase):
         names = _elements_of(variable)
@@ -2304,7 +2309,7 @@ def _updated(conv: _Converter, body: sp.Basic, names: list, values: list) -> lis
     a generated vector's elements, and a system's update has to come back as
     many values as it consumed.
     """
-    written = body.subs(dict(zip(names, values, strict=True)), simultaneous=True)
+    written = body.subs(_bindings(body, names, values), simultaneous=True)
     written = _retried(conv, written)
     if len(names) == 1:
         return [written]
@@ -2312,6 +2317,38 @@ def _updated(conv: _Converter, body: sp.Basic, names: list, values: list) -> lis
     if len(elements) != len(names):
         raise ValueError("not that many values")
     return elements
+
+
+def _bindings(body: sp.Basic, names: list, values: list) -> dict:
+    """What to write into the body: each variable, and each of its subscripts.
+
+    A variable holding a vector is read back element by element, and `v SUB 1`
+    is one symbol rather than a head over two - that is what makes a
+    subscripted variable something to solve for. A symbol is not reached by
+    substituting for `v`, so the elements are written in under those names too.
+    """
+    bindings = dict(zip(names, values, strict=True))
+    for name, value in zip(names, values, strict=True):
+        if not isinstance(value, (sp.MatrixBase, InertVector)):
+            continue
+        try:
+            elements = _elements_of(_matrix(value))
+        except Exception:
+            continue
+        for symbol in body.free_symbols:
+            place = _subscripted(symbol, name)
+            if place is not None and 1 <= place <= len(elements):
+                bindings[symbol] = elements[place - 1]
+    return bindings
+
+
+def _subscripted(symbol: sp.Symbol, name: sp.Symbol) -> int | None:
+    """Which element of `name` this symbol is a subscript of, if it is one."""
+    prefix = f"{name.name} SUB "
+    if not symbol.name.startswith(prefix):
+        return None
+    index = symbol.name[len(prefix) :]
+    return int(index) if index.isdigit() else None
 
 
 def _inverted(body: sp.Basic, names: list) -> sp.Basic:

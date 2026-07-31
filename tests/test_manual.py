@@ -232,7 +232,6 @@ NOT_YET_HELD = {
     "test_the_inverse_of_the_manuals_function",
     "test_the_iterates_of_the_manuals_fixed_point",
     "test_the_least_squares_fit_that_is_not_linear_in_its_data_variable",
-    "test_the_manuals_fibonacci_by_iteration",
     "test_the_manuals_mutual_recursion_written_with_accumulators",
     "test_the_manuals_three_by_three_system_solved_by_inversion",
     "test_the_matrix_operations_of_the_manual[CHARPOLY([[2, 3], [a, "
