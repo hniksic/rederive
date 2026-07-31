@@ -27,6 +27,7 @@ from fractions import Fraction
 from itertools import product
 
 import sympy as sp
+from sympy.concrete.gosper import gosper_term
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
 
@@ -45,6 +46,8 @@ from rederive.syntax.names import BUILTIN_FUNCTIONS
 
 __all__ = [
     "COMMAND_HEADS",
+    "Antidifference",
+    "Antiquotient",
     "Approx",
     "Assign",
     "Declare",
@@ -215,6 +218,92 @@ class Approx(sp.Function):
     """
 
     nargs = 2
+
+
+class Antidifference(sp.Function):
+    """`SUM(u, n)` with no limits, unevaluated until `.doit()`.
+
+    `F` is the antidifference of `f` when `f(n) = F(n + 1) - F(n)`, which is
+    the discrete analogue of an antiderivative and is what a definite sum
+    telescopes down to. The constant of summation is dropped the way an
+    integral's is.
+
+    Sympy has no head for one, so this is that head, and it waits where the
+    calculus heads wait for the reason `Taylor` gives.
+    """
+
+    nargs = 2
+
+    def doit(self, deep: bool = False, **hints) -> sp.Basic:
+        """The antidifference, or this head where there is none.
+
+        Gosper's algorithm decides it: its certificate `t` is the rational
+        function with `t(n)*f(n)` the antidifference, and no certificate means
+        no hypergeometric antidifference exists - `SUM(1/n^2, n)` among them,
+        which is a documented refusal and not an error. The certificate is
+        canonical and carries no constant, so nothing has to be taken off it.
+
+        Only the powers are gathered afterwards, so that `SUM(1/2^n, n)` comes
+        out as one power rather than as `-2/2^n`.
+        """
+        expression, index = self.args
+        if type(index) is not sp.Symbol:
+            return self
+        try:
+            certificate = gosper_term(expression, index)
+        except Exception:
+            return self
+        if certificate is None:
+            return self
+        try:
+            return sp.powsimp(certificate * expression)
+        except Exception:
+            return self
+
+
+class Antiquotient(sp.Function):
+    """`PRODUCT(u, n)` with no limits, unevaluated until `.doit()`.
+
+    `F` is the antiquotient of `f` when `f(n) = F(n + 1)/F(n)`: the
+    antidifference of section 7.5 with multiplication in place of addition, and
+    what a definite product telescopes down to. The constant factor is dropped
+    the way the constant of summation is.
+    """
+
+    nargs = 2
+
+    def doit(self, deep: bool = False, **hints) -> sp.Basic:
+        """The antiquotient, or this head where there is none.
+
+        There is no routine for one, so it is built from its definition: the
+        running product of the body up to `n - 1`, which telescopes to exactly
+        an `F` with `F(n + 1)/F(n)` the body again.
+
+        What sympy answers with is not always a closed form. A body Derive has
+        no answer for comes back holding a `RisingFactorial`, which the
+        notation has no spelling for, or the product itself, which is no answer
+        at all; `combsimp` turns some of those into factorials, and where it
+        does not the head stands, as it does for the manual's own
+        `PRODUCT(k^2 + 1, k)`.
+        """
+        expression, index = self.args
+        if type(index) is not sp.Symbol:
+            return self
+        running = sp.Dummy(index.name)
+        try:
+            value = sp.Product(
+                expression.subs(index, running), (running, 1, index - 1)
+            ).doit()
+        except Exception:
+            return self
+        if value.has(sp.RisingFactorial, sp.gamma):
+            try:
+                value = sp.combsimp(value).rewrite(sp.factorial)
+            except Exception:
+                return self
+        if value.has(sp.Product, sp.Sum, sp.RisingFactorial, sp.gamma):
+            return self
+        return value
 
 
 # -- the constant table -----------------------------------------------------
@@ -1474,11 +1563,13 @@ def _summation(conv: _Converter, args: list) -> sp.Basic:
     A third argument that is a vector is the values `k` takes, rather than the
     ends of a range it runs through.
 
-    An indefinite `SUM(u, k)` has no sympy object to be, so it stays inert
-    until a pipeline knows what to do with it.
+    An indefinite `SUM(u, k)` is the antidifference of `u`, which is a
+    computation and so waits for the pipeline the way the calculus heads do.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Add(*args[0])
+    if len(args) == 2:
+        return Antidifference(*args)
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Add(*_over_values(conv, args))
     expression, index, low, high = args
@@ -1488,10 +1579,13 @@ def _summation(conv: _Converter, args: list) -> sp.Basic:
 def _product(conv: _Converter, args: list) -> sp.Basic:
     """`PRODUCT(u, k, a, b)`, and `PRODUCT(v)` over a vector's elements.
 
-    A third argument that is a vector names the values, as it does for `SUM`.
+    A third argument that is a vector names the values, as it does for `SUM`,
+    and an indefinite `PRODUCT(u, k)` is the antiquotient of `u`.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Mul(*args[0])
+    if len(args) == 2:
+        return Antiquotient(*args)
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Mul(*_over_values(conv, args))
     expression, index, low, high = args

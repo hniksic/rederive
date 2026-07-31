@@ -100,6 +100,8 @@ _ORDERINGS = ("<", "<=", ">", ">=")
 
 #: sympy heads whose author-notation name is not just their name upper-cased.
 _FUNCTION_NAMES = {
+    "Antidifference": "SUM",
+    "Antiquotient": "PRODUCT",
     "log": "LN",
     "arg": "PHASE",
     "atan2": "ATAN",
@@ -233,6 +235,27 @@ def numeral(number: int, base: int = 10) -> str:
     return ("-" if number < 0 else "") + text
 
 
+def _under_the_bar(power: sp.Basic) -> bool:
+    """Whether a factor raised to `power` is a denominator in the notation.
+
+    A numeric exponent is: `k^(-2)` is written `1/k^2`. A symbolic one is not,
+    `2^(-m)` being how the notation writes that.
+    """
+    return bool(power.is_Number and power.is_negative)
+
+
+def _stays_above(factor: sp.Basic) -> bool:
+    """Whether sympy's product spine and `_print_Pow` disagree over `factor`.
+
+    Sympy reads any negatively signed exponent as a denominator and the
+    notation reads only a numeric one, so a factor such as `2^(-m)` is one the
+    inherited `_print_Mul` cannot be left to write.
+    """
+    if not isinstance(factor, sp.Pow) or _under_the_bar(factor.exp):
+        return False
+    return bool(factor.exp.as_coeff_Mul()[0].is_negative)
+
+
 class AuthorPrinter(sp.StrPrinter):
     """A `StrPrinter` that writes author notation."""
 
@@ -326,7 +349,47 @@ class AuthorPrinter(sp.StrPrinter):
             written = self._number(Fraction(coefficient.p, coefficient.q))
             if "/" not in written:
                 return self._beside(written, rest)
+        if any(_stays_above(factor) for factor in expr.args):
+            return self._divided(expr)
         return super()._print_Mul(expr)
+
+    def _divided(self, expr) -> str:
+        """A product whose denominator is read the way `_print_Pow` reads one.
+
+        Sympy's product spine sends every negatively signed exponent below the
+        bar, so `2^(-m)` inside a product comes out `1/2^m`. Alone it does not:
+        `_print_Pow` makes a denominator only of a numeric exponent, which is
+        the notation's own habit - `1/k^2`, but `2^(-m)`. This is the same
+        reading over a whole product, so that one power is written the same way
+        wherever it stands.
+
+        A power of `#e` is left alone. Sympy holds `#e^(-z)` as an exponential
+        rather than a power, and `#e^(-z)/2` is what the notation writes it as.
+
+        Sign extraction and the order of the factors are sympy's, as they are
+        in `_beside`.
+        """
+        sign = ""
+        if expr.could_extract_minus_sign():
+            expr, sign = -expr, "-"
+        above, below = [], []
+        for factor in expr.as_ordered_factors():
+            if isinstance(factor, sp.Rational):
+                if factor.p != 1:
+                    above.append(sp.Integer(factor.p))
+                if factor.q != 1:
+                    below.append(sp.Integer(factor.q))
+            elif isinstance(factor, sp.Pow) and _under_the_bar(factor.exp):
+                power = -factor.exp
+                below.append(factor.base if power == 1 else factor.base**power)
+            else:
+                above.append(factor)
+        level = PRECEDENCE["Mul"]
+        text = "*".join(self.parenthesize(factor, level) for factor in above) or "1"
+        if below:
+            under = below[0] if len(below) == 1 else sp.Mul(*below)
+            text += "/" + self.parenthesize(under, level)
+        return sign + text
 
     def _beside(self, written: str, rest) -> str:
         """A coefficient already written, times the rest of its product.

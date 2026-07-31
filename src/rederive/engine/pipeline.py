@@ -66,6 +66,8 @@ from rederive.engine.solving import oriented, solutions
 from rederive.engine.substitute import named_as_declared, substitute
 from rederive.engine.to_sympy import (
     COMMAND_HEADS,
+    Antidifference,
+    Antiquotient,
     Approx,
     Assign,
     annuity,
@@ -89,7 +91,17 @@ Rewrite = Callable[[sp.Basic], sp.Basic]
 #: calculus ones, and `APPROX`, which waits for the same reason and in the same
 #: place. It has to round the value an integral came out as rather than the
 #: integral, and evaluating innermost first is exactly what gives it that.
-_CALCULUS = (sp.Derivative, sp.Integral, sp.Sum, sp.Product, sp.Limit, Taylor, Approx)
+_CALCULUS = (
+    sp.Derivative,
+    sp.Integral,
+    sp.Sum,
+    sp.Product,
+    sp.Limit,
+    Antidifference,
+    Antiquotient,
+    Taylor,
+    Approx,
+)
 
 #: What `combsimp` is for. It is offered only where one of these appears,
 #: because on an ordinary polynomial it factors - `x^2 + 2*x` becomes
@@ -259,6 +271,7 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     # `(0, 1)` is a sum that cancels, and only once both bars are off.
     expression = settled(expression, context)
     expression = _rewritten(expression, context)
+    expression = _factorials(expression)
     # The rewrites can leave a head where none stood: `cancel` splits a single
     # integrand into a sum, and each part is an integral of its own. Those have
     # been offered to nothing yet, and an answer still holding `INT(x, x)` is
@@ -1045,6 +1058,25 @@ def _is_fractional_factorial(expression: sp.Basic) -> bool:
 
 def _as_gamma(expression: sp.Basic) -> sp.Basic:
     return sp.gamma(expression.args[0] + 1)
+
+
+def _factorials(expression: sp.Basic) -> sp.Basic:
+    """`GAMMA(z)` written as `(z - 1)!`, which section 6.9 says it is.
+
+    The factorial is the notation's own spelling and the gamma is the one it
+    falls back on, so an answer that reached a gamma has not been written yet.
+    Not gated on getting shorter - `(z - 1)!` is one operation more than
+    `GAMMA(z)` and is still the form asked for - and after the rewrites rather
+    than before, since `combsimp` is where most of the gammas come from.
+    """
+    try:
+        return expression.replace(sp.gamma, _as_factorial, simultaneous=False)
+    except Exception:
+        return expression
+
+
+def _as_factorial(argument: sp.Basic) -> sp.Basic:
+    return sp.factorial(argument - 1)
 
 
 # -- the gated rewrites ------------------------------------------------------
