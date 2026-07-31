@@ -146,7 +146,6 @@ NOT_YET_HELD = {
     "test_a_complex_result_is_written_in_rectangular_form",
     "test_a_logarithm_difference_waits_for_a_domain_that_justifies_it",
     "test_a_negative_order_of_differentiation_is_an_antiderivative",
-    "test_a_one_armed_conditional_counts_what_it_tests",
     "test_a_product_of_sines_collects_into_the_manuals_identity[COS(z)*"
     "COS(w)-(COS(z - w) + COS(z + w))/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"

@@ -420,9 +420,13 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     # written in; and before `_commanded`, so that a factorization a `FACTOR`
     # head produces is not multiplied straight back out.
     expression = normal_form(expression, context.order)
-    for standing_in in (held, frozen):
-        if standing_in:
-            expression = expression.xreplace(standing_in)
+    expression = _thawed(expression, held)
+    if frozen:
+        # A conditional comes back where its placeholder was applied, which
+        # need not be where it was frozen: an index written in is a test that
+        # may be decidable now, so the conditionals are offered once more.
+        thawed = _reconditioned(_thawed(expression, frozen), context)
+        expression = _resolved(thawed, context, _kept)
     return approximated(_commanded(_canonical(expression), context), context)
 
 
@@ -522,6 +526,13 @@ def _conditionals(
     0), k, 1, n)` would come back `n*IF(k > 0, k, 0)` - sympy summing what it
     had been shown no longer depends on `k`. Standing in as a function of `k`
     keeps the sum unevaluated, which is the true answer.
+
+    It is a function of `k` in earnest: what is remembered is the conditional
+    as a `Lambda` over those variables, and `_thawed` puts it back by applying
+    that rather than by matching what was frozen. A finite `SUM` is written out
+    by applying what it sums to each index in turn, so the placeholder reaches
+    the end as `IF0(1) + ... + IF0(100)`, and each of those terms is the
+    conditional with an index written in.
     """
     frozen: dict[sp.Basic, sp.Basic] = {}
 
@@ -529,6 +540,19 @@ def _conditionals(
         placeholder = _placeholder(head, len(frozen))
         frozen[placeholder] = head
         return placeholder
+
+    return _resolved(expression, context, freeze), frozen
+
+
+def _kept(head: sp.Basic) -> sp.Basic:
+    """An undecidable conditional left standing as itself, frozen for nothing."""
+    return head
+
+
+def _resolved(
+    expression: sp.Basic, context: Context, freeze: Callable[[sp.Basic], sp.Basic]
+) -> sp.Basic:
+    """Every conditional decided that can be, the rest handed to `freeze`."""
 
     def resolve(head: sp.Basic) -> sp.Basic:
         if isinstance(head, sp.Piecewise):
@@ -550,10 +574,9 @@ def _conditionals(
         return freeze(head)
 
     try:
-        resolved = expression.replace(_is_conditional, resolve, simultaneous=False)
+        return expression.replace(_is_conditional, resolve, simultaneous=False)
     except Exception:
-        return expression, {}
-    return resolved, frozen
+        return expression
 
 
 def _placeholder(head: sp.Basic, index: int) -> sp.Basic:
@@ -562,6 +585,66 @@ def _placeholder(head: sp.Basic, index: int) -> sp.Basic:
     if not variables:
         return sp.Dummy(f"IF{index}")
     return sp.Function(f"IF{index}", nargs=len(variables))(*variables)
+
+
+def _thawed(expression: sp.Basic, standing_in: dict[sp.Basic, sp.Basic]) -> sp.Basic:
+    """Every placeholder put back, wherever and however it was applied.
+
+    A placeholder that was applied to the variables its head mentions stands
+    for that head as a function of them, so putting it back is applying that
+    function to the arguments it is found under. Matching the placeholder as it
+    was frozen would miss `IF0(1)`, which is what a finite `SUM` leaves behind,
+    and the standing-in name would reach the reader.
+
+    One with no variables at all is a name and not a function, and there is
+    nothing to apply: it goes back where it stands.
+
+    Repeated because a head can hold a placeholder of its own - a conditional
+    frozen inside a conditional - and one pass puts back only the outer one.
+    """
+    if not standing_in:
+        return expression
+    applied: dict[type, sp.Lambda] = {}
+    named: dict[sp.Basic, sp.Basic] = {}
+    for placeholder, head in standing_in.items():
+        if isinstance(placeholder, AppliedUndef):
+            applied[type(placeholder)] = sp.Lambda(tuple(placeholder.args), head)
+        else:
+            named[placeholder] = head
+    for _ in range(len(standing_in)):
+        thawed = _thaw(expression, applied, named)
+        if thawed == expression:
+            return thawed
+        expression = thawed
+    return expression
+
+
+def _thaw(expression: sp.Basic, applied: dict[type, sp.Lambda], named: dict) -> sp.Basic:
+    """One pass of putting placeholders back: the applied ones and the named."""
+    if named:
+        expression = expression.xreplace(named)
+    if not applied:
+        return expression
+    try:
+        return expression.replace(
+            lambda found: type(found) in applied,
+            lambda found: _written_in(applied[type(found)], found.args),
+        )
+    except Exception:
+        return expression
+
+
+def _written_in(recipe: sp.Lambda, arguments: tuple) -> sp.Basic:
+    """The frozen head with these arguments written in for its variables.
+
+    By `subs` rather than by applying the `Lambda`, which writes in by
+    `xreplace` and so reaches into a sum whose index happens to be one of those
+    variables. `NUMBER.MTH` has one: a conditional that is a function of `i_`
+    and holds a sum over `i_` of its own, where a limit rewritten to `(0, 1, k_
+    - 1)` is no limit at all.
+    """
+    written = dict(zip(recipe.variables, arguments, strict=True))
+    return recipe.expr.subs(written, simultaneous=True)
 
 
 def _is_conditional(expression: sp.Basic) -> bool:
@@ -621,6 +704,41 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
         if candidate is sp.false:
             return False
     return decided(test, context)
+
+
+def _reconditioned(expression: sp.Basic, context: Context) -> sp.Basic:
+    """Every test read again over the heads that have since answered.
+
+    A test the conversion could make nothing of is read as a comparison with
+    zero, which is how Derive reads a number. `IF(PRIME(n))` is one of those:
+    with `n` still a variable, what `PRIME(n)` is has not been asked, so the
+    conversion had a call and no truth-value to work from. An index written in
+    by a sum asks it, and a truth-value read as `test = 0` is read backwards -
+    so a comparison whose subject has turned into a statement becomes that
+    statement.
+
+    A subject that answers nothing new is left alone, comparison and all: `x =
+    0` is a comparison somebody wrote, and nothing here makes it a claim.
+    """
+
+    def restated(found: sp.Basic) -> sp.Basic:
+        subject = reread(found.lhs, context)
+        if not isinstance(subject, (Boolean, Logical)):
+            return found
+        return as_condition(subject)
+
+    try:
+        return expression.replace(_is_zero_test, restated, simultaneous=False)
+    except Exception:
+        return expression
+
+
+def _is_zero_test(expression: sp.Basic) -> bool:
+    return (
+        isinstance(expression, sp.Equality)
+        and expression.rhs == 0
+        and expression.lhs.has(AppliedUndef)
+    )
 
 
 def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
