@@ -1689,13 +1689,30 @@ def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
 #: as it went in, so that a worksheet holding one is not damaged by simplifying
 #: it.
 OPAQUE = [
-    "FIT([x, 1], [[1, 2], [3, 4]])",
     "MY_FUNCTION(x, 2)",
+    "ANOTHER(1)",
 ]
 
 
 @pytest.mark.parametrize("text", OPAQUE, ids=str)
 def test_what_the_engine_has_no_mathematics_for_passes_through(text):
+    assert simp(text) == text
+
+
+#: Calls to a function the engine does know, written so that they name nothing
+#: it can answer: a fit with no parametric variable to solve for, data of a
+#: width the label vector does not match, and a dependence on the parameter
+#: that is not linear. Each comes back as it went in rather than being answered
+#: from a reading nobody asked for.
+NO_FIT = [
+    "FIT([x, 1], [[1, 2], [3, 4]])",
+    "FIT([x, a*x + b], [[1, 2, 3], [3, 4, 5]])",
+    "FIT([x, a^2*x], [[1, 2], [3, 4]])",
+]
+
+
+@pytest.mark.parametrize("text", NO_FIT, ids=str)
+def test_a_least_squares_fit_of_what_is_no_fit_passes_through(text):
     assert simp(text) == text
 
 

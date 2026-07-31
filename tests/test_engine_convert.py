@@ -403,8 +403,9 @@ def test_a_sympy_head_the_printer_named_converts_back_to_that_head():
     "name", ["SOLVE", "FIT", "ITERATE", "TRUTH_TABLE", "RANDOM"], ids=str
 )
 def test_a_name_derive_defines_is_not_displaced_by_a_sympy_head(name):
-    # The inventory has a reading of its own for each of these, or is
-    # deliberately inert; nothing found among sympy's classes may take one.
+    # The inventory has a reading of its own for each of these, and this call
+    # is one none of them can take; nothing found among sympy's classes may
+    # step in and answer it instead.
     assert isinstance(convert(f"{name}(x, 2)"), AppliedUndef)
 
 

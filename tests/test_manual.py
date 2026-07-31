@@ -211,7 +211,7 @@ NOT_YET_HELD = {
     "test_the_boolean_operators[p AND (p AND q OR r)-p AND (q OR r)]",
     "test_the_boolean_operators[p IMP q-NOT p OR q]",
     "test_the_boolean_operators[p OR NOT p-true]",
-    "test_the_boolean_operators[p XOR q-(NOT p AND q) OR (p AND NOT q)]",
+    "test_the_boolean_operators[p XOR q-NOT p AND q OR p AND NOT q]",
     "test_the_branch_the_manual_starts_on_is_the_principal_one",
     "test_the_characteristic_variable_defaults_to_w",
     "test_the_clairaut_difference_equation_the_manual_solves",
@@ -246,8 +246,6 @@ NOT_YET_HELD = {
     "N(SQRT(z^2 + 1) + z)]",
     "test_the_inverse_of_the_manuals_function",
     "test_the_iterates_of_the_manuals_fixed_point",
-    "test_the_least_squares_fit_of_the_manuals_parabola",
-    "test_the_least_squares_fit_of_the_manuals_plane",
     "test_the_least_squares_fit_that_is_not_linear_in_its_data_variable",
     "test_the_manuals_accumulating_fibonacci",
     "test_the_manuals_fibonacci_by_iteration",
@@ -764,7 +762,9 @@ def test_the_least_squares_fit_of_the_manuals_plane():
 
 
 def test_the_least_squares_fit_that_is_not_linear_in_its_data_variable():
-    # 6.10 p.120.
+    # 6.10 p.120. The coefficients come out as the manual has them; only the
+    # order of the two terms differs, Derive sorting function terms by an
+    # internal ordinal that puts ATAN before SIN where this sorts by name.
     fit = apx("FIT([t, q*ATAN(t) + r*SIN(t)], [[-4, -1], [-1, -1.9], [2, 2.25]])")
     assert fit == "1.29723*ATAN(t) + 0.961378*SIN(t)"
 
@@ -1719,8 +1719,10 @@ BOOLEAN = [
     ("true XOR false", "true"),
     ("true IMP false", "false"),
     ("false IMP true", "true"),
-    # 4.16 p.128: the forms the unknown cases take.
-    ("p XOR q", "(NOT p AND q) OR (p AND NOT q)"),
+    # 4.16 p.128: the forms the unknown cases take. The page fences the XOR
+    # form for the reader; the program prints it unfenced, relying on AND
+    # binding tighter than OR, and that is what is asserted here.
+    ("p XOR q", "NOT p AND q OR p AND NOT q"),
     ("p IMP q", "NOT p OR q"),
     ("NOT NOT p", "p"),
     ("p AND (p AND q OR r)", "p AND (q OR r)"),

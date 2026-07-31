@@ -1171,6 +1171,62 @@ def _standard_deviation(values: list) -> sp.Basic:
     return sp.sqrt(_variance(values))
 
 
+def _fit(conv: _Converter, args: list) -> sp.Basic:
+    """`FIT(v, A)`: the least squares fit of a parameterized expression to data.
+
+    The label vector `v` names the data variables and then the expression
+    written over them, and the data matrix `A` carries one row per point: a
+    value for each data variable, then the value the expression is meant to
+    take there. What is left of the expression's variables once the data ones
+    are taken out are the parametric ones, and those are what the fit solves
+    for.
+
+    The expression has to be linear in the parametric variables, but not in the
+    data ones - which is what makes `q*ATAN(t) + r*SIN(t)` a fit anyone can
+    ask for. Substituting a row's data values leaves an expression in the
+    parameters alone, and its derivative with respect to each parameter is that
+    parameter's coefficient there; a coefficient that still mentions a
+    parameter says the dependence was never linear, and the call comes back the
+    way it was written. What the parameters do not account for moves to the
+    other side, so the row reads as one equation of the linear system whose
+    least squares solution is the fit. As many rows as parameters solves it
+    exactly; more rows minimize the squared discrepancies.
+
+    Everything degenerate raises: no parametric variables, rows of the wrong
+    width, fewer rows than the fit has freedom, or a design matrix of deficient
+    rank. None of those name a fit, and an inert call says so better than an
+    answer that was picked out of a family would.
+    """
+    labels, data = args
+    labels = _matrix(labels)
+    if labels.rows != 1 or labels.cols < 2:
+        raise TypeError("not a label vector")
+    *variables, expression = list(labels)
+    if any(type(variable) is not sp.Symbol for variable in variables):
+        raise TypeError("not data variables")
+    if len(set(variables)) != len(variables):
+        raise ValueError("a data variable twice")
+    data = _matrix(data)
+    if data.cols != len(variables) + 1:
+        raise ValueError("data of the wrong width")
+    parameters = sorted(
+        expression.free_symbols - set(variables), key=sp.default_sort_key
+    )
+    if not parameters:
+        raise ValueError("no parametric variables")
+    design, targets = [], []
+    for index in range(data.rows):
+        row = list(data[index, :])
+        here = sp.expand(expression.subs(dict(zip(variables, row))))
+        coefficients = [sp.diff(here, parameter) for parameter in parameters]
+        if any(coefficient.has(*parameters) for coefficient in coefficients):
+            raise ValueError("not linear in the parameters")
+        design.append(coefficients)
+        targets.append(row[-1] - here.subs(dict.fromkeys(parameters, 0)))
+    solution = sp.Matrix(design).solve_least_squares(sp.Matrix(targets))
+    return expression.subs(dict(zip(parameters, solution)))
+
+
 def _is_number(conv: _Converter, args: list) -> sp.Basic:
     """`NUMBER(u)`: whether `u` simplified to a number.
 
@@ -2425,8 +2481,8 @@ def _matrix(value: sp.Basic) -> sp.MatrixBase:
 
 
 #: What each function name converts to. A name absent from here converts to an
-#: inert head over its converted arguments, which is what keeps `FIT` and every
-#: arbitrary user function alive through a round trip - and what makes
+#: inert head over its converted arguments, which is what keeps every arbitrary
+#: user function alive through a round trip - and what makes
 #: `DIF(F(x)^3, x)` differentiable. `SOLVE` is absent for a different reason:
 #: it is `COMMAND_HEADS`, and the pipeline evaluates it.
 FUNCTIONS: dict[str, Handler] = {
@@ -2454,6 +2510,7 @@ FUNCTIONS: dict[str, Handler] = {
     "RMS": _statistic(_root_mean_square),
     "VAR": _statistic(_variance),
     "STDEV": _statistic(_standard_deviation),
+    "FIT": _fit,
     "NUMBER": _is_number,
     "PRIME": _is_prime,
     "NEXT_PRIME": _next_prime,
@@ -2518,9 +2575,9 @@ def _sympy_heads() -> dict[str, Handler]:
     function classes.
 
     Only names Derive does not define itself. Everything in the inventory has a
-    reading of its own, waits for the pipeline as `SOLVE` does, or is
-    deliberately inert as `FIT` is - and nothing here may displace one. What is
-    left is names no Derive worksheet can mean anything else by.
+    reading of its own or waits for the pipeline as `SOLVE` does, and nothing
+    here may displace one. What is left is names no Derive worksheet can mean
+    anything else by.
     """
     reserved = set(FUNCTIONS) | BUILTIN_FUNCTIONS
     heads: dict[str, Handler] = {}
