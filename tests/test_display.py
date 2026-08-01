@@ -385,18 +385,18 @@ CALCULUS = [
     (
         "INT(x^2/(x+1),x)",
         """
-        ⌠     2
+        ╭     2
         │    x
         │ ─────── dx
-        ⌡  x + 1
+        ╯  x + 1
         """,
     ),
     (
         "INT(x^2,x,0,1)",
         """
          1
-        ⌠   2
-        ⌡  x  dx
+        ╭   2
+        ╯  x  dx
          0
         """,
     ),
@@ -496,8 +496,8 @@ CALCULUS = [
     (
         "INT(-x,x)",
         """
-        ⌠
-        ⌡ -x dx
+        ╭
+        ╯ -x dx
         """,
     ),
     # The antidifference and the antiquotient, which `Calculus Sum` and
@@ -1127,32 +1127,32 @@ FORM_FENCES = [
     (
         "INT(x^2,x)+1",
         """
-        ⌠  2
-        ⌡ x  dx + 1
+        ╭  2
+        ╯ x  dx + 1
         """,
     ),
     (
         "2 INT(x^2,x)",
         """
-          ⌠  2
-        2·⌡ x  dx
+          ╭  2
+        2·╯ x  dx
         """,
     ),
     (
         "INT(x^2/(x+1),x)+1",
         """
-        ⌠     2
+        ╭     2
         │    x
         │ ─────── dx + 1
-        ⌡  x + 1
+        ╯  x + 1
         """,
     ),
     (
         "INT(SUM(k,k,1,n),x)",
         """
-        ⌠  n
+        ╭  n
         │  Σ  k dx
-        ⌡ k=1
+        ╯ k=1
         """,
     ),
     # A sum, a product and a limit end in their body.

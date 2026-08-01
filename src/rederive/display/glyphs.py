@@ -91,8 +91,12 @@ PARENS = Fence(("(", ")"), ("┌", "│", "└"), ("┐", "│", "┘"))
 BRACKETS = Fence(("[", "]"), ("┌", "│", "└"), ("┐", "│", "┘"))
 #: Absolute value: the same rail whatever the height.
 RAILS = Fence(("│", "│"), ("│", "│", "│"), ("│", "│", "│"))
-#: The integral sign, drawn as a rail of its own.
-INTEGRAL = ("⌠", "│", "⌡")
+#: The integral sign, drawn as a rail of its own. Box-drawing arcs rather than
+#: `⌠` and `⌡`: those are math symbols, which a terminal clips to the cell like
+#: any other glyph, so the sign breaks where the pieces meet. The box-drawing
+#: block is the one a terminal joins seamlessly, which is why the matrix rails
+#: hold together.
+INTEGRAL = ("╭", "│", "╯")
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 

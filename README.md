@@ -72,9 +72,9 @@ the limits `0` and `inf`:
 
 ```
  ∞
-⌠      2
+╭      2
 │   - x
-⌡  ê     dx
+╯  ê     dx
  0
 ```
 
