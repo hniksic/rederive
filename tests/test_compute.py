@@ -267,9 +267,15 @@ async def test_control_enter_simplifies_what_it_entered_on_the_thread(app, runne
 
 
 @pytest.fixture
-def demo(tmp_path):
+def demo(tmp_path, monkeypatch):
+    """A demonstration file, with the shell sitting in the directory it is in.
+
+    So the prompt can be answered with the name alone, which it takes as the
+    file it names.
+    """
     path = tmp_path / "show.dmo"
     path.write_text("; adds two numbers\n2 + 3\n\n; and a symbolic one\n(x+1)^2\n")
+    monkeypatch.chdir(tmp_path)
     return path
 
 
@@ -281,7 +287,7 @@ async def test_a_demonstration_waits_on_the_step_it_dispatched(app, runner, demo
     """
     async with app.run_test() as pilot:
         await pilot.press("t", "d")
-        await pilot.press(*str(demo))
+        await pilot.press(*demo.name)
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         assert app.mode == MODE_COMPUTE
@@ -294,7 +300,7 @@ async def test_a_demonstration_waits_on_the_step_it_dispatched(app, runner, demo
 async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo):
     async with app.run_test() as pilot:
         await pilot.press("t", "d")
-        await pilot.press(*str(demo))
+        await pilot.press(*demo.name)
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         await pilot.press("escape")
@@ -303,7 +309,7 @@ async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo
         assert entries(app) == ["2+3"]
         # Suspended rather than lost: naming the file again picks it up.
         await pilot.press("t", "d")
-        await pilot.press(*str(demo))
+        await pilot.press(*demo.name)
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         runner.release()

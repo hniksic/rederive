@@ -30,6 +30,18 @@ from rederive.ui.app import RederiveApp
 from rederive.ui.menu import mnemonic
 
 
+@pytest.fixture(autouse=True)
+def here(tmp_path, monkeypatch):
+    """The shell sits in the directory a test keeps its files in.
+
+    A name typed on a file prompt is taken as it stands, so a test can name a
+    file by its name alone and reach the same file the absolute path would.
+    Where the absolute path is the point - what the list of names says it is
+    showing, and walking down a tree from the top - the test spells it out.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def session():
     return Session()
@@ -566,7 +578,7 @@ async def test_saving_asks_for_a_name_and_writes_the_file(app, file):
         await pilot.press("t", "s", "d")
         assert prompt(app) == ("TRANSFER SAVE DERIVE file:", "")
         assert message(app) == "Enter filename (TAB completes, opens the list)"
-        await pilot.press(*str(file), "enter")
+        await pilot.press(*file.name, "enter")
         assert file.read_text() == "x^2+1\n"
         assert message(app) == "Enter option"
         # The command ran, so the whole path it was reached by is done with.
@@ -576,7 +588,7 @@ async def test_saving_asks_for_a_name_and_writes_the_file(app, file):
 async def test_the_status_line_names_the_file_the_session_is_on(app, file):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter")
-        await pilot.press("t", "s", "d", *str(file), "enter")
+        await pilot.press("t", "s", "d", *file.name, "enter")
         status = text_of(app.query_one("#status")).plain
         assert "work.mth" in status
         # Beside the annotation, not in place of it.
@@ -586,9 +598,9 @@ async def test_the_status_line_names_the_file_the_session_is_on(app, file):
 async def test_the_file_last_used_is_offered_back(app, file):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter")
-        await pilot.press("t", "s", "d", *str(file), "enter")
+        await pilot.press("t", "s", "d", *file.name, "enter")
         await pilot.press("t", "s", "d")
-        assert prompt(app) == ("TRANSFER SAVE DERIVE file:", str(file))
+        assert prompt(app) == ("TRANSFER SAVE DERIVE file:", file.name)
         # All of it is selected, so a name typed over it replaces it whole.
         await pilot.press("q")
         assert prompt(app)[1] == "q"
@@ -598,13 +610,13 @@ async def test_the_history_keys_walk_without_touching_the_name(app, file):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter")
         await pilot.press("a", *"y", "enter")
-        await pilot.press("t", "s", "d", *str(file), "enter")
+        await pilot.press("t", "s", "d", *file.name, "enter")
         await pilot.press("t", "s", "d")
         await pilot.press("up")
         # The highlight walks, as it does under any prompt line, but a file
         # name is no label and is left exactly as it was offered.
         assert highlighted_expression(app) == "x"
-        assert prompt(app) == ("TRANSFER SAVE DERIVE file:", str(file))
+        assert prompt(app) == ("TRANSFER SAVE DERIVE file:", file.name)
 
 
 async def test_a_history_with_nothing_in_it_is_not_written(app):
@@ -627,7 +639,7 @@ async def test_the_some_range_asks_which_block_before_the_name(app, file):
         assert message(app) == "Enter label number"
         await pilot.press("2", "tab", "3", "enter")
         assert prompt(app)[0] == "TRANSFER SAVE DERIVE file:"
-        await pilot.press(*str(file), "enter")
+        await pilot.press(*file.name, "enter")
         assert file.read_text() == "b\n\nc\n"
 
 
@@ -641,7 +653,7 @@ async def test_loading_replaces_what_is_on_screen(app, file):
         await pilot.press("t", "l", "d")
         assert prompt(app) == ("TRANSFER LOAD DERIVE file:", "")
         assert message(app) == "Enter filename (TAB completes, opens the list)"
-        await pilot.press(*str(file), "enter")
+        await pilot.press(*file.name, "enter")
         assert entries(app) == ["a", "b"]
         assert message(app) == "Enter option"
 
@@ -649,7 +661,7 @@ async def test_loading_replaces_what_is_on_screen(app, file):
 async def test_ctrl_enter_simplifies_every_expression_it_reads(app, file):
     file.write_text("2+3\n\n4 5\n")
     async with app.run_test() as pilot:
-        await pilot.press("t", "l", "d", *str(file))
+        await pilot.press("t", "l", "d", *file.name)
         await pilot.press("ctrl+j")
         assert entries(app) == ["2+3", "4*5", "5", "20"]
         assert message(app).startswith("Compute time:")
@@ -661,15 +673,15 @@ async def test_merging_adds_to_what_is_on_screen(app, file):
         await pilot.press("a", *"z", "enter")
         await pilot.press("t", "m")
         assert prompt(app)[0] == "TRANSFER MERGE file:"
-        await pilot.press(*str(file), "enter")
+        await pilot.press(*file.name, "enter")
         assert entries(app) == ["z", "a", "b"]
 
 
-async def test_a_name_that_is_nothing_leaves_the_line_up_to_be_corrected(app, file):
+async def test_a_name_that_is_nothing_leaves_the_line_up_to_be_corrected(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"z", "enter")
         await pilot.press("t", "l", "d")
-        await pilot.press(*str(file.with_name("nothing.mth")), "enter")
+        await pilot.press(*"nothing.mth", "enter")
         assert message(app) == "File not found"
         assert prompt(app)[1].endswith("nothing.mth")
         assert entries(app) == ["z"]
@@ -681,7 +693,7 @@ async def test_a_name_that_is_nothing_leaves_the_line_up_to_be_corrected(app, fi
 async def test_a_file_with_a_line_that_will_not_parse_says_how_many(app, file):
     file.write_text("x^2+1\n\ny +\n\nz\n")
     async with app.run_test() as pilot:
-        await pilot.press("t", "l", "d", *str(file), "enter")
+        await pilot.press("t", "l", "d", *file.name, "enter")
         assert entries(app) == ["x^2+1", "z"]
         assert message(app) == "1 expression could not be read"
 
@@ -691,7 +703,7 @@ async def test_loading_a_utility_file_shows_nothing_and_defines_everything(app, 
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "u")
         assert prompt(app) == ("TRANSFER LOAD UTILITY file:", "")
-        await pilot.press(*str(file), "enter")
+        await pilot.press(*file.name, "enter")
         assert entries(app) == []
         await pilot.press("a", *"CUBE(2)", "enter")
         await pilot.press("s", "enter")
@@ -704,7 +716,7 @@ async def test_loading_a_data_file_puts_its_matrices_on_screen(app, tmp_path):
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "t")
         assert prompt(app) == ("TRANSFER LOAD DATA file:", "")
-        await pilot.press(*str(numbers), "enter")
+        await pilot.press(*numbers.name, "enter")
         assert entries(app) == ["[[1,2],[3,4]]"]
 
 
@@ -712,7 +724,7 @@ async def test_a_name_with_no_extension_gets_the_one_its_command_reads(app, tmp_
     """As the original supplied MTH, DAT or DMO by which command was asking."""
     (tmp_path / "grid.dat").write_text("1 2\n")
     async with app.run_test() as pilot:
-        await pilot.press("t", "l", "t", *str(tmp_path / "grid"), "enter")
+        await pilot.press("t", "l", "t", *"grid", "enter")
         assert entries(app) == ["[1,2]"]
 
 
@@ -723,8 +735,8 @@ async def test_tab_completes_the_name_and_the_file_reads(app, file):
     file.write_text("a\n\nb\n")
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{file.parent}/wo", "tab")
-        assert prompt(app)[1] == str(file)
+        await pilot.press(*"wo", "tab")
+        assert prompt(app)[1] == file.name
         await pilot.press("enter")
         assert entries(app) == ["a", "b"]
 
@@ -735,8 +747,8 @@ async def test_tab_writes_out_what_the_names_share_and_opens_the_list(app, tmp_p
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/w", "tab")
-        assert prompt(app)[1] == f"{tmp_path}/work"
+        await pilot.press(*"w", "tab")
+        assert prompt(app)[1] == "work"
         assert completions(app) == ["workbook.mth", "worksheet.mth"]
         # Opening the list takes nothing: the line is still what was typed.
         assert chosen(app) is None
@@ -760,18 +772,12 @@ async def test_tab_with_the_list_up_steps_through_it(app, tmp_path):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/work", "tab")
+        await pilot.press(*"work", "tab")
         assert chosen(app) is None
         await pilot.press("tab")
-        assert (chosen(app), prompt(app)[1]) == (
-            "workbook.mth",
-            f"{tmp_path}/workbook.mth",
-        )
+        assert (chosen(app), prompt(app)[1]) == ("workbook.mth", "workbook.mth")
         await pilot.press("tab")
-        assert (chosen(app), prompt(app)[1]) == (
-            "worksheet.mth",
-            f"{tmp_path}/worksheet.mth",
-        )
+        assert (chosen(app), prompt(app)[1]) == ("worksheet.mth", "worksheet.mth")
         # The list is a ring: the name after the last one is the first again.
         await pilot.press("tab")
         assert chosen(app) == "workbook.mth"
@@ -783,10 +789,10 @@ async def test_shift_tab_steps_back_through_the_list(app, tmp_path):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab", "tab", "tab", "tab")
+        await pilot.press("tab", "tab", "tab", "tab")
         assert chosen(app) == "gamma.mth"
         await pilot.press("shift+tab")
-        assert (chosen(app), prompt(app)[1]) == ("beta.mth", f"{tmp_path}/beta.mth")
+        assert (chosen(app), prompt(app)[1]) == ("beta.mth", "beta.mth")
         await pilot.press("shift+tab")
         assert chosen(app) == "alpha.mth"
         # Backwards off the front is the last name, the ring turning either way.
@@ -799,7 +805,7 @@ async def test_the_arrows_walk_the_list_the_same_way(app, tmp_path):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab", "down")
+        await pilot.press("tab", "down")
         assert chosen(app) == "alpha.mth"
         await pilot.press("down")
         assert chosen(app) == "beta.mth"
@@ -846,13 +852,13 @@ async def test_enter_on_a_directory_in_the_list_opens_it(app, tmp_path):
     (tmp_path / "notes.mth").touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab")
+        await pilot.press("tab")
         assert completions(app) == ["math/", "notes.mth"]
         await pilot.press("down", "enter")
         assert completions(app) == ["algebra/"]
         await pilot.press("enter")
         assert completions(app) == ["groups.mth"]
-        assert prompt(app)[1] == f"{tmp_path}/math/algebra/"
+        assert prompt(app)[1] == "math/algebra/"
 
 
 async def test_typing_narrows_the_list_without_taking_the_line(app, tmp_path):
@@ -861,14 +867,14 @@ async def test_typing_narrows_the_list_without_taking_the_line(app, tmp_path):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab")
+        await pilot.press("tab")
         assert completions(app) == ["alpha.mth", "berry.mth", "beta.mth"]
         await pilot.press("b")
         assert completions(app) == ["berry.mth", "beta.mth"]
-        assert prompt(app)[1] == f"{tmp_path}/b"
+        assert prompt(app)[1] == "b"
         await pilot.press("e", "t")
         assert completions(app) == ["beta.mth"]
-        assert prompt(app)[1] == f"{tmp_path}/bet"
+        assert prompt(app)[1] == "bet"
 
 
 async def test_backspacing_opens_the_list_back_out(app, tmp_path):
@@ -878,12 +884,12 @@ async def test_backspacing_opens_the_list_back_out(app, tmp_path):
     (tmp_path / "work.mth").touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/uti", "tab")
+        await pilot.press(*"uti", "tab")
         assert completions(app) == ["trig.mth"]
         await pilot.press("backspace")
         assert completions(app) == ["utility/"]
         await pilot.press(*["backspace"] * 7)
-        assert prompt(app)[1] == f"{tmp_path}/"
+        assert prompt(app)[1] == ""
         assert completions(app) == ["utility/", "work.mth"]
 
 
@@ -892,7 +898,7 @@ async def test_a_name_the_list_has_no_match_for_closes_it(app, tmp_path):
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab")
+        await pilot.press("tab")
         assert completions(app) == ["alpha.mth", "beta.mth"]
         await pilot.press("z")
         assert completions(app) is None
@@ -904,8 +910,8 @@ async def test_one_name_and_no_other_is_taken_with_no_list_to_look_at(app, tmp_p
     (tmp_path / "alpha.mth").touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab")
-        assert prompt(app)[1] == f"{tmp_path}/alpha.mth"
+        await pilot.press("tab")
+        assert prompt(app)[1] == "alpha.mth"
         assert completions(app) is None
 
 
@@ -915,13 +921,13 @@ async def test_escape_puts_the_list_away_before_it_leaves_the_command(app, tmp_p
         (tmp_path / name).touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab", "tab")
+        await pilot.press("tab", "tab")
         assert completions(app) == ["alpha.mth", "beta.mth"]
         await pilot.press("escape")
         # The list goes; the name it left on the line stays, and so does the
         # question, so a name browsed to is not lost by closing the list.
         assert completions(app) is None
-        assert prompt(app)[1] == f"{tmp_path}/alpha.mth"
+        assert prompt(app)[1] == "alpha.mth"
         await pilot.press("escape")
         assert band(app)[0].startswith(" TRANSFER LOAD:")
 
@@ -931,7 +937,7 @@ async def test_a_long_list_scrolls_and_says_how_much_is_showing(app, tmp_path):
         (tmp_path / f"utility{number:02}.mth").touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab")
+        await pilot.press("tab")
         rows = completions(app)
         assert rows == [f"utility{number:02}.mth" for number in range(10)]
         assert listing_title(app).endswith("1-10 of 40")
@@ -952,7 +958,7 @@ async def test_the_list_gives_up_rows_rather_than_the_line(app, tmp_path, height
         (tmp_path / f"utility{number:02}.mth").touch()
     async with app.run_test(size=(80, height)) as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/", "tab")
+        await pilot.press("tab")
         assert completions(app)
         # Everything below the list is still on the screen and still its own
         # height, which is what says the list did not push any of it off.
@@ -966,14 +972,14 @@ async def test_the_list_gives_up_rows_rather_than_the_line(app, tmp_path, height
         assert listing.region.bottom <= app.query_one("#rule").region.y
 
 
-async def test_a_name_that_completes_to_nothing_is_the_beep(app, tmp_path):
+async def test_a_name_that_completes_to_nothing_is_the_beep(app):
     async with app.run_test() as pilot:
         beeps = []
         app.bell = lambda: beeps.append("beep")
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/nothing", "tab")
+        await pilot.press(*"nothing", "tab")
         assert beeps == ["beep"]
-        assert prompt(app)[1] == f"{tmp_path}/nothing"
+        assert prompt(app)[1] == "nothing"
 
 
 async def test_a_command_completes_to_the_files_it_reads(app, tmp_path):
@@ -982,12 +988,12 @@ async def test_a_command_completes_to_the_files_it_reads(app, tmp_path):
     (tmp_path / "numbers.mth").touch()
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{tmp_path}/num", "tab")
-        assert prompt(app)[1] == f"{tmp_path}/numbers.mth"
+        await pilot.press(*"num", "tab")
+        assert prompt(app)[1] == "numbers.mth"
         await pilot.press("escape")
         await pilot.press("t")
-        await pilot.press(*f"{tmp_path}/num", "tab")
-        assert prompt(app)[1] == f"{tmp_path}/numbers.dat"
+        await pilot.press(*"num", "tab")
+        assert prompt(app)[1] == "numbers.dat"
 
 
 async def test_a_name_being_saved_completes_too(app, file):
@@ -996,7 +1002,7 @@ async def test_a_name_being_saved_completes_too(app, file):
     async with app.run_test() as pilot:
         await pilot.press("a", *"z", "enter")
         await pilot.press("t", "s", "d")
-        await pilot.press(*f"{file.parent}/wo", "tab", "enter")
+        await pilot.press(*"wo", "tab", "enter")
         assert file.read_text() == "z\n"
 
 
@@ -1011,10 +1017,10 @@ async def test_the_line_offers_the_completion_as_it_is_typed(app, file):
     file.write_text("a\n")
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d")
-        await pilot.press(*f"{file.parent}/wo")
+        await pilot.press(*"wo")
         await pilot.pause()
         await pilot.press("right")
-        assert prompt(app)[1] == str(file)
+        assert prompt(app)[1] == file.name
 
 
 # -- saving source code ------------------------------------------------------
@@ -1025,7 +1031,7 @@ async def test_saving_a_language_writes_it_under_that_language_suffix(app, tmp_p
         await pilot.press("a", *"SQRT(x)+1", "enter")
         await pilot.press("t", "s", "p")
         assert prompt(app) == ("TRANSFER SAVE PYTHON file:", "")
-        await pilot.press(*str(tmp_path / "work"), "enter")
+        await pilot.press(*"work", "enter")
         assert (tmp_path / "work.py").read_text() == "math.sqrt(x) + 1\n"
         assert band(app)[0].startswith(" COMMAND:")
 
@@ -1044,7 +1050,7 @@ async def test_each_language_is_reached_by_its_own_letter(
 ):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x^2", "enter")
-        await pilot.press("t", "s", letter, *str(tmp_path / "work"), "enter")
+        await pilot.press("t", "s", letter, *"work", "enter")
         assert (tmp_path / name).read_text() == expected
 
 
@@ -1052,7 +1058,7 @@ async def test_an_annotation_goes_behind_the_target_comment_marker(app, tmp_path
     async with app.run_test() as pilot:
         await pilot.press("a", *"x^2", "enter")
         await pilot.press("s", "enter")
-        await pilot.press("t", "s", "j", *str(tmp_path / "work"), "enter")
+        await pilot.press("t", "s", "j", *"work", "enter")
         assert (tmp_path / "work.jl").read_text() == "x ^ 2\n\n# Simp(#1)\nx ^ 2\n"
 
 
@@ -1066,7 +1072,7 @@ async def test_a_language_save_writes_the_block_the_range_option_asked_for(
         await pilot.press("c")
         assert band(app) == [" TRANSFER SAVE DERIVE: Start: 1      End: 3"]
         await pilot.press("2", "tab", "3", "enter")
-        await pilot.press(*str(tmp_path / "work"), "enter")
+        await pilot.press(*"work", "enter")
         assert (tmp_path / "work.c").read_text() == "b\n\nc\n"
 
 
@@ -1084,11 +1090,11 @@ def test_a_language_save_does_not_break_long_lines(session, tmp_path):
 # -- the state file through the app ------------------------------------------
 
 
-async def test_the_state_commands_offer_a_file_of_their_own(app, tmp_path):
+async def test_the_state_commands_offer_a_file_of_their_own(app):
     """The worksheet is not a settings file and neither name suits the other."""
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter")
-        await pilot.press("t", "s", "d", *str(tmp_path / "work"), "enter")
+        await pilot.press("t", "s", "d", *"work", "enter")
         await pilot.press("t", "s", "s")
         assert prompt(app) == ("TRANSFER SAVE STATE file:", "rederive.ini")
 
@@ -1097,21 +1103,21 @@ async def test_saving_and_loading_the_state_carries_the_settings_over(app, tmp_p
     async with app.run_test() as pilot:
         await pilot.press("o", "n", "m", "enter")
         assert app.settings["Notation"] == "Mixed"
-        await pilot.press("t", "s", "s", *str(tmp_path / "state"), "enter")
+        await pilot.press("t", "s", "s", *"state", "enter")
         assert (tmp_path / "state.ini").exists()
         await pilot.press("o", "n", "r", "enter")
         assert app.settings["Notation"] == "Rational"
         await pilot.press("t", "l", "s")
         # The file just written is what the load offers back.
-        assert prompt(app) == ("TRANSFER LOAD STATE file:", str(tmp_path / "state.ini"))
+        assert prompt(app) == ("TRANSFER LOAD STATE file:", "state.ini")
         await pilot.press("enter")
         assert app.settings["Notation"] == "Mixed"
 
 
-async def test_loading_a_state_leaves_the_history_alone(app, tmp_path):
+async def test_loading_a_state_leaves_the_history_alone(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter")
-        await pilot.press("t", "s", "s", *str(tmp_path / "state"), "enter")
+        await pilot.press("t", "s", "s", *"state", "enter")
         await pilot.press("t", "l", "s", "enter")
         assert entries(app) == ["x"]
         assert message(app) == "Enter option"
@@ -1178,7 +1184,7 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
         await pilot.press("t", "d")
         assert prompt(app) == ("TRANSFER DEMO file:", "")
         assert message(app) == "Enter filename (TAB completes, opens the list)"
-        await pilot.press(*str(demo), "enter")
+        await pilot.press(*demo.name, "enter")
         # The comment takes the band the menu was on, and it waits there.
         assert band(app) == [" adds two numbers"]
         assert message(app) == "Press any key to continue"
@@ -1194,27 +1200,27 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
 
 async def test_escape_suspends_a_demonstration_where_it_stands(app, demo):
     async with app.run_test() as pilot:
-        await pilot.press("t", "d", *str(demo), "enter")
+        await pilot.press("t", "d", *demo.name, "enter")
         await pilot.press("escape")
         assert band(app)[0].startswith(" COMMAND:")
         # Free to do anything, and naming the same file picks it up again.
         await pilot.press("a", *"z", "enter")
-        await pilot.press("t", "d", *str(demo), "enter")
+        await pilot.press("t", "d", *demo.name, "enter")
         assert band(app) == [" and a symbolic one"]
         assert entries(app) == ["2+3", "5", "z", "(x+1)^2", "(x + 1)^2"]
 
 
 async def test_a_demonstration_that_has_run_out_starts_over(app, demo):
     async with app.run_test() as pilot:
-        await pilot.press("t", "d", *str(demo), "enter")
+        await pilot.press("t", "d", *demo.name, "enter")
         await pilot.press("space", "space")
-        await pilot.press("t", "d", *str(demo), "enter")
+        await pilot.press("t", "d", *demo.name, "enter")
         assert band(app) == [" adds two numbers"]
 
 
-async def test_a_demonstration_file_that_is_nothing_leaves_the_line_up(app, tmp_path):
+async def test_a_demonstration_file_that_is_nothing_leaves_the_line_up(app):
     async with app.run_test() as pilot:
-        await pilot.press("t", "d", *str(tmp_path / "nothing.dmo"), "enter")
+        await pilot.press("t", "d", *"nothing.dmo", "enter")
         assert message(app) == "File not found"
         assert prompt(app)[0] == "TRANSFER DEMO file:"
 
