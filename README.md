@@ -1,74 +1,121 @@
-# Rederive
+# Rederive - the friendly mathematics system
 
-A modern remake of the DOS-era *Derive* computer algebra system.
+Rederive is a from-scratch reimplementation of Derive, the classic DOS computer algebra
+system. Implemented on top of SymPy, it does what you expect of a computer algebra system:
+exact arithmetic, simplification, factoring, equation solving, calculus. What sets it
+apart is friendliness: Rederive reads `ax+b` or `sinx` the way a mathematician writes
+them, and displays every result nicely typeset in the terminal. The UI is small and
+opinionated, but discoverable and humane.
 
-Rederive recreates DOS Derive as a terminal application: the numbered
-worksheet, the mnemonic single-letter menus, built-up textbook typesetting, and
-the workflow where an expression is authored first and told what to do second.
-Nothing evaluates because it was typed. It is a fresh implementation, and
-copies the original's look, wording and mathematical coverage rather than its
-code, its file formats or its bugs.
+<p align="center"><img src="screenshot.svg" alt="A Rederive session" width="700"></p>
 
-## What it does
+## Motivation
 
-The Algebra menu carries the original's twenty commands, and all but one of
-them work:
+Derive came out of Honolulu in 1988 and was the first computer algebra system that ran on
+machines mortals could afford. It fit on a floppy, worked on a 286 with half a megabyte of
+memory, and quietly took over maths classrooms across Europe. (I first saw it around 1992
+in a dusty classroom in Croatia.) It was cheap, famously close to bug-free, and you could
+learn to use it in minutes. More importantly, its ease of use and responsiveness made math
+fun in ways that are not quite matched by modern and more advanced programs, nor even by
+LLMs.  The original Derive was discontinued in 2007 after having been acquired by Texas
+Instruments.
 
-- `Author` and `Build` enter an expression, by typing it or by assembling it
-  from operators a menu offers.
-- `Simplify`, `approX`, `Expand`, `Factor` and `soLve` are the engine: exact
-  results by default, approximation as an explicit act.
-- `Calculus` differentiates, integrates, takes limits, products, sums, Taylor
-  series and vectors.
-- `Declare` says what a variable is - its domain or the interval it lies in -
-  and defines functions, matrices and vectors.
-- `Manage` annotates and renumbers expressions, sets the ordering of variables,
-  substitutes, and holds the Branch, Exponential, Logarithm and Trigonometry
-  transformation settings.
-- `Options` sets Color, Input, Mute, Notation, Output, Precision and Radix.
-- `Transfer` loads, merges and clears math, data, utility, state and demo
-  files, saves the worksheet or the settings, and writes an expression out as
-  C, Python, Rust or Julia source.
-- `Window` splits, opens, closes and moves among panes, each holding a whole
-  session of its own.
-- `Jump`, `Remove`, `Unremove`, `moVe`, `Help` and `Quit` move around the
-  worksheet and off it.
+Rederive aims to bring the experience back on modern foundations. The important pieces
+have long existed - Python, [SymPy](https://www.sympy.org/en/index.html) for symbolic
+math, and [Textual](https://textual.textualize.io/) for building a TUI. What remained is
+assembling them into a user-friendly CAS.
+
+Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
+but adapts to the 21st century where appropriate - Rederive integrates with the system
+clipboard, reads mouse clicks and the scroll wheel, and uses Unicode rather than ancient
+code pages.
 
 ## Running
 
-```sh
-uv run rederive
+Rederive runs from source:
+
+1. Download Rederive with `git clone https://github.com/hniksic/rederive`, or [grab the
+   ZIP](https://github.com/hniksic/rederive/archive/refs/heads/master.zip) and unpack it.
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
+3. In the `rederive` directory, run `uv run rederive`.
+
+## Usage
+
+Press enter to input an expression, and then <kbd>s</kbd> to Simplify it, <kbd>l</kbd>
+to soLve it, etc. For example typing in the expression:
+
+```
+((ax+b)^2 - (ax-b)^2) / ((cx+d)^2 - (cx-d)^2)
 ```
 
-Files named on the command line are read before the first frame, as the
-original reads them. An extension says what a file is - `.mth` a math file,
-`.dat` a data file, `.dmo` a demonstration - and a name given without one is
-looked for under each in turn, so `uv run rederive arith` starts on
-`arith.dmo`. A switch overrides that for the names after it, which is the only
-way to say that a math file is to be read as a utility library:
+displays it as:
 
-```sh
-uv run rederive -u number -m plot2d -d algebra
+```
+         2            2
+(a·x + b)  - (a·x - b)
+─────────────────────────
+         2            2
+(c·x + d)  - (c·x - d)
 ```
 
-`-m` math, `-u` utility, `-t` data, `-d` demonstration. The original spelled
-these after the name and behind a slash (`NUMBER/U`); a slash cannot mean that
-here.
+and pressing <kbd>s</kbd> simplifies it to:
 
-## Testing
-
-```sh
-uv run pytest
+```
+ a·b
+─────
+ c·d
 ```
 
-Simplifying the whole corpus - every shipped utility file, parser case and demo
-script - takes two minutes where the rest of the suite takes five seconds, so
-it is opt-in:
+Calculus goes through a small menu. Author `#e^(-x^2)`, press <kbd>c</kbd> for Calculus
+and <kbd>i</kbd> for Integrate, accept the offered expression and variable, and enter
+the limits `0` and `inf`:
 
-```sh
-uv run pytest -m slow
+```
+ ∞
+⌠      2
+│   - x
+⌡  ê     dx
+ 0
 ```
 
-Only the engine can regress it; a change to the UI or the session cannot move
-it. Both runs spread across every core, and `-n0` turns that off, which a
-single failing test is easier to read under.
+Pressing <kbd>s</kbd> answers:
+
+```
+ √π
+────
+  2
+```
+
+## For the math nerds
+
+Rederive is a computer algebra system of the classical kind: a worksheet of expressions
+and a handful of commands that transform them - Simplify, Expand, Factor, soLve, the
+calculus menu. It works over rationals, radicals and complex numbers, polynomials and
+rational functions, the elementary transcendental functions, and vectors and matrices; the
+calculus commands do derivatives, integrals, limits, Taylor expansions, and sums and
+products both definite and indefinite (`Σ 1/k^2` from 1 to ∞ is π²/6). All arithmetic is
+exact (no floating point anywhere), including approximation: approximating to n digits
+replaces a value by the simplest rational that matches it to those digits, so π to six
+digits is 355/113, and everything computed from it afterwards is again exact. The only
+error is the one you asked for.
+
+Simplification is conservative. It removes what is superfluous but otherwise leaves the
+expression the way you wrote it - `x^2 - (x + (y+1)^50)·(x - (y+1)^50)` simplifies to
+`(y + 1)^100`, not to a degree-100 polynomial - and how far Expand and Factor go is
+yours to choose, up to factoring over radicals and complex numbers. An identity is used
+only where it provably holds: variables are real by default, so `√(x^2)` is `|x|`;
+`SIN(n·π)` becomes 0 once n is declared an integer; `|x| + |x - 1|` becomes 1 once x is
+confined to (0, 1). Multivalued functions take their principal branches, unless you
+switch to real or any-branch mode.
+
+What it does, it does predictably: Simplify and Solve are total, so an integral the
+engine cannot do comes back as an integral, an equation it cannot crack comes back as an
+implicit relation, and `1/0` is `±∞` rather than an error. The weaknesses are classical
+too: a definite integral is evaluated straight through an interior singularity
+(`∫ dx/x^2` over [-1, 1] gives -2 unless you split it at the pole yourself), and
+declared intervals are consulted only as far as linear reasoning reaches.
+
+## License
+
+Rederive is distributed under the terms of the MIT license.  See [LICENSE](LICENSE) for
+details.  Contributing changes is assumed to signal agreement with these licensing terms.
