@@ -127,7 +127,10 @@ def answer(session, *lines):
 #: Two of the manual's own lines do not come back at all, and a test that
 #: wedges the suite says less than one that fails - so those two are asked
 #: through the worker engine, which is the half of the program Esc can stop.
-PATIENCE = 15.0
+#: The bound only has to be long enough to tell "never" from "slow": these two
+#: run out of it every time, so keeping it short is what keeps the suite quick
+#: while still reporting an unexpected pass if either ever starts answering.
+PATIENCE = 2.0
 
 
 @contextmanager
@@ -210,8 +213,8 @@ NOT_YET_HELD = {
     "test_the_worked_examples_of_the_vector_utility_file[RANK([[2, 3, "
     "5], [4, 6, 10], [1, 2, 3]])-2]",
     # Sympy never comes back for these two of the manual's own sessions; they
-    # are asked through the worker engine with a 15 second bound and fail
-    # saying so, instead of wedging the suite.
+    # are asked through the worker engine under PATIENCE and fail saying so,
+    # instead of wedging the suite.
     "test_the_integral_the_manual_does_by_substitution",
     "test_the_iterates_of_the_manuals_fixed_point",
     # Individual gaps, not yet diagnosed to a family.
