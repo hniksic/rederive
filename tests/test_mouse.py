@@ -34,7 +34,7 @@ from textual.events import (
 )
 
 from rederive.model.session import Session
-from rederive.ui.app import COPIED, COPIED_TEXT, MODE_COMPUTE, RederiveApp
+from rederive.ui.app import COPIED, COPIED_TEXT, CUT_TEXT, MODE_COMPUTE, RederiveApp
 
 
 @pytest.fixture
@@ -598,6 +598,29 @@ async def test_a_click_clears_a_sweep(app):
         assert app.screen.get_selected_text()
         await click_on(pilot, app, "x")
         assert not app.screen.get_selected_text()
+
+
+async def test_a_sweep_over_the_line_being_typed_is_the_lines_own(app):
+    """The line takes the drag itself, and Ctrl-C and Ctrl-X act on what it marked."""
+    async with app.run_test() as pilot:
+        await author(pilot, "a/b")
+        await pilot.press("a")
+        await pilot.press(*"2 x")
+        await pilot.pause()
+        line = app.query_one("#prompt-input")
+        await pilot.mouse_down(line, offset=(2, 0))
+        await pilot.hover(line, offset=(3, 0))
+        await pilot.mouse_up(line, offset=(3, 0))
+        await pilot.pause()
+        # Nothing of this reaches the screen's own selection: the widget with
+        # the mouse captured is the line, so the sweep is a stretch of it.
+        assert not app.screen.get_selected_text()
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "x"
+        assert message(app) == COPIED_TEXT
+        await pilot.press("ctrl+x")
+        assert prompt(app)[1] == "2 "
+        assert message(app) == CUT_TEXT
 
 
 async def test_repeated_clicks_go_in_rather_than_sweeping_the_pane(app):

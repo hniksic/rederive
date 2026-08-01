@@ -17,7 +17,7 @@ from screen import (
 
 from rederive import __version__
 from rederive.ui import menu as menus
-from rederive.ui.app import RederiveApp
+from rederive.ui.app import COPIED, COPIED_TEXT, CUT_TEXT, NOTHING_TO_CUT, RederiveApp
 
 
 def highlighted_menu_option(app):
@@ -2024,6 +2024,20 @@ async def test_a_cursor_key_hands_the_line_over_for_good(app):
         assert prompt(app)[1] == "#3"
 
 
+async def test_a_stretch_marked_out_by_hand_hands_the_line_over_too(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y", "z")
+        await pilot.press("s")
+        # A selection of the user's own is not the offering, however much it
+        # looks like one, so the walk leaves both the line and it alone.
+        await pilot.press("home", "shift+end")
+        await pilot.press("up")
+        assert highlighted_expression(app) == "y"
+        assert prompt(app)[1] == "#3"
+        line = app.query_one("#prompt-input")
+        assert line.selected_text == "#3"
+
+
 async def test_the_cursor_keys_move_no_highlight_while_a_line_is_up(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x", "y", "x (x + 1)")
@@ -2133,6 +2147,93 @@ async def test_ctrl_v_with_nothing_copied_writes_nothing(app):
     async with app.run_test() as pilot:
         await pilot.press("a", "ctrl+v")
         assert prompt(app) == ("AUTHOR expression:", "")
+
+
+# -- copying and cutting what is marked out on the line ------------------------
+#
+# A stretch marked out on the line is a selection like a sweep of the screen is,
+# and takes precedence over the highlight the same way: what a key acts on is
+# what is selected, and the highlighted expression is what Ctrl-C means only
+# when nothing is. Ctrl-X is the line's alone - a copy with the stretch taken
+# off - and says so where there is nothing marked.
+
+
+async def test_ctrl_c_copies_what_is_marked_out_on_the_line(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "a/b")
+        await pilot.press("a")
+        await pilot.press(*"2 ", "alt+p")
+        await pilot.press("shift+left")
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "π"
+        assert message(app) == COPIED_TEXT
+        # The line keeps what was copied, this being a copy and not a move.
+        assert prompt(app)[1] == "2 π"
+
+
+async def test_the_label_a_line_offers_is_not_a_selection_of_the_users(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x + 1", "y")
+        # Simplify comes up with `#2` selected, so that typing replaces it -
+        # which is the command speaking rather than the user marking a stretch
+        # out. Ctrl-C means the highlighted expression under such a line, that
+        # being the whole point of copying with a line up.
+        await pilot.press("s")
+        assert prompt(app) == ("SIMPLIFY expression:", "#2")
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "y"
+        assert message(app) == COPIED
+        # And still after the walk that rewrites the offering.
+        await pilot.press("up")
+        assert prompt(app)[1] == "#1"
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "x+1"
+
+
+async def test_ctrl_x_cuts_what_is_marked_out_and_keeps_the_copy(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.press(*"12+", "alt+p")
+        await pilot.press("shift+left")
+        await pilot.press("ctrl+x")
+        assert prompt(app)[1] == "12+"
+        assert app.clipboard == "π"
+        assert message(app) == CUT_TEXT
+        # A cut is a copy, so what it took is there to be put back.
+        await pilot.press("ctrl+v")
+        assert prompt(app)[1] == "12+π"
+
+
+async def test_ctrl_x_with_nothing_marked_out_says_so(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "a/b")
+        await pilot.press("a")
+        await pilot.press(*"x+1")
+        await pilot.press("ctrl+x")
+        # The line stands as it was, and the highlighted expression is not
+        # something the key will take away.
+        assert prompt(app)[1] == "x+1"
+        assert app.clipboard == ""
+        assert message(app) == NOTHING_TO_CUT
+
+
+async def test_ctrl_x_does_not_cut_the_label_a_line_offers(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x", "y")
+        await pilot.press("s")
+        await pilot.press("ctrl+x")
+        assert prompt(app) == ("SIMPLIFY expression:", "#2")
+        assert app.clipboard == ""
+        assert message(app) == NOTHING_TO_CUT
+
+
+async def test_ctrl_x_at_the_menu_cuts_nothing_and_says_nothing(app):
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "x+1")
+        await pilot.press("ctrl+x")
+        # There is no line at the menu, so there is nothing to explain either.
+        assert app.clipboard == ""
+        assert message(app) == "Enter option"
 
 
 # -- F3 and F4, the original's keys for the same thing -------------------------

@@ -24,7 +24,10 @@ mouse that the keyboard cannot reach and nothing can be done under a
 half-answered question that a key would not do. Sweeping text out with the
 mouse is the terminal's own gesture and is left to Textual, which copies cells
 off the screen; that is a different thing from the highlight over one
-subexpression, and Ctrl-C copies whichever of the two was pointed at last.
+subexpression, and Ctrl-C copies whichever of the two was pointed at last. A
+sweep over the line being typed is a third thing again: the line takes the drag
+itself and marks the stretch out as its own selection, which is what Ctrl-C and
+Ctrl-X then act on.
 
 Submenus and Options dialogs stack on top of the command menu: Esc pops one
 level, and committing a dialog returns all the way to the command menu, as the
@@ -48,11 +51,15 @@ that tells the two apart.
 
 An expression moves by way of the clipboard: Ctrl-C hands what is highlighted to
 the terminal, which passes it to the system clipboard where it can, and Ctrl-V
-writes the copy kept here onto the line being typed. Text copied in another
-program comes the other way by the terminal's own paste key, arriving as if it
-had been typed: a terminal hands over the clipboard when its user asks and not
-when a program does. The original's F3 and F4, which write the highlight onto
-the line directly, still work; the help offers copy and paste instead.
+writes the copy kept here onto the line being typed. Where something is selected
+- a sweep of the screen, or a stretch marked out on the line - that is what
+Ctrl-C copies instead, a selection being the plainest way of saying what a key
+is to act on, and Ctrl-X is the same for the line with the stretch taken off it.
+Text copied in another program comes the other way by the terminal's own paste
+key, arriving as if it had been typed: a terminal hands over the clipboard when
+its user asks and not when a program does. The original's F3 and F4, which write
+the highlight onto the line directly, still work; the help offers copy and paste
+instead.
 
 A line that names a file completes what is typed on it, and opens a list of the
 names on offer to look through. The first name the letters so far could grow
@@ -458,8 +465,15 @@ BUFFER_EMPTY = "Unremove buffer empty"
 #: is not quoted back: the message line is one line, and an expression is as
 #: long as it likes.
 COPIED = "Copied the highlighted expression"
-#: And what it says when what was copied is a sweep of the screen instead.
+#: And what it says when what was copied is selected text instead - a sweep of
+#: the screen, or a stretch of the line being typed.
 COPIED_TEXT = "Copied the selected text"
+#: What Ctrl-X says when it has taken that stretch off the line.
+CUT_TEXT = "Cut the selected text"
+#: And what it says when there is nothing on the line to cut. Cutting is about
+#: the line and nothing else, so the refusal names the line: a highlighted
+#: expression is not something a key can take away, however selected it looks.
+NOTHING_TO_CUT = "Nothing is selected on the line to cut"
 
 # The lines the four Declare commands read, and what the message line asks for
 # on each. `default` is the variable that stands for all the unnamed ones,
@@ -1115,6 +1129,11 @@ class RederiveApp(App[None]):
         # and paste it where it is going.
         Binding("ctrl+c", "copy_highlighted", "Copy", priority=True, show=False),
         Binding("ctrl+v", "paste_clipboard", "Paste", priority=True, show=False),
+        # Ctrl-X is the third of them, and the one that is only ever about the
+        # line: it takes what is selected there off it. The binding has to be
+        # the app's rather than the line's own, since the line would cut the
+        # label a command offered as readily as a stretch the user marked out.
+        Binding("ctrl+x", "cut_selected", "Cut", priority=True, show=False),
         # The original's keys for the same thing, kept because a session driven
         # from the manual still reaches for them: F3 writes the highlighted
         # expression straight onto the line, and F4 writes it fenced. Neither is
@@ -1271,6 +1290,11 @@ class RederiveApp(App[None]):
         #: not reset per command: it is how the user is typing, not what the
         #: command asked.
         self.inserting = True
+        #: The line and selection a command put up, which is what it is
+        #: offering rather than anything the user marked out. A line holding
+        #: anything else is the user's, and its selection is what the keys that
+        #: copy and cut act on.
+        self.offering: tuple[str, Selection] | None = None
         #: What a Y answers, while a command is asking for one.
         self.confirm: Callable[[], None] | None = None
         #: Whether that question has the dialog it came from standing under it,
@@ -1702,10 +1726,12 @@ class RederiveApp(App[None]):
         Alt keys, Ctrl-V and the key that toggles insert mode apply to every
         line, since they are about the text.
 
-        Ctrl-C is not about a line at all: what it copies is the highlighted
-        expression, so it applies at the menu as well as under every line, and
-        only where the worksheet is the thing on screen - not in help, and not
-        over a demonstration.
+        Ctrl-C need not be about a line at all: what it copies where nothing is
+        selected is the highlighted expression, so it applies at the menu as
+        well as under every line, and only where the worksheet is the thing on
+        screen - not in help, and not over a demonstration. Ctrl-X applies
+        wherever Ctrl-C does, though there is only ever a line for it to cut
+        from: taking the key at the menu too is what lets it say so.
 
         The keys that walk the list of names are the fifth, and they only
         apply while that list is open. Closed, Up and Down go on walking the
@@ -1759,7 +1785,7 @@ class RederiveApp(App[None]):
             return self.mode in EXPRESSION_LINES
         if action == "toggle_arrow_mode":
             return self.mode in EXPRESSION_LINES
-        if action == "copy_highlighted":
+        if action in ("copy_highlighted", "cut_selected"):
             return self.mode == MODE_MENU or self.mode in PROMPT_MODES
         if action in ("insert_glyph", "toggle_inserting", "paste_clipboard"):
             return self.mode in PROMPT_MODES
@@ -2276,32 +2302,56 @@ class RederiveApp(App[None]):
     def _relabel_prompt(self) -> None:
         """Put the label of where the highlight landed on the prompt line.
 
-        Only while the label the line was offered is still selected on it. A
-        cursor key collapses that selection and typing replaces it, and either
-        way the line is the user's from then on and is left as it stands.
+        Only while the line still stands as the command put it up. A cursor key
+        collapses the selection the label came up in, typing replaces it and
+        marking a stretch out by hand makes it the user's own; any of the three
+        and the line is the user's from then on and is left as it stands.
         """
         entry = self.session.selected_entry
         line = self.query_one("#prompt-input", Input)
-        start, end = sorted(line.selection)
-        if entry is None or start == end:
+        if entry is None or self.offering != (line.value, line.selection):
             return
+        start, end = sorted(line.selection)
         number = str(entry.number)
         line.value = f"{line.value[:start]}{number}{line.value[end:]}"
         line.selection = Selection(start, start + len(number))
+        # The relabelled line is the command's offering still, so what the keys
+        # that copy and cut act on is unchanged by the walk.
+        self.offering = (line.value, line.selection)
+
+    def _selected_on_line(self) -> str | None:
+        """What the user has selected on the prompt line, or None for nothing.
+
+        None where no line is up, where nothing is selected on it, and where
+        what is selected is what the command offered: a line comes up with its
+        offering selected so that typing replaces it, and an offering nobody
+        has touched is the command speaking rather than the user.
+        """
+        if self.mode not in PROMPT_MODES:
+            return None
+        line = self.query_one("#prompt-input", PromptLine)
+        if line.selection.is_empty or self.offering == (line.value, line.selection):
+            return None
+        return line.selected_text
 
     def action_copy_highlighted(self) -> None:
-        """Ctrl-C: take a copy of the highlighted expression, or of swept text.
+        """Ctrl-C: take a copy of what is selected, or of the highlighted expression.
 
-        What is copied is what is highlighted: the whole of an expression
-        selected whole, and just the part when the highlight is inside one. It
-        is the entry's own text rather than the two-dimensional render, so what
-        comes back is something a line will take again.
+        Where something is selected that is what is copied, a selection being
+        the plainest way of saying what a key is to act on. Two of them count:
+        text swept out with the mouse, which is the terminal's own gesture and
+        is cleared by the copy, and a stretch marked out on the line being
+        typed. A sweep is the one pointed at last, so it comes first; nothing
+        is swept in the ordinary way of working, and one click anywhere clears
+        a sweep, so the two never disagree for long.
 
-        Text swept out with the mouse is the exception. While a sweep stands it
-        is what the key copies and what it clears, that being the thing pointed
-        at last; nothing is swept in the ordinary way of working, so the
-        expression is what the key means the rest of the time. The two never
-        disagree: one click anywhere clears a sweep.
+        With nothing selected it is the highlighted expression: the whole of
+        one selected whole, and just the part where the highlight is inside
+        one. That is the entry's own text rather than the two-dimensional
+        render, so what comes back is something a line will take again. The
+        label a command offers on its line does not stand in the way of this,
+        which is what keeps the pair worth having under a line: walk the
+        highlight onto what is wanted and copy it.
 
         The copy is offered to the terminal as well as kept here, which is what
         carries an expression out to another program. Whether the terminal
@@ -2315,12 +2365,37 @@ class RederiveApp(App[None]):
             self.screen.clear_selection()
             self._set_message(COPIED_TEXT)
             return
+        marked = self._selected_on_line()
+        if marked is not None:
+            self.copy_to_clipboard(marked)
+            self._set_message(COPIED_TEXT)
+            return
         text = self.session.highlighted_text
         if text is None:
             self._beep()
             return
         self.copy_to_clipboard(text)
         self._set_message(COPIED)
+
+    def action_cut_selected(self) -> None:
+        """Ctrl-X: take what is selected off the line, keeping the copy.
+
+        Ctrl-C and a deletion in one key, and about the line and nothing else.
+        Where the line has no selection of the user's own there is nothing to
+        cut, and the message line says so rather than the key quietly doing
+        something else: a highlighted expression is not a selection a key can
+        take away, and neither is the label a command offers on its line.
+        """
+        text = self._selected_on_line()
+        if text is None:
+            self._beep()
+            if self.mode in PROMPT_MODES:
+                self._set_message(NOTHING_TO_CUT)
+            return
+        line = self.query_one("#prompt-input", PromptLine)
+        self.copy_to_clipboard(text)
+        line.delete_selection()
+        self._set_message(CUT_TEXT)
 
     def action_paste_clipboard(self) -> None:
         """Ctrl-V: put the copy back on the line being typed.
@@ -2608,7 +2683,9 @@ class RederiveApp(App[None]):
         What is offered comes up selected, so that typing replaces it and Enter
         alone accepts it. `keep` is how much of it stands outside the
         selection: the `#` of a label number, which typing a digit should not
-        take away, and nothing at all of a file name.
+        take away, and nothing at all of a file name. That selection is
+        remembered as the offering, which is how the keys that copy and cut
+        tell it from a stretch the user marked out.
 
         The arrow key mode is read from the settings here rather than kept from
         the last command, because that setting says what a command starts in
@@ -2630,6 +2707,7 @@ class RederiveApp(App[None]):
         self._close_list()
         line.value = offered
         line.selection = Selection(min(keep, len(offered)), len(offered))
+        self.offering = (line.value, line.selection)
         line.focus()
         self._set_message(message)
         self._show_flags()

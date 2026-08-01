@@ -59,7 +59,8 @@ Using the mouse:
 Every gesture stands for a key, so nothing here needs the mouse and nothing is
 reachable only with it. Text swept out with the button held down is the
 terminal's own selection rather than an expression, and Ctrl-C copies that
-while it stands.
+while it stands. A sweep over the line being typed marks out a stretch of it
+instead, which Ctrl-C copies and Ctrl-X takes off the line.
 
 Exact before approximate:
   Simplify   work an expression out exactly, however long the answer
@@ -99,7 +100,8 @@ collecting a variable, a file name or an annotation.
 Special key commands:
   F1           display this help; the line being typed is kept
   F6           hand the sideways arrow keys to the line, or to the highlight
-  Ctrl-C       copy the highlighted expression
+  Ctrl-C       copy what is marked out, or the highlighted expression
+  Ctrl-X       cut what is marked out on the line
   Ctrl-V       paste what was copied onto the line
   Ins          switch between making room for a character and typing over one
   Tab          on a line naming a file, complete the name and open the list
@@ -111,6 +113,18 @@ Cursor movement commands:
   Left, Right  one character along the line
   Home         to the start of the line
   End          to the end of it
+
+Text selection commands:
+  Shift-Left, Shift-Right   mark out one more character, one fewer
+  Shift-Home, Shift-End     mark out to the start of the line, to the end
+  the mouse                 sweep over the line with the button held down
+
+Ctrl-C copies what is marked out and Ctrl-X takes it off the line, keeping the
+copy for Ctrl-V. With nothing marked out, Ctrl-C copies the highlighted
+expression instead and Ctrl-X says there is nothing to cut, cutting being
+about the line and nothing else. The label a command offers on its line comes
+up selected so that typing replaces it, but that is the command's offering
+rather than a selection of yours, and neither key acts on it.
 
 Text deletion commands:
   Backspace    delete the character before the cursor
@@ -442,7 +456,8 @@ Algebra window key commands:
   F2           bring the next of this window's overlays to the top
   Shift-F2     the previous one
   F6           hand the sideways arrow keys to the line, or to the highlight
-  Ctrl-C       copy the highlighted expression
+  Ctrl-C       copy what is selected, or the highlighted expression
+  Ctrl-X       cut what is selected on the line being typed
   Ctrl-V       paste what was copied onto the line being typed
   Esc          abandon the question being asked; stop a running computation
 
