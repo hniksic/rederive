@@ -44,13 +44,18 @@ def from_sympy(
     expression: sp.Basic,
     context: Context | None = None,
     state: ParseState | None = None,
+    authored: dict[sp.Basic, str] | None = None,
 ) -> Result:
-    """Write `expression` as author notation, and read it back as a tree."""
+    """Write `expression` as author notation, and read it back as a tree.
+
+    `authored` is passed to the printer, which writes what it names as the text
+    it is given rather than as the expression it holds.
+    """
     context = context or Context()
     # Named first, so that the symbol table below is built from the names the
     # text actually carries rather than from the dummies behind them.
     expression = named(expression)
-    text = author_text(expression, context)
+    text = author_text(expression, context, authored)
     if state is None:
         state = parse_state_for(expression, context)
     else:
@@ -61,11 +66,15 @@ def from_sympy(
         # Nothing the engine produces should be unreadable, but a result that
         # is stays inert and legible rather than taking the command down.
         return Result(Node(Kind.STRING, 0, len(text), (), text), text)
-    return Result(node, text, _exact(expression, context, state, text))
+    return Result(node, text, _exact(expression, context, state, text, authored))
 
 
 def _exact(
-    expression: sp.Basic, context: Context, state: ParseState, text: str
+    expression: sp.Basic,
+    context: Context,
+    state: ParseState,
+    text: str,
+    authored: dict[sp.Basic, str] | None = None,
 ) -> Node | None:
     """The same answer written as the ratios it is made of, or None if that is
     what `text` already is.
@@ -77,7 +86,9 @@ def _exact(
     """
     if context.notation is Notation.RATIONAL:
         return None
-    exact = author_text(expression, replace(context, notation=Notation.RATIONAL))
+    exact = author_text(
+        expression, replace(context, notation=Notation.RATIONAL), authored
+    )
     if exact == text:
         return None
     try:

@@ -110,6 +110,51 @@ def test_the_original_writes_it_this_way(authored: str, expected: str) -> None:
     assert write_expression(parse_expression(authored, state).node) == expected
 
 
+SPACINGS = [
+    ("IF(h <= 40, 10*h, 400 + 15*(h - 40))", "IF(h <= 40, 10*h, 400 + 15*(h - 40))"),
+    ("x (x+1)-1", "x*(x + 1) - 1"),
+    ("[1,2,3]", "[1, 2, 3]"),
+    ("-x^2+2*x-1", "-x^2 + 2*x - 1"),
+    ("a/(b+c)", "a/(b + c)"),
+    ("f(x):=x^2", "F(x) := x^2"),
+    # `NOT` is the prefix operator, fenced only over what binds looser.
+    ("NOT p AND q", "NOT p AND q"),
+    ("NOT(p AND q)", "NOT (p AND q)"),
+    ("NOT(x=y)", "NOT x = y"),
+    # A run of one word operator keeps the fences the grammar needs and no
+    # others: `AND` folds to the right and `IMP` to the left.
+    ("a OR b OR c", "a OR b OR c"),
+    ("(a OR b) OR c", "(a OR b) OR c"),
+    ("a AND (b OR c)", "a AND (b OR c)"),
+    ("a IMP b IMP c", "(a IMP b) IMP c"),
+    ("a IMP (b IMP c)", "a IMP (b IMP c)"),
+    # A Greek letter is held as its glyph and written as its name.
+    ("alpha + 1", "alpha + 1"),
+]
+
+
+@pytest.mark.parametrize(
+    ("authored", "expected"), SPACINGS, ids=[authored for authored, _ in SPACINGS]
+)
+def test_the_printers_spelling_puts_the_blanks_back(authored: str, expected: str):
+    """`spaced` is the same text as a result line would show it."""
+    state = ParseState()
+    node = parse_expression(authored, state).node
+    assert write_expression(node, spaced=True) == expected
+
+
+def test_a_spaced_spelling_reads_back_as_what_was_written() -> None:
+    """The blanks are spelling and not meaning: every corpus case reparses."""
+    for case in CORPUS:
+        state = case.state()
+        node = parse_expression(case.text, state).node
+        written = write_expression(node, spaced=True)
+        again = parse_expression(written, state).node
+        assert to_sexpr(normalized(again)) == to_sexpr(normalized(node)), (
+            f"{case.text!r} was written {written!r}"
+        )
+
+
 def normalized(node: Node) -> Node:
     """`node` with the three differences the writer is allowed, applied.
 

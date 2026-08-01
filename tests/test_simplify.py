@@ -1787,6 +1787,37 @@ def test_an_undecidable_conditional_keeps_its_branches_unsimplified():
     assert simp("IF(x > 0, (x + 1)^2 - x^2, -1)") == "IF(x > 0, (x + 1)^2 - x^2, -1)"
 
 
+UNTOUCHED_CONDITIONALS = [
+    # Not even the arithmetic: an arm is shown as it was written.
+    ("IF(x > 0, 2 + 3, 4 + 5)", "IF(x > 0, 2 + 3, 4 + 5)"),
+    # Nor the order the operands were written in, nor a product a coefficient
+    # would be multiplied through.
+    ("IF(x > 0, b*a, 400 + 15*(x - 40))", "IF(x > 0, b*a, 400 + 15*(x - 40))"),
+    # Nor the side of the test each half was written on.
+    ("IF(40 >= h, 1, 2)", "IF(40 >= h, 1, 2)"),
+    # An arm of the conditional that was decided is simplified as any other
+    # expression is; only the one left standing is shown as written.
+    ("IF(2 = 2, 2 + 3, 4 + 5)", "5"),
+    ("IF(x > 0, 2 + 3, 4 + 5, 6 + 7)", "13"),
+    # A conditional inside a larger expression keeps its place in it.
+    ("2*IF(x > 0, 2 + 3, 4 + 5)", "2*IF(x > 0, 2 + 3, 4 + 5)"),
+    ("IF(x > 0, IF(y > 0, 1 + 1, 2), 3)", "IF(x > 0, IF(y > 0, 1 + 1, 2), 3)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), UNTOUCHED_CONDITIONALS, ids=str)
+def test_an_undecidable_conditional_comes_back_as_it_was_written(text, expected):
+    """10.3: Derive answers an undecidable `IF` with the `IF` the author typed.
+
+    Simplifying an arm is what the conditional exists to prevent, and doing the
+    arithmetic in one is simplifying it. What comes back is therefore the text
+    that went in - which is also what makes the answer stand still, a second
+    Simplify having nothing left to change.
+    """
+    assert simp(text) == expected
+    assert simp(expected) == expected
+
+
 def test_an_undecidable_conditional_keeps_the_variables_it_depends_on():
     """A held-back `IF` must not look constant to what surrounds it.
 

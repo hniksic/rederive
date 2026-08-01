@@ -27,7 +27,13 @@ from pathlib import Path
 
 import pytest
 
-from rederive.engine.computing import Context, from_sympy, simplify, to_sympy
+from rederive.engine.computing import (
+    Context,
+    authored_conditionals,
+    from_sympy,
+    simplify,
+    to_sympy,
+)
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 CORPUS = Path(__file__).parent / "corpus"
@@ -89,6 +95,12 @@ def _settles(text: str) -> bool:
     The two invariants at once: printing the answer is a fixed point, and
     simplifying it again changes nothing. A line the parser rejects is not
     this module's business - `test_expr_library.py` is where that is checked.
+
+    Printing takes the answer's own conditionals with it. An undecidable `IF`
+    is shown as it was written rather than as it was converted, so what its
+    arms are spelled as is not a property of the expression and no print of one
+    can recover it; the record is part of how such an answer is printed at all,
+    and printing without it would be asking a different question.
     """
     state = ParseState()
     try:
@@ -103,7 +115,8 @@ def _settles(text: str) -> bool:
     node = parsed.node
     context = Context()
     once = simplify(node, context, state)
-    printed = from_sympy(to_sympy(once.node, context), context, state).text
+    authored = authored_conditionals(once.node, context)
+    printed = from_sympy(to_sympy(once.node, context), context, state, authored).text
     return printed == once.text == simplify(once.node, context, state).text
 
 

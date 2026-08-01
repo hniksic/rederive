@@ -44,6 +44,7 @@ from rederive.engine.context import (
 from rederive.engine.ordering import main_order
 from rederive.model.expr import Kind, Node
 from rederive.syntax.names import BUILTIN_FUNCTIONS
+from rederive.syntax.writer import write_expression
 
 __all__ = [
     "COMMAND_HEADS",
@@ -64,6 +65,7 @@ __all__ = [
     "Taylor",
     "Transposed",
     "as_condition",
+    "authored_conditionals",
     "is_conditional",
     "outsized",
     "reread",
@@ -1917,6 +1919,60 @@ def _conditional(conv: _Converter, args: list) -> sp.Basic:
         return sp.Piecewise((then, as_condition(test)))
     test, then, otherwise = args
     return sp.Piecewise((then, as_condition(test)), (otherwise, sp.true))
+
+
+def authored_conditionals(node: Node, context: Context) -> dict[sp.Basic, str]:
+    """Every conditional in `node`, keyed by what it converts to.
+
+    Derive leaves an undecidable conditional exactly as it was typed: the test
+    is not turned round, the arms are not evaluated, and `IF(x > 0, 2 + 3,
+    4 + 5)` comes back with the arithmetic undone. None of that can be read off
+    the converted expression, where `2 + 3` was five before any command saw it,
+    so the text is taken from the tree here and given to the printer, which
+    writes it wherever the expression it converts to stands in an answer.
+
+    What is written always converts back to what it is written for - the text
+    is where the key came from - so this substitutes a spelling and never a
+    value. Two conditionals that converge on one expression converge on one
+    spelling of it too, which is the whole of the imprecision.
+
+    Keyed by the expression rather than spliced into it, so that a command runs
+    on exactly what it ran on before and an answer's operand order and
+    parentheses are decided by the conditional itself. A conditional the
+    pipeline decided is the key of nothing - what stands in the answer is the
+    arm it took, simplified - and one it reshaped, an index written into a
+    frozen `IF` above all, no longer matches what was written and is printed as
+    it now is. Both are what Derive shows.
+
+    The conversion is the authored subtree's own, before anything writes a
+    definition into it, since what is to be shown is what the author wrote.
+    Where that differs from what the command converted the two do not match,
+    and the answer is written as computed.
+    """
+    authored: dict[sp.Basic, str] = {}
+    for found in _conditional_nodes(node):
+        try:
+            converted = to_sympy(found, context)
+        except Exception:
+            continue
+        if is_conditional(converted):
+            authored.setdefault(converted, write_expression(found, spaced=True))
+    return authored
+
+
+def _conditional_nodes(node: Node) -> list[Node]:
+    """Every `IF` call in the tree, outermost first.
+
+    One nested in another is here too: its own arms are its own to keep, and
+    the outer text is written whole whenever the outer conditional survives.
+    """
+    found = []
+    if node.kind in (Kind.CALL, Kind.APPLY) and len(node.children) > 1:
+        if str(node.children[0].value).upper() == "IF":
+            found.append(node)
+    for child in node.children:
+        found += _conditional_nodes(child)
+    return found
 
 
 def is_conditional(expression: sp.Basic) -> bool:

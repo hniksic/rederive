@@ -84,6 +84,7 @@ from rederive.engine.to_sympy import (
     PlusMinus,
     Taylor,
     as_condition,
+    authored_conditionals,
     is_conditional,
     outsized,
     reread,
@@ -143,10 +144,19 @@ def simplify(
     session can simplify a highlighted subexpression and splice the answer
     back. `state` is the symbol table the answer is reparsed with; a session
     working in a non-default input or case mode must pass its own.
+
+    The conditionals the author wrote are collected before anything is done to
+    them and given to the printer, an undecidable one being shown as written
+    and not as converted. `authored_conditionals` is what that means.
     """
     context = context or Context()
     node = named_as_declared(node, state)
-    return from_sympy(simplified(node, context), context, state)
+    return from_sympy(
+        simplified(node, context),
+        context,
+        state,
+        authored_conditionals(node, context),
+    )
 
 
 def approx(

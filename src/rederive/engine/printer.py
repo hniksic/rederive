@@ -553,9 +553,19 @@ def _size(exponent: sp.Basic) -> tuple:
     return (place, -degree)
 
 
-def author_text(expression: sp.Basic, context: Context | None = None) -> str:
-    """Write `expression` the way the author line would."""
-    return AuthorPrinter(context).doprint(named(expression))
+def author_text(
+    expression: sp.Basic,
+    context: Context | None = None,
+    authored: dict[sp.Basic, str] | None = None,
+) -> str:
+    """Write `expression` the way the author line would.
+
+    `authored` names subexpressions that are to be written as the text beside
+    them rather than as the form they were converted to. `pipeline.simplify`
+    fills it with the conditionals an author wrote, whose arms are the one part
+    of an answer that is shown as written and not as computed.
+    """
+    return AuthorPrinter(context, authored).doprint(named(expression))
 
 
 def named(expression: sp.Basic) -> sp.Basic:
@@ -728,11 +738,37 @@ def _unevaluated(expr: sp.Basic) -> bool:
 class AuthorPrinter(sp.StrPrinter):
     """A `StrPrinter` that writes author notation."""
 
-    def __init__(self, context: Context | None = None) -> None:
+    def __init__(
+        self,
+        context: Context | None = None,
+        authored: dict[sp.Basic, str] | None = None,
+    ) -> None:
         # `grlex` is descending total degree, which is the order the original
         # writes a polynomial in: `x^2 + c`, not `c + x^2`.
         super().__init__({"full_prec": False, "order": "grlex"})
         self.context = context or Context()
+        self.authored = authored or {}
+
+    def _print(self, expr, **kwargs):
+        """One subexpression, as the author wrote it where that is on record.
+
+        The text stands in for the whole subtree and nothing under it is
+        printed, which is the point: the arms of a conditional whose test could
+        not be decided are shown as they were written, arithmetic and operand
+        order and all. Only the expression is replaced, never its position, so
+        what surrounds it is spaced and parenthesized exactly as it would have
+        been - the caller has already priced this subtree by its precedence,
+        and the text is written at the same one.
+
+        A conditional is the only thing recorded, and looking one up here costs
+        a dictionary miss per printed node while the record is empty, which is
+        every command but Simplify.
+        """
+        if self.authored and isinstance(expr, (sp.Piecewise, AppliedUndef)):
+            written = self.authored.get(expr)
+            if written is not None:
+                return written
+        return super()._print(expr, **kwargs)
 
     # -- sums ---------------------------------------------------------------
 

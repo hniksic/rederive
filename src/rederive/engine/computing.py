@@ -55,7 +55,7 @@ from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
 from rederive.engine.solve import solve, solved
 from rederive.engine.substitute import substitute
-from rederive.engine.to_sympy import to_sympy
+from rederive.engine.to_sympy import authored_conditionals, to_sympy
 from rederive.engine.variables import expression_variables
 
 __all__ = [
@@ -81,6 +81,7 @@ __all__ = [
     "TrigPower",
     "approx",
     "author_text",
+    "authored_conditionals",
     "decomposes",
     "domain_of_node",
     "equations_in",

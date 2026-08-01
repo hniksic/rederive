@@ -162,7 +162,6 @@ NOT_YET_HELD = {
     "test_an_expanded_exponential_of_a_sum_is_a_product",
     "test_an_expression_typed_with_a_trailing_equals_shows_both_sides",
     "test_an_iteration_count_bounds_the_iterates",
-    "test_an_undecidable_condition_keeps_the_whole_conditional",
     "test_approx_takes_the_digits_it_is_given",
     "test_arithmetic_on_a_whole_equation[(x^2 + 5*x + 6 = 0) - 6-x^2 + 5*x = -6]",
     "test_arithmetic_on_a_whole_equation[4*(x^2 + 5*x + 6 = 0)-4*x^2 + 20*x + 24 = 0]",
