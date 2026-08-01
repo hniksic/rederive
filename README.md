@@ -7,7 +7,7 @@ apart is friendliness: Rederive reads `ax+b` or `sinx` the way a mathematician w
 them, and displays every result nicely typeset in the terminal. The UI is small and
 opinionated, but discoverable and humane.
 
-<p align="center"><img src="screenshot.svg" alt="A Rederive session" width="700"></p>
+<p align="center"><img src="demo.svg" alt="An animated Rederive session" width="700"></p>
 
 ## Motivation
 
