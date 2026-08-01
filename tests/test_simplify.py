@@ -262,6 +262,12 @@ COEFFICIENTS = [
     ("z*(x + y)/2", "z*(x + y)/2"),
     # A whole number in front is not a denominator and is left where it is.
     ("6*a*b*(a*x + b*y)", "6*a*b*(a*x + b*y)"),
+    # And the way back is not taken: a sum of terms with denominators of their
+    # own is never gathered over the one they have in common, however many
+    # carry it. All three come from the original.
+    ("x^2/6 + x/2", "x^2/6 + x/2"),
+    ("x^10/2 - x^9/3 + x/6", "x^10/2 - x^9/3 + x/6"),
+    ("1/2 + SIN(x)/2", "SIN(x)/2 + 1/2"),
 ]
 
 
@@ -475,6 +481,15 @@ TRIGONOMETRY = [
     ("SIN(x)*COS(x)", "SIN(2*x)/2", Context(trigonometry=Direction.COLLECT)),
     ("COS(x)^2", "1 - SIN(x)^2", Context(trigpower=TrigPower.SINES)),
     ("SIN(x)^2", "1 - COS(x)^2", Context(trigpower=TrigPower.COSINES)),
+    # The original has no secant, and writes an even reciprocal power of a
+    # cosine over the tangent: `DIF(LN(COS(x)), x, 2)` is `- TAN(x)^2 - 1`
+    # there. Only where the cosine is the whole of the term, and only for an
+    # even power.
+    ("1/COS(x)^2", "TAN(x)^2 + 1", None),
+    ("1/COS(x)^4", "(TAN(x)^2 + 1)^2", None),
+    ("SEC(x)^2", "TAN(x)^2 + 1", None),
+    ("1/COS(x)^3", "1/COS(x)^3", None),
+    ("SIN(x)/COS(x)^2", "SIN(x)/COS(x)^2", None),
 ]
 
 
@@ -593,7 +608,9 @@ def test_the_functions_that_are_spellings_for_something_else(text, expected):
 @pytest.mark.parametrize(
     ("text", "expected", "branch"),
     [
-        ("(-8)^(1/3)", "2*(-1)^(1/3)", Branch.PRINCIPAL),
+        # The principal cube root, in the rectangular form 4.5 promises: Derive
+        # answers `1 + SQRT(3)*#i` and approximates it `1 + 1.73205*#i`.
+        ("(-8)^(1/3)", "1 + SQRT(3)*#i", Branch.PRINCIPAL),
         ("(-8)^(1/3)", "-2", Branch.REAL),
         ("SQRT(x^2)", "ABS(x)", Branch.PRINCIPAL),
         # Any permits the rewrite without a domain proof.
@@ -603,6 +620,25 @@ def test_the_functions_that_are_spellings_for_something_else(text, expected):
 )
 def test_which_root_an_expression_may_mean(text, expected, branch):
     assert simp(text, Context(branch=branch)) == expected
+
+
+#: Section 4.5's rectangular form, and the three things it does not reach. A
+#: base that is no number has no rectangle until something says what it is; a
+#: fifth root buys one with a radical inside a radical, and a seventh with a
+#: cosine, which is the polar form the rule is about avoiding.
+RECTANGULAR = [
+    ("(1 + #i)^3", "-2 + 2*#i"),
+    ("(-8)^(2/3)", "-2 + 2*SQRT(3)*#i"),
+    ("(-1)^(1/4)", "SQRT(2)/2 + SQRT(2)*#i/2"),
+    ("(-x)^(1/3)", "(-x)^(1/3)"),
+    ("(-32)^(1/5)", "2*(-1)^(1/5)"),
+    ("(-1)^(1/7)", "(-1)^(1/7)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), RECTANGULAR, ids=str)
+def test_a_numeric_power_that_is_complex_is_written_in_rectangular_form(text, expected):
+    assert simp(text) == expected
 
 
 # -- the calculus heads -------------------------------------------------------

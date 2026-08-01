@@ -420,7 +420,11 @@ def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
     # nothing else in the pipeline touches either - keep the form they were
     # written in; and before `_commanded`, so that a factorization a `FACTOR`
     # head produces is not multiplied straight back out.
-    expression = normal_form(expression, context.order)
+    #
+    # `over_numbers` off: nothing here divided, so a number several terms carry
+    # underneath is their own coefficient and not a denominator the sum is
+    # written over. `x^2/6 + x/2` is what was authored and what comes back.
+    expression = normal_form(expression, context.order, over_numbers=False)
     expression = _thawed(expression, held)
     if frozen:
         # A conditional comes back where its placeholder was applied, which
@@ -1496,6 +1500,9 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
         return _forced(expression, _distributed)
     expression = _by_definition(expression)
     expression = _branch(expression, context)
+    # After the branch, which is what settles how many values a root has: with
+    # Real asked for, `(-8)^(1/3)` is `-2` and there is no rectangle to write.
+    expression = _forced(expression, _rectangular)
     expression = _gated(expression, _multiplied_out)
     expression = _gated(expression, _cancelled)
     if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
@@ -1925,7 +1932,38 @@ def _trigonometry(expression: sp.Basic, context: Context) -> sp.Basic:
             return _forced(expression, TR6)
         case TrigPower.COSINES:
             return _forced(expression, TR5)
-    return expression
+    return _forced(expression, _tangent_squares)
+
+
+def _tangent_squares(expression: sp.Basic) -> sp.Basic:
+    """An even reciprocal power of a cosine, written over the tangent instead.
+
+    Derive has no secant of its own to write `1/COS(x)^2` as, and does not leave
+    it standing either: it answers `DIF(LN(COS(x)), x, 2)` with `-TAN(x)^2 - 1`,
+    and writes `TAN(x)^2 + 1` wherever else that power stands. Only an even
+    power, and only a negative one - `1/COS(x)^3` and `COS(x)^2` are both left
+    as they are, neither being a power of the identity.
+
+    The cosine has to be the whole of what the number in front multiplies, so
+    that only a quotient of a number by a squared cosine is rewritten:
+    `SIN(x)/COS(x)^2` keeps its cosine, there being no tangent identity for a
+    sine over one. That is why this walks the terms rather than the powers -
+    a power knows nothing about what stands beside it.
+
+    Forced rather than gated: `TAN(x)^2 + 1` is the longer of the two, and the
+    original writes it anyway. Left out of both Trigpower directions, each of
+    which is asking for the powers in one named function.
+    """
+    if isinstance(expression, sp.Add):
+        return sp.Add(*(_tangent_squares(term) for term in expression.args))
+    coefficient, rest = expression.as_coeff_Mul()
+    base, exponent = rest.as_base_exp()
+    if not (isinstance(base, sp.cos) and exponent.is_Integer and exponent < 0):
+        return expression
+    half = -exponent / 2
+    if not half.is_Integer:
+        return expression
+    return coefficient * (sp.tan(base.args[0]) ** 2 + 1) ** half
 
 
 #: The inverse functions that pair off, each with the one it complements.
@@ -2291,6 +2329,50 @@ def _is_odd_root_of_minus_one(expression: sp.Basic) -> bool:
 
 def _real_sign(expression: sp.Basic) -> sp.Basic:
     return sp.Integer(-1) ** expression.exp.p
+
+
+def _rectangular(expression: sp.Basic) -> sp.Basic:
+    """A numeric power that is not real, written as real part plus imaginary.
+
+    Section 4.5's promise: a complex result comes out in rectangular form.
+    `(1 + #i)^3` is `-2 + 2*#i` and the principal `(-8)^(1/3)` is
+    `1 + SQRT(3)*#i`, neither of which sympy reaches on its own - it leaves a
+    power of a sum folded and pulls the sign of a negative base out as
+    `2*(-1)^(1/3)`.
+
+    Only a power, and only one whose base and exponent are both numbers: what
+    `(-x)^(1/3)` is depends on `x`, and there is no rectangle to write until
+    something says. And only where the two parts come out plainly written -
+    the seventh root of -1 is `COS(pi/7) + #i*SIN(pi/7)`, which is the polar
+    form the promise was about avoiding, and the fifth root buys its rectangle
+    with a radical inside a radical. Both are left as they stand.
+    """
+    return expression.replace(_is_complex_power, _in_rectangular, simultaneous=False)
+
+
+def _is_complex_power(expression: sp.Basic) -> bool:
+    return (
+        isinstance(expression, sp.Pow)
+        and bool(expression.base.is_number)
+        and bool(expression.exp.is_Rational)
+        and expression.is_real is False
+    )
+
+
+def _in_rectangular(expression: sp.Basic) -> sp.Basic:
+    parts = sp.expand_complex(expression)
+    if parts == expression or not _plainly_written(parts):
+        return expression
+    return parts
+
+
+def _plainly_written(value: sp.Basic) -> bool:
+    """Whether `value` is arithmetic and roots of whole numbers, and no more."""
+    return not value.atoms(sp.Function) and all(
+        bool(power.base.is_Rational)
+        for power in value.atoms(sp.Pow)
+        if not power.exp.is_Integer
+    )
 
 
 # -- precision ---------------------------------------------------------------

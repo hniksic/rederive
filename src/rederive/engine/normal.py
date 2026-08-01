@@ -79,11 +79,23 @@ __all__ = ["normal_form"]
 _ROUNDS = 6
 
 
-def normal_form(expression: sp.Basic, order: Sequence[str] = ORDER_LIST) -> sp.Basic:
+def normal_form(
+    expression: sp.Basic, order: Sequence[str] = ORDER_LIST, over_numbers: bool = True
+) -> sp.Basic:
     """Every sum in `expression` written about its own primary variable.
 
     `order` is the session's variable order list, which is what decides which
     variable that is.
+
+    `over_numbers` says whether a *number* several terms carry underneath is
+    one the sum is written over. A quotient a computation made survives to the
+    display in the original, and dividing by a coefficient is what solving does
+    - `x = (1 - z)/2` and not `x = 1/2 - z/2`. A sum that was only ever added up
+    keeps its terms apart, however many denominators they have in common:
+    `x^2/6 + x/2` authored comes back as it stands, and so does
+    `1/2 + SIN(x)/2`. So the pipeline asks for `False` and solving takes the
+    default. A denominator holding a variable is combined either way, that
+    being the rational function the normal form is about.
 
     Total, like every other rewrite in the pipeline: what fails is not taken.
     """
@@ -93,7 +105,7 @@ def normal_form(expression: sp.Basic, order: Sequence[str] = ORDER_LIST) -> sp.B
         return _is_sum(candidate) and candidate not in written
 
     def step(total: sp.Basic) -> sp.Basic:
-        answer = _as_rational(total, order)
+        answer = _as_rational(total, order, over_numbers)
         if _is_sum(answer):
             written.add(answer)
         return answer
@@ -113,7 +125,9 @@ def _is_sum(expression: sp.Basic) -> bool:
     return bool(expression.is_Add and expression.is_commutative)
 
 
-def _as_rational(total: sp.Basic, order: Sequence[str]) -> sp.Basic:
+def _as_rational(
+    total: sp.Basic, order: Sequence[str], over_numbers: bool
+) -> sp.Basic:
     """One sum about its primary variable, and its free part about the next.
 
     Anything that is not a sum is already in normal form as far as this goes,
@@ -138,10 +152,11 @@ def _as_rational(total: sp.Basic, order: Sequence[str]) -> sp.Basic:
     terms = sp.Add.make_args(polynomial)
     powers = [term for term in terms if primary in term.free_symbols]
     ground = [term for term in terms if primary not in term.free_symbols] + free
-    return _shared(sp.Add(*powers, _as_rational(sp.Add(*ground), order), proper))
+    rest = _as_rational(sp.Add(*ground), order, over_numbers)
+    return _shared(sp.Add(*powers, rest, proper), over_numbers)
 
 
-def _shared(total: sp.Basic) -> sp.Basic:
+def _shared(total: sp.Basic, over_numbers: bool = True) -> sp.Basic:
     """A sum whose terms share a denominator, written over it.
 
     Which is what makes `(x + 1)^2/y + z` come out `(x^2 + 2*x + y*z + 1)/y`
@@ -153,6 +168,10 @@ def _shared(total: sp.Basic) -> sp.Basic:
 
     The proper part is never what is shared: its denominator holds the primary
     variable and no other term can carry it, having been divided by it already.
+
+    Without `over_numbers` a denominator that is a number is no denominator at
+    all for this purpose - it is each term's own rational coefficient - and
+    only the ones holding a variable are counted.
     """
     if not _is_sum(total):
         return total
@@ -167,7 +186,7 @@ def _shared(total: sp.Basic) -> sp.Basic:
         if not isinstance(term, sp.Expr):
             return total
         denominator = sp.fraction(term)[1]
-        if denominator != 1:
+        if denominator != 1 and (over_numbers or not denominator.is_number):
             seen[denominator] = seen.get(denominator, 0) + 1
     if not any(count > 1 for count in seen.values()):
         return total

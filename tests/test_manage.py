@@ -235,7 +235,7 @@ async def test_the_branch_setting_changes_the_answer(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"(-8)^(1/3)", "enter")
         await pilot.press("s", "enter")
-        assert entries(app)[-1] == "2*(-1)^(1/3)"
+        assert entries(app)[-1] == "1 + SQRT(3)*#i"
         await manage(pilot, "b", "r")
         await pilot.press("j", *"1", "enter")
         await pilot.press("s", "enter")

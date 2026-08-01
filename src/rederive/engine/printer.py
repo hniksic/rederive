@@ -257,6 +257,10 @@ def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
     so that the proper part of a rational function closes the sum it belongs
     to: `y + (2*x + 3)/((x + 1)*(x + 2))`, where the numerator is an x and the
     term still goes behind the plain `y`.
+
+    An imaginary term leads with the `#i` in the same way, whatever it is
+    multiplied by, so that the real part of a complex number is written first
+    however that part is spelled: `1 + SQRT(3)*#i` and not `SQRT(3)*#i + 1`.
     """
     kernels = sorted(
         (
@@ -264,7 +268,7 @@ def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
             for factor in sp.Mul.make_args(term)
             if not factor.is_Number
         ),
-        key=lambda kernel: (kernel[0] != _UNDER, kernel),
+        key=lambda kernel: (kernel[0] != _UNDER, kernel[0] != _IMAGINARY, kernel),
     )
     return (*kernels, _AFTER_EVERY_KERNEL)
 
@@ -742,10 +746,13 @@ class AuthorPrinter(sp.StrPrinter):
         `2*x - x^2`, while `-x^2 + 2*x - 1` is written as it stands and keeps
         the minus - three terms are left in the order they were put in, and a
         pair of negated terms has nowhere to turn to.
+
+        A complex number in rectangular form is the pair that does not turn:
+        `-2 + 2*#i` keeps its minus, the real part leading whatever its sign.
         """
         terms = _term_order(super()._as_ordered_terms(expr, order), self.context.order)
         if len(terms) == 2 and terms[0].could_extract_minus_sign():
-            if not terms[1].could_extract_minus_sign():
+            if not terms[1].could_extract_minus_sign() and not terms[1].has(sp.I):
                 return [terms[1], terms[0]]
         return terms
 

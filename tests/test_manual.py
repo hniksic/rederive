@@ -142,7 +142,6 @@ def answered_within(session, engine, ask, patience=PATIENCE):
 #: - and some are the same value written another way; `manual-conformance.md`
 #: sorts them out. Nothing here says the manual is wrong.
 NOT_YET_HELD = {
-    "test_a_complex_result_is_written_in_rectangular_form",
     "test_a_logarithm_difference_waits_for_a_domain_that_justifies_it",
     "test_a_negative_order_of_differentiation_is_an_antiderivative",
     "test_a_product_of_sines_collects_into_the_manuals_identity[COS(z)*"
@@ -180,10 +179,8 @@ NOT_YET_HELD = {
     "test_square_brackets_make_a_vector_rather_than_a_group",
     "test_substituting_a_root_for_a_variable_reaches_what_a_subexpression_cannot",
     "test_substitutions_for_variables_are_made_all_at_once",
-    "test_the_branch_the_manual_starts_on_is_the_principal_one",
     "test_the_characteristic_variable_defaults_to_w",
     "test_the_clairaut_equation_the_manual_solves",
-    "test_the_derivatives_of_the_manual[DIF(LN(COS(x)), x, 2)--TAN(x)^2 - 1]",
     "test_the_error_and_zeta_functions[NORMAL(z, m, "
     "s)-(ERF(SQRT(2)*z/(2*s) - SQRT(2)*m/(2*s)) + 1)/2]",
     "test_the_first_order_equation_the_manual_solves",
@@ -201,7 +198,6 @@ NOT_YET_HELD = {
     "test_the_piecewise_functions[MIN(x, y)-(x + y)/2 - |x - y|/2]",
     "test_the_quadratic_formula_as_a_radical_factoring",
     "test_the_series_inverse_of_a_function_that_has_no_closed_one",
-    "test_the_series_solution_of_an_equation_that_has_no_closed_one",
     "test_the_sign_of_a_complex_number_is_its_point_on_the_unit_circle",
     "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 0)-0]",
     "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 2)-?]",
