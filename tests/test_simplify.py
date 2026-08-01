@@ -883,6 +883,23 @@ def test_a_special_value(text, expected):
     assert simp(text) == expected
 
 
+#: Section 6.8's sign of a complex number: the point of that number on the unit
+#: circle, `z/|z|`. The original answers the first of these `3/5 + 4*#i/5`. A
+#: name is not a number and waits, whatever is written beside it.
+COMPLEX_SIGNS = [
+    ("SIGN(3 + 4*#i)", "3/5 + 4*#i/5"),
+    ("SIGN(2 + #i)", "SQRT(5)*(2 + #i)/5"),
+    ("SIGN(#i)", "#i"),
+    ("SIGN(-3)", "-1"),
+    ("SIGN(x + #i)", "SIGN(x + #i)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), COMPLEX_SIGNS, ids=str)
+def test_the_sign_of_a_complex_number(text, expected):
+    assert simp(text) == expected
+
+
 # -- the indicator function and the normal distribution ------------------------
 
 #: Two of Section 6's functions that are a closed form rather than a rule:

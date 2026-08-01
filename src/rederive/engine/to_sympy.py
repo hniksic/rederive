@@ -1132,10 +1132,24 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
 
 
 def _sign(conv: _Converter, args: list) -> sp.Basic:
-    """`SIGN(0)` is `+-1`, overriding sympy's `0`."""
+    """`SIGN(0)` is `+-1`, overriding sympy's `0`.
+
+    Section 6.8 defines the sign of a complex number as its point on the unit
+    circle, `z/|z|`, and the original answers `SIGN(3 + 4*#i)` with
+    `3/5 + 4*#i/5`. Sympy takes only the pure imaginaries that far, so a
+    number off both axes is divided by its magnitude here. Only a number:
+    what `SIGN(z)` is for a name depends on where the name lies, and it waits
+    as it always did.
+    """
     value = _one(args)
     if value.is_zero:
         return PlusMinus(sp.Integer(1))
+    if value.is_number and value.is_extended_real is False:
+        magnitude = sp.Abs(value)
+        # A magnitude that will not come out is no answer: the bars are as
+        # much of a wait as the `SIGN` was, and longer to read.
+        if not magnitude.has(sp.Abs):
+            return value / magnitude
     return sp.sign(value)
 
 
