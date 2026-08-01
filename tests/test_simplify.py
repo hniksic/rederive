@@ -251,6 +251,25 @@ def test_a_sum_of_ratios_is_written_over_one_denominator(text, expected):
     assert simp(text) == expected
 
 
+#: A number in front of a sum, which is the same rule seen from the other side:
+#: a polynomial's coefficients are rational, term by term, so a number that
+#: divides into them belongs among them and not in front. The one that does not
+#: divide in is a denominator the whole sum shares, and that one stays in front.
+COEFFICIENTS = [
+    ("(m^2 + m + 2)*(m - 1)!/2", "(m^2/2 + m/2 + 1)*(m - 1)!"),
+    ("(n^2 + n)/2", "n^2/2 + n/2"),
+    ("x*(x - 1)/2", "x*(x - 1)/2"),
+    ("z*(x + y)/2", "z*(x + y)/2"),
+    # A whole number in front is not a denominator and is left where it is.
+    ("6*a*b*(a*x + b*y)", "6*a*b*(a*x + b*y)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), COEFFICIENTS, ids=str)
+def test_a_number_that_divides_a_sum_is_written_into_it(text, expected):
+    assert simp(text) == expected
+
+
 def test_a_sum_over_two_powers_of_one_thing_is_written_over_the_higher():
     """The lower power divides the higher, so the sum is one ratio.
 
@@ -787,10 +806,20 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
     assert simp("INT(1/SQRT(1 - x^4), x)").startswith("x*HYPER(")
 
 
-def test_the_interior_singularity_derive_missed():
-    # Derive answers -2, having integrated straight through the pole at zero.
-    # Sympy is right and we keep its answer; this is not a bug to reproduce.
-    assert simp("INT(1/x^2, x, -1, 1)") == "inf"
+def test_an_integral_is_taken_straight_through_an_interior_singularity():
+    """A definite integral is the difference of the antiderivative's endpoints.
+
+    Nothing looks in between, which the manual is explicit about (7.4, p.199):
+    finding the singularities inside an interval and splitting the integral
+    there is the reader's job. So a pole inside is integrated straight through.
+    Over an odd power that lands on the Cauchy principal value, the positive
+    and negative infinite areas cancelling exactly; over an even power it lands
+    on a number the manual itself calls obviously wrong, the integrand being
+    positive throughout. Split at the pole and the divergence is there to see.
+    """
+    assert simp("INT(1/x^3, x, -1, 2)") == "3/8"
+    assert simp("INT(1/x^2, x, -1, 1)") == "-2"
+    assert simp("INT(1/x^2, x, -1, 0) + INT(1/x^2, x, 0, 1)") == "inf"
 
 
 def test_a_two_sided_limit_whose_sides_disagree_is_plus_or_minus():

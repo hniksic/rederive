@@ -140,6 +140,20 @@ def test_a_function_definition_reaches_the_next_command(session):
     assert session.simplify("#2").text == "8"
 
 
+def test_a_parameter_names_the_variable_a_sum_ranges_over(session):
+    """A definition is written in as text, index and all.
+
+    `PRODUCT(p, x, x0, x - 1)` called with `m` for both `p` and `x` is the
+    product of `m` over `m` from 1 to `m - 1`, which is `(m - 1)!`: the body the
+    first parameter wrote in is caught by the index the third one named, and the
+    limit is read outside the index it names. Derive's own RECUREQN.MTH is
+    written this way and its answers depend on it.
+    """
+    session.author("f(p, x, x0) := PRODUCT(p, x, x0, x - 1)")
+    session.author("f(m, m, 1)")
+    assert session.simplify("#2").text == "(m - 1)!"
+
+
 def test_every_definition_on_a_line_is_recorded(session):
     session.author("[a := 2, b := 3]")
     session.author("a b")

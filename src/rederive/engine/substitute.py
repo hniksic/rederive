@@ -191,9 +191,19 @@ def _binding(
 ) -> Node:
     """`SUM(u, k, m, n)`: `k` stands for itself in `u`, and nowhere else.
 
-    The name itself is left as written - substituting for it would leave the
-    call with no variable to range over - and the arguments after it are read in
-    the enclosing scope, because a limit is not part of what it bounds.
+    An assigned name is left as written - substituting `x := 5` into the index
+    would leave the call with no variable to range over - and the arguments
+    after it are read in the enclosing scope, because a limit is not part of
+    what it bounds.
+
+    A parameter is the other case, and there the name a call supplies is the
+    variable summed over: `LIN1_DIFFERENCE(p, q, x, x0, y0)` sums over `x` and
+    is called with `m` for it, so what it sums over is `m`. The body is then
+    substituted with that parameter still standing, which lets the index catch
+    what another parameter wrote in - `PRODUCT(p, x, x0, x - 1)` called with `m`
+    for both `p` and `x` is the product of `m` over `m`, and `(m - 1)!` is what
+    Derive answers. Textual substitution is what a Derive definition is, and
+    capture is part of it.
 
     A second argument that is no name binds nothing. `SUM(v)` over a vector's
     elements has none either, and both walk like any other call.
@@ -203,16 +213,21 @@ def _binding(
         walked = tuple(_walk(argument, scope, context) for argument in arguments)
         return replace(node, children=(head, *walked))
     body, index, *rest = arguments
-    name = str(index.value)
-    inner = replace(
-        scope,
-        arguments={
-            parameter: written
-            for parameter, written in scope.arguments.items()
-            if parameter != name
-        },
-        bound=scope.bound | {name},
-    )
+    supplied = scope.arguments.get(str(index.value))
+    if supplied is not None and supplied.kind is Kind.NAME:
+        index = supplied
+        inner = replace(scope, bound=scope.bound | {str(index.value)})
+    else:
+        name = str(index.value)
+        inner = replace(
+            scope,
+            arguments={
+                parameter: written
+                for parameter, written in scope.arguments.items()
+                if parameter != name
+            },
+            bound=scope.bound | {name},
+        )
     written = (
         _walk(body, inner, context),
         index,

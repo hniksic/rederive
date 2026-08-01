@@ -184,13 +184,10 @@ NOT_YET_HELD = {
     "test_the_characteristic_variable_defaults_to_w",
     "test_the_clairaut_equation_the_manual_solves",
     "test_the_derivatives_of_the_manual[DIF(LN(COS(x)), x, 2)--TAN(x)^2 - 1]",
-    "test_the_difference_equation_the_manual_solves",
     "test_the_error_and_zeta_functions[NORMAL(z, m, "
     "s)-(ERF(SQRT(2)*z/(2*s) - SQRT(2)*m/(2*s)) + 1)/2]",
     "test_the_first_order_equation_the_manual_solves",
     "test_the_integral_the_manual_does_by_substitution",
-    "test_the_integrals_of_the_manual[INT(1/x^2, x, -1, 1)--2]",
-    "test_the_integrals_of_the_manual[INT(1/x^3, x, -1, 2)-3/8]",
     "test_the_inverse_hyperbolic_functions_become_logarithms[ACOSH(z)-2"
     "*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)]",
     "test_the_inverse_of_the_manuals_function",

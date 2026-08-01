@@ -477,7 +477,9 @@ def _canonical(expression: sp.Basic) -> sp.Basic:
     the same answer printed two ways depending on which pass produced it.
 
     Rebuilding sorts both back into the order sympy would have put them in, so
-    the text and the expression it reads back as are the same thing.
+    the text and the expression it reads back as are the same thing. A product
+    is rebuilt by `_coefficient_in`, which finishes the first of the two where
+    sympy's own construction leaves it half done.
     """
     try:
         return expression.replace(_is_run, _rebuilt, simultaneous=False)
@@ -491,9 +493,42 @@ def _is_run(expression: sp.Basic) -> bool:
 
 def _rebuilt(run: sp.Basic) -> sp.Basic:
     try:
-        return run.func(*run.args)
+        return _coefficient_in(run) if run.is_Mul else run.func(*run.args)
     except Exception:
         return run
+
+
+def _coefficient_in(run: sp.Basic) -> sp.Basic:
+    """A product with its fractional coefficient written into the sum beside it.
+
+    Sympy writes one in where the sum is all there is beside the number -
+    `(n^2 + n)/2` is `n^2/2 + n/2` the moment it is built - and stops the
+    moment anything else stands in the product. Derive does not stop. Its
+    answer to the manual's difference equation is `(m^2/2 + m/2 + 1)*(m - 1)!`,
+    where the half is written in although a factorial stands beside the sum,
+    because a polynomial's coefficients are rational there, term by term, the
+    way `SUM(n^2, n)` is `n^3/3 - n^2/2 + n/6`.
+
+    Not where the number would land under every term. Then it is a denominator
+    the whole sum shares, and a shared denominator is written outside the sum
+    and not into it - `_shared` in `normal_form`, read the other way round.
+    `x*(x - 1)/2` is that one: written in, it would be `x*(x/2 - 1/2)`, where
+    the two halves are the one half the product already carried.
+    """
+    rebuilt = run.func(*run.args)
+    if not rebuilt.is_Mul:
+        return rebuilt
+    coefficient, rest = rebuilt.as_coeff_Mul()
+    if not (coefficient.is_Rational and coefficient.q != 1):
+        return rebuilt
+    factors = sp.Mul.make_args(rest)
+    sums = [factor for factor in factors if factor.is_Add]
+    if len(factors) < 2 or len(sums) != 1:
+        return rebuilt
+    terms = [coefficient * term for term in sums[0].args]
+    if not any(term.as_coeff_Mul()[0].is_integer for term in terms):
+        return rebuilt
+    return sp.Mul(*(factor for factor in factors if not factor.is_Add), sp.Add(*terms))
 
 
 # -- IF, the one place a relation is asked whether it holds -------------------
@@ -829,6 +864,19 @@ _BOUNDED = {"meijerg": False, "heurisch": False}
 
 
 def _integral(head: sp.Basic) -> sp.Basic:
+    """An integral, by sympy first and then by Derive's rule for a pole inside.
+
+    Sympy's answer is the one to print wherever the integrand is integrable.
+    Where it is not, because the integrand blows up strictly inside the
+    interval, Derive prints something else, and `_across_a_singularity` is that
+    something else.
+    """
+    value = _by_sympy(head)
+    across = _across_a_singularity(head, value)
+    return value if across is None else across
+
+
+def _by_sympy(head: sp.Basic) -> sp.Basic:
     """An integral, by the bounded methods first.
 
     The heuristic Risch algorithm is what finds the integrals nothing else
@@ -853,6 +901,66 @@ def _integral(head: sp.Basic) -> sp.Basic:
         return head if bounded is None else bounded
     full = _attempt(head, lambda h: h.doit(deep=False))
     return head if full is None else _antiderivative(head, full)
+
+
+def _across_a_singularity(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
+    """A definite integral read across an interior pole the way Derive reads one.
+
+    Derive simplifies a definite integral by finding a closed-form
+    antiderivative and subtracting its limit at the lower endpoint from its
+    limit at the upper one, both approached from inside the interval (7.4,
+    p.199). It looks for no singularity in between - the manual says finding
+    those is the reader's job - so where one is there the answer is the
+    difference of the antiderivative anyway. `INT(1/x^3, x, -1, 2)` comes out
+    3/8, which is the Cauchy principal value, and `INT(1/x^2, x, -1, 1)` comes
+    out -2, which the manual itself calls obviously wrong for an integrand
+    positive throughout. Both are what Derive prints, so both are what this
+    prints.
+
+    Only where the integral has no value otherwise, which is where sympy has
+    split at the pole and found the halves do not cancel. An integrable
+    singularity - a removable one, or `1/SQRT(|x|)` - keeps sympy's answer,
+    which is the Riemann integral and the same number this rule would reach.
+    And only where the pole is strictly inside: at an endpoint the technique is
+    valid, the manual keeps it, and `INT(1/x^2, x, -1, 0)` stays infinite.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 3:
+        return None
+    if not isinstance(value, sp.Expr) or value.is_finite:
+        return None
+    variable, low, high = head.limits[0]
+    if not _poles_inside(head.function, variable, low, high):
+        return None
+    antiderivative = _integral(sp.Integral(head.function, variable))
+    if antiderivative.has(sp.Integral):
+        return None
+    ends = []
+    for point, side in ((high, "-"), (low, "+")):
+        end = _attempt(antiderivative, lambda a: sp.limit(a, variable, point, side))
+        if end is None or not end.is_finite:
+            return None
+        ends.append(end)
+    return ends[0] - ends[1]
+
+
+def _poles_inside(
+    integrand: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
+) -> bool:
+    """Whether the integrand is known to blow up strictly between the limits.
+
+    Known is the word: a singularity sympy cannot locate, or locates at a point
+    it cannot place against the limits, is one Derive's rule is not applied
+    over. Nothing is lost by that - the answer without the rule is the answer
+    with it wherever the rule does not fire.
+    """
+    interval = _attempt(low, lambda bound: sp.Interval.open(bound, high))
+    if not isinstance(interval, sp.Interval):
+        return False
+    try:
+        poles = sp.singularities(integrand, variable, interval)
+    except Exception:
+        return False
+    return isinstance(poles, sp.FiniteSet) and bool(poles)
 
 
 def _antiderivative(head: sp.Basic, value: sp.Basic) -> sp.Basic:
