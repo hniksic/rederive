@@ -9,13 +9,13 @@ something no inline case covers. What it reports is the line it broke on, which
 is a starting point and not a diagnosis: the fix is usually a new inline case
 in `test_simplify.py` and then the code to pass it.
 
-Minutes of work, where the rest of the suite is ten seconds, so it is marked
-and left out of the default run:
+About a minute across every core, where the rest of the suite is forty seconds,
+so it is marked and left out of the default run:
 
     uv run pytest -m slow -n auto
 
 One case per expression, not per file. The cost of an expression runs from a
-microsecond to six seconds, and a case per file would leave one worker grinding
+microsecond to ten seconds, and a case per file would leave one worker grinding
 through the hypergeometric integrals while the others sat idle; a case apiece
 gives the distributor something to distribute, and the tail is one expression
 rather than one file.
