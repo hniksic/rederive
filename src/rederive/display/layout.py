@@ -351,7 +351,7 @@ class Engine:
 
     def _power(self, node: Node, level: int, budget: int | None) -> Box:
         base, exponent = node.children
-        under = self.operand(base, level, budget, forms.SCRIPT, forms.POW)
+        under = self.operand(base, level, budget, forms.POSTFIX, forms.POW)
         if level >= _LINEAR_SCRIPTS:
             script = self.operand(exponent, level, budget, forms.NEG)
             return row([under, text("^"), script], node, (under, script))
@@ -365,13 +365,13 @@ class Engine:
             # Flat: `a↓b`, the arrow standing in for the row there is no
             # longer any room to lower into, exactly as `a^b` stands in for
             # the row there is no room to raise into.
-            flat = self.operand(base, level, budget, forms.SCRIPT, forms.SCRIPT)
-            deeper = self.operand(script, level, budget, forms.POSTFIX)
+            flat = self.operand(base, level, budget, forms.POSTFIX, forms.POSTFIX)
+            deeper = self.operand(script, level, budget, forms.SCRIPT)
             return row(
                 [flat, text(glyphs.LOWERED), deeper], node, (flat, deeper)
             )
         lowered = self.box(script, level + 1, budget)
-        under = self.operand(base, level, budget, forms.SCRIPT, forms.SCRIPT)
+        under = self.operand(base, level, budget, forms.POSTFIX, forms.POSTFIX)
         dy = 1 + lowered.above
         parts = [Placed(under, 0, 0)]
         dx = under.width

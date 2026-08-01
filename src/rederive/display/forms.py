@@ -27,7 +27,9 @@ from rederive.model.expr import Kind, Node
 # The precedence ladder, loosest first. This is how tightly a rendering binds
 # as read back off the screen, which is not everywhere how the grammar builds
 # it: `-x*y` parses as `-(x·y)`, and a sign already drawn stands to the left
-# of a product the way one binding tighter would.
+# of a product the way one binding tighter would. A lowered index encloses
+# itself, so a subscript binds tighter than anything drawn beside it: `v₁!` is
+# the factorial of the element and needs no fences to say so.
 ASSIGNMENT = 0
 IMP = 1
 XOR = 2
@@ -39,8 +41,8 @@ ADD = 7
 MUL = 8
 NEG = 9
 POW = 10
-SCRIPT = 11
-POSTFIX = 12
+POSTFIX = 11
+SCRIPT = 12
 ATOM = 13
 
 _BINOPS: dict[str, int] = {

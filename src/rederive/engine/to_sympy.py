@@ -64,6 +64,7 @@ __all__ = [
     "Taylor",
     "Transposed",
     "as_condition",
+    "is_conditional",
     "outsized",
     "reread",
     "to_sympy",
@@ -1060,15 +1061,22 @@ def _arctrig(func: Callable[..., sp.Basic]) -> Handler:
 
 
 def _fold(func: Callable[[sp.Basic, sp.Basic], sp.Basic]) -> Handler:
-    def handler(conv: _Converter, args: list) -> sp.Basic:
-        if not args:
-            raise ValueError("no arguments")
-        result = args[0]
-        for argument in args[1:]:
-            result = func(result, argument)
+    """`GCD` and `LCM`: the function folded over the numbers it is given.
+
+    Section 6.13 says those two take any number of arguments, a vector, or a
+    matrix - a vector meaning its elements and a matrix meaning each of its
+    rows, the answers making a vector. That is the same reading a statistic
+    gives its sample, so the sample is read the same way and only the fold over
+    it differs.
+    """
+
+    def over(values: list) -> sp.Basic:
+        result = values[0]
+        for value in values[1:]:
+            result = func(result, value)
         return result
 
-    return handler
+    return _statistic(over)
 
 
 _TRIGONOMETRIC = {
@@ -1349,9 +1357,33 @@ def _erf(conv: _Converter, args: list) -> sp.Basic:
     return sp.erf(_one(args))
 
 
+def _absolute(conv: _Converter, args: list) -> sp.Basic:
+    """`ABS(z)`, and `ABS(v)` for a vector: how far from the origin it is.
+
+    Section 8.2 defines the absolute value of a vector as the square root of the
+    sum of the squares of its elements, its magnitude. A matrix is a vector of
+    vectors, and the same definition read over one gives the square root of the
+    sum of the squares of its rows' magnitudes - every element squared once.
+    """
+    value = _one(args)
+    if _symbolic_matrix(value):
+        raise TypeError("not a scalar")
+    if not isinstance(value, sp.MatrixBase):
+        return sp.Abs(value)
+    squares = [_absolute(conv, [element]) ** 2 for element in _elements_of(value)]
+    return sp.sqrt(sp.Add(*squares))
+
+
 def _floor(conv: _Converter, args: list) -> sp.Basic:
-    """`FLOOR(m, n)` is the floor of `m/n`, and `n` defaults to 1."""
+    """`FLOOR(m, n)` is the floor of `m/n`, and `n` defaults to 1.
+
+    A vector is floored element by element, which is what NUMBER.MTH's
+    `CONTINUED_FRACTION(u, n) := FLOOR(ITERATES(1/MOD(x_), x_, u, n))` asks for:
+    the partial quotients are the integer parts of the whole iterate vector.
+    """
     numerator, denominator = _with_unit_default(args)
+    if isinstance(numerator, sp.MatrixBase):
+        return numerator.applyfunc(lambda element: sp.floor(element / denominator))
     return sp.floor(numerator / denominator)
 
 
@@ -1763,6 +1795,9 @@ def _summation(conv: _Converter, args: list) -> sp.Basic:
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Add(*_over_values(conv, args))
     expression, index, low, high = args
+    terms = _over_counted(conv, args)
+    if terms is not None:
+        return sp.Add(*terms)
     return sp.Sum(expression, (index, low, high))
 
 
@@ -1779,7 +1814,51 @@ def _product(conv: _Converter, args: list) -> sp.Basic:
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Mul(*_over_values(conv, args))
     expression, index, low, high = args
+    factors = _over_counted(conv, args)
+    if factors is not None:
+        return sp.Mul(*factors)
     return sp.Product(expression, (index, low, high))
+
+
+#: How many terms a counted sum is willing to write out one by one.
+_WRITTEN_OUT = 100
+
+
+def _over_counted(conv: _Converter, args: list) -> list[sp.Basic] | None:
+    """The body of a counted sum or product at each value of its index, or none.
+
+    None wherever sympy's own `Sum` will do, which is nearly everywhere: it has
+    closed forms this cannot reach, and a range of a thousand is no reason to
+    build a thousand terms.
+
+    What it will not do is offer a head again. `SOLVE.MTH` sums
+    `LIM(aux SUB k_, ...)/k_!*(x - x0)^k_` over `k_`, where the subscript is
+    inert while `k_` is an index; `Sum.doit` writes the index in and stops
+    there, leaving a row of `ELEMENT` calls over a vector that has been in hand
+    all along. So a short counted range whose body still holds such a head is
+    written out here, where each term can be read again.
+
+    A body holding a conditional is left alone whatever else stands in it. The
+    pipeline sets an undecidable one aside as a function of the index and puts
+    it back once the sum has written the index in, and deciding it here instead
+    would decide it while the index is still an index: that is what makes
+    `SUM(IF(PRIME(n)), n, 1, 100)` count the primes rather than find none.
+    """
+    expression, index, low, high = args
+    if type(index) is not sp.Symbol:
+        return None
+    if not (isinstance(low, sp.Integer) and isinstance(high, sp.Integer)):
+        return None
+    if not 0 <= int(high) - int(low) < _WRITTEN_OUT:
+        return None
+    if any(is_conditional(found) for found in sp.preorder_traversal(expression)):
+        return None
+    if not any(_is_rereadable(found) for found in sp.preorder_traversal(expression)):
+        return None
+    return [
+        _retried(conv, expression.subs(index, sp.Integer(value)))
+        for value in range(int(low), int(high) + 1)
+    ]
 
 
 def _over_values(conv: _Converter, args: list) -> list[sp.Basic]:
@@ -1838,6 +1917,22 @@ def _conditional(conv: _Converter, args: list) -> sp.Basic:
         return sp.Piecewise((then, as_condition(test)))
     test, then, otherwise = args
     return sp.Piecewise((then, as_condition(test)), (otherwise, sp.true))
+
+
+def is_conditional(expression: sp.Basic) -> bool:
+    """Whether this is a case split: a `Piecewise`, or the `IF` that has none.
+
+    Derive's fourth argument, the value to take where the test cannot be
+    decided, has no `Piecewise` to be and stays an inert head; the two are the
+    same thing to everything that resolves one.
+    """
+    if isinstance(expression, sp.Piecewise):
+        return True
+    return (
+        isinstance(expression, AppliedUndef)
+        and type(expression).__name__ == "IF"
+        and 1 <= len(expression.args) <= 4
+    )
 
 
 def as_condition(test: sp.Basic) -> sp.Basic:
@@ -1984,6 +2079,14 @@ def _iterated_limit(args: list) -> sp.Basic:
 
     The first variable is approached innermost, so that the outer limit is
     taken of what the inner one came to.
+
+    Each point is worked out before it is approached, because sympy refuses a
+    point that still holds a limit of its own. An iteration writes the previous
+    iterate in as the point - `ODE_APPR.MTH`'s `EULER` is
+    `ITERATES(v_ + h*[1, LIM(r, [x, y], v_)], v_, [x0, y0], n)` - and that
+    iterate is itself a limit of this kind until it is taken, so a chain left
+    whole would stop after its first link. The limits over the expression are
+    left for the pipeline's calculus pass, like every other one.
     """
     expression, variables, points = args
     names = _elements_of(variables)
@@ -1991,8 +2094,26 @@ def _iterated_limit(args: list) -> sp.Basic:
     if len(names) != len(values):
         raise ValueError("not a point for every variable")
     for name, value in zip(names, values, strict=True):
-        expression = sp.Limit(expression, name, value, dir="+-")
+        expression = sp.Limit(expression, name, _limits_taken(value), dir="+-")
     return expression
+
+
+def _limits_taken(value: sp.Basic) -> sp.Basic:
+    """`value` with every limit standing in it taken, innermost first.
+
+    Sympy's own `doit` works outside in for a two-sided limit, which asks gruntz
+    to find the rate of growth of an expression that is still a `Limit` and gets
+    nowhere. `replace` rebuilds from the leaves, so each limit is taken over
+    what the ones under it came to. One that will not be taken stays as it is.
+    """
+
+    def taken(found: sp.Basic) -> sp.Basic:
+        try:
+            return found.doit(deep=False)
+        except Exception:
+            return found
+
+    return value.replace(lambda found: isinstance(found, sp.Limit), taken)
 
 
 def _determinant(conv: _Converter, args: list) -> sp.Basic:
@@ -2684,10 +2805,16 @@ def _gradient(conv: _Converter, args: list) -> sp.Basic:
     other elements can be compared against.
 
     A vector has no gradient here: the manual's GRAD takes an expression, and
-    VECTOR.MTH builds the Jacobian of a vector out of one GRAD per element.
+    VECTOR.MTH builds the Jacobian of a vector out of one GRAD per element -
+    `VECTOR(GRAD(u SUB m_, alpha), m_, DIMENSION(u))`. The body of that is
+    converted while `m_` is still a variable, so the field GRAD is handed is the
+    inert `ELEMENT(u, m_)`, a head carrying the whole vector `u`. Differentiating
+    one of those is sympy's matrix chain rule and answers a matrix of nonsense,
+    so a field with a vector still standing in it is refused: the call stays as
+    written and is offered again once the index has a value.
     """
     expression, *rest = args
-    if isinstance(expression, sp.MatrixBase):
+    if _holds_vector(expression):
         raise TypeError("not an expression")
     variables, scales = _coordinates(conv, rest)
     return _vector_of(_gradient_of(expression, variables, scales))
@@ -2823,6 +2950,16 @@ def _vector_potential(conv: _Converter, args: list) -> sp.Basic:
     )
 
 
+def _holds_vector(value: sp.Basic) -> bool:
+    """Whether a vector stands anywhere in `value`, at the top or under a head."""
+    if isinstance(value, (sp.MatrixBase, InertVector)):
+        return True
+    return any(
+        isinstance(found, (sp.MatrixBase, InertVector))
+        for found in sp.preorder_traversal(value)
+    )
+
+
 def _gradient_of(expression: sp.Basic, variables: list, scales: list) -> list[sp.Basic]:
     return [sp.diff(expression, x) / h for x, h in zip(variables, scales)]
 
@@ -2947,6 +3084,7 @@ FUNCTIONS: dict[str, Handler] = {
     "ATAN": _atan,
     "ACOT": _acot,
     "ERF": _erf,
+    "ABS": _absolute,
     "SIGN": _sign,
     "STEP": _step,
     "LOG": _log,

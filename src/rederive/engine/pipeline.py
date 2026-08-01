@@ -84,6 +84,7 @@ from rederive.engine.to_sympy import (
     PlusMinus,
     Taylor,
     as_condition,
+    is_conditional,
     outsized,
     reread,
     to_sympy,
@@ -574,7 +575,7 @@ def _resolved(
         return freeze(head)
 
     try:
-        return expression.replace(_is_conditional, resolve, simultaneous=False)
+        return expression.replace(is_conditional, resolve, simultaneous=False)
     except Exception:
         return expression
 
@@ -645,16 +646,6 @@ def _written_in(recipe: sp.Lambda, arguments: tuple) -> sp.Basic:
     """
     written = dict(zip(recipe.variables, arguments, strict=True))
     return recipe.expr.subs(written, simultaneous=True)
-
-
-def _is_conditional(expression: sp.Basic) -> bool:
-    if isinstance(expression, sp.Piecewise):
-        return True
-    return (
-        isinstance(expression, AppliedUndef)
-        and type(expression).__name__ == "IF"
-        and 1 <= len(expression.args) <= 4
-    )
 
 
 def _cases(head: sp.Piecewise, context: Context) -> sp.Basic:

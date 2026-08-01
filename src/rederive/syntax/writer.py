@@ -47,8 +47,8 @@ from rederive.model.expr import Kind, Node
     NEG,
     PRODUCT,
     POW,
-    SUB,
     POSTFIX,
+    SUB,
     ATOM,
 ) = range(13)
 
@@ -134,8 +134,10 @@ def _spell(node: Node) -> str:
         case Kind.POSTOP:
             return _operand(node.children[0], POSTFIX) + str(node.value)
         case Kind.SUB:
-            left = _operand(node.children[0], SUB)
-            return f"{left} SUB {_operand(node.children[1], POSTFIX)}"
+            left = _operand(node.children[0], POSTFIX)
+            # An index reaches one application, so anything written over one -
+            # a postfix operator above all - has to be fenced to stay inside it.
+            return f"{left} SUB {_operand(node.children[1], ATOM)}"
         case Kind.ABS:
             # `|u|` writes as the call it means, as the original writes it.
             return f"ABS({write_expression(node.children[0])})"
@@ -143,7 +145,10 @@ def _spell(node: Node) -> str:
             return f"{node.children[0].value}({_arguments(node.children[1:])})"
         case Kind.FUNCPOW:
             name, exponent, operand = node.children
-            return f"{name.value}^{_operand(exponent, SUB)}({write_expression(operand)})"
+            return (
+                f"{name.value}^{_operand(exponent, POSTFIX)}"
+                f"({write_expression(operand)})"
+            )
         case Kind.VECTOR:
             return f"[{_arguments(node.children)}]"
         case Kind.REL:
@@ -212,8 +217,8 @@ def _binop(node: Node) -> str:
     """
     operator = str(node.value)
     if operator == "^":
-        left = _operand(node.children[0], SUB)
-        return f"{left}^{_operand(node.children[1], SUB)}"
+        left = _operand(node.children[0], POSTFIX)
+        return f"{left}^{_operand(node.children[1], POSTFIX)}"
     # The dot product is spaced, being the one operator whose tight form would
     # fuse with its operands: `2 . 3` written `2.3` is the numeral two-point-
     # three, and the dot would be gone.

@@ -298,15 +298,28 @@ class Parser:
         return base
 
     def subscripted(self) -> _Parsed:
+        """`u SUB i`, whose index reaches no further than one application.
+
+        A postfix operator written after a subscript applies to the element and
+        not to the index: `ODE_APPR.MTH` writes a Taylor coefficient's
+        denominator `v_ SUB 1!`, meaning the factorial of the first element, and
+        the answer the manual prints for that file is the answer that reading
+        gives. So the index is one application and the postfix run belongs to
+        the whole subscript.
+        """
         left = self.postfix()
         while _is_op(self.peek(), "SUB"):
             token = self.advance()
-            right = self.postfix()
+            right = self.application()
             left = _combine(Kind.SUB, left, right, None, token.surface)
+            left = self.postfixed(left)
         return left
 
     def postfix(self) -> _Parsed:
-        left = self.application()
+        return self.postfixed(self.application())
+
+    def postfixed(self, left: _Parsed) -> _Parsed:
+        """`left` under the run of postfix operators written after it."""
         while _is_op(self.peek(), *_POSTFIX):
             token = self.advance()
             left = _Parsed(
