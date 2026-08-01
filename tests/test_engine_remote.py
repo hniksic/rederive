@@ -90,7 +90,7 @@ def test_approx_comes_back_from_the_child(remote):
 
 
 def test_factor_comes_back_from_the_child(remote):
-    assert remote.factor(tree("x^2 - 1"), Context()).text == "(x - 1)*(x + 1)"
+    assert remote.factor(tree("x^2 - 1"), Context()).text == "(x + 1)*(x - 1)"
 
 
 def test_expand_comes_back_from_the_child(remote):

@@ -191,14 +191,18 @@ NORMAL_FORM = [
     ("1/((x + 1)^2 + y)", "1/(x^2 + 2*x + y + 1)"),
     ("1/((y + 1)^2 + x)", "1/(x + (y + 1)^2)"),
     ("[(x + 1)^2 + y, (y + 1)^2 + x]", "[x^2 + 2*x + y + 1, x + (y + 1)^2]"),
-    # An exponent that is not a whole number is no polynomial degree.
-    ("(x + 1)^n + y", "y + (x + 1)^n"),
+    # An exponent that is not a whole number is no polynomial degree. The
+    # power is still a kernel of `x`, so it leads the `y` beside it.
+    ("(x + 1)^n + y", "(x + 1)^n + y"),
     # The coefficients are opaque: what is free of the primary variable is one
     # quantity, so the answer is in powers of `2*y + 1` and not of `y`. The
     # part that is free of `x` is then written about `y`, its own primary.
     ("(x + 2*y + 1)^3 + z", "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 "
                             "+ 8*y^3 + 12*y^2 + 6*y + z + 1"),
-    ("((x + 1)^2 + y)^2 + z", "x^4 + 4*x^3 + 2*x^2*(y + 3) + 4*x*(y + 1) "
+    # The `x^2` coefficient keeps its numeric content, where the original
+    # writes `2*x^2*(y + 3)`; the original writes it the other way round too,
+    # and the manual's LAPLACIAN is the case this follows.
+    ("((x + 1)^2 + y)^2 + z", "x^4 + 4*x^3 + x^2*(2*y + 6) + 4*x*(y + 1) "
                               "+ y^2 + 2*y + z + 1"),
     ("x*((y + 1)^2 + z) + w", "x*(y^2 + 2*y + z + 1) + w"),
     # Off the order list, variables order among themselves alphabetically.
@@ -231,7 +235,7 @@ RATIONAL_FORM = [
     # writes the numerator `2*(x^2 + y^2 + 18)`, which is the same number of
     # terms with the 2 taken outside.
     ("1/(9 + x^2 + (y - 3)^2) + 1/(9 + x^2 + (y + 3)^2)",
-     "(2*x^2 + 2*y^2 + 36)/((x^2 + y^2 - 6*y + 18)*(x^2 + y^2 + 6*y + 18))"),
+     "(2*x^2 + 2*y^2 + 36)/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y + 18))"),
     # A denominator free of the primary variable belongs to a coefficient, so
     # it is combined only where more than one term carries it.
     ("x/y + z", "x/y + z"),
@@ -341,7 +345,7 @@ INTERVALS = [
     # 6.7, so a bound that decides which argument is the greater answers with
     # that argument; one that does not leaves the formula, whose bars are
     # undecidable over the same interval for the same reason.
-    ("MAX(x, 1)", "x/2 + ABS(x - 1)/2 + 1/2", "x :epsilon Real (0, 2)"),
+    ("MAX(x, 1)", "ABS(x - 1)/2 + x/2 + 1/2", "x :epsilon Real (0, 2)"),
     # An integer variable is asked about through a real stand-in, sympy having
     # no answer at all about one bounded by a relation.
     ("ABS(n - 7)", "7 - n", "n :epsilon Integer [2, 5]"),
@@ -380,7 +384,7 @@ def test_an_interval_costs_nothing_where_nothing_is_declared():
     # The box is built only where a bound says something the symbol could not,
     # so an undeclared variable reaches none of this.
     assert simp("ABS(x - 1)") == "ABS(x - 1)"
-    assert simp("MAX(x, 1)") == "x/2 + ABS(x - 1)/2 + 1/2"
+    assert simp("MAX(x, 1)") == "ABS(x - 1)/2 + x/2 + 1/2"
     assert simp("IF(x < 1, a, b)") == "IF(x < 1, a, b)"
 
 
@@ -413,7 +417,7 @@ TRIGONOMETRY = [
     ("ASIN(x) + ACOS(x) + y", "y + pi/2", None),
     ("ASIN(x) + ACOS(x)", "90", Context(angle=Angle.DEGREE)),
     ("ACOT(t) + ATAN(t)", "pi*SIGN(t)/2", None),
-    ("ATAN(t) + ACOT(t) + y", "y + pi*SIGN(t)/2", None),
+    ("ATAN(t) + ACOT(t) + y", "pi*SIGN(t)/2 + y", None),
     ("2*ACOT(t) + 2*ATAN(t)", "pi*SIGN(t)", None),
     ("ACOT(t) + ATAN(t)", "90*SIGN(t)", Context(angle=Angle.DEGREE)),
     ("ACOT(t) + ATAN(t)", "pi/2", declared("t :epsilon Real (0, inf)")),
@@ -551,10 +555,10 @@ BY_DEFINITION = [
     ("CSCH(z)", "2*#e^z/(#e^(2*z) - 1)"),
     # 6.6: every inverse hyperbolic is the logarithm that inverts it.
     ("ATANH(z)", "LN(z + 1)/2 - LN(1 - z)/2"),
-    ("ASINH(z)", "LN(z + SQRT(z^2 + 1))"),
+    ("ASINH(z)", "LN(SQRT(z^2 + 1) + z)"),
     # A circular function beside a hyperbolic one keeps the form it was written
     # in: only the head that has a definition is written out by it.
-    ("SIN(z) + SINH(z)", "SIN(z) + #e^z/2 - #e^(-z)/2"),
+    ("SIN(z) + SINH(z)", "#e^z/2 - #e^(-z)/2 + SIN(z)"),
     ("SIN(z)", "SIN(z)"),
 ]
 
@@ -622,7 +626,7 @@ def test_an_integral_a_rewrite_leaves_behind_is_evaluated_too():
     # Cancelling this integrand splits it in two, and the part that is an
     # integral of `x` is evaluated as well: an answer still holding
     # `INT(x, x)` would not be a simplified one.
-    assert simp("INT((x*G(x) + F(x))/G(x), x)") == "x^2/2 + INT(F(x)/G(x), x)"
+    assert simp("INT((x*G(x) + F(x))/G(x), x)") == "INT(F(x)/G(x), x) + x^2/2"
 
 
 def test_an_integral_that_will_not_evaluate_survives_as_itself():
@@ -678,7 +682,7 @@ def test_a_parametrised_integral_of_an_affordable_shape_is_answered():
     start = time.monotonic()
     answer = simp("INT(x^(a-1)*(1-x)^(b-1), x)")
     assert time.monotonic() - start < 5
-    assert answer == "x^a*HYPER([a, 1 - b], [a + 1], x*EXP_POLAR(2*#i*pi))/a"
+    assert answer == "x^a*HYPER([a, 1 - b], [a + 1], EXP_POLAR(2*#i*pi)*x)/a"
 
 
 def test_a_parametrised_integral_is_answered_or_left_alone_promptly():
@@ -711,11 +715,13 @@ def test_an_antiderivative_is_written_with_no_constant_added():
     where sympy's antiderivative is over `LN(2*b + 2*SQRT(b^2 - 4*a*c))`. The
     two differ by `c*LN(2)`, which is a constant of integration and no part of
     the answer. The terms below are the original's; only the order and the `b`
-    left inside the numerator are the engine's.
+    left inside the numerator are the engine's - the original's two terms are
+    three here, and a sum of three keeps the leading minus the original's pair
+    turns round.
     """
     answer = simp("INT((SQRT(b^2 - 4*a*c) - b)/(2*a), b)")
     assert answer == (
-        "b*SQRT(b^2 - 4*a*c)/(4*a) - c*LN(b + SQRT(b^2 - 4*a*c)) - b^2/(4*a)"
+        "-c*LN(SQRT(b^2 - 4*a*c) + b) + b*SQRT(b^2 - 4*a*c)/(4*a) - b^2/(4*a)"
     )
 
 
@@ -742,7 +748,7 @@ def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
     does this.
     """
     assert simp("INT(SQRT(x^2 + a^2), x)") == (
-        "x*SQRT(x^2 + a^2)/2 + a^2*LN(x + SQRT(x^2 + a^2))/2"
+        "a^2*LN(SQRT(x^2 + a^2) + x)/2 + x*SQRT(x^2 + a^2)/2"
     )
 
 
@@ -1099,9 +1105,8 @@ LINEAR_ALGEBRA = [
         "ROW_REDUCE([[a,b],[c,d]],[e,f])",
         "[[1, 0, (d*e - b*f)/(a*d - b*c)], [0, 1, (a*f - c*e)/(a*d - b*c)]]",
     ),
-    # The manual's characteristic polynomial. Its middle term is the manual's
-    # `-z*(b + 2)` with the sign moved inside the factor.
-    ("CHARPOLY([[2,3],[a,b]],z)", "z^2 + z*(-b - 2) - 3*a + 2*b"),
+    # The manual's characteristic polynomial, term for term.
+    ("CHARPOLY([[2,3],[a,b]],z)", "z^2 - z*(b + 2) - 3*a + 2*b"),
     # The variable defaults to `w` when none is written, and `w` is not on the
     # order list, so the most main variable of the answer is `a` and the normal
     # form takes `-3*a` off and writes what is left about `b`. Derive answers
@@ -1110,10 +1115,10 @@ LINEAR_ALGEBRA = [
     # Sympy computes the characteristic polynomial by recurrence and hands back
     # a multiplied-out one, which no longer folds. Given that multiplied-out sum
     # Derive answers exactly as this does.
-    ("CHARPOLY([[2,3],[a,b]])", "b*(2 - w) - 3*a + w^2 - 2*w"),
+    ("CHARPOLY([[2,3],[a,b]])", "-3*a + b*(2 - w) + w^2 - 2*w"),
     # `DET(A - z*IDENTITY_MATRIX(3))` is the definition, so the cube is negated
-    # in an odd dimension; the printer leads with the positive term.
-    ("CHARPOLY([[1,2,3],[4,5,6],[7,8,10]],z)", "16*z^2 - z^3 + 12*z - 3"),
+    # in an odd dimension; a sum of more than two terms keeps the leading minus.
+    ("CHARPOLY([[1,2,3],[4,5,6],[7,8,10]],z)", "-z^3 + 16*z^2 + 12*z - 3"),
     # Eigenvalues are answered as solved equations. The manual's example, and a
     # 2 x 2 whose eigenvalues the quadratic formula has to be used on. Where a
     # pair differs only in the sign of a radical Derive lists the sum first;
@@ -1182,18 +1187,15 @@ VECTOR_CALCULUS = [
     # choosing, and there may be any number of them.
     ("GRAD(c*w + x^2 + y^3 + z^4, [w, x, y, z])", "[c, 2*x, 3*y^2, 4*z^3]"),
     ("GRAD(x*y, [x, y])", "[y, x]"),
-    ("DIV([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "2*x*(3*y^2*z + z^3)"),
+    ("DIV([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "x*(6*y^2*z + 2*z^3)"),
     # Degree one in the primary variable, so the normal form writes it as `x`
-    # times its coefficient. The manual, and Derive, answer
-    # `x*(6*y^2*z + 2*z^3)`, leaving the coefficient's numeric content where it
-    # stands; the collecting here takes the `2` outside. Which of the two Derive
-    # writes depends on how the sum was built rather than on what it is - the
-    # same coefficient `2*y + 6` comes back `x*(2*y + 6)` authored as
+    # times its coefficient, and the coefficient keeps its numeric content -
+    # which is the manual's own answer. Derive is not consistent about that:
+    # the same coefficient `2*y + 6` comes back `x*(2*y + 6)` authored as
     # `2*x*y + 6*x` and `2*x^2*(y + 3)` when it falls out of expanding
-    # `((x + 1)^2 + y)^2`, both taken from the original - so there is no one
-    # form to match. The same quantity either way. LAPLACIAN is DIV of GRAD, so
-    # the two examples agree.
-    ("LAPLACIAN(x*y^2*z^3)", "2*x*(3*y^2*z + z^3)"),
+    # `((x + 1)^2 + y)^2`, both taken from the original, so there is no one form
+    # that matches everything. LAPLACIAN is DIV of GRAD, so the two agree.
+    ("LAPLACIAN(x*y^2*z^3)", "x*(6*y^2*z + 2*z^3)"),
     ("CURL([y^2, 2*x*z, 0])", "[-2*x, 0, 2*z - 2*y]"),
     # The curl of a plane field is one number, not the space vector `[0, 0, w]`
     # that number is the last element of.
@@ -2030,7 +2032,7 @@ DEMO_ALGEBRA = [
     # cofactor - not the factors' order, which is sympy's - is the answer.
     (
         "2 (x^2 - y^2)^6 - (x^2 - y^2)^5(2 x^2 - 3)",
-        "(3 - 2*y^2)*(x^2 - y^2)^5",
+        "(x^2 - y^2)^5*(3 - 2*y^2)",
     ),
 ]
 

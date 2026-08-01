@@ -179,12 +179,12 @@ def test_the_precision_setting_reaches_the_command(session):
 def test_a_factored_answer_is_appended_and_annotated(session):
     session.author("x^2 - 4")
     answer = session.factor("#1")
-    assert texts(session) == ["x^2-4", "(x - 2)*(x + 2)"]
+    assert texts(session) == ["x^2-4", "(x + 2)*(x - 2)"]
     assert answer.annotation == "Fctr(#1)"
 
 
 def test_a_typed_expression_is_factored_as_the_users_own(session):
-    assert session.factor("x^2 - 9").text == "(x - 3)*(x + 3)"
+    assert session.factor("x^2 - 9").text == "(x + 3)*(x - 3)"
     assert session.entries[0].annotation == "Fctr(User)"
 
 
@@ -195,8 +195,8 @@ def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
     # The splice is fenced and the line's own fences stay, so the text carries
     # a pair more than it needs. What is drawn comes from the tree, where a
     # fence is a matter of precedence, so the extra pair shows up nowhere.
-    assert answer.text == "(((x - 1)*(x + 1)))+SIN(z)"
-    assert answer.layout.lines == ("(x - 1)·(x + 1) + SIN(z)",)
+    assert answer.text == "(((x + 1)*(x - 1)))+SIN(z)"
+    assert answer.layout.lines == ("(x + 1)·(x - 1) + SIN(z)",)
     assert answer.annotation == "Fctr(#1')"
 
 
@@ -209,9 +209,9 @@ def test_the_amount_reaches_the_command(session):
 def test_the_factorization_variables_reach_the_command(session):
     session.author("x^2 y^2 - x^2 - y^4 + y^2")
     whole = session.factor("#1", Amount.RATIONAL, ("x", "y"))
-    assert whole.text == "(x - y)*(x + y)*(y - 1)*(y + 1)"
+    assert whole.text == "(x + y)*(x - y)*(y + 1)*(y - 1)"
     about_x = session.factor("#1", Amount.RATIONAL, ("x",))
-    assert about_x.text == "(x - y)*(x + y)*(y^2 - 1)"
+    assert about_x.text == "(x + y)*(x - y)*(y^2 - 1)"
 
 
 def test_a_line_that_does_not_parse_factors_nothing(session):
@@ -224,7 +224,7 @@ def test_a_line_that_does_not_parse_factors_nothing(session):
 def test_an_assignment_reaches_the_factoring(session):
     session.author("k := 4")
     session.author("x^2 - k")
-    assert session.factor("#2").text == "(x - 2)*(x + 2)"
+    assert session.factor("#2").text == "(x + 2)*(x - 2)"
 
 
 # -- what Factor asks before it factors ---------------------------------------

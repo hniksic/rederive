@@ -102,8 +102,11 @@ def test_terms_of_equal_degree_are_collected():
 
 
 def test_a_collected_coefficient_keeps_its_common_factor_outside():
+    # The `2` of the middle coefficient is inside the bracket rather than in
+    # front of it: the normal form has already written that coefficient, and
+    # it leaves a coefficient's numeric content where it stands.
     text = "a*(x + 1)^2 + b*(x + 1)^2"
-    assert exp(text, variables=["x"]) == "x^2*(a + b) + 2*x*(a + b) + a + b"
+    assert exp(text, variables=["x"]) == "x^2*(a + b) + x*(2*a + 2*b) + a + b"
 
 
 def test_a_factor_free_of_the_variables_is_not_reached_into():
@@ -145,7 +148,7 @@ def test_an_integrand_stays_inside_its_integral():
     writing this - it is a different expression."""
     text = "INT(t^(a-1)*((1-t)^(b-a-1)*#e^(t*z) - 1), t, 0, 1/2)"
     assert exp(text, variables=["z"]) == (
-        "INT(t^(a - 1)*((1 - t)^(b - a - 1)*#e^(t*z) - 1), t, 0, 1/2)"
+        "INT(t^(a - 1)*((1 - t)^(-a + b - 1)*#e^(t*z) - 1), t, 0, 1/2)"
     )
 
 

@@ -159,9 +159,7 @@ NOT_YET_HELD = {
     "w)-COS(z)*COS(w) - SIN(z)*SIN(w)]",
     "test_an_angle_sum_expands_into_the_manuals_identity[SIN(z + "
     "w)-SIN(z)*COS(w) + COS(z)*SIN(w)]",
-    "test_an_approximate_radical_factoring_is_written_in_digits",
     "test_an_empty_definition_makes_a_name_a_function_and_not_a_variable",
-    "test_an_equation_factors_as_a_whole",
     "test_an_expanded_exponential_of_a_sum_is_a_product",
     "test_an_expression_typed_with_a_trailing_equals_shows_both_sides",
     "test_an_iteration_count_bounds_the_iterates",
@@ -175,13 +173,6 @@ NOT_YET_HELD = {
     "294*SQRT(3))^(1/3)-3*SQRT(5) - 2*SQRT(3)]",
     "test_exact_mode_denests_the_manuals_radicals[SQRT(5 + "
     "2*SQRT(6))-SQRT(3) + SQRT(2)]",
-    "test_expanding_about_the_variables_the_manual_chooses[('(x + 2*y "
-    "+ 1)^3', ('y', 'x'))-8*y^3 + 12*y^2*x + 12*y^2 + 6*y*x^2 + 12*y*x + 6*y + x^3 + "
-    "3*x^2 + 3*x + 1]",
-    "test_factoring_about_the_variables_the_manual_chooses[('x^2*y^2 - "
-    "x^2 - y^4 + y^2', ('x', 'y'))-(x + y)*(x - y)*(y + 1)*(y - 1)]",
-    "test_factoring_about_the_variables_the_manual_chooses[('x^2*y^2 - "
-    "x^2 - y^4 + y^2', ('x',))-(x + y)*(x - y)*(y^2 - 1)]",
     "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
     "test_newtons_finds_the_manuals_nonlinear_solution",
     "test_reapproximating_an_approximation_keeps_its_error",
@@ -198,14 +189,6 @@ NOT_YET_HELD = {
     "test_the_error_and_zeta_functions[NORMAL(z, m, "
     "s)-(ERF(SQRT(2)*z/(2*s) - SQRT(2)*m/(2*s)) + 1)/2]",
     "test_the_euler_steps_the_manual_takes",
-    "test_the_factorings_of_the_manual[('4*x^2 - 9', <Amount.RATIONAL: "
-    "'Rational'>)-(2*x + 3)*(2*x - 3)]",
-    "test_the_factorings_of_the_manual[('x^2 + 2', <Amount.COMPLEX: "
-    "'Complex'>)-(x + SQRT(2)*#i)*(x - SQRT(2)*#i)]",
-    "test_the_factorings_of_the_manual[('x^2 - 2', <Amount.RADICAL: "
-    "'raDical'>)-(x + SQRT(2))*(x - SQRT(2))]",
-    "test_the_factorings_of_the_manual[('x^4 + 2*x^3 - 3*x^2 - 8*x - "
-    "4', <Amount.RATIONAL: 'Rational'>)-(x + 2)*(x - 2)*(x + 1)^2]",
     "test_the_first_order_equation_the_manual_solves",
     "test_the_generated_vectors_of_the_manual[ABS([a, b, c])-SQRT(a^2 + b^2 + c^2)]",
     "test_the_integral_the_manual_does_by_substitution",
@@ -213,14 +196,10 @@ NOT_YET_HELD = {
     "test_the_integrals_of_the_manual[INT(1/x^3, x, -1, 2)-3/8]",
     "test_the_inverse_hyperbolic_functions_become_logarithms[ACOSH(z)-2"
     "*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)]",
-    "test_the_inverse_hyperbolic_functions_become_logarithms[ASINH(z)-L"
-    "N(SQRT(z^2 + 1) + z)]",
     "test_the_inverse_of_the_manuals_function",
     "test_the_iterates_of_the_manuals_fixed_point",
     "test_the_manuals_mutual_recursion_written_with_accumulators",
     "test_the_manuals_three_by_three_system_solved_by_inversion",
-    "test_the_matrix_operations_of_the_manual[CHARPOLY([[2, 3], [a, "
-    "b]], z)-z^2 - z*(b + 2) - 3*a + 2*b]",
     "test_the_number_theory_functions[LCM([6, 15, 14])-210]",
     "test_the_number_theory_functions[LCM(m, n)-|m*n|/GCD(n, m)]",
     "test_the_pair_of_the_manuals_nonlinear_system_that_solve_can_take",
@@ -236,9 +215,6 @@ NOT_YET_HELD = {
     "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 0)-0]",
     "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 2)-?]",
     "test_the_three_modes_on_an_expression_worth_one_half",
-    "test_the_vector_calculus_of_the_manual[DIV([y^2*z^3, 2*x*y*z^3, "
-    "3*x*y^2*z^2])-x*(6*y^2*z + 2*z^3)]",
-    "test_the_vector_calculus_of_the_manual[LAPLACIAN(x*y^2*z^3)-x*(6*y^2*z + 2*z^3)]",
     "test_the_worked_examples_of_the_number_theory_file[BERNOULLI_POLY("
     "10, x)-(66*x^10 - 330*x^9 + 495*x^8 - 462*x^6 + 330*x^4 - 99*x^2 + 5)/66]",
     "test_the_worked_examples_of_the_number_theory_file[DISTINCT_PARTS(4)-2]",
@@ -246,8 +222,6 @@ NOT_YET_HELD = {
     "x)-x*(x^9 - 5*x^8 + 30*x^6 - 126*x^4 + 255*x^2 - 155)]",
     "test_the_worked_examples_of_the_number_theory_file[FIBONACCI(10)-55]",
     "test_the_worked_examples_of_the_number_theory_file[PARTS(4)-5]",
-    "test_the_worked_examples_of_the_vector_utility_file[COVARIANT_METR"
-    "IC_TENSOR([[w, -v], [v, w]])-[[w^2 + v^2, 0], [0, w^2 + v^2]]]",
     "test_the_worked_examples_of_the_vector_utility_file[JACOBIAN([(w^2"
     " - v^2)/2, w*v], [w, v])-[[w, -v], [v, w]]]",
     "test_the_worked_examples_of_the_vector_utility_file[RANK([[2, 3, "
@@ -1905,8 +1879,10 @@ VECTOR_MTH = [
     ("RANK([[2, 3, 5], [4, 6, 10], [1, 2, 3]])", "2"),
     ("JACOBIAN([(w^2 - v^2)/2, w*v], [w, v])", "[[w, -v], [v, w]]"),
     (
+        # Manual p.238 misprints this as `w^2 + v^2`; the DOS releases both
+        # answer `v^2 + w^2`.
         "COVARIANT_METRIC_TENSOR([[w, -v], [v, w]])",
-        "[[w^2 + v^2, 0], [0, w^2 + v^2]]",
+        "[[v^2 + w^2, 0], [0, v^2 + w^2]]",
     ),
     (
         "GEOMETRY_MATRIX([u, v], [[u^2 + v^2, 0], [0, u^2 + v^2]])",

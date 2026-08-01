@@ -173,8 +173,14 @@ def held_about(
 
 
 def collected_by(expression: sp.Expr, variable: sp.Symbol) -> sp.Expr:
-    """A multiplied-out sum gathered back up by the powers of `variable`."""
-    return _collected(expression, (variable,))
+    """A multiplied-out sum gathered back up by the powers of `variable`.
+
+    The normal form's collecting rather than Expand's, and the two differ over
+    a coefficient's numeric content: this one leaves it where it stands, so
+    that `6*x*y^2*z + 2*x*z^3` is `x*(6*y^2*z + 2*z^3)` - which is what the
+    manual's own LAPLACIAN answers.
+    """
+    return _collected(expression, (variable,), content_outside=False)
 
 
 def _polynomial(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr:
@@ -266,7 +272,11 @@ def _held(expression: sp.Expr, held: dict[sp.Dummy, sp.Expr]) -> sp.Expr:
     return placeholder
 
 
-def _collected(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr:
+def _collected(
+    expression: sp.Expr,
+    variables: tuple[sp.Symbol, ...],
+    content_outside: bool = True,
+) -> sp.Expr:
     """Terms carrying the same powers of every expansion variable, put together.
 
     Which is the manual's rule that terms of equal degree in the expansion
@@ -275,7 +285,9 @@ def _collected(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr
 
     A coefficient that several terms went into keeps whatever it has in
     common outside: `2*x*(a + b)` rather than `x*(2*a + 2*b)`, which is the
-    same rule that leaves a non-expansion variable unexpanded.
+    same rule that leaves a non-expansion variable unexpanded, and which the
+    manual's own expansion about `y` alone shows in `12*y^2*(x + 1)`. The
+    normal form collects the other way round - see `collected_by`.
     """
     if not isinstance(expression, sp.Add):
         return expression
@@ -286,13 +298,15 @@ def _collected(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr
     return sp.Add(
         *(
             sp.Mul(*(base**power for base, power in zip(variables, degrees)))
-            * _coefficient(rest, degrees)
+            * _coefficient(rest, degrees, content_outside)
             for degrees, rest in groups.items()
         )
     )
 
 
-def _coefficient(terms: list[sp.Expr], degrees: tuple[sp.Expr, ...]) -> sp.Expr:
+def _coefficient(
+    terms: list[sp.Expr], degrees: tuple[sp.Expr, ...], content_outside: bool = True
+) -> sp.Expr:
     """What the terms of one degree carry, with any common factor outside.
 
     Only where there is a degree for them to be the coefficient of. The group
@@ -303,10 +317,22 @@ def _coefficient(terms: list[sp.Expr], degrees: tuple[sp.Expr, ...]) -> sp.Expr:
     stands rather than collected, and `LN(x^2 - x) - LN(x)` is left alone
     rather than written `LN(x*(x - 1)) - LN(x)`, which is `factor_terms`
     reaching inside a logarithm to factor its argument.
+
+    Without `content_outside` what the terms have in common numerically stays
+    inside, which is the normal form's rule rather than Expand's.
     """
     if len(terms) == 1 or not any(degrees):
         return sp.Add(*terms)
-    return sp.factor_terms(sp.Add(*terms))
+    gathered = sp.factor_terms(sp.Add(*terms))
+    return gathered if content_outside else _with_the_number_back(gathered)
+
+
+def _with_the_number_back(coefficient: sp.Expr) -> sp.Expr:
+    """`coefficient` with any numeric factor multiplied back into its sum."""
+    number, rest = coefficient.as_coeff_Mul()
+    if number is sp.S.One or not isinstance(rest, sp.Add):
+        return coefficient
+    return sp.Add(*(number * term for term in rest.args))
 
 
 def _degrees(

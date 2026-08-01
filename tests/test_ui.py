@@ -471,7 +471,7 @@ async def test_one_variable_is_no_choice_so_none_is_asked_for(app):
         await pilot.press("f", "enter")
         assert highlighted_menu_option(app) == "Rational"
         await pilot.press("r")
-        assert entries(app)[-1] == "(x - 2)*(x + 2)"
+        assert entries(app)[-1] == "(x + 2)*(x - 2)"
 
 
 async def test_a_number_is_decomposed_without_being_asked_about(app):
@@ -504,7 +504,7 @@ async def test_the_variables_are_collected_one_at_a_time(app):
         assert message(app) == "Return for no more or select next: y"
         # Ending the list leaves y out, which is what keeps y^2 - 1 whole.
         await pilot.press("enter", "r")
-        assert entries(app)[-1] == "(x - y)*(x + y)*(y^2 - 1)"
+        assert entries(app)[-1] == "(x + y)*(x - y)*(y^2 - 1)"
 
 
 async def test_choosing_the_last_variable_ends_the_list(app):
@@ -515,7 +515,7 @@ async def test_choosing_the_last_variable_ends_the_list(app):
         await pilot.press("y", "enter")
         assert message(app) == "Select amount of factoring"
         await pilot.press("r")
-        assert entries(app)[-1] == "(x - y)*(x + y)*(y - 1)*(y + 1)"
+        assert entries(app)[-1] == "(x + y)*(x - y)*(y + 1)*(y - 1)"
 
 
 async def test_a_name_that_is_no_variable_is_refused(app):
@@ -535,7 +535,7 @@ async def test_factor_of_a_part_copies_the_rest_of_the_expression(app):
         assert highlighted_expression(app) == " 2\nx  - 1"
         # Only x is in the highlighted part, so no variable is asked for.
         await pilot.press("f", "enter", "r")
-        assert work_area(app)[-1] == "#2:  (x - 1)·(x + 1) + SIN(z)"
+        assert work_area(app)[-1] == "#2:  (x + 1)·(x - 1) + SIN(z)"
         assert annotation(app) == "Fctr(#1')"
 
 
@@ -546,7 +546,7 @@ async def test_a_typed_expression_is_factored_as_the_users_own(app):
         await pilot.press(*"x^2-9")
         await pilot.press("enter", "r")
         # The line that was typed is not an entry; only the answer is.
-        assert entries(app) == ["(x - 3)*(x + 3)"]
+        assert entries(app) == ["(x + 3)*(x - 3)"]
         assert annotation(app) == "Fctr(User)"
 
 

@@ -42,7 +42,9 @@ def fact(text, amount=RATIONAL, variables=(), context=None):
 
 # -- the five amounts ---------------------------------------------------------
 
-# Every expected value below is the original's own answer.
+# Every expected value below is the original's own answer, and the order the
+# factors come in is the original's too: of two that differ only in the sign of
+# a coefficient the positive one leads, `x^2 - 4` -> `(x + 2)*(x - 2)`.
 AMOUNTS = [
     # Trivial puts the expression over a common denominator and pulls out the
     # gcd of the coefficients and the least power of each variable.
@@ -53,15 +55,15 @@ AMOUNTS = [
     ("2*x^3 - 12*x^2 + 18*x", SQUAREFREE, "2*x*(x - 3)^2"),
     ("x^4 + 2*x^3 - 3*x^2 - 8*x - 4", SQUAREFREE, "(x + 1)^2*(x^2 - 4)"),
     # Rational also splits products of sums.
-    ("x^4 + 2*x^3 - 3*x^2 - 8*x - 4", RATIONAL, "(x - 2)*(x + 1)^2*(x + 2)"),
-    ("4*x^2 - 9", RATIONAL, "(2*x - 3)*(2*x + 3)"),
-    ("x^2 - 5*x + 6", RATIONAL, "(x - 3)*(x - 2)"),
-    ("x^2 - y^2", RATIONAL, "(x - y)*(x + y)"),
+    ("x^4 + 2*x^3 - 3*x^2 - 8*x - 4", RATIONAL, "(x + 2)*(x - 2)*(x + 1)^2"),
+    ("4*x^2 - 9", RATIONAL, "(2*x + 3)*(2*x - 3)"),
+    ("x^2 - 5*x + 6", RATIONAL, "(x - 2)*(x - 3)"),
+    ("x^2 - y^2", RATIONAL, "(x + y)*(x - y)"),
     # raDical also allows fractional powers of numbers.
-    ("x^2 - 2", RADICAL, "(x - SQRT(2))*(x + SQRT(2))"),
-    ("x^4 - 4", RADICAL, "(x - SQRT(2))*(x + SQRT(2))*(x^2 + 2)"),
+    ("x^2 - 2", RADICAL, "(x + SQRT(2))*(x - SQRT(2))"),
+    ("x^4 - 4", RADICAL, "(x + SQRT(2))*(x - SQRT(2))*(x^2 + 2)"),
     # Complex also allows complex numbers.
-    ("x^2 + 2", COMPLEX, "(x - SQRT(2)*#i)*(x + SQRT(2)*#i)"),
+    ("x^2 + 2", COMPLEX, "(x + SQRT(2)*#i)*(x - SQRT(2)*#i)"),
 ]
 
 
@@ -78,7 +80,7 @@ def test_squarefree_stops_at_equal_powers():
     """
     text = "x^4 + 2*x^3 - 3*x^2 - 8*x - 4"
     assert fact(text, SQUAREFREE) == "(x + 1)^2*(x^2 - 4)"
-    assert fact(text, RATIONAL) == "(x - 2)*(x + 1)^2*(x + 2)"
+    assert fact(text, RATIONAL) == "(x + 2)*(x - 2)*(x + 1)^2"
 
 
 def test_rational_is_the_default_amount():
@@ -108,14 +110,14 @@ def test_a_radical_factor_keeps_a_real_quadratic_whole():
 
 def test_a_complex_factor_splits_the_pair_a_radical_one_keeps():
     assert fact("x^2 + 2", RADICAL) == "x^2 + 2"
-    assert fact("x^2 + 2", COMPLEX) == "(x - SQRT(2)*#i)*(x + SQRT(2)*#i)"
+    assert fact("x^2 + 2", COMPLEX) == "(x + SQRT(2)*#i)*(x - SQRT(2)*#i)"
 
 
 def test_the_reals_reach_further_than_one_quadratic():
     # Derive prints the same two quadratics, its `x` coefficients written
     # `1/2 - SQRT(5)/2` where the engine writes the one fraction.
     assert fact("x^5 - 1", RADICAL) == (
-        "(x - 1)*(x^2 + x*(1 - SQRT(5))/2 + 1)*(x^2 + x*(SQRT(5) + 1)/2 + 1)"
+        "(x - 1)*(x^2 + (SQRT(5) + 1)*x/2 + 1)*(x^2 + (1 - SQRT(5))*x/2 + 1)"
     )
 
 
@@ -127,7 +129,7 @@ def test_a_root_nobody_can_place_is_treated_as_real():
     the second factor carried inside the numerator instead of before it.
     """
     assert fact("a*x^2 + b*x + c", RADICAL, ("x",)) == (
-        "a*(x + (b - SQRT(b^2 - 4*a*c))/(2*a))*(x + (b + SQRT(b^2 - 4*a*c))/(2*a))"
+        "a*(x + (SQRT(b^2 - 4*a*c) + b)/(2*a))*(x + (b - SQRT(b^2 - 4*a*c))/(2*a))"
     )
 
 
@@ -143,8 +145,8 @@ def test_naming_fewer_variables_leaves_the_rest_alone():
     """The manual's rule that a subexpression in no factorization variable is
     neither expanded nor factored."""
     text = "x^2*y^2 - x^2 - y^4 + y^2"
-    assert fact(text, RATIONAL, ("x", "y")) == "(x - y)*(x + y)*(y - 1)*(y + 1)"
-    assert fact(text, RATIONAL, ("x",)) == "(x - y)*(x + y)*(y^2 - 1)"
+    assert fact(text, RATIONAL, ("x", "y")) == "(x + y)*(x - y)*(y + 1)*(y - 1)"
+    assert fact(text, RATIONAL, ("x",)) == "(x + y)*(x - y)*(y^2 - 1)"
 
 
 def test_similar_powers_of_a_factoring_variable_are_collected():
@@ -227,28 +229,28 @@ def test_a_number_that_is_no_rational_has_no_decomposition():
 def test_a_polynomials_coefficients_are_not_decomposed():
     """The manual is explicit: factoring a polynomial leaves its numeric
     coefficients alone. The `12` stays a `12`."""
-    assert fact("12*x^2 - 12") == "12*(x - 1)*(x + 1)"
+    assert fact("12*x^2 - 12") == "12*(x + 1)*(x - 1)"
 
 
 # -- what an entry is built out of --------------------------------------------
 
 
 def test_a_relation_is_factored_side_by_side():
-    assert fact("x^2 - 5*x + 6 = 0") == "(x - 3)*(x - 2) = 0"
+    assert fact("x^2 - 5*x + 6 = 0") == "(x - 2)*(x - 3) = 0"
 
 
 def test_a_vector_is_factored_element_by_element():
-    assert fact("[x^2 - 1, 2*x + 2]") == "[(x - 1)*(x + 1), 2*(x + 1)]"
+    assert fact("[x^2 - 1, 2*x + 2]") == "[(x + 1)*(x - 1), 2*(x + 1)]"
 
 
 def test_a_matrix_is_factored_element_by_element():
     assert fact("[[x^2 - 1, 0], [0, x^2 - 4]]") == (
-        "[[(x - 1)*(x + 1), 0], [0, (x - 2)*(x + 2)]]"
+        "[[(x + 1)*(x - 1), 0], [0, (x + 2)*(x - 2)]]"
     )
 
 
 def test_an_assignment_keeps_its_shape():
-    assert fact("w := x^2 - 1") == "w := (x - 1)*(x + 1)"
+    assert fact("w := x^2 - 1") == "w := (x + 1)*(x - 1)"
 
 
 # -- precision ----------------------------------------------------------------
@@ -262,15 +264,15 @@ def test_rounding_happens_after_factoring_not_before():
     input.
     """
     assert fact("x^2 - 2", RADICAL, context=APPROXIMATE) == (
-        "(x - 1.41421)*(x + 1.41421)"
+        "(x + 1.41421)*(x - 1.41421)"
     )
     assert fact("x^2 + 2", COMPLEX, context=APPROXIMATE) == (
-        "(x - 1.41421*#i)*(x + 1.41421*#i)"
+        "(x + 1.41421*#i)*(x - 1.41421*#i)"
     )
 
 
 def test_an_exact_factorization_is_exact():
-    assert fact("x^2 - 2", RADICAL) == "(x - SQRT(2))*(x + SQRT(2))"
+    assert fact("x^2 - 2", RADICAL) == "(x + SQRT(2))*(x - SQRT(2))"
 
 
 @pytest.mark.parametrize("mode", list(Precision), ids=str)
@@ -290,7 +292,7 @@ def test_rounding_reaches_the_factors_beside_a_decomposition():
     """The precision mode applies scalar by scalar, so one entry can hold both
     an exact decomposition and a rounded factorization."""
     assert fact("[1234567890, x^2 - 2]", RADICAL, context=APPROXIMATE) == (
-        "[2*3^2*5*3607*3803, (x - 1.41421)*(x + 1.41421)]"
+        "[2*3^2*5*3607*3803, (x + 1.41421)*(x - 1.41421)]"
     )
 
 
@@ -338,14 +340,14 @@ def test_factoring_an_answer_again_changes_nothing(text, amount, expected):
 # original's own answer for that very line.
 HEADS = [
     ("FACTOR(4*x^3 - 8*x^2 - 11*x - 3, Rational, x)", "(x - 3)*(2*x + 1)^2"),
-    ("FACTOR(x^2 - 1)", "(x - 1)*(x + 1)"),
-    ("FACTOR(x^2 - 2, raDical)", "(x - SQRT(2))*(x + SQRT(2))"),
+    ("FACTOR(x^2 - 1)", "(x + 1)*(x - 1)"),
+    ("FACTOR(x^2 - 2, raDical)", "(x + SQRT(2))*(x - SQRT(2))"),
     ("FACTOR(10!)", "2^8*3^4*5^2*7"),
     ("FACTOR([x^2 - 1, 2*x + 2], Trivial)", "[x^2 - 1, 2*(x + 1)]"),
     ("FACTOR(2*x^3 - 12*x^2 + 18*x, Trivial)", "2*x*(x^2 - 6*x + 9)"),
     (
         "FACTOR(x^2*y^2 - x^2 - y^4 + y^2, Rational, x)",
-        "(x - y)*(x + y)*(y^2 - 1)",
+        "(x + y)*(x - y)*(y^2 - 1)",
     ),
 ]
 
@@ -364,7 +366,7 @@ def test_the_amount_argument_may_be_left_out():
 def test_a_factor_head_is_factored_where_it_stands():
     """It is an expression like any other, so it may be part of a larger one."""
     assert simplify(parse("2*FACTOR(x^2 - 1)"), Context()).text == (
-        "2*(x - 1)*(x + 1)"
+        "2*(x + 1)*(x - 1)"
     )
 
 
@@ -372,7 +374,7 @@ def test_nothing_later_undoes_a_factor_head():
     """Everything that reshapes a sum - the gated rewrites and the normal form
     alike - runs before this, so none of them is offered the chance to multiply
     it back out."""
-    assert simplify(parse("FACTOR(x^2 - 4)"), Context()).text == "(x - 2)*(x + 2)"
+    assert simplify(parse("FACTOR(x^2 - 4)"), Context()).text == "(x + 2)*(x - 2)"
 
 
 def test_a_word_that_names_no_amount_is_not_an_amount():
@@ -392,7 +394,7 @@ def test_a_subtree_is_factored_on_its_own():
     the user has highlighted."""
     node = parse("(x^2 - 1) + SIN(z)")
     part = node.children[0]
-    assert factor(part, Context(), RATIONAL).text == "(x - 1)*(x + 1)"
+    assert factor(part, Context(), RATIONAL).text == "(x + 1)*(x - 1)"
 
 
 # -- what the engine does not do yet ------------------------------------------

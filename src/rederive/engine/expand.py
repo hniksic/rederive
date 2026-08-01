@@ -25,6 +25,7 @@ whole and expanding only the `(x - 3)^2` inside it.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 
 import sympy as sp
 
@@ -52,9 +53,29 @@ def expand(
     empty meaning all of them. `state` is the symbol table the answer is
     reparsed with; a session working in a non-default input or case mode must
     pass its own.
+
+    The expansion variables temporarily override the order list, as the manual
+    says they do, and the answer is written in that order: expanding
+    `(x + 2*y + 1)^3` about `y` and then `x` gives a polynomial led by `8*y^3`
+    where the same expansion about `x` and then `y` is led by `x^3`.
     """
     context = context or Context()
-    return from_sympy(expanded(node, context, amount, variables), context, state)
+    answer = expanded(node, context, amount, variables)
+    return from_sympy(answer, _about(context, variables), state)
+
+
+def _about(context: Context, variables: Sequence[str]) -> Context:
+    """`context` with the chosen expansion variables at the head of its order
+    list, which is where an expansion puts them.
+
+    The rest of the list follows, so that a variable nobody chose keeps the
+    place the session gave it. Nothing is chosen where the expansion was about
+    all of them, and then the list is the session's own.
+    """
+    if not variables:
+        return context
+    rest = [name for name in context.order if name not in variables]
+    return replace(context, order=(*variables, *rest))
 
 
 def expanded(

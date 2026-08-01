@@ -17,11 +17,14 @@ variables in, which makes the first one chosen the primary variable; the
 generators an Expand about all of them expands about; and the order a `Declare
 Function` definition's variables become the function's parameters in.
 
-It reaches the order a sum is written in too. A term sorts by the variable it
-leads with, so `5*y^3 + 2*x^2 - 3*a*x` is written `2*x^2 - 3*a*x + 5*y^3`; that
-is `printer`'s work rather than this module's, and it is a spelling and not a
-normal form - which sum is written which way round says nothing about what the
-sum is. Terms the list says nothing about keep the order sympy had them in.
+It reaches the order a sum and a product are written in too. A term sorts by
+the variable it leads with, so `5*y^3 + 2*x^2 - 3*a*x` is written
+`2*x^2 - 3*a*x + 5*y^3`, and a factor by the variable of its base, so
+`z^3*b^2*a*2*x^5*c` is written `2*a*b^2*c*x^5*z^3` - a product being the one
+place a name the list does not know goes *ahead* of one it does. Both of those
+are `printer`'s work rather than this module's, and both are a spelling and not
+a normal form: which way round a sum is written says nothing about what the sum
+is. Operands the list says nothing about keep the order sympy had them in.
 
 `Manage Ordering` rewrites the list, so the list is session state rather than a
 constant: it travels in the `Context`, alongside everything else a command's
