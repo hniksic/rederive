@@ -1,12 +1,13 @@
-# Rederive - the friendly mathematics system
+# Rederive - a friendly mathematical assistant
 
 Rederive is a from-scratch reimplementation of Derive, the classic DOS computer algebra
 system. Written on top of [SymPy](https://www.sympy.org/en/index.html), it simplifies,
 solves, and expands a wide range of mathematical expressions and equations, both
-symbolically and numerically, through an interactive, menu-driven interface. What sets it
-apart from SymPy in a Jupyter notebook is friendliness: Rederive reads `ax+b` or `sinx`
-the way a mathematician writes them, and displays every result nicely typeset right in the
-terminal. The UI is small and opinionated, but discoverable and humane.
+symbolically and numerically, through an interactive menu-driven interface. What sets it
+apart from SymPy in a Jupyter notebook is how it treats the user: Rederive reads `ax+b` or
+`sinx` the way a mathematician would, and displays every result nicely typeset right in
+the terminal. The UI, inherited from Derive, is tiny and opinionated, but discoverable and
+built for humans.
 
 <p align="center"><img src="demo.webp" alt="An animated Rederive session" width="700"></p>
 
@@ -14,22 +15,23 @@ terminal. The UI is small and opinionated, but discoverable and humane.
 
 Derive came out of Honolulu in 1988 and was the first computer algebra system that ran on
 machines mortals could afford. It fit on a floppy, worked on a 286 with half a megabyte of
-memory, and quietly took over maths classrooms across Europe. (I first saw it around 1992
-in a dusty classroom in Croatia.) It was cheap, famously close to bug-free, and you could
+memory, and quietly took over maths classrooms across Europe. (I was introduced to it in a
+Croatian classroom around 1992.) It was cheap, famously close to bug-free, and you could
 learn to use it in minutes. More importantly, its ease of use and responsiveness made math
 fun in ways that are not quite matched by modern and more advanced programs, nor even by
 LLMs. The original Derive was discontinued in 2007 after having been acquired by Texas
 Instruments.
 
 Rederive aims to bring the experience back on modern foundations. The important pieces
-have long existed - Python, SymPy for symbolic math, and
-[Textual](https://textual.textualize.io/) for building a TUI. What remained is assembling
-them into a user-friendly "mathematical assistant".
+have long existed - Python as universal glue, SymPy for symbolic math, and
+[Textual](https://textual.textualize.io/) for building TUIs. What remained is assembling
+them into a mathematical assistant.
 
 Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
-but adapts to the 21st century where appropriate - Rederive integrates with the system
-clipboard, reads mouse clicks and the scroll wheel, and uses Unicode rather than ancient
-code pages.
+but adapts to the 21st century where appropriate. The display is Unicode rather than code
+page 437, and everything is laid out for the terminal's actual size instead of an 80x25
+screen. The mouse and scroll wheel work, it uses the system clipboard, file names
+tab-complete, and the line editor follows Emacs conventions.
 
 ## Running
 
@@ -68,8 +70,7 @@ and pressing <kbd>s</kbd> simplifies it to:
 ```
 
 Calculus goes through a small menu. Author `#e^(-x^2)`, press <kbd>c</kbd> for Calculus
-and <kbd>i</kbd> for Integrate, accept the offered expression and variable, and enter
-the limits `0` and `inf`:
+and <kbd>i</kbd> for Integrate, and enter the limits `0` and `inf`:
 
 ```
  ∞
@@ -116,18 +117,18 @@ precision modes.
 Rederive is exact all the way down - there is no floating point anywhere, even in
 approximation. Approximating to n digits replaces a value by the simplest rational that
 matches it to those digits (π to six digits is 355/113), and everything computed from it
-afterwards is again exact. The only error is the one you ask for.
+afterwards is again exact. The only inexactness is the one you request.
 
-Compared with large systems such as Mathematica or Maple, Rederive's coverage is narrower:
-exact polynomial solving reaches only equations reducible to quartics, and numeric
-root-finding requires a user-supplied search interval; much functionality lives in utility
+Compared with large systems such as Mathematica or Maple, Rederive's coverage is narrower.
+Exact polynomial solving works only for equations reducible to quartics, and numeric
+root-finding requires a user-supplied search interval. Much functionality lives in utility
 files rather than in the core. The programming language is minimal, with no local
 variables, explicit loops, or data structures beyond vectors and matrices, so libraries
 introducing advanced polynomial algebra or sophisticated definite integration are out of
 reach. If you need that, you should probably turn to SymPy (or Mathematica) directly.
-Within its chosen scope, however, Rederive aims to be small and dependable. That trade-off
-defined the original: keep the system simple, but powerful enough to be useful, especially
-in the classroom.
+Within its chosen scope, however, Rederive strives to be small and dependable. That
+trade-off defined the original: keep the system simple, but powerful enough to be useful,
+especially in the classroom.
 
 ## License
 
