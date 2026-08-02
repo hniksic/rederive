@@ -79,24 +79,24 @@ the colours nor the mouse support Rederive expects.
 ### Installing it
 
 The single file above unpacks itself into a temporary directory every time it starts,
-which costs about a tenth of a second. Installing avoids that: download the archive
-instead, unpack it once, and put it on your `PATH`.
+which costs about a tenth of a second. Installing avoids that, and puts `rederive` on
+your `PATH` so it starts by name from anywhere.
 
-**Linux and macOS** (swap `linux-x86_64` for `macos-arm64` on a Mac):
+**Windows:** download and run
+[`rederive-setup.exe`](https://github.com/hniksic/rederive/releases/latest/download/rederive-setup.exe).
+It is an ordinary installer - next, next, finish - and it adds Rederive to your `PATH`
+and to Add/Remove Programs, where uninstalling it undoes both. SmartScreen warns once
+before it starts, the installer being unsigned; choose **More info** → **Run anyway**.
+
+**Linux and macOS:**
 
 ```
-curl -LO https://github.com/hniksic/rederive/releases/latest/download/rederive-linux-x86_64.tar.gz
-mkdir -p ~/.local/share ~/.local/bin
-tar -xzf rederive-linux-x86_64.tar.gz -C ~/.local/share
-ln -sf ~/.local/share/rederive/rederive ~/.local/bin/rederive
+curl -LsSf https://github.com/hniksic/rederive/releases/latest/download/install.sh | sh
 ```
 
-Then `rederive` starts it, provided `~/.local/bin` is on your `PATH`. To uninstall,
-remove `~/.local/share/rederive` and the link.
-
-**Windows:** download `rederive-windows-x86_64.zip`, unpack it into
-`%LOCALAPPDATA%\Programs`, and add the resulting `Rederive` directory to your `PATH`.
-To uninstall, delete the directory and undo the `PATH` entry.
+That unpacks Rederive into `~/.local/share/rederive`, links it into `~/.local/bin`, and
+says so if that directory is not on your `PATH`. Options go through `sh` - `sh -s --
+--prefix /opt --bin /usr/local/bin` - and `sh -s -- --uninstall` removes it again.
 
 ### Running from source
 

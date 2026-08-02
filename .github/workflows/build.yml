@@ -1,0 +1,140 @@
+name: Build
+
+# Binaries cannot be cross-compiled, so each one is built on the system it is for.
+# Run by hand to check that a change still builds everywhere; run by a tag to make
+# the release. `RELEASING.md` is the same procedure written out for a person.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            exe: ""
+          - platform: macos-arm64
+            os: macos-15
+            exe: ""
+          - platform: windows-x86_64
+            os: windows-2025
+            exe: ".exe"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --group packaging
+
+      - name: Build the single file
+        run: uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm
+
+      - name: Build the directory form
+        run: |
+          uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm \
+              --distpath dist/tree -- --tree
+
+      - name: Check both
+        run: |
+          uv run python packaging/smoke.py "dist/rederive${{ matrix.exe }}"
+          uv run python packaging/smoke.py "dist/tree/rederive/rederive${{ matrix.exe }}"
+
+      - name: Package the archive
+        if: runner.os != 'Windows'
+        run: tar -C dist/tree -czf "dist/rederive-${{ matrix.platform }}.tar.gz" rederive
+
+      - name: Package the archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\tree\rederive `
+              -DestinationPath dist\rederive-windows-x86_64.zip
+
+      - name: Check install.sh
+        if: runner.os != 'Windows'
+        run: |
+          sh packaging/install.sh --archive "dist/rederive-${{ matrix.platform }}.tar.gz" \
+              --prefix "$RUNNER_TEMP/share" --bin "$RUNNER_TEMP/bin"
+          uv run python packaging/smoke.py "$RUNNER_TEMP/bin/rederive"
+          sh packaging/install.sh --uninstall --prefix "$RUNNER_TEMP/share" \
+              --bin "$RUNNER_TEMP/bin"
+          test ! -e "$RUNNER_TEMP/share/rederive"
+
+      # The installer is compiled, run, checked and taken away again, which is the
+      # only way to find out whether it installs what it says it installs.
+      - name: Build and check the installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $version = "0.0.0"
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $version = $env:GITHUB_REF -replace "refs/tags/v", ""
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=$version" packaging\rederive.iss
+          if ($LASTEXITCODE -ne 0) { throw "the installer did not compile" }
+
+          Start-Process -Wait -FilePath dist\rederive-setup.exe `
+              -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART"
+          $installed = "$env:LOCALAPPDATA\Programs\Rederive\rederive.exe"
+          if (-not (Test-Path $installed)) { throw "the installer installed nothing" }
+          & $installed no-such-worksheet.mth
+          if ($LASTEXITCODE -ne 2) { throw "the installed program did not run" }
+
+          $path = (Get-ItemProperty -Path HKCU:\Environment -Name Path).Path
+          if ($path -notlike "*Programs\Rederive*") { throw "PATH was not added to" }
+
+          $uninstaller = "$env:LOCALAPPDATA\Programs\Rederive\unins000.exe"
+          Start-Process -Wait -FilePath $uninstaller -ArgumentList "/VERYSILENT"
+          if (Test-Path $installed) { throw "the uninstaller left the program behind" }
+          $path = (Get-ItemProperty -Path HKCU:\Environment -Name Path).Path
+          if ($path -like "*Programs\Rederive*") { throw "PATH was left behind" }
+
+      - name: Name the artifacts
+        run: |
+          mv "dist/rederive${{ matrix.exe }}" \
+             "dist/rederive-${{ matrix.platform }}${{ matrix.exe }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/rederive-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect what the release carries
+        run: |
+          cp packaging/install.sh artifacts/
+          cd artifacts && sha256sum rederive-* install.sh > SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes
