@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Record the animated session the README shows, as one self-contained SVG.
+"""Record the animated session the README shows, as one animated WebP.
 
 The app is driven headlessly through Textual's pilot, a keystroke at a time, and
-every keystroke's screen is exported as Rich draws it. The frames are then fused
-into a single SVG: the window chrome, the clip paths and the text styles are
-written once, each frame becomes a group of its own, and a stepped CSS animation
-shows the groups one after another - which is the one kind of animation an
-<img> tag on GitHub will play. A viewer with animations off sees the final
-frame, the worksheet with everything on it.
+every keystroke's screen is exported as Rich draws it. Each frame's SVG is
+rasterized by Inkscape, and the frames are encoded as one animated WebP, every
+frame held for as long as the script asks. The format is a raster one because a
+browser plays it for free: the same session as an animated SVG is a couple of
+thousand text nodes and a CSS animation per frame, all of them live for as long
+as the README is on screen, which makes the page sluggish.
 
 The script is the `play` coroutine: the two examples the Usage section walks
 through, then a quadratic solved symbolically, some trigonometry, a matrix
@@ -15,18 +15,24 @@ inverse, and the Basel sum as the closing number. Every result it shows is
 computed by the real engine while the recording runs, so the animation cannot
 drift from what the program actually answers.
 
-Run from the repository root:
+Needs Inkscape on the path, and Pillow, which is asked for on the command line
+rather than carried as a dependency of a project that never imports it. Run
+from the repository root:
 
-    uv run python tools/readme_demo.py [-o demo.svg]
+    uv run --with pillow python tools/readme_demo.py [-o demo.webp]
 """
 
 import argparse
 import asyncio
 import html
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from PIL import Image
 from textual.widgets import Input
 
 from rederive.ui.app import MODE_COMPUTE, RederiveApp
@@ -148,19 +154,19 @@ async def record() -> list[tuple[str, float]]:
 STYLE = re.compile(r"\.terminal-\d+-r\d+ \{ (?P<style>[^}]*?) \}")
 #: The generated id every name in a frame is prefixed with.
 PREFIX = re.compile(r"terminal-\d+-")
+#: A face Rich offers to fetch over the network. Nothing is fetched here: the
+#: rasterizer takes the font-family from the installed fonts, Fira Code if it
+#: is one of them and the default monospace face otherwise.
+FONT_FACE = re.compile(r"\s*@font-face \{.*?\n\s*\}", re.DOTALL)
 #: The group holding everything drawn inside the terminal.
 CONTENT = re.compile(r'<g transform="translate\(9, 41\)"[^>]*>')
 #: The rect the terminal text is clipped to, which sizes the backdrop.
 CLIP = re.compile(
     r'id="t-clip-terminal">\s*<rect x="0" y="0" width="([\d.]+)" height="([\d.]+)"'
 )
-#: A cell background. The black ones are the empty screen, painted once for
-#: the whole animation instead of once per frame.
+#: A cell background. The black ones are the empty screen, painted as one
+#: backdrop instead of a rect per run of cells.
 BLACK = re.compile(r'<rect fill="#000000"[^>]*/>')
-#: A text element; the ones holding nothing visible are dropped.
-TEXT = re.compile(r"<text[^>]*>([^<]*)</text>")
-#: A class attribute naming one of a frame's text styles.
-CLASS = re.compile(r'class="t-(r\d+)"')
 
 #: The box-drawing characters the layouts are built from: fraction bars, matrix
 #: brackets, the integral sign's arcs, the rule over the menu. A terminal
@@ -274,22 +280,25 @@ def _vectorized(match: re.Match, styles: dict[str, str]) -> tuple[str, str]:
     return f"{match.group('head')}{body}</text>", path
 
 
-def dissect(svg: str) -> tuple[dict[str, str], str]:
-    """One frame's text styles by name, and its content with names normalized.
+def redraw(svg: str) -> str:
+    """One frame ready to rasterize: no web fonts, box drawing as strokes.
 
-    Rich stamps every screenshot's ids with a hash of its content, so nothing
-    in one frame can refer to another frame's defs until the stamp is cut off.
-    The empty text runs and the black cell backgrounds are dropped here too:
-    the first paint nothing, and the second are one backdrop drawn per frame.
-    The box-drawing characters leave the text and come back as strokes.
+    Rich stamps every screenshot's ids with a hash of its content; the stamp is
+    cut off so that a frame reads the same as any other. The empty screen
+    arrives as a black rect per run of cells, and the runs meet at fractional
+    coordinates where a seam then shows, so one backdrop is painted instead.
+    The box-drawing characters leave the text and come back as strokes,
+    appended last so they are drawn over the cells they span.
     """
     styles = {
         match.group(0).split()[0].split("-")[-1]: match.group("style")
         for match in STYLE.finditer(svg)
     }
-    content = svg[CONTENT.search(svg).end() : svg.rindex("</g>")]
-    content = PREFIX.sub("t-", content)
-    content = BLACK.sub("", content)
+    svg = FONT_FACE.sub("", PREFIX.sub("t-", svg))
+    opening = CONTENT.search(svg)
+    width, height = CLIP.search(svg).groups()
+    head = svg[: opening.end()]
+    content = BLACK.sub("", svg[opening.end() :])
     paths: list[str] = []
 
     def vectorize(match: re.Match) -> str:
@@ -299,75 +308,49 @@ def dissect(svg: str) -> tuple[dict[str, str], str]:
         return text
 
     content = RUN.sub(vectorize, content)
-    content = TEXT.sub(
-        lambda m: "" if not m.group(1).replace("&#160;", "").strip() else m.group(0),
-        content,
-    )
-    return styles, content + "".join(paths)
-
-
-def keyframes(index: int, start: float, end: float, total: float, last: bool) -> str:
-    """The animation showing frame `index` from `start` to `end` seconds.
-
-    The timing function is step-end, so opacity holds each keyframe's value
-    until the next one: hidden to `start`, shown to `end`, hidden to the loop's
-    end. The last frame stays up instead, and is also the one frame visible
-    without animation, so a still viewer sees the finished worksheet.
-    """
-    a = f"{start / total:.4%}".rstrip("%")
-    b = f"{end / total:.4%}".rstrip("%")
-    on, off = "{opacity:1}", "{opacity:0}"
-    if index == 0:
-        frames = f"0%{on}{b}%{off}100%{off}"
-    elif last:
-        frames = f"0%{off}{a}%{on}100%{on}"
-    else:
-        frames = f"0%{off}{a}%{on}{b}%{off}100%{off}"
-    return (
-        f"@keyframes k{index}{{{frames}}}\n"
-        f"#f{index}{{animation:k{index} {total:.2f}s step-end infinite}}"
-    )
-
-
-def assemble(frames: list[tuple[str, float]]) -> str:
-    """All the frames as one animated SVG."""
-    first = frames[0][0]
-    # Everything outside the terminal group is identical from frame to frame:
-    # the fonts, the window, the clip paths. It is kept from the first frame,
-    # its content styles cut out and replaced with the shared ones.
-    head = PREFIX.sub("t-", first[: CONTENT.search(first).start()])
-    head = re.sub(r"\.t-r\d+ \{[^}]*\}\n?", "", head)
-
-    classes: dict[str, str] = {}
-    groups = []
-    total = sum(hold for _, hold in frames)
-    clock = 0.0
-    animations = []
-    for index, (svg, hold) in enumerate(frames):
-        styles, content = dissect(svg)
-        remap = {}
-        for name, style in styles.items():
-            remap[name] = classes.setdefault(style, f"g{len(classes)}")
-        content = CLASS.sub(lambda m: f'class="{remap[m.group(1)]}"', content)
-        groups.append(f'<g class="f" id="f{index}">{content}</g>')
-        animations.append(
-            keyframes(index, clock, clock + hold, total, index == len(frames) - 1)
-        )
-        clock += hold
-
-    width, height = CLIP.search(head).groups()
-    # The finale is the one frame shown without animations: a renderer that
-    # plays none - a thumbnail, a feed reader - shows the finished worksheet.
-    # While the animation runs it takes precedence over the static rule.
-    shared = "\n".join(
-        [".f{opacity:0}", f"#f{len(frames) - 1}{{opacity:1}}"]
-        + [f".{name}{{{style}}}" for style, name in classes.items()]
-        + animations
-    )
-    head = head.replace("</style>", shared + "\n</style>")
+    # The strokes belong to the terminal's group, which is the last to close.
+    at = content.rindex("</g>")
     backdrop = f'<rect fill="#000000" x="0" y="0" width="{width}" height="{height}"/>'
-    opening = PREFIX.sub("t-", CONTENT.search(first).group(0))
-    return f"{head}{opening}\n{backdrop}\n" + "\n".join(groups) + "\n</g>\n</svg>\n"
+    return head + backdrop + content[:at] + "".join(paths) + content[at:]
+
+
+def rasterize(frames: list[str], width: int, directory: Path) -> list[Path]:
+    """Every frame as a PNG `width` pixels across, in one run of Inkscape."""
+    if not shutil.which("inkscape"):
+        raise SystemExit("inkscape rasterizes the frames, and is not on PATH")
+    paths = []
+    for index, svg in enumerate(frames):
+        path = directory / f"{index:04d}.svg"
+        path.write_text(redraw(svg))
+        paths.append(path)
+    subprocess.run(
+        ["inkscape", "--export-type=png", f"--export-width={width}", *map(str, paths)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    return [path.with_suffix(".png") for path in paths]
+
+
+def encode(pngs: list[Path], holds: list[float], output: Path):
+    """The frames as one looping animated WebP, each held for its own time.
+
+    Lossless, the terminal being flat-colored text that a lossy codec would
+    only smear, and `minimize_size` so that consecutive frames are stored as
+    the rectangle that changed - which for a keystroke is one character cell.
+    The compression method is the default four: six takes twenty times as long
+    to save half a percent.
+    """
+    images = [Image.open(png).convert("RGB") for png in pngs]
+    images[0].save(
+        output,
+        save_all=True,
+        append_images=images[1:],
+        duration=[round(hold * 1000) for hold in holds],
+        loop=0,
+        lossless=True,
+        method=4,
+        minimize_size=True,
+    )
 
 
 def main():
@@ -376,15 +359,24 @@ def main():
         "-o",
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "demo.svg",
-        help="where to write the animation (default: demo.svg beside README.md)",
+        default=Path(__file__).resolve().parent.parent / "demo.webp",
+        help="where to write the animation (default: demo.webp beside README.md)",
+    )
+    parser.add_argument(
+        "-w",
+        "--width",
+        type=int,
+        default=1400,
+        help="pixels across, twice the width the README shows it at (default: 1400)",
     )
     arguments = parser.parse_args()
     frames = asyncio.run(record())
-    svg = assemble(frames)
-    arguments.output.write_text(svg)
+    with tempfile.TemporaryDirectory() as directory:
+        pngs = rasterize([svg for svg, _ in frames], arguments.width, Path(directory))
+        encode(pngs, [hold for _, hold in frames], arguments.output)
     seconds = sum(hold for _, hold in frames)
-    print(f"{arguments.output}: {len(frames)} frames, {seconds:.1f}s, {len(svg)} bytes")
+    size = arguments.output.stat().st_size
+    print(f"{arguments.output}: {len(frames)} frames, {seconds:.1f}s, {size} bytes")
 
 
 if __name__ == "__main__":

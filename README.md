@@ -8,7 +8,7 @@ apart from SymPy in a Jupyter notebook is friendliness: Rederive reads `ax+b` or
 the way a mathematician writes them, and displays every result nicely typeset right in the
 terminal. The UI is small and opinionated, but discoverable and humane.
 
-<p align="center"><img src="demo.svg" alt="An animated Rederive session" width="700"></p>
+<p align="center"><img src="demo.webp" alt="An animated Rederive session" width="700"></p>
 
 ## Motivation
 
