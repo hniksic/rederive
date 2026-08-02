@@ -13,9 +13,12 @@ grow per-session state for speed, it may only ever be a content-keyed cache the
 protocol treats as maybe-empty - the parent re-sends what the worker says it
 does not know - never the truth about a session.
 
-The tty belongs to the app. Nothing the worker writes may land on it, so
-stdout and stderr go to a log file named after the process, which is where a
-traceback the parent could not carry back is to be read.
+The tty belongs to the app. Nothing the worker writes may land on it, so both
+descriptors go to the null device before anything can print, and the log file
+named after the process - where a traceback the parent could not carry back is
+to be read - is opened by the first write rather than at startup. Nearly every
+worker is signalled to death having said nothing, so a log opened eagerly would
+be an empty file per worker and per test, forever.
 
 Two private methods sit in the table beside the six public ones, so that the
 parent's abort and memory tests do not have to find a real computation slow
@@ -24,6 +27,7 @@ enough or hungry enough to test with.
 
 from __future__ import annotations
 
+import io
 import os
 import signal
 import sys
@@ -57,7 +61,8 @@ MEMORY = "memory"
 #: worker it cannot otherwise ask.
 _LOG_NAME = "rederive-worker-{pid}.log"
 
-#: The log file, held open for as long as the worker runs.
+#: Both output streams, once they have been taken off the tty. The file behind
+#: them may not exist: it is opened by the first write, if one ever comes.
 _log: Any = None
 
 #: What `allocate` is holding, so that the heap keeps it while it hangs.
@@ -133,21 +138,107 @@ def _message() -> str:
     return f"{name}: {value}" if str(value) else name
 
 
-def _take_the_log(pid: int) -> None:
-    """Point both output streams at this worker's own log file.
+class _LazyLog(io.TextIOBase):
+    """An output stream that becomes the log file the first time it is written.
 
-    The descriptors are redirected rather than the Python objects, so that a
-    C extension writing to fd 2 lands there too. Anything that will not
-    redirect is left alone: a worker without a log is worth more than no
-    worker.
+    A worker that says nothing should leave nothing, and saying nothing is the
+    ordinary case: the file is created by the first write and never by starting
+    up. Creating it also moves the descriptors onto it, so a C extension writing
+    to fd 2 lands there too from that point on - the cost of being lazy is that
+    output from a C extension before the first write to these streams goes to
+    the null device, where a Python traceback would have named the file first.
+
+    Every write is flushed. Nearly every worker dies by signal, and a line still
+    sitting in a buffer when SIGKILL arrives is a line nobody will ever read.
+    """
+
+    def __init__(self, pid: int) -> None:
+        self._pid = pid
+        self._file: Any = None
+        self._failed = False
+
+    def write(self, text: str) -> int:
+        """Write to the log, opening it if this is the first thing to say."""
+        file = self._materialize()
+        if file is None:
+            return len(text)
+        try:
+            written = file.write(text)
+            file.flush()
+        except (OSError, ValueError):
+            return len(text)
+        return written
+
+    def flush(self) -> None:
+        if self._file is not None:
+            try:
+                self._file.flush()
+            except (OSError, ValueError):
+                pass
+
+    def fileno(self) -> int:
+        """The log's own descriptor, which asking for is enough to create it."""
+        file = self._materialize()
+        if file is None:
+            raise OSError("worker log unavailable")
+        return int(file.fileno())
+
+    def writable(self) -> bool:
+        return True
+
+    def isatty(self) -> bool:
+        return False
+
+    def _materialize(self) -> Any:
+        """The open log file, opening it and taking the descriptors on the way.
+
+        A file that will not open is not worth a dead worker, so the failure is
+        remembered and every later write is discarded rather than retried.
+        """
+        if self._file is not None or self._failed:
+            return self._file
+        try:
+            self._file = open(
+                log_path(self._pid), "a", buffering=1, encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            self._failed = True
+            return None
+        try:
+            os.dup2(self._file.fileno(), 1)
+            os.dup2(self._file.fileno(), 2)
+        except OSError:
+            pass
+        return self._file
+
+
+def _take_the_log(pid: int) -> None:
+    """Take both output streams off the tty, and promise a log if one is needed.
+
+    The descriptors go to the null device rather than to the log, because they
+    are inherited from the app and the app owns the screen: they have to stop
+    pointing at it before the first import can print, which is long before
+    anyone knows whether this worker will have anything to say. `_LazyLog`
+    holds the promise and opens the file if the day comes.
+
+    Anything that will not redirect is left alone: a worker without a log is
+    worth more than no worker.
     """
     global _log
     try:
-        _log = open(log_path(pid), "a", buffering=1, encoding="utf-8", errors="replace")
-        os.dup2(_log.fileno(), 1)
-        os.dup2(_log.fileno(), 2)
+        null = os.open(os.devnull, os.O_WRONLY)
     except OSError:
-        _log = None
+        return
+    try:
+        os.dup2(null, 1)
+        os.dup2(null, 2)
+    except OSError:
+        pass
+    finally:
+        os.close(null)
+    _log = _LazyLog(pid)
+    sys.stdout = _log
+    sys.stderr = _log
 
 
 def _apply_limits(cap: int | None) -> None:
