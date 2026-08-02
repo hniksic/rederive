@@ -10,6 +10,7 @@ dependencies = [
     "textual>=0.86",
     "sympy>=1.14",
     "psutil>=7",
+    "pyperclip>=1.9",
 ]
 
 [project.scripts]

@@ -1,5 +1,6 @@
 """Smoke tests driving the real app through Textual's pilot."""
 
+import pyperclip
 import pytest
 from screen import (
     annotation,
@@ -2075,9 +2076,9 @@ async def test_the_author_line_walks_but_is_never_labelled(app):
 # -- copying an expression and pasting it -------------------------------------
 #
 # Ctrl-C takes what is highlighted and Ctrl-V puts it back on the line being
-# typed. The copy goes to the terminal's clipboard as well as to the program's
-# own; what the terminal does with it is nothing a test can see, so these check
-# the copy that is kept here.
+# typed. The copy goes out to the system clipboard as well as to the program's
+# own, but a headless run keeps its hands off the desktop's clipboard, so these
+# check the copy that is kept here.
 
 
 async def test_ctrl_c_copies_the_highlighted_expression_and_ctrl_v_pastes_it(app):
@@ -2090,6 +2091,19 @@ async def test_ctrl_c_copies_the_highlighted_expression_and_ctrl_v_pastes_it(app
         assert message(app) == "Copied the highlighted expression"
         await pilot.press("a", "ctrl+v")
         assert prompt(app) == ("AUTHOR expression:", "y")
+
+
+async def test_a_headless_copy_keeps_off_the_desktop_clipboard(app, monkeypatch):
+    # The suite runs on somebody's desktop, and a test pressing Ctrl-C must
+    # not write on their clipboard; the headless guard in `copy_to_clipboard`
+    # is what stands between the two, and this is the test of the guard.
+    touched = []
+    monkeypatch.setattr(pyperclip, "copy", touched.append)
+    async with app.run_test() as pilot:
+        await worksheet(pilot, "y")
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "y"
+        assert touched == []
 
 
 async def test_ctrl_c_copies_only_the_highlighted_part(app):

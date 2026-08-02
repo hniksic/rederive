@@ -49,9 +49,9 @@ on every line an expression is entered from. It is one key in two spellings:
 Ctrl-J is what a terminal sends for it unless it speaks the keyboard protocol
 that tells the two apart.
 
-An expression moves by way of the clipboard: Ctrl-C hands what is highlighted to
-the terminal, which passes it to the system clipboard where it can, and Ctrl-V
-writes the copy kept here onto the line being typed. Where something is selected
+An expression moves by way of the clipboard: Ctrl-C puts what is highlighted on
+the system clipboard, both through the terminal and past it by the desktop's
+own tools, and Ctrl-V writes the copy kept here onto the line being typed. Where something is selected
 - a sweep of the screen, or a stretch marked out on the line - that is what
 Ctrl-C copies instead, a selection being the plainest way of saying what a key
 is to act on, and Ctrl-X is the same for the line with the stretch taken off it.
@@ -175,6 +175,7 @@ from os.path import commonprefix
 from pathlib import Path
 from typing import Any, Callable
 
+import pyperclip
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -2334,6 +2335,27 @@ class RederiveApp(App[None]):
             return None
         return line.selected_text
 
+    def copy_to_clipboard(self, text: str) -> None:
+        """Hand text to the system clipboard, keeping the copy Ctrl-V reads.
+
+        Two roads lead to the clipboard, and the copy takes both. The escape
+        sequence the base class writes asks the terminal to pass the text on;
+        it is the only road there is when the program runs across ssh, but
+        nothing comes back either way, and a terminal built on VTE reads the
+        sequence and drops it. pyperclip is the road around the terminal: it
+        hands the text to the desktop's own clipboard through whatever tool
+        it finds - wl-copy, xclip, xsel - and is quiet where it finds none.
+        A headless run takes the first road alone: a test has a clipboard of
+        its own to check, and the desktop's is not it to write on.
+        """
+        super().copy_to_clipboard(text)
+        if self.is_headless:
+            return
+        try:
+            pyperclip.copy(text)
+        except pyperclip.PyperclipException:
+            pass
+
     def action_copy_highlighted(self) -> None:
         """Ctrl-C: take a copy of what is selected, or of the highlighted expression.
 
@@ -2353,11 +2375,10 @@ class RederiveApp(App[None]):
         which is what keeps the pair worth having under a line: walk the
         highlight onto what is wanted and copy it.
 
-        The copy is offered to the terminal as well as kept here, which is what
-        carries an expression out to another program. Whether the terminal
-        passes it on to the system clipboard is the terminal's to say, and
-        nothing comes back either way, so the receipt on the message line is
-        what says the key landed.
+        The copy goes out to the system clipboard as well as staying here,
+        which is what carries an expression to another program;
+        `copy_to_clipboard` above says by which roads. No road reports back,
+        so the receipt on the message line is what says the key landed.
         """
         swept = self.screen.get_selected_text()
         if swept:
