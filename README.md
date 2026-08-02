@@ -1,11 +1,12 @@
 # Rederive - the friendly mathematics system
 
 Rederive is a from-scratch reimplementation of Derive, the classic DOS computer algebra
-system. Implemented on top of SymPy, it does what you expect of a computer algebra system:
-exact arithmetic, simplification, factoring, equation solving, calculus. What sets it
-apart is friendliness: Rederive reads `ax+b` or `sinx` the way a mathematician writes
-them, and displays every result nicely typeset in the terminal. The UI is small and
-opinionated, but discoverable and humane.
+system. Written on top of [SymPy](https://www.sympy.org/en/index.html), it simplifies,
+solves, and expands a wide range of mathematical expressions and equations, both
+symbolically and numerically, through an interactive, menu-driven interface. What sets it
+apart from SymPy in a Jupyter notebook is friendliness: Rederive reads `ax+b` or `sinx`
+the way a mathematician writes them, and displays every result nicely typeset right in the
+terminal. The UI is small and opinionated, but discoverable and humane.
 
 <p align="center"><img src="demo.svg" alt="An animated Rederive session" width="700"></p>
 
@@ -17,13 +18,13 @@ memory, and quietly took over maths classrooms across Europe. (I first saw it ar
 in a dusty classroom in Croatia.) It was cheap, famously close to bug-free, and you could
 learn to use it in minutes. More importantly, its ease of use and responsiveness made math
 fun in ways that are not quite matched by modern and more advanced programs, nor even by
-LLMs.  The original Derive was discontinued in 2007 after having been acquired by Texas
+LLMs. The original Derive was discontinued in 2007 after having been acquired by Texas
 Instruments.
 
 Rederive aims to bring the experience back on modern foundations. The important pieces
-have long existed - Python, [SymPy](https://www.sympy.org/en/index.html) for symbolic
-math, and [Textual](https://textual.textualize.io/) for building a TUI. What remained is
-assembling them into a user-friendly CAS.
+have long existed - Python, SymPy for symbolic math, and
+[Textual](https://textual.textualize.io/) for building a TUI. What remained is assembling
+them into a user-friendly "mathematical assistant".
 
 Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
 but adapts to the 21st century where appropriate - Rederive integrates with the system
@@ -88,32 +89,45 @@ Pressing <kbd>s</kbd> answers:
 
 ## For the math nerds
 
-Rederive is a computer algebra system of the classical kind: a worksheet of expressions
-and a handful of commands that transform them - Simplify, Expand, Factor, soLve, the
-calculus menu. It works over rationals, radicals and complex numbers, polynomials and
-rational functions, the elementary transcendental functions, and vectors and matrices; the
-calculus commands do derivatives, integrals, limits, Taylor expansions, and sums and
-products both definite and indefinite (`Σ 1/k^2` from 1 to ∞ is π²/6). All arithmetic is
-exact (no floating point anywhere), including approximation: approximating to n digits
-replaces a value by the simplest rational that matches it to those digits, so π to six
-digits is 355/113, and everything computed from it afterwards is again exact. The only
-error is the one you asked for.
+Mathematically, Rederive covers exact rational and arbitrary-precision arithmetic, and
+algebra over polynomials, rational functions, and elementary transcendental expressions.
+Equations can be solved exactly or approximately. The calculus menu offers limits,
+derivatives, Taylor polynomials, symbolic integration, and closed forms for sums and
+products (`Σ 1/k^2` from 1 to ∞ is `π²/6`). Vectors and matrices are supported too,
+including symbolic linear algebra, eigenvalues, and vector calculus. In the original
+Derive, loadable utility files extended the core with ordinary differential equations,
+recurrence equations, special functions (Bessel, elliptic, hypergeometric, zeta, and
+others), number theory, and unit conversion. These utilities, [still
+found](https://archive.org/details/derive314cas) in Internet archives, work in Rederive. A
+small functional programming language based on conditionals, iteration, and recursion lets
+users define their own functions.
 
-Simplification is conservative. It removes what is superfluous but otherwise leaves the
-expression the way you wrote it - `x^2 - (x + (y+1)^50)·(x - (y+1)^50)` simplifies to
-`(y + 1)^100`, not to a degree-100 polynomial - and how far Expand and Factor go is
-yours to choose, up to factoring over radicals and complex numbers. An identity is used
-only where it provably holds: variables are real by default, so `√(x^2)` is `|x|`;
-`SIN(n·π)` becomes 0 once n is declared an integer; `|x| + |x - 1|` becomes 1 once x is
-confined to (0, 1). Multivalued functions take their principal branches, unless you
-switch to real or any-branch mode.
+Its chief strength is the care behind its simplifier. The goal is a "sufficiently simple"
+result, one with no superfluous variables, roots, or reducible degrees, while transforming
+the input as little as necessary: `x^2 - (x + (y+1)^50)·(x - (y+1)^50)` simplifies to
+`(y + 1)^100`, not to a degree-100 polynomial, because expressions are not needlessly
+expanded or forced over common denominators. It is also mathematically conservative, using
+an identity only where it provably holds. Variables are real by default, so `√(x^2)` is
+`|x|`, but `ln(x^2 - x) - ln(x)` is only rewritten to `ln(x - 1)` after the user declares
+x positive. Users control behavior through declarations of variable domains, branch
+selection for multivalued functions, and switchable exact, approximate, and mixed
+precision modes.
 
-What it does, it does predictably: Simplify and Solve are total, so an integral the
-engine cannot do comes back as an integral, an equation it cannot crack comes back as an
-implicit relation, and `1/0` is `±∞` rather than an error. The weaknesses are classical
-too: a definite integral is evaluated straight through an interior singularity
-(`∫ dx/x^2` over [-1, 1] gives -2 unless you split it at the pole yourself), and
-declared intervals are consulted only as far as linear reasoning reaches.
+Rederive is exact all the way down - there is no floating point anywhere, even in
+approximation. Approximating to n digits replaces a value by the simplest rational that
+matches it to those digits (π to six digits is 355/113), and everything computed from it
+afterwards is again exact. The only error is the one you ask for.
+
+Compared with large systems such as Mathematica or Maple, Rederive's coverage is narrower:
+exact polynomial solving reaches only equations reducible to quartics, and numeric
+root-finding requires a user-supplied search interval; much functionality lives in utility
+files rather than in the core. The programming language is minimal, with no local
+variables, explicit loops, or data structures beyond vectors and matrices, so libraries
+introducing advanced polynomial algebra or sophisticated definite integration are out of
+reach. If you need that, you should probably turn to SymPy (or Mathematica) directly.
+Within its chosen scope, however, Rederive aims to be small and dependable. That trade-off
+defined the original: keep the system simple, but powerful enough to be useful, especially
+in the classroom.
 
 ## License
 
