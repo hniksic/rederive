@@ -19,6 +19,22 @@ def styled(widget, style):
     ]
 
 
+async def laid_out(pilot, app, identifier):
+    """Wait until the widget `identifier` names has been given a size.
+
+    Showing a widget or setting how tall it stands writes a style; the size that
+    follows from it is the compositor's, and arrives some turns of the message
+    loop later, on the screen's own idle. Until it does the widget measures
+    nothing, so a test that reads `size` or `region` after a keystroke waits here
+    for the layout rather than for the widget's queue to drain.
+    """
+    for _ in range(20):
+        if app.query_one(identifier).size.height:
+            return
+        await pilot.pause()
+    raise AssertionError(f"{identifier} was never laid out")
+
+
 def band_id(app):
     """Which of the two bands is showing: a menu, or an Options dialog."""
     return "#fields" if app.editor is not None else "#menu"

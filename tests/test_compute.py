@@ -16,7 +16,9 @@ from screen import entries, message, prompt
 from rederive.engine import computing
 from rederive.engine.client import EngineAborted
 from rederive.model.session import Session
+from rederive.ui import app as app_module
 from rederive.ui.app import (
+    CLOCK_AFTER,
     ENTER_TO_DERIVE,
     MODE_COMPUTE,
     MODE_MENU,
@@ -26,8 +28,10 @@ from rederive.ui.app import (
     _whole,
 )
 
-#: How long anything here waits for a thread to get where it is going.
-PATIENCE = 10.0
+#: How long anything here waits for a thread to get where it is going. Long
+#: enough for a loaded machine to hand off between a thread and the event loop,
+#: short enough that a deadlock is reported rather than sat on.
+PATIENCE = 2.0
 
 
 class Blocking:
@@ -141,7 +145,7 @@ async def settle(pilot, condition, patience=PATIENCE):
     while time.monotonic() < deadline:
         if condition():
             return True
-        await pilot.pause(0.01)
+        await pilot.pause(0.002)
     return condition()
 
 
@@ -162,21 +166,38 @@ async def simplify(pilot, runner):
     assert await settle(pilot, runner.running.is_set)
 
 
-async def test_a_computation_holds_the_screen_and_says_how_long_it_has(app, runner):
+async def test_a_computation_holds_the_screen_and_says_how_long_it_has(
+    app, runner, monkeypatch
+):
+    """The clock is read off `app.started`, which is moved rather than waited out.
+
+    Both figures the app is asked about here are seconds long, and waiting them
+    out would be waiting on the machine's clock rather than on the app. Moving
+    the start of the computation back instead tests more, not less: it names
+    the second the line is left alone for, and then reads a figure off the line
+    that nothing but a running clock could have put there.
+    """
+    monkeypatch.setattr(app_module, "TICK", 0.01)
     async with app.run_test() as pilot:
         await author(pilot, "1+1")
         await simplify(pilot, runner)
         assert app.mode == MODE_COMPUTE
-        # Nothing is said for the first second: the message line still asks
-        # what the prompt asked, so a command that answers at once passes
-        # without a clock flashing on the way.
+        # Nothing is said for the first second, ticks or no ticks: the message
+        # line still asks what the prompt asked, so a command that answers at
+        # once passes without a clock flashing on the way.
+        await pilot.pause(0.05)
         assert message(app) == ENTER_TO_DERIVE
+        # A second of running is what it takes for the clock to appear.
+        app.started -= CLOCK_AFTER
         assert await settle(pilot, lambda: message(app).startswith(SIMPLIFYING))
         assert "ESC aborts" in message(app)
         # And once it is up the clock moves, which is the whole point of the
-        # event loop being free.
-        first = message(app)
-        assert await settle(pilot, lambda: message(app) != first)
+        # event loop being free. A minute back rather than a second, so that
+        # what the line then says is a reading no amount of the test's own
+        # running could have produced: it is the clock and not the wait.
+        assert "1m" not in message(app)
+        app.started -= 60.0
+        assert await settle(pilot, lambda: "1m" in message(app))
         runner.release()
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
         assert entries(app) == ["1+1", "2"]
@@ -267,9 +288,15 @@ async def test_control_enter_simplifies_what_it_entered_on_the_thread(app, runne
 
 
 @pytest.fixture
-def demo(tmp_path):
+def demo(tmp_path, monkeypatch):
+    """A demonstration file, with the shell sitting in the directory it is in.
+
+    So the prompt can be answered with the name alone, which it takes as the
+    file it names.
+    """
     path = tmp_path / "show.dmo"
     path.write_text("; adds two numbers\n2 + 3\n\n; and a symbolic one\n(x+1)^2\n")
+    monkeypatch.chdir(tmp_path)
     return path
 
 
@@ -281,7 +308,7 @@ async def test_a_demonstration_waits_on_the_step_it_dispatched(app, runner, demo
     """
     async with app.run_test() as pilot:
         await pilot.press("t", "d")
-        await pilot.press(*str(demo))
+        await pilot.press(*demo.name)
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         assert app.mode == MODE_COMPUTE
@@ -294,7 +321,7 @@ async def test_a_demonstration_waits_on_the_step_it_dispatched(app, runner, demo
 async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo):
     async with app.run_test() as pilot:
         await pilot.press("t", "d")
-        await pilot.press(*str(demo))
+        await pilot.press(*demo.name)
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         await pilot.press("escape")
@@ -303,7 +330,7 @@ async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo
         assert entries(app) == ["2+3"]
         # Suspended rather than lost: naming the file again picks it up.
         await pilot.press("t", "d")
-        await pilot.press(*str(demo))
+        await pilot.press(*demo.name)
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         runner.release()

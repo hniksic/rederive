@@ -9,6 +9,7 @@ from screen import (
     highlighted,
     highlighted_expression,
     highlighted_rows,
+    laid_out,
     message,
     prompt,
     text_of,
@@ -33,6 +34,18 @@ async def author(pilot, text):
     await pilot.press("a")
     await pilot.press(*text)
     await pilot.press("enter")
+
+
+def authored(app, *texts):
+    """Entries put on the worksheet through the session rather than typed.
+
+    The Author line does no more than hand what was typed to `Session.author`,
+    so this leaves the same worksheet behind, with the last entry selected
+    whole. It is for setting a test up when the keys under test are the ones
+    pressed afterwards.
+    """
+    for text in texts:
+        app.session.author(text)
 
 
 # -- the opening notice --------------------------------------------------------
@@ -181,7 +194,9 @@ async def test_a_narrow_terminal_keeps_every_word_of_the_menu(app, width):
 async def test_a_narrow_terminal_keeps_both_lines_of_a_dialog(app):
     async with app.run_test(size=(60, 24)) as pilot:
         await pilot.press("o", "r")
-        await pilot.pause()
+        # The dialog band is shown by the keys above, and stands as tall as the
+        # fields need only once the layout has caught up with them.
+        await laid_out(pilot, app, "#fields")
         lines = band(app)
         assert lines[0].startswith(" OPTIONS RADIX: Input:")
         assert lines[-1].strip().startswith("Output:")
@@ -2604,8 +2619,7 @@ async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):
 async def test_the_page_keys_walk_a_paneful_at_a_time(app):
     async with app.run_test(size=(80, 25)) as pilot:
         # Twenty-five rows leave a twenty-row pane, which is the original's.
-        for number in range(1, 31):
-            await author(pilot, str(number))
+        authored(app, *(str(number) for number in range(1, 31)))
         await pilot.press("j", *"20", "enter")
         await pilot.press("pageup")
         assert selected_number(app) == 11
@@ -2624,8 +2638,7 @@ async def test_the_page_keys_walk_a_paneful_at_a_time(app):
 
 async def test_the_page_keys_walk_under_a_prompt_line_too(app):
     async with app.run_test(size=(80, 25)) as pilot:
-        for number in range(1, 31):
-            await author(pilot, str(number))
+        authored(app, *(str(number) for number in range(1, 31)))
         await pilot.press("j", *"20", "enter")
         await pilot.press("s")
         assert prompt(app)[1] == "#20"
@@ -2636,8 +2649,7 @@ async def test_the_page_keys_walk_under_a_prompt_line_too(app):
 
 async def test_the_page_keys_label_a_dialogs_field_too(app):
     async with app.run_test(size=(80, 25)) as pilot:
-        for number in range(1, 31):
-            await author(pilot, str(number))
+        authored(app, *(str(number) for number in range(1, 31)))
         await pilot.press("j", *"20", "enter")
         await pilot.press("r")
         assert band(app) == [" REMOVE: Start: 20     End: 20"]
@@ -2749,10 +2761,15 @@ def from_the_right(term):
 
 
 async def scrolled(pilot, keys):
-    """A worksheet with the wide entry in the middle, selected and scrolled."""
-    await author(pilot, "x+1")
-    await author(pilot, WIDE)
-    await author(pilot, "x+1")
+    """A worksheet with the wide entry in the middle, selected and scrolled.
+
+    The entries go up through the session: what these tests are about is where
+    the keys in `keys` take the render, not the typing that wrote it.
+    """
+    authored(pilot.app, "x+1", WIDE, "x+1")
+    # A pane not laid out yet measures nothing, and a scroll has to know how
+    # wide the pane it moves over is.
+    await pilot.pause()
     await pilot.press("up")
     await pilot.press(*keys)
 

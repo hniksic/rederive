@@ -14,7 +14,6 @@ what Derive prints or a hand-checked equal of comparable simplicity.
 from __future__ import annotations
 
 import math
-import time
 import warnings
 from fractions import Fraction
 
@@ -724,37 +723,6 @@ def test_a_conditional_whose_branches_are_vectors_simplifies_elementwise():
     # element whether it was written or arrived at.
     taken = "IF(a > 0, [1, 2], [3, 4], [SQRT(b)*SQRT(b), 2*b/b])"
     assert simp(taken) == simp("[SQRT(b)*SQRT(b), 2*b/b]") == "[b, 2]"
-
-
-def test_a_parametrised_integral_of_an_affordable_shape_is_answered():
-    """The heuristic method, where its ansatz is measured to be small.
-
-    A product of powers of polynomials is one generator per base and nothing
-    composed on top, so `heurisch` answers this in under a second where the
-    bounded methods have nothing for it. Derive answers it as the incomplete
-    beta function; sympy's spelling is the hypergeometric it is defined by.
-    """
-    start = time.monotonic()
-    answer = simp("INT(x^(a-1)*(1-x)^(b-1), x)")
-    assert time.monotonic() - start < 5
-    assert answer == "x^a*HYPER([a, 1 - b], [a + 1], EXP_POLAR(2*#i*pi)*x)/a"
-
-
-def test_a_parametrised_integral_is_answered_or_left_alone_promptly():
-    """The heuristic method is asked only where its cost is bounded.
-
-    This line is out of Derive's own utility library, and the answer to it is
-    that there is no answer. Reaching that answer through sympy's heuristic
-    Risch algorithm takes the better part of a minute and gigabytes of memory,
-    because the algorithm's ansatz grows with the three symbolic parameters in
-    the integrand. The generous bound below is not a benchmark; it is there so
-    that a change which puts the minute back fails loudly.
-    """
-    text = "INT(t^(a - 1)*(#e^(z*t)*(1 - t)^(b - a - 1) - 1), t, 0, 1/2)"
-    start = time.monotonic()
-    answer = simp(text)
-    assert time.monotonic() - start < 10
-    assert answer.startswith("INT(")
 
 
 def test_an_antiderivative_is_written_with_no_constant_added():

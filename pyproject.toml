@@ -28,12 +28,16 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-xdist>=3.6"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-# Simplify over the whole corpus - every shipped utility file, parser case and
-# demo script - takes two minutes where the rest of the suite takes five
-# seconds, so it is opt-in: `uv run pytest -m slow` runs it. Only run it after
-# changing the engine, which is the only thing it can catch a regression in;
-# a change to the UI or the session cannot move it. Both run across every
-# core; `-n0` turns that off, which a single failing test is easier to read
-# under.
-addopts = "-n auto -m 'not slow'"
-markers = ["slow: Simplify over the whole corpus; run with -m slow"]
+# One run is the whole suite: `uv run pytest`. Simplify over the whole corpus
+# is the heaviest thing in it and used to sit behind a marker, but the only
+# change it can catch a regression in is a change to the engine, and anyone
+# making one runs it - so what the marker bought was a green run that had not
+# asked the question. Across every core the two together are three quarters of
+# a minute; `-n0` turns the cores off, which a single failing test is easier to
+# read under.
+#
+# Work stealing rather than the default share-out, because the cost of a case
+# here spans five orders of magnitude: dealing the tests out up front leaves
+# one worker on the hypergeometric integrals while the rest go idle, and a
+# worker that runs dry takes work back off the stragglers instead of waiting.
+addopts = "-n auto --dist worksteal"
