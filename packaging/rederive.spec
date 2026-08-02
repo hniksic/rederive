@@ -1,13 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""The single-file executable: one download that runs with no Python installed.
+"""What a release ships: a program that runs with no Python installed.
 
-Built from the repository root:
+There are two forms of it, out of one analysis, because the two things people want
+are different. Built from the repository root:
 
     uv run --group packaging pyinstaller packaging/rederive.spec
 
-which leaves `dist/rederive` (or `dist/rederive.exe`). `packaging/smoke.py` is what
-says whether the result works; a bundle can import cleanly and still be missing a
-file it only reads when the user asks for help.
+leaves `dist/rederive`, one file that can be downloaded and run wherever it lands.
+It pays for that on every launch: a single file has nowhere to keep an unpacked
+interpreter, so it writes one to a temporary directory each time it starts and
+takes it away again on the way out.
+
+    uv run --group packaging pyinstaller packaging/rederive.spec \
+        --distpath dist/tree -- --tree
+
+leaves `dist/tree/rederive/`, the same program as a launcher with an `_internal`
+directory beside it. Nothing is unpacked at run time because nothing is packed;
+this is the form a release tars up for people who want the program installed
+rather than tried. `RELEASING.md` says what is done with either.
+
+`packaging/smoke.py` is what says whether a build works, and it should be run
+against both: a bundle can import cleanly and still be missing a file it only reads
+when the user asks for help.
 
 Three things about this program decide what has to be written here.
 
@@ -35,12 +49,17 @@ malware looks like, and an unsigned binary already starts with as much suspicion
 it can carry.
 """
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).parent  # noqa: F821 - PyInstaller defines SPECPATH
 PACKAGE = ROOT / "src" / "rederive"
+
+#: Which of the two forms to build. PyInstaller hands a spec whatever follows `--`
+#: on its own command line, which is the only way to ask a spec a question.
+TREE = "--tree" in sys.argv
 
 a = Analysis(  # noqa: F821
     [str(ROOT / "packaging" / "entry.py")],
@@ -61,19 +80,12 @@ a = Analysis(  # noqa: F821
 
 pyz = PYZ(a.pure)  # noqa: F821
 
-exe = EXE(  # noqa: F821
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name="rederive",
+SETTINGS = dict(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -81,3 +93,16 @@ exe = EXE(  # noqa: F821
     codesign_identity=None,
     entitlements_file=None,
 )
+
+if TREE:
+    # The directory the tarball carries: the launcher, and `_internal` beside it
+    # holding everything the one file would otherwise unpack on every run.
+    exe = EXE(  # noqa: F821
+        pyz, a.scripts, [], exclude_binaries=True, name="rederive", **SETTINGS
+    )
+    COLLECT(exe, a.binaries, a.datas, name="rederive")  # noqa: F821
+else:
+    exe = EXE(  # noqa: F821
+        pyz, a.scripts, a.binaries, a.datas, [], name="rederive",
+        runtime_tmpdir=None, **SETTINGS
+    )
