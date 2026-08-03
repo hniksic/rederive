@@ -7,10 +7,6 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-    # TEMPORARY, remove before merging: `workflow_dispatch` only reaches a
-    # workflow that is already on the default branch, so until this one is
-    # merged the only way to run it is to push to the branch it lives on.
-    branches: ["standalone"]
 
 permissions:
   contents: write
