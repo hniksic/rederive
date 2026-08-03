@@ -61,7 +61,15 @@ case "${system}/${machine}" in
 esac
 
 work=""
-cleanup() { [ -n "$work" ] && rm -rf "$work"; }
+# An exit trap hands its own status to the script, so this has to end well even
+# when there is nothing to clean up - which is the case whenever the archive was
+# named rather than downloaded.
+cleanup() {
+    if [ -n "$work" ]; then
+        rm -rf "$work"
+    fi
+    return 0
+}
 trap cleanup EXIT INT TERM
 
 if [ -z "$ARCHIVE" ]; then

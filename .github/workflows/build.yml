@@ -105,30 +105,48 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install innosetup --no-progress -y
+          # The program under test exits 2 on purpose, and this step's shell would
+          # otherwise read a native command's exit code as an error of its own and
+          # end the step where nothing is wrong. Every check below says what it is
+          # about to do, so a failure names itself rather than leaving an exit code
+          # to be guessed at.
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          function Check($what, $ok) {
+            if ($ok) { Write-Host "  ok   $what" } else { Write-Host "  FAIL $what"; exit 1 }
+          }
+          function CurrentPath() {
+            $entry = Get-ItemProperty -Path HKCU:\Environment -Name Path `
+                -ErrorAction SilentlyContinue
+            if ($entry) { return $entry.Path } else { return "" }
+          }
+
+          choco install innosetup --no-progress -y | Out-Null
           $version = "0.0.0"
           if ($env:GITHUB_REF -like "refs/tags/v*") {
             $version = $env:GITHUB_REF -replace "refs/tags/v", ""
           }
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=$version" packaging\rederive.iss
-          if ($LASTEXITCODE -ne 0) { throw "the installer did not compile" }
+          & $iscc "/DAppVersion=$version" packaging\rederive.iss | Out-Null
+          Check "compiles" ($LASTEXITCODE -eq 0)
 
           Start-Process -Wait -FilePath dist\rederive-setup.exe `
               -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART"
           $installed = "$env:LOCALAPPDATA\Programs\Rederive\rederive.exe"
-          if (-not (Test-Path $installed)) { throw "the installer installed nothing" }
+          Check "installs" (Test-Path $installed)
+
           & $installed no-such-worksheet.mth
-          if ($LASTEXITCODE -ne 2) { throw "the installed program did not run" }
+          Check "the installed program runs" ($LASTEXITCODE -eq 2)
+          Check "PATH gained the directory" ((CurrentPath) -like "*Rederive*")
 
-          $path = (Get-ItemProperty -Path HKCU:\Environment -Name Path).Path
-          if ($path -notlike "*Programs\Rederive*") { throw "PATH was not added to" }
-
-          $uninstaller = "$env:LOCALAPPDATA\Programs\Rederive\unins000.exe"
-          Start-Process -Wait -FilePath $uninstaller -ArgumentList "/VERYSILENT"
-          if (Test-Path $installed) { throw "the uninstaller left the program behind" }
-          $path = (Get-ItemProperty -Path HKCU:\Environment -Name Path).Path
-          if ($path -like "*Programs\Rederive*") { throw "PATH was left behind" }
+          $uninstaller = Get-ChildItem "$env:LOCALAPPDATA\Programs\Rederive\unins*.exe" |
+              Select-Object -First 1
+          Check "the uninstaller is there" ($null -ne $uninstaller)
+          Start-Process -Wait -FilePath $uninstaller.FullName -ArgumentList "/VERYSILENT"
+          Check "uninstalling removes the program" (-not (Test-Path $installed))
+          Check "uninstalling removes the PATH entry" ((CurrentPath) -notlike "*Rederive*")
+          exit 0
 
       - name: Name the artifacts
         run: |
