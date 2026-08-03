@@ -1,13 +1,13 @@
 # Installing Rederive
 
-Rederive ships as a single self-contained binary for Linux, macOS and Windows, needing no
-Python and no dependencies. You can run that file as it is, install it properly, or skip
-the binaries and run Rederive from source.
+Rederive releases ship as a single self-contained binary for Linux, macOS and Windows,
+needing no Python and no dependencies. You can run that file as it is, install it
+properly, or skip the binaries and run Rederive from source.
 
 ## Trying it out
 
-Download one file and run it. It needs no Python and installs nothing, and deleting the
-file is the whole of uninstalling.
+Download one file and run it. It needs no Python and installs nothing, and you uninstall
+by just deleting the file.
 
 **Linux:**
 
@@ -34,9 +34,8 @@ curl.exe -LO https://github.com/hniksic/rederive/releases/latest/download/rederi
 
 The download goes through `curl` on purpose. Rederive's binaries are not code-signed -
 signing certificates cost money that a hobby project has not spent - and both macOS and
-Windows refuse to run unsigned programs that a *browser* downloaded. The refusal is
-about the mark the browser attaches, not about the file: `curl` attaches no mark, so a
-binary fetched this way simply runs. (`curl.exe` ships with Windows 10 and later.)
+Windows refuse to run unsigned programs that a *browser* downloaded. Windows 10 and
+later ship `curl.exe`.
 
 If you download through a browser anyway, you can undo the mark:
 
@@ -44,21 +43,19 @@ If you download through a browser anyway, you can undo the mark:
   Privacy & Security and press **Open Anyway** after the first refusal.
 - Windows: on the SmartScreen warning, choose **More info** → **Run anyway**.
 
-On Windows, run Rederive in [Windows
-Terminal](https://aka.ms/terminal) rather than the old console window, which has neither
-the colours nor the mouse support Rederive expects.
+On Windows, run Rederive in [Windows Terminal](https://aka.ms/terminal) rather than the
+old console window, which has neither the colors nor the mouse support Rederive expects.
 
 ## Installing it
 
-The single file above unpacks itself into a temporary directory every time it starts,
-which costs about a tenth of a second. Installing avoids that, and puts `rederive` on
-your `PATH` so it starts by name from anywhere.
+The single file above unpacks itself into a temporary directory every time it starts.
+Installing avoids that.
 
 **Windows:** download and run
 [`rederive-setup.exe`](https://github.com/hniksic/rederive/releases/latest/download/rederive-setup.exe).
-It is an ordinary installer - next, next, finish - and it adds Rederive to your `PATH`
-and to Add/Remove Programs, where uninstalling it undoes both. SmartScreen warns once
-before it starts, the installer being unsigned; choose **More info** → **Run anyway**.
+It is an ordinary installer and it adds Rederive to your `PATH` and to Add/Remove
+Programs, where uninstalling it undoes both. SmartScreen might warn once before it starts,
+due to the installer being unsigned; choose **More info** and **Run anyway**.
 
 **Linux and macOS:**
 
