@@ -7,6 +7,10 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    # TEMPORARY, remove before merging: `workflow_dispatch` only reaches a
+    # workflow already on the default branch, so this is the only way to try
+    # a change to this file before it is merged.
+    branches: ["standalone"]
 
 permissions:
   contents: write
@@ -58,8 +62,17 @@ jobs:
         with:
           enable-cache: true
 
+      # `--managed-python` so that all three platforms build on uv's own
+      # interpreter rather than on whatever the runner happens to have lying
+      # about, which is how a Windows binary once came to carry a Python no
+      # test had ever run against. `.python-version` says which one.
       - name: Install dependencies
-        run: uv sync --frozen --group packaging
+        run: uv sync --frozen --managed-python --group packaging
+
+      # A release must not be cut from code that fails its own tests, so this
+      # runs before anything is built rather than beside it.
+      - name: Run the suite
+        run: uv run pytest -q
 
       - name: Build the single file
         run: uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm

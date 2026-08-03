@@ -53,3 +53,6 @@ the same tree. Attach everything to the GitHub release.
   stay in step with it.
 - The Linux binary needs glibc 2.17, which comes from uv's interpreter rather than
   from the build machine - no old distribution or container needed.
+- `--managed-python` and `.python-version` are what keep all three platforms on one
+  interpreter. Without them uv takes whatever the machine offers, and a runner with
+  its own Python installed will quietly build against that instead.
