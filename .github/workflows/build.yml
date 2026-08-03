@@ -12,7 +12,27 @@ permissions:
   contents: write
 
 jobs:
+  # A tag is what names the release, and `src/rederive/__init__.py` is what names
+  # the version everything else is built from, so a release where the two disagree
+  # is caught here rather than after three platforms have finished building. Run by
+  # hand there is no tag and nothing to disagree with, so the check passes.
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check that the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/rederive/__init__.py)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $version; expected v$version"
+            exit 1
+          fi
+
   build:
+    needs: version
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     strategy:

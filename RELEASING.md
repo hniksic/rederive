@@ -5,7 +5,7 @@ procedure around it.
 
 ## Artifacts
 
-Names carry no version, so that the README's
+Names carry no version, so that INSTALL.md's
 `releases/latest/download/<name>` links keep working across releases.
 
 | Platform | Single file | Archive | Installer |
@@ -14,14 +14,16 @@ Names carry no version, so that the README's
 | macOS arm64 | `rederive-macos-arm64` | `rederive-macos-arm64.tar.gz` | - |
 | Windows x86_64 | `rederive-windows-x86_64.exe` | `rederive-windows-x86_64.zip` | `rederive-setup.exe` |
 
-Plus `install.sh`, which the README's Unix instructions pipe into `sh`, and
+Plus `install.sh`, which the Unix instructions pipe into `sh`, and
 `SHA256SUMS` over everything.
 
 ## Procedure
 
-Bump the version in `pyproject.toml`, commit, tag `v<version>` and push the tag.
-`.github/workflows/build.yml` builds on all three platforms, checks every build,
-compiles and test-installs the Windows installer, and publishes the release.
+Bump `__version__` in `src/rederive/__init__.py`, which is where the version is
+written and where the build reads it from, commit, tag `v<version>` and push the
+tag. `.github/workflows/build.yml` refuses a tag that does not match that version,
+then builds on all three platforms, checks every build, compiles and test-installs
+the Windows installer, and publishes the release.
 
 To build by hand instead - there is no cross-compilation, so this is once per
 platform, from a clean checkout of the tag:
@@ -47,7 +49,7 @@ the same tree. Attach everything to the GitHub release.
   to drive the rest through. What covers the rest there is the workflow's installer
   check, which installs, runs and uninstalls.
 - Nothing is signed, so macOS and Windows refuse a browser's download and SmartScreen
-  warns about the installer. The README's instructions work around that and have to
+  warns about the installer. INSTALL.md's instructions work around that and have to
   stay in step with it.
 - The Linux binary needs glibc 2.17, which comes from uv's interpreter rather than
   from the build machine - no old distribution or container needed.

@@ -13,7 +13,7 @@
 #   --archive FILE  install from an archive already downloaded
 #   --uninstall     remove both again
 #
-# Windows has an installer of its own; see the README.
+# Windows has an installer of its own; see INSTALL.md.
 
 set -eu
 
@@ -56,8 +56,8 @@ machine="$(uname -m)"
 case "${system}/${machine}" in
     Linux/x86_64) platform="linux-x86_64" ;;
     Darwin/arm64) platform="macos-arm64" ;;
-    Darwin/x86_64) fail "no build for Intel Macs; run from source (see the README)" ;;
-    *) fail "no build for ${system} ${machine}; run from source (see the README)" ;;
+    Darwin/x86_64) fail "no build for Intel Macs; run from source (see INSTALL.md)" ;;
+    *) fail "no build for ${system} ${machine}; run from source (see INSTALL.md)" ;;
 esac
 
 work=""
