@@ -13,6 +13,7 @@ form is recorded and the case says so; nothing is weakened to make a test pass.
 from __future__ import annotations
 
 import pytest
+import sympy as sp
 
 from rederive.engine.computing import (
     Amount,
@@ -22,6 +23,7 @@ from rederive.engine.computing import (
     written_as_ratio,
 )
 from rederive.engine.context import Precision
+from rederive.engine.expanding import held_about
 from rederive.syntax import ParseState, parse_expression
 
 TRIVIAL = Amount.TRIVIAL
@@ -411,3 +413,23 @@ def test_only_expand_is_evaluated():
 def test_either_head_may_be_written_inside_the_other():
     assert simplify(parse("EXPAND(FACTOR(x^2 - 1))"), Context()).text == "x^2 - 1"
     assert simplify(parse("FACTOR(EXPAND((x + 1)^2))"), Context()).text == "(x + 1)^2"
+
+
+# -- what freezing keeps ------------------------------------------------------
+
+
+def test_holding_a_sum_about_a_variable_keeps_every_term():
+    """Nothing may be lost on the way into the frozen form.
+
+    A head that is not stood in for whole is rebuilt from its arguments once
+    each has been rewritten, and a head whose arguments are not all operands
+    does not survive that: a `RootSum` carries the polynomial whose roots it
+    runs over and the dummy that polynomial shares with its summand, and
+    rebuilding it from the three of them separately gives nothing back at all.
+    A term lost here is a confidently wrong answer rather than an unreadable
+    one, so what the sum holds is pinned term for term.
+    """
+    x, t = sp.Symbol("x", real=True), sp.Dummy("t")
+    root_sum = sp.RootSum(sp.Poly(t**3 + t + 1, t), sp.Lambda(t, t * sp.log(x - t)))
+    frozen, held = held_about(sp.log(x + 1) / 7 + root_sum, x)
+    assert frozen.xreplace(held) == sp.log(x + 1) / 7 + root_sum

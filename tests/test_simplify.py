@@ -810,6 +810,24 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
     assert simp("INT(1/SQRT(1 - x^4), x)").startswith("x*HYPER(")
 
 
+def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum():
+    """The logarithmic part of these is a sum over the roots of a polynomial.
+
+    Sympy writes that as a `RootSum`, which is a head with no name in author
+    notation, and what it comes back as is a legible inert string rather than a
+    live expression. What it must never come back as is the rational part on its
+    own: `1/(x^7 + 1)` does not integrate to `LN(x + 1)/7`, and an answer that
+    quietly loses two thirds of itself is worse than one that cannot be read.
+    """
+    for text, dropped in (
+        ("INT(1/(x^7 + 1), x)", "LN(x + 1)/7"),
+        ("INT(1/(x^7 - 1), x)", "LN(x - 1)/7"),
+    ):
+        answer = simp(text)
+        assert answer != dropped
+        assert "RootSum" in answer
+
+
 def test_an_integral_is_taken_straight_through_an_interior_singularity():
     """A definite integral is the difference of the antiderivative's endpoints.
 

@@ -248,15 +248,26 @@ def _frozen(
 #:
 #: Not every argument of one is an operand: a derivative carries the variable it
 #: is taken over and how many times, a substitution the variables it binds and
-#: the points they take. Those travel as tuples, and rebuilding the head from
-#: rewritten arguments reads them as something else - `DIF(u, xi)` comes back
-#: `DIF(u, [xi, 1])` and `SUBS(u, [xi], [y])` comes back `SUBS(u, [[xi]], [y])`.
+#: the points they take, a root sum the polynomial whose roots it runs over and
+#: the generator that polynomial and its summand share. Those travel as tuples,
+#: lambdas and dummies, and rebuilding the head from rewritten arguments reads
+#: them as something else - `DIF(u, xi)` comes back `DIF(u, [xi, 1])`,
+#: `SUBS(u, [xi], [y])` comes back `SUBS(u, [[xi]], [y])`, and a root sum does
+#: not come back at all: it rebuilds into nothing and the term is lost.
 #:
 #: And what is inside one is not being expanded anyway. `sp.expand` goes deep,
 #: so an integrand would be multiplied out where nobody asked - which splits the
 #: integral into one per term, and an integral that had no answer can end up
 #: beside one that does.
-_BOUND = (sp.Derivative, sp.Integral, sp.Sum, sp.Product, sp.Limit, sp.Subs)
+_BOUND = (
+    sp.Derivative,
+    sp.Integral,
+    sp.Sum,
+    sp.Product,
+    sp.Limit,
+    sp.Subs,
+    sp.RootSum,
+)
 
 
 def _held(expression: sp.Expr, held: dict[sp.Dummy, sp.Expr]) -> sp.Expr:
