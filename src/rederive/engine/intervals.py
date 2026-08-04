@@ -82,8 +82,9 @@ def settled(expression: sp.Basic, context: Context) -> sp.Basic:
 def decided(test: sp.Basic, context: Context) -> bool | None:
     """Whether the declared intervals settle this relation, and which way.
 
-    `IF(x < 1, a, b)` is `a` where `x` was declared below one, and the test of
-    an `IF` is the one place Simplify asks whether a relation holds at all.
+    `IF(x < 1, a, b)` is `a` where `x` was declared below one, and `x < 1` on
+    its own is `true` there: the test of an `IF` and a relation standing alone
+    are put the same question and get the same answer.
     """
     if not isinstance(test, Relational):
         return None

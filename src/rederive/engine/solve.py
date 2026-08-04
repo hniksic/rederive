@@ -6,6 +6,12 @@ pipeline runs at Exact precision whatever the session is set to, the solving
 runs next, and the rounding runs last. Rounding first would leave a float
 equation with nothing exact left to solve.
 
+That Simplify is asked not to decide the relation it is handed. Simplify on its
+own answers `x = x` with `true`, which is what the original does; here the
+relation is the thing about to be solved, and a statement already answered has
+no unknown left in it. `x = @1` - every value there is - is the answer soLve
+owes for that line, and it can only be reached from the equation as authored.
+
 What makes this command unlike every other one is its answer. `simplify`,
 `factor` and `expand` each turn one expression into one expression; soLve turns
 one expression into *any number of them*, one per solution, and the session
@@ -74,7 +80,7 @@ def solved(
     """
     context = context or Context()
     exact = context.with_precision(Precision.EXACT)
-    expression = simplified(node, exact)
+    expression = simplified(node, exact, decide=False)
     interval = (
         None
         if bounds is None

@@ -374,15 +374,16 @@ INTERVALS = [
     # no answer at all about one bounded by a relation.
     ("ABS(n - 7)", "7 - n", "n :epsilon Integer [2, 5]"),
     ("ABS(n - 7)", "ABS(n - 7)", "n :epsilon Integer [2, 9]"),
-    # The test of an `IF`, which is the one place Simplify asks whether a
-    # relation holds. The relation on its own is still soLve's business.
+    # The test of an `IF`, and the bare relation, which are asked the same
+    # question and get the same answer: a bound that decides one decides both.
     ("IF(x < 1, a, b)", "a", "x :epsilon Real (0, 1)"),
     ("IF(x > 1, a, b)", "b", "x :epsilon Real (0, 1)"),
     ("IF(x <= 1, a, b)", "a", "x :epsilon Real (0, 1]"),
     ("IF(x = 1, a, b)", "b", "x :epsilon Real (0, 1)"),
     ("IF(x /= 1, a, b)", "a", "x :epsilon Real (0, 1)"),
     ("IF(x < 1, a, b)", "IF(x < 1, a, b)", "x :epsilon Real (0, 2)"),
-    ("x < 1", "x < 1", "x :epsilon Real (0, 1)"),
+    ("x < 1", "true", "x :epsilon Real (0, 1)"),
+    ("x < 1", "x < 1", "x :epsilon Real (0, 2)"),
     # As far as the reasoning reaches, which is about as far as the bounds are
     # linear in. A square of a bounded variable is bounded and sympy does not
     # see it; the answer to a question nobody can settle is the expression.
@@ -1793,10 +1794,30 @@ def test_the_utility_files_matrix_minor():
 # -- relations and logic ------------------------------------------------------
 
 
-def test_the_sides_of_a_relation_are_simplified_and_the_relation_is_not_decided():
+def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
+    """A relation is a statement, and a statement that says something definite
+    is simplified by saying it. Every row here was checked against Derive 4.11
+    under DOSBox, which answers all six `true` or `false`.
+
+    The judgement is three-valued: `3*x = x^2 + c` settles nothing and so comes
+    back as it was authored, sides simplified and the relation standing. That
+    is what leaves a conditional's test alone, and what leaves soLve something
+    to solve."""
+    assert simp("2 < 3") == "true"
+    assert simp("2 = 2") == "true"
+    assert simp("1 = 2") == "false"
+    assert simp("x = x") == "true"
+    assert simp("2 <= 2") == "true"
+    assert simp("x < x + 1") == "true"
     assert simp("x + 2*x = c + x*x") == "3*x = x^2 + c"
-    assert simp("2 = 2") == "2 = 2"
-    assert simp("2 < 3") == "2 < 3"
+
+
+def test_only_the_reals_are_ordered_so_a_complex_variable_decides_nothing():
+    """`x < x + 1` is a fact about the reals and says nothing about the complex
+    plane, where `<` has no meaning to be true of. Equality is a question every
+    domain answers, so it is decided there too."""
+    assert simp("x < x + 1", COMPLEX_X) == "x < x + 1"
+    assert simp("x = x", COMPLEX_X) == "true"
 
 
 def test_relations_joined_over_one_variable_are_solved():
@@ -1884,7 +1905,7 @@ def test_truth_tables(text, expected):
     assert simp(text) == expected
 
 
-# -- IF, the one place a test is asked whether it holds ------------------------
+# -- IF, and the test it is asked whether it holds -----------------------------
 
 CONDITIONALS = [
     ("IF(2 = 2, 1, 2)", "1", None),
@@ -1955,6 +1976,17 @@ def test_an_undecidable_conditional_keeps_the_variables_it_depends_on():
 def test_a_decided_conditional_simplifies_the_branch_it_took():
     assert simp("IF(2 = 2, (x + 1)^2 - x^2, -1)") == "2*x + 1"
     assert simp("1 + IF(2 = 2, 3, 4)") == "4"
+
+
+def test_a_conditional_answer_keeps_the_test_that_qualifies_it():
+    """A sum that has a closed form only where it converges answers with that
+    condition attached, and the condition is exactly the kind nothing can
+    decide: `ABS(x) < 1` is true for some `x` and false for others. So it
+    stands, and the answer goes on saying what it is worth.
+    """
+    assert simp("SUM(k^2*x^k, k, 1, inf)") == (
+        "IF(ABS(x) < 1, -x*(x + 1)/(x - 1)^3, SUM(k^2*x^k, k, 1, inf))"
+    )
 
 
 #: What an undecidable four-argument `IF` leaves standing where the rest of the

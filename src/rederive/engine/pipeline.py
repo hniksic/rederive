@@ -176,7 +176,9 @@ def approx(
     return simplify(node, approximate, state)
 
 
-def simplified(node: Node, context: Context | None = None) -> sp.Basic:
+def simplified(
+    node: Node, context: Context | None = None, decide: bool = True
+) -> sp.Basic:
     """The simplified expression, before it is written back out.
 
     The sympy-level entry point. `simplify` is this plus `from_sympy`; a later
@@ -191,14 +193,20 @@ def simplified(node: Node, context: Context | None = None) -> sp.Basic:
     tree to it rather than a number. So the recursion lives here, around the
     pass, where deciding the test and doing the arithmetic have already
     happened.
+
+    `decide` is what makes a relation that holds come back as `true`, and soLve
+    is the one caller that turns it off. Its pipeline runs to prepare an
+    equation for solving, not to answer it, and `x = x` decided to `true` on
+    the way in is an equation with nothing left to solve for - where the answer
+    it has to reach is `x = @1`, every value there is.
     """
     context = context or Context()
-    result = _once(node, context)
+    result = _once(node, context, decide)
     for _ in range(_UNFOLDS - 1):
         if not _unfolds_further(result, context):
             break
         try:
-            following = _once(from_sympy(result, context).exact, context)
+            following = _once(from_sympy(result, context).exact, context, decide)
         except Exception:
             break
         if following == result:
@@ -209,11 +217,11 @@ def simplified(node: Node, context: Context | None = None) -> sp.Basic:
     return result
 
 
-def _once(node: Node, context: Context) -> sp.Basic:
+def _once(node: Node, context: Context, decide: bool) -> sp.Basic:
     """One pass: substitute, convert, and transform by shape."""
     expression = to_sympy(substitute(node, context), context)
     try:
-        return _transform(expression, context)
+        return _transform(expression, context, decide)
     except Exception:
         # Whatever went wrong, the faithful translation of the input is still
         # a correct answer to "simplify this".
@@ -257,38 +265,81 @@ _UNFOLDS = 300
 # -- by shape ----------------------------------------------------------------
 
 
-def _transform(expression: sp.Basic, context: Context) -> sp.Basic:
+def _transform(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
     """Simplify one expression according to what kind of thing it is."""
     if isinstance(expression, Relational):
-        return _relation(expression, context)
+        return _relation(expression, context, decide)
     if isinstance(expression, Declare):
         return expression
     if isinstance(expression, (Assign, FunDef)):
-        return _definition(expression, context)
+        return _definition(expression, context, decide)
     if isinstance(expression, sp.MatrixBase):
-        return expression.applyfunc(lambda element: _transform(element, context))
+        return expression.applyfunc(
+            lambda element: _transform(element, context, decide)
+        )
     if isinstance(expression, (InertVector, Logical)):
-        return expression.func(*(_transform(a, context) for a in expression.args))
+        return expression.func(
+            *(_transform(a, context, decide) for a in expression.args)
+        )
     if isinstance(expression, Boolean):
-        return _boolean(expression, context)
-    return _expression(expression, context)
+        return _boolean(expression, context, decide)
+    return _expression(expression, context, decide)
 
 
-def _relation(expression: Relational, context: Context) -> sp.Basic:
-    """The two sides, simplified apart and put back together undecided.
+def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basic:
+    """The two sides simplified apart, and the relation answered if it decides.
 
-    `2 = 2` stays `2 = 2`: whether a relation holds is a question for soLve, or
-    for the test of an `IF`, and never something Simplify answers on its own.
+    `2 = 2` is `true` and `1 = 2` is `false`, which is what the original
+    answers: a relation is a statement, and simplifying a statement that says
+    something definite means saying it. The judgement is three-valued and is
+    `_decide`'s, the same reading the test of an `IF` gets, so a relation that
+    settles nothing - `x = 2`, or `ABS(x) < 1` under no declaration - comes back
+    exactly as it was authored rather than as a guess.
+
+    An ordering is asked only of sides that are real, because that is the only
+    domain it means anything over: `x < x + 1` holds for a real `x` and says
+    nothing about a complex one, where sympy's own comparison declines. An
+    equation is asked whatever the domain, `=` being a question every value
+    answers.
+
+    `decide` off is soLve's pipeline, which wants the sides simplified and the
+    relation left standing to be solved.
     """
-    left = _transform(expression.lhs, context)
-    right = _transform(expression.rhs, context)
+    left = _transform(expression.lhs, context, decide)
+    right = _transform(expression.rhs, context, decide)
     try:
-        return expression.func(left, right, evaluate=False)
+        relation = expression.func(left, right, evaluate=False)
     except Exception:
-        return expression.func(left, right)
+        relation = expression.func(left, right)
+    if not (decide and isinstance(relation, Relational) and _comparable(relation)):
+        return relation
+    held = _decide(relation, context)
+    if held is None:
+        return relation
+    return sp.true if held else sp.false
 
 
-def _definition(expression: sp.Basic, context: Context) -> sp.Basic:
+def _comparable(relation: Relational) -> bool:
+    """Whether this relation is one that can be given an answer at all.
+
+    A side holding `?` is a side whose value nobody knows, and nothing is
+    decidably equal to an unknown - sympy compares the two `?` it can see and
+    finds them the same object, which is a fact about the notation and not
+    about the values it stands for.
+
+    `<` and its three companions order their sides, and only the reals are
+    ordered, so a side not known to be real is one an ordering has no answer
+    about however the arithmetic on the two happens to come out. Equality needs
+    no such condition: every value is equal to itself or is not.
+    """
+    if relation.has(sp.nan):
+        return False
+    if isinstance(relation, (sp.Equality, sp.Unequality)):
+        return True
+    return all(side.is_extended_real is True for side in relation.args)
+
+
+def _definition(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
     """An assignment or a function definition: its value, and its own shape.
 
     The first two arguments are the name being defined and the operator that
@@ -297,11 +348,11 @@ def _definition(expression: sp.Basic, context: Context) -> sp.Basic:
     """
     head, operator, *value = expression.args
     return expression.func(
-        head, operator, *(_transform(part, context) for part in value)
+        head, operator, *(_transform(part, context, decide) for part in value)
     )
 
 
-def _boolean(expression: Boolean, context: Context) -> sp.Basic:
+def _boolean(expression: Boolean, context: Context, decide: bool) -> sp.Basic:
     """Relations joined by boolean operators, solved and simplified.
 
     `6 >= -2*x AND 3*x /= -9` is a statement about one variable, and its
@@ -322,7 +373,9 @@ def _boolean(expression: Boolean, context: Context) -> sp.Basic:
         # Handing it back to `_transform` would only arrive here again.
         return expression
     try:
-        return expression.func(*(_transform(a, context) for a in expression.args))
+        return expression.func(
+            *(_transform(a, context, decide) for a in expression.args)
+        )
     except Exception:
         return expression
 
@@ -396,14 +449,14 @@ def _reduced(expression: Boolean) -> sp.Basic | None:
 # -- the pipeline proper -----------------------------------------------------
 
 
-def _expression(expression: sp.Basic, context: Context) -> sp.Basic:
+def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
     """An ordinary expression, through the whole sequence."""
     expression, frozen = _conditionals(expression, context)
     if not frozen and isinstance(expression, sp.MatrixBase):
         # A conditional whose branches are vectors is a vector once it has been
         # taken, and a vector is simplified element by element - the same
         # answer whether the matrix was written or arrived at.
-        return _transform(expression, context)
+        return _transform(expression, context, decide)
     expression, held = _held(expression)
     tried: set[sp.Basic] = set()
     expression = _calculus(expression, context, tried)
@@ -545,7 +598,7 @@ def _coefficient_in(run: sp.Basic) -> sp.Basic:
     return sp.Mul(*(factor for factor in factors if not factor.is_Add), sp.Add(*terms))
 
 
-# -- IF, the one place a relation is asked whether it holds -------------------
+# -- IF, and asking a test whether it holds -----------------------------------
 
 
 def _conditionals(

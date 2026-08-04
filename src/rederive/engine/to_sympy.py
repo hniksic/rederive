@@ -2031,10 +2031,12 @@ def as_condition(test: sp.Basic) -> sp.Basic:
 def _test(test: sp.Basic) -> sp.Basic:
     """A condition as sympy reads one: a relation evaluated, not held.
 
-    Everywhere else a relation is assembled undecided, because whether one
-    holds is no question of Simplify's. The test of a conditional is the one
-    place where it is, and `Piecewise` is entitled to answer it - an
-    unevaluated relation is also the one form of a condition it mishandles.
+    Everywhere else a relation is assembled undecided, so that answering one is
+    the pipeline's to do - over the declared domains, and with the two sides
+    simplified first - rather than sympy's as a side effect of the conversion.
+    The test of a conditional is the exception, `Piecewise` being entitled to
+    answer its own conditions, and an unevaluated relation is also the one form
+    of a condition it mishandles.
     """
     if test.is_Relational:
         return test.func(test.lhs, test.rhs)
