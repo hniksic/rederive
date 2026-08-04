@@ -23,6 +23,7 @@ from rederive.engine.computing import (
     written_as_ratio,
 )
 from rederive.engine.context import Precision
+from rederive.engine import expanding
 from rederive.engine.expanding import held_about
 from rederive.syntax import ParseState, parse_expression
 
@@ -433,3 +434,25 @@ def test_holding_a_sum_about_a_variable_keeps_every_term():
     root_sum = sp.RootSum(sp.Poly(t**3 + t + 1, t), sp.Lambda(t, t * sp.log(x - t)))
     frozen, held = held_about(sp.log(x + 1) / 7 + root_sum, x)
     assert frozen.xreplace(held) == sp.log(x + 1) / 7 + root_sum
+
+
+def test_a_head_that_will_not_survive_freezing_is_held_whole(monkeypatch):
+    """The promise is checked, so the next such head costs nothing but tidiness.
+
+    `_BOUND` names the heads known to need standing in for whole, and a head
+    missing from it used to lose what it carried. Now the freezing is put back
+    before it is handed on, and where that does not give the expression it
+    started from the whole of it is stood in for instead - the normal form then
+    has nothing it can take apart, which is worse writing and not a worse
+    answer. `RootSum` out of `_BOUND` is the case that was real.
+    """
+    x, t = sp.Symbol("x", real=True), sp.Dummy("t")
+    root_sum = sp.RootSum(sp.Poly(t**3 + t + 1, t), sp.Lambda(t, t * sp.log(x - t)))
+    total = sp.log(x + 1) / 7 + root_sum
+    monkeypatch.setattr(
+        expanding, "_BOUND", tuple(h for h in expanding._BOUND if h is not sp.RootSum)
+    )
+    frozen, held = held_about(total, x)
+    assert frozen.xreplace(held) == total
+    # Held whole, rather than written about `x` with a term missing.
+    assert frozen.is_Symbol

@@ -167,9 +167,29 @@ def held_about(
     variable: what is opaque to an expansion is opaque to the normal form too,
     and both want to work on the frozen expression rather than only on the
     answer. `xreplace` with the map puts the placeholders back.
+
+    Freezing has one thing to promise, and it is checked here rather than
+    trusted: putting the placeholders back has to give the expression it started
+    from. `_frozen` rebuilds a head it does not know from arguments it has
+    rewritten, and a head that will not survive that loses whatever it was
+    carrying - a `RootSum` rebuilt this way came back without its sum at all,
+    and what was written afterwards was an antiderivative missing half of
+    itself. `_BOUND` names the heads known to need standing in for whole, but
+    the check is what makes the next one an expression that does not change
+    rather than an answer that is wrong. Where it fails the whole expression is
+    stood in for as one placeholder, which leaves the normal form nothing to do
+    and is always the safe reading of a sum nobody can take apart.
     """
     held: dict[sp.Dummy, sp.Expr] = {}
-    return _frozen(expression, {variable}, held), held
+    frozen = _frozen(expression, {variable}, held)
+    try:
+        reversible = frozen.xreplace(held) == expression
+    except Exception:
+        reversible = False
+    if reversible:
+        return frozen, held
+    whole: dict[sp.Dummy, sp.Expr] = {}
+    return _held(expression, whole), whole
 
 
 def collected_by(expression: sp.Expr, variable: sp.Symbol) -> sp.Expr:
