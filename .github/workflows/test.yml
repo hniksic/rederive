@@ -17,6 +17,9 @@ jobs:
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # The suite takes about two minutes. Anything past ten is a hang, and a hang
+    # left alone runs into GitHub's six-hour ceiling rather than telling anyone.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -31,5 +34,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --managed-python
 
+      # `faulthandler_timeout` dumps every thread's stack when one test overruns
+      # and then ends the process, so a hang says where it was rather than
+      # leaving the job to be killed by the clock with nothing to read.
       - name: Run the suite
-        run: uv run pytest -q
+        run: |
+          uv run pytest -q -o faulthandler_timeout=120 \
+              -o faulthandler_exit_on_timeout=true

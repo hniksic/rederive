@@ -23,6 +23,7 @@ jobs:
   version:
     name: Version
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
 
@@ -39,6 +40,8 @@ jobs:
     needs: version
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    # The suite and two builds; about five minutes' work. Twenty-five is a hang.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -71,8 +74,13 @@ jobs:
 
       # A release must not be cut from code that fails its own tests, so this
       # runs before anything is built rather than beside it.
+      # `faulthandler_timeout` dumps every thread's stack when one test overruns
+      # and then ends the process, so a hang says where it was rather than
+      # leaving the job to be killed by the clock with nothing to read.
       - name: Run the suite
-        run: uv run pytest -q
+        run: |
+          uv run pytest -q -o faulthandler_timeout=120 \
+              -o faulthandler_exit_on_timeout=true
 
       - name: Build the single file
         run: uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm
@@ -172,6 +180,7 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
