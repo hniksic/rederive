@@ -2137,6 +2137,46 @@ def test_the_approx_function_takes_the_digits_it_is_given():
     assert simp("APPROX(pi, 12)") == "5419351/1725033"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Special functions sympy does not prove finite, which are finite.
+        ("APPROX(LI(2), 15)", "1.04516"),
+        ("APPROX(SI(2), 15)", "1.60541"),
+        ("APPROX(EI(2), 15)", "4.95423"),
+        ("APPROX(COSH_INT(2), 15)", "2.45266"),
+        # What has no exact answer still has digits, which is the original's
+        # own division of labour between Simplify and approX.
+        ("APPROX(INT(SIN(x)/x, x, 1, 2), 15)", "0.659329"),
+        ("APPROX(PRODUCT(1 - 1/k^2, k, 2, inf), 15)", "0.5"),
+        # An infinity is refused, being the one thing that has no digits.
+        ("APPROX(LN(0), 15)", "±inf"),
+        ("APPROX(1/0, 15)", "±inf"),
+    ],
+    ids=str,
+)
+def test_a_value_sympy_leaves_open_is_approximated_rather_than_refused(text, expected):
+    """Finiteness is asked loosely, the way rationality is.
+
+    Sympy answers `is_finite` with `None` for `SI`, `EI`, `LI` and for any
+    integral or sum it has not worked out, and demanding a proof of finiteness
+    left all of them written as themselves. Only what is known to be infinite
+    has no digits.
+
+    Written under the notation that shows digits, so these are the six the
+    notation asks for and not the fifteen the approximation was made to.
+    """
+    assert simp(text, DECIMAL) == expected
+
+
+def test_an_approximation_holds_the_digits_it_was_asked_for():
+    # The value behind the six shown above: asking for more digits gives a
+    # nearer rational, which is what makes the approximation the one requested
+    # rather than the one the notation happens to print.
+    assert simp("APPROX(LI(2), 6)") == "2615/2502"
+    assert simp("APPROX(LI(2), 15)") == "80302381/76832342"
+
+
 def test_approx_waits_for_the_value_it_is_asked_to_approximate():
     """Which is why the head is held back rather than rounded on conversion.
 

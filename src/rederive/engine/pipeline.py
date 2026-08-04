@@ -2530,11 +2530,21 @@ def _needs_digits(expression: sp.Basic) -> bool:
     wholly numeric expression can then answer with radicals still standing in
     it. Asking for a proof of rationality instead sends the unprovable cases
     the other way, and a number can only come out a number.
+
+    Finiteness is asked the same way round and for the same reason. Only what
+    is known to be infinite is refused: `LN(0)` has no digits and never will,
+    while `SI(2)`, `EI(2)` and `LI(2)` are finite numbers sympy simply does not
+    prove finite, and demanding the proof left every one of them written as
+    itself. An unevaluated integral or sum is the same case, and approximating
+    one numerically is what the original does with what it cannot do exactly.
+    Nothing is risked by asking loosely here: `_approximate` takes only what
+    comes back a float or a rational, so a value that will not evaluate - `nan`,
+    or a quadrature that does not converge - is left standing anyway.
     """
     return (
         expression.is_number
         and expression.is_rational is not True
-        and expression.is_finite is True
+        and expression.is_finite is not False
         and not isinstance(expression, sp.Float)
     )
 
