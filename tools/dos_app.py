@@ -13,6 +13,8 @@ of the program to drive. Neither is bundled.
         app.press("a")
         app.press("x (x + 1){enter}")
         print(app.highlights())      # [(15, 8, 'x + 1', '0x70')]
+        app.press("p")               # program switches to a graphics mode
+        app.capture("plot.png")      # ... and it can still be looked at
 
 --home defaults to $DOSAPP_HOME. --run is the executable's base name, started
 once the directory is mounted as C:. --require FILE refuses to start without it.
@@ -20,18 +22,24 @@ once the directory is mounted as C:. --require FILE refuses to start without it.
 How: dosbox runs as a child with SDL_VIDEODRIVER=dummy, so no window appears.
 The emulated VGA text buffer is read out of that process with
 process_vm_readv(); keys go in by writing the guest's BIOS keyboard ring buffer
-with process_vm_writev(). No X server, no screenshots, no OCR. The screen's
-address is found at startup rather than hardcoded: a generated .COM stamps a
-random marker into video memory and the marker is searched for.
+with process_vm_writev(). No X server, no OCR. The screen's address is found at
+startup rather than hardcoded: a generated .COM stamps a random marker into
+video memory and the marker is searched for.
 
 highlights() is the useful one - a menu highlight or an inverse-video selection
 is an *attribute*, invisible in the text alone.
 
+Graphics: a second generated .COM enters mode 12h and stamps markers into each
+of the four EGA/VGA bit planes, which locates DOSBox's emulated video RAM the
+same way. That buffer is allocated once for the life of the emulator, so the
+address stays good across the guest's own mode changes; capture() decodes the
+planar bitmap for the current mode and writes a PNG. Planar 16-colour modes
+(0Dh, 0Eh, 10h, 12h) and the chained 256-colour mode 13h are handled.
+
 Limits:
-  * Text modes only (0-3, 7). Starting in a graphics mode raises; a mode change
-    later on is yours to catch with is_text_mode(). A program whose own config
-    picks a graphics mode for its main screen needs the install copied and a
-    text mode set in the copy's config.
+  * read_screen() and friends need a text mode (0-3, 7); capture() needs one of
+    the graphics modes above. is_text_mode() says which you are in. Starting in
+    a graphics mode raises, because the settle logic reads characters.
   * Settling means the screen stopped changing, not that the program finished
     thinking. For anything slow use wait_for_text().
   * Keys arrive via the BIOS ring buffer, so they reach anything reading
@@ -45,10 +53,12 @@ import os
 import random
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 
 COLS, ROWS = 80, 25
 SCREEN_BYTES = COLS * ROWS * 2
@@ -222,6 +232,84 @@ def color_name(attr):
     return f"{VGA_COLORS[attr & 15]}-on-{VGA_COLORS[(attr >> 4) & 7]}"
 
 
+# -- graphics modes ----------------------------------------------------------
+
+# The 16 colours a BIOS mode set leaves in the DAC, as RGB.
+EGA_PALETTE = [
+    (0, 0, 0), (0, 0, 170), (0, 170, 0), (0, 170, 170),
+    (170, 0, 0), (170, 0, 170), (170, 85, 0), (170, 170, 170),
+    (85, 85, 85), (85, 85, 255), (85, 255, 85), (85, 255, 255),
+    (255, 85, 85), (255, 85, 255), (255, 255, 85), (255, 255, 255),
+]
+
+# mode -> (width, height, planes); planes 0 means the chained 256-colour mode
+GRAPHICS_MODES = {
+    0x0D: (320, 200, 4),
+    0x0E: (640, 200, 4),
+    0x0F: (640, 350, 2),
+    0x10: (640, 350, 4),
+    0x11: (640, 480, 1),
+    0x12: (640, 480, 4),
+    0x13: (320, 200, 0),
+}
+
+# byte -> the 8 pixels it contributes to plane p, as 8 bytes worth 0 or 1<<p
+_BIT_TABLES = [
+    [bytes(((b >> (7 - i)) & 1) << p for i in range(8)) for b in range(256)]
+    for p in range(4)
+]
+
+
+def _or_bytes(a, b):
+    return bytes(x | y for x, y in zip(a, b))
+
+
+def write_png(path, width, height, pixels, palette):
+    """An 8-bit indexed PNG. `pixels` is one byte per pixel, row-major."""
+    def chunk(tag, data):
+        c = tag + data
+        return (struct.pack(">I", len(data)) + c +
+                struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF))
+
+    raw = b"".join(b"\0" + pixels[y * width:(y + 1) * width]
+                   for y in range(height))
+    plte = b"".join(bytes(c) for c in palette)
+    png = (b"\x89PNG\r\n\x1a\n" +
+           chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 3, 0, 0, 0)) +
+           chunk(b"PLTE", plte) +
+           chunk(b"IDAT", zlib.compress(raw, 9)) +
+           chunk(b"IEND", b""))
+    with open(path, "wb") as f:
+        f.write(png)
+    return path
+
+
+def _gcalib_com(marks):
+    """A .COM that enters mode 12h, stamps one marker into each bit plane at
+    video offset 0, waits for a key, and restores text mode."""
+    code = bytes([0xB8, 0x12, 0x00,        # mov ax,0012h   (640x480x16)
+                  0xCD, 0x10,              # int 10h
+                  0xB8, 0x00, 0xA0,        # mov ax,0A000h
+                  0x8E, 0xC0,              # mov es,ax
+                  0xFC])                   # cld
+    per_plane = 18
+    data = 0x100 + len(code) + 4 * per_plane + 11
+    for p in range(4):
+        src = data + 32 * p
+        code += bytes([0xBA, 0xC4, 0x03,               # mov dx,3C4h
+                       0xB8, 0x02, 1 << p,             # mov ax,(plane<<8)|02
+                       0xEF,                           # out dx,ax (map mask)
+                       0xBE, src & 0xFF, src >> 8,     # mov si,marker
+                       0xBF, 0x00, 0x00,               # mov di,0
+                       0xB9, 0x20, 0x00,               # mov cx,32
+                       0xF3, 0xA4])                    # rep movsb
+    code += bytes([0xB4, 0x00, 0xCD, 0x16,   # wait for a key
+                   0xB8, 0x03, 0x00, 0xCD, 0x10,
+                   0xCD, 0x20])
+    assert len(code) + 0x100 == data, (len(code), data)
+    return code + b"".join(marks)
+
+
 def resolve_home(home=None, require=None):
     home = home or os.environ.get("DOSAPP_HOME")
     if not home:
@@ -236,7 +324,7 @@ def resolve_home(home=None, require=None):
 
 class DosApp:
     def __init__(self, home=None, run=None, require=None, boot_wait=6.0,
-                 dosbox="dosbox", conf=None, verbose=False):
+                 dosbox="dosbox", conf=None, verbose=False, graphics=True):
         if not run:
             raise DosError("No program named. Pass run= (or --run).")
         self.home = resolve_home(home, require)
@@ -245,10 +333,13 @@ class DosApp:
         self.dosbox = dosbox
         self.conf = conf
         self.verbose = verbose
+        self.graphics = graphics
         self.proc = None
         self.mem = None
         self.membase = None       # host address of guest physical 0
         self.screen_addr = None   # host address of the text buffer
+        self.vram_addr = None     # host address of emulated video RAM
+        self.vram_gap = 0         # bytes between planes, 0 = 4-byte interleave
         self.follow_page = True
         self._log = None
         self._caldir = None
@@ -274,10 +365,17 @@ class DosApp:
                            0xAB,                    # stosw
                            0xE2, 0xFA,              # loop
                            0xCD, 0x20]))            # int 20h
+        gmarks = [bytes(random.choice(b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+                        for _ in range(32)) for _ in range(4)]
+        with open(os.path.join(self._caldir, "GCALIB.COM"), "wb") as f:
+            f.write(_gcalib_com(gmarks))
         # PAUSE holds the autoexec until the marker has been found, so nothing
         # can scroll row 0 away first.
         cmds = ['mount d "%s"' % self._caldir, 'mount c "%s"' % self.home,
-                "cls", "d:\\calib.com", "pause", "c:", "cls", self.run]
+                "cls", "d:\\calib.com", "pause"]
+        if self.graphics:
+            cmds.append("d:\\gcalib.com")
+        cmds += ["c:", "cls", self.run]
         argv = [self.dosbox]
         if self.conf:
             argv += ["-conf", self.conf]
@@ -294,6 +392,9 @@ class DosApp:
         self._marker = marker
         self._locate(marker)
         self.send_keys("{enter}")          # release the PAUSE
+        if self.graphics:
+            self._locate_vram(gmarks)
+            self.send_keys("{enter}")      # release GCALIB's key wait
         self.wait_settle(quiet=0.10, timeout=5.0)
         return self
 
@@ -315,6 +416,32 @@ class DosApp:
                           % (self.screen_addr, self.membase), file=sys.stderr)
                 return
         raise DosError("timed out locating the DOSBox text buffer")
+
+    def _locate_vram(self, marks, timeout=25.0):
+        # DOSBox keeps emulated video RAM in one buffer for the life of the
+        # emulator, so an address found now stays good across mode changes.
+        deadline = time.time() + timeout
+        while self.video_mode() != 0x12:
+            if time.time() > deadline or self.proc.poll() is not None:
+                raise DosError("mode 12h never came up; is machine= a VGA?")
+            time.sleep(0.1)
+        time.sleep(0.2)
+        woven = bytes(marks[p][i] for i in range(32) for p in range(4))
+        for a in self.mem.scan(woven):
+            self.vram_addr, self.vram_gap = a, 0
+            break
+        else:
+            # planes held apart rather than interleaved: find each one
+            found = [next(self.mem.scan(m), None) for m in marks]
+            if None in found:
+                raise DosError("could not locate dosbox video RAM")
+            gaps = {found[p + 1] - found[p] for p in range(3)}
+            if len(gaps) != 1:
+                raise DosError("video RAM planes are not evenly spaced")
+            self.vram_addr, self.vram_gap = found[0], gaps.pop()
+        if self.verbose:
+            print("vram @ 0x%x gap %d" % (self.vram_addr, self.vram_gap),
+                  file=sys.stderr)
 
     def recalibrate(self):
         self._locate(self._marker)
@@ -439,6 +566,42 @@ class DosApp:
             out.append("".join(parts))
         return out
 
+    # -- graphics ----------------------------------------------------------
+
+    def is_graphics_mode(self):
+        return self.video_mode() in GRAPHICS_MODES
+
+    def _plane(self, index, count, size):
+        if self.vram_gap:
+            return self.mem.read(self.vram_addr + self.vram_gap * index, size)
+        return self.mem.read(self.vram_addr, size * 4)[index::4]
+
+    def pixels(self, mode=None):
+        """(width, height, one index byte per pixel) for the current mode."""
+        if self.vram_addr is None:
+            raise DosError("no video RAM address; construct with graphics=True")
+        mode = self.video_mode() if mode is None else mode
+        if mode not in GRAPHICS_MODES:
+            raise DosError("video mode %#x is not a graphics mode I decode"
+                           % mode)
+        width, height, planes = GRAPHICS_MODES[mode]
+        if planes == 0:                                   # mode 13h, chain-4
+            raw = self.mem.read(self.vram_addr, width * height * 4)
+            return width, height, b"".join(raw[i:i + 4]
+                                           for i in range(0, len(raw), 16))
+        size = width // 8 * height
+        out = None
+        for p in range(planes):
+            table = _BIT_TABLES[p]
+            layer = b"".join(map(table.__getitem__, self._plane(p, planes, size)))
+            out = layer if out is None else _or_bytes(out, layer)
+        return width, height, out
+
+    def capture(self, path, mode=None, palette=None):
+        """Write the graphics screen to `path` as an indexed PNG."""
+        width, height, data = self.pixels(mode)
+        return write_png(path, width, height, data, palette or EGA_PALETTE)
+
     def cursor(self):
         """(row, col) of the hardware cursor on page 0."""
         d = self.mem.read(self.membase + BDA_CURSOR, 2)
@@ -475,9 +638,13 @@ class DosApp:
         return {name: "".join(chars)[:60] for name, chars in seen.items()}
 
     def show(self, title="", rows=None, numbers=True):
-        lines = self.read_screen(strip=False)
         if title:
             print(f"--- {title} ---")
+        if not self.is_text_mode():
+            print("[video mode %#x: a graphics mode, capture() it]"
+                  % self.video_mode())
+            return self
+        lines = self.read_screen(strip=False)
         for i in (range(len(lines)) if rows is None else rows):
             print((f"{i:2}|" if numbers else "") + lines[i].rstrip())
         return self
@@ -523,13 +690,22 @@ class DosApp:
 
     # -- waiting -----------------------------------------------------------
 
+    def _frame(self):
+        """Whatever the screen currently *is*, as bytes: characters in a text
+        mode, video RAM in a graphics mode."""
+        if self.vram_addr is not None and self.is_graphics_mode():
+            width, height, planes = GRAPHICS_MODES[self.video_mode()]
+            size = width * height // 8 * max(planes, 1)
+            return self.mem.read(self.vram_addr, size * (4 if planes else 1))
+        return self.raw_screen()
+
     def wait_settle(self, quiet=0.12, timeout=5.0, poll=0.02):
         """Block until the screen has been unchanged for `quiet` seconds."""
         t0 = last_change = time.time()
-        last = self.raw_screen()
+        last = self._frame()
         while True:
             time.sleep(poll)
-            cur, now = self.raw_screen(), time.time()
+            cur, now = self._frame(), time.time()
             if cur != last:
                 last, last_change = cur, now
             elif now - last_change >= quiet:
@@ -540,9 +716,9 @@ class DosApp:
     def wait_change(self, before=None, timeout=5.0, poll=0.002):
         t0 = time.time()
         if before is None:
-            before = self.raw_screen()
+            before = self._frame()
         while time.time() - t0 < timeout:
-            if self.raw_screen() != before:
+            if self._frame() != before:
                 return time.time() - t0
             time.sleep(poll)
         return None
@@ -584,15 +760,20 @@ def main(argv):
                         help="also report which cells are in inverse video")
     parser.add_argument("--palette", action="store_true",
                         help="also report every colour on screen")
+    parser.add_argument("--no-graphics", action="store_true",
+                        help="skip video RAM calibration (a little faster)")
+    parser.add_argument("--capture", metavar="FILE.png",
+                        help="write the graphics screen as a PNG and exit")
     args = parser.parse_args(argv[1:])
 
     try:
         app = DosApp(args.home, run=args.run, require=args.require,
-                     boot_wait=args.boot_wait)
+                     boot_wait=args.boot_wait, graphics=not args.no_graphics)
         with app:
             for spec in args.keys:
                 app.press(spec)
             if args.repl:
+                shots = 0
                 app.show()
                 while True:
                     try:
@@ -601,10 +782,18 @@ def main(argv):
                         break
                     if line.strip() in (".quit", ".q"):
                         break
+                    if line.startswith(".png"):
+                        name = (line.split(None, 1) + ["shot%d.png" % shots])[1]
+                        print("wrote", app.capture(name.strip()))
+                        shots += 1
+                        continue
                     app.press(line)
                     app.show()
-                    if args.highlights:
+                    if args.highlights and app.is_text_mode():
                         print("highlights:", app.highlights())
+                return 0
+            if args.capture:
+                print("wrote", app.capture(args.capture))
                 return 0
             app.show()
             if args.highlights:
