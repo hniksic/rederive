@@ -9,11 +9,11 @@ are tested with. Timing a real computation to be slow enough or hungry enough
 would make these tests about sympy's mood rather than about the recovery path.
 """
 
-import os
 import signal
 import threading
 import time
 
+import psutil
 import pytest
 
 from rederive import memory
@@ -169,10 +169,19 @@ def test_a_worker_killed_from_outside_is_replaced(mortal):
     engine.start()
     engine.simplify(tree("1 + 1"), Context())
     pid = engine._process.pid
-    threading.Timer(0.2, lambda: os.kill(pid, signal.SIGKILL)).start()
+    # Killed through psutil rather than by a signal, `SIGKILL` being a name that
+    # does not exist on Windows. What the test is about is a worker taken away by
+    # something that is not the app - the OOM killer, a task manager - and every
+    # platform can do that even where it has no signal to do it with.
+    threading.Timer(0.2, lambda: psutil.Process(pid).kill()).start()
     with pytest.raises(EngineDied) as raised:
         engine._ask("hang", ())
-    assert str(raised.value).startswith("The engine was killed")
+    # An exit code carrying a signal is the only evidence that a worker was
+    # killed rather than that it stopped, and Windows reports an ordinary code
+    # for a terminated process. The death is noticed there and recovered from
+    # either way; it is only the naming of the cause that needs a signal.
+    if hasattr(signal, "SIGKILL"):
+        assert str(raised.value).startswith("The engine was killed")
     assert engine.starts == 2
     assert engine.simplify(tree("1 + 1"), Context()).text == "2"
 

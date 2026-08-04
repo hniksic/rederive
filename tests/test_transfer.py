@@ -188,7 +188,11 @@ def test_a_hidden_name_is_offered_only_to_a_dot(tmp_path):
 
 def test_what_was_typed_is_kept_as_it_was_typed(tmp_path, monkeypatch):
     """A `~` is completed from without being written out."""
+    # Both names, because expanding `~` reads a different one on each system:
+    # POSIX asks for HOME, Windows for USERPROFILE, and setting only the first
+    # leaves Windows expanding to the real home this test must not touch.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     (tmp_path / "work.mth").touch()
     assert worksheet.completions("~/wo") == ["~/work.mth"]
 
