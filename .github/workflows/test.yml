@@ -24,6 +24,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
+    # Windows would otherwise run these in PowerShell, where a trailing
+    # backslash is an argument rather than a line continuation.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
