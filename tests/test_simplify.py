@@ -914,6 +914,60 @@ def test_a_two_sided_limit_whose_sides_disagree_is_plus_or_minus():
     assert simp("LIM(SIGN(x), x, 0)") == "±1"
 
 
+def test_a_bounded_limit_that_never_settles_is_the_range_it_keeps_to():
+    """`INTERVAL(a, b)`, where there is no one value to answer with.
+
+    `SIN(1/x)` oscillates the whole way to zero and `SIN(x)` never stops
+    oscillating at all, so none of these limits exists - but each stays inside
+    a range it keeps returning to, and the range is what is known. Answering
+    `?` would throw that away.
+
+    The last of them arrives inside a product rather than as the whole answer,
+    which is the case a head that could only be written on its own would leave
+    unreadable. None of them may come back as a `Kind.STRING`: that is what an
+    answer the notation has no name for looks like, and it is dead on arrival.
+    """
+    for text, answer in (
+        ("LIM(SIN(1/x), x, 0)", "INTERVAL(-1, 1)"),
+        ("LIM(COS(1/x), x, 0)", "INTERVAL(-1, 1)"),
+        ("LIM(SIN(x), x, inf)", "INTERVAL(-1, 1)"),
+        ("LIM(x*SIN(x), x, inf)", "inf*SIGN(INTERVAL(-1, 1))"),
+    ):
+        answered = simplify(parse(text), Context())
+        assert answered.text == answer
+        assert answered.node.kind is not Kind.STRING
+
+
+def test_an_interval_goes_on_being_computed_with():
+    """The head is live, because sympy's arithmetic over it is.
+
+    Every value in the range is carried through the operation and the answer is
+    the range of the results, which is why the square is `INTERVAL(0, 1)`: the
+    square of the range is not the range of the squares. Differentiation and
+    integration pass it through the same way, so a limit like this can be used
+    for something rather than only looked at.
+    """
+    assert simp("INTERVAL(-1, 1) + 1") == "INTERVAL(0, 2)"
+    assert simp("2*INTERVAL(-1, 1)") == "INTERVAL(-2, 2)"
+    assert simp("INTERVAL(-1, 1)^2") == "INTERVAL(0, 1)"
+    assert simp("SIN(LIM(SIN(1/x), x, 0))") == "INTERVAL(-SIN(1), SIN(1))"
+    assert simp("DIF(y*LIM(SIN(1/x), x, 0), y)") == "INTERVAL(-1, 1)"
+    assert simp("INT(LIM(SIN(1/x), x, 0), y)") == "INTERVAL(-1, 1)*y"
+
+
+def test_a_limit_that_settles_or_runs_away_is_no_interval():
+    """The range is the answer to the bounded case alone.
+
+    One that exists is its value; one that grows without bound is `±inf`, which
+    is not a range of values but a single one the notation writes both signs of;
+    and one whose two sides are different numbers is `?`, the floor's being 0
+    from the left and 1 from the right.
+    """
+    assert simp("LIM(SIN(x)/x, x, 0)") == "1"
+    assert simp("LIM(1/x, x, 0)") == "±inf"
+    assert simp("LIM(FLOOR(x), x, 1)") == "?"
+
+
 # -- special values -----------------------------------------------------------
 
 SPECIAL = [

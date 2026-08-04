@@ -398,6 +398,33 @@ def test_a_hypergeometric_head_converts_back_from_the_vectors_it_is_written_as()
     )
 
 
+def test_an_interval_converts_back_to_the_bounds_a_limit_answered_with():
+    """The way back from an `AccumBounds`, which is what the head stands for.
+
+    The bounds are not a pair of numbers that look like a value: sympy computes
+    with the object itself, so reading `INTERVAL(-1, 1)` as anything else would
+    give a value that prints the same and adds up differently.
+    """
+    assert convert("INTERVAL(-1, 1)") == sp.AccumBounds(-1, 1)
+    assert roundtrip("INTERVAL(-1, 1)") == ("INTERVAL(-1, 1)", "INTERVAL(-1, 1)")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["INTERVAL(1)", "INTERVAL(-1, 0, 1)", "INTERVAL(3, 1)", "INTERVAL(x, 2)"],
+    ids=str,
+)
+def test_an_interval_whose_bounds_are_no_bounds_stays_opaque(text):
+    """A range needs two ends, and the lower one has to be the lower one.
+
+    Sympy's own constructor decides that where it can and the notation cannot
+    lean on it where it cannot: nothing says whether `x` is below two, and a
+    range that might be the wrong way round is not one. Each stays the call it
+    was written as rather than becoming a value of some other extent.
+    """
+    assert isinstance(convert(text), AppliedUndef)
+
+
 def test_a_sum_over_the_roots_of_a_polynomial_converts_back_from_its_bound_form():
     """The way back from a `RootSum`, whose summand is a `Lambda`.
 
@@ -678,6 +705,7 @@ UNCHANGED = [
     "LIM(F(x), x, 0)",
     "LIM(F(x), x, 0, 1)",
     "TAYLOR(F(x), x, 0, 3)",
+    "INTERVAL(-1, 1)",
     "ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))",
     "ROOT_OF(t^5 - t - 1, t, 0)",
     "SOLVE(x^2 = 1, x)",

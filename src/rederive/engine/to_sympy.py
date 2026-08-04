@@ -2193,6 +2193,28 @@ def _limits_taken(value: sp.Basic) -> sp.Basic:
     return value.replace(lambda found: isinstance(found, sp.Limit), taken)
 
 
+def _interval(conv: _Converter, args: list) -> sp.Basic:
+    """`INTERVAL(a, b)`: a value known only to lie between `a` and `b`.
+
+    What a limit that stays bounded without settling comes to. `SIN(1/x)` near
+    zero takes every value in `INTERVAL(-1, 1)` and no one of them, so there is
+    no limit to name, and the bounds are what is known. Sympy calls this the
+    accumulation bounds and does interval arithmetic over it, which is why the
+    value keeps working after it is written down: `INTERVAL(-1, 1) + 1` is
+    `INTERVAL(0, 2)`, and it differentiates, integrates and approximates.
+
+    Two arguments, the lower bound first. Bounds the wrong way round describe no
+    value at all, and an undecided pair - `INTERVAL(x, 2)`, where nothing says
+    which is lower - is not one either. Both raise instead of being turned round
+    or taken on trust, leaving the call inert rather than pretending to a
+    meaning it has not got.
+    """
+    low, high = args
+    if (low <= high) is not sp.true:
+        raise ValueError("not a lower bound below an upper one")
+    return sp.AccumBounds(low, high)
+
+
 def _root_sum(conv: _Converter, args: list) -> sp.Basic:
     """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`.
 
@@ -3245,6 +3267,7 @@ FUNCTIONS: dict[str, Handler] = {
     "SUM": _summation,
     "PRODUCT": _product,
     "LIM": _limit,
+    "INTERVAL": _interval,
     "ROOT_SUM": _root_sum,
     "ROOT_OF": _root_of,
     "TAYLOR": _taylor,

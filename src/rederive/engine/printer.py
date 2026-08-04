@@ -1222,6 +1222,24 @@ class AuthorPrinter(sp.StrPrinter):
             parts.append(side)
         return f"LIM({', '.join(parts)})"
 
+    # -- a limit that stayed bounded without settling ------------------------
+
+    def _print_AccumulationBounds(self, expr):
+        """`INTERVAL(a, b)`: a value known only to lie between `a` and `b`.
+
+        What a bounded limit that does not settle comes to - `LIM(SIN(x), x,
+        inf)` is every value in `INTERVAL(-1, 1)` and no one of them. Sympy
+        calls it the accumulation bounds; `INTERVAL` is what Mathematica and
+        Maple call the same thing, and it was free here because the notation
+        writes a solution set as a chained relation rather than as a range.
+
+        A whole answer is the smaller half of what this is for. The value turns
+        up inside larger expressions as readily as on its own, `LIM(x*SIN(x),
+        x, inf)` being `inf*SIGN(INTERVAL(-1, 1))`, and a call is an atom, so
+        the precedence rules bracket it exactly as they do any other head.
+        """
+        return f"INTERVAL({self.stringify(expr.args, ', ')})"
+
     # -- the roots of a polynomial that will not factor ----------------------
 
     def _print_RootSum(self, expr):
