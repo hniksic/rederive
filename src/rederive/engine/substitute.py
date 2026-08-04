@@ -46,7 +46,7 @@ from dataclasses import dataclass, field, replace
 from rederive.engine.context import Context
 from rederive.model.expr import Kind, Node
 from rederive.syntax import ParseState
-from rederive.syntax.names import BINDING_FUNCTIONS
+from rederive.syntax.names import BINDING_FUNCTIONS, BINDING_THROUGHOUT
 
 __all__ = ["named_as_declared", "substitute"]
 
@@ -207,6 +207,11 @@ def _binding(
 
     A second argument that is no name binds nothing. `SUM(v)` over a vector's
     elements has none either, and both walk like any other call.
+
+    `BINDING_THROUGHOUT` is the exception to where the binding stops. A root sum
+    runs its summand over the roots of a polynomial written in the same variable,
+    so the arguments after the name are inside the binding rather than outside
+    it, and an assigned `t` reaches none of `ROOT_SUM(p, t, u)`.
     """
     head = node.children[0]
     if len(arguments) < 2 or arguments[1].kind is not Kind.NAME:
@@ -228,10 +233,11 @@ def _binding(
             },
             bound=scope.bound | {name},
         )
+    outer = inner if str(head.value) in BINDING_THROUGHOUT else scope
     written = (
         _walk(body, inner, context),
         index,
-        *(_walk(argument, scope, context) for argument in rest),
+        *(_walk(argument, outer, context) for argument in rest),
     )
     return replace(node, children=(head, *written))
 

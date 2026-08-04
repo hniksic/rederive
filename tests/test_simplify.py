@@ -2187,6 +2187,27 @@ def test_an_assigned_variable_is_replaced_by_its_value():
     assert simp("u + u", context) == "4*w"
 
 
+def test_a_bound_name_survives_an_assignment_wherever_the_head_binds_it():
+    """A root sum names its variable in both the polynomial and the summand.
+
+    Everywhere else the binding stops after the first argument: a sum's limits
+    are outer expressions and are substituted, and so is the index a root is
+    counted by. But a root sum runs over the roots of a polynomial written in
+    the very variable its summand names, so an assigned `t` must reach neither
+    half - otherwise the answer to an integral becomes a different expression
+    the second time it is simplified.
+    """
+    context = Context(assignments={"t": parse("5")})
+    assert simp("ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))", context) == (
+        "ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))"
+    )
+    # The cases the exception must not swallow: an index, a limit, a free name.
+    assert simp("ROOT_OF(z^5 - z - 1, z, t - 5)", context) == "ROOT_OF(z^5 - z - 1, z, 0)"
+    assert simp("SUM(k, k, 1, t)", context) == "15"
+    assert simp("SUM(t^2, t, 1, 3)", context) == "14"
+    assert simp("t + 1", context) == "6"
+
+
 def test_a_defined_function_is_replaced_by_its_body():
     context = Context(functions={"ACCELERATION": (("f", "m"), parse("f/m"))})
     assert simp("ACCELERATION(6, 2)", context) == "3"

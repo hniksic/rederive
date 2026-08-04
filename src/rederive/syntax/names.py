@@ -34,6 +34,13 @@ BINDING_FUNCTIONS: frozenset[str] = frozenset(
     """.split()
 )
 
+# The binding functions whose name covers every argument rather than the first
+# alone. A sum's limits are outer expressions and a root's index is a number, but
+# the polynomial a root sum runs over is written in the very variable its summand
+# names: `ROOT_SUM(p, t, u)` means the same `t` in `p` as in `u`, and an assigned
+# `t` may reach neither.
+BINDING_THROUGHOUT: frozenset[str] = frozenset("ROOT_SUM".split())
+
 # `e` and `i` are not here: they are ordinary free variables. `?` is the
 # unknown value and has its own token.
 CONSTANTS: frozenset[str] = frozenset(
