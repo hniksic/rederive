@@ -34,6 +34,7 @@ from rederive.engine.to_sympy import (
     Subscript,
     Taylor,
     Transposed,
+    _AMBIGUOUS_HEADS,
 )
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, parse_expression
@@ -409,6 +410,54 @@ def test_a_sympy_head_the_printer_named_converts_back_to_that_head():
     assert convert("BESSELI(1, z)") == sp.besseli(1, z)
     assert convert("EI(z)") == sp.Ei(z)
     assert convert("LOWERGAMMA(1, z)") == sp.lowergamma(1, z)
+
+
+def test_the_logarithmic_integral_is_the_one_the_integrator_produces():
+    """Two sympy classes answer to `LI`, and only one of them may have it.
+
+    `li` is the logarithmic integral and `Li` the same integral offset by
+    `li(2)`, so a name settled by alphabet rather than by choice reads `LI(2)`
+    as zero. Derive's own `EXP_INT.MTH` calls the unoffset one `LI(x, m)`, and
+    it is what integrating `1/LN(x)` produces, so it is what the name means.
+    """
+    x = sp.Symbol("x", real=True)
+    assert convert("LI(x)") == sp.li(x)
+    assert convert("LI(2)") == sp.li(2)
+    assert convert("LI(2)") != 0
+    assert roundtrip("LI(x)") == ("LI(x)", "LI(x)")
+
+
+def test_no_author_name_is_claimed_by_two_sympy_classes_undecided():
+    """What would have caught `LI`, and will catch the next one.
+
+    The table upper-cases a class name, and two classes can upper-case to the
+    same one; whichever the scan meets first then answers for both. A name in
+    that position has to be decided outright, and a name Derive has reserved is
+    not in that position at all, since no sympy class is given it.
+    """
+    claimed: dict[str, list[str]] = {}
+    for name in dir(sp.functions):
+        if isinstance(getattr(sp.functions, name), sp.FunctionClass):
+            claimed.setdefault(name.upper(), []).append(name)
+    contested = {name for name, classes in claimed.items() if len(classes) > 1}
+    assert not contested - set(_AMBIGUOUS_HEADS) - set(FUNCTIONS) - BUILTIN_FUNCTIONS
+
+
+def test_the_hyperbolic_integrals_are_named_rather_than_upper_cased():
+    """`CHI` is Derive's, so sympy's `Chi` is given a name of its own.
+
+    Upper-casing writes the hyperbolic cosine integral as `CHI`, which is the
+    chi-square distribution here and reads back as one - two functions under one
+    spelling, and no complaint from anything. Derive shipped no cosh-integral,
+    so `COSH_INT` is free, and its partner is written to match.
+    """
+    x = sp.Symbol("x", real=True)
+    assert convert("COSH_INT(x)") == sp.Chi(x)
+    assert convert("SINH_INT(x)") == sp.Shi(x)
+    assert roundtrip("COSH_INT(x)") == ("COSH_INT(x)", "COSH_INT(x)")
+    assert roundtrip("SINH_INT(x)") == ("SINH_INT(x)", "SINH_INT(x)")
+    # The name the distribution had is still the distribution's.
+    assert convert("CHI(x)") == sp.sign(x) / 2 - sp.sign(x - 1) / 2
 
 
 @pytest.mark.parametrize(

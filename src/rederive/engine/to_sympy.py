@@ -1128,6 +1128,13 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
     "ACOTH": sp.acoth,
     "ASECH": sp.asech,
     "ACSCH": sp.acsch,
+    # The hyperbolic cosine and sine integrals, which Derive shipped no name
+    # for. Upper-casing `Chi` cannot name the first: `CHI` is the chi-square
+    # distribution. `COSH_INT` is free, reads in Derive's idiom, and its
+    # partner is spelled to match rather than as the `SHI` upper-casing gives
+    # it - a name that still reads, being one `_sympy_heads` finds.
+    "COSH_INT": sp.Chi,
+    "SINH_INT": sp.Shi,
 }
 
 
@@ -3227,6 +3234,18 @@ FUNCTIONS: dict[str, Handler] = {
 }
 
 
+#: Which sympy class an author name means where more than one class claims it.
+#: The scan below keeps the first name it meets in alphabetical order, and
+#: alphabet is no way to choose between two functions: `li` is the logarithmic
+#: integral and `Li` the same integral offset by `li(2)`, so `LI(2)` decided by
+#: sorting is zero rather than 1.045. `LI` is the logarithmic integral, which is
+#: what the integrator produces and what Derive's own `EXP_INT.MTH` calls
+#: `LI(x, m)`. `Li` is left without a name rather than given a misleading one:
+#: nothing found produces it, and whatever it is called it may not be called
+#: this.
+_AMBIGUOUS_HEADS: dict[str, Callable[..., sp.Basic]] = {"LI": sp.li}
+
+
 def _sympy_heads() -> dict[str, Handler]:
     """The way back from a sympy head nobody in Derive has a name for.
 
@@ -3243,9 +3262,16 @@ def _sympy_heads() -> dict[str, Handler]:
     reading of its own or waits for the pipeline as `SOLVE` does, and nothing
     here may displace one. What is left is names no Derive worksheet can mean
     anything else by.
+
+    A name two classes answer to is decided by `_AMBIGUOUS_HEADS` before the
+    scan runs, so that the reading is chosen rather than sorted.
     """
     reserved = set(FUNCTIONS) | BUILTIN_FUNCTIONS
-    heads: dict[str, Handler] = {}
+    heads: dict[str, Handler] = {
+        name: _direct(head)
+        for name, head in _AMBIGUOUS_HEADS.items()
+        if name not in reserved
+    }
     for name in dir(sp.functions):
         head = getattr(sp.functions, name)
         if isinstance(head, sp.FunctionClass) and name.upper() not in reserved:

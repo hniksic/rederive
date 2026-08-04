@@ -828,6 +828,30 @@ def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum
         assert "RootSum" in answer
 
 
+def test_an_integral_answered_by_a_special_function_reads_back_as_that_function():
+    """An answer is only as good as the name it is written under.
+
+    Each of these was written under a name something else answers to. `LI` is
+    sympy's offset logarithmic integral, `li(x) - li(2)`, as readily as its
+    plain one; `CHI` is Derive's chi-square distribution long before it is
+    anybody's cosh-integral. So each answer read back was a different function
+    from the one computed, with nothing to say so - which is what simplifying
+    the answer again is here to catch.
+    """
+    for text, answer in (
+        ("INT(1/LN(x), x)", "LI(x)"),
+        ("INT(COSH(x)/x, x)", "COSH_INT(x)"),
+        ("INT(SINH(x)/x, x)", "SINH_INT(x)"),
+    ):
+        assert simp(text) == answer
+        assert simp(answer) == answer
+    # The offset integral is exactly zero at 2, which is what kept the wrong
+    # reading out of sight. The logarithmic integral there is 1.0451637801,
+    # and it waits for digits nothing can give it while sympy leaves the
+    # finiteness of `li(2)` open.
+    assert simp("APPROX(LI(2))") != "0"
+
+
 def test_an_integral_is_taken_straight_through_an_interior_singularity():
     """A definite integral is the difference of the antiderivative's endpoints.
 

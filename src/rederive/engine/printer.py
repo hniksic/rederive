@@ -143,6 +143,11 @@ _FUNCTION_NAMES = {
     "binomial": "COMB",
     "FallingFactorial": "PERM",
     "Heaviside": "STEP",
+    # Upper-casing would write the hyperbolic cosine integral as `CHI`, which
+    # is Derive's chi-square distribution and reads back as one; its partner is
+    # named alongside it so that the pair is written the same way.
+    "Chi": "COSH_INT",
+    "Shi": "SINH_INT",
     "Determinant": "DET",
     "Trace": "TRACE",
 }
