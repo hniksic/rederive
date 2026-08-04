@@ -398,6 +398,26 @@ def test_a_hypergeometric_head_converts_back_from_the_vectors_it_is_written_as()
     )
 
 
+def test_a_g_function_converts_back_from_the_vectors_it_is_written_as():
+    """`meijerg`'s four parameter lists, in the two pairs it holds them in.
+
+    Which of the two shapes a pair is written as depends on the lengths and
+    nothing else - two lists of a length are a matrix, and a ragged pair is
+    not - so both are read here, and the ragged one is what an integral hands
+    back most often.
+    """
+    x = sp.Symbol("x", real=True)
+    assert convert("MEIJERG([[1, 1], []], [[1], [0]], x)") == sp.meijerg(
+        ((1, 1), ()), ((1,), (0,)), x
+    )
+    assert convert("MEIJERG([[1, 2], [3, 4]], [[5, 6], [7, 8]], x)") == sp.meijerg(
+        ((1, 2), (3, 4)), ((5, 6), (7, 8)), x
+    )
+    # A half that is not a pair of lists is no G-function, and declines to the
+    # inert head rather than being guessed at.
+    assert convert("MEIJERG([1, 1], [0], x)").func is sp.Function("MEIJERG")
+
+
 def test_an_interval_converts_back_to_the_bounds_a_limit_answered_with():
     """The way back from an `AccumBounds`, which is what the head stands for.
 
@@ -712,6 +732,7 @@ UNCHANGED = [
     "IF(x > 0, 1, -1)",
     "IF(x > 0, 1)",
     "HYPER([1, 2], [3], x)",
+    "MEIJERG([[1, 1], []], [[1], [0]], x)",
     "MY_FUNCTION(x, 2)",
 ]
 

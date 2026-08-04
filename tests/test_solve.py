@@ -28,6 +28,7 @@ from rederive.engine.computing import (
     to_sympy,
 )
 from rederive.engine.context import Angle, Precision
+from rederive.model.expr import Kind
 from rederive.syntax import ParseState, parse_expression
 
 EXACT = Context()
@@ -181,6 +182,43 @@ def test_an_unsolved_inequality_keeps_its_operator():
     does not turn it into an equation, and an entry that said so would be
     saying something nobody asked."""
     assert sol("x^3 < SIN(x)") == ["x^3 - SIN(x) < 0"]
+
+
+# -- the sets sympy answers with ----------------------------------------------
+
+
+#: One equation or inequality per set head sympy hands the solver, and the
+#: relations Derive says the same thing in. `Interval`, `Union`, `EmptySet`,
+#: `FiniteSet` and the whole complex plane each arrive as a set, and author
+#: notation has no word for any of them: a chain is how a range is written, an
+#: entry apiece is how a union is, no entries at all is how emptiness is, and
+#: `@n` is how "every value there is" is.
+SETS = [
+    ("x^2 < 1", ["-1 < x < 1"]),
+    ("x^2 > 1", ["x < -1", "x > 1"]),
+    ("#e^x = 0", []),
+    ("x^2 + 1 = 0", ["x = #i", "x = -#i"]),
+    ("x^2 + 1 > 0", ["x = @1"]),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SETS, ids=str)
+def test_a_solution_set_is_written_in_the_notation_derive_has(text, expected):
+    """The conversion happens in the solver, and it may not stop happening.
+
+    Every one of these would otherwise reach the printer as the set it is, and
+    a set is not something author notation can say: it would be shown as the
+    inert text `Interval(-1, 1)` and be dead on arrival, or - worse, now that
+    the notation has an `INTERVAL` of its own - be read back as the range a
+    limit keeps to, which is a different thing that looks like an answer.
+
+    So each entry is asserted to be a live relation as well as to read the way
+    it does. `Kind.STRING` is what a lost one looks like.
+    """
+    answers = solve(parse(text), EXACT)
+    assert [answer.text for answer in answers] == expected
+    for answer in answers:
+        assert answer.node.kind is not Kind.STRING
 
 
 def test_a_chained_answer_reads_back_as_what_it_says():

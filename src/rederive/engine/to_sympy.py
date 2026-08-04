@@ -2127,6 +2127,39 @@ def _hyper(conv: _Converter, args: list) -> sp.Basic:
     return sp.hyper(tuple(_matrix(top)), tuple(_matrix(bottom)), argument)
 
 
+def _meijerg(conv: _Converter, args: list) -> sp.Basic:
+    """`MEIJERG([[a, ...], [a, ...]], [[b, ...], [b, ...]], z)`.
+
+    The G-function's four parameter lists, in the two pairs sympy holds them
+    in, each pair written as a vector of vectors because a tuple is what the
+    notation has no spelling for. Without the way back the printed form reads
+    as an inert head over matrices - the same text and a different object,
+    which computes nothing and sorts under another name.
+    """
+    top, bottom, argument = args
+    return sp.meijerg(_parameters(top), _parameters(bottom), argument)
+
+
+def _parameters(value: sp.Basic) -> tuple[tuple[sp.Basic, ...], ...]:
+    """One of `meijerg`'s two halves: a vector of two vectors, as tuples.
+
+    Which of the two the halves arrive as depends only on their lengths.
+    `[[1, 2], [3, 4]]` is a matrix, two lists of the same length being what a
+    matrix is; a pair of unequal ones is no matrix and reaches here as an
+    `InertVector`, and one of them is often empty. Both are the same pair of
+    rows, and anything else is not a pair of parameter lists at all.
+    """
+    if isinstance(value, InertVector):
+        rows = [_matrix(row) for row in value.args]
+    elif isinstance(value, sp.MatrixBase):
+        rows = [value[row, :] for row in range(value.rows)]
+    else:
+        raise TypeError("not parameter lists")
+    if len(rows) != 2:
+        raise ValueError("not two parameter lists")
+    return tuple(tuple(row) for row in rows)
+
+
 def _limit(conv: _Converter, args: list) -> sp.Basic:
     """`LIM(u, x, a)` is two-sided; a fourth argument picks a side.
 
@@ -3276,6 +3309,7 @@ FUNCTIONS: dict[str, Handler] = {
     "TRUTH_TABLE": _truth_table,
     "SUBS": _substitution,
     "HYPER": _hyper,
+    "MEIJERG": _meijerg,
     "DET": _determinant,
     "TRACE": _trace,
     "DIMENSION": _dimension,

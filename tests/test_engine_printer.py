@@ -384,6 +384,75 @@ def test_a_head_carrying_tuples_writes_them_as_vectors():
     assert written(sp.Subs(sp.Function("F")(y), y, x)) == "SUBS(F(y), [y], [x])"
 
 
+SETS = [
+    (sp.S.EmptySet, '"EmptySet"'),
+    (sp.S.Reals, '"Reals"'),
+    (sp.S.Integers, '"Integers"'),
+    (sp.S.Naturals, '"Naturals"'),
+    (sp.S.Naturals0, '"Naturals0"'),
+    (sp.S.Rationals, '"Rationals"'),
+    (sp.S.Complexes, '"Complexes"'),
+    (sp.S.UniversalSet, '"UniversalSet"'),
+    (sp.Interval(0, 1), '"Interval(0, 1)"'),
+    (sp.FiniteSet(1, 2), '"{1, 2}"'),
+    (
+        sp.Union(sp.Interval(0, 1), sp.Interval(2, 3)),
+        '"Union(Interval(0, 1), Interval(2, 3))"',
+    ),
+    (
+        sp.ImageSet(sp.Lambda(n, 2 * sp.pi * n), sp.S.Integers),
+        '"ImageSet(Lambda(n, 2*pi*n), Integers)"',
+    ),
+]
+
+
+@pytest.mark.parametrize(("expression", "expected"), SETS, ids=str)
+def test_a_set_is_written_as_the_string_the_notation_holds_it_in(
+    expression, expected, unreadable_answers
+):
+    """Author notation has no word for a sympy set, and none may look as if it
+    had one.
+
+    soLve converts every set it is handed into chained relations and `@n`
+    before anything is printed, which is Derive's own idiom and is what makes
+    these unreachable rather than merely rare. What is pinned here is what
+    happens if some later path does not: the answer says it could not be
+    written, and stops there.
+
+    Two spellings say it wrongly and are what this is against. A bare word is
+    a product of its letters to a Character-mode reader, so `EmptySet` reads
+    back as `e*m*p*t*y*s*e*t`, an expression in six variables and nonsense in
+    every one of them. And `Interval(0, 1)` is the built-in `INTERVAL`, which
+    is the range a limit keeps to rather than a set of reals: one text for two
+    meanings, which is the collision `LI` and `CHI` were. A string is neither
+    of those, and is inert on purpose.
+    """
+    assert written(expression) == expected
+    result = from_sympy(expression)
+    assert result.node.kind is Kind.STRING
+    # And the engine says so where it can be read, which is the whole of what
+    # keeps the next one of these from going unnoticed.
+    assert unreadable_answers == [expected]
+
+
+def test_a_set_inside_a_set_is_not_quoted_twice():
+    """One head could not be written, not each of its parts.
+
+    The quotes go round the outermost set and everything under them is written
+    as it would have been anyway - author notation wherever a part of it has
+    one, which is what keeps the text legible enough to diagnose.
+    """
+    condition = sp.ConditionSet(x, sp.Eq(x**2, 1), sp.S.Reals)
+    assert written(condition) == '"ConditionSet(x, x^2 = 1, Reals)"'
+
+
+def test_a_string_the_author_wrote_is_not_an_unreadable_answer(unreadable_answers):
+    """A `Kind.STRING` result is how an unwritable head is shown and also how a
+    string literal is, and only the first of them is a failure."""
+    assert from_sympy(StringLiteral("HELP.MTH")).node.kind is Kind.STRING
+    assert unreadable_answers == []
+
+
 def test_a_sympy_bound_variable_is_written_as_an_ordinary_name():
     # Sympy writes a `Dummy` as `_k1`, and `_k1` does not lex.
     assert written(sp.Dummy("k1")) == "k1"

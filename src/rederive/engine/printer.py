@@ -753,6 +753,7 @@ class AuthorPrinter(sp.StrPrinter):
         super().__init__({"full_prec": False, "order": "grlex"})
         self.context = context or Context()
         self.authored = authored or {}
+        self._unspelling = False
 
     def _print(self, expr, **kwargs):
         """One subexpression, as the author wrote it where that is on record.
@@ -768,11 +769,18 @@ class AuthorPrinter(sp.StrPrinter):
         A conditional is the only thing recorded, and looking one up here costs
         a dictionary miss per printed node while the record is empty, which is
         every command but Simplify.
+
+        A set is the one head caught on the way past rather than by a
+        `_print_*` method of its own: sympy has a dozen classes for them and
+        the notation has a word for none of them, so the family is answered
+        once, by `_unspelled`.
         """
         if self.authored and isinstance(expr, (sp.Piecewise, AppliedUndef)):
             written = self.authored.get(expr)
             if written is not None:
                 return written
+        if isinstance(expr, sp.Set) and not self._unspelling:
+            return self._unspelled(expr)
         return super()._print(expr, **kwargs)
 
     # -- sums ---------------------------------------------------------------
@@ -1368,6 +1376,28 @@ class AuthorPrinter(sp.StrPrinter):
 
     def _print_StringLiteral(self, expr):
         return f'"{expr.name}"'
+
+    def _unspelled(self, expr):
+        """A head the notation has no word for, written as the string it is.
+
+        Sympy's sets reach here as `Interval(0, 1)` or as the bare word
+        `Reals`, and author notation says neither. A bare word is a product of
+        its letters to a Character-mode reader, so `EmptySet` comes back as
+        `e*m*p*t*y*s*e*t`; `Interval(0, 1)` reads as the built-in `INTERVAL`,
+        which is the range a limit keeps to and not a set of reals. Both look
+        computed and neither is, which is worse than an answer that says
+        plainly it could not be written - and a quoted string is what the
+        notation has for text it cannot read.
+
+        Between the quotes is the text the answer would have shown without
+        them, author notation wherever a part of it has one. Nothing inside is
+        quoted again: the whole head is the one thing that could not be said.
+        """
+        self._unspelling = True
+        try:
+            return f'"{super()._print(expr)}"'
+        finally:
+            self._unspelling = False
 
     def _print_Power(self, expr):
         base, exponent = expr.args

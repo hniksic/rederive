@@ -18,6 +18,7 @@ and it is None when the two would be the same text.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 
 import sympy as sp
@@ -38,6 +39,33 @@ from rederive.syntax import (
 
 #: What joins a subscripted symbol's parts in its name.
 _SUBSCRIPT = " SUB "
+
+#: Every answer the notation could not say, each the first time it was met.
+#:
+#: Falling back to an inert string is right for a head nobody foresaw. Doing it
+#: silently is not: `RootSum`, `AccumBounds` and the set heads all reached the
+#: worksheet as dead text and none of them was found by anything but somebody
+#: going to look. So each is noted here and written to the log, and the suite
+#: reads the list to ask of every command it runs that the list stayed empty.
+UNREADABLE: list[str] = []
+
+
+def _unreadable(text: str) -> None:
+    """Note an answer that is not author notation, where it can be read.
+
+    The worker has no terminal and its standard error is its log file, opened
+    by the first thing written to it, so a line here is a line in the log of
+    the process that computed the answer - which is where a head nobody
+    anticipated should turn up, rather than in somebody's reading of a node
+    kind.
+
+    Once per distinct text and per process. An answer met a thousand times is
+    one thing to name, and a log that repeats itself is a log nobody reads.
+    """
+    if text in UNREADABLE:
+        return
+    UNREADABLE.append(text)
+    print(f"result not readable as author notation: {text}", file=sys.stderr)
 
 
 def from_sympy(
@@ -65,7 +93,14 @@ def from_sympy(
     except DeriveSyntaxError:
         # Nothing the engine produces should be unreadable, but a result that
         # is stays inert and legible rather than taking the command down.
+        _unreadable(text)
         return Result(Node(Kind.STRING, 0, len(text), (), text), text)
+    if node.kind is Kind.STRING and not isinstance(expression, StringLiteral):
+        # A head the printer had no word for, written as the quoted string the
+        # notation keeps unreadable text in. It reparses, and it is as dead as
+        # one that did not, so it is worth the same notice. A string the author
+        # wrote is a string and not a failure.
+        _unreadable(text)
     return Result(node, text, _exact(expression, context, state, text, authored))
 
 
