@@ -1222,6 +1222,32 @@ class AuthorPrinter(sp.StrPrinter):
             parts.append(side)
         return f"LIM({', '.join(parts)})"
 
+    # -- the roots of a polynomial that will not factor ----------------------
+
+    def _print_RootSum(self, expr):
+        """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`.
+
+        Sympy answers a rational integral this way where the denominator has no
+        factors to take it apart into, and the summand it carries is a `Lambda`,
+        which the notation has no spelling for. What it does have is the binding
+        heads' own shape, the bound variable second - so the summand is written
+        in the polynomial's generator and the `Lambda` disappears.
+        """
+        variable = expr.poly.gen
+        parts = (expr.poly.as_expr(), variable, expr.fun(variable))
+        return f"ROOT_SUM({self.stringify(parts, ', ')})"
+
+    def _print_ComplexRootOf(self, expr):
+        """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counted from zero.
+
+        A single root of the kind a `ROOT_SUM` sums over. The generator is not
+        among the arguments sympy holds - those are the polynomial and the index
+        alone - so it is read off the polynomial, which is where the class
+        itself keeps it.
+        """
+        parts = (expr.poly.as_expr(), expr.poly.gen, sp.Integer(expr.index))
+        return f"ROOT_OF({self.stringify(parts, ', ')})"
+
     # -- vectors and matrices ------------------------------------------------
 
     def _print_Tuple(self, expr):

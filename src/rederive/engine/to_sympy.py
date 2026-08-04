@@ -2193,6 +2193,50 @@ def _limits_taken(value: sp.Basic) -> sp.Basic:
     return value.replace(lambda found: isinstance(found, sp.Limit), taken)
 
 
+def _root_sum(conv: _Converter, args: list) -> sp.Basic:
+    """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`.
+
+    What the logarithmic part of a rational integral comes to where the
+    denominator has no factors to take it apart into: `INT(1/(x^5 - x - 1), x)`
+    is such a sum over the roots of the quintic, and there is no writing it out
+    in radicals. Sympy holds the summand as a `Lambda` over the polynomial's
+    generator; the notation says the same thing by naming the bound variable
+    second, as `SUM` names its index.
+
+    Three arguments, a variable where the variable belongs, and a polynomial in
+    that variable alone. Anything else is a call this cannot make sense of, and
+    it raises rather than guess - `ROOT_SUM(u, k)` is an inert head, not a sum
+    over the roots of something.
+    """
+    polynomial, variable, summand = args
+    if type(variable) is not sp.Symbol:
+        raise TypeError("not a variable")
+    if polynomial.free_symbols - {variable}:
+        raise ValueError("not a polynomial in that variable alone")
+    # `Poly` refuses what is no polynomial at all and the degree refuses a
+    # constant: neither `SIN(t)` nor 2 has roots for a sum to run over.
+    if sp.Poly(polynomial, variable).degree() < 1:
+        raise ValueError("not a polynomial with roots")
+    return sp.RootSum(polynomial, sp.Lambda(variable, summand), variable)
+
+
+def _root_of(conv: _Converter, args: list) -> sp.Basic:
+    """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counted from zero.
+
+    One root of the kind `ROOT_SUM` sums over, and what sympy hands back where
+    a quintic or worse has to be solved. The index orders the roots the way
+    sympy orders them - the real ones ascending, then the complex ones - and it
+    is part of the value: two roots of one polynomial are told apart by nothing
+    else.
+    """
+    polynomial, variable, index = args
+    if type(variable) is not sp.Symbol:
+        raise TypeError("not a variable")
+    if not isinstance(index, sp.Integer):
+        raise TypeError("not an index")
+    return sp.CRootOf(polynomial, variable, int(index))
+
+
 def _determinant(conv: _Converter, args: list) -> sp.Basic:
     """`DET(u)`: the number, or what section 8.8 says a symbolic one is worth.
 
@@ -3201,6 +3245,8 @@ FUNCTIONS: dict[str, Handler] = {
     "SUM": _summation,
     "PRODUCT": _product,
     "LIM": _limit,
+    "ROOT_SUM": _root_sum,
+    "ROOT_OF": _root_of,
     "TAYLOR": _taylor,
     "APPROX": _approximation,
     "IF": _conditional,

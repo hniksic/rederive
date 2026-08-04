@@ -813,19 +813,61 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
 def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum():
     """The logarithmic part of these is a sum over the roots of a polynomial.
 
-    Sympy writes that as a `RootSum`, which is a head with no name in author
-    notation, and what it comes back as is a legible inert string rather than a
-    live expression. What it must never come back as is the rational part on its
-    own: `1/(x^7 + 1)` does not integrate to `LN(x + 1)/7`, and an answer that
+    `ROOT_SUM(p, t, u)` is what the notation calls that, and the answer is the
+    rational part plus one. What it must never be is the rational part alone:
+    `1/(x^7 + 1)` does not integrate to `LN(x + 1)/7`, and an answer that
     quietly loses two thirds of itself is worse than one that cannot be read.
+
+    The polynomial summed over is the resolvent sympy builds and not the
+    denominator it came from, which is why the coefficients are powers of seven:
+    the roots of one are the roots of the other scaled, and the summand is
+    scaled to match.
     """
-    for text, dropped in (
-        ("INT(1/(x^7 + 1), x)", "LN(x + 1)/7"),
-        ("INT(1/(x^7 - 1), x)", "LN(x - 1)/7"),
+    for text, answer in (
+        (
+            "INT(1/(x^7 + 1), x)",
+            "LN(x + 1)/7 + ROOT_SUM(117649*t^6 + 16807*t^5 + 2401*t^4 + 343*t^3 "
+            "+ 49*t^2 + 7*t + 1, t, t*LN(x + 7*t))",
+        ),
+        (
+            "INT(1/(x^7 - 1), x)",
+            "LN(x - 1)/7 + ROOT_SUM(117649*t^6 + 16807*t^5 + 2401*t^4 + 343*t^3 "
+            "+ 49*t^2 + 7*t + 1, t, t*LN(x - 7*t))",
+        ),
     ):
-        answer = simp(text)
-        assert answer != dropped
-        assert "RootSum" in answer
+        assert simp(text) == answer
+
+
+def test_a_sum_over_the_roots_of_a_polynomial_is_an_expression_and_not_a_string():
+    """The head is live: it differentiates, and it settles.
+
+    A quartic that does not factor has an antiderivative that is nothing but
+    such a sum, so this is the head on its own rather than beside a rational
+    part. Differentiating it back to the integrand is what says it is an
+    expression and not a decorative one - a `Kind.STRING` would print the same
+    and do none of it.
+    """
+    answer = simplify(parse("INT(1/(x^4 + x + 1), x)"), Context())
+    assert answer.node.kind is not Kind.STRING
+    assert answer.text == (
+        "ROOT_SUM(229*t^4 + 18*t^2 + 8*t + 1, t, "
+        "t*LN(x + 2061*t^3/64 - 687*t^2/64 + 391*t/64 + 27/64))"
+    )
+    assert simp(f"DIF({answer.text}, x)") == "1/(x^4 + x + 1)"
+    # And it is a fixed point: read back, it is the answer it was written from.
+    assert simp(answer.text) == answer.text
+
+
+def test_a_single_root_of_a_polynomial_approximates_to_that_root():
+    """`ROOT_OF` is the same idea for one indexed root, and it is as live.
+
+    Nothing found produces one today, so it is the companion of `ROOT_SUM`
+    rather than an answer anything gives; what it must do is be a number when a
+    number is asked for. The quintic's one real root is 1.1673039782...
+    """
+    assert approx(parse("ROOT_OF(t^5 - t - 1, t, 0)"), Context(), 10).text == (
+        "1.167303978"
+    )
 
 
 def test_an_integral_answered_by_a_special_function_reads_back_as_that_function():

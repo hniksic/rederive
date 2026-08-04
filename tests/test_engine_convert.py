@@ -398,6 +398,66 @@ def test_a_hypergeometric_head_converts_back_from_the_vectors_it_is_written_as()
     )
 
 
+def test_a_sum_over_the_roots_of_a_polynomial_converts_back_from_its_bound_form():
+    """The way back from a `RootSum`, whose summand is a `Lambda`.
+
+    A lambda is not something the notation writes, and it does not have to be:
+    naming the bound variable second is what every binding head does, and the
+    summand written in that variable says the same thing. Reading it back has
+    to rebuild the head itself - a sum over roots reassembled from its parts is
+    a different object, and one the printer would then write differently.
+    """
+    x, t = sp.Symbol("x", real=True), sp.Symbol("t", real=True)
+    summed = convert("ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))")
+    assert summed == sp.RootSum(t**3 + t + 1, sp.Lambda(t, t * sp.log(x - t)), t)
+    assert roundtrip("ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))") == (
+        "ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))",
+        "ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))",
+    )
+
+
+def test_a_single_root_of_a_polynomial_carries_the_index_that_picks_it():
+    """`ROOT_OF(p, t, n)`, where sympy carries the polynomial and the index.
+
+    The generator is not one of the class's own arguments, so the printer reads
+    it off the polynomial; without it the second root of a quintic and the
+    third would be written the same way.
+    """
+    t = sp.Symbol("t", real=True)
+    assert convert("ROOT_OF(t^5 - t - 1, t, 0)") == sp.CRootOf(t**5 - t - 1, t, 0)
+    assert convert("ROOT_OF(t^5 - t - 1, t, 1)") != convert("ROOT_OF(t^5 - t - 1, t, 0)")
+    assert roundtrip("ROOT_OF(t^5 - t - 1, t, 0)") == (
+        "ROOT_OF(t^5 - t - 1, t, 0)",
+        "ROOT_OF(t^5 - t - 1, t, 0)",
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ROOT_SUM(x, 2)",
+        "ROOT_SUM(SIN(t), t, t)",
+        "ROOT_SUM(2, t, t)",
+        "ROOT_SUM(t^3 + u, t, t*LN(x - t))",
+        "ROOT_SUM(t^3 + t + 1, 2, t)",
+        "ROOT_OF(x, 2)",
+        "ROOT_OF(t^5 - t - 1, t, 1/2)",
+        "ROOT_OF(t^5 - t - 1, t, 9)",
+    ],
+    ids=str,
+)
+def test_a_root_head_given_arguments_it_cannot_take_stays_opaque(text):
+    """None of these names a root, so none of them is read as one.
+
+    A sine and a constant have no roots for a sum to run over, a polynomial in
+    two variables none until one of them is chosen, a half is no index and a
+    ninth root of a quintic is no root at all. Each stays the call it was
+    written as, which is what the inventory's totality test asks of every name
+    in it.
+    """
+    assert isinstance(convert(text), AppliedUndef)
+
+
 def test_a_sympy_head_the_printer_named_converts_back_to_that_head():
     """The inverse of writing a sympy function as its name upper-cased.
 
@@ -618,6 +678,8 @@ UNCHANGED = [
     "LIM(F(x), x, 0)",
     "LIM(F(x), x, 0, 1)",
     "TAYLOR(F(x), x, 0, 3)",
+    "ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))",
+    "ROOT_OF(t^5 - t - 1, t, 0)",
     "SOLVE(x^2 = 1, x)",
     "IF(x > 0, 1, -1)",
     "IF(x > 0, 1)",
