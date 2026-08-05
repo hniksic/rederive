@@ -494,6 +494,119 @@ def test_the_shading_of_a_surface_runs_from_dim_to_full(solid):
     assert 0.0 < shading.min() < shading.max() <= 1.0
 
 
+# -- the refined boundary: a mesh that stops where the surface does ------------
+#
+# Section 9's geometry, still without a graphics card: the sampler bisects the
+# domain's edge on the closure, the mesh fills the partial cells from the
+# crossings, and the clip trims the result by interpolation alone.
+
+
+def _dome(x, y):
+    with np.errstate(all="ignore"):
+        return np.sqrt(1 - x**2 - y**2)
+
+
+def test_the_domes_rim_is_refined_onto_the_unit_circle(solid):
+    # The acceptance case: at the default 64 x 64 grid, the rim of
+    # `SQRT(1-x^2-y^2)` over [-2, 2] sits on the unit circle to within a
+    # fraction of a cell, on the defined side, with none of the z teeth the
+    # grid-aligned boundary had.
+    xs, ys, values = _grid(_dome, n=64)
+    boundary = evaluate.grid_boundary(_dome, xs, ys, values)
+    cell = xs[1] - xs[0]
+    crossed = np.isfinite(boundary.across)
+    assert crossed.any()
+    radius = np.hypot(
+        boundary.across[crossed], np.broadcast_to(ys, boundary.across.shape)[crossed]
+    )
+    assert radius.max() <= 1.0 + 1e-9
+    assert radius.min() >= 1.0 - cell / 8
+    assert boundary.across_z[crossed].max() <= 0.1
+    # The mesh built from the crossings reaches the circle and never leaves it.
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (0.0, 1.0))
+    vertexes, faces, shading = solid.mesh(xs, ys, values, box, boundary)
+    assert len(faces) > len(solid.mesh(xs, ys, values, box)[1])
+    used = vertexes[np.unique(faces.reshape(-1))]
+    scale = (2.0 - -2.0) / solid.WORLD
+    reach = np.hypot(used[:, 0] * scale, used[:, 1] * scale)
+    assert reach.max() <= 1.0 + 1e-6
+    assert reach.max() >= 1.0 - cell / 8
+    assert np.isfinite(shading).all()
+
+
+def test_a_grid_aligned_boundary_stays_straight(solid):
+    # `SQRT(x)` over a domain crossing zero ends exactly on the grid line at
+    # x = 0, and the refinement must leave it there: no wobble.
+    def half(x, y):
+        with np.errstate(all="ignore"):
+            return np.sqrt(x) + 0.0 * y
+
+    xs, ys, values = _grid(half)
+    boundary = evaluate.grid_boundary(half, xs, ys, values)
+    crossed = np.isfinite(boundary.across)
+    assert crossed.any()
+    assert (boundary.across[crossed] == 0.0).all()
+    assert not np.isfinite(boundary.along).any()
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (0.0, 1.5))
+    vertexes, faces, _ = solid.mesh(xs, ys, values, box, boundary)
+    used = vertexes[np.unique(faces.reshape(-1))]
+    assert used[:, 0].min() >= -1e-9  # x = 0 is the world's own origin here
+
+
+def test_the_ambiguous_cell_is_resolved_one_fixed_way(solid):
+    # Two diagonally opposite defined corners: filled as two separate
+    # triangles, each holding exactly one defined corner, whichever diagonal
+    # the definedness runs along.
+    def diagonal(x, y):
+        return np.where(np.abs(x - y) < 0.3, 0.5, np.nan)
+
+    def other(x, y):
+        return np.where(np.abs(x + y - 1.0) < 0.3, 0.5, np.nan)
+
+    xs = np.array([0.0, 1.0])
+    ys = np.array([0.0, 1.0])
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
+    box = solid.Box((0.0, 1.0), (0.0, 1.0), (0.0, 1.0))
+    corners = {
+        (-solid.HALF, -solid.HALF),
+        (solid.HALF, -solid.HALF),
+        (solid.HALF, solid.HALF),
+        (-solid.HALF, solid.HALF),
+    }
+    for f in (diagonal, other):
+        values = f(grid_x, grid_y)
+        boundary = evaluate.grid_boundary(f, xs, ys, values)
+        vertexes, faces, _ = solid.mesh(xs, ys, values, box, boundary)
+        assert len(faces) == 2
+        for face in faces:
+            touched = [
+                tuple(np.round(vertexes[k][:2], 6).tolist()) in corners for k in face
+            ]
+            assert sum(touched) == 1
+
+
+def test_an_unbounded_boundary_value_is_trimmed_by_the_clip(solid):
+    # `LOG(x)` runs to minus infinity at its boundary, so the refined boundary
+    # vertex is enormous; the clip trims it like any other, and the mesh ends
+    # exactly on the clip plane rather than outside the box or a cell short.
+    def logged(x, y):
+        with np.errstate(all="ignore"):
+            return np.log(x) + 0.0 * y
+
+    xs, ys, values = _grid(logged)
+    boundary = evaluate.grid_boundary(logged, xs, ys, values)
+    crossed = np.isfinite(boundary.across)
+    assert boundary.across_z[crossed].min() < -4.0
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-2.0, 1.0))
+    vertexes, faces, shading = solid.mesh(xs, ys, values, box, boundary)
+    used = vertexes[np.unique(faces.reshape(-1))]
+    top = box.height / 2
+    assert used[:, 2].min() >= -top - 1e-5
+    assert used[:, 2].max() <= top + 1e-5
+    assert used[:, 2].min() == pytest.approx(-top, abs=1e-5)
+    assert np.isfinite(shading).all()
+
+
 # -- window titles ---------------------------------------------------------------
 #
 # A window is titled by what it holds; the number that keys the protocol is no
@@ -1117,6 +1230,40 @@ def test_an_edited_grid_hands_the_new_count_back_to_the_host(deep, solid):
     deep.fields["x0"].setText("-2")
     deep._edited()
     assert deep.host.adjustments == {"grid": 48}
+
+
+def test_a_surfaces_boundary_arrives_beside_its_arrays(deep, solid):
+    # The refinement runs on the sampling thread with `grid_eval` and is cached
+    # on the surface, where the mesh - and section 10's wire - can read it.
+    surface = solid.Surface(
+        worksheet=1,
+        label="#1",
+        text="SQRT(1-x^2-y^2)",
+        kind=PlotKind.SURFACE,
+        node=parsed("SQRT(1-x^2-y^2)"),
+        context=Context(),
+        options=plots.Options(variables=("x", "y")),
+        state=ParseState(),
+    )
+    deep.add(surface)
+    assert isinstance(surface.boundary, evaluate.Boundary)
+    assert np.isfinite(surface.boundary.across).any()
+    assert np.isfinite(surface.boundary.along).any()
+
+
+def test_an_all_nan_surface_still_says_no_real_values(deep, solid):
+    surface = solid.Surface(
+        worksheet=1,
+        label="#5",
+        text="SQRT(-1-x^2-y^2)",
+        kind=PlotKind.SURFACE,
+        node=parsed("SQRT(-1-x^2-y^2)"),
+        context=Context(),
+        options=plots.Options(variables=("x", "y")),
+        state=ParseState(),
+    )
+    deep.add(surface)
+    assert deep.status.text() == "#5: no real values over this domain"
 
 
 def test_the_3d_clear_button_empties_its_own_window(deep, solid):

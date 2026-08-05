@@ -26,9 +26,12 @@ the status bar saying so. Vertices outside the clip leave the mesh exactly as
 non-real ones do, so the spike is not drawn flattened against the lid - it is
 simply not there, and the sentence says why.
 
-**Holes are holes.** `SQRT(1-x^2-y^2)` is a dome over the unit disc and nothing
-at all outside it, so every face with a non-real corner is dropped before the
-mesh is handed to OpenGL. `GLSurfacePlotItem` cannot do that - it generates the
+**Holes are holes, and the mesh stops where the surface does.**
+`SQRT(1-x^2-y^2)` is a dome over the unit disc and nothing at all outside it,
+so faces are kept only where the surface is real, and a cell the domain's edge
+crosses is filled up to the boundary the sampler refined - on the closure, to
+a fraction of a cell - rather than dropped, so the dome's rim is a circle and
+not a staircase. `GLSurfacePlotItem` cannot do any of that - it generates the
 full grid of faces from the array's shape - so the triangles are built here and
 drawn by a plain `GLMeshItem`. What the item does with a NaN vertex is not a
 contract anyone has written down, and a dome with a skirt of garbage triangles
@@ -196,6 +199,10 @@ class Surface:
     xs: np.ndarray = field(default_factory=lambda: np.empty(0))
     ys: np.ndarray = field(default_factory=lambda: np.empty(0))
     values: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
+    #: Where the surface stops being real, refined along the grid's edges on
+    #: the sampling thread and cached beside the arrays it was found on: the
+    #: mesh reads it to end at the boundary rather than a grid step short.
+    boundary: evaluate.Boundary | None = None
     hidden: bool = False
     #: Which evaluation these values came from. A job whose generation has
     #: moved on is a job about a domain that is gone.
@@ -320,33 +327,48 @@ def extent(arrays: Sequence[np.ndarray]) -> tuple[tuple[float, float], bool] | N
 
 
 def mesh(
-    xs: np.ndarray, ys: np.ndarray, values: np.ndarray, box: Box
+    xs: np.ndarray,
+    ys: np.ndarray,
+    values: np.ndarray,
+    box: Box,
+    boundary: evaluate.Boundary | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """One surface as vertices in the box, the faces that are whole, and shading.
+    """One surface as vertices in the box, the faces that reach it, and shading.
 
-    A face is kept only where all four of its corners are real, finite and
-    inside the box, so the mesh of a dome ends at the edge of its domain and
-    the mesh of a spiked surface ends at the clip. The dropped corners keep a
-    vertex each - unreferenced by any face, and therefore not drawn - because
-    renumbering the survivors would cost more than the few kilobytes the holes
-    are worth.
+    A face is kept whole where all four of its corners are real, finite and
+    inside the box. A cell that the edge of the surface's domain crosses is
+    filled up to the boundary instead of dropped: its defined corners plus the
+    refined crossing points `boundary` carries make a triangle, a quadrilateral
+    or a pentagon - the marching-squares cases - so the mesh ends where the
+    surface does rather than a grid step short. The clip planes come second,
+    array-only and evaluation-free because the box moves on the Qt thread: the
+    boundary there is a known z, so every partial cell's polygon is trimmed to
+    it by linear interpolation along its edges, which is also what saves a
+    boundary vertex whose limit is unbounded. Without `boundary` the cells the
+    domain's edge crosses are dropped as before; the clip trimming needs no
+    refinement data and happens regardless.
+
+    The corners a face never references keep a vertex each - unreferenced, and
+    therefore not drawn - because renumbering the survivors would cost more
+    than the few kilobytes the holes are worth.
 
     The shading comes back beside the mesh because it is read off the same
     array: how high a vertex is and which way the surface faces there are both
     questions about z, and answering them here is what leaves the drawing with
-    no normals to compute and no lighting to do.
+    no normals to compute and no lighting to do. A vertex on the boundary is
+    not on the grid, so its light is interpolated along the edge it sits on
+    rather than read from a gradient that has no cell there.
     """
     zs = np.asarray(values, dtype=np.float64)
     if zs.ndim != 2 or zs.shape[0] < 2 or zs.shape[1] < 2:
         return np.empty((0, 3), dtype=np.float32), _no_faces(), np.empty(0)
-    inside = np.isfinite(zs) & (zs >= box.z[0]) & (zs <= box.z[1])
+    finite = np.isfinite(zs)
     low, high = box.z
+    inside = finite & (zs >= low) & (zs <= high)
     heights = np.clip((zs - low) / (high - low), 0.0, 1.0)
-    heights = np.where(inside, heights, 0.0)
+    lit = _lit(np.where(finite, box.up(zs), np.nan))
+    shading = HEIGHT_SHARE * (DIM + (1.0 - DIM) * heights) + (1.0 - HEIGHT_SHARE) * lit
     upright = np.where(inside, box.up(zs), -box.height / 2)
-    shading = HEIGHT_SHARE * (DIM + (1.0 - DIM) * heights) + (
-        1.0 - HEIGHT_SHARE
-    ) * _lit(np.where(inside, upright, np.nan))
     across, along = np.meshgrid(box.across(xs), box.along(ys), indexing="ij")
     vertexes = np.stack([across, along, upright], axis=-1).reshape(-1, 3)
     index = np.arange(zs.size).reshape(zs.shape)
@@ -363,11 +385,216 @@ def mesh(
             np.stack([corners[0], corners[2], corners[3]], axis=1),
         ]
     )
+    gained, patches = _partial(
+        xs, ys, zs, finite, whole, shading, lit, boundary, box, offset=zs.size
+    )
+    # A vertex with no value has no shading either; it is unreferenced, and the
+    # colors it feeds must merely be numbers.
+    flat = np.nan_to_num(shading, nan=DIM).reshape(-1)
+    if gained:
+        points = np.array(gained, dtype=np.float64)
+        placed = np.stack(
+            [box.across(points[:, 0]), box.along(points[:, 1]), box.up(points[:, 2])],
+            axis=1,
+        )
+        vertexes = np.concatenate([vertexes, placed])
+        flat = np.concatenate([flat, points[:, 3]])
+        patched = np.array(patches, dtype=np.int64)
+        faces = np.concatenate([faces, patched]) if faces.size else patched
     return (
         vertexes.astype(np.float32),
         faces.astype(np.uint32) if faces.size else _no_faces(),
-        shading.reshape(-1),
+        flat,
     )
+
+
+#: The corners of a grid cell in perimeter order from its lower-left, so that
+#: edge k runs from corner k to corner k+1 and a walk over both visits the
+#: cell's rim exactly once.
+CELL = ((0, 0), (1, 0), (1, 1), (0, 1))
+
+
+def _partial(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    zs: np.ndarray,
+    finite: np.ndarray,
+    whole: np.ndarray,
+    shading: np.ndarray,
+    lit: np.ndarray,
+    boundary: evaluate.Boundary | None,
+    box: Box,
+    offset: int,
+) -> tuple[list[tuple[float, float, float, float]], list[tuple[int, int, int]]]:
+    """Fill the cells that stop short of being whole faces, up to where they stop.
+
+    Two kinds of cell arrive here: cells the domain's edge crosses, filled from
+    their defined corners and the refined crossings, and cells the clip planes
+    cut, whose corners are all real. Both go the same way - build the defined
+    polygon, then trim it to the box's z - which is the ordering that lets the
+    clip trim a boundary vertex like any other. Cells that are real all over
+    but stand entirely above or below the box trim to nothing and are skipped
+    without a look.
+
+    Returns the vertices gained, as (x, y, z, shade) in data coordinates, and
+    the triangles over them, indexed from `offset` on.
+    """
+    low, high = box.z
+    quads = finite[:-1, :-1] & finite[1:, :-1] & finite[1:, 1:] & finite[:-1, 1:]
+    some = finite[:-1, :-1] | finite[1:, :-1] | finite[1:, 1:] | finite[:-1, 1:]
+    over, under = zs > high, zs < low
+    gone = (over[:-1, :-1] & over[1:, :-1] & over[1:, 1:] & over[:-1, 1:]) | (
+        under[:-1, :-1] & under[1:, :-1] & under[1:, 1:] & under[:-1, 1:]
+    )
+    cells = some & ~whole & ~gone
+    if boundary is None:
+        cells &= quads
+    points: list[tuple[float, float, float, float]] = []
+    faces: list[tuple[int, int, int]] = []
+    for i, j in zip(*np.nonzero(cells)):
+        filled = _filled(
+            int(i), int(j), xs, ys, zs, finite, shading, lit, boundary, box.z
+        )
+        for polygon in filled:
+            trimmed = _trimmed(polygon, low, high)
+            if len(trimmed) < 3:
+                continue
+            base = offset + len(points)
+            points.extend(trimmed)
+            faces.extend(
+                (base, base + k, base + k + 1) for k in range(1, len(trimmed) - 1)
+            )
+    return points, faces
+
+
+def _filled(
+    i: int,
+    j: int,
+    xs: np.ndarray,
+    ys: np.ndarray,
+    zs: np.ndarray,
+    finite: np.ndarray,
+    shading: np.ndarray,
+    lit: np.ndarray,
+    boundary: evaluate.Boundary | None,
+    zspan: tuple[float, float],
+) -> list[list[tuple[float, float, float, float]]]:
+    """The marching-squares fill of one partial cell, as polygons in data space.
+
+    The defined corners in perimeter order, with the refined boundary crossing
+    inserted on every edge that straddles the domain: one, two or three defined
+    corners give a triangle, a quadrilateral or a pentagon, and four give the
+    whole quad for the clip to trim. The ambiguous cell - two defined corners
+    on a diagonal - is resolved one fixed way, as two separate triangles each
+    holding one corner, because a consistent boundary matters more than a guess
+    at the local topology. A straddling edge the boundary has no crossing for
+    leaves the cell unfilled, which is the un-refined behavior.
+    """
+    kept = [bool(finite[i + di, j + dj]) for di, dj in CELL]
+    corner = [
+        (
+            float(xs[i + di]),
+            float(ys[j + dj]),
+            float(zs[i + di, j + dj]),
+            float(shading[i + di, j + dj]),
+        )
+        for di, dj in CELL
+    ]
+    crossing: list[tuple[float, float, float, float] | None] = [None] * 4
+    for k in range(4):
+        if kept[k] != kept[(k + 1) % 4]:
+            crossing[k] = _crossing(i, j, k, xs, ys, lit, boundary, zspan)
+            if crossing[k] is None:
+                return []
+    if sum(kept) == 2 and kept[0] == kept[2]:
+        first = 0 if kept[0] else 1
+        return [
+            [crossing[(c + 3) % 4], corner[c], crossing[c]]
+            for c in (first, first + 2)
+        ]
+    polygon: list[tuple[float, float, float, float]] = []
+    for k in range(4):
+        if kept[k]:
+            polygon.append(corner[k])
+        if crossing[k] is not None:
+            polygon.append(crossing[k])
+    return [polygon] if len(polygon) >= 3 else []
+
+
+def _crossing(
+    i: int,
+    j: int,
+    k: int,
+    xs: np.ndarray,
+    ys: np.ndarray,
+    lit: np.ndarray,
+    boundary: evaluate.Boundary | None,
+    zspan: tuple[float, float],
+) -> tuple[float, float, float, float] | None:
+    """The refined boundary point on edge `k` of cell `(i, j)`, with its shade.
+
+    The point is off the grid, so its brightness cannot be read from the
+    gradient: the height half of its shade is its own z's ramp, clipped to the
+    box like any other, and the light half is interpolated along the edge it
+    sits on, between the light values of the edge's two grid ends.
+    """
+    if boundary is None:
+        return None
+    if k % 2 == 0:  # an edge running along x, at y[j] or y[j+1]
+        row = j if k == 0 else j + 1
+        x = float(boundary.across[i, row])
+        z = float(boundary.across_z[i, row])
+        if not np.isfinite(x):
+            return None
+        t = (x - float(xs[i])) / (float(xs[i + 1]) - float(xs[i]))
+        ends = (float(lit[i, row]), float(lit[i + 1, row]))
+        y = float(ys[row])
+    else:  # an edge running along y, at x[i+1] or x[i]
+        column = i + 1 if k == 1 else i
+        y = float(boundary.along[column, j])
+        z = float(boundary.along_z[column, j])
+        if not np.isfinite(y):
+            return None
+        t = (y - float(ys[j])) / (float(ys[j + 1]) - float(ys[j]))
+        ends = (float(lit[column, j]), float(lit[column, j + 1]))
+        x = float(xs[column])
+    low, high = zspan
+    light = (1.0 - t) * ends[0] + t * ends[1]
+    ramp = min(max((z - low) / (high - low), 0.0), 1.0)
+    shade = HEIGHT_SHARE * (DIM + (1.0 - DIM) * ramp) + (1.0 - HEIGHT_SHARE) * light
+    return (x, y, z, shade)
+
+
+def _trimmed(
+    polygon: list[tuple[float, float, float, float]],
+    low: float,
+    high: float,
+) -> list[tuple[float, float, float, float]]:
+    """`polygon` cut to the box's z, crossings interpolated along its edges.
+
+    The clip boundary is a known height, so the crossing is plain linear
+    interpolation over every component - position and shade alike - and needs
+    no evaluation at all, which is why it can run on the Qt thread every time
+    the box moves. The vertices all sit on the rim of a convex cell, so what
+    survives the cut is convex too and a fan can triangulate it.
+    """
+    for bound, sign in ((low, 1.0), (high, -1.0)):
+        kept: list[tuple[float, float, float, float]] = []
+        for at, point in enumerate(polygon):
+            previous = polygon[at - 1]
+            in_point = sign * (point[2] - bound) >= 0.0
+            in_previous = sign * (previous[2] - bound) >= 0.0
+            if in_point != in_previous:
+                t = (bound - previous[2]) / (point[2] - previous[2])
+                kept.append(
+                    tuple((1.0 - t) * p + t * q for p, q in zip(previous, point))
+                )
+            if in_point:
+                kept.append(point)
+        polygon = kept
+        if len(polygon) < 3:
+            return []
+    return polygon
 
 
 def _no_faces() -> np.ndarray:
@@ -848,7 +1075,8 @@ class Window3D(QtWidgets.QMainWindow):
             if f is None:
                 f = evaluate.closure(node, context, names)
             xs, ys, values = evaluate.grid_eval(f, xrange, yrange, nx, ny)
-            return f, xs, ys, values
+            boundary = evaluate.grid_boundary(f, xs, ys, values)
+            return f, xs, ys, values, boundary
 
         return work
 
@@ -861,7 +1089,13 @@ class Window3D(QtWidgets.QMainWindow):
             self.host.trouble(self.number, surface.label, str(answer))
             self.say(f"{surface.label}: {answer}")
             return
-        surface.closure, surface.xs, surface.ys, surface.values = answer
+        (
+            surface.closure,
+            surface.xs,
+            surface.ys,
+            surface.values,
+            surface.boundary,
+        ) = answer
         # Whatever the window was saying was about the domain this answer has
         # replaced; the two sentences below are what it has to say about the
         # new one, and they are said in the order they were arrived at.
@@ -940,7 +1174,7 @@ class Window3D(QtWidgets.QMainWindow):
         if surface.item is None:
             return
         vertexes, faces, shading = mesh(
-            surface.xs, surface.ys, surface.values, self.box_now
+            surface.xs, surface.ys, surface.values, self.box_now, surface.boundary
         )
         if not faces.size:
             surface.item.setVisible(False)

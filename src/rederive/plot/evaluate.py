@@ -61,6 +61,7 @@ __all__ = [
     "MAX_DEPTH",
     "MINIMUM",
     "ROOT",
+    "Boundary",
     "Feature",
     "Sampled",
     "Unplottable",
@@ -68,6 +69,7 @@ __all__ = [
     "difference",
     "features",
     "finite_fraction",
+    "grid_boundary",
     "grid_eval",
     "mask",
     "number",
@@ -690,6 +692,106 @@ def grid_eval(
     ys = np.linspace(float(yrange[0]), float(yrange[1]), max(int(ny), 2))
     grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
     return xs, ys, f(grid_x, grid_y)
+
+
+#: How many times a straddling cell edge is halved to find where the surface
+#: stops being real. Six halvings put the crossing within 1/64 of a cell,
+#: comfortably under a pixel at any grid the window draws.
+BOUNDARY_BISECTIONS = 6
+
+
+@dataclass(frozen=True)
+class Boundary:
+    """Where a surface stops being real, refined along the edges of its grid.
+
+    One entry per cell edge whose endpoints straddle the domain of definition:
+    `across` holds the x of the crossing on each edge running along x (indexed
+    `[i, j]` for the edge from x[i] to x[i+1] at y[j]), `along` the y of the
+    crossing on each edge running along y (indexed `[i, j]` for the edge from
+    y[j] to y[j+1] at x[i]), and the `_z` arrays the value the surface takes
+    there, found on the defined side of the crossing. Edges that do not
+    straddle hold NaN. The mesh reads these to put its boundary vertices on
+    the boundary, and a wire mesh ends its lines on them.
+    """
+
+    across: np.ndarray
+    across_z: np.ndarray
+    along: np.ndarray
+    along_z: np.ndarray
+
+
+def grid_boundary(
+    f: Callable[..., np.ndarray],
+    xs: np.ndarray,
+    ys: np.ndarray,
+    values: np.ndarray,
+) -> Boundary:
+    """Where `f` stops being real along the grid's edges, to a fraction of a cell.
+
+    For every cell edge with one defined and one undefined endpoint, the
+    crossing is bisected on the closure: the defined end moves to every
+    midpoint that answers a real value, so what remains after six halvings is
+    a real point within a sixty-fourth of a cell of where the surface ends -
+    the same bargain the curve sampler strikes at the edge of its domain.
+    Depends only on the domain and the grid, never on the box, so it runs on
+    the sampling thread beside `grid_eval` and is cached with its arrays.
+    """
+    zs = np.asarray(values, dtype=np.float64)
+    if zs.ndim != 2:
+        empty = np.empty((0, 0))
+        return Boundary(empty, empty, empty, empty)
+    defined = np.isfinite(zs)
+    nx, ny = zs.shape
+    across = np.full((max(nx - 1, 0), ny), np.nan)
+    across_z = np.full_like(across, np.nan)
+    along = np.full((nx, max(ny - 1, 0)), np.nan)
+    along_z = np.full_like(along, np.nan)
+    ii, jj = np.nonzero(defined[:-1, :] != defined[1:, :])
+    if ii.size:
+        first = defined[ii, jj]
+        starts = np.where(first, zs[ii, jj], zs[ii + 1, jj])
+        found, worth = _bisected(
+            lambda middle: f(middle, ys[jj]),
+            np.where(first, xs[ii], xs[ii + 1]),
+            np.where(first, xs[ii + 1], xs[ii]),
+            starts,
+        )
+        across[ii, jj], across_z[ii, jj] = found, worth
+    ii, jj = np.nonzero(defined[:, :-1] != defined[:, 1:])
+    if ii.size:
+        first = defined[ii, jj]
+        starts = np.where(first, zs[ii, jj], zs[ii, jj + 1])
+        found, worth = _bisected(
+            lambda middle: f(xs[ii], middle),
+            np.where(first, ys[jj], ys[jj + 1]),
+            np.where(first, ys[jj + 1], ys[jj]),
+            starts,
+        )
+        along[ii, jj], along_z[ii, jj] = found, worth
+    return Boundary(across, across_z, along, along_z)
+
+
+def _bisected(
+    f: Callable[[np.ndarray], np.ndarray],
+    real: np.ndarray,
+    lost: np.ndarray,
+    values: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Halve every edge between its real end and its lost one, all at once.
+
+    Each halving is one vectorized call over every straddling edge, so the
+    whole refinement costs six evaluations however many edges there are. What
+    comes back is the real end as it stands after the halvings, and the value
+    the surface takes there - always a real one, because the end only ever
+    moves to a midpoint that answered one.
+    """
+    for _ in range(BOUNDARY_BISECTIONS):
+        middle = (real + lost) / 2.0
+        answered = np.asarray(f(middle), dtype=np.float64)
+        settled = np.isfinite(answered)
+        values = np.where(settled, answered, values)
+        real, lost = np.where(settled, middle, real), np.where(settled, lost, middle)
+    return real, values
 
 
 #: What a feature is called, which is what the status bar says it found.
