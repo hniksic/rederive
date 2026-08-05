@@ -415,10 +415,8 @@ Options       how numbers are read, worked out and printed
   Radix          the number system input and output are written in
 
 Plot          draw the highlighted expression in a plot window
-  Plot           draw it in the current plot window, opening one if needed
-  New            draw it in a new window, which becomes the current one
-  Delete         take plots out of the window a plot last went into
-  Window         make a numbered plot window the one the next plot lands in
+  Plot           draw it in the plot window last touched, opening one if needed
+  New            draw it in a new window, which the next plot then lands in
 Quit          leave the program, after asking whether that was meant
 Remove        take a block of expressions out of the worksheet
 Simplify      work an expression out, exactly unless Precision says otherwise
