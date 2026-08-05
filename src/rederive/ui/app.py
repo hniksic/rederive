@@ -4494,10 +4494,10 @@ class RederiveApp(App[None]):
     def _classified(self, request: str, where: plots.Where) -> plots.Add:
         """What `request` is a plot of, as the request that would draw it.
 
-        Off the event loop, because two of its three steps can block: the
-        variables of the expression are an engine call, and the polar state of
-        the target window is a question for a host that may not be running yet.
-        Nothing is sent here - what comes back is the request, ready to go.
+        Off the event loop, because the variables of the expression are an
+        engine call and can block. Nothing here depends on any window's state -
+        polar is the window's own view mode - and nothing is sent: what comes
+        back is the request, ready to go.
         """
         target, label = self.session.named_target(request)
         variables = self.session.variables(request)
@@ -4516,12 +4516,6 @@ class RederiveApp(App[None]):
                     for element in target.children
                 ),
             )
-        if kind is plots.PlotKind.CURVE and len(plotted.variables) == 1:
-            # Polar is never a classification: it is what a window in polar
-            # mode makes of a univariate expression, so the promotion happens
-            # here, where the window that is about to receive it is known.
-            if self._polar_target(where):
-                kind = plots.PlotKind.POLAR
         if kind not in plots.DRAWN:
             raise PlotError(plots.UNDRAWN.format(kind=kind.value))
         return plots.Add(
@@ -4540,20 +4534,6 @@ class RederiveApp(App[None]):
             # bound with the same grammar the worksheet does.
             state=self.session.state,
         )
-
-    def _polar_target(self, where: plots.Where) -> bool:
-        """Whether the window this plot is heading for is in polar mode.
-
-        A new window never is, and a window that does not exist yet cannot be,
-        so the question is only ever about the current 2D one - which the host
-        is asked, the app tracking no window state of its own.
-        """
-        if where is plots.Where.NEW:
-            return False
-        for window in self.plots.describe():
-            if window.kind is plots.WindowKind.TWO_D and window.current:
-                return bool(window.polar)
-        return False
 
     def _plot_classified(self, outcome: Outcome) -> None:
         """The expression is classified: send it. Nothing is ever asked.

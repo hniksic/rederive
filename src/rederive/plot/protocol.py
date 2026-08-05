@@ -75,10 +75,10 @@ class PlotKind(StrEnum):
     with several expressions: one `Add` carries one expression, and what the
     kind says is how to read it.
 
-    `POLAR` never comes out of classification. A window in polar mode reads a
-    newly added univariate expression as `r = f(θ)`, so the command promotes a
-    curve to a polar curve when the target window says it is polar; every
-    other kind is unaffected by the toggle.
+    `POLAR` never comes out of classification, and no `Add` carries it: polar
+    is a property of the 2D window's view, whose toggle reads every univariate
+    curve in it as `r = f(θ)`. The kind is how such a window's plot list says
+    which of its plots are being read that way.
     """
 
     CURVE = "curve"
@@ -266,9 +266,8 @@ class Describe:
     """What windows are open and what is in them.
 
     The app tracks no window state of its own: the prompts that depend on a
-    window - the polar toggle, the number the Window field opens on - read it
-    from here when the command runs, and the tests observe the host the same
-    way.
+    window - the number the Window field opens on - read it from here when the
+    command runs, and the tests observe the host the same way.
     """
 
 
@@ -355,12 +354,7 @@ class PlotInfo:
 
 @dataclass(frozen=True)
 class WindowInfo:
-    """One open window, as `Describe` reports it.
-
-    `polar` is None for a 3D window, which has no such mode, rather than False:
-    absent and off are different answers and the prompt that reads it wants to
-    tell them apart.
-    """
+    """One open window, as `Describe` reports it."""
 
     number: int
     kind: WindowKind
@@ -369,7 +363,6 @@ class WindowInfo:
     plots: tuple[PlotInfo, ...] = ()
     xrange: tuple[float, float] = (0.0, 0.0)
     yrange: tuple[float, float] = (0.0, 0.0)
-    polar: bool | None = None
 
 
 @dataclass(frozen=True)

@@ -1357,8 +1357,7 @@ class Window3D(QtWidgets.QMainWindow):
         """This window as `Describe` reports it.
 
         The ranges reported are the domain, since that is what a 3D window is
-        framed by; `polar` stays absent, a window with no such mode having no
-        answer rather than a false one.
+        framed by.
         """
         return protocol.WindowInfo(
             number=self.number,
@@ -1377,7 +1376,6 @@ class Window3D(QtWidgets.QMainWindow):
             ),
             xrange=(float(self.xdomain[0]), float(self.xdomain[1])),
             yrange=(float(self.ydomain[0]), float(self.ydomain[1])),
-            polar=None,
         )
 
     def retitle(self, current: bool) -> None:

@@ -435,6 +435,8 @@ class Window2D(QtWidgets.QMainWindow):
         #: preference changed afterwards is for the next window.
         self.equal_default = equal_scales
         self.plots: list[Plot] = []
+        #: Whether this view reads its univariate curves as r = f(θ). A mode
+        #: of the picture, flipped by the toolbar toggle, never of one plot.
         self.polar = False
         self.current = False
         #: Ranges the view has been at, and where in that list it stands.
@@ -521,7 +523,7 @@ class Window2D(QtWidgets.QMainWindow):
         bar.addAction(self.equal)
         self.polar_toggle = QtGui.QAction("polar", self)
         self.polar_toggle.setCheckable(True)
-        self.polar_toggle.setToolTip("Read newly plotted expressions as r = f(θ)")
+        self.polar_toggle.setToolTip("Show every curve as r = f(θ)")
         self.polar_toggle.triggered.connect(self._polar_mode)
         bar.addAction(self.polar_toggle)
         # The parameter range of the selected parametric or polar plot. Hidden
@@ -657,6 +659,10 @@ class Window2D(QtWidgets.QMainWindow):
         # The angle unit is the worksheet's, and a window reads its pointer out
         # in whatever unit the expressions in it are written in.
         self.degrees = plot.context.angle is Angle.DEGREE
+        # Polar is the view's, not the plot's: a univariate curve arriving in
+        # a polar window is read as r = f(θ) from the start, and one spelled
+        # polar by the request is read the way this window reads every curve.
+        self._reread(plot)
         plot.connected = bool(plot.options.connected)
         plot.point_size = plot.options.point_size or POINT_SIZE
         plot.item = self._made(plot)
@@ -1131,21 +1137,53 @@ class Window2D(QtWidgets.QMainWindow):
         self.canvas.setAspectLocked(checked, ratio=1.0)
 
     def _polar_mode(self, checked: bool) -> None:
-        """The `polar` toolbar toggle, which is about the plots still to come.
+        """The `polar` toolbar toggle, which is a property of the view.
 
-        Nothing already drawn changes: a curve keeps the interpretation it was
-        plotted under, since a picture that re-read itself when a toggle moved
-        would be a picture nobody could trust. What the toggle does is tell the
-        Plot command, through `Describe`, that the next univariate expression
-        sent here is an r of a θ - and turn the pointer readout into the
-        coordinates such a window is read in.
+        Flipping it reinterprets every univariate curve in the window as
+        r = f(θ), and flipping it back restores them; the kinds with no polar
+        reading - parametric, data, implicit, region - keep their own. A
+        reinterpreted curve is drawn over one full turn, whatever x-range it
+        happened to be viewed at, and the toolbar's range fields are where a
+        different piece of θ is asked for - the same way for a curve read
+        polar as for one born polar. The axis labels, the pointer readout and
+        trace all follow the mode.
         """
         self.polar = checked
+        active = self._active
+        for plot in self.plots:
+            if not self._reread(plot):
+                continue
+            # The polar composition is the reading's own and goes with it; the
+            # closure survives, being the same f either way. The range comes
+            # back as one full turn when the sampling answers.
+            plot.pair = None
+            plot.bounds = None
+            plot.ts = np.empty(0)
+            if plot is active:
+                self._trace_t = 0.0
+            self._start(plot)
+        self._axis_names()
+        self._show_trange()
         self.say(
-            "Polar: new curves are read as r = f(θ)"
+            "Polar: curves are read as r = f(θ)"
             if checked
-            else "Polar off: new curves are read as y = f(x)"
+            else "Polar off: curves are read as y = f(x)"
         )
+
+    def _reread(self, plot: Plot) -> bool:
+        """Give `plot` the kind the view mode reads it as, saying if it moved.
+
+        A univariate curve is the one kind with two readings - r = f(θ) while
+        the window is polar and y = f(x) while it is not - so those two kinds
+        trade places with the toggle and every other kind is its own answer.
+        """
+        if plot.kind is PlotKind.CURVE and self.polar:
+            plot.kind = PlotKind.POLAR
+        elif plot.kind is PlotKind.POLAR and not self.polar:
+            plot.kind = PlotKind.CURVE
+        else:
+            return False
+        return True
 
     def _unlock(self) -> None:
         """Release equal scales, for a framing that is about fitting."""
@@ -1841,7 +1879,6 @@ class Window2D(QtWidgets.QMainWindow):
             ),
             xrange=(float(left), float(right)),
             yrange=(float(low), float(high)),
-            polar=self.polar,
         )
 
     def retitle(self, current: bool) -> None:
@@ -1909,7 +1946,10 @@ def _curve_work(
         pair, inner, trange = made, radius, known
         if pair is None:
             if polar:
-                inner = evaluate.closure(node, context, names)
+                # A curve reread polar by the view arrives with its closure
+                # already made, and r = f(θ) is the same f.
+                if inner is None:
+                    inner = evaluate.closure(node, context, names)
                 pair = evaluate.polar_pair(inner, degrees)
             else:
                 pair = evaluate.pair(node, context, names)

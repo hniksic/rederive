@@ -557,7 +557,6 @@ def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
     assert window.kind is plots.WindowKind.TWO_D
     assert window.title == "Rederive 2D plot 1 (current)"
     assert window.current is True
-    assert window.polar is False
     assert [plot.label for plot in window.plots] == ["#1", "#2"]
     assert [plot.text for plot in window.plots] == ["SIN(x)", "x^2 - 3"]
 
@@ -643,6 +642,8 @@ def test_one_window_takes_every_two_dimensional_kind(host):
     _add(session, host, "[[1, 2], [3, 4]]")
     _add(session, host, "x^2 + y^2 = 4")
     _add(session, host, "y < x^2")
+    # Polar is the view's mode rather than the plot's: a request still
+    # spelling the polar kind lands as the curve this window reads it as.
     _add(
         session,
         host,
@@ -656,7 +657,7 @@ def test_one_window_takes_every_two_dimensional_kind(host):
         PlotKind.DATA,
         PlotKind.IMPLICIT,
         PlotKind.REGION,
-        PlotKind.POLAR,
+        PlotKind.CURVE,
     ]
     assert not [plot.label for plot in window.plots if plot.hidden]
 
@@ -675,9 +676,6 @@ def test_a_surface_opens_a_solid_window_of_its_own(host):
     )
     assert solid.title == "Rederive 3D plot 2 (current)"
     assert flat.title == "Rederive 2D plot 1 (current)"
-    # Absent rather than off: a 3D window has no polar mode to be in.
-    assert solid.polar is None
-    assert flat.polar is False
     assert [plot.kind for plot in solid.plots] == [PlotKind.SURFACE]
     # The window reports the domain it evaluates over, which is the default one.
     assert solid.xrange == (-5.0, 5.0)
@@ -824,12 +822,12 @@ def flat(qt):
     window.close()
 
 
-def _plot(text, kind, variables):
+def _plot(text, kind, variables, label="#1"):
     from rederive.plot.window2d import Plot
 
     return Plot(
         worksheet=1,
-        label="#1",
+        label=label,
         text=text,
         kind=kind,
         node=parsed(text),
@@ -871,16 +869,81 @@ def test_the_range_fields_read_expressions_and_resample_the_plot(flat):
     assert plot.trange == pytest.approx((0.0, 2 * np.pi))
 
 
-def test_a_polar_plot_names_its_range_fields_by_the_angle(flat):
-    plot = _plot("2*COS(3*t)", PlotKind.POLAR, ("t",))
-    flat.add(plot)
-    assert flat.range_name.text().strip() == "θ:"
-
-
 def test_a_window_of_functions_offers_no_range_fields(flat):
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
     flat.add(plot)
     assert not any(action.isVisible() for action in flat._range_actions)
+
+
+def test_the_polar_toggle_rereads_curves_and_restores_them(flat):
+    plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
+    flat.add(plot)
+    flat.polar_toggle.trigger()
+    # The curve is now r = f(θ) over one full turn - the x-range it was viewed
+    # at is not a θ range - with the range fields named by the angle, and the
+    # readout in the coordinates the picture is measured in.
+    assert plot.kind is PlotKind.POLAR
+    assert plot.trange == pytest.approx((-np.pi, np.pi))
+    assert np.isfinite(plot.ys).any()
+    assert float(np.nanmax(np.abs(plot.xs))) < 1.5
+    assert flat.range_name.text().strip() == "θ:"
+    assert "r:" in flat._readout(1.0, 0.0)
+    # Flipping back restores the cartesian reading, sampled over the view.
+    flat.polar_toggle.trigger()
+    assert plot.kind is PlotKind.CURVE
+    assert float(plot.xs.min()) < -4 and float(plot.xs.max()) > 4
+    assert not any(action.isVisible() for action in flat._range_actions)
+    assert "r:" not in flat._readout(1.0, 0.0)
+
+
+def test_the_kinds_with_no_polar_reading_ignore_the_toggle(flat):
+    pair = _plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",))
+    points = _plot("[[1, 2], [3, 4]]", PlotKind.DATA, (), label="#2")
+    flat.add(pair)
+    flat.add(points)
+    before = pair.trange
+    flat.polar_toggle.trigger()
+    assert pair.kind is PlotKind.PARAMETRIC
+    assert points.kind is PlotKind.DATA
+    assert pair.trange == before
+
+
+def test_a_curve_added_to_a_polar_window_is_read_polar_from_the_start(flat):
+    flat.polar_toggle.trigger()
+    plot = _plot("2*COS(3*t)", PlotKind.CURVE, ("t",))
+    flat.add(plot)
+    assert plot.kind is PlotKind.POLAR
+    assert plot.trange == pytest.approx((-np.pi, np.pi))
+    assert flat.range_name.text().strip() == "θ:"
+
+
+def test_the_range_fields_adjust_a_reread_curve_like_a_born_polar_one(flat):
+    plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
+    flat.add(plot)
+    flat.polar_toggle.trigger()
+    flat.range_low.setText("0")
+    flat.range_high.setText("2π")
+    flat._range_edited()
+    assert plot.trange == pytest.approx((0.0, 2 * np.pi))
+    # And a reread over one turn is the default again the next time the
+    # toggle comes on, the adjusted range having been the polar reading's.
+    flat.polar_toggle.trigger()
+    flat.polar_toggle.trigger()
+    assert plot.trange == pytest.approx((-np.pi, np.pi))
+
+
+def test_the_axis_label_follows_the_polar_mode(flat):
+    # The known wart, fixed: a window in polar mode must not label its
+    # abscissa with the parameter's letter - the horizontal axis of a polar
+    # picture is not θ.
+    plot = _plot("SIN(t)", PlotKind.CURVE, ("t",))
+    flat.add(plot)
+    axis = flat.item.getAxis("bottom")
+    assert axis.labelText == "t"
+    flat.polar_toggle.trigger()
+    assert axis.labelText == ""
+    flat.polar_toggle.trigger()
+    assert axis.labelText == "t"
 
 
 @pytest.fixture
@@ -1069,6 +1132,10 @@ class Answering:
         self.windows = windows
         self.refuse = refuse
         self.events = None
+        #: How many times the app has asked what the windows hold, which a
+        #: plain plot must never do: nothing app-side needs a window's state
+        #: to send one.
+        self.described = 0
         #: The preferences it has been handed, newest last. The real proxy holds
         #: one and sends it in front of the next request; what the app is
         #: responsible for is handing it over at all.
@@ -1092,6 +1159,7 @@ class Answering:
         return window
 
     def describe(self):
+        self.described += 1
         return self.windows
 
     def prefer(self, preferences):
@@ -1211,32 +1279,15 @@ async def test_a_parametric_pair_is_sent_with_no_question_asked(app):
         assert band(app)[0].startswith(" COMMAND:")
 
 
-async def test_a_polar_window_reads_a_curve_as_r_of_an_angle(app):
+async def test_a_plot_is_sent_without_asking_any_window_its_mode(app):
     async with app.run_test() as pilot:
-        # Polar is never a classification: it is what the command makes of a
-        # univariate expression when the window it is heading for says so.
-        app.plots.windows = (
-            plots.WindowInfo(
-                1, plots.WindowKind.TWO_D, "one", True, polar=True
-            ),
-        )
+        # Polar is the window's own view mode, so a univariate expression is
+        # always sent as the curve it classifies as, and no `Describe` goes
+        # down the pipe on the way.
         await authored(pilot, app, "SIN(x)")
         await pilot.press("p", "p")
-        assert app.plots.sent[0].kind is PlotKind.POLAR
-        assert message(app) == "Plotting #1 in window 1"
-
-
-async def test_a_new_window_is_never_polar_and_asks_nothing(app):
-    async with app.run_test() as pilot:
-        app.plots.windows = (
-            plots.WindowInfo(
-                1, plots.WindowKind.TWO_D, "one", True, polar=True
-            ),
-        )
-        await authored(pilot, app, "SIN(x)")
-        await pilot.press("p", "n")
         assert app.plots.sent[0].kind is PlotKind.CURVE
-        assert message(app) == "Plotting #1 in window 1"
+        assert app.plots.described == 0
 
 
 async def test_a_family_carries_the_text_of_every_element(app):
