@@ -11,6 +11,10 @@ dependencies = [
     "sympy>=1.14",
     "psutil>=7",
     "pyperclip>=1.9",
+    "pyside6>=6.7",
+    "pyqtgraph>=0.13.7",
+    "pyopengl>=3.1",
+    "numpy>=1.26",
 ]
 
 [project.scripts]

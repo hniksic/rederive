@@ -64,6 +64,26 @@ def test_the_app_side_imports_no_sympy(module: str) -> None:
     assert imported.stdout.strip() == "False", f"{module} imports sympy"
 
 
+#: What plotting costs, and what the app process must not pay. The windows live
+#: in a child process for the same reason the mathematics does, so the app side
+#: may name the plot vocabulary and the availability check and nothing under
+#: them: a Qt toolkit imported here is thirty megabytes for a picture drawn
+#: elsewhere, and one that a session which never plots pays for regardless.
+HEAVY = ("numpy", "PySide6", "pyqtgraph", "OpenGL")
+
+
+@pytest.mark.parametrize("module", CLIENT_SIDE)
+def test_the_app_side_imports_no_toolkit(module: str) -> None:
+    program = (
+        f"import sys, {module}; "
+        f"print([name for name in {HEAVY!r} if name in sys.modules])"
+    )
+    imported = subprocess.run(
+        [sys.executable, "-c", program], check=True, capture_output=True, text=True
+    )
+    assert imported.stdout.strip() == "[]", f"{module} imports {imported.stdout}"
+
+
 def test_the_entry_point_imports_no_screen() -> None:
     """`rederive.__main__`'s body may name the command line and nothing more.
 

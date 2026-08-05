@@ -169,7 +169,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from os.path import commonprefix
 from pathlib import Path
@@ -192,6 +192,7 @@ from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
 from rederive.model import session as sessions
 from rederive.model.expr import Node
+from rederive.model.plotting import Unplottable, classify
 from rederive.model.session import Session
 from rederive.model.settings import (
     ChoiceField,
@@ -201,7 +202,10 @@ from rederive.model.settings import (
     TextField,
 )
 from rederive.model.windows import Window, Windows
-from rederive.syntax import LANGUAGES, DeriveSyntaxError, Language
+from rederive.plot import PREFIX, UNAVAILABLE, available
+from rederive.plot import protocol as plots
+from rederive.plot.proxy import PlotError, PlotProxy
+from rederive.syntax import LANGUAGES, DeriveSyntaxError, Language, write_expression
 from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
 from rederive.ui.theme import COLOR_SETTINGS, Palette
@@ -443,6 +447,33 @@ SOLVING = "Solving"
 #: is a question for the engine and so can cost something, though it hardly
 #: ever does.
 READING = "Reading expression"
+#: How the Plot command names itself while it runs. It reaches the engine for
+#: the variables of the expression and then the plot host, which on the first
+#: plot of a session is a process starting up, so it is worth a clock.
+PLOTTING = "Plotting"
+#: What the message line says when a plot has landed, and when plots have been
+#: taken out of a window. The delete phrases are the menu's own words spelled
+#: as a sentence says them.
+PLOTTED = "Plotting {label} in window {window}"
+DELETED = "Deleted {what} in window {window}"
+NOTHING_DELETED = "No plots to delete in window {window}"
+DELETE_WORDS = {
+    "All": "all plots",
+    "Butlast": "all but the last plot",
+    "First": "first plot",
+    "Last": "last plot",
+}
+#: What each word of the Delete submenu takes out.
+PLOT_DELETIONS = {
+    "All": plots.Which.ALL,
+    "Butlast": plots.Which.BUTLAST,
+    "First": plots.Which.FIRST,
+    "Last": plots.Which.LAST,
+}
+#: What Plot says when there is nothing highlighted to plot.
+NOTHING_TO_PLOT = "no expression to plot"
+#: And when a command that acts on a plot window is asked with none open.
+NO_PLOT_WINDOW = "no plot window"
 #: Seconds between two readings of the elapsed time. Fast enough that the
 #: figure looks like a clock rather than a series of guesses.
 TICK = 0.1
@@ -1061,6 +1092,17 @@ def _whole(seconds: float) -> str:
     return f"{minute}m {second}s" if not hours else f"{hours}h {minute}m {second}s"
 
 
+def _plot_reason(error: Exception) -> str:
+    """What a Plot command that went wrong says after the `Plot: ` prefix.
+
+    Every way it can go wrong has a message worth reading as it stands: an
+    expression no reading fits, an engine that died under the variables call, a
+    host that would not start. What is left is a bug, and its type name is more
+    use than nothing.
+    """
+    return str(error) or type(error).__name__
+
+
 def _reported(outcome: Outcome) -> str:
     """What the message line says about a command that has finished."""
     error = outcome.error
@@ -1234,6 +1276,11 @@ class RederiveApp(App[None]):
         #: back. `_opening_screen` is that rule.
         self.opening_session = self.windows.session
         self.greeting = True
+        #: The plot windows, which live in a child process that is not started
+        #: until something is plotted. Constructing this costs nothing: no Qt,
+        #: no numpy, no process, and the app process stays as free of all three
+        #: as it is of sympy.
+        self.plots = PlotProxy(self._plot_reported)
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
         #: The command menu, plus whatever submenu or dialog is stacked on it.
@@ -1367,8 +1414,10 @@ class RederiveApp(App[None]):
             (menus.TRANSFER_LOAD, "Utility"): self._command_load_utility,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
             (menus.TRANSFER_SAVE, "State"): self._command_save_state,
+            (menus.PLOT, "Plot"): partial(self._command_plot, plots.Where.CURRENT),
+            (menus.PLOT, "New"): partial(self._command_plot, plots.Where.NEW),
+            (menus.PLOT, "Window"): self._command_plot_window,
             (menus.WINDOW, "Close"): self._command_window_close,
-            (menus.WINDOW, "Designate"): self._command_window_designate,
             (menus.WINDOW, "Flip"): self._command_window_flip,
             (menus.WINDOW, "Goto"): self._command_window_goto,
             (menus.WINDOW, "Next"): partial(self._command_window_step, 1),
@@ -1379,6 +1428,12 @@ class RederiveApp(App[None]):
             ),
             (menus.WINDOW_SPLIT, "Vertical"): partial(self._command_window_split, True),
         }
+        # The four Delete words differ only in which end of the plot list they
+        # take, so they are one command told which off the menu word.
+        for word, which in PLOT_DELETIONS.items():
+            self.commands[(menus.PLOT_DELETE, word)] = partial(
+                self._command_plot_delete, word, which
+            )
         # The seven Calculus commands differ only in what they write and what
         # their last line asks, so they are one command told which off the word.
         for word, calculus in CALCULUS_COMMANDS.items():
@@ -1424,6 +1479,15 @@ class RederiveApp(App[None]):
         )
         yield MessageLine(id="message")
         yield StatusLine(id="status")
+
+    def on_unmount(self) -> None:
+        """Leaving takes the plot host with it, windows and all.
+
+        The host is a daemon child and would go anyway; asking it to stop is
+        how it goes tidily, closing its windows rather than having them
+        disappear.
+        """
+        self.plots.shutdown()
 
     def on_mount(self) -> None:
         self.query_one("#prompt-band").display = False
@@ -1515,9 +1579,8 @@ class RederiveApp(App[None]):
         opened, that window's own worksheet, nothing in it, and no help page
         over it. Everything the original gave the notice up to shows here as
         one of those - an expression to draw, a help page, a second session a
-        split or an overlay made, another worksheet Designate put in the window
-        - bar the two Clear commands, which draw over it without changing any
-        of them and so put it away themselves.
+        split or an overlay made - bar the two Clear commands, which draw over
+        it without changing any of them and so put it away themselves.
         """
         sessions = self.windows.sessions()
         return (
@@ -4379,20 +4442,179 @@ class RederiveApp(App[None]):
             return ""
         return demo.steps[demo.at - 1][0]
 
+    # -- Plot --------------------------------------------------------------
+    #
+    # Four commands, and only the first of them is about an expression. `Plot`
+    # classifies what is highlighted and sends it; `New` is the same into a
+    # window of its own; `Delete` and `Window` act on windows that already
+    # exist and never make one.
+    #
+    # Everything here goes through the computing thread, including the parts
+    # that are not computations. Two of the three steps can block: the
+    # variables of the expression are an engine call, and the first plot of a
+    # session starts a process that imports Qt and sympy before it answers. The
+    # message line's clock is what makes that wait legible instead of a freeze.
+    #
+    # The app holds no plot state at all. Which window is current, what is in
+    # it, what it is called - the host owns all of it, because the host is the
+    # only side that knows when the user closes a window.
+
+    def _command_plot(self, where: plots.Where) -> None:
+        """Plot the highlighted expression, into the current window or a new one.
+
+        The same rules as Simplify decide what is plotted: a highlighted
+        subexpression is what gets plotted, and the whole entry otherwise. No
+        question is asked - that is the point of the command.
+        """
+        if not available():
+            self._plot_refused(UNAVAILABLE)
+            return
+        entry = self.session.selected_entry
+        if entry is None:
+            self._plot_refused(NOTHING_TO_PLOT)
+            return
+        request = f"#{entry.number}"
+        self._compute(
+            PLOTTING, partial(self._plot, request, where), self._plot_done
+        )
+
+    def _plot(self, request: str, where: plots.Where) -> str:
+        """Classify what `request` names and send it, off the event loop.
+
+        The classification is app-side because it decides what else has to be
+        asked; the text is written here because the host renders no expression
+        of its own. What comes back is the message line's sentence, since the
+        window number is only known once the host has answered.
+        """
+        target, label = self.session.named_target(request)
+        variables = self.session.variables(request)
+        text = write_expression(target, spaced=True)
+        plotted = classify(target, variables, text)
+        if plotted.kind not in plots.DRAWN:
+            raise PlotError(plots.UNDRAWN.format(kind=plotted.kind.value))
+        options = plotted.options
+        if plotted.kind is plots.PlotKind.FAMILY:
+            options = replace(
+                options,
+                texts=tuple(
+                    write_expression(element, spaced=True)
+                    for element in target.children
+                ),
+            )
+        window = self.plots.add(
+            plots.Add(
+                # The worksheet is named by identity: two algebra overlays can
+                # each own a `#3`, and the plot list is keyed by the pair.
+                worksheet=id(self.session),
+                node=target,
+                context=self.session.context,
+                kind=plotted.kind,
+                window=where,
+                label=label,
+                text=text,
+                options=options,
+            )
+        )
+        return PLOTTED.format(label=label, window=window)
+
+    def _plot_done(self, outcome: Outcome) -> None:
+        """Say where the plot landed, or why it did not."""
+        if outcome.error is not None:
+            self._plot_refused(_plot_reason(outcome.error))
+            return
+        self._plot_finished(str(outcome.value))
+
+    def _plot_finished(self, message: str) -> None:
+        """A Plot command has run, so the command menu has the screen again."""
+        del self.stack[1:]
+        self._restart_menu()
+        self._return_to_menu(message)
+
+    def _command_plot_delete(self, word: str, which: plots.Which) -> None:
+        """Take plots out of the window that last received one."""
+        self._compute(
+            PLOTTING,
+            partial(self._plot_delete, word, which),
+            self._plot_done,
+        )
+
+    def _plot_delete(self, word: str, which: plots.Which) -> str:
+        removed = self.plots.delete(plots.Delete(which=which))
+        if not removed.count:
+            return NOTHING_DELETED.format(window=removed.window)
+        return DELETED.format(what=DELETE_WORDS[word], window=removed.window)
+
+    def _command_plot_window(self) -> None:
+        """Ask which plot window the next plot of its kind should land in.
+
+        The field opens on the window that is current now, which is both the
+        answer most likely wanted and how the command doubles as a way of
+        finding out what the current one is.
+        """
+        self._compute(PLOTTING, self.plots.describe, self._plot_windows)
+
+    def _plot_windows(self, outcome: Outcome) -> None:
+        """The windows are known: put the number field up, or refuse."""
+        if outcome.error is not None:
+            self._plot_refused(_plot_reason(outcome.error))
+            return
+        open_windows = outcome.value
+        assert isinstance(open_windows, tuple)
+        if not open_windows:
+            self._plot_refused(NO_PLOT_WINDOW)
+            return
+        current = next(
+            (window.number for window in open_windows if window.current),
+            open_windows[0].number,
+        )
+        self._ask(menus.plot_window(current), self._chose_plot_window)
+
+    def _chose_plot_window(self, values: dict[str, str | int]) -> None:
+        number = int(values["PlotWindow"])
+        self._compute(
+            PLOTTING, partial(self._set_plot_window, number), self._plot_done
+        )
+
+    def _set_plot_window(self, number: int) -> str:
+        return PLOTTED.format(label="the next plot", window=self.plots.set_current(number))
+
+    def _plot_refused(self, reason: str) -> None:
+        """Every plot refusal reads as one sentence off the same prefix."""
+        self._plot_finished(f"{PREFIX}{reason}")
+
+    def _plot_reported(self, event: plots.Event) -> None:
+        """An event off the proxy's reader thread, put on the event loop.
+
+        The thread is not the app's, so nothing may be read or written from
+        here but the handing over itself; a message line is a screen and the
+        screen belongs to the loop.
+        """
+        self.call_from_thread(self._plot_event, event)
+
+    def _plot_event(self, event: plots.Event) -> None:
+        """What the host has to say for itself, on the message line.
+
+        Arrives on the event loop from the proxy's reader thread. A window the
+        user closed is not worth a word - the user closed it and can see that
+        it is gone - but a curve that would not evaluate is exactly the silence
+        this design refuses to have.
+        """
+        if isinstance(event, plots.Trouble):
+            self._set_message(f"{PREFIX}{event.label}: {event.message}")
+
     # -- Window ------------------------------------------------------------
     #
-    # Eight commands over a tree of windows, of which the app owns only the
+    # Seven commands over a tree of windows, of which the app owns only the
     # screen half: which pane a window is drawn in, and how big. The tree
     # itself, the numbering and the geometry are `model.windows`.
     #
-    # Two of them can throw a worksheet away - Close, and Designate, which
-    # makes a window over rather than converting it - so both ask before they
-    # do, with the answered field still on the band.
+    # One of them can throw a worksheet away - Close - so it asks before it
+    # does, with the answered field still on the band.
     #
-    # A window of a plot type is offered because the original offers it on the
-    # same field, and refused because this program draws no plots. Everything
-    # else works for every window: splitting copies the worksheet, and the two
-    # copies are two derivations from there on.
+    # Every window in the tree is an Algebra window, plot windows being windows
+    # of the desktop instead, so `Open` makes one without asking what to make.
+    # Everything here works for every window: splitting copies the worksheet,
+    # and the two copies are two derivations from there on.
 
     def _command_window_split(self, vertical: bool) -> None:
         """Ask where to cut the active window in two."""
@@ -4462,51 +4684,15 @@ class RederiveApp(App[None]):
         self.windows.active.flip(direction)
         self._done_with_menu()
 
-    def _command_window_designate(self) -> None:
-        """Ask what type to make the active window, opening on what it is."""
-        self._ask(
-            menus.window_type(menus.WINDOW_DESIGNATE, self.windows.kind),
-            self._designate_window,
-        )
-
-    def _designate_window(self, values: dict[str, str | int]) -> None:
-        kind = str(values["WindowType"])
-        if kind != windows.ALGEBRA:
-            self._unplotted(kind)
-            return
-        if self.session.entries:
-            self._confirm_over(values, partial(self._redesignate, kind))
-            return
-        self._redesignate(kind)
-
-    def _redesignate(self, kind: str) -> None:
-        """Make the active window over as a fresh window of `kind`.
-
-        Which empties it: a type is not something a window is converted to,
-        it is what a new window in the same rectangle would be.
-        """
-        for dropped in self.windows.designate(kind, self._new_session()):
-            dropped.discard()
-        self._done_with_menu()
-
     def _command_window_open(self) -> None:
-        """Ask what type to overlay on the active window, offering Algebra."""
-        self._ask(
-            menus.window_type(menus.WINDOW_OPEN, windows.ALGEBRA), self._open_window
-        )
+        """Overlay a fresh worksheet on the active window, asking nothing.
 
-    def _open_window(self, values: dict[str, str | int]) -> None:
-        kind = str(values["WindowType"])
-        if kind != windows.ALGEBRA:
-            self._unplotted(kind)
-            return
-        self.windows.open(kind, self._new_session())
+        The original asked what type to make it, which was a question with
+        three answers; with plot windows outside the tree there is one, so the
+        command runs on the keystroke like Next and Previous.
+        """
+        self.windows.open(windows.ALGEBRA, self._new_session())
         self._done_with_menu()
-
-    def _unplotted(self, kind: str) -> None:
-        """Refuse a plot window, which is a window with nothing to put in it."""
-        self.message = f"{kind}: not implemented yet"
-        self.refresh_screen()
 
     def _new_session(self) -> Session:
         """An empty worksheet for a window that has just been made.

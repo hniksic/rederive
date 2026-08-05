@@ -34,13 +34,12 @@ from dataclasses import dataclass, replace
 
 from rederive.model.session import Session
 
-#: The three kinds of window, in the order the original's Type field lists
-#: them. Only Algebra windows hold a worksheet; the other two are the original's
-#: plot windows, which this program does not draw yet.
-PLOT_2D = "2D-plot"
-PLOT_3D = "3D-plot"
+#: The one kind of window this tree holds. The original had three - two of them
+#: plot windows - and chose between them with `Window Designate`; here a plot
+#: window is a window of the desktop rather than a leaf of this tree, so there
+#: is nothing left to choose between and the kind is carried only because a
+#: second kind would want it back.
 ALGEBRA = "Algebra"
-KINDS = (PLOT_2D, PLOT_3D, ALGEBRA)
 
 #: How near an edge a split may fall, as the original allows it: a line no
 #: closer than two rows to the top of the window and two to the bottom, a
@@ -76,7 +75,7 @@ _PIECES = {
 
 @dataclass
 class Overlay:
-    """One window's worth of state, of the three kinds a window can be."""
+    """One window's worth of state, and what kind of window it is."""
 
     kind: str
     session: Session
@@ -300,17 +299,6 @@ class Windows:
     def open(self, kind: str, session: Session) -> None:
         """Overlay a new window on the active one, sharing its number and place."""
         self.active.overlays.insert(0, Overlay(kind, session))
-
-    def designate(self, kind: str, session: Session) -> list[Session]:
-        """Make the active window a fresh window of `kind`.
-
-        The old contents go: changing a window's type is not a conversion, it
-        is a new window in the same rectangle. What it dropped is handed back,
-        for the caller to let go of.
-        """
-        dropped = [overlay.session for overlay in self.active.overlays]
-        self.active.overlays = [Overlay(kind, session)]
-        return dropped
 
     def close(self, window: Window) -> list[Session]:
         """Close what `window` is showing, and the window with its last overlay.
