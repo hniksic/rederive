@@ -100,3 +100,65 @@ infinities are refused.
 
 Derive expands the first of these; the largest exceeds the memory it can address, and it
 answers `Memory Full`.
+
+## Plotting
+
+The plotter is Rederive's own, over [pyqtgraph](https://www.pyqtgraph.org/), and sympy is
+in it only to convert an expression into something `lambdify` can turn into a numeric
+closure.
+
+**What a shape is drawn as.** One command, `Plot`, reads the highlighted expression and
+decides; the first matching row wins.
+
+| shape | drawn as |
+|---|---|
+| scalar in 0 or 1 variables | a curve, the variable naming the horizontal axis |
+| vector of ≥3 scalars in one common variable | one curve per element, colors cycling |
+| 2-vector in exactly one variable | a parametric curve, over a range it asks for |
+| scalar in one variable, window in polar mode | `r = f(θ)` |
+| `u = v` in at most two variables | the zero contour of `u - v`, by marching squares |
+| inequality, or a boolean combination of them | the region it holds on, shaded |
+| n x 2 matrix of constants | points, joined into a polyline on request |
+| scalar in exactly two variables | a shaded surface, several to a window |
+| vector of ≥2 scalars in the same two variables | one surface per element |
+| equation with one side a lone variable | a surface, that variable naming the vertical axis |
+
+**Sampling is redone at every scale.** Each plot keeps its lambdified closure, so a view
+change re-evaluates over the new range instead of stretching pixels: 129 uniform samples,
+then adaptive bisection until every chord sits within a quarter pixel of the curve, capped
+at depth 12, and the same in the plane for parametric and polar curves. A spike narrower
+than a pixel is therefore not lost - zoom towards it and it appears. Implicit contours and
+regions are recomputed on the same schedule, so zooming into `x^2 + y^2 = 9` reveals its
+detail rather than its polygon.
+
+**Corner cases are drawn as what they are.** `TAN(x)` and `SIGN(x)` gap at their jumps
+instead of bridging them with a vertical stroke. `SQRT(x)` and `x^(1/3)` are evaluated
+over the complex plane and masked back to their real part, so the negative half is absent
+rather than drawn as zero. A surface's mesh drops the faces that touch a non-real vertex,
+which is why `SQRT(1 - x^2 - y^2)` stops cleanly at the unit circle instead of skirting
+the floor.
+
+**Nothing is silent.** An expression in too many variables is refused by name. A curve
+with no real value in view says so and names the range it looked over. A surface whose
+spikes would crush the box is clipped to the 1st-99th percentile and says that too. An
+empty picture with no explanation is the named anti-goal.
+
+**Numbers come off the closure, not off the pixels.** Trace rides a curve and reads out
+`x` and `f(x)` at full precision, freshly evaluated at the exact x. `Tab` jumps to the
+next root, local extremum or intersection with another plotted curve: candidates are found
+by sign changes in the sampled arrays, then refined on the closure by bisection or a
+parabolic fit. A sign change across a NaN gap is a pole and is never offered as a root.
+
+**Deliberately absent.** No accuracy setting - sampling is always sub-pixel. No framing
+dialogs; the mouse, and the stock context menu's per-axis min/max fields, are the whole
+vocabulary. No persisted view state, so every new window frames the same [-5, 5] world and
+a plot reads the same at a glance. `Options Plot` keeps only four preferences, and they
+apply to the next window and the next plot rather than to what is already drawn.
+
+**Where it runs.** Plotting needs a graphical display: on Linux, `DISPLAY` or
+`WAYLAND_DISPLAY` has to be set. Where it is not, the Plot command stays on the menu - a
+command that disappears is a command nobody learns - and refuses with `Plot: needs a
+graphical display`. A broken install says so in its own words instead. The dependencies
+are `pyside6`, `pyqtgraph`, `pyopengl` and `numpy`; none of them is imported by the
+terminal program, which stays as free of Qt as it is of sympy. All the plotting lives in
+one child process, spawned the first time something is plotted.

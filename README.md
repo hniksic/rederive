@@ -2,7 +2,7 @@
 
 Rederive is a from-scratch reimplementation of Derive, the classic DOS computer algebra
 system. Written on top of [SymPy](https://www.sympy.org/en/index.html), it simplifies,
-solves, and expands a wide range of mathematical expressions and equations, both
+solves, expands and plots a wide range of mathematical expressions and equations, both
 symbolically and numerically, through an interactive menu-driven interface. What sets it
 apart from SymPy in a Jupyter notebook is how it treats the user: Rederive reads `ax+b` or
 `sinx` the way a mathematician would, and displays every result nicely typeset right in
@@ -31,7 +31,8 @@ Much like Derive, Rederive runs in a terminal. It follows the look&feel of the o
 but adapts to the 21st century where appropriate. The display is Unicode rather than code
 page 437, and everything is laid out for the terminal's actual size instead of an 80x25
 screen. The mouse and scroll wheel work, it uses the system clipboard, file names
-tab-complete, and the line editor follows Emacs conventions.
+tab-complete, and the line editor follows Emacs conventions. Plots, which the original
+drew in a pane of its own text screen, open as real windows of the desktop.
 
 ## Running
 
@@ -87,6 +88,47 @@ Pressing <kbd>s</kbd> answers:
 ────
   2
 ```
+
+## Plotting
+
+Two keystrokes get you a picture. Highlight an expression, press <kbd>p</kbd> for Plot and
+<kbd>p</kbd> again, and it is drawn in a plot window - no dialogs, no framing questions.
+Plot windows are ordinary windows of the desktop, outside the terminal, and one process
+serves all of them; it starts the first time you plot and costs nothing until then.
+
+Rederive works out what an expression is a plot of and draws it accordingly: a curve for
+`SIN(x)/x`, one curve per element of a vector like `[x, x^2, x^3]`, a parametric curve for
+`[3SIN(3t), 3SIN(4t)]`, a polar curve for `r = f(θ)` in a window switched to polar, the
+zero contour for an equation like `x^2 + y^2 = 9`, a shaded area for an inequality, points
+for a matrix of numbers, and a shaded surface for anything in two variables. Anything it
+cannot read says why on the message line rather than drawing nothing.
+
+The picture is a measuring instrument, not an illustration. Axes cross at the origin where
+mathematics puts them. The wheel zooms about the pointer, the left button drags, the right
+button sweeps out a rectangle to zoom to, <kbd>Backspace</kbd> steps back through the
+views, and every zoom re-samples the function from its lambdified closure - so a spike
+narrower than a pixel resolves as soon as you zoom towards it, instead of being smoothed
+away forever. Poles are gaps and never vertical strokes, and only the real part of
+`SQRT(x)` or `x^(1/3)` is drawn. <kbd>T</kbd> puts a marker on a curve that reads out
+`x` and `f(x)` at full precision, and <kbd>Tab</kbd> jumps it to the next root, extremum,
+or crossing with another curve, naming what it found. <kbd>Ctrl-C</kbd> copies the picture
+to the clipboard - or the traced point as `[x, y]`, ready to paste into the worksheet.
+3D windows draw several surfaces at once in one box, with hand-drawn tick numbers and axis
+names, direct-manipulation camera, and <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> to face the
+coordinate planes.
+
+`Transfer Load Derive gallery` reads a worksheet of captioned plots - one entry per idea,
+from a family of curves to a clipped spike - that comes with the program and loads from
+any directory. `Options Plot` holds the few things worth remembering between sessions:
+whether a new window locks the two scales together, how fine a surface is sampled, and how
+data points are drawn.
+
+Plotting needs a graphical display. Without one - over a bare SSH connection, say - the
+Plot command stays on the menu and refuses with `Plot: needs a graphical display`;
+everything else works as it always did. The dependencies it brings are
+[pyqtgraph](https://www.pyqtgraph.org/) on [PySide6](https://doc.qt.io/qtforpython-6/),
+with PyOpenGL for the 3D windows and NumPy for evaluation. None of them is loaded by the
+terminal program itself.
 
 ## For the math nerds
 
