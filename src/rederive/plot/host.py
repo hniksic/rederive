@@ -421,9 +421,9 @@ class Host:
     def _open(self, kind: WindowKind) -> Any:
         """A new window of `kind`, numbered where the last one left off.
 
-        One sequence of numbers across both kinds, never reused, so a window
-        number means the same thing in a title, in a message and in a prompt
-        for the life of the session.
+        One sequence of numbers across both kinds, never reused, so the number
+        that keys the protocol names one window for the life of the session.
+        The user never reads it: a window is titled by what it holds.
 
         The two window classes are imported here rather than at the top of the
         file because each of them costs a toolkit: a session that only ever

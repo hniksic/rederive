@@ -464,6 +464,7 @@ class Window2D(QtWidgets.QMainWindow):
         #: default framing is a thing to be given up rather than returned to.
         self._default = True
         self._build()
+        self.retitle()
         self.home()
 
     # -- construction ------------------------------------------------------
@@ -688,6 +689,7 @@ class Window2D(QtWidgets.QMainWindow):
             self.item.addItem(plot.fill, ignoreBounds=True)
         self.plots.append(plot)
         self._relabel()
+        self.retitle()
         self._axis_names()
         self._show_trange()
         self._start(plot, fresh=True)
@@ -742,6 +744,7 @@ class Window2D(QtWidgets.QMainWindow):
         if plot in self.plots:
             self.plots.remove(plot)
         self._relabel()
+        self.retitle()
         self._show_trange()
         if self._tracing is not None and self._tracing >= len(self.plots):
             self._trace_off()
@@ -1880,10 +1883,21 @@ class Window2D(QtWidgets.QMainWindow):
             yrange=(float(low), float(high)),
         )
 
-    def retitle(self, current: bool) -> None:
-        """Say in the title bar whether the next plot lands here."""
-        self.current = current
-        self.setWindowTitle(protocol.titled(self.kind, self.number, current))
+    def retitle(self, current: bool | None = None) -> None:
+        """Title the window by what it holds, and say whether the next plot lands here.
+
+        Called with no argument when the plot list changes, so the title tracks
+        the contents while the receiver mark stays as it was.
+        """
+        if current is not None:
+            self.current = current
+        self.setWindowTitle(
+            protocol.titled(
+                self.kind,
+                tuple(plot.text or plot.label for plot in self.plots),
+                self.current,
+            )
+        )
 
     def _resized(self, *_: Any) -> None:
         """The canvas has a new size: re-sample, and frame it while it is fresh.

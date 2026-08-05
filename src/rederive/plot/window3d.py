@@ -605,6 +605,7 @@ class Window3D(QtWidgets.QMainWindow):
         self._papered = False
         self._inspector: Inspector | None = None
         self._build()
+        self.retitle()
         self.home()
 
     # -- construction ------------------------------------------------------
@@ -745,6 +746,7 @@ class Window3D(QtWidgets.QMainWindow):
         self._state, self._context = surface.state, surface.context
         self.plots.append(surface)
         self._relabel()
+        self.retitle()
         self._name_axes()
         self._start(surface)
         if self.view.broken:
@@ -765,6 +767,7 @@ class Window3D(QtWidgets.QMainWindow):
         if surface in self.plots:
             self.plots.remove(surface)
         self._relabel()
+        self.retitle()
         self._name_axes()
         self._frame()
 
@@ -1375,10 +1378,21 @@ class Window3D(QtWidgets.QMainWindow):
             yrange=(float(self.ydomain[0]), float(self.ydomain[1])),
         )
 
-    def retitle(self, current: bool) -> None:
-        """Say in the title bar whether the next plot lands here."""
-        self.current = current
-        self.setWindowTitle(protocol.titled(self.kind, self.number, current))
+    def retitle(self, current: bool | None = None) -> None:
+        """Title the window by what it holds, and say whether the next plot lands here.
+
+        Called with no argument when the plot list changes, so the title tracks
+        the contents while the receiver mark stays as it was.
+        """
+        if current is not None:
+            self.current = current
+        self.setWindowTitle(
+            protocol.titled(
+                self.kind,
+                tuple(surface.text or surface.label for surface in self.plots),
+                self.current,
+            )
+        )
 
     def changeEvent(self, ev: Any) -> None:
         """Activation is the user touching this window, and the host's to know.

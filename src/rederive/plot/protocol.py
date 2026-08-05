@@ -22,6 +22,7 @@ refusing.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -143,16 +144,29 @@ class Where(StrEnum):
     NEW = "new"
 
 
-#: How a window is titled, and what says it is the one the next plot of its
-#: kind will land in. Both sides know the spelling so that a test can name a
-#: window without having asked the host what it calls itself.
-TITLE = "Rederive {kind} plot {number}"
+#: How a window names itself, and what says it is the one the next plot of its
+#: kind will land in. A window is titled by what it holds - the taskbar and the
+#: alt-tab list are where a title is read, and there the contents are what tell
+#: one plot from another. Windows holding the same expressions share a title,
+#: which is how content-named windows behave everywhere; the number stays a
+#: protocol key and no part of the name.
+TITLE = {WindowKind.TWO_D: "Rederive plot", WindowKind.THREE_D: "Rederive 3D plot"}
 CURRENT_MARK = " (current)"
 
+#: How much of the contents a title carries before the rest becomes "...":
+#: enough to tell two windows apart, little enough to fit a taskbar button.
+TITLE_WIDTH = 60
 
-def titled(kind: WindowKind, number: int, current: bool = False) -> str:
-    """What the window manager shows over a plot window."""
-    title = TITLE.format(kind=kind.value, number=number)
+
+def titled(kind: WindowKind, contents: Sequence[str] = (), current: bool = False) -> str:
+    """What the window manager shows over a plot window: the plots it holds.
+
+    An empty window is titled by its kind alone.
+    """
+    text = ", ".join(contents)
+    if len(text) > TITLE_WIDTH:
+        text = text[: TITLE_WIDTH - 3].rstrip() + "..."
+    title = f"{text} - {TITLE[kind]}" if text else TITLE[kind]
     return title + CURRENT_MARK if current else title
 
 

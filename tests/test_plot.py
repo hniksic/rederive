@@ -494,6 +494,30 @@ def test_the_shading_of_a_surface_runs_from_dim_to_full(solid):
     assert 0.0 < shading.min() < shading.max() <= 1.0
 
 
+# -- window titles ---------------------------------------------------------------
+#
+# A window is titled by what it holds; the number that keys the protocol is no
+# part of the name. Pure functions of the contents, so no toolkit is needed.
+
+
+def test_a_window_is_titled_by_its_contents():
+    titled = plots.titled(plots.WindowKind.TWO_D, ("SIN(x)", "COS(x)"))
+    assert titled == "SIN(x), COS(x) - Rederive plot"
+    titled = plots.titled(plots.WindowKind.THREE_D, ("x^2 - y^2",), current=True)
+    assert titled == "x^2 - y^2 - Rederive 3D plot (current)"
+
+
+def test_an_empty_window_is_titled_by_its_kind_alone():
+    assert plots.titled(plots.WindowKind.TWO_D) == "Rederive plot"
+    assert plots.titled(plots.WindowKind.THREE_D) == "Rederive 3D plot"
+
+
+def test_a_title_that_outgrows_a_taskbar_is_cut_with_an_ellipsis():
+    titled = plots.titled(plots.WindowKind.TWO_D, ("SIN(x)",) * 12)
+    assert titled.endswith("... - Rederive plot")
+    assert len(titled) <= plots.TITLE_WIDTH + len(" - Rederive plot")
+
+
 # -- the host over a real pipe -------------------------------------------------
 
 
@@ -555,7 +579,7 @@ def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
     window = described[0]
     assert window.number == 1
     assert window.kind is plots.WindowKind.TWO_D
-    assert window.title == "Rederive 2D plot 1 (current)"
+    assert window.title == "SIN(x), x^2 - 3 - Rederive plot (current)"
     assert window.current is True
     assert [plot.label for plot in window.plots] == ["#1", "#2"]
     assert [plot.text for plot in window.plots] == ["SIN(x)", "x^2 - 3"]
@@ -589,8 +613,8 @@ def test_a_new_window_takes_the_next_number_and_becomes_current(host):
     described = host.describe()
     assert [window.number for window in described] == [1, 2]
     assert [window.current for window in described] == [False, True]
-    assert described[0].title == "Rederive 2D plot 1"
-    assert described[1].title == "Rederive 2D plot 2 (current)"
+    assert described[0].title == "SIN(x) - Rederive plot"
+    assert described[1].title == "COS(x) - Rederive plot (current)"
     # The receiver is where the next plot lands: the new window's arrival was
     # the last touch.
     assert _add(session, host, "TAN(x)") == 2
@@ -657,8 +681,8 @@ def test_a_surface_opens_a_solid_window_of_its_own(host):
         plots.WindowKind.TWO_D,
         plots.WindowKind.THREE_D,
     )
-    assert solid.title == "Rederive 3D plot 2 (current)"
-    assert flat.title == "Rederive 2D plot 1 (current)"
+    assert solid.title == "x^2 - y^2 - Rederive 3D plot (current)"
+    assert flat.title == "SIN(x) - Rederive plot (current)"
     assert [plot.kind for plot in solid.plots] == [PlotKind.SURFACE]
     # The window reports the domain it evaluates over, which is the default one.
     assert solid.xrange == (-5.0, 5.0)
@@ -939,6 +963,23 @@ def test_the_delete_key_clears_the_window_it_is_pressed_in(flat):
     assert flat.plots == []
 
 
+def test_the_title_tracks_the_plot_list(flat):
+    # The title bar names what the window holds, so it follows every change to
+    # the plot list: add, replace in place, remove, clear.
+    assert flat.windowTitle() == "Rederive plot"
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    assert flat.windowTitle() == "SIN(x) - Rederive plot"
+    flat.add(_plot("COS(x)", PlotKind.CURVE, ("x",), label="#2"))
+    assert flat.windowTitle() == "SIN(x), COS(x) - Rederive plot"
+    # Re-plotting a label replaces its curve, and the title reads the new text.
+    flat.add(_plot("x^2 - 3", PlotKind.CURVE, ("x",)))
+    assert flat.windowTitle() == "COS(x), x^2 - 3 - Rederive plot"
+    flat.remove(flat.plots[0])
+    assert flat.windowTitle() == "x^2 - 3 - Rederive plot"
+    flat.clear_action.trigger()
+    assert flat.windowTitle() == "Rederive plot"
+
+
 def test_the_axis_label_follows_the_polar_mode(flat):
     # The known wart, fixed: a window in polar mode must not label its
     # abscissa with the parameter's letter - the horizontal axis of a polar
@@ -1001,8 +1042,11 @@ def test_the_3d_clear_button_empties_its_own_window(deep, solid):
         state=ParseState(),
     )
     deep.add(surface)
+    assert deep.windowTitle() == "x*y - Rederive 3D plot"
     deep.clear_action.trigger()
     assert deep.plots == []
+    # A cleared window's title falls back to the empty-window one.
+    assert deep.windowTitle() == "Rederive 3D plot"
 
 
 # -- the receiver ---------------------------------------------------------------
@@ -1054,7 +1098,7 @@ def test_a_plots_arrival_counts_as_a_touch(registry):
     assert placed == plots.Placed(1)
     window = registry.windows[1]
     assert window.current
-    assert window.windowTitle() == "Rederive 2D plot 1 (current)"
+    assert window.windowTitle() == "SIN(x) - Rederive plot (current)"
 
 
 def test_touching_a_window_makes_it_the_receiver(registry):
@@ -1299,7 +1343,7 @@ async def test_p_p_plots_the_highlighted_expression_with_no_question(app):
     async with app.run_test() as pilot:
         await authored(pilot, app, "SIN(x)")
         await pilot.press("p", "p")
-        assert message(app) == "Plotting #1 in window 1"
+        assert message(app) == "Plotting #1"
         request = app.plots.sent[0]
         assert request.label == "#1"
         assert request.text == "SIN(x)"
@@ -1329,7 +1373,7 @@ async def test_a_surface_is_sent_with_no_question_asked(app):
     async with app.run_test() as pilot:
         await authored(pilot, app, "x^2 - y^2")
         await pilot.press("p", "p")
-        assert message(app) == "Plotting #1 in window 1"
+        assert message(app) == "Plotting #1"
         request = app.plots.sent[0]
         assert request.kind is PlotKind.SURFACE
         assert request.options.variables == ("x", "y")
@@ -1374,7 +1418,7 @@ async def test_a_parametric_pair_is_sent_with_no_question_asked(app):
         await pilot.press("p", "p")
         # No field line: the picture appears over one turn, and the range is
         # adjusted in the plot window's own toolbar.
-        assert message(app) == "Plotting #1 in window 1"
+        assert message(app) == "Plotting #1"
         request = app.plots.sent[0]
         assert request.kind is PlotKind.PARAMETRIC
         assert request.options.variables == ("t",)
@@ -1423,7 +1467,7 @@ async def test_a_plot_that_replaces_a_curve_says_replotting(app):
         # itself.
         app.plots.placed = plots.Placed(1, replaced=True)
         await pilot.press("p", "p")
-        assert message(app) == "Replotting #1 in window 1"
+        assert message(app) == "Replotting #1"
 
 
 async def test_plotting_without_a_display_is_refused_but_still_offered(
@@ -1500,12 +1544,13 @@ async def test_the_whole_loop_lands_a_parametric_plot_in_a_real_window(monkeypat
             await pilot.press("p", "p")
             for _ in range(100):
                 await pilot.pause()
-                if "window" in message(app) or message(app).startswith("Plot:"):
+                if message(app).startswith(("Plotting #", "Plot:")):
                     break
                 await asyncio.sleep(0.05)
-            assert message(app) == "Plotting #1 in window 1"
+            assert message(app) == "Plotting #1"
             window = app.plots.describe()[0]
-            assert window.title == "Rederive 2D plot 1 (current)"
+            # The window is titled by what it holds, spelled as the app wrote it.
+            assert window.title == f"{window.plots[0].text} - Rederive plot (current)"
             assert window.plots[0].kind is PlotKind.PARAMETRIC
     finally:
         app.plots.shutdown()

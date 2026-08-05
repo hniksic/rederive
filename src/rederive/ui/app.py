@@ -452,11 +452,12 @@ READING = "Reading expression"
 #: the variables of the expression and then the plot host, which on the first
 #: plot of a session is a process starting up, so it is worth a clock.
 PLOTTING = "Plotting"
-#: What the message line says when a plot has landed. The second wording is
-#: how replacement teaches itself: a plot that replaced a curve already there
-#: says so in one word.
-PLOTTED = "Plotting {label} in window {window}"
-REPLOTTED = "Replotting {label} in window {window}"
+#: What the message line says when a plot has landed. No window is named -
+#: windows are titled by their contents, and the one the plot went to has just
+#: been raised - and the second wording is how replacement teaches itself: a
+#: plot that replaced a curve already there says so in one word.
+PLOTTED = "Plotting {label}"
+REPLOTTED = "Replotting {label}"
 #: What Plot says when there is nothing highlighted to plot.
 NOTHING_TO_PLOT = "no expression to plot"
 #: Seconds between two readings of the elapsed time. Fast enough that the
@@ -4531,16 +4532,16 @@ class RederiveApp(App[None]):
         self._compute(PLOTTING, partial(self._plot, request), self._plot_done)
 
     def _plot(self, request: plots.Add) -> str:
-        """Send one plot, off the event loop, and say where it landed.
+        """Send one plot, off the event loop, and word the acknowledgement.
 
-        The window number is only known once the host has answered, which is
-        why the sentence is made here rather than by the command - and so is
-        the word: a plot that replaced a curve already there says `Replotting`,
-        which is how replacement teaches itself.
+        Whether the plot replaced a curve already there is only known once the
+        host has answered, which is why the sentence is made here rather than
+        by the command: a plot that replaced says `Replotting`, which is how
+        replacement teaches itself.
         """
         placed = self.plots.add(request)
         worded = REPLOTTED if placed.replaced else PLOTTED
-        return worded.format(label=request.label, window=placed.window)
+        return worded.format(label=request.label)
 
     def _plot_done(self, outcome: Outcome) -> None:
         """Say where the plot landed, or why it did not."""
