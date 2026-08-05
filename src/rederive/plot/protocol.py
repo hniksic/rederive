@@ -117,22 +117,13 @@ def dimension(kind: PlotKind) -> WindowKind:
     return DIMENSION[kind]
 
 
-#: The kinds a window can draw today. Classification knows every kind, so an
-#: expression is always recognized for what it is; this is the one place that
-#: says which of them a window has been taught to draw, and it is what both
-#: sides refuse by. Later work extends it rather than the vocabulary: the two
-#: surfaces are what is left, and they wait on the 3D window.
-DRAWN = frozenset(
-    {
-        PlotKind.CURVE,
-        PlotKind.FAMILY,
-        PlotKind.PARAMETRIC,
-        PlotKind.POLAR,
-        PlotKind.DATA,
-        PlotKind.IMPLICIT,
-        PlotKind.REGION,
-    }
-)
+#: The kinds a window can draw today, which is now all of them. Classification
+#: knows every kind, so an expression is always recognized for what it is; this
+#: is the one place that says which of them a window has been taught to draw,
+#: and it is what both sides refuse by. It is kept, empty of exclusions, because
+#: the next kind the vocabulary grows - a parametric surface, a slider - is
+#: recognized before it is drawn, and a refusal has to be able to name it.
+DRAWN = frozenset(PlotKind)
 
 #: The kinds drawn over a parameter, which are the ones the Plot command asks
 #: a range for before it sends anything.

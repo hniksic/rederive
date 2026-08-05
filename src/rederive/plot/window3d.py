@@ -1,0 +1,1485 @@
+"""The 3D plot window: several surfaces in one solid, and a camera that costs nothing.
+
+A surface is read by turning it over, so the whole of this window is arranged
+around making that free. The mesh is built once per domain and grid and never
+again: every orbit, every wheel click, every preset is a camera move over
+vertices that are already on the card, and nothing the mouse can do starts an
+evaluation. Only the two toolbar fields - the domain and the grid - do that,
+because they are the two things that change what was computed rather than where
+it is looked at from.
+
+**The picture is drawn in a box of the program's choosing, not the data's.** The
+floor is always the same square, whatever rectangle the domain is, and the
+height is the true proportion of the z range to the floor - until that
+proportion is one no picture can hold, when it is capped at the floor's own
+length or lifted off it. So a surface whose z runs to a million reads as a shape
+rather than as a wall, a hemisphere over its own disc reads as a hemisphere, and
+a camera that frames one surface frames every other one. The numbers along the
+box edges carry the truth; the geometry carries the form. That is also what
+makes `Home` a fixed camera rather than a computation: there is only ever one
+box, near enough, to look at.
+
+**The z extent is the data's, within reason.** It autoscales to the finite
+values of every surface in the window, and where a spike would crush everything
+else into a plane it is taken from the 1st to the 99th percentile instead, with
+the status bar saying so. Vertices outside the clip leave the mesh exactly as
+non-real ones do, so the spike is not drawn flattened against the lid - it is
+simply not there, and the sentence says why.
+
+**Holes are holes.** `SQRT(1-x^2-y^2)` is a dome over the unit disc and nothing
+at all outside it, so every face with a non-real corner is dropped before the
+mesh is handed to OpenGL. `GLSurfacePlotItem` cannot do that - it generates the
+full grid of faces from the array's shape - so the triangles are built here and
+drawn by a plain `GLMeshItem`. What the item does with a NaN vertex is not a
+contract anyone has written down, and a dome with a skirt of garbage triangles
+around it is the picture that gets drawn when you trust it.
+
+**A window that cannot get an OpenGL context says so.** The context is asked for
+when the window is first shown, which is inside the Qt event loop, and an
+exception there would leave the host dead and every 2D window with it. It is
+caught and put on the status bar instead: no picture, but a plot list, a title
+and a message naming what happened.
+"""
+
+from __future__ import annotations
+
+import html
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+import pyqtgraph as pg
+import pyqtgraph.opengl as gl
+from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+
+from rederive.engine.context import Context
+from rederive.model.expr import Node
+from rederive.plot import evaluate, protocol
+from rederive.plot.protocol import Options, PlotKind
+from rederive.plot.window2d import PALETTE, PAPER_PALETTE
+
+__all__ = ["Box", "Surface", "Window3D", "mesh", "ticks"]
+
+#: The surface colors, which are the curve colors turned by one. A shaded solid
+#: in white is a white shape with a white shape behind it - the palette's first
+#: color is the right one for a stroke on a dark canvas and the worst one for a
+#: lit surface - so the order starts at the second and comes round to it last.
+SOLID_PALETTE = PALETTE[1:] + PALETTE[:1]
+SOLID_PAPER = PAPER_PALETTE[1:] + PAPER_PALETTE[:1]
+
+#: The window's own colors, the 2D window's near-black and its status line, so
+#: that two plot windows side by side are two windows of one program.
+BACKGROUND = "#0c0c10"
+BOX_COLOR = (150, 150, 150, 110)
+TICK_COLOR = (150, 150, 150, 200)
+TEXT_COLOR = "#d0d0d0"
+STATUS_BACKGROUND = "#16161c"
+
+#: The same three, for the white background every image export is taken on.
+PAPER_BOX = (40, 40, 40, 230)
+PAPER_TICK = (60, 60, 60, 255)
+PAPER_TEXT = "#000000"
+
+#: The rectangle a fresh window evaluates over, and how many samples of it each
+#: axis takes. Sixty-four is dense enough that `SIN(x*y)` over the default
+#: domain does not alias; the cap is what stops a typed grid from asking for a
+#: quarter of a million vertices.
+DEFAULT_DOMAIN = (-5.0, 5.0)
+DEFAULT_GRID = 64
+MAX_GRID = 256
+
+#: The side of the square floor every surface is drawn over, and half of it,
+#: which is where the box walls are. World units, and they mean nothing else:
+#: the axis numbers are the only quantities in this window with units.
+WORLD = 10.0
+HALF = WORLD / 2
+
+#: How short the box may be drawn, as a fraction of its floor. The height is
+#: the true one - a dome of radius 1 over a floor of 4 is drawn as a dome and
+#: not as a bullet - until the surface is so flat that the true height is a
+#: line, and then it is exaggerated to this much so that there is a shape to
+#: look at rather than a lid.
+MIN_HEIGHT = 0.15
+
+#: When the z extent is taken from the percentiles rather than from the data.
+#: A surface whose full range is four times its middle 98% has a spike in it,
+#: and drawing to the spike is drawing everything else as a floor.
+PERCENTILES = (1.0, 99.0)
+CLIP_FACTOR = 4.0
+
+#: How a vertex's brightness is arrived at. Height is half of it - the ramp
+#: runs from `DIM` at the floor of the box to 1 at the lid - and how the
+#: surface lies to a fixed light is the other half. Height alone reads a hill
+#: from a valley and nothing else, since two slopes at the same height are the
+#: same color; a light is what makes a fold in the middle of a surface show.
+#: The light is baked into the vertex colors rather than computed by a shader,
+#: which is what keeps the mesh free of normals and the frame rate free of
+#: anything.
+DIM = 0.30
+LIGHT = (0.40, -0.60, 0.69)
+AMBIENT = 0.20
+HEIGHT_SHARE = 0.5
+
+#: The camera a fresh window opens with and `Home` returns to: a three-quarter
+#: view from above, far enough out that the whole cube is in the picture.
+CAMERA_ELEVATION = 30.0
+CAMERA_AZIMUTH = -60.0
+CAMERA_DISTANCE = 23.0
+
+#: The three presets, as elevation and azimuth: face the xy plane from above,
+#: the xz plane from the front, the yz plane from the side.
+PLANES = {
+    "xy": (90.0, -90.0),
+    "xz": (0.0, -90.0),
+    "yz": (0.0, 0.0),
+}
+
+#: How far one arrow key turns the camera, and how fast `R` turns it by itself.
+#: A rotation is for reading a shape from every side while the eye stays still,
+#: so it is slow: a turn takes half a minute.
+ORBIT_DEGREES = 5.0
+SPIN_MS = 33
+SPIN_DEGREES = 0.4
+
+#: How many tick marks an axis aims for, and the most it may draw - the pool of
+#: text items is made once and never grown, since items cannot be added to the
+#: view while it is painting.
+TICKS = 5
+MAX_TICKS = 9
+
+#: What a window with no usable OpenGL says instead of drawing. The reason is
+#: the toolkit's own words, which are the only ones that name a missing driver.
+NO_OPENGL = "3D drawing is not available: {reason}"
+
+#: How nearly an axis has to point at the camera before its numbers are dropped,
+#: as the cosine of the angle between them: about five degrees.
+EDGE_ON = 0.996
+
+#: How far a tick mark and its number stand out of the box, in world units.
+TICK_OUT = 0.35
+LABEL_OUT = 1.05
+NAME_OUT = 2.3
+
+
+@dataclass
+class Surface:
+    """One entry of a 3D window's plot list: what to draw and what it is called.
+
+    The identity is `worksheet` and `label` together, exactly as a curve's is,
+    so re-plotting `#3` replaces its surface and keeps its color while a `#3`
+    from another algebra overlay is a second surface.
+
+    `values` is the grid the closure last answered with, kept because the mesh
+    is rebuilt whenever the z extent moves - another surface arriving in the
+    same window changes what the cube holds without changing what this surface
+    is worth.
+    """
+
+    worksheet: int
+    label: str
+    text: str
+    kind: PlotKind
+    node: Node
+    context: Context
+    options: Options
+    color: str = SOLID_PALETTE[0]
+    paper: str = SOLID_PAPER[0]
+    item: Any = None
+    #: The lambdified closure, once the sampling thread has built one.
+    closure: Callable[..., np.ndarray] | None = None
+    trouble: str = ""
+    xs: np.ndarray = field(default_factory=lambda: np.empty(0))
+    ys: np.ndarray = field(default_factory=lambda: np.empty(0))
+    values: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
+    hidden: bool = False
+    #: Which evaluation these values came from. A job whose generation has
+    #: moved on is a job about a domain that is gone.
+    generation: int = 0
+
+    @property
+    def visible(self) -> bool:
+        return not self.hidden
+
+    @property
+    def named(self) -> str:
+        """How the legend and the status line name this surface."""
+        return f"{self.label}  {self.text}" if self.label else self.text
+
+    @property
+    def axes(self) -> tuple[str, str]:
+        """The two variables of the floor, in the order the axes take them."""
+        names = self.options.variables
+        if len(names) >= 2:
+            return names[0], names[1]
+        return (names[0] if names else "x"), "y"
+
+    @property
+    def vertical(self) -> str:
+        """What the upright axis is called: the expression's name for it, or z.
+
+        `z = x^2 + y^2` names it and an expression that is only `x^2 + y^2`
+        does not, so the second gets the letter every reader supplies anyway.
+        """
+        return self.options.vertical or "z"
+
+
+@dataclass(frozen=True)
+class Box:
+    """The three ranges the picture stands for: the domain, and the z it holds.
+
+    Everything drawn is placed through this and nothing else, which is what
+    keeps one mapping between the numbers a reader sees and the geometry the
+    card draws. The floor is always the same square, whatever rectangle the
+    domain is - the axis numbers say what it is - and the height is the one
+    proportion kept, because that is what tells a dome from a bullet.
+    """
+
+    x: tuple[float, float]
+    y: tuple[float, float]
+    z: tuple[float, float]
+
+    @property
+    def center(self) -> tuple[float, float, float]:
+        return tuple(float(low + high) / 2 for low, high in (self.x, self.y, self.z))
+
+    @property
+    def lengths(self) -> tuple[float, float, float]:
+        return tuple(float(high - low) for low, high in (self.x, self.y, self.z))
+
+    @property
+    def height(self) -> float:
+        """How tall the box is drawn, in world units.
+
+        In proportion to the floor while the proportion is one a picture can
+        hold: a surface whose z runs ten times its domain would be a tower and
+        is drawn at the height of the floor instead, and one whose z barely
+        varies would be a sheet and is drawn at a fraction of it. Between those
+        two the height is true, which is the interesting range - a hemisphere
+        over its own disc has to read as a hemisphere.
+        """
+        across, along, up = self.lengths
+        floor = float(np.sqrt(abs(across) * abs(along)))
+        if not np.isfinite(floor) or floor <= 0 or not np.isfinite(up) or up <= 0:
+            return WORLD
+        return WORLD * min(max(up / floor, MIN_HEIGHT), 1.0)
+
+    def across(self, values: Any) -> np.ndarray:
+        return place(values, self.x, WORLD)
+
+    def along(self, values: Any) -> np.ndarray:
+        return place(values, self.y, WORLD)
+
+    def up(self, values: Any) -> np.ndarray:
+        return place(values, self.z, self.height)
+
+
+def place(values: Any, span: tuple[float, float], length: float) -> np.ndarray:
+    """Data coordinates onto the box: the range of `span` onto `length` of world."""
+    low, high = float(span[0]), float(span[1])
+    width = high - low
+    array = np.asarray(values, dtype=np.float64)
+    if not np.isfinite(width) or width == 0:
+        return np.zeros_like(array)
+    return length * ((array - low) / width - 0.5)
+
+
+def extent(arrays: Sequence[np.ndarray]) -> tuple[tuple[float, float], bool] | None:
+    """The z range the box takes, and whether the percentiles decided it.
+
+    The whole finite data, unless the data is mostly one thing and a little of
+    another: a single pole in a corner of the grid can be a thousand times the
+    rest of the surface, and drawing to it makes every other feature a flat
+    floor. The 1st and 99th percentiles are then the box, the spike leaves the
+    mesh, and the window says that it did.
+
+    None where there is nothing finite at all, which is the message rather than
+    a picture.
+    """
+    finite: list[np.ndarray] = []
+    for array in arrays:
+        flat = np.asarray(array, dtype=np.float64).ravel()
+        finite.append(flat[np.isfinite(flat)])
+    values = np.concatenate(finite) if finite else np.empty(0)
+    if not values.size:
+        return None
+    low, high = float(np.min(values)), float(np.max(values))
+    inner = np.percentile(values, PERCENTILES)
+    tight = (float(inner[0]), float(inner[1]))
+    clipped = False
+    if tight[1] > tight[0] and (high - low) > CLIP_FACTOR * (tight[1] - tight[0]):
+        low, high, clipped = tight[0], tight[1], True
+    if high <= low:
+        # A plane is a surface too, and a box of no height cannot be divided by.
+        low, high = low - 1.0, high + 1.0
+    return (low, high), clipped
+
+
+def mesh(
+    xs: np.ndarray, ys: np.ndarray, values: np.ndarray, box: Box
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One surface as vertices in the box, the faces that are whole, and shading.
+
+    A face is kept only where all four of its corners are real, finite and
+    inside the box, so the mesh of a dome ends at the edge of its domain and
+    the mesh of a spiked surface ends at the clip. The dropped corners keep a
+    vertex each - unreferenced by any face, and therefore not drawn - because
+    renumbering the survivors would cost more than the few kilobytes the holes
+    are worth.
+
+    The shading comes back beside the mesh because it is read off the same
+    array: how high a vertex is and which way the surface faces there are both
+    questions about z, and answering them here is what leaves the drawing with
+    no normals to compute and no lighting to do.
+    """
+    zs = np.asarray(values, dtype=np.float64)
+    if zs.ndim != 2 or zs.shape[0] < 2 or zs.shape[1] < 2:
+        return np.empty((0, 3), dtype=np.float32), _no_faces(), np.empty(0)
+    inside = np.isfinite(zs) & (zs >= box.z[0]) & (zs <= box.z[1])
+    low, high = box.z
+    heights = np.clip((zs - low) / (high - low), 0.0, 1.0)
+    heights = np.where(inside, heights, 0.0)
+    upright = np.where(inside, box.up(zs), -box.height / 2)
+    shading = HEIGHT_SHARE * (DIM + (1.0 - DIM) * heights) + (
+        1.0 - HEIGHT_SHARE
+    ) * _lit(np.where(inside, upright, np.nan))
+    across, along = np.meshgrid(box.across(xs), box.along(ys), indexing="ij")
+    vertexes = np.stack([across, along, upright], axis=-1).reshape(-1, 3)
+    index = np.arange(zs.size).reshape(zs.shape)
+    whole = inside[:-1, :-1] & inside[1:, :-1] & inside[1:, 1:] & inside[:-1, 1:]
+    corners = [
+        index[:-1, :-1][whole],
+        index[1:, :-1][whole],
+        index[1:, 1:][whole],
+        index[:-1, 1:][whole],
+    ]
+    faces = np.concatenate(
+        [
+            np.stack(corners[:3], axis=1),
+            np.stack([corners[0], corners[2], corners[3]], axis=1),
+        ]
+    )
+    return (
+        vertexes.astype(np.float32),
+        faces.astype(np.uint32) if faces.size else _no_faces(),
+        shading.reshape(-1),
+    )
+
+
+def _no_faces() -> np.ndarray:
+    return np.empty((0, 3), dtype=np.uint32)
+
+
+def _lit(upright: np.ndarray) -> np.ndarray:
+    """How much light each vertex catches, from the slope of the grid there.
+
+    The normal of a height field is `(-dz/dx, -dz/dy, 1)` normalized, which is
+    two differences and a square root over the array and needs no mesh at all -
+    the reason this window computes its own lighting rather than asking for
+    face normals it would then have to keep in step with the holes. The light
+    is fixed in the world, so turning the picture moves the highlight across
+    it, which is what a solid does.
+    """
+    step_x = WORLD / max(upright.shape[0] - 1, 1)
+    step_y = WORLD / max(upright.shape[1] - 1, 1)
+    slope_x = np.nan_to_num(np.gradient(upright, step_x, axis=0), nan=0.0)
+    slope_y = np.nan_to_num(np.gradient(upright, step_y, axis=1), nan=0.0)
+    slope_x = np.clip(slope_x, -1e6, 1e6)
+    slope_y = np.clip(slope_y, -1e6, 1e6)
+    facing = (-slope_x * LIGHT[0] - slope_y * LIGHT[1] + LIGHT[2]) / np.sqrt(
+        slope_x**2 + slope_y**2 + 1.0
+    )
+    return AMBIENT + (1.0 - AMBIENT) * np.clip(facing, 0.0, 1.0)
+
+
+def brightened(shading: np.ndarray, color: str) -> np.ndarray:
+    """A surface's own color per vertex, scaled by how bright the vertex is."""
+    tint = pg.mkColor(color)
+    rgb = np.array(tint.getRgbF()[:3], dtype=np.float32)
+    scale = np.clip(np.asarray(shading, dtype=np.float32), 0.0, 1.0)[:, None]
+    colors = np.ones((int(np.size(shading)), 4), dtype=np.float32)
+    colors[:, :3] = rgb * scale
+    return colors
+
+
+def ticks(low: float, high: float, count: int = TICKS) -> list[float]:
+    """The round numbers to mark an axis at, about `count` of them.
+
+    One, two, two and a half or five times a power of ten, which is what every
+    ruler in the world is divided in and what a reader can add up in their head
+    while looking at a picture.
+    """
+    span = float(high) - float(low)
+    if not np.isfinite(span) or span <= 0:
+        return []
+    rough = span / max(count, 1)
+    step = 10.0 ** np.floor(np.log10(rough))
+    for multiple in (1.0, 2.0, 2.5, 5.0, 10.0):
+        if step * multiple >= rough:
+            step *= multiple
+            break
+    slack = step * 1e-6
+    first = np.ceil((low - slack) / step) * step
+    found = np.arange(first, high + slack, step)
+    return [0.0 if abs(value) < slack else float(value) for value in found]
+
+
+class View(gl.GLViewWidget):
+    """The GL view, saying when the camera has moved and surviving no GL at all.
+
+    Two departures from stock, both of them about what happens around the
+    drawing rather than to it. The camera signal is what the tick labels
+    re-anchor on: every stock gesture goes through `orbit`, `pan`,
+    `setCameraPosition` or the wheel, so overriding those four is a complete
+    account of the camera moving, and it is emitted after the move rather than
+    during it.
+
+    The other is the guard. `initializeGL` is where a machine with no usable
+    OpenGL says so, and it runs inside the Qt event loop, where an exception
+    ends the host and takes every other plot window with it. It is remembered
+    instead, and the window reports it on its status bar.
+    """
+
+    moved = QtCore.Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.broken = ""
+
+    def initializeGL(self) -> None:
+        try:
+            super().initializeGL()
+        except Exception as error:
+            self.broken = str(error).strip().splitlines()[0]
+
+    def paintGL(self, *arguments: Any, **keywords: Any) -> None:
+        if self.broken:
+            return
+        try:
+            super().paintGL(*arguments, **keywords)
+        except Exception as error:  # a card that gave out mid-frame
+            self.broken = str(error).strip().splitlines()[0]
+
+    def orbit(self, *arguments: Any, **keywords: Any) -> None:
+        super().orbit(*arguments, **keywords)
+        self.moved.emit()
+
+    def pan(self, *arguments: Any, **keywords: Any) -> None:
+        super().pan(*arguments, **keywords)
+        self.moved.emit()
+
+    def setCameraPosition(self, *arguments: Any, **keywords: Any) -> None:
+        super().setCameraPosition(*arguments, **keywords)
+        self.moved.emit()
+
+    def wheelEvent(self, ev: Any) -> None:
+        super().wheelEvent(ev)
+        self.moved.emit()
+
+    def mouseMoveEvent(self, ev: Any) -> None:
+        """Stock, plus Shift-drag as a second way to say pan.
+
+        The stock view pans on Ctrl-drag and on the middle button; Shift is the
+        modifier the rest of this program uses for "the other axis", and a hand
+        already holding Shift for a 2D window should not have to learn a second
+        key for the same gesture in a 3D one.
+        """
+        modifiers = ev.modifiers()
+        shift = modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier
+        control = modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
+        if shift and not control and ev.buttons() == QtCore.Qt.MouseButton.LeftButton:
+            here = ev.position()
+            moved = here - getattr(self, "mousePos", here)
+            self.mousePos = here
+            self.pan(moved.x(), moved.y(), 0, relative="view")
+            return
+        super().mouseMoveEvent(ev)
+
+
+class Legend(QtWidgets.QFrame):
+    """The plot list, over the picture, one row per surface.
+
+    A GL view is not a graphics scene, so the 2D window's legend item has
+    nothing to hang on and this is a plain widget floating over the canvas
+    instead. It answers the same two gestures: a click on a row hides and shows
+    its surface, a right-click offers to remove it, and the whole row is the
+    target either way.
+
+    The rows are a pool that grows and never shrinks, the row for a surface
+    that is gone being emptied and hidden rather than deleted. A plot list is
+    rebuilt on every add and every removal, and widgets deleted from under a
+    live layout are the shortest way to a legend of stale rows.
+    """
+
+    picked = QtCore.Signal(int, object)
+
+    def __init__(self, parent: Any) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background: rgba(12, 12, 16, 170); border-radius: 3px;")
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(1)
+        self._rows: list[QtWidgets.QLabel] = []
+        self.shown = 0
+
+    def rebuild(self, entries: Sequence[tuple[str, str, bool]]) -> None:
+        """One row per surface: its name, in its color, struck through if hidden."""
+        while len(self._rows) < len(entries):
+            row = QtWidgets.QLabel(self)
+            self.layout().addWidget(row)
+            self._rows.append(row)
+        self.shown = len(entries)
+        for index, row in enumerate(self._rows):
+            if index >= len(entries):
+                row.setVisible(False)
+                continue
+            name, color, hidden = entries[index]
+            style = f"color: {html.escape(color)}; background: transparent;"
+            if hidden:
+                style += " text-decoration: line-through;"
+            row.setStyleSheet(style)
+            row.setText(
+                "<span style='font-size: 9pt'>"
+                f"{html.escape(name).replace(' ', '&nbsp;')}</span>"
+            )
+            row.setVisible(True)
+        # The frame is not in any layout - it floats over the picture - so its
+        # size is its own business, and the rows have none until the layout has
+        # run over them.
+        self.layout().activate()
+        self.resize(self.layout().sizeHint())
+
+    def mousePressEvent(self, ev: Any) -> None:
+        for index, row in enumerate(self._rows[: self.shown]):
+            if row.geometry().contains(ev.position().toPoint()):
+                self.picked.emit(index, ev.button())
+                ev.accept()
+                return
+        ev.ignore()
+
+
+class Window3D(QtWidgets.QMainWindow):
+    """One top-level 3D plot window and everything that happens inside it."""
+
+    def __init__(self, number: int, host: Any) -> None:
+        super().__init__()
+        self.number = number
+        self.kind = protocol.WindowKind.THREE_D
+        self.host = host
+        self.plots: list[Surface] = []
+        self.current = False
+        self.xdomain = DEFAULT_DOMAIN
+        self.ydomain = DEFAULT_DOMAIN
+        self.grid = (DEFAULT_GRID, DEFAULT_GRID)
+        #: The z range now drawn, and the one the inspector nailed down where
+        #: somebody typed it - a typed extent is an answer and is not autoscaled
+        #: away by the next surface.
+        self.zrange = (-1.0, 1.0)
+        #: What the three axes are called, which is the first surface's reading
+        #: of the expression until there is one.
+        self.axis_names = ("x", "y", "z")
+        self._fixed: tuple[float, float] | None = None
+        self._counter = 0
+        self._message = ""
+        #: Which of the three furnishings are shown: the box and its ticks, the
+        #: numbers and axis names, the legend. All on for a fresh window.
+        self._boxed = True
+        self._named = True
+        self._legend = True
+        self._papered = False
+        self._inspector: Inspector | None = None
+        self._build()
+        self.home()
+
+    # -- construction ------------------------------------------------------
+
+    def _build(self) -> None:
+        self.view = View()
+        self.view.setBackgroundColor(BACKGROUND)
+        # The keys belong to the window: the stock view has arrow bindings of
+        # its own with a repeat timer, and ours orbit by a fixed step.
+        self.view.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.view.moved.connect(self._anchor)
+        self.legend = Legend(self.view)
+        self.legend.move(12, 12)
+        self.legend.picked.connect(self._legend_picked)
+        self._furnish()
+        self.setCentralWidget(self._laid_out())
+        self._spin = QtCore.QTimer(self)
+        self._spin.setInterval(SPIN_MS)
+        self._spin.timeout.connect(lambda: self.view.orbit(-SPIN_DEGREES, 0.0))
+        self.resize(760, 620)
+
+    def _laid_out(self) -> QtWidgets.QWidget:
+        """The view between a toolbar and a status line.
+
+        The toolbar holds the two things that change what was computed - the
+        rectangle and how finely it is sampled - and the door to the numbers
+        behind the picture. Everything else about a 3D window is the camera,
+        and the camera is the mouse.
+        """
+        holder = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._toolbar())
+        layout.addWidget(self.view, 1)
+        self.status = QtWidgets.QLabel("")
+        line = QtWidgets.QWidget()
+        line.setStyleSheet(f"background: {STATUS_BACKGROUND}; color: {TEXT_COLOR};")
+        across = QtWidgets.QHBoxLayout(line)
+        across.setContentsMargins(8, 2, 8, 2)
+        across.addWidget(self.status, 1)
+        layout.addWidget(line)
+        return holder
+
+    def _toolbar(self) -> QtWidgets.QWidget:
+        bar = QtWidgets.QToolBar()
+        bar.setMovable(False)
+        self.fields: dict[str, QtWidgets.QLineEdit] = {}
+        bar.addWidget(QtWidgets.QLabel(" x: "))
+        bar.addWidget(self._field("x0", self.xdomain[0]))
+        bar.addWidget(QtWidgets.QLabel(" to "))
+        bar.addWidget(self._field("x1", self.xdomain[1]))
+        bar.addWidget(QtWidgets.QLabel("   y: "))
+        bar.addWidget(self._field("y0", self.ydomain[0]))
+        bar.addWidget(QtWidgets.QLabel(" to "))
+        bar.addWidget(self._field("y1", self.ydomain[1]))
+        bar.addWidget(QtWidgets.QLabel("   grid: "))
+        bar.addWidget(self._field("nx", self.grid[0]))
+        bar.addWidget(QtWidgets.QLabel(" x "))
+        bar.addWidget(self._field("ny", self.grid[1]))
+        bar.addWidget(QtWidgets.QLabel("  "))
+        self.inspect = QtGui.QAction("view...", self)
+        self.inspect.setToolTip("The box and the camera as numbers")
+        self.inspect.triggered.connect(self.inspector)
+        bar.addAction(self.inspect)
+        return bar
+
+    def _field(self, name: str, value: float) -> QtWidgets.QLineEdit:
+        """One toolbar number, which the keyboard only reaches when clicked in.
+
+        The keys of this window are the camera's - `1` faces the xy plane - and
+        a field that took the focus when the window opened would swallow them.
+        So the fields are click-only, and finishing an edit hands the keyboard
+        straight back.
+        """
+        edit = QtWidgets.QLineEdit(_written(value))
+        edit.setFixedWidth(52)
+        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
+        edit.editingFinished.connect(self._edited)
+        self.fields[name] = edit
+        return edit
+
+    def _furnish(self) -> None:
+        """The box, the axis rays, the tick marks and the pool of text items.
+
+        Made once and never added to, because re-anchoring happens while the
+        view is live and a view's item list must not be edited from under it. A
+        label with nothing to say is set to the empty string instead of being
+        taken away.
+        """
+        self.box = gl.GLBoxItem(
+            size=QtGui.QVector3D(WORLD, WORLD, WORLD), color=BOX_COLOR
+        )
+        self.box.translate(-HALF, -HALF, -HALF)
+        self.view.addItem(self.box)
+        self.rays = gl.GLAxisItem(size=QtGui.QVector3D(HALF, HALF, HALF))
+        self.view.addItem(self.rays)
+        self.marks = gl.GLLinePlotItem(
+            pos=np.zeros((0, 3), dtype=np.float32), mode="lines", antialias=True
+        )
+        self.view.addItem(self.marks)
+        self.labels = [gl.GLTextItem(text="") for _ in range(3 * MAX_TICKS)]
+        self.names = [gl.GLTextItem(text="") for _ in range(3)]
+        for item in self.labels + self.names:
+            item.setData(font=QtGui.QFont("Helvetica", 10))
+            # A number is drawn with a painter and not with the depth buffer, so
+            # it is only readable if it is drawn last: the view draws in order
+            # of depth value, and a surface added later would otherwise be
+            # painted over the numbers naming the edge behind it.
+            item.setDepthValue(10)
+            self.view.addItem(item)
+
+    # -- the plot list -----------------------------------------------------
+
+    def add(self, surface: Surface) -> None:
+        """Put a surface in the window, replacing one with the same identity."""
+        existing = self.find(surface.worksheet, surface.label)
+        if existing is not None:
+            surface.color, surface.paper = existing.color, existing.paper
+            self.remove(existing)
+        else:
+            index = self._counter % len(SOLID_PALETTE)
+            surface.color, surface.paper = SOLID_PALETTE[index], SOLID_PAPER[index]
+            self._counter += 1
+        surface.item = gl.GLMeshItem(
+            smooth=True, computeNormals=False, shader=None, glOptions="opaque"
+        )
+        # Hidden until there is a mesh in it: an item with no faces is asked to
+        # draw itself on the next frame, and the sampling has not answered yet.
+        surface.item.setVisible(False)
+        self.view.addItem(surface.item)
+        self.plots.append(surface)
+        self._relabel()
+        self._name_axes()
+        self._start(surface)
+        if self.view.broken:
+            self._quiet()
+
+    def find(self, worksheet: int, label: str) -> Surface | None:
+        """The surface a worksheet and a label name, if this window has it."""
+        for surface in self.plots:
+            if surface.worksheet == worksheet and surface.label == label:
+                return surface
+        return None
+
+    def remove(self, surface: Surface) -> None:
+        """Take one surface out of the window, legend row and all."""
+        if surface.item is not None:
+            self.view.removeItem(surface.item)
+            surface.item = None
+        if surface in self.plots:
+            self.plots.remove(surface)
+        self._relabel()
+        self._name_axes()
+        self._frame()
+
+    def take(self, which: protocol.Which, worksheet: int = 0, label: str = "") -> int:
+        """The Delete submenu, applied to this window's plot list."""
+        if which is protocol.Which.ONE:
+            surface = self.find(worksheet, label)
+            going = [] if surface is None else [surface]
+        elif not self.plots:
+            going = []
+        elif which is protocol.Which.ALL:
+            going = list(self.plots)
+        elif which is protocol.Which.FIRST:
+            going = self.plots[:1]
+        elif which is protocol.Which.LAST:
+            going = self.plots[-1:]
+        else:
+            going = self.plots[:-1]
+        for surface in going:
+            self.remove(surface)
+        return len(going)
+
+    def _relabel(self) -> None:
+        """Build the legend again, which is how a removal leaves it right."""
+        self.legend.rebuild(
+            [
+                (
+                    surface.named,
+                    surface.paper if self._papered else surface.color,
+                    surface.hidden,
+                )
+                for surface in self.plots
+            ]
+        )
+        # An empty legend is a rectangle over the corner of the picture saying
+        # nothing; the toggle is remembered rather than read off the widget, so
+        # a legend the user put away stays away when the next surface arrives.
+        self.legend.setVisible(self._legend and bool(self.plots))
+
+    def _name_axes(self) -> None:
+        """What the three axes are called, taken from the first surface there is.
+
+        The names are the expression's own - the two floor variables in the
+        engine's canonical order, and the vertical one where an equation named
+        it. A window holding two surfaces of the same two variables is the
+        ordinary case, and a window holding two of different ones has to pick:
+        the first surface named the axes and the others are drawn over them.
+        """
+        surface = self.plots[0] if self.plots else None
+        if surface is None:
+            self.axis_names = ("x", "y", "z")
+        else:
+            self.axis_names = (*surface.axes, surface.vertical)
+        self._anchor()
+
+    # -- evaluation --------------------------------------------------------
+
+    def _start(self, surface: Surface) -> None:
+        """Ask the sampling thread for this surface over the domain and grid.
+
+        The only thing that starts an evaluation. A camera move does not come
+        near here, which is the promise the window is built on: the mesh is
+        about the domain, and the domain is only ever changed by typing in it.
+        """
+        surface.generation += 1
+        generation = surface.generation
+        self.host.sample(
+            (self.number, id(surface)),
+            self._work(surface),
+            lambda answer: self._sampled(surface, generation, answer),
+        )
+
+    def _work(self, surface: Surface) -> Callable[..., Any]:
+        """What the sampling thread is to do, as one callable over nothing else.
+
+        Everything it needs is read here, on the Qt thread, and captured: by
+        the time it runs the domain may have been typed over and the surface
+        may have been removed, and a job that reached into the window would
+        find either.
+        """
+        node, context, names = surface.node, surface.context, surface.axes
+        made = surface.closure
+        xrange, yrange = self.xdomain, self.ydomain
+        nx, ny = self.grid
+
+        def work(_report: Callable[..., None]) -> Any:
+            f = made
+            if f is None:
+                f = evaluate.closure(node, context, names)
+            xs, ys, values = evaluate.grid_eval(f, xrange, yrange, nx, ny)
+            return f, xs, ys, values
+
+        return work
+
+    def _sampled(self, surface: Surface, generation: int, answer: Any) -> None:
+        """The grid is in: rebuild the box around it, and say what it holds."""
+        if surface.generation != generation or surface not in self.plots:
+            return
+        if isinstance(answer, Exception):
+            surface.trouble = str(answer)
+            self.host.trouble(self.number, surface.label, str(answer))
+            self.say(f"{surface.label}: {answer}")
+            return
+        surface.closure, surface.xs, surface.ys, surface.values = answer
+        # Whatever the window was saying was about the domain this answer has
+        # replaced; the two sentences below are what it has to say about the
+        # new one, and they are said in the order they were arrived at.
+        self._quiet()
+        self._frame()
+        if evaluate.finite_fraction(surface.values) == 0.0:
+            self.say(f"{surface.label}: no real values over this domain")
+
+    def reevaluate(self) -> None:
+        """Every surface again, which is what a new domain or grid asks for."""
+        for surface in self.plots:
+            self._start(surface)
+
+    # -- the box -----------------------------------------------------------
+
+    def _frame(self) -> None:
+        """Work out the z the box stands for, and build every mesh to it.
+
+        One box for the window rather than one per surface: two surfaces in the
+        same picture are being compared, and comparing them through two
+        different vertical scales would be a picture that lies. So a surface
+        arriving rebuilds the others, which costs a mesh each and no evaluation
+        at all.
+        """
+        shown = [
+            surface.values
+            for surface in self.plots
+            if surface.visible and surface.values.size
+        ]
+        found = extent(shown)
+        clipped = False
+        if self._fixed is not None:
+            self.zrange = self._fixed
+        elif found is not None:
+            self.zrange, clipped = found
+        self._reshape()
+        for surface in self.plots:
+            self._draw(surface)
+        self._anchor()
+        if clipped:
+            low, high = self.zrange
+            self.say(
+                "z clipped to the 1st-99th percentile:"
+                f" {_written(low)} to {_written(high)}"
+            )
+
+    @property
+    def box_now(self) -> Box:
+        """The three ranges the picture stands for, as one thing to read them from."""
+        return Box(self.xdomain, self.ydomain, self.zrange)
+
+    def _reshape(self) -> None:
+        """Stand the box and the axis rays up to the height the data asks for.
+
+        The rays start where the data's origin is, when the box holds it, which
+        is the same convention the 2D window draws its axes by: an axis belongs
+        at zero, and a picture framed away from zero shows it at the edge
+        instead of not at all.
+        """
+        box = self.box_now
+        height = box.height
+        self.box.setSize(WORLD, WORLD, height)
+        self.box.resetTransform()
+        self.box.translate(-HALF, -HALF, -height / 2)
+        origin = (
+            float(np.clip(box.across(0.0), -HALF, HALF)),
+            float(np.clip(box.along(0.0), -HALF, HALF)),
+            float(np.clip(box.up(0.0), -height / 2, height / 2)),
+        )
+        self.rays.setSize(HALF - origin[0], HALF - origin[1], height / 2 - origin[2])
+        self.rays.resetTransform()
+        self.rays.translate(*origin)
+
+    def _draw(self, surface: Surface) -> None:
+        """Build one surface's triangles for the box as it now stands."""
+        if surface.item is None:
+            return
+        vertexes, faces, shading = mesh(
+            surface.xs, surface.ys, surface.values, self.box_now
+        )
+        if not faces.size:
+            surface.item.setVisible(False)
+            return
+        color = surface.paper if self._papered else surface.color
+        surface.item.setMeshData(
+            vertexes=vertexes, faces=faces, vertexColors=brightened(shading, color)
+        )
+        surface.item.setVisible(surface.visible)
+
+    def _anchor(self) -> None:
+        """Put the tick marks and the numbers on the box edges nearest the camera.
+
+        Three edges carry them: the two bottom edges of the side the camera is
+        on, which is where a number sits in front of the picture rather than
+        behind it, and for the upright axis the far vertical edge, which is the
+        one the surface does not stand in front of. Which edges those are
+        changes as the view turns, so this runs on every camera move; it is a
+        few dozen positions and no geometry at all.
+
+        An axis pointing at the camera is left unnumbered. Facing the xy plane
+        makes the whole z axis one point of the screen, and five numbers stacked
+        on that point are five numbers about nothing; the axis keeps its name,
+        which is all there is to say about it from there.
+        """
+        box = self.box_now
+        floor = -box.height / 2
+        camera = self.view.cameraPosition()
+        head_on = self._head_on()
+        near_y = -HALF if camera.y() < 0 else HALF
+        near_x = -HALF if camera.x() < 0 else HALF
+        far_x, far_y = -near_x, -near_y
+        out_y, out_x = np.sign(near_y), np.sign(near_x)
+        segments: list[tuple[float, float, float]] = []
+        written: list[tuple[tuple[float, float, float], str]] = []
+
+        for value in self._ticks(self.xdomain) if not head_on[0] else ():
+            at = float(box.across(value))
+            segments += [
+                (at, near_y, floor),
+                (at, near_y + out_y * TICK_OUT, floor),
+            ]
+            written.append(((at, near_y + out_y * LABEL_OUT, floor), _written(value)))
+        for value in self._ticks(self.ydomain) if not head_on[1] else ():
+            at = float(box.along(value))
+            segments += [
+                (near_x, at, floor),
+                (near_x + out_x * TICK_OUT, at, floor),
+            ]
+            written.append(((near_x + out_x * LABEL_OUT, at, floor), _written(value)))
+        upright = np.sign(far_x) * 0.7, np.sign(far_y) * 0.7
+        for value in self._ticks(self.zrange) if not head_on[2] else ():
+            at = float(box.up(value))
+            segments += [
+                (far_x, far_y, at),
+                (far_x + upright[0] * TICK_OUT, far_y + upright[1] * TICK_OUT, at),
+            ]
+            written.append(
+                (
+                    (
+                        far_x + upright[0] * LABEL_OUT,
+                        far_y + upright[1] * LABEL_OUT,
+                        at,
+                    ),
+                    _written(value),
+                )
+            )
+
+        self.marks.setData(
+            pos=np.array(segments, dtype=np.float32).reshape(-1, 3),
+            color=pg.glColor(PAPER_TICK if self._papered else TICK_COLOR),
+            width=1,
+        )
+        ink = PAPER_TEXT if self._papered else TEXT_COLOR
+        for index, item in enumerate(self.labels):
+            if index < len(written) and self._named:
+                where, text = written[index]
+                item.setData(pos=np.array(where, dtype=np.float64), text=text, color=ink)
+            else:
+                item.setData(text="")
+        places = (
+            (0.0, near_y + out_y * NAME_OUT, floor),
+            (near_x + out_x * NAME_OUT, 0.0, floor),
+            (
+                far_x + upright[0] * NAME_OUT,
+                far_y + upright[1] * NAME_OUT,
+                -floor * 0.9,
+            ),
+        )
+        for item, where, name in zip(self.names, places, self.axis_names):
+            item.setData(
+                pos=np.array(where, dtype=np.float64),
+                text=name if self._named else "",
+                color=ink,
+            )
+
+    def _head_on(self) -> tuple[bool, bool, bool]:
+        """Which axes point so nearly at the camera that they have no length.
+
+        The camera looks along the line from itself to the box's center, so an
+        axis is edge-on to the picture exactly when it is parallel to that line.
+        The three coordinate presets each put one axis in that position, which
+        is why the test is worth making rather than assuming a general view.
+        """
+        camera = self.view.cameraPosition()
+        center = self.view.cameraParams()["center"]
+        away = np.array(
+            [
+                float(camera.x() - center.x()),
+                float(camera.y() - center.y()),
+                float(camera.z() - center.z()),
+            ]
+        )
+        length = float(np.linalg.norm(away))
+        if not length:
+            return (False, False, False)
+        near = [abs(value) / length > EDGE_ON for value in away]
+        return near[0], near[1], near[2]
+
+    def _ticks(self, span: tuple[float, float], count: int = TICKS) -> list[float]:
+        """The round numbers of one axis, never more than the label pool holds."""
+        return ticks(span[0], span[1], count)[:MAX_TICKS]
+
+    # -- the domain and the grid -------------------------------------------
+
+    def _edited(self) -> None:
+        """A toolbar field was left: take the numbers, or put back the old ones.
+
+        The one place in this window where typing changes what is computed. A
+        field that does not read as a number is reverted rather than argued
+        with, since the value it would take is on the screen beside it.
+        """
+        try:
+            xdomain = (self._read("x0"), self._read("x1"))
+            ydomain = (self._read("y0"), self._read("y1"))
+            grid = (int(self._read("nx")), int(self._read("ny")))
+        except ValueError:
+            self._show_domain()
+            self.say("The domain and the grid are numbers")
+            return
+        grid = (
+            int(min(max(grid[0], 2), MAX_GRID)),
+            int(min(max(grid[1], 2), MAX_GRID)),
+        )
+        if xdomain[1] <= xdomain[0] or ydomain[1] <= ydomain[0]:
+            self._show_domain()
+            self.say("The domain runs from a lower number to a higher one")
+            return
+        changed = (xdomain, ydomain, grid) != (self.xdomain, self.ydomain, self.grid)
+        self.xdomain, self.ydomain, self.grid = xdomain, ydomain, grid
+        self._show_domain()
+        if changed:
+            self.say(f"Evaluating over the new domain at {grid[0]} by {grid[1]}")
+            self.reevaluate()
+
+    def _read(self, name: str) -> float:
+        return float(self.fields[name].text().strip())
+
+    def _show_domain(self) -> None:
+        """Put the window's own numbers back in the fields, however they got there."""
+        for name, value in (
+            ("x0", self.xdomain[0]),
+            ("x1", self.xdomain[1]),
+            ("y0", self.ydomain[0]),
+            ("y1", self.ydomain[1]),
+            ("nx", self.grid[0]),
+            ("ny", self.grid[1]),
+        ):
+            self.fields[name].setText(_written(value))
+
+    def reframe(
+        self,
+        xdomain: tuple[float, float],
+        ydomain: tuple[float, float],
+        zrange: tuple[float, float],
+    ) -> None:
+        """The inspector's answer: a box typed rather than arrived at.
+
+        A typed z extent is an opinion and outranks the autoscale from then on -
+        somebody who asked for -1 to 1 wants to see the surface cut off at 1,
+        and a picture that reframed itself on the next plot would be answering a
+        question nobody asked. The extent that was already on the screen is not
+        such an opinion, though: applying a change of camera must not quietly
+        freeze the z the data chose, so an unedited field changes nothing.
+        """
+        moved = (xdomain, ydomain) != (self.xdomain, self.ydomain)
+        self.xdomain, self.ydomain = xdomain, ydomain
+        self._show_domain()
+        if zrange[1] > zrange[0] and not _alike(zrange, self.zrange):
+            self._fixed = zrange
+        if moved:
+            self.reevaluate()
+        self._frame()
+
+    def autoscale_z(self) -> None:
+        """Give the z extent back to the data, undoing a typed one."""
+        self._fixed = None
+        self._frame()
+
+    # -- the camera --------------------------------------------------------
+
+    def home(self) -> None:
+        """The default camera: a three-quarter view with the whole cube in it."""
+        self.view.setCameraPosition(
+            pos=pg.Vector(0.0, 0.0, 0.0),
+            distance=CAMERA_DISTANCE,
+            elevation=CAMERA_ELEVATION,
+            azimuth=CAMERA_AZIMUTH,
+        )
+
+    def face(self, plane: str) -> None:
+        """`1`, `2`, `3`: look straight at one of the three coordinate planes."""
+        elevation, azimuth = PLANES[plane]
+        self.view.setCameraPosition(elevation=elevation, azimuth=azimuth)
+        self.say(f"Facing the {plane} plane")
+
+    def spin(self) -> None:
+        """`R`: turn the picture slowly, or stop turning it."""
+        if self._spin.isActive():
+            self._spin.stop()
+            self._quiet()
+            return
+        self._spin.start()
+        self.say("Rotating - R stops it")
+
+    def inspector(self) -> None:
+        """The `view...` dialog: the box and the camera as editable numbers."""
+        if self._inspector is None:
+            self._inspector = Inspector(self)
+        self._inspector.refresh()
+        self._inspector.show()
+        self._inspector.raise_()
+
+    # -- the legend --------------------------------------------------------
+
+    def _legend_picked(self, row: int, button: Any) -> None:
+        """A click on a legend row: hide and show, or offer to remove."""
+        if not 0 <= row < len(self.plots):
+            return
+        surface = self.plots[row]
+        if button == QtCore.Qt.MouseButton.RightButton:
+            menu = QtWidgets.QMenu(self)
+            menu.addAction(f"Remove {surface.named}", lambda: self.remove(surface))
+            menu.exec(QtGui.QCursor.pos())
+            return
+        surface.hidden = not surface.hidden
+        if surface.item is not None:
+            surface.item.setVisible(surface.visible)
+        self._relabel()
+        self._frame()
+
+    # -- export ------------------------------------------------------------
+
+    def copy_image(self) -> None:
+        """Ctrl-C: the picture on the clipboard, on paper colors."""
+        image = self._photograph()
+        if image is None:
+            return
+        QtWidgets.QApplication.clipboard().setImage(image)
+        self.say("Copied the plot to the clipboard")
+
+    def export(self) -> None:
+        """Ctrl-S: the picture in a file, on paper colors.
+
+        pyqtgraph's exporters know nothing about a GL view, so this is the
+        frame buffer, a file dialog and a PNG - which is every image a 3D plot
+        has to give. The colors are the same paper colors the 2D window
+        exports on, for the same reason: a dark picture pasted into a document
+        is a black rectangle.
+        """
+        name, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save the plot", f"plot{self.number}.png", "PNG image (*.png)"
+        )
+        if not name:
+            return
+        image = self._photograph()
+        if image is None:
+            return
+        image.save(name)
+        self.say(f"Saved {name}")
+
+    def _photograph(self) -> Any:
+        """The view as an image, taken on a white background and put back after.
+
+        `readQImage` is the frame buffer and nothing else: the legend is a Qt
+        widget floating over the view, not an item in it, so it would be missing
+        from a picture of two surfaces - which is a picture that does not say
+        which is which. It is written onto the image afterwards, in the same
+        paper colors the surfaces took.
+        """
+        if self.view.broken:
+            self.say(NO_OPENGL.format(reason=self.view.broken))
+            return None
+        with _on_paper(self):
+            image = self.view.readQImage()
+            self._name_surfaces(image)
+        return image
+
+    def _name_surfaces(self, image: Any) -> None:
+        """Write the plot list into the corner of an exported picture."""
+        if not self._legend or not self.plots:
+            return
+        painter = QtGui.QPainter(image)
+        # The frame buffer is in device pixels and the widget in logical ones,
+        # so a picture on a doubled display is twice the size of the window.
+        painter.scale(*([image.height() / max(self.view.height(), 1)] * 2))
+        painter.setFont(QtGui.QFont("Helvetica", 9))
+        painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+        for index, surface in enumerate(self.plots):
+            painter.setPen(pg.mkColor(surface.paper))
+            painter.drawText(16, 20 + index * 14, surface.named)
+        painter.end()
+
+    # -- keys --------------------------------------------------------------
+
+    def keyPressEvent(self, ev: Any) -> None:
+        key = ev.key()
+        control = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
+        keys = QtCore.Qt.Key
+        if control and key == keys.Key_C:
+            self.copy_image()
+        elif control and key == keys.Key_S:
+            self.export()
+        elif control and key == keys.Key_W:
+            self.close()
+        elif key in (keys.Key_Home, keys.Key_0):
+            self.home()
+        elif key == keys.Key_1:
+            self.face("xy")
+        elif key == keys.Key_2:
+            self.face("xz")
+        elif key == keys.Key_3:
+            self.face("yz")
+        elif key == keys.Key_R:
+            self.spin()
+        elif key == keys.Key_B:
+            self._boxed = not self._boxed
+            for item in (self.box, self.rays, self.marks):
+                item.setVisible(self._boxed)
+        elif key == keys.Key_X:
+            self._named = not self._named
+            self._anchor()
+        elif key == keys.Key_L:
+            self._legend = not self._legend
+            self.legend.setVisible(self._legend and bool(self.plots))
+        elif key == keys.Key_Left:
+            self.view.orbit(ORBIT_DEGREES, 0.0)
+        elif key == keys.Key_Right:
+            self.view.orbit(-ORBIT_DEGREES, 0.0)
+        elif key == keys.Key_Up:
+            self.view.orbit(0.0, ORBIT_DEGREES)
+        elif key == keys.Key_Down:
+            self.view.orbit(0.0, -ORBIT_DEGREES)
+        else:
+            super().keyPressEvent(ev)
+            return
+        ev.accept()
+
+    # -- the rest ----------------------------------------------------------
+
+    def say(self, message: str) -> None:
+        """Put one line on the status bar, which is the window's whole voice."""
+        self._message = message
+        self.status.setText(message)
+
+    def _quiet(self) -> None:
+        """Nothing to say - unless there is no picture, which always wants saying."""
+        self.say(NO_OPENGL.format(reason=self.view.broken) if self.view.broken else "")
+
+    def describe(self) -> protocol.WindowInfo:
+        """This window as `Describe` reports it.
+
+        The ranges reported are the domain, since that is what a 3D window is
+        framed by; `polar` stays absent, a window with no such mode having no
+        answer rather than a false one.
+        """
+        return protocol.WindowInfo(
+            number=self.number,
+            kind=self.kind,
+            title=self.windowTitle(),
+            current=self.current,
+            plots=tuple(
+                protocol.PlotInfo(
+                    worksheet=surface.worksheet,
+                    label=surface.label,
+                    text=surface.text,
+                    kind=surface.kind,
+                    hidden=surface.hidden,
+                )
+                for surface in self.plots
+            ),
+            xrange=(float(self.xdomain[0]), float(self.xdomain[1])),
+            yrange=(float(self.ydomain[0]), float(self.ydomain[1])),
+            polar=None,
+        )
+
+    def retitle(self, current: bool) -> None:
+        """Say in the title bar whether the next plot lands here."""
+        self.current = current
+        self.setWindowTitle(protocol.titled(self.kind, self.number, current))
+
+    def closeEvent(self, ev: Any) -> None:
+        """The window manager's business, and the host's to hear about."""
+        self._spin.stop()
+        if self._inspector is not None:
+            self._inspector.close()
+        self.host.closed(self.number)
+        super().closeEvent(ev)
+
+
+class Inspector(QtWidgets.QDialog):
+    """The numbers behind the picture: the box, and where it is looked at from.
+
+    Everything here is reachable with the mouse and the toolbar; what this adds
+    is exactness. Somebody who wants the box to run from -1 to 1 in z, or the
+    camera at an azimuth of 45 degrees precisely, has nowhere else to say so -
+    and a 3D picture is one of the few places where a number typed is worth
+    more than a gesture made.
+    """
+
+    ROWS = (
+        ("cx", "center x"),
+        ("cy", "center y"),
+        ("cz", "center z"),
+        ("lx", "length x"),
+        ("ly", "length y"),
+        ("lz", "length z"),
+        ("azimuth", "camera azimuth"),
+        ("elevation", "camera elevation"),
+        ("distance", "camera distance"),
+    )
+
+    def __init__(self, window: Window3D) -> None:
+        super().__init__(window)
+        self._window = window
+        self.setWindowTitle(f"View of plot {window.number}")
+        layout = QtWidgets.QFormLayout(self)
+        self.fields: dict[str, QtWidgets.QLineEdit] = {}
+        for name, shown in self.ROWS:
+            edit = QtWidgets.QLineEdit()
+            edit.setFixedWidth(90)
+            self.fields[name] = edit
+            layout.addRow(shown, edit)
+        buttons = QtWidgets.QDialogButtonBox()
+        buttons.addButton("Apply", QtWidgets.QDialogButtonBox.ButtonRole.ApplyRole)
+        buttons.addButton("Autoscale z", QtWidgets.QDialogButtonBox.ButtonRole.ResetRole)
+        buttons.addButton("Close", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.clicked.connect(self._clicked)
+        layout.addRow(buttons)
+        window.view.moved.connect(self._camera_moved)
+
+    def refresh(self) -> None:
+        """Fill the fields from the window as it now stands."""
+        box = self._window.box_now
+        camera = self._window.view.cameraParams()
+        values = dict(zip(("cx", "cy", "cz"), box.center))
+        values.update(zip(("lx", "ly", "lz"), box.lengths))
+        for name in ("azimuth", "elevation", "distance"):
+            values[name] = float(camera.get(name, 0.0))
+        for name, value in values.items():
+            self.fields[name].setText(_written(value))
+
+    def _camera_moved(self) -> None:
+        """Follow the camera while the dialog is up: it is a readout as well."""
+        if not self.isVisible():
+            return
+        camera = self._window.view.cameraParams()
+        for name in ("azimuth", "elevation", "distance"):
+            self.fields[name].setText(_written(float(camera.get(name, 0.0))))
+
+    def _clicked(self, button: Any) -> None:
+        text = button.text()
+        if text == "Close":
+            self.close()
+        elif text == "Autoscale z":
+            self._window.autoscale_z()
+            self.refresh()
+        else:
+            self._apply()
+
+    def _apply(self) -> None:
+        try:
+            center = [float(self.fields[name].text()) for name in ("cx", "cy", "cz")]
+            lengths = [float(self.fields[name].text()) for name in ("lx", "ly", "lz")]
+            camera = {
+                name: float(self.fields[name].text())
+                for name in ("azimuth", "elevation", "distance")
+            }
+        except ValueError:
+            self._window.say("The view is described in numbers")
+            self.refresh()
+            return
+        spans = [
+            (middle - width / 2, middle + width / 2)
+            for middle, width in zip(center, lengths)
+        ]
+        self._window.reframe(spans[0], spans[1], spans[2])
+        self._window.view.setCameraPosition(
+            distance=max(camera["distance"], 0.1),
+            elevation=camera["elevation"],
+            azimuth=camera["azimuth"],
+        )
+        self.refresh()
+
+
+class _on_paper:
+    """The window in paper colors for as long as an export takes.
+
+    The same bargain the 2D window makes: a picture pasted into a document is
+    read on white, so the background goes white, the surfaces take the darkened
+    half of the palette, and the box and its numbers go black. The window
+    flickers, which is honest - the picture that was taken is the picture that
+    was shown.
+    """
+
+    def __init__(self, window: Window3D) -> None:
+        self._window = window
+
+    def __enter__(self) -> None:
+        window = self._window
+        window._papered = True
+        window.view.setBackgroundColor("w")
+        window.box.setColor(PAPER_BOX)
+        for surface in window.plots:
+            window._draw(surface)
+        window._relabel()
+        window._anchor()
+        QtWidgets.QApplication.processEvents()
+
+    def __exit__(self, *_: Any) -> None:
+        window = self._window
+        window._papered = False
+        window.view.setBackgroundColor(BACKGROUND)
+        window.box.setColor(BOX_COLOR)
+        for surface in window.plots:
+            window._draw(surface)
+        window._relabel()
+        window._anchor()
+
+
+def _alike(one: tuple[float, float], other: tuple[float, float]) -> bool:
+    """Whether two ranges are the same range, allowing for what a field wrote.
+
+    A number that went out to a field as `16.6667` and came back is the same
+    number for this purpose: what is being asked is whether somebody typed
+    something, not whether two floats are equal.
+    """
+    span = max(abs(other[1] - other[0]), 1e-12)
+    return all(abs(a - b) <= 1e-4 * span for a, b in zip(one, other))
+
+
+def _written(value: float) -> str:
+    """A number as a toolbar field and a tick label write it: short and exact."""
+    number = float(value)
+    if number == int(number) and abs(number) < 1e15:
+        return str(int(number))
+    return f"{number:g}"

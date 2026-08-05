@@ -4494,7 +4494,10 @@ class RederiveApp(App[None]):
         plotted = classify(target, variables, text)
         kind = plotted.kind
         options = plotted.options
-        if kind is plots.PlotKind.FAMILY:
+        if kind in (plots.PlotKind.FAMILY, plots.PlotKind.SURFACES):
+            # A vector is one expression to the user and several plots in the
+            # window, whether its elements are curves or surfaces, so each of
+            # them carries the text the syntax writer made of it.
             options = replace(
                 options,
                 texts=tuple(

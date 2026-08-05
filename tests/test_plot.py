@@ -355,6 +355,146 @@ def _spans(xs, ys, place):
     ]
 
 
+# -- the solid: the mesh, the box, the ticks -----------------------------------
+#
+# Pure functions, so the whole of the interesting behaviour of a 3D window is
+# tested without a graphics card: which faces survive a hole in the domain,
+# where the box stands, and what the numbers along its edges say. GL rendering
+# itself is only ever exercised by the offscreen host below.
+
+
+@pytest.fixture(scope="module")
+def solid():
+    """The 3D window module, or a skip where there is no OpenGL to import it."""
+    if not _toolkit():
+        pytest.skip("pyqtgraph and PySide6 are not installed")
+    try:
+        from rederive.plot import window3d
+    except ImportError as missing:  # no PyOpenGL, or no libGL to load it with
+        pytest.skip(f"pyqtgraph.opengl will not import: {missing}")
+    return window3d
+
+
+def _grid(f, span=(-2.0, 2.0), n=33):
+    """A grid of `f` over a square domain, the way the window evaluates one."""
+    xs = np.linspace(span[0], span[1], n)
+    ys = np.linspace(span[0], span[1], n)
+    across, along = np.meshgrid(xs, ys, indexing="ij")
+    with np.errstate(all="ignore"):
+        values = f(across, along)
+    return xs, ys, np.where(np.isfinite(values), values, np.nan)
+
+
+def test_a_whole_grid_becomes_two_triangles_a_cell(solid):
+    xs, ys, values = _grid(lambda x, y: x + y, n=8)
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-4.0, 4.0))
+    vertexes, faces, shading = solid.mesh(xs, ys, values, box)
+    assert vertexes.shape == (64, 3)
+    assert faces.shape == (2 * 7 * 7, 3)
+    assert shading.shape == (64,)
+
+
+def test_the_faces_of_a_dome_stop_at_the_edge_of_its_domain(solid):
+    # The acceptance case: `SQRT(1-x^2-y^2)` over [-2, 2] is a dome over the
+    # unit disc and nothing at all outside it. Every face has to lie inside the
+    # circle, and there have to be enough of them left to be a dome.
+    xs, ys, values = _grid(lambda x, y: np.sqrt(1 - x**2 - y**2))
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (0.0, 1.0))
+    vertexes, faces, _ = solid.mesh(xs, ys, values, box)
+    assert faces.size
+    corners = vertexes[faces.reshape(-1)]
+    # Back to data coordinates, where the unit circle is the boundary. The
+    # world is a square of side WORLD standing for the domain.
+    scale = (2.0 - -2.0) / solid.WORLD
+    radius = np.hypot(corners[:, 0] * scale, corners[:, 1] * scale)
+    assert radius.max() <= 1.0
+    # A quarter of the square is the disc, so about a quarter of the faces of a
+    # whole grid survive; fewer than a tenth would not be a dome.
+    assert len(faces) > 0.1 * 2 * 32 * 32
+
+
+def test_a_surface_with_no_real_values_has_no_faces_at_all(solid):
+    xs, ys, values = _grid(lambda x, y: np.sqrt(-1 - x**2 - y**2))
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (0.0, 1.0))
+    _, faces, _ = solid.mesh(xs, ys, values, box)
+    assert not faces.size
+    assert solid.extent([values]) is None
+
+
+def test_a_vertex_beyond_the_clip_drops_its_faces_like_a_hole(solid):
+    xs, ys, values = _grid(lambda x, y: x + y, span=(-2.0, 2.0), n=9)
+    whole = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-4.0, 4.0))
+    clipped = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-1.0, 1.0))
+    assert len(solid.mesh(xs, ys, values, clipped)[1]) < len(
+        solid.mesh(xs, ys, values, whole)[1]
+    )
+    heights = solid.mesh(xs, ys, values, clipped)[0][:, 2]
+    assert heights.max() <= clipped.height / 2 + 1e-6
+
+
+def test_the_extent_is_the_data_until_a_spike_would_crush_it(solid):
+    values = np.linspace(-2.0, 2.0, 400)
+    (low, high), clipped = solid.extent([values])
+    assert (low, high) == (-2.0, 2.0)
+    assert clipped is False
+    # One pole among four hundred ordinary values: the box is the percentiles
+    # and the window says so.
+    spiked = values.copy()
+    spiked[0] = 1e6
+    (low, high), clipped = solid.extent([spiked])
+    assert clipped is True
+    assert high < 10.0
+
+
+def test_a_flat_surface_still_gets_a_box_to_stand_in(solid):
+    (low, high), clipped = solid.extent([np.full(100, 3.0)])
+    assert low < 3.0 < high
+    assert clipped is False
+
+
+def test_the_box_keeps_the_true_height_until_it_would_be_a_tower(solid):
+    # A hemisphere of radius 1 over a floor of 4 is a quarter as tall as it is
+    # wide, and is drawn that way - which is what makes it read as a dome.
+    dome = solid.Box((-2.0, 2.0), (-2.0, 2.0), (0.0, 1.0))
+    assert dome.height == pytest.approx(solid.WORLD * 0.25)
+    # A z range of five times the domain would be a tower nothing fits in.
+    tower = solid.Box((-5.0, 5.0), (-5.0, 5.0), (-25.0, 25.0))
+    assert tower.height == solid.WORLD
+    # And a sheet is exaggerated rather than drawn as a line.
+    sheet = solid.Box((-5.0, 5.0), (-5.0, 5.0), (-0.001, 0.001))
+    assert sheet.height == pytest.approx(solid.WORLD * solid.MIN_HEIGHT)
+
+
+def test_the_box_reports_its_center_and_its_lengths(solid):
+    box = solid.Box((-2.0, 6.0), (-5.0, 5.0), (0.0, 1.0))
+    assert box.center == (2.0, 0.0, 0.5)
+    assert box.lengths == (8.0, 10.0, 1.0)
+
+
+def test_the_tick_marks_of_an_axis_are_round_numbers(solid):
+    assert solid.ticks(-5.0, 5.0) == [-4.0, -2.0, 0.0, 2.0, 4.0]
+    assert solid.ticks(0.0, 1.0) == pytest.approx([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    assert solid.ticks(3.0, 3.0) == []
+    # Zero comes out as zero rather than as a rounding error of one.
+    assert 0.0 in solid.ticks(-0.3, 0.3)
+    assert all(abs(value) > 1e-9 or value == 0.0 for value in solid.ticks(-0.3, 0.3))
+
+
+def test_a_vertex_is_darkest_at_the_floor_of_the_box(solid):
+    colors = solid.brightened(np.array([0.0, 1.0]), "#ffffff")
+    assert colors.shape == (2, 4)
+    assert colors[0][0] < colors[1][0]
+    assert colors[1][0] == pytest.approx(1.0)
+    assert list(colors[:, 3]) == [1.0, 1.0]
+
+
+def test_the_shading_of_a_surface_runs_from_dim_to_full(solid):
+    xs, ys, values = _grid(lambda x, y: x + y, n=16)
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-4.0, 4.0))
+    shading = solid.mesh(xs, ys, values, box)[2]
+    assert 0.0 < shading.min() < shading.max() <= 1.0
+
+
 # -- the host over a real pipe -------------------------------------------------
 
 
@@ -521,13 +661,52 @@ def _turn(variables=("t",)):
     return plots.Options(variables=variables, minimum=parsed("-π"), maximum=parsed("π"))
 
 
-def test_a_kind_no_window_draws_yet_is_refused_by_name(host):
-    from rederive.plot.proxy import PlotError
-
+def test_a_surface_opens_a_solid_window_of_its_own(host):
+    # One window per kind: a curve and a surface never share a window, and each
+    # is the current one for its own kind, so the next plot of either lands
+    # where the last one did. Sent in one test because each costs a process.
     session = Session()
-    with pytest.raises(PlotError) as refused:
-        _add(session, host, "x*y")
-    assert "surface plots are not implemented yet" in str(refused.value)
+    assert _add(session, host, "SIN(x)") == 1
+    assert _add(session, host, "x^2 - y^2") == 2
+    flat, solid = host.describe()
+    assert (flat.kind, solid.kind) == (
+        plots.WindowKind.TWO_D,
+        plots.WindowKind.THREE_D,
+    )
+    assert solid.title == "Rederive 3D plot 2 (current)"
+    assert flat.title == "Rederive 2D plot 1 (current)"
+    # Absent rather than off: a 3D window has no polar mode to be in.
+    assert solid.polar is None
+    assert flat.polar is False
+    assert [plot.kind for plot in solid.plots] == [PlotKind.SURFACE]
+    # The window reports the domain it evaluates over, which is the default one.
+    assert solid.xrange == (-5.0, 5.0)
+    assert solid.yrange == (-5.0, 5.0)
+    assert _add(session, host, "SIN(x*y)") == 2
+    assert _add(session, host, "COS(x)") == 1
+
+
+def test_a_vector_of_surfaces_becomes_one_surface_per_element(host):
+    session = Session()
+    entry = session.author("[x + y, x - y]")
+    host.add(
+        plots.Add(
+            worksheet=id(session),
+            node=entry.node,
+            context=session.context,
+            kind=PlotKind.SURFACES,
+            label="#1",
+            text="[x + y, x - y]",
+            options=plots.Options(variables=("x", "y"), texts=("x + y", "x - y")),
+        )
+    )
+    window = host.describe()[0]
+    assert [plot.label for plot in window.plots] == ["#1.1", "#1.2"]
+    assert [plot.text for plot in window.plots] == ["x + y", "x - y"]
+    assert [plot.kind for plot in window.plots] == [PlotKind.SURFACE] * 2
+    removed = host.delete(plots.Delete(which=plots.Which.LAST))
+    assert (removed.window, removed.count) == (1, 1)
+    assert [plot.label for plot in host.describe()[0].plots] == ["#1.1"]
 
 
 def test_a_curve_that_will_not_evaluate_reports_itself(host):
@@ -676,7 +855,33 @@ async def test_plotting_with_nothing_highlighted_is_refused(app):
         assert app.plots.sent == []
 
 
-async def test_a_kind_no_window_draws_yet_is_refused_before_it_is_sent(app):
+async def test_a_surface_is_sent_with_no_question_asked(app):
+    async with app.run_test() as pilot:
+        await authored(pilot, app, "x^2 - y^2")
+        await pilot.press("p", "p")
+        assert message(app) == "Plotting #1 in window 1"
+        request = app.plots.sent[0]
+        assert request.kind is PlotKind.SURFACE
+        assert request.options.variables == ("x", "y")
+        # No field line: a surface is drawn over a domain the window owns, and
+        # the command asks nothing at all.
+        assert band(app)[0].startswith(" COMMAND:")
+
+
+async def test_a_vector_of_surfaces_carries_the_text_of_every_element(app):
+    async with app.run_test() as pilot:
+        await authored(pilot, app, "[x + y, x - y]")
+        await pilot.press("p", "p")
+        request = app.plots.sent[0]
+        assert request.kind is PlotKind.SURFACES
+        assert request.options.texts == ("x + y", "x - y")
+
+
+async def test_a_kind_no_window_draws_yet_is_refused_before_it_is_sent(app, monkeypatch):
+    # Every kind the vocabulary has is drawn today, so the refusal is exercised
+    # against a kind taken out of the drawn set: it is the machinery that will
+    # name the next kind classification learns before a window can draw it.
+    monkeypatch.setattr(plots, "DRAWN", frozenset({PlotKind.CURVE}))
     async with app.run_test() as pilot:
         await authored(pilot, app, "x*y")
         await pilot.press("p", "p")

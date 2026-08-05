@@ -65,9 +65,18 @@ def serve(connection: Connection) -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         import pyqtgraph as pg
-        from pyqtgraph.Qt import QtWidgets
+        from pyqtgraph.Qt import QtCore, QtWidgets
 
         pg.setConfigOptions(antialias=True, imageAxisOrder="row-major")
+        # Two 3D windows are two OpenGL contexts, and the shader programs
+        # pyqtgraph compiles are cached per program name rather than per
+        # context: without this the second 3D window draws with the first
+        # one's program handles and every item in it fails. It has to be set
+        # before the application exists, which is why it is here and not in
+        # the window.
+        QtCore.QCoreApplication.setAttribute(
+            QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True
+        )
         application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         # The host outlives its windows: closing the last one leaves a process
         # ready for the next Plot command rather than a session that has
@@ -407,11 +416,21 @@ class Host:
         One sequence of numbers across both kinds, never reused, so a window
         number means the same thing in a title, in a message and in a prompt
         for the life of the session.
-        """
-        from rederive.plot.window2d import Window2D
 
+        The two window classes are imported here rather than at the top of the
+        file because each of them costs a toolkit: a session that only ever
+        draws curves never loads OpenGL, and a machine without it can still
+        plot everything else.
+        """
         self._made += 1
-        window = Window2D(self._made, self)
+        if kind is WindowKind.THREE_D:
+            from rederive.plot.window3d import Window3D
+
+            window: Any = Window3D(self._made, self)
+        else:
+            from rederive.plot.window2d import Window2D
+
+            window = Window2D(self._made, self)
         self.windows[self._made] = window
         window.retitle(False)
         return window
@@ -442,21 +461,28 @@ class Host:
 
 
 def _curves(request: protocol.Add) -> list[Any]:
-    """The curves one `Add` becomes: one, or one per element of a family.
+    """The plots one `Add` becomes: one, or one per element of a family.
 
     A family is one expression to the user - `#3` is the vector - and several
-    curves in the window, so its elements are labelled `#3.1`, `#3.2` and take
-    the next colors of the palette. Re-plotting `#3` therefore replaces its own
-    curves one by one, each keeping the color it had.
+    curves or surfaces in the window, so its elements are labelled `#3.1`,
+    `#3.2` and take the next colors of the palette. Re-plotting `#3` therefore
+    replaces its own elements one by one, each keeping the color it had.
 
     The elements are named with the texts the app wrote, since the host renders
     no expression itself; a family that arrives without them falls back on the
     label, which is at least true.
     """
-    from rederive.plot.window2d import Plot
+    if protocol.dimension(request.kind) is WindowKind.THREE_D:
+        from rederive.plot.window3d import Surface as Made
 
-    def curve(label: str, text: str, node: Any, kind: PlotKind) -> Any:
-        return Plot(
+        several, single = PlotKind.SURFACES, PlotKind.SURFACE
+    else:
+        from rederive.plot.window2d import Plot as Made  # type: ignore[assignment]
+
+        several, single = PlotKind.FAMILY, PlotKind.CURVE
+
+    def one(label: str, text: str, node: Any, kind: PlotKind) -> Any:
+        return Made(
             worksheet=request.worksheet,
             label=label,
             text=text,
@@ -466,15 +492,15 @@ def _curves(request: protocol.Add) -> list[Any]:
             options=request.options,
         )
 
-    if request.kind is not PlotKind.FAMILY:
-        return [curve(request.label, request.text, request.node, request.kind)]
+    if request.kind is not several:
+        return [one(request.label, request.text, request.node, request.kind)]
     texts = request.options.texts
     return [
-        curve(
+        one(
             f"{request.label}.{index + 1}",
             texts[index] if index < len(texts) else request.label,
             element,
-            PlotKind.CURVE,
+            single,
         )
         for index, element in enumerate(request.node.children)
     ]
