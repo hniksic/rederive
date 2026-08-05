@@ -1,0 +1,48 @@
+name: Test
+
+# The suite, on every system a release is built for. Building a binary says
+# nothing about whether the program is right, and until this ran the only thing
+# testing Rederive was whoever last typed `uv run pytest`.
+on:
+  push:
+  pull_request:
+
+# A second push supersedes the first; there is nothing to learn from finishing a
+# run of code that has already been replaced.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # The suite takes about two minutes. Anything past ten is a hang, and a hang
+    # left alone runs into GitHub's six-hour ceiling rather than telling anyone.
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    # Windows would otherwise run these in PowerShell, where a trailing
+    # backslash is an argument rather than a line continuation.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --managed-python
+
+      # `faulthandler_timeout` dumps every thread's stack when one test overruns
+      # and then ends the process, so a hang says where it was rather than
+      # leaving the job to be killed by the clock with nothing to read.
+      - name: Run the suite
+        run: |
+          uv run pytest -q -o faulthandler_timeout=120 \
+              -o faulthandler_exit_on_timeout=true

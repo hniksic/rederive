@@ -1,0 +1,196 @@
+name: Build
+
+# Binaries cannot be cross-compiled, so each one is built on the system it is for.
+# Run by hand to check that a change still builds everywhere; run by a tag to make
+# the release. `RELEASING.md` is the same procedure written out for a person.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  # A tag is what names the release, and `src/rederive/__init__.py` is what names
+  # the version everything else is built from, so a release where the two disagree
+  # is caught here rather than after three platforms have finished building. Run by
+  # hand there is no tag and nothing to disagree with, so the check passes.
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check that the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/rederive/__init__.py)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $version; expected v$version"
+            exit 1
+          fi
+
+  build:
+    needs: version
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    # The suite and two builds; about five minutes' work. Twenty-five is a hang.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            exe: ""
+          - platform: macos-arm64
+            os: macos-15
+            exe: ""
+          - platform: windows-x86_64
+            os: windows-2025
+            exe: ".exe"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      # `--managed-python` so that all three platforms build on uv's own
+      # interpreter rather than on whatever the runner happens to have lying
+      # about, which is how a Windows binary once came to carry a Python no
+      # test had ever run against. `.python-version` says which one.
+      - name: Install dependencies
+        run: uv sync --frozen --managed-python --group packaging
+
+      # A release must not be cut from code that fails its own tests, so this
+      # runs before anything is built rather than beside it.
+      # `faulthandler_timeout` dumps every thread's stack when one test overruns
+      # and then ends the process, so a hang says where it was rather than
+      # leaving the job to be killed by the clock with nothing to read.
+      - name: Run the suite
+        run: |
+          uv run pytest -q -o faulthandler_timeout=120 \
+              -o faulthandler_exit_on_timeout=true
+
+      - name: Build the single file
+        run: uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm
+
+      - name: Build the directory form
+        run: |
+          uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm \
+              --distpath dist/tree -- --tree
+
+      - name: Check both
+        run: |
+          uv run python packaging/smoke.py "dist/rederive${{ matrix.exe }}"
+          uv run python packaging/smoke.py "dist/tree/rederive/rederive${{ matrix.exe }}"
+
+      - name: Package the archive
+        if: runner.os != 'Windows'
+        run: tar -C dist/tree -czf "dist/rederive-${{ matrix.platform }}.tar.gz" rederive
+
+      - name: Package the archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\tree\rederive `
+              -DestinationPath dist\rederive-windows-x86_64.zip
+
+      - name: Check install.sh
+        if: runner.os != 'Windows'
+        run: |
+          sh packaging/install.sh --archive "dist/rederive-${{ matrix.platform }}.tar.gz" \
+              --prefix "$RUNNER_TEMP/share" --bin "$RUNNER_TEMP/bin"
+          uv run python packaging/smoke.py "$RUNNER_TEMP/bin/rederive"
+          sh packaging/install.sh --uninstall --prefix "$RUNNER_TEMP/share" \
+              --bin "$RUNNER_TEMP/bin"
+          test ! -e "$RUNNER_TEMP/share/rederive"
+
+      # The installer is compiled, run, checked and taken away again, which is the
+      # only way to find out whether it installs what it says it installs.
+      - name: Build and check the installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The program under test exits 2 on purpose, and this step's shell would
+          # otherwise read a native command's exit code as an error of its own and
+          # end the step where nothing is wrong. Every check below says what it is
+          # about to do, so a failure names itself rather than leaving an exit code
+          # to be guessed at.
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          function Check($what, $ok) {
+            if ($ok) { Write-Host "  ok   $what" } else { Write-Host "  FAIL $what"; exit 1 }
+          }
+          function CurrentPath() {
+            $entry = Get-ItemProperty -Path HKCU:\Environment -Name Path `
+                -ErrorAction SilentlyContinue
+            if ($entry) { return $entry.Path } else { return "" }
+          }
+
+          choco install innosetup --no-progress -y | Out-Null
+          $version = "0.0.0"
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $version = $env:GITHUB_REF -replace "refs/tags/v", ""
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=$version" packaging\rederive.iss | Out-Null
+          Check "compiles" ($LASTEXITCODE -eq 0)
+
+          Start-Process -Wait -FilePath dist\rederive-setup.exe `
+              -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART"
+          $installed = "$env:LOCALAPPDATA\Programs\Rederive\rederive.exe"
+          Check "installs" (Test-Path $installed)
+
+          & $installed no-such-worksheet.mth
+          Check "the installed program runs" ($LASTEXITCODE -eq 2)
+          Check "PATH gained the directory" ((CurrentPath) -like "*Rederive*")
+
+          $uninstaller = Get-ChildItem "$env:LOCALAPPDATA\Programs\Rederive\unins*.exe" |
+              Select-Object -First 1
+          Check "the uninstaller is there" ($null -ne $uninstaller)
+          Start-Process -Wait -FilePath $uninstaller.FullName -ArgumentList "/VERYSILENT"
+          Check "uninstalling removes the program" (-not (Test-Path $installed))
+          Check "uninstalling removes the PATH entry" ((CurrentPath) -notlike "*Rederive*")
+          exit 0
+
+      - name: Name the artifacts
+        run: |
+          mv "dist/rederive${{ matrix.exe }}" \
+             "dist/rederive-${{ matrix.platform }}${{ matrix.exe }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/rederive-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect what the release carries
+        run: |
+          cp packaging/install.sh artifacts/
+          cd artifacts && sha256sum rederive-* install.sh > SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes

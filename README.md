@@ -33,14 +33,17 @@ page 437, and everything is laid out for the terminal's actual size instead of a
 screen. The mouse and scroll wheel work, it uses the system clipboard, file names
 tab-complete, and the line editor follows Emacs conventions.
 
-## Running
+## Installing
 
-Rederive runs from source:
+Rederive ships as a single self-contained binary for Linux, macOS and Windows; none of
+them needs Python. On Linux and macOS, one line installs it:
 
-1. Download Rederive with `git clone https://github.com/hniksic/rederive`, or [grab the
-   ZIP](https://github.com/hniksic/rederive/archive/refs/heads/master.zip) and unpack it.
-2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
-3. In the `rederive` directory, run `uv run rederive`.
+```
+curl -LsSf https://github.com/hniksic/rederive/releases/latest/download/install.sh | sh
+```
+
+See [INSTALL.md](INSTALL.md) for Windows, for running a binary without installing it, and
+for running from source.
 
 ## Usage
 
