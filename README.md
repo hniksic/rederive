@@ -19,13 +19,13 @@ memory, and quietly took over maths classrooms across Europe. (I was introduced 
 Croatian classroom around 1992.) It was cheap, famously close to bug-free, and you could
 learn to use it in minutes. More importantly, its ease of use and responsiveness made math
 fun in ways that are not quite matched by modern and more advanced programs, nor even by
-LLMs. The original Derive was discontinued in 2007 after having been acquired by Texas
-Instruments.
+LLMs. Derive was discontinued in 2007 after having been acquired by Texas Instruments.
 
 Rederive aims to bring the experience back on modern foundations. The important pieces
-have long existed - Python as universal glue, SymPy for symbolic math, and
-[Textual](https://textual.textualize.io/) for building TUIs. What remained is assembling
-them into a mathematical assistant.
+have long existed - Python as the lingua franca of math and science,
+[SymPy](https://www.sympy.org/en/index.html) for symbolic math,
+[Textual](https://textual.textualize.io/) for TUIs. What remained is assembling them into
+a user-friendly CAS.
 
 Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
 but adapts to the 21st century where appropriate. The display is Unicode rather than code
