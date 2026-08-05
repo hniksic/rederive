@@ -24,9 +24,11 @@ state is deliberately not persisted anywhere, so there is nothing to restore.
 
 from __future__ import annotations
 
+import contextlib
 import multiprocessing
+import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from multiprocessing.connection import Connection
 from multiprocessing.context import BaseContext
 from multiprocessing.process import BaseProcess
@@ -53,6 +55,29 @@ REPLY_TIMEOUT = 30.0
 #: What the app says when the host is gone. The one message that is about the
 #: process rather than about the picture.
 DIED = "plot window process died"
+
+
+@contextlib.contextmanager
+def _real_stderr() -> Iterator[None]:
+    """The process's own error stream, for as long as a spawn takes.
+
+    Textual redirects `sys.stderr` at an object that answers -1 to `fileno`,
+    which is honest - a screen is not a file descriptor - and fatal to the
+    first spawn of the session: the multiprocessing resource tracker hands the
+    error stream's descriptor to the child it starts, and -1 is not one, so the
+    whole spawn is refused with `bad value(s) in fds_to_keep`. Putting the real
+    stream back around `start` costs nothing and is the only place in the
+    program that has to know the screen is not a file.
+    """
+    original = sys.stderr
+    if sys.__stderr__ is None or original is sys.__stderr__:
+        yield
+        return
+    sys.stderr = sys.__stderr__
+    try:
+        yield
+    finally:
+        sys.stderr = original
 
 
 class PlotError(Exception):
@@ -240,7 +265,8 @@ class PlotProxy:
             process = self._context.Process(
                 target=host.serve, args=(child,), daemon=True
             )
-            process.start()
+            with _real_stderr():
+                process.start()
         except (OSError, ValueError) as error:
             _close(parent)
             _close(child)
