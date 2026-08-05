@@ -114,9 +114,11 @@ class PlotProxy:
         self._number = 0
         self._ready = False
         self._stopped = False
-        #: The plot preferences the app last read out of the settings store, and
-        #: whether the host has yet to be told about them. A host that has just
-        #: started always has: it knows only the protocol's own defaults.
+        #: The sticky plot preferences the app last held - read from the
+        #: settings store, whether a state file or a host's own report put
+        #: them there - and whether the host has yet to be told about them. A
+        #: host that has just started always has: it knows only the protocol's
+        #: own defaults.
         self._preferences: protocol.Prefer | None = None
         self._unsaid = False
         #: Why the host is gone, once it is. Cleared by the next spawn, so a

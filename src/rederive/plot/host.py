@@ -36,10 +36,12 @@ falls back to the last-activated survivor of its kind. The receiver says so in
 its own title, so the user can see where the next plot will land. The app
 never tracks any of this; it asks.
 
-Traffic goes the other way once: the app tells the host what the settings store
-says a new window and a new plot are to look like. The host holds those
-preferences and reads them where a window is built and where a plot is added,
-which is what keeps a preference change out of the windows already open.
+The sticky preferences travel both ways. The app tells the host what the next
+surface's grid and the next data plot's points are to be; the host reads them
+where a window is built and where a plot is added, which is what keeps a
+change out of the windows already open. And when a sticky control moves in a
+window, the host keeps the new value and reports it up the pipe, because the
+app is the side that outlives the host and writes state files.
 """
 
 from __future__ import annotations
@@ -306,6 +308,16 @@ class Host:
         """A traced point a window sends home, to be authored into a worksheet."""
         self.event(protocol.Traced(worksheet, text))
 
+    def adjusted(self, **values: Any) -> None:
+        """A sticky control was left in a new position, named by its `Prefer` field.
+
+        The value is kept, so the next plot follows the last one's look, and
+        the whole of the preferences goes up the pipe: the app is the side
+        that survives this process and carries the answer into a state file.
+        """
+        self.preferences = replace(self.preferences, **values)
+        self.event(protocol.Preferred(self.preferences))
+
     def touched(self, number: int) -> None:
         """A window the user touched is the receiver for its kind now.
 
@@ -434,10 +446,12 @@ class Host:
         draws curves never loads OpenGL, and a machine without it can still
         plot everything else.
 
-        This is the one construction site, and so the one place the framing and
-        grid preferences reach a window. They are read now rather than kept by
-        the window, which is what makes a changed preference show in the next
-        window and leave the open ones as they are.
+        This is the one construction site, and so the one place the sticky
+        grid reaches a window. It is read now rather than kept by the window,
+        which is what makes a changed preference show in the next window and
+        leave the open ones as they are. A 2D window takes no preference at
+        all: it always opens with equal scales, and its `1:1` toggle is the
+        one-window exception that is deliberately not remembered.
         """
         self._made += 1
         if kind is WindowKind.THREE_D:
@@ -447,9 +461,7 @@ class Host:
         else:
             from rederive.plot.window2d import Window2D
 
-            window = Window2D(
-                self._made, self, equal_scales=self.preferences.equal_scales
-            )
+            window = Window2D(self._made, self)
         self.windows[self._made] = window
         window.retitle(False)
         return window
@@ -486,8 +498,7 @@ def preferred(request: protocol.Add, preferences: protocol.Prefer) -> protocol.A
     window it lands in, so the preference is read when the plot is added rather
     than when the window was built: a new data plot follows the preference in
     force now, and one drawn a minute ago keeps whatever its right-click menu
-    was told. The window preferences - the framing lock, the grid - go the other
-    way, and are read where a window is made.
+    was told. The grid goes the other way, and is read where a window is made.
 
     A pure function, so that what a preference does to a request can be asked
     without a toolkit to ask it in.

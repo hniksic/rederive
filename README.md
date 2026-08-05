@@ -119,9 +119,10 @@ coordinate planes.
 
 `Transfer Load Derive gallery` reads a worksheet of captioned plots - one entry per idea,
 from a family of curves to a clipped spike - that comes with the program and loads from
-any directory. `Options Plot` holds the few things worth remembering between sessions:
-whether a new window locks the two scales together, how fine a surface is sampled, and how
-data points are drawn.
+any directory. The few plot choices worth remembering are sticky rather than a settings
+screen: a new surface is sampled as finely as the last one was asked to be, a new data
+plot draws its points the way the last one was left, and `Transfer Save State` carries
+both.
 
 Plotting needs a graphical display. Without one - over a bare SSH connection, say - the
 Plot command stays on the menu and refuses with `Plot: needs a graphical display`;

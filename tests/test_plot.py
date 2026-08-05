@@ -771,7 +771,7 @@ def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
     keeps whatever it says, and the next plot goes where it would have gone.
     """
     session = Session()
-    host.prefer(plots.Prefer(equal_scales=False, grid=16, connected=True, point_size=9))
+    host.prefer(plots.Prefer(grid=16, connected=True, point_size=9))
     assert _add(session, host, "SIN(x)") == 1
     assert [plot.label for plot in host.describe()[0].plots] == ["#1"]
 
@@ -790,6 +790,8 @@ class InlineHost:
     def __init__(self):
         #: The points windows have sent home, as (worksheet, text) pairs.
         self.authored = []
+        #: The sticky preference values windows have handed back, merged.
+        self.adjustments = {}
 
     def sample(self, key, work, done, report=None):
         try:
@@ -809,6 +811,9 @@ class InlineHost:
 
     def author(self, worksheet, text):
         self.authored.append((worksheet, text))
+
+    def adjusted(self, **values):
+        self.adjustments.update(values)
 
 
 @pytest.fixture(scope="module")
@@ -1025,6 +1030,29 @@ def test_the_title_tracks_the_plot_list(flat):
     assert flat.windowTitle() == "Rederive plot"
 
 
+def test_a_data_plots_toggles_hand_the_sticky_values_back(flat):
+    # The reversal section 7 asks for: the right-click controls write back, so
+    # the way this plot is left is the way the next data plot arrives.
+    plot = _plot("[[1, 2], [3, 4]]", PlotKind.DATA, ())
+    flat.add(plot)
+    flat._pointed = plot
+    flat._toggle_connected()
+    assert flat.host.adjustments == {"connected": True}
+    flat._set_point_size(8.0)
+    assert flat.host.adjustments == {"connected": True, "point_size": 8.0}
+    flat._toggle_connected()
+    assert flat.host.adjustments["connected"] is False
+
+
+def test_the_framing_lock_hands_nothing_back(flat):
+    # Equal scales is deliberately not sticky: releasing it is this window's
+    # exception, and a one-off framing choice must not silently become the
+    # default that reshapes the next circle.
+    flat.equal.trigger()
+    assert not flat.equal.isChecked()
+    assert flat.host.adjustments == {}
+
+
 def test_the_axis_label_follows_the_polar_mode(flat):
     # The known wart, fixed: a window in polar mode must not label its
     # abscissa with the parameter's letter - the horizontal axis of a polar
@@ -1075,6 +1103,22 @@ def test_the_domain_fields_read_expressions(deep, solid):
     assert deep.fields["y0"].text() == "-5"
 
 
+def test_an_edited_grid_hands_the_new_count_back_to_the_host(deep, solid):
+    deep.fields["nx"].setText("32")
+    deep.fields["ny"].setText("32")
+    deep._edited()
+    assert deep.grid == (32, 32)
+    assert deep.host.adjustments == {"grid": 32}
+    # The sticky value is one count per axis, so a rectangular grid hands on
+    # its finer axis; the domain fields are a framing and hand back nothing.
+    deep.fields["ny"].setText("48")
+    deep._edited()
+    assert deep.host.adjustments == {"grid": 48}
+    deep.fields["x0"].setText("-2")
+    deep._edited()
+    assert deep.host.adjustments == {"grid": 48}
+
+
 def test_the_3d_clear_button_empties_its_own_window(deep, solid):
     surface = solid.Surface(
         worksheet=1,
@@ -1117,6 +1161,8 @@ def registry(qt):
 
     ours, theirs = multiprocessing.Pipe()
     host = Host(theirs)
+    #: The app's end of the pipe, for a test that reads events off it.
+    host.appside = ours
     yield host
     for window in list(host.windows.values()):
         window.close()
@@ -1180,6 +1226,66 @@ def test_closing_the_receiver_hands_it_to_the_last_activated_survivor(registry):
     assert registry._add(_landing("x^2", "#4")).window == one
 
 
+# -- the sticky preferences in the registry --------------------------------------
+#
+# The write-back half of section 7, on the same in-process Host: a control
+# moved in a window updates the preferences the next plot is built with, and
+# the change goes up the pipe so the app can outlive this host with it.
+
+
+def _points(text, label, **keywords):
+    """One data plot the way the app would send it, with no opinion of its own."""
+    return plots.Add(
+        worksheet=1,
+        node=parsed(text),
+        context=Context(),
+        kind=PlotKind.DATA,
+        label=label,
+        text=text,
+        **keywords,
+    )
+
+
+def test_a_toggle_left_in_one_window_shapes_the_next_data_plot(registry):
+    window = registry.windows[registry._add(_points("[[1, 2], [3, 4]]", "#1")).window]
+    plot = window.plots[0]
+    assert plot.connected is False
+    window._pointed = plot
+    window._toggle_connected()
+    window._set_point_size(8.0)
+    # The host keeps the values the next plot is filled from...
+    assert registry.preferences == plots.Prefer(connected=True, point_size=8.0)
+    # ...and the app is told, so the values survive this host.
+    assert registry.appside.poll(1.0)
+    number, event = registry.appside.recv()
+    assert number == plots.EVENT
+    assert event == plots.Preferred(plots.Prefer(connected=True))
+    # A data plot with no opinion of its own follows suit, in a fresh window
+    # as in this one.
+    fresh = registry._add(_points("[[5, 6], [7, 8]]", "#2", window=plots.Where.NEW))
+    arrived = registry.windows[fresh.window].plots[0]
+    assert arrived.connected is True
+    assert arrived.point_size == 8.0
+
+
+def test_a_released_framing_lock_is_this_windows_alone(registry):
+    one = registry._add(_landing("SIN(x)", "#1")).window
+    registry.windows[one].equal.trigger()
+    assert not registry.windows[one].equal.isChecked()
+    # Nothing was kept and nothing was reported: the next window opens with
+    # equal scales, as every window does.
+    assert registry.preferences == plots.Prefer()
+    assert not registry.appside.poll(0.05)
+    two = registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    assert registry.windows[two].equal.isChecked()
+
+
+def test_the_grid_handed_back_is_the_next_surface_windows_grid(registry, solid):
+    registry.adjusted(grid=32)
+    window = registry._target(plots.Where.NEW, plots.WindowKind.THREE_D)
+    assert window.grid == (32, 32)
+
+
 # -- the gallery ---------------------------------------------------------------
 
 
@@ -1213,32 +1319,37 @@ def test_every_line_of_the_gallery_is_a_captioned_plot():
 
 # -- the preferences -----------------------------------------------------------
 #
-# `Options Plot` is four values in the settings store, and they have three
-# things to do: translate into the request the host understands, reach a host
-# that may not be running yet, and be the default a plot with no opinion of its
-# own is drawn with. All three are pure and none of them needs a window.
+# The sticky plot values live in the settings store, screenless, and they have
+# three things to do: translate into the request the host understands, reach a
+# host that may not be running yet, and be the default a plot with no opinion
+# of its own is drawn with. All three are pure and none of them needs a window.
 
 
-def test_the_preferences_translate_the_words_the_dialog_holds():
+def test_the_preferences_translate_the_words_the_settings_hold():
     from rederive.model.plotting import preferences
     from rederive.model.settings import Settings
 
     settings = Settings()
-    # The dialog's defaults and the request's defaults are the same picture,
-    # which is what makes a session that never opens the screen behave like one
-    # that opened it and pressed Enter.
+    # The settings' defaults and the request's defaults are the same picture,
+    # which is what makes a session that never touched a sticky control behave
+    # like one that touched it and put it back.
     assert preferences(settings) == plots.Prefer()
-    settings.apply(
-        {
-            "PlotScales": "No",
-            "PlotGrid": 128,
-            "PlotPoints": "Connected",
-            "PlotPointSize": 8,
-        }
-    )
+    settings.apply({"PlotGrid": 128, "PlotPoints": "Connected", "PlotPointSize": 8})
     assert preferences(settings) == plots.Prefer(
-        equal_scales=False, grid=128, connected=True, point_size=8.0
+        grid=128, connected=True, point_size=8.0
     )
+
+
+def test_what_a_host_reports_round_trips_through_the_settings():
+    from rederive.model.plotting import learned, preferences
+    from rederive.model.settings import Settings
+
+    reported = plots.Prefer(grid=32, connected=True, point_size=8.0)
+    settings = Settings()
+    settings.apply(learned(reported))
+    # The two translations are inverses, so what a toggle moved is exactly
+    # what the next host is handed.
+    assert preferences(settings) == reported
 
 
 def test_the_preferences_travel_in_a_state_file():
@@ -1247,10 +1358,21 @@ def test_the_preferences_travel_in_a_state_file():
     from rederive.model.settings import Settings
 
     written = Settings()
-    written.apply({"PlotScales": "No", "PlotGrid": 32})
+    written.apply({"PlotGrid": 32, "PlotPoints": "Connected"})
     read = Settings()
     assert state.read(state.write(written), read) == (0, "")
-    assert preferences(read) == plots.Prefer(equal_scales=False, grid=32)
+    assert preferences(read) == plots.Prefer(grid=32, connected=True)
+
+
+def test_equal_scales_is_nobodys_setting_and_nothing_persists_it():
+    # The resolved open question: a new window always opens with equal scales
+    # and the 1:1 toggle serves the exception, so there is no setting to hold
+    # it and no line of a state file that carries it.
+    from rederive.model import state
+    from rederive.model.settings import DEFAULTS, Settings
+
+    assert "PlotScales" not in DEFAULTS
+    assert "PlotScales" not in state.write(Settings())
 
 
 def test_a_plot_with_no_opinion_is_drawn_the_way_the_preferences_say():
@@ -1312,6 +1434,43 @@ def test_the_preferences_go_in_front_of_the_next_request_and_only_once(monkeypat
     proxy.prefer(plots.Prefer(grid=16))
     proxy.add(request)
     assert sent[3:] == [request]
+
+
+def test_a_restarted_host_hears_the_preferences_again(monkeypatch):
+    """A fresh host knows only the defaults, so the sticky values go in front
+    of its first plot however many hosts heard them before."""
+    from rederive.plot import proxy as proxy_module
+
+    sent = []
+
+    class Alive:
+        def is_alive(self):
+            return True
+
+    def spawning(self):
+        self._replies[plots.READY] = plots.Done()
+        self._process = Alive()
+        self.starts += 1
+
+    def delivering(self, request):
+        sent.append(request)
+        return plots.Placed(1)
+
+    monkeypatch.setattr(proxy_module.PlotProxy, "_spawn", spawning)
+    monkeypatch.setattr(proxy_module.PlotProxy, "_deliver", delivering)
+    proxy = proxy_module.PlotProxy()
+    request = plots.Add(
+        worksheet=0, node=parsed("SIN(x)"), context=Context(), kind=PlotKind.CURVE
+    )
+    proxy.prefer(plots.Prefer(connected=True))
+    proxy.add(request)
+    assert sent == [plots.Prefer(connected=True), request]
+    # The host dies; the next plot starts another, and the preferences it was
+    # never told go in front of that plot too.
+    proxy._process = None
+    proxy.add(request)
+    assert proxy.starts == 2
+    assert sent[2:] == [plots.Prefer(connected=True), request]
 
 
 # -- the Plot command in the algebra window ------------------------------------
@@ -1528,21 +1687,50 @@ async def test_plotting_without_a_display_is_refused_but_still_offered(
         assert app.plots.sent == []
 
 
-async def test_the_options_plot_screen_hands_what_it_changed_to_the_plots(app):
+async def test_the_options_plot_screen_is_gone(app):
     async with app.run_test() as pilot:
-        # Options pLot: `P` belongs to Precision, so the plot screen takes `l`.
-        await pilot.press("o", "l")
+        # The settings screen is retired: the sticky values live with the plot
+        # windows' own controls, so the menu no longer offers a word for it,
+        # and the letter that used to open it answers nothing.
+        await pilot.press("o")
         assert band(app) == [
-            " OPTIONS PLOT: Scales: Yes No  Grid: 64",
-            "               Points:(Discrete)Connected  Size: 5",
+            " OPTIONS: Color Input Mute Notation Output Precision Radix"
         ]
-        assert message(app) == "Select equal scales in a new plot window"
-        await pilot.press("n", "1", "6", "enter")
-        assert app.settings["PlotScales"] == "No"
-        assert app.settings["PlotGrid"] == 16
-        assert app.plots.preferences[-1] == plots.Prefer(equal_scales=False, grid=16)
-        # Nothing is recorded: a plot preference has no `Name := Value` spelling.
+        await pilot.press("l")
+        assert band(app) == [
+            " OPTIONS: Color Input Mute Notation Output Precision Radix"
+        ]
+
+
+async def test_a_control_the_host_reports_becomes_the_sticky_default(app):
+    async with app.run_test() as pilot:
+        app._plot_event(
+            plots.Preferred(plots.Prefer(grid=32, connected=True, point_size=8.0))
+        )
+        await pilot.pause()
+        # The values land in the settings store, which is where they outlive
+        # the host and where a state file finds them...
+        assert app.settings["PlotGrid"] == 32
+        assert app.settings["PlotPoints"] == "Connected"
+        assert app.settings["PlotPointSize"] == 8
+        # ...and the proxy is handed them back, for the host after this one.
+        assert app.plots.preferences[-1] == plots.Prefer(
+            grid=32, connected=True, point_size=8.0
+        )
+        # Nothing is recorded and nothing is said: the user is looking at the
+        # control they just moved.
         assert app.session.entries == []
+
+
+async def test_what_a_host_reported_is_what_a_state_file_carries(app, tmp_path):
+    async with app.run_test() as pilot:
+        app._plot_event(plots.Preferred(plots.Prefer(connected=True, point_size=8.0)))
+        await pilot.pause()
+        path = tmp_path / "kept.ini"
+        app.session.save_state(path)
+        lines = path.read_text().splitlines()
+        assert "PlotPoints := Connected" in lines
+        assert "PlotPointSize := 8" in lines
 
 
 async def test_a_state_file_that_moves_a_preference_reaches_the_plots(app, tmp_path):

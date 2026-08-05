@@ -574,9 +574,9 @@ class Window3D(QtWidgets.QMainWindow):
         self.current = False
         self.xdomain = DEFAULT_DOMAIN
         self.ydomain = DEFAULT_DOMAIN
-        # The grid the window opens with is the preference `Options Plot` holds,
-        # clamped here as a typed one is: a window never samples finer than it
-        # can draw, whoever asked it to.
+        # The grid the window opens with is the sticky one the host holds -
+        # the grid the last surface was given - clamped here as a typed one
+        # is: a window never samples finer than it can draw, whoever asked.
         square = int(min(max(grid, 2), MAX_GRID))
         self.grid = (square, square)
         #: The z range now drawn, and the one the inspector nailed down where
@@ -1130,6 +1130,12 @@ class Window3D(QtWidgets.QMainWindow):
             self._show_domain()
             self.say("The domain runs from a lower bound to a higher one")
             return
+        if grid != self.grid:
+            # A typed grid is sticky: the next surface window opens on it. The
+            # sticky value is one count per axis, so a rectangular grid hands
+            # on its finer axis. The domain is not sticky - it is a framing,
+            # like a 2D view - so only the grid goes back.
+            self.host.adjusted(grid=max(grid))
         changed = ((x0, x1), (y0, y1), grid) != (self.xdomain, self.ydomain, self.grid)
         self.xdomain, self.ydomain, self.grid = (x0, x1), (y0, y1), grid
         self._show_domain()

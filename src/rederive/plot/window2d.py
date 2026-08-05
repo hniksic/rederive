@@ -10,12 +10,13 @@ items keep their numbers and lose their lines, and two infinite lines cross at
 along the edges and no axis lines in sight, which is the honest picture.
 
 Framing is never asked about. A fresh window shows x in [-5, 5] with equal
-scales - `Options Plot` is where that last is turned off for good, and the
-window is handed the answer when it is built - so a circle is round; the mouse
-does the rest, and the only place exact bounds can be typed is the stock context
-menu's per-axis fields - deliberately the only one. The one time the window
-reframes itself is when the alternative is an empty picture: a curve added with
-finite values none of which are in view autoscales y and says so.
+scales - always, so a circle is round; the `1:1` toggle releases the lock for
+the one odd plot, and that choice is deliberately this window's alone rather
+than a default the next window inherits. The mouse does the rest, and the only
+place exact bounds can be typed is the stock context menu's per-axis fields -
+deliberately the only one. The one time the window reframes itself is when the
+alternative is an empty picture: a curve added with finite values none of which
+are in view autoscales y and says so.
 
 Sampling is in screen space and repeats on every view change, debounced. That
 is what makes zooming worth doing: a spike narrower than a pixel is not in the
@@ -424,16 +425,11 @@ class Legend(pg.LegendItem):
 class Window2D(QtWidgets.QMainWindow):
     """One top-level 2D plot window and everything that happens inside it."""
 
-    def __init__(self, number: int, host: Any, *, equal_scales: bool = True) -> None:
+    def __init__(self, number: int, host: Any) -> None:
         super().__init__()
         self.number = number
         self.kind = protocol.WindowKind.TWO_D
         self.host = host
-        #: Whether this window locks the two scales together, which the `1:1`
-        #: toggle changes and `Home` comes back to. It is the preference the
-        #: window was opened under and stays that for the window's life: a
-        #: preference changed afterwards is for the next window.
-        self.equal_default = equal_scales
         self.plots: list[Plot] = []
         #: Whether this view reads its univariate curves as r = f(θ). A mode
         #: of the picture, flipped by the toolbar toggle, never of one plot.
@@ -489,7 +485,7 @@ class Window2D(QtWidgets.QMainWindow):
         self.marker.setVisible(False)
         self.item.addItem(self.marker, ignoreBounds=True)
         self.setCentralWidget(self._laid_out())
-        self.canvas.setAspectLocked(self.equal_default, ratio=1.0)
+        self.canvas.setAspectLocked(True, ratio=1.0)
         self.canvas.disableAutoRange()
         self.canvas.sigRangeChanged.connect(self._ranged)
         self.canvas.sigResized.connect(self._resized)
@@ -518,7 +514,7 @@ class Window2D(QtWidgets.QMainWindow):
         bar.setMovable(False)
         self.equal = QtGui.QAction("1:1", self)
         self.equal.setCheckable(True)
-        self.equal.setChecked(self.equal_default)
+        self.equal.setChecked(True)
         self.equal.setToolTip("Equal scales on both axes")
         self.equal.triggered.connect(self._equal_scales)
         bar.addAction(self.equal)
@@ -633,8 +629,9 @@ class Window2D(QtWidgets.QMainWindow):
 
         Connecting the points is the difference between a scatter and a
         polyline, and the size is how a hundred points and a hundred thousand
-        are both made readable; neither is a preference of the program, so both
-        live on the plot's own menu rather than in a settings dialog.
+        are both made readable. Both live on the plot's own menu rather than
+        in a settings dialog, and both are sticky: the way a data plot is left
+        is the way the next one arrives, which the host is told about below.
         """
         connect = menu.addAction("Connect points", self._toggle_connected)
         sizes = menu.addMenu("Point size")
@@ -1081,19 +1078,19 @@ class Window2D(QtWidgets.QMainWindow):
     # -- framing -----------------------------------------------------------
 
     def home(self) -> None:
-        """The default framing: x in [-5, 5], the origin centred, scales as set.
+        """The default framing: x in [-5, 5], the origin centred, equal scales.
 
         Both ranges are worked out here rather than left to the aspect lock,
         because the lock is free to satisfy itself by widening either axis, and
         which one it picks is not something the framing should depend on. The
         ordinate is therefore the abscissa scaled by the shape of the canvas,
         which is what equal scales means, and the origin is in the middle of it.
-        A window whose preference is not equal scales gets the same rectangle
-        unlocked, so that Home is the framing this window opened with.
+        The scales relock too, so that Home is the framing every window opens
+        with and a released `1:1` is a departure from it like any pan or zoom.
         """
         self.remember()
-        self.equal.setChecked(self.equal_default)
-        self.canvas.setAspectLocked(self.equal_default, ratio=1.0)
+        self.equal.setChecked(True)
+        self.canvas.setAspectLocked(True, ratio=1.0)
         width = max(self.canvas.width(), 1.0)
         height = max(self.canvas.height(), 1.0)
         half = DEFAULT_HALF_WIDTH * height / width
@@ -1737,20 +1734,27 @@ class Window2D(QtWidgets.QMainWindow):
             action.setText("Disconnect points" if plot.connected else "Connect points")
 
     def _toggle_connected(self) -> None:
-        """Connect a data plot's points into a polyline, or take the line away."""
+        """Connect a data plot's points into a polyline, or take the line away.
+
+        The choice is sticky: the host keeps it as what the next data plot is
+        drawn with, and reports it to the app, which is the side that carries
+        it into a state file.
+        """
         plot = self._pointed
         if plot is None or plot.kind is not PlotKind.DATA:
             return
         plot.connected = not plot.connected
         self._redraw_points(plot)
+        self.host.adjusted(connected=plot.connected)
 
     def _set_point_size(self, size: float) -> None:
-        """How big a data plot's points are drawn, off its own menu."""
+        """How big a data plot's points are drawn, off its own menu. Sticky too."""
         plot = self._pointed
         if plot is None or plot.kind is not PlotKind.DATA:
             return
         plot.point_size = size
         self._redraw_points(plot)
+        self.host.adjusted(point_size=size)
 
     def _redraw_points(self, plot: Plot) -> None:
         """Put a data plot's own opinions back on its item.

@@ -380,12 +380,13 @@ MANAGE = Menu(
 
 # `Display` and `Execute` are the two of Derive's nine Options commands that
 # are not here: one chose between text and graphics modes on adapters that no
-# longer exist, the other shelled out to DOS. `pLot` is the one word of this
-# menu that is not the original's, and it carries its capital late because `P`
-# belongs to Precision, which is.
+# longer exist, the other shelled out to DOS. There is no plot screen either:
+# the plot preferences are sticky - a new surface or data plot starts out the
+# way the last one was left - and their controls live on the plot windows
+# themselves.
 OPTIONS = Menu(
     "OPTIONS:",
-    ("Color", "Input", "Mute", "Notation", "Output", "pLot", "Precision", "Radix"),
+    ("Color", "Input", "Mute", "Notation", "Output", "Precision", "Radix"),
 )
 
 COLOR = Menu("OPTIONS COLOR:", ("Menu", "Work"))
@@ -771,7 +772,6 @@ OPTIONS_TARGETS: dict[str, Menu | settings.Dialog] = {
     "Mute": settings.MUTE,
     "Notation": settings.NOTATION,
     "Output": settings.OUTPUT,
-    "pLot": settings.PLOT,
     "Precision": settings.PRECISION,
     "Radix": settings.RADIX,
 }

@@ -192,7 +192,7 @@ from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
 from rederive.model import session as sessions
 from rederive.model.expr import Node
-from rederive.model.plotting import Unplottable, classify, preferences
+from rederive.model.plotting import Unplottable, classify, learned, preferences
 from rederive.model.session import Session
 from rederive.model.settings import (
     PLOT_PREFERENCES,
@@ -1649,10 +1649,11 @@ class RederiveApp(App[None]):
         The settings that decide how an expression is drawn are not: an entry
         keeps the render it was authored with, as it does in the original.
 
-        The plot preferences are neither: they belong to a process that may not
-        be running, so they are handed to the proxy, which passes them on in
-        front of the next request it sends. A state file loaded with plot
-        preferences in it arrives here the same way `Options Plot` does.
+        The sticky plot preferences are neither: they belong to a process that
+        may not be running, so they are handed to the proxy, which passes them
+        on in front of the next request it sends. A state file loaded with
+        plot preferences in it arrives here the same way a control the host
+        reported does.
         """
         if changed & COLOR_SETTINGS:
             self.refresh_css()
@@ -4583,11 +4584,18 @@ class RederiveApp(App[None]):
         it is gone - but a curve that would not evaluate is exactly the silence
         this design refuses to have, and a point sent home from a plot is the
         one event that writes rather than prints.
+
+        A sticky control moved in a plot window says nothing at all: the new
+        values go into the settings store, which is where they outlive the
+        host and where a state file finds them, and the settings watcher hands
+        them back to the proxy for the host after this one.
         """
         if isinstance(event, plots.Trouble):
             self._set_message(f"{PREFIX}{event.label}: {event.message}")
         elif isinstance(event, plots.Traced):
             self._plot_traced(event)
+        elif isinstance(event, plots.Preferred):
+            self.settings.apply(learned(event.preferences))
 
     def _plot_traced(self, event: plots.Traced) -> None:
         """A point sent home from a plot window: author it as a new entry.

@@ -152,8 +152,10 @@ parabolic fit. A sign change across a NaN gap is a pole and is never offered as 
 **Deliberately absent.** No accuracy setting - sampling is always sub-pixel. No framing
 dialogs; the mouse, and the stock context menu's per-axis min/max fields, are the whole
 vocabulary. No persisted view state, so every new window frames the same [-5, 5] world and
-a plot reads the same at a glance. `Options Plot` keeps only four preferences, and they
-apply to the next window and the next plot rather than to what is already drawn.
+a plot reads the same at a glance. No plot settings screen either: a surface's grid and a
+data plot's points are sticky - the next plot starts out the way the last one was left,
+and `Transfer Save State` carries that - while equal scales is every new window's and the
+`1:1` toggle serves the exception, remembered by nothing.
 
 **Where it runs.** Plotting needs a graphical display: on Linux, `DISPLAY` or
 `WAYLAND_DISPLAY` has to be set. Where it is not, the Plot command stays on the menu - a

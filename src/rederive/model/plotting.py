@@ -21,10 +21,11 @@ the parametric reading needs exactly one variable and this has two.
 Never silence: an expression that matches no row is refused with a message that
 says what stopped it. A refusal that only beeps is the anti-goal.
 
-`preferences` is the other pure translation the Plot command needs, and it is
-here for the same reason: the `Options Plot` screen keeps its answers as the
-words and whole numbers a dialog field holds, and the host wants them as the
-four values a window is built from.
+`preferences` and `learned` are the other pure translations plotting needs,
+and they are here for the same reason: the settings store keeps the sticky
+plot preferences as words and whole numbers, the host speaks them as booleans
+and a pixel count, and these two are where the spellings meet - one for each
+direction the values travel.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
 from rederive.plot.protocol import Options, PlotKind, Prefer
 
-__all__ = ["Plotted", "Unplottable", "classify", "preferences"]
+__all__ = ["Plotted", "Unplottable", "classify", "learned", "preferences"]
 
 #: What a refusal says when the expression holds more variables than any
 #: reading of it can use. The variables are named, since which ones they are is
@@ -181,19 +182,31 @@ def _scalar(node: Node, names: tuple[str, ...]) -> Plotted | None:
 
 
 def preferences(settings: Settings) -> Prefer:
-    """The `Options Plot` screen as the request that carries it to the host.
+    """The sticky plot values as the request that carries them to a host.
 
     The settings store keeps words and whole numbers, because that is what a
-    dialog field holds and what a state file writes; the host wants booleans and
-    a pixel count. This is the one place the two spellings meet, and it is a
-    pure function so that the translation is testable without a plot window.
+    state file writes; the host wants a boolean and a pixel count. Pure, so
+    that the translation is testable without a plot window.
     """
     return Prefer(
-        equal_scales=settings["PlotScales"] == "Yes",
         grid=int(settings["PlotGrid"]),
         connected=settings["PlotPoints"] == "Connected",
         point_size=float(settings["PlotPointSize"]),
     )
+
+
+def learned(preferences: Prefer) -> dict[str, str | int]:
+    """A host's report of its sticky values, as the settings store spells them.
+
+    The inverse of `preferences`: a control moved in a plot window comes back
+    as a `Prefer`, and what the app stores - and a state file then writes -
+    are the settings' own words and whole numbers.
+    """
+    return {
+        "PlotGrid": int(preferences.grid),
+        "PlotPoints": "Connected" if preferences.connected else "Discrete",
+        "PlotPointSize": int(round(preferences.point_size)),
+    }
 
 
 def _names_in(node: Node) -> set[str]:

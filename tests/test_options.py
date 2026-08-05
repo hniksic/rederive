@@ -29,7 +29,7 @@ async def test_options_lists_the_commands_that_still_mean_something(app):
     async with app.run_test() as pilot:
         await options(pilot)
         assert band(app) == [
-            " OPTIONS: Color Input Mute Notation Output pLot Precision Radix"
+            " OPTIONS: Color Input Mute Notation Output Precision Radix"
         ]
         assert highlighted(app) == "Color"
         assert message(app) == "Enter option"

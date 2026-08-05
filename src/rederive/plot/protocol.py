@@ -41,6 +41,7 @@ __all__ = [
     "PlotKind",
     "Placed",
     "Prefer",
+    "Preferred",
     "Refused",
     "Reply",
     "Request",
@@ -253,27 +254,33 @@ class Describe:
 
 @dataclass(frozen=True)
 class Prefer:
-    """The persistent plot preferences, as the settings store now holds them.
+    """The sticky plot values: what the app last learned back from a host.
 
     A request of its own rather than more fields on `Options`, because the two
     are about different things: `Options` is what one expression is drawn with
-    and this is what the *program* has been told to open its next window with.
-    Widening `Options` would have meant sending the same four values with every
-    plot and leaving the host to guess which of them it was being told about.
+    and this is what the next surface and the next data plot start out as -
+    the grid the last surface was given, and the way the last data plot was
+    left. Widening `Options` would have meant sending the same values with
+    every plot and leaving the host to guess which of them it was being told
+    about.
 
-    The app sends one when a host starts - a fresh host knows only the
-    dataclass defaults, and the session's preferences may have moved since the
-    program opened - and again whenever `Options Plot` or a loaded state file
-    changes them. They travel in front of the next request rather than the
-    moment they change, since what they matter to is the next window and the
-    next plot and nothing sooner.
+    The values move in both directions. The host reports every change of a
+    sticky control in a `Preferred` event, and the app hands the values back
+    in a request of this shape when a host starts - a fresh host knows only
+    the dataclass defaults - and again when a loaded state file changes them.
+    They travel in front of the next request rather than the moment they
+    change, since what they matter to is the next plot and nothing sooner.
 
-    Defaults and nothing more. A window already on screen keeps the framing
-    lock and the grid it was built with, and a plot already drawn keeps the
-    point size its right-click menu gave it; the toggles never write back.
+    Defaults and nothing more. A window already on screen keeps the grid it
+    was built with, and a plot already drawn keeps the point size its
+    right-click menu gave it.
+
+    Equal scales is deliberately absent: a new window always opens with equal
+    scales, the window's `1:1` toggle serves the exception, and nothing
+    persists - a one-off framing choice must not silently become the default
+    that reshapes the next circle.
     """
 
-    equal_scales: bool = True
     grid: int = 64
     connected: bool = False
     point_size: float = 5.0
@@ -395,4 +402,20 @@ class Traced:
     text: str
 
 
-Event = Closed | Trouble | Traced
+@dataclass(frozen=True)
+class Preferred:
+    """A sticky control moved in a plot window, and these are the values now.
+
+    The whole of `Prefer` rather than the one value that moved, so that the
+    app stores a complete answer and a new sticky value is one more field on
+    `Prefer` rather than a message of its own. The host cannot hold these for
+    the session - it starts on demand, and on a display-less machine never
+    starts at all - so the app is told, keeps them, and writes them into a
+    state file; this event is the one place a toggle writes back, and the
+    reversal is deliberate.
+    """
+
+    preferences: Prefer
+
+
+Event = Closed | Trouble | Traced | Preferred
