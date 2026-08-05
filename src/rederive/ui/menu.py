@@ -67,18 +67,6 @@ ENTER_WINDOW = "Enter window number"
 ENTER_PLOT_WINDOW = "Enter plot window number"
 PLOT_WINDOW = "PLOT WINDOW:"
 
-#: What the one field line before a parametric or polar plot asks for. The
-#: parameter has no name on the line because it has none in the picture: what
-#: is being answered is how far round the curve is drawn.
-ENTER_MINIMUM = "Enter minimum parameter value"
-ENTER_MAXIMUM = "Enter maximum parameter value"
-
-#: What that line offers, which is one whole turn in the angle unit the
-#: worksheet is set to. A rose drawn over a turn is a rose; drawn over the
-#: wrong unit it is a stub or a scribble, so the default follows the setting.
-TURN_RADIANS = ("-π", "π")
-TURN_DEGREES = ("-180", "180")
-
 #: The two symbols a bound is written with: `<` for a bound the variable can
 #: never equal, `≤` for one it can.
 OPEN = "<"
@@ -526,32 +514,6 @@ def plot_window(number: int) -> settings.Dialog:
                     minimum=1,
                     recorded=False,
                 ),
-            ),
-        ),
-        stored=False,
-    )
-
-
-def parameter_range(degrees: bool) -> settings.Dialog:
-    """The one field line a parametric or polar plot is asked before it is sent.
-
-    The only question the Plot command ever asks about an expression, and it is
-    asked because there is no answer to guess: a curve `[x(t), y(t)]` is drawn
-    over whatever piece of t is wanted, and the piece is not in the expression.
-    One turn is offered because it is what draws a closed curve of the ordinary
-    ones, and it is written the way the worksheet writes angles.
-
-    The bounds are expressions and are judged by nobody here: `-π`, `2π/3` and
-    `#4` are all answers, and what they are worth is arithmetic the plot host
-    does when the plot is added.
-    """
-    low, high = TURN_DEGREES if degrees else TURN_RADIANS
-    return settings.Dialog(
-        "PLOT:",
-        (
-            (
-                settings.TextField("Min", ENTER_MINIMUM, "PlotMin", low, _NARROW_WIDTH),
-                settings.TextField("Max", ENTER_MAXIMUM, "PlotMax", high, _NARROW_WIDTH),
             ),
         ),
         stored=False,

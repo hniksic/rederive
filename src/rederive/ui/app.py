@@ -188,7 +188,6 @@ from textual.widgets.input import Selection
 
 from rederive import __version__
 from rederive.engine.client import Amount, EngineAborted
-from rederive.engine.context import Angle
 from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
 from rederive.model import session as sessions
@@ -4498,8 +4497,7 @@ class RederiveApp(App[None]):
         Off the event loop, because two of its three steps can block: the
         variables of the expression are an engine call, and the polar state of
         the target window is a question for a host that may not be running yet.
-        Nothing is sent here - what comes back is the request as it stands
-        before the one question that may still be asked about it.
+        Nothing is sent here - what comes back is the request, ready to go.
         """
         target, label = self.session.named_target(request)
         variables = self.session.variables(request)
@@ -4537,6 +4535,10 @@ class RederiveApp(App[None]):
             label=label,
             text=text,
             options=options,
+            # The parse state travels with the plot so that the window's own
+            # fields - the parameter range, a surface's domain - read a typed
+            # bound with the same grammar the worksheet does.
+            state=self.session.state,
         )
 
     def _polar_target(self, where: plots.Where) -> bool:
@@ -4554,46 +4556,18 @@ class RederiveApp(App[None]):
         return False
 
     def _plot_classified(self, outcome: Outcome) -> None:
-        """The expression is classified: ask its range, or send it as it is."""
+        """The expression is classified: send it. Nothing is ever asked.
+
+        A parametric or polar plot is drawn over one turn and its range is a
+        property of the picture, adjusted in the plot window's own toolbar
+        while it is being looked at.
+        """
         if outcome.error is not None:
             self._plot_refused(_plot_reason(outcome.error))
             return
         request = outcome.value
         assert isinstance(request, plots.Add)
-        if request.kind in plots.PARAMETRIZED:
-            self._ask(
-                menus.parameter_range(self.session.context.angle is Angle.DEGREE),
-                partial(self._chose_range, request),
-                self._unparsable_bound,
-            )
-            return
         self._send_plot(request)
-
-    def _chose_range(self, request: plots.Add, values: dict[str, str | int]) -> None:
-        """The parameter range is answered: send the plot with it attached."""
-        options = replace(
-            request.options,
-            minimum=self.session.target(_text(values, "PlotMin")),
-            maximum=self.session.target(_text(values, "PlotMax")),
-        )
-        self._send_plot(replace(request, options=options))
-
-    def _unparsable_bound(self, values: dict[str, str | int]) -> str | None:
-        """The first bound that is not an expression, for the dialog to go back to.
-
-        What a bound is worth is the host's arithmetic and not the app's, so
-        the only thing judged here is whether it is an expression at all - a
-        blank field or a half-typed one, which the question stays up over.
-        """
-        for setting in ("PlotMin", "PlotMax"):
-            text = _text(values, setting)
-            if not text:
-                return setting
-            try:
-                self.session.target(text)
-            except DeriveSyntaxError:
-                return setting
-        return None
 
     def _send_plot(self, request: plots.Add) -> None:
         self._compute(PLOTTING, partial(self._plot, request), self._plot_done)

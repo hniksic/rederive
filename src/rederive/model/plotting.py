@@ -1,9 +1,9 @@
 """What an expression is a plot of, decided before anything is sent anywhere.
 
-Classification is done app-side because it drives the questions: whether the
-Plot command asks for a parameter range before it sends, and which kind of
-window the plot is going to land in, are both known from the shape of the tree
-and the list of free variables and neither is worth a round trip to find out.
+Classification is done app-side because the app is the side that has to act on
+it: which kind of window the plot is going to land in is known from the shape
+of the tree and the list of free variables, and is not worth a round trip to
+find out.
 
 The variables come from `session.variables`, which is a worker call that
 already exists and is the authority: it resolves labels, assigned variables and

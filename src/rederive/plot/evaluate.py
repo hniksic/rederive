@@ -242,10 +242,9 @@ def points(node: Node, context: Context) -> tuple[np.ndarray, np.ndarray]:
 def number(node: Node | None, context: Context, default: float) -> float:
     """What a bound written as an expression is worth, `default` where nothing.
 
-    The parameter range is answered on a field line in the algebra window,
-    where `-π` is what a person types and what the field offers; turning it
-    into a float is arithmetic, so it happens here, in the process that owns
-    the arithmetic, and never app-side.
+    A range or a domain is typed into a plot window's toolbar, where `-π` is
+    what a person types; turning it into a float is arithmetic, so it happens
+    here, on the sampling thread, and never where the text was typed.
     """
     if node is None:
         return default

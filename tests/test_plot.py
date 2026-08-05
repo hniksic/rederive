@@ -25,7 +25,6 @@ import pytest
 from screen import band, highlighted, message
 
 from rederive.engine.context import Context
-from rederive.model.expr import Node
 from rederive.model.plotting import Unplottable, classify
 from rederive.model.session import Session
 from rederive.plot import evaluate
@@ -285,8 +284,8 @@ def test_an_inequality_is_a_truth_value_at_every_point():
 
 
 def test_a_bound_written_as_an_expression_is_worth_a_number():
-    # The field line takes `-π` because that is what a person types; what it is
-    # worth is arithmetic, and arithmetic happens in the process that has it.
+    # The toolbar fields take `-π` because that is what a person types; what it
+    # is worth is arithmetic, and arithmetic happens in the process that has it.
     assert evaluate.number(parsed("-π"), Context(), 0.0) == pytest.approx(-np.pi)
     assert evaluate.number(None, Context(), 1.5) == 1.5
     # An answer with no number in it falls back rather than refusing: the
@@ -640,11 +639,17 @@ def test_one_window_takes_every_two_dimensional_kind(host):
     # shaded region are one picture with one legend. Sent in a single test
     # because each of these costs a process to start.
     session = Session()
-    _add(session, host, "[SIN(t), COS(t)]", options=_turn())
+    _add(session, host, "[SIN(t), COS(t)]", options=plots.Options(variables=("t",)))
     _add(session, host, "[[1, 2], [3, 4]]")
     _add(session, host, "x^2 + y^2 = 4")
     _add(session, host, "y < x^2")
-    _add(session, host, "2*COS(3*t)", kind=PlotKind.POLAR, options=_turn(("t",)))
+    _add(
+        session,
+        host,
+        "2*COS(3*t)",
+        kind=PlotKind.POLAR,
+        options=plots.Options(variables=("t",)),
+    )
     window = host.describe()[0]
     assert [plot.kind for plot in window.plots] == [
         PlotKind.PARAMETRIC,
@@ -654,11 +659,6 @@ def test_one_window_takes_every_two_dimensional_kind(host):
         PlotKind.POLAR,
     ]
     assert not [plot.label for plot in window.plots if plot.hidden]
-
-
-def _turn(variables=("t",)):
-    """The parameter range the Plot command's field line would have carried."""
-    return plots.Options(variables=variables, minimum=parsed("-π"), maximum=parsed("π"))
 
 
 def test_a_surface_opens_a_solid_window_of_its_own(host):
@@ -775,6 +775,148 @@ def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
     host.prefer(plots.Prefer(equal_scales=False, grid=16, connected=True, point_size=9))
     assert _add(session, host, "SIN(x)") == 1
     assert [plot.label for plot in host.describe()[0].plots] == ["#1"]
+
+
+# -- the windows' own fields ----------------------------------------------------
+#
+# The 2D range fields and the 3D domain fields are exercised in-process,
+# offscreen, with a host whose sampling thread is the caller: what is under
+# test is the wiring from a typed expression to a re-sampled plot, and the
+# pipe is already crossed by the host tests above.
+
+
+class InlineHost:
+    """A host that runs each sampling job before `sample` returns."""
+
+    def sample(self, key, work, done, report=None):
+        try:
+            answer = work(lambda *arguments: None)
+        except Exception as error:
+            answer = error
+        done(answer)
+
+    def trouble(self, window, label, message):
+        pass
+
+    def closed(self, number):
+        pass
+
+
+@pytest.fixture(scope="module")
+def qt():
+    """A Qt application in this process, offscreen, or a skip without one."""
+    if not _toolkit():
+        pytest.skip("pyqtgraph and PySide6 are not installed")
+    import os
+
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    import pyqtgraph as pg
+
+    return pg.mkQApp()
+
+
+@pytest.fixture
+def flat(qt):
+    from rederive.plot.window2d import Window2D
+
+    window = Window2D(1, InlineHost())
+    yield window
+    window.close()
+
+
+def _plot(text, kind, variables):
+    from rederive.plot.window2d import Plot
+
+    return Plot(
+        worksheet=1,
+        label="#1",
+        text=text,
+        kind=kind,
+        node=parsed(text),
+        context=Context(),
+        options=plots.Options(variables=variables),
+        state=ParseState(),
+    )
+
+
+def test_a_parametric_plot_draws_at_once_over_one_turn(flat):
+    plot = _plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",))
+    flat.add(plot)
+    # The picture is there with no question asked anywhere on the way.
+    assert plot.trange == pytest.approx((-np.pi, np.pi))
+    assert np.isfinite(plot.ys).any()
+    # And the range that drew it is on the toolbar, named by its parameter.
+    assert all(action.isVisible() for action in flat._range_actions)
+    assert flat.range_name.text().strip() == "t:"
+    assert (flat.range_low.text(), flat.range_high.text()) == ("-3.14159", "3.14159")
+
+
+def test_the_range_fields_read_expressions_and_resample_the_plot(flat):
+    plot = _plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",))
+    flat.add(plot)
+    flat.range_low.setText("0")
+    flat.range_high.setText("2π")
+    flat._range_edited()
+    assert plot.trange == pytest.approx((0.0, 2 * np.pi))
+    assert plot.bounds is None
+    assert float(plot.ts[0]) == pytest.approx(0.0)
+    # Text that does not parse reverts to the range on the screen.
+    flat.range_high.setText("2*")
+    flat._range_edited()
+    assert flat.range_high.text() == "6.28319"
+    assert plot.trange == pytest.approx((0.0, 2 * np.pi))
+    # A bound that parses but is worth no number falls back the same way.
+    flat.range_low.setText("1/0")
+    flat._range_edited()
+    assert plot.trange == pytest.approx((0.0, 2 * np.pi))
+
+
+def test_a_polar_plot_names_its_range_fields_by_the_angle(flat):
+    plot = _plot("2*COS(3*t)", PlotKind.POLAR, ("t",))
+    flat.add(plot)
+    assert flat.range_name.text().strip() == "θ:"
+
+
+def test_a_window_of_functions_offers_no_range_fields(flat):
+    plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
+    flat.add(plot)
+    assert not any(action.isVisible() for action in flat._range_actions)
+
+
+@pytest.fixture
+def deep(qt, solid):
+    window = solid.Window3D(1, InlineHost())
+    yield window
+    window.close()
+
+
+def test_the_domain_fields_read_expressions(deep, solid):
+    surface = solid.Surface(
+        worksheet=1,
+        label="#1",
+        text="x*y",
+        kind=PlotKind.SURFACE,
+        node=parsed("x*y"),
+        context=Context(),
+        options=plots.Options(variables=("x", "y")),
+        state=ParseState(),
+    )
+    deep.add(surface)
+    deep.fields["x0"].setText("-π")
+    deep.fields["x1"].setText("π")
+    deep._edited()
+    assert deep.xdomain == pytest.approx((-np.pi, np.pi))
+    assert deep.fields["x0"].text() == "-3.14159"
+    # A field that does not parse reverts, the domain untouched.
+    deep.fields["y0"].setText("*")
+    deep._edited()
+    assert deep.ydomain == (-5.0, 5.0)
+    assert deep.fields["y0"].text() == "-5"
+    # An inverted domain is refused in words and reverted the same way.
+    deep.fields["y0"].setText("10")
+    deep._edited()
+    assert deep.ydomain == (-5.0, 5.0)
+    assert deep.fields["y0"].text() == "-5"
 
 
 # -- the gallery ---------------------------------------------------------------
@@ -1053,32 +1195,20 @@ async def test_an_expression_of_three_variables_is_refused_by_name(app):
         )
 
 
-async def test_a_parametric_pair_is_asked_its_range_before_it_is_sent(app):
+async def test_a_parametric_pair_is_sent_with_no_question_asked(app):
     async with app.run_test() as pilot:
         await authored(pilot, app, "[SIN(t), COS(t)]")
         await pilot.press("p", "p")
-        # The one question the Plot command ever asks about an expression,
-        # offering one whole turn.
-        assert band(app)[0].startswith(" PLOT: Min: -π")
-        assert band(app)[0].endswith("Max: π")
-        assert message(app) == "Enter minimum parameter value"
-        assert app.plots.sent == []
-        await pilot.press("enter")
+        # No field line: the picture appears over one turn, and the range is
+        # adjusted in the plot window's own toolbar.
+        assert message(app) == "Plotting #1 in window 1"
         request = app.plots.sent[0]
         assert request.kind is PlotKind.PARAMETRIC
         assert request.options.variables == ("t",)
-        # The bounds travel as expressions, the app doing no arithmetic.
-        assert isinstance(request.options.minimum, Node)
-        assert message(app) == "Plotting #1 in window 1"
-
-
-async def test_a_range_that_is_not_an_expression_keeps_the_question_up(app):
-    async with app.run_test() as pilot:
-        await authored(pilot, app, "[SIN(t), COS(t)]")
-        await pilot.press("p", "p")
-        await pilot.press("*", "enter")
-        assert band(app)[0].startswith(" PLOT: Min: *π")
-        assert app.plots.sent == []
+        # The parse state travels with the plot, so the window's range fields
+        # read a typed bound with the grammar the worksheet reads.
+        assert request.state is app.session.state
+        assert band(app)[0].startswith(" COMMAND:")
 
 
 async def test_a_polar_window_reads_a_curve_as_r_of_an_angle(app):
@@ -1092,9 +1222,8 @@ async def test_a_polar_window_reads_a_curve_as_r_of_an_angle(app):
         )
         await authored(pilot, app, "SIN(x)")
         await pilot.press("p", "p")
-        assert band(app)[0].startswith(" PLOT: Min: -π")
-        await pilot.press("enter")
         assert app.plots.sent[0].kind is PlotKind.POLAR
+        assert message(app) == "Plotting #1 in window 1"
 
 
 async def test_a_new_window_is_never_polar_and_asks_nothing(app):
@@ -1108,19 +1237,6 @@ async def test_a_new_window_is_never_polar_and_asks_nothing(app):
         await pilot.press("p", "n")
         assert app.plots.sent[0].kind is PlotKind.CURVE
         assert message(app) == "Plotting #1 in window 1"
-
-
-def test_the_range_offered_follows_the_angle_unit():
-    from rederive.ui import menu as menus
-
-    assert [field.default for field in menus.parameter_range(False).fields] == [
-        "-π",
-        "π",
-    ]
-    assert [field.default for field in menus.parameter_range(True).fields] == [
-        "-180",
-        "180",
-    ]
 
 
 async def test_a_family_carries_the_text_of_every_element(app):
@@ -1227,7 +1343,7 @@ async def test_a_curve_the_host_could_not_draw_reaches_the_message_line(app):
 
 
 async def test_the_whole_loop_lands_a_parametric_plot_in_a_real_window(monkeypatch):
-    """`P` `P`, the range field line, and a curve in a window that exists.
+    """`P` `P` and a curve in a window that exists, with nothing asked between.
 
     The one test that has the app and a real host in it at once, and the only
     place the seam between them is exercised: everything above either answers
@@ -1250,8 +1366,6 @@ async def test_the_whole_loop_lands_a_parametric_plot_in_a_real_window(monkeypat
             app.session.author("[3*SIN(3*t), 3*COS(2*t)]")
             await pilot.pause()
             await pilot.press("p", "p")
-            assert band(app)[0].startswith(" PLOT: Min: -π")
-            await pilot.press("enter")
             for _ in range(100):
                 await pilot.pause()
                 if "window" in message(app) or message(app).startswith("Plot:"):

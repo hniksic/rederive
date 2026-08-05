@@ -53,6 +53,7 @@ from rederive.engine.context import Angle, Context
 from rederive.model.expr import Node
 from rederive.plot import evaluate, protocol
 from rederive.plot.protocol import Options, PlotKind
+from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 __all__ = ["PALETTE", "Plot", "Window2D"]
 
@@ -122,9 +123,9 @@ FORMAT = "{:.6f}"
 
 #: The parameter range a parametric or polar plot takes when nothing says
 #: otherwise: one turn, written in whichever angle unit the worksheet is set
-#: to. The Plot command offers the same numbers on its field line, so a plot
-#: added without an answer and one added with the default answer are the same
-#: picture.
+#: to. One turn is what draws a closed curve of the ordinary ones, and the
+#: toolbar's range fields are where a different piece of the parameter is
+#: asked for, while the picture is on the screen.
 DEFAULT_TURN = np.pi
 DEFAULT_TURN_DEGREES = 180.0
 
@@ -224,9 +225,14 @@ class Plot:
     #: truth values over them - which is what says whether a click landed
     #: inside the region.
     grid: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
-    #: The parameter range, once the host has worked out what the bounds the
-    #: request carried are worth.
+    #: The parse state the expression arrived under, which is what the range
+    #: fields read a typed bound with: the same grammar the worksheet reads.
+    state: ParseState = field(default_factory=ParseState)
+    #: The parameter range now drawn over, and the bounds typed in the range
+    #: fields that the sampling thread has yet to turn into one - trees, since
+    #: what a person types is `-π` and what it is worth is arithmetic.
     trange: tuple[float, float] = (-DEFAULT_TURN, DEFAULT_TURN)
+    bounds: tuple[Node, Node] | None = None
     #: The notable points of this curve for the samples now drawn, worked out
     #: when trace first asks for them and dropped whenever the samples change,
     #: beside the labels of the curves the intersections among them are with.
@@ -518,6 +524,20 @@ class Window2D(QtWidgets.QMainWindow):
         self.polar_toggle.setToolTip("Read newly plotted expressions as r = f(θ)")
         self.polar_toggle.triggered.connect(self._polar_mode)
         bar.addAction(self.polar_toggle)
+        # The parameter range of the selected parametric or polar plot. Hidden
+        # while the window holds no such plot, since a range of nothing is not
+        # a control; the actions are kept so showing it back is one call.
+        self.range_name = QtWidgets.QLabel("")
+        self.range_low = self._range_field()
+        self.range_high = self._range_field()
+        self._range_actions = (
+            bar.addWidget(self.range_name),
+            bar.addWidget(self.range_low),
+            bar.addWidget(QtWidgets.QLabel(" to ")),
+            bar.addWidget(self.range_high),
+        )
+        for action in self._range_actions:
+            action.setVisible(False)
         layout.addWidget(bar)
         layout.addWidget(self.plot, 1)
         self.status = QtWidgets.QLabel("")
@@ -530,6 +550,20 @@ class Window2D(QtWidgets.QMainWindow):
         across.addWidget(self.readout, 0)
         layout.addWidget(line)
         return holder
+
+    def _range_field(self) -> QtWidgets.QLineEdit:
+        """One range bound, which the keyboard only reaches when clicked in.
+
+        The keys of this window pan, zoom and trace, and a field that took the
+        focus when the window opened would swallow them - the same bargain the
+        3D window's domain fields make.
+        """
+        edit = QtWidgets.QLineEdit()
+        edit.setFixedWidth(64)
+        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
+        edit.editingFinished.connect(self._range_edited)
+        return edit
 
     def _strip_spines(self) -> None:
         """Keep the tick numbers along the edges, drop the lines they sit on.
@@ -645,6 +679,7 @@ class Window2D(QtWidgets.QMainWindow):
         self.plots.append(plot)
         self._relabel()
         self._axis_names()
+        self._show_trange()
         self._start(plot, fresh=True)
 
     def _made(self, plot: Plot) -> Any:
@@ -697,6 +732,7 @@ class Window2D(QtWidgets.QMainWindow):
         if plot in self.plots:
             self.plots.remove(plot)
         self._relabel()
+        self._show_trange()
         if self._tracing is not None and self._tracing >= len(self.plots):
             self._trace_off()
 
@@ -856,8 +892,13 @@ class Window2D(QtWidgets.QMainWindow):
     def _ridden(self, plot: Plot, answer: Any) -> None:
         """A parametric or polar curve, and the note that it gave up refining."""
         plot.pair, plot.closure, sampled, plot.trange = answer
+        # The bounds this sampling was asked over are now the range it came
+        # back with, and the fields show what they came to - which is also how
+        # a bound that would not evaluate announces itself: by reverting.
+        plot.bounds = None
         plot.ts, plot.xs, plot.ys = sampled.ts, sampled.xs, sampled.ys
         plot.item.setData(plot.xs, plot.ys, connect="finite")
+        self._show_trange()
         if sampled.gave_up is not None:
             self.say(
                 f"{plot.label}: gave up refining near"
@@ -969,6 +1010,67 @@ class Window2D(QtWidgets.QMainWindow):
         across, up = self.canvas.viewPixelSize()
         self.axes[0].setPos(min(max(0.0, left + across), right - across))
         self.axes[1].setPos(min(max(0.0, low + up), high - up))
+
+    # -- the parameter range -----------------------------------------------
+
+    def _ranged_plot(self) -> Plot | None:
+        """The plot the range fields are about, or None where there is none.
+
+        The traced curve when the marker is riding a parametrized one, since
+        taking hold of a curve is how a plot is selected; otherwise the
+        parametrized plot added last.
+        """
+        active = self._active
+        if active is not None and active.kind in PARAMETRIZED:
+            return active
+        for plot in reversed(self.plots):
+            if plot.kind in PARAMETRIZED:
+                return plot
+        return None
+
+    def _show_trange(self) -> None:
+        """Put the selected plot's range in the fields, or put the fields away.
+
+        A field being typed in is left alone: a re-sample landing mid-edit
+        must not pull the text out from under the keyboard.
+        """
+        plot = self._ranged_plot()
+        for action in self._range_actions:
+            action.setVisible(plot is not None)
+        if plot is None:
+            return
+        self.range_name.setText(f"   {plot.parameter}: ")
+        for edit, value in (
+            (self.range_low, plot.trange[0]),
+            (self.range_high, plot.trange[1]),
+        ):
+            if not edit.hasFocus():
+                edit.setText(_short(value))
+
+    def _range_edited(self) -> None:
+        """A range field was left: re-sample the selected plot over what it says.
+
+        The fields read expressions rather than floats - `-π` is what a person
+        types, and a field that special-cased a constant or two would be a
+        parser by stealth - so the text is parsed whole, under the parse state
+        the plot arrived with, and what the trees are worth is arithmetic the
+        sampling thread does under the plot's own context. A text that does
+        not parse is reverted rather than argued with, as a 3D domain is; a
+        bound that parses but has no number in it reverts when the sampling
+        answers, keeping the range the plot already had.
+        """
+        plot = self._ranged_plot()
+        if plot is None:
+            return
+        try:
+            low = parse_expression(self.range_low.text().strip(), plot.state).node
+            high = parse_expression(self.range_high.text().strip(), plot.state).node
+        except DeriveSyntaxError:
+            self._show_trange()
+            self.say(f"The {plot.parameter} bounds are expressions, like -π or 2π")
+            return
+        plot.bounds = (low, high)
+        self._start(plot)
 
     # -- framing -----------------------------------------------------------
 
@@ -1172,6 +1274,7 @@ class Window2D(QtWidgets.QMainWindow):
         if plot.kind not in TRACEABLE:
             return
         self._tracing = self.plots.index(plot)
+        self._show_trange()
         if plot.kind in PARAMETRIZED:
             nearest = self._nearest(plot, point)
             self._trace_at(self._trace_t if nearest is None else nearest)
@@ -1280,6 +1383,7 @@ class Window2D(QtWidgets.QMainWindow):
         if not rideable:
             return
         self._tracing = rideable[0]
+        self._show_trange()
         plot = self.plots[self._tracing]
         if plot.kind in PARAMETRIZED:
             self._trace_at(sum(plot.trange) / 2)
@@ -1290,6 +1394,7 @@ class Window2D(QtWidgets.QMainWindow):
     def _trace_off(self) -> None:
         self._tracing = None
         self.marker.setVisible(False)
+        self._show_trange()
         self.say("")
 
     def _rideable(self) -> list[int]:
@@ -1346,6 +1451,7 @@ class Window2D(QtWidgets.QMainWindow):
         at = self._tracing
         here = rideable.index(at) if at in rideable else 0
         self._tracing = rideable[(here + step) % len(rideable)]
+        self._show_trange()
         self._retrace()
 
     def _trace_to(self, x: float) -> None:
@@ -1782,10 +1888,11 @@ def _curve_work(
     """What the sampling thread does for a parametric or polar curve.
 
     The two closures are made once and kept on the plot, like a function's one
-    is, so that a zoom re-samples without asking sympy anything. So is the
-    parameter range: the bounds arrive as expressions - `-π` is what a person
-    types on the field line - and what they are worth is arithmetic that need
-    only be done the first time.
+    is, so that a zoom re-samples without asking sympy anything. The first
+    sampling is over one turn, so the picture appears with no question asked;
+    bounds typed in the range fields arrive as trees - `-π` is what a person
+    types - and what they are worth is arithmetic that need only be done once,
+    here, before the range they make goes back to the plot.
 
     A polar curve is a parametric one composed here rather than at the far end:
     r(θ) is kept beside the pair because the readout and the trace are in r and
@@ -1794,6 +1901,7 @@ def _curve_work(
     node, context, options = plot.node, plot.context, plot.options
     names = options.variables or ("t",)
     made, radius, known = plot.pair, plot.closure, plot.trange
+    pending = plot.bounds
     polar = plot.kind is PlotKind.POLAR
     turn = DEFAULT_TURN_DEGREES if degrees else DEFAULT_TURN
 
@@ -1805,9 +1913,12 @@ def _curve_work(
                 pair = evaluate.polar_pair(inner, degrees)
             else:
                 pair = evaluate.pair(node, context, names)
-            low = evaluate.number(options.minimum, context, -turn)
-            high = evaluate.number(options.maximum, context, turn)
-            trange = (low, high) if high > low else (-turn, turn)
+            trange = (-turn, turn)
+        if pending is not None:
+            low = evaluate.number(pending[0], context, trange[0])
+            high = evaluate.number(pending[1], context, trange[1])
+            if high > low:
+                trange = (low, high)
         sampled = evaluate.sample_curve(
             pair[0], pair[1], trange, xrange, yrange, size, report=report
         )

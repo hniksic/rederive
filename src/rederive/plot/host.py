@@ -543,6 +543,7 @@ def _curves(request: protocol.Add) -> list[Any]:
             node=node,
             context=request.context,
             options=request.options,
+            state=request.state,
         )
 
     if request.kind is not several:

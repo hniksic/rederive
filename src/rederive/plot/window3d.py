@@ -58,6 +58,7 @@ from rederive.model.expr import Node
 from rederive.plot import evaluate, protocol
 from rederive.plot.protocol import Options, PlotKind
 from rederive.plot.window2d import PALETTE, PAPER_PALETTE, naming
+from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 __all__ = ["Box", "Surface", "Window3D", "mesh", "ticks"]
 
@@ -183,6 +184,9 @@ class Surface:
     node: Node
     context: Context
     options: Options
+    #: The parse state the expression arrived under, which is what the domain
+    #: fields read a typed bound with: the same grammar the worksheet reads.
+    state: ParseState = field(default_factory=ParseState)
     color: str = SOLID_PALETTE[0]
     paper: str = SOLID_PAPER[0]
     item: Any = None
@@ -583,6 +587,14 @@ class Window3D(QtWidgets.QMainWindow):
         #: of the expression until there is one.
         self.axis_names = ("x", "y", "z")
         self._fixed: tuple[float, float] | None = None
+        #: The parse state and context the domain fields read typed bounds
+        #: under: the last added surface's, since the domain belongs to the
+        #: window and the worksheet that last plotted into it is its reader.
+        self._state = ParseState()
+        self._context = Context()
+        #: Which domain edit is the latest, so the numbers a superseded edit
+        #: evaluated to cannot land on top of a newer one's.
+        self._edit = 0
         self._counter = 0
         self._message = ""
         #: Which of the three furnishings are shown: the box and its ticks, the
@@ -725,6 +737,7 @@ class Window3D(QtWidgets.QMainWindow):
         # draw itself on the next frame, and the sampling has not answered yet.
         surface.item.setVisible(False)
         self.view.addItem(surface.item)
+        self._state, self._context = surface.state, surface.context
         self.plots.append(surface)
         self._relabel()
         self._name_axes()
@@ -1056,30 +1069,71 @@ class Window3D(QtWidgets.QMainWindow):
     # -- the domain and the grid -------------------------------------------
 
     def _edited(self) -> None:
-        """A toolbar field was left: take the numbers, or put back the old ones.
+        """A toolbar field was left: take what it says, or put back the old text.
 
-        The one place in this window where typing changes what is computed. A
-        field that does not read as a number is reverted rather than argued
-        with, since the value it would take is on the screen beside it.
+        The one place in this window where typing changes what is computed. The
+        domain fields read expressions rather than floats - `-π` and `2π` are
+        answers - parsed here under the parse state the last surface arrived
+        with; what the trees are worth is arithmetic, so they go to the
+        sampling thread and the domain moves when the numbers come back. The
+        grid is a pair of counts and stays one. A field that does not read is
+        reverted rather than argued with, since the value it would take is on
+        the screen beside it.
         """
         try:
-            xdomain = (self._read("x0"), self._read("x1"))
-            ydomain = (self._read("y0"), self._read("y1"))
             grid = (int(self._read("nx")), int(self._read("ny")))
         except ValueError:
             self._show_domain()
-            self.say("The domain and the grid are numbers")
+            self.say("The grid is a pair of numbers")
             return
         grid = (
             int(min(max(grid[0], 2), MAX_GRID)),
             int(min(max(grid[1], 2), MAX_GRID)),
         )
-        if xdomain[1] <= xdomain[0] or ydomain[1] <= ydomain[0]:
+        try:
+            bounds = tuple(
+                parse_expression(self.fields[name].text().strip(), self._state).node
+                for name in ("x0", "x1", "y0", "y1")
+            )
+        except DeriveSyntaxError:
             self._show_domain()
-            self.say("The domain runs from a lower number to a higher one")
+            self.say("The domain bounds are expressions, like -π or 2π")
             return
-        changed = (xdomain, ydomain, grid) != (self.xdomain, self.ydomain, self.grid)
-        self.xdomain, self.ydomain, self.grid = xdomain, ydomain, grid
+        self._edit += 1
+        edit = self._edit
+        context = self._context
+        known = (*self.xdomain, *self.ydomain)
+
+        def work(_report: Callable[..., None]) -> Any:
+            return tuple(
+                evaluate.number(node, context, default)
+                for node, default in zip(bounds, known)
+            )
+
+        self.host.sample(
+            (self.number, "domain"),
+            work,
+            lambda answer: self._reframe_typed(edit, grid, answer),
+        )
+
+    def _reframe_typed(
+        self, edit: int, grid: tuple[int, int], answer: Any
+    ) -> None:
+        """The typed bounds are worth numbers: take them, or put back the old ones.
+
+        A bound that would not evaluate came back as the value it was replacing,
+        so a field of nonsense reverts by arithmetic rather than by a case; an
+        inverted domain is the one refusal left to make here.
+        """
+        if edit != self._edit or isinstance(answer, Exception):
+            return
+        x0, x1, y0, y1 = answer
+        if x1 <= x0 or y1 <= y0:
+            self._show_domain()
+            self.say("The domain runs from a lower bound to a higher one")
+            return
+        changed = ((x0, x1), (y0, y1), grid) != (self.xdomain, self.ydomain, self.grid)
+        self.xdomain, self.ydomain, self.grid = (x0, x1), (y0, y1), grid
         self._show_domain()
         if changed:
             self.say(f"Evaluating over the new domain at {grid[0]} by {grid[1]}")

@@ -114,7 +114,7 @@ decides; the first matching row wins.
 |---|---|
 | scalar in 0 or 1 variables | a curve, the variable naming the horizontal axis |
 | vector of ≥3 scalars in one common variable | one curve per element, colors cycling |
-| 2-vector in exactly one variable | a parametric curve, over a range it asks for |
+| 2-vector in exactly one variable | a parametric curve, over one turn by default |
 | scalar in one variable, window in polar mode | `r = f(θ)` |
 | `u = v` in at most two variables | the zero contour of `u - v`, by marching squares |
 | inequality, or a boolean combination of them | the region it holds on, shaded |

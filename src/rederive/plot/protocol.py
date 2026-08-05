@@ -27,6 +27,7 @@ from enum import StrEnum
 
 from rederive.engine.context import Context
 from rederive.model.expr import Node
+from rederive.syntax import ParseState
 
 __all__ = [
     "Add",
@@ -126,8 +127,8 @@ def dimension(kind: PlotKind) -> WindowKind:
 #: recognized before it is drawn, and a refusal has to be able to name it.
 DRAWN = frozenset(PlotKind)
 
-#: The kinds drawn over a parameter, which are the ones the Plot command asks
-#: a range for before it sends anything.
+#: The kinds drawn over a parameter, which are the ones the 2D window's range
+#: fields apply to. Drawn over one turn until those fields say otherwise.
 PARAMETRIZED = frozenset({PlotKind.PARAMETRIC, PlotKind.POLAR})
 
 #: What a request for one of the others is refused with. The word is the
@@ -195,13 +196,6 @@ class Options:
     app-side like `text` is: a family is one request that becomes several
     curves, and the host renders no expression of its own to name them with.
 
-    `minimum` and `maximum` are the parameter range a parametric or polar plot
-    is drawn over, asked for on a field line before the request is sent. They
-    are expressions rather than numbers because `-π` is what the field offers
-    and what a person types: turning one into a float is arithmetic, and the
-    app does no arithmetic. The host evaluates them once, when the plot is
-    added.
-
     The rest are how a data plot draws its points; None means "whatever the
     preferences say" rather than a value, and the host fills it in from the
     `Prefer` it was last sent. So a plot added without an opinion follows the
@@ -211,8 +205,6 @@ class Options:
     variables: tuple[str, ...] = ()
     vertical: str = ""
     texts: tuple[str, ...] = ()
-    minimum: Node | None = None
-    maximum: Node | None = None
     connected: bool | None = None
     point_size: float | None = None
 
@@ -233,6 +225,12 @@ class Add:
     writer. The host never renders an expression itself - it has the tree only
     to evaluate it - which is what keeps one spelling of an expression in the
     program.
+
+    `state` is the parse state the expression was read under. The window's own
+    fields - the parameter range of a parametric or polar plot, a surface's
+    domain - take expressions rather than floats, and the syntax reader is
+    dependency-free, so the window parses what is typed in them under this
+    state and evaluates it under the plot's own context.
     """
 
     worksheet: int
@@ -243,6 +241,7 @@ class Add:
     label: str = ""
     text: str = ""
     options: Options = field(default_factory=Options)
+    state: ParseState = field(default_factory=ParseState)
 
 
 @dataclass(frozen=True)
