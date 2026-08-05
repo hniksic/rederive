@@ -14,17 +14,24 @@ through a terminal rather than importing anything from it, and each one stands f
 way the bundle can be wrong:
 
 * The command line, which says the archive unpacked and the app's own modules import.
+* `--version`, which says what the bundle actually carries. A release is a binary
+  with its own interpreter and its own sympy inside it, so the versions it reports
+  are the only evidence of what was built - a machine that quietly supplied its own
+  Python produces a bundle that passes every other check here and is still not the
+  program the suite tested.
 * The first frame, which says the stylesheet was found - Textual refuses to start
   without it.
 * The Help menu, which says `help.txt` was found and read as a resource.
-* An expansion, which says the worker was spawned, re-entered the executable as a
-  child, imported sympy there and sent an answer back. It is the check that costs the
-  most and covers the most: nothing else exercises the child process at all.
+* A computation from each of several areas of the mathematics, which says the worker
+  was spawned, re-entered the executable as a child, imported sympy there and sent an
+  answer back. These cost the most and cover the most: nothing else exercises the
+  child process at all, and a module the build's analysis failed to bring along is
+  not missing until something reaches for it.
 
-Only the first runs on Windows, there being no pty to drive the rest through. That
-leaves the Windows build covered for unpacking and not for anything above it, which
-is worth knowing about rather than papering over, so it is reported and not skipped
-silently.
+The first two run on Windows, there being no pty to drive the rest through. That
+leaves the Windows build covered for unpacking and for what it carries, but not for
+anything above that, which is worth knowing about rather than papering over, so it is
+reported and not skipped silently.
 """
 
 from __future__ import annotations
@@ -49,6 +56,27 @@ PATIENCE = 30.0
 #: the line, so that neither the 2D layout of the exponents above it nor the width of
 #: the window can move it out of reach.
 EXPANSION = "21·x"
+
+#: What Simplify is asked for, what says the answer arrived, and the part of the
+#: mathematics each one stands for. One per area the bundle has to have brought whole,
+#: because an area is only missing once something reaches for it: the polynomial above
+#: reaches none of these, and a build without sympy's integrals answers every other
+#: check here correctly.
+#:
+#: Each expected fragment was read off a real screen rather than derived from the text
+#: form of the answer. An answer is typeset in two dimensions, so only a piece of one
+#: line can be waited for, and only answers that come out on a single line are asked
+#: for here - `#e` draws as `ê`, and a fraction would put its halves on three lines.
+COMPUTATIONS = (
+    ("INT(1/(1 + x^2), x)", "ATAN(x)", "integrals"),
+    ("SOLVE(x^2 - 4, x)", "[x = -2, x = 2]", "solving"),
+    ("EIGENVALUES([[2, 0], [0, 3]])", "[w = 2, w = 3]", "matrices"),
+    ("LIM((1 + 1/n)^n, n, inf)", "ê", "limits"),
+)
+
+#: What the Author line asks, and what Simplify asks after it.
+AUTHOR_PROMPT = "AUTHOR expression:"
+SIMPLIFY_PROMPT = "SIMPLIFY expression:"
 
 #: The label the command menu carries, which is how the app says it is back at the
 #: top and ready for the next command.
@@ -85,6 +113,31 @@ def usage_check(binary: Path) -> None:
             f"and {finished.stderr!r}"
         )
     report("command line", "refuses a file that is not there")
+
+
+def version_check(binary: Path) -> None:
+    """The bundle says what it is, and what interpreter and sympy it brought.
+
+    Only that all four lines are there and carry something version-shaped; which
+    versions they ought to be is a question for the build workflow, which has
+    `.python-version` and `uv.lock` to compare them against and this script does not.
+    """
+    finished = subprocess.run(
+        [str(binary), "--version"], capture_output=True, text=True, timeout=PATIENCE
+    )
+    reported = dict(
+        line.split(maxsplit=1)
+        for line in finished.stdout.splitlines()
+        if len(line.split(maxsplit=1)) == 2
+    )
+    missing = [name for name in ("rederive", "Python", "sympy") if name not in reported]
+    if finished.returncode != 0 or missing:
+        raise Failed(
+            f"expected a version for each of rederive, Python and sympy; got exit "
+            f"{finished.returncode} and {finished.stdout!r}"
+        )
+    carried = ", ".join(f"{name} {reported[name]}" for name in ("Python", "sympy"))
+    report("version", f"carries {carried}")
 
 
 class Terminal:
@@ -168,6 +221,22 @@ def _shown(data: bytes) -> str:
     return "\n".join(f"    {line}" for line in lines[-12:])
 
 
+def _simplify(terminal: Terminal, expression: str, expected: str) -> None:
+    """Author `expression`, Simplify it, and wait for the answer to appear.
+
+    Simplify is offered the expression just authored, so the prompt takes an empty
+    line the way the expansion above does.
+    """
+    terminal.type("A")
+    terminal.wait_for(AUTHOR_PROMPT)
+    terminal.type(f"{expression}\r")
+    terminal.wait_for(COMMAND_MENU)
+    terminal.type("S")
+    terminal.wait_for(SIMPLIFY_PROMPT)
+    terminal.type("\r")
+    terminal.wait_for(expected)
+
+
 def session_checks(binary: Path) -> None:
     """Start the app, ask it for help, make it compute, and let it go."""
     terminal = Terminal(binary)
@@ -181,7 +250,7 @@ def session_checks(binary: Path) -> None:
         terminal.escape()
 
         terminal.type("A")
-        terminal.wait_for("AUTHOR expression:")
+        terminal.wait_for(AUTHOR_PROMPT)
         terminal.type("(x + 1)^7\r")
         terminal.wait_for(COMMAND_MENU)
         terminal.type("E")
@@ -189,6 +258,10 @@ def session_checks(binary: Path) -> None:
         terminal.type("\r")
         terminal.wait_for(EXPANSION)
         report("engine", "the worker spawned and expanded (x + 1)^7")
+
+        for expression, expected, area in COMPUTATIONS:
+            _simplify(terminal, expression, expected)
+            report(area, expression)
 
         terminal.type("Q")
         terminal.wait_for(ABANDON)
@@ -214,6 +287,7 @@ def main(arguments: list[str] | None = None) -> int:
     print(f"smoke: {binary}", flush=True)
     try:
         usage_check(binary)
+        version_check(binary)
         if sys.platform == "win32":
             print("  --   screen, help and engine not checked: no pty on Windows")
         else:

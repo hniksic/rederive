@@ -31,12 +31,20 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rederive import __version__
 from rederive.model import worksheet
 
 if TYPE_CHECKING:
     from rederive.model.session import Session
 
-USAGE = "usage: rederive [-m|-u|-t|-d] FILE ..."
+USAGE = "usage: rederive [--version] [-m|-u|-t|-d] FILE ..."
+
+#: The switch that says what this program is and what it carries, instead of
+#: starting the app. A release is a binary with its own interpreter and its own
+#: sympy inside it, so what it runs is not what the machine has installed and there
+#: is no way to find out from outside. That makes this the first thing to ask a user
+#: for, and the build workflow reads it too, against `.python-version` and `uv.lock`.
+VERSION = "--version"
 
 #: How a switch says the files after it are to be read. The original wrote
 #: these after the name and behind a slash - `NUMBER/U` - which cannot be
@@ -157,6 +165,30 @@ def _reported(skipped: int) -> str:
     return f"{skipped} {lines} not read"
 
 
+def provenance() -> str:
+    """This program's version, and the interpreter and sympy it is running on.
+
+    One `name version` per line, so that a person can read it and a workflow can
+    check it without parsing prose.
+
+    Sympy is imported here and nowhere else on this side of the program. The app
+    process is kept clear of it - the mathematics belongs to the worker, and
+    `tests/test_packages.py` holds this module to that - which is affordable because
+    this path prints its four lines and leaves rather than going on to open a
+    session.
+    """
+    import platform
+
+    import sympy
+
+    return (
+        f"rederive {__version__}\n"
+        f"Python {platform.python_version()}\n"
+        f"sympy {sympy.__version__}\n"
+        f"platform {platform.system().lower()} {platform.machine()}"
+    )
+
+
 def _refused(refused: Usage) -> int:
     print(f"rederive: {refused}\n{USAGE}", file=sys.stderr)
     return 2
@@ -175,8 +207,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     of one behind the other. Only the engine proxy is needed to start a worker,
     and it is the cheap half.
     """
+    given = sys.argv[1:] if arguments is None else arguments
+    if VERSION in given:
+        print(provenance())
+        return 0
+
     try:
-        files = named(sys.argv[1:] if arguments is None else arguments)
+        files = named(given)
     except Usage as refused:
         return _refused(refused)
 

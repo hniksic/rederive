@@ -10,7 +10,8 @@ original's.
 import pytest
 from screen import band, entries, message
 
-from rederive.__main__ import Usage, named, read
+from rederive import __version__
+from rederive.__main__ import Usage, named, provenance, read
 from rederive.model.session import Session
 from rederive.ui.app import RederiveApp
 
@@ -181,3 +182,20 @@ async def test_files_read_first_are_there_for_the_demonstration_to_use(files):
     app = opened(["work", "arith"])
     async with app.run_test():
         assert entries(app) == ["x+1", "2*x", "1+1", "2"]
+
+
+# -- what the program says it is -------------------------------------------
+
+
+def test_provenance_names_the_program_and_what_it_runs_on():
+    """One `name version` per line, which is the form the build workflow reads.
+
+    A release carries its own interpreter and its own sympy, so these four lines are
+    the only account of what is inside a binary; the workflow checks the middle two
+    against `.python-version` and `uv.lock`.
+    """
+    reported = dict(line.split(maxsplit=1) for line in provenance().splitlines())
+    assert reported["rederive"] == __version__
+    assert reported["Python"].split(".")[0] == "3"
+    assert reported["sympy"][0].isdigit()
+    assert "platform" in reported

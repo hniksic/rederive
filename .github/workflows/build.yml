@@ -63,8 +63,10 @@ jobs:
 
       # `--managed-python` so that all three platforms build on uv's own
       # interpreter rather than on whatever the runner happens to have lying
-      # about, which is how a Windows binary once came to carry a Python no
-      # test had ever run against. `.python-version` says which one.
+      # about: a runner with a Python of its own would otherwise be built
+      # against, and nothing downstream would say so. `.python-version` says
+      # which interpreter, and "Check what the binaries carry" is what holds
+      # the finished bundles to it.
       - name: Install dependencies
         run: uv sync --frozen --managed-python --group packaging
 
@@ -90,6 +92,33 @@ jobs:
         run: |
           uv run python packaging/smoke.py "dist/rederive${{ matrix.exe }}"
           uv run python packaging/smoke.py "dist/tree/rederive/rederive${{ matrix.exe }}"
+
+      # A bundle brings its own interpreter and its own sympy, and from outside it
+      # there is no way to tell which. So each one is asked, and the answer is held
+      # against the two files that decide it. What this catches is a build made
+      # against something other than what the suite ran on: the program still starts,
+      # still computes, still passes every other check here, and is not the program
+      # that was tested. Only the interpreter's minor version is compared, that being
+      # all `.python-version` pins.
+      - name: Check what the binaries carry
+        run: |
+          expected_python=$(cat .python-version)
+          expected_sympy=$(sed -n '/^name = "sympy"$/{n;s/^version = "\(.*\)"$/\1/p;}' uv.lock)
+          for binary in "dist/rederive${{ matrix.exe }}" \
+                        "dist/tree/rederive/rederive${{ matrix.exe }}"; do
+            reported=$("$binary" --version)
+            python=$(echo "$reported" | awk '$1 == "Python" { print $2 }')
+            sympy=$(echo "$reported" | awk '$1 == "sympy" { print $2 }')
+            echo "$binary: Python $python, sympy $sympy"
+            case "$python" in
+              "$expected_python".* | "$expected_python") ;;
+              *) echo "expected Python $expected_python.x, not $python"; exit 1 ;;
+            esac
+            if [ "$sympy" != "$expected_sympy" ]; then
+              echo "expected sympy $expected_sympy, not $sympy"
+              exit 1
+            fi
+          done
 
       - name: Package the archive
         if: runner.os != 'Windows'

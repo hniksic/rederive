@@ -54,9 +54,13 @@ the same tree. Attach everything to the GitHub release.
 ## Notes
 
 - `--frozen` matters: the test suite ran against `uv.lock`, so ship what it tested.
-- On Windows the smoke script only checks that the bundle unpacks, there being no pty
-  to drive the rest through. What covers the rest there is the workflow's installer
-  check, which installs, runs and uninstalls.
+- `rederive --version` reports what a bundle carries rather than what the machine has
+  installed, which is the only way to tell the two apart from outside. The workflow
+  holds it against `.python-version` and `uv.lock`; building by hand, run it and read
+  it. It is also the first thing to ask for in a bug report.
+- On Windows the smoke script only checks that the bundle unpacks and says what it
+  carries, there being no pty to drive the rest through. What covers the rest there is
+  the workflow's installer check, which installs, runs and uninstalls.
 - Nothing is signed, so macOS and Windows refuse a browser's download and SmartScreen
   warns about the installer. INSTALL.md's instructions work around that and have to
   stay in step with it.
