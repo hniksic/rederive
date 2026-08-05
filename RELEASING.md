@@ -20,10 +20,19 @@ Plus `install.sh`, which the Unix instructions pipe into `sh`, and
 ## Procedure
 
 Bump `__version__` in `src/rederive/__init__.py`, which is where the version is
-written and where the build reads it from, commit, tag `v<version>` and push the
-tag. `.github/workflows/build.yml` refuses a tag that does not match that version,
-then builds on all three platforms, checks every build, compiles and test-installs
-the Windows installer, and publishes the release.
+written and where the build reads it from, commit, then tag and push:
+
+```
+git tag -a v<version> -m "Rederive <version>"
+git push origin v<version>
+```
+
+The tag is annotated rather than lightweight, so that it carries a tagger, a date and
+a message of its own - `git describe` considers no other kind, and the message shows
+on the release page beside the generated notes.
+`.github/workflows/build.yml` refuses a tag that does not match that version, then
+builds on all three platforms, checks every build, compiles and test-installs the
+Windows installer, and publishes the release.
 
 To build by hand instead - there is no cross-compilation, so this is once per
 platform, from a clean checkout of the tag:
