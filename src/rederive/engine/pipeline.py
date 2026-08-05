@@ -903,6 +903,8 @@ def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
         return _integral(head)
     if isinstance(head, (sp.Sum, sp.Product)) and not _searchable(head):
         return head
+    if isinstance(head, sp.Product):
+        return _product(head)
     try:
         value = head.doit(deep=False)
     except Exception:
@@ -921,6 +923,79 @@ def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
     value, digits = head.args
     approximate = context.with_precision(Precision.APPROXIMATE, int(digits))
     return approximated(value, approximate)
+
+
+def _product(head: sp.Product) -> sp.Basic:
+    """A product, by sympy first and then by its own definition.
+
+    Sympy has no routine for an infinite product, so `PRODUCT(1 - 1/k^2, k, 2,
+    inf)` comes back as it went in. What it does have is the definition: the
+    infinite product is the limit of the partial products, and both halves of
+    that it can do. So a product over an endless range that sympy leaves
+    standing is asked again as `_partial_products`.
+    """
+    value = _attempt(head, lambda p: p.doit(deep=False))
+    if value is None:
+        return head
+    if not isinstance(value, sp.Product):
+        return value
+    partial = _partial_products(value)
+    return value if partial is None else partial
+
+
+def _partial_products(head: sp.Product) -> sp.Basic | None:
+    """An infinite product as the limit of the products up to `n`, or None.
+
+    This is sympy's own documented way around the gap, and it is the
+    definition rather than a trick: the product to `n` is a closed form in `n`
+    wherever the body is hypergeometric, and where the limit of that closed
+    form exists it is what the infinite product means. `PRODUCT(1 - 1/k^2, k,
+    2, inf)` telescopes to a ratio of rising factorials and the limit of that
+    is 1/2, which is Derive's answer; Wallis' product comes out `pi/2` the same
+    way, and `PRODUCT(k/(k + 1), k, 1, inf)` comes out 0.
+
+    None wherever either half declines - `PRODUCT(COS(pi/2^k), k, 1, inf)` has
+    no closed form to take a limit of, and `PRODUCT(1 - x/k, k, 1, inf)`
+    depends on the sign of an `x` nothing knows - and the product then stands
+    unevaluated, which is the honest answer and the one Derive gives.
+
+    A lower end that is not known finite is refused, which leaves the range
+    running from somewhere to infinity and the limit meaning nothing. A
+    declared variable is known finite and is allowed: `PRODUCT(1 - 1/k^2, k,
+    m, inf)` is `(m - 1)/m`, the same telescoping one step short of the whole.
+
+    An oscillating product is left standing rather than answered. Sympy's
+    limit of `(-1)^n` is `nan` and of `(-2)^n` is complex infinity, and
+    neither is a value: `PRODUCT(-1, k, 1, inf)` has none, and saying it is
+    undefined is a stronger claim than the head makes. That is what the
+    matching sums do - `SUM((-1)^k, k, 1, inf)` stands unevaluated - and
+    divergence to infinity is a value in the same house style, so
+    `PRODUCT((k + 1)/k, k, 1, inf)` is `inf`.
+
+    The closed form is written in gammas, and the limit of it in gammas of
+    complex argument, which the reflection formula turns back into a real
+    hyperbolic: `PRODUCT(1 + 1/k^2, k, 1, inf)` is `SINH(pi)/pi` and not
+    `1/(GAMMA(1 - #i)*GAMMA(1 + #i))`. `simplify` rather than `gammasimp`
+    because only the former also cancels what the formula leaves behind, and
+    the expression it is asked about is a constant.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 3:
+        return None
+    index, low, high = head.limits[0]
+    if high != sp.oo or not low.is_finite:
+        return None
+    count = sp.Dummy("n", integer=True, positive=True)
+    partial = _attempt(
+        head.function,
+        lambda body: sp.Product(body, (index, low, count)).doit(deep=False),
+    )
+    if partial is None or partial.has(sp.Product):
+        return None
+    value = _attempt(partial, lambda closed: sp.limit(closed, count, sp.oo))
+    if value is None or value.has(count, sp.Product, sp.Limit, sp.nan, sp.zoo):
+        return None
+    reduced = _attempt(value, sp.simplify) if value.has(sp.gamma) else None
+    return value if reduced is None else reduced
 
 
 #: Integration by the methods whose cost is bounded: sympy's tables, the

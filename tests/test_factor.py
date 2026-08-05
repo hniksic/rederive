@@ -138,6 +138,20 @@ def test_a_factor_whose_roots_are_unknown_stays_whole():
     assert fact("x^5 - x + 1", RADICAL) == "x^5 - x + 1"
 
 
+def test_an_irreducible_cubic_with_three_real_roots_splits_over_the_reals():
+    """The casus irreducibilis, which Cardano's formula can only write in `#i`.
+
+    The three roots are real, and under Cardano each was written as nested
+    radicals over an imaginary unit that cancels but cannot be cancelled: the
+    split happened, by the rule that treats an unplaceable root as real, and
+    the answer was unreadable. Viete's trigonometric form is real on its face,
+    and it is what Derive prints.
+    """
+    assert fact("x^3 - 3*x + 1", RADICAL) == (
+        "(x + 2*COS(pi/9))*(x - 2*COS(2*pi/9))*(x - 2*COS(4*pi/9))"
+    )
+
+
 # -- the factorization variables ----------------------------------------------
 
 
@@ -195,6 +209,19 @@ def test_the_amount_does_not_reach_a_number():
     expression is a number."""
     for amount in Amount:
         assert fact("1234567890", amount) == "2*3^2*5*3607*3803"
+
+
+def test_a_number_no_trial_division_reaches_is_decomposed_anyway():
+    """The search is not bounded, so a semiprime past trial division splits.
+
+    Both of these are out of reach of the small primes and of Fermat's method
+    alike - the factors are nowhere near each other - and what finds them is
+    elliptic-curve factorization. Sympy switches that off entirely the moment
+    it is handed a `limit`, so asking for a bounded search is what would leave
+    these two written as themselves.
+    """
+    assert fact("2^101 - 1") == "7432339208719*341117531003194129"
+    assert fact("2^128 + 1") == "59649589127497217*5704689200685129054721"
 
 
 def test_a_large_factorial_is_decomposed():

@@ -247,12 +247,18 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     is a root of, and it collapses multiplicities, so `x^2*(8*x - 9)` has two
     solutions and not three. A polynomial it cannot split is one nothing can
     split in radicals, and that is exactly when the original gives up too.
+
+    `trig` asks for Viete's cubic rather than Cardano's, which differs only for
+    the casus irreducibilis: three real roots that the radicals can only reach
+    through `#i`. `SOLVE(x^3 - 3*x + 1 = 0, x)` is then the original's own
+    `2*COS(2*pi/9)` and its two companions, and not three nested radicals over
+    an imaginary unit that cancels.
     """
     polynomial = _polynomial(residual, variable)
     if polynomial is not None:
         if polynomial.degree() < 1:
             return sp.S.EmptySet if not polynomial.is_zero else sp.S.Complexes
-        found = sp.roots(polynomial)
+        found = sp.roots(polynomial, trig=True)
         if not found or sum(found.values()) != polynomial.degree():
             return None
         return sp.FiniteSet(*found)

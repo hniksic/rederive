@@ -1,6 +1,8 @@
 # Capabilities
 
-What Rederive can compute, and where that differs from Derive 4.11.
+Rederive computes through sympy, whose CAS reaches well past the one Derive shipped with.
+This file is about that surplus: the built-ins added to spell answers the original had no
+name for, and the places where the engine computes what it refused.
 
 ## Derive's built-ins
 
@@ -24,9 +26,11 @@ The 110 names the original defines, all supported:
 Bound-variable heads are `DIF INT ITERATE ITERATES LIM PRODUCT SELECT SUM TAYLOR VECTOR`,
 binding their second argument over the first.
 
-## Added names
+## Added built-ins
 
-Rederive computes through sympy, so each added name is author notation for a sympy class.
+Sympy answers in its own vocabulary, and some of what it returns has no name in the
+original, like `AccumBounds`. Each such class has a built-in written for it, so the answer
+has a spelling that can be read and typed back. The complete list:
 
 | name | sympy class | reached by |
 |---|---|---|
@@ -83,7 +87,7 @@ SUM(1/(k^2 + 1), k, 1, inf)   pi·(#e^(2·pi) + 1)/(2·#e^(2·pi) - 2) - 1/2
 answers `SIN(∞)`.
 
 **Approximation.** `APPROX` evaluates what has no exact answer: `APPROX(SI(2))`,
-`APPROX(INT(SIN(x)/x, x, 1, 2))`, `APPROX(PRODUCT(1 - 1/k^2, k, 2, inf))`. Only known
+`APPROX(INT(SIN(x)/x, x, 1, 2))`, `APPROX(SUM(1/(k^3 + 1), k, 1, inf))`. Only known
 infinities are refused.
 
 **Size.** `EXPAND((1 + x + y + z)^n)`:
@@ -96,13 +100,3 @@ infinities are refused.
 
 Derive expands the first of these; the largest exceeds the memory it can address, and it
 answers `Memory Full`.
-
-## Where Derive is still ahead
-
-- Infinite products: `PRODUCT(1 - 1/k^2, k, 2, inf)` is `1/2` there, unevaluated here
-  (`APPROX` gives `0.5`).
-- Integer factoring: ECM given time, versus a bounded search here that gives a number back
-  unfactored rather than run indefinitely.
-- Casus irreducibilis: the real roots of an irreducible cubic are written trigonometrically
-  there and as nested radicals over `#i` here, so a real eigenvalue of a symmetric matrix
-  is spelled with an imaginary unit in it.

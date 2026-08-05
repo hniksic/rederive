@@ -811,6 +811,46 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
     assert simp("INT(1/SQRT(1 - x^4), x)").startswith("x*HYPER(")
 
 
+INFINITE_PRODUCTS = [
+    # The manual's own example, and Wallis'.
+    ("PRODUCT(1 - 1/k^2, k, 2, inf)", "1/2"),
+    ("PRODUCT(4*k^2/(4*k^2 - 1), k, 1, inf)", "pi/2"),
+    # These two are `SINH(pi)/pi` and `COSH(SQRT(3)*pi/2)/(3*pi)`, written the
+    # way Simplify writes any hyperbolic of a constant.
+    ("PRODUCT(1 + 1/k^2, k, 1, inf)", "(#e^pi/2 - #e^(-pi)/2)/pi"),
+    (
+        "PRODUCT(1 - 1/k^3, k, 2, inf)",
+        "(#e^(SQRT(3)*pi) + 1)*#e^(-SQRT(3)*pi/2)/(6*pi)",
+    ),
+    # A product need not converge to a number to have a value.
+    ("PRODUCT(k/(k + 1), k, 1, inf)", "0"),
+    ("PRODUCT((k + 1)/k, k, 1, inf)", "inf"),
+    # A lower end that is a variable telescopes one step short of the whole.
+    ("PRODUCT(1 - 1/k^2, k, m, inf)", "(m - 1)/m"),
+    # And where either half of the definition declines, the product stands: the
+    # first has no closed form to take a limit of, and the second's limit
+    # depends on the sign of an `x` nothing has been told anything about.
+    ("PRODUCT(COS(pi/2^k), k, 1, inf)", "PRODUCT(COS(pi*2^(-k)), k, 1, inf)"),
+    ("PRODUCT(1 - x/k, k, 1, inf)", "PRODUCT(1 - x/k, k, 1, inf)"),
+    # An oscillating product has no value, and `nan` is not one: it stands, the
+    # way the sum that oscillates the same way does.
+    ("PRODUCT(-1, k, 1, inf)", "PRODUCT(-1, k, 1, inf)"),
+    ("SUM((-1)^k, k, 1, inf)", "SUM((-1)^k, k, 1, inf)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), INFINITE_PRODUCTS, ids=str)
+def test_an_infinite_product_is_the_limit_of_its_partial_products(text, expected):
+    """Sympy has no routine for one, so the definition is used instead.
+
+    The product up to `n` is a closed form in `n` wherever the body is
+    hypergeometric, and the limit of that closed form is what the infinite
+    product means. Both halves are sympy's, and putting them together is what
+    reaches the answer Derive prints.
+    """
+    assert simp(text) == expected
+
+
 def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum():
     """The logarithmic part of these is a sum over the roots of a polynomial.
 
@@ -1319,6 +1359,16 @@ LINEAR_ALGEBRA = [
     # A repeated eigenvalue is one eigenvalue: the multiplicity is the number of
     # parameters its eigenvector carries, not a second solution.
     ("EIGENVALUES([[1,0,0],[0,1,0],[0,0,2]],z)", "[z = 1, z = 2]"),
+    # A symmetric matrix has real eigenvalues, and this one's characteristic
+    # polynomial is the casus irreducibilis: three real roots that Cardano's
+    # formula can only write through `#i`. Viete's cubic writes them as the
+    # cosines they are, so nothing here is spelled with an imaginary unit.
+    (
+        "EIGENVALUES([[0,1,1],[1,1,1],[1,1,-1]],z)",
+        "[z = -4*SQRT(3)*SIN(pi/6 - ACOS(3*SQRT(3)/8)/3)/3, "
+        "z = -4*SQRT(3)*COS(pi/3 - ACOS(3*SQRT(3)/8)/3)/3, "
+        "z = 4*SQRT(3)*COS(ACOS(3*SQRT(3)/8)/3)/3]",
+    ),
     # No square matrix, no characteristic polynomial - and no radicals for the
     # quintic the manual's 5 x 5 exercise leads to, which is the manual's own
     # account of why exact eigenvalues stop at 4 x 4. Both come back unchanged.
@@ -2148,7 +2198,7 @@ def test_the_approx_function_takes_the_digits_it_is_given():
         # What has no exact answer still has digits, which is the original's
         # own division of labour between Simplify and approX.
         ("APPROX(INT(SIN(x)/x, x, 1, 2), 15)", "0.659329"),
-        ("APPROX(PRODUCT(1 - 1/k^2, k, 2, inf), 15)", "0.5"),
+        ("APPROX(SUM(1/(k^3 + 1), k, 1, inf), 15)", "0.686503"),
         # An infinity is refused, being the one thing that has no digits.
         ("APPROX(LN(0), 15)", "±inf"),
         ("APPROX(1/0, 15)", "±inf"),

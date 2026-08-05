@@ -55,18 +55,6 @@ from rederive.engine.shape import distributed
 
 __all__ = ["amount_named", "factored_expression"]
 
-#: How far the integer factorizer is allowed to look for a divisor before it
-#: gives the number back as it found it. Bounded because factoring is the one
-#: thing here with no upper cost: a sixty-digit semiprime pegs a core
-#: indefinitely, and a user watching `FACTOR 12` take forever has learned
-#: nothing. The bound is on trial division, and the other methods sympy tries
-#: are bounded with it, so every divisor below it is still found - and the ones
-#: above it usually are too, since a hopeless number is what the bound is for.
-#: Generous: no factor a worksheet writes on purpose is anywhere near it, and a
-#: number this will not factor comes back written as itself, which is what
-#: Derive does with what it cannot do.
-FACTOR_LIMIT = 100_000
-
 #: What to put a factored scalar through afterwards, if anything. The precision
 #: mode is the only caller so far, and it is a callback rather than a `Context`
 #: because rounding belongs to `pipeline`, which sits above this file.
@@ -248,11 +236,18 @@ def _split(base: sp.Expr, variable: sp.Symbol, complex_allowed: bool) -> sp.Expr
     what it could solve, and a partial answer is no factorization. A quintic
     it cannot crack is a factor that stays whole, which is the honest result
     rather than a numeric approximation nobody asked for.
+
+    `trig` is Viete's solution of the cubic, and asking for it changes nothing
+    but the casus irreducibilis - the irreducible cubic whose three roots are
+    all real, which Cardano's formula can only write through `#i`. The
+    trigonometric form is real on its face, so the reals allow what the
+    radicals hid: `x^3 - 3*x + 1` splits under raDical rather than staying
+    whole for want of a root that could be shown real.
     """
     polynomial = sp.Poly(base, variable)
     if polynomial.degree() < 2:
         return base
-    roots = sp.roots(polynomial)
+    roots = sp.roots(polynomial, trig=True)
     if sum(roots.values()) != polynomial.degree():
         return base
     leading = polynomial.LC()
@@ -350,11 +345,17 @@ def _primes(number: sp.Rational) -> sp.Expr:
     `1234567890` being a different integer. Sealing it here means every caller
     is exempt without having to know it needs to be.
 
-    A number the search gives up on comes back whole, as one factor of itself:
-    `FACTOR_LIMIT` is what makes the search end, and a product of one number is
-    that number, so the refusal needs no code of its own.
+    The search is unbounded, which is the one computation here with no upper
+    cost: a sixty-digit semiprime pegs a core for as long as it is left to.
+    Bounding it is worse than not, because a bound is `limit=`, and that is not
+    a budget - sympy switches elliptic-curve factoring off entirely when it is
+    given one, and hands back a residual it never even tested for primality.
+    So a bounded search is slower *and* answers with a composite written among
+    the primes. Running it out instead means every factorization is complete,
+    and the cost of the hopeless number is Escape, which takes the worker down
+    with the computation still in it.
     """
-    powers = sp.factorrat(abs(number), limit=FACTOR_LIMIT)
+    powers = sp.factorrat(abs(number))
     pieces = [
         sp.Integer(prime) if power == 1 else sp.Pow(prime, power, evaluate=False)
         for prime, power in sorted(powers.items())

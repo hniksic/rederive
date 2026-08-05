@@ -2949,9 +2949,13 @@ def _eigenvalues(conv: _Converter, args: list) -> sp.Basic:
     cubic and quartic formulas and says exact eigenvalues are rarely attainable
     beyond that, so a matrix whose eigenvalues will not come out in radicals
     comes back the call it was written as.
+
+    `trig` reaches `roots` through `eigenvals` and picks Viete's cubic over
+    Cardano's for the casus irreducibilis, so a symmetric matrix - whose
+    eigenvalues are real by construction - is not answered in `#i`.
     """
     matrix, variable = _matrix_and_variable(conv, args)
-    zeros = sorted(matrix.eigenvals(), key=sp.default_sort_key)
+    zeros = sorted(matrix.eigenvals(trig=True), key=sp.default_sort_key)
     if any(zero.has(sp.CRootOf) for zero in zeros):
         raise ValueError("no closed form")
     return _vector_of([sp.Eq(variable, zero, evaluate=False) for zero in zeros])

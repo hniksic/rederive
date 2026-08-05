@@ -99,6 +99,22 @@ def test_a_cubic_is_solved_in_radicals():
         assert abs(complex(residual.evalf())) < 1e-9
 
 
+def test_three_real_roots_are_written_without_an_imaginary_unit():
+    """The casus irreducibilis: an irreducible cubic whose roots are all real.
+
+    Cardano's formula reaches them only through the cube root of a complex
+    number, so the radicals carry an `#i` that cancels and cannot be
+    cancelled - and there is no way around that in radicals at all, which is
+    what the case is named for. Viete's trigonometric form is the way around
+    it, and its answers are the original's.
+    """
+    assert sol("x^3 - 3*x + 1 = 0", ("x",)) == [
+        "x = -2*COS(pi/9)",
+        "x = 2*COS(4*pi/9)",
+        "x = 2*COS(2*pi/9)",
+    ]
+
+
 def test_the_order_of_several_solutions_is_ours_and_not_the_originals():
     """Reals ascending, then the complex ones. Derive's order is its solver's:
     `x^2 - 5*x + 6` comes out `2, 3` there and `x^2 - 4` comes out `2, -2`, so
