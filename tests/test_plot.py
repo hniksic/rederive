@@ -18,11 +18,14 @@ to start it with, and every wait in it has a deadline: a test that hangs the
 suite is worse than a test that is not run.
 """
 
+import asyncio
+
 import numpy as np
 import pytest
 from screen import band, highlighted, message
 
 from rederive.engine.context import Context
+from rederive.model.expr import Node
 from rederive.model.plotting import Unplottable, classify
 from rederive.model.session import Session
 from rederive.plot import evaluate
@@ -233,6 +236,109 @@ def test_a_function_with_no_numeric_reading_is_all_gaps_rather_than_a_crash():
     assert evaluate.finite_fraction(values) == 0.0
 
 
+def test_a_parametric_pair_through_a_pole_terminates_with_a_gap():
+    # `[t, 1/t]` is the acceptance case: the two branches never come close on
+    # the screen however finely t is cut, so refinement has to stop at the
+    # depth cap rather than chase the pole down forever.
+    fx, fy = evaluate.pair(parsed("[t, 1/t]"), Context(), ("t",))
+    drawn = evaluate.sample_curve(fx, fy, VIEW, VIEW, VIEW, CANVAS)
+    assert len(drawn.ts) < evaluate.MAX_POINTS
+    assert drawn.gave_up is not None and abs(drawn.gave_up) < 0.01
+    # And the gap is at the pole rather than anywhere along the branches.
+    gapped = drawn.ts[np.isnan(drawn.xs)]
+    assert gapped.size and np.abs(gapped).max() < 0.05
+
+
+def test_a_polar_curve_turns_its_angle_in_the_unit_it_was_written_in():
+    # `r = 1` at 90 is the top of the unit circle in degrees and something
+    # else entirely in radians, which is the whole reason the turn is a
+    # parameter of the composition.
+    one = closure("1")
+    for degrees, expected in ((True, 90.0), (False, np.pi / 2)):
+        horizontal, vertical = evaluate.polar_pair(one, degrees=degrees)
+        assert abs(float(horizontal(np.array([expected]))[0])) < 1e-9
+        assert abs(float(vertical(np.array([expected]))[0]) - 1.0) < 1e-9
+
+
+def test_a_constant_matrix_becomes_the_two_columns_of_a_data_plot():
+    xs, ys = evaluate.points(parsed("[[1, 2], [3, 4], [5, 6]]"), Context())
+    assert list(xs) == [1.0, 3.0, 5.0]
+    assert list(ys) == [2.0, 4.0, 6.0]
+    # A single point is a one-row matrix and reads exactly the same way.
+    xs, ys = evaluate.points(parsed("[1, 2]"), Context())
+    assert (list(xs), list(ys)) == ([1.0], [2.0])
+
+
+def test_an_equation_is_evaluated_as_the_difference_of_its_sides():
+    # An implicit curve is the zero contour of `u - v`, so the equation has to
+    # become one expression before marching squares ever sees it.
+    g = evaluate.difference(parsed("x^2 + y^2 = 4"), Context(), ("x", "y"))
+    assert float(g(np.array([2.0]), np.array([0.0]))[0]) == 0.0
+    assert float(g(np.array([0.0]), np.array([0.0]))[0]) == -4.0
+
+
+def test_an_inequality_is_a_truth_value_at_every_point():
+    inside = evaluate.mask(parsed("x^2 + y^2 <= 4"), Context(), ("x", "y"))
+    answer = inside(np.array([0.0, 3.0]), np.array([0.0, 0.0]))
+    assert answer.dtype == bool
+    assert list(answer) == [True, False]
+
+
+def test_a_bound_written_as_an_expression_is_worth_a_number():
+    # The field line takes `-π` because that is what a person types; what it is
+    # worth is arithmetic, and arithmetic happens in the process that has it.
+    assert evaluate.number(parsed("-π"), Context(), 0.0) == pytest.approx(-np.pi)
+    assert evaluate.number(None, Context(), 1.5) == 1.5
+    # An answer with no number in it falls back rather than refusing: the
+    # picture is worth more than the complaint.
+    assert evaluate.number(parsed("1/0"), Context(), 2.5) == 2.5
+
+
+def test_features_finds_the_roots_and_extrema_of_a_sine():
+    f = closure("SIN(x)")
+    xs, ys = evaluate.sample_adaptive(f, VIEW, VIEW, CANVAS)
+    found = evaluate.features(xs, ys, f)
+    roots = [item.x for item in found if item.kind == evaluate.ROOT]
+    assert roots == pytest.approx([-np.pi, 0.0, np.pi], abs=1e-9)
+    peaks = [item.x for item in found if item.kind == evaluate.MAXIMUM]
+    dips = [item.x for item in found if item.kind == evaluate.MINIMUM]
+    assert peaks == pytest.approx([-3 * np.pi / 2, np.pi / 2], abs=1e-6)
+    assert dips == pytest.approx([-np.pi / 2, 3 * np.pi / 2], abs=1e-6)
+
+
+def test_features_finds_where_two_curves_cross():
+    f, g = closure("SIN(x)"), closure("COS(x)")
+    xs, ys = evaluate.sample_adaptive(f, VIEW, VIEW, CANVAS)
+    crossings = [
+        item
+        for item in evaluate.features(xs, ys, f, [g])
+        if item.kind == evaluate.CROSSING
+    ]
+    assert [item.x for item in crossings] == pytest.approx(
+        [-3 * np.pi / 4, np.pi / 4, 5 * np.pi / 4], abs=1e-9
+    )
+    # The crossing carries the height of the curve it belongs to, and says
+    # which of the others it was with.
+    assert [item.other for item in crossings] == [0, 0, 0]
+    assert crossings[1].y == pytest.approx(np.sqrt(0.5))
+
+
+def test_the_pole_of_a_tangent_is_not_called_a_root():
+    # `TAN(x)` changes sign across every pole, and a scan that only looked at
+    # signs would report four roots that are not there. The NaN the sampler put
+    # through the pole is what keeps them out.
+    f = closure("TAN(x)")
+    xs, ys = evaluate.sample_adaptive(f, VIEW, VIEW, CANVAS)
+    found = evaluate.features(xs, ys, f)
+    roots = [item.x for item in found if item.kind == evaluate.ROOT]
+    assert roots == pytest.approx([-np.pi, 0.0, np.pi], abs=1e-9)
+    assert not any(abs(abs(root) - np.pi / 2) < 0.1 for root in roots)
+
+
+def test_a_feature_scan_over_nothing_finds_nothing():
+    assert evaluate.features(np.empty(0), np.empty(0), closure("SIN(x)")) == ()
+
+
 def _spans(xs, ys, place):
     """The drawn segments that cross `place`, which a discontinuity forbids.
 
@@ -289,18 +395,16 @@ def _add(session, host, text, **keywords):
     entry = session.author(text)
     label = f"#{entry.number}"
     plotted = classify(entry.node, session.variables(label), text)
-    return host.add(
-        plots.Add(
-            worksheet=id(session),
-            node=entry.node,
-            context=session.context,
-            kind=plotted.kind,
-            label=label,
-            text=text,
-            options=plotted.options,
-            **keywords,
-        )
-    )
+    fields = {
+        "worksheet": id(session),
+        "node": entry.node,
+        "context": session.context,
+        "kind": plotted.kind,
+        "label": label,
+        "text": text,
+        "options": plotted.options,
+    }
+    return host.add(plots.Add(**{**fields, **keywords}))
 
 
 def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
@@ -390,13 +494,40 @@ def test_a_family_becomes_one_curve_per_element(host):
     assert [plot.text for plot in window.plots] == ["x", "x^2", "x^3"]
 
 
+def test_one_window_takes_every_two_dimensional_kind(host):
+    # One window and one plot list for all of them, which is the design's own
+    # claim: a parametric pair, a rose, a matrix of points, a contour and a
+    # shaded region are one picture with one legend. Sent in a single test
+    # because each of these costs a process to start.
+    session = Session()
+    _add(session, host, "[SIN(t), COS(t)]", options=_turn())
+    _add(session, host, "[[1, 2], [3, 4]]")
+    _add(session, host, "x^2 + y^2 = 4")
+    _add(session, host, "y < x^2")
+    _add(session, host, "2*COS(3*t)", kind=PlotKind.POLAR, options=_turn(("t",)))
+    window = host.describe()[0]
+    assert [plot.kind for plot in window.plots] == [
+        PlotKind.PARAMETRIC,
+        PlotKind.DATA,
+        PlotKind.IMPLICIT,
+        PlotKind.REGION,
+        PlotKind.POLAR,
+    ]
+    assert not [plot.label for plot in window.plots if plot.hidden]
+
+
+def _turn(variables=("t",)):
+    """The parameter range the Plot command's field line would have carried."""
+    return plots.Options(variables=variables, minimum=parsed("-π"), maximum=parsed("π"))
+
+
 def test_a_kind_no_window_draws_yet_is_refused_by_name(host):
     from rederive.plot.proxy import PlotError
 
     session = Session()
     with pytest.raises(PlotError) as refused:
-        _add(session, host, "x^2 + y^2 = 4")
-    assert "implicit plots are not implemented yet" in str(refused.value)
+        _add(session, host, "x*y")
+    assert "surface plots are not implemented yet" in str(refused.value)
 
 
 def test_a_curve_that_will_not_evaluate_reports_itself(host):
@@ -547,9 +678,9 @@ async def test_plotting_with_nothing_highlighted_is_refused(app):
 
 async def test_a_kind_no_window_draws_yet_is_refused_before_it_is_sent(app):
     async with app.run_test() as pilot:
-        await authored(pilot, app, "x^2 + y^2 = 4")
+        await authored(pilot, app, "x*y")
         await pilot.press("p", "p")
-        assert message(app) == "Plot: implicit plots are not implemented yet"
+        assert message(app) == "Plot: surface plots are not implemented yet"
         assert app.plots.sent == []
 
 
@@ -560,6 +691,76 @@ async def test_an_expression_of_three_variables_is_refused_by_name(app):
         assert message(app) == (
             "Plot: a*x*y depends on x, y, a - reduce to one or two variables"
         )
+
+
+async def test_a_parametric_pair_is_asked_its_range_before_it_is_sent(app):
+    async with app.run_test() as pilot:
+        await authored(pilot, app, "[SIN(t), COS(t)]")
+        await pilot.press("p", "p")
+        # The one question the Plot command ever asks about an expression,
+        # offering one whole turn.
+        assert band(app)[0].startswith(" PLOT: Min: -π")
+        assert band(app)[0].endswith("Max: π")
+        assert message(app) == "Enter minimum parameter value"
+        assert app.plots.sent == []
+        await pilot.press("enter")
+        request = app.plots.sent[0]
+        assert request.kind is PlotKind.PARAMETRIC
+        assert request.options.variables == ("t",)
+        # The bounds travel as expressions, the app doing no arithmetic.
+        assert isinstance(request.options.minimum, Node)
+        assert message(app) == "Plotting #1 in window 1"
+
+
+async def test_a_range_that_is_not_an_expression_keeps_the_question_up(app):
+    async with app.run_test() as pilot:
+        await authored(pilot, app, "[SIN(t), COS(t)]")
+        await pilot.press("p", "p")
+        await pilot.press("*", "enter")
+        assert band(app)[0].startswith(" PLOT: Min: *π")
+        assert app.plots.sent == []
+
+
+async def test_a_polar_window_reads_a_curve_as_r_of_an_angle(app):
+    async with app.run_test() as pilot:
+        # Polar is never a classification: it is what the command makes of a
+        # univariate expression when the window it is heading for says so.
+        app.plots.windows = (
+            plots.WindowInfo(
+                1, plots.WindowKind.TWO_D, "one", True, polar=True
+            ),
+        )
+        await authored(pilot, app, "SIN(x)")
+        await pilot.press("p", "p")
+        assert band(app)[0].startswith(" PLOT: Min: -π")
+        await pilot.press("enter")
+        assert app.plots.sent[0].kind is PlotKind.POLAR
+
+
+async def test_a_new_window_is_never_polar_and_asks_nothing(app):
+    async with app.run_test() as pilot:
+        app.plots.windows = (
+            plots.WindowInfo(
+                1, plots.WindowKind.TWO_D, "one", True, polar=True
+            ),
+        )
+        await authored(pilot, app, "SIN(x)")
+        await pilot.press("p", "n")
+        assert app.plots.sent[0].kind is PlotKind.CURVE
+        assert message(app) == "Plotting #1 in window 1"
+
+
+def test_the_range_offered_follows_the_angle_unit():
+    from rederive.ui import menu as menus
+
+    assert [field.default for field in menus.parameter_range(False).fields] == [
+        "-π",
+        "π",
+    ]
+    assert [field.default for field in menus.parameter_range(True).fields] == [
+        "-180",
+        "180",
+    ]
 
 
 async def test_a_family_carries_the_text_of_every_element(app):
@@ -635,6 +836,45 @@ async def test_a_curve_the_host_could_not_draw_reaches_the_message_line(app):
         app._plot_event(plots.Trouble(1, "#3", "no numeric reading of FOO"))
         await pilot.pause()
         assert message(app) == "Plot: #3: no numeric reading of FOO"
+
+
+async def test_the_whole_loop_lands_a_parametric_plot_in_a_real_window(monkeypatch):
+    """`P` `P`, the range field line, and a curve in a window that exists.
+
+    The one test that has the app and a real host in it at once, and the only
+    place the seam between them is exercised: everything above either answers
+    the app with a stub or drives the host without one. It earns a process
+    because that seam has a way of breaking silently - the app's screen is not
+    a file descriptor, and a spawn that inherits one is refused - and because
+    the acceptance case for this phase is a picture, not a request.
+    """
+    if not _toolkit():
+        pytest.skip("pyqtgraph and PySide6 are not installed")
+    from rederive.plot import proxy as proxy_module
+    from rederive.ui.app import RederiveApp
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(proxy_module, "READY_TIMEOUT", 60.0)
+    monkeypatch.setattr(proxy_module, "REPLY_TIMEOUT", 20.0)
+    app = RederiveApp()
+    try:
+        async with app.run_test() as pilot:
+            app.session.author("[3*SIN(3*t), 3*COS(2*t)]")
+            await pilot.pause()
+            await pilot.press("p", "p")
+            assert band(app)[0].startswith(" PLOT: Min: -π")
+            await pilot.press("enter")
+            for _ in range(100):
+                await pilot.pause()
+                if "window" in message(app) or message(app).startswith("Plot:"):
+                    break
+                await asyncio.sleep(0.05)
+            assert message(app) == "Plotting #1 in window 1"
+            window = app.plots.describe()[0]
+            assert window.title == "Rederive 2D plot 1 (current)"
+            assert window.plots[0].kind is PlotKind.PARAMETRIC
+    finally:
+        app.plots.shutdown()
 
 
 def test_availability_needs_a_display_on_linux(monkeypatch):

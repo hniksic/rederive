@@ -188,6 +188,7 @@ from textual.widgets.input import Selection
 
 from rederive import __version__
 from rederive.engine.client import Amount, EngineAborted
+from rederive.engine.context import Angle
 from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
 from rederive.model import session as sessions
@@ -4475,25 +4476,25 @@ class RederiveApp(App[None]):
             return
         request = f"#{entry.number}"
         self._compute(
-            PLOTTING, partial(self._plot, request, where), self._plot_done
+            PLOTTING, partial(self._classified, request, where), self._plot_classified
         )
 
-    def _plot(self, request: str, where: plots.Where) -> str:
-        """Classify what `request` names and send it, off the event loop.
+    def _classified(self, request: str, where: plots.Where) -> plots.Add:
+        """What `request` is a plot of, as the request that would draw it.
 
-        The classification is app-side because it decides what else has to be
-        asked; the text is written here because the host renders no expression
-        of its own. What comes back is the message line's sentence, since the
-        window number is only known once the host has answered.
+        Off the event loop, because two of its three steps can block: the
+        variables of the expression are an engine call, and the polar state of
+        the target window is a question for a host that may not be running yet.
+        Nothing is sent here - what comes back is the request as it stands
+        before the one question that may still be asked about it.
         """
         target, label = self.session.named_target(request)
         variables = self.session.variables(request)
         text = write_expression(target, spaced=True)
         plotted = classify(target, variables, text)
-        if plotted.kind not in plots.DRAWN:
-            raise PlotError(plots.UNDRAWN.format(kind=plotted.kind.value))
+        kind = plotted.kind
         options = plotted.options
-        if plotted.kind is plots.PlotKind.FAMILY:
+        if kind is plots.PlotKind.FAMILY:
             options = replace(
                 options,
                 texts=tuple(
@@ -4501,21 +4502,93 @@ class RederiveApp(App[None]):
                     for element in target.children
                 ),
             )
-        window = self.plots.add(
-            plots.Add(
-                # The worksheet is named by identity: two algebra overlays can
-                # each own a `#3`, and the plot list is keyed by the pair.
-                worksheet=id(self.session),
-                node=target,
-                context=self.session.context,
-                kind=plotted.kind,
-                window=where,
-                label=label,
-                text=text,
-                options=options,
-            )
+        if kind is plots.PlotKind.CURVE and len(plotted.variables) == 1:
+            # Polar is never a classification: it is what a window in polar
+            # mode makes of a univariate expression, so the promotion happens
+            # here, where the window that is about to receive it is known.
+            if self._polar_target(where):
+                kind = plots.PlotKind.POLAR
+        if kind not in plots.DRAWN:
+            raise PlotError(plots.UNDRAWN.format(kind=kind.value))
+        return plots.Add(
+            # The worksheet is named by identity: two algebra overlays can
+            # each own a `#3`, and the plot list is keyed by the pair.
+            worksheet=id(self.session),
+            node=target,
+            context=self.session.context,
+            kind=kind,
+            window=where,
+            label=label,
+            text=text,
+            options=options,
         )
-        return PLOTTED.format(label=label, window=window)
+
+    def _polar_target(self, where: plots.Where) -> bool:
+        """Whether the window this plot is heading for is in polar mode.
+
+        A new window never is, and a window that does not exist yet cannot be,
+        so the question is only ever about the current 2D one - which the host
+        is asked, the app tracking no window state of its own.
+        """
+        if where is plots.Where.NEW:
+            return False
+        for window in self.plots.describe():
+            if window.kind is plots.WindowKind.TWO_D and window.current:
+                return bool(window.polar)
+        return False
+
+    def _plot_classified(self, outcome: Outcome) -> None:
+        """The expression is classified: ask its range, or send it as it is."""
+        if outcome.error is not None:
+            self._plot_refused(_plot_reason(outcome.error))
+            return
+        request = outcome.value
+        assert isinstance(request, plots.Add)
+        if request.kind in plots.PARAMETRIZED:
+            self._ask(
+                menus.parameter_range(self.session.context.angle is Angle.DEGREE),
+                partial(self._chose_range, request),
+                self._unparsable_bound,
+            )
+            return
+        self._send_plot(request)
+
+    def _chose_range(self, request: plots.Add, values: dict[str, str | int]) -> None:
+        """The parameter range is answered: send the plot with it attached."""
+        options = replace(
+            request.options,
+            minimum=self.session.target(_text(values, "PlotMin")),
+            maximum=self.session.target(_text(values, "PlotMax")),
+        )
+        self._send_plot(replace(request, options=options))
+
+    def _unparsable_bound(self, values: dict[str, str | int]) -> str | None:
+        """The first bound that is not an expression, for the dialog to go back to.
+
+        What a bound is worth is the host's arithmetic and not the app's, so
+        the only thing judged here is whether it is an expression at all - a
+        blank field or a half-typed one, which the question stays up over.
+        """
+        for setting in ("PlotMin", "PlotMax"):
+            text = _text(values, setting)
+            if not text:
+                return setting
+            try:
+                self.session.target(text)
+            except DeriveSyntaxError:
+                return setting
+        return None
+
+    def _send_plot(self, request: plots.Add) -> None:
+        self._compute(PLOTTING, partial(self._plot, request), self._plot_done)
+
+    def _plot(self, request: plots.Add) -> str:
+        """Send one plot, off the event loop, and say where it landed.
+
+        The window number is only known once the host has answered, which is
+        why the sentence is made here rather than by the command.
+        """
+        return PLOTTED.format(label=request.label, window=self.plots.add(request))
 
     def _plot_done(self, outcome: Outcome) -> None:
         """Say where the plot landed, or why it did not."""

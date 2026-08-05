@@ -23,10 +23,17 @@ the host's sampling thread - this file never evaluates anything on the Qt
 thread except a single point under the trace marker, where the whole point is
 that the answer is the function's and not the pixel grid's.
 
-What this window draws is function curves. Parametric, polar, data, implicit
-and region plots are the same window with other item types in it and are not
-written yet; the plot list, the legend, the deletion paths and the trace
-machinery are already shaped for them, which is why `Plot` carries its kind.
+What this window draws is every 2D kind there is: function curves, parametric
+pairs, polar curves, data points, implicit contours and shaded regions. They
+are one plot list and one set of gestures because they are one picture - a
+legend entry hides a region as it hides a curve, and Remove removes either -
+and they differ only in what a sample is. A function is sampled over the
+abscissa, a parametric curve over its parameter with the error measured as a
+distance in the plane, a field over a grid at half the canvas resolution. All
+of them re-evaluate on a view change, debounced, through the same keyed job:
+zooming into an implicit curve reveals its detail exactly as zooming into a
+function does, which is the whole reason the sampling is redone rather than
+the pixels stretched.
 """
 
 from __future__ import annotations
@@ -41,7 +48,7 @@ import pyqtgraph as pg
 import pyqtgraph.exporters  # noqa: F401  - registers the exporters Ctrl-C uses
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
-from rederive.engine.context import Context
+from rederive.engine.context import Angle, Context
 from rederive.model.expr import Node
 from rederive.plot import evaluate, protocol
 from rederive.plot.protocol import Options, PlotKind
@@ -112,6 +119,47 @@ PAN_SHARE = 0.25
 #: and see it agree, short enough to fit twice on one line.
 FORMAT = "{:.6f}"
 
+#: The parameter range a parametric or polar plot takes when nothing says
+#: otherwise: one turn, written in whichever angle unit the worksheet is set
+#: to. The Plot command offers the same numbers on its field line, so a plot
+#: added without an answer and one added with the default answer are the same
+#: picture.
+DEFAULT_TURN = np.pi
+DEFAULT_TURN_DEGREES = 180.0
+
+#: How far the arrow keys move the marker along a parametric curve, as a
+#: fraction of the parameter range, plain and with Shift. A five-hundredth is
+#: about a pixel on a curve that crosses the window once.
+STEP_SHARE = 1 / 500
+STEP_FAST_SHARE = 1 / 50
+
+#: How fine the grid an implicit curve or a region is evaluated on is, as a
+#: fraction of the canvas, and the most points either axis of it may have. Half
+#: the canvas resolution is the design's own figure: marching squares
+#: interpolates within a cell, so a contour drawn from half-resolution samples
+#: is smooth at full resolution.
+GRID_SHARE = 0.5
+MAX_GRID = 512
+
+#: How solid a region's fill is. Enough to read as shading, little enough that
+#: a curve crossing it is still a curve.
+REGION_ALPHA = 0.25
+
+#: How big a data point is drawn, and the sizes the right-click menu offers.
+POINT_SIZE = 5.0
+POINT_SIZES = (3.0, 5.0, 8.0, 12.0)
+
+#: The kinds parametrized by the abscissa, which are the ones a marker rides
+#: at an x and the ones features are sought on.
+FUNCTIONS = frozenset({PlotKind.CURVE, PlotKind.FAMILY})
+
+#: The kinds parametrized by something else, which are ridden at a t.
+PARAMETRIZED = protocol.PARAMETRIZED
+
+#: The kinds evaluated over a grid rather than along a line. They are areas,
+#: recomputed for whatever the view now shows.
+FIELDS = frozenset({PlotKind.IMPLICIT, PlotKind.REGION})
+
 
 @dataclass
 class Plot:
@@ -133,13 +181,38 @@ class Plot:
     color: str = PALETTE[0]
     paper: str = PAPER_PALETTE[0]
     item: Any = None
+    #: The image a region shades itself with, which is the one kind that needs
+    #: a second item: everything else is a stroke and `item` draws it.
+    fill: Any = None
     #: The lambdified closure, once the sampling thread has built one, and
     #: what went wrong if it could not.
     closure: Callable[..., np.ndarray] | None = None
+    #: The two closures of a parametric pair, or of a polar curve composed into
+    #: one. `closure` is then r(θ), which is what the polar readout says.
+    pair: tuple[Callable[..., np.ndarray], Callable[..., np.ndarray]] | None = None
     trouble: str = ""
     #: The samples now drawn, which trace and the feature scan read.
     xs: np.ndarray = field(default_factory=lambda: np.empty(0))
     ys: np.ndarray = field(default_factory=lambda: np.empty(0))
+    #: The parameter each of those samples came from, for the kinds that have
+    #: one: a marker on a parametric curve lives at a t and not at an x.
+    ts: np.ndarray = field(default_factory=lambda: np.empty(0))
+    #: The grid a region was last shaded from - the two axis vectors and the
+    #: truth values over them - which is what says whether a click landed
+    #: inside the region.
+    grid: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+    #: The parameter range, once the host has worked out what the bounds the
+    #: request carried are worth.
+    trange: tuple[float, float] = (-DEFAULT_TURN, DEFAULT_TURN)
+    #: The notable points of this curve for the samples now drawn, worked out
+    #: when trace first asks for them and dropped whenever the samples change,
+    #: beside the labels of the curves the intersections among them are with.
+    features: tuple[Any, ...] | None = None
+    crossed: tuple[str, ...] = ()
+    #: How a data plot is drawn, resolved from the request and the window's
+    #: defaults when the plot is added, and changed by its right-click menu.
+    connected: bool = False
+    point_size: float = POINT_SIZE
     #: Which re-sample these samples came from. A job whose generation has
     #: moved on is a job whose answer is about a view that is gone.
     generation: int = 0
@@ -155,8 +228,59 @@ class Plot:
 
     @property
     def variable(self) -> str:
-        """The name of the abscissa, `x` where the expression named none."""
+        """The name the plot is parametrized by, `x` where it named none.
+
+        The abscissa of a function, the parameter of a parametric pair, the
+        angle of a polar curve: what the status line calls the number the
+        marker is moved along.
+        """
         return self.options.variables[0] if self.options.variables else "x"
+
+    @property
+    def parameter(self) -> str:
+        """What the status line calls the number the marker is moved along.
+
+        A polar curve's is θ whatever letter the expression happened to spell
+        its variable with: the picture is drawn in an angle and a radius, and a
+        line reading `x = 0.50   x = 0.11` for the angle and the abscissa would
+        be two different numbers under one name.
+        """
+        return "θ" if self.kind is PlotKind.POLAR else self.variable
+
+    @property
+    def abscissa(self) -> str:
+        """What this plot would have the horizontal axis called, if anything.
+
+        A parametric curve has an opinion about neither axis - t is not drawn
+        anywhere - and a data plot has no variables at all, so both keep quiet
+        and let a function in the same window name the axis.
+        """
+        if self.kind in FUNCTIONS:
+            return self.variable
+        if self.kind in FIELDS:
+            return self.axes[0]
+        return ""
+
+    @property
+    def axes(self) -> tuple[str, str]:
+        """The two variables a field plot is evaluated over, horizontal first.
+
+        An equation or an inequality in one variable still needs two: `y = 3`
+        is a horizontal line and `x = 3` a vertical one, and which it is comes
+        from where the name sits in the worksheet's variable order. The lone
+        variable is paired with the neighbour that order names, and the two are
+        put in the order's own order, so the picture follows the convention the
+        reader has in mind.
+        """
+        names = self.options.variables
+        if len(names) >= 2:
+            return names[0], names[1]
+        order = list(self.context.order)
+        lone = names[0] if names else "x"
+        other = next((name for name in order[:2] if name != lone), "y")
+        if lone in order and other in order and order.index(other) < order.index(lone):
+            return other, lone
+        return lone, other
 
 
 class Canvas(pg.ViewBox):
@@ -288,7 +412,14 @@ class Window2D(QtWidgets.QMainWindow):
         #: Which curve trace is riding, or None while trace is off.
         self._tracing: int | None = None
         self._trace_x = 0.0
+        #: Where the marker sits on a curve parametrized by something other
+        #: than the abscissa, which is a parameter value and not an x.
+        self._trace_t = 0.0
         self._message = ""
+        #: Whether the expressions in this window are written in degrees. Read
+        #: off the context of every plot added, since it is the worksheet's
+        #: setting and not the window's; false until there is one to read.
+        self.degrees = False
         #: The paper colors, while an export dialog is holding them on.
         self._paper: _on_paper | None = None
         self._grid = True
@@ -354,6 +485,11 @@ class Window2D(QtWidgets.QMainWindow):
         self.equal.setToolTip("Equal scales on both axes")
         self.equal.triggered.connect(self._equal_scales)
         bar.addAction(self.equal)
+        self.polar_toggle = QtGui.QAction("polar", self)
+        self.polar_toggle.setCheckable(True)
+        self.polar_toggle.setToolTip("Read newly plotted expressions as r = f(θ)")
+        self.polar_toggle.triggered.connect(self._polar_mode)
+        bar.addAction(self.polar_toggle)
         layout.addWidget(bar)
         layout.addWidget(self.plot, 1)
         self.status = QtWidgets.QLabel("")
@@ -420,7 +556,24 @@ class Window2D(QtWidgets.QMainWindow):
         menu = self.canvas.menu
         menu.addSeparator()
         self._remove_action = menu.addAction("Remove", self._remove_pointed)
+        self._data_actions = self._point_actions(menu)
         self._pointed: Plot | None = None
+
+    def _point_actions(self, menu: Any) -> tuple[Any, ...]:
+        """The two things a data plot can be asked, wherever it is right-clicked.
+
+        Connecting the points is the difference between a scatter and a
+        polyline, and the size is how a hundred points and a hundred thousand
+        are both made readable; neither is a preference of the program, so both
+        live on the plot's own menu rather than in a settings dialog.
+        """
+        connect = menu.addAction("Connect points", self._toggle_connected)
+        sizes = menu.addMenu("Point size")
+        for size in POINT_SIZES:
+            sizes.addAction(
+                f"{size:g} px", lambda _=False, size=size: self._set_point_size(size)
+            )
+        return (connect, sizes.menuAction())
 
     # -- the plot list -----------------------------------------------------
 
@@ -439,13 +592,12 @@ class Window2D(QtWidgets.QMainWindow):
             index = self._counter % len(PALETTE)
             plot.color, plot.paper = PALETTE[index], PAPER_PALETTE[index]
             self._counter += 1
-        plot.item = pg.PlotDataItem(
-            np.empty(0),
-            np.empty(0),
-            pen=pg.mkPen(plot.color, width=1),
-            connect="finite",
-            antialias=True,
-        )
+        # The angle unit is the worksheet's, and a window reads its pointer out
+        # in whatever unit the expressions in it are written in.
+        self.degrees = plot.context.angle is Angle.DEGREE
+        plot.connected = bool(plot.options.connected)
+        plot.point_size = plot.options.point_size or POINT_SIZE
+        plot.item = self._made(plot)
         plot.item.setCurveClickable(True, width=int(HIT_PX))
         # The stroke takes the click before the view box sees it, which is the
         # stock hit test doing exactly what is wanted: clicking a curve is how
@@ -454,10 +606,52 @@ class Window2D(QtWidgets.QMainWindow):
             lambda _item, ev, plot=plot: self._curve_clicked(plot, ev)
         )
         self.item.addItem(plot.item)
+        if plot.kind is PlotKind.REGION:
+            plot.fill = pg.ImageItem()
+            # Explicit rather than inherited from the global config: the array
+            # this window builds is indexed [x, y], and which way an image item
+            # reads its data is otherwise a process-wide setting.
+            plot.fill.setOpts(axisOrder="col-major")
+            plot.fill.setZValue(-5)
+            self.item.addItem(plot.fill, ignoreBounds=True)
         self.plots.append(plot)
         self._relabel()
         self._axis_names()
         self._start(plot, fresh=True)
+
+    def _made(self, plot: Plot) -> Any:
+        """The drawing item for a plot of this kind.
+
+        One item type for all of them, which is not a coincidence: a stroke
+        with gaps in it draws a function, a parametric curve and an implicit
+        contour equally, and the same item with no pen and a symbol draws
+        points. What that buys is that the legend, the click hit test, the
+        color and the export path are written once.
+
+        A region has no stroke at all and hangs an image behind this item,
+        which is then an empty curve carrying the color the legend reads.
+        """
+        pen = pg.mkPen(plot.color, width=1)
+        if plot.kind is PlotKind.DATA:
+            item = pg.PlotDataItem(
+                np.empty(0),
+                np.empty(0),
+                pen=pen if plot.connected else None,
+                symbol="o",
+                symbolSize=plot.point_size,
+                symbolPen=pen,
+                symbolBrush=pg.mkBrush(plot.color),
+                antialias=True,
+            )
+            # A matrix of a hundred thousand rows is an ordinary thing to plot
+            # and must stay as live as a curve: drawing what is in view, at the
+            # resolution the view has, is what makes it one.
+            item.setDownsampling(auto=True)
+            item.setClipToView(True)
+            return item
+        return pg.PlotDataItem(
+            np.empty(0), np.empty(0), pen=pen, connect="finite", antialias=True
+        )
 
     def find(self, worksheet: int, label: str) -> Plot | None:
         """The plot a worksheet and a label name, if this window has it."""
@@ -470,6 +664,8 @@ class Window2D(QtWidgets.QMainWindow):
         """Take one plot out of the window, legend entry and all."""
         if plot.item is not None:
             self.item.removeItem(plot.item)
+        if plot.fill is not None:
+            self.item.removeItem(plot.fill)
         if plot in self.plots:
             self.plots.remove(plot)
         self._relabel()
@@ -495,11 +691,17 @@ class Window2D(QtWidgets.QMainWindow):
             self.remove(plot)
         return len(going)
 
-    def _relabel(self) -> None:
-        """Build the legend again, which is how a removal leaves it right."""
+    def _relabel(self, paper: bool = False) -> None:
+        """Build the legend again, which is how a removal leaves it right.
+
+        The colors are written into the entries rather than set on them, so an
+        export in paper colors rebuilds the legend as well: a name in the
+        screen color of a curve is a name in white, and white on white paper is
+        a legend that is not there.
+        """
         self.legend.clear()
         for plot in self.plots:
-            color = html.escape(plot.color)
+            color = html.escape(plot.paper if paper else plot.color)
             name = html.escape(plot.named).replace(" ", "&nbsp;")
             self.legend.addItem(plot.item, f'<span style="color: {color}">{name}</span>')
 
@@ -510,31 +712,72 @@ class Window2D(QtWidgets.QMainWindow):
         what a 2D window knows about names; the ordinate carries the label of
         the one curve there is, and nothing once there are several - a stack of
         names down the side of the canvas is what the legend is for.
+
+        The kinds with nothing to say about the axes say nothing: a parametric
+        pair is not a plot against t, and a window holding one beside `SIN(x)`
+        still has an x axis.
         """
-        names = {plot.variable for plot in self.plots}
+        names = {plot.abscissa for plot in self.plots} - {""}
         self.item.setLabel("bottom", names.pop() if len(names) == 1 else "")
-        if len(self.plots) == 1 and self.plots[0].label:
-            self.item.setLabel("left", self.plots[0].label)
+        single = self.plots[0] if len(self.plots) == 1 else None
+        if single is not None and single.kind in FIELDS:
+            self.item.setLabel("left", single.axes[1])
+        elif single is not None and single.label and single.kind in FUNCTIONS:
+            self.item.setLabel("left", single.label)
         else:
             self.item.setLabel("left", "")
 
     # -- sampling ----------------------------------------------------------
 
     def _start(self, plot: Plot, fresh: bool = False) -> None:
-        """Ask the sampling thread for this curve over the visible range.
+        """Ask the sampling thread for this plot over the visible range.
 
         Everything expensive is on the other side of this call: the conversion,
-        the lambdify and the sampling all happen on the host's sampling thread,
-        and what comes back is two arrays. A window whose curves are all slow
-        is a window that still pans, zooms and closes while they arrive.
+        the lambdify, the sampling and the grid all happen on the host's
+        sampling thread, and what comes back is arrays. A window whose curves
+        are all slow is a window that still pans, zooms and closes while they
+        arrive.
+
+        Which work is done is the plot's kind, and the answer it hands back is
+        read by the same kind, which is why there is one job and one key for
+        all of them: a view change debounces an implicit grid exactly as it
+        debounces a curve.
         """
         if plot.item is None or not plot.visible:
             return
+        if plot.kind is PlotKind.DATA and plot.xs.size:
+            # A matrix of constants is the same matrix at every zoom. Clipping
+            # and downsampling are what the view change costs, and the item
+            # does both itself.
+            return
         plot.generation += 1
+        plot.features = None
         generation = plot.generation
-        (left, right), (low, high) = self.canvas.viewRange()
+        view = self.canvas.viewRange()
         size = (max(self.plot.width(), 100), max(self.plot.height(), 100))
-        node, context, variables = plot.node, plot.context, plot.options.variables
+        self.host.sample(
+            (self.number, id(plot)),
+            self._work(plot, view, size),
+            lambda answer: self._sampled(plot, generation, fresh, answer),
+            lambda xs, ys: self._outlined(plot, generation, xs, ys),
+        )
+
+    def _work(self, plot: Plot, view: Any, size: Any) -> Callable[..., Any]:
+        """What the sampling thread is to do for this plot, as one callable.
+
+        Everything it needs is read here, on the Qt thread, and captured: the
+        job must not touch the window while it runs, since by the time it does
+        run the view may have moved and the plot may be gone.
+        """
+        (left, right), (low, high) = view
+        node, context = plot.node, plot.context
+        if plot.kind in FIELDS:
+            return _field_work(plot, (left, right), (low, high), size)
+        if plot.kind in PARAMETRIZED:
+            return _curve_work(plot, (left, right), (low, high), size, self.degrees)
+        if plot.kind is PlotKind.DATA:
+            return lambda report: evaluate.points(node, context)
+        variables = plot.options.variables
         closure = plot.closure
 
         def work(report: Callable[..., None]) -> Any:
@@ -546,12 +789,7 @@ class Window2D(QtWidgets.QMainWindow):
             )
             return made, xs, ys
 
-        self.host.sample(
-            (self.number, id(plot)),
-            work,
-            lambda answer: self._sampled(plot, generation, fresh, answer),
-            lambda xs, ys: self._outlined(plot, generation, xs, ys),
-        )
+        return work
 
     def _outlined(
         self, plot: Plot, generation: int, xs: np.ndarray, ys: np.ndarray
@@ -570,37 +808,114 @@ class Window2D(QtWidgets.QMainWindow):
             self.host.trouble(self.number, plot.label, str(answer))
             self.say(f"{plot.label}: {answer}")
             return
-        plot.closure, plot.xs, plot.ys = answer
-        plot.item.setData(plot.xs, plot.ys, connect="finite")
-        if not np.isfinite(plot.ys).any():
-            left, right = self.canvas.viewRange()[0]
-            self.say(
-                f"{plot.label}: no real values for {_short(left)} ≤ {plot.variable}"
-                f" ≤ {_short(right)} - try A to autoscale"
-            )
+        if plot.kind in FIELDS:
+            self._shaded(plot, answer)
+        elif plot.kind in PARAMETRIZED:
+            self._ridden(plot, answer)
+        elif plot.kind is PlotKind.DATA:
+            plot.xs, plot.ys = answer
+            plot.item.setData(plot.xs, plot.ys)
+        else:
+            plot.closure, plot.xs, plot.ys = answer
+            plot.item.setData(plot.xs, plot.ys, connect="finite")
+        if plot.kind not in FIELDS and not np.isfinite(plot.ys).any():
+            self._nothing_real(plot)
         elif fresh:
             self._frame_new(plot)
         if self._tracing is not None:
-            self._trace_to(self._trace_x)
+            self._retrace()
+
+    def _ridden(self, plot: Plot, answer: Any) -> None:
+        """A parametric or polar curve, and the note that it gave up refining."""
+        plot.pair, plot.closure, sampled, plot.trange = answer
+        plot.ts, plot.xs, plot.ys = sampled.ts, sampled.xs, sampled.ys
+        plot.item.setData(plot.xs, plot.ys, connect="finite")
+        if sampled.gave_up is not None:
+            self.say(
+                f"{plot.label}: gave up refining near"
+                f" {plot.parameter} = {_short(sampled.gave_up)}"
+            )
+
+    def _shaded(self, plot: Plot, answer: Any) -> None:
+        """An implicit contour or a region, over the grid just evaluated.
+
+        A contour is line segments and is drawn by the same item every other
+        kind is drawn by, with a NaN between segments so nothing joins them. A
+        region is an image behind the curves, one pixel per grid cell, and the
+        view box stretches it over the rectangle it was evaluated on.
+        """
+        plot.closure, xs, ys, values = answer
+        plot.grid = (xs, ys, values)
+        if plot.kind is PlotKind.IMPLICIT:
+            plot.xs, plot.ys = _contour(xs, ys, values)
+            plot.item.setData(plot.xs, plot.ys, connect="finite")
+            if not plot.xs.size:
+                self._nothing_real(plot)
+            return
+        plot.fill.setImage(_shading(values, plot.color), autoLevels=False)
+        plot.fill.setRect(
+            QtCore.QRectF(
+                float(xs[0]),
+                float(ys[0]),
+                float(xs[-1] - xs[0]),
+                float(ys[-1] - ys[0]),
+            )
+        )
+        plot.fill.setVisible(plot.item.isVisible())
+
+    def _nothing_real(self, plot: Plot) -> None:
+        """The message a plot with nothing to draw in view leaves behind.
+
+        An empty picture with no explanation is the named anti-goal, and the
+        sentence names the range it was empty over, since the answer is nearly
+        always to look somewhere else. An implicit curve gets a sentence of its
+        own: its grid did evaluate, and what is missing is a solution in the
+        rectangle rather than a real value anywhere.
+        """
+        left, right = self.canvas.viewRange()[0]
+        name = plot.abscissa or plot.variable
+        span = f"{_short(left)} ≤ {name} ≤ {_short(right)}"
+        if plot.kind is PlotKind.IMPLICIT:
+            self.say(f"{plot.label}: no solutions in view for {span}")
+            return
+        self.say(f"{plot.label}: no real values for {span} - try A to autoscale")
 
     def _frame_new(self, plot: Plot) -> None:
-        """Autoscale for a new curve that has values but none of them in view.
+        """Autoscale for a new plot that has points but none of them in view.
 
         Exactly when the alternative is an empty picture, and never otherwise:
         a window whose framing moved under every added curve would be a window
         nobody could compare two curves in. The aspect lock goes when it
-        happens, since a y range chosen to fit is not a y range equal scales
-        would have given.
+        happens, since a range chosen to fit is not a range equal scales would
+        have given.
+
+        A function is framed in y alone - its x range is the view, which is
+        what it was sampled over - while a parametric curve or a matrix of
+        points can be off the screen in both directions and is framed in both.
         """
-        low, high = self.canvas.viewRange()[1]
-        inside = plot.ys[np.isfinite(plot.ys)]
-        if not inside.size or ((inside >= low) & (inside <= high)).any():
+        if plot.kind in FIELDS:
+            return
+        (left, right), (low, high) = self.canvas.viewRange()
+        keep = np.isfinite(plot.xs) & np.isfinite(plot.ys)
+        xs, ys = plot.xs[keep], plot.ys[keep]
+        if not ys.size:
+            return
+        inside = (xs >= left) & (xs <= right) & (ys >= low) & (ys <= high)
+        if inside.any():
             return
         self._unlock()
         self._default = False
-        bottom, top = float(np.min(inside)), float(np.max(inside))
-        self.canvas.setYRange(bottom, top, padding=0.1)
-        self.say(f"{plot.label}: y autoscaled to fit")
+        bottom, top = float(np.min(ys)), float(np.max(ys))
+        if plot.kind in FUNCTIONS:
+            self.canvas.setYRange(bottom, top, padding=0.1)
+            self.say(f"{plot.label}: y autoscaled to fit")
+            return
+        self.canvas.setRange(
+            xRange=(float(np.min(xs)), float(np.max(xs))),
+            yRange=(bottom, top),
+            padding=0.1,
+        )
+        self.say(f"{plot.label}: autoscaled to fit")
 
     def resample(self) -> None:
         """Re-sample every visible curve for the range now shown."""
@@ -652,11 +967,21 @@ class Window2D(QtWidgets.QMainWindow):
         self._default = True
 
     def autoscale(self) -> None:
-        """Frame every visible curve, which is what `A` and `View All` do."""
+        """Frame every visible plot, which is what `A` and `View All` do.
+
+        A region has no points to frame - it is evaluated over whatever the
+        view shows and so agrees with any framing - and is left out rather
+        than counted as nothing.
+        """
         self.remember()
         self._unlock()
-        xs = [plot.xs[np.isfinite(plot.ys)] for plot in self.plots if plot.visible]
-        ys = [plot.ys[np.isfinite(plot.ys)] for plot in self.plots if plot.visible]
+        framed = [
+            plot
+            for plot in self.plots
+            if plot.visible and plot.kind is not PlotKind.REGION
+        ]
+        xs = [plot.xs[np.isfinite(plot.ys)] for plot in framed]
+        ys = [plot.ys[np.isfinite(plot.ys)] for plot in framed]
         finite = [array for array in ys if array.size]
         if not finite:
             self.canvas.autoRange()
@@ -672,6 +997,23 @@ class Window2D(QtWidgets.QMainWindow):
     def _equal_scales(self, checked: bool) -> None:
         """The `1:1` toolbar toggle, which relocks or releases equal scales."""
         self.canvas.setAspectLocked(checked, ratio=1.0)
+
+    def _polar_mode(self, checked: bool) -> None:
+        """The `polar` toolbar toggle, which is about the plots still to come.
+
+        Nothing already drawn changes: a curve keeps the interpretation it was
+        plotted under, since a picture that re-read itself when a toggle moved
+        would be a picture nobody could trust. What the toggle does is tell the
+        Plot command, through `Describe`, that the next univariate expression
+        sent here is an r of a θ - and turn the pointer readout into the
+        coordinates such a window is read in.
+        """
+        self.polar = checked
+        self.say(
+            "Polar: new curves are read as r = f(θ)"
+            if checked
+            else "Polar off: new curves are read as y = f(x)"
+        )
 
     def _unlock(self) -> None:
         """Release equal scales, for a framing that is about fitting."""
@@ -739,13 +1081,35 @@ class Window2D(QtWidgets.QMainWindow):
     # -- the pointer -------------------------------------------------------
 
     def _moved(self, position: Any) -> None:
-        """The pointer moved over the scene: the readout, and trace if it is on."""
+        """The pointer moved over the scene: the readout, and trace if it is on.
+
+        A marker riding a parametric curve stays where it is: its place is a
+        parameter value, and the pointer's x is not one - the arrow keys and a
+        click are how it moves. A marker on a function follows the pointer,
+        which is what makes trace feel like pointing at the curve.
+        """
         if not self.item.sceneBoundingRect().contains(position):
             return
         point = self.canvas.mapSceneToView(position)
-        self.readout.setText(f"x: {_number(point.x())}   y: {_number(point.y())}")
-        if self._tracing is not None:
+        self.readout.setText(self._readout(point.x(), point.y()))
+        plot = self._active
+        if plot is not None and plot.kind not in PARAMETRIZED:
             self._trace_to(point.x())
+
+    def _readout(self, x: float, y: float) -> str:
+        """Where the pointer is, in the coordinates this window is read in.
+
+        A polar window adds the polar pair, because a picture drawn as r
+        against θ is measured in r and θ: reading a rose off the cartesian
+        numbers alone would be arithmetic the window is there to save.
+        """
+        text = f"x: {_number(x)}   y: {_number(y)}"
+        if not self.polar:
+            return text
+        turn = 180.0 / np.pi if self.degrees else 1.0
+        radius = float(np.hypot(x, y))
+        angle = float(np.arctan2(y, x)) * turn
+        return f"{text}   r: {_number(radius)}   θ: {_number(angle)}"
 
     def clicked(self, point: Any) -> bool:
         """A left click on the canvas. True where a curve took it.
@@ -756,37 +1120,101 @@ class Window2D(QtWidgets.QMainWindow):
         plot = self.at(point)
         if plot is None:
             return False
-        self._tracing = self.plots.index(plot)
-        self._trace_to(point.x())
+        self._take_hold(plot, point)
         return True
 
     def _curve_clicked(self, plot: Plot, ev: Any) -> None:
         """A click that landed on a curve's own stroke: trace that curve."""
         if plot not in self.plots:
             return
+        self._take_hold(plot, self.canvas.mapSceneToView(ev.scenePos()))
+
+    def _take_hold(self, plot: Plot, point: Any) -> None:
+        """Trace `plot`, at the place the click was pointing at.
+
+        Which place that is depends on what the curve is parametrized by. A
+        function is ridden at an abscissa and the click names one; a parametric
+        or polar curve is ridden at a parameter, which a point in the plane
+        does not name at all - so the click snaps to the nearest point that was
+        actually sampled, and the parameter it came from is where the marker
+        goes.
+        """
+        if plot.kind not in TRACEABLE:
+            return
         self._tracing = self.plots.index(plot)
-        self._trace_to(self.canvas.mapSceneToView(ev.scenePos()).x())
+        if plot.kind in PARAMETRIZED:
+            nearest = self._nearest(plot, point)
+            self._trace_at(self._trace_t if nearest is None else nearest)
+            return
+        self._trace_to(point.x())
+
+    def _nearest(self, plot: Plot, point: Any) -> float | None:
+        """The parameter of the sampled point nearest `point`, in pixels."""
+        across, up = self._per_pixel()
+        if across is None or up is None or not plot.ts.size:
+            return None
+        away = np.hypot((plot.xs - point.x()) / across, (plot.ys - point.y()) / up)
+        if not np.isfinite(away).any():
+            return None
+        return float(plot.ts[int(np.nanargmin(away))])
+
+    def _per_pixel(self) -> tuple[float | None, float | None]:
+        """How much of each axis one pixel is worth, or None where nothing."""
+        across, up = self.canvas.viewPixelSize()
+        return (across or None), (up or None)
 
     def at(self, point: Any) -> Plot | None:
         """The visible curve nearest the point, if one is near enough.
 
-        Measured in pixels against the samples that are drawn, which is the
-        same thing the eye is doing: a curve is where its stroke is.
+        Measured in pixels against the curve as it is drawn, which is the same
+        thing the eye is doing: a curve is where its stroke is. A function
+        answers with its own value at the pointer's abscissa, which is exact; a
+        curve that can double back has no such answer and is measured against
+        its samples, in the plane.
         """
-        pixel = self.canvas.viewPixelSize()
-        if not pixel[0] or not pixel[1]:
+        across, up = self._per_pixel()
+        if across is None or up is None:
             return None
         best: tuple[float, Plot] | None = None
         for plot in self.plots:
             if not plot.visible or not plot.xs.size:
                 continue
-            value = self._value_at(plot, point.x())
-            if value is None:
-                continue
-            away = abs(value - point.y()) / pixel[1]
-            if away <= HIT_PX and (best is None or away < best[0]):
+            if plot.kind in FUNCTIONS:
+                value = self._value_at(plot, point.x())
+                away = None if value is None else abs(value - point.y()) / up
+            else:
+                distances = np.hypot(
+                    (plot.xs - point.x()) / across, (plot.ys - point.y()) / up
+                )
+                away = (
+                    float(np.nanmin(distances))
+                    if np.isfinite(distances).any()
+                    else None
+                )
+            if away is not None and away <= HIT_PX and (best is None or away < best[0]):
                 best = (away, plot)
         return None if best is None else best[1]
+
+    def _region_at(self, point: Any) -> Plot | None:
+        """The region the point is inside, for a click that landed on no curve.
+
+        A region is an area and not a stroke, so nothing is ever within a few
+        pixels of one; what it means to point at a region is to point inside
+        it, which the grid it was shaded from answers. Asked only by the
+        context menu, and after the curves have had their chance, so that a
+        curve crossing a region is still the thing a click on it is about.
+        """
+        for plot in reversed(self.plots):
+            if plot.kind is not PlotKind.REGION or not plot.visible:
+                continue
+            if plot.grid is None or not plot.grid[0].size or not plot.grid[1].size:
+                continue
+            xs, ys, inside = plot.grid
+            across = int(np.argmin(np.abs(xs - point.x())))
+            up = int(np.argmin(np.abs(ys - point.y())))
+            if bool(inside[across, up]):
+                return plot
+        return None
 
     def _value_at(self, plot: Plot, x: float) -> float | None:
         """What the curve is worth at `x`, evaluated rather than read off.
@@ -806,16 +1234,26 @@ class Window2D(QtWidgets.QMainWindow):
 
     # -- trace -------------------------------------------------------------
 
+    @property
+    def _active(self) -> Plot | None:
+        """The curve the marker is riding, or None while trace is off."""
+        if self._tracing is None or self._tracing >= len(self.plots):
+            return None
+        return self.plots[self._tracing]
+
     def trace(self) -> None:
         """`T` and `F3`: take hold of a curve, or let go of one."""
         if self._tracing is not None:
             self._trace_off()
             return
-        if not any(plot.visible for plot in self.plots):
+        rideable = self._rideable()
+        if not rideable:
             return
-        self._tracing = next(
-            index for index, plot in enumerate(self.plots) if plot.visible
-        )
+        self._tracing = rideable[0]
+        plot = self.plots[self._tracing]
+        if plot.kind in PARAMETRIZED:
+            self._trace_at(sum(plot.trange) / 2)
+            return
         (left, right) = self.canvas.viewRange()[0]
         self._trace_to((left + right) / 2)
 
@@ -824,55 +1262,220 @@ class Window2D(QtWidgets.QMainWindow):
         self.marker.setVisible(False)
         self.say("")
 
-    def _trace_step(self, pixels: float) -> None:
-        """Left and right while tracing: one pixel, or ten with Shift."""
-        self._trace_to(self._trace_x + pixels * self.canvas.viewPixelSize()[0])
+    def _rideable(self) -> list[int]:
+        """Which plots a marker can sit on, by index into the plot list.
 
-    def _trace_curve(self, step: int) -> None:
-        """Up and down while tracing: the next curve of the plot list.
-
-        Hidden curves are skipped, as are the kinds with no parametrized curve
-        to ride - a region has no `f(x)` a marker could sit on.
+        Hidden curves are out, as are the kinds with no parametrized curve to
+        ride: a region has no `f(x)` a marker could be at a point of.
         """
-        rideable = [
+        return [
             index
             for index, plot in enumerate(self.plots)
             if plot.visible and plot.kind in TRACEABLE
         ]
+
+    def _retrace(self) -> None:
+        """Put the marker back after a re-sample moved the ground under it."""
+        plot = self._active
+        if plot is None:
+            return
+        if plot.kind in PARAMETRIZED:
+            self._trace_at(self._trace_t)
+        else:
+            self._trace_to(self._trace_x)
+
+    def _trace_step(self, backwards: bool, fast: bool) -> None:
+        """Left and right while tracing, in whatever the curve is drawn against.
+
+        A function is nudged a pixel at a time, since its parameter is the
+        abscissa and a pixel is the smallest step that shows. A parametric or
+        polar curve is stepped by a fraction of its parameter range instead:
+        the parameter is not on the screen, so a step of it cannot be measured
+        in pixels, and a five-hundredth of the range is about a pixel on a
+        curve that crosses the window once.
+        """
+        plot = self._active
+        if plot is None:
+            return
+        direction = -1.0 if backwards else 1.0
+        if plot.kind in PARAMETRIZED:
+            low, high = plot.trange
+            share = STEP_FAST_SHARE if fast else STEP_SHARE
+            step = direction * share * (high - low)
+            self._trace_at(min(max(self._trace_t + step, low), high))
+            return
+        pixels = NUDGE_FAST_PX if fast else NUDGE_PX
+        step = direction * pixels * self.canvas.viewPixelSize()[0]
+        self._trace_to(self._trace_x + step)
+
+    def _trace_curve(self, step: int) -> None:
+        """Up and down while tracing: the next curve of the plot list."""
+        rideable = self._rideable()
         if not rideable or self._tracing is None:
             return
         at = self._tracing
         here = rideable.index(at) if at in rideable else 0
         self._tracing = rideable[(here + step) % len(rideable)]
-        self._trace_to(self._trace_x)
+        self._retrace()
 
     def _trace_to(self, x: float) -> None:
         """Put the marker at this abscissa on the active curve, and say so."""
-        if self._tracing is None or self._tracing >= len(self.plots):
+        plot = self._active
+        if plot is None:
             return
-        plot = self.plots[self._tracing]
+        if plot.kind in PARAMETRIZED:
+            self._trace_at(self._trace_t)
+            return
         self._trace_x = x
         value = self._value_at(plot, x)
         if value is None:
-            self.marker.setVisible(False)
-            self.say(f"Tracing {plot.named}: not real and finite at {_number(x)}")
+            self._lost(plot, plot.variable, x)
             return
-        self.marker.setData([x], [value])
-        self.marker.setPen(pg.mkPen(plot.color))
-        self.marker.setVisible(True)
+        self._marked(plot, x, value)
         self.say(
             f"Tracing {plot.named}   {plot.variable} = {_number(x)}"
             f"   y = {_number(value)}"
         )
 
+    def _trace_at(self, t: float) -> None:
+        """Put the marker at this parameter value, on the curve that has one.
+
+        The point is the two closures' own values at the exact t rather than
+        the nearest sample, for the same reason a function's reading is: what a
+        plot is for is the number, and the pixel grid is only how it is shown.
+        """
+        plot = self._active
+        if plot is None or plot.pair is None:
+            return
+        self._trace_t = t
+        x = _one(plot.pair[0], t)
+        y = _one(plot.pair[1], t)
+        if not np.isfinite(x) or not np.isfinite(y):
+            self._lost(plot, plot.parameter, t)
+            return
+        self._trace_x = x
+        self._marked(plot, x, y)
+        self.say(
+            f"Tracing {plot.named}   {plot.parameter} = {_number(t)}"
+            f"{self._radius(plot, t)}   x = {_number(x)}   y = {_number(y)}"
+        )
+
+    def _radius(self, plot: Plot, t: float) -> str:
+        """What a polar curve is worth at θ, which is the reading it is read by."""
+        if plot.kind is not PlotKind.POLAR or plot.closure is None:
+            return ""
+        return f"   r = {_number(_one(plot.closure, t))}"
+
+    def _lost(self, plot: Plot, name: str, at: float) -> None:
+        """The marker over a place the curve has no point at.
+
+        Riding a curve into such a place is how a removable singularity is
+        found, so the message is the answer rather than an error.
+        """
+        self.marker.setVisible(False)
+        self.say(f"Tracing {plot.named}: not real and finite at {name} = {_number(at)}")
+
+    def _marked(self, plot: Plot, x: float, y: float) -> None:
+        """The marker itself, in the color of the curve it is riding."""
+        self.marker.setData([x], [y])
+        self.marker.setPen(pg.mkPen(plot.color))
+        self.marker.setVisible(True)
+
     @property
     def traced(self) -> tuple[float, float] | None:
         """The point under the marker, for the key that copies it."""
-        if self._tracing is None or self._tracing >= len(self.plots):
+        plot = self._active
+        if plot is None:
             return None
-        plot = self.plots[self._tracing]
+        if plot.kind in PARAMETRIZED:
+            if plot.pair is None:
+                return None
+            x = _one(plot.pair[0], self._trace_t)
+            y = _one(plot.pair[1], self._trace_t)
+            return None if not (np.isfinite(x) and np.isfinite(y)) else (x, y)
         value = self._value_at(plot, self._trace_x)
         return None if value is None else (self._trace_x, value)
+
+    # -- feature snapping ---------------------------------------------------
+
+    def snap(self, backwards: bool) -> None:
+        """`Tab` and `Shift-Tab`: the next notable point of the active curve.
+
+        Roots, local extrema and crossings of the other curves, found on the
+        samples that are already drawn and refined on the closure, so what the
+        status bar names is the function's own root and not the pixel the
+        stroke crossed the axis in. Nothing is drawn for them: a feature exists
+        under the marker and in the sentence, and a canvas that sprouted dots
+        nobody asked for would be a canvas with an opinion.
+
+        Function curves only in this first version - a parametric curve's
+        notable points are a different question, being about a path rather than
+        about a graph.
+        """
+        plot = self._active
+        if plot is None:
+            return
+        if plot.kind not in FUNCTIONS or plot.closure is None:
+            self.say(f"Tracing {plot.named}: features are found on function curves")
+            return
+        if plot.features is None:
+            self._find_features(plot)
+        found = self._next_feature(plot, backwards)
+        if found is None:
+            self.say(
+                f"Tracing {plot.named}: no further feature"
+                f" to the {'left' if backwards else 'right'}"
+            )
+            return
+        self._trace_to(found.x)
+        self.say(f"Tracing {plot.named}: {self._named_feature(plot, found)}")
+
+    def _find_features(self, plot: Plot) -> None:
+        """Work out this curve's notable points for the samples now drawn.
+
+        Kept on the plot until the samples change, since Tab is pressed
+        repeatedly and the scan is over every interval of the curve; every
+        re-sample throws them away, which is what keeps a feature about the
+        picture that is on the screen.
+        """
+        others = [
+            other
+            for other in self.plots
+            if other is not plot
+            and other.visible
+            and other.kind in FUNCTIONS
+            and other.closure is not None
+        ]
+        assert plot.closure is not None
+        plot.features = evaluate.features(
+            plot.xs, plot.ys, plot.closure, [other.closure for other in others]
+        )
+        plot.crossed = tuple(other.named for other in others)
+
+    def _next_feature(self, plot: Plot, backwards: bool) -> Any:
+        """The first feature past the marker, in the direction asked for.
+
+        Past rather than at, and by more than a pixel, so that pressing Tab
+        twice moves twice: a feature the marker is already sitting on is where
+        it came from and not where it is going.
+        """
+        found = plot.features or ()
+        step = self.canvas.viewPixelSize()[0] or 0.0
+        if backwards:
+            behind = [item for item in found if item.x < self._trace_x - step]
+            return behind[-1] if behind else None
+        ahead = [item for item in found if item.x > self._trace_x + step]
+        return ahead[0] if ahead else None
+
+    def _named_feature(self, plot: Plot, found: Any) -> str:
+        """One clause naming what was found and where, as the status bar says it."""
+        where = f"at {plot.variable} = {_number(found.x)}"
+        if found.kind is not evaluate.CROSSING:
+            return f"{found.kind} {where}"
+        crossed = plot.crossed
+        if 0 <= found.other < len(crossed):
+            return f"intersection with {crossed[found.other]} {where}"
+        return f"intersection {where}"
 
     # -- the legend and the context menu ------------------------------------
 
@@ -888,6 +1491,8 @@ class Window2D(QtWidgets.QMainWindow):
         if plot.item is None:
             return
         plot.item.setVisible(not plot.item.isVisible())
+        if plot.fill is not None:
+            plot.fill.setVisible(plot.item.isVisible())
         self.legend.items[row][0].update()
         if plot.visible:
             self._start(plot)
@@ -895,17 +1500,64 @@ class Window2D(QtWidgets.QMainWindow):
             self._trace_off()
 
     def _offer_removal(self, at: Any) -> None:
-        """A menu of one, where a right-click was about a plot and not a view."""
+        """The plot's own menu, where a right-click was about a plot and not a view.
+
+        Built rather than kept, because it is put up beside a legend entry and
+        not inside the view box, and so is not the stock menu at all - but it
+        offers the same words, which is what makes the legend and the curve one
+        target with two places to hit it.
+        """
+        plot = self._pointed
+        assert plot is not None
         menu = QtWidgets.QMenu(self)
-        menu.addAction(f"Remove {self._pointed.named}", self._remove_pointed)
+        menu.addAction(f"Remove {plot.named}", self._remove_pointed)
+        if plot.kind is PlotKind.DATA:
+            self._name_connect(self._point_actions(menu)[0], plot)
         menu.exec(at)
 
     def prepare_menu(self, point: Any) -> None:
         """Say what a right-click on the canvas was pointing at, if anything."""
-        self._pointed = self.at(point)
+        self._pointed = self.at(point) or self._region_at(point)
         self._remove_action.setVisible(self._pointed is not None)
+        data = self._pointed is not None and self._pointed.kind is PlotKind.DATA
+        for action in self._data_actions:
+            action.setVisible(data)
         if self._pointed is not None:
             self._remove_action.setText(f"Remove {self._pointed.named}")
+        if data:
+            self._name_connect(self._data_actions[0], self._pointed)
+
+    def _name_connect(self, action: Any, plot: Plot | None) -> None:
+        """Say which way the connect entry would go, which is the other way."""
+        if plot is not None:
+            action.setText("Disconnect points" if plot.connected else "Connect points")
+
+    def _toggle_connected(self) -> None:
+        """Connect a data plot's points into a polyline, or take the line away."""
+        plot = self._pointed
+        if plot is None or plot.kind is not PlotKind.DATA:
+            return
+        plot.connected = not plot.connected
+        self._redraw_points(plot)
+
+    def _set_point_size(self, size: float) -> None:
+        """How big a data plot's points are drawn, off its own menu."""
+        plot = self._pointed
+        if plot is None or plot.kind is not PlotKind.DATA:
+            return
+        plot.point_size = size
+        self._redraw_points(plot)
+
+    def _redraw_points(self, plot: Plot) -> None:
+        """Put a data plot's own opinions back on its item.
+
+        The item is kept rather than remade so that the legend entry, the hit
+        test and the visibility it already has all survive a change of mind
+        about how big a point is.
+        """
+        pen = pg.mkPen(plot.color, width=1)
+        plot.item.setPen(pen if plot.connected else None)
+        plot.item.setSymbolSize(plot.point_size)
 
     def _remove_pointed(self) -> None:
         if self._pointed is not None:
@@ -960,6 +1612,23 @@ class Window2D(QtWidgets.QMainWindow):
 
     # -- keys --------------------------------------------------------------
 
+    def event(self, ev: Any) -> bool:
+        """Take Tab before the focus chain does, while a marker wants it.
+
+        Qt reads Tab as "next widget" in `QWidget.event`, above the key
+        handler, so a key binding on it never fires; while trace is on, Tab is
+        the marker's and is taken here. Off trace it goes back to being Qt's.
+        """
+        tabs = (QtCore.Qt.Key.Key_Tab, QtCore.Qt.Key.Key_Backtab)
+        if (
+            ev.type() == QtCore.QEvent.Type.KeyPress
+            and self._tracing is not None
+            and ev.key() in tabs
+        ):
+            self.keyPressEvent(ev)
+            return True
+        return bool(super().event(ev))
+
     def keyPressEvent(self, ev: Any) -> None:
         key = ev.key()
         shift = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
@@ -990,10 +1659,12 @@ class Window2D(QtWidgets.QMainWindow):
         elif key == keys.Key_G:
             self._grid = not self._grid
             self.item.showGrid(x=self._grid, y=self._grid, alpha=GRID_ALPHA)
+        elif key in (keys.Key_Tab, keys.Key_Backtab) and self._tracing is not None:
+            self.snap(shift or key == keys.Key_Backtab)
         elif key in (keys.Key_Left, keys.Key_Right):
             step = -1 if key == keys.Key_Left else 1
             if self._tracing is not None:
-                self._trace_step(step * (NUDGE_FAST_PX if shift else NUDGE_PX))
+                self._trace_step(key == keys.Key_Left, shift)
             else:
                 self.pan(step * PAN_SHARE, 0.0)
         elif key in (keys.Key_Up, keys.Key_Down):
@@ -1071,6 +1742,174 @@ TRACEABLE = frozenset(
 )
 
 
+def _curve_work(
+    plot: Plot,
+    xrange: tuple[float, float],
+    yrange: tuple[float, float],
+    size: tuple[float, float],
+    degrees: bool,
+) -> Callable[..., Any]:
+    """What the sampling thread does for a parametric or polar curve.
+
+    The two closures are made once and kept on the plot, like a function's one
+    is, so that a zoom re-samples without asking sympy anything. So is the
+    parameter range: the bounds arrive as expressions - `-π` is what a person
+    types on the field line - and what they are worth is arithmetic that need
+    only be done the first time.
+
+    A polar curve is a parametric one composed here rather than at the far end:
+    r(θ) is kept beside the pair because the readout and the trace are in r and
+    θ, and only the composition knows which closure that is.
+    """
+    node, context, options = plot.node, plot.context, plot.options
+    names = options.variables or ("t",)
+    made, radius, known = plot.pair, plot.closure, plot.trange
+    polar = plot.kind is PlotKind.POLAR
+    turn = DEFAULT_TURN_DEGREES if degrees else DEFAULT_TURN
+
+    def work(report: Callable[..., None]) -> Any:
+        pair, inner, trange = made, radius, known
+        if pair is None:
+            if polar:
+                inner = evaluate.closure(node, context, names)
+                pair = evaluate.polar_pair(inner, degrees)
+            else:
+                pair = evaluate.pair(node, context, names)
+            low = evaluate.number(options.minimum, context, -turn)
+            high = evaluate.number(options.maximum, context, turn)
+            trange = (low, high) if high > low else (-turn, turn)
+        sampled = evaluate.sample_curve(
+            pair[0], pair[1], trange, xrange, yrange, size, report=report
+        )
+        return pair, inner, sampled, trange
+
+    return work
+
+
+def _field_work(
+    plot: Plot,
+    xrange: tuple[float, float],
+    yrange: tuple[float, float],
+    size: tuple[float, float],
+) -> Callable[..., Any]:
+    """What the sampling thread does for an implicit curve or a region.
+
+    Both are fields over the rectangle now in view rather than curves over an
+    abscissa, and both are recomputed for whatever the view has become, which
+    is what makes zooming into a contour reveal it rather than magnify it.
+
+    Half the canvas resolution is the design's figure and it is not a
+    compromise: marching squares interpolates inside a cell, so a contour drawn
+    from half-resolution samples is smooth at full resolution, and a grid at
+    the full one would cost four times as much to say the same thing.
+    """
+    node, context = plot.node, plot.context
+    names = plot.axes
+    made = plot.closure
+    implicit = plot.kind is PlotKind.IMPLICIT
+    nx = int(min(max(size[0] * GRID_SHARE, 2), MAX_GRID))
+    ny = int(min(max(size[1] * GRID_SHARE, 2), MAX_GRID))
+
+    def work(_report: Callable[..., None]) -> Any:
+        f = made
+        if f is None:
+            reading = evaluate.difference if implicit else evaluate.mask
+            f = reading(node, context, names)
+        xs, ys, values = evaluate.grid_eval(f, xrange, yrange, nx, ny)
+        return f, xs, ys, values
+
+    return work
+
+
+def _contour(
+    xs: np.ndarray, ys: np.ndarray, values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The zero contour of a grid, as one stroke with gaps between its pieces.
+
+    `isocurve` is pyqtgraph's own marching squares and answers in the index
+    coordinates of the array, so the axis vectors are what turn a crossing of
+    cell 17.4 into an x. Connected paths rather than loose segments, because a
+    path is one polyline and an implicit curve drawn as ten thousand two-point
+    segments is ten thousand items to antialias.
+    """
+    if values.shape[0] < 2 or values.shape[1] < 2:
+        return np.empty(0), np.empty(0)
+    across = (float(xs[-1]) - float(xs[0])) / (len(xs) - 1)
+    up = (float(ys[-1]) - float(ys[0])) / (len(ys) - 1)
+    # Marching squares compares, and every comparison with a NaN is false,
+    # which would read the hole in a domain as one enormous negative region. A
+    # number far above every real one says the same thing and still divides -
+    # an infinity would make the interpolation along a crossing edge NaN and
+    # put the contour nowhere - and the contour it invents around the hole is
+    # taken out below.
+    real = np.isfinite(values)
+    if not real.any():
+        return np.empty(0), np.empty(0)
+    outside = 1e6 * max(float(np.max(np.abs(values[real]))), 1.0)
+    pieces = pg.functions.isocurve(np.where(real, values, outside), 0.0, connected=True)
+    drawn_x: list[np.ndarray] = []
+    drawn_y: list[np.ndarray] = []
+    for path in pieces:
+        if len(path) < 2:
+            continue
+        points = np.asarray(path, dtype=np.float64)
+        keep = _surrounded(points, real)
+        here = np.where(keep, float(xs[0]) + points[:, 0] * across, np.nan)
+        there = np.where(keep, float(ys[0]) + points[:, 1] * up, np.nan)
+        drawn_x.append(np.append(here, np.nan))
+        drawn_y.append(np.append(there, np.nan))
+    if not drawn_x:
+        return np.empty(0), np.empty(0)
+    return np.concatenate(drawn_x), np.concatenate(drawn_y)
+
+
+def _surrounded(points: np.ndarray, real: np.ndarray) -> np.ndarray:
+    """Which contour points have the function defined all round them.
+
+    A point of the contour lies on the edge between two cells, so the four grid
+    nodes bracketing it are what say whether it is a crossing of the function
+    or of the edge of the function's domain. The ones with a hole beside them
+    are the boundary of the hole and are dropped: `SQRT(x) = y` is a curve that
+    begins at the origin, not a curve with a wall down the y axis.
+    """
+    highest = (real.shape[0] - 1, real.shape[1] - 1)
+    low = [np.clip(np.floor(points[:, n]).astype(int), 0, highest[n]) for n in (0, 1)]
+    high = [np.clip(np.ceil(points[:, n]).astype(int), 0, highest[n]) for n in (0, 1)]
+    return (
+        real[low[0], low[1]]
+        & real[high[0], low[1]]
+        & real[low[0], high[1]]
+        & real[high[0], high[1]]
+    )
+
+
+def _shading(inside: np.ndarray, color: str) -> np.ndarray:
+    """A boolean grid as the translucent image a region is filled with.
+
+    One pixel per grid cell, in the plot's own color at a quarter opacity, and
+    transparent everywhere the inequality is false. The view box stretches it
+    over the rectangle it was evaluated on, so the resolution of the fill is
+    the resolution of the grid and not of the screen - which is exactly right:
+    the boundary of a region is only known to the grid's accuracy, and a fill
+    drawn sharper than that would be claiming more than was computed.
+    """
+    tint = pg.mkColor(color)
+    image = np.zeros((*inside.shape, 4), dtype=np.ubyte)
+    image[..., 0] = tint.red()
+    image[..., 1] = tint.green()
+    image[..., 2] = tint.blue()
+    image[..., 3] = np.where(inside, int(REGION_ALPHA * 255), 0)
+    return image
+
+
+def _one(f: Callable[..., np.ndarray], at: float) -> float:
+    """A closure at one point, as a float, NaN where it has no value there."""
+    try:
+        return float(np.asarray(f(np.array([at], dtype=np.float64)))[0])
+    except Exception:
+        return float("nan")
+
+
 class _on_paper:
     """The window in paper colors for as long as an export takes.
 
@@ -1088,7 +1927,17 @@ class _on_paper:
         self._pens = [(plot, plot.item.opts["pen"]) for plot in window.plots if plot.item]
         window.plot.setBackground("w")
         for plot, _ in self._pens:
-            plot.item.setPen(pg.mkPen(plot.paper, width=1))
+            # A data plot with its points loose has no stroke to recolor, and
+            # giving it one would draw a polyline nobody asked for; its symbols
+            # are what have to change color, and a region's shading is.
+            if plot.kind is not PlotKind.DATA or plot.connected:
+                plot.item.setPen(pg.mkPen(plot.paper, width=1))
+            if plot.kind is PlotKind.DATA:
+                plot.item.setSymbolPen(pg.mkPen(plot.paper))
+                plot.item.setSymbolBrush(pg.mkBrush(plot.paper))
+            if plot.fill is not None and plot.grid is not None:
+                plot.fill.setImage(_shading(plot.grid[2], plot.paper), autoLevels=False)
+        window._relabel(paper=True)
         for edge in ("bottom", "left"):
             window.item.getAxis(edge).setTextPen(pg.mkPen("k"))
         for line in window.axes:
@@ -1100,6 +1949,12 @@ class _on_paper:
         window.plot.setBackground(BACKGROUND)
         for plot, pen in self._pens:
             plot.item.setPen(pen)
+            if plot.kind is PlotKind.DATA:
+                plot.item.setSymbolPen(pg.mkPen(plot.color))
+                plot.item.setSymbolBrush(pg.mkBrush(plot.color))
+            if plot.fill is not None and plot.grid is not None:
+                plot.fill.setImage(_shading(plot.grid[2], plot.color), autoLevels=False)
+        window._relabel()
         for edge in ("bottom", "left"):
             window.item.getAxis(edge).setTextPen(pg.mkPen(TEXT_COLOR))
         for line in window.axes:

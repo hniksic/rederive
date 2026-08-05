@@ -52,6 +52,7 @@ __all__ = [
     "WindowKind",
     "Windows",
     "DRAWN",
+    "PARAMETRIZED",
     "UNDRAWN",
     "dimension",
     "titled",
@@ -119,8 +120,23 @@ def dimension(kind: PlotKind) -> WindowKind:
 #: The kinds a window can draw today. Classification knows every kind, so an
 #: expression is always recognized for what it is; this is the one place that
 #: says which of them a window has been taught to draw, and it is what both
-#: sides refuse by. Later work extends it rather than the vocabulary.
-DRAWN = frozenset({PlotKind.CURVE, PlotKind.FAMILY})
+#: sides refuse by. Later work extends it rather than the vocabulary: the two
+#: surfaces are what is left, and they wait on the 3D window.
+DRAWN = frozenset(
+    {
+        PlotKind.CURVE,
+        PlotKind.FAMILY,
+        PlotKind.PARAMETRIC,
+        PlotKind.POLAR,
+        PlotKind.DATA,
+        PlotKind.IMPLICIT,
+        PlotKind.REGION,
+    }
+)
+
+#: The kinds drawn over a parameter, which are the ones the Plot command asks
+#: a range for before it sends anything.
+PARAMETRIZED = frozenset({PlotKind.PARAMETRIC, PlotKind.POLAR})
 
 #: What a request for one of the others is refused with. The word is the
 #: classification's own, so the refusal names what was recognized.
@@ -188,17 +204,22 @@ class Options:
     curves, and the host renders no expression of its own to name them with.
 
     `minimum` and `maximum` are the parameter range a parametric or polar plot
-    is drawn over, asked for on a field line before the request is sent. The
-    rest are the data-plot preferences of section 9; None means the window's
-    own default rather than a value, so a plot added without an opinion follows
-    the preferences and one that has an opinion keeps it.
+    is drawn over, asked for on a field line before the request is sent. They
+    are expressions rather than numbers because `-π` is what the field offers
+    and what a person types: turning one into a float is arithmetic, and the
+    app does no arithmetic. The host evaluates them once, when the plot is
+    added.
+
+    The rest are the data-plot preferences of section 9; None means the
+    window's own default rather than a value, so a plot added without an
+    opinion follows the preferences and one that has an opinion keeps it.
     """
 
     variables: tuple[str, ...] = ()
     vertical: str = ""
     texts: tuple[str, ...] = ()
-    minimum: float | None = None
-    maximum: float | None = None
+    minimum: Node | None = None
+    maximum: Node | None = None
     connected: bool | None = None
     point_size: float | None = None
 

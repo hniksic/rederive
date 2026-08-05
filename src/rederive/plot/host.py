@@ -455,25 +455,26 @@ def _curves(request: protocol.Add) -> list[Any]:
     """
     from rederive.plot.window2d import Plot
 
-    def curve(label: str, text: str, node: Any) -> Any:
+    def curve(label: str, text: str, node: Any, kind: PlotKind) -> Any:
         return Plot(
             worksheet=request.worksheet,
             label=label,
             text=text,
-            kind=PlotKind.CURVE,
+            kind=kind,
             node=node,
             context=request.context,
             options=request.options,
         )
 
     if request.kind is not PlotKind.FAMILY:
-        return [curve(request.label, request.text, request.node)]
+        return [curve(request.label, request.text, request.node, request.kind)]
     texts = request.options.texts
     return [
         curve(
             f"{request.label}.{index + 1}",
             texts[index] if index < len(texts) else request.label,
             element,
+            PlotKind.CURVE,
         )
         for index, element in enumerate(request.node.children)
     ]
