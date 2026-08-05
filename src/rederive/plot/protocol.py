@@ -45,6 +45,7 @@ __all__ = [
     "Reply",
     "Request",
     "Shutdown",
+    "Traced",
     "Trouble",
     "Where",
     "WindowInfo",
@@ -378,4 +379,20 @@ class Trouble:
     message: str
 
 
-Event = Closed | Trouble
+@dataclass(frozen=True)
+class Traced:
+    """A point the user sent home from a plot window, to be authored as an entry.
+
+    While tracing, one key appends the point under the marker - or the root or
+    extremum just refined - to the worksheet as a new algebra entry, ready to
+    compute with. `worksheet` is the id the `Add` that made the plot carried,
+    and `text` is the point exactly as `Ctrl-C` puts it on the clipboard -
+    `[x, y]`, six decimals - so the clipboard route and this one enter the same
+    expression.
+    """
+
+    worksheet: int
+    text: str
+
+
+Event = Closed | Trouble | Traced

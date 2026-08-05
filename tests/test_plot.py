@@ -22,7 +22,7 @@ import asyncio
 
 import numpy as np
 import pytest
-from screen import band, highlighted, message
+from screen import band, highlighted, message, prompt
 
 from rederive.engine.context import Context
 from rederive.model.plotting import Unplottable, classify
@@ -787,6 +787,10 @@ def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
 class InlineHost:
     """A host that runs each sampling job before `sample` returns."""
 
+    def __init__(self):
+        #: The points windows have sent home, as (worksheet, text) pairs.
+        self.authored = []
+
     def sample(self, key, work, done, report=None):
         try:
             answer = work(lambda *arguments: None)
@@ -802,6 +806,9 @@ class InlineHost:
 
     def closed(self, number):
         pass
+
+    def author(self, worksheet, text):
+        self.authored.append((worksheet, text))
 
 
 @pytest.fixture(scope="module")
@@ -961,6 +968,44 @@ def test_the_delete_key_clears_the_window_it_is_pressed_in(flat):
         )
     )
     assert flat.plots == []
+
+
+def _pressed_return(window):
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    window.keyPressEvent(
+        QtGui.QKeyEvent(
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_Return,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
+def test_enter_while_tracing_sends_the_refined_point_home(flat):
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    # Enter with no marker up is not the send key: nothing goes anywhere.
+    _pressed_return(flat)
+    assert flat.host.authored == []
+    flat.trace()
+    # Tab snaps to the next feature to the right of center - the maximum at
+    # π/2 - refined on the closure, and Enter sends that number home.
+    flat.snap(False)
+    _pressed_return(flat)
+    assert flat.host.authored == [(1, "[1.570796, 1.000000]")]
+    # The window says so where the user is looking.
+    assert flat.status.text() == "Sent [1.570796, 1.000000] to the worksheet"
+
+
+def test_the_point_sent_home_is_the_text_ctrl_c_copies(flat, qt):
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    flat.trace()
+    flat.snap(False)
+    flat.copy_image()
+    copied = qt.clipboard().text()
+    flat.send_home()
+    assert copied.startswith("[")
+    assert flat.host.authored == [(1, copied)]
 
 
 def test_the_title_tracks_the_plot_list(flat):
@@ -1516,6 +1561,75 @@ async def test_a_curve_the_host_could_not_draw_reaches_the_message_line(app):
         app._plot_event(plots.Trouble(1, "#3", "no numeric reading of FOO"))
         await pilot.pause()
         assert message(app) == "Plot: #3: no numeric reading of FOO"
+
+
+async def test_a_point_sent_home_is_authored_into_its_worksheet(app):
+    async with app.run_test() as pilot:
+        app._plot_event(plots.Traced(id(app.session), "[1.570796, 1.000000]"))
+        await pilot.pause()
+        [entry] = app.session.entries
+        # The direct route enters exactly what pasting the Ctrl-C text on the
+        # author line would have entered: the same text, read the same way.
+        assert entry.text == Session().author("[1.570796, 1.000000]").text
+        assert message(app) == "Entered [1.570796, 1.000000] as #1"
+
+
+async def test_a_point_lands_in_its_own_worksheet_not_the_active_one(app):
+    async with app.run_test() as pilot:
+        # An overlay opens a second worksheet over the first, and the second is
+        # the active one; the point still goes to the worksheet its plot came
+        # from.
+        first = app.session
+        app.windows.open(app.windows.kind, first.copy())
+        assert app.session is not first
+        app._plot_event(plots.Traced(id(first), "[1.000000, 2.000000]"))
+        await pilot.pause()
+        assert len(first.entries) == 1
+        assert app.session.entries == []
+        assert message(app) == "Entered [1.000000, 2.000000] as #1"
+
+
+async def test_a_point_from_a_closed_worksheet_finds_the_active_one(app):
+    async with app.run_test() as pilot:
+        # No worksheet on screen carries this id: the overlay the plot came
+        # from has closed since. The point was sent to be computed with, so it
+        # lands in the active worksheet rather than being dropped.
+        app._plot_event(plots.Traced(-1, "[1.000000, 2.000000]"))
+        await pilot.pause()
+        assert len(app.session.entries) == 1
+        assert message(app) == "Entered [1.000000, 2.000000] as #1"
+
+
+async def test_a_point_arriving_mid_edit_leaves_the_line_standing(app):
+    async with app.run_test() as pilot:
+        # Author, with a line half-typed: the entry goes in under the prompt,
+        # which stands untouched - and the point is one F3 away from the line.
+        await pilot.press("a", "s", "i", "n")
+        app._plot_event(plots.Traced(id(app.session), "[1.000000, 2.000000]"))
+        await pilot.pause()
+        assert len(app.session.entries) == 1
+        assert message(app) == "Entered [1.000000, 2.000000] as #1"
+        assert prompt(app) == ("AUTHOR expression:", "sin")
+
+
+async def test_a_point_arriving_mid_command_waits_its_turn(app):
+    from rederive.ui.app import MODE_COMPUTE, MODE_MENU
+
+    async with app.run_test() as pilot:
+        # While a command computes, the computing thread owns the worksheets,
+        # so the point waits for the command to let go rather than racing it.
+        app.mode = MODE_COMPUTE
+        app._plot_event(plots.Traced(id(app.session), "[1.000000, 2.000000]"))
+        await pilot.pause()
+        assert app.session.entries == []
+        app.mode = MODE_MENU
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+            if app.session.entries:
+                break
+        assert len(app.session.entries) == 1
+        assert message(app) == "Entered [1.000000, 2.000000] as #1"
 
 
 async def test_the_whole_loop_lands_a_parametric_plot_in_a_real_window(monkeypatch):

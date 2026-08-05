@@ -1570,6 +1570,36 @@ class Window2D(QtWidgets.QMainWindow):
         value = self._value_at(plot, self._trace_x)
         return None if value is None else (self._trace_x, value)
 
+    @property
+    def traced_text(self) -> str | None:
+        """The traced point spelled for the worksheet: `[x, y]`, six decimals.
+
+        One spelling for the two routes home, so what Ctrl-C puts on the
+        clipboard and what Enter sends up the event channel are the same text.
+        """
+        point = self.traced
+        if point is None:
+            return None
+        return f"[{_number(point[0])}, {_number(point[1])}]"
+
+    def send_home(self) -> None:
+        """Enter and Return while tracing: the traced point into the worksheet.
+
+        The number the status bar names - the point under the marker, or the
+        root or extremum Tab just refined - goes up the event channel to be
+        appended to the worksheet the plot came from as a new algebra entry,
+        ready to compute with. The same text Ctrl-C copies, so the clipboard
+        route and this one enter the same expression; the difference is that
+        nothing has to be retyped, which is what makes the plot a measuring
+        instrument rather than a poster.
+        """
+        plot = self._active
+        text = self.traced_text
+        if plot is None or text is None:
+            return
+        self.host.author(plot.worksheet, text)
+        self.say(f"Sent {text} to the worksheet")
+
     # -- feature snapping ---------------------------------------------------
 
     def snap(self, backwards: bool) -> None:
@@ -1748,9 +1778,8 @@ class Window2D(QtWidgets.QMainWindow):
         message. While tracing it copies the traced point instead, which is the
         one reading a plot produces that the algebra window can take back.
         """
-        point = self.traced
-        if point is not None:
-            text = f"[{_number(point[0])}, {_number(point[1])}]"
+        text = self.traced_text
+        if text is not None:
             QtWidgets.QApplication.clipboard().setText(text)
             self.say(f"Copied {text}")
             return
@@ -1837,6 +1866,8 @@ class Window2D(QtWidgets.QMainWindow):
             self.clear()
         elif key in (keys.Key_Tab, keys.Key_Backtab) and self._tracing is not None:
             self.snap(shift or key == keys.Key_Backtab)
+        elif key in (keys.Key_Return, keys.Key_Enter) and self._tracing is not None:
+            self.send_home()
         elif key in (keys.Key_Left, keys.Key_Right):
             step = -1 if key == keys.Key_Left else 1
             if self._tracing is not None:

@@ -302,6 +302,10 @@ class Host:
     def trouble(self, window: int, label: str, message: str) -> None:
         self.event(protocol.Trouble(window, label, message))
 
+    def author(self, worksheet: int, text: str) -> None:
+        """A traced point a window sends home, to be authored into a worksheet."""
+        self.event(protocol.Traced(worksheet, text))
+
     def touched(self, number: int) -> None:
         """A window the user touched is the receiver for its kind now.
 

@@ -460,6 +460,12 @@ PLOTTED = "Plotting {label}"
 REPLOTTED = "Replotting {label}"
 #: What Plot says when there is nothing highlighted to plot.
 NOTHING_TO_PLOT = "no expression to plot"
+#: What the message line says when a plot window sends a traced point home.
+#: The new entry is named by its label, so the next command can ask for it.
+POINT_ENTERED = "Entered {text} as {label}"
+#: How long a point sent home waits before asking again, while a running
+#: command's computing thread owns the worksheets.
+POINT_RETRY = 0.25
 #: Seconds between two readings of the elapsed time. Fast enough that the
 #: figure looks like a clock rather than a series of guesses.
 TICK = 0.1
@@ -4575,10 +4581,50 @@ class RederiveApp(App[None]):
         Arrives on the event loop from the proxy's reader thread. A window the
         user closed is not worth a word - the user closed it and can see that
         it is gone - but a curve that would not evaluate is exactly the silence
-        this design refuses to have.
+        this design refuses to have, and a point sent home from a plot is the
+        one event that writes rather than prints.
         """
         if isinstance(event, plots.Trouble):
             self._set_message(f"{PREFIX}{event.label}: {event.message}")
+        elif isinstance(event, plots.Traced):
+            self._plot_traced(event)
+
+    def _plot_traced(self, event: plots.Traced) -> None:
+        """A point sent home from a plot window: author it as a new entry.
+
+        The event names the worksheet the plot came from, but that overlay may
+        have closed since, so the entry's home is decided in two steps: the
+        originating worksheet where it is still on screen, and the active one
+        otherwise. The point was sent to be computed with, and the active
+        worksheet is where the next command happens, so landing it there beats
+        dropping a number the user explicitly asked for.
+
+        `Trouble` only prints, while this writes into a worksheet, so when the
+        event arrives matters. While a command computes, the computing thread
+        owns the worksheets, and the point waits its turn rather than racing
+        it - nothing is dropped, it lands when the command lets go. Mid-dialog
+        and mid-edit the append is safe: the entry goes in under whatever line
+        or dialog is up, the panes repaint around it, and the selection moves
+        to the new entry - which is what puts the point one `F3` away from the
+        line being edited.
+        """
+        if self.mode == MODE_COMPUTE:
+            self.set_timer(POINT_RETRY, partial(self._plot_traced, event))
+            return
+        session = next(
+            (one for one in self.windows.sessions() if id(one) == event.worksheet),
+            self.session,
+        )
+        try:
+            entry = session.author(event.text)
+        except DeriveSyntaxError as error:
+            # A point that will not read under the worksheet's settings - a
+            # digit the input base does not have - refuses in the parser's own
+            # words, exactly as the same text pasted on the author line would.
+            self._set_message(f"{PREFIX}{error}")
+            return
+        self.place_windows()
+        self._set_message(POINT_ENTERED.format(text=event.text, label=f"#{entry.number}"))
 
     # -- Window ------------------------------------------------------------
     #
