@@ -447,17 +447,23 @@ class Host:
         plot everything else.
 
         This is the one construction site, and so the one place the sticky
-        grid reaches a window. It is read now rather than kept by the window,
-        which is what makes a changed preference show in the next window and
-        leave the open ones as they are. A 2D window takes no preference at
-        all: it always opens with equal scales, and its `1:1` toggle is the
-        one-window exception that is deliberately not remembered.
+        grid and wire look reach a window. They are read now rather than kept
+        by the window, which is what makes a changed preference show in the
+        next window and leave the open ones as they are. A 2D window takes no
+        preference at all: it always opens with equal scales, and its `1:1`
+        toggle is the one-window exception that is deliberately not
+        remembered.
         """
         self._made += 1
         if kind is WindowKind.THREE_D:
             from rederive.plot.window3d import Window3D
 
-            window: Any = Window3D(self._made, self, grid=self.preferences.grid)
+            window: Any = Window3D(
+                self._made,
+                self,
+                grid=self.preferences.grid,
+                wire=self.preferences.wire,
+            )
         else:
             from rederive.plot.window2d import Window2D
 

@@ -63,7 +63,7 @@ from rederive.plot.protocol import Options, PlotKind
 from rederive.plot.window2d import PALETTE, PAPER_PALETTE, naming
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
-__all__ = ["Box", "Surface", "Window3D", "mesh", "ticks"]
+__all__ = ["Box", "Surface", "Window3D", "mesh", "ticks", "wire"]
 
 #: The surface colors, which are the curve colors turned by one. A shaded solid
 #: in white is a white shape with a white shape behind it - the palette's first
@@ -124,6 +124,14 @@ DIM = 0.30
 LIGHT = (0.40, -0.60, 0.69)
 AMBIENT = 0.20
 HEIGHT_SHARE = 0.5
+
+#: How many row and column lines the wire drawing aims for each way. The full
+#: grid at the default 64 x 64 is some eight thousand segments and reads as
+#: gray fuzz, so only every k-th row and column is drawn - the thinning is of
+#: the drawing, never of the sampling, and every drawn line keeps the full
+#: sample spacing. Raising the grid in the toolbar therefore sharpens the
+#: wire's lines instead of multiplying them.
+WIRE_LINES = 20
 
 #: The camera a fresh window opens with and `Home` returns to: a three-quarter
 #: view from above, far enough out that the whole cube is in the picture.
@@ -193,6 +201,14 @@ class Surface:
     color: str = SOLID_PALETTE[0]
     paper: str = SOLID_PAPER[0]
     item: Any = None
+    #: Whether this surface draws as the wire grid of its samples rather than
+    #: as a shaded solid. A property of the surface, not the window: the
+    #: toolbar's `mesh` box flips every surface at once, and the legend's
+    #: right-click carries the per-surface exception.
+    wire: bool = False
+    #: The line item the wire look draws with, made beside `item` and shown in
+    #: its place while `wire` is on.
+    wires: Any = None
     #: The lambdified closure, once the sampling thread has built one.
     closure: Callable[..., np.ndarray] | None = None
     trouble: str = ""
@@ -597,6 +613,156 @@ def _trimmed(
     return polygon
 
 
+def wire(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    values: np.ndarray,
+    box: Box,
+    boundary: evaluate.Boundary | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """One surface as the rectangular grid of its own samples, and its shading.
+
+    The row and column lines of the sample arrays, one segment per grid step,
+    for a `GLLinePlotItem` in `'lines'` mode: consecutive pairs of the points
+    returned are segments, placed in the box, with a shade per point computed
+    the way the solid's is. `drawEdges` would have been the wrong tool - the
+    faces are triangles, so it draws every diagonal and yields a triangulated
+    fabric rather than this grid.
+
+    Only every k-th row and column is drawn, k chosen to leave about
+    `WIRE_LINES` lines each way, while every drawn line keeps the full sample
+    spacing - the thinning is of the drawing, not of the shape.
+
+    A segment lives by the predicate that decides face survival: both ends
+    real, finite and inside the box's z. So holes and clip edges appear in the
+    wire exactly where they appear in the solid. Where one end is not real,
+    the refined crossing `boundary` carries takes its place, ending the line
+    on the boundary rather than a grid step short of it; where an end leaves
+    the box's z, the segment is trimmed to the clip plane by the same
+    interpolation that trims the faces, which is also what saves a boundary
+    end whose limit is unbounded.
+    """
+    zs = np.asarray(values, dtype=np.float64)
+    if zs.ndim != 2 or zs.shape[0] < 2 or zs.shape[1] < 2:
+        return np.empty((0, 3), dtype=np.float32), np.empty(0)
+    finite = np.isfinite(zs)
+    low, high = box.z
+    heights = np.clip((zs - low) / (high - low), 0.0, 1.0)
+    lit = _lit(np.where(finite, box.up(zs), np.nan))
+    shading = HEIGHT_SHARE * (DIM + (1.0 - DIM) * heights) + (1.0 - HEIGHT_SHARE) * lit
+    points: list[tuple[float, float, float, float]] = []
+    for i in _drawn(zs.shape[0]):
+        for j in range(zs.shape[1] - 1):
+            _strand(
+                points, i, j, False, xs, ys, zs, finite, shading, lit, boundary, box.z
+            )
+    for j in _drawn(zs.shape[1]):
+        for i in range(zs.shape[0] - 1):
+            _strand(
+                points, i, j, True, xs, ys, zs, finite, shading, lit, boundary, box.z
+            )
+    if not points:
+        return np.empty((0, 3), dtype=np.float32), np.empty(0)
+    data = np.array(points, dtype=np.float64)
+    placed = np.stack(
+        [box.across(data[:, 0]), box.along(data[:, 1]), box.up(data[:, 2])], axis=1
+    )
+    return placed.astype(np.float32), data[:, 3]
+
+
+def _drawn(count: int) -> list[int]:
+    """Which of `count` rows or columns the wire draws: every k-th, and the last.
+
+    The step leaves about `WIRE_LINES` lines, and the last sample is always
+    among them so the wire's rim is the grid's own rim on every side.
+    """
+    step = max(1, round((count - 1) / WIRE_LINES))
+    picked = list(range(0, count, step))
+    if picked[-1] != count - 1:
+        picked.append(count - 1)
+    return picked
+
+
+def _strand(
+    points: list[tuple[float, float, float, float]],
+    i: int,
+    j: int,
+    across: bool,
+    xs: np.ndarray,
+    ys: np.ndarray,
+    zs: np.ndarray,
+    finite: np.ndarray,
+    shading: np.ndarray,
+    lit: np.ndarray,
+    boundary: evaluate.Boundary | None,
+    zspan: tuple[float, float],
+) -> None:
+    """One grid step of a wire line: append what survives of it to `points`.
+
+    The segment from sample `(i, j)` to the next sample along x (`across`) or
+    along y, in data coordinates with a shade per end. An end that is not real
+    is replaced by the refined crossing on the edge - read through `_crossing`,
+    against the cell the edge borders, so the wire's boundary points and their
+    shades are exactly the mesh's - and a segment with no crossing to end on is
+    dropped, which is the un-refined behavior. What remains is trimmed to the
+    box's z.
+    """
+    if across:
+        ends = (i, j), (i + 1, j)
+        cell, k = ((i, j), 0) if j + 1 < zs.shape[1] else ((i, j - 1), 2)
+    else:
+        ends = (i, j), (i, j + 1)
+        cell, k = ((i, j), 3) if i + 1 < zs.shape[0] else ((i - 1, j), 1)
+    kept = bool(finite[ends[0]]), bool(finite[ends[1]])
+    if not any(kept):
+        return
+
+    def corner(at: tuple[int, int]) -> tuple[float, float, float, float]:
+        return (float(xs[at[0]]), float(ys[at[1]]), float(zs[at]), float(shading[at]))
+
+    if all(kept):
+        segment = corner(ends[0]), corner(ends[1])
+    else:
+        crossing = _crossing(cell[0], cell[1], k, xs, ys, lit, boundary, zspan)
+        if crossing is None:
+            return
+        segment = (corner(ends[0]), crossing) if kept[0] else (crossing, corner(ends[1]))
+    trimmed = _trimmed_segment(segment[0], segment[1], *zspan)
+    if trimmed is not None:
+        points.extend(trimmed)
+
+
+def _trimmed_segment(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+    low: float,
+    high: float,
+) -> tuple[tuple[float, float, float, float], ...] | None:
+    """The part of the segment `a`-`b` inside the box's z, or None for none.
+
+    The segment's own case of what `_trimmed` does for a polygon: the clip
+    boundary is a known height, so the crossing is plain linear interpolation
+    over every component, position and shade alike, and needs no evaluation.
+    """
+    first, last = 0.0, 1.0
+    for bound, sign in ((low, 1.0), (high, -1.0)):
+        into_a, into_b = sign * (a[2] - bound), sign * (b[2] - bound)
+        if into_a < 0.0 and into_b < 0.0:
+            return None
+        if into_a < 0.0:
+            first = max(first, into_a / (into_a - into_b))
+        elif into_b < 0.0:
+            last = min(last, into_a / (into_a - into_b))
+    if last <= first:
+        return None
+
+    def between(t: float) -> tuple[float, float, float, float]:
+        x, y, z, shade = ((1.0 - t) * p + t * q for p, q in zip(a, b))
+        return (x, y, z, shade)
+
+    return between(first), between(last)
+
+
 def _no_faces() -> np.ndarray:
     return np.empty((0, 3), dtype=np.uint32)
 
@@ -792,7 +958,9 @@ class Legend(QtWidgets.QFrame):
 class Window3D(QtWidgets.QMainWindow):
     """One top-level 3D plot window and everything that happens inside it."""
 
-    def __init__(self, number: int, host: Any, *, grid: int = DEFAULT_GRID) -> None:
+    def __init__(
+        self, number: int, host: Any, *, grid: int = DEFAULT_GRID, wire: bool = False
+    ) -> None:
         super().__init__()
         self.number = number
         self.kind = protocol.WindowKind.THREE_D
@@ -806,6 +974,10 @@ class Window3D(QtWidgets.QMainWindow):
         # is: a window never samples finer than it can draw, whoever asked.
         square = int(min(max(grid, 2), MAX_GRID))
         self.grid = (square, square)
+        #: How a surface arriving here is drawn - the sticky look the last
+        #: surface anywhere was left in, and thereafter whatever this window's
+        #: own `mesh` box says.
+        self.wired = bool(wire)
         #: The z range now drawn, and the one the inspector nailed down where
         #: somebody typed it - a typed extent is an answer and is not autoscaled
         #: away by the next surface.
@@ -858,7 +1030,8 @@ class Window3D(QtWidgets.QMainWindow):
         """The view between a toolbar and a status line.
 
         The toolbar holds the two things that change what was computed - the
-        rectangle and how finely it is sampled - the door to the numbers
+        rectangle and how finely it is sampled - the `mesh` box that draws
+        every surface as the wire grid of its samples, the door to the numbers
         behind the picture, and the clear that starts the picture over.
         Everything else about a 3D window is the camera, and the camera is
         the mouse.
@@ -895,6 +1068,14 @@ class Window3D(QtWidgets.QMainWindow):
         bar.addWidget(QtWidgets.QLabel(" x "))
         bar.addWidget(self._field("ny", self.grid[1]))
         bar.addWidget(QtWidgets.QLabel("  "))
+        self.mesh_action = QtGui.QAction("mesh", self)
+        self.mesh_action.setCheckable(True)
+        self.mesh_action.setChecked(self.wired)
+        self.mesh_action.setToolTip(
+            "Draw every surface as the wire grid of its samples (M)"
+        )
+        self.mesh_action.triggered.connect(self._mesh_mode)
+        bar.addAction(self.mesh_action)
         self.inspect = QtGui.QAction("view...", self)
         self.inspect.setToolTip("The box and the camera as numbers")
         self.inspect.triggered.connect(self.inspector)
@@ -957,12 +1138,16 @@ class Window3D(QtWidgets.QMainWindow):
         """Put a surface in the window, replacing one with the same identity."""
         existing = self.find(surface.worksheet, surface.label)
         if existing is not None:
+            # A replacement keeps the look of what it replaces - the color and
+            # the wire choice - so re-plotting does not reshuffle the picture.
             surface.color, surface.paper = existing.color, existing.paper
+            surface.wire = existing.wire
             self.remove(existing)
         else:
             index = self._counter % len(SOLID_PALETTE)
             surface.color, surface.paper = SOLID_PALETTE[index], SOLID_PAPER[index]
             self._counter += 1
+            surface.wire = self.wired
         surface.item = gl.GLMeshItem(
             smooth=True, computeNormals=False, shader=None, glOptions="opaque"
         )
@@ -970,6 +1155,18 @@ class Window3D(QtWidgets.QMainWindow):
         # draw itself on the next frame, and the sampling has not answered yet.
         surface.item.setVisible(False)
         self.view.addItem(surface.item)
+        # The wire drawing of the same samples, shown in the solid's place
+        # while the surface's `wire` is on. Opaque rather than blended, so the
+        # depth buffer sorts the wire against the solids beside it the same
+        # way it sorts two solids.
+        surface.wires = gl.GLLinePlotItem(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            mode="lines",
+            antialias=True,
+            glOptions="opaque",
+        )
+        surface.wires.setVisible(False)
+        self.view.addItem(surface.wires)
         self._state, self._context = surface.state, surface.context
         self.plots.append(surface)
         self._relabel()
@@ -991,6 +1188,9 @@ class Window3D(QtWidgets.QMainWindow):
         if surface.item is not None:
             self.view.removeItem(surface.item)
             surface.item = None
+        if surface.wires is not None:
+            self.view.removeItem(surface.wires)
+            surface.wires = None
         if surface in self.plots:
             self.plots.remove(surface)
         self._relabel()
@@ -1170,16 +1370,34 @@ class Window3D(QtWidgets.QMainWindow):
         self.rays.translate(*origin)
 
     def _draw(self, surface: Surface) -> None:
-        """Build one surface's triangles for the box as it now stands."""
+        """Build one surface's triangles - or its wire - for the box as it stands.
+
+        One of the two items draws at a time. The wire is see-through, which
+        is the retro look and most of the point: nothing is drawn underneath
+        it, and where a wire surface and a solid one cross, the depth buffer
+        sorts them as it sorts two solids.
+        """
         if surface.item is None:
             return
+        color = surface.paper if self._papered else surface.color
+        if surface.wire:
+            surface.item.setVisible(False)
+            points, shades = wire(
+                surface.xs, surface.ys, surface.values, self.box_now, surface.boundary
+            )
+            if not points.size:
+                surface.wires.setVisible(False)
+                return
+            surface.wires.setData(pos=points, color=brightened(shades, color))
+            surface.wires.setVisible(surface.visible)
+            return
+        surface.wires.setVisible(False)
         vertexes, faces, shading = mesh(
             surface.xs, surface.ys, surface.values, self.box_now, surface.boundary
         )
         if not faces.size:
             surface.item.setVisible(False)
             return
-        color = surface.paper if self._papered else surface.color
         surface.item.setMeshData(
             vertexes=vertexes, faces=faces, vertexColors=brightened(shading, color)
         )
@@ -1464,14 +1682,43 @@ class Window3D(QtWidgets.QMainWindow):
         surface = self.plots[row]
         if button == QtCore.Qt.MouseButton.RightButton:
             menu = QtWidgets.QMenu(self)
+            menu.addAction(
+                "Draw solid" if surface.wire else "Draw as wire mesh",
+                lambda: self.toggle_wire(surface),
+            )
             menu.addAction(f"Remove {surface.named}", lambda: self.remove(surface))
             menu.exec(QtGui.QCursor.pos())
             return
         surface.hidden = not surface.hidden
-        if surface.item is not None:
-            surface.item.setVisible(surface.visible)
         self._relabel()
+        # The box is recomputed over what is visible now, and redrawing every
+        # surface to it is also what shows or hides the right item - the solid
+        # or the wire - for the surface that was clicked.
         self._frame()
+
+    def _mesh_mode(self, checked: bool) -> None:
+        """The toolbar's `mesh` box: every surface as wire, or every one solid.
+
+        The property belongs to the surfaces - the legend's right-click
+        carries the per-surface exception - so the box flips them all rather
+        than holding a state of its own. The look it leaves is the sticky one:
+        the next surface, here or in the next window, arrives drawn this way.
+        """
+        self.wired = bool(checked)
+        for surface in self.plots:
+            surface.wire = self.wired
+            self._draw(surface)
+        self.host.adjusted(wire=self.wired)
+
+    def toggle_wire(self, surface: Surface) -> None:
+        """One surface between wire and solid: the legend's per-surface override.
+
+        An exception rather than a default, so it hands nothing back to the
+        sticky preferences and leaves the toolbar box - the every-surface
+        control - where it was.
+        """
+        surface.wire = not surface.wire
+        self._draw(surface)
 
     # -- export ------------------------------------------------------------
 
@@ -1567,6 +1814,11 @@ class Window3D(QtWidgets.QMainWindow):
         elif key == keys.Key_L:
             self._legend = not self._legend
             self.legend.setVisible(self._legend and bool(self.plots))
+        elif key == keys.Key_M:
+            # M rather than W, deliberately: Ctrl-W closes the window, and a
+            # frequent toggle one slipped modifier from destroying the picture
+            # would be a poor place for it.
+            self.mesh_action.trigger()
         elif key == keys.Key_Delete:
             self.clear()
         elif key == keys.Key_Left:

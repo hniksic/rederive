@@ -386,6 +386,14 @@ PLOT_FIELDS: tuple[Field, ...] = (
         maximum=PLOT_POINT_MAXIMUM,
         recorded=False,
     ),
+    ChoiceField(
+        "Mesh",
+        "How a new surface is drawn",
+        "PlotMesh",
+        ("Solid", "Wire"),
+        "Solid",
+        recorded=False,
+    ),
 )
 
 

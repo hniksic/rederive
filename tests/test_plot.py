@@ -607,6 +607,76 @@ def test_an_unbounded_boundary_value_is_trimmed_by_the_clip(solid):
     assert np.isfinite(shading).all()
 
 
+# -- the wire: the grid of the samples, on request -------------------------------
+#
+# Section 10's geometry, pure like the mesh's: row and column polylines built
+# from the same arrays, thinned in the drawing and never in the sampling,
+# ending on section 9's refined boundary and trimmed by the same clip.
+
+
+def test_the_wire_is_thinned_rows_of_dense_polylines(solid):
+    # At 64 x 64 the full grid would be gray fuzz, so only every k-th row and
+    # column is drawn - roughly 16 to 24 each way - while every drawn line
+    # keeps the full sample spacing: each segment is one grid step long.
+    xs, ys, values = _grid(lambda x, y: x + y, n=64)
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-4.0, 4.0))
+    points, shades = solid.wire(xs, ys, values, box)
+    assert len(points) % 2 == 0
+    assert len(shades) == len(points)
+    segments = points.reshape(-1, 2, 3)
+    step = solid.WORLD / 63
+    for axis in (0, 1):
+        lines = segments[np.isclose(segments[:, 0, axis], segments[:, 1, axis])]
+        drawn = np.unique(np.round(lines[:, 0, axis], 5))
+        assert 16 <= len(drawn) <= 24
+        # The first and last sample rows are always among the lines drawn.
+        assert np.isclose(drawn.min(), -solid.HALF)
+        assert np.isclose(drawn.max(), solid.HALF)
+        # Dense polylines: every segment spans exactly one grid step.
+        along = lines[:, 1, 1 - axis] - lines[:, 0, 1 - axis]
+        assert np.abs(along) == pytest.approx(np.full(len(along), step), rel=1e-4)
+    assert 0.0 < shades.min() <= shades.max() <= 1.0
+
+
+def test_the_wires_rim_ends_on_the_refined_boundary(solid):
+    # The acceptance case: the dome in wire has a clean circular rim, the wire
+    # ending on the unit circle rather than a grid step short of it, and no
+    # segment reaching past it - holes appear in the wire exactly where they
+    # appear in the solid.
+    xs, ys, values = _grid(_dome, n=64)
+    boundary = evaluate.grid_boundary(_dome, xs, ys, values)
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (0.0, 1.0))
+    points, shades = solid.wire(xs, ys, values, box, boundary)
+    cell = xs[1] - xs[0]
+    scale = (2.0 - -2.0) / solid.WORLD
+    radius = np.hypot(points[:, 0] * scale, points[:, 1] * scale)
+    assert radius.max() <= 1.0 + 1e-6
+    assert radius.max() >= 1.0 - cell / 8
+    assert np.isfinite(shades).all()
+    # Without the refinement the wire stops at the last defined sample.
+    bare = solid.wire(xs, ys, values, box)[0]
+    short = np.hypot(bare[:, 0] * scale, bare[:, 1] * scale)
+    assert short.max() < radius.max()
+
+
+def test_a_wire_segment_beyond_the_clip_is_trimmed_to_it(solid):
+    # The clip trims the wire by interpolation as it trims the faces - a
+    # boundary end whose limit is unbounded included - so the wire ends on the
+    # clip plane rather than outside the box or a sample short of it.
+    def logged(x, y):
+        with np.errstate(all="ignore"):
+            return np.log(x) + 0.0 * y
+
+    xs, ys, values = _grid(logged, n=64)
+    boundary = evaluate.grid_boundary(logged, xs, ys, values)
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-2.0, 1.0))
+    points, _ = solid.wire(xs, ys, values, box, boundary)
+    top = box.height / 2
+    assert points[:, 2].min() >= -top - 1e-5
+    assert points[:, 2].max() <= top + 1e-5
+    assert points[:, 2].min() == pytest.approx(-top, abs=1e-5)
+
+
 # -- window titles ---------------------------------------------------------------
 #
 # A window is titled by what it holds; the number that keys the protocol is no
@@ -1285,6 +1355,100 @@ def test_the_3d_clear_button_empties_its_own_window(deep, solid):
     assert deep.windowTitle() == "Rederive 3D plot"
 
 
+def _surface(solid, text, label="#1"):
+    return solid.Surface(
+        worksheet=1,
+        label=label,
+        text=text,
+        kind=PlotKind.SURFACE,
+        node=parsed(text),
+        context=Context(),
+        options=plots.Options(variables=("x", "y")),
+        state=ParseState(),
+    )
+
+
+def _pressed_m(window):
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    window.keyPressEvent(
+        QtGui.QKeyEvent(
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_M,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
+def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
+    # The toolbar box flips every surface in the window to wire and back, M is
+    # its key, and the look it leaves is handed back as the sticky value.
+    one = _surface(solid, "x*y")
+    two = _surface(solid, "x+y", label="#2")
+    deep.add(one)
+    deep.add(two)
+    assert not one.wire and not two.wire
+    deep.mesh_action.trigger()
+    assert one.wire and two.wire
+    assert deep.host.adjustments == {"wire": True}
+    # The solid item steps aside and the wire draws in its place.
+    assert not one.item.visible() and one.wires.visible()
+    _pressed_m(deep)
+    assert not one.wire and not two.wire
+    assert deep.host.adjustments == {"wire": False}
+    assert one.item.visible() and not one.wires.visible()
+
+
+def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep, solid):
+    # The two-level shape a data plot's points already use: the per-surface
+    # right-click is the exception, so one surface goes wire while the other
+    # stays solid, and no sticky value is handed back.
+    one = _surface(solid, "x*y")
+    two = _surface(solid, "x+y", label="#2")
+    deep.add(one)
+    deep.add(two)
+    deep.toggle_wire(one)
+    assert one.wire and not two.wire
+    assert one.wires.visible() and two.item.visible()
+    assert deep.host.adjustments == {}
+    deep.toggle_wire(one)
+    assert not one.wire
+    assert deep.host.adjustments == {}
+
+
+def test_a_surface_arrives_in_the_look_the_window_was_left_in(qt, solid):
+    # Sticky in the sense of section 7: a window built with the wire look
+    # opens with the box checked and gives it to every surface that arrives,
+    # while a replacement keeps the look of the surface it replaces.
+    window = solid.Window3D(1, InlineHost(), wire=True)
+    try:
+        assert window.mesh_action.isChecked()
+        one = _surface(solid, "x*y")
+        window.add(one)
+        assert one.wire
+        window.toggle_wire(one)
+        replaced = _surface(solid, "x^2-y^2")
+        window.add(replaced)
+        assert not replaced.wire
+    finally:
+        window.close()
+
+
+def test_the_wire_darkens_for_export_like_every_other_color(deep, solid):
+    surface = _surface(solid, "x*y")
+    deep.add(surface)
+    deep.toggle_wire(surface)
+    points, shades = solid.wire(
+        surface.xs, surface.ys, surface.values, deep.box_now, surface.boundary
+    )
+    deep._papered = True
+    deep._draw(surface)
+    assert np.allclose(surface.wires.color, solid.brightened(shades, surface.paper))
+    deep._papered = False
+    deep._draw(surface)
+    assert np.allclose(surface.wires.color, solid.brightened(shades, surface.color))
+
+
 # -- the receiver ---------------------------------------------------------------
 #
 # One pointer, and it is the window the user last touched: the host learns it
@@ -1433,6 +1597,19 @@ def test_the_grid_handed_back_is_the_next_surface_windows_grid(registry, solid):
     assert window.grid == (32, 32)
 
 
+def test_the_wire_handed_back_is_the_next_surface_windows_look(registry, solid):
+    # The round trip of section 10's stickiness: the mesh box moved somewhere,
+    # the host kept the value and told the app, and the next 3D window opens
+    # with the box checked - so the next surface arrives as wire.
+    registry.adjusted(wire=True)
+    assert registry.appside.poll(1.0)
+    _, event = registry.appside.recv()
+    assert event == plots.Preferred(plots.Prefer(wire=True))
+    window = registry._target(plots.Where.NEW, plots.WindowKind.THREE_D)
+    assert window.wired
+    assert window.mesh_action.isChecked()
+
+
 # -- the gallery ---------------------------------------------------------------
 
 
@@ -1481,9 +1658,16 @@ def test_the_preferences_translate_the_words_the_settings_hold():
     # which is what makes a session that never touched a sticky control behave
     # like one that touched it and put it back.
     assert preferences(settings) == plots.Prefer()
-    settings.apply({"PlotGrid": 128, "PlotPoints": "Connected", "PlotPointSize": 8})
+    settings.apply(
+        {
+            "PlotGrid": 128,
+            "PlotPoints": "Connected",
+            "PlotPointSize": 8,
+            "PlotMesh": "Wire",
+        }
+    )
     assert preferences(settings) == plots.Prefer(
-        grid=128, connected=True, point_size=8.0
+        grid=128, connected=True, point_size=8.0, wire=True
     )
 
 
@@ -1491,7 +1675,7 @@ def test_what_a_host_reports_round_trips_through_the_settings():
     from rederive.model.plotting import learned, preferences
     from rederive.model.settings import Settings
 
-    reported = plots.Prefer(grid=32, connected=True, point_size=8.0)
+    reported = plots.Prefer(grid=32, connected=True, point_size=8.0, wire=True)
     settings = Settings()
     settings.apply(learned(reported))
     # The two translations are inverses, so what a toggle moved is exactly
@@ -1505,10 +1689,10 @@ def test_the_preferences_travel_in_a_state_file():
     from rederive.model.settings import Settings
 
     written = Settings()
-    written.apply({"PlotGrid": 32, "PlotPoints": "Connected"})
+    written.apply({"PlotGrid": 32, "PlotPoints": "Connected", "PlotMesh": "Wire"})
     read = Settings()
     assert state.read(state.write(written), read) == (0, "")
-    assert preferences(read) == plots.Prefer(grid=32, connected=True)
+    assert preferences(read) == plots.Prefer(grid=32, connected=True, wire=True)
 
 
 def test_equal_scales_is_nobodys_setting_and_nothing_persists_it():
@@ -1852,7 +2036,9 @@ async def test_the_options_plot_screen_is_gone(app):
 async def test_a_control_the_host_reports_becomes_the_sticky_default(app):
     async with app.run_test() as pilot:
         app._plot_event(
-            plots.Preferred(plots.Prefer(grid=32, connected=True, point_size=8.0))
+            plots.Preferred(
+                plots.Prefer(grid=32, connected=True, point_size=8.0, wire=True)
+            )
         )
         await pilot.pause()
         # The values land in the settings store, which is where they outlive
@@ -1860,9 +2046,10 @@ async def test_a_control_the_host_reports_becomes_the_sticky_default(app):
         assert app.settings["PlotGrid"] == 32
         assert app.settings["PlotPoints"] == "Connected"
         assert app.settings["PlotPointSize"] == 8
+        assert app.settings["PlotMesh"] == "Wire"
         # ...and the proxy is handed them back, for the host after this one.
         assert app.plots.preferences[-1] == plots.Prefer(
-            grid=32, connected=True, point_size=8.0
+            grid=32, connected=True, point_size=8.0, wire=True
         )
         # Nothing is recorded and nothing is said: the user is looking at the
         # control they just moved.
@@ -1871,13 +2058,16 @@ async def test_a_control_the_host_reports_becomes_the_sticky_default(app):
 
 async def test_what_a_host_reported_is_what_a_state_file_carries(app, tmp_path):
     async with app.run_test() as pilot:
-        app._plot_event(plots.Preferred(plots.Prefer(connected=True, point_size=8.0)))
+        app._plot_event(
+            plots.Preferred(plots.Prefer(connected=True, point_size=8.0, wire=True))
+        )
         await pilot.pause()
         path = tmp_path / "kept.ini"
         app.session.save_state(path)
         lines = path.read_text().splitlines()
         assert "PlotPoints := Connected" in lines
         assert "PlotPointSize := 8" in lines
+        assert "PlotMesh := Wire" in lines
 
 
 async def test_a_state_file_that_moves_a_preference_reaches_the_plots(app, tmp_path):

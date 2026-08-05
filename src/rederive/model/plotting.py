@@ -192,6 +192,7 @@ def preferences(settings: Settings) -> Prefer:
         grid=int(settings["PlotGrid"]),
         connected=settings["PlotPoints"] == "Connected",
         point_size=float(settings["PlotPointSize"]),
+        wire=settings["PlotMesh"] == "Wire",
     )
 
 
@@ -206,6 +207,7 @@ def learned(preferences: Prefer) -> dict[str, str | int]:
         "PlotGrid": int(preferences.grid),
         "PlotPoints": "Connected" if preferences.connected else "Discrete",
         "PlotPointSize": int(round(preferences.point_size)),
+        "PlotMesh": "Wire" if preferences.wire else "Solid",
     }
 
 

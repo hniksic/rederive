@@ -259,8 +259,9 @@ class Prefer:
     A request of its own rather than more fields on `Options`, because the two
     are about different things: `Options` is what one expression is drawn with
     and this is what the next surface and the next data plot start out as -
-    the grid the last surface was given, and the way the last data plot was
-    left. Widening `Options` would have meant sending the same values with
+    the grid and the wire look the last surface was given, and the way the
+    last data plot was left. Widening `Options` would have meant sending the
+    same values with
     every plot and leaving the host to guess which of them it was being told
     about.
 
@@ -284,6 +285,7 @@ class Prefer:
     grid: int = 64
     connected: bool = False
     point_size: float = 5.0
+    wire: bool = False
 
 
 @dataclass(frozen=True)
