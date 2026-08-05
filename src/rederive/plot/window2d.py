@@ -67,6 +67,15 @@ GRID_ALPHA = 0.18
 TEXT_COLOR = "#d0d0d0"
 STATUS_BACKGROUND = "#16161c"
 
+#: How wide the stroke that draws mathematics is, in logical pixels. The curve
+#: pen, a data plot's connecting polyline, the legend sample drawn with the
+#: item's own pen and the export pens all take their width from here, and the
+#: 3D window's wire borrows it, so the weight is the same on screen, in the
+#: swatch and in a pasted PNG. The furniture keeps its hairlines - axis lines
+#: at one pixel, the grid at its alpha - which is what makes a curve read as
+#: the subject rather than as more scaffolding.
+CURVE_WIDTH = 2.0
+
 #: The curve palette, cycled in this order. Bright on the dark canvas, and
 #: eight of them because a ninth curve in a window is rare enough that
 #: repeating a color there costs nothing.
@@ -691,6 +700,19 @@ class Window2D(QtWidgets.QMainWindow):
         self._show_trange()
         self._start(plot, fresh=True)
 
+    def _pen(self, color: str) -> Any:
+        """A stroke of `CURVE_WIDTH` logical pixels in the given color.
+
+        Cosmetic, said explicitly: the width holds while the view zooms, which
+        is what a curve wants. Qt reads a cosmetic width in device pixels,
+        ignoring the high-DPI scale along with the zoom - measured, not
+        presumed - so the screen's ratio is multiplied in to keep the weight
+        the same to the eye on a 1x and a 2x screen.
+        """
+        return pg.mkPen(
+            color, width=CURVE_WIDTH * self.devicePixelRatioF(), cosmetic=True
+        )
+
     def _made(self, plot: Plot) -> Any:
         """The drawing item for a plot of this kind.
 
@@ -703,7 +725,7 @@ class Window2D(QtWidgets.QMainWindow):
         A region has no stroke at all and hangs an image behind this item,
         which is then an empty curve carrying the color the legend reads.
         """
-        pen = pg.mkPen(plot.color, width=1)
+        pen = self._pen(plot.color)
         if plot.kind is PlotKind.DATA:
             item = pg.PlotDataItem(
                 np.empty(0),
@@ -711,7 +733,10 @@ class Window2D(QtWidgets.QMainWindow):
                 pen=pen if plot.connected else None,
                 symbol="o",
                 symbolSize=plot.point_size,
-                symbolPen=pen,
+                # The symbols keep a one-pixel outline: how big a point draws
+                # is the point size's own setting, and only the line joining
+                # the points takes the curve's weight.
+                symbolPen=pg.mkPen(plot.color),
                 symbolBrush=pg.mkBrush(plot.color),
                 antialias=True,
             )
@@ -1763,8 +1788,7 @@ class Window2D(QtWidgets.QMainWindow):
         test and the visibility it already has all survive a change of mind
         about how big a point is.
         """
-        pen = pg.mkPen(plot.color, width=1)
-        plot.item.setPen(pen if plot.connected else None)
+        plot.item.setPen(self._pen(plot.color) if plot.connected else None)
         plot.item.setSymbolSize(plot.point_size)
 
     def _remove_pointed(self) -> None:
@@ -1820,7 +1844,7 @@ class Window2D(QtWidgets.QMainWindow):
     # -- keys --------------------------------------------------------------
 
     def event(self, ev: Any) -> bool:
-        """Take Tab before the focus chain does, while a marker wants it.
+        """Take Tab while a marker wants it, and re-pen on a density change.
 
         Qt reads Tab as "next widget" in `QWidget.event`, above the key
         handler, so a key binding on it never fires; while trace is on, Tab is
@@ -1834,6 +1858,19 @@ class Window2D(QtWidgets.QMainWindow):
         ):
             self.keyPressEvent(ev)
             return True
+        # The pens carry the screen's pixel ratio (see `_pen`), so landing on
+        # a screen of another density is the one event that changes what they
+        # should be. While an export holds the paper pens on they are left
+        # alone: they are sized for the file, not for the screen.
+        if (
+            ev.type() == QtCore.QEvent.Type.DevicePixelRatioChange
+            and self._paper is None
+        ):
+            for plot in self.plots:
+                if plot.item is None:
+                    continue
+                if plot.kind is not PlotKind.DATA or plot.connected:
+                    plot.item.setPen(self._pen(plot.color))
         return bool(super().event(ev))
 
     def keyPressEvent(self, ev: Any) -> None:
@@ -2174,8 +2211,11 @@ class _on_paper:
             # A data plot with its points loose has no stroke to recolor, and
             # giving it one would draw a polyline nobody asked for; its symbols
             # are what have to change color, and a region's shading is.
+            # The paper pens take `CURVE_WIDTH` plain: the exporters render the
+            # scene at its logical size with no high-DPI scale, so the plain
+            # constant is what puts the screen's weight in the file.
             if plot.kind is not PlotKind.DATA or plot.connected:
-                plot.item.setPen(pg.mkPen(plot.paper, width=1))
+                plot.item.setPen(pg.mkPen(plot.paper, width=CURVE_WIDTH, cosmetic=True))
             if plot.kind is PlotKind.DATA:
                 plot.item.setSymbolPen(pg.mkPen(plot.paper))
                 plot.item.setSymbolBrush(pg.mkBrush(plot.paper))

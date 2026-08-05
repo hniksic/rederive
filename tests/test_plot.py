@@ -1250,6 +1250,59 @@ def test_the_axis_label_follows_the_polar_mode(flat):
     assert axis.labelText == "t"
 
 
+# -- the stroke weight: curves out-weigh the furniture ---------------------------
+
+
+def test_a_curve_out_weighs_the_axes_and_the_grid(flat):
+    from rederive.plot.window2d import CURVE_WIDTH
+
+    plot = _plot("2*x + 3", PlotKind.CURVE, ("x",))
+    flat.add(plot)
+    pen = plot.item.opts["pen"]
+    # Two logical pixels - the screen's density multiplied in - and cosmetic,
+    # so zooming the view never fattens or thins the stroke.
+    assert pen.widthF() == CURVE_WIDTH * flat.devicePixelRatioF()
+    assert pen.isCosmetic()
+    # The furniture keeps its hairlines: the origin axes locate the curve, and
+    # the curve plainly out-weighs them.
+    for line in flat.axes:
+        assert line.pen.widthF() == 1.0
+    # The legend sample is drawn with the item's own pen, so the swatch shows
+    # the weight the canvas does.
+    sample, _ = flat.legend.items[0]
+    assert sample.item is plot.item
+
+
+def test_a_data_plots_line_takes_the_weight_and_its_points_do_not(flat):
+    from rederive.plot.window2d import CURVE_WIDTH
+
+    plot = _plot("[[1, 2], [3, 4]]", PlotKind.DATA, ())
+    flat.add(plot)
+    flat._pointed = plot
+    flat._toggle_connected()
+    pen = plot.item.opts["pen"]
+    assert pen.widthF() == CURVE_WIDTH * flat.devicePixelRatioF()
+    assert pen.isCosmetic()
+    # The point size is its own setting: the symbol outline stays at one, so
+    # fattening the connecting line does not fatten every point with it.
+    assert plot.item.opts["symbolPen"].widthF() == 1.0
+
+
+def test_the_export_pens_carry_the_same_weight(flat):
+    from rederive.plot.window2d import CURVE_WIDTH, _on_paper
+
+    plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
+    flat.add(plot)
+    with _on_paper(flat):
+        # The exporters render the scene with no high-DPI scale, so the paper
+        # pens take the plain constant: the file carries the weight a 1x
+        # screen shows.
+        pen = plot.item.opts["pen"]
+        assert pen.widthF() == CURVE_WIDTH
+        assert pen.isCosmetic()
+    assert plot.item.opts["pen"].widthF() == CURVE_WIDTH * flat.devicePixelRatioF()
+
+
 @pytest.fixture
 def deep(qt, solid):
     window = solid.Window3D(1, InlineHost())
@@ -1397,6 +1450,16 @@ def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
     assert not one.wire and not two.wire
     assert deep.host.adjustments == {"wire": False}
     assert one.item.visible() and not one.wires.visible()
+
+
+def test_the_wire_draws_at_the_curves_weight(deep, solid):
+    from rederive.plot.window2d import CURVE_WIDTH
+
+    # The one constant of the 2D window's strokes reaches the wire too, so a
+    # wire surface carries the weight a curve does.
+    surface = _surface(solid, "x*y")
+    deep.add(surface)
+    assert surface.wires.width == CURVE_WIDTH
 
 
 def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep, solid):

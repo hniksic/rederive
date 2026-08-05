@@ -60,7 +60,7 @@ from rederive.engine.context import Context
 from rederive.model.expr import Node
 from rederive.plot import evaluate, protocol
 from rederive.plot.protocol import Options, PlotKind
-from rederive.plot.window2d import PALETTE, PAPER_PALETTE, naming
+from rederive.plot.window2d import CURVE_WIDTH, PALETTE, PAPER_PALETTE, naming
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 __all__ = ["Box", "Surface", "Window3D", "mesh", "ticks", "wire"]
@@ -1158,10 +1158,13 @@ class Window3D(QtWidgets.QMainWindow):
         # The wire drawing of the same samples, shown in the solid's place
         # while the surface's `wire` is on. Opaque rather than blended, so the
         # depth buffer sorts the wire against the solids beside it the same
-        # way it sorts two solids.
+        # way it sorts two solids. It draws at the curve's weight, best-effort:
+        # a core forward-compatible GL profile refuses line widths other than
+        # one, and pyqtgraph skips the width call there.
         surface.wires = gl.GLLinePlotItem(
             pos=np.zeros((0, 3), dtype=np.float32),
             mode="lines",
+            width=CURVE_WIDTH,
             antialias=True,
             glOptions="opaque",
         )
