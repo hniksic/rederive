@@ -36,10 +36,7 @@ from multiprocessing.process import BaseProcess
 from rederive.plot import protocol
 from rederive.plot.protocol import Event, Refused, Reply, Request
 
-__all__ = ["DIED", "NO_WINDOW", "PlotError", "PlotProxy"]
-
-#: What the requests that are about existing windows say when there are none.
-NO_WINDOW = "no plot window"
+__all__ = ["DIED", "PlotError", "PlotProxy"]
 
 #: How long to wait for a freshly spawned host to say it has imported Qt,
 #: sympy and pyqtgraph and opened its connection to the display. Generous: a
@@ -90,7 +87,7 @@ class PlotError(Exception):
 
 
 class PlotProxy:
-    """The plot host as six method calls, with a process behind them or not.
+    """The plot host as four method calls, with a process behind them or not.
 
     One request is in flight at a time. The host is single-threaded from the
     protocol's point of view - its Qt loop takes requests in the order they
@@ -135,41 +132,19 @@ class PlotProxy:
         process = self._process
         return process is not None and process.is_alive()
 
-    # -- the six requests --------------------------------------------------
+    # -- the four requests -------------------------------------------------
 
-    def add(self, request: protocol.Add) -> int:
-        """Plot an expression, and say which window took it."""
+    def add(self, request: protocol.Add) -> protocol.Placed:
+        """Plot an expression, and say which window took it.
+
+        The whole reply comes back rather than the number alone, because the
+        acknowledgement message turns on more than the number: whether the
+        plot replaced a curve already there is the host's to know.
+        """
         reply = self._ask(request)
         if isinstance(reply, protocol.Placed):
-            return reply.window
-        raise PlotError(_unexpected(reply))
-
-    def delete(self, request: protocol.Delete) -> protocol.Removed:
-        """Take plots out of a window, and say how many came out of which."""
-        self._standing()
-        reply = self._ask(request)
-        if isinstance(reply, protocol.Removed):
             return reply
         raise PlotError(_unexpected(reply))
-
-    def set_current(self, window: int) -> int:
-        """Make a window the current one for its kind."""
-        self._standing()
-        reply = self._ask(protocol.SetCurrent(window))
-        if isinstance(reply, protocol.Placed):
-            return reply.window
-        raise PlotError(_unexpected(reply))
-
-    def _standing(self) -> None:
-        """Refuse the requests that are only about windows that exist.
-
-        Adding a plot starts a host, since a plot is what a host is for.
-        Deleting one and naming a current one are not: starting a Qt toolkit
-        to be told there is nothing to delete is a wait for an answer that was
-        known before it began.
-        """
-        if not self.running:
-            raise PlotError(NO_WINDOW)
 
     def prefer(self, preferences: protocol.Prefer) -> None:
         """Remember what a new window and a new plot are to be built with.

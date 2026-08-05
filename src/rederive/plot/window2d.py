@@ -174,10 +174,10 @@ FIELDS = frozenset({PlotKind.IMPLICIT, PlotKind.REGION})
 def naming(label: str, text: str) -> str:
     """What a plot is called wherever a window has room for one line of it.
 
-    The label first, because that is what identifies it in the worksheet and
-    what a Delete names it by, and then as much of the expression as fits. Both
-    window kinds name their plots this way, which is why the 3D window borrows
-    this rather than spelling it again.
+    The label first, because that is what identifies it in the worksheet, and
+    then as much of the expression as fits. Both window kinds name their plots
+    this way, which is why the 3D window borrows this rather than spelling it
+    again.
     """
     name = f"{label}  {text}" if label else text
     if len(name) <= NAME_WIDTH:
@@ -385,8 +385,8 @@ class Legend(pg.LegendItem):
     pyqtgraph puts hide/show on the color swatch alone, which is a twenty-pixel
     box beside a name that reads like a button and is not one. Here a click
     anywhere on the row toggles the curve, and a right-click anywhere on it
-    offers to remove the plot - the same deletion the Plot Delete submenu
-    drives from the algebra window.
+    offers to remove the plot - the same removal a right-click on the curve
+    itself offers.
     """
 
     #: The row the pointer is over, by index into the plot list, and what a
@@ -503,11 +503,11 @@ class Window2D(QtWidgets.QMainWindow):
     def _laid_out(self) -> QtWidgets.QWidget:
         """The canvas over a one-line status bar, and a toolbar over both.
 
-        The toolbar holds the toggles that belong to a window rather than to a
-        plot - equal scales now, the polar reading later - because they are the
-        two settings a picture is read differently under, and a toggle that
-        shows its state is worth more than a menu item that has to be opened
-        to be read.
+        The toolbar holds what belongs to the window rather than to one plot:
+        the two toggles a picture is read differently under - equal scales and
+        the polar reading - and the clear that starts the picture over. A
+        toggle that shows its state is worth more than a menu item that has to
+        be opened to be read.
         """
         holder = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(holder)
@@ -526,6 +526,10 @@ class Window2D(QtWidgets.QMainWindow):
         self.polar_toggle.setToolTip("Show every curve as r = f(θ)")
         self.polar_toggle.triggered.connect(self._polar_mode)
         bar.addAction(self.polar_toggle)
+        self.clear_action = QtGui.QAction("clear", self)
+        self.clear_action.setToolTip("Remove every plot from this window (Del)")
+        self.clear_action.triggered.connect(self.clear)
+        bar.addAction(self.clear_action)
         # The parameter range of the selected parametric or polar plot. Hidden
         # while the window holds no such plot, since a range of nothing is not
         # a control; the actions are kept so showing it back is one call.
@@ -742,24 +746,17 @@ class Window2D(QtWidgets.QMainWindow):
         if self._tracing is not None and self._tracing >= len(self.plots):
             self._trace_off()
 
-    def take(self, which: protocol.Which, worksheet: int = 0, label: str = "") -> int:
-        """The Delete submenu, applied to this window's plot list."""
-        if which is protocol.Which.ONE:
-            plot = self.find(worksheet, label)
-            going = [] if plot is None else [plot]
-        elif not self.plots:
-            going = []
-        elif which is protocol.Which.ALL:
-            going = list(self.plots)
-        elif which is protocol.Which.FIRST:
-            going = self.plots[:1]
-        elif which is protocol.Which.LAST:
-            going = self.plots[-1:]
-        else:
-            going = self.plots[:-1]
-        for plot in going:
+    def clear(self) -> None:
+        """The toolbar's clear: start this picture over.
+
+        The window it acts on is the window the button is drawn in, so there
+        is nothing to infer and nothing to report. The range fields go away
+        with the plots that owned them, and the axis labels with the curves
+        they named.
+        """
+        for plot in list(self.plots):
             self.remove(plot)
-        return len(going)
+        self._axis_names()
 
     def _relabel(self, paper: bool = False) -> None:
         """Build the legend again, which is how a removal leaves it right.
@@ -1833,6 +1830,8 @@ class Window2D(QtWidgets.QMainWindow):
         elif key == keys.Key_G:
             self._grid = not self._grid
             self.item.showGrid(x=self._grid, y=self._grid, alpha=GRID_ALPHA)
+        elif key == keys.Key_Delete:
+            self.clear()
         elif key in (keys.Key_Tab, keys.Key_Backtab) and self._tracing is not None:
             self.snap(shift or key == keys.Key_Backtab)
         elif key in (keys.Key_Left, keys.Key_Right):
@@ -1901,6 +1900,21 @@ class Window2D(QtWidgets.QMainWindow):
             self._history.clear()
             self._at = 0
         self._timer.start()
+
+    def changeEvent(self, ev: Any) -> None:
+        """Activation is the user touching this window, and the host's to know.
+
+        The receiver of the next plot follows the window the user last
+        touched, and the activation event is how a click, a raise or an
+        alt-tab says so - whatever the platform's focus policy, including one
+        that hands focus to whatever the pointer crosses.
+        """
+        if (
+            ev.type() == QtCore.QEvent.Type.ActivationChange
+            and self.isActiveWindow()
+        ):
+            self.host.touched(self.number)
+        super().changeEvent(ev)
 
     def closeEvent(self, ev: Any) -> None:
         """The window manager's business, and the host's to hear about."""

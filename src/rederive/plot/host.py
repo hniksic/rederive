@@ -27,12 +27,14 @@ depth- and size-capped, so the worst a pathological expression can do is take
 a while over its own curve.
 
 The host owns the window bookkeeping too, because it is the only place that
-knows when a window closes. Per kind, the *current* window is the one that last
-received a plot or was named, falling back to the most recently used remaining
-window of its kind when the current one closes; across kinds, the *MRU* window
-is whichever last received a plot or a deletion, and that is the one the Delete
-submenu acts on. The current window says so in its own title, so the user can
-see where the next plot will land. The app never tracks any of this; it asks.
+knows when a window closes. One pointer, and it is the window the user last
+touched: the windows report their own activation events - a click, a raise, an
+alt-tab - and the last-activated window of each kind is the *receiver* the
+next plot of that kind lands in. A plot's own arrival counts as a touch, since
+the host raises the window it draws into, and when the receiver closes it
+falls back to the last-activated survivor of its kind. The receiver says so in
+its own title, so the user can see where the next plot will land. The app
+never tracks any of this; it asks.
 
 Traffic goes the other way once: the app tells the host what the settings store
 says a new window and a new plot are to look like. The host holds those
@@ -246,9 +248,9 @@ class Host:
         #: front of its first request, so a host driven by a test draws the
         #: pictures the program's own defaults describe.
         self.preferences = protocol.Prefer()
-        #: Which window is current for each kind, and the order windows have
-        #: been used in, most recent first - which is what a closed current
-        #: window falls back through and what `MRU` reads.
+        #: Which window is the receiver for each kind, and the order windows
+        #: have been touched in, most recent first - fed by the windows' own
+        #: activation events, and what a closed receiver falls back through.
         self._current: dict[WindowKind, int] = {}
         self._used: list[int] = []
         self._made = 0
@@ -300,11 +302,27 @@ class Host:
     def trouble(self, window: int, label: str, message: str) -> None:
         self.event(protocol.Trouble(window, label, message))
 
+    def touched(self, number: int) -> None:
+        """A window the user touched is the receiver for its kind now.
+
+        Fed by the windows' own activation events - a click, a raise, an
+        alt-tab - and by `_add`, since a plot's arrival raises the window it
+        draws into and counts as a touch even where the window manager
+        declines to hand that window the focus. The same bookkeeping either
+        way, which is what makes it bookkeeping that cannot disagree with
+        what the user sees.
+        """
+        window = self.windows.get(number)
+        if window is None:
+            return
+        self._used_now(number)
+        self._make_current(number)
+
     def closed(self, number: int) -> None:
         """A window the user closed: forget it, and hand its kind on.
 
-        The current window of that kind falls back to the most recently used
-        one that is left, so plotting after closing a window lands somewhere
+        The receiver of that kind falls back to the last-activated survivor
+        of its kind, so plotting after closing a window lands somewhere
         rather than opening a new window every time.
         """
         window = self.windows.pop(number, None)
@@ -328,10 +346,6 @@ class Host:
         try:
             if isinstance(request, protocol.Add):
                 self.reply(number, self._add(request))
-            elif isinstance(request, protocol.Delete):
-                self.reply(number, self._delete(request))
-            elif isinstance(request, protocol.SetCurrent):
-                self.reply(number, self._set_current(request))
             elif isinstance(request, protocol.Describe):
                 self.reply(number, self._describe())
             elif isinstance(request, protocol.Prefer):
@@ -364,30 +378,18 @@ class Host:
                 and plot.label not in kept
             ):
                 window.remove(plot)
+        # Whether any of what is about to be drawn replaces a plot already
+        # there, which is the word the acknowledgement message turns on.
+        replaced = any(
+            window.find(plot.worksheet, plot.label) is not None for plot in drawing
+        )
         for plot in drawing:
             window.add(plot)
-        self._used_now(window.number)
-        self._make_current(window.number)
         window.show()
         window.raise_()
         window.activateWindow()
-        return protocol.Placed(window.number)
-
-    def _delete(self, request: protocol.Delete) -> Any:
-        window = self._named(request.window)
-        if isinstance(window, protocol.Refused):
-            return window
-        count = window.take(request.which, request.worksheet, request.label)
-        self._used_now(window.number)
-        return protocol.Removed(window.number, count)
-
-    def _set_current(self, request: protocol.SetCurrent) -> Any:
-        window = self.windows.get(request.window)
-        if window is None:
-            return protocol.Refused(f"there is no plot window {request.window}")
-        self._make_current(window.number)
-        window.raise_()
-        return protocol.Placed(window.number)
+        self.touched(window.number)
+        return protocol.Placed(window.number, replaced)
 
     def _describe(self) -> protocol.Windows:
         return protocol.Windows(
@@ -396,8 +398,12 @@ class Host:
 
     # -- the registry ------------------------------------------------------
 
-    def _target(self, where: int | Where, kind: WindowKind) -> Any:
-        """The window an `Add` is for, making one where that is what is asked."""
+    def _target(self, where: int | Where | None, kind: WindowKind) -> Any:
+        """The window an `Add` is for, making one where that is what is asked.
+
+        Named by nothing, the plot goes to the receiver of its kind - the
+        window the user last touched - and opens one where none exists.
+        """
         if isinstance(where, int):
             window = self.windows.get(where)
             if window is None:
@@ -410,18 +416,6 @@ class Host:
         number = self._current.get(kind, self._recent(kind))
         if number is None:
             return self._open(kind)
-        return self.windows[number]
-
-    def _named(self, where: int | Where) -> Any:
-        """The window a `Delete` is for. Never makes one: there is nothing in it."""
-        if isinstance(where, int):
-            window = self.windows.get(where)
-            if window is None:
-                return protocol.Refused(f"there is no plot window {where}")
-            return window
-        if not self.windows:
-            return protocol.Refused("no plot window")
-        number = self._used[0] if self._used else max(self.windows)
         return self.windows[number]
 
     def _open(self, kind: WindowKind) -> Any:
@@ -457,7 +451,7 @@ class Host:
         return window
 
     def _make_current(self, number: int) -> None:
-        """Make a window current for its kind, and say so in the titles."""
+        """Make a window the receiver for its kind, and say so in the titles."""
         window = self.windows.get(number)
         if window is None:
             return
@@ -472,7 +466,7 @@ class Host:
         self._used.insert(0, number)
 
     def _recent(self, kind: WindowKind) -> int | None:
-        """The most recently used window of `kind`, or the newest one there is."""
+        """The last-touched window of `kind`, or the newest one there is."""
         for number in self._used:
             window = self.windows.get(number)
             if window is not None and window.kind is kind:

@@ -32,7 +32,6 @@ from rederive.syntax import ParseState
 __all__ = [
     "Add",
     "Closed",
-    "Delete",
     "Describe",
     "Done",
     "Event",
@@ -42,14 +41,11 @@ __all__ = [
     "Placed",
     "Prefer",
     "Refused",
-    "Removed",
     "Reply",
     "Request",
-    "SetCurrent",
     "Shutdown",
     "Trouble",
     "Where",
-    "Which",
     "WindowInfo",
     "WindowKind",
     "Windows",
@@ -139,30 +135,12 @@ UNDRAWN = "{kind} plots are not implemented yet"
 class Where(StrEnum):
     """Which window a request is about, where it is not about a numbered one.
 
-    `CURRENT` is the window of the matching kind the next plot lands in,
-    `NEW` asks for one that does not exist yet, and `MRU` is the window that
-    last received a plot or a deletion, whatever its kind - which is what the
-    Delete submenu acts on.
+    `NEW` asks for a window that does not exist yet. A request that names no
+    window at all goes to the receiver: the window of its kind the user last
+    touched, which the host learns from the windows' own activation events.
     """
 
-    CURRENT = "current"
     NEW = "new"
-    MRU = "mru"
-
-
-class Which(StrEnum):
-    """Which of a window's plots a `Delete` takes out.
-
-    `ONE` is the deletion the window's own right-click menu drives: the plot
-    is named by the worksheet and label it was added under, since that pair is
-    what identifies a plot everywhere.
-    """
-
-    ALL = "all"
-    FIRST = "first"
-    LAST = "last"
-    BUTLAST = "butlast"
-    ONE = "one"
 
 
 #: How a window is titled, and what says it is the one the next plot of its
@@ -216,6 +194,10 @@ class Options:
 class Add:
     """Plot one expression, in the window `window` names.
 
+    A `window` of None is the ordinary case: the plot goes to the receiver of
+    its kind - the window the user last touched - and opens one where no window
+    of that kind exists.
+
     `worksheet` is an opaque id of the algebra worksheet the label belongs to:
     two overlays can each own a `#3`, and a plot is keyed by the pair, so
     re-plotting `#3` from the same worksheet replaces its curve while a `#3`
@@ -237,7 +219,7 @@ class Add:
     node: Node
     context: Context
     kind: PlotKind
-    window: int | Where = Where.CURRENT
+    window: int | Where | None = None
     label: str = ""
     text: str = ""
     options: Options = field(default_factory=Options)
@@ -245,29 +227,12 @@ class Add:
 
 
 @dataclass(frozen=True)
-class Delete:
-    """Take plots out of a window, `which` saying how many and which end."""
-
-    window: int | Where = Where.MRU
-    which: Which = Which.LAST
-    worksheet: int = 0
-    label: str = ""
-
-
-@dataclass(frozen=True)
-class SetCurrent:
-    """Make a window the current one for its kind, as `Plot Window` does."""
-
-    window: int
-
-
-@dataclass(frozen=True)
 class Describe:
     """What windows are open and what is in them.
 
-    The app tracks no window state of its own: the prompts that depend on a
-    window - the number the Window field opens on - read it from here when the
-    command runs, and the tests observe the host the same way.
+    The app tracks no window state of its own: whatever it needs to know about
+    a window it reads from here when a command runs, and the tests observe the
+    host the same way.
     """
 
 
@@ -304,7 +269,7 @@ class Shutdown:
     """Close every window and end the host, which is what leaving the app is."""
 
 
-Request = Add | Delete | SetCurrent | Describe | Prefer | Shutdown
+Request = Add | Describe | Prefer | Shutdown
 
 
 # -- replies ------------------------------------------------------------------
@@ -328,17 +293,16 @@ class Refused:
 
 @dataclass(frozen=True)
 class Placed:
-    """The number of the window that took the plot, or was made current."""
+    """The number of the window that took the plot, and how it took it.
+
+    `replaced` says the plot took the place of one already there - same
+    worksheet and label - rather than adding a curve, which is the word the
+    acknowledgement message turns on: `Replotting` is how replacement teaches
+    itself.
+    """
 
     window: int
-
-
-@dataclass(frozen=True)
-class Removed:
-    """How many plots came out of which window, for the message line to say."""
-
-    window: int
-    count: int
+    replaced: bool = False
 
 
 @dataclass(frozen=True)
@@ -372,7 +336,7 @@ class Windows:
     windows: tuple[WindowInfo, ...] = ()
 
 
-Reply = Done | Refused | Placed | Removed | Windows
+Reply = Done | Refused | Placed | Windows
 
 
 # -- events -------------------------------------------------------------------

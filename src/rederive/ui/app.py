@@ -452,29 +452,13 @@ READING = "Reading expression"
 #: the variables of the expression and then the plot host, which on the first
 #: plot of a session is a process starting up, so it is worth a clock.
 PLOTTING = "Plotting"
-#: What the message line says when a plot has landed, and when plots have been
-#: taken out of a window. The delete phrases are the menu's own words spelled
-#: as a sentence says them.
+#: What the message line says when a plot has landed. The second wording is
+#: how replacement teaches itself: a plot that replaced a curve already there
+#: says so in one word.
 PLOTTED = "Plotting {label} in window {window}"
-DELETED = "Deleted {what} in window {window}"
-NOTHING_DELETED = "No plots to delete in window {window}"
-DELETE_WORDS = {
-    "All": "all plots",
-    "Butlast": "all but the last plot",
-    "First": "first plot",
-    "Last": "last plot",
-}
-#: What each word of the Delete submenu takes out.
-PLOT_DELETIONS = {
-    "All": plots.Which.ALL,
-    "Butlast": plots.Which.BUTLAST,
-    "First": plots.Which.FIRST,
-    "Last": plots.Which.LAST,
-}
+REPLOTTED = "Replotting {label} in window {window}"
 #: What Plot says when there is nothing highlighted to plot.
 NOTHING_TO_PLOT = "no expression to plot"
-#: And when a command that acts on a plot window is asked with none open.
-NO_PLOT_WINDOW = "no plot window"
 #: Seconds between two readings of the elapsed time. Fast enough that the
 #: figure looks like a clock rather than a series of guesses.
 TICK = 0.1
@@ -1416,9 +1400,8 @@ class RederiveApp(App[None]):
             (menus.TRANSFER_LOAD, "Utility"): self._command_load_utility,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
             (menus.TRANSFER_SAVE, "State"): self._command_save_state,
-            (menus.PLOT, "Plot"): partial(self._command_plot, plots.Where.CURRENT),
+            (menus.PLOT, "Plot"): partial(self._command_plot, None),
             (menus.PLOT, "New"): partial(self._command_plot, plots.Where.NEW),
-            (menus.PLOT, "Window"): self._command_plot_window,
             (menus.WINDOW, "Close"): self._command_window_close,
             (menus.WINDOW, "Flip"): self._command_window_flip,
             (menus.WINDOW, "Goto"): self._command_window_goto,
@@ -1430,12 +1413,6 @@ class RederiveApp(App[None]):
             ),
             (menus.WINDOW_SPLIT, "Vertical"): partial(self._command_window_split, True),
         }
-        # The four Delete words differ only in which end of the plot list they
-        # take, so they are one command told which off the menu word.
-        for word, which in PLOT_DELETIONS.items():
-            self.commands[(menus.PLOT_DELETE, word)] = partial(
-                self._command_plot_delete, word, which
-            )
         # The seven Calculus commands differ only in what they write and what
         # their last line asks, so they are one command told which off the word.
         for word, calculus in CALCULUS_COMMANDS.items():
@@ -4457,10 +4434,11 @@ class RederiveApp(App[None]):
 
     # -- Plot --------------------------------------------------------------
     #
-    # Four commands, and only the first of them is about an expression. `Plot`
-    # classifies what is highlighted and sends it; `New` is the same into a
-    # window of its own; `Delete` and `Window` act on windows that already
-    # exist and never make one.
+    # Two commands, both about the highlighted expression. `Plot` classifies
+    # it and sends it to the receiver - the plot window the user last touched
+    # - and `New` is the same into a window of its own. Everything else about
+    # a plot lives in the plot window itself: removal is a right-click on the
+    # curve or its legend entry, and clearing is the window's own toolbar.
     #
     # Everything here goes through the computing thread, including the parts
     # that are not computations. Two of the three steps can block: the
@@ -4468,12 +4446,12 @@ class RederiveApp(App[None]):
     # session starts a process that imports Qt and sympy before it answers. The
     # message line's clock is what makes that wait legible instead of a freeze.
     #
-    # The app holds no plot state at all. Which window is current, what is in
-    # it, what it is called - the host owns all of it, because the host is the
-    # only side that knows when the user closes a window.
+    # The app holds no plot state at all. Which window is the receiver, what
+    # is in it, what it is called - the host owns all of it, because the host
+    # is the only side that sees the user touch or close a window.
 
-    def _command_plot(self, where: plots.Where) -> None:
-        """Plot the highlighted expression, into the current window or a new one.
+    def _command_plot(self, where: plots.Where | None) -> None:
+        """Plot the highlighted expression, into the receiver or a new window.
 
         The same rules as Simplify decide what is plotted: a highlighted
         subexpression is what gets plotted, and the whole entry otherwise. No
@@ -4491,7 +4469,7 @@ class RederiveApp(App[None]):
             PLOTTING, partial(self._classified, request, where), self._plot_classified
         )
 
-    def _classified(self, request: str, where: plots.Where) -> plots.Add:
+    def _classified(self, request: str, where: plots.Where | None) -> plots.Add:
         """What `request` is a plot of, as the request that would draw it.
 
         Off the event loop, because the variables of the expression are an
@@ -4556,9 +4534,13 @@ class RederiveApp(App[None]):
         """Send one plot, off the event loop, and say where it landed.
 
         The window number is only known once the host has answered, which is
-        why the sentence is made here rather than by the command.
+        why the sentence is made here rather than by the command - and so is
+        the word: a plot that replaced a curve already there says `Replotting`,
+        which is how replacement teaches itself.
         """
-        return PLOTTED.format(label=request.label, window=self.plots.add(request))
+        placed = self.plots.add(request)
+        worded = REPLOTTED if placed.replaced else PLOTTED
+        return worded.format(label=request.label, window=placed.window)
 
     def _plot_done(self, outcome: Outcome) -> None:
         """Say where the plot landed, or why it did not."""
@@ -4572,54 +4554,6 @@ class RederiveApp(App[None]):
         del self.stack[1:]
         self._restart_menu()
         self._return_to_menu(message)
-
-    def _command_plot_delete(self, word: str, which: plots.Which) -> None:
-        """Take plots out of the window that last received one."""
-        self._compute(
-            PLOTTING,
-            partial(self._plot_delete, word, which),
-            self._plot_done,
-        )
-
-    def _plot_delete(self, word: str, which: plots.Which) -> str:
-        removed = self.plots.delete(plots.Delete(which=which))
-        if not removed.count:
-            return NOTHING_DELETED.format(window=removed.window)
-        return DELETED.format(what=DELETE_WORDS[word], window=removed.window)
-
-    def _command_plot_window(self) -> None:
-        """Ask which plot window the next plot of its kind should land in.
-
-        The field opens on the window that is current now, which is both the
-        answer most likely wanted and how the command doubles as a way of
-        finding out what the current one is.
-        """
-        self._compute(PLOTTING, self.plots.describe, self._plot_windows)
-
-    def _plot_windows(self, outcome: Outcome) -> None:
-        """The windows are known: put the number field up, or refuse."""
-        if outcome.error is not None:
-            self._plot_refused(_plot_reason(outcome.error))
-            return
-        open_windows = outcome.value
-        assert isinstance(open_windows, tuple)
-        if not open_windows:
-            self._plot_refused(NO_PLOT_WINDOW)
-            return
-        current = next(
-            (window.number for window in open_windows if window.current),
-            open_windows[0].number,
-        )
-        self._ask(menus.plot_window(current), self._chose_plot_window)
-
-    def _chose_plot_window(self, values: dict[str, str | int]) -> None:
-        number = int(values["PlotWindow"])
-        self._compute(
-            PLOTTING, partial(self._set_plot_window, number), self._plot_done
-        )
-
-    def _set_plot_window(self, number: int) -> str:
-        return PLOTTED.format(label="the next plot", window=self.plots.set_current(number))
 
     def _plot_refused(self, reason: str) -> None:
         """Every plot refusal reads as one sentence off the same prefix."""

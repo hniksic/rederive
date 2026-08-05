@@ -62,11 +62,6 @@ ENTER_RIGHT_BOUND = "Enter right bound"
 #: What the two Window commands that name a window ask for.
 ENTER_WINDOW = "Enter window number"
 
-#: What `Plot Window` asks on the one field it puts up, and what that dialog
-#: is titled.
-ENTER_PLOT_WINDOW = "Enter plot window number"
-PLOT_WINDOW = "PLOT WINDOW:"
-
 #: The two symbols a bound is written with: `<` for a bound the variable can
 #: never equal, `≤` for one it can.
 OPEN = "<"
@@ -329,15 +324,13 @@ SOLVE_BOUNDS = settings.Dialog(
     stored=False,
 )
 
-#: The four Plot commands. `Plot` is first and so comes up highlighted, which
-#: is what makes `P` `P` draw the highlighted expression with no question
-#: asked - the muscle memory of the original, one keystroke shorter on the
-#: first plot since the window opens itself.
-PLOT = Menu("PLOT:", ("Plot", "New", "Delete", "Window"))
-
-#: What `Plot Delete` takes out of the plot list, in the original's order:
-#: alphabetical, which puts the wholesale one first.
-PLOT_DELETE = Menu("DELETE:", ("All", "Butlast", "First", "Last"))
+#: The two Plot commands: into the receiver, or into a window of its own.
+#: `Plot` is first and so comes up highlighted, which is what makes `P` `P`
+#: draw the highlighted expression with no question asked - the muscle memory
+#: of the original, one keystroke shorter on the first plot since the window
+#: opens itself. Everything else about a plot lives in the plot window, which
+#: is where the picture it acts on is.
+PLOT = Menu("PLOT:", ("Plot", "New"))
 
 DECLARE = Menu("DECLARE:", ("Function", "Variable", "Matrix", "vectoR"))
 
@@ -487,31 +480,6 @@ def window_split(vertical: bool, at: int, low: int, high: int) -> settings.Dialo
                     at,
                     minimum=low,
                     maximum=high,
-                    recorded=False,
-                ),
-            ),
-        ),
-        stored=False,
-    )
-
-
-def plot_window(number: int) -> settings.Dialog:
-    """The dialog `Plot Window` names a window on.
-
-    It opens on the current plot window, which is where the next plot would
-    land if nothing were said: the answer most likely wanted is the state as
-    it stands, and the field is how it is changed.
-    """
-    return settings.Dialog(
-        PLOT_WINDOW,
-        (
-            (
-                settings.NumberField(
-                    "Window",
-                    ENTER_PLOT_WINDOW,
-                    "PlotWindow",
-                    number,
-                    minimum=1,
                     recorded=False,
                 ),
             ),
@@ -836,7 +804,6 @@ TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
         "Transfer": TRANSFER,
         "Window": WINDOW,
     },
-    PLOT: {"Delete": PLOT_DELETE},
     WINDOW: {"Split": WINDOW_SPLIT},
     MANAGE: MANAGE_TARGETS,
     OPTIONS: OPTIONS_TARGETS,

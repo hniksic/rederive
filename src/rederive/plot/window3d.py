@@ -630,9 +630,10 @@ class Window3D(QtWidgets.QMainWindow):
         """The view between a toolbar and a status line.
 
         The toolbar holds the two things that change what was computed - the
-        rectangle and how finely it is sampled - and the door to the numbers
-        behind the picture. Everything else about a 3D window is the camera,
-        and the camera is the mouse.
+        rectangle and how finely it is sampled - the door to the numbers
+        behind the picture, and the clear that starts the picture over.
+        Everything else about a 3D window is the camera, and the camera is
+        the mouse.
         """
         holder = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(holder)
@@ -670,6 +671,10 @@ class Window3D(QtWidgets.QMainWindow):
         self.inspect.setToolTip("The box and the camera as numbers")
         self.inspect.triggered.connect(self.inspector)
         bar.addAction(self.inspect)
+        self.clear_action = QtGui.QAction("clear", self)
+        self.clear_action.setToolTip("Remove every surface from this window (Del)")
+        self.clear_action.triggered.connect(self.clear)
+        bar.addAction(self.clear_action)
         return bar
 
     def _field(self, name: str, value: float) -> QtWidgets.QLineEdit:
@@ -763,24 +768,14 @@ class Window3D(QtWidgets.QMainWindow):
         self._name_axes()
         self._frame()
 
-    def take(self, which: protocol.Which, worksheet: int = 0, label: str = "") -> int:
-        """The Delete submenu, applied to this window's plot list."""
-        if which is protocol.Which.ONE:
-            surface = self.find(worksheet, label)
-            going = [] if surface is None else [surface]
-        elif not self.plots:
-            going = []
-        elif which is protocol.Which.ALL:
-            going = list(self.plots)
-        elif which is protocol.Which.FIRST:
-            going = self.plots[:1]
-        elif which is protocol.Which.LAST:
-            going = self.plots[-1:]
-        else:
-            going = self.plots[:-1]
-        for surface in going:
+    def clear(self) -> None:
+        """The toolbar's clear: start this picture over.
+
+        The window it acts on is the window the button is drawn in, so there
+        is nothing to infer and nothing to report.
+        """
+        for surface in list(self.plots):
             self.remove(surface)
-        return len(going)
 
     def _relabel(self) -> None:
         """Build the legend again, which is how a removal leaves it right."""
@@ -1329,6 +1324,8 @@ class Window3D(QtWidgets.QMainWindow):
         elif key == keys.Key_L:
             self._legend = not self._legend
             self.legend.setVisible(self._legend and bool(self.plots))
+        elif key == keys.Key_Delete:
+            self.clear()
         elif key == keys.Key_Left:
             self.view.orbit(ORBIT_DEGREES, 0.0)
         elif key == keys.Key_Right:
@@ -1382,6 +1379,21 @@ class Window3D(QtWidgets.QMainWindow):
         """Say in the title bar whether the next plot lands here."""
         self.current = current
         self.setWindowTitle(protocol.titled(self.kind, self.number, current))
+
+    def changeEvent(self, ev: Any) -> None:
+        """Activation is the user touching this window, and the host's to know.
+
+        The receiver of the next plot follows the window the user last
+        touched, and the activation event is how a click, a raise or an
+        alt-tab says so - whatever the platform's focus policy, including one
+        that hands focus to whatever the pointer crosses.
+        """
+        if (
+            ev.type() == QtCore.QEvent.Type.ActivationChange
+            and self.isActiveWindow()
+        ):
+            self.host.touched(self.number)
+        super().changeEvent(ev)
 
     def closeEvent(self, ev: Any) -> None:
         """The window manager's business, and the host's to hear about."""

@@ -530,7 +530,7 @@ def host(monkeypatch):
 
 
 def _add(session, host, text, **keywords):
-    """Plot one expression the way the Plot command does."""
+    """Plot one expression the way the Plot command does, and say where it went."""
     entry = session.author(text)
     label = f"#{entry.number}"
     plotted = classify(entry.node, session.variables(label), text)
@@ -543,7 +543,7 @@ def _add(session, host, text, **keywords):
         "text": text,
         "options": plotted.options,
     }
-    return host.add(plots.Add(**{**fields, **keywords}))
+    return host.add(plots.Add(**{**fields, **keywords})).window
 
 
 def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
@@ -561,11 +561,11 @@ def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
     assert [plot.text for plot in window.plots] == ["SIN(x)", "x^2 - 3"]
 
 
-def test_re_plotting_a_label_replaces_its_curve(host):
+def test_re_plotting_a_label_replaces_its_curve_and_says_so(host):
     session = Session()
     _add(session, host, "SIN(x)")
     entry = session.entries[0]
-    host.add(
+    placed = host.add(
         plots.Add(
             worksheet=id(session),
             node=entry.node,
@@ -576,6 +576,9 @@ def test_re_plotting_a_label_replaces_its_curve(host):
             options=plots.Options(variables=("x",)),
         )
     )
+    # The reply says the plot replaced a curve rather than adding one, which
+    # is the word the acknowledgement message turns on.
+    assert placed == plots.Placed(1, replaced=True)
     assert len(host.describe()[0].plots) == 1
 
 
@@ -588,29 +591,9 @@ def test_a_new_window_takes_the_next_number_and_becomes_current(host):
     assert [window.current for window in described] == [False, True]
     assert described[0].title == "Rederive 2D plot 1"
     assert described[1].title == "Rederive 2D plot 2 (current)"
-    # The current window is where the next plot lands.
+    # The receiver is where the next plot lands: the new window's arrival was
+    # the last touch.
     assert _add(session, host, "TAN(x)") == 2
-
-
-def test_naming_a_window_makes_it_current_again(host):
-    session = Session()
-    _add(session, host, "SIN(x)")
-    _add(session, host, "COS(x)", window=plots.Where.NEW)
-    assert host.set_current(1) == 1
-    assert _add(session, host, "TAN(x)") == 1
-
-
-def test_delete_takes_plots_off_the_end_of_the_list(host):
-    session = Session()
-    for text in ("SIN(x)", "COS(x)", "TAN(x)"):
-        _add(session, host, text)
-    removed = host.delete(plots.Delete(which=plots.Which.LAST))
-    assert (removed.window, removed.count) == (1, 1)
-    assert [plot.label for plot in host.describe()[0].plots] == ["#1", "#2"]
-    host.delete(plots.Delete(which=plots.Which.BUTLAST))
-    assert [plot.label for plot in host.describe()[0].plots] == ["#2"]
-    assert host.delete(plots.Delete(which=plots.Which.ALL)).count == 1
-    assert host.describe()[0].plots == ()
 
 
 def test_a_family_becomes_one_curve_per_element(host):
@@ -702,9 +685,6 @@ def test_a_vector_of_surfaces_becomes_one_surface_per_element(host):
     assert [plot.label for plot in window.plots] == ["#1.1", "#1.2"]
     assert [plot.text for plot in window.plots] == ["x + y", "x - y"]
     assert [plot.kind for plot in window.plots] == [PlotKind.SURFACE] * 2
-    removed = host.delete(plots.Delete(which=plots.Which.LAST))
-    assert (removed.window, removed.count) == (1, 1)
-    assert [plot.label for plot in host.describe()[0].plots] == ["#1.1"]
 
 
 def test_a_curve_that_will_not_evaluate_reports_itself(host):
@@ -725,15 +705,12 @@ def test_the_host_is_started_once_and_stopped_when_it_is_asked_to(host):
     assert not host.running
 
 
-def test_deleting_with_no_window_open_is_refused_without_starting_one():
+def test_describing_with_no_host_answers_nothing_without_starting_one():
     from rederive.plot import proxy as proxy_module
 
     proxy = proxy_module.PlotProxy()
-    with pytest.raises(proxy_module.PlotError) as refused:
-        proxy.delete(plots.Delete())
-    assert str(refused.value) == proxy_module.NO_WINDOW
-    assert proxy.starts == 0
     assert proxy.describe() == ()
+    assert proxy.starts == 0
 
 
 def test_a_host_that_will_not_start_reports_its_own_words(monkeypatch):
@@ -794,6 +771,9 @@ class InlineHost:
         done(answer)
 
     def trouble(self, window, label, message):
+        pass
+
+    def touched(self, number):
         pass
 
     def closed(self, number):
@@ -932,6 +912,33 @@ def test_the_range_fields_adjust_a_reread_curve_like_a_born_polar_one(flat):
     assert plot.trange == pytest.approx((-np.pi, np.pi))
 
 
+def test_the_clear_button_empties_its_own_window(flat):
+    # The toolbar's clear acts on the window it is drawn in - there is nothing
+    # to infer and nothing to report - and the range fields go away with the
+    # parametrized plot that owned them.
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    flat.add(_plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",), label="#2"))
+    assert all(action.isVisible() for action in flat._range_actions)
+    flat.clear_action.trigger()
+    assert flat.plots == []
+    assert not any(action.isVisible() for action in flat._range_actions)
+    assert flat.item.getAxis("bottom").labelText == ""
+
+
+def test_the_delete_key_clears_the_window_it_is_pressed_in(flat):
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    flat.keyPressEvent(
+        QtGui.QKeyEvent(
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_Delete,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+    )
+    assert flat.plots == []
+
+
 def test_the_axis_label_follows_the_polar_mode(flat):
     # The known wart, fixed: a window in polar mode must not label its
     # abscissa with the parameter's letter - the horizontal axis of a polar
@@ -980,6 +987,108 @@ def test_the_domain_fields_read_expressions(deep, solid):
     deep._edited()
     assert deep.ydomain == (-5.0, 5.0)
     assert deep.fields["y0"].text() == "-5"
+
+
+def test_the_3d_clear_button_empties_its_own_window(deep, solid):
+    surface = solid.Surface(
+        worksheet=1,
+        label="#1",
+        text="x*y",
+        kind=PlotKind.SURFACE,
+        node=parsed("x*y"),
+        context=Context(),
+        options=plots.Options(variables=("x", "y")),
+        state=ParseState(),
+    )
+    deep.add(surface)
+    deep.clear_action.trigger()
+    assert deep.plots == []
+
+
+# -- the receiver ---------------------------------------------------------------
+#
+# One pointer, and it is the window the user last touched: the host learns it
+# from the windows' own activation events. Exercised on a real Host built in
+# this process, offscreen, because activation is a conversation between the
+# window and the registry - the pipe carries none of it, and a child process's
+# windows cannot be touched from a test.
+
+
+@pytest.fixture
+def registry(qt):
+    """A real Host in this process, windows and receiver bookkeeping included.
+
+    The pipe goes nowhere: what is under test is which window an `Add` lands
+    in and how the receiver follows the user's touch, and the replies come
+    back as return values rather than up a pipe.
+    """
+    import multiprocessing
+
+    from rederive.plot.host import Host
+
+    ours, theirs = multiprocessing.Pipe()
+    host = Host(theirs)
+    yield host
+    for window in list(host.windows.values()):
+        window.close()
+    ours.close()
+    theirs.close()
+
+
+def _landing(text, label, **keywords):
+    """One curve the way the app would send it, for the registry to place."""
+    return plots.Add(
+        worksheet=1,
+        node=parsed(text),
+        context=Context(),
+        kind=PlotKind.CURVE,
+        label=label,
+        text=text,
+        options=plots.Options(variables=("x",)),
+        **keywords,
+    )
+
+
+def test_a_plots_arrival_counts_as_a_touch(registry):
+    placed = registry._add(_landing("SIN(x)", "#1"))
+    assert placed == plots.Placed(1)
+    window = registry.windows[1]
+    assert window.current
+    assert window.windowTitle() == "Rederive 2D plot 1 (current)"
+
+
+def test_touching_a_window_makes_it_the_receiver(registry):
+    one = registry._add(_landing("SIN(x)", "#1")).window
+    two = registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    assert registry.windows[two].current and not registry.windows[one].current
+    registry.touched(one)
+    assert registry.windows[one].current and not registry.windows[two].current
+    assert registry.windows[one].windowTitle().endswith("(current)")
+    # The next plot follows the touch.
+    assert registry._add(_landing("TAN(x)", "#3")).window == one
+
+
+def test_the_activation_event_is_what_feeds_the_receiver(registry, qt):
+    # The wiring itself: activating the window - what a click, a raise or an
+    # alt-tab comes to - reaches the registry with no request on the way.
+    one = registry._add(_landing("SIN(x)", "#1")).window
+    registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW))
+    registry.windows[one].activateWindow()
+    qt.processEvents()
+    assert registry.windows[one].current
+    assert registry._add(_landing("TAN(x)", "#3")).window == one
+
+
+def test_closing_the_receiver_hands_it_to_the_last_activated_survivor(registry):
+    one = registry._add(_landing("SIN(x)", "#1")).window
+    two = registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    three = registry._add(_landing("TAN(x)", "#3", window=plots.Where.NEW)).window
+    registry.touched(one)
+    registry.touched(three)
+    registry.windows[three].close()
+    # The last-activated survivor of the kind, not the newest window.
+    assert registry.windows[one].current and not registry.windows[two].current
+    assert registry._add(_landing("x^2", "#4")).window == one
 
 
 # -- the gallery ---------------------------------------------------------------
@@ -1132,6 +1241,9 @@ class Answering:
         self.windows = windows
         self.refuse = refuse
         self.events = None
+        #: What `add` answers, which a test overrides to say a plot replaced
+        #: a curve rather than adding one.
+        self.placed = plots.Placed(1)
         #: How many times the app has asked what the windows hold, which a
         #: plain plot must never do: nothing app-side needs a window's state
         #: to send one.
@@ -1148,15 +1260,7 @@ class Answering:
 
     def add(self, request):
         self._answer(request)
-        return 1
-
-    def delete(self, request):
-        self._answer(request)
-        return plots.Removed(2, 1)
-
-    def set_current(self, window):
-        self._answer(window)
-        return window
+        return self.placed
 
     def describe(self):
         self.described += 1
@@ -1183,10 +1287,10 @@ async def authored(pilot, app, text):
     await pilot.pause()
 
 
-async def test_the_plot_menu_offers_four_words_with_plot_first(app):
+async def test_the_plot_menu_offers_two_words_with_plot_first(app):
     async with app.run_test() as pilot:
         await pilot.press("p")
-        assert band(app) == [" PLOT: Plot New Delete Window"]
+        assert band(app) == [" PLOT: Plot New"]
         assert highlighted(app) == "Plot"
         assert message(app) == "Enter option"
 
@@ -1200,7 +1304,8 @@ async def test_p_p_plots_the_highlighted_expression_with_no_question(app):
         assert request.label == "#1"
         assert request.text == "SIN(x)"
         assert request.kind is PlotKind.CURVE
-        assert request.window is plots.Where.CURRENT
+        # No window named: the plot goes to the receiver of its kind.
+        assert request.window is None
         assert request.options.variables == ("x",)
         # The command menu is back, the submenu being finished with.
         assert band(app)[0].startswith(" COMMAND:")
@@ -1310,39 +1415,15 @@ async def test_a_highlighted_subexpression_is_what_gets_plotted(app):
         assert request.text == "SIN(x)"
 
 
-async def test_delete_names_what_it_took_out_and_from_where(app):
+async def test_a_plot_that_replaces_a_curve_says_replotting(app):
     async with app.run_test() as pilot:
-        await pilot.press("p", "d", "l")
-        assert message(app) == "Deleted last plot in window 2"
-        assert app.plots.sent[0].which is plots.Which.LAST
-        assert app.plots.sent[0].window is plots.Where.MRU
-
-
-async def test_delete_with_no_plot_window_says_so(app):
-    async with app.run_test() as pilot:
-        app.plots.refuse = "no plot window"
-        await pilot.press("p", "d", "a")
-        assert message(app) == "Plot: no plot window"
-
-
-async def test_the_window_command_opens_on_the_current_window(app):
-    async with app.run_test() as pilot:
-        app.plots.windows = (
-            plots.WindowInfo(1, plots.WindowKind.TWO_D, "one", False),
-            plots.WindowInfo(2, plots.WindowKind.TWO_D, "two", True),
-        )
-        await pilot.press("p", "w")
-        assert band(app) == [" PLOT WINDOW: Window: 2"]
-        assert message(app) == "Enter plot window number"
-        await pilot.press("backspace", "1", "enter")
-        assert app.plots.sent == [1]
-        assert message(app) == "Plotting the next plot in window 1"
-
-
-async def test_the_window_command_with_nothing_open_says_so(app):
-    async with app.run_test() as pilot:
-        await pilot.press("p", "w")
-        assert message(app) == "Plot: no plot window"
+        await authored(pilot, app, "SIN(x)")
+        # The host says the plot replaced a curve already there, and the
+        # message says so in one word - which is how replacement teaches
+        # itself.
+        app.plots.placed = plots.Placed(1, replaced=True)
+        await pilot.press("p", "p")
+        assert message(app) == "Replotting #1 in window 1"
 
 
 async def test_plotting_without_a_display_is_refused_but_still_offered(
