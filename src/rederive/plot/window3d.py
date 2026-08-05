@@ -57,7 +57,7 @@ from rederive.engine.context import Context
 from rederive.model.expr import Node
 from rederive.plot import evaluate, protocol
 from rederive.plot.protocol import Options, PlotKind
-from rederive.plot.window2d import PALETTE, PAPER_PALETTE
+from rederive.plot.window2d import PALETTE, PAPER_PALETTE, naming
 
 __all__ = ["Box", "Surface", "Window3D", "mesh", "ticks"]
 
@@ -204,7 +204,7 @@ class Surface:
     @property
     def named(self) -> str:
         """How the legend and the status line name this surface."""
-        return f"{self.label}  {self.text}" if self.label else self.text
+        return naming(self.label, self.text)
 
     @property
     def axes(self) -> tuple[str, str]:
@@ -561,7 +561,7 @@ class Legend(QtWidgets.QFrame):
 class Window3D(QtWidgets.QMainWindow):
     """One top-level 3D plot window and everything that happens inside it."""
 
-    def __init__(self, number: int, host: Any) -> None:
+    def __init__(self, number: int, host: Any, *, grid: int = DEFAULT_GRID) -> None:
         super().__init__()
         self.number = number
         self.kind = protocol.WindowKind.THREE_D
@@ -570,7 +570,11 @@ class Window3D(QtWidgets.QMainWindow):
         self.current = False
         self.xdomain = DEFAULT_DOMAIN
         self.ydomain = DEFAULT_DOMAIN
-        self.grid = (DEFAULT_GRID, DEFAULT_GRID)
+        # The grid the window opens with is the preference `Options Plot` holds,
+        # clamped here as a typed one is: a window never samples finer than it
+        # can draw, whoever asked it to.
+        square = int(min(max(grid, 2), MAX_GRID))
+        self.grid = (square, square)
         #: The z range now drawn, and the one the inspector nailed down where
         #: somebody typed it - a typed extent is an answer and is not autoscaled
         #: away by the next surface.

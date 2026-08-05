@@ -20,6 +20,11 @@ the parametric reading needs exactly one variable and this has two.
 
 Never silence: an expression that matches no row is refused with a message that
 says what stopped it. A refusal that only beeps is the anti-goal.
+
+`preferences` is the other pure translation the Plot command needs, and it is
+here for the same reason: the `Options Plot` screen keeps its answers as the
+words and whole numbers a dialog field holds, and the host wants them as the
+four values a window is built from.
 """
 
 from __future__ import annotations
@@ -28,9 +33,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rederive.model.expr import Kind, Node
-from rederive.plot.protocol import Options, PlotKind
+from rederive.model.settings import Settings
+from rederive.plot.protocol import Options, PlotKind, Prefer
 
-__all__ = ["Plotted", "Unplottable", "classify"]
+__all__ = ["Plotted", "Unplottable", "classify", "preferences"]
 
 #: What a refusal says when the expression holds more variables than any
 #: reading of it can use. The variables are named, since which ones they are is
@@ -172,6 +178,22 @@ def _scalar(node: Node, names: tuple[str, ...]) -> Plotted | None:
     if len(names) == 2:
         return Plotted(PlotKind.SURFACE, names)
     return None
+
+
+def preferences(settings: Settings) -> Prefer:
+    """The `Options Plot` screen as the request that carries it to the host.
+
+    The settings store keeps words and whole numbers, because that is what a
+    dialog field holds and what a state file writes; the host wants booleans and
+    a pixel count. This is the one place the two spellings meet, and it is a
+    pure function so that the translation is testable without a plot window.
+    """
+    return Prefer(
+        equal_scales=settings["PlotScales"] == "Yes",
+        grid=int(settings["PlotGrid"]),
+        connected=settings["PlotPoints"] == "Connected",
+        point_size=float(settings["PlotPointSize"]),
+    )
 
 
 def _names_in(node: Node) -> set[str]:

@@ -193,9 +193,10 @@ from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
 from rederive.model import session as sessions
 from rederive.model.expr import Node
-from rederive.model.plotting import Unplottable, classify
+from rederive.model.plotting import Unplottable, classify, preferences
 from rederive.model.session import Session
 from rederive.model.settings import (
+    PLOT_PREFERENCES,
     ChoiceField,
     Dialog,
     DialogEditor,
@@ -1282,6 +1283,7 @@ class RederiveApp(App[None]):
         #: no numpy, no process, and the app process stays as free of all three
         #: as it is of sympy.
         self.plots = PlotProxy(self._plot_reported)
+        self.plots.prefer(preferences(self.settings))
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
         #: The command menu, plus whatever submenu or dialog is stacked on it.
@@ -1663,10 +1665,17 @@ class RederiveApp(App[None]):
         Color is a property of painting, so a color change repaints everything.
         The settings that decide how an expression is drawn are not: an entry
         keeps the render it was authored with, as it does in the original.
+
+        The plot preferences are neither: they belong to a process that may not
+        be running, so they are handed to the proxy, which passes them on in
+        front of the next request it sends. A state file loaded with plot
+        preferences in it arrives here the same way `Options Plot` does.
         """
         if changed & COLOR_SETTINGS:
             self.refresh_css()
             self.refresh_screen()
+        if changed & PLOT_PREFERENCES:
+            self.plots.prefer(preferences(self.settings))
 
     def _beep(self) -> None:
         """The error beep for a key with no command, unless Mute silenced it."""
@@ -4295,8 +4304,12 @@ class RederiveApp(App[None]):
         suffix: str = worksheet.SUFFIX,
         refused: str = UNREADABLE,
     ) -> bool:
-        """Read a file into the session, leaving the line up if it cannot be."""
-        path = worksheet.path_of(name, suffix)
+        """Read a file into the session, leaving the line up if it cannot be.
+
+        The name is resolved against the worksheets Rederive ships with as well
+        as the working directory, which is how the gallery is loaded by name.
+        """
+        path = worksheet.reading(name, suffix)
         try:
             skipped = command(path)
         except FileNotFoundError:
@@ -4364,7 +4377,7 @@ class RederiveApp(App[None]):
         stopped, which is what the manual means by issuing another Demo command
         to carry on. Any other name starts that file from its first step.
         """
-        path = worksheet.path_of(name, worksheet.DEMO_SUFFIX)
+        path = worksheet.reading(name, worksheet.DEMO_SUFFIX)
         if self.demo is None or self.demo.path != path or self.demo.done:
             try:
                 steps = worksheet.demonstration(path)

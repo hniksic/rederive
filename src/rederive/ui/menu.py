@@ -399,10 +399,12 @@ MANAGE = Menu(
 
 # `Display` and `Execute` are the two of Derive's nine Options commands that
 # are not here: one chose between text and graphics modes on adapters that no
-# longer exist, the other shelled out to DOS.
+# longer exist, the other shelled out to DOS. `pLot` is the one word of this
+# menu that is not the original's, and it carries its capital late because `P`
+# belongs to Precision, which is.
 OPTIONS = Menu(
     "OPTIONS:",
-    ("Color", "Input", "Mute", "Notation", "Output", "Precision", "Radix"),
+    ("Color", "Input", "Mute", "Notation", "Output", "pLot", "Precision", "Radix"),
 )
 
 COLOR = Menu("OPTIONS COLOR:", ("Menu", "Work"))
@@ -839,6 +841,7 @@ OPTIONS_TARGETS: dict[str, Menu | settings.Dialog] = {
     "Mute": settings.MUTE,
     "Notation": settings.NOTATION,
     "Output": settings.OUTPUT,
+    "pLot": settings.PLOT,
     "Precision": settings.PRECISION,
     "Radix": settings.RADIX,
 }

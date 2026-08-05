@@ -39,6 +39,7 @@ __all__ = [
     "PlotInfo",
     "PlotKind",
     "Placed",
+    "Prefer",
     "Refused",
     "Removed",
     "Reply",
@@ -201,9 +202,10 @@ class Options:
     app does no arithmetic. The host evaluates them once, when the plot is
     added.
 
-    The rest are the data-plot preferences of section 9; None means the
-    window's own default rather than a value, so a plot added without an
-    opinion follows the preferences and one that has an opinion keeps it.
+    The rest are how a data plot draws its points; None means "whatever the
+    preferences say" rather than a value, and the host fills it in from the
+    `Prefer` it was last sent. So a plot added without an opinion follows the
+    preferences and one that has an opinion keeps it.
     """
 
     variables: tuple[str, ...] = ()
@@ -272,11 +274,39 @@ class Describe:
 
 
 @dataclass(frozen=True)
+class Prefer:
+    """The persistent plot preferences, as the settings store now holds them.
+
+    A request of its own rather than more fields on `Options`, because the two
+    are about different things: `Options` is what one expression is drawn with
+    and this is what the *program* has been told to open its next window with.
+    Widening `Options` would have meant sending the same four values with every
+    plot and leaving the host to guess which of them it was being told about.
+
+    The app sends one when a host starts - a fresh host knows only the
+    dataclass defaults, and the session's preferences may have moved since the
+    program opened - and again whenever `Options Plot` or a loaded state file
+    changes them. They travel in front of the next request rather than the
+    moment they change, since what they matter to is the next window and the
+    next plot and nothing sooner.
+
+    Defaults and nothing more. A window already on screen keeps the framing
+    lock and the grid it was built with, and a plot already drawn keeps the
+    point size its right-click menu gave it; the toggles never write back.
+    """
+
+    equal_scales: bool = True
+    grid: int = 64
+    connected: bool = False
+    point_size: float = 5.0
+
+
+@dataclass(frozen=True)
 class Shutdown:
     """Close every window and end the host, which is what leaving the app is."""
 
 
-Request = Add | Delete | SetCurrent | Describe | Shutdown
+Request = Add | Delete | SetCurrent | Describe | Prefer | Shutdown
 
 
 # -- replies ------------------------------------------------------------------

@@ -763,6 +763,154 @@ def test_a_host_that_will_not_start_reports_its_own_words(monkeypatch):
     assert str(refused.value) == "no module named pyqtgraph"
 
 
+def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
+    """The new request over a real pipe, in front of a plot that still lands.
+
+    What a preference does to a picture is a thing to be looked at rather than
+    asserted about - `Describe` reports what is in a window and not what it was
+    built with - so this is the round trip: the host understands the request,
+    keeps whatever it says, and the next plot goes where it would have gone.
+    """
+    session = Session()
+    host.prefer(plots.Prefer(equal_scales=False, grid=16, connected=True, point_size=9))
+    assert _add(session, host, "SIN(x)") == 1
+    assert [plot.label for plot in host.describe()[0].plots] == ["#1"]
+
+
+# -- the gallery ---------------------------------------------------------------
+
+
+def test_every_line_of_the_gallery_is_a_captioned_plot():
+    """The shipped worksheet, read as the Plot command reads it.
+
+    A gallery whose lines have stopped classifying as what their captions say
+    they are is worse than no gallery, so every line goes through the same
+    classification the command does. `VECTOR(...)` is the one line that is not a
+    plot as it stands - its caption says to simplify it into a matrix first -
+    and it is here as the reading it has before that, a constant.
+    """
+    from rederive.model import worksheet
+
+    session = Session()
+    assert session.load(worksheet.reading("gallery")) == 0
+    kinds = []
+    for entry in session.entries:
+        assert entry.annotation, entry.text
+        plotted = classify(entry.node, session.variables(f"#{entry.number}"), entry.text)
+        kinds.append(plotted.kind)
+    assert set(kinds) >= {
+        PlotKind.CURVE,
+        PlotKind.FAMILY,
+        PlotKind.PARAMETRIC,
+        PlotKind.IMPLICIT,
+        PlotKind.REGION,
+        PlotKind.SURFACE,
+    }
+
+
+# -- the preferences -----------------------------------------------------------
+#
+# `Options Plot` is four values in the settings store, and they have three
+# things to do: translate into the request the host understands, reach a host
+# that may not be running yet, and be the default a plot with no opinion of its
+# own is drawn with. All three are pure and none of them needs a window.
+
+
+def test_the_preferences_translate_the_words_the_dialog_holds():
+    from rederive.model.plotting import preferences
+    from rederive.model.settings import Settings
+
+    settings = Settings()
+    # The dialog's defaults and the request's defaults are the same picture,
+    # which is what makes a session that never opens the screen behave like one
+    # that opened it and pressed Enter.
+    assert preferences(settings) == plots.Prefer()
+    settings.apply(
+        {
+            "PlotScales": "No",
+            "PlotGrid": 128,
+            "PlotPoints": "Connected",
+            "PlotPointSize": 8,
+        }
+    )
+    assert preferences(settings) == plots.Prefer(
+        equal_scales=False, grid=128, connected=True, point_size=8.0
+    )
+
+
+def test_the_preferences_travel_in_a_state_file():
+    from rederive.model import state
+    from rederive.model.plotting import preferences
+    from rederive.model.settings import Settings
+
+    written = Settings()
+    written.apply({"PlotScales": "No", "PlotGrid": 32})
+    read = Settings()
+    assert state.read(state.write(written), read) == (0, "")
+    assert preferences(read) == plots.Prefer(equal_scales=False, grid=32)
+
+
+def test_a_plot_with_no_opinion_is_drawn_the_way_the_preferences_say():
+    from rederive.plot.host import preferred
+
+    request = plots.Add(
+        worksheet=0,
+        node=parsed("[[1, 2], [3, 4]]"),
+        context=Context(),
+        kind=PlotKind.DATA,
+    )
+    filled = preferred(request, plots.Prefer(connected=True, point_size=12.0))
+    assert (filled.options.connected, filled.options.point_size) == (True, 12.0)
+
+
+def test_a_plot_that_has_an_opinion_keeps_it():
+    """Which is what makes a point size chosen in the window survive a replot."""
+    from rederive.plot.host import preferred
+
+    request = plots.Add(
+        worksheet=0,
+        node=parsed("[[1, 2], [3, 4]]"),
+        context=Context(),
+        kind=PlotKind.DATA,
+        options=plots.Options(connected=False, point_size=3.0),
+    )
+    assert preferred(request, plots.Prefer(connected=True, point_size=12.0)) is request
+
+
+def test_the_preferences_go_in_front_of_the_next_request_and_only_once(monkeypatch):
+    """Nothing is sent when a preference changes; it travels with the next plot.
+
+    Which is what lets the settings watcher call `prefer` straight from the
+    event loop, and what means a session that changes a preference and never
+    plots again starts no process over it.
+    """
+    from rederive.plot import proxy as proxy_module
+
+    sent = []
+
+    def delivering(self, request):
+        sent.append(request)
+        return plots.Placed(1)
+
+    monkeypatch.setattr(proxy_module.PlotProxy, "_require", lambda self: None)
+    monkeypatch.setattr(proxy_module.PlotProxy, "_deliver", delivering)
+    proxy = proxy_module.PlotProxy()
+    request = plots.Add(
+        worksheet=0, node=parsed("SIN(x)"), context=Context(), kind=PlotKind.CURVE
+    )
+    proxy.prefer(plots.Prefer(grid=16))
+    assert sent == []
+    proxy.add(request)
+    assert sent == [plots.Prefer(grid=16), request]
+    # And a second plot does not say it again.
+    proxy.add(request)
+    assert sent[2:] == [request]
+    # Nor does one that has heard the same preferences twice.
+    proxy.prefer(plots.Prefer(grid=16))
+    proxy.add(request)
+    assert sent[3:] == [request]
+
+
 # -- the Plot command in the algebra window ------------------------------------
 #
 # The app is driven with a proxy that answers instead of a host, because what
@@ -779,6 +927,10 @@ class Answering:
         self.windows = windows
         self.refuse = refuse
         self.events = None
+        #: The preferences it has been handed, newest last. The real proxy holds
+        #: one and sends it in front of the next request; what the app is
+        #: responsible for is handing it over at all.
+        self.preferences = []
 
     def _answer(self, request):
         self.sent.append(request)
@@ -799,6 +951,9 @@ class Answering:
 
     def describe(self):
         return self.windows
+
+    def prefer(self, preferences):
+        self.preferences.append(preferences)
 
     def shutdown(self):
         pass
@@ -1034,6 +1189,34 @@ async def test_plotting_without_a_display_is_refused_but_still_offered(
         await pilot.press("p", "p")
         assert message(app) == "Plot: needs a graphical display"
         assert app.plots.sent == []
+
+
+async def test_the_options_plot_screen_hands_what_it_changed_to_the_plots(app):
+    async with app.run_test() as pilot:
+        # Options pLot: `P` belongs to Precision, so the plot screen takes `l`.
+        await pilot.press("o", "l")
+        assert band(app) == [
+            " OPTIONS PLOT: Scales: Yes No  Grid: 64",
+            "               Points:(Discrete)Connected  Size: 5",
+        ]
+        assert message(app) == "Select equal scales in a new plot window"
+        await pilot.press("n", "1", "6", "enter")
+        assert app.settings["PlotScales"] == "No"
+        assert app.settings["PlotGrid"] == 16
+        assert app.plots.preferences[-1] == plots.Prefer(equal_scales=False, grid=16)
+        # Nothing is recorded: a plot preference has no `Name := Value` spelling.
+        assert app.session.entries == []
+
+
+async def test_a_state_file_that_moves_a_preference_reaches_the_plots(app, tmp_path):
+    async with app.run_test() as pilot:
+        app.settings.apply({"PlotPoints": "Connected", "PlotPointSize": 9})
+        path = tmp_path / "kept.ini"
+        app.session.save_state(path)
+        app.settings.apply({"PlotPoints": "Discrete", "PlotPointSize": 5})
+        assert app.session.load_state(path) == 0
+        await pilot.pause()
+        assert app.plots.preferences[-1] == plots.Prefer(connected=True, point_size=9.0)
 
 
 async def test_a_curve_the_host_could_not_draw_reaches_the_message_line(app):

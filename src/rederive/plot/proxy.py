@@ -90,7 +90,7 @@ class PlotError(Exception):
 
 
 class PlotProxy:
-    """The plot host as five method calls, with a process behind them or not.
+    """The plot host as six method calls, with a process behind them or not.
 
     One request is in flight at a time. The host is single-threaded from the
     protocol's point of view - its Qt loop takes requests in the order they
@@ -117,6 +117,11 @@ class PlotProxy:
         self._number = 0
         self._ready = False
         self._stopped = False
+        #: The plot preferences the app last read out of the settings store, and
+        #: whether the host has yet to be told about them. A host that has just
+        #: started always has: it knows only the protocol's own defaults.
+        self._preferences: protocol.Prefer | None = None
+        self._unsaid = False
         #: Why the host is gone, once it is. Cleared by the next spawn, so a
         #: message is reported exactly once.
         self._death: str | None = None
@@ -130,7 +135,7 @@ class PlotProxy:
         process = self._process
         return process is not None and process.is_alive()
 
-    # -- the five requests -------------------------------------------------
+    # -- the six requests --------------------------------------------------
 
     def add(self, request: protocol.Add) -> int:
         """Plot an expression, and say which window took it."""
@@ -165,6 +170,20 @@ class PlotProxy:
         """
         if not self.running:
             raise PlotError(NO_WINDOW)
+
+    def prefer(self, preferences: protocol.Prefer) -> None:
+        """Remember what a new window and a new plot are to be built with.
+
+        Nothing is sent from here, and nothing is started. What preferences
+        matter to is the next window and the next plot, so they travel in front
+        of the next request instead of as traffic of their own - which is why
+        this may be called straight from the app's event loop, as the settings
+        watcher does: it stores four values and returns.
+        """
+        if preferences == self._preferences:
+            return
+        self._preferences = preferences
+        self._unsaid = True
 
     def describe(self) -> tuple[protocol.WindowInfo, ...]:
         """What windows are open and what is in them.
@@ -201,22 +220,38 @@ class PlotProxy:
     # -- one request -------------------------------------------------------
 
     def _ask(self, request: Request) -> Reply:
-        """Send one request and wait for the acknowledgement it is owed."""
+        """Send one request and wait for the acknowledgement it is owed.
+
+        Preferences the host has not been told about go first, so that the
+        window this request may open is built with them. They are one cheap
+        message and only ever sent when something has changed.
+        """
         with self._call:
             if self._stopped:
                 raise PlotError("plotting has been shut down")
             self._require()
-            number = self._next()
-            connection = self._connection
-            assert connection is not None
-            try:
-                connection.send((number, request))
-            except (OSError, ValueError):
-                raise self._collapsed() from None
-            reply = self._await(number, REPLY_TIMEOUT)
-            if isinstance(reply, Refused):
-                raise PlotError(reply.message)
-            return reply
+            if self._unsaid and self._preferences is not None:
+                self._deliver(self._preferences)
+                self._unsaid = False
+            return self._deliver(request)
+
+    def _deliver(self, request: Request) -> Reply:
+        """One request down the pipe, and the acknowledgement it is owed.
+
+        The caller holds the call lock and has seen to it that there is a host
+        on the other end.
+        """
+        number = self._next()
+        connection = self._connection
+        assert connection is not None
+        try:
+            connection.send((number, request))
+        except (OSError, ValueError):
+            raise self._collapsed() from None
+        reply = self._await(number, REPLY_TIMEOUT)
+        if isinstance(reply, Refused):
+            raise PlotError(reply.message)
+        return reply
 
     def _await(self, number: int, timeout: float) -> Reply:
         """Wait for the reader thread to hand over the answer to `number`."""
@@ -252,6 +287,9 @@ class PlotProxy:
             self._clear()
             raise PlotError(reply.message)
         self._ready = True
+        # A fresh host knows only the protocol's defaults, whatever it may have
+        # been told before it died.
+        self._unsaid = self._preferences is not None
 
     # -- the process -------------------------------------------------------
 

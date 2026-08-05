@@ -10,11 +10,12 @@ items keep their numbers and lose their lines, and two infinite lines cross at
 along the edges and no axis lines in sight, which is the honest picture.
 
 Framing is never asked about. A fresh window shows x in [-5, 5] with equal
-scales, so a circle is round; the mouse does the rest, and the only place exact
-bounds can be typed is the stock context menu's per-axis fields - deliberately
-the only one. The one time the window reframes itself is when the alternative
-is an empty picture: a curve added with finite values none of which are in
-view autoscales y and says so.
+scales - `Options Plot` is where that last is turned off for good, and the
+window is handed the answer when it is built - so a circle is round; the mouse
+does the rest, and the only place exact bounds can be typed is the stock context
+menu's per-axis fields - deliberately the only one. The one time the window
+reframes itself is when the alternative is an empty picture: a curve added with
+finite values none of which are in view autoscales y and says so.
 
 Sampling is in screen space and repeats on every view change, debounced. That
 is what makes zooming worth doing: a spike narrower than a pixel is not in the
@@ -149,6 +150,14 @@ REGION_ALPHA = 0.25
 POINT_SIZE = 5.0
 POINT_SIZES = (3.0, 5.0, 8.0, 12.0)
 
+#: How much of an expression a legend entry, a menu item or a status line shows
+#: of it. A data matrix is one expression and a hundred pairs of numbers, and a
+#: legend entry three times the width of the window names nothing legibly, so a
+#: long one is cut and marked as cut. Nothing is lost: the whole expression is
+#: in the worksheet, under the label the entry begins with.
+NAME_WIDTH = 48
+ELLIPSIS = "…"
+
 #: The kinds parametrized by the abscissa, which are the ones a marker rides
 #: at an x and the ones features are sought on.
 FUNCTIONS = frozenset({PlotKind.CURVE, PlotKind.FAMILY})
@@ -159,6 +168,20 @@ PARAMETRIZED = protocol.PARAMETRIZED
 #: The kinds evaluated over a grid rather than along a line. They are areas,
 #: recomputed for whatever the view now shows.
 FIELDS = frozenset({PlotKind.IMPLICIT, PlotKind.REGION})
+
+
+def naming(label: str, text: str) -> str:
+    """What a plot is called wherever a window has room for one line of it.
+
+    The label first, because that is what identifies it in the worksheet and
+    what a Delete names it by, and then as much of the expression as fits. Both
+    window kinds name their plots this way, which is why the 3D window borrows
+    this rather than spelling it again.
+    """
+    name = f"{label}  {text}" if label else text
+    if len(name) <= NAME_WIDTH:
+        return name
+    return name[: NAME_WIDTH - len(ELLIPSIS)].rstrip() + ELLIPSIS
 
 
 @dataclass
@@ -224,7 +247,7 @@ class Plot:
     @property
     def named(self) -> str:
         """How the legend and the status line name this plot."""
-        return f"{self.label}  {self.text}" if self.label else self.text
+        return naming(self.label, self.text)
 
     @property
     def variable(self) -> str:
@@ -395,11 +418,16 @@ class Legend(pg.LegendItem):
 class Window2D(QtWidgets.QMainWindow):
     """One top-level 2D plot window and everything that happens inside it."""
 
-    def __init__(self, number: int, host: Any) -> None:
+    def __init__(self, number: int, host: Any, *, equal_scales: bool = True) -> None:
         super().__init__()
         self.number = number
         self.kind = protocol.WindowKind.TWO_D
         self.host = host
+        #: Whether this window locks the two scales together, which the `1:1`
+        #: toggle changes and `Home` comes back to. It is the preference the
+        #: window was opened under and stays that for the window's life: a
+        #: preference changed afterwards is for the next window.
+        self.equal_default = equal_scales
         self.plots: list[Plot] = []
         self.polar = False
         self.current = False
@@ -452,7 +480,7 @@ class Window2D(QtWidgets.QMainWindow):
         self.marker.setVisible(False)
         self.item.addItem(self.marker, ignoreBounds=True)
         self.setCentralWidget(self._laid_out())
-        self.canvas.setAspectLocked(True, ratio=1.0)
+        self.canvas.setAspectLocked(self.equal_default, ratio=1.0)
         self.canvas.disableAutoRange()
         self.canvas.sigRangeChanged.connect(self._ranged)
         self.canvas.sigResized.connect(self._resized)
@@ -481,7 +509,7 @@ class Window2D(QtWidgets.QMainWindow):
         bar.setMovable(False)
         self.equal = QtGui.QAction("1:1", self)
         self.equal.setCheckable(True)
-        self.equal.setChecked(True)
+        self.equal.setChecked(self.equal_default)
         self.equal.setToolTip("Equal scales on both axes")
         self.equal.triggered.connect(self._equal_scales)
         bar.addAction(self.equal)
@@ -945,17 +973,19 @@ class Window2D(QtWidgets.QMainWindow):
     # -- framing -----------------------------------------------------------
 
     def home(self) -> None:
-        """The default framing: x in [-5, 5], equal scales, the origin centred.
+        """The default framing: x in [-5, 5], the origin centred, scales as set.
 
         Both ranges are worked out here rather than left to the aspect lock,
         because the lock is free to satisfy itself by widening either axis, and
         which one it picks is not something the framing should depend on. The
         ordinate is therefore the abscissa scaled by the shape of the canvas,
         which is what equal scales means, and the origin is in the middle of it.
+        A window whose preference is not equal scales gets the same rectangle
+        unlocked, so that Home is the framing this window opened with.
         """
         self.remember()
-        self.equal.setChecked(True)
-        self.canvas.setAspectLocked(True, ratio=1.0)
+        self.equal.setChecked(self.equal_default)
+        self.canvas.setAspectLocked(self.equal_default, ratio=1.0)
         width = max(self.canvas.width(), 1.0)
         height = max(self.canvas.height(), 1.0)
         half = DEFAULT_HALF_WIDTH * height / width

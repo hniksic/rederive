@@ -19,12 +19,19 @@ shipped are already in it.
 Reading is the syntax package's job - `Source.from_file` strips the comments
 and joins the continuations. This module says what those comments *meant*, and
 how a file is written.
+
+It also says where a file is looked for. A few worksheets are part of the
+program rather than of anyone's directory - the plot gallery is the first - and
+they live inside the package, so a name that the working directory has nothing
+of is looked for among them. Only reads look there, and a file of your own
+always wins: see `reading`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 
 #: What a file is called when the name typed has no extension of its own.
@@ -34,6 +41,12 @@ SUFFIX = ".mth"
 #: something else: a demonstration script and a file of numbers.
 DEMO_SUFFIX = ".dmo"
 DATA_SUFFIX = ".dat"
+
+#: The package directory the worksheets Rederive ships with live in, named
+#: relative to the `rederive` package. A name typed in full is looked for there
+#: when the working directory has no such file, which is how
+#: `Transfer Load Derive gallery` finds the gallery from anywhere.
+LIBRARY = "worksheets"
 
 COMMENT = ";"
 CONTINUATION = "~"
@@ -169,6 +182,37 @@ def path_of(name: str, suffix: str = SUFFIX) -> Path:
     return path if path.suffix else path.with_suffix(suffix)
 
 
+def reading(name: str, suffix: str = SUFFIX) -> Path:
+    """The file a typed name asks to be read, the shipped ones included.
+
+    `path_of`, and then the library if that named nothing: a bare name that is
+    not in the working directory may be one of the files Rederive ships with,
+    and those are found by name from wherever the program was started. Derive
+    did the same with the `.MTH` files that sat beside `DERIVE.EXE`.
+
+    Only reads go through here. A save resolves with `path_of` alone, so that
+    `Transfer Save gallery` writes a file of your own in the directory you are
+    working in rather than over the one the program came with.
+    """
+    path = path_of(name, suffix)
+    if path.parent == Path() and not path.exists():
+        shipped = library() / path.name
+        if shipped.is_file():
+            return shipped
+    return path
+
+
+def library() -> Path:
+    """Where the worksheets that are part of the program itself live.
+
+    Inside the package, so that they travel with an installed copy the way the
+    help text does. A zipped install has no such directory, which is why
+    nothing here minds a path that does not exist: the fallback simply finds
+    nothing and the name means what it said.
+    """
+    return Path(str(files("rederive"))) / LIBRARY
+
+
 def matches(name: str, suffix: str = SUFFIX) -> list[str]:
     """Every name `name` could mean, in order, itself included.
 
@@ -183,6 +227,12 @@ def matches(name: str, suffix: str = SUFFIX) -> list[str]:
     grows, so any of the answers can go straight back on the line. A name that
     is already one of them is among them, which is what lets the list stay up
     and stay honest once a name has been taken from it.
+
+    What is *not* on offer is the library: the same list is what a save prompt
+    completes from, and offering a name that names a file of the program's own
+    in a prompt that is about to write one of yours would be a lie. The library
+    is reached by typing the name, and named in the help text and the README so
+    that it can be.
     """
     head, separator, typed = name.rpartition("/")
     directory = Path(head + separator).expanduser() if separator else Path()

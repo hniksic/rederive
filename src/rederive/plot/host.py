@@ -33,6 +33,11 @@ window of its kind when the current one closes; across kinds, the *MRU* window
 is whichever last received a plot or a deletion, and that is the one the Delete
 submenu acts on. The current window says so in its own title, so the user can
 see where the next plot will land. The app never tracks any of this; it asks.
+
+Traffic goes the other way once: the app tells the host what the settings store
+says a new window and a new plot are to look like. The host holds those
+preferences and reads them where a window is built and where a plot is added,
+which is what keeps a preference change out of the windows already open.
 """
 
 from __future__ import annotations
@@ -42,13 +47,14 @@ import signal
 import sys
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from multiprocessing.connection import Connection
 from typing import Any
 
 from rederive.plot import protocol
 from rederive.plot.protocol import PlotKind, Where, WindowKind
 
-__all__ = ["serve"]
+__all__ = ["preferred", "serve"]
 
 
 def serve(connection: Connection) -> None:
@@ -235,6 +241,11 @@ class Host:
         self.bridge.arrived.connect(self._handle)
         self.bridge.ended.connect(self._ended)
         self.windows: dict[int, Any] = {}
+        #: The preferences the next window and the next plot are built with.
+        #: The dataclass defaults until the app says otherwise, which it does in
+        #: front of its first request, so a host driven by a test draws the
+        #: pictures the program's own defaults describe.
+        self.preferences = protocol.Prefer()
         #: Which window is current for each kind, and the order windows have
         #: been used in, most recent first - which is what a closed current
         #: window falls back through and what `MRU` reads.
@@ -323,6 +334,9 @@ class Host:
                 self.reply(number, self._set_current(request))
             elif isinstance(request, protocol.Describe):
                 self.reply(number, self._describe())
+            elif isinstance(request, protocol.Prefer):
+                self.preferences = request
+                self.reply(number, protocol.Done())
             elif isinstance(request, protocol.Shutdown):
                 self.reply(number, protocol.Done())
                 self._ended()
@@ -338,7 +352,7 @@ class Host:
         window = self._target(request.window, kind)
         if isinstance(window, protocol.Refused):
             return window
-        drawing = _curves(request)
+        drawing = _curves(preferred(request, self.preferences))
         # A family that has grown shorter leaves elements behind, and an
         # element of a plot that is no longer there is a curve nobody can
         # account for.
@@ -421,16 +435,23 @@ class Host:
         file because each of them costs a toolkit: a session that only ever
         draws curves never loads OpenGL, and a machine without it can still
         plot everything else.
+
+        This is the one construction site, and so the one place the framing and
+        grid preferences reach a window. They are read now rather than kept by
+        the window, which is what makes a changed preference show in the next
+        window and leave the open ones as they are.
         """
         self._made += 1
         if kind is WindowKind.THREE_D:
             from rederive.plot.window3d import Window3D
 
-            window: Any = Window3D(self._made, self)
+            window: Any = Window3D(self._made, self, grid=self.preferences.grid)
         else:
             from rederive.plot.window2d import Window2D
 
-            window = Window2D(self._made, self)
+            window = Window2D(
+                self._made, self, equal_scales=self.preferences.equal_scales
+            )
         self.windows[self._made] = window
         window.retitle(False)
         return window
@@ -458,6 +479,38 @@ class Host:
                 return number
         matching = [n for n, w in self.windows.items() if w.kind is kind]
         return max(matching) if matching else None
+
+
+def preferred(request: protocol.Add, preferences: protocol.Prefer) -> protocol.Add:
+    """`request` with the preferences filled in wherever it has no opinion.
+
+    How a data plot draws its points is a property of the plot and not of the
+    window it lands in, so the preference is read when the plot is added rather
+    than when the window was built: a new data plot follows the preference in
+    force now, and one drawn a minute ago keeps whatever its right-click menu
+    was told. The window preferences - the framing lock, the grid - go the other
+    way, and are read where a window is made.
+
+    A pure function, so that what a preference does to a request can be asked
+    without a toolkit to ask it in.
+    """
+    options = request.options
+    if options.connected is not None and options.point_size is not None:
+        return request
+    return replace(
+        request,
+        options=replace(
+            options,
+            connected=(
+                preferences.connected if options.connected is None else options.connected
+            ),
+            point_size=(
+                preferences.point_size
+                if options.point_size is None
+                else options.point_size
+            ),
+        ),
+    )
 
 
 def _curves(request: protocol.Add) -> list[Any]:

@@ -83,7 +83,7 @@ Files, screen and settings:
   Transfer Save    write the worksheet out
   Transfer Load    read one back in
   Transfer Clear   start again with nothing
-  Options          how numbers are read, worked out and printed
+  Options          how numbers are read and printed, and how plots open
   Manage           which transformations the simplifier applies
   Window           split the screen, so two parts of one session show at once
   Help             this help
@@ -405,12 +405,13 @@ Manage        how expressions are kept, and how they are simplified
   Substitute     put a value in place of a variable, or of a subexpression
   Trigonometry   angle sums, multiple angles, powers, and degrees or radians
 
-Options       how numbers are read, worked out and printed
+Options       how numbers are read, worked out and printed, and how plots open
   Color          the colors of the menu bands and of the work area
   Input          typing over or inserting, case sensitivity, arrow key mode
   Mute           whether a refused key beeps
   Notation       the style answers are printed in, and how many digits
   Output         built-up or compressed display, and the times operator
+  pLot           what a new plot window and a new data plot start out as
   Precision      exact, approximate or mixed arithmetic, and its digit count
   Radix          the number system input and output are written in
 
@@ -452,6 +453,10 @@ utility files written for the original Derive can be read this way.
 
 Transfer Save writes a worksheet in this program's own format, and also writes
 a highlighted expression out as C, Python, Rust or Julia source.
+
+Transfer Load Derive gallery reads the worksheet of captioned plots that comes
+with the program, from whatever directory you are working in. Highlight a line,
+read its caption on the status line, and press P P to see what it draws.
 
 A plot window is a window of the desktop rather than a part of this screen,
 and it is closed the way any other window is. The picture is navigated with the
