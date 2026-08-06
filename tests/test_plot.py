@@ -1032,6 +1032,29 @@ def test_a_host_that_will_not_start_reports_its_own_words(monkeypatch):
     assert str(refused.value) == "no module named pyqtgraph"
 
 
+def test_a_plot_with_the_extra_not_installed_says_what_to_install(monkeypatch):
+    # The `plot` extra is opt-in, so a machine without it is an ordinary install
+    # of the rest of the program rather than a broken one, and what it wants to
+    # be told is the name of the thing to install. Not an ImportError naming a
+    # module nobody asked for, and not after paying a process start-up to find
+    # out: nothing is spawned here, which is what `starts` says.
+    from rederive.plot import proxy as proxy_module
+
+    proxy = proxy_module.PlotProxy()
+    monkeypatch.setattr(proxy_module, "_installed", lambda name: False)
+    with pytest.raises(PlotError) as refused:
+        proxy.add(
+            plots.Add(
+                worksheet=0,
+                node=parsed("SIN(x)"),
+                context=Context(),
+                kind=PlotKind.CURVE,
+            )
+        )
+    assert str(refused.value) == proxy_module.UNINSTALLED
+    assert proxy.starts == 0
+
+
 def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
     """The new request over a real pipe, in front of a plot that still lands.
 

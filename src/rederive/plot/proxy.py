@@ -25,6 +25,7 @@ state is deliberately not persisted anywhere, so there is nothing to restore.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import multiprocessing
 import sys
 import threading
@@ -52,6 +53,16 @@ REPLY_TIMEOUT = 30.0
 #: What the app says when the host is gone. The one message that is about the
 #: process rather than about the picture.
 DIED = "plot window process died"
+
+#: What a plot window is drawn with, in the order the host reaches for them.
+#: They are the `plot` extra and the extra is opt-in, so an install may simply
+#: not have them - which is a working install of everything else.
+DRAWN_WITH = ("pyqtgraph", "PySide6", "OpenGL")
+
+#: What the app says where those were never installed. The one refusal that is
+#: about the install rather than about the machine, so it says what to do about
+#: it: everything else in the program goes on working without them.
+UNINSTALLED = "plot windows are not installed - `pip install rederive[plot]` adds them"
 
 
 @contextlib.contextmanager
@@ -271,7 +282,19 @@ class PlotProxy:
     # -- the process -------------------------------------------------------
 
     def _spawn(self) -> None:
-        """Put a host up. Raises `PlotError` where the system will not have one."""
+        """Put a host up. Raises `PlotError` where the system will not have one.
+
+        The toolkit is looked for before a process is started for it. A host
+        without one refuses in its own words already - that is the path a
+        display Qt will not open takes - but the words are an ImportError's,
+        which name a module rather than the extra it came in, and finding out
+        costs a spawn and a Python start-up. Looked for rather than imported:
+        the app process is deliberately free of the toolkit, and `find_spec`
+        answers without loading anything.
+        """
+        if not all(_installed(name) for name in DRAWN_WITH):
+            raise PlotError(UNINSTALLED)
+
         from rederive.plot import host
 
         parent = child = None
@@ -353,6 +376,20 @@ class PlotProxy:
         self._ready = False
         with self._arrived:
             self._replies.clear()
+
+
+def _installed(name: str) -> bool:
+    """Whether a module is there to be imported, without importing it.
+
+    An install that has the module but not what it is built on - a PySide6
+    whose Qt libraries are missing - answers yes here and refuses in the host's
+    own words, which is where a broken install belongs: this question is only
+    about whether the wheel was ever fetched.
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ImportError:
+        return False
 
 
 def _unexpected(reply: Reply) -> str:
