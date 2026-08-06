@@ -2480,9 +2480,17 @@ class Answering:
 
 
 @pytest.fixture
-def app():
+def app(monkeypatch):
+    """The app, with a host that answers every request without drawing anything.
+
+    A display is asserted rather than inherited. The Plot command refuses
+    outright where there is none, so a machine with no screen - a build runner
+    is one - would otherwise turn every test below into a test of the refusal,
+    which has one of its own further down.
+    """
     from rederive.ui.app import RederiveApp
 
+    monkeypatch.setenv("DISPLAY", ":0")
     made = RederiveApp()
     made.plots = Answering()
     return made
@@ -2800,6 +2808,9 @@ async def test_the_whole_loop_lands_a_parametric_plot_in_a_real_window(monkeypat
     from rederive.ui.app import RederiveApp
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    # A display for the command to agree to, and none for the host to draw on:
+    # the window this opens is a real one that is never mapped anywhere.
+    monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(proxy_module, "READY_TIMEOUT", 60.0)
     monkeypatch.setattr(proxy_module, "REPLY_TIMEOUT", 20.0)
     app = RederiveApp()
