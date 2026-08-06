@@ -76,15 +76,15 @@ hidden position to keep track of, and every one of them has a key that undoes
 it. That is the whole difference from the original's F1 file listing, which
 could only be read and never walked.
 
-A command that reaches the math engine does not run on the event loop. It is
-handed to a thread, and the screen goes into a mode of its own until the answer
-comes back: the worksheet is neither read nor repainted, since the thread owns
-the session until it is done, and the only key that means anything is Esc,
-which aborts. What does keep moving is the message line, saying which command
-is running and how long it has been, and the status line's memory gauge - which
-together are how a user decides whether this one is worth waiting for. Every
-dispatch site goes through one helper, and every one of them finishes in a
-completion handler rather than in the line that started it.
+A command that reaches the math engine is awaited rather than called. It goes on
+a worker task of its own, and where the engine can be aborted the screen goes
+into a mode until the answer comes back: the worksheet is neither read nor
+repainted, since the command owns the session until it is done, and the only key
+that means anything is Esc, which aborts. What does keep moving is the message
+line, saying which command is running and how long it has been, and the status
+line's memory gauge - which together are how a user decides whether this one is
+worth waiting for. Every dispatch site goes through one helper, and every one of
+them finishes in a completion handler rather than in the line that started it.
 
 Two commands take the band for something other than a menu. A question with a
 Y or N for an answer - Quit, and the two Clear commands that throw expressions
@@ -166,9 +166,10 @@ and the command simplifies what it built instead of appending it, which is what
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from os.path import commonprefix
@@ -254,9 +255,9 @@ MODE_ORDER = "order"
 MODE_SUBSTITUTE = "substitute"
 MODE_SUBSTITUTE_VALUE = "substitute_value"
 MODE_DEMO = "demo"
-#: The mode a computation holds the screen in. Modal on purpose: the thread
-#: running the command owns the session until it is done, so nothing may read
-#: the worksheet and no key but Esc means anything.
+#: The mode a computation holds the screen in. Modal on purpose: the command
+#: owns the session until it is done, so nothing may read the worksheet and no
+#: key but Esc means anything.
 MODE_COMPUTE = "compute"
 #: The mode help holds the screen in. A menu mode like the command menu - the
 #: same keys move the same highlight - but the work area is showing a document
@@ -443,6 +444,11 @@ ABORTED = "Aborted after {elapsed}"
 SIMPLIFYING = "Simplifying"
 APPROXIMATING = "Approximating"
 SOLVING = "Solving"
+#: And how Build and the Calculus commands name themselves when they were taken
+#: with plain Enter. They reach no engine then, so the clock never gets far
+#: enough to write this - a name is wanted all the same, the dispatch being the
+#: same dispatch.
+BUILDING = "Building"
 #: What a command is doing while it works out which variables to offer, which
 #: is a question for the engine and so can cost something, though it hardly
 #: ever does.
@@ -463,7 +469,7 @@ NOTHING_TO_PLOT = "no expression to plot"
 #: The new entry is named by its label, so the next command can ask for it.
 POINT_ENTERED = "Entered {text} as {label}"
 #: How long a point sent home waits before asking again, while a running
-#: command's computing thread owns the worksheets.
+#: command owns the worksheets.
 POINT_RETRY = 0.25
 #: Seconds between two readings of the elapsed time. Fast enough that the
 #: figure looks like a clock rather than a series of guesses.
@@ -647,7 +653,7 @@ class Command:
     running: str
     amounts: Menu
     needs_amount: Callable[[Session, str], bool]
-    run: Callable[[Session, str, Amount, tuple[str, ...]], object]
+    run: Callable[[Session, str, Amount, tuple[str, ...]], Awaitable[object]]
 
 
 FACTOR = Command(
@@ -1030,10 +1036,10 @@ def _variables_wanted(equations: int, variables: int) -> int:
 
 @dataclass(frozen=True)
 class Outcome:
-    """What became of one session command, whichever thread it ran on.
+    """What became of one session command, whichever task it ran on.
 
     Every way a command can end arrives here rather than as an exception up
-    the stack, because the stack the command ran on is not the one that has to
+    the stack, because the task the command ran on is not the one that has to
     report it: a computation that is killed mid-bignum has no return path of
     its own.
     """
@@ -1043,8 +1049,8 @@ class Outcome:
     seconds: float = 0.0
 
 
-def _ran(run: Callable[[], object]) -> Outcome:
-    """Run one session command and time it, however it ends.
+async def _ran(run: Callable[[], Awaitable[object]]) -> Outcome:
+    """Await one session command and time it, however it ends.
 
     Everything is caught. A refusal, a death of the engine worker and a bug
     that got past the engine's promises are all things the message line can
@@ -1052,7 +1058,7 @@ def _ran(run: Callable[[], object]) -> Outcome:
     """
     started = time.monotonic()
     try:
-        return Outcome(run(), None, time.monotonic() - started)
+        return Outcome(await run(), None, time.monotonic() - started)
     except Exception as error:
         return Outcome(None, error, time.monotonic() - started)
 
@@ -1510,9 +1516,9 @@ class RederiveApp(App[None]):
         a command would act on is its number in the frame.
 
         A computation under way is why the painting is conditional. A resize
-        reaches here at any moment, and while a command is running the thread
-        running it owns the worksheet - so the panes are moved to where the
-        windows now are and left showing what they showed.
+        reaches here at any moment, and while a command is running that command
+        owns the worksheet - so the panes are moved to where the windows now are
+        and left showing what they showed.
         """
         panes = self.query_one(Panes)
         height, width = panes.size.height, panes.size.width
@@ -1520,7 +1526,7 @@ class RederiveApp(App[None]):
         framed = self.windows.framed
         painting = self.mode != MODE_COMPUTE
         # The sessions are read only while nothing is computing: while a command
-        # runs the thread running it owns them.
+        # runs it owns them.
         if painting and not self._opening_screen():
             self.greeting = False
         for window in self.windows.windows:
@@ -1667,12 +1673,13 @@ class RederiveApp(App[None]):
 
     # -- computing ---------------------------------------------------------
     #
-    # Every command that reaches the math engine goes through here, and the
-    # screen is modal while one does. The thread running the command owns the
-    # session, so the worksheet is neither read nor repainted until the answer
-    # is in and the completion handler puts it back; what does keep moving is
-    # the message line's elapsed time and the status line's memory gauge, which
-    # together are how a user decides whether this one is worth waiting for.
+    # Every command that reaches the math engine goes through here, and where
+    # the engine can be aborted the screen is modal while one does. The command
+    # owns the session for as long as it is awaited, so the worksheet is neither
+    # read nor repainted until the answer is in and the completion handler puts
+    # it back; what does keep moving is the message line's elapsed time and the
+    # status line's memory gauge, which together are how a user decides whether
+    # this one is worth waiting for.
 
     @property
     def _abortable(self) -> bool:
@@ -1682,56 +1689,59 @@ class RederiveApp(App[None]):
     def _compute(
         self,
         label: str,
-        run: Callable[[], object],
+        run: Callable[[], Awaitable[object]],
         done: Callable[[Outcome], None],
     ) -> None:
-        """Run one session command, and hand what became of it to `done`.
+        """Await one session command on a task of its own, and hand it to `done`.
 
-        The command goes on a thread wherever the engine can be aborted: the
-        call blocks that thread on a pipe and leaves the event loop free to
-        repaint and to hear Esc. An engine computing in this process can be
-        neither aborted nor watched, so putting the screen into a mode with no
-        way out of it would be a lie; that one runs inline, and `done` is
-        called before this returns.
+        One shape for every engine there is. Where the call waits is the
+        engine's business - a thread blocking on a pipe on the desktop - and all
+        that is needed here is a task to await it on, which leaves the event
+        loop free to repaint and to hear Esc.
+
+        The modal dressing is the part that is not for everyone. An engine
+        computing in this process can be neither aborted nor watched, so putting
+        the screen into a mode with no way out of it would be a lie: that one
+        gets the task and no mode, no clock and no Esc.
         """
-        if not self._abortable:
-            done(_ran(run))
-            return
-        self.resumed = self.mode
-        self.mode = MODE_COMPUTE
-        self.computing = label
-        self.started = time.monotonic()
-        # The line being computed from keeps the screen, and loses the keys:
-        # with nothing focused every key reaches the app, where all but Esc are
-        # dropped.
-        self.set_focus(None)
-        # Nothing is written now: the clock starts only if the command is still
-        # running a second from here, which almost none of them are.
-        self.ticker = self.set_interval(TICK, self._tick)
-        self.run_worker(partial(self._computing_thread, run, done), thread=True)
+        if self._abortable:
+            self.resumed = self.mode
+            self.mode = MODE_COMPUTE
+            self.computing = label
+            self.started = time.monotonic()
+            # The line being computed from keeps the screen, and loses the keys:
+            # with nothing focused every key reaches the app, where all but Esc
+            # are dropped.
+            self.set_focus(None)
+            # Nothing is written now: the clock starts only if the command is
+            # still running a second from here, which almost none of them are.
+            self.ticker = self.set_interval(TICK, self._tick)
+        self.run_worker(self._computing(run, done))
 
-    def _computing_thread(
-        self, run: Callable[[], object], done: Callable[[Outcome], None]
+    async def _computing(
+        self, run: Callable[[], Awaitable[object]], done: Callable[[Outcome], None]
     ) -> None:
-        """The thread side: block on the engine, then hand back to the loop."""
-        outcome = _ran(run)
-        self.call_from_thread(self._computed, done, outcome)
+        """The task side: wait for the answer, then let the loop finish the command."""
+        outcome = await _ran(run)
+        self._computed(done, outcome)
 
     def _computed(self, done: Callable[[Outcome], None], outcome: Outcome) -> None:
-        """Back on the event loop: stop the clock and let the command finish.
+        """Stop the clock and let the command finish.
 
         The mode goes back to the one the command was dispatched from before
         the handler runs, since a handler that leaves its prompt up - a line
-        that would not read - is leaving the mode that prompt belongs to. The
-        focus is not put back here: Textual applies a focus on the next beat,
-        and a handler that takes the prompt down in this one would leave a
-        hidden line holding the keyboard.
+        that would not read - is leaving the mode that prompt belongs to. A
+        command that was never modal has no mode to put back, and `computing`
+        is what says which this was. The focus is not put back here: Textual
+        applies a focus on the next beat, and a handler that takes the prompt
+        down in this one would leave a hidden line holding the keyboard.
         """
         if self.ticker is not None:
             self.ticker.stop()
             self.ticker = None
-        self.computing = None
-        self.mode = self.resumed
+        if self.computing is not None:
+            self.computing = None
+            self.mode = self.resumed
         done(outcome)
 
     def _tick(self) -> None:
@@ -3028,10 +3038,10 @@ class RederiveApp(App[None]):
         expanded on the spot, with no question put at all.
 
         Which variables the expression holds is the engine's answer and not a
-        walk over the tree, so even this question goes through the computing
-        thread: converting an expression is where a hostile one detonates, and
-        it would detonate here as readily as in the command itself. It is a
-        round trip of well under a millisecond on anything sane.
+        walk over the tree, so even this question goes through the compute path:
+        converting an expression is where a hostile one detonates, and it would
+        detonate here as readily as in the command itself. It is a round trip of
+        well under a millisecond on anything sane.
         """
         pending = self.asking
         assert pending is not None
@@ -3264,27 +3274,25 @@ class RederiveApp(App[None]):
         self._ask_operand(MODE_BUILD_NEXT, BUILD_NEXT_PROMPT)
 
     def _built(self, pending: Building) -> None:
-        """Done: append what was built, unsimplified, and give the menu back."""
+        """Done: append what was built, and give the menu back.
+
+        Through the compute path either way. Ctrl-Enter simplifies what was put
+        together, which is an engine call like any other; plain Enter appends it
+        as it stands, which reaches no engine at all and is dispatched the same
+        way because the answer arrives where every other command's answer does.
+        Nothing is caught here: a line that would not read is all but
+        unreachable - every operand was read as it was collected - and the
+        completion handler says so as readily as this could.
+        """
         assert pending.node is not None
         node, annotation = pending.node, pending.annotation
         self.building = None
-        if self._wanted_simplified():
-            self._compute(
-                SIMPLIFYING,
-                partial(self.session.build, node, annotation, True),
-                self._appended,
-            )
-            return
-        started = time.monotonic()
-        try:
-            self.session.build(node, annotation)
-        except DeriveSyntaxError as error:
-            # All but unreachable: every operand was read as it was collected,
-            # and what is written here is what they were read from.
-            self._end_prompt(str(error))
-            return
-        took = _elapsed(time.monotonic() - started)
-        self._end_prompt(COMPUTE_TIME.format(elapsed=took))
+        simplified = self._wanted_simplified()
+        self._compute(
+            SIMPLIFYING if simplified else BUILDING,
+            partial(self.session.build, node, annotation, simplified),
+            self._appended,
+        )
 
     def _wanted_simplified(self) -> bool:
         """Whether the key that finished the command was Ctrl-Enter.
@@ -3321,8 +3329,8 @@ class RederiveApp(App[None]):
 
         The one the original offers is the primary variable of what was named,
         which is the engine's answer rather than a walk over the tree - and so
-        is asked for the way Factor asks for the same list, on the computing
-        thread. An expression with no variables in it is offered none, and the
+        is asked for the way Factor asks for the same list, down the compute
+        path. An expression with no variables in it is offered none, and the
         line comes up empty.
         """
         pending = self.calculating
@@ -3388,35 +3396,29 @@ class RederiveApp(App[None]):
     def _calculus_answered(self, values: dict[str, str | int]) -> None:
         """The last line is answered: write the expression and append it.
 
-        Nothing is computed, so nothing goes to the computing thread: the
-        command writes a head around what was named and stops, which is what
-        leaves a Simplify after it something to do.
+        Plain Enter computes nothing - the command writes a head around what was
+        named and stops, which is what leaves a Simplify after it something to
+        do - and it is dispatched down the compute path anyway, since that is
+        where a Ctrl-Enter's Simplify has to go and where the answer of either
+        arrives. A field holding something that is not an expression is reported
+        by the completion handler; the line is gone by then, so it is said
+        rather than corrected.
         """
         pending = self.calculating
         assert pending is not None
         self.calculating = None
         command = pending.command
         arguments = (pending.variable, *command.arguments(values))
+        simplified = self._wanted_simplified()
         run = partial(
             self.session.calculus,
             command.head,
             command.prefix,
             pending.request,
             arguments,
+            simplified,
         )
-        if self._wanted_simplified():
-            self._compute(SIMPLIFYING, partial(run, simplified=True), self._appended)
-            return
-        started = time.monotonic()
-        try:
-            run()
-        except DeriveSyntaxError as error:
-            # What a field holding something that is not an expression comes
-            # to. The line is gone by now, so this is said and not corrected.
-            self._end_prompt(str(error))
-            return
-        took = _elapsed(time.monotonic() - started)
-        self._end_prompt(COMPUTE_TIME.format(elapsed=took))
+        self._compute(SIMPLIFYING if simplified else BUILDING, run, self._appended)
 
     # -- soLve -------------------------------------------------------------
     #
@@ -3442,9 +3444,9 @@ class RederiveApp(App[None]):
         """The expression is settled: work out what is left to ask.
 
         How many equations it is comes off the tree and costs nothing; which
-        variables it holds is the engine's answer, and goes to the computing
-        thread for the reason Factor's does - converting an expression is where
-        a hostile one detonates.
+        variables it holds is the engine's answer, and goes down the compute
+        path for the reason Factor's does - converting an expression is where a
+        hostile one detonates.
         """
         pending = self.solving
         assert pending is not None
@@ -4444,11 +4446,11 @@ class RederiveApp(App[None]):
     # a plot lives in the plot window itself: removal is a right-click on the
     # curve or its legend entry, and clearing is the window's own toolbar.
     #
-    # Everything here goes through the computing thread, including the parts
-    # that are not computations. Two of the three steps can block: the
-    # variables of the expression are an engine call, and the first plot of a
-    # session starts a process that imports Qt and sympy before it answers. The
-    # message line's clock is what makes that wait legible instead of a freeze.
+    # Everything here goes through the compute path, including the parts that
+    # are not computations. Two of the three steps can wait: the variables of
+    # the expression are an engine call, and the first plot of a session starts
+    # a process that imports Qt and sympy before it answers. The message line's
+    # clock is what makes that wait legible instead of a freeze.
     #
     # The app holds no plot state at all. Which window is the receiver, what
     # is in it, what it is called - the host owns all of it, because the host
@@ -4473,16 +4475,16 @@ class RederiveApp(App[None]):
             PLOTTING, partial(self._classified, request, where), self._plot_classified
         )
 
-    def _classified(self, request: str, where: plots.Where | None) -> plots.Add:
+    async def _classified(self, request: str, where: plots.Where | None) -> plots.Add:
         """What `request` is a plot of, as the request that would draw it.
 
-        Off the event loop, because the variables of the expression are an
-        engine call and can block. Nothing here depends on any window's state -
-        polar is the window's own view mode - and nothing is sent: what comes
-        back is the request, ready to go.
+        Down the compute path, because the variables of the expression are an
+        engine call and can take as long as any other. Nothing here depends on
+        any window's state - polar is the window's own view mode - and nothing
+        is sent: what comes back is the request, ready to go.
         """
         target, label = self.session.named_target(request)
-        variables = self.session.variables(request)
+        variables = await self.session.variables(request)
         text = write_expression(target, spaced=True)
         plotted = classify(target, variables, text)
         kind = plotted.kind
@@ -4534,15 +4536,19 @@ class RederiveApp(App[None]):
     def _send_plot(self, request: plots.Add) -> None:
         self._compute(PLOTTING, partial(self._plot, request), self._plot_done)
 
-    def _plot(self, request: plots.Add) -> str:
+    async def _plot(self, request: plots.Add) -> str:
         """Send one plot, off the event loop, and word the acknowledgement.
+
+        The host is a process at the other end of a pipe and the send waits for
+        its answer, so the wait goes on a thread as the engine's does - the loop
+        has a screen to keep painting either way.
 
         Whether the plot replaced a curve already there is only known once the
         host has answered, which is why the sentence is made here rather than
         by the command: a plot that replaced says `Replotting`, which is how
         replacement teaches itself.
         """
-        placed = self.plots.add(request)
+        placed = await asyncio.to_thread(self.plots.add, request)
         worded = REPLOTTED if placed.replaced else PLOTTED
         return worded.format(label=request.label)
 
@@ -4604,13 +4610,12 @@ class RederiveApp(App[None]):
         dropping a number the user explicitly asked for.
 
         `Trouble` only prints, while this writes into a worksheet, so when the
-        event arrives matters. While a command computes, the computing thread
-        owns the worksheets, and the point waits its turn rather than racing
-        it - nothing is dropped, it lands when the command lets go. Mid-dialog
-        and mid-edit the append is safe: the entry goes in under whatever line
-        or dialog is up, the panes repaint around it, and the selection moves
-        to the new entry - which is what puts the point one `F3` away from the
-        line being edited.
+        event arrives matters. While a command computes it owns the worksheets,
+        and the point waits its turn rather than racing it - nothing is dropped,
+        it lands when the command lets go. Mid-dialog and mid-edit the append is
+        safe: the entry goes in under whatever line or dialog is up, the panes
+        repaint around it, and the selection moves to the new entry - which is
+        what puts the point one `F3` away from the line being edited.
         """
         if self.mode == MODE_COMPUTE:
             self.set_timer(POINT_RETRY, partial(self._plot_traced, event))
@@ -4913,7 +4918,7 @@ class RederiveApp(App[None]):
         self._derive(request, self.session.approx, APPROXIMATING)
 
     def _derive(
-        self, request: str, run: Callable[[str], object], label: str
+        self, request: str, run: Callable[[str], Awaitable[object]], label: str
     ) -> None:
         """Run `run` on what the line asks for, and say how long it took.
 
@@ -4921,7 +4926,7 @@ class RederiveApp(App[None]):
         that does not read stays up to be corrected, as an authored one does -
         which is why the refusal is judged where the answer is, rather than
         here: the line is not read until the command runs, and by then the
-        command is on a thread of its own.
+        command is on a task of its own.
         """
         if not request.strip():
             self._end_prompt()
@@ -4939,8 +4944,8 @@ class RederiveApp(App[None]):
         """Say where the line stopped reading, and leave it up.
 
         The line is focused as well as pointed at, because a command that ran
-        on a thread took the keyboard off it while it ran, and a refused line
-        is the user's again.
+        took the keyboard off it while it ran, and a refused line is the user's
+        again.
         """
         self._beep()
         self._set_message(str(error))
@@ -4996,15 +5001,15 @@ class RederiveApp(App[None]):
         known = {id(entry) for entry in before}
         return [entry for entry in self.session.entries if id(entry) not in known]
 
-    def _simplify_entered(self, entered: list[sessions.Entry]) -> None:
-        """Simplify each of them in turn, on the computing thread.
+    async def _simplify_entered(self, entered: list[sessions.Entry]) -> None:
+        """Simplify each of them in turn, one engine call after another.
 
         An abort lands in the middle of the list and is left there: what has
         already been simplified stands, and the rest is abandoned, which is the
         same bargain every other abort makes.
         """
         for entry in entered:
-            self.session.simplify(f"#{entry.number}")
+            await self.session.simplify(f"#{entry.number}")
 
     def _return_to_menu(self, message: str) -> None:
         entered = self._entered_to_simplify()

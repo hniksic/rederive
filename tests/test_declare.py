@@ -67,29 +67,29 @@ def test_an_infinite_bound_is_open_however_it_was_set(session):
     assert drawn(session.declare_domain("x", "Real", bounds)) == "x :ε Real (-∞, ∞)"
 
 
-def test_a_declared_domain_is_what_lets_a_rewrite_fire(session):
+async def test_a_declared_domain_is_what_lets_a_rewrite_fire(session):
     session.declare_domain("z", "Real", Bounds("0", "∞"))
     session.author("SQRT(z^2)")
-    assert session.simplify("#2").text == "z"
+    assert (await session.simplify("#2")).text == "z"
 
 
-def test_the_default_domain_stands_for_every_variable_nobody_named(session):
+async def test_the_default_domain_stands_for_every_variable_nobody_named(session):
     session.author("SQRT(w^2)")
-    assert session.simplify("#1").text == "ABS(w)"
+    assert (await session.simplify("#1")).text == "ABS(w)"
     session.declare_domain("default", "Complex")
     session.author("SQRT(q^2)")
-    assert session.simplify("#4").text == "SQRT(q^2)"
+    assert (await session.simplify("#4")).text == "SQRT(q^2)"
 
 
 # -- Declare Variable Value --------------------------------------------------
 
 
-def test_a_value_is_written_as_an_assignment(session):
+async def test_a_value_is_written_as_an_assignment(session):
     entry = session.declare_value("area", "pi r^2")
     assert entry.text == "area:=pi*r^2"
     assert entry.layout.lines == ("           2", "area := π·r ")
     session.author("2 area")
-    assert session.simplify("#2").text == "2*pi*r^2"
+    assert (await session.simplify("#2")).text == "2*pi*r^2"
 
 
 def test_a_blank_value_leaves_the_name_an_unassigned_variable(session):
@@ -101,13 +101,13 @@ def test_a_blank_value_leaves_the_name_an_unassigned_variable(session):
 # -- Declare Function --------------------------------------------------------
 
 
-def test_the_definitions_own_variables_become_the_parameters(session):
+async def test_the_definitions_own_variables_become_the_parameters(session):
     entry = session.declare_function("hyp", "sqrt(a^2 + b^2)")
     assert entry.text == "HYP(a,b):=SQRT(a^2+b^2)"
     # The name is a function's now, so it is drawn as one: upper case.
     assert entry.layout.lines[-1] == "HYP(a, b) := √(a  + b )"
     session.author("HYP(3, 4)")
-    assert session.simplify("#2").text == "5"
+    assert (await session.simplify("#2")).text == "5"
 
 
 def test_the_parameters_are_ordered_most_main_first(session):

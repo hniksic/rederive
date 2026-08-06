@@ -6,14 +6,18 @@ it is where the math engine is reached from: the UI never calls a command
 itself, it asks the session for one.
 
 Which engine answers is the one thing a session takes from outside. The six
-calls that can cost anything go through `runner`, which is `engine.computing`
-itself unless something hands in another - and what the app hands in is a proxy
-to a child process, so that a computation can be killed. Everything else this
-module asks the engine for costs nothing and is asked of `engine.client`, the
-half that holds no mathematics: that is what lets the app process draw a
-worksheet without sympy in it. Every command here stays synchronous whichever it
-is: the session appends an answer only once the call has returned, so a call that
-dies leaves the worksheet exactly as the command found it.
+calls that can cost anything go through `runner`, and they are awaited: the
+program has to be able to go on drawing while one is in flight, and the caller
+that can wait for it is not the same everywhere - a thread on the desktop, an
+event on a page. Everything else this module asks the engine for costs nothing
+and is asked of `engine.client`, the half that holds no mathematics: that is
+what lets the app process draw a worksheet without sympy in it. A command that
+computes is a coroutine and every other one is an ordinary call, which is the
+line between what may wait and what may not.
+
+Awaiting changes nothing about when the worksheet moves. The session appends an
+answer only once the call has returned, so a call that dies - or is aborted
+mid-await - leaves the worksheet exactly as the command found it.
 
 The session owns the three things an authored line needs: the parse state, so
 that `InputMode`, `CaseMode` and every definition reach the lines that follow;
@@ -61,10 +65,10 @@ worksheet and never goes back.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from rederive.display import DisplayOptions, Layout, Region, render
 
@@ -132,9 +136,9 @@ ARBITRARY = re.compile(r"@(\d+)")
 Rename = Callable[[int], int | None]
 
 #: One engine command, as the session calls it. Every command takes the same
-#: three things and gives back an answer, which is what lets `_command` serve
-#: all of them and know nothing about which one it is running.
-Command = Callable[[Node, "engine.Context", ParseState], "engine.Result"]
+#: three things and gives back an answer to wait for, which is what lets
+#: `_command` serve all of them and know nothing about which one it is running.
+Command = Callable[[Node, "engine.Context", ParseState], Awaitable["engine.Result"]]
 
 
 class Runner(Protocol):
@@ -146,17 +150,21 @@ class Runner(Protocol):
     convert to sympy, and converting alone can hang: `10^10^10` never finishes
     being built.
 
-    The `rederive.engine.computing` module satisfies this as it stands, which is
-    what `_computing_here` gives a session that is handed nothing else.
-    `engine.RemoteEngine` satisfies it too, and answers out of a child process
-    that can be killed, which is how the app makes Esc mean something.
+    They are awaited because the six are the only calls that can take long
+    enough to have to be waited for, and because where the waiting happens is
+    not the session's business. `remote.RemoteEngine` hands each one to a thread
+    that blocks on a pipe to a child process, which is how the app makes Esc
+    mean something; `_Here` computes it in this process, which is what a test
+    and a direct caller want; and an implementation with neither a thread nor a
+    process to spare can resolve one from an event and satisfy the same
+    signatures.
     """
 
-    def simplify(
+    async def simplify(
         self, node: Node, context: engine.Context, state: ParseState | None = ...
     ) -> engine.Result: ...
 
-    def approx(
+    async def approx(
         self,
         node: Node,
         context: engine.Context,
@@ -164,7 +172,7 @@ class Runner(Protocol):
         state: ParseState | None = ...,
     ) -> engine.Result: ...
 
-    def factor(
+    async def factor(
         self,
         node: Node,
         context: engine.Context,
@@ -173,7 +181,7 @@ class Runner(Protocol):
         state: ParseState | None = ...,
     ) -> engine.Result: ...
 
-    def expand(
+    async def expand(
         self,
         node: Node,
         context: engine.Context,
@@ -182,7 +190,7 @@ class Runner(Protocol):
         state: ParseState | None = ...,
     ) -> engine.Result: ...
 
-    def solve(
+    async def solve(
         self,
         node: Node,
         context: engine.Context,
@@ -191,9 +199,73 @@ class Runner(Protocol):
         state: ParseState | None = ...,
     ) -> tuple[engine.Result, ...]: ...
 
-    def expression_variables(
+    async def expression_variables(
         self, node: Node, context: engine.Context | None = ...
     ) -> tuple[str, ...]: ...
+
+
+class _Here:
+    """The engine computing in this process, wearing the six awaitable calls.
+
+    An answer worked out here is in hand the moment it is asked for, so nothing
+    below ever waits: these coroutines suspend at no point, and awaiting one
+    costs what the call costs and nothing more. That is exactly why a session
+    computing this way cannot be aborted - there is no moment between the ask
+    and the answer for an Esc to arrive in - and why the app hands in a proxy
+    instead.
+    """
+
+    def __init__(self, computing: Any) -> None:
+        self._engine = computing
+
+    async def simplify(
+        self, node: Node, context: engine.Context, state: ParseState | None = None
+    ) -> engine.Result:
+        return self._engine.simplify(node, context, state)
+
+    async def approx(
+        self,
+        node: Node,
+        context: engine.Context,
+        digits: int | None = None,
+        state: ParseState | None = None,
+    ) -> engine.Result:
+        return self._engine.approx(node, context, digits, state)
+
+    async def factor(
+        self,
+        node: Node,
+        context: engine.Context,
+        amount: engine.Amount = engine.Amount.RATIONAL,
+        variables: Sequence[str] = (),
+        state: ParseState | None = None,
+    ) -> engine.Result:
+        return self._engine.factor(node, context, amount, variables, state)
+
+    async def expand(
+        self,
+        node: Node,
+        context: engine.Context,
+        amount: engine.Amount = engine.Amount.RATIONAL,
+        variables: Sequence[str] = (),
+        state: ParseState | None = None,
+    ) -> engine.Result:
+        return self._engine.expand(node, context, amount, variables, state)
+
+    async def solve(
+        self,
+        node: Node,
+        context: engine.Context,
+        variables: Sequence[str] = (),
+        bounds: tuple[Node, Node] | None = None,
+        state: ParseState | None = None,
+    ) -> tuple[engine.Result, ...]:
+        return self._engine.solve(node, context, variables, bounds, state)
+
+    async def expression_variables(
+        self, node: Node, context: engine.Context | None = None
+    ) -> tuple[str, ...]:
+        return self._engine.expression_variables(node, context)
 
 
 def _computing_here() -> Runner:
@@ -205,10 +277,14 @@ def _computing_here() -> Runner:
     it, which is why the app never takes this door: it hands in a `RemoteEngine`, and
     the process that draws the screen goes on knowing no mathematics at all. Tests
     and direct callers take it, and want exactly what it does.
+
+    `_Here` is the awaitable face over it and nothing more. The module's own calls
+    stay ordinary functions, since the worker calls them in the process where the
+    computing happens and has nothing to wait for either.
     """
     from rederive.engine import computing
 
-    return computing
+    return _Here(computing)
 
 
 @dataclass(frozen=True)
@@ -578,23 +654,25 @@ class Session:
             labels={entry.number: entry.value for entry in self.entries},
         )
 
-    def simplify(self, request: str) -> Entry:
+    async def simplify(self, request: str) -> Entry:
         """Append the simplified form of the expression `request` names."""
-        return self._command(request, "Simp", self.runner.simplify)
+        return await self._command(request, "Simp", self.runner.simplify)
 
-    def approx(self, request: str) -> Entry:
+    async def approx(self, request: str) -> Entry:
         """Append the approximated form of the expression `request` names.
 
         Simplify with the precision temporarily approximate, at whatever
         `PrecisionDigits` says; the rest is Simplify's story exactly.
         """
 
-        def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
+        def run(
+            node: Node, context: engine.Context, state: ParseState
+        ) -> Awaitable[engine.Result]:
             return self.runner.approx(node, context, None, state)
 
-        return self._command(request, "Approx", run)
+        return await self._command(request, "Approx", run)
 
-    def factor(
+    async def factor(
         self,
         request: str,
         amount: engine.Amount = engine.Amount.RATIONAL,
@@ -607,12 +685,14 @@ class Session:
         exactly.
         """
 
-        def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
+        def run(
+            node: Node, context: engine.Context, state: ParseState
+        ) -> Awaitable[engine.Result]:
             return self.runner.factor(node, context, amount, variables, state)
 
-        return self._command(request, "Fctr", run)
+        return await self._command(request, "Fctr", run)
 
-    def expand(
+    async def expand(
         self,
         request: str,
         amount: engine.Amount = engine.Amount.RATIONAL,
@@ -625,12 +705,14 @@ class Session:
         on the way to partial fractions; the rest is Simplify's story exactly.
         """
 
-        def run(node: Node, context: engine.Context, state: ParseState) -> engine.Result:
+        def run(
+            node: Node, context: engine.Context, state: ParseState
+        ) -> Awaitable[engine.Result]:
             return self.runner.expand(node, context, amount, variables, state)
 
-        return self._command(request, "Expd", run)
+        return await self._command(request, "Expd", run)
 
-    def solve(
+    async def solve(
         self,
         request: str,
         variables: Sequence[str] = (),
@@ -668,7 +750,7 @@ class Session:
         # engine command does.
         self.removed = []
         source = AUTHORED if entry is None else f"#{entry.number}"
-        results = self.runner.solve(
+        results = await self.runner.solve(
             target if entry is None else entry.value,
             self.context,
             variables,
@@ -680,7 +762,7 @@ class Session:
             for result in results
         ]
 
-    def solve_variables(self, request: str) -> tuple[str, ...]:
+    async def solve_variables(self, request: str) -> tuple[str, ...]:
         """The variables soLve would offer for what `request` names.
 
         `variables` is not enough on its own: soLve names the whole entry where
@@ -690,7 +772,7 @@ class Session:
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
         _, target = self._requested(request)
-        return self.runner.expression_variables(target, self.context)
+        return await self.runner.expression_variables(target, self.context)
 
     def equations(self, request: str) -> int:
         """How many equations what `request` names is a system of, or zero.
@@ -807,7 +889,7 @@ class Session:
             return False
         return node.kind is Kind.NAME and self._is_variable(str(node.value))
 
-    def build(self, node: Node, annotation: str, simplified: bool = False) -> Entry:
+    async def build(self, node: Node, annotation: str, simplified: bool = False) -> Entry:
         """Append a built expression, unsimplified, as Build leaves it.
 
         `node` is hung together from operands the command resolved as it
@@ -819,9 +901,9 @@ class Session:
         expression alone, the built form it came from never reaching the
         history, and says so by wrapping the annotation - `Simp(#1+#1)`.
         """
-        return self._derived(node, annotation, simplified)
+        return await self._derived(node, annotation, simplified)
 
-    def calculus(
+    async def calculus(
         self,
         head: str,
         prefix: str,
@@ -850,9 +932,11 @@ class Session:
         name = Node(Kind.NAME, 0, 0, (), head)
         call = Node(Kind.CALL, 0, 0, (name, target, *parsed))
         variable = arguments[0] if arguments else ""
-        return self._derived(call, f"{prefix}({source},{variable})", simplified)
+        return await self._derived(call, f"{prefix}({source},{variable})", simplified)
 
-    def _derived(self, node: Node, annotation: str, simplified: bool = False) -> Entry:
+    async def _derived(
+        self, node: Node, annotation: str, simplified: bool = False
+    ) -> Entry:
         """Append a tree built rather than computed, written out and read back.
 
         Deriving an expression empties the unremove buffer, which every other
@@ -867,9 +951,11 @@ class Session:
         result = engine.replace(node, (), self.state)
         if not simplified:
             return self._append(result.text, result.node, annotation)
-        return self._answered(result.node, self.runner.simplify, f"Simp({annotation})")
+        return await self._answered(
+            result.node, self.runner.simplify, f"Simp({annotation})"
+        )
 
-    def variables(self, request: str) -> tuple[str, ...]:
+    async def variables(self, request: str) -> tuple[str, ...]:
         """The variables Factor or Expand would offer for what `request` names.
 
         Most main first, as the original lists them. Fewer than two is no
@@ -877,7 +963,7 @@ class Session:
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
-        return self.runner.expression_variables(self.target(request), self.context)
+        return await self.runner.expression_variables(self.target(request), self.context)
 
     def decomposes(self, request: str) -> bool:
         """Whether what `request` names is a number, which Factor just decomposes.
@@ -893,7 +979,7 @@ class Session:
         """
         return engine.written_as_ratio(self.target(request))
 
-    def _command(self, request: str, prefix: str, run: Command) -> Entry:
+    async def _command(self, request: str, prefix: str, run: Command) -> Entry:
         """Run one engine command on what `request` names, and append the answer.
 
         `#3` on its own is entry 3. When that is the entry the selection is in
@@ -911,10 +997,10 @@ class Session:
         self.removed = []
         entry = self._labelled(node)
         if entry is None:
-            return self._answered(node, run, f"{prefix}({AUTHORED})")
+            return await self._answered(node, run, f"{prefix}({AUTHORED})")
         if self._highlighted_in(entry) is not None:
-            return self._answered_part(entry, run, prefix)
-        return self._answered(entry.value, run, f"{prefix}(#{entry.number})")
+            return await self._answered_part(entry, run, prefix)
+        return await self._answered(entry.value, run, f"{prefix}(#{entry.number})")
 
     def _labelled(self, node: Node) -> Entry | None:
         """The entry a bare `#3` names, or None when that is not what this is."""
@@ -966,11 +1052,11 @@ class Session:
         source = AUTHORED if entry is None else f"#{entry.number}"
         return self._append(result.text, result.node, f"Sub({source})")
 
-    def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
-        result = run(node, self.context, self.state)
+    async def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
+        result = await run(node, self.context, self.state)
         return self._append(result.text, result.node, annotation, result.value)
 
-    def _answered_part(self, entry: Entry, run: Command, prefix: str) -> Entry:
+    async def _answered_part(self, entry: Entry, run: Command, prefix: str) -> Entry:
         """`entry` again, with the highlighted part of it transformed.
 
         The answer is spliced into the entry's own text and the whole line read
@@ -983,7 +1069,7 @@ class Session:
         """
         part = self.selected_node
         assert part is not None
-        result = run(part, self.context, self.state)
+        result = await run(part, self.context, self.state)
         fragment = result.text if result.node.is_atom else f"({result.text})"
         text = entry.text[: part.start] + fragment + entry.text[part.end :]
         node = parse_expression(text, self.state).node

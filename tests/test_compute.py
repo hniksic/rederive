@@ -7,6 +7,7 @@ engine answers, so what lands on the worksheet is what a real command would
 have put there.
 """
 
+import asyncio
 import threading
 import time
 
@@ -38,7 +39,10 @@ class Blocking:
     """An engine that answers only once the test says so.
 
     It satisfies the five calls a session makes and the `abort` the app looks
-    for, which is all that decides whether the app runs a command on a thread.
+    for, which is all that decides whether the app puts the screen into compute
+    mode. The waiting is done the way `RemoteEngine` does it - a thread of the
+    loop's own pool blocking on an event - so an awaited call here leaves the
+    loop as free as a real one does.
     """
 
     def __init__(self) -> None:
@@ -65,24 +69,27 @@ class Blocking:
             self._aborted = False
             raise EngineAborted("Aborted")
 
-    def simplify(self, node, context, state=None):
-        self._wait()
+    async def _held(self):
+        await asyncio.to_thread(self._wait)
+
+    async def simplify(self, node, context, state=None):
+        await self._held()
         return computing.simplify(node, context, state)
 
-    def approx(self, node, context, digits=None, state=None):
-        self._wait()
+    async def approx(self, node, context, digits=None, state=None):
+        await self._held()
         return computing.approx(node, context, digits, state)
 
-    def factor(self, node, context, amount=None, variables=(), state=None):
-        self._wait()
+    async def factor(self, node, context, amount=None, variables=(), state=None):
+        await self._held()
         return computing.factor(node, context, amount, variables, state)
 
-    def expand(self, node, context, amount=None, variables=(), state=None):
-        self._wait()
+    async def expand(self, node, context, amount=None, variables=(), state=None):
+        await self._held()
         return computing.expand(node, context, amount, variables, state)
 
-    def expression_variables(self, node, context=None):
-        self._wait()
+    async def expression_variables(self, node, context=None):
+        await self._held()
         return computing.expression_variables(node, context)
 
 

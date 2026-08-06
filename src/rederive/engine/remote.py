@@ -1,10 +1,12 @@
 """The app side of the engine worker: six calls, one pipe, one child process.
 
-`RemoteEngine` has the signatures `Session` calls the engine by, so a session
+`RemoteEngine` answers the six calls `Session` makes the engine by, so a session
 handed one computes in a child process without knowing it. Each call ships the
-tree, the context and the parse state down a pipe and blocks on the answer,
-which is why the caller must be a thread and not the event loop: the loop stays
-free to repaint, to tick the elapsed time, and to hear Esc.
+tree, the context and the parse state down a pipe and blocks on the answer, on a
+thread `asyncio.to_thread` lends it: the event loop stays free to repaint, to tick
+the elapsed time, and to hear Esc. Everything under those six calls is written in
+the blocking style that thread is for - a pull-based receive loop with deadlines,
+a resident set polled between reads, a handshake waited out.
 
 Esc is the whole reason for the child. Sympy cannot be politely interrupted
 mid-bignum - there is no cooperative cancellation to ask for - so an abort is
@@ -31,6 +33,7 @@ time: Derive users let computations run for hours, and Esc is the time limit.
 
 from __future__ import annotations
 
+import asyncio
 import multiprocessing
 import signal
 import threading
@@ -99,6 +102,12 @@ def default_cap() -> int:
 class RemoteEngine:
     """The six engine calls, answered by a child process that can be killed.
 
+    The calls are awaitable and everything under them blocks, `asyncio.to_thread`
+    being what joins the two. That is the desktop reading of the session's async
+    engine seam, and it is today's semantics to the letter: a thread waits on the
+    pipe, Esc kills the worker, and the waiting call raises the exception naming
+    the cause.
+
     One request is in flight at a time, which is what the lock is for: the
     session is single-threaded and the worker holds nothing between requests,
     so there is nothing a second concurrent request could be about. `abort`
@@ -147,22 +156,27 @@ class RemoteEngine:
         self.starts = 0
 
     # -- the engine interface ----------------------------------------------
+    #
+    # Six awaitable calls over a blocking machine. Each hands `_ask` to a thread
+    # and waits for that thread rather than for the pipe, which is what leaves the
+    # loop free while the answer is being computed: the thread is where the wait
+    # happens, and it is the thread the kill lands under.
 
-    def simplify(
+    async def simplify(
         self, node: Node, context: Context, state: ParseState | None = None
     ) -> Result:
-        return self._ask("simplify", (node, context, state))
+        return await self._await("simplify", (node, context, state))
 
-    def approx(
+    async def approx(
         self,
         node: Node,
         context: Context,
         digits: int | None = None,
         state: ParseState | None = None,
     ) -> Result:
-        return self._ask("approx", (node, context, digits, state))
+        return await self._await("approx", (node, context, digits, state))
 
-    def factor(
+    async def factor(
         self,
         node: Node,
         context: Context,
@@ -170,9 +184,10 @@ class RemoteEngine:
         variables: Sequence[str] = (),
         state: ParseState | None = None,
     ) -> Result:
-        return self._ask("factor", (node, context, amount, tuple(variables), state))
+        arguments = (node, context, amount, tuple(variables), state)
+        return await self._await("factor", arguments)
 
-    def expand(
+    async def expand(
         self,
         node: Node,
         context: Context,
@@ -180,9 +195,10 @@ class RemoteEngine:
         variables: Sequence[str] = (),
         state: ParseState | None = None,
     ) -> Result:
-        return self._ask("expand", (node, context, amount, tuple(variables), state))
+        arguments = (node, context, amount, tuple(variables), state)
+        return await self._await("expand", arguments)
 
-    def solve(
+    async def solve(
         self,
         node: Node,
         context: Context,
@@ -190,12 +206,17 @@ class RemoteEngine:
         bounds: tuple[Node, Node] | None = None,
         state: ParseState | None = None,
     ) -> tuple[Result, ...]:
-        return self._ask("solve", (node, context, tuple(variables), bounds, state))
+        arguments = (node, context, tuple(variables), bounds, state)
+        return await self._await("solve", arguments)
 
-    def expression_variables(
+    async def expression_variables(
         self, node: Node, context: Context | None = None
     ) -> tuple[str, ...]:
-        return self._ask("expression_variables", (node, context))
+        return await self._await("expression_variables", (node, context))
+
+    async def _await(self, method: str, args: tuple[Any, ...]) -> Any:
+        """One request, waited for on a thread of the loop's own pool."""
+        return await asyncio.to_thread(self._ask, method, args)
 
     # -- lifecycle ---------------------------------------------------------
 

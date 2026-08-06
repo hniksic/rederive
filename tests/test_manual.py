@@ -49,8 +49,8 @@ exercise elsewhere is left out.
 
 from __future__ import annotations
 
-import threading
-from contextlib import contextmanager
+import asyncio
+from contextlib import contextmanager, suppress
 
 import pytest
 
@@ -116,11 +116,11 @@ def session():
     return Session()
 
 
-def answer(session, *lines):
+async def answer(session, *lines):
     """Author every line but the last, and simplify the last one."""
     for line in lines[:-1]:
         session.author(line)
-    return session.simplify(lines[-1]).text
+    return (await session.simplify(lines[-1])).text
 
 
 #: How long a manual session is given to answer before it is called a hang.
@@ -143,26 +143,22 @@ def abortable():
         engine.shutdown()
 
 
-def answered_within(session, engine, ask, patience=PATIENCE):
-    """What `ask(session)` answers, or a failure saying it never did."""
-    answer = {}
+async def answered_within(session, engine, ask, patience=PATIENCE):
+    """What `ask(session)` answers, or a failure saying it never did.
 
-    def run():
-        try:
-            answer["text"] = ask(session)
-        except BaseException as error:  # noqa: BLE001 - reported below
-            answer["error"] = error
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    thread.join(patience)
-    if thread.is_alive():
+    `ask` hands back the command to wait for, so the bound can be put on the
+    waiting and not on the command. One that runs out of it is stopped the way
+    a user stops one - `engine.abort` is Esc - and what is reported is that it
+    never answered rather than whatever the abort raised.
+    """
+    asking = asyncio.ensure_future(ask(session))
+    answered, _ = await asyncio.wait((asking,), timeout=patience)
+    if not answered:
         engine.abort()
-        thread.join(patience)
+        with suppress(BaseException):
+            await asyncio.wait_for(asking, patience)
         pytest.fail(f"no answer in {patience:.0f} seconds")
-    if "error" in answer:
-        raise answer["error"]
-    return answer["text"]
+    return asking.result()
 
 
 #: The manual's promises this engine has decided not to keep, test id to
@@ -324,14 +320,14 @@ def test_the_operators_group_the_way_the_manual_says(text, expected):
     assert simp(text) == expected
 
 
-def test_the_manuals_first_arithmetic_is_not_simplified_until_asked(session):
+async def test_the_manuals_first_arithmetic_is_not_simplified_until_asked(session):
     # 3.1 p.27: authoring `2 (8 + 7)/3^2` displays it built up, unsimplified.
     entry = session.author("2 (8 + 7) / 3^2")
     assert entry.text == "2*(8+7)/3^2"
     lines = (" 2·(8 + 7) ", "───────────", "      2    ", "     3     ")
     assert entry.layout.lines == lines
     # 3.2 p.28: Simplify answers 10/3, and says which line it came from.
-    simplified = session.simplify("#1")
+    simplified = await session.simplify("#1")
     assert simplified.text == "10/3"
     assert simplified.annotation == "Simp(#1)"
 
@@ -859,10 +855,10 @@ def test_the_derivatives_of_the_manual(text, expected):
     assert simp(text) == expected
 
 
-def test_the_derivative_of_a_declared_arbitrary_function(session):
+async def test_the_derivative_of_a_declared_arbitrary_function(session):
     # 7.2 p.173: with F an arbitrary function, the chain rule stops at F'.
     session.declare_arbitrary("F", ["x"])
-    assert session.simplify("DIF(F(x)^3, x)").text == "3*F(x)^2*DIF(F(x), x)"
+    assert (await session.simplify("DIF(F(x)^3, x)")).text == "3*F(x)^2*DIF(F(x), x)"
 
 
 def test_a_negative_order_of_differentiation_is_an_antiderivative():
@@ -1111,10 +1107,10 @@ def test_the_vector_calculus_of_the_manual(text, expected):
     assert simp(text) == expected
 
 
-def test_the_gradient_of_an_arbitrary_function_is_its_partial_derivatives(session):
+async def test_the_gradient_of_an_arbitrary_function_is_its_partial_derivatives(session):
     # 8.9 p.213.
     session.declare_arbitrary("F", ["x", "y", "z"])
-    assert session.simplify("GRAD(F(x, y, z))").text == (
+    assert (await session.simplify("GRAD(F(x, y, z))")).text == (
         "[DIF(F(x, y, z), x), DIF(F(x, y, z), y), DIF(F(x, y, z), z)]"
     )
 
@@ -1133,20 +1129,22 @@ def test_a_vector_potential_is_checked_by_taking_its_curl_back():
 
 # == Chapter 10: Programming ==================================================
 
-def test_the_iterates_of_the_manuals_fixed_point():
+async def test_the_iterates_of_the_manuals_fixed_point():
     # 10.1 p.253: iteration stops when a value repeats, and x0 heads the
     # vector. The manual is explicit that this one has to be approximated:
     # iterated exactly it never repeats, so it never stops.
     with abortable() as (session, engine):
-        answer = answered_within(
-            session, engine, lambda s: s.approx("ITERATES(#e^(-x/20), x, 1)").text
+        answer = await answered_within(
+            session, engine, lambda s: s.approx("ITERATES(#e^(-x/20), x, 1)")
         )
-    assert answer == "[1, 0.951229, 0.953551, 0.953441, 0.953446, 0.953446, 0.953446]"
+    assert answer.text == (
+        "[1, 0.951229, 0.953551, 0.953441, 0.953446, 0.953446, 0.953446]"
+    )
 
 
-def test_an_iteration_count_bounds_the_iterates(session):
+async def test_an_iteration_count_bounds_the_iterates(session):
     # 10.1 p.254: n iterations, and n + 1 elements with x0.
-    assert session.approx("ITERATES(#e^(-x/20), x, 1, 5)").text == (
+    assert (await session.approx("ITERATES(#e^(-x/20), x, 1, 5)")).text == (
         "[1, 0.951229, 0.953551, 0.953441, 0.953446, 0.953446]"
     )
 
@@ -1156,34 +1154,34 @@ def test_a_negative_count_iterates_the_inverse():
     assert simp("ITERATES(TAN(x), x, x, -1)") == "[x, ATAN(x)]"
 
 
-def test_the_manuals_fibonacci_by_iteration(session):
+async def test_the_manuals_fibonacci_by_iteration(session):
     # 10.2 p.257: the pair is the hundredth and the hundred and first.
     session.author("FIB(n) := ITERATE([v SUB 2, v SUB 1 + v SUB 2], v, [0, 1], n)")
-    assert session.simplify("FIB(100)").text == (
+    assert (await session.simplify("FIB(100)")).text == (
         "[354224848179261915075, 573147844013817084101]"
     )
 
 
-def test_the_same_fibonacci_written_with_a_vector_of_variables(session):
+async def test_the_same_fibonacci_written_with_a_vector_of_variables(session):
     # 10.2 p.258: the same thing without subscripts.
     session.author("FIB(n) := ITERATE([k, j+k], [j, k], [0, 1], n)")
-    assert session.simplify("FIB(100)").text == (
+    assert (await session.simplify("FIB(100)")).text == (
         "[354224848179261915075, 573147844013817084101]"
     )
 
 
-def test_a_value_assigned_decides_the_manuals_pay_schedule(session):
+async def test_a_value_assigned_decides_the_manuals_pay_schedule(session):
     # 10.3 p.261.
     session.author("h := 50")
-    assert session.simplify("IF(h <= 40, 10h, 400 + 15*(h - 40))").text == "550"
+    assert (await session.simplify("IF(h <= 40, 10h, 400 + 15*(h - 40))")).text == "550"
 
 
-def test_a_declared_domain_decides_the_manuals_pay_schedule(session):
+async def test_a_declared_domain_decides_the_manuals_pay_schedule(session):
     # 10.3 p.261: h under thirty, so the first branch is the answer even
     # without a value.
     session.declare_domain("h", "Real", None)
     session.author("h :epsilon Real (-inf, 30)")
-    assert session.simplify("IF(h <= 40, 10h, 400 + 15*(h - 40))").text == "10*h"
+    assert (await session.simplify("IF(h <= 40, 10h, 400 + 15*(h - 40))")).text == "10*h"
 
 
 def test_an_undecidable_condition_keeps_the_whole_conditional():
@@ -1212,19 +1210,19 @@ def test_the_manuals_search_for_the_first_prime_pair_above_a_hundred_thousand():
     assert simp("ITERATE(IF(PRIME(n) AND PRIME(n+2), n, n+2), n, 100001)") == "100151"
 
 
-def test_the_manuals_quadrant_function(session):
+async def test_the_manuals_quadrant_function(session):
     # 10.4 p.266: the origin and both positive axes fall in quadrant one, the
     # negative x-axis in two and the negative y-axis in four.
     session.author("QUADRANT(x, y) := IF(x >= 0, IF(y >= 0, 1, 4), IF(y >= 0, 2, 3))")
     corners = ["(1, 1)", "(-1, 1)", "(-1, -1)", "(1, -1)"]
-    assert [session.simplify(f"QUADRANT{at}").text for at in corners] == [
+    assert [(await session.simplify(f"QUADRANT{at}")).text for at in corners] == [
         "1",
         "2",
         "3",
         "4",
     ]
     axes = ["(1, 0)", "(0, 1)", "(-1, 0)", "(0, -1)", "(0, 0)"]
-    assert [session.simplify(f"QUADRANT{at}").text for at in axes] == [
+    assert [(await session.simplify(f"QUADRANT{at}")).text for at in axes] == [
         "1",
         "1",
         "2",
@@ -1233,10 +1231,10 @@ def test_the_manuals_quadrant_function(session):
     ]
 
 
-def test_the_manuals_triangle_category_is_inclusive(session):
+async def test_the_manuals_triangle_category_is_inclusive(session):
     # 10.5 p.269: OR is and/or, so an equilateral triangle is isosceles.
     session.author('CATEGORY(a, b, c) := IF(a=b OR a=c OR b=c, "Isosceles", "Scalene")')
-    assert session.simplify("CATEGORY(1, 1, 1)").text == '"Isosceles"'
+    assert (await session.simplify("CATEGORY(1, 1, 1)")).text == '"Isosceles"'
 
 
 def test_and_binds_tighter_than_or(session):
@@ -1246,22 +1244,22 @@ def test_and_binds_tighter_than_or(session):
     assert loose.text == tight.text
 
 
-def test_the_manuals_recursive_factorial(session):
+async def test_the_manuals_recursive_factorial(session):
     # 10.6 p.273: the recursion the chapter opens with.
     session.author("FACT(n) := IF(n = 0, 1, n*FACT(n - 1))")
-    assert session.simplify("FACT(0)").text == "1"
-    assert session.simplify("FACT(5)").text == "120"
-    assert session.simplify("FACT(64)").text == simp("64!")
+    assert (await session.simplify("FACT(0)")).text == "1"
+    assert (await session.simplify("FACT(5)")).text == "120"
+    assert (await session.simplify("FACT(64)")).text == simp("64!")
 
 
-def test_the_manuals_accumulating_fibonacci(session):
+async def test_the_manuals_accumulating_fibonacci(session):
     # 10.6 p.277: the helper carries what would otherwise be recomputed.
     session.author("FIB_AUX(n, f1, f0) := IF(n=0, f0, FIB_AUX(n - 1, f1 + f0, f1))")
     session.author("FIB_FAST(n) := FIB_AUX(n, 1, 0)")
-    assert session.simplify("FIB_FAST(100)").text == "354224848179261915075"
+    assert (await session.simplify("FIB_FAST(100)")).text == "354224848179261915075"
 
 
-def test_an_empty_definition_makes_a_name_a_function_and_not_a_variable(session):
+async def test_an_empty_definition_makes_a_name_a_function_and_not_a_variable(session):
     # 10.7 p.279: `G(n) :=` first, or the G inside F's definition is read as a
     # variable and the mutual recursion never closes.
     session.author("m := -3*mu*sigma")
@@ -1276,10 +1274,10 @@ def test_an_empty_definition_makes_a_name_a_function_and_not_a_variable(session)
         "G(n) := IF(n=0, 0, m*DIF(G(n-1), mu) + s*DIF(G(n-1), sigma) "
         "+ e*DIF(G(n-1), epsilon) + F(n-1))"
     )
-    assert session.simplify("F(4)").text == "mu*(3*epsilon + mu - 15*sigma^2)"
+    assert (await session.simplify("F(4)")).text == "mu*(3*epsilon + mu - 15*sigma^2)"
 
 
-def test_the_manuals_mutual_recursion_written_with_accumulators(session):
+async def test_the_manuals_mutual_recursion_written_with_accumulators(session):
     # 10.7 p.280: the pair F(4) and G(4), computed once each.
     session.author("m := -3*mu*sigma")
     session.author("s := epsilon - 2*sigma^2")
@@ -1290,7 +1288,7 @@ def test_the_manuals_mutual_recursion_written_with_accumulators(session):
         "m*DIF(g,mu) + s*DIF(g,sigma) + e*DIF(g,epsilon) + f))"
     )
     session.author("FG(n) := FG_AUX(n, 1, 0)")
-    assert session.simplify("FG(4)").text == (
+    assert (await session.simplify("FG(4)")).text == (
         "[mu*(3*epsilon + mu - 15*sigma^2), 6*mu*sigma]"
     )
 
@@ -1320,13 +1318,13 @@ def test_the_algebra_the_manual_simplifies(text, expected):
     assert simp(text) == expected
 
 
-def test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone(session):
+async def test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone(session):
     # 4.2 p.61: only the parenthesized sum is simplified, and the annotation
     # says so with a prime.
     session.author("(5*x - 3*x + 1)^7 - x")
     session.select_entry(0)
     session.move_down()
-    part = session.simplify("#1'")
+    part = await session.simplify("#1'")
     assert part.text == "(2*x + 1)^7 - x"
     assert part.annotation == "Simp(#1')"
 
@@ -1582,26 +1580,27 @@ def test_a_one_point_interval_is_an_assignment():
 
 # -- 4.11 assigning values ----------------------------------------------------
 
-def test_an_assigned_variable_is_replaced_where_it_stands(session):
+async def test_an_assigned_variable_is_replaced_where_it_stands(session):
     # 4.11 p.98.
     session.author("area_circle := pi*r^2")
-    assert session.simplify("2*area_circle + 2*pi*h*r").text == "2*pi*h*r + 2*pi*r^2"
+    answered = await session.simplify("2*area_circle + 2*pi*h*r")
+    assert answered.text == "2*pi*h*r + 2*pi*r^2"
 
 
-def test_an_assignment_is_followed_as_far_as_it_goes(session):
+async def test_an_assignment_is_followed_as_far_as_it_goes(session):
     # 4.11 p.99: radius is s², s is 5, so radius is 25.
     session.author("radius := s^2")
     session.author("s := 5")
-    assert session.simplify("radius").text == "25"
+    assert (await session.simplify("radius")).text == "25"
 
 
 # -- 4.12 defining functions --------------------------------------------------
 
-def test_a_function_definition_takes_the_arguments_it_is_given(session):
+async def test_a_function_definition_takes_the_arguments_it_is_given(session):
     # 4.12 p.104: and leaves the parameters it is not given standing.
     session.author("ACCELERATION(f, m) := f/m")
-    assert session.simplify("ACCELERATION(6, 2)").text == "3"
-    assert session.simplify("ACCELERATION(6)").text == "6/m"
+    assert (await session.simplify("ACCELERATION(6, 2)")).text == "3"
+    assert (await session.simplify("ACCELERATION(6)")).text == "6/m"
 
 
 # -- 4.13 equations and relations ---------------------------------------------
@@ -1885,28 +1884,29 @@ def loaded(tmp_path):
 
 # -- 9.1 SOLVE.MTH ------------------------------------------------------------
 
-def test_the_series_solution_of_an_equation_that_has_no_closed_one(loaded):
+async def test_the_series_solution_of_an_equation_that_has_no_closed_one(loaded):
     # 9.1 p.229.
     session = loaded("SOLVE.MTH")
-    assert session.simplify("TAYLOR_SOLVE(SIN(y) + y + x*#e^x, x, y, 0, 0, 3)").text == (
+    answered = await session.simplify("TAYLOR_SOLVE(SIN(y) + y + x*#e^x, x, y, 0, 0, 3)")
+    assert answered.text == (
         "-25*x^3/96 - x^2/2 - x/2"
     )
 
 
-def test_the_series_inverse_of_a_function_that_has_no_closed_one(loaded):
+async def test_the_series_inverse_of_a_function_that_has_no_closed_one(loaded):
     # 9.1 p.230.
     session = loaded("SOLVE.MTH")
-    assert session.simplify("TAYLOR_INVERSE(x*#e^x, x, 0, 3)").text == (
+    assert (await session.simplify("TAYLOR_INVERSE(x*#e^x, x, 0, 3)")).text == (
         "3*y^3/2 - y^2 + y"
     )
 
 
-def test_newtons_finds_the_manuals_nonlinear_solution(loaded):
+async def test_newtons_finds_the_manuals_nonlinear_solution(loaded):
     # 9.1 p.228: seven rows, and the last of them is the solution.
     session = loaded("SOLVE.MTH")
-    rows = session.approx(
+    rows = (await session.approx(
         "NEWTONS([#e^(x*y) - x - 2*y, ATAN(x*y) - 2*x - y], [x, y], [-1, -1], 6)"
-    ).text
+    )).text
     assert rows.endswith("[-0.424667, 0.599887]]")
 
 
@@ -1941,98 +1941,99 @@ VECTOR_MTH = [
 
 
 @pytest.mark.parametrize(("text", "expected"), VECTOR_MTH, ids=str)
-def test_the_worked_examples_of_the_vector_utility_file(text, expected, loaded):
+async def test_the_worked_examples_of_the_vector_utility_file(text, expected, loaded):
     session = loaded("VECTOR.MTH", word_input=True)
-    assert session.simplify(text).text == expected
+    assert (await session.simplify(text)).text == expected
 
 
-def test_the_coordinate_geometries_the_vector_file_assigns(loaded):
+async def test_the_coordinate_geometries_the_vector_file_assigns(loaded):
     # 9.2 p.236.
     session = loaded("VECTOR.MTH", word_input=True)
-    assert session.simplify("cylindrical").text == "[[r, theta, z], [1, r, 1]]"
-    assert session.simplify("spherical").text == (
+    assert (await session.simplify("cylindrical")).text == "[[r, theta, z], [1, r, 1]]"
+    assert (await session.simplify("spherical")).text == (
         "[[r, theta, phi], [1, r*SIN(phi), r]]"
     )
 
 
 # -- 9.5 INT_APPS.MTH ---------------------------------------------------------
 
-def test_the_laplace_transform_of_the_manuals_square(loaded):
+async def test_the_laplace_transform_of_the_manuals_square(loaded):
     # 9.5 p.240: s must be declared positive or the integral does not converge.
     session = loaded("INT_APPS.MTH")
     session.author("s :epsilon Real (0, inf)")
-    assert session.simplify("LAPLACE(t^2, t, s)").text == "2/s^3"
+    assert (await session.simplify("LAPLACE(t^2, t, s)")).text == "2/s^3"
 
 
 # -- 9.6 ODE1.MTH -------------------------------------------------------------
 
-def test_the_first_order_equation_the_manual_solves(loaded):
+async def test_the_first_order_equation_the_manual_solves(loaded):
     # 9.6 p.247: and the check that the answer meets the initial condition.
     session = loaded("ODE1.MTH")
-    assert session.simplify("DSOLVE1(2*x*y, 1 + x^2, x, y, 0, 1)").text == (
+    assert (await session.simplify("DSOLVE1(2*x*y, 1 + x^2, x, y, 0, 1)")).text == (
         "x^2*y + y - 1 = 0"
     )
-    assert session.simplify("0^2*1 + 1 - 1 = 0").text == "0 = 0"
+    assert (await session.simplify("0^2*1 + 1 - 1 = 0")).text == "0 = 0"
 
 
-def test_the_clairaut_equation_the_manual_solves(loaded):
+async def test_the_clairaut_equation_the_manual_solves(loaded):
     # 9.6 p.251: a general solution in c, and an equation to find v from.
     session = loaded("ODE1.MTH")
-    assert session.simplify("CLAIRAUT((x*v - y)^2, v^2 + 1)").text == (
+    assert (await session.simplify("CLAIRAUT((x*v - y)^2, v^2 + 1)")).text == (
         "[c^2*x^2 - 2*c*x*y + y^2 - c^2 - 1 = 0, 2*(v*x^2 - x*y - v) = 0]"
     )
 
 
 # -- 9.8 ODE_APPR.MTH ---------------------------------------------------------
 
-def test_the_series_solution_of_the_manuals_first_order_equation(loaded):
+async def test_the_series_solution_of_the_manuals_first_order_equation(loaded):
     # 9.8 p.255.
     session = loaded("ODE_APPR.MTH")
-    assert session.simplify("TAYLOR_ODE1(#e^(x*y), x, y, 0, 1, 4)").text == (
+    assert (await session.simplify("TAYLOR_ODE1(#e^(x*y), x, y, 0, 1, 4)")).text == (
         "5*x^4/12 + x^3/2 + x^2/2 + x + 1"
     )
 
 
-def test_the_picard_iterate_of_the_manuals_equation(loaded):
+async def test_the_picard_iterate_of_the_manuals_equation(loaded):
     # 9.8 p.256: expanded about x, which is the form the manual prints.
     session = loaded("ODE_APPR.MTH")
     entry = session.author("PICARD(y^2 + SQRT(x), x + 1, x, y, 0, 1)")
-    assert session.expand(f"#{entry.number}", variables=("x",)).text == (
+    assert (await session.expand(f"#{entry.number}", variables=("x",))).text == (
         "x^3/3 + x^2 + 2*x^(3/2)/3 + x + 1"
     )
 
 
-def test_the_series_solution_of_the_manuals_second_order_equation(loaded):
+async def test_the_series_solution_of_the_manuals_second_order_equation(loaded):
     # 9.8 p.259.
     session = loaded("ODE_APPR.MTH")
-    assert session.simplify(
+    assert (await session.simplify(
         "TAYLOR_ODE2(2*x*v + x^2*y + 3*x, x, y, v, 0, 0, 1, 5)"
-    ).text == "3*x^5/10 + 5*x^3/6 + x"
+    )).text == "3*x^5/10 + 5*x^3/6 + x"
 
 
-def test_the_euler_steps_the_manual_takes(loaded):
+async def test_the_euler_steps_the_manual_takes(loaded):
     # 9.8 p.260: five coordinate pairs, the first of them the initial point.
     session = loaded("ODE_APPR.MTH")
-    assert session.approx("EULER(26/(3 + (x + y)^2), x, y, 1, -2, 1/4, 4)").text == (
+    answered = await session.approx("EULER(26/(3 + (x + y)^2), x, y, 1, -2, 1/4, 4)")
+    assert answered.text == (
         "[[1, -2], [1.25, -0.375], [1.5, 1.35114], [1.75, 1.93520], [2, 2.32722]]"
     )
 
 
 # -- 9.9 RECUREQN.MTH ---------------------------------------------------------
 
-def test_the_difference_equation_the_manual_solves(loaded):
+async def test_the_difference_equation_the_manual_solves(loaded):
     # 9.9 p.264, and the check of its initial condition.
     session = loaded("RECUREQN.MTH")
-    assert session.simplify("LIN1_DIFFERENCE(m, (m+1)!, m, 1, 2)").text == (
+    assert (await session.simplify("LIN1_DIFFERENCE(m, (m+1)!, m, 1, 2)")).text == (
         "(m^2/2 + m/2 + 1)*(m - 1)!"
     )
-    assert session.simplify("(1^2/2 + 1/2 + 1)*(1 - 1)!").text == "2"
+    assert (await session.simplify("(1^2/2 + 1/2 + 1)*(1 - 1)!")).text == "2"
 
 
-def test_the_clairaut_difference_equation_the_manual_solves(loaded):
+async def test_the_clairaut_difference_equation_the_manual_solves(loaded):
     # 9.9 p.266.
     session = loaded("RECUREQN.MTH")
-    assert session.simplify("CLAIRAUT_DIF((y - x*d)^2, d^2)").text == (
+    assert (await session.simplify("CLAIRAUT_DIF((y - x*d)^2, d^2)")).text == (
         "c^2*x^2 - 2*c*x*y + y^2 - c^2 = 0"
     )
 
@@ -2059,34 +2060,34 @@ NUMBER_MTH = [
 
 
 @pytest.mark.parametrize(("text", "expected"), NUMBER_MTH, ids=str)
-def test_the_worked_examples_of_the_number_theory_file(text, expected, loaded):
+async def test_the_worked_examples_of_the_number_theory_file(text, expected, loaded):
     session = loaded("NUMBER.MTH")
-    assert session.simplify(text).text == expected
+    assert (await session.simplify(text)).text == expected
 
 
-def test_the_continued_fraction_of_e(loaded):
+async def test_the_continued_fraction_of_e(loaded):
     # 9.20 p.283: nine partial quotients of ê.
     session = loaded("NUMBER.MTH")
-    assert session.approx("CONTINUED_FRACTION(#e, 8)").text == (
+    assert (await session.approx("CONTINUED_FRACTION(#e, 8)")).text == (
         "[2, 1, 2, 1, 1, 4, 1, 1, 6]"
     )
 
 
 # -- 9.21 MISC.MTH ------------------------------------------------------------
 
-def test_the_integral_the_manual_does_by_substitution(tmp_path):
+async def test_the_integral_the_manual_does_by_substitution(tmp_path):
     # 9.21 p.285.
     with abortable() as (session, engine):
         session.load_utility(written(tmp_path, "MISC.MTH"))
-        answer = answered_within(
+        answer = await answered_within(
             session,
             engine,
-            lambda s: s.simplify("INT_SUBST(t*SIN(t^2), t, t^2)").text,
+            lambda s: s.simplify("INT_SUBST(t*SIN(t^2), t, t^2)"),
         )
-    assert answer == "-COS(t^2)/2"
+    assert answer.text == "-COS(t^2)/2"
 
 
-def test_the_inverse_of_the_manuals_function(loaded):
+async def test_the_inverse_of_the_manuals_function(loaded):
     # 9.21 p.285.
     session = loaded("MISC.MTH")
-    assert session.simplify("INVERSE(SIN(x/b), x)").text == "b*ASIN(x)"
+    assert (await session.simplify("INVERSE(SIN(x/b), x)")).text == "b*ASIN(x)"

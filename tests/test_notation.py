@@ -273,12 +273,12 @@ def test_a_power_of_ten_fences_itself_where_it_has_to() -> None:
 # -- through the session -----------------------------------------------------
 
 
-def simplified(text: str, style: str, digits: int = 6):
+async def simplified(text: str, style: str, digits: int = 6):
     session = Session()
     session.author(f"Notation := {style}")
     session.author(f"NotationDigits := {digits}")
     entry = session.author(text)
-    return session.simplify(f"#{entry.number}")
+    return await session.simplify(f"#{entry.number}")
 
 
 @pytest.mark.parametrize(
@@ -290,22 +290,24 @@ def simplified(text: str, style: str, digits: int = 6):
         ("Scientific", ("0.333333",)),
     ],
 )
-def test_the_setting_reaches_the_answer(style: str, expected: tuple[str, ...]) -> None:
-    assert simplified("1/3", style).layout.lines == expected
+async def test_the_setting_reaches_the_answer(
+    style: str, expected: tuple[str, ...]
+) -> None:
+    assert (await simplified("1/3", style)).layout.lines == expected
 
 
-def test_scientific_notation_is_drawn_as_a_power_of_ten() -> None:
+async def test_scientific_notation_is_drawn_as_a_power_of_ten() -> None:
     # The original draws the same three parts, and lets the arrow keys walk
     # into them: the mantissa first, then the power.
-    assert simplified("12345.6789", "Scientific").layout.lines == (
+    assert (await simplified("12345.6789", "Scientific")).layout.lines == (
         "          4",
         "1.23456·10 ",
     )
 
 
-def test_the_digits_reach_the_answer() -> None:
-    assert simplified("1/3", "Decimal", digits=3).text == "0.333"
-    assert simplified("1/3", "Decimal", digits=12).text == "0.333333333333"
+async def test_the_digits_reach_the_answer() -> None:
+    assert (await simplified("1/3", "Decimal", digits=3)).text == "0.333"
+    assert (await simplified("1/3", "Decimal", digits=12)).text == "0.333333333333"
 
 
 def test_a_numeral_the_user_wrote_is_not_the_notation_s_business() -> None:
@@ -332,7 +334,7 @@ def test_a_numeral_the_user_wrote_is_not_the_notation_s_business() -> None:
         ("1/10^7", "10^-7"),
     ],
 )
-def test_approx_answers_in_scientific_whatever_the_style(
+async def test_approx_answers_in_scientific_whatever_the_style(
     style: str, text: str, expected: str
 ) -> None:
     """approX approximates, and approximating carries the notation with it.
@@ -344,11 +346,11 @@ def test_approx_answers_in_scientific_whatever_the_style(
     session = Session()
     session.author(f"Notation := {style}")
     entry = session.author(text)
-    assert session.approx(f"#{entry.number}").text == expected
+    assert (await session.approx(f"#{entry.number}")).text == expected
     assert session.settings["Notation"] == style
 
 
-def test_the_value_behind_the_answer_is_the_exact_one() -> None:
+async def test_the_value_behind_the_answer_is_the_exact_one() -> None:
     """What a decimal style shows is a view: the value behind it is untouched.
 
     Read off the original, which answers all three of these the same way: the
@@ -357,30 +359,30 @@ def test_the_value_behind_the_answer_is_the_exact_one() -> None:
     session = Session()
     session.author("Notation := Decimal")
     session.author("1/3")
-    answer = session.simplify("#2")
+    answer = await session.simplify("#2")
     assert answer.text == "0.333333"
     session.author(f"3 * #{answer.number}")
-    assert session.simplify(f"#{answer.number + 1}").text == "1"
+    assert (await session.simplify(f"#{answer.number + 1}")).text == "1"
     session.author(f"#{answer.number} - 1/3")
-    assert session.simplify(f"#{answer.number + 3}").text == "0"
+    assert (await session.simplify(f"#{answer.number + 3}")).text == "0"
     # And asking for it in rational notation shows the ratio it always was.
     session.author("Notation := Rational")
-    assert session.simplify(f"#{answer.number}").text == "1/3"
+    assert (await session.simplify(f"#{answer.number}")).text == "1/3"
 
 
-def test_an_answer_keeps_the_style_it_was_worked_out_in() -> None:
+async def test_an_answer_keeps_the_style_it_was_worked_out_in() -> None:
     """Changing the notation leaves what is already on screen alone."""
     session = Session()
     session.author("1/3")
-    first = session.simplify("#1")
+    first = await session.simplify("#1")
     session.author("Notation := Decimal")
     assert first.layout.lines == (" 1 ", "───", " 3 ")
-    assert session.simplify("#1").layout.lines == ("0.333333",)
+    assert (await session.simplify("#1")).layout.lines == ("0.333333",)
 
 
-def test_approximate_arithmetic_still_answers_in_digits() -> None:
+async def test_approximate_arithmetic_still_answers_in_digits() -> None:
     """Rational notation leaves a float alone: it has no ratio to be written as."""
     session = Session()
     session.settings.apply({"Precision": Precision.APPROXIMATE.value})
     entry = session.author("pi")
-    assert session.simplify(f"#{entry.number}").text == "3.14159"
+    assert (await session.simplify(f"#{entry.number}")).text == "3.14159"

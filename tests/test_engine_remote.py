@@ -181,61 +181,61 @@ def mortal():
 # -- the six answers ---------------------------------------------------------
 
 
-def test_simplify_comes_back_from_the_child(remote):
-    assert remote.simplify(tree("2 + 3"), Context()).text == "5"
+async def test_simplify_comes_back_from_the_child(remote):
+    assert (await remote.simplify(tree("2 + 3"), Context())).text == "5"
 
 
-def test_approx_comes_back_from_the_child(remote):
-    assert remote.approx(tree("1/3"), Context(), None, None).text == "0.333333"
+async def test_approx_comes_back_from_the_child(remote):
+    assert (await remote.approx(tree("1/3"), Context(), None, None)).text == "0.333333"
 
 
-def test_factor_comes_back_from_the_child(remote):
-    assert remote.factor(tree("x^2 - 1"), Context()).text == "(x + 1)*(x - 1)"
+async def test_factor_comes_back_from_the_child(remote):
+    assert (await remote.factor(tree("x^2 - 1"), Context())).text == "(x + 1)*(x - 1)"
 
 
-def test_expand_comes_back_from_the_child(remote):
-    assert remote.expand(tree("(x + 1)^2"), Context()).text == "x^2 + 2*x + 1"
+async def test_expand_comes_back_from_the_child(remote):
+    assert (await remote.expand(tree("(x + 1)^2"), Context())).text == "x^2 + 2*x + 1"
 
 
-def test_solve_comes_back_from_the_child(remote):
+async def test_solve_comes_back_from_the_child(remote):
     """Several results down one pipe, which is what makes soLve unlike the
     other five: a tuple crosses where the others send one answer."""
-    answers = remote.solve(tree("x^2 - 5*x + 6 = 0"), Context())
+    answers = await remote.solve(tree("x^2 - 5*x + 6 = 0"), Context())
     assert [answer.text for answer in answers] == ["x = 2", "x = 3"]
 
 
-def test_a_solve_with_no_solutions_comes_back_empty(remote):
-    assert remote.solve(tree("x = x + 1"), Context()) == ()
+async def test_a_solve_with_no_solutions_comes_back_empty(remote):
+    assert await remote.solve(tree("x = x + 1"), Context()) == ()
 
 
-def test_the_variables_come_back_from_the_child(remote):
-    assert remote.expression_variables(tree("x^2 - a^2"), Context()) == ("x", "a")
+async def test_the_variables_come_back_from_the_child(remote):
+    assert await remote.expression_variables(tree("x^2 - a^2"), Context()) == ("x", "a")
 
 
-def test_a_session_given_one_computes_through_it(remote):
+async def test_a_session_given_one_computes_through_it(remote):
     session = Session(runner=remote)
     session.author("(x + 1)*(x - 1)")
-    assert session.expand("#1").text == "x^2 - 1"
+    assert (await session.expand("#1")).text == "x^2 - 1"
 
 
 # -- the deaths --------------------------------------------------------------
 
 
-def test_an_abort_kills_the_worker_and_the_next_one_is_already_coming(mortal):
+async def test_an_abort_kills_the_worker_and_the_next_one_is_already_coming(mortal):
     engine = mortal()
     # Asked for rather than started, so that the worker is up and past its
     # imports before anything hangs: a `hang` that never got sent is not what
     # this test is about.
-    assert engine.simplify(tree("1 + 1"), Context()).text == "2"
+    assert (await engine.simplify(tree("1 + 1"), Context())).text == "2"
     fire(after_the_request(engine), engine.abort)
     with pytest.raises(EngineAborted):
         engine._ask("hang", ())
     # The replacement is spawned by the death itself, not by the next command.
     assert engine.starts == 2
-    assert engine.simplify(tree("1 + 1"), Context()).text == "2"
+    assert (await engine.simplify(tree("1 + 1"), Context())).text == "2"
 
 
-def test_an_abort_while_a_call_is_still_waiting_stops_it_too(mortal):
+async def test_an_abort_while_a_call_is_still_waiting_stops_it_too(mortal):
     """An Esc pressed before the worker is even up must still mean Esc.
 
     Here the abort lands while the call is queueing for a worker that is still
@@ -248,10 +248,10 @@ def test_an_abort_while_a_call_is_still_waiting_stops_it_too(mortal):
     fire(a_worker_that_is_still_starting(engine), engine.abort)
     with pytest.raises(EngineAborted):
         engine._ask("hang", ())
-    assert engine.simplify(tree("1 + 1"), Context()).text == "2"
+    assert (await engine.simplify(tree("1 + 1"), Context())).text == "2"
 
 
-def test_a_worker_over_the_cap_is_taken_away(mortal):
+async def test_a_worker_over_the_cap_is_taken_away(mortal):
     engine = mortal(cap=SMALL_CAP, period=0.05)
     engine.start()
     with pytest.raises(EngineMemoryExceeded) as raised:
@@ -260,13 +260,13 @@ def test_a_worker_over_the_cap_is_taken_away(mortal):
     # program reports is written. How that reads is `test_memory` to pin; what
     # this one is about is that the figure named is the cap in force.
     assert memory.written(SMALL_CAP) in str(raised.value)
-    assert engine.simplify(tree("1 + 1"), Context()).text == "2"
+    assert (await engine.simplify(tree("1 + 1"), Context())).text == "2"
 
 
-def test_a_worker_killed_from_outside_is_replaced(mortal):
+async def test_a_worker_killed_from_outside_is_replaced(mortal):
     engine = mortal()
     engine.start()
-    engine.simplify(tree("1 + 1"), Context())
+    await engine.simplify(tree("1 + 1"), Context())
     pid = engine._process.pid
     # Killed through psutil rather than by a signal, `SIGKILL` being a name that
     # does not exist on Windows. What the test is about is a worker taken away by
@@ -282,17 +282,17 @@ def test_a_worker_killed_from_outside_is_replaced(mortal):
     if hasattr(signal, "SIGKILL"):
         assert str(raised.value).startswith("The engine was killed")
     assert engine.starts == 2
-    assert engine.simplify(tree("1 + 1"), Context()).text == "2"
+    assert (await engine.simplify(tree("1 + 1"), Context())).text == "2"
 
 
-def test_a_bug_in_the_engine_costs_the_answer_and_not_the_worker(remote):
+async def test_a_bug_in_the_engine_costs_the_answer_and_not_the_worker(remote):
     """The shared worker, since the point is that it is still there afterwards."""
     starts = remote.starts
     with pytest.raises(Exception) as raised:
         remote._ask("no_such_method", ())
     assert "no_such_method" in str(raised.value)
     assert remote.starts == starts
-    assert remote.simplify(tree("1 + 1"), Context()).text == "2"
+    assert (await remote.simplify(tree("1 + 1"), Context())).text == "2"
 
 
 def refuses_to_start(connection, cap):
@@ -305,11 +305,11 @@ def refuses_to_start(connection, cap):
     raise SystemExit(1)
 
 
-def test_a_worker_that_will_not_start_puts_the_proxy_down(monkeypatch, mortal):
+async def test_a_worker_that_will_not_start_puts_the_proxy_down(monkeypatch, mortal):
     monkeypatch.setattr(worker_module, "serve", refuses_to_start)
     engine = mortal()
     with pytest.raises(EngineDied):
-        engine.simplify(tree("1 + 1"), Context())
+        await engine.simplify(tree("1 + 1"), Context())
     assert until(lambda: engine._deaths.down is not None)
     assert engine.starts == STARTS_BEFORE_DOWN
     # And it stays down: a command asked for while it is down tries exactly one
@@ -318,14 +318,14 @@ def test_a_worker_that_will_not_start_puts_the_proxy_down(monkeypatch, mortal):
     # moves it - so the count after the next command is the whole of the
     # evidence that nothing spun behind the user's back in between.
     with pytest.raises(EngineDied):
-        engine.simplify(tree("1 + 1"), Context())
+        await engine.simplify(tree("1 + 1"), Context())
     assert engine.starts == STARTS_BEFORE_DOWN + 1
 
 
 # -- a hostile expression, never run without a cap ---------------------------
 
 
-def test_a_hostile_power_comes_back_inert_and_the_session_stands(remote):
+async def test_a_hostile_power_comes_back_inert_and_the_session_stands(remote):
     """`10^10^10` is the input that used to take the app and the worksheet.
 
     Sympy builds `Integer**Integer` as the power is constructed, so converting
@@ -339,7 +339,7 @@ def test_a_hostile_power_comes_back_inert_and_the_session_stands(remote):
     starts = remote.starts
     session = Session(runner=remote)
     session.author("10^10^10")
-    assert session.simplify("#1").text == "10^10000000000"
+    assert (await session.simplify("#1")).text == "10^10000000000"
     session.author("2 + 3")
-    assert session.simplify("#3").text == "5"
+    assert (await session.simplify("#3")).text == "5"
     assert remote.starts == starts

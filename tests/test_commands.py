@@ -33,65 +33,65 @@ def part(session, *route):
 # -- the answer as an entry --------------------------------------------------
 
 
-def test_the_answer_is_appended_and_selected_as_a_whole(session):
+async def test_the_answer_is_appended_and_selected_as_a_whole(session):
     session.author("2 (8 + 7) / 3^2")
-    answer = session.simplify("#1")
+    answer = await session.simplify("#1")
     assert texts(session) == ["2*(8+7)/3^2", "10/3"]
     assert answer.number == 2
     assert session.selected == 1 and session.route == ()
     assert answer.annotation == "Simp(#1)"
 
 
-def test_a_typed_expression_is_the_users_own(session):
-    assert session.simplify("2 + 3").text == "5"
+async def test_a_typed_expression_is_the_users_own(session):
+    assert (await session.simplify("2 + 3")).text == "5"
     assert session.entries[0].annotation == "Simp(User)"
 
 
-def test_a_label_stands_for_the_entry_it_names(session):
+async def test_a_label_stands_for_the_entry_it_names(session):
     session.author("2^3")
-    assert session.simplify("#1 + 1").text == "9"
+    assert (await session.simplify("#1 + 1")).text == "9"
     # Written into an expression rather than named alone, so it is the user's.
     assert session.entries[-1].annotation == "Simp(User)"
 
 
-def test_a_line_that_does_not_parse_appends_nothing(session):
+async def test_a_line_that_does_not_parse_appends_nothing(session):
     session.author("x")
     with pytest.raises(DeriveSyntaxError):
-        session.simplify("x +")
+        await session.simplify("x +")
     assert texts(session) == ["x"]
 
 
-def test_an_answer_can_be_simplified_again(session):
+async def test_an_answer_can_be_simplified_again(session):
     session.author("2 (8 + 7) / 3^2")
-    session.simplify("#1")
-    assert session.simplify("#2").text == "10/3"
+    await session.simplify("#1")
+    assert (await session.simplify("#2")).text == "10/3"
     assert session.entries[-1].annotation == "Simp(#2)"
 
 
 # -- part of an entry --------------------------------------------------------
 
 
-def test_simplifying_part_of_an_entry_copies_the_rest_of_it(session):
+async def test_simplifying_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("2 (8 + 7) / 3^2")
     assert part(session, "right", "right").value == "^"
-    answer = session.simplify("#1")
+    answer = await session.simplify("#1")
     assert answer.text == "2*(8+7)/9"
     # The quote is what says that only part of the entry was simplified.
     assert answer.annotation == "Simp(#1')"
 
 
-def test_a_spliced_answer_is_fenced_where_the_line_needs_it(session):
+async def test_a_spliced_answer_is_fenced_where_the_line_needs_it(session):
     session.author("x := y + 1")
     session.author("2 x")
     part(session, "right", "right")
-    assert session.simplify("#2").text == "2*(y + 1)"
+    assert (await session.simplify("#2")).text == "2*(y + 1)"
 
 
-def test_a_spliced_line_reads_back_as_the_text_it_shows(session):
+async def test_a_spliced_line_reads_back_as_the_text_it_shows(session):
     """The new entry's spans index its own text, as an authored line's do."""
     session.author("(8 + 7) (x + 1)")
     part(session, "right")
-    answer = session.simplify("#1")
+    answer = await session.simplify("#1")
     # The fences the line was written with stay, and are drawn as precedence
     # asks rather than as they were typed.
     assert answer.text == "(15)*(x+1)"
@@ -100,20 +100,20 @@ def test_a_spliced_line_reads_back_as_the_text_it_shows(session):
     assert answer.text[session.selected_node.start : session.selected_node.end] == "15"
 
 
-def test_the_whole_entry_is_simplified_when_the_whole_entry_is_selected(session):
+async def test_the_whole_entry_is_simplified_when_the_whole_entry_is_selected(session):
     session.author("2 (8 + 7) / 3^2")
     part(session, "right", "right", "up", "up")
     assert session.route == ()
-    assert session.simplify("#1").text == "10/3"
+    assert (await session.simplify("#1")).text == "10/3"
 
 
-def test_another_entry_is_simplified_whole(session):
+async def test_another_entry_is_simplified_whole(session):
     session.author("2 (8 + 7) / 3^2")
     session.author("x + x")
     session.select_entry(0)
     part(session, "right", "right")
     # The highlight is in #1, so naming #2 asks for the whole of #2.
-    answer = session.simplify("#2")
+    answer = await session.simplify("#2")
     assert answer.text == "2*x"
     assert answer.annotation == "Simp(#2)"
 
@@ -121,26 +121,26 @@ def test_another_entry_is_simplified_whole(session):
 # -- what the lines have defined ---------------------------------------------
 
 
-def test_an_assignment_reaches_the_next_command(session):
+async def test_an_assignment_reaches_the_next_command(session):
     session.author("x := 5")
     session.author("2 x + 1")
-    assert session.simplify("#2").text == "11"
+    assert (await session.simplify("#2")).text == "11"
 
 
-def test_an_emptied_assignment_is_forgotten(session):
+async def test_an_emptied_assignment_is_forgotten(session):
     session.author("x := 5")
     session.author("x :=")
     session.author("2 x")
-    assert session.simplify("#3").text == "2*x"
+    assert (await session.simplify("#3")).text == "2*x"
 
 
-def test_a_function_definition_reaches_the_next_command(session):
+async def test_a_function_definition_reaches_the_next_command(session):
     session.author("f(y) := y^2 - 1")
     session.author("f(3)")
-    assert session.simplify("#2").text == "8"
+    assert (await session.simplify("#2")).text == "8"
 
 
-def test_a_parameter_names_the_variable_a_sum_ranges_over(session):
+async def test_a_parameter_names_the_variable_a_sum_ranges_over(session):
     """A definition is written in as text, index and all.
 
     `PRODUCT(p, x, x0, x - 1)` called with `m` for both `p` and `x` is the
@@ -151,13 +151,13 @@ def test_a_parameter_names_the_variable_a_sum_ranges_over(session):
     """
     session.author("f(p, x, x0) := PRODUCT(p, x, x0, x - 1)")
     session.author("f(m, m, 1)")
-    assert session.simplify("#2").text == "(m - 1)!"
+    assert (await session.simplify("#2")).text == "(m - 1)!"
 
 
-def test_every_definition_on_a_line_is_recorded(session):
+async def test_every_definition_on_a_line_is_recorded(session):
     session.author("[a := 2, b := 3]")
     session.author("a b")
-    assert session.simplify("#2").text == "6"
+    assert (await session.simplify("#2")).text == "6"
 
 
 def test_a_setting_is_not_a_variable(session):
@@ -166,21 +166,21 @@ def test_a_setting_is_not_a_variable(session):
     assert session.settings["Notation"] == "Mixed"
 
 
-def test_a_declared_domain_is_what_lets_a_rewrite_fire(session):
+async def test_a_declared_domain_is_what_lets_a_rewrite_fire(session):
     session.author("z :epsilon Real (0, inf)")
     session.author("SQRT(z^2)")
-    assert session.simplify("#2").text == "z"
+    assert (await session.simplify("#2")).text == "z"
 
 
-def test_nothing_is_guessed_about_a_variable_nobody_declared(session):
+async def test_nothing_is_guessed_about_a_variable_nobody_declared(session):
     session.author("SQRT(w^2)")
-    assert session.simplify("#1").text == "ABS(w)"
+    assert (await session.simplify("#1")).text == "ABS(w)"
 
 
-def test_the_precision_setting_reaches_the_command(session):
+async def test_the_precision_setting_reaches_the_command(session):
     session.author("1/3")
     session.settings.assign("Precision", "Approximate")
-    assert session.simplify("#1").text.startswith("0.333333")
+    assert (await session.simplify("#1")).text.startswith("0.333333")
 
 
 # -- Factor ------------------------------------------------------------------
@@ -190,22 +190,22 @@ def test_the_precision_setting_reaches_the_command(session):
 # questions it asks first are answered from the expression it would act on.
 
 
-def test_a_factored_answer_is_appended_and_annotated(session):
+async def test_a_factored_answer_is_appended_and_annotated(session):
     session.author("x^2 - 4")
-    answer = session.factor("#1")
+    answer = await session.factor("#1")
     assert texts(session) == ["x^2-4", "(x + 2)*(x - 2)"]
     assert answer.annotation == "Fctr(#1)"
 
 
-def test_a_typed_expression_is_factored_as_the_users_own(session):
-    assert session.factor("x^2 - 9").text == "(x + 3)*(x - 3)"
+async def test_a_typed_expression_is_factored_as_the_users_own(session):
+    assert (await session.factor("x^2 - 9")).text == "(x + 3)*(x - 3)"
     assert session.entries[0].annotation == "Fctr(User)"
 
 
-def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
+async def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("(x^2 - 1) + SIN(z)")
     part(session, "right")
-    answer = session.factor("#1")
+    answer = await session.factor("#1")
     # The splice is fenced and the line's own fences stay, so the text carries
     # a pair more than it needs. What is drawn comes from the tree, where a
     # fence is a matter of precedence, so the extra pair shows up nowhere.
@@ -214,58 +214,58 @@ def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
     assert answer.annotation == "Fctr(#1')"
 
 
-def test_the_amount_reaches_the_command(session):
+async def test_the_amount_reaches_the_command(session):
     session.author("2 x^3 - 12 x^2 + 18 x")
-    assert session.factor("#1", Amount.TRIVIAL).text == "2*x*(x^2 - 6*x + 9)"
-    assert session.factor("#1", Amount.SQUAREFREE).text == "2*x*(x - 3)^2"
+    assert (await session.factor("#1", Amount.TRIVIAL)).text == "2*x*(x^2 - 6*x + 9)"
+    assert (await session.factor("#1", Amount.SQUAREFREE)).text == "2*x*(x - 3)^2"
 
 
-def test_the_factorization_variables_reach_the_command(session):
+async def test_the_factorization_variables_reach_the_command(session):
     session.author("x^2 y^2 - x^2 - y^4 + y^2")
-    whole = session.factor("#1", Amount.RATIONAL, ("x", "y"))
+    whole = await session.factor("#1", Amount.RATIONAL, ("x", "y"))
     assert whole.text == "(x + y)*(x - y)*(y + 1)*(y - 1)"
-    about_x = session.factor("#1", Amount.RATIONAL, ("x",))
+    about_x = await session.factor("#1", Amount.RATIONAL, ("x",))
     assert about_x.text == "(x + y)*(x - y)*(y^2 - 1)"
 
 
-def test_a_line_that_does_not_parse_factors_nothing(session):
+async def test_a_line_that_does_not_parse_factors_nothing(session):
     session.author("x")
     with pytest.raises(DeriveSyntaxError):
-        session.factor("x +")
+        await session.factor("x +")
     assert texts(session) == ["x"]
 
 
-def test_an_assignment_reaches_the_factoring(session):
+async def test_an_assignment_reaches_the_factoring(session):
     session.author("k := 4")
     session.author("x^2 - k")
-    assert session.factor("#2").text == "(x + 2)*(x - 2)"
+    assert (await session.factor("#2")).text == "(x + 2)*(x - 2)"
 
 
 # -- what Factor asks before it factors ---------------------------------------
 
 
-def test_the_variables_on_offer_are_most_main_first(session):
+async def test_the_variables_on_offer_are_most_main_first(session):
     session.author("y^2 - x^2")
-    assert session.variables("#1") == ("x", "y")
+    assert await session.variables("#1") == ("x", "y")
     session.author("b a - c^2")
-    assert session.variables("#2") == ("a", "b", "c")
+    assert await session.variables("#2") == ("a", "b", "c")
     # The order list is x, y, z, and a variable on it outranks one that is not.
     session.author("z^2 - a^2")
-    assert session.variables("#3") == ("z", "a")
+    assert await session.variables("#3") == ("z", "a")
 
 
-def test_the_variables_on_offer_come_from_the_highlighted_part(session):
+async def test_the_variables_on_offer_come_from_the_highlighted_part(session):
     """Only the subexpression is factored, so only its variables are offered."""
     session.author("(x^2 - 1) + SIN(z)")
-    assert session.variables("#1") == ("x", "z")
+    assert await session.variables("#1") == ("x", "z")
     part(session, "right")
-    assert session.variables("#1") == ("x",)
+    assert await session.variables("#1") == ("x",)
 
 
-def test_an_assigned_name_is_no_longer_a_variable(session):
+async def test_an_assigned_name_is_no_longer_a_variable(session):
     session.author("k := 4")
     session.author("x^2 - k")
-    assert session.variables("#2") == ("x",)
+    assert await session.variables("#2") == ("x",)
 
 
 def test_a_number_is_recognised_before_anything_is_asked(session):
@@ -288,39 +288,39 @@ def test_a_number_is_recognised_before_anything_is_asked(session):
 # -- Expand -------------------------------------------------------------------
 
 
-def test_the_answer_is_appended_as_an_expansion(session):
+async def test_the_answer_is_appended_as_an_expansion(session):
     session.author("2 x (x - 3)^2")
-    answer = session.expand("#1")
+    answer = await session.expand("#1")
     assert texts(session) == ["2*x*(x-3)^2", "2*x^3 - 12*x^2 + 18*x"]
     assert answer.annotation == "Expd(#1)"
 
 
-def test_expanding_part_of_an_entry_copies_the_rest_of_it(session):
+async def test_expanding_part_of_an_entry_copies_the_rest_of_it(session):
     """The manual's own example: expanding only the square inside the product
     leaves the product standing around it."""
     session.author("2 x (x - 3)^2")
     part(session, "right", "last_sibling")
-    answer = session.expand("#1")
+    answer = await session.expand("#1")
     assert answer.layout.lines == ("      2           ", "2·x·(x  - 6·x + 9)")
     assert answer.annotation == "Expd(#1')"
 
 
-def test_the_expansion_variables_reach_the_command(session):
+async def test_the_expansion_variables_reach_the_command(session):
     session.author("(x + 2 y + 1)^3")
-    about_x = session.expand("#1", Amount.RATIONAL, ("x",))
+    about_x = await session.expand("#1", Amount.RATIONAL, ("x",))
     assert about_x.text == "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 + (2*y + 1)^3"
 
 
-def test_the_amount_reaches_the_expansion(session):
+async def test_the_amount_reaches_the_expansion(session):
     session.author("1/(x^2 - 1)")
-    assert session.expand("#1", Amount.TRIVIAL).text == "1/(x^2 - 1)"
-    assert session.expand("#1").text == "1/(2*(x - 1)) - 1/(2*(x + 1))"
+    assert (await session.expand("#1", Amount.TRIVIAL)).text == "1/(x^2 - 1)"
+    assert (await session.expand("#1")).text == "1/(2*(x - 1)) - 1/(2*(x + 1))"
 
 
-def test_an_assignment_reaches_the_expansion(session):
+async def test_an_assignment_reaches_the_expansion(session):
     session.author("k := 3")
     session.author("(x + k)^2")
-    assert session.expand("#2").text == "x^2 + 6*x + 9"
+    assert (await session.expand("#2")).text == "x^2 + 6*x + 9"
 
 
 def test_a_ratio_is_recognised_before_an_amount_is_asked_for(session):
@@ -346,99 +346,99 @@ def test_a_ratio_is_recognised_before_an_amount_is_asked_for(session):
 # entries, none of them included.
 
 
-def test_every_solution_is_an_entry_and_the_last_is_selected(session):
+async def test_every_solution_is_an_entry_and_the_last_is_selected(session):
     session.author("x^2 - 5 x + 6 = 0")
-    appended = session.solve("#1")
+    appended = await session.solve("#1")
     assert [entry.text for entry in appended] == ["x = 2", "x = 3"]
     assert texts(session) == ["x^2-5*x+6=0", "x = 2", "x = 3"]
     assert session.selected_entry is appended[-1]
     assert session.route == ()
 
 
-def test_a_solution_is_annotated_with_where_it_came_from(session):
+async def test_a_solution_is_annotated_with_where_it_came_from(session):
     session.author("2 x = 8")
-    assert session.solve("#1")[0].annotation == "Solve(#1)"
-    assert session.solve("3 x = 9")[0].annotation == "Solve(User)"
+    assert (await session.solve("#1"))[0].annotation == "Solve(#1)"
+    assert (await session.solve("3 x = 9"))[0].annotation == "Solve(User)"
 
 
-def test_no_solutions_appends_nothing_and_leaves_the_highlight(session):
+async def test_no_solutions_appends_nothing_and_leaves_the_highlight(session):
     session.author("x^2 - 4")
     session.author("x = x + 1")
     session.select_entry(0)
-    assert session.solve("#2") == []
+    assert await session.solve("#2") == []
     assert texts(session) == ["x^2-4", "x=x+1"]
     assert session.selected == 0
 
 
-def test_solving_the_same_equation_twice_appends_duplicates(session):
+async def test_solving_the_same_equation_twice_appends_duplicates(session):
     """No reuse and no warning: the original appends the answer again."""
     session.author("2 x = 8")
-    session.solve("#1")
-    session.solve("#1")
+    await session.solve("#1")
+    await session.solve("#1")
     assert texts(session) == ["2*x=8", "x = 4", "x = 4"]
 
 
-def test_a_system_appends_one_entry(session):
+async def test_a_system_appends_one_entry(session):
     session.author("[x + y = 3, x - y = 1]")
-    assert [entry.text for entry in session.solve("#1")] == ["[x = 2, y = 1]"]
+    assert [entry.text for entry in await session.solve("#1")] == ["[x = 2, y = 1]"]
 
 
-def test_solve_names_the_whole_entry_even_where_a_part_is_highlighted(session):
+async def test_solve_names_the_whole_entry_even_where_a_part_is_highlighted(session):
     """Solving a subexpression gives nothing there is any way to splice back
     around the rest, so the highlight says nothing about what soLve acts on."""
     session.author("(x^2 - 4) = 0")
     part(session, "right")
-    answer = session.solve("#1")
+    answer = await session.solve("#1")
     assert [entry.text for entry in answer] == ["x = -2", "x = 2"]
     assert answer[0].annotation == "Solve(#1)"
 
 
-def test_the_arbitrary_counter_survives_across_commands(session):
+async def test_the_arbitrary_counter_survives_across_commands(session):
     session.author("x = x")
-    assert session.solve("#1")[0].text == "x = @1"
+    assert (await session.solve("#1"))[0].text == "x = @1"
     session.author("2 y = y + y")
-    assert session.solve("#3")[0].text == "y = @2"
-    assert session.solve("#1")[0].text == "x = @3"
+    assert (await session.solve("#3"))[0].text == "y = @2"
+    assert (await session.solve("#1"))[0].text == "x = @3"
 
 
-def test_an_authored_arbitrary_value_moves_the_counter_past_itself(session):
+async def test_an_authored_arbitrary_value_moves_the_counter_past_itself(session):
     """A `SOLVE` on the author line mints them too, and reaches the history
     through a plain Simplify; the counter watches every entry for that."""
     session.author("SOLVE(z = z, z)")
-    assert session.simplify("#1").text == "[z = @1]"
+    assert (await session.simplify("#1")).text == "[z = @1]"
     session.author("x = x")
-    assert session.solve("#3")[0].text == "x = @2"
+    assert (await session.solve("#3"))[0].text == "x = @2"
 
 
-def test_the_bounds_reach_the_command(session):
+async def test_the_bounds_reach_the_command(session):
     session.author("Precision := Approximate")
     session.author("x^2 - 5 x + 6 = 0")
-    assert [e.text for e in session.solve("#2", (), ("0", "2.5"))] == ["x = 2"]
-    assert [e.text for e in session.solve("#2", (), ("10", "20"))] == []
+    assert [e.text for e in await session.solve("#2", (), ("0", "2.5"))] == ["x = 2"]
+    assert [e.text for e in await session.solve("#2", (), ("10", "20"))] == []
 
 
-def test_the_solution_variables_reach_the_command(session):
+async def test_the_solution_variables_reach_the_command(session):
     session.author("a x + b = 0")
-    assert [e.text for e in session.solve("#1", ("a",))] == ["a = -b/x"]
-    assert [e.text for e in session.solve("#1", ("x",))] == ["x = -b/a"]
+    assert [e.text for e in await session.solve("#1", ("a",))] == ["a = -b/x"]
+    assert [e.text for e in await session.solve("#1", ("x",))] == ["x = -b/a"]
 
 
-def test_a_line_that_does_not_parse_solves_nothing(session):
+async def test_a_line_that_does_not_parse_solves_nothing(session):
     session.author("x")
     with pytest.raises(DeriveSyntaxError):
-        session.solve("x +")
+        await session.solve("x +")
     assert texts(session) == ["x"]
 
 
 # -- what soLve asks before it solves -----------------------------------------
 
 
-def test_the_variables_on_offer_are_the_whole_entrys(session):
+async def test_the_variables_on_offer_are_the_whole_entrys(session):
     """Unlike Factor's, which come from the highlighted part: soLve acts on the
     entry whatever is highlighted, so it has to offer the entry's own."""
     session.author("(x^2 - 1) + SIN(z)")
     part(session, "right")
-    assert session.solve_variables("#1") == ("x", "z")
+    assert await session.solve_variables("#1") == ("x", "z")
 
 
 def test_a_system_is_counted_before_anything_is_computed(session):
@@ -454,74 +454,74 @@ def test_a_system_is_counted_before_anything_is_computed(session):
 # command asks for an expression and no more.
 
 
-def test_an_approximated_answer_is_appended_and_annotated(session):
+async def test_an_approximated_answer_is_appended_and_annotated(session):
     session.author("pi")
-    answer = session.approx("#1")
+    answer = await session.approx("#1")
     assert texts(session) == ["pi", "3.14159"]
     assert answer.annotation == "Approx(#1)"
 
 
-def test_a_typed_expression_is_approximated_as_the_users_own(session):
-    assert session.approx("SQRT(3)").text == "1.73205"
+async def test_a_typed_expression_is_approximated_as_the_users_own(session):
+    assert (await session.approx("SQRT(3)")).text == "1.73205"
     assert session.entries[0].annotation == "Approx(User)"
 
 
-def test_approximating_part_of_an_entry_copies_the_rest_of_it(session):
+async def test_approximating_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("SQRT(2) + x^2")
     part(session, "right")
-    answer = session.approx("#1")
+    answer = await session.approx("#1")
     assert answer.layout.lines == ("           2", "1.41421 + x ")
     assert answer.annotation == "Approx(#1')"
 
 
-def test_the_settings_are_left_where_they_were(session):
+async def test_the_settings_are_left_where_they_were(session):
     """The precision is approximate for the one command, not from now on."""
     session.author("1/3")
-    assert session.approx("#1").text == "0.333333"
+    assert (await session.approx("#1")).text == "0.333333"
     assert session.settings["Precision"] == "Exact"
-    assert session.simplify("#1").text == "1/3"
+    assert (await session.simplify("#1")).text == "1/3"
 
 
-def test_the_precision_digits_setting_reaches_the_command(session):
+async def test_the_precision_digits_setting_reaches_the_command(session):
     session.author("pi")
     session.settings.assign("PrecisionDigits", 12)
     # Twelve digits of pi, cut rather than rounded, which is what the
     # original answers here: `3.14159265358`, not `...359`.
-    assert session.approx("#1").text == "3.14159265358"
+    assert (await session.approx("#1")).text == "3.14159265358"
 
 
-def test_what_has_no_number_in_it_is_simplified_and_no_more(session):
+async def test_what_has_no_number_in_it_is_simplified_and_no_more(session):
     session.author("x + x")
-    assert session.approx("#1").text == "2*x"
+    assert (await session.approx("#1")).text == "2*x"
 
 
-def test_a_line_that_does_not_parse_approximates_nothing(session):
+async def test_a_line_that_does_not_parse_approximates_nothing(session):
     session.author("x")
     with pytest.raises(DeriveSyntaxError):
-        session.approx("x +")
+        await session.approx("x +")
     assert texts(session) == ["x"]
 
 
-def test_an_assignment_reaches_the_approximation(session):
+async def test_an_assignment_reaches_the_approximation(session):
     session.author("k := 2")
     session.author("SQRT(k)")
-    assert session.approx("#2").text == "1.41421"
+    assert (await session.approx("#2")).text == "1.41421"
 
 
 # -- Build --------------------------------------------------------------------
 
 
-def built(session, word, *requests):
+async def built(session, word, *requests):
     """Build one operator over the expressions `requests` names."""
     operator = building.operator(word)
     resolved = [session.named_target(request) for request in requests]
     node = operator.build(*(node for node, _ in resolved))
-    return session.build(node, operator.annotate(*(name for _, name in resolved)))
+    return await session.build(node, operator.annotate(*(name for _, name in resolved)))
 
 
-def test_a_built_expression_is_appended_unsimplified(session):
+async def test_a_built_expression_is_appended_unsimplified(session):
     session.author("2 + 3")
-    answer = built(session, "*", "#1", "#1")
+    answer = await built(session, "*", "#1", "#1")
     assert answer.text == "(2+3)*(2+3)"
     assert answer.annotation == "#1*#1"
 
@@ -542,12 +542,12 @@ def test_a_built_expression_is_appended_unsimplified(session):
     ],
     ids=str,
 )
-def test_each_operator_writes_what_the_original_writes(session, word, expected):
+async def test_each_operator_writes_what_the_original_writes(session, word, expected):
     """The forms the original's own Transfer Save writes."""
     session.author("x^2*y")
     operator = building.operator(word)
     requests = ["#1"] * operator.arity
-    assert built(session, word, *requests).text == expected
+    assert (await built(session, word, *requests)).text == expected
 
 
 @pytest.mark.parametrize(
@@ -555,53 +555,53 @@ def test_each_operator_writes_what_the_original_writes(session, word, expected):
     [("+", "#1+#1"), ("Minus", "-(#1)"), ("Recip", "1/(#1)"), ("Sin", "SIN(#1)")],
     ids=str,
 )
-def test_the_annotation_names_the_operands(session, word, expected):
+async def test_the_annotation_names_the_operands(session, word, expected):
     session.author("x^2*y")
     operator = building.operator(word)
-    assert built(session, word, *["#1"] * operator.arity).annotation == expected
+    assert (await built(session, word, *["#1"] * operator.arity)).annotation == expected
 
 
-def test_a_typed_operand_is_the_users_own(session):
+async def test_a_typed_operand_is_the_users_own(session):
     session.author("x")
-    assert built(session, "+", "#1", "2 + 3").annotation == "#1+User"
+    assert (await built(session, "+", "#1", "2 + 3")).annotation == "#1+User"
 
 
-def test_a_highlighted_part_is_the_operand_and_carries_a_quote(session):
+async def test_a_highlighted_part_is_the_operand_and_carries_a_quote(session):
     session.author("SIN(a*x^2) + 5")
     part(session, "right", "down")
-    answer = built(session, "Sin", "#1")
+    answer = await built(session, "Sin", "#1")
     # Extraction, not substitution: what is built is the part alone, and the
     # rest of the entry it came out of is left where it was.
     assert answer.text == "SIN(a*x^2)"
     assert answer.annotation == "SIN(#1')"
 
 
-def test_building_a_part_alone_extracts_it(session):
+async def test_building_a_part_alone_extracts_it(session):
     session.author("SIN(a*x^2) + 5")
     part(session, "right", "down")
     node, name = session.named_target("#1")
-    assert session.build(node, name).text == "a*x^2"
+    assert (await session.build(node, name)).text == "a*x^2"
     assert session.entries[-1].annotation == "#1'"
 
 
-def test_operators_chain_left_to_right(session):
+async def test_operators_chain_left_to_right(session):
     """`#1 + #2` then `* #3` is `(#1 + #2)·#3`, and the annotation is flat."""
     for text in ("2", "3", "4"):
         session.author(text)
-    first = built(session, "+", "#1", "#2")
+    first = await built(session, "+", "#1", "#2")
     operator = building.operator("*")
     node = operator.build(first.node, session.target("#3"))
-    answer = session.build(node, operator.annotate(first.annotation, "#3"))
+    answer = await session.build(node, operator.annotate(first.annotation, "#3"))
     assert answer.text == "(2+3)*4"
     assert answer.annotation == "#1+#2*#3"
 
 
-def test_a_build_taken_with_ctrl_enter_appends_one_entry(session):
+async def test_a_build_taken_with_ctrl_enter_appends_one_entry(session):
     session.author("x^2*y")
     node, name = session.named_target("#1")
     operator = building.operator("+")
     built_node = operator.build(node, node)
-    answer = session.build(built_node, operator.annotate(name, name), True)
+    answer = await session.build(built_node, operator.annotate(name, name), True)
     assert texts(session) == ["x^2*y", "2*x^2*y"]
     assert answer.annotation == "Simp(#1+#1)"
 
@@ -627,77 +627,79 @@ def test_a_build_taken_with_ctrl_enter_appends_one_entry(session):
     ],
     ids=str,
 )
-def test_each_head_is_written_as_the_original_writes_it(
+async def test_each_head_is_written_as_the_original_writes_it(
     session, head, prefix, arguments, expected
 ):
     """The linear forms come from the original's own Transfer Save."""
     session.author("x^2*y")
-    assert session.calculus(head, prefix, "#1", arguments).text == expected
+    assert (await session.calculus(head, prefix, "#1", arguments)).text == expected
 
 
-def test_nothing_is_computed(session):
+async def test_nothing_is_computed(session):
     """The point of the command: a Simplify after it is what takes the answer."""
     session.author("x^2*y")
-    session.calculus("DIF", "Dif", "#1", ("x",))
+    await session.calculus("DIF", "Dif", "#1", ("x",))
     assert texts(session) == ["x^2*y", "DIF(x^2*y,x)"]
-    assert session.simplify("#2").text == "2*x*y"
+    assert (await session.simplify("#2")).text == "2*x*y"
 
 
-def test_the_annotation_names_the_expression_and_the_variable(session):
+async def test_the_annotation_names_the_expression_and_the_variable(session):
     session.author("x^2*y")
     # The order is not in it: `DIF(u, x, 3)` is annotated as the first
     # derivative is.
-    assert session.calculus("DIF", "Dif", "#1", ("x", "3")).annotation == "Dif(#1,x)"
+    entry = await session.calculus("DIF", "Dif", "#1", ("x", "3"))
+    assert entry.annotation == "Dif(#1,x)"
 
 
-def test_a_typed_expression_is_calculated_as_the_users_own(session):
-    assert session.calculus("INT", "Int", "SIN(z)", ("z",)).annotation == "Int(User,z)"
+async def test_a_typed_expression_is_calculated_as_the_users_own(session):
+    entry = await session.calculus("INT", "Int", "SIN(z)", ("z",))
+    assert entry.annotation == "Int(User,z)"
 
 
-def test_a_highlighted_part_is_taken_alone_and_carries_a_quote(session):
+async def test_a_highlighted_part_is_taken_alone_and_carries_a_quote(session):
     session.author("SIN(a*x^2) + 5")
     part(session, "right", "down")
-    answer = session.calculus("DIF", "Dif", "#1", ("x",))
+    answer = await session.calculus("DIF", "Dif", "#1", ("x",))
     assert answer.text == "DIF(a*x^2,x)"
     assert answer.annotation == "Dif(#1',x)"
 
 
-def test_a_calculus_command_taken_with_ctrl_enter_appends_one_entry(session):
+async def test_a_calculus_command_taken_with_ctrl_enter_appends_one_entry(session):
     session.author("x^2*y")
-    answer = session.calculus("DIF", "Dif", "#1", ("x",), True)
+    answer = await session.calculus("DIF", "Dif", "#1", ("x",), True)
     assert texts(session) == ["x^2*y", "2*x*y"]
     assert answer.annotation == "Simp(Dif(#1,x))"
 
 
-def test_an_argument_that_does_not_parse_appends_nothing(session):
+async def test_an_argument_that_does_not_parse_appends_nothing(session):
     session.author("x")
     with pytest.raises(DeriveSyntaxError):
-        session.calculus("DIF", "Dif", "#1", ("x", "2 +"))
+        await session.calculus("DIF", "Dif", "#1", ("x", "2 +"))
     assert texts(session) == ["x"]
 
 
-def test_a_two_sided_limit_is_written_with_the_direction_the_menu_chose(session):
+async def test_a_two_sided_limit_is_written_with_the_direction_the_menu_chose(session):
     """`Calculus Limit` writes `0` for Both, and `0` is two-sided."""
     session.author("ABS(x)/x")
-    both = session.calculus("LIM", "Lim", "#1", ("x", "0", "0"))
+    both = await session.calculus("LIM", "Lim", "#1", ("x", "0", "0"))
     assert both.text == "LIM(ABS(x)/x,x,0,0)"
-    assert session.simplify("#2").text == "±1"
-    right = session.calculus("LIM", "Lim", "#1", ("x", "0", "1"))
+    assert (await session.simplify("#2")).text == "±1"
+    right = await session.calculus("LIM", "Lim", "#1", ("x", "0", "1"))
     assert right.text == "LIM(ABS(x)/x,x,0,1)"
-    assert session.simplify("#4").text == "1"
+    assert (await session.simplify("#4")).text == "1"
 
 
 # -- what a Calculus variable field takes -------------------------------------
 
 
-def test_the_variable_offered_is_the_primary_one(session):
+async def test_the_variable_offered_is_the_primary_one(session):
     session.author("SIN(a*x^2)")
-    assert session.variables("#1")[0] == "x"
+    assert (await session.variables("#1"))[0] == "x"
 
 
-def test_a_bound_variable_is_not_offered(session):
+async def test_a_bound_variable_is_not_offered(session):
     session.author("INT(x^2*y, x, 0, 1)")
-    assert session.variables("#1") == ("y",)
+    assert await session.variables("#1") == ("y",)
 
 
 @pytest.mark.parametrize("text", ["x", "k", " x "], ids=str)

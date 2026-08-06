@@ -124,13 +124,13 @@ def test_a_shape_that_is_not_a_plot_says_so_without_naming_variables():
     assert "not an expression this can plot" in str(refusal.value)
 
 
-def test_classification_reads_what_a_label_means_and_not_what_it_says():
+async def test_classification_reads_what_a_label_means_and_not_what_it_says():
     # The command resolves `#1` before classifying, so what is classified is
     # the expression, whatever it was written as.
     session = Session()
     session.author("SIN(x)")
     target = session.target("#1")
-    assert classify(target, session.variables("#1"), "#1").kind is PlotKind.CURVE
+    assert classify(target, await session.variables("#1"), "#1").kind is PlotKind.CURVE
 
 
 # -- evaluation ---------------------------------------------------------------
@@ -823,11 +823,11 @@ def host(monkeypatch):
         proxy.shutdown()
 
 
-def _add(session, host, text, **keywords):
+async def _add(session, host, text, **keywords):
     """Plot one expression the way the Plot command does, and say where it went."""
     entry = session.author(text)
     label = f"#{entry.number}"
-    plotted = classify(entry.node, session.variables(label), text)
+    plotted = classify(entry.node, await session.variables(label), text)
     fields = {
         "worksheet": id(session),
         "node": entry.node,
@@ -840,10 +840,10 @@ def _add(session, host, text, **keywords):
     return host.add(plots.Add(**{**fields, **keywords})).window
 
 
-def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
+async def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
     session = Session()
-    assert _add(session, host, "SIN(x)") == 1
-    assert _add(session, host, "x^2 - 3") == 1
+    assert await _add(session, host, "SIN(x)") == 1
+    assert await _add(session, host, "x^2 - 3") == 1
     described = host.describe()
     assert len(described) == 1
     window = described[0]
@@ -855,9 +855,9 @@ def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
     assert [plot.text for plot in window.plots] == ["SIN(x)", "x^2 - 3"]
 
 
-def test_re_plotting_a_label_replaces_its_curve_and_says_so(host):
+async def test_re_plotting_a_label_replaces_its_curve_and_says_so(host):
     session = Session()
-    _add(session, host, "SIN(x)")
+    await _add(session, host, "SIN(x)")
     entry = session.entries[0]
     placed = host.add(
         plots.Add(
@@ -876,10 +876,10 @@ def test_re_plotting_a_label_replaces_its_curve_and_says_so(host):
     assert len(host.describe()[0].plots) == 1
 
 
-def test_a_new_window_takes_the_next_number_and_becomes_current(host):
+async def test_a_new_window_takes_the_next_number_and_becomes_current(host):
     session = Session()
-    assert _add(session, host, "SIN(x)") == 1
-    assert _add(session, host, "COS(x)", window=plots.Where.NEW) == 2
+    assert await _add(session, host, "SIN(x)") == 1
+    assert await _add(session, host, "COS(x)", window=plots.Where.NEW) == 2
     described = host.describe()
     assert [window.number for window in described] == [1, 2]
     assert [window.current for window in described] == [False, True]
@@ -887,7 +887,7 @@ def test_a_new_window_takes_the_next_number_and_becomes_current(host):
     assert described[1].title == "COS(x) - Rederive plot (current)"
     # The receiver is where the next plot lands: the new window's arrival was
     # the last touch.
-    assert _add(session, host, "TAN(x)") == 2
+    assert await _add(session, host, "TAN(x)") == 2
 
 
 def test_a_family_becomes_one_curve_per_element(host):
@@ -909,19 +909,19 @@ def test_a_family_becomes_one_curve_per_element(host):
     assert [plot.text for plot in window.plots] == ["x", "x^2", "x^3"]
 
 
-def test_one_window_takes_every_two_dimensional_kind(host):
+async def test_one_window_takes_every_two_dimensional_kind(host):
     # One window and one plot list for all of them, which is the design's own
     # claim: a parametric pair, a rose, a matrix of points, a contour and a
     # shaded region are one picture with one legend. Sent in a single test
     # because each of these costs a process to start.
     session = Session()
-    _add(session, host, "[SIN(t), COS(t)]", options=plots.Options(variables=("t",)))
-    _add(session, host, "[[1, 2], [3, 4]]")
-    _add(session, host, "x^2 + y^2 = 4")
-    _add(session, host, "y < x^2")
+    await _add(session, host, "[SIN(t), COS(t)]", options=plots.Options(variables=("t",)))
+    await _add(session, host, "[[1, 2], [3, 4]]")
+    await _add(session, host, "x^2 + y^2 = 4")
+    await _add(session, host, "y < x^2")
     # Polar is the view's mode rather than the plot's: a request still
     # spelling the polar kind lands as the curve this window reads it as.
-    _add(
+    await _add(
         session,
         host,
         "2*COS(3*t)",
@@ -939,13 +939,13 @@ def test_one_window_takes_every_two_dimensional_kind(host):
     assert not [plot.label for plot in window.plots if plot.hidden]
 
 
-def test_a_surface_opens_a_solid_window_of_its_own(host):
+async def test_a_surface_opens_a_solid_window_of_its_own(host):
     # One window per kind: a curve and a surface never share a window, and each
     # is the current one for its own kind, so the next plot of either lands
     # where the last one did. Sent in one test because each costs a process.
     session = Session()
-    assert _add(session, host, "SIN(x)") == 1
-    assert _add(session, host, "x^2 - y^2") == 2
+    assert await _add(session, host, "SIN(x)") == 1
+    assert await _add(session, host, "x^2 - y^2") == 2
     flat, solid = host.describe()
     assert (flat.kind, solid.kind) == (
         plots.WindowKind.TWO_D,
@@ -957,8 +957,8 @@ def test_a_surface_opens_a_solid_window_of_its_own(host):
     # The window reports the domain it evaluates over, which is the default one.
     assert solid.xrange == (-5.0, 5.0)
     assert solid.yrange == (-5.0, 5.0)
-    assert _add(session, host, "SIN(x*y)") == 2
-    assert _add(session, host, "COS(x)") == 1
+    assert await _add(session, host, "SIN(x*y)") == 2
+    assert await _add(session, host, "COS(x)") == 1
 
 
 def test_a_vector_of_surfaces_becomes_one_surface_per_element(host):
@@ -981,18 +981,18 @@ def test_a_vector_of_surfaces_becomes_one_surface_per_element(host):
     assert [plot.kind for plot in window.plots] == [PlotKind.SURFACE] * 2
 
 
-def test_a_curve_that_will_not_evaluate_reports_itself(host):
+async def test_a_curve_that_will_not_evaluate_reports_itself(host):
     session = Session()
     # A window with no host of its own to draw in reports over the pipe rather
     # than drawing nothing; the event is the only thing that says so.
-    _add(session, host, "SIN(x)")
+    await _add(session, host, "SIN(x)")
     assert host.describe()[0].plots[0].label == "#1"
 
 
-def test_the_host_is_started_once_and_stopped_when_it_is_asked_to(host):
+async def test_the_host_is_started_once_and_stopped_when_it_is_asked_to(host):
     session = Session()
-    _add(session, host, "SIN(x)")
-    _add(session, host, "COS(x)")
+    await _add(session, host, "SIN(x)")
+    await _add(session, host, "COS(x)")
     assert host.starts == 1
     assert host.running
     host.shutdown()
@@ -1055,7 +1055,7 @@ def test_a_plot_with_the_extra_not_installed_says_what_to_install(monkeypatch):
     assert proxy.starts == 0
 
 
-def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
+async def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
     """The new request over a real pipe, in front of a plot that still lands.
 
     What a preference does to a picture is a thing to be looked at rather than
@@ -1065,7 +1065,7 @@ def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
     """
     session = Session()
     host.prefer(plots.Prefer(grid=16, connected=True, point_size=9))
-    assert _add(session, host, "SIN(x)") == 1
+    assert await _add(session, host, "SIN(x)") == 1
     assert [plot.label for plot in host.describe()[0].plots] == ["#1"]
 
 
@@ -2302,7 +2302,7 @@ def test_the_wire_handed_back_is_the_next_surface_windows_look(registry, solid):
 # -- the gallery ---------------------------------------------------------------
 
 
-def test_every_line_of_the_gallery_is_a_captioned_plot():
+async def test_every_line_of_the_gallery_is_a_captioned_plot():
     """The shipped worksheet, read as the Plot command reads it.
 
     A gallery whose lines have stopped classifying as what their captions say
@@ -2318,7 +2318,8 @@ def test_every_line_of_the_gallery_is_a_captioned_plot():
     kinds = []
     for entry in session.entries:
         assert entry.annotation, entry.text
-        plotted = classify(entry.node, session.variables(f"#{entry.number}"), entry.text)
+        variables = await session.variables(f"#{entry.number}")
+        plotted = classify(entry.node, variables, entry.text)
         kinds.append(plotted.kind)
     assert set(kinds) >= {
         PlotKind.CURVE,

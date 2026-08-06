@@ -91,9 +91,9 @@ def test_an_entry_is_written_from_its_tree_and_not_from_its_text(session, file):
     assert written(session, file) == "x*(x+1)\n\n2*(8+7)/3^2\n"
 
 
-def test_an_annotation_is_the_comment_above_its_expression(session, file):
+async def test_an_annotation_is_the_comment_above_its_expression(session, file):
     session.author("SIN(x)/2")
-    session.simplify("#1")
+    await session.simplify("#1")
     assert written(session, file) == "SIN(x)/2\n\n;Simp(#1)\nSIN(x)/2\n"
 
 
@@ -102,9 +102,9 @@ def test_a_line_the_user_wrote_needs_no_comment_to_say_so(session, file):
     assert ";" not in written(session, file)
 
 
-def test_the_annotation_option_leaves_the_comments_out(session, file):
+async def test_the_annotation_option_leaves_the_comments_out(session, file):
     session.author("SIN(x)/2")
-    session.simplify("#1")
+    await session.simplify("#1")
     session.settings.apply({"SaveAnnotation": "Omit"})
     assert written(session, file) == "SIN(x)/2\n\nSIN(x)/2\n"
 
@@ -281,21 +281,21 @@ def test_loading_replaces_the_history_and_numbers_it_again(session, file):
     assert session.selected == 1 and session.route == ()
 
 
-def test_an_annotation_comes_back_with_its_expression(session, file):
+async def test_an_annotation_comes_back_with_its_expression(session, file):
     session.author("SIN(x)/2")
-    session.simplify("#1")
+    await session.simplify("#1")
     session.save(file)
     session.load(file)
     assert annotations(session) == ["User", "Simp(#1)"]
 
 
-def test_what_a_loaded_line_defines_reaches_the_next_command(session, file):
+async def test_what_a_loaded_line_defines_reaches_the_next_command(session, file):
     session.author("f(y) := y^2 - 1")
     session.author("f(3)")
     session.save(file)
     other = Session()
     other.load(file)
-    assert other.simplify("#2").text == "8"
+    assert (await other.simplify("#2")).text == "8"
 
 
 def test_a_setting_a_loaded_line_assigns_takes_effect(session, file):
@@ -367,16 +367,16 @@ def test_merging_appends_and_carries_the_numbering_on(session, file):
     assert [entry.number for entry in session.entries] == [1, 2, 3, 4]
 
 
-def test_a_merged_annotation_names_the_entry_it_now_means(session, file):
+async def test_a_merged_annotation_names_the_entry_it_now_means(session, file):
     session.author("SIN(x)/2")
-    session.simplify("#1")
+    await session.simplify("#1")
     session.save(file)
     session.merge(file)
     # The file says Simp(#1); merged behind two entries, that entry is #3.
     assert annotations(session) == ["User", "Simp(#1)", "User", "Simp(#3)"]
 
 
-def test_a_merged_reference_still_means_the_expression_it_meant(session, file):
+async def test_a_merged_reference_still_means_the_expression_it_meant(session, file):
     session.author("p")
     session.author("#1 + 2")
     session.save(file)
@@ -385,7 +385,7 @@ def test_a_merged_reference_still_means_the_expression_it_meant(session, file):
         other.author(text)
     other.merge(file)
     assert texts(other) == ["a", "b", "c", "p", "#4+2"]
-    assert other.simplify("#5").text == "p + 2"
+    assert (await other.simplify("#5")).text == "p + 2"
 
 
 def test_loading_shifts_nothing(session, file):
@@ -409,50 +409,50 @@ def test_clearing_expressions_starts_the_numbering_again(session):
     assert [entry.number for entry in session.entries] == [1]
 
 
-def test_clearing_expressions_leaves_what_they_defined(session):
+async def test_clearing_expressions_leaves_what_they_defined(session):
     """Four commands rather than degrees of one: the manual is explicit."""
     session.author("v := 7")
     session.clear_expressions()
     session.author("v + 1")
-    assert session.simplify("#1").text == "8"
+    assert (await session.simplify("#1")).text == "8"
 
 
-def test_clearing_variables_leaves_the_expressions(session):
+async def test_clearing_variables_leaves_the_expressions(session):
     session.author("v := 7")
     session.author("v + 1")
     session.clear_variables()
     assert texts(session) == ["v:=7", "v+1"]
-    assert session.simplify("#2").text == "v + 1"
+    assert (await session.simplify("#2")).text == "v + 1"
 
 
-def test_clearing_functions_takes_the_body_away(session):
+async def test_clearing_functions_takes_the_body_away(session):
     """The name is left undefined, so a call on it is stuck rather than nine."""
     session.author("F(u) := u^2")
     session.author("F(3)")
-    assert session.simplify("#2").text == "9"
+    assert (await session.simplify("#2")).text == "9"
     session.clear_functions()
     session.author("F(3)")
-    assert session.simplify("#4").text == "F(3)"
+    assert (await session.simplify("#4")).text == "F(3)"
 
 
-def test_clearing_all_is_the_other_three_at_once(session):
+async def test_clearing_all_is_the_other_three_at_once(session):
     session.author("v := 7")
     session.author("F(u) := u^2")
     session.clear_all()
     assert texts(session) == []
     session.author("v + F(3)")
-    assert session.simplify("#1").text == "v + F(3)"
+    assert (await session.simplify("#1")).text == "v + F(3)"
 
 
 # -- loading a utility file --------------------------------------------------
 
 
-def test_a_utility_file_defines_without_being_displayed(session, file):
+async def test_a_utility_file_defines_without_being_displayed(session, file):
     file.write_text("CUBE(t) := t^3\n\nk := 11\n")
     assert session.load_utility(file) == 0
     assert texts(session) == []
     session.author("CUBE(k)")
-    assert session.simplify("#1").text == "1331"
+    assert (await session.simplify("#1")).text == "1331"
 
 
 def test_a_utility_file_does_not_become_the_session_file(session, file):

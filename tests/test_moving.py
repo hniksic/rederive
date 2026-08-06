@@ -140,18 +140,18 @@ def test_a_whole_expression_moves_however_little_of_it_was_highlighted(session):
     assert session.route == ()
 
 
-def test_an_annotation_travels_with_its_expression(session):
+async def test_an_annotation_travels_with_its_expression(session):
     session.author("2 + 3")
-    session.simplify("#1")
+    await session.simplify("#1")
     session.move_block(1, 2, 2)
     assert labels(session) == ["#2: 5", "#1: 2+3"]
     assert session.entries[0].annotation == "Simp(#1)"
 
 
-def test_what_a_moved_line_defined_stays_defined(session):
+async def test_what_a_moved_line_defined_stays_defined(session):
     authored(session, "k := 4", "x")
     session.move_block(None, 1, 1)
-    assert session.simplify("k + 1").text == "5"
+    assert (await session.simplify("k + 1")).text == "5"
 
 
 def test_moving_leaves_the_unremove_buffer_alone(session):

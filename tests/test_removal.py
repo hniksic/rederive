@@ -68,11 +68,11 @@ def test_the_block_is_physically_contiguous_and_not_numerically(session):
     assert labels(session) == ["#1: a", "#4: d", "#3: c"]
 
 
-def test_what_a_removed_line_defined_is_left_standing(session):
+async def test_what_a_removed_line_defined_is_left_standing(session):
     authored(session, "k := 4", "x")
     session.remove(1, 1)
     # The value outlives the line that gave it, as it does in the original.
-    assert session.simplify("k + 1").text == "5"
+    assert (await session.simplify("k + 1")).text == "5"
 
 
 def test_a_label_that_names_no_entry_removes_nothing(session):
@@ -122,9 +122,9 @@ def test_they_go_after_the_last_entry_when_no_entry_is_named(session):
     assert labels(session) == ["#3: z", "#1: x", "#2: y"]
 
 
-def test_an_annotation_comes_back_with_its_expression(session):
+async def test_an_annotation_comes_back_with_its_expression(session):
     session.author("2 + 3")
-    session.simplify("#1")
+    await session.simplify("#1")
     assert session.entries[1].annotation == "Simp(#1)"
     session.remove(2, 2)
     session.unremove()
@@ -191,10 +191,10 @@ def test_a_label_already_taken_is_given_afresh_on_the_way_back(session):
     ]
 
 
-def test_an_engine_command_empties_the_buffer(session):
+async def test_an_engine_command_empties_the_buffer(session):
     authored(session, "x", "2 + 3")
     session.remove(1, 1)
-    session.simplify("#2")
+    await session.simplify("#2")
     assert session.removed == []
     assert session.unremove() == 0
 
@@ -206,9 +206,9 @@ def test_authoring_leaves_the_buffer_alone(session):
     assert session.unremove() == 1
 
 
-def test_a_command_that_does_not_run_leaves_the_buffer_alone(session):
+async def test_a_command_that_does_not_run_leaves_the_buffer_alone(session):
     authored(session, "x", "y")
     session.remove(1, 1)
     with pytest.raises(DeriveSyntaxError):
-        session.simplify("y +")
+        await session.simplify("y +")
     assert session.unremove() == 1

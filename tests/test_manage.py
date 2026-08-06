@@ -245,12 +245,12 @@ async def test_the_branch_setting_changes_the_answer(app):
 # -- Manage Renumber ---------------------------------------------------------
 
 
-def test_renumber_puts_the_labels_back_in_sequence(session):
+async def test_renumber_puts_the_labels_back_in_sequence(session):
     """The manual's own case: a remove leaves 1, 3, 4, and renumbering makes it
     1, 2, 3 - the annotation of the last entry moving with the label it names."""
     authored(session, "x", "y", "z")
     session.remove(2, 2)
-    session.simplify("#3")
+    await session.simplify("#3")
     assert labels(session) == ["#1: x", "#3: z", "#4: z"]
     assert annotations(session) == ["User", "User", "Simp(#3)"]
     session.renumber()
@@ -269,7 +269,7 @@ def test_renumber_follows_the_order_the_entries_sit_in(session):
     assert labels(session) == ["#1: a", "#2: d", "#3: e", "#4: b", "#5: c"]
 
 
-def test_renumber_moves_a_reference_inside_an_expression(session):
+async def test_renumber_moves_a_reference_inside_an_expression(session):
     """Rederive keeps `#3` as a reference where the original resolved it as it
     read the line, so renumbering has to move it or it points somewhere else."""
     authored(session, "x", "y", "z")
@@ -278,7 +278,7 @@ def test_renumber_moves_a_reference_inside_an_expression(session):
     session.renumber()
     assert labels(session) == ["#1: x", "#2: z", "#3: #2+1"]
     # And it still names the same expression it named before.
-    assert session.simplify("#3").text == "z + 1"
+    assert (await session.simplify("#3")).text == "z + 1"
 
 
 def test_a_reference_in_a_renumbered_line_is_drawn_as_it_now_reads(session):
@@ -426,10 +426,10 @@ def test_an_annotation_read_back_is_the_one_that_was_written(session, tmp_path):
     assert annotations(other) == ["Kirchhoff"]
 
 
-def test_an_annotation_moves_with_its_label_when_the_history_is_renumbered(session):
+async def test_an_annotation_moves_with_its_label_when_the_history_is_renumbered(session):
     authored(session, "x", "y", "z")
     session.remove(2, 2)
-    session.simplify("#3")
+    await session.simplify("#3")
     session.annotate(4, "from #3, twice over")
     session.renumber()
     assert annotations(session)[-1] == "from #2, twice over"
@@ -482,18 +482,18 @@ def test_an_empty_line_is_an_empty_list(session):
     assert session.order_list("") == ()
 
 
-def test_the_order_list_changes_which_variable_factor_offers_first(session):
+async def test_the_order_list_changes_which_variable_factor_offers_first(session):
     authored(session, "x^2 - y^2")
-    assert session.variables("#1") == ("x", "y")
+    assert await session.variables("#1") == ("x", "y")
     session.order = ("y", "x", "z")
-    assert session.variables("#1") == ("y", "x")
+    assert await session.variables("#1") == ("y", "x")
 
 
-def test_a_variable_off_the_list_is_less_main_than_one_on_it(session):
+async def test_a_variable_off_the_list_is_less_main_than_one_on_it(session):
     authored(session, "x^2 - a^2")
-    assert session.variables("#1") == ("x", "a")
+    assert await session.variables("#1") == ("x", "a")
     session.order = ("a",)
-    assert session.variables("#1") == ("a", "x")
+    assert await session.variables("#1") == ("a", "x")
 
 
 async def test_the_order_list_reaches_the_variables_factor_offers(app):
@@ -576,10 +576,10 @@ def test_a_line_that_does_not_parse_appends_nothing(session):
     assert labels(session) == ["#1: x"]
 
 
-def test_the_result_is_appended_unsimplified_and_can_be_simplified_after(session):
+async def test_the_result_is_appended_unsimplified_and_can_be_simplified_after(session):
     authored(session, "a x^2 + b x + c")
     session.substitute("#1", {"x": "2", "a": "3", "b": "5", "c": "0"})
-    assert session.simplify("#2").text == "22"
+    assert (await session.simplify("#2")).text == "22"
 
 
 # -- a highlighted subexpression ---------------------------------------------
