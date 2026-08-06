@@ -5,9 +5,11 @@ package has two halves and a caller has to say which one it is entitled to.
 Nothing inside the package may import from the UI, and nothing outside it may
 import from inside except through one of the two:
 
-* `client` is what anyone may hold: the `RemoteEngine` proxy, the vocabulary that
-  crosses the pipe, and the questions a tree answers by itself. It imports no
-  sympy, and the app process holds this and nothing more.
+* `client` is what anyone may hold: the vocabulary that crosses to the worker, the
+  exceptions a dead one raises, and the questions a tree answers by itself. It
+  imports no sympy, and the app process holds this and nothing more. `remote` is
+  one implementation over it, and the one that needs a child process; `policy` is
+  what every implementation dies by.
 * `computing` is the mathematics, and importing it means importing sympy. The
   worker holds this, and so does anything that computes in place - every test,
   every direct caller. Everything `client` offers it offers too, so a caller who
@@ -126,7 +128,7 @@ None of these promises covers what a computation costs. Simplify of `1000000!`
 finishes eventually and `10^10^10` does not finish at all, and neither can be
 interrupted from the inside, sympy having no cooperative cancellation to ask
 for. So the engine also ships with a way to run it at arm's length:
-`RemoteEngine` offers the six heavy calls with the signatures the session
+`remote.RemoteEngine` offers the six heavy calls with the signatures the session
 already uses and answers them out of a child process that can be killed, which
 is what makes Esc an abort and a memory cap enforceable. A session given one
 computes remotely; a session given nothing computes here, which is what every

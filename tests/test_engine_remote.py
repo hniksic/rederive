@@ -24,8 +24,8 @@ import pytest
 from rederive import memory
 from rederive.engine import worker as worker_module
 from rederive.engine.client import Context
+from rederive.engine.policy import STARTS_BEFORE_DOWN
 from rederive.engine.remote import (
-    STARTS_BEFORE_DOWN,
     EngineAborted,
     EngineDied,
     EngineMemoryExceeded,
@@ -310,7 +310,7 @@ def test_a_worker_that_will_not_start_puts_the_proxy_down(monkeypatch, mortal):
     engine = mortal()
     with pytest.raises(EngineDied):
         engine.simplify(tree("1 + 1"), Context())
-    assert until(lambda: engine._down is not None)
+    assert until(lambda: engine._deaths.down is not None)
     assert engine.starts == STARTS_BEFORE_DOWN
     # And it stays down: a command asked for while it is down tries exactly one
     # more spawn, and nothing else spawns at all. There is no timer, no backoff

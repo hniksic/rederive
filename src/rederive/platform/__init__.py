@@ -69,6 +69,16 @@ class Platform(Protocol):
     def process_bytes(self, pid: int | None = None) -> int | None:
         """One process's resident set, or None where it will not be read."""
 
+    def measures_processes(self) -> bool:
+        """Whether a resident set can be read here at all.
+
+        A different question from `process_bytes` answering None, which is also
+        what a process that has just died answers. This one is about the
+        environment, and what turns on it is the engine's memory watchdog: an
+        environment that measures nothing runs without one rather than polling
+        for a figure that is never going to come.
+        """
+
     def total_bytes(self) -> int | None:
         """How much memory the machine has, or None where that is unknown."""
 

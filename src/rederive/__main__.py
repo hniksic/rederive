@@ -224,7 +224,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     except Usage as refused:
         return _refused(refused)
 
-    from rederive.engine.client import RemoteEngine
+    from rederive.engine.remote import RemoteEngine
 
     runner = RemoteEngine()
     runner.start()

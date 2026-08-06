@@ -45,6 +45,16 @@ def process_bytes(pid: int | None = None) -> int | None:
     return platform.current().process_bytes(pid)
 
 
+def measures_processes() -> bool:
+    """Whether a resident set can be read here at all.
+
+    What the engine's memory watchdog turns on: an environment that measures no
+    process runs without one. Asked of the platform rather than guessed from a
+    None reading, since a None is also what a process that has died gives.
+    """
+    return platform.current().measures_processes()
+
+
 def resident_bytes() -> int | None:
     """What the program holds: this process, plus the worker where there is one.
 

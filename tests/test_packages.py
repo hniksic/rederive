@@ -44,6 +44,7 @@ CLIENT_SIDE = [
     "rederive.engine",
     "rederive.engine.boundary",
     "rederive.engine.client",
+    "rederive.engine.policy",
     "rederive.memory",
     "rederive.model.session",
     "rederive.platform",

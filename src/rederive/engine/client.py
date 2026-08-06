@@ -3,23 +3,31 @@
 The engine has two halves and one rule between them.
 
 The worker half is the mathematics - `pipeline`, `to_sympy`, `from_sympy`, `factor`,
-`expand`, `solve` and what they stand on. It imports sympy, it runs in the child
-process, and `worker.serve` is what imports it there. The app process never does:
-`RemoteEngine` ships a tree down a pipe and a `Result` comes back, and a proxy needs
-none of the mathematics it is a proxy for.
+`expand`, `solve` and what they stand on. It imports sympy, it runs in the worker,
+and `worker.serve` is what imports it there. The app process never does: a client
+ships a tree across and a `Result` comes back, and a proxy needs none of the
+mathematics it is a proxy for.
 
 The client half is this module, and its rule is that it imports no sympy, directly or
 through anything else. That is not tidiness. Sympy is some four hundred modules, a
 third of a second and thirty-odd megabytes, and the app paying that buys nothing:
-whatever it loaded, the worker loads its own copy in the process where the computing
-happens. What is left when it is gone is enough to author, draw, navigate and save a
-worksheet - so a session whose engine is down goes on working, which is the property
-`remote` is built around.
+whatever it loaded, the worker loads its own copy where the computing happens. What
+is left when it is gone is enough to author, draw, navigate and save a worksheet - so
+a session whose engine is down goes on working, which is the property every engine
+client is built around.
+
+The rule has a second edge, and it is what the exceptions are doing here. A client
+is written against a transport - `remote` spawns a child process and talks down a
+pipe - and a port has another one. So the vocabulary a dead worker raises lives here,
+where anyone may hold it, rather than beside the machinery of any one transport; the
+recovery every death funnels into is in `policy` beside it, for the same reason. What
+is left in `remote` is the child process itself, which is the only part a browser
+cannot use.
 
 What the client half offers:
 
-* `RemoteEngine` and the exceptions a dead worker raises.
-* The vocabulary that crosses the pipe, from `boundary`: `Amount` and `Result`.
+* The exceptions a dead worker raises.
+* The vocabulary that crosses to the worker, from `boundary`: `Amount` and `Result`.
 * The session's own state - `Context` and the settings in it - since a context is
   data the app edits and the worker only reads.
 * `replace` and `main_order`, the two things a command asks for that are answered by
@@ -49,15 +57,6 @@ from rederive.engine.context import (
     domain_of_node,
 )
 from rederive.engine.ordering import ORDER_LIST, main_order
-from rederive.engine.remote import (
-    EngineAborted,
-    EngineBug,
-    EngineDied,
-    EngineDown,
-    EngineError,
-    EngineMemoryExceeded,
-    RemoteEngine,
-)
 from rederive.engine.replacing import Replacement, replace
 from rederive.model.expr import Kind, Node
 
@@ -78,7 +77,6 @@ __all__ = [
     "EngineError",
     "EngineMemoryExceeded",
     "Precision",
-    "RemoteEngine",
     "Replacement",
     "Result",
     "TrigPower",
@@ -89,6 +87,49 @@ __all__ = [
     "replace",
     "written_as_ratio",
 ]
+
+
+class EngineError(Exception):
+    """What every engine call can fail with, the worker being mortal."""
+
+    #: Where the dead worker's output went, where there is a file to read.
+    log: str = ""
+
+
+class EngineAborted(EngineError):
+    """The user pressed Esc and the computation was taken away."""
+
+
+class EngineMemoryExceeded(EngineError):
+    """The worker met the memory cap, from the inside or from the watchdog."""
+
+
+class EngineDied(EngineError):
+    """The worker went away for a reason neither it nor the user chose."""
+
+    def __init__(self, message: str, log: str = "") -> None:
+        super().__init__(f"{message} - see {log}" if log else message)
+        self.log = log
+
+
+class EngineDown(EngineError):
+    """There is no worker and starting one is not working."""
+
+    def __init__(self, message: str, log: str = "") -> None:
+        super().__init__(f"{message} - see {log}" if log else message)
+        self.log = log
+
+
+class EngineBug(EngineError):
+    """The engine raised, which it promises never to do on parser output.
+
+    The worker survives it - one bad answer is not worth a process - so this is
+    the one engine failure that costs nothing but the command.
+    """
+
+    def __init__(self, message: str, traceback_text: str = "") -> None:
+        super().__init__(message)
+        self.traceback_text = traceback_text
 
 
 def decomposes(node: Node) -> bool:

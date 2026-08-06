@@ -103,6 +103,16 @@ class Desktop:
         except (psutil.Error, OSError, ValueError, AttributeError):
             return None
 
+    def measures_processes(self) -> bool:
+        """Whether psutil is here to read a resident set with, which is the whole of it.
+
+        A machine that has it may still refuse a particular process - one that
+        has gone, one another user owns - and that is `process_bytes` answering
+        None rather than this answering False. What this decides is whether it
+        is worth asking at all.
+        """
+        return psutil is not None
+
     def total_bytes(self) -> int | None:
         """How much physical memory the machine has, or None where that is unknown."""
         if psutil is None:

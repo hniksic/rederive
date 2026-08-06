@@ -1,4 +1,4 @@
-"""The app side of the engine worker: six calls, one pipe, one recovery path.
+"""The app side of the engine worker: six calls, one pipe, one child process.
 
 `RemoteEngine` has the signatures `Session` calls the engine by, so a session
 handed one computes in a child process without knowing it. Each call ships the
@@ -13,29 +13,20 @@ worker an ordinary operation rather than a catastrophe, and it is only ordinary
 because the worker is stateless: the replacement knows everything the dead one
 knew, which is nothing.
 
-Every death therefore funnels into one path. The user pressing Esc, the
-watchdog finding the worker over the memory cap, the worker's own
-`MemoryError`, the system's OOM killer, a segfault in a C extension and a
-worker that simply stopped are six causes with one shape: the pending call
-fails with the exception that names the cause, and a replacement is started
-straight away. Because a fresh worker is spawned every time the app starts, the
-recovery path is exercised on every run and not only in emergencies.
-
-The one thing that is not ordinary is a worker that cannot start at all. Three
-deaths before the handshake in a row stop the automatic respawn, since a broken
-install would otherwise spin: the proxy goes down, engine commands fail fast
-saying why and where the worker's log is, and the next command tries one more
-spawn - retry at the pace of a person pressing keys, with no backoff machinery
-to get wrong. Everything that does not need the engine goes on working while it
-is down, which is the property that matters: the mathematics may die, the
-worksheet must always be savable.
+What every death then comes to is not this module's to decide. It is one path for
+all of them, it is the same path for a worker that is a browser tab's rather than a
+process, and it is `policy` - the three-strikes rule included. What is here is the
+half that cannot travel: spawning, signalling, and reading a pipe.
 
 The memory cap is enforced from here rather than in the child, because the
 portable answer is to watch from outside. `RLIMIT_AS` is enforced on Linux, is
 famously not enforced on macOS, and does not exist on Windows; the watchdog
 polls the worker's resident set while a request is in flight and works
-everywhere. There is deliberately no limit on time: Derive users let
-computations run for hours, and Esc is the time limit.
+everywhere a resident set can be read. Where none can - an environment with no
+psutil, and any environment with no such thing to read - there is no watchdog at
+all rather than one polling for a figure that will never come, and the cap is
+whatever the child's own kernel will enforce. There is deliberately no limit on
+time: Derive users let computations run for hours, and Esc is the time limit.
 """
 
 from __future__ import annotations
@@ -53,7 +44,16 @@ from typing import Any
 from rederive import memory
 from rederive.engine import worker
 from rederive.engine.boundary import Amount, Result
+from rederive.engine.client import (
+    EngineAborted,
+    EngineBug,
+    EngineDied,
+    EngineDown,
+    EngineError,
+    EngineMemoryExceeded,
+)
 from rederive.engine.context import Context
+from rederive.engine.policy import Deaths
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 
@@ -89,53 +89,6 @@ WATCH_PERIOD = 0.5
 #: abortable anyway.
 READY_TIMEOUT = 30.0
 
-#: Deaths before the handshake, in a row, after which the proxy stops
-#: respawning by itself and waits to be asked.
-STARTS_BEFORE_DOWN = 3
-
-
-class EngineError(Exception):
-    """What every engine call can fail with, the worker being mortal."""
-
-    #: Where the dead worker's output went, where there is a file to read.
-    log: str = ""
-
-
-class EngineAborted(EngineError):
-    """The user pressed Esc and the computation was taken away."""
-
-
-class EngineMemoryExceeded(EngineError):
-    """The worker met the memory cap, from the inside or from the watchdog."""
-
-
-class EngineDied(EngineError):
-    """The worker went away for a reason neither it nor the user chose."""
-
-    def __init__(self, message: str, log: str = "") -> None:
-        super().__init__(f"{message} - see {log}" if log else message)
-        self.log = log
-
-
-class EngineDown(EngineError):
-    """There is no worker and starting one is not working."""
-
-    def __init__(self, message: str, log: str = "") -> None:
-        super().__init__(f"{message} - see {log}" if log else message)
-        self.log = log
-
-
-class EngineBug(EngineError):
-    """The engine raised, which it promises never to do on parser output.
-
-    The worker survives it - one bad answer is not worth a process - so this is
-    the one engine failure that costs nothing but the command.
-    """
-
-    def __init__(self, message: str, traceback_text: str = "") -> None:
-        super().__init__(message)
-        self.traceback_text = traceback_text
-
 
 def default_cap() -> int:
     """Half of physical memory, or a fixed figure where the machine will not say."""
@@ -163,6 +116,9 @@ class RemoteEngine:
         self.cap = default_cap() if cap is None else cap
         self._period = period
         self._ready_timeout = ready_timeout
+        #: Whether there is a resident set to read, and so a watchdog to run.
+        #: Asked once: an environment does not grow the ability while it runs.
+        self._watching = memory.measures_processes()
         # Spawn on every platform, never fork: forking a process with a Textual
         # app's threads and event loop in it is not safe, and one start-up
         # behaviour everywhere is worth the second of import it costs.
@@ -175,16 +131,15 @@ class RemoteEngine:
         #: Why we did the killing, when we did. Set before the kill and read by
         #: the death path, which is what tells an abort from a segfault.
         self._reason: EngineError | None = None
-        #: Deaths before the handshake, in a row.
-        self._failures = 0
+        #: The three-strikes rule and what put the proxy down, which are the
+        #: parts of dying that have nothing to do with a child process.
+        self._deaths = Deaths()
         #: How many aborts have been asked for. A call reads it before it
         #: starts and gives up if it has moved: an Esc pressed while the call
         #: is still queueing for a worker is as much an abort as one pressed
         #: while sympy is grinding, and the user must not find the command run
         #: anyway on the worker that turns up next.
         self._aborts = 0
-        #: What put the proxy down, or None while it is up.
-        self._down: EngineError | None = None
         self._stopped = False
         self._number = 0
         #: How many workers have been spawned. Nothing reads it but the tests,
@@ -329,8 +284,8 @@ class RemoteEngine:
         """
         if self._stopped:
             raise EngineDown("The engine has been shut down")
-        if self._down is not None:
-            self._down = None
+        if self._deaths.down is not None:
+            self._deaths.retrying()
             self._spawn()
         elif self._process is None:
             self._spawn()
@@ -345,7 +300,7 @@ class RemoteEngine:
             answer = self._receive(deadline)
             if answer[0] == worker.READY:
                 self._ready = True
-                self._failures = 0
+                self._deaths.ready()
                 return
 
     def _receive(self, deadline: float | None = None) -> Any:
@@ -366,16 +321,20 @@ class RemoteEngine:
             process = self._process
             if process is None or not process.is_alive():
                 raise self._collapse() from None
-            self._watch(process)
+            if self._watching:
+                self._watch(process)
             if deadline is not None and time.monotonic() > deadline:
                 self._record(EngineDied("The engine did not start in time"))
                 self._kill()
 
     def _watch(self, process: BaseProcess) -> None:
-        """The memory cap, polled from outside where every platform answers.
+        """The memory cap, polled from outside where there is a figure to poll.
 
         A reading that fails is no reading: a worker that has just died has
         nothing to report, and the death path is about to hear about it anyway.
+        Where the environment reads no resident set at all this is never called,
+        and the poll below is left doing the one job it has either way, which is
+        noticing that the worker has gone.
         """
         held = memory.process_bytes(process.pid)
         if held is not None and held > self.cap:
@@ -403,8 +362,10 @@ class RemoteEngine:
         """A worker is gone: say why, clear it away, and put another in its place.
 
         Every cause arrives here, which is what makes the recovery one piece of
-        code. The exception is returned rather than raised so that each caller
-        raises it from where its own error handling reads best.
+        code. What is decided here is only what a child process makes of it; how
+        many failures in a row are too many is `policy`'s. The exception is
+        returned rather than raised so that each caller raises it from where its
+        own error handling reads best.
         """
         with self._guard:
             process, self._process = self._process, None
@@ -417,11 +378,8 @@ class RemoteEngine:
             _reap(process)
         _close(connection)
         error = reason if reason is not None else _death_of(process, ready)
-        self._failures = 0 if ready else self._failures + 1
-        if self._stopped:
-            return error
-        if self._failures >= STARTS_BEFORE_DOWN:
-            self._down = error
+        respawn = self._deaths.died(error, ready)
+        if self._stopped or not respawn:
             return error
         try:
             self._spawn()
@@ -445,7 +403,7 @@ class RemoteEngine:
             _close(parent)
             _close(child)
             down = EngineDown(f"The engine could not be started: {error}")
-            self._down = down
+            self._deaths.down = down
             raise down from None
         # The child's end belongs to the child now; holding it here would keep
         # the pipe open past its death and turn every death into a hang.
