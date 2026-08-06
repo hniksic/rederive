@@ -2148,9 +2148,10 @@ class _on_paper:
 
     The same bargain the 2D window makes: a picture pasted into a document is
     read on white, so the background goes white, the surfaces take the darkened
-    half of the palette, and the box and its numbers go black. The window
-    flickers, which is honest - the picture that was taken is the picture that
-    was shown.
+    half of the palette, and the box and its numbers go black. Both swaps
+    happen between two paints of the widget, and `grabFramebuffer` renders on
+    its own rather than through the screen, so the picture is taken on white
+    while the screen keeps the dark one.
     """
 
     def __init__(self, window: Window3D) -> None:
@@ -2165,7 +2166,6 @@ class _on_paper:
             window._draw(surface)
         window._relabel()
         window._anchor()
-        QtWidgets.QApplication.processEvents()
 
     def __exit__(self, *_: Any) -> None:
         window = self._window

@@ -2469,6 +2469,12 @@ class Window2D(QtWidgets.QMainWindow):
         the file will hold.
         """
         scene = self.item.scene()
+        # The dialog reads `contextMenuItem` off the scene to learn what the
+        # export is about, and the only writer of that attribute is the stock
+        # context menu, which this window never raises - left unwritten it is
+        # not even None. The plot item is what an export of this window means,
+        # so it is named here.
+        scene.contextMenuItem = self.item
         scene.showExportDialog()
         if self._paper is None:
             self._paper = _on_paper(self)
@@ -2938,8 +2944,10 @@ class _on_paper:
 
     A dark plot pasted into a document is a black rectangle, so every image
     export sets a white background, redraws the curves in the colors that read
-    on it, exports, and puts the window back. The window flickers, which is
-    honest: the picture that was taken is the picture that was shown.
+    on it, exports, and puts the window back. Around a synchronous export both
+    swaps happen between two paints, so the screen never shows them; while the
+    export dialog holds the colors on, the window is visibly on paper, which is
+    what its preview promises the file will hold.
     """
 
     def __init__(self, window: Window2D) -> None:
@@ -2968,7 +2976,6 @@ class _on_paper:
             window.item.getAxis(edge).setTextPen(pg.mkPen("k"))
         for line in window.axes:
             line.setPen(pg.mkPen("#404040"))
-        QtWidgets.QApplication.processEvents()
 
     def __exit__(self, *_: Any) -> None:
         window = self._window

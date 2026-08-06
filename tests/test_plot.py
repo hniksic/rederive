@@ -1526,6 +1526,16 @@ def test_bounds_that_are_not_a_range_are_refused_in_words(flat):
     assert flat.canvas.viewRange()[0] == pytest.approx([-5.0, 5.0])
 
 
+def test_export_opens_the_dialog_although_no_stock_menu_names_the_item(flat):
+    # The export dialog learns which item it is about from an attribute that
+    # nothing but pyqtgraph's own context menu writes; the window writes it
+    # itself, so `Export...` works in a window that never raises that menu.
+    flat.export()
+    dialog = flat.item.scene().exportDialog
+    assert dialog is not None and dialog.isVisible()
+    dialog.close()
+
+
 def test_a_key_the_menu_names_does_its_thing_exactly_once(flat):
     from pyqtgraph.Qt import QtCore
 
