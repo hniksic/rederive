@@ -93,6 +93,8 @@ Pressing <kbd>s</kbd> answers:
 
 ## Plotting
 
+<p align="center"><img src="plot.webp" alt="An animated Rederive plotting session" width="700"></p>
+
 Highlight an expression, press <kbd>p</kbd> for Plot and <kbd>p</kbd> again, and it is
 drawn in a plot window.
 
