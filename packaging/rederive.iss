@@ -1,8 +1,11 @@
 ; The Windows installer: the directory form of the program, in a wizard.
 ;
-; Built on Windows, from the repository root, after the tree build has run:
+; Built on Windows, from the repository root, after the tree build has run. The
+; version is never typed in: it is read out of the package, which is the one place
+; in the repository it is written.
 ;
-;     iscc /DAppVersion=0.1.0 packaging\rederive.iss
+;     $version = uv run python -c "import rederive; print(rederive.__version__)"
+;     iscc /DAppVersion=$version packaging\rederive.iss
 ;
 ; which leaves `dist\rederive-setup.exe`. `RELEASING.md` says where that goes.
 ;
@@ -11,8 +14,12 @@
 ; program, so the point of installing it is the PATH entry rather than the Start Menu
 ; shortcut, and both are removed again on uninstall.
 
+; A default here would be a second place the version is written, and a stale one
+; the day after it was right - an installer stamped with it would say so in Add or
+; Remove Programs and nowhere else, which is the worst way to find out. So there is
+; no default, and a build that forgets the version does not start.
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #error "Pass the version in with /DAppVersion=, as the comment above shows"
 #endif
 #define AppName "Rederive"
 #define AppExe "rederive.exe"

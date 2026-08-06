@@ -200,10 +200,14 @@ jobs:
           }
 
           choco install innosetup --no-progress -y | Out-Null
-          $version = "0.0.0"
-          if ($env:GITHUB_REF -like "refs/tags/v*") {
-            $version = $env:GITHUB_REF -replace "refs/tags/v", ""
-          }
+          # The version the installer is stamped with comes off the package, the
+          # way every other version in this file does. Not off the tag: the two
+          # are held together by the version job above, and a build off a branch
+          # has no tag to take one from at all.
+          $named = Select-String -Path src\rederive\__init__.py `
+              -Pattern '^__version__ = "(.*)"$'
+          Check "the version is in the package" ($null -ne $named)
+          $version = $named.Matches[0].Groups[1].Value
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "/DAppVersion=$version" packaging\rederive.iss | Out-Null
           Check "compiles" ($LASTEXITCODE -eq 0)

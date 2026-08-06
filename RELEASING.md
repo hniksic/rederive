@@ -49,9 +49,17 @@ uv run python packaging/smoke.py dist/tree/rederive/rederive
 ```
 
 Archive `dist/tree/rederive` so the archive holds one `rederive` directory - `tar -C
-dist/tree -czf rederive-<platform>.tar.gz rederive`, or a zip on Windows. On Windows,
-`iscc /DAppVersion=<version> packaging\rederive.iss` then builds the installer from
-the same tree. Attach everything to the GitHub release.
+dist/tree -czf rederive-<platform>.tar.gz rederive`, or a zip on Windows. On Windows
+the installer is then built from the same tree, with the version read out of the
+package rather than typed - it is written in one place and this is one of the two
+that ask for it, the tag being the other:
+
+```
+$version = uv run python -c "import rederive; print(rederive.__version__)"
+iscc /DAppVersion=$version packaging\rederive.iss
+```
+
+Attach everything to the GitHub release.
 
 ## Notes
 
