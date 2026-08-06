@@ -452,9 +452,15 @@ def _spans(xs, ys, place):
 
 @pytest.fixture(scope="module")
 def solid():
+    """The surface geometry, which is arrays and needs no toolkit at all."""
+    from rederive.plot import surface
+
+    return surface
+
+
+@pytest.fixture(scope="module")
+def space(qt):
     """The 3D window module, or a skip where there is no OpenGL to import it."""
-    if not _toolkit():
-        pytest.skip("pyqtgraph and PySide6 are not installed")
     try:
         from rederive.plot.qt import window3d
     except ImportError as missing:  # no PyOpenGL, or no libGL to load it with
@@ -1528,7 +1534,7 @@ def test_view_all_is_this_windows_autoscale_and_is_remembered(flat):
     flat.canvas.setRange(xRange=(-1.0, 1.0), yRange=(-1.0, 1.0), padding=0)
     framed = tuple(tuple(span) for span in flat.canvas.viewRange())
     _entry(flat.menu, "View all").trigger()
-    assert flat._history[-1] == framed
+    assert flat._history.last == framed
     assert not flat.equal.isChecked()
     (left, right), (low, high) = flat.canvas.viewRange()
     # The curve is a third of a unit tall over the whole sampled abscissa, and
@@ -1582,7 +1588,7 @@ def test_the_set_range_dialog_frames_the_view_on_what_is_typed(flat):
     assert not flat.equal.isChecked()
     # The framing it replaced is one Backspace away, and the window says what
     # it is now showing.
-    assert flat._history[-1] == framed
+    assert flat._history.last == framed
     assert flat.status.text().startswith("Showing -1 ≤ x ≤ 6.28319")
 
 
@@ -1723,13 +1729,13 @@ def test_a_key_typed_into_a_range_field_is_text_and_not_a_command(flat):
 
 
 @pytest.fixture
-def deep(qt, solid):
-    window = solid.Window3D(1, InlineSession())
+def deep(space):
+    window = space.Window3D(1, InlineSession())
     yield window
     window.close()
 
 
-def test_the_domain_fields_read_expressions(deep, solid):
+def test_the_domain_fields_read_expressions(deep):
     surface = Surface(
         worksheet=1,
         label="#1",
@@ -1758,7 +1764,7 @@ def test_the_domain_fields_read_expressions(deep, solid):
     assert deep.fields["y0"].text() == "-5"
 
 
-def test_an_edited_grid_hands_the_new_count_back_to_the_host(deep, solid):
+def test_an_edited_grid_hands_the_new_count_back_to_the_host(deep):
     deep.fields["nx"].setText("32")
     deep.fields["ny"].setText("32")
     deep._edited()
@@ -1774,7 +1780,7 @@ def test_an_edited_grid_hands_the_new_count_back_to_the_host(deep, solid):
     assert deep.session.adjustments == {"grid": 48}
 
 
-def test_a_surfaces_boundary_arrives_beside_its_arrays(deep, solid):
+def test_a_surfaces_boundary_arrives_beside_its_arrays(deep):
     # The refinement runs on the sampling thread with `grid_eval` and is cached
     # on the surface, where the mesh - and section 10's wire - can read it.
     surface = Surface(
@@ -1793,7 +1799,7 @@ def test_a_surfaces_boundary_arrives_beside_its_arrays(deep, solid):
     assert np.isfinite(surface.boundary.along).any()
 
 
-def test_an_all_nan_surface_still_says_no_real_values(deep, solid):
+def test_an_all_nan_surface_still_says_no_real_values(deep):
     surface = Surface(
         worksheet=1,
         label="#5",
@@ -1808,7 +1814,7 @@ def test_an_all_nan_surface_still_says_no_real_values(deep, solid):
     assert deep.status.text() == "#5: no real values over this domain"
 
 
-def test_the_3d_clear_button_empties_its_own_window(deep, solid):
+def test_the_3d_clear_button_empties_its_own_window(deep):
     surface = Surface(
         worksheet=1,
         label="#1",
@@ -1852,7 +1858,7 @@ def _pressed_m(window):
     )
 
 
-def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
+def test_the_mesh_box_and_the_m_key_flip_every_surface(deep):
     # The toolbar box flips every surface in the window to wire and back, M is
     # its key, and the look it leaves is handed back as the sticky value.
     one = _surface("x*y")
@@ -1872,7 +1878,7 @@ def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
     assert one.item.visible() and one.wires.visible()
 
 
-def test_the_wire_draws_at_the_curves_weight(deep, solid):
+def test_the_wire_draws_at_the_curves_weight(deep):
     from rederive.plot.qt.window2d import CURVE_WIDTH
 
     # The one constant of the 2D window's strokes reaches the wire too, so a
@@ -1882,7 +1888,7 @@ def test_the_wire_draws_at_the_curves_weight(deep, solid):
     assert surface.wires.width == CURVE_WIDTH
 
 
-def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep, solid):
+def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep):
     # The two-level shape a data plot's points already use: the per-surface
     # right-click is the exception, so one surface goes solid while the other
     # stays wire, and no sticky value is handed back.
@@ -1899,12 +1905,12 @@ def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep, solid):
     assert deep.session.adjustments == {}
 
 
-def test_a_surface_arrives_in_the_look_the_window_was_left_in(qt, solid):
+def test_a_surface_arrives_in_the_look_the_window_was_left_in(space):
     # Sticky in the sense of section 7: a window built with the solid look -
     # the exception, the wire being every window's default - opens with the
     # box unchecked and gives the look to every surface that arrives, while a
     # replacement keeps the look of the surface it replaces.
-    window = solid.Window3D(1, InlineSession(), wire=False)
+    window = space.Window3D(1, InlineSession(), wire=False)
     try:
         assert not window.mesh_action.isChecked()
         one = _surface("x*y")
@@ -1918,7 +1924,7 @@ def test_a_surface_arrives_in_the_look_the_window_was_left_in(qt, solid):
         window.close()
 
 
-def test_the_wire_darkens_for_export_like_every_other_color(deep, solid):
+def test_the_wire_darkens_for_export_like_every_other_color(deep, solid, space):
     surface = _surface("x*y")
     surface = deep.add(surface)
     points, shades = solid.wire(
@@ -1941,7 +1947,7 @@ def _gl_state(item):
     return item._GLGraphicsItem__glOpts
 
 
-def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid):
+def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid, space):
     import pyqtgraph as pg
 
     # Hidden-line removal as it is actually built: both items draw, the solid
@@ -1951,13 +1957,13 @@ def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid):
     surface = _surface("x^2+y^2")
     surface = deep.add(surface)
     assert surface.item.visible() and surface.wires.visible()
-    assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
+    assert surface.item.opts["color"] == pg.mkColor(space.BACKGROUND)
     # The flat color is only read where a mesh has no vertex colors, so the
     # occluder is given none - it is a shape and not a picture.
     assert not surface.item.opts["meshdata"].hasVertexColor()
     state = _gl_state(surface.item)
-    assert state["glPolygonOffset"] == solid.WIRE_OFFSET
-    assert state[solid.GL.GL_POLYGON_OFFSET_FILL] is True
+    assert state["glPolygonOffset"] == space.WIRE_OFFSET
+    assert state[space.GL.GL_POLYGON_OFFSET_FILL] is True
     # It is the solid's own triangles: the same rim, so the silhouette the
     # lines are cut against is the surface's.
     faces = solid.mesh(
@@ -1966,19 +1972,19 @@ def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid):
     assert len(surface.item.opts["meshdata"].faces()) == len(faces)
 
 
-def test_the_occluder_goes_white_with_the_canvas_for_an_export(deep, solid):
+def test_the_occluder_goes_white_with_the_canvas_for_an_export(deep, solid, space):
     import pyqtgraph as pg
 
     # An export is taken on white, and an occluder still painted the dark
     # canvas would be a black surface in the picture rather than no surface.
     surface = _surface("x^2+y^2")
     surface = deep.add(surface)
-    with solid._on_paper(deep):
+    with space._on_paper(deep):
         assert surface.item.opts["color"] == pg.mkColor("w")
-    assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
+    assert surface.item.opts["color"] == pg.mkColor(space.BACKGROUND)
 
 
-def test_a_surface_drawn_solid_again_is_the_stock_item_it_was(deep, solid):
+def test_a_surface_drawn_solid_again_is_the_stock_item_it_was(deep, solid, space):
     from pyqtgraph.opengl.GLGraphicsItem import GLOptions
 
     # The occluder is a dress the item wears for as long as the wire is on:
@@ -1998,10 +2004,10 @@ def test_a_surface_drawn_solid_again_is_the_stock_item_it_was(deep, solid):
             solid.brightened(shading, surface.color),
         )
         deep.toggle_wire(surface)
-        assert solid.GL.GL_POLYGON_OFFSET_FILL in _gl_state(surface.item)
+        assert space.GL.GL_POLYGON_OFFSET_FILL in _gl_state(surface.item)
 
 
-def test_the_wire_loses_the_pixels_behind_the_surface(qt, deep, solid):
+def test_the_wire_loses_the_pixels_behind_the_surface(qt, deep):
     # The picture itself, where there is a card to draw it on: a bowl in wire
     # has fewer lit pixels than the same bowl with nothing to hide behind,
     # because its far side is inside it.
@@ -2098,7 +2104,7 @@ def test_the_3d_menu_is_the_cameras_list_with_its_keys(deep):
     assert deep.status.text() == "Facing the xy plane"
 
 
-def test_the_3d_menu_lists_every_surface_under_remove(deep, solid):
+def test_the_3d_menu_lists_every_surface_under_remove(deep):
     entry = _entry(deep.menu, "Remove")
     deep.menu.aboutToShow.emit()
     # A submenu of nothing is offered greyed rather than left off: what it

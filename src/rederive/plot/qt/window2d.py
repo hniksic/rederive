@@ -18,6 +18,12 @@ fields and no more, deliberately the only one. The one time the window reframes
 itself is when the alternative is an empty picture: a curve added with finite
 values none of which are in view autoscales y and says so.
 
+The arithmetic of the framing is `plot.view`'s and the re-sampling policy is
+`plot.resample`'s: what a default framing is, what rectangle a set of samples
+wants, when a plot is worth sampling again and what the sampling is then asked
+to do are all questions with no toolkit in them. What is left here is the
+picture.
+
 Sampling is in screen space and repeats on every view change, debounced. That
 is what makes zooming worth doing: a spike narrower than a pixel is not in the
 data until the view asks for it, and then it is. The sampling itself happens on
@@ -51,10 +57,8 @@ import pyqtgraph.exporters  # noqa: F401  - registers the exporters copy and exp
 from pyqtgraph.Qt import QtCore, QtGui, QtSvg, QtWidgets
 
 from rederive.engine.context import Angle, Context
-from rederive.plot import evaluate, protocol
+from rederive.plot import evaluate, protocol, resample, view
 from rederive.plot.model import (
-    DEFAULT_TURN,
-    DEFAULT_TURN_DEGREES,
     FIELDS,
     FUNCTIONS,
     PALETTE,
@@ -62,8 +66,8 @@ from rederive.plot.model import (
     POINT_SIZE,
     Plot,
 )
-from rederive.plot.qt import theme
 from rederive.plot.protocol import PlotKind
+from rederive.plot.qt import theme
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 __all__ = ["Drawn", "Legend", "Window2D"]
@@ -90,14 +94,6 @@ CURVE_WIDTH = 2.0
 #: 72 to the inch and every other Qt paint device counts these, so this is what
 #: makes the file the size of the picture it was taken from.
 SVG_DPI = 96
-
-#: The default framing: x from -5 to 5, with y following from equal scales.
-DEFAULT_HALF_WIDTH = 5.0
-
-#: How long the window waits after the last view change before re-sampling.
-#: Long enough that a drag is one re-sample rather than sixty, short enough
-#: that letting go of the mouse feels like the end of the gesture.
-RESAMPLE_DELAY_MS = 100
 
 #: How far the pointer may move between a right-button press and its release
 #: and still count as a click that opens the context menu rather than a
@@ -134,14 +130,6 @@ FORMAT = "{:.6f}"
 #: about a pixel on a curve that crosses the window once.
 STEP_SHARE = 1 / 500
 STEP_FAST_SHARE = 1 / 50
-
-#: How fine the grid an implicit curve or a region is evaluated on is, as a
-#: fraction of the canvas, and the most points either axis of it may have. Half
-#: the canvas resolution is the design's own figure: marching squares
-#: interpolates within a cell, so a contour drawn from half-resolution samples
-#: is smooth at full resolution.
-GRID_SHARE = 0.5
-MAX_GRID = 512
 
 #: How solid a region's fill is. Enough to read as shading, little enough that
 #: a curve crossing it is still a curve.
@@ -636,11 +624,10 @@ class Window2D(QtWidgets.QMainWindow):
         #: of the picture, flipped by the toolbar toggle, never of one plot.
         self.polar = False
         self.current = False
-        #: Ranges the view has been at, and where in that list it stands.
-        #: Every gesture pushes before it changes anything, so stepping back is
-        #: stepping to the range the last gesture left.
-        self._history: list[tuple[tuple[float, float], tuple[float, float]]] = []
-        self._at = 0
+        #: Ranges the view has been at. Every gesture pushes before it changes
+        #: anything, so stepping back is stepping to the range the last gesture
+        #: left.
+        self._history = view.History()
         self._counter = 0
         #: Which curve trace is riding, or None while trace is off.
         self._tracing: int | None = None
@@ -704,7 +691,7 @@ class Window2D(QtWidgets.QMainWindow):
         self.item.scene().sigMouseMoved.connect(self._moved)
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.setInterval(RESAMPLE_DELAY_MS)
+        self._timer.setInterval(resample.RESAMPLE_DELAY_MS)
         self._timer.timeout.connect(self.resample)
         self.plot.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.resize(760, 560)
@@ -1155,60 +1142,22 @@ class Window2D(QtWidgets.QMainWindow):
         the lambdify, the sampling and the grid all happen on the session's
         sampling thread, and what comes back is arrays. A window whose curves
         are all slow is a window that still pans, zooms and closes while they
-        arrive.
-
-        Which work is done is the plot's kind, and the answer it hands back is
-        read by the same kind, which is why there is one job and one key for
-        all of them: a view change debounces an implicit grid exactly as it
-        debounces a curve.
+        arrive. What the job is, and whether there is one to do at all, is
+        `resample`'s to say.
         """
-        if plot.item is None or not plot.visible:
-            return
-        if plot.kind is PlotKind.DATA and plot.xs.size:
-            # A matrix of constants is the same matrix at every zoom. Clipping
-            # and downsampling are what the view change costs, and the item
-            # does both itself.
+        if plot.item is None or not plot.visible or not resample.wanted(plot):
             return
         plot.generation += 1
         plot.features = None
         generation = plot.generation
-        view = self.canvas.viewRange()
+        xrange, yrange = self.canvas.viewRange()
         size = (max(self.plot.width(), 100), max(self.plot.height(), 100))
         self.session.sample(
-            (self.number, id(plot)),
-            self._work(plot, view, size),
+            resample.keyed(self.number, plot),
+            resample.job(plot, xrange, yrange, size, self.degrees),
             lambda answer: self._sampled(plot, generation, fresh, answer),
             lambda xs, ys: self._outlined(plot, generation, xs, ys),
         )
-
-    def _work(self, plot: Drawn, view: Any, size: Any) -> Callable[..., Any]:
-        """What the sampling thread is to do for this plot, as one callable.
-
-        Everything it needs is read here, on the Qt thread, and captured: the
-        job must not touch the window while it runs, since by the time it does
-        run the view may have moved and the plot may be gone.
-        """
-        (left, right), (low, high) = view
-        node, context = plot.node, plot.context
-        if plot.kind in FIELDS:
-            return _field_work(plot, (left, right), (low, high), size)
-        if plot.kind in PARAMETRIZED:
-            return _curve_work(plot, (left, right), (low, high), size, self.degrees)
-        if plot.kind is PlotKind.DATA:
-            return lambda report: evaluate.points(node, context)
-        variables = plot.options.variables
-        closure = plot.closure
-
-        def work(report: Callable[..., None]) -> Any:
-            made = closure
-            if made is None:
-                made = evaluate.closure(node, context, variables or ("x",))
-            xs, ys = evaluate.sample_adaptive(
-                made, (left, right), (low, high), size, report=report
-            )
-            return made, xs, ys
-
-        return work
 
     def _outlined(
         self, plot: Drawn, generation: int, xs: np.ndarray, ys: np.ndarray
@@ -1319,26 +1268,16 @@ class Window2D(QtWidgets.QMainWindow):
         """
         if plot.kind in FIELDS:
             return
-        (left, right), (low, high) = self.canvas.viewRange()
-        keep = np.isfinite(plot.xs) & np.isfinite(plot.ys)
-        xs, ys = plot.xs[keep], plot.ys[keep]
-        if not ys.size:
-            return
-        inside = (xs >= left) & (xs <= right) & (ys >= low) & (ys <= high)
-        if inside.any():
+        fitted = view.fitting(plot.xs, plot.ys, self.canvas.viewRange())
+        if fitted is None:
             return
         self._unlock()
         self._default = False
-        bottom, top = float(np.min(ys)), float(np.max(ys))
         if plot.kind in FUNCTIONS:
-            self.canvas.setYRange(bottom, top, padding=0.1)
+            self.canvas.setYRange(*fitted[1], padding=0.1)
             self.say(f"{plot.label}: y autoscaled to fit")
             return
-        self.canvas.setRange(
-            xRange=(float(np.min(xs)), float(np.max(xs))),
-            yRange=(bottom, top),
-            padding=0.1,
-        )
+        self.canvas.setRange(xRange=fitted[0], yRange=fitted[1], padding=0.1)
         self.say(f"{plot.label}: autoscaled to fit")
 
     def resample(self) -> None:
@@ -1363,8 +1302,8 @@ class Window2D(QtWidgets.QMainWindow):
         """
         (left, right), (low, high) = self.canvas.viewRange()
         across, up = self.canvas.viewPixelSize()
-        self.axes[0].setPos(min(max(0.0, left + across), right - across))
-        self.axes[1].setPos(min(max(0.0, low + up), high - up))
+        self.axes[0].setPos(view.axis_at(left, right, across))
+        self.axes[1].setPos(view.axis_at(low, high, up))
 
     # -- the parameter range -----------------------------------------------
 
@@ -1432,25 +1371,14 @@ class Window2D(QtWidgets.QMainWindow):
     def home(self) -> None:
         """The default framing: x in [-5, 5], the origin centred, equal scales.
 
-        Both ranges are worked out here rather than left to the aspect lock,
-        because the lock is free to satisfy itself by widening either axis, and
-        which one it picks is not something the framing should depend on. The
-        ordinate is therefore the abscissa scaled by the shape of the canvas,
-        which is what equal scales means, and the origin is in the middle of it.
-        The scales relock too, so that Home is the framing every window opens
-        with and a released `1:1` is a departure from it like any pan or zoom.
+        The scales relock, so that Home is the framing every window opens with
+        and a released `1:1` is a departure from it like any pan or zoom.
         """
         self.remember()
         self.equal.setChecked(True)
         self.canvas.setAspectLocked(True, ratio=1.0)
-        width = max(self.canvas.width(), 1.0)
-        height = max(self.canvas.height(), 1.0)
-        half = DEFAULT_HALF_WIDTH * height / width
-        self.canvas.setRange(
-            xRange=(-DEFAULT_HALF_WIDTH, DEFAULT_HALF_WIDTH),
-            yRange=(-half, half),
-            padding=0,
-        )
+        xrange, yrange = view.home_range(self.canvas.width(), self.canvas.height())
+        self.canvas.setRange(xRange=xrange, yRange=yrange, padding=0)
         self._default = True
 
     def set_range(self) -> None:
@@ -1529,24 +1457,17 @@ class Window2D(QtWidgets.QMainWindow):
         """
         self.remember()
         self._unlock()
-        framed = [
-            plot
-            for plot in self.plots
-            if plot.visible and plot.kind is not PlotKind.REGION
-        ]
-        xs = [plot.xs[np.isfinite(plot.ys)] for plot in framed]
-        ys = [plot.ys[np.isfinite(plot.ys)] for plot in framed]
-        finite = [array for array in ys if array.size]
-        if not finite:
+        framed = view.framing(
+            [
+                (plot.xs, plot.ys)
+                for plot in self.plots
+                if plot.visible and plot.kind is not PlotKind.REGION
+            ]
+        )
+        if framed is None:
             self.canvas.autoRange()
             return
-        low = min(float(np.min(array)) for array in finite)
-        high = max(float(np.max(array)) for array in finite)
-        left = min(float(np.min(array)) for array in xs if array.size)
-        right = max(float(np.max(array)) for array in xs if array.size)
-        self.canvas.setRange(
-            xRange=(left, right), yRange=(low, high), padding=0.05
-        )
+        self.canvas.setRange(xRange=framed[0], yRange=framed[1], padding=0.05)
 
     def _equal_scales(self, checked: bool) -> None:
         """The `1:1` toolbar toggle, which relocks or releases equal scales."""
@@ -1593,12 +1514,10 @@ class Window2D(QtWidgets.QMainWindow):
         the window is polar and y = f(x) while it is not - so those two kinds
         trade places with the toggle and every other kind is its own answer.
         """
-        if plot.kind is PlotKind.CURVE and self.polar:
-            plot.kind = PlotKind.POLAR
-        elif plot.kind is PlotKind.POLAR and not self.polar:
-            plot.kind = PlotKind.CURVE
-        else:
+        reread = view.reread(plot.kind, self.polar)
+        if reread is None:
             return False
+        plot.kind = reread
         return True
 
     def _unlock(self) -> None:
@@ -1635,34 +1554,32 @@ class Window2D(QtWidgets.QMainWindow):
 
         Called by every gesture rather than by a range signal, because a signal
         arrives after the change and the thing worth keeping is what was there
-        before it. Stepping back and then somewhere new throws the forward half
-        away, which is what every history in every program does.
+        before it.
         """
-        try:
-            ranges = self.canvas.viewRange()
-        except Exception:
+        here = self._where()
+        if here is None:
             return
-        current = (tuple(ranges[0]), tuple(ranges[1]))
         self._default = False
-        del self._history[self._at :]
-        if not self._history or self._history[-1] != current:
-            self._history.append(current)  # type: ignore[arg-type]
-        self._at = len(self._history)
+        self._history.remember(here)
 
     def step_history(self, direction: int) -> None:
         """Backspace and Shift-Backspace: where the view has been."""
-        if direction < 0 and self._at == len(self._history):
-            # Stepping back for the first time has to keep where we are, or
-            # there would be nothing to step forward to.
-            self.remember()
-            self._at = len(self._history) - 1
-        at = self._at + direction
-        if not 0 <= at < len(self._history):
+        here = self._where()
+        if here is None:
             return
-        self._at = at
-        xrange, yrange = self._history[at]
+        stepped = self._history.step(direction, here)
+        if stepped is None:
+            return
         self._unlock()
-        self.canvas.setRange(xRange=xrange, yRange=yrange, padding=0)
+        self.canvas.setRange(xRange=stepped[0], yRange=stepped[1], padding=0)
+
+    def _where(self) -> tuple[tuple[float, float], tuple[float, float]] | None:
+        """The range the view is at now, or None where there is not one yet."""
+        try:
+            ranges = self.canvas.viewRange()
+        except Exception:
+            return None
+        return (tuple(ranges[0]), tuple(ranges[1]))  # type: ignore[return-value]
 
     # -- the pointer -------------------------------------------------------
 
@@ -1695,9 +1612,9 @@ class Window2D(QtWidgets.QMainWindow):
         """
         readings = [("x", x), ("y", y)]
         if self.polar:
-            turn = 180.0 / np.pi if self.degrees else 1.0
-            readings.append(("r", float(np.hypot(x, y))))
-            readings.append(("θ", float(np.arctan2(y, x)) * turn))
+            radius, angle = view.polar(x, y, self.degrees)
+            readings.append(("r", radius))
+            readings.append(("θ", angle))
         return "&nbsp;&nbsp;&nbsp;".join(_named_value(*reading) for reading in readings)
 
     def clicked(self, point: Any) -> bool:
@@ -2542,7 +2459,6 @@ class Window2D(QtWidgets.QMainWindow):
         if self._default and self.canvas.width() > 1:
             self.home()
             self._history.clear()
-            self._at = 0
         self._place_legend()
         self._timer.start()
 
@@ -2674,93 +2590,6 @@ class Bounds(QtWidgets.QDialog):
         """What the four fields say, in the order the window reads them."""
         said = [self.fields[name].text() for name, *_ in self.FIELDS]
         return said[0], said[1], said[2], said[3]
-
-
-def _curve_work(
-    plot: Drawn,
-    xrange: tuple[float, float],
-    yrange: tuple[float, float],
-    size: tuple[float, float],
-    degrees: bool,
-) -> Callable[..., Any]:
-    """What the sampling thread does for a parametric or polar curve.
-
-    The two closures are made once and kept on the plot, like a function's one
-    is, so that a zoom re-samples without asking sympy anything. The first
-    sampling is over one turn, so the picture appears with no question asked;
-    bounds typed in the range fields arrive as trees - `-π` is what a person
-    types - and what they are worth is arithmetic that need only be done once,
-    here, before the range they make goes back to the plot.
-
-    A polar curve is a parametric one composed here rather than at the far end:
-    r(θ) is kept beside the pair because the readout and the trace are in r and
-    θ, and only the composition knows which closure that is.
-    """
-    node, context, options = plot.node, plot.context, plot.options
-    names = options.variables or ("t",)
-    made, radius, known = plot.pair, plot.closure, plot.trange
-    pending = plot.bounds
-    polar = plot.kind is PlotKind.POLAR
-    turn = DEFAULT_TURN_DEGREES if degrees else DEFAULT_TURN
-
-    def work(report: Callable[..., None]) -> Any:
-        pair, inner, trange = made, radius, known
-        if pair is None:
-            if polar:
-                # A curve reread polar by the view arrives with its closure
-                # already made, and r = f(θ) is the same f.
-                if inner is None:
-                    inner = evaluate.closure(node, context, names)
-                pair = evaluate.polar_pair(inner, degrees)
-            else:
-                pair = evaluate.pair(node, context, names)
-            trange = (-turn, turn)
-        if pending is not None:
-            low = evaluate.number(pending[0], context, trange[0])
-            high = evaluate.number(pending[1], context, trange[1])
-            if high > low:
-                trange = (low, high)
-        sampled = evaluate.sample_curve(
-            pair[0], pair[1], trange, xrange, yrange, size, report=report
-        )
-        return pair, inner, sampled, trange
-
-    return work
-
-
-def _field_work(
-    plot: Drawn,
-    xrange: tuple[float, float],
-    yrange: tuple[float, float],
-    size: tuple[float, float],
-) -> Callable[..., Any]:
-    """What the sampling thread does for an implicit curve or a region.
-
-    Both are fields over the rectangle now in view rather than curves over an
-    abscissa, and both are recomputed for whatever the view has become, which
-    is what makes zooming into a contour reveal it rather than magnify it.
-
-    Half the canvas resolution is the design's figure and it is not a
-    compromise: marching squares interpolates inside a cell, so a contour drawn
-    from half-resolution samples is smooth at full resolution, and a grid at
-    the full one would cost four times as much to say the same thing.
-    """
-    node, context = plot.node, plot.context
-    names = plot.axes
-    made = plot.closure
-    implicit = plot.kind is PlotKind.IMPLICIT
-    nx = int(min(max(size[0] * GRID_SHARE, 2), MAX_GRID))
-    ny = int(min(max(size[1] * GRID_SHARE, 2), MAX_GRID))
-
-    def work(_report: Callable[..., None]) -> Any:
-        f = made
-        if f is None:
-            reading = evaluate.difference if implicit else evaluate.mask
-            f = reading(node, context, names)
-        xs, ys, values = evaluate.grid_eval(f, xrange, yrange, nx, ny)
-        return f, xs, ys, values
-
-    return work
 
 
 def _contour(
