@@ -1117,9 +1117,8 @@ class Window3D(QtWidgets.QMainWindow):
         So the fields are click-only, and finishing an edit hands the keyboard
         straight back.
         """
-        edit = QtWidgets.QLineEdit(_written(value))
-        edit.setFixedWidth(52)
-        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        edit = theme.field(52)
+        edit.setText(_written(value))
         edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         edit.editingFinished.connect(self._edited)
         self.fields[name] = edit
@@ -2112,9 +2111,7 @@ class Inspector(QtWidgets.QDialog):
         return buttons
 
     def _field(self, name: str) -> QtWidgets.QLineEdit:
-        edit = QtWidgets.QLineEdit()
-        edit.setFixedWidth(90)
-        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        edit = theme.field(90)
         self.fields[name] = edit
         return edit
 

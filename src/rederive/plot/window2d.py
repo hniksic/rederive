@@ -955,9 +955,7 @@ class Window2D(QtWidgets.QMainWindow):
         focus when the window opened would swallow them - the same bargain the
         3D window's domain fields make.
         """
-        edit = QtWidgets.QLineEdit()
-        edit.setFixedWidth(64)
-        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        edit = theme.field(64)
         edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         edit.editingFinished.connect(self._range_edited)
         return edit
@@ -2777,9 +2775,7 @@ class Bounds(QtWidgets.QDialog):
         return buttons
 
     def _field(self, name: str) -> QtWidgets.QLineEdit:
-        edit = QtWidgets.QLineEdit()
-        edit.setFixedWidth(90)
-        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        edit = theme.field(90)
         self.fields[name] = edit
         return edit
 

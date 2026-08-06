@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["dangerous", "dress", "divider", "monospace"]
+__all__ = ["dangerous", "dress", "divider", "field", "monospace"]
 
 #: The bar the controls stand on, and the hairline that ends it.
 CHROME = "#131318"
@@ -262,6 +262,112 @@ def divider(vertical: bool = True) -> Any:
     else:
         line.setFixedHeight(1)
     return line
+
+
+#: The class `field` hands out, made on its first call and kept. A widget class
+#: cannot be written at module scope here - that would want the toolkit at
+#: import time - and one class per field would be one class per window.
+_FITTED: Any = None
+
+
+def field(width: int) -> Any:
+    """One number a person types, `width` pixels across and right-aligned.
+
+    A field too narrow for what is in it has to say so. Qt scrolls such a text
+    to its end, which on a right-aligned field leaves `.14159` of `-3.14159`:
+    the sign and the whole number are gone and what is left reads as a
+    different number altogether. So the text is elided at its end instead, and
+    the whole of it comes back the moment the field takes the keyboard - what
+    is edited is always the value and never the elision of it.
+    """
+    from pyqtgraph.Qt import QtCore, QtWidgets
+
+    global _FITTED
+    if _FITTED is None:
+
+        class Fitted(QtWidgets.QLineEdit):
+            """A field that elides what it cannot show, and knows what it holds."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                #: The text in full, which is what the field is worth however
+                #: much of it is on show, and whether it is showing less.
+                self._full = ""
+                self._short = False
+
+            def setText(self, text: str) -> None:
+                self._full = text
+                self._short = False
+                super().setText(text)
+                self._fit()
+
+            def text(self) -> str:
+                return self._full if self._short else super().text()
+
+            def focusInEvent(self, event: Any) -> None:
+                self._whole()
+                super().focusInEvent(event)
+
+            def keyPressEvent(self, event: Any) -> None:
+                # Nothing is ever typed into an elision. Taking the keyboard is
+                # what normally puts the whole text back, and this is the net
+                # under a key that reaches the field some other way.
+                self._whole()
+                super().keyPressEvent(event)
+
+            def focusOutEvent(self, event: Any) -> None:
+                # Whatever was typed is the value now, and it is taken before
+                # the event goes any further: `editingFinished` is emitted from
+                # inside it, and what the handler reads has to be that text and
+                # not the elision this ends with.
+                self._full = super().text()
+                self._short = False
+                super().focusOutEvent(event)
+                self._fit()
+
+            def resizeEvent(self, event: Any) -> None:
+                super().resizeEvent(event)
+                self._fit()
+
+            def _whole(self) -> None:
+                """Put the text back in full, for a field about to be typed in."""
+                if self._short:
+                    self._short = False
+                    super().setText(self._full)
+
+            def _fit(self) -> None:
+                """Show as much of the text as there is room for.
+
+                A field being typed in is left alone: what is on show there is
+                the text itself, and the value is whatever the keyboard has
+                made of it rather than the last thing put in.
+                """
+                if self.hasFocus():
+                    return
+                shown = self.fontMetrics().elidedText(
+                    self._full, QtCore.Qt.TextElideMode.ElideRight, self._room()
+                )
+                self._short = shown != self._full
+                super().setText(shown)
+
+            def _room(self) -> int:
+                """How wide the text may be, which the sheet's padding decides."""
+                option = QtWidgets.QStyleOptionFrame()
+                self.initStyleOption(option)
+                return (
+                    self.style()
+                    .subElementRect(
+                        QtWidgets.QStyle.SubElement.SE_LineEditContents, option, self
+                    )
+                    .width()
+                )
+
+        _FITTED = Fitted
+
+    edit = _FITTED()
+    edit.setFixedWidth(width)
+    edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+    return edit
 
 
 def dangerous(bar: Any, action: Any) -> None:
