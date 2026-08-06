@@ -167,6 +167,45 @@ def test_a_closure_answers_nan_where_the_value_is_not_finite():
     assert np.isnan(values[1])
 
 
+def test_a_closure_plots_the_heads_numpy_has_no_name_for():
+    # `x!` was an empty window: lambdify's numpy namespace has no factorial, so
+    # the printed name picked up `math.factorial`, which refuses every float it
+    # is handed, and every sample came back NaN. What plots has to be what
+    # approximates - `0.3!` has always been a number - so sympy answers for the
+    # points numpy will not, and the rule is general rather than a list of
+    # heads that have been noticed.
+    for text, place, expected in [
+        ("x!", 2.5, 3.32335097),
+        ("ZETA(x)", 0.5, -1.46035450),
+        ("SI(x)", 2.0, 1.60541298),
+        ("EI(x)", 1.0, 1.89511782),
+        ("SHI(x)", 2.0, 2.50156743),
+    ]:
+        value = closure(text)(np.array([place]))[0]
+        assert abs(value - expected) < 1e-6, f"{text} at {place} is {value}"
+
+
+def test_a_closure_over_a_slow_head_still_gaps_its_poles():
+    # The probe has to tell an evaluator that cannot answer from one that
+    # answers "no value here", and the two look alike at a single point. `x!`
+    # is the case that settles it: its poles are the negative whole numbers, so
+    # the first samples of the uniform pass are poles, and probing only the
+    # first would give up on the curve that starts just past them.
+    values = closure("x!")(np.array([-3.0, -2.0, -1.0, 0.5, 2.5]))
+    assert np.isnan(values[:3]).all()
+    assert abs(values[3] - 0.88622693) < 1e-6
+    assert abs(values[4] - 3.32335097) < 1e-6
+
+
+def test_a_closure_numpy_can_evaluate_never_builds_the_slow_rung():
+    # The cost of the rung has to fall only on the expressions it exists for.
+    # Nothing numpy evaluates may so much as construct it, which is what keeps
+    # a zoom of an ordinary curve at the microseconds it has always taken.
+    f = closure("SIN(x)")
+    evaluate.sample_adaptive(f, VIEW, VIEW, CANVAS)
+    assert f._candidates is None
+
+
 def test_a_constant_closure_answers_one_value_per_point():
     values = closure("3")(np.linspace(-1.0, 1.0, 7))
     assert list(values) == [3.0] * 7

@@ -11,7 +11,11 @@ The first is that an expression is converted *once*. The algebraic form of what
 is being plotted must not affect how fast it draws, so the tree goes through the
 engine's own pre-pass and converter and comes out a lambdified closure that is
 kept for the life of the curve; re-sampling a zoom then costs microseconds and
-sympy is never asked anything again.
+sympy is never asked anything again. Where numpy has no reading of a head at
+all - `x!` is the plainest of them - sympy is asked after all, a point at a
+time, because what plots should be what approximates and not what numpy has a
+name for. That rung is under a probe and is reached only where the fast one has
+already failed, so nothing it exists for is paid for by anything else.
 
 The second is that everything is evaluated in the complex plane and masked back
 to the reals afterwards. `SQRT(x)` over a range that includes the negative half
@@ -52,6 +56,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -123,6 +128,13 @@ HELD_FRACTION = 0.75
 #: pathological one from eating the host's memory.
 MAX_POINTS = 20001
 
+#: How many points the exact rung is offered before it is given up on. One is
+#: not enough: the first sample of a curve can perfectly well be a pole, and a
+#: pole is a value the evaluator found rather than a sign that it cannot
+#: evaluate. Spread across the sample, these settle the question for the cost
+#: of a rounding error on a plot that was going to be slow anyway.
+PROBE_POINTS = 8
+
 
 class Unplottable(Exception):
     """The expression cannot be turned into numbers, and this is why.
@@ -148,8 +160,8 @@ def closure(
     where the value is real and finite, NaN everywhere else. It never raises,
     whatever it is handed, because it is called from the middle of a sampling
     loop where an exception would cost the whole curve rather than one point:
-    a vectorized call that raises is retried point by point, and a point that
-    raises is NaN.
+    a vectorized call that raises is retried point by point, a point that
+    raises is asked of sympy itself, and a point sympy will not answer is NaN.
     """
     return _lambdified(_converted(node, context), variables)
 
@@ -299,13 +311,78 @@ def _lambdified(
         function = sp.lambdify(symbols, expression, modules="numpy")
     except Exception as error:
         raise Unplottable(_said(error)) from None
-    return _Numeric(function, len(symbols), real=real)
+    return _Numeric(function, expression, symbols, real=real)
 
 
 def _said(error: Exception) -> str:
     """One line naming an exception, for a message line to carry."""
     text = str(error).strip().splitlines()
     return text[0] if text else type(error).__name__
+
+
+def _exact(expression: Any, symbols: Sequence[Any]) -> list[Callable[..., Any]]:
+    """The evaluators to fall back on, in the order they are worth trying.
+
+    Lambdify's numpy namespace is narrower than the arithmetic the engine
+    itself does, and the gap is not a short list of special cases: a head numpy
+    has no entry for is printed as a bare name and picks up whatever python
+    happens to have under it, which for `factorial` is `math.factorial` and
+    refuses every float it is handed. Anything the rest of the program can
+    approximate should therefore be plottable, and these are what make that
+    true - the same value the engine's precision mode would show, arrived at
+    the same way.
+
+    Mpmath first, because it is the same arithmetic evalf runs on with the
+    dispatch taken off the front, and measures three to seventy times faster
+    per point for it. Sympy's own evaluation second, for the expression mpmath
+    has no reading of at all: it is the slower of the two and the one that
+    cannot be wrong about what the engine would say.
+    """
+    import sympy as sp
+
+    candidates: list[Callable[..., Any]] = []
+    try:
+        candidates.append(sp.lambdify(symbols, expression, modules="mpmath"))
+    except Exception:
+        pass
+    candidates.append(_Evalf(expression, symbols))
+    return candidates
+
+
+class _Evalf:
+    """One point of `expression`, evaluated by sympy the way the engine does."""
+
+    def __init__(self, expression: Any, symbols: Sequence[Any]) -> None:
+        self._expression = expression
+        self._symbols = list(symbols)
+
+    def __call__(self, *arguments: Any) -> complex:
+        values = [_as_number(argument) for argument in arguments]
+        bound = dict(zip(self._symbols, values, strict=True))
+        return complex(self._expression.subs(bound).evalf())
+
+
+def _as_number(value: Any) -> Any:
+    """A numpy scalar as the sympy number it stands for.
+
+    A real input stays real rather than becoming a complex with nothing in its
+    imaginary part, because the two are different questions to ask sympy: the
+    factorial of 2.5 is a number and the factorial of `2.5 + 0i` is a branch.
+    """
+    import sympy as sp
+
+    number = complex(value)
+    if number.imag:
+        return sp.Float(number.real) + sp.Float(number.imag) * sp.I
+    return sp.Float(number.real)
+
+
+def _probes(size: int) -> list[int]:
+    """Which points the exact rung is tried at, spread across the sample."""
+    if size <= PROBE_POINTS:
+        return list(range(size))
+    step = size / PROBE_POINTS
+    return [int(index * step) for index in range(PROBE_POINTS)]
 
 
 class _Numeric:
@@ -325,16 +402,35 @@ class _Numeric:
     parts of the inputs are therefore tried next, which is the reading those
     functions do have, and nothing is lost by it: an input whose imaginary part
     is more than noise is already outside the graph and comes back NaN.
+
+    Below both of those is the exact rung, which is what makes the set of
+    things that plot the set of things that approximate rather than the set of
+    things numpy has a name for. It is reached only where the lambdified
+    function has already failed at a point, so no expression numpy can evaluate
+    pays anything for it, and it is gated on a probe so that no expression
+    nothing can evaluate pays for it twice: a few points decide whether an
+    exact evaluator answers at all, and where none does the sample is NaN as
+    before.
     """
 
     def __init__(
-        self, function: Callable[..., object], arity: int, real: bool = False
+        self,
+        function: Callable[..., object],
+        expression: Any,
+        symbols: Sequence[Any],
+        real: bool = False,
     ) -> None:
         self._function = function
-        self._arity = arity
+        self._expression = expression
+        self._symbols = list(symbols)
+        self._arity = len(self._symbols)
         #: Whether the inputs stay real. Only a relation asks for that: `x > 0`
         #: has no reading in the complex plane, and sympy says so by raising.
         self._dtype = np.float64 if real else np.complex128
+        #: The exact evaluators, built at most once. Kept for the life of the
+        #: curve like the lambdified function is, since building one means
+        #: lambdifying again and a zoom must not pay for that.
+        self._candidates: list[Callable[..., Any]] | None = None
 
     def __call__(self, *arguments: np.ndarray) -> np.ndarray:
         inputs = [np.asarray(argument, dtype=self._dtype) for argument in arguments]
@@ -375,22 +471,65 @@ class _Numeric:
     def _pointwise(
         self, inputs: list[np.ndarray], shape: tuple[int, ...]
     ) -> np.ndarray:
-        """One point at a time, for a function the vectorized call choked on."""
+        """One point at a time, for a function the vectorized call choked on.
+
+        The lambdified function first, since where it answers it answers
+        fastest, and the exact rung under it for the points it refuses. The
+        probe is run at the first such point rather than up front, so a
+        function that only stumbles over a pole never builds an evaluator it
+        has no use for.
+        """
         spreads = [
             [np.broadcast_to(value, shape).ravel() for value in attempt]
             for attempt in self._attempts(inputs)
         ]
         answers = np.full(int(np.prod(shape)) if shape else 1, np.nan, np.complex128)
+        exact: Callable[..., Any] | None = None
+        probed = False
         for index in range(answers.size):
-            for spread in spreads:
-                try:
-                    answers[index] = complex(
-                        self._function(*(value[index] for value in spread))
-                    )
-                    break
-                except Exception:
-                    answers[index] = np.nan
+            value = _at(self._function, spreads, index)
+            if value is None:
+                if not probed:
+                    exact, probed = self._probed(spreads, answers.size), True
+                if exact is not None:
+                    value = _at(exact, spreads, index)
+            answers[index] = np.nan if value is None else value
         return answers.reshape(shape)
+
+    def _probed(
+        self, spreads: list[list[np.ndarray]], size: int
+    ) -> Callable[..., Any] | None:
+        """Whichever exact evaluator answers over this sample, or none of them.
+
+        Asked afresh for every sampling rather than remembered, because it is a
+        question about the points in view: a head undefined over the whole of
+        one window can be the graph of the next one along. What is remembered
+        is the evaluators themselves, which is the part that costs anything to
+        make.
+        """
+        if self._candidates is None:
+            self._candidates = _exact(self._expression, self._symbols)
+        for candidate in self._candidates:
+            if any(_at(candidate, spreads, place) is not None for place in _probes(size)):
+                return candidate
+        return None
+
+
+def _at(
+    function: Callable[..., Any], spreads: list[list[np.ndarray]], index: int
+) -> complex | None:
+    """What `function` is worth at one point, or None where it will not say.
+
+    None rather than NaN, because the two mean different things here: NaN is a
+    value the evaluator found and a point the graph does not pass through,
+    while None is the evaluator declining and the reason to try the next one.
+    """
+    for spread in spreads:
+        try:
+            return complex(function(*(value[index] for value in spread)))
+        except Exception:
+            continue
+    return None
 
 
 def _real_part(values: np.ndarray) -> np.ndarray:
