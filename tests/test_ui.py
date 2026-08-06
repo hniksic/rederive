@@ -1,6 +1,5 @@
 """Smoke tests driving the real app through Textual's pilot."""
 
-import pyperclip
 import pytest
 from screen import (
     annotation,
@@ -17,7 +16,7 @@ from screen import (
     work_area,
 )
 
-from rederive import __version__
+from rederive import __version__, platform
 from rederive.ui import menu as menus
 from rederive.ui.app import COPIED, COPIED_TEXT, CUT_TEXT, NOTHING_TO_CUT, RederiveApp
 
@@ -2098,7 +2097,8 @@ async def test_a_headless_copy_keeps_off_the_desktop_clipboard(app, monkeypatch)
     # not write on their clipboard; the headless guard in `copy_to_clipboard`
     # is what stands between the two, and this is the test of the guard.
     touched = []
-    monkeypatch.setattr(pyperclip, "copy", touched.append)
+    environment = type(platform.current())
+    monkeypatch.setattr(environment, "copy", lambda self, text: touched.append(text))
     async with app.run_test() as pilot:
         await worksheet(pilot, "y")
         await pilot.press("ctrl+c")

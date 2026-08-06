@@ -166,46 +166,33 @@ def _reported(skipped: int) -> str:
     return f"{skipped} {lines} not read"
 
 
-def _toolkit() -> str:
-    """The Qt and pyqtgraph a plot would be drawn with, or the reason there is none.
-
-    Which Qt a build carries is the first question a plot that misbehaves raises, and
-    a bundle carries its own, so nothing outside it can answer. The import is the
-    answer either way: a machine whose Qt will not load is one where the Plot command
-    cannot work, and saying so here costs nothing, where refusing to print a version
-    at all would cost a user the rest of the lines.
-    """
-    try:
-        import pyqtgraph
-        from pyqtgraph.Qt import QtCore
-    except ImportError as missing:
-        return f"Qt unusable ({missing})"
-
-    return f"Qt {QtCore.qVersion()}\npyqtgraph {pyqtgraph.__version__}"
-
-
 def provenance() -> str:
-    """This program's version, and the interpreter, sympy and Qt it is running on.
+    """This program's version, and the interpreter, sympy and environment it is on.
 
     One `name version` per line, so that a person can read it and a workflow can
-    check it without parsing prose.
+    check it without parsing prose. The first three lines are true wherever the
+    program runs; what comes after them is the environment's to say, since a
+    build that has no Qt to report has something else, and `rederive.platform` is
+    the side that knows which.
 
     Sympy is imported here and nowhere else on this side of the program, and the
-    toolkit only here and in the plot host. The app process is kept clear of both -
-    the mathematics belongs to the worker and the windows to the host, and
-    `tests/test_packages.py` holds this module to that - which is affordable because
-    this path prints its lines and leaves rather than going on to open a session.
+    toolkit only in the platform and the plot host. The app process is kept clear
+    of both - the mathematics belongs to the worker and the windows to the host,
+    and `tests/test_packages.py` holds this module to that - which is affordable
+    because this path prints its lines and leaves rather than going on to open a
+    session.
     """
     import platform
 
     import sympy
 
+    from rederive.platform import current
+
     return (
         f"rederive {__version__}\n"
         f"Python {platform.python_version()}\n"
         f"sympy {sympy.__version__}\n"
-        f"{_toolkit()}\n"
-        f"platform {platform.system().lower()} {platform.machine()}"
+        f"{current().provenance()}"
     )
 
 

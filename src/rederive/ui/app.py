@@ -175,7 +175,6 @@ from os.path import commonprefix
 from pathlib import Path
 from typing import Any, Callable
 
-import pyperclip
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -186,7 +185,7 @@ from textual.widget import Widget
 from textual.widgets import Input, Static
 from textual.widgets.input import Selection
 
-from rederive import __version__
+from rederive import __version__, platform
 from rederive.engine.client import Amount, EngineAborted
 from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
@@ -2399,19 +2398,16 @@ class RederiveApp(App[None]):
         sequence the base class writes asks the terminal to pass the text on;
         it is the only road there is when the program runs across ssh, but
         nothing comes back either way, and a terminal built on VTE reads the
-        sequence and drops it. pyperclip is the road around the terminal: it
-        hands the text to the desktop's own clipboard through whatever tool
-        it finds - wl-copy, xclip, xsel - and is quiet where it finds none.
-        A headless run takes the first road alone: a test has a clipboard of
-        its own to check, and the desktop's is not it to write on.
+        sequence and drops it. The platform is the road around the terminal: it
+        hands the text to whatever clipboard the environment keeps, and is
+        quiet where it keeps none. A headless run takes the first road alone: a
+        test has a clipboard of its own to check, and the environment's is not
+        it to write on.
         """
         super().copy_to_clipboard(text)
         if self.is_headless:
             return
-        try:
-            pyperclip.copy(text)
-        except pyperclip.PyperclipException:
-            pass
+        platform.current().copy(text)
 
     def action_copy_highlighted(self) -> None:
         """Ctrl-C: take a copy of what is selected, or of the highlighted expression.

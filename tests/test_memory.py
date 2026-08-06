@@ -7,7 +7,7 @@ import sys
 import pytest
 from screen import text_of
 
-from rederive import memory
+from rederive import memory, platform
 from rederive.ui.app import RederiveApp
 
 
@@ -69,6 +69,19 @@ def test_a_worker_that_is_gone_is_left_out_rather_than_refused():
         assert memory.resident_bytes() == pytest.approx(alone, rel=0.5)
     finally:
         memory.register_worker(None)
+
+
+def test_a_platform_that_will_not_answer_leaves_the_field_empty(monkeypatch):
+    """An install without psutil is the ordinary shape of this, and it is supported.
+
+    The gauge is the one part of the program that has nothing to fall back on, so
+    what it does instead is say nothing - a field that is not there reads better
+    than a figure that is not true.
+    """
+    environment = type(platform.current())
+    monkeypatch.setattr(environment, "process_bytes", lambda self, pid=None: None)
+    assert memory.resident_bytes() is None
+    assert memory.label() == ""
 
 
 async def test_the_status_line_shows_what_the_process_holds():

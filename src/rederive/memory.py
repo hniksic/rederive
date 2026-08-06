@@ -1,10 +1,10 @@
-"""How much memory the program is holding, asked of the platform directly.
+"""How much memory the program is holding, and how the figure is written.
 
 The status line shows the figure where the original showed its muLISP heap
-gauge. psutil is what asks: it is already a dependency for the engine worker's
-memory cap, and one library that answers on Linux, macOS and Windows is worth
-more than three hand-written ways of asking. Where a platform will not answer,
-or a reading fails, the answer is None and the field stays empty rather than
+gauge. The reading itself belongs to the environment and comes from
+`rederive.platform`, which asks psutil on a desktop and has nothing to ask
+anywhere else; what is here is what the gauge makes of it. Where the platform
+will not answer the answer is None and the field stays empty rather than
 showing a figure that might be wrong.
 
 The program is two processes once the engine worker is up, and the gauge is
@@ -15,7 +15,7 @@ spawned yet contributes nothing, silently - a gauge is not worth an error.
 
 from __future__ import annotations
 
-import psutil
+from rederive import platform
 
 #: Bytes in the units a size is written in, largest first. Resident sets are
 #: measured in mebibytes on every machine this runs on, but a small one reads
@@ -38,14 +38,11 @@ def register_worker(pid: int | None) -> None:
 def process_bytes(pid: int | None = None) -> int | None:
     """One process's resident set, or None where it will not be read.
 
-    None covers both a platform that does not report a resident set and a
-    process that is no longer there, which are the same thing to a caller: no
-    figure to show.
+    None covers a platform that does not report a resident set and a process
+    that is no longer there, which are the same thing to a caller: no figure to
+    show.
     """
-    try:
-        return psutil.Process(pid).memory_info().rss
-    except (psutil.Error, OSError, ValueError, AttributeError):
-        return None
+    return platform.current().process_bytes(pid)
 
 
 def resident_bytes() -> int | None:
@@ -66,10 +63,7 @@ def resident_bytes() -> int | None:
 
 def total_bytes() -> int | None:
     """How much physical memory the machine has, or None where that is unknown."""
-    try:
-        return psutil.virtual_memory().total
-    except (psutil.Error, OSError, ValueError, AttributeError):
-        return None
+    return platform.current().total_bytes()
 
 
 def written(size: int) -> str:
