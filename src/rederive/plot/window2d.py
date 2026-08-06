@@ -745,6 +745,11 @@ class Window2D(QtWidgets.QMainWindow):
         self.setCentralWidget(self._laid_out())
         self.canvas.setAspectLocked(True, ratio=1.0)
         self.canvas.disableAutoRange()
+        # No corner auto-range button: framing is never asked about, so auto-range
+        # is off for good and the button would offer it back - tooltip-less, and in
+        # a loop with screen-space resampling, since every widening refills the view
+        # with curve and gives auto-range a reason to widen again.
+        self.item.hideButtons()
         self.canvas.sigRangeChanged.connect(self._ranged)
         self.canvas.sigResized.connect(self._resized)
         self.item.scene().sigMouseMoved.connect(self._moved)
