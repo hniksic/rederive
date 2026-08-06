@@ -52,7 +52,8 @@ from pyqtgraph.Qt import QtCore, QtGui, QtSvg, QtWidgets
 
 from rederive.engine.context import Angle, Context
 from rederive.model.expr import Node
-from rederive.plot import evaluate, protocol, theme
+from rederive.plot import evaluate, protocol
+from rederive.plot.qt import theme
 from rederive.plot.protocol import Options, PlotKind
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 

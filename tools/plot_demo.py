@@ -298,7 +298,7 @@ def photograph(
     import pyqtgraph as pg
     from pyqtgraph.Qt import QtCore, QtWidgets
 
-    from rederive.plot import theme
+    from rederive.plot.qt import theme
     from rederive.plot.host import Host
 
     pg.setConfigOptions(antialias=True, imageAxisOrder="row-major")

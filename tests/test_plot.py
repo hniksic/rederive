@@ -455,7 +455,7 @@ def solid():
     if not _toolkit():
         pytest.skip("pyqtgraph and PySide6 are not installed")
     try:
-        from rederive.plot import window3d
+        from rederive.plot.qt import window3d
     except ImportError as missing:  # no PyOpenGL, or no libGL to load it with
         pytest.skip(f"pyqtgraph.opengl will not import: {missing}")
     return window3d
@@ -1125,7 +1125,7 @@ def qt():
 
 @pytest.fixture
 def flat(qt):
-    from rederive.plot.window2d import Window2D
+    from rederive.plot.qt.window2d import Window2D
 
     window = Window2D(1, InlineHost())
     yield window
@@ -1133,7 +1133,7 @@ def flat(qt):
 
 
 def _plot(text, kind, variables, label="#1"):
-    from rederive.plot.window2d import Plot
+    from rederive.plot.qt.window2d import Plot
 
     return Plot(
         worksheet=1,
@@ -1365,7 +1365,7 @@ def test_the_axis_label_follows_the_polar_mode(flat):
 
 
 def test_a_curve_out_weighs_the_axes_and_the_grid(flat):
-    from rederive.plot.window2d import CURVE_WIDTH
+    from rederive.plot.qt.window2d import CURVE_WIDTH
 
     plot = _plot("2*x + 3", PlotKind.CURVE, ("x",))
     flat.add(plot)
@@ -1384,7 +1384,7 @@ def test_a_curve_out_weighs_the_axes_and_the_grid(flat):
 
 
 def test_a_data_plots_line_takes_the_weight_and_its_points_do_not(flat):
-    from rederive.plot.window2d import CURVE_WIDTH
+    from rederive.plot.qt.window2d import CURVE_WIDTH
 
     plot = _plot("[[1, 2], [3, 4]]", PlotKind.DATA, ())
     flat.add(plot)
@@ -1399,7 +1399,7 @@ def test_a_data_plots_line_takes_the_weight_and_its_points_do_not(flat):
 
 
 def test_the_export_pens_carry_the_same_weight(flat):
-    from rederive.plot.window2d import CURVE_WIDTH, _on_paper
+    from rederive.plot.qt.window2d import CURVE_WIDTH, _on_paper
 
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
     flat.add(plot)
@@ -1623,7 +1623,7 @@ def _answers_the_save_dialog(monkeypatch, name, chosen="PNG image (*.png)"):
 def test_export_writes_the_png_ctrl_c_copies_and_leaves_the_window_dark(
     flat, tmp_path, monkeypatch
 ):
-    from rederive.plot.window2d import BACKGROUND
+    from rederive.plot.qt.window2d import BACKGROUND
 
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
     flat.add(plot)
@@ -1874,7 +1874,7 @@ def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
 
 
 def test_the_wire_draws_at_the_curves_weight(deep, solid):
-    from rederive.plot.window2d import CURVE_WIDTH
+    from rederive.plot.qt.window2d import CURVE_WIDTH
 
     # The one constant of the 2D window's strokes reaches the wire too, so a
     # wire surface carries the weight a curve does.

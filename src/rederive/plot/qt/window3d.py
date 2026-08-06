@@ -67,9 +67,10 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Context
 from rederive.model.expr import Node
-from rederive.plot import evaluate, protocol, theme
+from rederive.plot import evaluate, protocol
+from rederive.plot.qt import theme
 from rederive.plot.protocol import Options, PlotKind
-from rederive.plot.window2d import (
+from rederive.plot.qt.window2d import (
     CLICK_SLOP_PX,
     CURVE_WIDTH,
     PALETTE,

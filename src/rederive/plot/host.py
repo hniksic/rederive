@@ -55,7 +55,8 @@ from dataclasses import replace
 from multiprocessing.connection import Connection
 from typing import Any
 
-from rederive.plot import protocol, theme
+from rederive.plot import protocol
+from rederive.plot.qt import theme
 from rederive.plot.protocol import PlotKind, Where, WindowKind
 
 __all__ = ["preferred", "serve"]
@@ -461,7 +462,7 @@ class Host:
         """
         self._made += 1
         if kind is WindowKind.THREE_D:
-            from rederive.plot.window3d import Window3D
+            from rederive.plot.qt.window3d import Window3D
 
             window: Any = Window3D(
                 self._made,
@@ -470,7 +471,7 @@ class Host:
                 wire=self.preferences.wire,
             )
         else:
-            from rederive.plot.window2d import Window2D
+            from rederive.plot.qt.window2d import Window2D
 
             window = Window2D(self._made, self)
         self.windows[self._made] = window
@@ -546,11 +547,11 @@ def _curves(request: protocol.Add) -> list[Any]:
     label, which is at least true.
     """
     if protocol.dimension(request.kind) is WindowKind.THREE_D:
-        from rederive.plot.window3d import Surface as Made
+        from rederive.plot.qt.window3d import Surface as Made
 
         several, single = PlotKind.SURFACES, PlotKind.SURFACE
     else:
-        from rederive.plot.window2d import Plot as Made  # type: ignore[assignment]
+        from rederive.plot.qt.window2d import Plot as Made  # type: ignore[assignment]
 
         several, single = PlotKind.FAMILY, PlotKind.CURVE
 
