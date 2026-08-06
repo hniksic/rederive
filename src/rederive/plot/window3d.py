@@ -1165,6 +1165,7 @@ class Window3D(QtWidgets.QMainWindow):
         self.menu.addSeparator()
         self._remove_menu = self.menu.addMenu("Remove")
         self._command("Clear", self.clear, ("Del",))
+        self._command("Close", self.close, ("Q", "Ctrl+W"))
 
     def _command(
         self,
@@ -1863,13 +1864,10 @@ class Window3D(QtWidgets.QMainWindow):
         shows the state of, and the arrows, which are the camera's.
         """
         key = ev.key()
-        control = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
         keys = QtCore.Qt.Key
         command = self._keyed.get(pressed(ev))
         if command is not None:
             command.trigger()
-        elif control and key == keys.Key_W:
-            self.close()
         elif key == keys.Key_B:
             self._boxed = not self._boxed
             for item in (self.box, self.rays, self.marks):

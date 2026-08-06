@@ -47,8 +47,8 @@ from typing import Any
 
 import numpy as np
 import pyqtgraph as pg
-import pyqtgraph.exporters  # noqa: F401  - registers the exporters Ctrl-C uses
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+import pyqtgraph.exporters  # noqa: F401  - registers the exporters copy and export use
+from pyqtgraph.Qt import QtCore, QtGui, QtSvg, QtWidgets
 
 from rederive.engine.context import Angle, Context
 from rederive.model.expr import Node
@@ -103,6 +103,11 @@ PAPER_PALETTE = (
     "#b06000",
     "#0040c0",
 )
+
+#: The pixels an exported SVG is measured in, per inch. Qt's SVG writer counts
+#: 72 to the inch and every other Qt paint device counts these, so this is what
+#: makes the file the size of the picture it was taken from.
+SVG_DPI = 96
 
 #: The default framing: x from -5 to 5, with y following from equal scales.
 DEFAULT_HALF_WIDTH = 5.0
@@ -786,8 +791,6 @@ class Window2D(QtWidgets.QMainWindow):
         #: that last plotted into it is its reader.
         self._state = ParseState()
         self._context = Context()
-        #: The paper colors, while an export dialog is holding them on.
-        self._paper: _on_paper | None = None
         #: The four bounds as a form, once somebody has asked to type them.
         self._bounds: Bounds | None = None
         self._grid = True
@@ -1035,6 +1038,7 @@ class Window2D(QtWidgets.QMainWindow):
         self._command("Copy image", self.copy_image, ("Ctrl+C",))
         self._command("Export...", self.export, ("Ctrl+S",))
         self._command("Clear", self.clear, ("Del",))
+        self._command("Close", self.close, ("Q", "Ctrl+W"))
         self.menu.addSeparator()
         self._remove_action = self._command("Remove", self._remove_pointed)
         self._data_actions = self._point_actions(self.menu)
@@ -2429,25 +2433,99 @@ class Window2D(QtWidgets.QMainWindow):
             QtWidgets.QApplication.clipboard().setText(text)
             self.say(f"Copied {text}")
             return
-        with _on_paper(self):
-            image = pg.exporters.ImageExporter(self.item).export(toBytes=True)
-            self._name_plots(image)
-        QtWidgets.QApplication.clipboard().setImage(image)
+        QtWidgets.QApplication.clipboard().setImage(self._photograph())
         self.say("Copied the plot to the clipboard")
 
-    def _name_plots(self, image: Any) -> None:
+    def export(self) -> None:
+        """Ctrl-S and the menu's `Export...`: the picture in a file, on paper colors.
+
+        A name and two formats, which is the whole of the transaction: the PNG
+        is the same photograph Ctrl-C takes, written to the file instead of the
+        clipboard, and the SVG is the scene itself, for a document that will be
+        printed or scaled. A typed extension says which; without one the chosen
+        filter does, and its extension is added to the name.
+
+        Either file carries the legend names, written on the way out the same
+        way, so the two formats say the same thing about the same picture.
+        """
+        name, chosen = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save the plot",
+            f"plot{self.number}.png",
+            "PNG image (*.png);;SVG image (*.svg)",
+        )
+        if not name:
+            return
+        kind = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if kind not in ("png", "svg"):
+            kind = "svg" if "svg" in chosen.lower() else "png"
+            name = f"{name}.{kind}"
+        if kind == "png":
+            self._photograph().save(name)
+        else:
+            self._draw_svg(name)
+        self.say(f"Saved {name}")
+
+    def _draw_svg(self, name: str) -> None:
+        """The scene into an SVG file, drawn onto it rather than exported to it.
+
+        Qt's SVG writer is a paint device like any other, so the scene paints
+        itself onto the file and the curves arrive as vectors and the axis
+        numbers as text. pyqtgraph's own SVG exporter goes the long way around -
+        it re-reads what Qt wrote to correct the coordinates in it - and cannot
+        read the closepath token Qt ends a rectangle with, which makes every
+        export through it a traceback.
+        """
+        rect = self.item.sceneBoundingRect()
+        page = QtCore.QRectF(0, 0, rect.width(), rect.height())
+        writer = QtSvg.QSvgGenerator()
+        writer.setFileName(name)
+        writer.setSize(rect.size().toSize())
+        writer.setViewBox(page)
+        # The file is measured in the pixels of the window it is a picture of,
+        # and the writer's own idea of a pixel is 72 to the inch: left at that,
+        # every number and label lands three quarters of the way to where its
+        # tick is.
+        writer.setResolution(SVG_DPI)
+        with _on_paper(self):
+            painter = QtGui.QPainter(writer)
+            # The background is the view's rather than an item's, so a render
+            # of the scene alone would come out on nothing at all.
+            painter.fillRect(page, pg.mkColor("w"))
+            self.item.scene().render(painter, page, rect)
+            # The page is the item's own rectangle moved to the origin, so the
+            # names go on at the coordinates the legend's corner is measured in.
+            self._name_plots(painter)
+            painter.end()
+
+    def _photograph(self) -> Any:
+        """The scene as an image, taken on paper colors and put back after.
+
+        Both swaps happen between two paints, so what the screen shows never
+        changes: the picture goes to paper, is taken, and the window is dark
+        again before anything is drawn.
+        """
+        with _on_paper(self):
+            image = pg.exporters.ImageExporter(self.item).export(toBytes=True)
+            painter = QtGui.QPainter(image)
+            painter.scale(*([image.height() / max(self.item.height(), 1)] * 2))
+            self._name_plots(painter)
+            painter.end()
+        return image
+
+    def _name_plots(self, painter: Any) -> None:
         """Write the plot list into the corner of an exported picture.
 
         The legend is a card floating over the canvas rather than an item in
-        the scene, and an exporter photographs the scene: a picture of three
+        the scene, and an export photographs the scene: a picture of three
         curves with no legend in it is a picture that has lost half of what it
         showed. So the names are written on afterwards, in the paper colors the
-        curves themselves took, exactly as the 3D window's are.
+        curves themselves took, exactly as the 3D window's are. The painter
+        arrives scaled to the item's coordinates, which is what the corner the
+        legend sits in is measured in.
         """
         if not self._legend or not self.plots:
             return
-        painter = QtGui.QPainter(image)
-        painter.scale(*([image.height() / max(self.item.height(), 1)] * 2))
         painter.setFont(QtGui.QFont("Helvetica", 9))
         painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
         corner = self.canvas.geometry().topLeft()
@@ -2456,39 +2534,6 @@ class Window2D(QtWidgets.QMainWindow):
             painter.drawText(
                 int(corner.x()) + 16, int(corner.y()) + 24 + index * 14, plot.named
             )
-        painter.end()
-
-    def export(self) -> None:
-        """Ctrl-S and the menu's `Export...`: pyqtgraph's own export dialog.
-
-        PNG, SVG, a CSV of the sampled points and a matplotlib window, all of
-        them the library's, which is why this one dialog is borrowed where the
-        menu that opens it is not. The paper colors go on while the dialog is
-        up rather than around the export itself, because the dialog is modeless
-        and the export happens inside it: what the preview shows is then what
-        the file will hold.
-        """
-        scene = self.item.scene()
-        # The dialog reads `contextMenuItem` off the scene to learn what the
-        # export is about, and the only writer of that attribute is the stock
-        # context menu, which this window never raises - left unwritten it is
-        # not even None. The plot item is what an export of this window means,
-        # so it is named here.
-        scene.contextMenuItem = self.item
-        scene.showExportDialog()
-        if self._paper is None:
-            self._paper = _on_paper(self)
-            self._paper.__enter__()
-            scene.exportDialog.installEventFilter(self)
-
-    def eventFilter(self, watched: Any, ev: Any) -> bool:
-        """Put the dark theme back when the export dialog goes away."""
-        gone = (QtCore.QEvent.Type.Hide, QtCore.QEvent.Type.Close)
-        if ev.type() in gone and self._paper is not None:
-            self._paper.__exit__()
-            self._paper = None
-            watched.removeEventFilter(self)
-        return False
 
     # -- keys --------------------------------------------------------------
 
@@ -2509,12 +2554,8 @@ class Window2D(QtWidgets.QMainWindow):
             return True
         # The pens carry the screen's pixel ratio (see `_pen`), so landing on
         # a screen of another density is the one event that changes what they
-        # should be. While an export holds the paper pens on they are left
-        # alone: they are sized for the file, not for the screen.
-        if (
-            ev.type() == QtCore.QEvent.Type.DevicePixelRatioChange
-            and self._paper is None
-        ):
+        # should be.
+        if ev.type() == QtCore.QEvent.Type.DevicePixelRatioChange:
             for plot in self.plots:
                 if plot.item is None:
                     continue
@@ -2533,13 +2574,10 @@ class Window2D(QtWidgets.QMainWindow):
         """
         key = ev.key()
         shift = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
-        control = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
         keys = QtCore.Qt.Key
         command = self._keyed.get(pressed(ev))
         if command is not None:
             command.trigger()
-        elif control and key == keys.Key_W:
-            self.close()
         elif shift and key == keys.Key_Backspace:
             self.step_history(1)
         elif key in (keys.Key_Plus, keys.Key_Equal):
@@ -2944,10 +2982,9 @@ class _on_paper:
 
     A dark plot pasted into a document is a black rectangle, so every image
     export sets a white background, redraws the curves in the colors that read
-    on it, exports, and puts the window back. Around a synchronous export both
-    swaps happen between two paints, so the screen never shows them; while the
-    export dialog holds the colors on, the window is visibly on paper, which is
-    what its preview promises the file will hold.
+    on it, exports, and puts the window back. Every export is synchronous, so
+    both swaps fall between two paints and the screen never shows either: the
+    file is on paper and the window on screen stays dark throughout.
     """
 
     def __init__(self, window: Window2D) -> None:

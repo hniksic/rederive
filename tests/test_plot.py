@@ -1376,6 +1376,7 @@ def test_the_canvas_menu_is_the_windows_own_and_not_pyqtgraphs(flat):
         ("Copy image", "Ctrl+C"),
         ("Export...", "Ctrl+S"),
         ("Clear", "Del"),
+        ("Close", "Q"),
         ("Remove", ""),
         ("Connect points", ""),
         ("Point size", ""),
@@ -1526,14 +1527,84 @@ def test_bounds_that_are_not_a_range_are_refused_in_words(flat):
     assert flat.canvas.viewRange()[0] == pytest.approx([-5.0, 5.0])
 
 
-def test_export_opens_the_dialog_although_no_stock_menu_names_the_item(flat):
-    # The export dialog learns which item it is about from an attribute that
-    # nothing but pyqtgraph's own context menu writes; the window writes it
-    # itself, so `Export...` works in a window that never raises that menu.
+def _answers_the_save_dialog(monkeypatch, name, chosen="PNG image (*.png)"):
+    """Put a name and a chosen filter in the save dialog's mouth."""
+    from pyqtgraph.Qt import QtWidgets
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(name), chosen),
+    )
+
+
+def test_export_writes_the_png_ctrl_c_copies_and_leaves_the_window_dark(
+    flat, tmp_path, monkeypatch
+):
+    from rederive.plot.window2d import BACKGROUND
+
+    plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
+    flat.add(plot)
+    target = tmp_path / "curve.png"
+    _answers_the_save_dialog(monkeypatch, target)
     flat.export()
-    dialog = flat.item.scene().exportDialog
-    assert dialog is not None and dialog.isVisible()
-    dialog.close()
+    # A real picture, by the only test a file format offers about itself.
+    assert target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert flat.status.text() == f"Saved {target}"
+    # The paper colors were the file's and never the window's: what is on
+    # screen after the export is the dark theme it had before.
+    assert flat.plot.backgroundBrush().color().name() == BACKGROUND
+    assert plot.item.opts["pen"].color().name() == plot.color
+
+
+def test_export_writes_an_svg_when_the_name_asks_for_one(flat, tmp_path, monkeypatch):
+    plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
+    flat.add(plot)
+    target = tmp_path / "curve.SVG"
+    # The typed extension decides the format, whatever filter is selected and
+    # whichever case it is typed in.
+    _answers_the_save_dialog(monkeypatch, target)
+    flat.export()
+    written = target.read_text()
+    assert "<svg" in written
+    # The legend is a card over the canvas rather than an item in the scene, so
+    # the names are written onto the file - into this one as text.
+    assert plot.named in written
+    assert flat.status.text() == f"Saved {target}"
+
+
+def test_a_name_with_no_extension_takes_the_chosen_filters(flat, tmp_path, monkeypatch):
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    _answers_the_save_dialog(monkeypatch, tmp_path / "curve", "SVG image (*.svg)")
+    flat.export()
+    written = tmp_path / "curve.svg"
+    assert "<svg" in written.read_text()
+    assert flat.status.text() == f"Saved {written}"
+
+
+def test_a_cancelled_export_writes_nothing_and_says_nothing(flat, tmp_path, monkeypatch):
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    flat.say("Ready")
+    _answers_the_save_dialog(monkeypatch, "")
+    flat.export()
+    assert list(tmp_path.iterdir()) == []
+    assert flat.status.text() == "Ready"
+
+
+def test_q_closes_the_window_as_the_menu_advertises(flat):
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    # `Q` is Derive's own key for leaving a plot window, and `Close` carries it
+    # (with Ctrl+W riding along) so the menu is where it is learned.
+    flat.show()
+    flat.keyPressEvent(
+        QtGui.QKeyEvent(
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_Q,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+    )
+    assert flat.isHidden()
 
 
 def test_a_key_the_menu_names_does_its_thing_exactly_once(flat):
@@ -1818,6 +1889,7 @@ def test_the_3d_menu_is_the_cameras_list_with_its_keys(deep):
         ("Export...", "Ctrl+S"),
         ("Remove", ""),
         ("Clear", "Del"),
+        ("Close", "Q"),
     ]
     assert "mesh" not in {text for text, _ in _entries(deep.menu)}
     # The keyboard dispatches off that same table, so a key does what the entry
