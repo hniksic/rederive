@@ -60,11 +60,14 @@ from rederive.model.expr import Node
 from rederive.plot import evaluate, protocol, theme
 from rederive.plot.protocol import Options, PlotKind
 from rederive.plot.window2d import (
+    CLICK_SLOP_PX,
     CURVE_WIDTH,
     PALETTE,
     PAPER_PALETTE,
     Legend,
+    commanded,
     naming,
+    pressed,
 )
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
@@ -830,14 +833,21 @@ def ticks(low: float, high: float, count: int = TICKS) -> list[float]:
 class View(gl.GLViewWidget):
     """The GL view, saying when the camera has moved and surviving no GL at all.
 
-    Two departures from stock, both of them about what happens around the
+    Three departures from stock, all of them about what happens around the
     drawing rather than to it. The camera signal is what the tick labels
     re-anchor on: every stock gesture goes through `orbit`, `pan`,
     `setCameraPosition` or the wheel, so overriding those four is a complete
     account of the camera moving, and it is emitted after the move rather than
     during it.
 
-    The other is the guard. `initializeGL` is where a machine with no usable
+    The second is the right button, which the stock view has no use for at all:
+    it orbits on the left and pans on the middle, and a press of the right one
+    is recorded and forgotten. So the button is free, and a press let go where
+    it was pressed asks for the window's menu - the same click the 2D canvas
+    answers, measured by the same slop, so that one hand opens either window's
+    menu the same way.
+
+    The third is the guard. `initializeGL` is where a machine with no usable
     OpenGL says so, and it runs inside the Qt event loop, where an exception
     ends the host and takes every other plot window with it. It is remembered
     instead, and the window reports it on its status bar.
@@ -845,9 +855,14 @@ class View(gl.GLViewWidget):
 
     moved = QtCore.Signal()
 
+    #: A right click that stayed put, at the point on the screen it landed on.
+    asked = QtCore.Signal(object)
+
     def __init__(self) -> None:
         super().__init__()
         self.broken = ""
+        #: Where the right button went down, while it is down.
+        self._pressed: Any = None
 
     def initializeGL(self) -> None:
         try:
@@ -878,6 +893,27 @@ class View(gl.GLViewWidget):
     def wheelEvent(self, ev: Any) -> None:
         super().wheelEvent(ev)
         self.moved.emit()
+
+    def mousePressEvent(self, ev: Any) -> None:
+        """Stock, plus the beginning of a click that may be asking for the menu."""
+        super().mousePressEvent(ev)
+        if ev.button() == QtCore.Qt.MouseButton.RightButton:
+            self._pressed = ev.position()
+
+    def mouseReleaseEvent(self, ev: Any) -> None:
+        """A right button let go where it went down is the menu being asked for.
+
+        Let go anywhere else it is nothing, which is what a right drag is here
+        already: the stock view moves the camera on the other two buttons, so
+        nothing is being taken away from the mouse to pay for the menu.
+        """
+        super().mouseReleaseEvent(ev)
+        if ev.button() != QtCore.Qt.MouseButton.RightButton or self._pressed is None:
+            return
+        moved = ev.position() - self._pressed
+        self._pressed = None
+        if float(np.hypot(moved.x(), moved.y())) < CLICK_SLOP_PX:
+            self.asked.emit(ev.globalPosition().toPoint())
 
     def mouseMoveEvent(self, ev: Any) -> None:
         """Stock, plus Shift-drag as a second way to say pan.
@@ -960,9 +996,11 @@ class Window3D(QtWidgets.QMainWindow):
         # its own with a repeat timer, and ours orbit by a fixed step.
         self.view.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.view.moved.connect(self._anchor)
+        self.view.asked.connect(self._menu_at)
         self.legend = Legend(self.view)
         self.legend.move(12, 12)
         self.legend.picked.connect(self._legend_picked)
+        self._make_menu()
         self._furnish()
         self.setCentralWidget(self._laid_out())
         self._spin = QtCore.QTimer(self)
@@ -1089,6 +1127,75 @@ class Window3D(QtWidgets.QMainWindow):
             # painted over the numbers naming the edge behind it.
             item.setDepthValue(10)
             self.view.addItem(item)
+
+    def _make_menu(self) -> None:
+        """The window's own context menu: what it does, and the keys that do it.
+
+        The GL view has no menu of its own to inherit or to prune, so this one
+        is the whole of what a right click on the picture offers. It is the
+        camera's list, because a 3D window is a camera: where to look from, and
+        the three presets that put an axis edge-on. What is on the toolbar is
+        not repeated here - the `mesh` box says its own state where it stands,
+        and a menu entry that had to be opened to be read would say it worse.
+
+        The surfaces are listed under `Remove` when the menu opens rather than
+        when it is built, since what the window holds changes and the menu does
+        not; the submenu of an empty window is offered greyed rather than left
+        off, because what it would list is what the window is empty of.
+        """
+        #: Every key the menu advertises, by the stroke that presses it. The
+        #: table `keyPressEvent` dispatches from.
+        self._keyed: dict[tuple[int, int], Any] = {}
+        self.menu = QtWidgets.QMenu(self)
+        self.menu.aboutToShow.connect(self._read_menu)
+        self._command("Home view", self.home, ("Home", "0"))
+        # The three presets in the order `PLANES` holds them, which is the order
+        # the number keys have always been in.
+        for plane, key in zip(PLANES, ("1", "2", "3")):
+            self._command(
+                f"Face the {plane} plane",
+                lambda _=False, plane=plane: self.face(plane),
+                (key,),
+            )
+        self._spin_entry = self._command("Rotate", self.spin, ("R",), checkable=True)
+        self.menu.addSeparator()
+        self._command("View...", self.inspector)
+        self._command("Copy image", self.copy_image, ("Ctrl+C",))
+        self._command("Export...", self.export, ("Ctrl+S",))
+        self.menu.addSeparator()
+        self._remove_menu = self.menu.addMenu("Remove")
+        self._command("Clear", self.clear, ("Del",))
+
+    def _command(
+        self,
+        text: str,
+        handler: Callable[..., None],
+        keys: Sequence[str] = (),
+        checkable: bool = False,
+    ) -> Any:
+        """One entry of the menu, its keys written on it and in the key table."""
+        action = commanded(self, self._keyed, text, handler, keys, checkable)
+        self.menu.addAction(action)
+        return action
+
+    def _read_menu(self) -> None:
+        """Read the menu off the window as it opens: what turns, and what is in it.
+
+        The rotation is a timer and says for itself whether it is running, which
+        is what the tick is drawn from; a tick remembering what the menu last
+        did would be wrong the first time `R` was pressed instead.
+        """
+        self._spin_entry.setChecked(self._spin.isActive())
+        self._remove_menu.clear()
+        for surface in self.plots:
+            self._remove_menu.addAction(
+                surface.named, lambda _=False, surface=surface: self.remove(surface)
+            )
+        self._remove_menu.setEnabled(bool(self.plots))
+
+    def _menu_at(self, point: Any) -> None:
+        """A right click on the picture: the window's menu, where it was asked for."""
+        self.menu.popup(point)
 
     # -- the plot list -----------------------------------------------------
 
@@ -1747,25 +1854,22 @@ class Window3D(QtWidgets.QMainWindow):
     # -- keys --------------------------------------------------------------
 
     def keyPressEvent(self, ev: Any) -> None:
+        """The keys of this window, the menu's own among them.
+
+        Every key a menu entry advertises is dispatched off the menu's own
+        table, so the key that works and the key the menu names are one key and
+        neither can fire twice. What is left written out here are the keys no
+        entry has: the three furnishings, the `mesh` box the toolbar already
+        shows the state of, and the arrows, which are the camera's.
+        """
         key = ev.key()
         control = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
         keys = QtCore.Qt.Key
-        if control and key == keys.Key_C:
-            self.copy_image()
-        elif control and key == keys.Key_S:
-            self.export()
+        command = self._keyed.get(pressed(ev))
+        if command is not None:
+            command.trigger()
         elif control and key == keys.Key_W:
             self.close()
-        elif key in (keys.Key_Home, keys.Key_0):
-            self.home()
-        elif key == keys.Key_1:
-            self.face("xy")
-        elif key == keys.Key_2:
-            self.face("xz")
-        elif key == keys.Key_3:
-            self.face("yz")
-        elif key == keys.Key_R:
-            self.spin()
         elif key == keys.Key_B:
             self._boxed = not self._boxed
             for item in (self.box, self.rays, self.marks):
@@ -1781,8 +1885,6 @@ class Window3D(QtWidgets.QMainWindow):
             # frequent toggle one slipped modifier from destroying the picture
             # would be a poor place for it.
             self.mesh_action.trigger()
-        elif key == keys.Key_Delete:
-            self.clear()
         elif key == keys.Key_Left:
             self.view.orbit(ORBIT_DEGREES, 0.0)
         elif key == keys.Key_Right:

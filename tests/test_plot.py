@@ -1331,6 +1331,235 @@ def test_the_export_pens_carry_the_same_weight(flat):
     assert plot.item.opts["pen"].widthF() == CURVE_WIDTH * flat.devicePixelRatioF()
 
 
+# -- the windows' own menus -----------------------------------------------------
+#
+# Both windows answer a right click with a menu written here rather than with
+# pyqtgraph's, and every entry carries the key that does the same thing with no
+# menu open. What these ask is that the menu is ours whole, that a key does its
+# thing exactly once, and that a key typed into a toolbar field is text.
+
+
+def _entries(menu):
+    """What a menu offers, as (text, shortcut) pairs, its separators left out."""
+    return [
+        (action.text(), action.shortcut().toString())
+        for action in menu.actions()
+        if not action.isSeparator()
+    ]
+
+
+def _entry(menu, text):
+    """The entry a menu offers under this name."""
+    return next(action for action in menu.actions() if action.text() == text)
+
+
+def _pressed(window, key, target=None):
+    """One key press, delivered the way the window itself would see it."""
+    from pyqtgraph.Qt import QtCore, QtTest
+
+    QtTest.QTest.keyClick(target if target is not None else window, key)
+    QtCore.QCoreApplication.processEvents()
+
+
+def test_the_canvas_menu_is_the_windows_own_and_not_pyqtgraphs(flat):
+    # Every entry is something this window does, in the order agreed, and each
+    # carries the key that does it with no menu open. The tail is about
+    # whatever the click was pointing at and so comes last.
+    assert _entries(flat.menu) == [
+        ("Set range...", ""),
+        ("View all", "A"),
+        ("Home framing", "Home"),
+        ("Back", "Backspace"),
+        ("Trace", "T"),
+        ("Grid", "G"),
+        ("Legend", "L"),
+        ("Copy image", "Ctrl+C"),
+        ("Export...", "Ctrl+S"),
+        ("Clear", "Del"),
+        ("Remove", ""),
+        ("Connect points", ""),
+        ("Point size", ""),
+    ]
+    # Nothing of the library's is left anywhere to leak into it: the view box
+    # has no menu at all, and the plot item's is off, which is what stops the
+    # scene appending `Plot Options` and its own `Export...` to whatever menu
+    # a right click raises.
+    assert flat.canvas.menu is None
+    assert not flat.item.menuEnabled()
+    words = {text for text, _ in _entries(flat.menu)}
+    assert not words & {"Mouse Mode", "Plot Options", "X axis", "Y axis", "View All"}
+
+
+class _Click:
+    """A right click on the canvas, as the view box hands one to the menu."""
+
+    def __init__(self, point):
+        self._point = point
+
+    def pos(self):
+        return self._point
+
+    def screenPos(self):
+        return self._point
+
+
+def test_a_right_click_raises_our_menu_whole(flat):
+    from pyqtgraph.Qt import QtCore
+
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    built = len(flat.menu.actions())
+    flat.canvas.raiseContextMenu(_Click(QtCore.QPointF(0.0, 0.0)))
+    try:
+        assert flat.menu.isVisible()
+        # Stock `raiseContextMenu` hands the menu to the scene on the way up to
+        # have the plot item's `Plot Options` and the scene's own `Export...`
+        # appended to it. What comes up here is what was built, entry for
+        # entry.
+        assert len(flat.menu.actions()) == built
+        assert "Plot Options" not in {action.text() for action in flat.menu.actions()}
+    finally:
+        flat.menu.close()
+
+
+def test_the_menus_keys_and_the_windows_keys_are_one_table(flat):
+    from pyqtgraph.Qt import QtCore
+
+    # The keyboard dispatches off the menu's own table, so an entry and the key
+    # it advertises cannot drift apart: every stroke in the table belongs to an
+    # entry of the menu, second keys included - Home framing answers to 0 as
+    # well as to Home, and Trace to F3 as well as to T.
+    assert set(flat._keyed.values()) <= set(flat.menu.actions())
+    keys = QtCore.Qt.Key
+    for key, text in (
+        (keys.Key_A, "View all"),
+        (keys.Key_0, "Home framing"),
+        (keys.Key_F3, "Trace"),
+    ):
+        assert flat._keyed[(0, int(key))].text() == text
+
+
+def test_view_all_is_this_windows_autoscale_and_is_remembered(flat):
+    # `View all` is the window's own framing rather than pyqtgraph's
+    # auto-range: it pushes the range it is leaving onto the history, releases
+    # equal scales, and frames the samples that are drawn.
+    flat.add(_plot("SIN(x)/3", PlotKind.CURVE, ("x",)))
+    flat.canvas.setRange(xRange=(-1.0, 1.0), yRange=(-1.0, 1.0), padding=0)
+    framed = tuple(tuple(span) for span in flat.canvas.viewRange())
+    _entry(flat.menu, "View all").trigger()
+    assert flat._history[-1] == framed
+    assert not flat.equal.isChecked()
+    (left, right), (low, high) = flat.canvas.viewRange()
+    # The curve is a third of a unit tall over the whole sampled abscissa, and
+    # the framing is that and not the square it was framed in.
+    assert right - left > 9.0
+    assert 0.3 < high < 0.4 and -0.4 < low < -0.3
+
+
+def test_the_switched_entries_are_read_off_the_window_as_the_menu_opens(flat):
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    trace, grid, legend = (
+        _entry(flat.menu, name) for name in ("Trace", "Grid", "Legend")
+    )
+    flat.menu.aboutToShow.emit()
+    assert (trace.isChecked(), grid.isChecked(), legend.isChecked()) == (
+        False,
+        True,
+        True,
+    )
+    # None of the three is the menu's alone - a curve is taken hold of by a
+    # click and the grid by its key - so the ticks are read off the window
+    # every time the menu opens rather than remembered from the last time it
+    # was used.
+    flat.trace()
+    flat.toggle_grid()
+    flat.menu.aboutToShow.emit()
+    assert (trace.isChecked(), grid.isChecked(), legend.isChecked()) == (
+        True,
+        False,
+        True,
+    )
+
+
+def test_the_set_range_dialog_frames_the_view_on_what_is_typed(flat):
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    flat.set_range()
+    dialog = flat._bounds
+    # It opens on the view as it stands, so a dialog opened to move one edge is
+    # three edges already right.
+    assert dialog.typed[:2] == ("-5", "5")
+    framed = tuple(tuple(span) for span in flat.canvas.viewRange())
+    for name, text in (("left", "-1"), ("right", "2π"), ("bottom", "-3"), ("top", "4")):
+        dialog.fields[name].setText(text)
+    dialog.accept()
+    (left, right), (bottom, top) = flat.canvas.viewRange()
+    # The bounds are expressions, as the toolbar's range fields are, and what
+    # they are worth is exactly what the view is framed to - no padding, and no
+    # equal-scales lock widening one axis to satisfy itself.
+    assert (left, bottom, top) == pytest.approx((-1.0, -3.0, 4.0))
+    assert right == pytest.approx(2 * np.pi)
+    assert not flat.equal.isChecked()
+    # The framing it replaced is one Backspace away, and the window says what
+    # it is now showing.
+    assert flat._history[-1] == framed
+    assert flat.status.text().startswith("Showing -1 ≤ x ≤ 6.28319")
+
+
+def test_bounds_that_are_not_a_range_are_refused_in_words(flat):
+    flat.set_range()
+    dialog = flat._bounds
+    dialog.fields["left"].setText("3")
+    dialog.fields["right"].setText("1")
+    dialog.accept()
+    assert flat.status.text() == "A range runs from a lower bound to a higher one"
+    assert flat.canvas.viewRange()[0] == pytest.approx([-5.0, 5.0])
+    # Text that does not parse is refused by what it is rather than by which
+    # field it was typed in, and one that parses but is worth no number goes
+    # the same way.
+    flat.set_range()
+    flat._bounds.fields["left"].setText("2*")
+    flat._bounds.accept()
+    assert flat.status.text() == "The bounds are expressions, like -π or 2π"
+    flat.set_range()
+    flat._bounds.fields["left"].setText("1/0")
+    flat._bounds.accept()
+    assert flat.status.text() == "The bounds have to be worth numbers, like -π or 2π"
+    assert flat.canvas.viewRange()[0] == pytest.approx([-5.0, 5.0])
+
+
+def test_a_key_the_menu_names_does_its_thing_exactly_once(flat):
+    from pyqtgraph.Qt import QtCore
+
+    # The menu writes the key and the ladder presses it, and there is no third
+    # party: a shortcut of Qt's own would fire beside the ladder and reframe
+    # the window twice.
+    flat.show()
+    fired = []
+    _entry(flat.menu, "View all").triggered.connect(lambda: fired.append("A"))
+    _pressed(flat, QtCore.Qt.Key.Key_A)
+    assert fired == ["A"]
+
+
+def test_a_key_typed_into_a_range_field_is_text_and_not_a_command(flat):
+    from pyqtgraph.Qt import QtCore
+
+    flat.add(_plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",)))
+    flat.show()
+    fired = []
+    for name in ("View all", "Clear"):
+        _entry(flat.menu, name).triggered.connect(
+            lambda _=False, name=name: fired.append(name)
+        )
+    flat.range_low.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+    _pressed(flat, QtCore.Qt.Key.Key_A, target=flat.range_low)
+    _pressed(flat, QtCore.Qt.Key.Key_Delete, target=flat.range_low)
+    assert fired == []
+    # The letter is in the field where it was typed, and Del deleted nothing
+    # but text: a window that cleared itself under a bound being edited would
+    # be a window nobody could type a bound into.
+    assert flat.range_low.text().endswith("a")
+    assert len(flat.plots) == 1
+
+
 @pytest.fixture
 def deep(qt, solid):
     window = solid.Window3D(1, InlineHost())
@@ -1538,6 +1767,99 @@ def test_the_wire_darkens_for_export_like_every_other_color(deep, solid):
     deep._papered = False
     deep._draw(surface)
     assert np.allclose(surface.wires.color, solid.brightened(shades, surface.color))
+
+
+def _right_click(view, start, end):
+    """A right press at one point and a release at another, as the view sees them."""
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    for kind, at in (
+        (QtCore.QEvent.Type.MouseButtonPress, start),
+        (QtCore.QEvent.Type.MouseButtonRelease, end),
+    ):
+        ev = QtGui.QMouseEvent(
+            kind,
+            QtCore.QPointF(*at),
+            QtCore.QPointF(*at),
+            QtCore.Qt.MouseButton.RightButton,
+            QtCore.Qt.MouseButton.RightButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+        if kind == QtCore.QEvent.Type.MouseButtonPress:
+            view.mousePressEvent(ev)
+        else:
+            view.mouseReleaseEvent(ev)
+
+
+def test_the_3d_menu_is_the_cameras_list_with_its_keys(deep):
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    # A 3D window is a camera, so its menu is where to look from - and what is
+    # on the toolbar is not repeated: the `mesh` box says its own state where
+    # it stands.
+    assert _entries(deep.menu) == [
+        ("Home view", "Home"),
+        ("Face the xy plane", "1"),
+        ("Face the xz plane", "2"),
+        ("Face the yz plane", "3"),
+        ("Rotate", "R"),
+        ("View...", ""),
+        ("Copy image", "Ctrl+C"),
+        ("Export...", "Ctrl+S"),
+        ("Remove", ""),
+        ("Clear", "Del"),
+    ]
+    assert "mesh" not in {text for text, _ in _entries(deep.menu)}
+    # The keyboard dispatches off that same table, so a key does what the entry
+    # naming it says it does.
+    deep.keyPressEvent(
+        QtGui.QKeyEvent(
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_1,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+    )
+    assert deep.status.text() == "Facing the xy plane"
+
+
+def test_the_3d_menu_lists_every_surface_under_remove(deep, solid):
+    entry = _entry(deep.menu, "Remove")
+    deep.menu.aboutToShow.emit()
+    # A submenu of nothing is offered greyed rather than left off: what it
+    # would list is what the window is empty of.
+    assert not entry.isEnabled()
+    one, two = _surface(solid, "x*y"), _surface(solid, "x+y", label="#2")
+    deep.add(one)
+    deep.add(two)
+    deep.menu.aboutToShow.emit()
+    listed = deep._remove_menu.actions()
+    assert [action.text() for action in listed] == [one.named, two.named]
+    assert entry.isEnabled()
+    listed[0].trigger()
+    assert deep.plots == [two]
+
+
+def test_the_rotate_entry_is_read_off_the_timer_that_turns_the_picture(deep):
+    rotate = _entry(deep.menu, "Rotate")
+    deep.spin()
+    deep.menu.aboutToShow.emit()
+    assert rotate.isChecked()
+    # And the entry stops it, as `R` does, since both are the one command.
+    rotate.trigger()
+    deep.menu.aboutToShow.emit()
+    assert not rotate.isChecked()
+    assert not deep._spin.isActive()
+
+
+def test_a_right_click_that_stays_put_is_what_asks_for_the_3d_menu(deep):
+    asked = []
+    deep.view.asked.connect(lambda point: asked.append(point))
+    _right_click(deep.view, (10.0, 10.0), (11.0, 10.0))
+    assert len(asked) == 1
+    # A right drag is not a click and goes on meaning what it meant, which in
+    # the stock GL view - orbit on the left, pan on the middle - is nothing.
+    _right_click(deep.view, (10.0, 10.0), (60.0, 40.0))
+    assert len(asked) == 1
 
 
 # -- the receiver ---------------------------------------------------------------

@@ -12,11 +12,11 @@ along the edges and no axis lines in sight, which is the honest picture.
 Framing is never asked about. A fresh window shows x in [-5, 5] with equal
 scales - always, so a circle is round; the `1:1` toggle releases the lock for
 the one odd plot, and that choice is deliberately this window's alone rather
-than a default the next window inherits. The mouse does the rest, and the only
-place exact bounds can be typed is the stock context menu's per-axis fields -
-deliberately the only one. The one time the window reframes itself is when the
-alternative is an empty picture: a curve added with finite values none of which
-are in view autoscales y and says so.
+than a default the next window inherits. The mouse does the rest, and the one
+place exact bounds can be typed is the context menu's `Set range...` - four
+fields and no more, deliberately the only one. The one time the window reframes
+itself is when the alternative is an empty picture: a curve added with finite
+values none of which are in view autoscales y and says so.
 
 Sampling is in screen space and repeats on every view change, debounced. That
 is what makes zooming worth doing: a spike narrower than a pixel is not in the
@@ -120,6 +120,17 @@ CLICK_SLOP_PX = 4.0
 #: How near a curve the pointer has to be, in pixels, to be pointing at it.
 HIT_PX = 6.0
 
+#: The modifiers a key of these windows is written with. What else the keyboard
+#: reports about a press - the keypad flag a `0` typed on the numeric pad
+#: carries - says nothing about which key it was, and is masked off before the
+#: key is looked up in a window's command table.
+MODIFIERS = (
+    QtCore.Qt.KeyboardModifier.ControlModifier
+    | QtCore.Qt.KeyboardModifier.ShiftModifier
+    | QtCore.Qt.KeyboardModifier.AltModifier
+    | QtCore.Qt.KeyboardModifier.MetaModifier
+)
+
 #: How far the arrow keys move the trace marker, in pixels, plain and with
 #: Shift; and how far they pan the view, as a fraction of it.
 NUDGE_PX = 1.0
@@ -222,6 +233,48 @@ def naming(label: str, text: str) -> str:
     if len(name) <= NAME_WIDTH:
         return name
     return name[: NAME_WIDTH - len(ELLIPSIS)].rstrip() + ELLIPSIS
+
+
+def commanded(
+    owner: Any,
+    keyed: dict[tuple[int, int], Any],
+    text: str,
+    handler: Callable[..., None],
+    keys: Sequence[str] = (),
+    checkable: bool = False,
+) -> Any:
+    """One thing a window does, as the menu entry and the keys that do it.
+
+    The keys are written on the action and put in `keyed`, which is the table
+    the window's `keyPressEvent` dispatches from. Qt is never asked to press
+    them itself: a shortcut of its own would fire beside the ladder and do
+    everything twice, and the ladder has to stay in any case, being where the
+    keys that mean one thing while a marker is up and another while it is not
+    are decided. `WidgetShortcut` on an action no widget owns is therefore
+    lettering rather than binding - the menu writes the keys in its shortcut
+    column, the ladder presses them, and a key typed into a toolbar field stays
+    text in the field it was typed into, since a field with the keyboard takes
+    it first.
+
+    Both window kinds build their menus through this, which is what keeps the
+    key a menu entry advertises and the key that works the same key.
+    """
+    action = QtGui.QAction(text, owner)
+    action.setCheckable(checkable)
+    if keys:
+        action.setShortcuts([QtGui.QKeySequence(key) for key in keys])
+        action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        action.setShortcutVisibleInContextMenu(True)
+        for sequence in action.shortcuts():
+            stroke = sequence[0]
+            keyed[(stroke.keyboardModifiers().value, int(stroke.key()))] = action
+    action.triggered.connect(handler)
+    return action
+
+
+def pressed(ev: Any) -> tuple[int, int]:
+    """The stroke a key event is, spelled the way a command table is keyed."""
+    return ((ev.modifiers() & MODIFIERS).value, int(ev.key()))
 
 
 @dataclass
@@ -354,18 +407,21 @@ class Plot:
 class Canvas(pg.ViewBox):
     """The view box, with the mouse vocabulary this program wants.
 
-    Three departures from stock. The rubber band lives on the *right* button
+    Four departures from stock. The rubber band lives on the *right* button
     rather than on the left, because left-drag is panning and panning is what
     a hand reaches for first; a right press that does not move is still a
     click, and still opens the context menu. The wheel takes Ctrl and Shift to
-    mean one axis. And every gesture that changes the range pushes the range it
+    mean one axis. Every gesture that changes the range pushes the range it
     changed onto the window's own history first, so Backspace steps back
     through where the view has been rather than through pyqtgraph's rectangle
-    stack, which only knows about rubber bands.
+    stack, which only knows about rubber bands. And the menu a right click
+    raises is the window's own, the stock one being a chart library's.
     """
 
     def __init__(self, window: Window2D) -> None:
-        super().__init__()
+        # No stock menu at all rather than a stock menu kept out of sight: what
+        # a right click raises here is built by the window.
+        super().__init__(enableMenu=False)
         self._window = window
 
     def mouseDragEvent(self, ev: Any, axis: int | None = None) -> None:
@@ -411,7 +467,17 @@ class Canvas(pg.ViewBox):
         super().wheelEvent(ev, axis)
 
     def mouseClickEvent(self, ev: Any) -> None:
-        """A click on the canvas: center on it, or take hold of a curve."""
+        """A click on the canvas: the menu, the middle of the view, or a curve.
+
+        A right press let go where it was pressed reaches the view box as a
+        click rather than as a drag of no distance, so the menu is raised from
+        here as well as from the end of a rubber band that turned out to be a
+        click.
+        """
+        if ev.button() == QtCore.Qt.MouseButton.RightButton:
+            ev.accept()
+            self.raiseContextMenu(ev)
+            return
         if ev.button() != QtCore.Qt.MouseButton.LeftButton:
             super().mouseClickEvent(ev)
             return
@@ -425,10 +491,17 @@ class Canvas(pg.ViewBox):
             return
         super().mouseClickEvent(ev)
 
-    def getMenu(self, ev: Any) -> Any:
-        """The context menu, told what the click was pointing at first."""
+    def raiseContextMenu(self, ev: Any) -> None:
+        """The window's menu, told what the click was pointing at, and nothing else.
+
+        Stock `raiseContextMenu` hands whatever menu it is given to the scene to
+        have the plot item's `Plot Options` and the exporter's `Export...`
+        appended to it, which is how a menu written here would come up carrying
+        entries nobody wrote. The composition is what is overridden: the menu
+        that appears is ours, whole.
+        """
         self._window.prepare_menu(self.mapToView(ev.pos()))
-        return self.menu
+        self._window.menu.popup(ev.screenPos().toPoint())
 
 
 class _Row(QtWidgets.QWidget):
@@ -708,8 +781,15 @@ class Window2D(QtWidgets.QMainWindow):
         #: off the context of every plot added, since it is the worksheet's
         #: setting and not the window's; false until there is one to read.
         self.degrees = False
+        #: The parse state and the context a typed bound is read under: the
+        #: last plot's, since a framing belongs to the window and the worksheet
+        #: that last plotted into it is its reader.
+        self._state = ParseState()
+        self._context = Context()
         #: The paper colors, while an export dialog is holding them on.
         self._paper: _on_paper | None = None
+        #: The four bounds as a form, once somebody has asked to type them.
+        self._bounds: Bounds | None = None
         self._grid = True
         #: Whether the legend card is shown, remembered rather than read off
         #: the widget: a legend the user put away stays away when the next plot
@@ -736,9 +816,7 @@ class Window2D(QtWidgets.QMainWindow):
         self.item.showGrid(x=True, y=True, alpha=GRID_ALPHA)
         self._strip_spines()
         self._origin_axes()
-        self._prune_menu()
-        self._extend_menu()
-        self._menu_tooltips()
+        self._make_menu()
         self.legend = Legend(self.plot)
         self.legend.picked.connect(self._legend_clicked)
         self.legend.setVisible(False)
@@ -912,77 +990,79 @@ class Window2D(QtWidgets.QMainWindow):
             line.setZValue(-10)
             self.item.addItem(line, ignoreBounds=True)
 
-    def _prune_menu(self) -> None:
-        """Keep the stock menu, less the entries that would be wrong answers.
+    def _make_menu(self) -> None:
+        """The window's own context menu: what it does, and the keys that do it.
 
-        `Transforms` offers an FFT, a derivative and a phase map of the
-        *sampled points*. In a computer algebra system a derivative comes from
-        Calculus and is then plotted; a finite difference of screen samples
-        would be a wrong answer wearing the right name. `Average` and `Points`
-        are about data series and this window draws functions.
+        The stock menu is a chart library's. It offers a mouse mode named after
+        how many buttons a mouse has, transforms that would take a finite
+        difference of screen samples and call the answer a derivative, and axis
+        submenus whose names say nothing about the fields inside them - while
+        saying nothing at all about trace, about the history, or about any other
+        word this window knows. So it is not pruned but replaced: every entry
+        here is something the window does, and each carries the key that does
+        the same thing with no menu open, which makes the menu the place the
+        keyboard is learned.
+
+        The tail is about whatever the click was pointing at rather than about
+        the window, which is why it is written when the menu opens.
+
+        Both of pyqtgraph's menus are switched off rather than merely left
+        unused: `Plot Options` and `Export...` belong to the plot item and the
+        scene, and stock `raiseContextMenu` appends them to whatever menu is
+        raised.
         """
-        for name in ("Transforms", "Average", "Points"):
-            self.item.setContextMenuActionVisible(name, False)
-
-    def _extend_menu(self) -> None:
-        """Our own entries, appended to the stock ViewBox menu.
-
-        `Remove` is about whatever the right-click was pointing at, so its text
-        is written when the menu opens and it hides itself when the click was
-        pointing at nothing.
-        """
-        menu = self.canvas.menu
-        menu.addSeparator()
-        self._remove_action = menu.addAction("Remove", self._remove_pointed)
-        self._data_actions = self._point_actions(menu)
+        self.item.setMenuEnabled(False, False)
+        #: Every key the menu advertises, by the stroke that presses it. The
+        #: table `keyPressEvent` dispatches from.
+        self._keyed: dict[tuple[int, int], Any] = {}
+        self.menu = QtWidgets.QMenu(self)
+        self.menu.aboutToShow.connect(self._read_toggles)
+        self._command("Set range...", self.set_range)
+        self._command("View all", self.autoscale, ("A",))
+        self._command("Home framing", self.home, ("Home", "0"))
+        self._command("Back", lambda: self.step_history(-1), ("Backspace",))
+        self.menu.addSeparator()
+        self._trace_entry = self._command(
+            "Trace", self.trace, ("T", "F3"), checkable=True
+        )
+        self._grid_entry = self._command(
+            "Grid", self.toggle_grid, ("G",), checkable=True
+        )
+        self._legend_entry = self._command(
+            "Legend", self.toggle_legend, ("L",), checkable=True
+        )
+        self.menu.addSeparator()
+        self._command("Copy image", self.copy_image, ("Ctrl+C",))
+        self._command("Export...", self.export, ("Ctrl+S",))
+        self._command("Clear", self.clear, ("Del",))
+        self.menu.addSeparator()
+        self._remove_action = self._command("Remove", self._remove_pointed)
+        self._data_actions = self._point_actions(self.menu)
         self._pointed: Plot | None = None
 
-    def _menu_tooltips(self) -> None:
-        """A one-line manual on each stock menu entry whose name assumes pyqtgraph.
+    def _command(
+        self,
+        text: str,
+        handler: Callable[..., None],
+        keys: Sequence[str] = (),
+        checkable: bool = False,
+    ) -> Any:
+        """One entry of the menu, its keys written on it and in the key table."""
+        action = commanded(self, self._keyed, text, handler, keys, checkable)
+        self.menu.addAction(action)
+        return action
 
-        The menu is inherited rather than written here, so it speaks the library's
-        vocabulary: a "Mouse Mode" named after how many buttons a mouse has, axis
-        submenus that do not say they hold the only fields exact bounds can be typed
-        into. Each such entry gets the sentence its name never carried. Qt keeps
-        menu tooltips off until a menu is told to show them, so every menu touched
-        is switched on as well.
+    def _read_toggles(self) -> None:
+        """Read the three switched entries off the window as the menu opens.
+
+        Read rather than remembered, because none of the three is this menu's
+        alone: trace is taken hold of by clicking a curve and let go of with
+        Escape, and a tick that stood for what the menu last did would be wrong
+        the first time anything else did it.
         """
-        menu = self.canvas.menu
-        menu.setToolTipsVisible(True)
-        tips = {
-            "View All": "Reframe the view to fit everything drawn",
-            "X axis": "Type exact bounds for the x axis, or auto-range or invert it",
-            "Y axis": "Type exact bounds for the y axis, or auto-range or invert it",
-            "Mouse Mode": "What dragging with the left button does",
-        }
-        for action in menu.actions():
-            tip = tips.get(action.text())
-            if tip is not None:
-                action.setToolTip(tip)
-                if action.menu() is not None:
-                    action.menu().setToolTipsVisible(True)
-        pan, rect = menu.mouseModes
-        pan.setToolTip("Left drag pans; the zoom box stays on the right button")
-        rect.setToolTip("Left drag draws a zoom box too, as on a one-button mouse")
-        # `Plot Options` and `Export...` are not on the view box's menu: the scene
-        # appends them each time the menu is raised, reusing these same objects.
-        options = self.item.ctrlMenu
-        options.setToolTipsVisible(True)
-        options.menuAction().setToolTip(
-            "How the picture is drawn: downsampling, opacity, the grid"
-        )
-        more = {
-            "Downsample": "Draw fewer of the samples, trading detail for speed",
-            "Alpha": "Fade every plot in the window toward transparent",
-            "Grid": "Show or hide the grid lines, and how darkly they are drawn",
-        }
-        for action in options.actions():
-            tip = more.get(action.text())
-            if tip is not None:
-                action.setToolTip(tip)
-        self.item.scene().contextMenu[0].setToolTip(
-            "Save the picture as an image or SVG, or the plotted samples as CSV"
-        )
+        self._trace_entry.setChecked(self._tracing is not None)
+        self._grid_entry.setChecked(self._grid)
+        self._legend_entry.setChecked(self._legend)
 
     def _point_actions(self, menu: Any) -> tuple[Any, ...]:
         """The two things a data plot can be asked, wherever it is right-clicked.
@@ -1019,8 +1099,10 @@ class Window2D(QtWidgets.QMainWindow):
             plot.color, plot.paper = PALETTE[index], PAPER_PALETTE[index]
             self._counter += 1
         # The angle unit is the worksheet's, and a window reads its pointer out
-        # in whatever unit the expressions in it are written in.
+        # in whatever unit the expressions in it are written in; the grammar and
+        # the context a typed bound is read under come from the same place.
         self.degrees = plot.context.angle is Angle.DEGREE
+        self._state, self._context = plot.state, plot.context
         # Polar is the view's, not the plot's: a univariate curve arriving in
         # a polar window is read as r = f(θ) from the start, and one spelled
         # polar by the request is read the way this window reads every curve.
@@ -1496,8 +1578,75 @@ class Window2D(QtWidgets.QMainWindow):
         )
         self._default = True
 
+    def set_range(self) -> None:
+        """The menu's `Set range...`: the four bounds of the view, typed.
+
+        The one place in this window where a framing is written instead of
+        gestured, and it is a form of four fields rather than a screen of
+        settings: a framing is four numbers, and everything else about the view
+        is the mouse's. The dialog is window-modal and hands its answer back
+        through `_take_range`, which is where the numbers are argued with; it is
+        made once and filled from the view every time it is opened, as the 3D
+        window's inspector is.
+        """
+        if self._bounds is None:
+            self._bounds = Bounds(self)
+            self._bounds.accepted.connect(
+                lambda: self._take_range(self._bounds.typed)
+            )
+        self._bounds.refresh()
+        self._bounds.open()
+
+    def _take_range(self, texts: tuple[str, str, str, str]) -> None:
+        """Read four typed bounds, or say in what way they were not four.
+
+        The fields read expressions rather than floats, as the toolbar's range
+        fields do - `-π` is what a person types - so the text is parsed whole
+        under the grammar the last plot arrived with, and what the trees are
+        worth is arithmetic the sampling thread does. Nothing in this window
+        evaluates on the Qt thread, and a bound is no exception.
+        """
+        try:
+            nodes = tuple(
+                parse_expression(text.strip(), self._state).node for text in texts
+            )
+        except DeriveSyntaxError:
+            self.say("The bounds are expressions, like -π or 2π")
+            return
+        context = self._context
+
+        def work(_report: Callable[..., None]) -> Any:
+            return tuple(
+                evaluate.number(node, context, float("nan")) for node in nodes
+            )
+
+        self.host.sample((self.number, "range"), work, self._framed)
+
+    def _framed(self, answer: Any) -> None:
+        """The typed bounds are worth numbers: frame the view on them, or refuse.
+
+        The history is pushed first, so a range typed by mistake is one
+        Backspace from the range it replaced, and the equal-scales lock goes the
+        way it goes for every other framing that is about fitting: somebody who
+        asks for these four numbers is asking for these four numbers.
+        """
+        if isinstance(answer, Exception) or not all(np.isfinite(v) for v in answer):
+            self.say("The bounds have to be worth numbers, like -π or 2π")
+            return
+        left, right, bottom, top = answer
+        if right <= left or top <= bottom:
+            self.say("A range runs from a lower bound to a higher one")
+            return
+        self.remember()
+        self._unlock()
+        self.canvas.setRange(xRange=(left, right), yRange=(bottom, top), padding=0)
+        self.say(
+            f"Showing {_short(left)} ≤ x ≤ {_short(right)}"
+            f"   {_short(bottom)} ≤ y ≤ {_short(top)}"
+        )
+
     def autoscale(self) -> None:
-        """Frame every visible plot, which is what `A` and `View All` do.
+        """Frame every visible plot, which is what `A` and `View all` do.
 
         A region has no points to frame - it is evaluated over whatever the
         view shows and so agrees with any framing - and is left out rather
@@ -2128,6 +2277,20 @@ class Window2D(QtWidgets.QMainWindow):
 
     # -- the legend and the context menu ------------------------------------
 
+    def toggle_grid(self) -> None:
+        """`G` and the menu's `Grid`: the ruling under the picture, or none."""
+        self._grid = not self._grid
+        self.item.showGrid(x=self._grid, y=self._grid, alpha=GRID_ALPHA)
+
+    def toggle_legend(self) -> None:
+        """`L` and the menu's `Legend`: the plot list card, or the bare picture.
+
+        Remembered on the window rather than read off the widget, so a legend
+        that was put away stays away when the next plot brings a card back.
+        """
+        self._legend = not self._legend
+        self.legend.setVisible(self._legend and bool(self.plots))
+
     def _legend_clicked(self, row: int, button: Any) -> None:
         """A click on a legend entry: hide and show, or offer to remove."""
         if not 0 <= row < len(self.plots):
@@ -2182,10 +2345,11 @@ class Window2D(QtWidgets.QMainWindow):
     def _offer_removal(self, at: Any) -> None:
         """The plot's own menu, where a right-click was about a plot and not a view.
 
-        Built rather than kept, because it is put up beside a legend entry and
-        not inside the view box, and so is not the stock menu at all - but it
-        offers the same words, which is what makes the legend and the curve one
-        target with two places to hit it.
+        A menu of its own rather than the canvas's, because half of the canvas
+        menu is about the view and a click on a legend row is about one plot -
+        but the words it does offer are the canvas menu's own words, which is
+        what makes the legend and the curve one target with two places to hit
+        it.
         """
         plot = self._pointed
         assert plot is not None
@@ -2295,13 +2459,14 @@ class Window2D(QtWidgets.QMainWindow):
         painter.end()
 
     def export(self) -> None:
-        """Ctrl-S and the context menu's `Export...`: the stock export dialog.
+        """Ctrl-S and the menu's `Export...`: pyqtgraph's own export dialog.
 
         PNG, SVG, a CSV of the sampled points and a matplotlib window, all of
-        them pyqtgraph's. The paper colors go on while the dialog is up rather
-        than around the export itself, because the dialog is modeless and the
-        export happens inside it: what the preview shows is then what the file
-        will hold.
+        them the library's, which is why this one dialog is borrowed where the
+        menu that opens it is not. The paper colors go on while the dialog is
+        up rather than around the export itself, because the dialog is modeless
+        and the export happens inside it: what the preview shows is then what
+        the file will hold.
         """
         scene = self.item.scene()
         scene.showExportDialog()
@@ -2352,38 +2517,31 @@ class Window2D(QtWidgets.QMainWindow):
         return bool(super().event(ev))
 
     def keyPressEvent(self, ev: Any) -> None:
+        """The keys of this window, the menu's own among them.
+
+        Every key a menu entry advertises is dispatched off the menu's own
+        table, so the key that works and the key the menu names are one key and
+        neither can fire twice. What is left written out here are the keys no
+        entry has: the ones that mean one thing while a marker is up and another
+        while it is not, and the ones that are gestures rather than commands.
+        """
         key = ev.key()
         shift = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
         control = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
         keys = QtCore.Qt.Key
-        if control and key == keys.Key_C:
-            self.copy_image()
-        elif control and key == keys.Key_S:
-            self.export()
+        command = self._keyed.get(pressed(ev))
+        if command is not None:
+            command.trigger()
         elif control and key == keys.Key_W:
             self.close()
-        elif key in (keys.Key_Home, keys.Key_0):
-            self.home()
-        elif key == keys.Key_A:
-            self.autoscale()
+        elif shift and key == keys.Key_Backspace:
+            self.step_history(1)
         elif key in (keys.Key_Plus, keys.Key_Equal):
             self.zoom(0.5)
         elif key == keys.Key_Minus:
             self.zoom(2.0)
-        elif key == keys.Key_Backspace:
-            self.step_history(1 if shift else -1)
-        elif key in (keys.Key_T, keys.Key_F3):
-            self.trace()
         elif key == keys.Key_Escape and self._tracing is not None:
             self._trace_off()
-        elif key == keys.Key_L:
-            self._legend = not self._legend
-            self.legend.setVisible(self._legend and bool(self.plots))
-        elif key == keys.Key_G:
-            self._grid = not self._grid
-            self.item.showGrid(x=self._grid, y=self._grid, alpha=GRID_ALPHA)
-        elif key == keys.Key_Delete:
-            self.clear()
         elif key in (keys.Key_Tab, keys.Key_Backtab) and self._tracing is not None:
             self.snap(shift or key == keys.Key_Backtab)
         elif key in (keys.Key_Return, keys.Key_Enter) and self._tracing is not None:
@@ -2483,7 +2641,13 @@ class Window2D(QtWidgets.QMainWindow):
         super().changeEvent(ev)
 
     def closeEvent(self, ev: Any) -> None:
-        """The window manager's business, and the host's to hear about."""
+        """The window manager's business, and the host's to hear about.
+
+        A range dialog left open goes with the picture it was about, since it
+        is a window of its own and would otherwise outlive it.
+        """
+        if self._bounds is not None:
+            self._bounds.close()
         self.host.closed(self.number)
         super().closeEvent(ev)
 
@@ -2493,6 +2657,104 @@ class Window2D(QtWidgets.QMainWindow):
 TRACEABLE = frozenset(
     {PlotKind.CURVE, PlotKind.FAMILY, PlotKind.PARAMETRIC, PlotKind.POLAR}
 )
+
+
+class Bounds(QtWidgets.QDialog):
+    """The four edges of the view, as four fields: the framing typed out.
+
+    Everything here is reachable with the mouse, and what this adds is
+    exactness - the same bargain the 3D window's inspector makes. It is
+    deliberately a form and not a screen: left, right, bottom and top are what
+    a framing is, and the four are laid out as the picture is, the horizontal
+    pair over the vertical one.
+
+    The fields open on the view as it stands, so a dialog opened to change one
+    edge is three edges already right, and they read expressions rather than
+    floats - `-π` and `2π` are answers here as they are in the toolbar's range
+    fields. What is typed is argued with by the window and not here: this one
+    collects four strings and closes.
+    """
+
+    #: The four bounds, in the order the window takes them, with the label each
+    #: is asked for by and where in the two-by-two form it stands.
+    FIELDS = (
+        ("left", "Left", 0, 0),
+        ("right", "Right", 0, 1),
+        ("bottom", "Bottom", 1, 0),
+        ("top", "Top", 1, 1),
+    )
+
+    def __init__(self, window: Window2D) -> None:
+        super().__init__(window)
+        self._window = window
+        self.setWindowTitle(f"Range of plot {window.number}")
+        self.fields: dict[str, QtWidgets.QLineEdit] = {}
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+        layout.addWidget(self._headed())
+        layout.addWidget(self._form())
+        layout.addWidget(self._buttons())
+        self.refresh()
+
+    def _headed(self) -> QtWidgets.QWidget:
+        """What the dialog is about, and what a field will take."""
+        holder = QtWidgets.QWidget()
+        column = QtWidgets.QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(1)
+        title = QtWidgets.QLabel(f"Range - plot {self._window.number}")
+        title.setStyleSheet(f"color: {theme.FIELD_TEXT}; font-weight: 600;")
+        subtitle = QtWidgets.QLabel("expressions, like -π or 2π")
+        subtitle.setStyleSheet(f"color: {theme.DIM};")
+        column.addWidget(title)
+        column.addWidget(subtitle)
+        return holder
+
+    def _form(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("Bounds")
+        grid = QtWidgets.QGridLayout(group)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        for name, shown, row, column in self.FIELDS:
+            label = QtWidgets.QLabel(shown)
+            label.setStyleSheet(f"color: {theme.TEXT};")
+            grid.addWidget(label, row, column * 2)
+            grid.addWidget(self._field(name), row, column * 2 + 1)
+        return group
+
+    def _buttons(self) -> QtWidgets.QWidget:
+        """The two answers, the one that frames the picture being the accented one."""
+        standard = QtWidgets.QDialogButtonBox.StandardButton
+        buttons = QtWidgets.QDialogButtonBox(standard.Ok | standard.Cancel)
+        buttons.button(standard.Ok).setObjectName(theme.PRIMARY)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        return buttons
+
+    def _field(self, name: str) -> QtWidgets.QLineEdit:
+        edit = QtWidgets.QLineEdit()
+        edit.setFixedWidth(90)
+        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.fields[name] = edit
+        return edit
+
+    def refresh(self) -> None:
+        """Fill the fields from the view as it now stands."""
+        (left, right), (bottom, top) = self._window.canvas.viewRange()
+        for name, value in (
+            ("left", left),
+            ("right", right),
+            ("bottom", bottom),
+            ("top", top),
+        ):
+            self.fields[name].setText(_short(value))
+
+    @property
+    def typed(self) -> tuple[str, str, str, str]:
+        """What the four fields say, in the order the window reads them."""
+        said = [self.fields[name].text() for name, *_ in self.FIELDS]
+        return said[0], said[1], said[2], said[3]
 
 
 def _curve_work(
