@@ -1,0 +1,127 @@
+name: Web demo
+
+# The browser demo, built and then actually opened. `test.yml` runs the suite on
+# three operating systems and says nothing about the page: everything the port
+# added lives between Pyodide, a Textual driver and xterm.js, and none of it is
+# reachable from pytest. So this builds the directory and asks a real browser one
+# question - author an expression, simplify it, read the answer off the screen -
+# which is the shortest path that goes through every piece.
+#
+# Publishing is not part of that and does not happen here unless someone asks for
+# it by hand: see the `publish` job.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the built demo to GitHub Pages
+        type: boolean
+        default: false
+
+# A second push supersedes the first, as in the suite: there is nothing to learn
+# from finishing a run of code that has already been replaced.
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Build and open the demo
+    runs-on: ubuntu-24.04
+    # The build fetches Pyodide, npm and the wheels, and then two browsers boot a
+    # Python interpreter each. Ten minutes is the ordinary run; anything past
+    # thirty is a hang rather than a slow day.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      # npm is what the terminal and the two plotting libraries are vendored
+      # with. Nothing is fetched from it at run time - the built directory names
+      # no host but its own.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # Without the dev group: what the build reads out of the environment is the
+      # version of Textual and the pure-Python wheels under it, so that the page
+      # runs what the suite ran against. Qt is no part of that and is 200 MB.
+      - name: Install dependencies
+        run: uv sync --frozen --managed-python --no-dev
+
+      - name: Build the demo
+        run: python3 tools/build_web.py
+
+      # Playwright is a correctness gate here and nothing else. Its Firefox runs
+      # WebAssembly several times slower than a real one, which is why no timing
+      # is taken through it and why the waits in the smoke test are generous.
+      - name: Install the browsers
+        run: uv run --with playwright playwright install --with-deps chromium firefox
+
+      - name: Open the demo in Chromium and Firefox
+        run: uv run --with playwright python tools/smoke_web.py --shots build/shots
+
+      # The screen either browser was looking at, kept whether the run passed or
+      # failed: a demo that broke is a picture worth having, and one that worked
+      # is worth comparing the next one against.
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: build/shots
+          if-no-files-found: ignore
+
+  # Publishing is deliberate and manual. It runs only when someone opens this
+  # workflow from the Actions tab, ticks the box and starts it - never on a push,
+  # never on a pull request, and never as a consequence of the smoke test passing.
+  # A demo is a thing you decide to put in front of people.
+  publish:
+    name: Publish to GitHub Pages
+    needs: smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: uv sync --frozen --managed-python --no-dev
+
+      # Built again rather than carried over from the smoke job, so that what is
+      # published is a directory this job made out of this commit and nothing
+      # else. It is four minutes and it removes a whole class of question.
+      - name: Build the demo
+        run: python3 tools/build_web.py
+
+      - uses: actions/configure-pages@v5
+
+      # Pages serves this compressed, which is the difference between 24 MB and
+      # 64 MB on a first visit. It sets no COOP or COEP headers and needs to set
+      # none: there is no `SharedArrayBuffer` here, so nothing on the page asks
+      # for cross-origin isolation.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

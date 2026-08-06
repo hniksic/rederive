@@ -115,6 +115,19 @@ function surface() {
   return root;
 }
 
+// Holding on to a pointer for the length of a drag, so that a finger or a mouse
+// that leaves the element it started on is still heard. A browser may refuse -
+// a pointer it has already released is not one to capture - and a refusal is
+// not worth an exception in the page: what capture buys is the end of the drag,
+// not the drag.
+function capture(element, event) {
+  try {
+    element.setPointerCapture(event.pointerId);
+  } catch (refused) {
+    /* the drag goes on without it, and ends wherever the element does */
+  }
+}
+
 // -- what Python calls ---------------------------------------------------------
 
 // One pane, opened where the plot session asked for one. What comes back is
@@ -211,7 +224,7 @@ class Solid {
       this.dismiss();
       this.say.closed();
     });
-    pane.addEventListener('mousedown', () => {
+    pane.addEventListener('pointerdown', () => {
       this.raise();
       this.say.touched();
     });
@@ -287,20 +300,28 @@ class Solid {
   // Dragging by the title bar, which is what a pane has instead of a window
   // manager. Nothing here is a resize: the pane's own corner does that, and the
   // observer below hears about it.
+  //
+  // The pointer is captured by the bar, so the drag follows a finger or a mouse
+  // that has left it - which every drag does, a bar being twenty pixels tall.
+  // The camera needs nothing of the sort: OrbitControls reads pointers itself
+  // and has read a finger since long before this pane existed.
   _movable() {
     let from = null;
-    this.bar.addEventListener('mousedown', (event) => {
+    this.bar.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || event.target.tagName === 'BUTTON') return;
       from = { x: event.clientX, y: event.clientY, left: this.element.offsetLeft,
                top: this.element.offsetTop };
+      capture(this.bar, event);
       event.preventDefault();
     });
-    window.addEventListener('mousemove', (event) => {
+    this.bar.addEventListener('pointermove', (event) => {
       if (from === null) return;
       this.element.style.left = `${from.left + event.clientX - from.x}px`;
       this.element.style.top = `${from.top + event.clientY - from.y}px`;
     });
-    window.addEventListener('mouseup', () => { from = null; });
+    const dropped = () => { from = null; };
+    this.bar.addEventListener('pointerup', dropped);
+    this.bar.addEventListener('pointercancel', dropped);
   }
 
   _watch() {
@@ -567,7 +588,7 @@ class Solid {
       // part of an expression.
       name.textContent = plot.name;
       row.append(swatch, name);
-      row.addEventListener('mousedown', (event) => {
+      row.addEventListener('pointerdown', (event) => {
         event.stopPropagation();
         if (event.button === 0) this.say.hide(serial, !plot.hidden);
       });

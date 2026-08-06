@@ -15,7 +15,7 @@ is worth an error to a status line or a copy.
 from __future__ import annotations
 
 import platform
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -67,13 +67,18 @@ class Desktop:
 
     # -- the clipboard -----------------------------------------------------
 
-    def copy(self, text: str) -> None:
+    def copy(self, text: str, refused: Callable[[str], None] | None = None) -> None:
         """Hand text to the desktop's own clipboard, through whatever tool is there.
 
         pyperclip finds wl-copy, xclip or xsel and uses it, and is quiet where
         it finds none. An install without pyperclip is quiet in the same way:
         the copy still took the terminal's road, which is the only road there
         is across ssh anyway.
+
+        Nothing is ever said through `refused`, and that is the reason: a
+        machine with no clipboard tool is a machine the copy left by the other
+        road, and a message about it would be a message about a key that
+        worked.
         """
         if pyperclip is None:
             return

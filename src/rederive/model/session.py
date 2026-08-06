@@ -70,6 +70,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
+from rederive import platform
 from rederive.display import DisplayOptions, Layout, Region, render
 
 # The client half of the engine, under the name the mathematics goes by, because a
@@ -1476,18 +1477,34 @@ class Session:
         so the file says what the expression is rather than how it was reached:
         `x (x + 1)` goes out as `x*(x+1)`, as it does in the original.
         """
-        records = [
+        records = self._records(first, last)
+        platform.current().storage().write(path, self._file_text(records))
+        self.file = path
+        return len(records)
+
+    def written(self, first: int | None = None, last: int | None = None) -> str:
+        """The file `save` would write, without writing it anywhere.
+
+        Split out because a browser has somewhere else to put it: the same text
+        is what a shared link carries, and a worksheet that read one way out of
+        a file and another out of a link would be two worksheets.
+        """
+        return self._file_text(self._records(first, last))
+
+    def _records(self, first: int | None, last: int | None) -> list[worksheet.Record]:
+        """The history as a file's records: an expression each, with its note."""
+        return [
             worksheet.Record(write_expression(entry.node), self._noted(entry))
             for entry in self._block(first, last)
         ]
-        text = worksheet.write(
+
+    def _file_text(self, records: Iterable[worksheet.Record]) -> str:
+        """Records as a math file, laid out the way the save settings ask for."""
+        return worksheet.write(
             records,
             length=int(self.settings["SaveLength"]),
             annotations=self.settings["SaveAnnotation"] == "Save",
         )
-        path.write_text(text, encoding="utf-8")
-        self.file = path
-        return len(records)
 
     def _block(self, first: int | None, last: int | None) -> Iterator[Entry]:
         """The entries a save writes: the label numbers `first` to `last`."""
@@ -1527,7 +1544,7 @@ class Session:
             annotations=self.settings["SaveAnnotation"] == "Save",
             comment=f"{language.comment} ",
         )
-        path.write_text(text, encoding="utf-8")
+        platform.current().storage().write(path, text)
         self.file = path
         return len(entries)
 
@@ -1537,7 +1554,16 @@ class Session:
         The session's own file is not touched: a state file is not the
         worksheet, and the status line goes on naming the worksheet.
         """
-        path.write_text(state.write(self.settings, self.order), encoding="utf-8")
+        platform.current().storage().write(path, self.state_written())
+
+    def state_written(self) -> str:
+        """The state file `save_state` would write, without writing it anywhere.
+
+        The settings half of `written`, and there for the same reason: a tab
+        keeps its settings in a store rather than in a file, and it keeps them
+        by asking the session what a file would have said.
+        """
+        return state.write(self.settings, self.order)
 
     def load_state(self, path: Path) -> int:
         """Apply the settings in `path`, and say how many lines would not take.

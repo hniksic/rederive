@@ -8,6 +8,11 @@ very interpreter, opening panes in the page rather than windows on a desktop;
 and the screen is xterm.js, reached through a Textual driver. Nothing else about
 the program changes, and nothing else in the program knows any of it.
 
+What `__main__` does with the command line, `web.files` does with the address
+and the store: a tab has no shell to have been started from, so what it opens on
+is a worksheet carried in a link and the settings it was last left with, both
+read before the app is built.
+
 Two of the swaps have to happen before anything is built, which is why they are
 the first lines. `platform.use` has to be in force before the first thing asks
 for a clipboard or a memory reading, and the environment variables have to be
@@ -42,6 +47,7 @@ from rederive.ui import app as ui
 from rederive.ui.app import RederiveApp
 from rederive.web.driver import BrowserDriver
 from rederive.web.engine import WebEngine
+from rederive.web.files import Files
 from rederive.web.plots import WebPlots
 
 __all__ = ["start"]
@@ -62,34 +68,51 @@ class PageApp(RederiveApp):
 
     CSS_PATH = str(Path(ui.__file__).parent / RederiveApp.CSS_PATH)
 
-    def __init__(self, session: Session, terminal: Any, plots: WebPlots) -> None:
+    def __init__(
+        self,
+        session: Session,
+        terminal: Any,
+        plots: WebPlots,
+        opening: str = "",
+    ) -> None:
         # Before the base class, which asks for the driver as it starts.
         self._terminal = terminal
-        super().__init__(session, plotter=plots)
+        super().__init__(session, plotter=plots, opening=opening)
 
     def get_driver_class(self) -> Any:
         """This page's terminal, and nothing behind it to fall back to."""
         return BrowserDriver.on(self._terminal)
 
 
-async def start(terminal: Any, spawn: Any, plots: Any, solids: Any) -> None:
+async def start(terminal: Any, spawn: Any, plots: Any, solids: Any, page: Any) -> None:
     """Run Rederive on this page until the user leaves it.
 
-    Four things the page owns and this side cannot make: the xterm.js the
-    program draws on, what makes an engine worker, and the two modules that
-    open a plot pane - one for a flat picture and one for a solid, which share
-    no drawing at all. All of them are DOM elements, script URLs and canvases,
-    and none of them is anything Python could have built.
+    Five things the page owns and this side cannot make: the xterm.js the
+    program draws on, what makes an engine worker, the two modules that open a
+    plot pane - one for a flat picture and one for a solid, which share no
+    drawing at all - and the file gestures, which are a download, a picker and
+    an address. All of them are DOM elements, script URLs and canvases, and
+    none of them is anything Python could have built.
+
+    What happens between the session and the app is what a tab has instead of a
+    command line: the settings this page was last left with are applied, and a
+    worksheet carried in the address is read, both before there is a screen, so
+    that what the user is first shown is already what the link asked for.
     """
     _naming_tasks()
     os.environ.update(TERMINAL)
-    platform.use(Web())
+    platform.use(Web(page))
     engine = WebEngine(spawn)
     engine.start()
-    app = PageApp(Session(runner=engine), terminal, WebPlots(plots, solids, engine))
+    session = Session(runner=engine)
+    files = Files(page, session, platform.current().storage())
+    files.settings()
+    app = PageApp(session, terminal, WebPlots(plots, solids, engine), files.opening())
+    files.attend()
     try:
         await app.run_async()
     finally:
+        files.remember()
         engine.shutdown()
 
 

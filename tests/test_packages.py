@@ -79,6 +79,7 @@ CLIENT_SIDE = [
     "rederive.web.boot",
     "rederive.web.driver",
     "rederive.web.engine",
+    "rederive.web.files",
     "rederive.web.plots",
     "rederive.__main__",
 ]

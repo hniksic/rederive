@@ -2426,11 +2426,26 @@ class RederiveApp(App[None]):
         quiet where it keeps none. A headless run takes the first road alone: a
         test has a clipboard of its own to check, and the environment's is not
         it to write on.
+
+        An environment where neither road leads anywhere says so, and that is
+        what the second argument is for. Nothing on a desktop ever uses it; a
+        browser does, because there the escape sequence goes nowhere at all and
+        the page's clipboard is a permission the user may not have given.
         """
         super().copy_to_clipboard(text)
         if self.is_headless:
             return
-        platform.current().copy(text)
+        platform.current().copy(text, self._copy_refused)
+
+    def _copy_refused(self, why: str) -> None:
+        """Say that the copy did not happen after all, wherever the receipt went.
+
+        It arrives late by nature - a browser answers a clipboard write with a
+        promise - so it lands on the message line after the receipt for the key
+        and writes over it, which is the right way round: the last thing said
+        about a copy should be the true one.
+        """
+        self._set_message(why)
 
     def action_copy_highlighted(self) -> None:
         """Ctrl-C: take a copy of what is selected, or of the highlighted expression.

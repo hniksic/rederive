@@ -24,6 +24,55 @@
      program has no scrollback and wants none of it. */
   .xterm-viewport { overflow: hidden !important; }
 
+  /* The two gestures a tab has that a terminal cannot ask for: opening a file,
+     which a browser only ever does on a click, and making a link out of the
+     address. They sit in a corner and stay faded until pointed at, since the
+     program owns the screen and these are the page around it. */
+  #chrome {
+    position: fixed;
+    top: 6px;
+    right: 10px;
+    z-index: 20;
+    display: flex;
+    gap: 6px;
+    opacity: 0.28;
+    transition: opacity 0.15s;
+    font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+  }
+  #chrome:hover, #chrome:focus-within { opacity: 1; }
+  #chrome button {
+    padding: 3px 10px;
+    background: rgba(17, 17, 23, 0.9);
+    border: 1px solid #2b2b34;
+    border-radius: 4px;
+    color: #b6bcc7;
+    cursor: pointer;
+    font: inherit;
+  }
+  #chrome button:hover { color: #dde3ec; border-color: rgba(101, 178, 241, 0.55); }
+  /* A finger is not a pointer: on a touch screen nothing is ever hovered, so
+     the controls stand at full strength rather than waiting to be pointed at. */
+  @media (hover: none) {
+    #chrome { opacity: 1; }
+    #chrome button { padding: 8px 14px; }
+  }
+  /* What the page says for itself, about the things that happen beside the
+     program rather than inside it. The message line belongs to Rederive. */
+  #notice {
+    position: fixed;
+    top: 38px;
+    right: 10px;
+    z-index: 20;
+    max-width: min(46ch, 80vw);
+    padding: 6px 10px;
+    background: rgba(17, 17, 23, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 6px;
+    color: #dde3ec;
+    font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+    line-height: 1.35;
+  }
+
   /* The plot panes are the desktop's plot windows, in the one place a page has
      for a window: a layer over everything, which lets the pointer through
      wherever there is no pane so that the terminal underneath still hears it. */
@@ -65,6 +114,10 @@
     border-bottom: 1px solid #23232b;
     cursor: move;
     user-select: none;
+    /* A finger dragging the bar is moving the pane and not scrolling the page.
+       Without this the browser takes the gesture for itself and the pane never
+       hears the moves; the picture under it says the same to uPlot's overlay. */
+    touch-action: none;
   }
   .plot-title { flex: 1; color: #dde3ec; white-space: nowrap; overflow: hidden; }
   .plot-close {
@@ -194,11 +247,29 @@
   /* uPlot draws the axes and their numbers and nothing else; the strokes are
      drawn on its canvas by `plot2d.js`, so its own series never show. */
   .uplot, .u-wrap { background: #0c0c10; }
+  /* The overlay uPlot lays over the picture is where a pan, a pinch and the
+     trace are heard, all three of them gestures the browser would otherwise
+     take for a scroll. */
+  .u-over { touch-action: none; }
 </style>
 </head>
 <body>
 <div id="screen"></div>
 <div id="panes"></div>
+<div id="chrome">
+  <button id="pick" type="button" title="Bring a worksheet into this page">
+    Open file
+  </button>
+  <button id="link" type="button" title="Put this worksheet in the address">
+    Link
+  </button>
+</div>
+<!-- A file picker opens on a click and on nothing a program can do, which is
+     why the input is here rather than made when it is wanted. `.mth` and its
+     neighbours are what the Transfer commands read; anything else can still be
+     chosen, since a worksheet is plain text whatever it is called. -->
+<input id="picker" type="file" accept=".mth,.dmo,.dat,.ini,text/plain" multiple hidden>
+<div id="notice" hidden></div>
 <!-- The UMD builds, which is what xterm ships for a plain script tag: each
      leaves one global behind, and `main.js` is the only thing that reads
      them. Everything here is served from beside this file - the demo names no

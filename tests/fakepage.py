@@ -1,4 +1,4 @@
-"""A browser with no browser in it, for the tests that are about the plot panes.
+"""A browser with no browser in it, for the tests that are about the browser.
 
 The browser backend talks to two things a desktop has not got: a page, which it
 calls into to make a pane and draw in one, and a runtime bridge, which turns a
@@ -14,6 +14,12 @@ share no drawing, so they share no fake either.
 proxying a callback and converting a structure - are identity functions on a
 desktop, and the fake says so; what it is not is a pretend browser, and nothing
 here draws anything.
+
+The tab itself is faked for the same reasons and to the same depth. `js` is a
+module with a store, a clipboard, an address and two things that take listeners,
+because that is the whole of what the storage and the file gestures touch - and
+a store with a ceiling on it is the one way to ask what a save does when the
+browser will not keep any more.
 """
 
 import sys
@@ -199,6 +205,75 @@ class Proxy:
         self.destroyed += 1
 
 
+class Store:
+    """localStorage as a browser keeps one: strings, and a ceiling to hit.
+
+    `room` is how many characters it will take before it refuses, which is what
+    a browser does with its five megabytes and the only interesting thing about
+    the ceiling. None is a store with no ceiling at all.
+    """
+
+    def __init__(self, room=None):
+        self.items = {}
+        self.room = room
+
+    def getItem(self, key):
+        return self.items.get(key)
+
+    def setItem(self, key, value):
+        if self.room is not None and len(value) > self.room:
+            raise RuntimeError("QuotaExceededError")
+        self.items[key] = value
+
+
+class Promise:
+    """What a clipboard write answers with: something that may be refused."""
+
+    def __init__(self, refuse=None):
+        self.refuse = refuse
+
+    def catch(self, handler):
+        if self.refuse is not None:
+            handler(self.refuse)
+
+
+class Clipboard:
+    """The page's clipboard, granted or refused, and what it was given."""
+
+    def __init__(self, allow=True, raises=False):
+        self.allow = allow
+        self.raises = raises
+        self.written = []
+
+    def writeText(self, text):
+        if self.raises:
+            raise RuntimeError("NotAllowedError")
+        self.written.append(text)
+        return Promise(None if self.allow else "NotAllowedError")
+
+
+class FakeTab:
+    """The page's file module, as `WebStorage` and `Files` call into it."""
+
+    def __init__(self):
+        self.downloads = []
+        self.notices = []
+        self.fragment = None
+        self.handlers = None
+
+    def download(self, name, text):
+        self.downloads.append((name, text))
+
+    def said(self, text):
+        self.notices.append(text)
+
+    def address(self, fragment):
+        self.fragment = fragment
+
+    def attend(self, handlers):
+        self.handlers = handlers
+
+
 def bridge():
     """Put a desktop-shaped `js` and `pyodide.ffi` where the backend looks.
 
@@ -218,3 +293,24 @@ def bridge():
     sys.modules["js"] = js
     sys.modules["pyodide"] = pyodide
     sys.modules["pyodide.ffi"] = ffi
+
+
+def browser(store=None, clipboard=None, hash=""):
+    """A tab with nothing in it yet: an empty store, a clipboard, an address.
+
+    Returned as well as installed, since a test asks the tab what it was told
+    as often as it tells it anything. Everything is replaced on every call - a
+    store left over from another test is a store with somebody else's
+    worksheets in it.
+    """
+    bridge()
+    js = sys.modules["js"]
+    js.localStorage = Store() if store is None else store
+    js.navigator = types.SimpleNamespace(
+        clipboard=Clipboard() if clipboard is None else clipboard,
+        userAgent="a test",
+    )
+    js.location = types.SimpleNamespace(hash=hash, href=f"https://demo.test/#{hash}")
+    js.window = types.SimpleNamespace(addEventListener=lambda *given: None)
+    js.document = types.SimpleNamespace(addEventListener=lambda *given: None)
+    return js

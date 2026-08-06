@@ -12,6 +12,7 @@ import pytest
 
 from rederive import platform
 from rederive.platform.desktop import Desktop, DesktopStorage
+from rederive.platform.web import Web, WebStorage
 
 
 def _asked_of(protocol):
@@ -25,15 +26,21 @@ def _asked_of(protocol):
 
 @pytest.mark.parametrize(
     ("protocol", "implementation"),
-    [(platform.Platform, Desktop), (platform.Storage, DesktopStorage)],
+    [
+        (platform.Platform, Desktop),
+        (platform.Storage, DesktopStorage),
+        (platform.Platform, Web),
+        (platform.Storage, WebStorage),
+    ],
     ids=lambda given: given.__name__,
 )
-def test_the_desktop_answers_everything_the_protocol_asks(protocol, implementation):
-    """Nothing type-checks this suite, so the one implementation is asked by name.
+def test_every_environment_answers_everything_the_protocol_asks(protocol, implementation):
+    """Nothing type-checks this suite, so each implementation is asked by name.
 
-    It matters most for storage, which nothing calls yet: an interface written for a
-    second environment to satisfy is worth nothing if the first one has quietly
-    stopped satisfying it.
+    The browser's is asked here rather than where it is exercised because this is
+    the question that has nothing to do with a browser: whether the two
+    environments still answer the same calls, which is the whole claim the seam
+    makes.
     """
     assert _asked_of(protocol) <= _asked_of(implementation)
 

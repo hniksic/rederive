@@ -20,16 +20,15 @@ supported install: it authors, computes and saves. So a missing wheel is an
 answer here rather than an error - no clipboard is a copy that took the
 terminal's road alone, and no reading is an empty field on the status line.
 
-Storage is defined and not yet used. Every file the program reads or writes
-still goes through `pathlib` where the command is, which is right for as long
-as there is one filesystem; the protocol is written down now so that the side
-that has no filesystem has something to satisfy rather than something to
-invent.
+Every file the program reads or writes goes through `Storage`. On a desktop
+that is `pathlib` with one call in front of it and nothing else; in a tab it is
+a store the page keeps, a download and a file the user hands over. The commands
+themselves say `storage().read` and `storage().write` and know neither answer.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -39,11 +38,17 @@ __all__ = ["Platform", "Storage", "current", "use"]
 class Storage(Protocol):
     """Files, as the worksheet commands ask for them.
 
-    Five calls, and each one is a place the program already touches a path:
+    Five calls, and each one is a place the program touches a file:
     `worksheet.text_of` reads bytes rather than text, because a file the
     original wrote is code page 437 and only the caller knows that;
     `Session.save`, `save_source` and `save_state` write text; and the file
     prompt browses and completes from a directory listing.
+
+    A path is what the calls are keyed by wherever they land, because a path is
+    what the user typed and what the status line shows. What an environment
+    with no filesystem does with one is its own business - the browser's store
+    keys by the name and reads the shipped worksheets off MEMFS behind it - and
+    nothing above here may depend on the answer.
     """
 
     def read(self, path: Path) -> bytes: ...
@@ -60,8 +65,17 @@ class Storage(Protocol):
 class Platform(Protocol):
     """The environment, as the program asks it for things."""
 
-    def copy(self, text: str) -> None:
-        """Hand text to whatever clipboard there is, quiet where there is none."""
+    def copy(self, text: str, refused: Callable[[str], None] | None = None) -> None:
+        """Hand text to whatever clipboard there is, quiet where there is none.
+
+        `refused` is where an environment says that the copy did not happen
+        after all, in a sentence, and it is optional because whether a refusal
+        is worth reporting is the environment's to judge: a desktop that has no
+        clipboard tool has still sent the text out through the terminal, and a
+        page has not. It may be called after this returns - a browser's
+        clipboard answers with a promise - which is why it is a callback and
+        not a return value.
+        """
 
     def storage(self) -> Storage:
         """The files this environment keeps worksheets in."""

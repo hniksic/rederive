@@ -96,6 +96,19 @@ function surface() {
   return root;
 }
 
+// Holding on to a pointer for the length of a drag, so that a finger or a mouse
+// that leaves the element it started on is still heard. A browser may refuse -
+// a pointer it has already released is not one to capture - and a refusal is
+// not worth an exception in the page: what capture buys is the end of the drag,
+// not the drag.
+function capture(element, event) {
+  try {
+    element.setPointerCapture(event.pointerId);
+  } catch (refused) {
+    /* the drag goes on without it, and ends wherever the element does */
+  }
+}
+
 // -- what Python calls ---------------------------------------------------------
 
 // One pane, opened where the plot session asked for one. What comes back is
@@ -197,7 +210,7 @@ class Pane {
       this.dismiss();
       this.say.closed();
     });
-    pane.addEventListener('mousedown', () => {
+    pane.addEventListener('pointerdown', () => {
       this.raise();
       this.say.touched();
     });
@@ -210,20 +223,26 @@ class Pane {
   // Dragging by the title bar, which is what a pane has instead of a window
   // manager. Nothing here is a resize: the pane's own corner does that, and the
   // observer below hears about it.
+  //
+  // The pointer is captured by the bar, so the drag follows a finger or a mouse
+  // that has left it - which every drag does, a bar being twenty pixels tall.
   _movable() {
     let from = null;
-    this.bar.addEventListener('mousedown', (event) => {
+    this.bar.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || event.target.tagName === 'BUTTON') return;
       from = { x: event.clientX, y: event.clientY, left: this.element.offsetLeft,
                top: this.element.offsetTop };
+      capture(this.bar, event);
       event.preventDefault();
     });
-    window.addEventListener('mousemove', (event) => {
+    this.bar.addEventListener('pointermove', (event) => {
       if (from === null) return;
       this.element.style.left = `${from.left + event.clientX - from.x}px`;
       this.element.style.top = `${from.top + event.clientY - from.y}px`;
     });
-    window.addEventListener('mouseup', () => { from = null; });
+    const dropped = () => { from = null; };
+    this.bar.addEventListener('pointerup', dropped);
+    this.bar.addEventListener('pointercancel', dropped);
   }
 
   _watch() {
@@ -669,7 +688,7 @@ class Pane {
       // part of an expression.
       name.textContent = plot.name;
       row.append(swatch, name);
-      row.addEventListener('mousedown', (event) => {
+      row.addEventListener('pointerdown', (event) => {
         event.stopPropagation();
         this.say.hide(serial, !plot.hidden);
       });
@@ -679,12 +698,41 @@ class Pane {
 
   // -- the mouse ---------------------------------------------------------------
 
+  // Pointer events rather than mouse ones, which is the whole of what a finger
+  // needs from a flat picture: the same handler hears a mouse, a finger and a
+  // pen, and a drag that leaves the picture is still delivered because the
+  // pointer is captured. The one gesture a finger has that a mouse has not is
+  // the second finger, and it is what a touch screen has instead of the wheel.
   _gestures(over) {
     let panning = null;
     let banding = null;
+    //: Where every pointer now down on the picture is, which is how a pan
+    //: knows it has become a pinch.
+    const down = new Map();
+    let pinch = null;
+    const spread = () => {
+      const [first, second] = [...down.values()];
+      return {
+        apart: Math.hypot(first.x - second.x, first.y - second.y),
+        x: (first.x + second.x) / 2,
+        y: (first.y + second.y) / 2,
+      };
+    };
     over.addEventListener('contextmenu', (event) => event.preventDefault());
-    over.addEventListener('mousedown', (event) => {
+    over.addEventListener('pointerdown', (event) => {
       this.element.focus();
+      down.set(event.pointerId, { x: event.offsetX, y: event.offsetY });
+      capture(over, event);
+      if (down.size === 2) {
+        // A second finger is a pinch and not a pan, so whatever the first one
+        // had started is given up rather than left half done.
+        panning = null;
+        banding = null;
+        this._band(null);
+        pinch = spread();
+        event.preventDefault();
+        return;
+      }
       if (event.button === 0) {
         panning = { x: event.offsetX, y: event.offsetY, view: { ...this.shown } };
       } else if (event.button === 2) {
@@ -693,7 +741,18 @@ class Pane {
       }
       event.preventDefault();
     });
-    over.addEventListener('mousemove', (event) => {
+    over.addEventListener('pointermove', (event) => {
+      if (down.has(event.pointerId)) {
+        down.set(event.pointerId, { x: event.offsetX, y: event.offsetY });
+      }
+      if (pinch !== null && down.size === 2) {
+        const now = spread();
+        if (pinch.apart > 0 && now.apart > 0) {
+          this._zoom(pinch.apart / now.apart, now.x, now.y, over);
+        }
+        pinch = now;
+        return;
+      }
       if (panning !== null) {
         const across = (this.shown.x1 - this.shown.x0) / over.clientWidth;
         const up = (this.shown.y1 - this.shown.y0) / over.clientHeight;
@@ -716,6 +775,8 @@ class Pane {
       this._pointed(event.offsetX, event.offsetY, over);
     });
     const release = (event) => {
+      down.delete(event.pointerId);
+      if (down.size < 2) pinch = null;
       if (banding !== null) {
         this._band(null);
         if (banding.moved > CLICK_SLOP_PX) {
@@ -727,29 +788,42 @@ class Pane {
       panning = null;
       banding = null;
     };
-    over.addEventListener('mouseup', release);
-    over.addEventListener('mouseleave', () => {
+    over.addEventListener('pointerup', release);
+    over.addEventListener('pointercancel', release);
+    over.addEventListener('pointerleave', () => {
       panning = null;
       banding = null;
       this._band(null);
     });
     over.addEventListener('wheel', (event) => {
       event.preventDefault();
-      const factor = event.deltaY > 0 ? 1.25 : 0.8;
-      const at = {
-        x: this.shown.x0 + (event.offsetX / over.clientWidth) * (this.shown.x1 - this.shown.x0),
-        y: this.shown.y1 - (event.offsetY / over.clientHeight) * (this.shown.y1 - this.shown.y0),
-      };
-      const wide = !event.shiftKey;
-      const tall = !event.ctrlKey;
-      if (!wide || !tall) this._unlock();
-      this._look(
-        wide ? at.x + (this.shown.x0 - at.x) * factor : this.shown.x0,
-        wide ? at.x + (this.shown.x1 - at.x) * factor : this.shown.x1,
-        tall ? at.y + (this.shown.y0 - at.y) * factor : this.shown.y0,
-        tall ? at.y + (this.shown.y1 - at.y) * factor : this.shown.y1,
+      // Shift holds the width and Ctrl the height, which is how one axis is
+      // stretched against the other.
+      this._zoom(
+        event.deltaY > 0 ? 1.25 : 0.8,
+        event.offsetX,
+        event.offsetY,
+        over,
+        !event.shiftKey,
+        !event.ctrlKey,
       );
     }, { passive: false });
+  }
+
+  // Zoom about a point of the picture: the wheel's gesture and the pinch's,
+  // which differ in where the factor comes from and in nothing else.
+  _zoom(factor, x, y, over, wide = true, tall = true) {
+    const at = {
+      x: this.shown.x0 + (x / over.clientWidth) * (this.shown.x1 - this.shown.x0),
+      y: this.shown.y1 - (y / over.clientHeight) * (this.shown.y1 - this.shown.y0),
+    };
+    if (!wide || !tall) this._unlock();
+    this._look(
+      wide ? at.x + (this.shown.x0 - at.x) * factor : this.shown.x0,
+      wide ? at.x + (this.shown.x1 - at.x) * factor : this.shown.x1,
+      tall ? at.y + (this.shown.y0 - at.y) * factor : this.shown.y0,
+      tall ? at.y + (this.shown.y1 - at.y) * factor : this.shown.y1,
+    );
   }
 
   // The pointer readout: where the pointer is, which is the one number on this
@@ -1210,7 +1284,7 @@ function show(where, event, items) {
     const item = document.createElement('div');
     item.className = 'plot-item';
     item.textContent = text;
-    item.addEventListener('mousedown', (press) => {
+    item.addEventListener('pointerdown', (press) => {
       press.stopPropagation();
       menu.remove();
       run();
@@ -1219,8 +1293,8 @@ function show(where, event, items) {
   }
   const away = () => {
     menu.remove();
-    window.removeEventListener('mousedown', away, true);
+    window.removeEventListener('pointerdown', away, true);
   };
-  window.addEventListener('mousedown', away, true);
+  window.addEventListener('pointerdown', away, true);
   where.appendChild(menu);
 }

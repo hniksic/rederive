@@ -25,6 +25,12 @@ program rather than of anyone's directory - the plot gallery is the first - and
 they live inside the package, so a name that the working directory has nothing
 of is looked for among them. Only reads look there, and a file of your own
 always wins: see `reading`.
+
+Nothing here opens a file itself. Reading one, listing a directory and asking
+whether a name is there all go through `platform.current().storage()`, which on
+a desktop is `pathlib` with one call in front of it and in a browser is a store
+the page keeps. What a path *means* stays here, since that is the same question
+wherever the file lands.
 """
 
 from __future__ import annotations
@@ -33,6 +39,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
+
+from rederive import platform
 
 #: What a file is called when the name typed has no extension of its own.
 SUFFIX = ".mth"
@@ -136,7 +144,7 @@ def text_of(path: Path) -> str:
     almost always - and that is what the fallback reads. Code page 437 decodes
     any byte at all, so a file is never refused for what is in it.
     """
-    raw = path.read_bytes()
+    raw = platform.current().storage().read(path)
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -194,10 +202,11 @@ def reading(name: str, suffix: str = SUFFIX) -> Path:
     `Transfer Save gallery` writes a file of your own in the directory you are
     working in rather than over the one the program came with.
     """
+    storage = platform.current().storage()
     path = path_of(name, suffix)
-    if path.parent == Path() and not path.exists():
+    if path.parent == Path() and not storage.exists(path):
         shipped = library() / path.name
-        if shipped.is_file():
+        if storage.exists(shipped) and not storage.is_directory(shipped):
             return shipped
     return path
 
@@ -234,19 +243,16 @@ def matches(name: str, suffix: str = SUFFIX) -> list[str]:
     is reached by typing the name, and named in the help text and the README so
     that it can be.
     """
+    storage = platform.current().storage()
     head, separator, typed = name.rpartition("/")
     directory = Path(head + separator).expanduser() if separator else Path()
-    try:
-        found = sorted(entry.name for entry in directory.iterdir())
-    except OSError:
-        return []
     offered = []
-    for entry in found:
+    for entry in storage.names(directory):
         if not entry.startswith(typed):
             continue
         if entry.startswith(".") and not typed.startswith("."):
             continue
-        if (directory / entry).is_dir():
+        if storage.is_directory(directory / entry):
             offered.append(f"{head}{separator}{entry}/")
         elif entry.lower().endswith(suffix.lower()):
             offered.append(f"{head}{separator}{entry}")

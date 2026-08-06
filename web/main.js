@@ -25,11 +25,33 @@
 // Every URL named below is relative to this file. Nothing is fetched from a
 // CDN, which is what `tools/build_web.py` is for.
 
+import * as files from './files.js';
 import * as plots from './plot2d.js';
 import * as solids from './plot3d.js';
 
 const SCREEN = 'screen';
 const MANIFEST = 'manifest.json';
+
+// What the page says for itself while there is nothing else to look at. It is
+// written against a measurement rather than an apology - see
+// `research/web-demo-channel.md` - and the one thing it must not do is imply
+// that something is wrong: a first visit spends most of its time on the wire.
+const OPENING = [
+  'Rederive',
+  '',
+  'The whole program runs in this tab - the interpreter, the algebra and the',
+  'plotting - with nothing behind it but a file server. About 24 MB comes down',
+  'the first time, over a connection that compresses, and is cached afterwards.',
+  'What follows that is compiling Python a desktop would have compiled once.',
+  '',
+];
+
+// And what it says once the screen is up, about the two waits that are still to
+// come. Both are sympy and numpy warming up inside the engine worker, and both
+// happen exactly once.
+const AFTERWARDS =
+  'The first Simplify and the first plot each take a moment longer than the ones\r\n' +
+  'after them, while the engine worker warms up.\r\n';
 
 // The font the display is measured in. DejaVu is what stage 0 checked the
 // typeset math against; the rest are what a machine without it is likely to
@@ -52,6 +74,17 @@ const mark = (name, since) => {
   return performance.now();
 };
 
+// One line of the loading screen, opened when a phase starts and closed with
+// what it cost. A user watching a page load wants to know that it is still
+// going and roughly how far along it is, and the honest way to say both is to
+// name each piece as it is fetched and to print the seconds it took.
+const starting = (term, what) => term.write('  ' + what.padEnd(22, '.') + ' ');
+const finished = (term, name, since) => {
+  const at = mark(name, since);
+  term.write((timings[name] / 1000).toFixed(1) + ' s\r\n');
+  return at;
+};
+
 function terminal() {
   const term = new Terminal({
     fontFamily: FONT,
@@ -68,13 +101,15 @@ function terminal() {
   term.unicode.activeVersion = '11';
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.open(document.getElementById(SCREEN));
+  const screen = document.getElementById(SCREEN);
+  term.open(screen);
   render(term, true);
   fit.fit();
   term.focus();
   // A click anywhere puts the keyboard back on the terminal, since there is
   // nothing else on the page for it to be on.
-  document.getElementById(SCREEN).addEventListener('mousedown', () => term.focus());
+  screen.addEventListener('mousedown', () => term.focus());
+  tapping(term, screen);
   // Refitting posts a resize, which the driver turns into the event a program
   // on a desktop would have got from SIGWINCH.
   let pending = null;
@@ -83,6 +118,49 @@ function terminal() {
     pending = setTimeout(() => fit.fit(), 100);
   });
   return term;
+}
+
+// A tap is a click, which is the whole of what a touch screen needs from this
+// program: the menus are words on a band, and pointing at one is how the mouse
+// works them on a desktop.
+//
+// xterm.js hears nothing from a finger - it reports mouse buttons and has no
+// touch handling at all - so the report is written by hand and fed back in as
+// if the terminal had sent it. SGR, because that is the encoding the driver
+// turned on, and it is the only one that says which button was released.
+//
+// The touch is cancelled rather than let through: a tap the browser is allowed
+// to finish produces a second, synthetic mouse press a moment later, and the
+// program would see every tap twice. Cancelling it also takes away the focus a
+// tap would have given, which is why the terminal is focused by hand - and
+// focusing it inside the gesture is what puts a phone's keyboard up.
+function tapping(term, element) {
+  let at = null;
+  const within = (value, most) => Math.min(most, Math.max(1, Math.ceil(value)));
+  const cell = (touch) => {
+    const screen = element.querySelector('.xterm-screen') || element;
+    const box = screen.getBoundingClientRect();
+    return {
+      column: within((touch.clientX - box.left) / (box.width / term.cols), term.cols),
+      row: within((touch.clientY - box.top) / (box.height / term.rows), term.rows),
+    };
+  };
+  element.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) return;
+    at = cell(event.touches[0]);
+    event.preventDefault();
+    term.focus();
+  }, { passive: false });
+  element.addEventListener('touchend', (event) => {
+    if (at === null) return;
+    // Press and release in one go. A finger has no button to hold down, and a
+    // press with no release would leave the program dragging.
+    term.input(`\x1b[<0;${at.column};${at.row}M`, false);
+    term.input(`\x1b[<0;${at.column};${at.row}m`, false);
+    at = null;
+    event.preventDefault();
+  }, { passive: false });
+  element.addEventListener('touchcancel', () => { at = null; });
 }
 
 // WebGL, with canvas behind it. The two are pixel-identical - they share the
@@ -143,26 +221,32 @@ function spawn(manifest) {
 
 async function main() {
   const term = terminal();
-  say(term, 'Rederive');
-  say(term, 'Loading the runtime...');
+  files.wire(term);
+  for (const line of OPENING) say(term, line);
   const started = performance.now();
   const manifest = await (await fetch(MANIFEST)).json();
   let at = performance.now();
 
+  starting(term, 'the interpreter');
   const { loadPyodide } = await import('./' + manifest.pyodide + 'pyodide.mjs');
   const pyodide = await loadPyodide({ indexURL: manifest.pyodide });
-  at = mark('runtime', at);
-  say(term, 'Loading the program...');
+  at = finished(term, 'runtime', at);
+  starting(term, 'the program');
   // The app instance and nothing under it: no sympy here, ever. The engine
   // worker loads its own, in the interpreter where the computing happens.
   await pyodide.loadPackage(manifest.page, { messageCallback: () => {} });
-  at = mark('package', at);
+  at = finished(term, 'package', at);
+  say(term, '');
+  term.write(AFTERWARDS);
+  say(term, '');
+  starting(term, 'the screen');
 
   pyodide.globals.set('TERMINAL', term);
   pyodide.globals.set('SPAWN', () => spawn(manifest));
   pyodide.globals.set('PLOTS', plots);
   pyodide.globals.set('SOLIDS', solids);
-  window.rederive = { term, pyodide, timings, plots, solids };
+  pyodide.globals.set('FILES', files);
+  window.rederive = { term, pyodide, timings, plots, solids, files };
   term.onRender(() => {
     if (timings.prompt === undefined) mark('prompt', started);
   });
@@ -172,7 +256,7 @@ async function main() {
   await pyodide.runPythonAsync(`
 from rederive.web.boot import start
 
-await start(TERMINAL, SPAWN, PLOTS, SOLIDS)
+await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES)
 `);
   mark('session', started);
   say(term, '');
