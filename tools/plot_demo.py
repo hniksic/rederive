@@ -268,27 +268,16 @@ async def record() -> Recorder:
 # -- the plot windows ----------------------------------------------------------
 
 
-class _Silent:
-    """The pipe a host talks home on, with nobody at the other end.
-
-    The host reports closed windows and moved controls to the app it was spawned
-    by. Here it was spawned by nothing, and everything it has to say is dropped.
-    """
-
-    def send(self, message: Any) -> None:
-        pass
-
-
 def photograph(
     actions: list[plots.Add | float | str], directory: Path
 ) -> list[tuple[Path, str, tuple[float, float] | None]]:
     """Every picture the film shows, taken off the program's own plot windows.
 
-    A host is built here rather than spawned, and asked to take the requests the
-    first pass collected - the same handler the pipe would have delivered them
-    to. Its windows are laid out and rendered but never mapped onto the screen,
-    so this draws real pictures without putting a window in front of whatever
-    the machine is doing.
+    A plot session is built here rather than spawned into a host process, and
+    asked to take the requests the first pass collected - the same routing the
+    pipe would have delivered them to. Its windows are laid out and rendered but
+    never mapped onto the screen, so this draws real pictures without putting a
+    window in front of whatever the machine is doing.
 
     The first picture is the window before anything has been plotted, which is
     what stands beside the frames where the first expression is still being
@@ -299,7 +288,8 @@ def photograph(
     from pyqtgraph.Qt import QtCore, QtWidgets
 
     from rederive.plot.qt import theme
-    from rederive.plot.host import Host
+    from rederive.plot.qt.backend import QtBackend, ThreadExecutor
+    from rederive.plot.session import PlotSession
 
     pg.setConfigOptions(antialias=True, imageAxisOrder="row-major")
     QtCore.QCoreApplication.setAttribute(
@@ -308,19 +298,21 @@ def photograph(
     application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     theme.dress(application)
 
-    class Filmed(Host):
-        """A host whose windows are the right size and are never shown."""
+    class Filmed(QtBackend):
+        """A backend whose windows are the right size and are never shown."""
 
-        pending = 0
-
-        def _open(self, kind: plots.WindowKind) -> Any:
-            window = super()._open(kind)
+        def open(self, session: Any, kind: Any, number: int, preferences: Any) -> Any:
+            window = super().open(session, kind, number, preferences)
             window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             window.resize(*WINDOW)
             return window
 
+    class Counted(PlotSession):
+        """A session that counts its sampling out, so a picture is of a finished curve."""
+
+        pending = 0
+
         def sample(self, key: Any, work: Any, done: Any, report: Any = None) -> None:
-            """Count the sampling out, so a picture is taken of a finished curve."""
             self.pending += 1
 
             def finished(answer: Any) -> None:
@@ -329,7 +321,7 @@ def photograph(
 
             super().sample(key, work, finished, report)
 
-    host = Filmed(_Silent())
+    host = Counted(Filmed(), ThreadExecutor())
 
     def settle() -> None:
         """Wait out the sampling, and let the windows paint what came of it."""
@@ -384,7 +376,7 @@ def photograph(
     shoot(window)
     for action in actions:
         if isinstance(action, plots.Add):
-            placed = host._add(action)
+            placed = host.add(action)
             if not isinstance(placed, plots.Placed):
                 raise SystemExit(f"{action.label} was refused: {placed}")
             window = host.windows[placed.window]

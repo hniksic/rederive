@@ -47,7 +47,7 @@ lines and every other item's alike.
 
 **A window that cannot get an OpenGL context says so.** The context is asked for
 when the window is first shown, which is inside the Qt event loop, and an
-exception there would leave the host dead and every 2D window with it. It is
+exception there would leave the process dead and every 2D window with it. It is
 caught and put on the status bar instead: no picture, but a plot list, a title
 and a message naming what happened.
 """
@@ -55,7 +55,7 @@ and a message naming what happened.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 import numpy as np
@@ -66,30 +66,20 @@ from pyqtgraph.opengl.GLGraphicsItem import GLOptions
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Context
-from rederive.model.expr import Node
 from rederive.plot import evaluate, protocol
+from rederive.plot.model import SOLID_PALETTE, SOLID_PAPER, Surface
 from rederive.plot.qt import theme
-from rederive.plot.protocol import Options, PlotKind
+from rederive.plot.protocol import PlotKind
 from rederive.plot.qt.window2d import (
     CLICK_SLOP_PX,
     CURVE_WIDTH,
-    PALETTE,
-    PAPER_PALETTE,
     Legend,
     commanded,
-    naming,
     pressed,
 )
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
-__all__ = ["Box", "Surface", "Window3D", "mesh", "ticks", "wire"]
-
-#: The surface colors, which are the curve colors turned by one. A shaded solid
-#: in white is a white shape with a white shape behind it - the palette's first
-#: color is the right one for a stroke on a dark canvas and the worst one for a
-#: lit surface - so the order starts at the second and comes round to it last.
-SOLID_PALETTE = PALETTE[1:] + PALETTE[:1]
-SOLID_PAPER = PAPER_PALETTE[1:] + PAPER_PALETTE[:1]
+__all__ = ["Box", "Drawn", "Window3D", "mesh", "ticks", "wire"]
 
 #: The window's own colors, which are the 2D window's, so that two plot
 #: windows side by side are two windows of one program. What is around the
@@ -211,12 +201,12 @@ NAME_OUT = 2.3
 
 
 @dataclass
-class Surface:
-    """One entry of a 3D window's plot list: what to draw and what it is called.
+class Drawn(Surface):
+    """A surface as this window holds it: the items that draw it and its grid.
 
-    The identity is `worksheet` and `label` together, exactly as a curve's is,
-    so re-plotting `#3` replaces its surface and keeps its color while a `#3`
-    from another algebra overlay is a second surface.
+    The identity, the look and the expression are the surface's own and come
+    from the session; everything added here belongs to the side that evaluates
+    and draws.
 
     `values` is the grid the closure last answered with, kept because the mesh
     is rebuilt whenever the z extent moves - another surface arriving in the
@@ -224,31 +214,13 @@ class Surface:
     is worth.
     """
 
-    worksheet: int
-    label: str
-    text: str
-    kind: PlotKind
-    node: Node
-    context: Context
-    options: Options
-    #: The parse state the expression arrived under, which is what the domain
-    #: fields read a typed bound with: the same grammar the worksheet reads.
-    state: ParseState = field(default_factory=ParseState)
-    color: str = SOLID_PALETTE[0]
-    paper: str = SOLID_PAPER[0]
     item: Any = None
-    #: Whether this surface draws as the wire grid of its samples rather than
-    #: as a shaded solid. A property of the surface, not the window: the
-    #: toolbar's `mesh` box flips every surface at once, and the legend's
-    #: right-click carries the per-surface exception.
-    wire: bool = False
     #: The line item the wire look draws with, made beside `item` and shown
     #: over it while `wire` is on - `item` stays, as the shape the lines are
     #: hidden behind.
     wires: Any = None
     #: The lambdified closure, once the sampling thread has built one.
     closure: Callable[..., np.ndarray] | None = None
-    trouble: str = ""
     xs: np.ndarray = field(default_factory=lambda: np.empty(0))
     ys: np.ndarray = field(default_factory=lambda: np.empty(0))
     values: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
@@ -256,36 +228,16 @@ class Surface:
     #: the sampling thread and cached beside the arrays it was found on: the
     #: mesh reads it to end at the boundary rather than a grid step short.
     boundary: evaluate.Boundary | None = None
-    hidden: bool = False
     #: Which evaluation these values came from. A job whose generation has
     #: moved on is a job about a domain that is gone.
     generation: int = 0
 
-    @property
-    def visible(self) -> bool:
-        return not self.hidden
-
-    @property
-    def named(self) -> str:
-        """How the legend and the status line name this surface."""
-        return naming(self.label, self.text)
-
-    @property
-    def axes(self) -> tuple[str, str]:
-        """The two variables of the floor, in the order the axes take them."""
-        names = self.options.variables
-        if len(names) >= 2:
-            return names[0], names[1]
-        return (names[0] if names else "x"), "y"
-
-    @property
-    def vertical(self) -> str:
-        """What the upright axis is called: the expression's name for it, or z.
-
-        `z = x^2 + y^2` names it and an expression that is only `x^2 + y^2`
-        does not, so the second gets the letter every reader supplies anyway.
-        """
-        return self.options.vertical or "z"
+    @classmethod
+    def of(cls, surface: Drawn) -> Drawn:
+        """This window's record of a surface the session has just handed it."""
+        return cls(
+            **{field.name: getattr(surface, field.name) for field in fields(Surface)}
+        )
 
 
 @dataclass(frozen=True)
@@ -877,7 +829,7 @@ class View(gl.GLViewWidget):
 
     The third is the guard. `initializeGL` is where a machine with no usable
     OpenGL says so, and it runs inside the Qt event loop, where an exception
-    ends the host and takes every other plot window with it. It is remembered
+    ends the process and takes every other plot window with it. It is remembered
     instead, and the window reports it on its status bar.
     """
 
@@ -967,17 +919,17 @@ class Window3D(QtWidgets.QMainWindow):
     """One top-level 3D plot window and everything that happens inside it."""
 
     def __init__(
-        self, number: int, host: Any, *, grid: int = DEFAULT_GRID, wire: bool = True
+        self, number: int, session: Any, *, grid: int = DEFAULT_GRID, wire: bool = True
     ) -> None:
         super().__init__()
         self.number = number
         self.kind = protocol.WindowKind.THREE_D
-        self.host = host
-        self.plots: list[Surface] = []
+        self.session = session
+        self.plots: list[Drawn] = []
         self.current = False
         self.xdomain = DEFAULT_DOMAIN
         self.ydomain = DEFAULT_DOMAIN
-        # The grid the window opens with is the sticky one the host holds -
+        # The grid the window opens with is the sticky one the session holds -
         # the grid the last surface was given - clamped here as a typed one
         # is: a window never samples finer than it can draw, whoever asked.
         square = int(min(max(grid, 2), MAX_GRID))
@@ -1227,8 +1179,14 @@ class Window3D(QtWidgets.QMainWindow):
 
     # -- the plot list -----------------------------------------------------
 
-    def add(self, surface: Surface) -> None:
-        """Put a surface in the window, replacing one with the same identity."""
+    def add(self, surface: Surface) -> Drawn:
+        """Put a surface in the window, replacing one with the same identity.
+
+        What the session hands over is the surface; what this window keeps is
+        its own record of it, and that is what comes back for a caller that
+        wants to watch what became of the picture.
+        """
+        surface = Drawn.of(surface)
         existing = self.find(surface.worksheet, surface.label)
         if existing is not None:
             # A replacement keeps the look of what it replaces - the color and
@@ -1271,15 +1229,16 @@ class Window3D(QtWidgets.QMainWindow):
         self._start(surface)
         if self.view.broken:
             self._quiet()
+        return surface
 
-    def find(self, worksheet: int, label: str) -> Surface | None:
+    def find(self, worksheet: int, label: str) -> Drawn | None:
         """The surface a worksheet and a label name, if this window has it."""
         for surface in self.plots:
             if surface.worksheet == worksheet and surface.label == label:
                 return surface
         return None
 
-    def remove(self, surface: Surface) -> None:
+    def remove(self, surface: Drawn) -> None:
         """Take one surface out of the window, legend row and all."""
         if surface.item is not None:
             self.view.removeItem(surface.item)
@@ -1339,7 +1298,7 @@ class Window3D(QtWidgets.QMainWindow):
 
     # -- evaluation --------------------------------------------------------
 
-    def _start(self, surface: Surface) -> None:
+    def _start(self, surface: Drawn) -> None:
         """Ask the sampling thread for this surface over the domain and grid.
 
         The only thing that starts an evaluation. A camera move does not come
@@ -1348,13 +1307,13 @@ class Window3D(QtWidgets.QMainWindow):
         """
         surface.generation += 1
         generation = surface.generation
-        self.host.sample(
+        self.session.sample(
             (self.number, id(surface)),
             self._work(surface),
             lambda answer: self._sampled(surface, generation, answer),
         )
 
-    def _work(self, surface: Surface) -> Callable[..., Any]:
+    def _work(self, surface: Drawn) -> Callable[..., Any]:
         """What the sampling thread is to do, as one callable over nothing else.
 
         Everything it needs is read here, on the Qt thread, and captured: by
@@ -1377,13 +1336,13 @@ class Window3D(QtWidgets.QMainWindow):
 
         return work
 
-    def _sampled(self, surface: Surface, generation: int, answer: Any) -> None:
+    def _sampled(self, surface: Drawn, generation: int, answer: Any) -> None:
         """The grid is in: rebuild the box around it, and say what it holds."""
         if surface.generation != generation or surface not in self.plots:
             return
         if isinstance(answer, Exception):
             surface.trouble = str(answer)
-            self.host.trouble(self.number, surface.label, str(answer))
+            self.session.trouble(self.number, surface.label, str(answer))
             self.say(f"{surface.label}: {answer}")
             return
         (
@@ -1466,7 +1425,7 @@ class Window3D(QtWidgets.QMainWindow):
         self.rays.resetTransform()
         self.rays.translate(*origin)
 
-    def _draw(self, surface: Surface) -> None:
+    def _draw(self, surface: Drawn) -> None:
         """Build one surface's triangles - and its wire, where it wears one.
 
         A wire surface has its hidden lines removed, the way Derive's plotter
@@ -1672,7 +1631,7 @@ class Window3D(QtWidgets.QMainWindow):
                 for node, default in zip(bounds, known)
             )
 
-        self.host.sample(
+        self.session.sample(
             (self.number, "domain"),
             work,
             lambda answer: self._reframe_typed(edit, grid, answer),
@@ -1699,7 +1658,7 @@ class Window3D(QtWidgets.QMainWindow):
             # sticky value is one count per axis, so a rectangular grid hands
             # on its finer axis. The domain is not sticky - it is a framing,
             # like a 2D view - so only the grid goes back.
-            self.host.adjusted(grid=max(grid))
+            self.session.adjusted(grid=max(grid))
         changed = ((x0, x1), (y0, y1), grid) != (self.xdomain, self.ydomain, self.grid)
         self.xdomain, self.ydomain, self.grid = (x0, x1), (y0, y1), grid
         self._show_domain()
@@ -1820,9 +1779,9 @@ class Window3D(QtWidgets.QMainWindow):
         for surface in self.plots:
             surface.wire = self.wired
             self._draw(surface)
-        self.host.adjusted(wire=self.wired)
+        self.session.adjusted(wire=self.wired)
 
-    def toggle_wire(self, surface: Surface) -> None:
+    def toggle_wire(self, surface: Drawn) -> None:
         """One surface between wire and solid: the legend's per-surface override.
 
         An exception rather than a default, so it hands nothing back to the
@@ -1974,6 +1933,12 @@ class Window3D(QtWidgets.QMainWindow):
             yrange=(float(self.ydomain[0]), float(self.ydomain[1])),
         )
 
+    def present(self) -> None:
+        """A plot has landed here: show this window and put it in front."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def retitle(self, current: bool | None = None) -> None:
         """Title the window by what it holds, and say whether the next plot lands here.
 
@@ -1991,7 +1956,7 @@ class Window3D(QtWidgets.QMainWindow):
         )
 
     def changeEvent(self, ev: Any) -> None:
-        """Activation is the user touching this window, and the host's to know.
+        """Activation is the user touching this window, and the session's to know.
 
         The receiver of the next plot follows the window the user last
         touched, and the activation event is how a click, a raise or an
@@ -2002,15 +1967,15 @@ class Window3D(QtWidgets.QMainWindow):
             ev.type() == QtCore.QEvent.Type.ActivationChange
             and self.isActiveWindow()
         ):
-            self.host.touched(self.number)
+            self.session.touched(self.number)
         super().changeEvent(ev)
 
     def closeEvent(self, ev: Any) -> None:
-        """The window manager's business, and the host's to hear about."""
+        """The window manager's business, and the session's to hear about."""
         self._spin.stop()
         if self._inspector is not None:
             self._inspector.close()
-        self.host.closed(self.number)
+        self.session.closed(self.number)
         super().closeEvent(ev)
 
 

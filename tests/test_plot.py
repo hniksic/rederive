@@ -29,6 +29,7 @@ from rederive.model.plotting import Unplottable, classify
 from rederive.model.session import Session
 from rederive.plot import evaluate
 from rederive.plot import protocol as plots
+from rederive.plot.model import Plot, Surface
 from rederive.plot.protocol import PlotKind
 from rederive.plot.proxy import PlotError
 from rederive.syntax import ParseState, parse_expression
@@ -1078,8 +1079,8 @@ async def test_a_host_takes_the_preferences_before_the_plot_that_follows(host):
 # pipe is already crossed by the host tests above.
 
 
-class InlineHost:
-    """A host that runs each sampling job before `sample` returns."""
+class InlineSession:
+    """A plot session that runs each sampling job before `sample` returns."""
 
     def __init__(self):
         #: The points windows have sent home, as (worksheet, text) pairs.
@@ -1127,14 +1128,12 @@ def qt():
 def flat(qt):
     from rederive.plot.qt.window2d import Window2D
 
-    window = Window2D(1, InlineHost())
+    window = Window2D(1, InlineSession())
     yield window
     window.close()
 
 
 def _plot(text, kind, variables, label="#1"):
-    from rederive.plot.qt.window2d import Plot
-
     return Plot(
         worksheet=1,
         label=label,
@@ -1149,7 +1148,7 @@ def _plot(text, kind, variables, label="#1"):
 
 def test_a_parametric_plot_draws_at_once_over_one_turn(flat):
     plot = _plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",))
-    flat.add(plot)
+    plot = flat.add(plot)
     # The picture is there with no question asked anywhere on the way.
     assert plot.trange == pytest.approx((-np.pi, np.pi))
     assert np.isfinite(plot.ys).any()
@@ -1161,7 +1160,7 @@ def test_a_parametric_plot_draws_at_once_over_one_turn(flat):
 
 def test_the_range_fields_read_expressions_and_resample_the_plot(flat):
     plot = _plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",))
-    flat.add(plot)
+    plot = flat.add(plot)
     flat.range_low.setText("0")
     flat.range_high.setText("2π")
     flat._range_edited()
@@ -1181,13 +1180,13 @@ def test_the_range_fields_read_expressions_and_resample_the_plot(flat):
 
 def test_a_window_of_functions_offers_no_range_fields(flat):
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
-    flat.add(plot)
+    plot = flat.add(plot)
     assert not any(action.isVisible() for action in flat._range_actions)
 
 
 def test_the_polar_toggle_rereads_curves_and_restores_them(flat):
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
-    flat.add(plot)
+    plot = flat.add(plot)
     flat.polar_toggle.trigger()
     # The curve is now r = f(θ) over one full turn - the x-range it was viewed
     # at is not a θ range - with the range fields named by the angle, and the
@@ -1209,8 +1208,8 @@ def test_the_polar_toggle_rereads_curves_and_restores_them(flat):
 def test_the_kinds_with_no_polar_reading_ignore_the_toggle(flat):
     pair = _plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",))
     points = _plot("[[1, 2], [3, 4]]", PlotKind.DATA, (), label="#2")
-    flat.add(pair)
-    flat.add(points)
+    pair = flat.add(pair)
+    points = flat.add(points)
     before = pair.trange
     flat.polar_toggle.trigger()
     assert pair.kind is PlotKind.PARAMETRIC
@@ -1221,7 +1220,7 @@ def test_the_kinds_with_no_polar_reading_ignore_the_toggle(flat):
 def test_a_curve_added_to_a_polar_window_is_read_polar_from_the_start(flat):
     flat.polar_toggle.trigger()
     plot = _plot("2*COS(3*t)", PlotKind.CURVE, ("t",))
-    flat.add(plot)
+    plot = flat.add(plot)
     assert plot.kind is PlotKind.POLAR
     assert plot.trange == pytest.approx((-np.pi, np.pi))
     assert flat.range_name.text().strip() == "θ:"
@@ -1229,7 +1228,7 @@ def test_a_curve_added_to_a_polar_window_is_read_polar_from_the_start(flat):
 
 def test_the_range_fields_adjust_a_reread_curve_like_a_born_polar_one(flat):
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
-    flat.add(plot)
+    plot = flat.add(plot)
     flat.polar_toggle.trigger()
     flat.range_low.setText("0")
     flat.range_high.setText("2π")
@@ -1285,13 +1284,13 @@ def test_enter_while_tracing_sends_the_refined_point_home(flat):
     flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
     # Enter with no marker up is not the send key: nothing goes anywhere.
     _pressed_return(flat)
-    assert flat.host.authored == []
+    assert flat.session.authored == []
     flat.trace()
     # Tab snaps to the next feature to the right of center - the maximum at
     # π/2 - refined on the closure, and Enter sends that number home.
     flat.snap(False)
     _pressed_return(flat)
-    assert flat.host.authored == [(1, "[1.570796, 1.000000]")]
+    assert flat.session.authored == [(1, "[1.570796, 1.000000]")]
     # The window says so where the user is looking.
     assert flat.status.text() == "Sent [1.570796, 1.000000] to the worksheet"
 
@@ -1304,7 +1303,7 @@ def test_the_point_sent_home_is_the_text_ctrl_c_copies(flat, qt):
     copied = qt.clipboard().text()
     flat.send_home()
     assert copied.startswith("[")
-    assert flat.host.authored == [(1, copied)]
+    assert flat.session.authored == [(1, copied)]
 
 
 def test_the_title_tracks_the_plot_list(flat):
@@ -1328,14 +1327,14 @@ def test_a_data_plots_toggles_hand_the_sticky_values_back(flat):
     # The reversal section 7 asks for: the right-click controls write back, so
     # the way this plot is left is the way the next data plot arrives.
     plot = _plot("[[1, 2], [3, 4]]", PlotKind.DATA, ())
-    flat.add(plot)
+    plot = flat.add(plot)
     flat._pointed = plot
     flat._toggle_connected()
-    assert flat.host.adjustments == {"connected": True}
+    assert flat.session.adjustments == {"connected": True}
     flat._set_point_size(8.0)
-    assert flat.host.adjustments == {"connected": True, "point_size": 8.0}
+    assert flat.session.adjustments == {"connected": True, "point_size": 8.0}
     flat._toggle_connected()
-    assert flat.host.adjustments["connected"] is False
+    assert flat.session.adjustments["connected"] is False
 
 
 def test_the_framing_lock_hands_nothing_back(flat):
@@ -1344,7 +1343,7 @@ def test_the_framing_lock_hands_nothing_back(flat):
     # default that reshapes the next circle.
     flat.equal.trigger()
     assert not flat.equal.isChecked()
-    assert flat.host.adjustments == {}
+    assert flat.session.adjustments == {}
 
 
 def test_the_axis_label_follows_the_polar_mode(flat):
@@ -1352,7 +1351,7 @@ def test_the_axis_label_follows_the_polar_mode(flat):
     # abscissa with the parameter's letter - the horizontal axis of a polar
     # picture is not θ.
     plot = _plot("SIN(t)", PlotKind.CURVE, ("t",))
-    flat.add(plot)
+    plot = flat.add(plot)
     axis = flat.item.getAxis("bottom")
     assert axis.labelText == "t"
     flat.polar_toggle.trigger()
@@ -1368,7 +1367,7 @@ def test_a_curve_out_weighs_the_axes_and_the_grid(flat):
     from rederive.plot.qt.window2d import CURVE_WIDTH
 
     plot = _plot("2*x + 3", PlotKind.CURVE, ("x",))
-    flat.add(plot)
+    plot = flat.add(plot)
     pen = plot.item.opts["pen"]
     # Two logical pixels - the screen's density multiplied in - and cosmetic,
     # so zooming the view never fattens or thins the stroke.
@@ -1387,7 +1386,7 @@ def test_a_data_plots_line_takes_the_weight_and_its_points_do_not(flat):
     from rederive.plot.qt.window2d import CURVE_WIDTH
 
     plot = _plot("[[1, 2], [3, 4]]", PlotKind.DATA, ())
-    flat.add(plot)
+    plot = flat.add(plot)
     flat._pointed = plot
     flat._toggle_connected()
     pen = plot.item.opts["pen"]
@@ -1402,7 +1401,7 @@ def test_the_export_pens_carry_the_same_weight(flat):
     from rederive.plot.qt.window2d import CURVE_WIDTH, _on_paper
 
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
-    flat.add(plot)
+    plot = flat.add(plot)
     with _on_paper(flat):
         # The exporters render the scene with no high-DPI scale, so the paper
         # pens take the plain constant: the file carries the weight a 1x
@@ -1626,7 +1625,7 @@ def test_export_writes_the_png_ctrl_c_copies_and_leaves_the_window_dark(
     from rederive.plot.qt.window2d import BACKGROUND
 
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
-    flat.add(plot)
+    plot = flat.add(plot)
     target = tmp_path / "curve.png"
     _answers_the_save_dialog(monkeypatch, target)
     flat.export()
@@ -1641,7 +1640,7 @@ def test_export_writes_the_png_ctrl_c_copies_and_leaves_the_window_dark(
 
 def test_export_writes_an_svg_when_the_name_asks_for_one(flat, tmp_path, monkeypatch):
     plot = _plot("SIN(x)", PlotKind.CURVE, ("x",))
-    flat.add(plot)
+    plot = flat.add(plot)
     target = tmp_path / "curve.SVG"
     # The typed extension decides the format, whatever filter is selected and
     # whichever case it is typed in.
@@ -1725,13 +1724,13 @@ def test_a_key_typed_into_a_range_field_is_text_and_not_a_command(flat):
 
 @pytest.fixture
 def deep(qt, solid):
-    window = solid.Window3D(1, InlineHost())
+    window = solid.Window3D(1, InlineSession())
     yield window
     window.close()
 
 
 def test_the_domain_fields_read_expressions(deep, solid):
-    surface = solid.Surface(
+    surface = Surface(
         worksheet=1,
         label="#1",
         text="x*y",
@@ -1741,7 +1740,7 @@ def test_the_domain_fields_read_expressions(deep, solid):
         options=plots.Options(variables=("x", "y")),
         state=ParseState(),
     )
-    deep.add(surface)
+    surface = deep.add(surface)
     deep.fields["x0"].setText("-π")
     deep.fields["x1"].setText("π")
     deep._edited()
@@ -1764,21 +1763,21 @@ def test_an_edited_grid_hands_the_new_count_back_to_the_host(deep, solid):
     deep.fields["ny"].setText("32")
     deep._edited()
     assert deep.grid == (32, 32)
-    assert deep.host.adjustments == {"grid": 32}
+    assert deep.session.adjustments == {"grid": 32}
     # The sticky value is one count per axis, so a rectangular grid hands on
     # its finer axis; the domain fields are a framing and hand back nothing.
     deep.fields["ny"].setText("48")
     deep._edited()
-    assert deep.host.adjustments == {"grid": 48}
+    assert deep.session.adjustments == {"grid": 48}
     deep.fields["x0"].setText("-2")
     deep._edited()
-    assert deep.host.adjustments == {"grid": 48}
+    assert deep.session.adjustments == {"grid": 48}
 
 
 def test_a_surfaces_boundary_arrives_beside_its_arrays(deep, solid):
     # The refinement runs on the sampling thread with `grid_eval` and is cached
     # on the surface, where the mesh - and section 10's wire - can read it.
-    surface = solid.Surface(
+    surface = Surface(
         worksheet=1,
         label="#1",
         text="SQRT(1-x^2-y^2)",
@@ -1788,14 +1787,14 @@ def test_a_surfaces_boundary_arrives_beside_its_arrays(deep, solid):
         options=plots.Options(variables=("x", "y")),
         state=ParseState(),
     )
-    deep.add(surface)
+    surface = deep.add(surface)
     assert isinstance(surface.boundary, evaluate.Boundary)
     assert np.isfinite(surface.boundary.across).any()
     assert np.isfinite(surface.boundary.along).any()
 
 
 def test_an_all_nan_surface_still_says_no_real_values(deep, solid):
-    surface = solid.Surface(
+    surface = Surface(
         worksheet=1,
         label="#5",
         text="SQRT(-1-x^2-y^2)",
@@ -1805,12 +1804,12 @@ def test_an_all_nan_surface_still_says_no_real_values(deep, solid):
         options=plots.Options(variables=("x", "y")),
         state=ParseState(),
     )
-    deep.add(surface)
+    surface = deep.add(surface)
     assert deep.status.text() == "#5: no real values over this domain"
 
 
 def test_the_3d_clear_button_empties_its_own_window(deep, solid):
-    surface = solid.Surface(
+    surface = Surface(
         worksheet=1,
         label="#1",
         text="x*y",
@@ -1820,7 +1819,7 @@ def test_the_3d_clear_button_empties_its_own_window(deep, solid):
         options=plots.Options(variables=("x", "y")),
         state=ParseState(),
     )
-    deep.add(surface)
+    surface = deep.add(surface)
     assert deep.windowTitle() == "x*y - Rederive 3D plot"
     deep.clear_action.trigger()
     assert deep.plots == []
@@ -1828,8 +1827,8 @@ def test_the_3d_clear_button_empties_its_own_window(deep, solid):
     assert deep.windowTitle() == "Rederive 3D plot"
 
 
-def _surface(solid, text, label="#1"):
-    return solid.Surface(
+def _surface(text, label="#1"):
+    return Surface(
         worksheet=1,
         label=label,
         text=text,
@@ -1856,18 +1855,18 @@ def _pressed_m(window):
 def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
     # The toolbar box flips every surface in the window to wire and back, M is
     # its key, and the look it leaves is handed back as the sticky value.
-    one = _surface(solid, "x*y")
-    two = _surface(solid, "x+y", label="#2")
-    deep.add(one)
-    deep.add(two)
+    one = _surface("x*y")
+    two = _surface("x+y", label="#2")
+    one = deep.add(one)
+    two = deep.add(two)
     assert one.wire and two.wire
     deep.mesh_action.trigger()
     assert not one.wire and not two.wire
-    assert deep.host.adjustments == {"wire": False}
+    assert deep.session.adjustments == {"wire": False}
     assert one.item.visible() and not one.wires.visible()
     _pressed_m(deep)
     assert one.wire and two.wire
-    assert deep.host.adjustments == {"wire": True}
+    assert deep.session.adjustments == {"wire": True}
     # The wire draws over the solid, which stays on as the shape it is hidden
     # behind.
     assert one.item.visible() and one.wires.visible()
@@ -1878,8 +1877,8 @@ def test_the_wire_draws_at_the_curves_weight(deep, solid):
 
     # The one constant of the 2D window's strokes reaches the wire too, so a
     # wire surface carries the weight a curve does.
-    surface = _surface(solid, "x*y")
-    deep.add(surface)
+    surface = _surface("x*y")
+    surface = deep.add(surface)
     assert surface.wires.width == CURVE_WIDTH
 
 
@@ -1887,17 +1886,17 @@ def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep, solid):
     # The two-level shape a data plot's points already use: the per-surface
     # right-click is the exception, so one surface goes solid while the other
     # stays wire, and no sticky value is handed back.
-    one = _surface(solid, "x*y")
-    two = _surface(solid, "x+y", label="#2")
-    deep.add(one)
-    deep.add(two)
+    one = _surface("x*y")
+    two = _surface("x+y", label="#2")
+    one = deep.add(one)
+    two = deep.add(two)
     deep.toggle_wire(one)
     assert not one.wire and two.wire
     assert one.item.visible() and two.wires.visible()
-    assert deep.host.adjustments == {}
+    assert deep.session.adjustments == {}
     deep.toggle_wire(one)
     assert one.wire
-    assert deep.host.adjustments == {}
+    assert deep.session.adjustments == {}
 
 
 def test_a_surface_arrives_in_the_look_the_window_was_left_in(qt, solid):
@@ -1905,23 +1904,23 @@ def test_a_surface_arrives_in_the_look_the_window_was_left_in(qt, solid):
     # the exception, the wire being every window's default - opens with the
     # box unchecked and gives the look to every surface that arrives, while a
     # replacement keeps the look of the surface it replaces.
-    window = solid.Window3D(1, InlineHost(), wire=False)
+    window = solid.Window3D(1, InlineSession(), wire=False)
     try:
         assert not window.mesh_action.isChecked()
-        one = _surface(solid, "x*y")
-        window.add(one)
+        one = _surface("x*y")
+        one = window.add(one)
         assert not one.wire
         window.toggle_wire(one)
-        replaced = _surface(solid, "x^2-y^2")
-        window.add(replaced)
+        replaced = _surface("x^2-y^2")
+        replaced = window.add(replaced)
         assert replaced.wire
     finally:
         window.close()
 
 
 def test_the_wire_darkens_for_export_like_every_other_color(deep, solid):
-    surface = _surface(solid, "x*y")
-    deep.add(surface)
+    surface = _surface("x*y")
+    surface = deep.add(surface)
     points, shades = solid.wire(
         surface.xs, surface.ys, surface.values, deep.box_now, surface.boundary
     )
@@ -1949,8 +1948,8 @@ def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid):
     # in the background's own color and pushed back by the polygon offset, so
     # that it takes the pixels of every line behind it and none of the lines
     # on it.
-    surface = _surface(solid, "x^2+y^2")
-    deep.add(surface)
+    surface = _surface("x^2+y^2")
+    surface = deep.add(surface)
     assert surface.item.visible() and surface.wires.visible()
     assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
     # The flat color is only read where a mesh has no vertex colors, so the
@@ -1972,8 +1971,8 @@ def test_the_occluder_goes_white_with_the_canvas_for_an_export(deep, solid):
 
     # An export is taken on white, and an occluder still painted the dark
     # canvas would be a black surface in the picture rather than no surface.
-    surface = _surface(solid, "x^2+y^2")
-    deep.add(surface)
+    surface = _surface("x^2+y^2")
+    surface = deep.add(surface)
     with solid._on_paper(deep):
         assert surface.item.opts["color"] == pg.mkColor("w")
     assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
@@ -1985,8 +1984,8 @@ def test_a_surface_drawn_solid_again_is_the_stock_item_it_was(deep, solid):
     # The occluder is a dress the item wears for as long as the wire is on:
     # solid again, it draws under the stock opaque state in its own shaded
     # colors, however many times the look has been flipped.
-    surface = _surface(solid, "x^2+y^2")
-    deep.add(surface)
+    surface = _surface("x^2+y^2")
+    surface = deep.add(surface)
     for _ in range(2):
         deep.toggle_wire(surface)
         assert _gl_state(surface.item) == GLOptions["opaque"]
@@ -2006,8 +2005,8 @@ def test_the_wire_loses_the_pixels_behind_the_surface(qt, deep, solid):
     # The picture itself, where there is a card to draw it on: a bowl in wire
     # has fewer lit pixels than the same bowl with nothing to hide behind,
     # because its far side is inside it.
-    surface = _surface(solid, "x^2+y^2")
-    deep.add(surface)
+    surface = _surface("x^2+y^2")
+    surface = deep.add(surface)
     deep.resize(400, 300)
     deep.show()
     qt.processEvents()
@@ -2105,9 +2104,9 @@ def test_the_3d_menu_lists_every_surface_under_remove(deep, solid):
     # A submenu of nothing is offered greyed rather than left off: what it
     # would list is what the window is empty of.
     assert not entry.isEnabled()
-    one, two = _surface(solid, "x*y"), _surface(solid, "x+y", label="#2")
-    deep.add(one)
-    deep.add(two)
+    one, two = _surface("x*y"), _surface("x+y", label="#2")
+    one = deep.add(one)
+    two = deep.add(two)
     deep.menu.aboutToShow.emit()
     listed = deep._remove_menu.actions()
     assert [action.text() for action in listed] == [one.named, two.named]
@@ -2141,8 +2140,8 @@ def test_a_right_click_that_stays_put_is_what_asks_for_the_3d_menu(deep):
 
 # -- the receiver ---------------------------------------------------------------
 #
-# One pointer, and it is the window the user last touched: the host learns it
-# from the windows' own activation events. Exercised on a real Host built in
+# One pointer, and it is the window the user last touched: the session learns
+# it from the windows' own activation events. Exercised on a real session in
 # this process, offscreen, because activation is a conversation between the
 # window and the registry - the pipe carries none of it, and a child process's
 # windows cannot be touched from a test.
@@ -2150,25 +2149,22 @@ def test_a_right_click_that_stays_put_is_what_asks_for_the_3d_menu(deep):
 
 @pytest.fixture
 def registry(qt):
-    """A real Host in this process, windows and receiver bookkeeping included.
+    """A real plot session over the Qt backend, receiver bookkeeping included.
 
-    The pipe goes nowhere: what is under test is which window an `Add` lands
-    in and how the receiver follows the user's touch, and the replies come
-    back as return values rather than up a pipe.
+    Nothing is sent anywhere: what is under test is which window an `Add`
+    lands in and how the receiver follows the user's touch, so the replies are
+    return values and the events are a list.
     """
-    import multiprocessing
+    from rederive.plot.qt.backend import QtBackend, ThreadExecutor
+    from rederive.plot.session import PlotSession
 
-    from rederive.plot.host import Host
-
-    ours, theirs = multiprocessing.Pipe()
-    host = Host(theirs)
-    #: The app's end of the pipe, for a test that reads events off it.
-    host.appside = ours
-    yield host
-    for window in list(host.windows.values()):
+    session = PlotSession(QtBackend(), ThreadExecutor())
+    #: Every event the session has reported, which the app would have heard.
+    session.reported = []
+    session.events = session.reported.append
+    yield session
+    for window in list(session.windows.values()):
         window.close()
-    ours.close()
-    theirs.close()
 
 
 def _landing(text, label, **keywords):
@@ -2186,7 +2182,7 @@ def _landing(text, label, **keywords):
 
 
 def test_a_plots_arrival_counts_as_a_touch(registry):
-    placed = registry._add(_landing("SIN(x)", "#1"))
+    placed = registry.add(_landing("SIN(x)", "#1"))
     assert placed == plots.Placed(1)
     window = registry.windows[1]
     assert window.current
@@ -2194,44 +2190,44 @@ def test_a_plots_arrival_counts_as_a_touch(registry):
 
 
 def test_touching_a_window_makes_it_the_receiver(registry):
-    one = registry._add(_landing("SIN(x)", "#1")).window
-    two = registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    one = registry.add(_landing("SIN(x)", "#1")).window
+    two = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
     assert registry.windows[two].current and not registry.windows[one].current
     registry.touched(one)
     assert registry.windows[one].current and not registry.windows[two].current
     assert registry.windows[one].windowTitle().endswith("(current)")
     # The next plot follows the touch.
-    assert registry._add(_landing("TAN(x)", "#3")).window == one
+    assert registry.add(_landing("TAN(x)", "#3")).window == one
 
 
 def test_the_activation_event_is_what_feeds_the_receiver(registry, qt):
     # The wiring itself: activating the window - what a click, a raise or an
     # alt-tab comes to - reaches the registry with no request on the way.
-    one = registry._add(_landing("SIN(x)", "#1")).window
-    registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW))
+    one = registry.add(_landing("SIN(x)", "#1")).window
+    registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW))
     registry.windows[one].activateWindow()
     qt.processEvents()
     assert registry.windows[one].current
-    assert registry._add(_landing("TAN(x)", "#3")).window == one
+    assert registry.add(_landing("TAN(x)", "#3")).window == one
 
 
 def test_closing_the_receiver_hands_it_to_the_last_activated_survivor(registry):
-    one = registry._add(_landing("SIN(x)", "#1")).window
-    two = registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
-    three = registry._add(_landing("TAN(x)", "#3", window=plots.Where.NEW)).window
+    one = registry.add(_landing("SIN(x)", "#1")).window
+    two = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    three = registry.add(_landing("TAN(x)", "#3", window=plots.Where.NEW)).window
     registry.touched(one)
     registry.touched(three)
     registry.windows[three].close()
     # The last-activated survivor of the kind, not the newest window.
     assert registry.windows[one].current and not registry.windows[two].current
-    assert registry._add(_landing("x^2", "#4")).window == one
+    assert registry.add(_landing("x^2", "#4")).window == one
 
 
 # -- the sticky preferences in the registry --------------------------------------
 #
-# The write-back half of section 7, on the same in-process Host: a control
+# The write-back half of section 7, on the same in-process session: a control
 # moved in a window updates the preferences the next plot is built with, and
-# the change goes up the pipe so the app can outlive this host with it.
+# the change is reported so the app can outlive this session with it.
 
 
 def _points(text, label, **keywords):
@@ -2248,7 +2244,7 @@ def _points(text, label, **keywords):
 
 
 def test_a_toggle_left_in_one_window_shapes_the_next_data_plot(registry):
-    window = registry.windows[registry._add(_points("[[1, 2], [3, 4]]", "#1")).window]
+    window = registry.windows[registry.add(_points("[[1, 2], [3, 4]]", "#1")).window]
     plot = window.plots[0]
     assert plot.connected is False
     window._pointed = plot
@@ -2256,28 +2252,25 @@ def test_a_toggle_left_in_one_window_shapes_the_next_data_plot(registry):
     window._set_point_size(8.0)
     # The host keeps the values the next plot is filled from...
     assert registry.preferences == plots.Prefer(connected=True, point_size=8.0)
-    # ...and the app is told, so the values survive this host.
-    assert registry.appside.poll(1.0)
-    number, event = registry.appside.recv()
-    assert number == plots.EVENT
-    assert event == plots.Preferred(plots.Prefer(connected=True))
+    # ...and the app is told, so the values survive this session.
+    assert registry.reported[0] == plots.Preferred(plots.Prefer(connected=True))
     # A data plot with no opinion of its own follows suit, in a fresh window
     # as in this one.
-    fresh = registry._add(_points("[[5, 6], [7, 8]]", "#2", window=plots.Where.NEW))
+    fresh = registry.add(_points("[[5, 6], [7, 8]]", "#2", window=plots.Where.NEW))
     arrived = registry.windows[fresh.window].plots[0]
     assert arrived.connected is True
     assert arrived.point_size == 8.0
 
 
 def test_a_released_framing_lock_is_this_windows_alone(registry):
-    one = registry._add(_landing("SIN(x)", "#1")).window
+    one = registry.add(_landing("SIN(x)", "#1")).window
     registry.windows[one].equal.trigger()
     assert not registry.windows[one].equal.isChecked()
     # Nothing was kept and nothing was reported: the next window opens with
     # equal scales, as every window does.
     assert registry.preferences == plots.Prefer()
-    assert not registry.appside.poll(0.05)
-    two = registry._add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    assert registry.reported == []
+    two = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
     assert registry.windows[two].equal.isChecked()
 
 
@@ -2292,9 +2285,7 @@ def test_the_wire_handed_back_is_the_next_surface_windows_look(registry, solid):
     # the host kept the value and told the app, and the next 3D window opens
     # with the box checked - so the next surface arrives as wire.
     registry.adjusted(wire=True)
-    assert registry.appside.poll(1.0)
-    _, event = registry.appside.recv()
-    assert event == plots.Preferred(plots.Prefer(wire=True))
+    assert registry.reported == [plots.Preferred(plots.Prefer(wire=True))]
     window = registry._target(plots.Where.NEW, plots.WindowKind.THREE_D)
     assert window.wired
     assert window.mesh_action.isChecked()
@@ -2398,7 +2389,7 @@ def test_equal_scales_is_nobodys_setting_and_nothing_persists_it():
 
 
 def test_a_plot_with_no_opinion_is_drawn_the_way_the_preferences_say():
-    from rederive.plot.host import preferred
+    from rederive.plot.session import preferred
 
     request = plots.Add(
         worksheet=0,
@@ -2412,7 +2403,7 @@ def test_a_plot_with_no_opinion_is_drawn_the_way_the_preferences_say():
 
 def test_a_plot_that_has_an_opinion_keeps_it():
     """Which is what makes a point size chosen in the window survive a replot."""
-    from rederive.plot.host import preferred
+    from rederive.plot.session import preferred
 
     request = plots.Add(
         worksheet=0,
