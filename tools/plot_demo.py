@@ -80,12 +80,22 @@ WINDOW = (900, 520)
 SPIN_DEGREES = 4.0
 SPIN = 0.12
 
-#: The one action the film takes that is neither a plot nor a camera move: the
-#: `polar` toggle in the window the last curve landed in, which is where a
-#: curve is read as r = f(θ). It is a control of the picture and not a command
-#: of the app, so nothing happens in the algebra window while it is flipped -
-#: the plot window says what it did on its own status line.
+#: The three actions the polar flip is filmed as. The `polar` toggle is a
+#: control of the picture and not a command of the app, so no keystroke stands
+#: for it and nothing moves in the algebra window while it happens - and a
+#: picture that rearranges itself with nothing visible causing it reads as a
+#: fault. So the pointer that does it is drawn in: it reaches the control, the
+#: control lights under it and the curve is reread, and it leaves again.
+REACH = "reach"
 POLAR = "polar"
+AWAY = "away"
+
+#: The pointer, drawn tip-first from the point it is pointing at, and how tall
+#: it stands in the units the chrome is drawn in. White on a dark toolbar, with
+#: an outline so that it survives the light one under it.
+POINTER = "M0 0 L0 17 L4.4 13.1 L7.2 19.4 L10.2 18 L7.4 11.8 L12.8 11.6 Z"
+POINTER_HEIGHT = 19.4
+POINTER_SIZE = 22.0
 
 #: The chrome Rich draws around a screenshot, in the units it writes one in: the
 #: whole width, the padding a screenshot sits in, the title bar over it and the
@@ -146,9 +156,14 @@ class Recorder(readme_demo.Recorder):
         await self.key("n" if new else "p", hold)
 
     def polar(self, hold: float = RESULT) -> None:
-        """Flip the last window's polar toggle, and hold what it makes of it."""
-        self.actions.append(POLAR)
-        self.snap(hold)
+        """Film the pointer reaching the last window's polar toggle and pressing it.
+
+        Three frames: the pointer on the control, the control lit with the curve
+        redrawn under it, and the picture alone once the pointer has gone.
+        """
+        for action, held in ((REACH, 0.9), (POLAR, 1.6), (AWAY, hold)):
+            self.actions.append(action)
+            self.snap(held)
 
     def spin(self, frames: int, last: float = RESULT) -> None:
         """Turn the camera over the surface just drawn, a frame at a step.
@@ -266,7 +281,7 @@ class _Silent:
 
 def photograph(
     actions: list[plots.Add | float | str], directory: Path
-) -> list[tuple[Path, str]]:
+) -> list[tuple[Path, str, tuple[float, float] | None]]:
     """Every picture the film shows, taken off the program's own plot windows.
 
     A host is built here rather than spawned, and asked to take the requests the
@@ -330,12 +345,38 @@ def photograph(
             application.processEvents()
             time.sleep(0.01)
 
-    shots: list[tuple[Path, str]] = []
+    shots: list[tuple[Path, str, tuple[float, float] | None]] = []
+    #: Where the pointer stands in the picture being taken, in its own pixels,
+    #: or None for the frames it is not in - which is all but three of them.
+    pointer: tuple[float, float] | None = None
 
     def shoot(window: Any) -> None:
         path = directory / f"{len(shots):04d}.png"
         window.grab().save(str(path))
-        shots.append((path, window.windowTitle()))
+        shots.append((path, window.windowTitle(), pointer))
+
+    def hover(window: Any, under: bool) -> tuple[float, float] | None:
+        """Put the polar toggle under the pointer, or take it out again.
+
+        The button is left believing the pointer is on it, which is what the
+        style sheet's `:hover` reads, so the control lights the way it would
+        under a hand. Where it lands is asked of the button rather than
+        guessed, and answered in the picture's pixels rather than the window's.
+        """
+        button = next(
+            found
+            for found in window.findChildren(QtWidgets.QToolButton)
+            if found.defaultAction() is window.polar_toggle
+        )
+        button.setAttribute(QtCore.Qt.WidgetAttribute.WA_UnderMouse, under)
+        button.update()
+        if not under:
+            return None
+        middle = button.mapTo(
+            window, QtCore.QPoint(button.width() // 2, button.height() // 2)
+        )
+        ratio = window.devicePixelRatioF()
+        return (middle.x() * ratio, middle.y() * ratio)
 
     window = host._target(plots.Where.NEW, plots.WindowKind.TWO_D)
     window.show()
@@ -348,9 +389,15 @@ def photograph(
                 raise SystemExit(f"{action.label} was refused: {placed}")
             window = host.windows[placed.window]
             settle()
+        elif action == REACH:
+            pointer = hover(window, True)
+            quiet(TURN)
         elif action == POLAR:
             window.polar_toggle.trigger()
             settle()
+        elif action == AWAY:
+            pointer = hover(window, False)
+            quiet(TURN)
         else:
             window.view.orbit(action, 0.0)
             quiet(TURN)
@@ -358,18 +405,31 @@ def photograph(
     return shots
 
 
-def framed(picture: Path, title: str) -> str:
+def framed(picture: Path, title: str, pointer: tuple[float, float] | None) -> str:
     """One plot window in the chrome Rich draws a terminal screenshot in.
 
     The same rounded card, the same three lights and the same title face, so
     that the two windows in a frame read as two windows of one desktop. The
     title is the window's own, which is the plots it holds - the window manager
     would be showing exactly this over it.
+
+    The pointer, where there is one, is drawn over the picture rather than
+    grabbed with it: a window renders without the cursor that is on it, and the
+    one control the film works by hand needs a hand to be seen working it.
     """
     with Image.open(picture) as image:
         width, height = image.size
     inner = FRAME_WIDTH - 2 * INSET
     tall = round(inner * height / width, 1)
+    hand = ""
+    if pointer is not None:
+        scale = POINTER_SIZE / POINTER_HEIGHT
+        at = (INSET + pointer[0] * inner / width, TITLE_BAR + pointer[1] * tall / height)
+        hand = (
+            f'\n  <path d="{POINTER}" fill="#ffffff" stroke="#111318"'
+            f' stroke-width="1.4" stroke-linejoin="round"'
+            f' transform="translate({at[0]:.1f},{at[1]:.1f}) scale({scale:.3f})"/>'
+        )
     return f"""<svg viewBox="0 0 {FRAME_WIDTH} {TITLE_BAR + tall + FOOT}"
      xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" rx="8"
@@ -382,7 +442,7 @@ def framed(picture: Path, title: str) -> str:
     <circle cx="44" cy="0" r="7" fill="#28c840"/>
   </g>
   <image xlink:href="{picture.name}" x="{INSET}" y="{TITLE_BAR}"
-         width="{inner}" height="{tall}"/>
+         width="{inner}" height="{tall}"/>{hand}
 </svg>
 """
 
@@ -471,7 +531,7 @@ def main():
         plots_at.mkdir()
         shots = photograph(rec.actions, plots_at)
         panels = render(
-            [framed(picture, title) for picture, title in shots],
+            [framed(*shot) for shot in shots],
             arguments.width,
             plots_at,
         )
