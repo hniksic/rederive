@@ -41,7 +41,7 @@ the pixels stretched.
 from __future__ import annotations
 
 import html
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,20 +52,20 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Angle, Context
 from rederive.model.expr import Node
-from rederive.plot import evaluate, protocol
+from rederive.plot import evaluate, protocol, theme
 from rederive.plot.protocol import Options, PlotKind
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
-__all__ = ["PALETTE", "Plot", "Window2D"]
+__all__ = ["PALETTE", "Legend", "Plot", "Window2D"]
 
 #: The window's own colors. Near-black rather than black, so that a curve in
 #: black-adjacent color still reads and so that the window does not look like
-#: a hole in the desktop.
+#: a hole in the desktop. What is around the canvas - the bar, the fields, the
+#: status line - is the chrome's business and lives in `theme`.
 BACKGROUND = "#0c0c10"
 AXIS_COLOR = "#909090"
 GRID_ALPHA = 0.18
 TEXT_COLOR = "#d0d0d0"
-STATUS_BACKGROUND = "#16161c"
 
 #: How wide the stroke that draws mathematics is, in logical pixels. The curve
 #: pen, a data plot's connecting polyline, the legend sample drawn with the
@@ -160,6 +160,35 @@ REGION_ALPHA = 0.25
 #: How big a data point is drawn, and the sizes the right-click menu offers.
 POINT_SIZE = 5.0
 POINT_SIZES = (3.0, 5.0, 8.0, 12.0)
+
+#: How the legend card is laid out, in logical pixels: the length of the color
+#: sample, the gap on either side of it, the room the eye affordance takes at
+#: the right end of a row, and how tall a row is drawn.
+LEGEND_SAMPLE = 18
+LEGEND_GAP = 8
+LEGEND_EYE = 16
+LEGEND_ROW = 19
+
+#: How much of a hidden row is left standing. Dimmed rather than struck
+#: through: a hidden curve is a curve that is still in the window, and the row
+#: has to read as one of the list rather than as a mistake in it.
+LEGEND_FADED = 0.4
+
+#: How long a curve takes to come back when its legend row is clicked. The
+#: hiding is instant - what is hidden is hidden the moment it is asked for -
+#: and only the return is eased, since that is the half the eye follows.
+FADE_MS = 150
+
+#: The trace marker: a ring rather than a filled dot, so the point it names is
+#: still visible under it, and the pen that draws the ring. The hairline down
+#: to the axis is drawn in the same color at this much of it, and the value
+#: chip rides this far from the point so that a pointer over the marker never
+#: covers what the marker says.
+MARKER_PX = 11.0
+MARKER_WIDTH = 2.0
+HAIRLINE_ALPHA = 0.45
+CHIP_OFFSET_PX = 12.0
+CHIP_RADIUS = 4.0
 
 #: How much of an expression a legend entry, a menu item or a status line shows
 #: of it. A data matrix is one expression and a hundred pairs of numbers, and a
@@ -359,6 +388,19 @@ class Canvas(pg.ViewBox):
         self._window.remember()
         self.showAxRect(self.childGroup.mapRectFromParent(rectangle))
 
+    def updateScaleBox(self, one: Any, two: Any) -> None:
+        """The rubber band, in this window's accent rather than in stock yellow.
+
+        Colored here rather than once at construction because the box is not
+        ours: the view box makes it lazily and throws it away again whenever
+        the mouse mode changes, so the one place it is certain to exist is the
+        moment it is about to be drawn.
+        """
+        box = self.rbScaleBox
+        box.setPen(pg.mkPen(theme.ACCENT, width=1))
+        box.setBrush(pg.mkBrush(_tinted(theme.ACCENT, 0.08)))
+        super().updateScaleBox(one, two)
+
     def wheelEvent(self, ev: Any, axis: int | None = None) -> None:
         modifiers = ev.modifiers()
         if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier:
@@ -389,46 +431,251 @@ class Canvas(pg.ViewBox):
         return self.menu
 
 
-class Legend(pg.LegendItem):
-    """The stock legend with the whole entry as the click target.
+class _Row(QtWidgets.QWidget):
+    """One line of a legend card: a sample of the color, a name, and an eye.
 
-    pyqtgraph puts hide/show on the color swatch alone, which is a twenty-pixel
-    box beside a name that reads like a button and is not one. Here a click
-    anywhere on the row toggles the curve, and a right-click anywhere on it
-    offers to remove the plot - the same removal a right-click on the curve
-    itself offers.
+    Painted rather than laid out of labels, because what a row shows is three
+    things in one strip - the stroke the curve is drawn with, what it is
+    called, and whether it is being shown - and a painter says that in a dozen
+    lines where a stack of styled labels would need a dozen widgets.
+
+    It is transparent to the mouse: the card above answers every gesture, so
+    the row the pointer is on and the row a click is about are worked out in
+    one place instead of in as many places as there are rows.
     """
 
-    #: The row the pointer is over, by index into the plot list, and what a
-    #: click on it is about.
-    clicked = QtCore.Signal(int, object)
+    def __init__(self, parent: Any) -> None:
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setFixedHeight(LEGEND_ROW)
+        self.name = ""
+        self.color = PALETTE[0]
+        self.hidden = False
+        self.over = False
+        self.paper = False
 
-    def hoverEvent(self, ev: Any) -> None:
-        """Claim both buttons, so a click anywhere on a row comes here.
+    def describe(self, name: str, color: str, hidden: bool, paper: bool) -> None:
+        """What this row now stands for, and a repaint to say so.
 
-        The stock legend claims drags alone, which leaves clicking to the
-        twenty-pixel swatch; claiming clicks as well is what widens the target
-        to the name beside it.
+        The width is a minimum rather than a size, so the layout stretches
+        every row to the widest of them: the eyes then stand in one column and
+        the hover wash is one shape, whatever the names happen to be.
         """
-        ev.acceptDrags(QtCore.Qt.MouseButton.LeftButton)
-        ev.acceptClicks(QtCore.Qt.MouseButton.LeftButton)
-        ev.acceptClicks(QtCore.Qt.MouseButton.RightButton)
+        self.name, self.color, self.hidden, self.paper = name, color, hidden, paper
+        self.setMinimumWidth(
+            LEGEND_GAP
+            + LEGEND_SAMPLE
+            + LEGEND_GAP
+            + self.fontMetrics().horizontalAdvance(name)
+            + LEGEND_GAP
+            + LEGEND_EYE
+        )
+        self.update()
 
-    def mouseClickEvent(self, ev: Any) -> None:
-        row = self._row_at(ev.pos())
-        if row is None:
+    def paintEvent(self, _ev: Any) -> None:
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        rectangle = QtCore.QRectF(self.rect())
+        if self.over:
+            wash = theme.CARD_PAPER_ROW_OVER if self.paper else theme.CARD_ROW_OVER
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QColor(*wash))
+            painter.drawRoundedRect(rectangle, 5.0, 5.0)
+        painter.setOpacity(LEGEND_FADED if self.hidden else 1.0)
+        color = QtGui.QColor(self.color)
+        middle = rectangle.center().y()
+        pen = QtGui.QPen(color)
+        pen.setWidthF(CURVE_WIDTH)
+        painter.setPen(pen)
+        painter.drawLine(
+            QtCore.QPointF(LEGEND_GAP, middle),
+            QtCore.QPointF(LEGEND_GAP + LEGEND_SAMPLE, middle),
+        )
+        painter.setPen(color)
+        painter.setFont(self.font())
+        left = LEGEND_GAP + LEGEND_SAMPLE + LEGEND_GAP
+        painter.drawText(
+            QtCore.QRectF(left, 0.0, rectangle.width() - left, rectangle.height()),
+            int(
+                QtCore.Qt.AlignmentFlag.AlignLeft
+                | QtCore.Qt.AlignmentFlag.AlignVCenter
+            ),
+            self.name,
+        )
+        if self.over:
+            painter.setOpacity(1.0)
+            self._eye(painter, rectangle)
+        painter.end()
+
+    def _eye(self, painter: Any, rectangle: Any) -> None:
+        """The affordance that says what a click here would do, while it can do it.
+
+        An open eye on a plot that is being shown and a struck one on a plot
+        that is not, drawn only under the pointer: a row of eyes down the card
+        would be a row of buttons, and the card is a list of what the window
+        holds first and a set of controls second.
+        """
+        room = QtCore.QRectF(
+            rectangle.right() - LEGEND_EYE - LEGEND_GAP / 2,
+            rectangle.center().y() - LEGEND_EYE / 2,
+            LEGEND_EYE,
+            LEGEND_EYE,
+        )
+        almond = QtCore.QRectF(
+            room.center().x() - 5.0, room.center().y() - 3.0, 10.0, 6.0
+        )
+        ink = QtGui.QColor(theme.DIM if self.paper else theme.MUTED)
+        painter.setPen(QtGui.QPen(ink, 1.0))
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(almond)
+        painter.setBrush(ink)
+        painter.drawEllipse(room.center(), 1.4, 1.4)
+        if self.hidden:
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            painter.drawLine(almond.bottomLeft(), almond.topRight())
+
+
+class Legend(QtWidgets.QFrame):
+    """The plot list as a card over the picture, one row per plot.
+
+    A widget floating over the canvas rather than an item inside it, which is
+    what lets the two window kinds share one legend: a GL view is not a
+    graphics scene and has nothing an item could hang on, and a card that is a
+    widget hangs equally well over either.
+
+    It answers the same two gestures it always has, and the whole row is the
+    target for both: a left click hides and shows the plot, a right click
+    offers the menu the plot's own stroke offers. The eye that appears under
+    the pointer is the only new thing, and it says what the click would do
+    rather than being a second place to click.
+
+    The rows are a pool that grows and never shrinks, the row for a plot that
+    is gone being emptied and hidden rather than deleted. A plot list is
+    rebuilt on every add and every removal, and widgets deleted from under a
+    live layout are the shortest way to a legend of stale rows.
+    """
+
+    #: The row the pointer is over, by index into the plot list, and which
+    #: button the click on it was.
+    picked = QtCore.Signal(int, object)
+
+    def __init__(self, parent: Any) -> None:
+        super().__init__(parent)
+        self.setObjectName("legend")
+        self.setMouseTracking(True)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setSpacing(1)
+        self._rows: list[_Row] = []
+        self.shown = 0
+        #: What the card now says, as the window described it, for anything
+        #: that has to draw the same list somewhere else.
+        self.entries: tuple[tuple[str, str, bool], ...] = ()
+        self._over = -1
+        self._paper = False
+        self._dress()
+
+    def _dress(self) -> None:
+        """The card itself: a translucent ground, a hairline, and round corners."""
+        ground = theme.CARD_PAPER if self._paper else theme.CARD
+        edge = theme.CARD_PAPER_EDGE if self._paper else theme.CARD_EDGE
+        self.setStyleSheet(
+            f"QFrame#legend {{ background: {ground}; border: 1px solid {edge};"
+            f" border-radius: {theme.CARD_RADIUS}px; }}"
+        )
+
+    def rebuild(
+        self, entries: Sequence[tuple[str, str, bool]], paper: bool = False
+    ) -> None:
+        """One row per plot: its name, in its color, dimmed where it is hidden.
+
+        The colors are given rather than looked up, so that an export in paper
+        colors rebuilds the card in them: a name in the screen color of a curve
+        is a name in white, and white on white paper is a legend that is not
+        there.
+        """
+        if paper != self._paper:
+            self._paper = paper
+            self._dress()
+        self.entries = tuple(entries)
+        while len(self._rows) < len(entries):
+            row = _Row(self)
+            self.layout().addWidget(row)
+            self._rows.append(row)
+        self.shown = len(entries)
+        for index, row in enumerate(self._rows):
+            if index >= len(entries):
+                row.setVisible(False)
+                continue
+            name, color, hidden = entries[index]
+            row.describe(name, color, hidden, paper)
+            row.over = index == self._over
+            row.setVisible(True)
+        # The card is not in any layout - it floats over the picture - so its
+        # size is its own business, and the rows have none until the layout has
+        # run over them.
+        self.layout().activate()
+        self.resize(self.layout().sizeHint())
+
+    def mousePressEvent(self, ev: Any) -> None:
+        row = self._at(ev.position().toPoint())
+        if row < 0:
             ev.ignore()
             return
+        self.picked.emit(row, ev.button())
         ev.accept()
-        self.clicked.emit(row, ev.button())
 
-    def _row_at(self, pos: Any) -> int | None:
-        """Which entry the point is in, or None where it is in none of them."""
-        for index, (sample, label) in enumerate(self.items):
-            for item in (sample, label):
-                if item.mapRectToParent(item.boundingRect()).contains(pos):
-                    return index
-        return None
+    def mouseMoveEvent(self, ev: Any) -> None:
+        self._hover(self._at(ev.position().toPoint()))
+        ev.ignore()
+
+    def leaveEvent(self, ev: Any) -> None:
+        self._hover(-1)
+        super().leaveEvent(ev)
+
+    def _hover(self, row: int) -> None:
+        if row == self._over:
+            return
+        self._over = row
+        for index, one in enumerate(self._rows[: self.shown]):
+            one.over = index == row
+            one.update()
+
+    def _at(self, point: Any) -> int:
+        """Which row the point is in, or -1 where it is in none of them."""
+        for index, row in enumerate(self._rows[: self.shown]):
+            if row.geometry().contains(point):
+                return index
+        return -1
+
+
+class _Chip(pg.TextItem):
+    """The traced numbers, in a small dark label riding the marker.
+
+    A text item that draws its own ground, because the stock one draws a
+    polygon around its text and what this wants is a chip: rounded, dark
+    enough to be read over a curve, and edged by one hairline rather than by a
+    frame. The base item's own fill and border are left empty, so what it does
+    here is the transform bookkeeping, and the ground is painted under text
+    that has not been drawn yet - a child item paints after its parent.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(html="", anchor=(0.0, 1.0))
+        self._fill = pg.mkBrush(_tinted("#0f0f15", 0.85))
+        self._edge = pg.mkPen(_tinted("#ffffff", 0.10))
+        self.setFont(theme.monospace(8))
+
+    def paint(self, painter: Any, *arguments: Any) -> None:
+        super().paint(painter, *arguments)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(self._edge)
+        painter.setBrush(self._fill)
+        painter.drawRoundedRect(
+            self.textItem.mapRectToParent(self.textItem.boundingRect()),
+            CHIP_RADIUS,
+            CHIP_RADIUS,
+        )
 
 
 class Window2D(QtWidgets.QMainWindow):
@@ -464,6 +711,14 @@ class Window2D(QtWidgets.QMainWindow):
         #: The paper colors, while an export dialog is holding them on.
         self._paper: _on_paper | None = None
         self._grid = True
+        #: Whether the legend card is shown, remembered rather than read off
+        #: the widget: a legend the user put away stays away when the next plot
+        #: arrives and brings the card back with it.
+        self._legend = True
+        #: The opacity animations now running, by the plot each belongs to, so
+        #: that a row clicked twice replaces its own animation rather than
+        #: racing it.
+        self._fades: dict[int, Any] = {}
         #: Whether the view is still the default framing, nobody having moved
         #: it. Every gesture that changes the range clears it, since the
         #: default framing is a thing to be given up rather than returned to.
@@ -483,16 +738,10 @@ class Window2D(QtWidgets.QMainWindow):
         self._origin_axes()
         self._prune_menu()
         self._extend_menu()
-        self.legend = Legend(offset=(12, 12), labelTextSize="9pt")
-        self.legend.setParentItem(self.item.vb)
-        self.item.legend = self.legend
-        self.legend.clicked.connect(self._legend_clicked)
-        self.marker = pg.ScatterPlotItem(
-            size=11, symbol="s", pen=pg.mkPen(TEXT_COLOR), brush=None
-        )
-        self.marker.setZValue(20)
-        self.marker.setVisible(False)
-        self.item.addItem(self.marker, ignoreBounds=True)
+        self.legend = Legend(self.plot)
+        self.legend.picked.connect(self._legend_clicked)
+        self.legend.setVisible(False)
+        self._trace_items()
         self.setCentralWidget(self._laid_out())
         self.canvas.setAspectLocked(True, ratio=1.0)
         self.canvas.disableAutoRange()
@@ -505,6 +754,32 @@ class Window2D(QtWidgets.QMainWindow):
         self._timer.timeout.connect(self.resample)
         self.plot.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.resize(760, 560)
+
+    def _trace_items(self) -> None:
+        """The three things a traced point is drawn with, made once and hidden.
+
+        A ring in the curve's own color, a dashed hairline from it down to the
+        abscissa, and a chip carrying the numbers the status line is saying.
+        Three items rather than one because they are three answers to the same
+        question - where on the curve, how far above the axis, and worth what -
+        and they are shown, colored and hidden together.
+        """
+        self.marker = pg.ScatterPlotItem(
+            size=MARKER_PX,
+            symbol="o",
+            pen=pg.mkPen(TEXT_COLOR, width=MARKER_WIDTH),
+            brush=None,
+        )
+        self.marker.setZValue(20)
+        self.hairline = pg.PlotCurveItem(
+            np.empty(0), np.empty(0), pen=pg.mkPen(TEXT_COLOR)
+        )
+        self.hairline.setZValue(19)
+        self.chip = _Chip()
+        self.chip.setZValue(21)
+        for item in (self.marker, self.hairline, self.chip):
+            item.setVisible(False)
+            self.item.addItem(item, ignoreBounds=True)
 
     def _laid_out(self) -> QtWidgets.QWidget:
         """The canvas over a one-line status bar, and a toolbar over both.
@@ -532,36 +807,59 @@ class Window2D(QtWidgets.QMainWindow):
         self.polar_toggle.setToolTip("Show every curve as r = f(θ)")
         self.polar_toggle.triggered.connect(self._polar_mode)
         bar.addAction(self.polar_toggle)
+        bar.addWidget(theme.divider())
         self.clear_action = QtGui.QAction("clear", self)
         self.clear_action.setToolTip("Remove every plot from this window (Del)")
         self.clear_action.triggered.connect(self.clear)
         bar.addAction(self.clear_action)
+        theme.dangerous(bar, self.clear_action)
         # The parameter range of the selected parametric or polar plot. Hidden
         # while the window holds no such plot, since a range of nothing is not
-        # a control; the actions are kept so showing it back is one call.
+        # a control; the actions are kept so showing it back is one call, and
+        # the hairline in front of them goes away with the group it divides.
         self.range_name = QtWidgets.QLabel("")
         self.range_low = self._range_field()
         self.range_high = self._range_field()
         self._range_actions = (
+            bar.addWidget(theme.divider()),
             bar.addWidget(self.range_name),
             bar.addWidget(self.range_low),
-            bar.addWidget(QtWidgets.QLabel(" to ")),
+            bar.addWidget(QtWidgets.QLabel(" … ")),
             bar.addWidget(self.range_high),
         )
         for action in self._range_actions:
             action.setVisible(False)
         layout.addWidget(bar)
         layout.addWidget(self.plot, 1)
+        layout.addWidget(self._status_line())
+        return holder
+
+    def _status_line(self) -> QtWidgets.QWidget:
+        """The window's one line: what it has to say, and where the pointer is.
+
+        The message is the window speaking and is written in the quiet ink a
+        sentence takes; the readout is a measurement and is written in figures
+        that keep their columns while the pointer moves, with the names of the
+        coordinates dimmer than the numbers they carry - the numbers are what
+        is being read, and `x` is only there to say which one.
+        """
+        line = QtWidgets.QFrame()
+        line.setObjectName("statusline")
+        line.setStyleSheet(
+            f"QFrame#statusline {{ background: {theme.STATUS};"
+            f" border-top: 1px solid {theme.STATUS_EDGE}; }}"
+        )
         self.status = QtWidgets.QLabel("")
+        self.status.setStyleSheet(f"color: {theme.STATUS_TEXT}; background: transparent;")
         self.readout = QtWidgets.QLabel("")
-        line = QtWidgets.QWidget()
-        line.setStyleSheet(f"background: {STATUS_BACKGROUND}; color: {TEXT_COLOR};")
+        self.readout.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.readout.setFont(theme.monospace())
+        self.readout.setStyleSheet("background: transparent;")
         across = QtWidgets.QHBoxLayout(line)
-        across.setContentsMargins(8, 2, 8, 2)
+        across.setContentsMargins(10, 3, 10, 3)
         across.addWidget(self.status, 1)
         across.addWidget(self.readout, 0)
-        layout.addWidget(line)
-        return holder
+        return line
 
     def _range_field(self) -> QtWidgets.QLineEdit:
         """One range bound, which the keyboard only reaches when clicked in.
@@ -786,16 +1084,35 @@ class Window2D(QtWidgets.QMainWindow):
     def _relabel(self, paper: bool = False) -> None:
         """Build the legend again, which is how a removal leaves it right.
 
-        The colors are written into the entries rather than set on them, so an
+        The colors are handed to the card rather than looked up by it, so an
         export in paper colors rebuilds the legend as well: a name in the
         screen color of a curve is a name in white, and white on white paper is
         a legend that is not there.
         """
-        self.legend.clear()
-        for plot in self.plots:
-            color = html.escape(plot.paper if paper else plot.color)
-            name = html.escape(plot.named).replace(" ", "&nbsp;")
-            self.legend.addItem(plot.item, f'<span style="color: {color}">{name}</span>')
+        self.legend.rebuild(
+            [
+                (plot.named, plot.paper if paper else plot.color, not plot.visible)
+                for plot in self.plots
+            ],
+            paper=paper,
+        )
+        # An empty card is a rectangle over the corner of the picture saying
+        # nothing; the toggle is remembered rather than read off the widget, so
+        # a legend the user put away stays away when the next plot arrives.
+        self.legend.setVisible(self._legend and bool(self.plots))
+        self._place_legend()
+
+    def _place_legend(self) -> None:
+        """Put the card in the top left corner of the canvas, inside the axes.
+
+        The card is a widget over the whole plot widget and the canvas is only
+        part of it, so where the corner is depends on how wide the numbers down
+        the left edge have made the axis - which changes as the view moves.
+        """
+        corner = self.plot.mapFromScene(
+            self.canvas.mapRectToScene(self.canvas.boundingRect()).topLeft()
+        )
+        self.legend.move(corner.x() + 12, corner.y() + 12)
 
     def _axis_names(self) -> None:
         """Label the axes with the variable being plotted against.
@@ -1294,14 +1611,17 @@ class Window2D(QtWidgets.QMainWindow):
         A polar window adds the polar pair, because a picture drawn as r
         against θ is measured in r and θ: reading a rose off the cartesian
         numbers alone would be arithmetic the window is there to save.
+
+        Written as marked-up text rather than plain, so that the names sit
+        behind the numbers they belong to: what is being read is the figures,
+        and `x` is only there to say which of them is which.
         """
-        text = f"x: {_number(x)}   y: {_number(y)}"
-        if not self.polar:
-            return text
-        turn = 180.0 / np.pi if self.degrees else 1.0
-        radius = float(np.hypot(x, y))
-        angle = float(np.arctan2(y, x)) * turn
-        return f"{text}   r: {_number(radius)}   θ: {_number(angle)}"
+        readings = [("x", x), ("y", y)]
+        if self.polar:
+            turn = 180.0 / np.pi if self.degrees else 1.0
+            readings.append(("r", float(np.hypot(x, y))))
+            readings.append(("θ", float(np.arctan2(y, x)) * turn))
+        return "&nbsp;&nbsp;&nbsp;".join(_named_value(*reading) for reading in readings)
 
     def clicked(self, point: Any) -> bool:
         """A left click on the canvas. True where a curve took it.
@@ -1453,7 +1773,7 @@ class Window2D(QtWidgets.QMainWindow):
 
     def _trace_off(self) -> None:
         self._tracing = None
-        self.marker.setVisible(False)
+        self._unmark()
         self._show_trange()
         self.say("")
 
@@ -1527,7 +1847,7 @@ class Window2D(QtWidgets.QMainWindow):
         if value is None:
             self._lost(plot, plot.variable, x)
             return
-        self._marked(plot, x, value)
+        self._marked(plot, x, value, ((plot.variable, x), ("y", value)))
         self.say(
             f"Tracing {plot.named}   {plot.variable} = {_number(x)}"
             f"   y = {_number(value)}"
@@ -1550,7 +1870,7 @@ class Window2D(QtWidgets.QMainWindow):
             self._lost(plot, plot.parameter, t)
             return
         self._trace_x = x
-        self._marked(plot, x, y)
+        self._marked(plot, x, y, ((plot.parameter, t), ("x", x), ("y", y)))
         self.say(
             f"Tracing {plot.named}   {plot.parameter} = {_number(t)}"
             f"{self._radius(plot, t)}   x = {_number(x)}   y = {_number(y)}"
@@ -1568,14 +1888,64 @@ class Window2D(QtWidgets.QMainWindow):
         Riding a curve into such a place is how a removable singularity is
         found, so the message is the answer rather than an error.
         """
-        self.marker.setVisible(False)
+        self._unmark()
         self.say(f"Tracing {plot.named}: not real and finite at {name} = {_number(at)}")
 
-    def _marked(self, plot: Plot, x: float, y: float) -> None:
-        """The marker itself, in the color of the curve it is riding."""
+    def _unmark(self) -> None:
+        """Take the marker, its hairline and its chip off the canvas together."""
+        for item in (self.marker, self.hairline, self.chip):
+            item.setVisible(False)
+
+    def _marked(
+        self, plot: Plot, x: float, y: float, readings: tuple[tuple[str, float], ...]
+    ) -> None:
+        """The point, marked in the color of the curve it is being read off.
+
+        A ring rather than a dot, so the curve goes on through it; a dashed
+        hairline down to the abscissa, because half of what a reading means is
+        where along the axis it is; and the chip, which says what the status
+        line says without the eye having to travel to the bottom of the window
+        for it. All three take the curve's color, which is what says which
+        curve is being ridden when there are several.
+        """
+        color = pg.mkColor(plot.color)
         self.marker.setData([x], [y])
-        self.marker.setPen(pg.mkPen(plot.color))
-        self.marker.setVisible(True)
+        self.marker.setPen(pg.mkPen(color, width=MARKER_WIDTH))
+        self.hairline.setData(np.array([x, x]), np.array([y, self.axes[1].value()]))
+        self.hairline.setPen(
+            pg.mkPen(
+                _tinted(plot.color, HAIRLINE_ALPHA),
+                width=1,
+                style=QtCore.Qt.PenStyle.DashLine,
+            )
+        )
+        self.chip.setHtml(
+            "<div style='white-space: pre'>"
+            + "<br/>".join(_named_value(*reading) for reading in readings)
+            + "</div>"
+        )
+        self._place_chip(x, y)
+        for item in (self.marker, self.hairline, self.chip):
+            item.setVisible(True)
+
+    def _place_chip(self, x: float, y: float) -> None:
+        """Stand the chip beside the point, on the side that keeps it in view.
+
+        Up and to the right of the marker, which is where the pointer is not,
+        and around to the other side within a corner of the canvas, where the
+        chip would otherwise be written off the edge of the picture.
+        """
+        (left, right), (low, high) = self.canvas.viewRange()
+        across, up = self.canvas.viewPixelSize()
+        near_right = x > right - 0.25 * (right - left)
+        near_top = y > high - 0.2 * (high - low)
+        self.chip.setAnchor((1.0, 1.0) if near_right else (0.0, 1.0))
+        if near_top:
+            self.chip.setAnchor((1.0, 0.0) if near_right else (0.0, 0.0))
+        self.chip.setPos(
+            x + (-CHIP_OFFSET_PX if near_right else CHIP_OFFSET_PX) * across,
+            y + (-CHIP_OFFSET_PX if near_top else CHIP_OFFSET_PX) * up,
+        )
 
     @property
     def traced(self) -> tuple[float, float] | None:
@@ -1719,11 +2089,42 @@ class Window2D(QtWidgets.QMainWindow):
         plot.item.setVisible(not plot.item.isVisible())
         if plot.fill is not None:
             plot.fill.setVisible(plot.item.isVisible())
-        self.legend.items[row][0].update()
+        self._relabel()
         if plot.visible:
+            self._fade_in(plot)
             self._start(plot)
         elif self._tracing == row:
             self._trace_off()
+
+    def _fade_in(self, plot: Plot) -> None:
+        """Bring a curve back over a moment rather than in one frame.
+
+        The one animation in this window, and it is deliberately half of one:
+        hiding is instant, because what the window reports about a plot has to
+        be true the moment the click lands, and only the return is eased. The
+        opacity is nothing but drawing, so nothing anywhere reads it.
+        """
+        running = self._fades.pop(id(plot), None)
+        if running is not None:
+            running.stop()
+        fade = QtCore.QVariantAnimation(self)
+        fade.setDuration(FADE_MS)
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        fade.valueChanged.connect(lambda value, plot=plot: self._faded(plot, value))
+        fade.finished.connect(lambda plot=plot: self._done_fading(plot))
+        self._fades[id(plot)] = fade
+        fade.start(QtCore.QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    def _faded(self, plot: Plot, value: Any) -> None:
+        for item in (plot.item, plot.fill):
+            if item is not None:
+                item.setOpacity(float(value))
+
+    def _done_fading(self, plot: Plot) -> None:
+        """Land on the end of the ramp, whatever the last frame happened to be."""
+        self._faded(plot, 1.0)
+        self._fades.pop(id(plot), None)
 
     def _offer_removal(self, at: Any) -> None:
         """The plot's own menu, where a right-click was about a plot and not a view.
@@ -1813,8 +2214,32 @@ class Window2D(QtWidgets.QMainWindow):
             return
         with _on_paper(self):
             image = pg.exporters.ImageExporter(self.item).export(toBytes=True)
+            self._name_plots(image)
         QtWidgets.QApplication.clipboard().setImage(image)
         self.say("Copied the plot to the clipboard")
+
+    def _name_plots(self, image: Any) -> None:
+        """Write the plot list into the corner of an exported picture.
+
+        The legend is a card floating over the canvas rather than an item in
+        the scene, and an exporter photographs the scene: a picture of three
+        curves with no legend in it is a picture that has lost half of what it
+        showed. So the names are written on afterwards, in the paper colors the
+        curves themselves took, exactly as the 3D window's are.
+        """
+        if not self._legend or not self.plots:
+            return
+        painter = QtGui.QPainter(image)
+        painter.scale(*([image.height() / max(self.item.height(), 1)] * 2))
+        painter.setFont(QtGui.QFont("Helvetica", 9))
+        painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+        corner = self.canvas.geometry().topLeft()
+        for index, plot in enumerate(self.plots):
+            painter.setPen(pg.mkColor(plot.paper))
+            painter.drawText(
+                int(corner.x()) + 16, int(corner.y()) + 24 + index * 14, plot.named
+            )
+        painter.end()
 
     def export(self) -> None:
         """Ctrl-S and the context menu's `Export...`: the stock export dialog.
@@ -1899,7 +2324,8 @@ class Window2D(QtWidgets.QMainWindow):
         elif key == keys.Key_Escape and self._tracing is not None:
             self._trace_off()
         elif key == keys.Key_L:
-            self.legend.setVisible(not self.legend.isVisible())
+            self._legend = not self._legend
+            self.legend.setVisible(self._legend and bool(self.plots))
         elif key == keys.Key_G:
             self._grid = not self._grid
             self.item.showGrid(x=self._grid, y=self._grid, alpha=GRID_ALPHA)
@@ -1985,6 +2411,7 @@ class Window2D(QtWidgets.QMainWindow):
             self.home()
             self._history.clear()
             self._at = 0
+        self._place_legend()
         self._timer.start()
 
     def changeEvent(self, ev: Any) -> None:
@@ -2243,6 +2670,25 @@ class _on_paper:
             window.item.getAxis(edge).setTextPen(pg.mkPen(TEXT_COLOR))
         for line in window.axes:
             line.setPen(pg.mkPen(AXIS_COLOR))
+
+
+def _tinted(color: str, alpha: float) -> Any:
+    """A color at a fraction of its own opacity, for a wash or a hairline."""
+    tint = pg.mkColor(color)
+    tint.setAlphaF(alpha)
+    return tint
+
+
+def _named_value(name: str, value: float) -> str:
+    """One reading, as the status line and the trace chip both write it.
+
+    The name behind the number: what is being read is the figure, and the
+    letter in front of it is only there to say which figure it is.
+    """
+    return (
+        f'<font color="{theme.DIM}">{html.escape(name)}:</font> '
+        f'<font color="{theme.READOUT}">{_number(value)}</font>'
+    )
 
 
 def _number(value: float) -> str:

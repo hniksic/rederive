@@ -46,7 +46,6 @@ and a message naming what happened.
 
 from __future__ import annotations
 
-import html
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -58,9 +57,15 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Context
 from rederive.model.expr import Node
-from rederive.plot import evaluate, protocol
+from rederive.plot import evaluate, protocol, theme
 from rederive.plot.protocol import Options, PlotKind
-from rederive.plot.window2d import CURVE_WIDTH, PALETTE, PAPER_PALETTE, naming
+from rederive.plot.window2d import (
+    CURVE_WIDTH,
+    PALETTE,
+    PAPER_PALETTE,
+    Legend,
+    naming,
+)
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 __all__ = ["Box", "Surface", "Window3D", "mesh", "ticks", "wire"]
@@ -72,13 +77,14 @@ __all__ = ["Box", "Surface", "Window3D", "mesh", "ticks", "wire"]
 SOLID_PALETTE = PALETTE[1:] + PALETTE[:1]
 SOLID_PAPER = PAPER_PALETTE[1:] + PAPER_PALETTE[:1]
 
-#: The window's own colors, the 2D window's near-black and its status line, so
-#: that two plot windows side by side are two windows of one program.
+#: The window's own colors, which are the 2D window's, so that two plot
+#: windows side by side are two windows of one program. What is around the
+#: picture - the bar, the fields, the status line - is the chrome's business
+#: and lives in `theme`.
 BACKGROUND = "#0c0c10"
 BOX_COLOR = (150, 150, 150, 110)
 TICK_COLOR = (150, 150, 150, 200)
 TEXT_COLOR = "#d0d0d0"
-STATUS_BACKGROUND = "#16161c"
 
 #: The same three, for the white background every image export is taken on.
 PAPER_BOX = (40, 40, 40, 230)
@@ -893,68 +899,6 @@ class View(gl.GLViewWidget):
         super().mouseMoveEvent(ev)
 
 
-class Legend(QtWidgets.QFrame):
-    """The plot list, over the picture, one row per surface.
-
-    A GL view is not a graphics scene, so the 2D window's legend item has
-    nothing to hang on and this is a plain widget floating over the canvas
-    instead. It answers the same two gestures: a click on a row hides and shows
-    its surface, a right-click offers to remove it, and the whole row is the
-    target either way.
-
-    The rows are a pool that grows and never shrinks, the row for a surface
-    that is gone being emptied and hidden rather than deleted. A plot list is
-    rebuilt on every add and every removal, and widgets deleted from under a
-    live layout are the shortest way to a legend of stale rows.
-    """
-
-    picked = QtCore.Signal(int, object)
-
-    def __init__(self, parent: Any) -> None:
-        super().__init__(parent)
-        self.setStyleSheet("background: rgba(12, 12, 16, 170); border-radius: 3px;")
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(1)
-        self._rows: list[QtWidgets.QLabel] = []
-        self.shown = 0
-
-    def rebuild(self, entries: Sequence[tuple[str, str, bool]]) -> None:
-        """One row per surface: its name, in its color, struck through if hidden."""
-        while len(self._rows) < len(entries):
-            row = QtWidgets.QLabel(self)
-            self.layout().addWidget(row)
-            self._rows.append(row)
-        self.shown = len(entries)
-        for index, row in enumerate(self._rows):
-            if index >= len(entries):
-                row.setVisible(False)
-                continue
-            name, color, hidden = entries[index]
-            style = f"color: {html.escape(color)}; background: transparent;"
-            if hidden:
-                style += " text-decoration: line-through;"
-            row.setStyleSheet(style)
-            row.setText(
-                "<span style='font-size: 9pt'>"
-                f"{html.escape(name).replace(' ', '&nbsp;')}</span>"
-            )
-            row.setVisible(True)
-        # The frame is not in any layout - it floats over the picture - so its
-        # size is its own business, and the rows have none until the layout has
-        # run over them.
-        self.layout().activate()
-        self.resize(self.layout().sizeHint())
-
-    def mousePressEvent(self, ev: Any) -> None:
-        for index, row in enumerate(self._rows[: self.shown]):
-            if row.geometry().contains(ev.position().toPoint()):
-                self.picked.emit(index, ev.button())
-                ev.accept()
-                return
-        ev.ignore()
-
-
 class Window3D(QtWidgets.QMainWindow):
     """One top-level 3D plot window and everything that happens inside it."""
 
@@ -1043,31 +987,44 @@ class Window3D(QtWidgets.QMainWindow):
         layout.addWidget(self._toolbar())
         layout.addWidget(self.view, 1)
         self.status = QtWidgets.QLabel("")
-        line = QtWidgets.QWidget()
-        line.setStyleSheet(f"background: {STATUS_BACKGROUND}; color: {TEXT_COLOR};")
+        self.status.setStyleSheet(f"color: {theme.STATUS_TEXT}; background: transparent;")
+        line = QtWidgets.QFrame()
+        line.setObjectName("statusline")
+        line.setStyleSheet(
+            f"QFrame#statusline {{ background: {theme.STATUS};"
+            f" border-top: 1px solid {theme.STATUS_EDGE}; }}"
+        )
         across = QtWidgets.QHBoxLayout(line)
-        across.setContentsMargins(8, 2, 8, 2)
+        across.setContentsMargins(10, 3, 10, 3)
         across.addWidget(self.status, 1)
         layout.addWidget(line)
         return holder
 
     def _toolbar(self) -> QtWidgets.QWidget:
+        """The domain, the grid, and the controls the picture itself answers to.
+
+        The fields stand in three groups with a hairline between them, since a
+        domain in x, a domain in y and a grid are three answers rather than six
+        numbers in a row.
+        """
         bar = QtWidgets.QToolBar()
         bar.setMovable(False)
         self.fields: dict[str, QtWidgets.QLineEdit] = {}
-        bar.addWidget(QtWidgets.QLabel(" x: "))
+        bar.addWidget(QtWidgets.QLabel("x:"))
         bar.addWidget(self._field("x0", self.xdomain[0]))
-        bar.addWidget(QtWidgets.QLabel(" to "))
+        bar.addWidget(QtWidgets.QLabel(" … "))
         bar.addWidget(self._field("x1", self.xdomain[1]))
-        bar.addWidget(QtWidgets.QLabel("   y: "))
+        bar.addWidget(theme.divider())
+        bar.addWidget(QtWidgets.QLabel("y:"))
         bar.addWidget(self._field("y0", self.ydomain[0]))
-        bar.addWidget(QtWidgets.QLabel(" to "))
+        bar.addWidget(QtWidgets.QLabel(" … "))
         bar.addWidget(self._field("y1", self.ydomain[1]))
-        bar.addWidget(QtWidgets.QLabel("   grid: "))
+        bar.addWidget(theme.divider())
+        bar.addWidget(QtWidgets.QLabel("grid:"))
         bar.addWidget(self._field("nx", self.grid[0]))
         bar.addWidget(QtWidgets.QLabel(" x "))
         bar.addWidget(self._field("ny", self.grid[1]))
-        bar.addWidget(QtWidgets.QLabel("  "))
+        bar.addWidget(theme.divider())
         self.mesh_action = QtGui.QAction("mesh", self)
         self.mesh_action.setCheckable(True)
         self.mesh_action.setChecked(self.wired)
@@ -1084,6 +1041,7 @@ class Window3D(QtWidgets.QMainWindow):
         self.clear_action.setToolTip("Remove every surface from this window (Del)")
         self.clear_action.triggered.connect(self.clear)
         bar.addAction(self.clear_action)
+        theme.dangerous(bar, self.clear_action)
         return bar
 
     def _field(self, name: str, value: float) -> QtWidgets.QLineEdit:
@@ -1220,7 +1178,8 @@ class Window3D(QtWidgets.QMainWindow):
                     surface.hidden,
                 )
                 for surface in self.plots
-            ]
+            ],
+            paper=self._papered,
         )
         # An empty legend is a rectangle over the corner of the picture saying
         # nothing; the toggle is remembered rather than read off the widget, so
@@ -1921,38 +1880,112 @@ class Inspector(QtWidgets.QDialog):
     camera at an azimuth of 45 degrees precisely, has nowhere else to say so -
     and a 3D picture is one of the few places where a number typed is worth
     more than a gesture made.
+
+    The numbers are grouped the way the picture is: the box first, as three
+    columns of an axis each, and where it is looked at from second. The camera
+    half is a readout as well as a field, following the picture while the
+    dialog is up, which is why the heading says so.
     """
 
-    ROWS = (
-        ("cx", "center x"),
-        ("cy", "center y"),
-        ("cz", "center z"),
-        ("lx", "length x"),
-        ("ly", "length y"),
-        ("lz", "length z"),
-        ("azimuth", "camera azimuth"),
-        ("elevation", "camera elevation"),
-        ("distance", "camera distance"),
-    )
+    #: The box, as a person reads one: a row of three numbers for where it is
+    #: and a row of three for how big it is, under the axis each column is
+    #: about. Six fields in a list is the same six numbers with the shape taken
+    #: out of them.
+    BOX = (("center", ("cx", "cy", "cz")), ("length", ("lx", "ly", "lz")))
+    AXES = ("x", "y", "z")
+
+    #: Where the box is looked at from, which is one row of three.
+    CAMERA = ("azimuth", "elevation", "distance")
 
     def __init__(self, window: Window3D) -> None:
         super().__init__(window)
         self._window = window
         self.setWindowTitle(f"View of plot {window.number}")
-        layout = QtWidgets.QFormLayout(self)
         self.fields: dict[str, QtWidgets.QLineEdit] = {}
-        for name, shown in self.ROWS:
-            edit = QtWidgets.QLineEdit()
-            edit.setFixedWidth(90)
-            self.fields[name] = edit
-            layout.addRow(shown, edit)
-        buttons = QtWidgets.QDialogButtonBox()
-        buttons.addButton("Apply", QtWidgets.QDialogButtonBox.ButtonRole.ApplyRole)
-        buttons.addButton("Autoscale z", QtWidgets.QDialogButtonBox.ButtonRole.ResetRole)
-        buttons.addButton("Close", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole)
-        buttons.clicked.connect(self._clicked)
-        layout.addRow(buttons)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+        layout.addWidget(self._headed())
+        layout.addWidget(self._box_group())
+        layout.addWidget(self._camera_group())
+        layout.addWidget(self._buttons())
         window.view.moved.connect(self._camera_moved)
+
+    def _headed(self) -> QtWidgets.QWidget:
+        """What the dialog is about, and the one thing worth knowing about it.
+
+        That the camera numbers follow the picture is the difference between a
+        form and an instrument, and it is not a thing anybody would guess from
+        three fields with numbers in them.
+        """
+        holder = QtWidgets.QWidget()
+        column = QtWidgets.QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(1)
+        title = QtWidgets.QLabel(f"View - plot {self._window.number}")
+        title.setStyleSheet(f"color: {theme.FIELD_TEXT}; font-weight: 600;")
+        subtitle = QtWidgets.QLabel("follows the camera while open")
+        subtitle.setStyleSheet(f"color: {theme.DIM};")
+        column.addWidget(title)
+        column.addWidget(subtitle)
+        return holder
+
+    def _box_group(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("Box")
+        grid = QtWidgets.QGridLayout(group)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        for column, axis in enumerate(self.AXES):
+            grid.addWidget(self._column_head(axis), 0, column + 1)
+        for row, (shown, names) in enumerate(self.BOX, start=1):
+            grid.addWidget(self._label(shown), row, 0)
+            for column, name in enumerate(names):
+                grid.addWidget(self._field(name), row, column + 1)
+        return group
+
+    def _camera_group(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("Camera")
+        grid = QtWidgets.QGridLayout(group)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        for column, name in enumerate(self.CAMERA):
+            grid.addWidget(self._column_head(name), 0, column)
+            grid.addWidget(self._field(name), 1, column)
+        return group
+
+    def _buttons(self) -> QtWidgets.QWidget:
+        """The three answers: give the z back, leave, or take what is typed.
+
+        One button box rather than a row built by hand, so that the platform
+        puts the buttons where the platform puts buttons; `Apply` is the
+        accented one, being the only one of the three that does what the
+        dialog is for.
+        """
+        roles = QtWidgets.QDialogButtonBox.ButtonRole
+        buttons = QtWidgets.QDialogButtonBox()
+        buttons.addButton("Apply", roles.ApplyRole).setObjectName(theme.PRIMARY)
+        buttons.addButton("Autoscale z", roles.ResetRole)
+        buttons.addButton("Close", roles.RejectRole)
+        buttons.clicked.connect(self._clicked)
+        return buttons
+
+    def _field(self, name: str) -> QtWidgets.QLineEdit:
+        edit = QtWidgets.QLineEdit()
+        edit.setFixedWidth(90)
+        edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.fields[name] = edit
+        return edit
+
+    def _label(self, text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setStyleSheet(f"color: {theme.TEXT};")
+        return label
+
+    def _column_head(self, text: str) -> QtWidgets.QLabel:
+        head = QtWidgets.QLabel(text)
+        head.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
+        head.setStyleSheet(f"color: {theme.DIM};")
+        return head
 
     def refresh(self) -> None:
         """Fill the fields from the window as it now stands."""

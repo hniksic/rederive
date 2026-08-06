@@ -1267,10 +1267,9 @@ def test_a_curve_out_weighs_the_axes_and_the_grid(flat):
     # the curve plainly out-weighs them.
     for line in flat.axes:
         assert line.pen.widthF() == 1.0
-    # The legend sample is drawn with the item's own pen, so the swatch shows
-    # the weight the canvas does.
-    sample, _ = flat.legend.items[0]
-    assert sample.item is plot.item
+    # The legend's sample is a stroke of the same weight in the same color, so
+    # the swatch on the card shows what the canvas does.
+    assert flat.legend.entries == ((plot.named, plot.color, False),)
 
 
 def test_a_data_plots_line_takes_the_weight_and_its_points_do_not(flat):

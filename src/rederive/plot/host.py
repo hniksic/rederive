@@ -55,7 +55,7 @@ from dataclasses import replace
 from multiprocessing.connection import Connection
 from typing import Any
 
-from rederive.plot import protocol
+from rederive.plot import protocol, theme
 from rederive.plot.protocol import PlotKind, Where, WindowKind
 
 __all__ = ["preferred", "serve"]
@@ -88,6 +88,11 @@ def serve(connection: Connection) -> None:
             QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True
         )
         application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        # Every window this process opens is a dark picture, and the chrome
+        # around it is dressed to match here rather than window by window: one
+        # sheet on the application reaches the toolbars, the fields, the menus
+        # the toolkit puts up for us and the export dialogs we never built.
+        theme.dress(application)
         # The host outlives its windows: closing the last one leaves a process
         # ready for the next Plot command rather than a session that has
         # quietly lost the ability to plot.
