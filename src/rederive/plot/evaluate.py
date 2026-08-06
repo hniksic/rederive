@@ -27,8 +27,12 @@ see, so the deviation of a midpoint from its chord is measured after the view
 transform, and every curve is therefore sampled to the same visible accuracy
 whatever it is a curve of. That is also what makes the discontinuity guard
 possible - refinement that bottoms out at subpixel width with the samples still
-far apart has found a jump rather than a slope, and a jump is where a NaN goes
-so that nothing draws a stroke across it.
+far apart, and no nearer to each other than before it was cut, has found a jump
+rather than a slope, and a jump is where a NaN goes so that nothing draws a
+stroke across it. The last of those conditions is what keeps the guard off a
+curve that is merely steeper than the screen: bisecting a slope halves its
+height and bisecting a jump does not, so `x·SIN(x)` zoomed out until it
+oscillates faster than the pixels is drawn as the band it is.
 
 There are two samplers rather than one because a curve parametrized by t is a
 different measurement from a curve parametrized by its own abscissa: the error
@@ -106,6 +110,13 @@ NARROWEST_PX = 0.25
 #: refinement has already bottomed out on it. The visible height is the other
 #: sufficient reason, and it is the one a pole meets.
 JUMP_PX = 8.0
+
+#: How much of its height a jump has to keep when it is bisected, as a fraction
+#: of the height the interval had before the split, for it to still count as a
+#: jump. A discontinuity keeps all of it however finely it is cut, because the
+#: whole of the step is in whichever half the step is in. A slope hands half of
+#: it to each half, and goes on doing so however steep it is.
+HELD_FRACTION = 0.75
 
 #: How many samples one curve may end up with. Refinement only bisects where
 #: it must, so no ordinary expression comes near this; it is what stops a
@@ -399,8 +410,8 @@ def sample_adaptive(
     ys = f(xs)
     if report is not None:
         report(xs, ys)
-    xs, ys, unresolved = _refine(f, xs, ys, across, up)
-    return _cut(xs, ys, unresolved, abs(span), up)
+    xs, ys, standing = _refine(f, xs, ys, across, up)
+    return _cut(xs, ys, standing, abs(span), up)
 
 
 def _refine(
@@ -417,10 +428,22 @@ def _refine(
     is settled and never looked at again; one that did not passes the flag to
     both its halves. Whatever is still flagged when the loop ends - because
     twelve levels were not enough, or because the interval is now narrower than
-    a pixel - is where refinement gave up, and that is exactly the set the
-    discontinuity guard is interested in.
+    a pixel - is where refinement gave up.
+
+    Giving up is not by itself a discontinuity, though, which is what the second
+    array is for. A slope too steep to draw and a jump are both intervals whose
+    midpoint never comes near its chord, and the one thing that tells them apart
+    is what bisection does to the height: a jump is entirely inside one half and
+    the other half loses it, while a slope splits its height evenly however
+    steep it is. So each half is told whether it kept the height its parent had,
+    and an interval that has kept it at every level down is one bisection has
+    made no progress on at all. That is the set the discontinuity guard wants,
+    and it is what comes back - `TAN(x)` keeps its poles, and `x·SIN(x)` zoomed
+    out to where it oscillates faster than the pixels draws as a solid band
+    rather than as a comb of gaps.
     """
     flags = np.ones(max(len(xs) - 1, 0), dtype=bool)
+    held = flags.copy()
     for _ in range(MAX_DEPTH):
         if len(xs) > MAX_POINTS:
             break
@@ -432,11 +455,18 @@ def _refine(
         values = f(middles)
         chords = (ys[splitting] + ys[splitting + 1]) / 2.0
         children = _strayed(ys[splitting], ys[splitting + 1], values, chords, up)
+        heights, kept = np.abs(ys[splitting + 1] - ys[splitting]), held[splitting]
+        right = np.abs(ys[splitting + 1] - values)
+        left = np.abs(values - ys[splitting])
+        # `insert` puts its value before the element it is given, so the copy is
+        # the left half of the split and what was there is the right half.
+        held[splitting] = kept & (right > HELD_FRACTION * heights)
+        held = np.insert(held, splitting, kept & (left > HELD_FRACTION * heights))
         flags[splitting] = children
         flags = np.insert(flags, splitting, children)
         xs = np.insert(xs, splitting + 1, middles)
         ys = np.insert(ys, splitting + 1, values)
-    return xs, ys, flags
+    return xs, ys, flags & held
 
 
 def _strayed(
@@ -472,18 +502,19 @@ def _strayed(
 def _cut(
     xs: np.ndarray,
     ys: np.ndarray,
-    unresolved: np.ndarray,
+    standing: np.ndarray,
     span: float,
     up: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Put a NaN through every jump, so nothing draws a stroke across one.
 
-    A jump is an interval refinement could not settle - it is subpixel wide and
-    the midpoint is still nowhere near the chord - across which the value moves
-    either more than the whole visible height, which is what a pole does, or
-    more than a few pixels, which is what a step function does. Both are the
-    same fact: the curve is not there in between, and joining the two samples
-    would draw a line the function has no points on.
+    A jump is an interval bisection got nowhere on - it is subpixel wide, the
+    midpoint is still nowhere near the chord, and every split left the whole
+    height on one side - across which the value moves either more than the whole
+    visible height, which is what a pole does, or more than a few pixels, which
+    is what a step function does. Both are the same fact: the curve is not there
+    in between, and joining the two samples would draw a line the function has
+    no points on.
 
     `TAN(x)` and `SIGN(x)` are the two acceptance cases, and they arrive here by
     the two different clauses.
@@ -494,7 +525,7 @@ def _cut(
     joined = np.isfinite(ys[:-1]) & np.isfinite(ys[1:])
     jumping = (steps > span) if span > 0 else np.zeros(steps.shape, dtype=bool)
     jumping |= steps * up > JUMP_PX
-    cutting = np.nonzero(unresolved & joined & jumping)[0]
+    cutting = np.nonzero(standing & joined & jumping)[0]
     if not cutting.size:
         return xs, ys
     middles = (xs[cutting] + xs[cutting + 1]) / 2.0
@@ -556,8 +587,8 @@ def sample_curve(
     xs, ys = fx(ts), fy(ts)
     if report is not None:
         report(xs, ys)
-    ts, xs, ys, unresolved = _refine_curve(fx, fy, ts, xs, ys, across, up)
-    return _cut_curve(ts, xs, ys, unresolved, across, up)
+    ts, xs, ys, standing = _refine_curve(fx, fy, ts, xs, ys, across, up)
+    return _cut_curve(ts, xs, ys, standing, across, up)
 
 
 def _pixels_per_unit(
@@ -589,13 +620,21 @@ def _refine_curve(
     across: float,
     up: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Bisect in t until every interval is a straight line on the screen."""
+    """Bisect in t until every interval is a straight line on the screen.
+
+    The second array that comes back is the explicit sampler's, for the same
+    reason and by the same measure with the height read as a distance in the
+    plane: an interval whose two ends stayed as far apart as its parent's, at
+    every level down, is one bisection has made no progress on, and only those
+    are jumps. A curve that merely moves faster than the pixels is drawn.
+    """
     flags = np.ones(max(len(ts) - 1, 0), dtype=bool)
+    held = flags.copy()
     for _ in range(MAX_DEPTH):
         if len(ts) > MAX_POINTS:
             break
-        long = _apart(xs[:-1], ys[:-1], xs[1:], ys[1:], across, up) > NARROWEST_PX
-        splitting = np.nonzero(flags & long)[0]
+        reach = _apart(xs[:-1], ys[:-1], xs[1:], ys[1:], across, up)
+        splitting = np.nonzero(flags & (reach > NARROWEST_PX))[0]
         if not splitting.size:
             break
         middles = (ts[splitting] + ts[splitting + 1]) / 2.0
@@ -613,12 +652,19 @@ def _refine_curve(
         edges = left & right
         straddling = (left != right) | (edges != here)
         children = np.where(edges & here, strayed, straddling)
+        reaches, kept = reach[splitting], held[splitting]
+        second = _apart(mx, my, xs[splitting + 1], ys[splitting + 1], across, up)
+        first = _apart(xs[splitting], ys[splitting], mx, my, across, up)
+        # `insert` puts its value before the element it is given, so the copy is
+        # the first half of the split and what was there is the second.
+        held[splitting] = kept & (second > HELD_FRACTION * reaches)
+        held = np.insert(held, splitting, kept & (first > HELD_FRACTION * reaches))
         flags[splitting] = children
         flags = np.insert(flags, splitting, children)
         ts = np.insert(ts, splitting + 1, middles)
         xs = np.insert(xs, splitting + 1, mx)
         ys = np.insert(ys, splitting + 1, my)
-    return ts, xs, ys, flags
+    return ts, xs, ys, flags & held
 
 
 def _apart(
@@ -645,7 +691,7 @@ def _cut_curve(
     ts: np.ndarray,
     xs: np.ndarray,
     ys: np.ndarray,
-    unresolved: np.ndarray,
+    standing: np.ndarray,
     across: float,
     up: float,
 ) -> Sampled:
@@ -653,14 +699,15 @@ def _cut_curve(
 
     Two samples a subpixel step of t apart and half a screen apart in the plane
     are not two ends of a segment, they are two branches, and drawing the
-    segment would be drawing a line the curve has no points on.
+    segment would be drawing a line the curve has no points on - as long as
+    bisection got no nearer to closing them, which is what `standing` says.
     """
     if len(ts) < 2:
         return Sampled(ts, xs, ys)
     away = _apart(xs[:-1], ys[:-1], xs[1:], ys[1:], across, up)
     ends = np.isfinite(xs) & np.isfinite(ys)
     joined = ends[:-1] & ends[1:]
-    cutting = np.nonzero(unresolved & joined & (away > JUMP_PX))[0]
+    cutting = np.nonzero(standing & joined & (away > JUMP_PX))[0]
     gave_up = float(ts[cutting[0]]) if cutting.size else None
     if not cutting.size:
         return Sampled(ts, xs, ys, gave_up)

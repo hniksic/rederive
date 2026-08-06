@@ -236,16 +236,45 @@ def test_a_function_with_no_numeric_reading_is_all_gaps_rather_than_a_crash():
 
 
 def test_a_parametric_pair_through_a_pole_terminates_with_a_gap():
-    # `[t, 1/t]` is the acceptance case: the two branches never come close on
-    # the screen however finely t is cut, so refinement has to stop at the
-    # depth cap rather than chase the pole down forever.
-    fx, fy = evaluate.pair(parsed("[t, 1/t]"), Context(), ("t",))
+    # `[t, 1/(t - 1)]` is the acceptance case: the two branches never come close
+    # on the screen however finely t is cut, so refinement has to stop at the
+    # depth cap rather than chase the pole down forever. The pole is at 1 rather
+    # than at 0 so that it falls between two samples of the uniform pass and the
+    # sampler has to find it, instead of being handed the NaN of `1/0`.
+    fx, fy = evaluate.pair(parsed("[t, 1/(t - 1)]"), Context(), ("t",))
     drawn = evaluate.sample_curve(fx, fy, VIEW, VIEW, VIEW, CANVAS)
     assert len(drawn.ts) < evaluate.MAX_POINTS
-    assert drawn.gave_up is not None and abs(drawn.gave_up) < 0.01
+    assert drawn.gave_up is not None and abs(drawn.gave_up - 1.0) < 0.01
     # And the gap is at the pole rather than anywhere along the branches.
     gapped = drawn.ts[np.isnan(drawn.xs)]
-    assert gapped.size and np.abs(gapped).max() < 0.05
+    assert gapped.size and np.abs(gapped - 1.0).max() < 0.05
+
+
+def test_a_curve_faster_than_the_pixels_is_drawn_rather_than_gapped():
+    # `x·SIN(x)` zoomed out is the regression: its flanks are steeper than the
+    # screen, so refinement bottoms out on them, and reading that as a jump cut
+    # the band into a comb of strokes. A slope loses half its height to each
+    # half when it is bisected, which is what tells it from a discontinuity.
+    for span in (400.0, 2000.0):
+        view = (-span / 2, span / 2)
+        xs, ys = sampled("x*SIN(x)", xrange=view, yrange=view, size=(900.0, 600.0))
+        assert not np.isnan(ys).any(), f"x·SIN(x) over {view} is cut into pieces"
+    # And the same curve as a parametric pair, which is the other sampler.
+    fx, fy = evaluate.pair(parsed("[t, t*SIN(t)]"), Context(), ("t",))
+    wide = (-1000.0, 1000.0)
+    drawn = evaluate.sample_curve(fx, fy, wide, wide, wide, (900.0, 600.0))
+    assert not np.isnan(drawn.xs).any()
+    assert drawn.gave_up is None
+
+
+def test_a_jump_is_still_a_jump_where_the_curve_around_it_is_steep():
+    # The other half of the argument: a pole keeps its whole height in whichever
+    # half of the interval it lands in, however far down the bisection goes, so
+    # `TAN(x)` is gapped at every pole even though the branches leading up to it
+    # are steeper than the screen and are drawn.
+    xs, ys = sampled("TAN(x)")
+    for pole in (-3 * np.pi / 2, -np.pi / 2, np.pi / 2, 3 * np.pi / 2):
+        assert _spans(xs, ys, pole) == [], f"TAN(x) bridges the pole at {pole}"
 
 
 def test_a_polar_curve_turns_its_angle_in_the_unit_it_was_written_in():
