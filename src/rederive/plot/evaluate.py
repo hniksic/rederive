@@ -314,8 +314,17 @@ class _Numeric:
     The wrapper is where every promise of section 8 is kept: complex inputs so
     that a radical has a real part to find, the real mask, non-finite to NaN,
     numpy's warnings silenced - a plot of `1/x` divides by zero by design and
-    the terminal is not the place to hear about it - and the pointwise retry,
-    which some sympy functions lambdify imperfectly enough to need.
+    the terminal is not the place to hear about it - and the retries, which
+    some sympy functions lambdify imperfectly enough to need.
+
+    The complex plane is where the evaluation starts and not where it has to
+    end. A few of numpy's functions are defined over the reals and nowhere
+    else - `arctan2`, `floor`, `ceiling`, `Mod` - and they refuse a complex
+    argument by its dtype rather than by its value, so a plot of `ATAN(-y, x)`
+    would be an empty window if the first attempt were the only one. The real
+    parts of the inputs are therefore tried next, which is the reading those
+    functions do have, and nothing is lost by it: an input whose imaginary part
+    is more than noise is already outside the graph and comes back NaN.
     """
 
     def __init__(
@@ -333,29 +342,54 @@ class _Numeric:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             with np.errstate(all="ignore"):
-                try:
-                    values = np.asarray(self._function(*inputs), dtype=np.complex128)
-                except Exception:
-                    values = self._pointwise(inputs, shape)
+                values = self._values(inputs, shape)
                 if values.shape != shape:
                     # A constant expression lambdifies to a function that
                     # ignores its arguments and answers with one number.
                     values = np.broadcast_to(values, shape).copy()
                 return _real_part(values)
 
+    def _values(self, inputs: list[np.ndarray], shape: tuple[int, ...]) -> np.ndarray:
+        """What the function answers over `inputs`, however it can be got.
+
+        The vectorized call over each reading of the inputs in turn, and a
+        point at a time if none of them evaluated.
+        """
+        for attempt in self._attempts(inputs):
+            try:
+                return np.asarray(self._function(*attempt), dtype=np.complex128)
+            except Exception:
+                continue
+        return self._pointwise(inputs, shape)
+
+    def _attempts(self, inputs: list[np.ndarray]) -> list[list[np.ndarray]]:
+        """The inputs as they stand, and then their real parts.
+
+        One reading when the inputs are real already, since the second would be
+        the first call over again.
+        """
+        if self._dtype is np.float64 or not inputs:
+            return [inputs]
+        return [inputs, [_real_part(value) for value in inputs]]
+
     def _pointwise(
         self, inputs: list[np.ndarray], shape: tuple[int, ...]
     ) -> np.ndarray:
         """One point at a time, for a function the vectorized call choked on."""
-        spread = [np.broadcast_to(value, shape).ravel() for value in inputs]
+        spreads = [
+            [np.broadcast_to(value, shape).ravel() for value in attempt]
+            for attempt in self._attempts(inputs)
+        ]
         answers = np.full(int(np.prod(shape)) if shape else 1, np.nan, np.complex128)
         for index in range(answers.size):
-            try:
-                answers[index] = complex(
-                    self._function(*(value[index] for value in spread))
-                )
-            except Exception:
-                answers[index] = np.nan
+            for spread in spreads:
+                try:
+                    answers[index] = complex(
+                        self._function(*(value[index] for value in spread))
+                    )
+                    break
+                except Exception:
+                    answers[index] = np.nan
         return answers.reshape(shape)
 
 

@@ -142,6 +142,25 @@ def test_a_closure_masks_the_complex_half_of_a_square_root():
     assert list(values[2:]) == [0.0, 1.0, 2.0]
 
 
+def test_a_closure_evaluates_a_function_that_has_only_a_real_reading():
+    # `arctan2` refuses a complex argument by its dtype, so the surface of
+    # `ATAN(-y, x)` was every point NaN and the window said nothing was real.
+    values = closure("ATAN(-y, x + 1/10)", ("x", "y"))(
+        np.array([1.0, -1.0]), np.array([1.0, 1.0])
+    )
+    assert np.allclose(values, [np.arctan2(-1.0, 1.1), np.arctan2(-1.0, -0.9)])
+
+
+def test_a_closure_evaluates_the_other_functions_of_the_reals_alone():
+    # The same dtype refusal, in the three other places numpy makes it.
+    for text, answers in [
+        ("FLOOR(x)", [-2.0, 1.0]),
+        ("CEILING(x)", [-1.0, 2.0]),
+        ("MOD(x, 2)", [0.5, 1.5]),
+    ]:
+        assert list(closure(text)(np.array([-1.5, 1.5]))) == answers
+
+
 def test_a_closure_answers_nan_where_the_value_is_not_finite():
     values = closure("1/x")(np.array([-1.0, 0.0, 1.0]))
     assert list(values[[0, 2]]) == [-1.0, 1.0]
