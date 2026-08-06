@@ -1964,11 +1964,19 @@ def _lit_pixels(window):
     The wire is the surface's color at every brightness the shading gives it,
     and everything else in the picture - the canvas, the box, the numbers - is
     gray, so the hue is what tells them apart whatever the brightness.
+
+    A frame buffer that reads back empty is not a picture with nothing lit in
+    it. It is a context that reported itself fine and then rendered nowhere,
+    which is what OpenGL with no graphics card behind it does, and there is
+    nothing here to count.
     """
     from pyqtgraph.Qt import QtGui
 
     image = window.view.readQImage().convertToFormat(QtGui.QImage.Format.Format_RGB32)
-    pixels = np.frombuffer(image.constBits(), dtype=np.uint8)
+    pixels = image.constBits()
+    if pixels is None:
+        pytest.skip("the OpenGL frame buffer read back empty")
+    pixels = np.frombuffer(pixels, dtype=np.uint8)
     pixels = pixels.reshape(image.height(), image.width(), 4)[:, :, 2::-1]
     spread = pixels.astype(np.int16).max(axis=2) - pixels.astype(np.int16).min(axis=2)
     return int(np.count_nonzero(spread > 25))
