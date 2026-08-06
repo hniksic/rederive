@@ -738,6 +738,7 @@ class Window2D(QtWidgets.QMainWindow):
         self._origin_axes()
         self._prune_menu()
         self._extend_menu()
+        self._menu_tooltips()
         self.legend = Legend(self.plot)
         self.legend.picked.connect(self._legend_clicked)
         self.legend.setVisible(False)
@@ -935,6 +936,53 @@ class Window2D(QtWidgets.QMainWindow):
         self._remove_action = menu.addAction("Remove", self._remove_pointed)
         self._data_actions = self._point_actions(menu)
         self._pointed: Plot | None = None
+
+    def _menu_tooltips(self) -> None:
+        """A one-line manual on each stock menu entry whose name assumes pyqtgraph.
+
+        The menu is inherited rather than written here, so it speaks the library's
+        vocabulary: a "Mouse Mode" named after how many buttons a mouse has, axis
+        submenus that do not say they hold the only fields exact bounds can be typed
+        into. Each such entry gets the sentence its name never carried. Qt keeps
+        menu tooltips off until a menu is told to show them, so every menu touched
+        is switched on as well.
+        """
+        menu = self.canvas.menu
+        menu.setToolTipsVisible(True)
+        tips = {
+            "View All": "Reframe the view to fit everything drawn",
+            "X axis": "Type exact bounds for the x axis, or auto-range or invert it",
+            "Y axis": "Type exact bounds for the y axis, or auto-range or invert it",
+            "Mouse Mode": "What dragging with the left button does",
+        }
+        for action in menu.actions():
+            tip = tips.get(action.text())
+            if tip is not None:
+                action.setToolTip(tip)
+                if action.menu() is not None:
+                    action.menu().setToolTipsVisible(True)
+        pan, rect = menu.mouseModes
+        pan.setToolTip("Left drag pans; the zoom box stays on the right button")
+        rect.setToolTip("Left drag draws a zoom box too, as on a one-button mouse")
+        # `Plot Options` and `Export...` are not on the view box's menu: the scene
+        # appends them each time the menu is raised, reusing these same objects.
+        options = self.item.ctrlMenu
+        options.setToolTipsVisible(True)
+        options.menuAction().setToolTip(
+            "How the picture is drawn: downsampling, opacity, the grid"
+        )
+        more = {
+            "Downsample": "Draw fewer of the samples, trading detail for speed",
+            "Alpha": "Fade every plot in the window toward transparent",
+            "Grid": "Show or hide the grid lines, and how darkly they are drawn",
+        }
+        for action in options.actions():
+            tip = more.get(action.text())
+            if tip is not None:
+                action.setToolTip(tip)
+        self.item.scene().contextMenu[0].setToolTip(
+            "Save the picture as an image or SVG, or the plotted samples as CSV"
+        )
 
     def _point_actions(self, menu: Any) -> tuple[Any, ...]:
         """The two things a data plot can be asked, wherever it is right-clicked.
