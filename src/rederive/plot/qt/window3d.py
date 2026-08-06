@@ -51,7 +51,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Context
 from rederive.plot import evaluate, protocol, resample
-from rederive.plot.model import SOLID_PALETTE, SOLID_PAPER, Surface
+from rederive.plot.model import SOLID_PALETTE, SOLID_PAPER, Surface, written
 from rederive.plot.qt import theme
 from rederive.plot.qt.window2d import (
     CLICK_SLOP_PX,
@@ -71,6 +71,7 @@ from rederive.plot.surface import (
     ticks,
     wire,
 )
+from rederive.plot.view import DEFAULT_DOMAIN, DEFAULT_GRID, MAX_GRID
 from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 
 __all__ = ["Drawn", "Window3D"]
@@ -88,14 +89,6 @@ TEXT_COLOR = "#d0d0d0"
 PAPER_BOX = (40, 40, 40, 230)
 PAPER_TICK = (60, 60, 60, 255)
 PAPER_TEXT = "#000000"
-
-#: The rectangle a fresh window evaluates over, and how many samples of it each
-#: axis takes. Sixty-four is dense enough that `SIN(x*y)` over the default
-#: domain does not alias; the cap is what stops a typed grid from asking for a
-#: quarter of a million vertices.
-DEFAULT_DOMAIN = (-5.0, 5.0)
-DEFAULT_GRID = 64
-MAX_GRID = 256
 
 #: How far the wire's occluder is pushed away from the camera, as OpenGL's
 #: (factor, units) pair. The occluder is the surface's own triangles, so the
@@ -454,7 +447,7 @@ class Window3D(QtWidgets.QMainWindow):
         straight back.
         """
         edit = theme.field(52)
-        edit.setText(_written(value))
+        edit.setText(written(value))
         edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         edit.editingFinished.connect(self._edited)
         self.fields[name] = edit
@@ -755,7 +748,7 @@ class Window3D(QtWidgets.QMainWindow):
             low, high = self.zrange
             self.say(
                 "z clipped to the 1st-99th percentile:"
-                f" {_written(low)} to {_written(high)}"
+                f" {written(low)} to {written(high)}"
             )
 
     @property
@@ -858,7 +851,7 @@ class Window3D(QtWidgets.QMainWindow):
         far_x, far_y = -near_x, -near_y
         out_y, out_x = np.sign(near_y), np.sign(near_x)
         segments: list[tuple[float, float, float]] = []
-        written: list[tuple[tuple[float, float, float], str]] = []
+        numbered: list[tuple[tuple[float, float, float], str]] = []
 
         for value in self._ticks(self.xdomain) if not head_on[0] else ():
             at = float(box.across(value))
@@ -866,14 +859,14 @@ class Window3D(QtWidgets.QMainWindow):
                 (at, near_y, floor),
                 (at, near_y + out_y * TICK_OUT, floor),
             ]
-            written.append(((at, near_y + out_y * LABEL_OUT, floor), _written(value)))
+            numbered.append(((at, near_y + out_y * LABEL_OUT, floor), written(value)))
         for value in self._ticks(self.ydomain) if not head_on[1] else ():
             at = float(box.along(value))
             segments += [
                 (near_x, at, floor),
                 (near_x + out_x * TICK_OUT, at, floor),
             ]
-            written.append(((near_x + out_x * LABEL_OUT, at, floor), _written(value)))
+            numbered.append(((near_x + out_x * LABEL_OUT, at, floor), written(value)))
         upright = np.sign(far_x) * 0.7, np.sign(far_y) * 0.7
         for value in self._ticks(self.zrange) if not head_on[2] else ():
             at = float(box.up(value))
@@ -881,14 +874,14 @@ class Window3D(QtWidgets.QMainWindow):
                 (far_x, far_y, at),
                 (far_x + upright[0] * TICK_OUT, far_y + upright[1] * TICK_OUT, at),
             ]
-            written.append(
+            numbered.append(
                 (
                     (
                         far_x + upright[0] * LABEL_OUT,
                         far_y + upright[1] * LABEL_OUT,
                         at,
                     ),
-                    _written(value),
+                    written(value),
                 )
             )
 
@@ -899,8 +892,8 @@ class Window3D(QtWidgets.QMainWindow):
         )
         ink = PAPER_TEXT if self._papered else TEXT_COLOR
         for index, item in enumerate(self.labels):
-            if index < len(written) and self._named:
-                where, text = written[index]
+            if index < len(numbered) and self._named:
+                where, text = numbered[index]
                 item.setData(pos=np.array(where, dtype=np.float64), text=text, color=ink)
             else:
                 item.setData(text="")
@@ -1039,7 +1032,7 @@ class Window3D(QtWidgets.QMainWindow):
             ("nx", self.grid[0]),
             ("ny", self.grid[1]),
         ):
-            self.fields[name].setText(_written(value))
+            self.fields[name].setText(written(value))
 
     def reframe(
         self,
@@ -1461,7 +1454,7 @@ class Inspector(QtWidgets.QDialog):
         for name in ("azimuth", "elevation", "distance"):
             values[name] = float(camera.get(name, 0.0))
         for name, value in values.items():
-            self.fields[name].setText(_written(value))
+            self.fields[name].setText(written(value))
 
     def _camera_moved(self) -> None:
         """Follow the camera while the dialog is up: it is a readout as well."""
@@ -1469,7 +1462,7 @@ class Inspector(QtWidgets.QDialog):
             return
         camera = self._window.view.cameraParams()
         for name in ("azimuth", "elevation", "distance"):
-            self.fields[name].setText(_written(float(camera.get(name, 0.0))))
+            self.fields[name].setText(written(float(camera.get(name, 0.0))))
 
     def _clicked(self, button: Any) -> None:
         text = button.text()
@@ -1551,10 +1544,3 @@ def _alike(one: tuple[float, float], other: tuple[float, float]) -> bool:
     span = max(abs(other[1] - other[0]), 1e-12)
     return all(abs(a - b) <= 1e-4 * span for a, b in zip(one, other))
 
-
-def _written(value: float) -> str:
-    """A number as a toolbar field and a tick label write it: short and exact."""
-    number = float(value)
-    if number == int(number) and abs(number) < 1e15:
-        return str(int(number))
-    return f"{number:g}"

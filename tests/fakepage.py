@@ -7,6 +7,9 @@ here as ordinary Python - so what a pane does when a plot lands in it, what it
 asks the worker for, and what it says when an answer comes back are questions
 that can be asked with no browser at all.
 
+The page is two modules, as it is in a browser: a flat picture and a solid one
+share no drawing, so they share no fake either.
+
 `pyodide` is faked rather than avoided. The two calls the backend makes of it -
 proxying a callback and converting a structure - are identity functions on a
 desktop, and the fake says so; what it is not is a pretend browser, and nothing
@@ -74,6 +77,79 @@ class FakePage:
 
     def open(self, number, debounce, handlers):
         pane = FakePane(number, debounce, handlers)
+        self.panes[number] = pane
+        return pane
+
+    def attend(self, handlers):
+        self.handlers = handlers
+
+    def stop(self):
+        self.stopped += 1
+
+
+class FakeSolid:
+    """One 3D pane as the backend speaks to one, recording what it is told."""
+
+    def __init__(self, number, handlers):
+        self.number = number
+        self.say = handlers
+        self.plots = {}
+        self.order = []
+        self.title = ""
+        self.current = False
+        self.presented = 0
+        self.dismissed = 0
+        self.wired = False
+        self.message = ""
+        #: What the six fields of the tool row are showing.
+        self.fields = ()
+        #: Every `starting` the backend announced, as a surface and a generation.
+        self.started = []
+
+    def add(self, serial, spec):
+        self.plots[serial] = spec
+        self.order.append(serial)
+
+    def respec(self, serial, spec):
+        self.plots[serial] = spec
+
+    def remove(self, serial):
+        self.plots.pop(serial, None)
+        self.order = [one for one in self.order if one != serial]
+
+    def starting(self, serial, generation):
+        self.started.append((serial, generation))
+
+    def present(self):
+        self.presented += 1
+
+    def retitle(self, title, current):
+        self.title = title
+        self.current = current
+
+    def domain(self, *fields):
+        self.fields = fields
+
+    def meshed(self, wired):
+        self.wired = bool(wired)
+
+    def said(self, message):
+        self.message = message
+
+    def dismiss(self):
+        self.dismissed += 1
+
+
+class FakeSolids:
+    """The page's solid-drawing module, as the backend calls into it."""
+
+    def __init__(self):
+        self.panes = {}
+        self.handlers = None
+        self.stopped = 0
+
+    def open(self, number, handlers):
+        pane = FakeSolid(number, handlers)
         self.panes[number] = pane
         return pane
 

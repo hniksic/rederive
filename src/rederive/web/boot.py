@@ -72,20 +72,21 @@ class PageApp(RederiveApp):
         return BrowserDriver.on(self._terminal)
 
 
-async def start(terminal: Any, spawn: Any, plots: Any) -> None:
+async def start(terminal: Any, spawn: Any, plots: Any, solids: Any) -> None:
     """Run Rederive on this page until the user leaves it.
 
-    Three things the page owns and this side cannot make: the xterm.js the
-    program draws on, what makes an engine worker, and the module that opens a
-    plot pane. All of them are DOM elements, script URLs and canvases, and none
-    of them is anything Python could have built.
+    Four things the page owns and this side cannot make: the xterm.js the
+    program draws on, what makes an engine worker, and the two modules that
+    open a plot pane - one for a flat picture and one for a solid, which share
+    no drawing at all. All of them are DOM elements, script URLs and canvases,
+    and none of them is anything Python could have built.
     """
     _naming_tasks()
     os.environ.update(TERMINAL)
     platform.use(Web())
     engine = WebEngine(spawn)
     engine.start()
-    app = PageApp(Session(runner=engine), terminal, WebPlots(plots, engine))
+    app = PageApp(Session(runner=engine), terminal, WebPlots(plots, solids, engine))
     try:
         await app.run_async()
     finally:

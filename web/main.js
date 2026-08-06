@@ -10,9 +10,13 @@
 // The one message this file does look at is a plot sampling. Its answer is
 // typed arrays and is for the canvas rather than for Python, so the worker's
 // messages are listened to twice: Python's own handler takes the pickles and
-// steps over these, and `plot2d.js` takes these and steps over the pickles. The
-// arrays therefore go from the interpreter that computed them to the canvas
-// that draws them, and never become a Python object on this thread.
+// steps over these, and the drawing modules take these and step over the
+// pickles. The arrays therefore go from the interpreter that computed them to
+// the canvas that draws them, and never become a Python object on this thread.
+//
+// There are two drawing modules, a flat picture and a solid one sharing no
+// drawing at all, and one of them is asked first: a sampling is acknowledged
+// exactly once, and the acknowledgement is what lets the next one go out.
 //
 // Nor does this file render anything. The one spelling of an expression is the
 // one Python wrote; what crosses to JS is the bytes a terminal would have been
@@ -22,6 +26,7 @@
 // CDN, which is what `tools/build_web.py` is for.
 
 import * as plots from './plot2d.js';
+import * as solids from './plot3d.js';
 
 const SCREEN = 'screen';
 const MANIFEST = 'manifest.json';
@@ -125,7 +130,9 @@ function render(term, retry) {
 // rest by.
 function spawn(manifest) {
   const worker = new Worker('worker.js', { type: 'module' });
-  worker.addEventListener('message', (event) => plots.heard(event.data));
+  worker.addEventListener('message', (event) => {
+    if (!solids.heard(event.data)) plots.heard(event.data);
+  });
   worker.postMessage({
     indexURL: new URL(manifest.pyodide, location.href).href,
     packages: manifest.packages,
@@ -154,7 +161,8 @@ async function main() {
   pyodide.globals.set('TERMINAL', term);
   pyodide.globals.set('SPAWN', () => spawn(manifest));
   pyodide.globals.set('PLOTS', plots);
-  window.rederive = { term, pyodide, timings, plots };
+  pyodide.globals.set('SOLIDS', solids);
+  window.rederive = { term, pyodide, timings, plots, solids };
   term.onRender(() => {
     if (timings.prompt === undefined) mark('prompt', started);
   });
@@ -164,7 +172,7 @@ async function main() {
   await pyodide.runPythonAsync(`
 from rederive.web.boot import start
 
-await start(TERMINAL, SPAWN, PLOTS)
+await start(TERMINAL, SPAWN, PLOTS, SOLIDS)
 `);
   mark('session', started);
   say(term, '');

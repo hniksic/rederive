@@ -6,6 +6,11 @@ request, which is where the arrays are and so where every kind either draws or
 does not; and that the split holds - the main thread routes and the arrays never
 come through it.
 
+The solids are asked the same three questions and one more, which is the only
+one a 3D picture has that a flat one has not: that what crosses is exactly what
+`plot/surface.py` builds, since that file is what the desktop draws from too and
+two programs drawing one surface differently would be two programs.
+
 The page is faked and the runtime bridge is faked, and neither is a pretend
 browser: the first records what it was told to draw and the second is the pair of
 identity functions Pyodide's are on a desktop. What is real is everything
@@ -16,13 +21,12 @@ import asyncio
 
 import numpy as np
 import pytest
-from fakepage import FakeEngine, FakePage, bridge
+from fakepage import FakeEngine, FakePage, FakeSolids, bridge
 
 from rederive.engine.context import Angle, Context
 from rederive.plot import protocol as plots
-from rederive.plot.model import Plot
+from rederive.plot.model import Plot, Surface, written
 from rederive.plot.protocol import PlotKind
-from rederive.plot.proxy import PlotError
 from rederive.plot.session import PlotSession
 from rederive.plot.web import protocol as asking
 from rederive.plot.web import sampler
@@ -91,16 +95,22 @@ def page():
 
 
 @pytest.fixture
+def solids():
+    return FakeSolids()
+
+
+@pytest.fixture
 def engine():
     return FakeEngine()
 
 
 @pytest.fixture
-def session(page, engine):
+def session(page, solids, engine):
     """A plot session over panes, sampling nowhere: the requests are the point."""
     executor = WorkerExecutor(engine)
-    backend = WebBackend(page, engine)
+    backend = WebBackend(page, solids, engine)
     page.attend(backend.handed({"landed": executor.landed}))
+    solids.attend(backend.handed({"landed": executor.landed}))
     engine.lost = executor.lost
     return PlotSession(backend, executor)
 
@@ -145,12 +155,6 @@ async def test_a_family_becomes_one_curve_per_element(session, page):
     session.add(request)
     names = [spec["name"] for spec in page.panes[1].plots.values()]
     assert names == ["#1.1  SIN(x)", "#1.2  COS(x)"]
-
-
-async def test_a_solid_opens_no_pane_and_says_what_is_missing(session, page):
-    with pytest.raises(ValueError, match="3D plots are not in the browser yet"):
-        session.add(_landing("x*y", kind=PlotKind.SURFACE, variables=("x", "y")))
-    assert page.panes == {}
 
 
 async def test_describe_reads_the_view_off_the_page(session, page):
@@ -616,10 +620,10 @@ def test_the_cache_forgets_the_oldest_rather_than_growing_forever():
 # -- the whole of it, over an inline executor ----------------------------------------
 
 
-async def test_the_five_calls_answer_as_the_app_expects_them_to(page, engine):
+async def test_the_five_calls_answer_as_the_app_expects_them_to(page, solids, engine):
     from rederive.web.plots import WebPlots
 
-    plots_object = WebPlots(page, engine)
+    plots_object = WebPlots(page, solids, engine)
     placed = await plots_object.add(_landing("SIN(x)"))
     assert placed == plots.Placed(1, replaced=False)
     again = await plots_object.add(_landing("COS(x)", "#1"))
@@ -629,13 +633,305 @@ async def test_the_five_calls_answer_as_the_app_expects_them_to(page, engine):
     assert page.stopped == 1
 
 
-async def test_a_solid_is_a_plot_error_in_the_words_the_message_line_prints(
-    page, engine
+async def test_a_solid_opens_a_pane_of_its_own_beside_the_flat_ones(
+    page, solids, engine
 ):
     from rederive.web.plots import WebPlots
 
-    plots_object = WebPlots(page, engine)
-    with pytest.raises(PlotError, match="3D plots are not in the browser yet"):
-        await plots_object.add(
-            _landing("x*y", kind=PlotKind.SURFACE, variables=("x", "y"))
-        )
+    plots_object = WebPlots(page, solids, engine)
+    await plots_object.add(_landing("SIN(x)"))
+    await plots_object.add(_landing("x*y", kind=PlotKind.SURFACE, variables=("x", "y")))
+    assert list(page.panes) == [1]
+    assert list(solids.panes) == [2]
+    assert [one.kind for one in plots_object.describe()] == ["2D", "3D"]
+
+
+# -- a pane a solid stands in ------------------------------------------------------
+
+
+def _solid(text, label="#1", variables=("x", "y"), context=None):
+    """One surface as the worker is sent one."""
+    return Surface(
+        worksheet=1,
+        label=label,
+        text=text,
+        kind=PlotKind.SURFACE,
+        node=parsed(text),
+        context=context or Context(),
+        options=plots.Options(variables=variables),
+    )
+
+
+def _grid(text, grid=(16, 16), domain=(-5.0, 5.0), zrange=None, **keywords):
+    return asking.Grid(
+        pane=1,
+        plot=1,
+        generation=1,
+        model=_solid(text, **keywords),
+        xdomain=domain,
+        ydomain=domain,
+        grid=grid,
+        zrange=zrange,
+    )
+
+
+def _standing(request):
+    """One evaluation, run where the worker would run it."""
+    table = sampler.methods(lambda _partial: None)
+    return table[asking.GRID](request)
+
+
+def _plotted(text, label="#1"):
+    return _landing(text, label=label, kind=PlotKind.SURFACE, variables=("x", "y"))
+
+
+async def test_a_surface_opens_a_pane_of_its_own_and_lands_in_it(session, solids, page):
+    assert session.add(_plotted("SIN(x y)")) == plots.Placed(1)
+    assert page.panes == {}
+    pane = solids.panes[1]
+    assert pane.presented == 1
+    assert pane.title == "SIN(x y) - Rederive 3D plot (current)"
+    assert [spec["name"] for spec in pane.plots.values()] == ["#1  SIN(x y)"]
+    # The solid palette, which is the curve palette turned by one: a white
+    # surface is a white shape with a white shape behind it.
+    assert [spec["color"] for spec in pane.plots.values()] == ["#ffff55"]
+
+
+async def test_a_surface_is_asked_for_over_the_domain_the_pane_opens_on(
+    session, solids, engine
+):
+    session.add(_plotted("SIN(x y)"))
+    await settle()
+    _number, method, request = engine.sent[0]
+    assert method == asking.GRID
+    assert request.xdomain == (-5.0, 5.0)
+    assert request.ydomain == (-5.0, 5.0)
+    assert request.grid == (64, 64)
+    # Alone in the picture, the surface says what the box is rather than being
+    # told - which is what makes one surface cost one evaluation.
+    assert request.zrange is None
+    assert solids.panes[1].started == [(1, 1)]
+
+
+async def test_the_grid_a_pane_opens_on_is_the_sticky_one(session, engine):
+    session.prefer(plots.Prefer(grid=24))
+    session.add(_plotted("SIN(x y)"))
+    await settle()
+    assert engine.sent[0][2].grid == (24, 24)
+
+
+async def test_a_typed_grid_evaluates_again_and_the_next_pane_opens_on_it(
+    session, solids, engine
+):
+    heard = []
+    session.events = heard.append
+    session.add(_plotted("SIN(x y)"))
+    await drain(page_of(solids), engine)
+    engine.sent.clear()
+    solids.panes[1].say["framed"]("-2", "2", "-2", "2", "32", "32")
+    await settle()
+    assert heard[-1] == plots.Preferred(plots.Prefer(grid=32))
+    request = engine.sent[0][2]
+    assert request.xdomain == (-2.0, 2.0)
+    assert request.grid == (32, 32)
+    assert solids.panes[1].message == "Evaluating over the new domain at 32 by 32"
+    # And `Describe` reports the domain, which is what a 3D window is framed by.
+    assert session.describe().windows[0].xrange == (-2.0, 2.0)
+
+
+async def test_a_domain_field_that_will_not_read_is_put_back(session, solids, engine):
+    session.add(_plotted("SIN(x y)"))
+    await drain(page_of(solids), engine)
+    engine.sent.clear()
+    pane = solids.panes[1]
+    pane.say["framed"]("-π", "5", "-5", "5", "64", "64")
+    assert pane.message == "The domain is four numbers, the grid two"
+    assert pane.fields == ("-5", "5", "-5", "5", "64", "64")
+    pane.say["framed"]("5", "-5", "-5", "5", "64", "64")
+    assert pane.message == "The domain runs from a lower bound to a higher one"
+    await settle()
+    assert engine.sent == []
+
+
+async def test_the_mesh_box_flips_every_surface_and_is_sticky(session, solids):
+    heard = []
+    session.events = heard.append
+    session.add(_plotted("SIN(x y)"))
+    session.add(_plotted("x^2 - y^2", "#2"))
+    pane = solids.panes[1]
+    assert [spec["wire"] for spec in pane.plots.values()] == [True, True]
+    pane.say["wire"](False)
+    assert [spec["wire"] for spec in pane.plots.values()] == [False, False]
+    assert pane.wired is False
+    assert heard[-1] == plots.Preferred(plots.Prefer(wire=False))
+
+
+async def test_a_legend_row_hides_a_surface_without_removing_it(session, solids):
+    session.add(_plotted("SIN(x y)"))
+    solids.panes[1].say["hide"](1, True)
+    assert solids.panes[1].plots[1]["hidden"] is True
+    assert session.describe().windows[0].plots[0].hidden is True
+
+
+async def test_one_surface_in_a_pane_is_drawn_in_the_box_it_asked_for(
+    session, solids, engine
+):
+    session.add(_plotted("SIN(x y)"))
+    await settle()
+    engine.sent.clear()
+    # What the page says when it has drawn: the extent the values wanted, and
+    # the box they were placed in. The same, for a surface standing alone.
+    solids.panes[1].say["stood"](1, [-1.0, 1.0], [-1.0, 1.0])
+    await settle()
+    assert engine.sent == []
+
+
+async def test_two_surfaces_are_drawn_in_one_box(session, solids, engine):
+    session.add(_plotted("SIN(x y)"))
+    session.add(_plotted("x^2 - y^2", "#2"))
+    pane = solids.panes[1]
+    await settle()
+    pane.say["stood"](1, [-1.0, 1.0], [-1.0, 1.0])
+    await answered(solids, engine)
+    at = len(engine.sent)
+    # The second surface reaches higher, so the box grows and every mesh built
+    # to the box that is gone - both of them - is asked for again in the new one.
+    pane.say["stood"](2, [-25.0, 25.0], [-1.0, 1.0])
+    await answered(solids, engine)
+    asked = engine.sent[at:]
+    assert asked and all(one[2].zrange == (-25.0, 25.0) for one in asked)
+
+
+async def answered(solids, engine):
+    """Acknowledge the evaluation with the worker, which sends the next one."""
+    await settle()
+    if engine.sent:
+        solids.handlers["landed"](engine.sent[-1][0], "")
+    await settle()
+
+
+async def test_a_surface_that_would_not_evaluate_reports_itself(
+    session, solids, engine
+):
+    heard = []
+    session.events = heard.append
+    session.add(_plotted("SIN(x y)"))
+    await settle()
+    solids.handlers["landed"](engine.sent[-1][0], "the surface would not evaluate")
+    assert heard == [plots.Trouble(1, "#1", "the surface would not evaluate")]
+
+
+def page_of(solids):
+    """The one handler a drain needs, which for a solid is the same table."""
+    return _Landing(solids)
+
+
+class _Landing:
+    """Enough of a page for `drain`: the acknowledgement, and nothing else."""
+
+    def __init__(self, solids):
+        self.handlers = solids.handlers
+
+
+# -- what the worker makes of a surface ---------------------------------------------
+
+
+def _geometry(text, grid=(16, 16), domain=(-5.0, 5.0), zrange=None):
+    """The same surface, built the way the desktop's window builds one."""
+    from rederive.plot import evaluate
+    from rederive.plot.surface import Box, brightened, extent, mesh, wire
+
+    node = parsed(text)
+    closure = evaluate.closure(node, Context(), ("x", "y"))
+    xs, ys, values = evaluate.grid_eval(closure, domain, domain, *grid)
+    boundary = evaluate.grid_boundary(closure, xs, ys, values)
+    found = extent([values])
+    box = Box(domain, domain, zrange or found[0])
+    vertexes, faces, shading = mesh(xs, ys, values, box, boundary)
+    points, shades = wire(xs, ys, values, box, boundary)
+    return {
+        "box": box,
+        "clipped": found[1],
+        "wanted": found[0],
+        "vertices": vertexes,
+        "faces": faces,
+        "colors": brightened(shading, "#ffff55"),
+        "wire": points,
+        "wirecolors": brightened(shades, "#ffff55"),
+    }
+
+
+def test_a_surface_crosses_as_the_geometry_plot_surface_builds():
+    answer = _standing(_grid("SIN(x y)"))
+    built = _geometry("SIN(x y)")
+    assert np.array_equal(answer["vertices"], built["vertices"].ravel())
+    assert np.array_equal(answer["faces"], built["faces"].ravel())
+    assert np.array_equal(answer["colors"], built["colors"][:, :3].ravel())
+    assert np.array_equal(answer["wire"], built["wire"].ravel())
+    assert answer["vertices"].dtype == np.float32
+    assert answer["faces"].dtype == np.uint32
+    assert answer["vertices"].ndim == 1 and answer["vertices"].flags["C_CONTIGUOUS"]
+
+
+def test_a_surfaces_box_is_the_one_the_desktops_inspector_reads():
+    answer = _standing(_grid("SIN(x y)"))
+    box = _geometry("SIN(x y)")["box"]
+    assert answer["center"] == pytest.approx(list(box.center))
+    assert answer["lengths"] == pytest.approx(list(box.lengths))
+    assert answer["height"] == pytest.approx(box.height)
+    assert answer["world"] == 10.0
+    # And the numbers arrive spelled, in the function the desktop's fields and
+    # tick labels are spelled by: the page shows what Python wrote.
+    assert answer["reading"]["lengths"] == [written(one) for one in box.lengths]
+    assert answer["reading"]["lengths"][:2] == ["10", "10"]
+
+
+def test_a_grid_of_n_by_n_is_n_squared_vertices_and_twice_the_faces():
+    answer = _standing(_grid("x + y", grid=(8, 8)))
+    assert answer["vertices"].size == 3 * 8 * 8
+    assert answer["faces"].size == 3 * 2 * 7 * 7
+
+
+def test_a_dome_stops_where_it_stops_rather_than_a_grid_step_short():
+    # `SQRT(1-x^2-y^2)` is a dome over the unit disc and nothing outside it, so
+    # the mesh has fewer faces than a full grid and every vertex of it is in the
+    # box - which is what the refined boundary is for.
+    answer = _standing(_grid("SQRT(1 - x^2 - y^2)", grid=(16, 16), domain=(-2.0, 2.0)))
+    assert 0 < answer["faces"].size < 3 * 2 * 15 * 15
+    assert answer["trouble"] == ""
+
+
+def test_a_spike_clips_the_box_to_the_percentiles_and_says_so():
+    answer = _standing(_grid("1/(x^2 + y^2)", grid=(32, 32)))
+    assert answer["clipped"] is True
+    assert answer["words"].startswith("z clipped to the 1st-99th percentile")
+
+
+def test_a_surface_placed_in_a_box_it_was_given_asks_for_nothing():
+    # The box a pane holding two surfaces hands down: the mesh stands in it, and
+    # what the values themselves wanted is reported beside it rather than used.
+    answer = _standing(_grid("SIN(x y)", zrange=(-4.0, 4.0)))
+    assert answer["zrange"] == pytest.approx([-4.0, 4.0])
+    assert answer["wanted"] == pytest.approx([-1.0, 1.0], abs=1e-4)
+    assert answer["clipped"] is False
+
+
+def test_a_surface_with_nothing_real_over_the_domain_says_so():
+    answer = _standing(_grid("SQRT(-1 - x^2 - y^2)"))
+    assert answer["empty"] is True
+    assert answer["words"] == "#1: no real values over this domain"
+    assert answer["vertices"].size == 0
+
+
+def test_a_surface_that_will_not_evaluate_answers_with_what_went_wrong():
+    answer = _standing(_grid("1/0 + x y"))
+    assert answer["trouble"]
+    assert "vertices" not in answer
+
+
+def test_a_surfaces_closure_is_cached_by_content_like_a_curves():
+    held = sampler.Closures()
+    first = sampler._standing(held, _solid("SIN(x y)"))
+    assert first.closure is None
+    sampler._gridded(held, _grid("SIN(x y)"))
+    assert sampler._standing(held, _solid("SIN(x y)")).closure is not None

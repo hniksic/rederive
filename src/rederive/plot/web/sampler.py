@@ -19,6 +19,12 @@ The jobs themselves are `plot/resample.py`'s, unaltered: the record built here
 carries the same fields the desktop's window carries, so the two backends ask
 for the same sampling and differ only in where the answer is drawn.
 
+A surface goes the same way and further. What crosses for a solid is not the
+grid it was evaluated on but the geometry built from it - the triangles, the
+wire grid of the samples and a color a vertex, all of them `plot/surface.py`'s -
+because that file is the whole of what a 3D picture is, and the page's job is
+to put its answer on a card and turn it.
+
 Two things are written here that the desktop gets from its toolkit. The zero
 contour of an implicit grid is marching squares, which pyqtgraph provides on the
 desktop and nothing provides here; and a region's shading crosses as the truth
@@ -35,18 +41,22 @@ from typing import Any
 import numpy as np
 
 from rederive.plot import evaluate, resample
+from rederive.plot import surface as geometry
 from rederive.plot.model import (
     FIELDS,
     FUNCTIONS,
+    SOLIDS,
     Plot,
+    Surface,
     naming,
     pointed,
     reading,
     roughly,
+    written,
 )
 from rederive.plot.protocol import PARAMETRIZED, PlotKind
 from rederive.plot.web import protocol
-from rederive.plot.web.protocol import Features, Sample, Trace
+from rederive.plot.web.protocol import Features, Grid, Sample, Trace
 
 __all__ = ["Closures", "methods"]
 
@@ -110,18 +120,33 @@ class Riding(Plot):
     xs: Any = None
 
 
+class Gridded(Surface):
+    """A surface as the sampling holds it: its closure, and nothing drawn.
+
+    `Riding`'s counterpart for a solid, and it carries one field for the same
+    reason: `plot/resample.py`'s grid job reads a closure off the plot it is
+    given and puts the one it built back, and neither end of that wants to know
+    which side of the program it is on.
+    """
+
+    closure: Any = None
+
+
 def methods(post: Callable[[dict[str, Any]], None]) -> dict[str, Callable[..., Any]]:
-    """The three plot requests, over one cache of closures.
+    """The four plot requests, over one cache of closures.
 
     `post` is how a partial answer reaches the page: the uniform pass of a
     sampling is drawn while the refinement is still running, and it arrives as
-    a message of its own rather than as the answer, which comes later.
+    a message of its own rather than as the answer, which comes later. A
+    surface makes none - a grid is evaluated in one pass and has no coarse
+    reading to show while a finer one runs.
     """
     held = Closures()
     return {
         protocol.SAMPLE: lambda request: _sampled(held, request, post),
         protocol.TRACE: lambda request: _traced(held, request),
         protocol.FEATURES: lambda request: _found(held, request),
+        protocol.GRID: lambda request: _gridded(held, request),
     }
 
 
@@ -282,6 +307,152 @@ def _empty(plot: Riding, xs: Any, ys: Any, request: Sample) -> dict[str, Any]:
     }
 
 
+# -- one surface --------------------------------------------------------------
+
+
+def _gridded(held: Closures, request: Grid) -> dict[str, Any]:
+    """One surface over one domain, as the geometry the page uploads.
+
+    The whole of a 3D drawing crosses here: the triangles, the wire grid of the
+    samples and a color a vertex, all of them `plot/surface.py`'s and all of
+    them the same arrays the desktop's window hands to pyqtgraph. What is left
+    for the page is to put them on a card and turn them.
+    """
+    surface = _standing(held, request.model)
+    answer = _about_solid(request)
+    try:
+        work = resample.grid_job(
+            surface, request.xdomain, request.ydomain, request.grid
+        )
+        made, xs, ys, values, boundary = work(_nothing)
+        _remember(held, surface, made)
+        return answer | _built(surface, xs, ys, values, boundary, request)
+    except Exception as error:  # the surface's problem, and it says so itself
+        return answer | {"trouble": _said(error)}
+
+
+def _built(
+    surface: Gridded,
+    xs: np.ndarray,
+    ys: np.ndarray,
+    values: np.ndarray,
+    boundary: Any,
+    request: Grid,
+) -> dict[str, Any]:
+    """The mesh, the wire and the shading of one grid, placed in one box.
+
+    Two z ranges travel back and they are different questions. The box is what
+    the vertices were placed in, which is the pane's where the pane has one;
+    `wanted` is what this surface's own values ask for, which is what the pane
+    unions to arrive at the box in the first place. A pane with one surface
+    gets the same two numbers twice and evaluates once for them.
+    """
+    found = geometry.extent([values])
+    if found is None:
+        return _undrawn() | {
+            "empty": True,
+            "words": f"{surface.label}: no real values over this domain",
+        }
+    wanted, clipped = found
+    zrange = wanted if request.zrange is None else request.zrange
+    said = ""
+    if clipped and request.zrange is None:
+        said = (
+            "z clipped to the 1st-99th percentile:"
+            f" {roughly(wanted[0])} to {roughly(wanted[1])}"
+        )
+    box = geometry.Box(request.xdomain, request.ydomain, zrange)
+    vertexes, faces, shading = geometry.mesh(xs, ys, values, box, boundary)
+    points, shades = geometry.wire(xs, ys, values, box, boundary)
+    return {
+        "vertices": _placed(vertexes),
+        "faces": np.ascontiguousarray(faces, dtype=np.uint32).ravel(),
+        "colors": _tinted(shading, surface.color),
+        "wire": _placed(points),
+        "wirecolors": _tinted(shades, surface.color),
+        "wanted": [float(wanted[0]), float(wanted[1])],
+        "clipped": bool(clipped),
+        "words": said,
+    } | _box(box)
+
+
+def _about_solid(request: Grid) -> dict[str, Any]:
+    """The header a surface's answer wears: who it is about, and which grid."""
+    return {
+        "pane": request.pane,
+        "plot": request.plot,
+        "generation": request.generation,
+        "reply": "grid",
+        "trouble": "",
+        "words": "",
+        "empty": False,
+    }
+
+
+def _box(box: geometry.Box) -> dict[str, Any]:
+    """The box the vertices stand in, as the numbers behind the picture.
+
+    World units for the drawing - the floor is always the same square and the
+    height is the one proportion kept - and data units for the reading, which
+    are what the desktop's inspector shows and what the axis numbers say.
+
+    The reading is spelled here rather than by the page, in the function the
+    desktop's fields and tick labels are spelled by, so that the two programs
+    say the same number the same way and neither has to be trusted with the
+    other's arithmetic.
+    """
+    return {
+        "world": float(geometry.WORLD),
+        "height": float(box.height),
+        "center": [float(value) for value in box.center],
+        "lengths": [float(value) for value in box.lengths],
+        "zrange": [float(box.z[0]), float(box.z[1])],
+        "reading": {
+            "center": [written(value) for value in box.center],
+            "lengths": [written(value) for value in box.lengths],
+            "z": [written(box.z[0]), written(box.z[1])],
+        },
+    }
+
+
+def _undrawn() -> dict[str, Any]:
+    """Nothing to draw, as the arrays that say so: a mesh of no vertices.
+
+    Sent rather than left out, because the page has the last mesh on the card
+    and a domain the surface is nowhere real over has to take it off again.
+    """
+    return {
+        "vertices": np.empty(0, dtype=np.float32),
+        "faces": np.empty(0, dtype=np.uint32),
+        "colors": np.empty(0, dtype=np.float32),
+        "wire": np.empty(0, dtype=np.float32),
+        "wirecolors": np.empty(0, dtype=np.float32),
+        "wanted": [],
+        "clipped": False,
+    }
+
+
+def _placed(points: np.ndarray) -> np.ndarray:
+    """Vertices as the page takes them: one flat run of single precision.
+
+    Three floats a point, in the order a `BufferAttribute` reads them. The same
+    reason a stroke crosses flat: a second dimension would cross as a nested
+    list of JavaScript numbers, and a surface has sixty-four times as many
+    numbers in it as a curve.
+    """
+    return np.ascontiguousarray(points, dtype=np.float32).ravel()
+
+
+def _tinted(shading: np.ndarray, color: str) -> np.ndarray:
+    """One color a vertex, the surface's own scaled by how bright it is.
+
+    The alpha `brightened` fills in is dropped: every vertex of a surface is
+    opaque, and three floats a vertex is what a color attribute is read as.
+    """
+    colors = geometry.brightened(shading, color)[:, :3]
+    return np.ascontiguousarray(colors, dtype=np.float32).ravel()
+
+
 # -- a reading and a scan -----------------------------------------------------
 
 
@@ -425,6 +596,23 @@ def _riding(held: Closures, model: Plot, degrees: bool) -> Riding:
     return plot
 
 
+def _standing(held: Closures, model: Surface) -> Gridded:
+    """The surface as the sampling holds it, with whatever closure is cached.
+
+    A surface's reading of its tree is a function of two names, which is the
+    same reading a function curve of one name is and slots into the same cache:
+    a domain typed twice, a grid raised and lowered, a pane closed and the
+    expression plotted again all find the closure already built.
+    """
+    surface = Gridded(
+        **{name: getattr(model, name) for name in model.__dataclass_fields__}
+    )
+    surface.closure = held.get(
+        held.keyed(surface, _names(surface), _reading_of(surface))
+    )
+    return surface
+
+
 def _ensured(held: Closures, model: Plot, degrees: bool) -> Riding:
     """The plot with its closures actually built, whatever the cache had.
 
@@ -471,7 +659,7 @@ def _remember(held: Closures, plot: Riding, made: Any, pair: Any = None) -> None
 
 def _names(plot: Plot) -> tuple[str, ...]:
     """The variables a plot's closure is a function of, in the axes' order."""
-    if plot.kind in FIELDS:
+    if plot.kind in FIELDS or plot.kind in SOLIDS:
         return plot.axes
     if plot.kind in PARAMETRIZED:
         return plot.options.variables or ("t",)

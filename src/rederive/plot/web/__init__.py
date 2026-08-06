@@ -10,7 +10,8 @@ the screen and knows no mathematics.
 
 `protocol.py` is what it asks the engine worker for and what comes back. The
 requests are picklable and free of numpy, exactly as `plot/protocol.py` is; the
-answers are arrays, and they never come back this way at all.
+answers are arrays, and they never come back this way at all. Four requests: a
+curve over a view, a reading, a scan, and a surface over a domain.
 
 `sampler.py` is the far end, and it runs in the worker beside sympy. It holds
 the lambdified closures - the one content-keyed cache the worker's statelessness
@@ -20,6 +21,13 @@ thread's Python, which is what keeps numpy out of the instance that draws the
 terminal.
 
 What is left for JavaScript is the picture: the view, the gestures and the
-drawing, in `web/plot2d.js`. It renders no expression of its own, and no number
-it shows was formatted anywhere but Python.
+drawing, in `web/plot2d.js` for a flat one and `web/plot3d.js` for a solid.
+Neither renders an expression of its own, and no number either shows was
+formatted anywhere but Python.
+
+A solid divides differently in one place only. What crosses for it is not the
+grid it was sampled on but the geometry `plot/surface.py` builds out of that
+grid - the triangles, the wire drawing and a color a vertex - because a picture
+of a surface is the geometry, and three.js is handed exactly what pyqtgraph is
+handed on a desktop.
 """

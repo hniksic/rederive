@@ -38,13 +38,16 @@ __all__ = ["WebPlots"]
 class WebPlots:
     """The five calls, answered by a plot session whose windows are panes."""
 
-    def __init__(self, page: Any, engine: Any) -> None:
+    def __init__(self, page: Any, solids: Any, engine: Any) -> None:
         executor = WorkerExecutor(engine)
-        backend = WebBackend(page, engine)
-        # The one thing the page says that is about no pane in particular: a
-        # sampling has been drawn. It goes to the executor, which is what lets
-        # go of the request in flight and sends the next one.
+        backend = WebBackend(page, solids, engine)
+        # The one thing either drawing module says that is about no pane in
+        # particular: a sampling has been drawn. It goes to the executor, which
+        # is what lets go of the request in flight and sends the next one. Both
+        # modules are told, because a request in flight may be a curve's or a
+        # surface's and the queue is one queue.
         page.attend(backend.handed({"landed": executor.landed}))
+        solids.attend(backend.handed({"landed": executor.landed}))
         # A terminated worker takes its sampling with it, and the executor is
         # the side that would otherwise wait forever for the answer.
         engine.lost = executor.lost
@@ -64,8 +67,8 @@ class WebPlots:
         """Draw one expression, and say which pane took it.
 
         The refusals are the session's own where it has one, and this call's
-        where a window could not be built at all - a solid, until three.js
-        draws one. Both come out as the one sentence the message line prints.
+        where a window could not be built at all. Both come out as the one
+        sentence the message line prints.
         """
         try:
             reply = self.session.add(request)

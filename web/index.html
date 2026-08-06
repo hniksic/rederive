@@ -35,6 +35,11 @@
   }
   .plot-pane {
     position: absolute;
+    /* A stacking context of its own, so that what floats inside a pane - the
+       legend, the readout, the chip - floats inside that pane and not over the
+       pane in front of it. Without it a positioned child is painted in the
+       page's own stacking order, where it outranks every pane raised later. */
+    z-index: 0;
     pointer-events: auto;
     display: flex;
     flex-direction: column;
@@ -74,6 +79,57 @@
   }
   .plot-close:hover { color: #e2a1a1; border-color: #7c3f42; }
   .plot-canvas { position: relative; flex: 1; background: #0c0c10; overflow: hidden; }
+  /* The card a solid is drawn on fills the canvas area under it; three.js sizes
+     the element itself, and this is what stops a stale size from stretching it. */
+  .plot-card { display: block; width: 100% !important; height: 100% !important; }
+  /* The second row of a 3D pane: the domain, the grid and the three controls
+     that are not the camera. A 2D pane has none of this - what a flat picture
+     is framed by is where the mouse left it. */
+  .plot-tools {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    background: #131318;
+    border-bottom: 1px solid #23232b;
+    user-select: none;
+  }
+  .plot-label { color: #8d93a0; }
+  .plot-field {
+    width: 52px;
+    padding: 2px 4px;
+    background: #0c0c10;
+    border: 1px solid #2b2b34;
+    border-radius: 3px;
+    color: #dde3ec;
+    font: inherit;
+  }
+  .plot-field:focus { outline: none; border-color: rgba(101, 178, 241, 0.55); }
+  .plot-toggle {
+    margin-left: 4px;
+    padding: 2px 9px;
+    background: transparent;
+    border: 1px solid #2b2b34;
+    border-radius: 3px;
+    color: #b6bcc7;
+    cursor: pointer;
+    font: inherit;
+  }
+  .plot-toggle:hover { color: #dde3ec; border-color: #3a3a46; }
+  .plot-toggle.on { color: #cfe6fb; border-color: rgba(101, 178, 241, 0.55); }
+  /* The numbers behind the picture, in the corner opposite the legend. */
+  .plot-readout {
+    position: absolute;
+    left: 10px;
+    bottom: 8px;
+    z-index: 3;
+    padding: 5px 8px;
+    background: rgba(17, 17, 23, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 9px;
+    white-space: pre;
+    color: #b6bcc7;
+  }
   .plot-status {
     padding: 4px 10px;
     min-height: 17px;
@@ -153,6 +209,13 @@
 <script src="xterm/addon-webgl.js"></script>
 <script src="xterm/addon-canvas.js"></script>
 <script src="uplot/uPlot.iife.min.js"></script>
+<!-- three.js is a module and its controls import it by name, which is what an
+     import map is for: one entry, pointing at the copy beside this file. The
+     alternative is patching a vendored file on the way in, and a build that
+     edits what it vendors is a build nobody can check against upstream. -->
+<script type="importmap">
+{ "imports": { "three": "./three/three.module.min.js" } }
+</script>
 <script type="module" src="main.js"></script>
 </body>
 </html>

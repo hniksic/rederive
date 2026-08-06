@@ -1,4 +1,4 @@
-"""The arithmetic a 2D view is framed by, in nobody's toolkit.
+"""The arithmetic a view is framed by, in nobody's toolkit.
 
 Framing is never asked about. A fresh window shows x in [-5, 5] with equal
 scales - always, so a circle is round - and the mouse does the rest. The one
@@ -13,6 +13,12 @@ polar coordinates, and where the view has been.
 Nothing here decides anything. A window asks for a rectangle and then does what
 it likes with it - the aspect lock, the padding and the drawing are the
 window's, because they are the picture's rather than the mathematics'.
+
+A 3D window is framed by a domain rather than by a view - the mouse turns the
+picture and never re-evaluates it - so what it has here is the rectangle it
+opens on and how finely that is sampled. They are here rather than in either
+window because both backends open on them, and a browser opening on a different
+rectangle from a desktop would be two programs.
 
 Numpy is imported where it is used rather than at the top, and the three
 functions that use it are the three that take arrays of samples. The rest -
@@ -32,10 +38,29 @@ from rederive.plot.protocol import PlotKind
 if TYPE_CHECKING:
     import numpy as np
 
-__all__ = ["History", "axis_at", "fitting", "framing", "home_range", "polar", "reread"]
+__all__ = [
+    "DEFAULT_DOMAIN",
+    "DEFAULT_GRID",
+    "MAX_GRID",
+    "History",
+    "axis_at",
+    "fitting",
+    "framing",
+    "home_range",
+    "polar",
+    "reread",
+]
 
 #: The default framing: x from -5 to 5, with y following from equal scales.
 DEFAULT_HALF_WIDTH = 5.0
+
+#: The rectangle a fresh 3D window evaluates over, and how many samples of it
+#: each axis takes. Sixty-four is dense enough that `SIN(x*y)` over the default
+#: domain does not alias; the cap is what stops a typed grid from asking for a
+#: quarter of a million vertices.
+DEFAULT_DOMAIN = (-5.0, 5.0)
+DEFAULT_GRID = 64
+MAX_GRID = 256
 
 #: A range, as everything here passes one around: two bounds each way.
 Ranges = tuple[tuple[float, float], tuple[float, float]]

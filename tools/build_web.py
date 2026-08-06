@@ -9,7 +9,8 @@ What it gathers, and where each part comes from:
 
 * the Pyodide runtime and the sympy, mpmath and numpy wheels, from the CDN's
   precompiled `pyc` channel;
-* xterm.js and its fit, unicode11, WebGL and canvas addons, and uPlot, from npm;
+* xterm.js and its fit, unicode11, WebGL and canvas addons, uPlot and three.js,
+  from npm;
 * this package, built with `uv build`, and the pure-Python wheels it and
   Textual stand on, at the versions the working environment holds - so what
   the page runs is what the suite was run against;
@@ -21,11 +22,12 @@ proxy, and on a static host that is not allowed to reach anywhere else.
 
 Two things about that directory are worth knowing before it is served.
 
-It is large and it compresses well: about 47 MB as it sits, about 16 MB over a
-connection whose server compresses, and nearly all of the difference is the
-precompiled sympy wheel and the stdlib. `python -m http.server` does not
-compress at all, which is fine for a look and wrong for a demo anyone else is
-going to load; GitHub Pages does.
+It is large and it compresses well: about 62 MB as it sits, about 24 MB over a
+connection whose server compresses, and nearly all of it is the precompiled
+sympy wheel, numpy and the stdlib. The JavaScript is a rounding error beside
+them - three.js, the biggest piece of it, is 0.8 MB and 0.2 MB compressed.
+`python -m http.server` does not compress at all, which is fine for a look and
+wrong for a demo anyone else is going to load; GitHub Pages does.
 
 And it needs no headers. There is no `SharedArrayBuffer` here and no
 `setInterruptBuffer`, so no COOP or COEP is called for: the abort is a
@@ -76,12 +78,15 @@ RUNTIME = (
 #: terminal, and loads no mathematics at all.
 DISTRIBUTED = ("sympy", "mpmath", "numpy")
 
-#: The terminal, the four addons the page loads it with, and the chart library
-#: the plot panes are framed by. unicode11 is insurance rather than necessity -
+#: The terminal, the four addons the page loads it with, and the two libraries
+#: the plot panes draw with. unicode11 is insurance rather than necessity -
 #: stage 0 measured every character the display can emit as one cell either way
 #: - and canvas is the fallback for a machine that cannot have a WebGL context,
 #: the two being pixel-identical. uPlot is 21 kB and draws the axes, their
 #: numbers and the ruling; the curves are drawn on its canvas by `plot2d.js`.
+#: three.js is the largest thing here that is not Python - 190 kB over a
+#: compressing connection for the module, its core and one control - and it is
+#: what a solid is put on a card by.
 NPM = (
     "@xterm/xterm@^6.0.0",
     "@xterm/addon-fit@^0.11.0",
@@ -89,11 +94,17 @@ NPM = (
     "@xterm/addon-webgl@^0.19.0",
     "@xterm/addon-canvas@^0.7.0",
     "uplot@^1.6.32",
+    "three@^0.185.0",
 )
 
 #: Which file of each package the page loads, and which directory of the built
 #: demo it lands in. The UMD and IIFE builds, because they are what these
 #: packages ship for a plain `<script>` tag and what their own examples use.
+#: three.js is the exception and is taken as modules, which is the only form it
+#: ships in: the minified module, the core it imports beside it, and the one
+#: control out of the examples tree that the panes use. Nothing else of that
+#: tree is copied - it is a few megabytes of loaders and post-processing for a
+#: demo that orbits a mesh.
 BUNDLED = {
     "@xterm/xterm": ("lib/xterm.js", "css/xterm.css"),
     "@xterm/addon-fit": ("lib/addon-fit.js",),
@@ -101,12 +112,17 @@ BUNDLED = {
     "@xterm/addon-webgl": ("lib/addon-webgl.js",),
     "@xterm/addon-canvas": ("lib/addon-canvas.js",),
     "uplot": ("dist/uPlot.iife.min.js", "dist/uPlot.min.css"),
+    "three": (
+        "build/three.module.min.js",
+        "build/three.core.min.js",
+        "examples/jsm/controls/OrbitControls.js",
+    ),
 }
 
 #: Which directory each package's files are served from. One name per package,
 #: because a page that names `xterm/xterm.js` and `uplot/uPlot.min.css` says
 #: where each thing came from.
-SERVED = {"uplot": "uplot"}
+SERVED = {"uplot": "uplot", "three": "three"}
 
 #: What the app instance needs beside this package: Textual and what Textual
 #: stands on, every one of them pure Python. Sympy is not here and must not be

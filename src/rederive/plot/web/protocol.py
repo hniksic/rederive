@@ -23,21 +23,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rederive.plot.model import Plot
+from rederive.plot.model import Plot, Surface
 
-__all__ = ["DRAWING", "Features", "Sample", "Trace"]
+__all__ = ["DRAWING", "Features", "Grid", "Sample", "Trace"]
 
-#: The names the three requests travel under in the worker's request table.
+#: The names the four requests travel under in the worker's request table.
 #: They sit beside the six engine calls rather than in a channel of their own,
 #: because the worker is one thread and a second channel would only queue in
 #: front of the same interpreter.
 SAMPLE = "plot_sample"
 TRACE = "plot_trace"
 FEATURES = "plot_features"
+GRID = "plot_grid"
 
-#: All three together, which is how the worker's dispatcher tells a request
+#: All four together, which is how the worker's dispatcher tells a request
 #: whose answer is arrays from one whose answer is a pickle.
-DRAWING = (SAMPLE, TRACE, FEATURES)
+DRAWING = (SAMPLE, TRACE, FEATURES, GRID)
 
 
 @dataclass(frozen=True)
@@ -107,3 +108,35 @@ class Features:
     xrange: tuple[float, float]
     yrange: tuple[float, float]
     size: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class Grid:
+    """One surface over one domain, as the geometry a card can be given.
+
+    The 3D request, and the only thing that starts an evaluation in a 3D pane:
+    the camera turns the picture and never comes near here, because the mesh is
+    about the domain and the domain is only ever changed by typing in it. What
+    comes back is `plot/surface.py`'s answer - vertices, triangles, a wire grid
+    and a color a vertex - which is what three.js is handed and what pyqtgraph
+    is handed on a desktop.
+
+    `grid` is how many samples each axis of the domain takes, which is the one
+    number a 3D window has that a 2D one has not: a curve is sampled to the
+    pixels it is drawn on and a surface is sampled to what was asked for.
+
+    `zrange` is the box the vertices are to be placed in, where the pane
+    already has one. A pane holding two surfaces draws them in one box or draws
+    a picture that lies, so the pane says what the box is and a surface arriving
+    into an empty one says what it should be - which is `None` here, and an
+    extent worked out from the values themselves.
+    """
+
+    pane: int
+    plot: int
+    generation: int
+    model: Surface
+    xdomain: tuple[float, float]
+    ydomain: tuple[float, float]
+    grid: tuple[int, int]
+    zrange: tuple[float, float] | None = None

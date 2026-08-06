@@ -31,6 +31,7 @@ __all__ = [
     "FUNCTIONS",
     "PALETTE",
     "PAPER_PALETTE",
+    "SOLIDS",
     "SOLID_PALETTE",
     "SOLID_PAPER",
     "Plot",
@@ -39,6 +40,7 @@ __all__ = [
     "pointed",
     "reading",
     "roughly",
+    "written",
 ]
 
 #: The curve palette, cycled in this order. Bright on the dark canvas, and
@@ -103,6 +105,11 @@ FUNCTIONS = frozenset({PlotKind.CURVE, PlotKind.FAMILY})
 #: recomputed for whatever the view now shows.
 FIELDS = frozenset({PlotKind.IMPLICIT, PlotKind.REGION})
 
+#: The kinds drawn as a height over a rectangle, which are the ones a 3D window
+#: holds. They are evaluated over a grid like a field and read like a function
+#: of two names, which is the pair of facts anything sampling one needs.
+SOLIDS = frozenset({PlotKind.SURFACE, PlotKind.SURFACES})
+
 
 def naming(label: str, text: str) -> str:
     """What a plot is called wherever a window has room for one line of it.
@@ -143,6 +150,19 @@ def roughly(value: float) -> str:
     nothing.
     """
     return f"{value:g}"
+
+
+def written(value: float) -> str:
+    """A number as a field or a tick label writes it: short and exact.
+
+    A whole number is written whole however large it is, because a domain of
+    `-5 … 5` typed as `-5` must come back as `-5` and not as `-5.00000`; a
+    field that rewrote what was typed into it would be a field nobody trusted.
+    """
+    number = float(value)
+    if number == int(number) and abs(number) < 1e15:
+        return str(int(number))
+    return f"{number:g}"
 
 
 def pointed(x: float, y: float) -> str:
