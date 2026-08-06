@@ -166,7 +166,6 @@ and the command simplifies what it built instead of appending it, which is what
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
 from collections.abc import Awaitable, Mapping
@@ -1241,6 +1240,7 @@ class RederiveApp(App[None]):
         settings: Settings | None = None,
         demo: Path | None = None,
         opening: str = "",
+        plotter: Any = None,
     ) -> None:
         """`demo` and `opening` are what the command line asked for.
 
@@ -1249,6 +1249,10 @@ class RederiveApp(App[None]):
         the message line in place of the usual invitation, since the user has
         not been asked anything yet and a count of lines that would not parse
         is the more useful thing to be told.
+
+        `plotter` is where a plot goes when one is asked for, and the default
+        is the plot host this program has always had. A caller that draws
+        windows another way - a browser, a test - hands its own in.
         """
         # Before the base class, which asks for the CSS variables as it starts.
         # A session brings its own settings, there being only one store.
@@ -1276,8 +1280,11 @@ class RederiveApp(App[None]):
         #: The plot windows, which live in a child process that is not started
         #: until something is plotted. Constructing this costs nothing: no Qt,
         #: no numpy, no process, and the app process stays as free of all three
-        #: as it is of sympy.
-        self.plots = PlotProxy(self._plot_reported)
+        #: as it is of sympy. A caller with windows of another kind hands them
+        #: in instead - the five calls below are the whole of what this side
+        #: asks of them, and what is behind them is not this side's business.
+        self.plots = PlotProxy() if plotter is None else plotter
+        self.plots.events = self._plot_reported
         self.plots.prefer(preferences(self.settings))
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
@@ -4537,18 +4544,20 @@ class RederiveApp(App[None]):
         self._compute(PLOTTING, partial(self._plot, request), self._plot_done)
 
     async def _plot(self, request: plots.Add) -> str:
-        """Send one plot, off the event loop, and word the acknowledgement.
+        """Send one plot, and word the acknowledgement it comes back with.
 
-        The host is a process at the other end of a pipe and the send waits for
-        its answer, so the wait goes on a thread as the engine's does - the loop
-        has a screen to keep painting either way.
+        Awaited rather than called, exactly as an engine command is, and for
+        the same reason: where the waiting happens belongs to the side that
+        does the drawing - a thread blocking on a pipe where there is a host,
+        nothing at all where there is no window to open - and the loop has a
+        screen to keep painting either way.
 
         Whether the plot replaced a curve already there is only known once the
         host has answered, which is why the sentence is made here rather than
         by the command: a plot that replaced says `Replotting`, which is how
         replacement teaches itself.
         """
-        placed = await asyncio.to_thread(self.plots.add, request)
+        placed = await self.plots.add(request)
         worded = REPLOTTED if placed.replaced else PLOTTED
         return worded.format(label=request.label)
 

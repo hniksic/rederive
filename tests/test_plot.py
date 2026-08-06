@@ -837,7 +837,8 @@ async def _add(session, host, text, **keywords):
         "text": text,
         "options": plotted.options,
     }
-    return host.add(plots.Add(**{**fields, **keywords})).window
+    placed = await host.add(plots.Add(**{**fields, **keywords}))
+    return placed.window
 
 
 async def test_a_host_takes_a_plot_and_describes_what_it_holds(host):
@@ -859,7 +860,7 @@ async def test_re_plotting_a_label_replaces_its_curve_and_says_so(host):
     session = Session()
     await _add(session, host, "SIN(x)")
     entry = session.entries[0]
-    placed = host.add(
+    placed = host.plot(
         plots.Add(
             worksheet=id(session),
             node=entry.node,
@@ -893,7 +894,7 @@ async def test_a_new_window_takes_the_next_number_and_becomes_current(host):
 def test_a_family_becomes_one_curve_per_element(host):
     session = Session()
     entry = session.author("[x, x^2, x^3]")
-    host.add(
+    host.plot(
         plots.Add(
             worksheet=id(session),
             node=entry.node,
@@ -964,7 +965,7 @@ async def test_a_surface_opens_a_solid_window_of_its_own(host):
 def test_a_vector_of_surfaces_becomes_one_surface_per_element(host):
     session = Session()
     entry = session.author("[x + y, x - y]")
-    host.add(
+    host.plot(
         plots.Add(
             worksheet=id(session),
             node=entry.node,
@@ -1021,7 +1022,7 @@ def test_a_host_that_will_not_start_reports_its_own_words(monkeypatch):
 
     monkeypatch.setattr(proxy, "_spawn", refusing)
     with pytest.raises(PlotError) as refused:
-        proxy.add(
+        proxy.plot(
             plots.Add(
                 worksheet=0,
                 node=parsed("SIN(x)"),
@@ -1043,7 +1044,7 @@ def test_a_plot_with_the_extra_not_installed_says_what_to_install(monkeypatch):
     proxy = proxy_module.PlotProxy()
     monkeypatch.setattr(proxy_module, "_installed", lambda name: False)
     with pytest.raises(PlotError) as refused:
-        proxy.add(
+        proxy.plot(
             plots.Add(
                 worksheet=0,
                 node=parsed("SIN(x)"),
@@ -2446,14 +2447,14 @@ def test_the_preferences_go_in_front_of_the_next_request_and_only_once(monkeypat
     )
     proxy.prefer(plots.Prefer(grid=16))
     assert sent == []
-    proxy.add(request)
+    proxy.plot(request)
     assert sent == [plots.Prefer(grid=16), request]
     # And a second plot does not say it again.
-    proxy.add(request)
+    proxy.plot(request)
     assert sent[2:] == [request]
     # Nor does one that has heard the same preferences twice.
     proxy.prefer(plots.Prefer(grid=16))
-    proxy.add(request)
+    proxy.plot(request)
     assert sent[3:] == [request]
 
 
@@ -2484,12 +2485,12 @@ def test_a_restarted_host_hears_the_preferences_again(monkeypatch):
         worksheet=0, node=parsed("SIN(x)"), context=Context(), kind=PlotKind.CURVE
     )
     proxy.prefer(plots.Prefer(connected=True))
-    proxy.add(request)
+    proxy.plot(request)
     assert sent == [plots.Prefer(connected=True), request]
     # The host dies; the next plot starts another, and the preferences it was
     # never told go in front of that plot too.
     proxy._process = None
-    proxy.add(request)
+    proxy.plot(request)
     assert proxy.starts == 2
     assert sent[2:] == [plots.Prefer(connected=True), request]
 
@@ -2527,7 +2528,7 @@ class Answering:
         if self.refuse is not None:
             raise PlotError(self.refuse)
 
-    def add(self, request):
+    async def add(self, request):
         self._answer(request)
         return self.placed
 

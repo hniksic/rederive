@@ -24,6 +24,7 @@ state is deliberately not persisted anywhere, so there is nothing to restore.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import importlib.util
 import multiprocessing
@@ -147,13 +148,24 @@ class PlotProxy:
 
     # -- the four requests -------------------------------------------------
 
-    def add(self, request: protocol.Add) -> protocol.Placed:
+    async def add(self, request: protocol.Add) -> protocol.Placed:
         """Plot an expression, and say which window took it.
+
+        Awaited, and everything under it blocks: the send waits for the host's
+        acknowledgement and the first send of a session waits for a process to
+        import Qt, so the wait goes on a thread of the loop's own pool exactly
+        as an engine call's does. Where the waiting happens is not the app's
+        business, and a browser that has no thread to wait in answers the same
+        call with no wait at all.
 
         The whole reply comes back rather than the number alone, because the
         acknowledgement message turns on more than the number: whether the
         plot replaced a curve already there is the host's to know.
         """
+        return await asyncio.to_thread(self.plot, request)
+
+    def plot(self, request: protocol.Add) -> protocol.Placed:
+        """`add` itself, on whatever thread is willing to wait for it."""
         reply = self._ask(request)
         if isinstance(reply, protocol.Placed):
             return reply
