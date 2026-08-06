@@ -71,6 +71,13 @@ jobs:
       # where nothing is wrong. Nothing here reaches that code path, so the missing
       # library would first be heard about from whoever downloaded the release.
       #
+      # `libEGL.so.1` is the same story one layer in, and the suite runs into it
+      # first: the 3D window imports `pyqtgraph.opengl`, which pulls in Qt's OpenGL
+      # module, which loads EGL by name. Without it that import fails, which is not
+      # a plot window that draws nothing but a plot host that will not start and a
+      # `--version` that reports no Qt at all. `libgl1` goes with it, being what a
+      # desktop context is made from.
+      #
       # The build warns about `libtiff.so.5` for the same reason and it is left
       # alone: the distribution ships libtiff 6 now, and all it costs is Qt's TIFF
       # image plugin, which nothing reaches - a plot exports as PNG or SVG.
@@ -78,7 +85,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb-cursor0
+          sudo apt-get install -y libxcb-cursor0 libegl1 libgl1
 
       # `--managed-python` so that all three platforms build on uv's own
       # interpreter rather than on whatever the runner happens to have lying

@@ -36,6 +36,17 @@ jobs:
         with:
           enable-cache: true
 
+      # The 3D window imports `pyqtgraph.opengl`, which pulls in Qt's OpenGL module,
+      # which loads `libEGL.so.1` by name. A runner without it fails that import, and
+      # what fails with it is every Qt test here: the plot host will not start and
+      # `--version` reports no Qt. Nothing in the suite draws on a screen - the
+      # windows are offscreen - but the import has to work for any of it to be asked.
+      - name: Install what Qt loads by name
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1
+
       - name: Install dependencies
         run: uv sync --frozen --managed-python
 
