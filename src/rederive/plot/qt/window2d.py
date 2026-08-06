@@ -64,6 +64,9 @@ from rederive.plot.model import (
     PALETTE,
     PAPER_PALETTE,
     Plot,
+    pointed,
+    reading,
+    roughly,
 )
 from rederive.plot.protocol import PlotKind
 from rederive.plot.qt import theme
@@ -118,11 +121,6 @@ MODIFIERS = (
 NUDGE_PX = 1.0
 NUDGE_FAST_PX = 10.0
 PAN_SHARE = 0.25
-
-#: How the numbers in the status line are written. Six decimals is what a
-#: reading is worth from a picture: enough to paste into the algebra window
-#: and see it agree, short enough to fit twice on one line.
-FORMAT = "{:.6f}"
 
 #: How far the arrow keys move the marker along a parametric curve, as a
 #: fraction of the parameter range, plain and with Shift. A five-hundredth is
@@ -1203,7 +1201,7 @@ class Window2D(QtWidgets.QMainWindow):
         if sampled.gave_up is not None:
             self.say(
                 f"{plot.label}: gave up refining near"
-                f" {plot.parameter} = {_short(sampled.gave_up)}"
+                f" {plot.parameter} = {roughly(sampled.gave_up)}"
             )
 
     def _shaded(self, plot: Drawn, answer: Any) -> None:
@@ -1244,7 +1242,7 @@ class Window2D(QtWidgets.QMainWindow):
         """
         left, right = self.canvas.viewRange()[0]
         name = plot.abscissa or plot.variable
-        span = f"{_short(left)} ≤ {name} ≤ {_short(right)}"
+        span = f"{roughly(left)} ≤ {name} ≤ {roughly(right)}"
         if plot.kind is PlotKind.IMPLICIT:
             self.say(f"{plot.label}: no solutions in view for {span}")
             return
@@ -1336,7 +1334,7 @@ class Window2D(QtWidgets.QMainWindow):
             (self.range_high, plot.trange[1]),
         ):
             if not edit.hasFocus():
-                edit.setText(_short(value))
+                edit.setText(roughly(value))
 
     def _range_edited(self) -> None:
         """A range field was left: re-sample the selected plot over what it says.
@@ -1441,8 +1439,8 @@ class Window2D(QtWidgets.QMainWindow):
         self._unlock()
         self.canvas.setRange(xRange=(left, right), yRange=(bottom, top), padding=0)
         self.say(
-            f"Showing {_short(left)} ≤ x ≤ {_short(right)}"
-            f"   {_short(bottom)} ≤ y ≤ {_short(top)}"
+            f"Showing {roughly(left)} ≤ x ≤ {roughly(right)}"
+            f"   {roughly(bottom)} ≤ y ≤ {roughly(top)}"
         )
 
     def autoscale(self) -> None:
@@ -1840,8 +1838,8 @@ class Window2D(QtWidgets.QMainWindow):
             return
         self._marked(plot, x, value, ((plot.variable, x), ("y", value)))
         self.say(
-            f"Tracing {plot.named}   {plot.variable} = {_number(x)}"
-            f"   y = {_number(value)}"
+            f"Tracing {plot.named}   {plot.variable} = {reading(x)}"
+            f"   y = {reading(value)}"
         )
 
     def _trace_at(self, t: float) -> None:
@@ -1863,15 +1861,15 @@ class Window2D(QtWidgets.QMainWindow):
         self._trace_x = x
         self._marked(plot, x, y, ((plot.parameter, t), ("x", x), ("y", y)))
         self.say(
-            f"Tracing {plot.named}   {plot.parameter} = {_number(t)}"
-            f"{self._radius(plot, t)}   x = {_number(x)}   y = {_number(y)}"
+            f"Tracing {plot.named}   {plot.parameter} = {reading(t)}"
+            f"{self._radius(plot, t)}   x = {reading(x)}   y = {reading(y)}"
         )
 
     def _radius(self, plot: Drawn, t: float) -> str:
         """What a polar curve is worth at θ, which is the reading it is read by."""
         if plot.kind is not PlotKind.POLAR or plot.closure is None:
             return ""
-        return f"   r = {_number(_one(plot.closure, t))}"
+        return f"   r = {reading(_one(plot.closure, t))}"
 
     def _lost(self, plot: Drawn, name: str, at: float) -> None:
         """The marker over a place the curve has no point at.
@@ -1880,7 +1878,7 @@ class Window2D(QtWidgets.QMainWindow):
         found, so the message is the answer rather than an error.
         """
         self._unmark()
-        self.say(f"Tracing {plot.named}: not real and finite at {name} = {_number(at)}")
+        self.say(f"Tracing {plot.named}: not real and finite at {name} = {reading(at)}")
 
     def _unmark(self) -> None:
         """Take the marker, its hairline and its chip off the canvas together."""
@@ -1963,7 +1961,7 @@ class Window2D(QtWidgets.QMainWindow):
         point = self.traced
         if point is None:
             return None
-        return f"[{_number(point[0])}, {_number(point[1])}]"
+        return pointed(point[0], point[1])
 
     def send_home(self) -> None:
         """Enter and Return while tracing: the traced point into the worksheet.
@@ -2056,7 +2054,7 @@ class Window2D(QtWidgets.QMainWindow):
 
     def _named_feature(self, plot: Drawn, found: Any) -> str:
         """One clause naming what was found and where, as the status bar says it."""
-        where = f"at {plot.variable} = {_number(found.x)}"
+        where = f"at {plot.variable} = {reading(found.x)}"
         if found.kind is not evaluate.CROSSING:
             return f"{found.kind} {where}"
         crossed = plot.crossed
@@ -2580,7 +2578,7 @@ class Bounds(QtWidgets.QDialog):
             ("bottom", bottom),
             ("top", top),
         ):
-            self.fields[name].setText(_short(value))
+            self.fields[name].setText(roughly(value))
 
     @property
     def typed(self) -> tuple[str, str, str, str]:
@@ -2747,22 +2745,7 @@ def _named_value(name: str, value: float) -> str:
     """
     return (
         f'<font color="{theme.DIM}">{html.escape(name)}:</font> '
-        f'<font color="{theme.READOUT}">{_number(value)}</font>'
+        f'<font color="{theme.READOUT}">{reading(value)}</font>'
     )
 
 
-def _number(value: float) -> str:
-    """A number as the status line writes it: six decimals, or a word."""
-    if not np.isfinite(value):
-        return "undefined"
-    return FORMAT.format(value)
-
-
-def _short(value: float) -> str:
-    """A number as a sentence about the view writes it, with no trailing noise.
-
-    A reading wants every digit it has; a range does not - `-5 ≤ x ≤ 5` is what
-    the window is showing, and six decimals of it would be six decimals of
-    nothing.
-    """
-    return f"{value:g}"

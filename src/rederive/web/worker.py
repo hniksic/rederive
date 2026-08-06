@@ -9,6 +9,20 @@ contract: nothing is kept between requests but warm imports and sympy's own
 cache, which is what makes terminating this worker a recovery rather than a
 loss.
 
+This worker serves one family the desktop's does not, and it is the plot
+sampling. It is here rather than in a third interpreter because sampling wants
+sympy and numpy, and a Pyodide of its own would be another hundred megabytes and
+a second sympy boot for a picture. The state it keeps is the one the contract
+licenses - a content-keyed cache of lambdified expressions, which the protocol
+treats as maybe-empty and rebuilds on demand - and nothing else.
+
+Its answers leave by a different door. Everything the engine says is a pickle,
+because Python is what reads it; a sampling says arrays, and arrays go to the
+JavaScript that draws them, as a message of typed arrays that the page's own
+listener picks up. The main thread's Python sees such a message go past and
+reads nothing out of it, which is what keeps a numerical library out of the
+instance that paints the screen.
+
 What the desktop worker does that this one does not is take the tty off the
 program and open a log. A worker has no tty to take, and what it prints goes to
 the page's console, which is the browser's log file and needs no opening.
@@ -29,6 +43,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rederive.engine.worker import BUG, MEMORY, READY, methods
+from rederive.plot.web import protocol as plots
 
 __all__ = ["serve"]
 
@@ -41,11 +56,17 @@ def serve() -> None:
     knows the next request pays for nothing but its own answer. What comes
     before the import here is the page's own - the runtime, the package - and
     is finished by the time this is called.
+
+    The sampling table is built after the engine's, and its cost is numpy and
+    this package's own plotting half - a fraction of what sympy costs, and paid
+    before the handshake with everything else.
     """
     import js
     from pyodide.ffi import create_proxy
 
-    table = methods()
+    from rederive.plot.web import sampler
+
+    table = methods() | sampler.methods(_drawing)
     js.self.onmessage = create_proxy(lambda event: _asked(table, event.data))
     _post(pickle.dumps((READY, "ready")))
 
@@ -54,7 +75,11 @@ def _asked(table: dict[str, Callable[..., Any]], data: Any) -> None:
     """One request, answered however it turns out."""
     number, method, args = pickle.loads(bytes(data.to_py()))
     try:
-        _post(pickle.dumps((number, "ok", table[method](*args))))
+        answer = table[method](*args)
+        if method in plots.DRAWING:
+            _drawing({"number": number} | answer)
+        else:
+            _post(pickle.dumps((number, "ok", answer)))
     except MemoryError:
         _post(_trouble(number, MEMORY))
         _close()
@@ -64,6 +89,21 @@ def _asked(table: dict[str, Callable[..., Any]], data: Any) -> None:
         # anything arriving here is a bug worth surfacing and not worth a
         # fresh Pyodide.
         _post(_trouble(number, BUG))
+
+
+def _drawing(answer: dict[str, Any]) -> None:
+    """Hand one picture to the page, as the arrays a canvas can draw.
+
+    Not a pickle, and deliberately so: what is in it is samples, and samples
+    are for the side that draws. A 1-D contiguous array of single precision
+    crosses as one typed array with one copy; anything with a second dimension
+    in it would cross as a nested list of JavaScript numbers, which the runtime
+    documents as extremely slow and which a drag would feel every frame of.
+    """
+    import js
+    from pyodide.ffi import to_js
+
+    js.self.postMessage(to_js(answer, dict_converter=js.Object.fromEntries))
 
 
 def _trouble(number: int, kind: str) -> bytes:

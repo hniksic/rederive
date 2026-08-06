@@ -32,6 +32,24 @@ carries - a tree, a `Context`, a `ParseState`, a `Result` - and the same
 serialisation, since both ends are the same Python running the same package;
 `postMessage` carries the bytes as a `Uint8Array`, which is a copy and nothing
 more.
+
+There is a second family of requests on the same worker, and it is the plot
+sampling. It goes out through `ask` rather than through the six calls, and the
+difference is where its answer goes: a sampling answers in arrays, and arrays
+belong on the page where they are drawn rather than in the interpreter that
+routes them. So `ask` numbers a request, posts it, and expects nothing back -
+the page hears the answer, draws it, and says so to the plot session. That is
+also why `ask` takes no lock. The lock guards the one pending slot the six calls
+share, and a request with no answer to this side needs no slot; what actually
+orders a sampling against a Simplify is the worker, which is one thread of one
+interpreter and takes its messages as they come.
+
+The price of sharing is worth naming. A drag posted behind an integral waits for
+the integral, and a Simplify pressed mid-drag waits for the one sampling in
+flight - bounded, since sampling is depth- and size-capped, but real. And Esc
+terminates the worker under both families at once, which is why `lost` is here:
+the side waiting for a sampling that will never arrive has to be told, or its
+queue stops moving.
 """
 
 from __future__ import annotations
@@ -111,6 +129,10 @@ class WebEngine:
         self._aborts = 0
         self._stopped = False
         self._number = 0
+        #: Told when a worker dies, so that whoever was waiting on an answer
+        #: this side will never see - the plot sampling, whose answers go to
+        #: the page - can stop waiting. Assigned rather than required.
+        self.lost: Callable[[str], None] | None = None
         #: How many workers have been made. Nothing reads it but the tests,
         #: which is where respawn policy is worth asserting about.
         self.starts = 0
@@ -232,6 +254,34 @@ class WebEngine:
                 raise self._collapse(EngineDied(f"The engine stopped: {error}")) from None
             return await answer
 
+    # -- the second family -------------------------------------------------
+
+    def numbered(self) -> int:
+        """The number the next request will travel under.
+
+        Taken before the sending rather than during it, because the sending is
+        a coroutine and the side that asked has to know what it is waiting for
+        the moment it asks. One sequence for both families, so that an answer
+        never wears a number two requests could claim.
+        """
+        self._number += 1
+        return self._number
+
+    async def ask(self, number: int, method: str, args: tuple[Any, ...]) -> None:
+        """Send one request whose answer is the page's rather than Python's.
+
+        The plot sampling, and nothing else. No lock, because there is nothing
+        here for a second request to collide with: what the lock protects is the
+        pending slot the six calls share, and this request has no answer to put
+        in one. What it does share is the worker, and the worker orders the two
+        families itself by taking its messages in the order they arrive.
+        """
+        await self._require()
+        try:
+            _post(self._worker, pickle.dumps((number, method, args)))
+        except Exception as error:
+            raise self._collapse(EngineDied(f"The engine stopped: {error}")) from None
+
     def _abandoned(self, aborts: int) -> None:
         """Give up where an abort has arrived since this call started."""
         if self._aborts != aborts:
@@ -284,6 +334,13 @@ class WebEngine:
         """
         if isinstance(data, str):
             self._collapse(EngineDied(data, CONSOLE))
+            return
+        if getattr(data, "pane", None) is not None:
+            # A sampling answer, which is the page's traffic and not this
+            # side's: the arrays in it are drawn by whoever is listening for
+            # them in JavaScript, and are never read here. Recognized by a
+            # field rather than by a type, because what a pickle arrives as is
+            # a typed array and so is half of what a sampling answers with.
             return
         message = pickle.loads(_bytes(data))
         if message[0] == worker.READY:
@@ -346,6 +403,11 @@ class WebEngine:
         _fail(starting, reason)
         if pending is not None:
             _fail(pending[1], reason)
+        if self.lost is not None:
+            # The second family has no future to fail: its answers go to the
+            # page, so the only way to tell it that one is never coming is to
+            # say so.
+            self.lost(str(reason))
         respawn = self._deaths.died(reason, ready)
         if not self._stopped and respawn:
             self._new()

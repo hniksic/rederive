@@ -7,12 +7,21 @@
 // is the same split the desktop program has, with `postMessage` where the pipe
 // was.
 //
+// The one message this file does look at is a plot sampling. Its answer is
+// typed arrays and is for the canvas rather than for Python, so the worker's
+// messages are listened to twice: Python's own handler takes the pickles and
+// steps over these, and `plot2d.js` takes these and steps over the pickles. The
+// arrays therefore go from the interpreter that computed them to the canvas
+// that draws them, and never become a Python object on this thread.
+//
 // Nor does this file render anything. The one spelling of an expression is the
 // one Python wrote; what crosses to JS is the bytes a terminal would have been
 // sent, and xterm.js draws them exactly as a terminal would.
 //
 // Every URL named below is relative to this file. Nothing is fetched from a
 // CDN, which is what `tools/build_web.py` is for.
+
+import * as plots from './plot2d.js';
 
 const SCREEN = 'screen';
 const MANIFEST = 'manifest.json';
@@ -108,8 +117,15 @@ function render(term, retry) {
 // is Python's at both ends, and every message after this one is a pickle.
 //
 // A module worker, because Pyodide refuses to load in a classic one at all.
+//
+// The plot listener goes on here rather than anywhere else, because a worker is
+// replaced whenever one dies and a listener attached elsewhere would be
+// listening to a worker that is gone. It runs beside Python's own handler and
+// neither knows about the other: each recognizes its own messages and lets the
+// rest by.
 function spawn(manifest) {
   const worker = new Worker('worker.js', { type: 'module' });
+  worker.addEventListener('message', (event) => plots.heard(event.data));
   worker.postMessage({
     indexURL: new URL(manifest.pyodide, location.href).href,
     packages: manifest.packages,
@@ -137,7 +153,8 @@ async function main() {
 
   pyodide.globals.set('TERMINAL', term);
   pyodide.globals.set('SPAWN', () => spawn(manifest));
-  window.rederive = { term, pyodide, timings };
+  pyodide.globals.set('PLOTS', plots);
+  window.rederive = { term, pyodide, timings, plots };
   term.onRender(() => {
     if (timings.prompt === undefined) mark('prompt', started);
   });
@@ -147,7 +164,7 @@ async function main() {
   await pyodide.runPythonAsync(`
 from rederive.web.boot import start
 
-await start(TERMINAL, SPAWN)
+await start(TERMINAL, SPAWN, PLOTS)
 `);
   mark('session', started);
   say(term, '');

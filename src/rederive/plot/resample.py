@@ -27,6 +27,11 @@ the plot may be gone, so it closes over values and touches no window.
 The generation counter that goes with all this belongs to the plot: a job whose
 generation has moved on is a job about a view that is gone, and its answer is
 dropped by the side that would have drawn it.
+
+The evaluation is imported where a job is built rather than at the top, so that
+the policy above can be read by a side with no numpy in it: the browser's plot
+list lives on a main thread that must not load a numerical library, and what it
+needs from here is the debounce and the rule about a data plot.
 """
 
 from __future__ import annotations
@@ -34,7 +39,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from rederive.plot import evaluate
 from rederive.plot.model import DEFAULT_TURN, DEFAULT_TURN_DEGREES, FIELDS, Plot
 from rederive.plot.protocol import PARAMETRIZED, PlotKind
 
@@ -77,6 +81,8 @@ def job(
     a function or a data plot, a sampled path for a parametric curve, a grid for
     a field.
     """
+    from rederive.plot import evaluate
+
     node, context = plot.node, plot.context
     if plot.kind in FIELDS:
         return _field(plot, xrange, yrange, size)
@@ -109,6 +115,8 @@ def grid_job(
     not come near it, which is the promise that window is built on: the mesh is
     about the domain, and the domain is only ever changed by typing in it.
     """
+    from rederive.plot import evaluate
+
     node, context, names = surface.node, surface.context, surface.axes
     made = surface.closure
     nx, ny = grid
@@ -144,6 +152,8 @@ def _curve(
     r(θ) is kept beside the pair because the readout and the trace are in r and
     θ, and only the composition knows which closure that is.
     """
+    from rederive.plot import evaluate
+
     node, context, options = plot.node, plot.context, plot.options
     names = options.variables or ("t",)
     made, radius, known = plot.pair, plot.closure, plot.trange
@@ -193,6 +203,8 @@ def _field(
     from half-resolution samples is smooth at full resolution, and a grid at
     the full one would cost four times as much to say the same thing.
     """
+    from rederive.plot import evaluate
+
     node, context = plot.node, plot.context
     names = plot.axes
     made = plot.closure

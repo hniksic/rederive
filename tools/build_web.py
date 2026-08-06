@@ -7,9 +7,9 @@
 
 What it gathers, and where each part comes from:
 
-* the Pyodide runtime and the sympy and mpmath wheels, from the CDN's
+* the Pyodide runtime and the sympy, mpmath and numpy wheels, from the CDN's
   precompiled `pyc` channel;
-* xterm.js and its fit, unicode11, WebGL and canvas addons, from npm;
+* xterm.js and its fit, unicode11, WebGL and canvas addons, and uPlot, from npm;
 * this package, built with `uv build`, and the pure-Python wheels it and
   Textual stand on, at the versions the working environment holds - so what
   the page runs is what the suite was run against;
@@ -71,32 +71,42 @@ RUNTIME = (
 )
 
 #: What the engine worker loads out of the distribution, by the names the lock
-#: file knows them under. Nothing else is fetched from it: numpy is what
-#: plotting will want and stage 3 has no plotting, and the main thread loads no
-#: mathematics at all.
-DISTRIBUTED = ("sympy", "mpmath")
+#: file knows them under. Numpy is here because every plot sample is one, and
+#: it is loaded by the worker alone: the main thread routes plots and draws a
+#: terminal, and loads no mathematics at all.
+DISTRIBUTED = ("sympy", "mpmath", "numpy")
 
-#: The terminal, and the four addons the page loads it with. unicode11 is
-#: insurance rather than necessity - stage 0 measured every character the
-#: display can emit as one cell either way - and canvas is the fallback for a
-#: machine that cannot have a WebGL context, the two being pixel-identical.
+#: The terminal, the four addons the page loads it with, and the chart library
+#: the plot panes are framed by. unicode11 is insurance rather than necessity -
+#: stage 0 measured every character the display can emit as one cell either way
+#: - and canvas is the fallback for a machine that cannot have a WebGL context,
+#: the two being pixel-identical. uPlot is 21 kB and draws the axes, their
+#: numbers and the ruling; the curves are drawn on its canvas by `plot2d.js`.
 NPM = (
     "@xterm/xterm@^6.0.0",
     "@xterm/addon-fit@^0.11.0",
     "@xterm/addon-unicode11@^0.9.0",
     "@xterm/addon-webgl@^0.19.0",
     "@xterm/addon-canvas@^0.7.0",
+    "uplot@^1.6.32",
 )
 
-#: Which file of each package the page loads. The UMD builds, because they are
-#: what xterm ships for a plain `<script>` tag and what its own examples use.
+#: Which file of each package the page loads, and which directory of the built
+#: demo it lands in. The UMD and IIFE builds, because they are what these
+#: packages ship for a plain `<script>` tag and what their own examples use.
 BUNDLED = {
     "@xterm/xterm": ("lib/xterm.js", "css/xterm.css"),
     "@xterm/addon-fit": ("lib/addon-fit.js",),
     "@xterm/addon-unicode11": ("lib/addon-unicode11.js",),
     "@xterm/addon-webgl": ("lib/addon-webgl.js",),
     "@xterm/addon-canvas": ("lib/addon-canvas.js",),
+    "uplot": ("dist/uPlot.iife.min.js", "dist/uPlot.min.css"),
 }
+
+#: Which directory each package's files are served from. One name per package,
+#: because a page that names `xterm/xterm.js` and `uplot/uPlot.min.css` says
+#: where each thing came from.
+SERVED = {"uplot": "uplot"}
 
 #: What the app instance needs beside this package: Textual and what Textual
 #: stands on, every one of them pure Python. Sympy is not here and must not be
@@ -129,8 +139,8 @@ def main(arguments: list[str] | None = None) -> int:
     distributed = _distributed(pyodide)
     for name in distributed:
         _copy(pyodide / name, output / "pyodide" / name)
-    for source in terminal:
-        _copy(source, output / "xterm" / source.name)
+    for package, source in terminal:
+        _copy(source, output / SERVED.get(package, "xterm") / source.name)
     for source in wheels:
         _copy(source, output / "wheels" / source.name)
     for source in sorted((ROOT / "web").iterdir()):
@@ -199,8 +209,8 @@ def _distributed(directory: Path) -> list[str]:
     return [packages[name]["file_name"] for name in DISTRIBUTED]
 
 
-def _terminal(cache: Path, offline: bool) -> list[Path]:
-    """xterm.js and its addons, installed with npm and read out of the tree."""
+def _terminal(cache: Path, offline: bool) -> list[tuple[str, Path]]:
+    """The page's JavaScript, installed with npm and read out of the tree."""
     directory = cache / "npm"
     directory.mkdir(parents=True, exist_ok=True)
     if not offline:
@@ -217,7 +227,7 @@ def _terminal(cache: Path, offline: bool) -> list[Path]:
             path = directory / "node_modules" / Path(package) / name
             if not path.is_file():
                 raise SystemExit(f"{path}: not installed - run without --offline")
-            found.append(path)
+            found.append((package, path))
     return found
 
 
@@ -227,13 +237,18 @@ def _wheels(cache: Path, offline: bool) -> list[Path]:
     Built and downloaded at the versions this environment has, so that the
     browser runs the Textual the suite ran against rather than whatever PyPI
     resolves to on the day.
+
+    This package is built every time, `--offline` or not. It is the one thing
+    here that comes from the working tree rather than from a network, and a
+    build that served yesterday's wheel while the page beside it was today's
+    would be the worst kind of stale: everything looks rebuilt and half of it is.
     """
     directory = cache / "wheels"
     directory.mkdir(parents=True, exist_ok=True)
+    for stale in directory.glob("rederive-*.whl"):
+        stale.unlink()
+    _run(["uv", "build", "--wheel", "--out-dir", str(directory)], ROOT)
     if not offline:
-        for stale in directory.glob("rederive-*.whl"):
-            stale.unlink()
-        _run(["uv", "build", "--wheel", "--out-dir", str(directory)], ROOT)
         held = _versions()
         pinned = [f"{name}=={held[_normal(name)]}" for name in DEPENDENCIES]
         _run(

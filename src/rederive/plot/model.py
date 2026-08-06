@@ -36,6 +36,9 @@ __all__ = [
     "Plot",
     "Surface",
     "naming",
+    "pointed",
+    "reading",
+    "roughly",
 ]
 
 #: The curve palette, cycled in this order. Bright on the dark canvas, and
@@ -113,6 +116,42 @@ def naming(label: str, text: str) -> str:
     if len(name) <= NAME_WIDTH:
         return name
     return name[: NAME_WIDTH - len(ELLIPSIS)].rstrip() + ELLIPSIS
+
+
+#: How a number a window reads out is written. Six decimals is what a reading
+#: is worth from a picture: enough to paste into the algebra window and see it
+#: agree, short enough to fit twice on one line.
+FORMAT = "{:.6f}"
+
+
+def reading(value: float) -> str:
+    """A number as a status line writes it: six decimals, or a word.
+
+    Here rather than in a window because both backends read a curve out and a
+    point sent home from either has to be the same text.
+    """
+    if not math.isfinite(value):
+        return "undefined"
+    return FORMAT.format(value)
+
+
+def roughly(value: float) -> str:
+    """A number as a sentence about the view writes it, with no trailing noise.
+
+    A reading wants every digit it has; a range does not - `-5 ≤ x ≤ 5` is what
+    the window is showing, and six decimals of it would be six decimals of
+    nothing.
+    """
+    return f"{value:g}"
+
+
+def pointed(x: float, y: float) -> str:
+    """The point under a trace marker, spelled for the worksheet: `[x, y]`.
+
+    One spelling for every route home, so that what a clipboard carries, what
+    an event sends and what a browser pane hands back are the same text.
+    """
+    return f"[{reading(x)}, {reading(y)}]"
 
 
 @dataclass

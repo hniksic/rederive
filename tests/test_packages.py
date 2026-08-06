@@ -48,10 +48,14 @@ PACKAGES = [
 #: interpreter's worth of it in the instance that draws the screen. The one
 #: exception is `rederive.web.worker`, which is that other interpreter's entry
 #: and is meant to import the whole engine. The plot session, its backend
-#: protocol and its model are on the list for the same reason: in the browser
-#: the plot list and the routing live on the main thread while the arrays go
-#: from the worker to what draws them, so a numpy import in any of the three
-#: would put a numerical library in the instance that paints the screen.
+#: protocol, its model, its re-sampling policy, its view arithmetic and the
+#: whole of the browser backend are on the list for the same reason: in the
+#: browser the plot list and the routing live on the main thread while the
+#: arrays go from the worker to what draws them, so a numpy import in any of
+#: them would put a numerical library in the instance that paints the screen.
+#: `rederive.plot.web.sampler` is the exception and the mirror of
+#: `rederive.web.worker`: it is the half that computes, and it runs where sympy
+#: and numpy already are.
 CLIENT_SIDE = [
     "rederive.engine",
     "rederive.engine.boundary",
@@ -64,7 +68,12 @@ CLIENT_SIDE = [
     "rederive.plot.backend",
     "rederive.plot.model",
     "rederive.plot.proxy",
+    "rederive.plot.resample",
     "rederive.plot.session",
+    "rederive.plot.view",
+    "rederive.plot.web",
+    "rederive.plot.web.backend",
+    "rederive.plot.web.protocol",
     "rederive.ui.app",
     "rederive.web",
     "rederive.web.boot",

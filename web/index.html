@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rederive</title>
 <link rel="stylesheet" href="xterm/xterm.css">
+<link rel="stylesheet" href="uplot/uPlot.min.css">
 <style>
-  /* The terminal is the page. Nothing else is drawn, and the black behind it
-     is what shows through while the first frame is being composed. */
+  /* The terminal is the page, and the plot panes float over it. The black
+     behind both is what shows through while the first frame is composed. */
   html, body {
     margin: 0;
     padding: 0;
@@ -22,10 +23,126 @@
   /* xterm draws its own scrollbar for the buffer it keeps; a full-screen
      program has no scrollback and wants none of it. */
   .xterm-viewport { overflow: hidden !important; }
+
+  /* The plot panes are the desktop's plot windows, in the one place a page has
+     for a window: a layer over everything, which lets the pointer through
+     wherever there is no pane so that the terminal underneath still hears it. */
+  #panes {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .plot-pane {
+    position: absolute;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 320px;
+    min-height: 240px;
+    background: #131318;
+    border: 1px solid #23232b;
+    border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    resize: both;
+    font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+    color: #b6bcc7;
+  }
+  .plot-pane:focus { outline: none; }
+  .plot-pane.current { border-color: rgba(101, 178, 241, 0.55); }
+  .plot-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px 5px 10px;
+    background: #131318;
+    border-bottom: 1px solid #23232b;
+    cursor: move;
+    user-select: none;
+  }
+  .plot-title { flex: 1; color: #dde3ec; white-space: nowrap; overflow: hidden; }
+  .plot-close {
+    background: transparent;
+    border: 1px solid #2b2b34;
+    border-radius: 11px;
+    color: #b6bcc7;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 9px;
+  }
+  .plot-close:hover { color: #e2a1a1; border-color: #7c3f42; }
+  .plot-canvas { position: relative; flex: 1; background: #0c0c10; overflow: hidden; }
+  .plot-status {
+    padding: 4px 10px;
+    min-height: 17px;
+    background: #101015;
+    border-top: 1px solid #1f1f27;
+    color: #8d93a0;
+    white-space: pre;
+    overflow: hidden;
+  }
+  /* The legend is a floating card rather than a column beside the picture: the
+     picture is the subject, and the list of what is in it is a note on top. */
+  .plot-legend {
+    position: absolute;
+    right: 10px;
+    top: 8px;
+    z-index: 3;
+    padding: 5px 8px;
+    background: rgba(17, 17, 23, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 9px;
+    max-width: 60%;
+  }
+  .plot-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    line-height: 19px;
+  }
+  .plot-row:hover { background: rgba(255, 255, 255, 0.07); }
+  .plot-swatch { width: 18px; height: 2px; flex: none; }
+  .plot-chip {
+    position: absolute;
+    z-index: 4;
+    pointer-events: none;
+    padding: 2px 6px;
+    background: rgba(17, 17, 23, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 4px;
+    white-space: pre;
+  }
+  .plot-band {
+    position: absolute;
+    z-index: 4;
+    pointer-events: none;
+    border: 1px solid rgba(101, 178, 241, 0.75);
+    background: rgba(101, 178, 241, 0.14);
+  }
+  .plot-menu {
+    position: absolute;
+    z-index: 5;
+    min-width: 150px;
+    padding: 4px 0;
+    background: rgba(17, 17, 23, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 6px;
+  }
+  .plot-item { padding: 3px 12px; cursor: pointer; white-space: nowrap; }
+  .plot-item:hover { background: rgba(101, 178, 241, 0.22); color: #cfe6fb; }
+  /* uPlot draws the axes and their numbers and nothing else; the strokes are
+     drawn on its canvas by `plot2d.js`, so its own series never show. */
+  .uplot, .u-wrap { background: #0c0c10; }
 </style>
 </head>
 <body>
 <div id="screen"></div>
+<div id="panes"></div>
 <!-- The UMD builds, which is what xterm ships for a plain script tag: each
      leaves one global behind, and `main.js` is the only thing that reads
      them. Everything here is served from beside this file - the demo names no
@@ -35,6 +152,7 @@
 <script src="xterm/addon-unicode11.js"></script>
 <script src="xterm/addon-webgl.js"></script>
 <script src="xterm/addon-canvas.js"></script>
+<script src="uplot/uPlot.iife.min.js"></script>
 <script type="module" src="main.js"></script>
 </body>
 </html>

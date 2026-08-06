@@ -1,69 +1,88 @@
-"""The plot windows a browser has, which for now are none, and say so.
+"""The plot windows a browser has: panes in the page, and no process behind them.
 
 The app talks to plotting through five calls - `add`, `prefer`, `describe`,
 `shutdown` and the callback events arrive on - and on the desktop the object
 behind them is a proxy for a child process holding Qt. A browser has no such
-process and will not have one: the windows are to be DOM panes drawn by the
-page, which is stage 5's work. What it has meanwhile is this, an object with
-the same five calls and nothing behind them, which refuses a plot in a sentence
-and lets every other command in the program go on working.
+process and needs none: the windows are panes in the page this app is already
+drawing on, so what the five calls reach is the plot session itself, in this
+interpreter, with nothing between them and it.
 
-The refusal is not new machinery. `PlotError` is what a plot host that will not
-start already raises and what the app already prints behind `Plot: `, so a
-browser refusing for a reason of its own reads exactly like a desktop refusing
-for want of a wheel. What differs is the sentence, and it differs because the
-desktop's names a thing to install and a browser cannot install anything.
+That is the whole of the browser's answer to the plot host. `PlotSession` is the
+same class the desktop runs in its host process, holding the same window
+registry and the same keyed job queue; what differs is the backend it opens
+windows on and the executor it samples through. So a browser and a desktop route
+a plot, pick a receiver and apply a preference by running the same code, and the
+two implementations meet only at the two protocols stage 4 drew.
 
-Preferences are remembered rather than dropped. They are the settings a plot
-window would be built with, they arrive whether or not anything is ever
-plotted, and a `prefer` that threw them away would leave stage 5 with a window
-built out of defaults on a page whose settings say otherwise.
+`add` is a coroutine because plotting is awaited. On the desktop the wait is a
+thread blocking on the host's acknowledgement; here the answer is known before
+the call returns, and the coroutine is what keeps one shape in the app for both
+worlds. A refusal is raised as `PlotError`, which is what a host that will not
+start already raises and what the app already prints behind `Plot: `.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from rederive.plot import protocol
 from rederive.plot.protocol import Event
 from rederive.plot.proxy import PlotError
+from rederive.plot.session import PlotSession, said
+from rederive.plot.web.backend import WebBackend, WorkerExecutor
 
-__all__ = ["UNDRAWN", "WebPlots"]
-
-#: What the browser says when asked to plot. The one refusal that is about
-#: where the program is running rather than about the expression or the
-#: install, so it says which part of the program is missing and not what to do
-#: about it - there is nothing a reader could do.
-UNDRAWN = "plot windows are not in the browser yet - the desktop program draws them"
+__all__ = ["WebPlots"]
 
 
 class WebPlots:
-    """The five calls, answered by a page that cannot draw a plot yet."""
+    """The five calls, answered by a plot session whose windows are panes."""
 
-    def __init__(self, events: Callable[[Event], None] | None = None) -> None:
-        #: Where asynchronous events would go. Nothing sends any yet: a
-        #: refusal is the answer to the request that asked for it, and events
-        #: are what a window says about itself afterwards.
-        self.events = events
-        #: The sticky plot preferences the app last held. Kept rather than
-        #: used, since what they are for is the next window.
-        self.preferences: protocol.Prefer | None = None
+    def __init__(self, page: Any, engine: Any) -> None:
+        executor = WorkerExecutor(engine)
+        backend = WebBackend(page, engine)
+        # The one thing the page says that is about no pane in particular: a
+        # sampling has been drawn. It goes to the executor, which is what lets
+        # go of the request in flight and sends the next one.
+        page.attend(backend.handed({"landed": executor.landed}))
+        # A terminated worker takes its sampling with it, and the executor is
+        # the side that would otherwise wait forever for the answer.
+        engine.lost = executor.lost
+        self.session = PlotSession(backend, executor)
+
+    @property
+    def events(self) -> Callable[[Event], None] | None:
+        """Where asynchronous events go - a pane closed, a curve that would not
+        evaluate, a point sent home. The app assigns it, as it does on a proxy."""
+        return self.session.events
+
+    @events.setter
+    def events(self, listener: Callable[[Event], None] | None) -> None:
+        self.session.events = listener
 
     async def add(self, request: protocol.Add) -> protocol.Placed:
-        """Refuse, in the words the message line prints behind `Plot: `.
+        """Draw one expression, and say which pane took it.
 
-        Awaited because plotting is awaited: on the desktop the wait is a
-        thread blocking on the host's acknowledgement, and here there is
-        nothing to wait for at all.
+        The refusals are the session's own where it has one, and this call's
+        where a window could not be built at all - a solid, until three.js
+        draws one. Both come out as the one sentence the message line prints.
         """
-        raise PlotError(UNDRAWN)
+        try:
+            reply = self.session.add(request)
+        except Exception as error:
+            raise PlotError(said(error)) from None
+        if isinstance(reply, protocol.Refused):
+            raise PlotError(reply.message)
+        assert isinstance(reply, protocol.Placed)
+        return reply
 
     def prefer(self, preferences: protocol.Prefer) -> None:
-        self.preferences = preferences
+        self.session.prefer(preferences)
 
     def describe(self) -> tuple[protocol.WindowInfo, ...]:
-        """Nothing is open, which is the truth and not a refusal."""
-        return ()
+        """What panes are open and what is in them."""
+        return self.session.describe().windows
 
     def shutdown(self) -> None:
-        """Nothing to end: there is no process here and no window."""
+        """Take every pane off the page: the user is leaving the program."""
+        self.session.shutdown()

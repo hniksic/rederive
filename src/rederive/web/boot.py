@@ -3,7 +3,8 @@
 `start` is the whole of the browser's entry point, and it is `__main__.main` with
 each of its three machines swapped for the thing a tab has instead. The engine
 worker is a Web Worker rather than a child process; the environment is
-`platform.web` rather than a desktop; the plot host is an object that refuses;
+`platform.web` rather than a desktop; the plot host is a plot session in this
+very interpreter, opening panes in the page rather than windows on a desktop;
 and the screen is xterm.js, reached through a Textual driver. Nothing else about
 the program changes, and nothing else in the program knows any of it.
 
@@ -71,19 +72,20 @@ class PageApp(RederiveApp):
         return BrowserDriver.on(self._terminal)
 
 
-async def start(terminal: Any, spawn: Any) -> None:
+async def start(terminal: Any, spawn: Any, plots: Any) -> None:
     """Run Rederive on this page until the user leaves it.
 
-    `terminal` is the xterm.js the program draws on and `spawn` is what makes
-    an engine worker - both the page's, because both are made of things only
-    the page knows: a DOM element, a script URL, a module worker.
+    Three things the page owns and this side cannot make: the xterm.js the
+    program draws on, what makes an engine worker, and the module that opens a
+    plot pane. All of them are DOM elements, script URLs and canvases, and none
+    of them is anything Python could have built.
     """
     _naming_tasks()
     os.environ.update(TERMINAL)
     platform.use(Web())
     engine = WebEngine(spawn)
     engine.start()
-    app = PageApp(Session(runner=engine), terminal, WebPlots())
+    app = PageApp(Session(runner=engine), terminal, WebPlots(plots, engine))
     try:
         await app.run_async()
     finally:

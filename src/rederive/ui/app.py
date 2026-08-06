@@ -167,6 +167,7 @@ and the command simplifies what it built instead of appending it, which is what
 from __future__ import annotations
 
 import re
+import threading
 import time
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, replace
@@ -1284,6 +1285,11 @@ class RederiveApp(App[None]):
         #: in instead - the five calls below are the whole of what this side
         #: asks of them, and what is behind them is not this side's business.
         self.plots = PlotProxy() if plotter is None else plotter
+        #: Which thread the loop this app runs on will be. Taken here because
+        #: an app is built on the thread it is then run on, and read where an
+        #: event has to be told whether it needs to cross to that thread or is
+        #: on it already.
+        self._on_loop = threading.get_ident()
         self.plots.events = self._plot_reported
         self.plots.prefer(preferences(self.settings))
         self.settings.watch(self._settings_changed)
@@ -4579,12 +4585,19 @@ class RederiveApp(App[None]):
         self._plot_finished(f"{PREFIX}{reason}")
 
     def _plot_reported(self, event: plots.Event) -> None:
-        """An event off the proxy's reader thread, put on the event loop.
+        """An event off the plot windows, put on the event loop.
 
-        The thread is not the app's, so nothing may be read or written from
-        here but the handing over itself; a message line is a screen and the
-        screen belongs to the loop.
+        Nothing may be read or written from here but the handing over itself: a
+        message line is a screen and the screen belongs to the loop. Which hand
+        does the handing depends on where the windows are. A host in a child
+        process reports on the proxy's reader thread and has to cross to the
+        loop; panes in this very page report on the loop already, there being no
+        thread for them to report on, and crossing from it to itself is the one
+        thing `call_from_thread` refuses to do.
         """
+        if threading.get_ident() == self._on_loop:
+            self.call_next(self._plot_event, event)
+            return
         self.call_from_thread(self._plot_event, event)
 
     def _plot_event(self, event: plots.Event) -> None:

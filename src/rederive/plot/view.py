@@ -13,15 +13,24 @@ polar coordinates, and where the view has been.
 Nothing here decides anything. A window asks for a rectangle and then does what
 it likes with it - the aspect lock, the padding and the drawing are the
 window's, because they are the picture's rather than the mathematics'.
+
+Numpy is imported where it is used rather than at the top, and the three
+functions that use it are the three that take arrays of samples. The rest -
+the default framing, where an axis line goes, which reading a view mode gives a
+curve, where the view has been - is arithmetic over single numbers, and a
+browser's main thread has to be able to ask for it without loading a numerical
+library into the instance that paints the screen.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-
-import numpy as np
+from typing import TYPE_CHECKING
 
 from rederive.plot.protocol import PlotKind
+
+if TYPE_CHECKING:
+    import numpy as np
 
 __all__ = ["History", "axis_at", "fitting", "framing", "home_range", "polar", "reread"]
 
@@ -52,6 +61,8 @@ def framing(samples: Sequence[tuple[np.ndarray, np.ndarray]]) -> Ranges | None:
     rather than counted as nothing: a region agrees with any framing, since it
     is evaluated over whatever the view shows.
     """
+    import numpy as np
+
     xs = [x[np.isfinite(y)] for x, y in samples]
     ys = [y[np.isfinite(y)] for _, y in samples]
     finite = [array for array in ys if array.size]
@@ -71,6 +82,8 @@ def fitting(xs: np.ndarray, ys: np.ndarray, view: Ranges) -> Ranges | None:
     a window whose framing moved under every added curve would be a window
     nobody could compare two curves in.
     """
+    import numpy as np
+
     (left, right), (low, high) = view
     keep = np.isfinite(xs) & np.isfinite(ys)
     xs, ys = xs[keep], ys[keep]
@@ -100,6 +113,8 @@ def polar(x: float, y: float, degrees: bool) -> tuple[float, float]:
     since a reading in radians beside a curve drawn in degrees is a number
     about nothing.
     """
+    import numpy as np
+
     turn = 180.0 / np.pi if degrees else 1.0
     return float(np.hypot(x, y)), float(np.arctan2(y, x)) * turn
 
