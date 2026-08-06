@@ -37,6 +37,14 @@ drawn by a plain `GLMeshItem`. What the item does with a NaN vertex is not a
 contract anyone has written down, and a dome with a skirt of garbage triangles
 around it is the picture that gets drawn when you trust it.
 
+**A wire surface hides what is behind it.** Derive's plotter drew a grid with
+its hidden lines removed, and a see-through grid is a shape a reader has to
+solve rather than see - the far side of a dome comes forward, and two surfaces
+in one window are one fabric. So the wire is drawn over its own solid, painted
+in the color of the canvas and shoved a hair back by the polygon offset: an
+invisible body for the depth buffer to hide the lines behind, this surface's
+lines and every other item's alike.
+
 **A window that cannot get an OpenGL context says so.** The context is asked for
 when the window is first shown, which is inside the Qt event loop, and an
 exception there would leave the host dead and every 2D window with it. It is
@@ -53,6 +61,8 @@ from typing import Any
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+from OpenGL import GL
+from pyqtgraph.opengl.GLGraphicsItem import GLOptions
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Context
@@ -142,6 +152,22 @@ HEIGHT_SHARE = 0.5
 #: wire's lines instead of multiplying them.
 WIRE_LINES = 20
 
+#: How far the wire's occluder is pushed away from the camera, as OpenGL's
+#: (factor, units) pair. The occluder is the surface's own triangles, so the
+#: lines lie exactly on it and the depth test would decide their pixels by
+#: rounding - a wire stitched out of dashes. A small shove backwards settles
+#: it: the lines win everywhere they touch the surface, and the shove is far
+#: too slight to let a line on the far side through.
+WIRE_OFFSET = (1.0, 2.0)
+
+#: The GL state that shove is asked for in - the stock opaque state, which is
+#: what every other item here draws under, and the polygon offset over it.
+WIRE_OCCLUDER = {
+    **GLOptions["opaque"],
+    GL.GL_POLYGON_OFFSET_FILL: True,
+    "glPolygonOffset": WIRE_OFFSET,
+}
+
 #: The camera a fresh window opens with and `Home` returns to: a three-quarter
 #: view from above, far enough out that the whole cube is in the picture.
 CAMERA_ELEVATION = 30.0
@@ -215,8 +241,9 @@ class Surface:
     #: toolbar's `mesh` box flips every surface at once, and the legend's
     #: right-click carries the per-surface exception.
     wire: bool = False
-    #: The line item the wire look draws with, made beside `item` and shown in
-    #: its place while `wire` is on.
+    #: The line item the wire look draws with, made beside `item` and shown
+    #: over it while `wire` is on - `item` stays, as the shape the lines are
+    #: hidden behind.
     wires: Any = None
     #: The lambdified closure, once the sampling thread has built one.
     closure: Callable[..., np.ndarray] | None = None
@@ -1221,12 +1248,12 @@ class Window3D(QtWidgets.QMainWindow):
         # draw itself on the next frame, and the sampling has not answered yet.
         surface.item.setVisible(False)
         self.view.addItem(surface.item)
-        # The wire drawing of the same samples, shown in the solid's place
-        # while the surface's `wire` is on. Opaque rather than blended, so the
-        # depth buffer sorts the wire against the solids beside it the same
-        # way it sorts two solids. It draws at the curve's weight, best-effort:
-        # a core forward-compatible GL profile refuses line widths other than
-        # one, and pyqtgraph skips the width call there.
+        # The wire drawing of the same samples, shown over the solid while the
+        # surface's `wire` is on. Opaque rather than blended, so the depth
+        # buffer sorts the wire against the solids beside it - its own among
+        # them - the same way it sorts two solids. It draws at the curve's
+        # weight, best-effort: a core forward-compatible GL profile refuses
+        # line widths other than one, and pyqtgraph skips the width call there.
         surface.wires = gl.GLLinePlotItem(
             pos=np.zeros((0, 3), dtype=np.float32),
             mode="lines",
@@ -1440,31 +1467,46 @@ class Window3D(QtWidgets.QMainWindow):
         self.rays.translate(*origin)
 
     def _draw(self, surface: Surface) -> None:
-        """Build one surface's triangles - or its wire - for the box as it stands.
+        """Build one surface's triangles - and its wire, where it wears one.
 
-        One of the two items draws at a time. The wire is see-through, which
-        is the retro look and most of the point: nothing is drawn underneath
-        it, and where a wire surface and a solid one cross, the depth buffer
-        sorts them as it sorts two solids.
+        A wire surface has its hidden lines removed, the way Derive's plotter
+        removed them: what is behind the shape is behind it, and the grid reads
+        as a body turned in the light rather than as two grids laid over each
+        other. Both items draw for it. The solid keeps the triangles it always
+        had - the same ones, stopping at the same rim - painted in the canvas's
+        own color, so it is nothing to look at and everything to hide behind;
+        the lines draw over it and the depth buffer does the removing, per
+        pixel, for the box frame and the other surfaces too.
+
+        The polygon offset is what makes that a wire and not a stitch. The
+        lines lie on the very faces they are being tested against, so the
+        occluder is pushed a hair away from the camera and the lines win the
+        ties.
         """
         if surface.item is None:
             return
         color = surface.paper if self._papered else surface.color
-        if surface.wire:
-            surface.item.setVisible(False)
-            points, shades = wire(
-                surface.xs, surface.ys, surface.values, self.box_now, surface.boundary
-            )
-            if not points.size:
-                surface.wires.setVisible(False)
-                return
-            surface.wires.setData(pos=points, color=brightened(shades, color))
-            surface.wires.setVisible(surface.visible)
-            return
-        surface.wires.setVisible(False)
         vertexes, faces, shading = mesh(
             surface.xs, surface.ys, surface.values, self.box_now, surface.boundary
         )
+        if surface.wire:
+            points, shades = wire(
+                surface.xs, surface.ys, surface.values, self.box_now, surface.boundary
+            )
+            surface.wires.setData(pos=points, color=brightened(shades, color))
+            surface.wires.setVisible(surface.visible and bool(points.size))
+            surface.item.setGLOptions(WIRE_OCCLUDER)
+            # An occluder is a shape and not a picture, so it is given no vertex
+            # colors at all: those are what the card reads where a mesh has
+            # them, and the one flat color - the canvas behind it, whichever
+            # canvas is up - only reaches the fragments in their absence.
+            surface.item.setColor(pg.mkColor("w" if self._papered else BACKGROUND))
+            if faces.size:
+                surface.item.setMeshData(vertexes=vertexes, faces=faces)
+            surface.item.setVisible(surface.visible and bool(faces.size))
+            return
+        surface.wires.setVisible(False)
+        surface.item.setGLOptions("opaque")
         if not faces.size:
             surface.item.setVisible(False)
             return
@@ -1762,8 +1804,8 @@ class Window3D(QtWidgets.QMainWindow):
         surface.hidden = not surface.hidden
         self._relabel()
         # The box is recomputed over what is visible now, and redrawing every
-        # surface to it is also what shows or hides the right item - the solid
-        # or the wire - for the surface that was clicked.
+        # surface to it is also what puts the items of the surface that was
+        # clicked away or back.
         self._frame()
 
     def _mesh_mode(self, checked: bool) -> None:

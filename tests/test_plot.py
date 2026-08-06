@@ -1782,8 +1782,9 @@ def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
     deep.mesh_action.trigger()
     assert one.wire and two.wire
     assert deep.host.adjustments == {"wire": True}
-    # The solid item steps aside and the wire draws in its place.
-    assert not one.item.visible() and one.wires.visible()
+    # The wire draws over the solid, which stays on as the shape it is hidden
+    # behind.
+    assert one.item.visible() and one.wires.visible()
     _pressed_m(deep)
     assert not one.wire and not two.wire
     assert deep.host.adjustments == {"wire": False}
@@ -1848,6 +1849,113 @@ def test_the_wire_darkens_for_export_like_every_other_color(deep, solid):
     deep._papered = False
     deep._draw(surface)
     assert np.allclose(surface.wires.color, solid.brightened(shades, surface.color))
+
+
+def _gl_state(item):
+    """The GL state an item draws under, which pyqtgraph keeps to itself.
+
+    There is no reader for it, and the polygon offset the hidden lines depend
+    on is not written down anywhere else.
+    """
+    return item._GLGraphicsItem__glOpts
+
+
+def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid):
+    import pyqtgraph as pg
+
+    # Hidden-line removal as it is actually built: both items draw, the solid
+    # in the background's own color and pushed back by the polygon offset, so
+    # that it takes the pixels of every line behind it and none of the lines
+    # on it.
+    surface = _surface(solid, "x^2+y^2")
+    deep.add(surface)
+    deep.toggle_wire(surface)
+    assert surface.item.visible() and surface.wires.visible()
+    assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
+    # The flat color is only read where a mesh has no vertex colors, so the
+    # occluder is given none - it is a shape and not a picture.
+    assert not surface.item.opts["meshdata"].hasVertexColor()
+    state = _gl_state(surface.item)
+    assert state["glPolygonOffset"] == solid.WIRE_OFFSET
+    assert state[solid.GL.GL_POLYGON_OFFSET_FILL] is True
+    # It is the solid's own triangles: the same rim, so the silhouette the
+    # lines are cut against is the surface's.
+    faces = solid.mesh(
+        surface.xs, surface.ys, surface.values, deep.box_now, surface.boundary
+    )[1]
+    assert len(surface.item.opts["meshdata"].faces()) == len(faces)
+
+
+def test_the_occluder_goes_white_with_the_canvas_for_an_export(deep, solid):
+    import pyqtgraph as pg
+
+    # An export is taken on white, and an occluder still painted the dark
+    # canvas would be a black surface in the picture rather than no surface.
+    surface = _surface(solid, "x^2+y^2")
+    deep.add(surface)
+    deep.toggle_wire(surface)
+    with solid._on_paper(deep):
+        assert surface.item.opts["color"] == pg.mkColor("w")
+    assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
+
+
+def test_a_surface_drawn_solid_again_is_the_stock_item_it_was(deep, solid):
+    from pyqtgraph.opengl.GLGraphicsItem import GLOptions
+
+    # The occluder is a dress the item wears for as long as the wire is on:
+    # solid again, it draws under the stock opaque state in its own shaded
+    # colors, however many times the look has been flipped.
+    surface = _surface(solid, "x^2+y^2")
+    deep.add(surface)
+    for _ in range(2):
+        deep.toggle_wire(surface)
+        assert solid.GL.GL_POLYGON_OFFSET_FILL in _gl_state(surface.item)
+        deep.toggle_wire(surface)
+        assert _gl_state(surface.item) == GLOptions["opaque"]
+        assert surface.item.visible() and not surface.wires.visible()
+        shading = solid.mesh(
+            surface.xs, surface.ys, surface.values, deep.box_now, surface.boundary
+        )[2]
+        assert np.allclose(
+            surface.item.opts["meshdata"].vertexColors(),
+            solid.brightened(shading, surface.color),
+        )
+
+
+def test_the_wire_loses_the_pixels_behind_the_surface(qt, deep, solid):
+    # The picture itself, where there is a card to draw it on: a bowl in wire
+    # has fewer lit pixels than the same bowl with nothing to hide behind,
+    # because its far side is inside it.
+    surface = _surface(solid, "x^2+y^2")
+    deep.add(surface)
+    deep.toggle_wire(surface)
+    deep.resize(400, 300)
+    deep.show()
+    qt.processEvents()
+    # The context is asked for on the first paint, so whether there is one to
+    # draw with is only known here - offscreen there is usually not.
+    if deep.view.broken:
+        pytest.skip(f"no OpenGL to render with: {deep.view.broken}")
+    hidden = _lit_pixels(deep)
+    surface.item.setVisible(False)
+    through = _lit_pixels(deep)
+    assert 0 < hidden < through
+
+
+def _lit_pixels(window):
+    """How many pixels of the view carry the surface's own hue.
+
+    The wire is the surface's color at every brightness the shading gives it,
+    and everything else in the picture - the canvas, the box, the numbers - is
+    gray, so the hue is what tells them apart whatever the brightness.
+    """
+    from pyqtgraph.Qt import QtGui
+
+    image = window.view.readQImage().convertToFormat(QtGui.QImage.Format.Format_RGB32)
+    pixels = np.frombuffer(image.constBits(), dtype=np.uint8)
+    pixels = pixels.reshape(image.height(), image.width(), 4)[:, :, 2::-1]
+    spread = pixels.astype(np.int16).max(axis=2) - pixels.astype(np.int16).min(axis=2)
+    return int(np.count_nonzero(spread > 25))
 
 
 def _right_click(view, start, end):
