@@ -63,7 +63,6 @@ from rederive.plot.model import (
     FUNCTIONS,
     PALETTE,
     PAPER_PALETTE,
-    POINT_SIZE,
     Plot,
 )
 from rederive.plot.protocol import PlotKind
@@ -968,8 +967,6 @@ class Window2D(QtWidgets.QMainWindow):
         # a polar window is read as r = f(θ) from the start, and one spelled
         # polar by the request is read the way this window reads every curve.
         self._reread(plot)
-        plot.connected = bool(plot.options.connected)
-        plot.point_size = plot.options.point_size or POINT_SIZE
         plot.item = self._made(plot)
         plot.item.setCurveClickable(True, width=int(HIT_PX))
         # The stroke takes the click before the view box sees it, which is the

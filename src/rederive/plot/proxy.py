@@ -307,7 +307,7 @@ class PlotProxy:
         if not all(_installed(name) for name in DRAWN_WITH):
             raise PlotError(UNINSTALLED)
 
-        from rederive.plot import host
+        from rederive.plot.qt import host
 
         parent = child = None
         try:

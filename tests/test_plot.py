@@ -16,12 +16,19 @@ The host is exercised over a real pipe with a real Qt toolkit, offscreen. It is
 the one test here that starts a process, so it is skipped where there is no Qt
 to start it with, and every wait in it has a deadline: a test that hangs the
 suite is worse than a test that is not run.
+
+What is left over is the plot session, and none of it is drawing: which window
+a plot lands in, which window is the receiver, what a preference does to the
+next one and what a refusal says are asked of a backend that draws nothing, and
+the geometry of a surface is asked of the arrays alone. Those need no display
+and no toolkit at all, which is also how they say that the seam is real.
 """
 
 import asyncio
 
 import numpy as np
 import pytest
+from fakeplot import FakeBackend, InlineExecutor
 from screen import band, highlighted, message, prompt
 
 from rederive.engine.context import Context
@@ -2147,25 +2154,39 @@ def test_a_right_click_that_stays_put_is_what_asks_for_the_3d_menu(deep):
 # -- the receiver ---------------------------------------------------------------
 #
 # One pointer, and it is the window the user last touched: the session learns
-# it from the windows' own activation events. Exercised on a real session in
-# this process, offscreen, because activation is a conversation between the
-# window and the registry - the pipe carries none of it, and a child process's
-# windows cannot be touched from a test.
+# it from the windows' own activation events. None of this is drawing, so it is
+# exercised on a backend that draws nothing - which is also what says that the
+# session asks a window for exactly what `plot.backend` says it does.
 
 
 @pytest.fixture
-def registry(qt):
-    """A real plot session over the Qt backend, receiver bookkeeping included.
+def registry():
+    """A plot session over a backend with no toolkit under it.
 
     Nothing is sent anywhere: what is under test is which window an `Add`
     lands in and how the receiver follows the user's touch, so the replies are
     return values and the events are a list.
     """
+    from rederive.plot.session import PlotSession
+
+    session = PlotSession(FakeBackend(), InlineExecutor())
+    #: Every event the session has reported, which the app would have heard.
+    session.reported = []
+    session.events = session.reported.append
+    return session
+
+
+@pytest.fixture
+def windowed(qt):
+    """The same session over the Qt backend, for the two conversations that are Qt.
+
+    Activation and the framing lock are the window's own doing rather than the
+    session's, so they are asked of a real window, offscreen.
+    """
     from rederive.plot.qt.backend import QtBackend, ThreadExecutor
     from rederive.plot.session import PlotSession
 
     session = PlotSession(QtBackend(), ThreadExecutor())
-    #: Every event the session has reported, which the app would have heard.
     session.reported = []
     session.events = session.reported.append
     yield session
@@ -2191,8 +2212,8 @@ def test_a_plots_arrival_counts_as_a_touch(registry):
     placed = registry.add(_landing("SIN(x)", "#1"))
     assert placed == plots.Placed(1)
     window = registry.windows[1]
-    assert window.current
-    assert window.windowTitle() == "SIN(x) - Rederive plot (current)"
+    assert window.current and window.presented == 1
+    assert window.title == "SIN(x) - Rederive plot (current)"
 
 
 def test_touching_a_window_makes_it_the_receiver(registry):
@@ -2201,20 +2222,20 @@ def test_touching_a_window_makes_it_the_receiver(registry):
     assert registry.windows[two].current and not registry.windows[one].current
     registry.touched(one)
     assert registry.windows[one].current and not registry.windows[two].current
-    assert registry.windows[one].windowTitle().endswith("(current)")
+    assert registry.windows[one].title.endswith("(current)")
     # The next plot follows the touch.
     assert registry.add(_landing("TAN(x)", "#3")).window == one
 
 
-def test_the_activation_event_is_what_feeds_the_receiver(registry, qt):
+def test_the_activation_event_is_what_feeds_the_receiver(windowed, qt):
     # The wiring itself: activating the window - what a click, a raise or an
     # alt-tab comes to - reaches the registry with no request on the way.
-    one = registry.add(_landing("SIN(x)", "#1")).window
-    registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW))
-    registry.windows[one].activateWindow()
+    one = windowed.add(_landing("SIN(x)", "#1")).window
+    windowed.add(_landing("COS(x)", "#2", window=plots.Where.NEW))
+    windowed.windows[one].activateWindow()
     qt.processEvents()
-    assert registry.windows[one].current
-    assert registry.add(_landing("TAN(x)", "#3")).window == one
+    assert windowed.windows[one].current
+    assert windowed.add(_landing("TAN(x)", "#3")).window == one
 
 
 def test_closing_the_receiver_hands_it_to_the_last_activated_survivor(registry):
@@ -2229,11 +2250,52 @@ def test_closing_the_receiver_hands_it_to_the_last_activated_survivor(registry):
     assert registry.add(_landing("x^2", "#4")).window == one
 
 
+def test_a_plot_for_a_window_that_is_not_there_is_refused_by_number(registry):
+    registry.add(_landing("SIN(x)", "#1"))
+    assert registry.add(_landing("COS(x)", "#2", window=7)) == plots.Refused(
+        "there is no plot window 7"
+    )
+
+
+def test_a_curve_sent_to_a_surface_window_is_refused_in_words(registry):
+    solid = registry.add(_surfaced("x*y", "#1")).window
+    refused = registry.add(_landing("SIN(x)", "#2", window=solid))
+    assert isinstance(refused, plots.Refused)
+    assert refused.message == f"window {solid} is a 3D window"
+
+
+def test_a_kind_no_window_draws_is_refused_before_a_window_is_opened(
+    registry, monkeypatch
+):
+    # Every kind the vocabulary has is drawn today, so the refusal is exercised
+    # against a kind taken out of the drawn set. Nothing is opened for it: a
+    # refusal that had left an empty window behind would be a refusal with a
+    # window in it.
+    monkeypatch.setattr(plots, "DRAWN", frozenset({PlotKind.CURVE}))
+    refused = registry.add(_surfaced("x*y", "#1"))
+    assert refused == plots.Refused("surface plots are not implemented yet")
+    assert registry.windows == {}
+
+
 # -- the sticky preferences in the registry --------------------------------------
 #
 # The write-back half of section 7, on the same in-process session: a control
 # moved in a window updates the preferences the next plot is built with, and
 # the change is reported so the app can outlive this session with it.
+
+
+def _surfaced(text, label, **keywords):
+    """One surface the way the app would send it, for the registry to place."""
+    return plots.Add(
+        worksheet=1,
+        node=parsed(text),
+        context=Context(),
+        kind=PlotKind.SURFACE,
+        label=label,
+        text=text,
+        options=plots.Options(variables=("x", "y")),
+        **keywords,
+    )
 
 
 def _points(text, label, **keywords):
@@ -2250,13 +2312,12 @@ def _points(text, label, **keywords):
 
 
 def test_a_toggle_left_in_one_window_shapes_the_next_data_plot(registry):
-    window = registry.windows[registry.add(_points("[[1, 2], [3, 4]]", "#1")).window]
-    plot = window.plots[0]
-    assert plot.connected is False
-    window._pointed = plot
-    window._toggle_connected()
-    window._set_point_size(8.0)
-    # The host keeps the values the next plot is filled from...
+    first = registry.windows[registry.add(_points("[[1, 2], [3, 4]]", "#1")).window]
+    assert first.plots[0].connected is False
+    # A control moved in a window says so with these, whatever drew it...
+    registry.adjusted(connected=True)
+    registry.adjusted(point_size=8.0)
+    # ...the session keeps the values the next plot is filled from...
     assert registry.preferences == plots.Prefer(connected=True, point_size=8.0)
     # ...and the app is told, so the values survive this session.
     assert registry.reported[0] == plots.Preferred(plots.Prefer(connected=True))
@@ -2268,31 +2329,45 @@ def test_a_toggle_left_in_one_window_shapes_the_next_data_plot(registry):
     assert arrived.point_size == 8.0
 
 
-def test_a_released_framing_lock_is_this_windows_alone(registry):
-    one = registry.add(_landing("SIN(x)", "#1")).window
-    registry.windows[one].equal.trigger()
-    assert not registry.windows[one].equal.isChecked()
+def test_a_released_framing_lock_is_this_windows_alone(windowed):
+    one = windowed.add(_landing("SIN(x)", "#1")).window
+    windowed.windows[one].equal.trigger()
+    assert not windowed.windows[one].equal.isChecked()
     # Nothing was kept and nothing was reported: the next window opens with
     # equal scales, as every window does.
-    assert registry.preferences == plots.Prefer()
-    assert registry.reported == []
-    two = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
-    assert registry.windows[two].equal.isChecked()
+    assert windowed.preferences == plots.Prefer()
+    assert windowed.reported == []
+    two = windowed.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    assert windowed.windows[two].equal.isChecked()
 
 
-def test_the_grid_handed_back_is_the_next_surface_windows_grid(registry, solid):
+def test_what_was_handed_back_is_what_the_next_window_is_opened_with(registry):
+    # The round trip of section 10's stickiness: a control moved somewhere, the
+    # session kept the value and told the app, and the preferences in force are
+    # what the next window is built from - which is the only way one reaches a
+    # window at all.
     registry.adjusted(grid=32)
-    window = registry._target(plots.Where.NEW, plots.WindowKind.THREE_D)
+    registry.adjusted(wire=True)
+    assert registry.reported == [
+        plots.Preferred(plots.Prefer(grid=32)),
+        plots.Preferred(plots.Prefer(grid=32, wire=True)),
+    ]
+    registry.add(_surfaced("x*y", "#1", window=plots.Where.NEW))
+    opened = registry.backend.opened[-1]
+    assert opened.preferences == plots.Prefer(grid=32, wire=True)
+
+
+def test_the_grid_handed_back_is_the_next_surface_windows_grid(windowed, space):
+    windowed.adjusted(grid=32)
+    window = windowed._target(plots.Where.NEW, plots.WindowKind.THREE_D)
     assert window.grid == (32, 32)
 
 
-def test_the_wire_handed_back_is_the_next_surface_windows_look(registry, solid):
-    # The round trip of section 10's stickiness: the mesh box moved somewhere,
-    # the host kept the value and told the app, and the next 3D window opens
-    # with the box checked - so the next surface arrives as wire.
-    registry.adjusted(wire=True)
-    assert registry.reported == [plots.Preferred(plots.Prefer(wire=True))]
-    window = registry._target(plots.Where.NEW, plots.WindowKind.THREE_D)
+def test_the_wire_handed_back_is_the_next_surface_windows_look(windowed, space):
+    # The Qt half of the same round trip: the window opens with the mesh box
+    # checked, so the next surface arrives as wire.
+    windowed.adjusted(wire=True)
+    window = windowed._target(plots.Where.NEW, plots.WindowKind.THREE_D)
     assert window.wired
     assert window.mesh_action.isChecked()
 

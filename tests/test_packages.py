@@ -22,8 +22,10 @@ which is what a browser is.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -151,6 +153,43 @@ def test_the_app_side_imports_with_no_extras_installed(module: str) -> None:
     """
     program = ABSENT.format(names=set(OPTIONAL)) + f"\nimport {module}\n"
     subprocess.run([sys.executable, "-c", program], check=True)
+
+
+#: The toolkit a plot window is made of, by the top-level name each is imported
+#: under. `OpenGL` is PyOpenGL, which `pyqtgraph.opengl` rides.
+TOOLKIT = ("PySide6", "pyqtgraph", "OpenGL")
+
+#: The one package allowed to name it. Everything else in `plot/` - the plot
+#: session, the model, the sampling policy, the surface geometry, the view
+#: arithmetic - is what a second backend shares, and a toolkit import anywhere
+#: in it is a line the browser cannot cross.
+TOOLKIT_PACKAGE = "rederive/plot/qt"
+
+
+def test_only_the_qt_backend_names_a_toolkit() -> None:
+    """The rule the whole plot layer is arranged around, read off the source.
+
+    Read rather than imported, because the imports that would break this are the
+    ones written inside a function: the window classes are imported where a
+    window is made, deliberately, and a module that did the same thing outside
+    `plot/qt` would pass an import test and still be a toolkit in the browser.
+    """
+    root = Path(__file__).resolve().parent.parent / "src"
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if TOOLKIT_PACKAGE in path.as_posix():
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Import):
+                named = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                named = [node.module or ""]
+            else:
+                continue
+            for name in named:
+                if name.partition(".")[0] in TOOLKIT:
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno} {name}")
+    assert offenders == []
 
 
 def test_the_entry_point_imports_no_screen() -> None:

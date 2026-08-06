@@ -129,21 +129,9 @@ class Desktop:
 
         Which Qt a build carries is the first question a plot that misbehaves
         raises, and a bundle carries its own, so nothing outside it can answer.
-        The import is the answer either way: a machine whose Qt will not load
-        is one where the Plot command cannot work, and saying so here costs
-        nothing, where refusing to print a version at all would cost a user the
-        rest of the lines.
+        The names are the Qt backend's to know, so the answer is asked of it.
         """
+        from rederive.plot.qt import toolkit
+
         machine = f"{platform.system().lower()} {platform.machine()}"
-        return f"{_toolkit()}\nplatform {machine}"
-
-
-def _toolkit() -> str:
-    """The Qt and pyqtgraph a plot is drawn with, or the reason there is none."""
-    try:
-        import pyqtgraph
-        from pyqtgraph.Qt import QtCore
-    except ImportError as missing:
-        return f"Qt unusable ({missing})"
-
-    return f"Qt {QtCore.qVersion()}\npyqtgraph {pyqtgraph.__version__}"
+        return f"{toolkit()}\nplatform {machine}"

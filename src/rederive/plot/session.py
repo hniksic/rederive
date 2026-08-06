@@ -38,7 +38,7 @@ from typing import Any, Protocol
 
 from rederive.plot import protocol
 from rederive.plot.backend import Backend, WindowHandle
-from rederive.plot.model import Plot, Surface
+from rederive.plot.model import POINT_SIZE, Plot, Surface
 from rederive.plot.protocol import PlotKind, Where, WindowKind
 
 __all__ = ["Executor", "PlotSession", "Sampler", "curves", "preferred", "said"]
@@ -440,6 +440,11 @@ def curves(request: protocol.Add) -> list[Plot]:
             context=request.context,
             options=request.options,
             state=request.state,
+            # How a data plot draws its points is the plot's own and is settled
+            # here, where the preferences have already been read into the
+            # request: what a backend is handed knows how it is to look.
+            connected=bool(request.options.connected),
+            point_size=request.options.point_size or POINT_SIZE,
         )
 
     if request.kind is not several:
