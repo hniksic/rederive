@@ -285,7 +285,7 @@ class Prefer:
     grid: int = 64
     connected: bool = False
     point_size: float = 5.0
-    wire: bool = False
+    wire: bool = True
 
 
 @dataclass(frozen=True)

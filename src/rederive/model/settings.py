@@ -391,7 +391,7 @@ PLOT_FIELDS: tuple[Field, ...] = (
         "How a new surface is drawn",
         "PlotMesh",
         ("Solid", "Wire"),
-        "Solid",
+        "Wire",
         recorded=False,
     ),
 )

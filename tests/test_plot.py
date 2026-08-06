@@ -1778,17 +1778,17 @@ def test_the_mesh_box_and_the_m_key_flip_every_surface(deep, solid):
     two = _surface(solid, "x+y", label="#2")
     deep.add(one)
     deep.add(two)
-    assert not one.wire and not two.wire
+    assert one.wire and two.wire
     deep.mesh_action.trigger()
+    assert not one.wire and not two.wire
+    assert deep.host.adjustments == {"wire": False}
+    assert one.item.visible() and not one.wires.visible()
+    _pressed_m(deep)
     assert one.wire and two.wire
     assert deep.host.adjustments == {"wire": True}
     # The wire draws over the solid, which stays on as the shape it is hidden
     # behind.
     assert one.item.visible() and one.wires.visible()
-    _pressed_m(deep)
-    assert not one.wire and not two.wire
-    assert deep.host.adjustments == {"wire": False}
-    assert one.item.visible() and not one.wires.visible()
 
 
 def test_the_wire_draws_at_the_curves_weight(deep, solid):
@@ -1803,35 +1803,36 @@ def test_the_wire_draws_at_the_curves_weight(deep, solid):
 
 def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep, solid):
     # The two-level shape a data plot's points already use: the per-surface
-    # right-click is the exception, so one surface goes wire while the other
-    # stays solid, and no sticky value is handed back.
+    # right-click is the exception, so one surface goes solid while the other
+    # stays wire, and no sticky value is handed back.
     one = _surface(solid, "x*y")
     two = _surface(solid, "x+y", label="#2")
     deep.add(one)
     deep.add(two)
     deep.toggle_wire(one)
-    assert one.wire and not two.wire
-    assert one.wires.visible() and two.item.visible()
+    assert not one.wire and two.wire
+    assert one.item.visible() and two.wires.visible()
     assert deep.host.adjustments == {}
     deep.toggle_wire(one)
-    assert not one.wire
+    assert one.wire
     assert deep.host.adjustments == {}
 
 
 def test_a_surface_arrives_in_the_look_the_window_was_left_in(qt, solid):
-    # Sticky in the sense of section 7: a window built with the wire look
-    # opens with the box checked and gives it to every surface that arrives,
-    # while a replacement keeps the look of the surface it replaces.
-    window = solid.Window3D(1, InlineHost(), wire=True)
+    # Sticky in the sense of section 7: a window built with the solid look -
+    # the exception, the wire being every window's default - opens with the
+    # box unchecked and gives the look to every surface that arrives, while a
+    # replacement keeps the look of the surface it replaces.
+    window = solid.Window3D(1, InlineHost(), wire=False)
     try:
-        assert window.mesh_action.isChecked()
+        assert not window.mesh_action.isChecked()
         one = _surface(solid, "x*y")
         window.add(one)
-        assert one.wire
+        assert not one.wire
         window.toggle_wire(one)
         replaced = _surface(solid, "x^2-y^2")
         window.add(replaced)
-        assert not replaced.wire
+        assert replaced.wire
     finally:
         window.close()
 
@@ -1839,7 +1840,6 @@ def test_a_surface_arrives_in_the_look_the_window_was_left_in(qt, solid):
 def test_the_wire_darkens_for_export_like_every_other_color(deep, solid):
     surface = _surface(solid, "x*y")
     deep.add(surface)
-    deep.toggle_wire(surface)
     points, shades = solid.wire(
         surface.xs, surface.ys, surface.values, deep.box_now, surface.boundary
     )
@@ -1869,7 +1869,6 @@ def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid):
     # on it.
     surface = _surface(solid, "x^2+y^2")
     deep.add(surface)
-    deep.toggle_wire(surface)
     assert surface.item.visible() and surface.wires.visible()
     assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
     # The flat color is only read where a mesh has no vertex colors, so the
@@ -1893,7 +1892,6 @@ def test_the_occluder_goes_white_with_the_canvas_for_an_export(deep, solid):
     # canvas would be a black surface in the picture rather than no surface.
     surface = _surface(solid, "x^2+y^2")
     deep.add(surface)
-    deep.toggle_wire(surface)
     with solid._on_paper(deep):
         assert surface.item.opts["color"] == pg.mkColor("w")
     assert surface.item.opts["color"] == pg.mkColor(solid.BACKGROUND)
@@ -1909,8 +1907,6 @@ def test_a_surface_drawn_solid_again_is_the_stock_item_it_was(deep, solid):
     deep.add(surface)
     for _ in range(2):
         deep.toggle_wire(surface)
-        assert solid.GL.GL_POLYGON_OFFSET_FILL in _gl_state(surface.item)
-        deep.toggle_wire(surface)
         assert _gl_state(surface.item) == GLOptions["opaque"]
         assert surface.item.visible() and not surface.wires.visible()
         shading = solid.mesh(
@@ -1920,6 +1916,8 @@ def test_a_surface_drawn_solid_again_is_the_stock_item_it_was(deep, solid):
             surface.item.opts["meshdata"].vertexColors(),
             solid.brightened(shading, surface.color),
         )
+        deep.toggle_wire(surface)
+        assert solid.GL.GL_POLYGON_OFFSET_FILL in _gl_state(surface.item)
 
 
 def test_the_wire_loses_the_pixels_behind_the_surface(qt, deep, solid):
@@ -1928,7 +1926,6 @@ def test_the_wire_loses_the_pixels_behind_the_surface(qt, deep, solid):
     # because its far side is inside it.
     surface = _surface(solid, "x^2+y^2")
     deep.add(surface)
-    deep.toggle_wire(surface)
     deep.resize(400, 300)
     deep.show()
     qt.processEvents()

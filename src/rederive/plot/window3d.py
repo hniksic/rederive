@@ -966,7 +966,7 @@ class Window3D(QtWidgets.QMainWindow):
     """One top-level 3D plot window and everything that happens inside it."""
 
     def __init__(
-        self, number: int, host: Any, *, grid: int = DEFAULT_GRID, wire: bool = False
+        self, number: int, host: Any, *, grid: int = DEFAULT_GRID, wire: bool = True
     ) -> None:
         super().__init__()
         self.number = number
