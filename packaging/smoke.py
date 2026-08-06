@@ -15,10 +15,12 @@ way the bundle can be wrong:
 
 * The command line, which says the archive unpacked and the app's own modules import.
 * `--version`, which says what the bundle actually carries. A release is a binary
-  with its own interpreter and its own sympy inside it, so the versions it reports
-  are the only evidence of what was built - a machine that quietly supplied its own
-  Python produces a bundle that passes every other check here and is still not the
-  program the suite tested.
+  with its own interpreter, its own sympy and its own Qt inside it, so the versions
+  it reports are the only evidence of what was built - a machine that quietly
+  supplied its own Python produces a bundle that passes every other check here and
+  is still not the program the suite tested. It is also the whole of what says the
+  plot toolkit survived the build, since the program has to import Qt and pyqtgraph
+  to answer.
 * The first frame, which says the stylesheet was found - Textual refuses to start
   without it.
 * The Help menu, which says `help.txt` was found and read as a resource.
@@ -32,6 +34,14 @@ The first two run on Windows, there being no pty to drive the rest through. That
 leaves the Windows build covered for unpacking and for what it carries, but not for
 anything above that, which is worth knowing about rather than papering over, so it is
 reported and not skipped silently.
+
+Plotting is the other gap, and it is reported the same way. A plot is a window in a
+child process, and this runs where there is nothing to put one on - the app refuses
+the command outright on a Linux machine with no display. What `--version` proves is
+that the bundle carries an importable Qt and pyqtgraph. Whether a window actually
+opens, and whether the backend PyOpenGL picks by name at run time came along with it,
+nothing here asks: the suite draws offscreen but does it against the source tree, so
+a build is only answered for that by someone drawing a 3D plot from it by hand.
 """
 
 from __future__ import annotations
@@ -115,13 +125,17 @@ def usage_check(binary: Path) -> None:
     report("command line", "refuses a file that is not there")
 
 
-def version_check(binary: Path) -> None:
-    """The bundle says what it is, and what interpreter and sympy it brought.
+#: The lines `--version` has to produce for the bundle to be worth checking further.
+#: A version-shaped answer for each is all this asks; which versions they ought to be
+#: is a question for the build workflow, which has `.python-version` and `uv.lock` to
+#: compare them against and this script does not. `Qt` and `pyqtgraph` are here
+#: because the program has to import the toolkit to print them, which is the only
+#: word this script gets on whether plotting survived the build.
+CARRIED = ("rederive", "Python", "sympy", "Qt", "pyqtgraph")
 
-    Only that all four lines are there and carry something version-shaped; which
-    versions they ought to be is a question for the build workflow, which has
-    `.python-version` and `uv.lock` to compare them against and this script does not.
-    """
+
+def version_check(binary: Path) -> None:
+    """The bundle says what it is, and what interpreter, sympy and Qt it brought."""
     finished = subprocess.run(
         [str(binary), "--version"], capture_output=True, text=True, timeout=PATIENCE
     )
@@ -130,13 +144,13 @@ def version_check(binary: Path) -> None:
         for line in finished.stdout.splitlines()
         if len(line.split(maxsplit=1)) == 2
     )
-    missing = [name for name in ("rederive", "Python", "sympy") if name not in reported]
+    missing = [name for name in CARRIED if not reported.get(name, "")[:1].isdigit()]
     if finished.returncode != 0 or missing:
         raise Failed(
-            f"expected a version for each of rederive, Python and sympy; got exit "
+            f"expected a version for each of {', '.join(CARRIED)}; got exit "
             f"{finished.returncode} and {finished.stdout!r}"
         )
-    carried = ", ".join(f"{name} {reported[name]}" for name in ("Python", "sympy"))
+    carried = ", ".join(f"{name} {reported[name]}" for name in CARRIED[1:])
     report("version", f"carries {carried}")
 
 
@@ -292,6 +306,7 @@ def main(arguments: list[str] | None = None) -> int:
             print("  --   screen, help and engine not checked: no pty on Windows")
         else:
             session_checks(binary)
+        print("  --   plotting not drawn: no display to open a plot window on")
     except Failed as failure:
         print(f"  FAIL {failure}", file=sys.stderr)
         return 1

@@ -225,6 +225,48 @@ def test_matches_answers_the_same_questions_completions_does(tmp_path):
     assert worksheet.matches(f"{tmp_path}/gone/wo") == []
 
 
+# -- the worksheets the program ships with -----------------------------------
+#
+# A few worksheets are part of the program rather than of anyone's directory.
+# They are found by name from wherever the program was started, the way the
+# original found the .MTH files that sat beside DERIVE.EXE, and the tests here
+# are about that lookup rather than about what is in them.
+
+
+def test_a_shipped_worksheet_is_found_by_name_from_any_directory():
+    """The working directory is `tmp_path` here, and holds no such file."""
+    found = worksheet.reading("gallery")
+    assert found == worksheet.library() / "gallery.mth"
+    assert found.is_file()
+
+
+def test_a_file_of_your_own_is_what_its_name_means():
+    """A shipped name is a fallback and never a hijacking."""
+    worksheet.path_of("gallery").write_text("x\n", encoding="utf-8")
+    assert worksheet.reading("gallery") == worksheet.path_of("gallery")
+
+
+def test_a_save_never_resolves_to_the_shipped_copy():
+    """`Transfer Save gallery` writes a file here, not over the program's own."""
+    assert worksheet.path_of("gallery") == worksheet.path_of("gallery.mth")
+    assert not worksheet.path_of("gallery").is_absolute()
+
+
+def test_the_shipped_worksheets_are_not_offered_by_the_name_list():
+    """The same list completes a save, and it may only name files of yours."""
+    worksheet.path_of("aardvark").touch()
+    assert worksheet.matches("") == ["aardvark.mth"]
+    assert worksheet.completions("gal") == []
+
+
+async def test_a_shipped_worksheet_is_read_by_the_command_that_names_it(app):
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        await pilot.press(*"gallery", "enter")
+        assert message(app) == "Enter option"
+        assert len(app.session.entries) > 8
+
+
 # -- loading -----------------------------------------------------------------
 
 

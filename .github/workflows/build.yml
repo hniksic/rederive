@@ -36,8 +36,10 @@ jobs:
     needs: version
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    # The suite and two builds; about five minutes' work. Twenty-five is a hang.
-    timeout-minutes: 25
+    # The suite and two builds. A build is most of a gigabyte of Qt to analyse and
+    # write out twice over, so this is quarter-hour work rather than five-minute
+    # work now. Forty is a hang.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +62,23 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+
+      # A bundle carries the shared libraries the build machine had, and warns
+      # rather than fails about the ones it did not. Qt 6.5 and later load
+      # `libxcb-cursor.so.0` from the xcb platform plugin, which is the plugin every
+      # X11 desktop uses, and a runner without it builds a Linux binary that opens no
+      # plot window at all - "could not load the Qt platform plugin xcb", on a machine
+      # where nothing is wrong. Nothing here reaches that code path, so the missing
+      # library would first be heard about from whoever downloaded the release.
+      #
+      # The build warns about `libtiff.so.5` for the same reason and it is left
+      # alone: the distribution ships libtiff 6 now, and all it costs is Qt's TIFF
+      # image plugin, which nothing reaches - a plot exports as PNG or SVG.
+      - name: Install what Qt loads by name
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0
 
       # `--managed-python` so that all three platforms build on uv's own
       # interpreter rather than on whatever the runner happens to have lying
@@ -93,29 +112,45 @@ jobs:
           uv run python packaging/smoke.py "dist/rederive${{ matrix.exe }}"
           uv run python packaging/smoke.py "dist/tree/rederive/rederive${{ matrix.exe }}"
 
-      # A bundle brings its own interpreter and its own sympy, and from outside it
-      # there is no way to tell which. So each one is asked, and the answer is held
-      # against the two files that decide it. What this catches is a build made
+      # A bundle brings its own interpreter, its own sympy and its own Qt, and from
+      # outside it there is no way to tell which. So each one is asked, and the answer
+      # is held against the two files that decide it. What this catches is a build made
       # against something other than what the suite ran on: the program still starts,
       # still computes, still passes every other check here, and is not the program
       # that was tested. Only the interpreter's minor version is compared, that being
-      # all `.python-version` pins.
+      # all `.python-version` pins, and only Qt's, because what the lock file pins is
+      # the PySide6 wheel and the Qt inside it carries a patch number of its own.
       - name: Check what the binaries carry
         run: |
+          version_of() {
+            sed -n "/^name = \"$1\"\$/{n;s/^version = \"\(.*\)\"\$/\1/p;}" uv.lock
+          }
           expected_python=$(cat .python-version)
-          expected_sympy=$(sed -n '/^name = "sympy"$/{n;s/^version = "\(.*\)"$/\1/p;}' uv.lock)
+          expected_sympy=$(version_of sympy)
+          expected_qt=$(version_of pyside6-essentials | cut -d. -f1,2)
+          expected_pyqtgraph=$(version_of pyqtgraph)
           for binary in "dist/rederive${{ matrix.exe }}" \
                         "dist/tree/rederive/rederive${{ matrix.exe }}"; do
             reported=$("$binary" --version)
             python=$(echo "$reported" | awk '$1 == "Python" { print $2 }')
             sympy=$(echo "$reported" | awk '$1 == "sympy" { print $2 }')
-            echo "$binary: Python $python, sympy $sympy"
+            qt=$(echo "$reported" | awk '$1 == "Qt" { print $2 }')
+            pyqtgraph=$(echo "$reported" | awk '$1 == "pyqtgraph" { print $2 }')
+            echo "$binary: Python $python, sympy $sympy, Qt $qt, pyqtgraph $pyqtgraph"
             case "$python" in
               "$expected_python".* | "$expected_python") ;;
               *) echo "expected Python $expected_python.x, not $python"; exit 1 ;;
             esac
+            case "$qt" in
+              "$expected_qt".* | "$expected_qt") ;;
+              *) echo "expected Qt $expected_qt.x, not $qt"; exit 1 ;;
+            esac
             if [ "$sympy" != "$expected_sympy" ]; then
               echo "expected sympy $expected_sympy, not $sympy"
+              exit 1
+            fi
+            if [ "$pyqtgraph" != "$expected_pyqtgraph" ]; then
+              echo "expected pyqtgraph $expected_pyqtgraph, not $pyqtgraph"
               exit 1
             fi
           done

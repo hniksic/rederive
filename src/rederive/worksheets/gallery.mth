@@ -1,0 +1,44 @@
+;A gallery of plots. Highlight a line and press P P to draw it.
+SIN(x)
+
+;Plot this too: it lands in the same window. T traces, Tab jumps to a root
+COS(x)
+
+;A family: one curve per element, each in the next color of the palette
+[x, x^2/2, x^3/4, x^4/8]
+
+;Poles are gaps, never vertical strokes. Zoom in on one and it stays a gap
+TAN(x)
+
+;Only the real half is drawn: left of 0 there is nothing, and no zero line
+SQRT(x)
+
+;A Lissajous figure. Plot asks for the t range first; -pi to pi closes it
+[3*SIN(3t), 3*SIN(4t)]
+
+;A rose. Switch the window's polar toggle on first, then this is r = f(theta)
+3*COS(3t)
+
+;An implicit equation. Equal scales are on, so the circle is round
+x^2 + y^2 = 9
+
+;A region: a boolean combination of inequalities, shaded under the curves
+x^2 + y^2 < 16 AND y > x
+
+;Simplify this to a matrix (S), then plot it: 49 points, right-click to join
+VECTOR([x, SIN(x)], x, -2pi, 2pi, pi/12)
+
+;A saddle. Plot opens a 3D window: drag to orbit, R to spin, Home to reset
+x^2 - y^2
+
+;P N for a window of its own. The default 64 by 64 grid does not alias this
+SIN(x*y)
+
+;P P puts this in the same box as the one above; the two are the same height
+SIN(x) + COS(y)
+
+;P N. A spike at the origin, clipped to the 1st-99th percentile - it says so
+1/(x^2 + y^2)
+
+;P N, then type the domain down to -2 and 2: the mesh stops at the circle
+SQRT(1 - x^2 - y^2)

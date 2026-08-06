@@ -251,12 +251,10 @@ def test_the_number_of_a_window_past_the_ninth_takes_two_cells():
 # -- the commands -------------------------------------------------------------
 
 
-async def test_the_window_menu_lists_the_eight_commands_on_one_line(app):
+async def test_the_window_menu_lists_the_seven_commands_on_one_line(app):
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press("w")
-        assert band(app) == [
-            " WINDOW: Close Designate Flip Goto Next Open Previous Split"
-        ]
+        assert band(app) == [" WINDOW: Close Flip Goto Next Open Previous Split"]
         assert message(app) == "Enter option"
         assert highlighted(app) == "Close"
 
@@ -353,42 +351,16 @@ async def test_close_asks_before_it_throws_expressions_away(app):
 async def test_close_is_refused_outright_while_there_is_one_window(app):
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press("w", "c")
-        assert band(app) == [
-            " WINDOW: Close Designate Flip Goto Next Open Previous Split"
-        ]
+        assert band(app) == [" WINDOW: Close Flip Goto Next Open Previous Split"]
         assert message(app) == "Enter option"
-
-
-async def test_designate_offers_the_three_types_and_opens_on_this_one(app):
-    async with app.run_test(size=SIZE) as pilot:
-        await pilot.press("w", "d")
-        assert band(app) == [" WINDOW DESIGNATE: Type: 2D-plot 3D-plot Algebra"]
-        assert message(app) == "Enter window type"
-        assert highlighted(app) == "Algebra"
-
-
-async def test_designating_a_window_makes_it_over_empty(app):
-    async with app.run_test(size=SIZE) as pilot:
-        await author(pilot, "x")
-        await pilot.press("w", "d", "enter")
-        assert message(app) == "Abandon expressions (Y/N)?"
-        await pilot.press("y")
-        assert work_area(app) == []
-
-
-async def test_a_plot_window_is_offered_and_refused(app):
-    async with app.run_test(size=SIZE) as pilot:
-        await pilot.press("w", "d", "2")
-        assert message(app) == "2D-plot: not implemented yet"
-        assert app.windows.kind == "Algebra"
 
 
 async def test_open_overlays_a_window_that_flip_brings_back(app):
     async with app.run_test(size=SIZE) as pilot:
         await author(pilot, "x")
+        # With plot windows outside the tree there is one kind of window left,
+        # so Open asks nothing and runs on the keystroke.
         await pilot.press("w", "o")
-        assert band(app) == [" WINDOW OPEN: Type: 2D-plot 3D-plot Algebra"]
-        await pilot.press("enter")
         # Still one window, and still no frame: an overlay shares both.
         assert len(app.windows.windows) == 1
         assert work_area(app) == []

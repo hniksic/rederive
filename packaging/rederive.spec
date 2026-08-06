@@ -9,7 +9,9 @@ are different. Built from the repository root:
 leaves `dist/rederive`, one file that can be downloaded and run wherever it lands.
 It pays for that on every launch: a single file has nowhere to keep an unpacked
 interpreter, so it writes one to a temporary directory each time it starts and
-takes it away again on the way out.
+takes it away again on the way out. With Qt in it that is a quarter of a gigabyte
+a launch, and the form is kept anyway - it is for trying the program rather than
+keeping it, and anyone keeping it has the form below.
 
     uv run --group packaging pyinstaller packaging/rederive.spec \
         --distpath dist/tree -- --tree
@@ -23,7 +25,7 @@ rather than tried. `RELEASING.md` says what is done with either.
 against both: a bundle can import cleanly and still be missing a file it only reads
 when the user asks for help.
 
-Three things about this program decide what has to be written here.
+Four things about this program decide what has to be written here.
 
 The two data files are the first. Nothing in a bundle is found by walking a source
 tree, so `help.txt` and `rederive.tcss` have to be named and placed under the package
@@ -40,7 +42,15 @@ die rather than answer. The corpus does not reach any of them, so this is insura
 and not a fix: it costs about eight megabytes, which is the cheaper side of the
 trade.
 
-The test dependencies are the third, and they are only weight. Nothing in the app
+PyOpenGL is the third, and it goes wrong the way `help.txt` would rather than the way
+sympy might. It chooses its platform backend - `egl`, `glx`, the Windows and macOS
+ones - by name at run time, so the analysis reads no import for any of them and a
+bundle built without this carries none. The build says nothing and the program starts,
+computes and draws a 2D plot; it dies the first time someone asks for a 3D one, with a
+`'NoneType' object is not callable` out of `OpenGL.platform`. Taking the package whole
+is what avoids that.
+
+The test dependencies are the fourth, and they are only weight. Nothing in the app
 imports them; they are excluded because the environment the build runs in has them
 installed and the analysis would otherwise follow them in.
 
@@ -69,7 +79,7 @@ a = Analysis(  # noqa: F821
         (str(PACKAGE / "model" / "help.txt"), "rederive/model"),
         (str(PACKAGE / "ui" / "rederive.tcss"), "rederive/ui"),
     ],
-    hiddenimports=collect_submodules("sympy"),
+    hiddenimports=collect_submodules("sympy") + collect_submodules("OpenGL"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

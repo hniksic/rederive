@@ -7,8 +7,9 @@ subjects, and a subject read a page at a time. There were no links, no index
 and no search; the section numbers printed through the text pointed at the
 paper manual, and following one meant picking the manual up. That shape is
 kept here, less the parts that were about paper, less the two plot subjects -
-there being nothing yet to plot - and less the subject listing the utility
-files, this program shipping none of its own.
+whose menus and framing dialogs are not this program's, its plot windows being
+windows of the desktop that are driven with a mouse - and less the subject
+listing the utility files, this program shipping none of its own.
 
 Nothing in this module draws anything. A topic is a run of blocks, a block is
 a run of source lines that belong on one page together, and laying one out is

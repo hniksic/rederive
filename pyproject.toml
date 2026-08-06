@@ -11,6 +11,13 @@ dependencies = [
     "sympy>=1.14",
     "psutil>=7",
     "pyperclip>=1.9",
+    # Essentials rather than the `pyside6` meta-package, which drags in
+    # `pyside6-addons` - a third of a gigabyte of Qt3D, Charts, WebEngine and
+    # DataVisualization that a plot window never touches.
+    "pyside6-essentials>=6.7",
+    "pyqtgraph>=0.13.7",
+    "pyopengl>=3.1",
+    "numpy>=1.26",
 ]
 
 [project.scripts]

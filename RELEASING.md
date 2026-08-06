@@ -35,7 +35,9 @@ builds on all three platforms, checks every build, compiles and test-installs th
 Windows installer, and publishes the release.
 
 To build by hand instead - there is no cross-compilation, so this is once per
-platform, from a clean checkout of the tag:
+platform, from a clean checkout of the tag. On Linux, install `libxcb-cursor0` first:
+a bundle carries the libraries the build machine had, and without it Qt's xcb plugin
+ships incomplete and the binary opens no window on X11.
 
 ```
 uv sync --frozen --group packaging
@@ -55,17 +57,29 @@ the same tree. Attach everything to the GitHub release.
 
 - `--frozen` matters: the test suite ran against `uv.lock`, so ship what it tested.
 - `rederive --version` reports what a bundle carries rather than what the machine has
-  installed, which is the only way to tell the two apart from outside. The workflow
-  holds it against `.python-version` and `uv.lock`; building by hand, run it and read
-  it. It is also the first thing to ask for in a bug report.
+  installed, which is the only way to tell the two apart from outside. Python, sympy,
+  Qt and pyqtgraph are all on it, and the workflow holds all four against
+  `.python-version` and `uv.lock`; building by hand, run it and read it. It is also
+  the first thing to ask for in a bug report - which Qt a bundle carries is where a
+  plot that misbehaves is answered from.
 - On Windows the smoke script only checks that the bundle unpacks and says what it
   carries, there being no pty to drive the rest through. What covers the rest there is
   the workflow's installer check, which installs, runs and uninstalls.
+- No check anywhere draws a plot from a build: the runners have no display, and the
+  suite draws offscreen but against the source tree. What `--version` says is that the
+  toolkit imports. Before a release, open a 2D and a 3D plot from the binary by hand -
+  the 3D one especially, since PyOpenGL finds its backend by a name no build can see.
 - Nothing is signed, so macOS and Windows refuse a browser's download and SmartScreen
   warns about the installer. INSTALL.md's instructions work around that and have to
-  stay in step with it.
-- The Linux binary needs glibc 2.17, which comes from uv's interpreter rather than
-  from the build machine - no old distribution or container needed.
+  stay in step with it. There is more of it to object to since Qt arrived - a bundle
+  is several hundred libraries rather than one binary - so any signing done later is
+  that much larger a job.
+- The Linux binary needs glibc 2.34, which is what PySide6's wheels are built for -
+  Ubuntu 22.04, Debian 12 and RHEL 9 and later. The interpreter comes from uv and
+  would run on far older, so this is Qt's floor and not the build machine's.
+- The macOS binary needs macOS 13, for the same reason. PySide6's wheels are
+  `universal2`, so the arm64 bundle carries x86_64 code it never runs unless it is
+  thinned.
 - `--managed-python` and `.python-version` are what keep all three platforms on one
   interpreter. Without them uv takes whatever the machine offers, and a runner with
   its own Python installed will quietly build against that instead.

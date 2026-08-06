@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rederive.model import building, settings, windows
+from rederive.model import building, settings
 from rederive.model import help as helps
 from rederive.model.session import Bounds
 
@@ -59,10 +59,8 @@ ENTER_ELEMENTS = "Enter number of elements"
 ENTER_LEFT_BOUND = "Enter left bound"
 ENTER_RIGHT_BOUND = "Enter right bound"
 
-#: What the two Window commands that name a window ask for, and what the two
-#: that make one ask for.
+#: What the two Window commands that name a window ask for.
 ENTER_WINDOW = "Enter window number"
-ENTER_WINDOW_TYPE = "Enter window type"
 
 #: The two symbols a bound is written with: `<` for a bound the variable can
 #: never equal, `≤` for one it can.
@@ -326,6 +324,14 @@ SOLVE_BOUNDS = settings.Dialog(
     stored=False,
 )
 
+#: The two Plot commands: into the receiver, or into a window of its own.
+#: `Plot` is first and so comes up highlighted, which is what makes `P` `P`
+#: draw the highlighted expression with no question asked - the muscle memory
+#: of the original, one keystroke shorter on the first plot since the window
+#: opens itself. Everything else about a plot lives in the plot window, which
+#: is where the picture it acts on is.
+PLOT = Menu("PLOT:", ("Plot", "New"))
+
 DECLARE = Menu("DECLARE:", ("Function", "Variable", "Matrix", "vectoR"))
 
 #: What Declare Variable asks once it has a name, and then once it has a
@@ -374,7 +380,10 @@ MANAGE = Menu(
 
 # `Display` and `Execute` are the two of Derive's nine Options commands that
 # are not here: one chose between text and graphics modes on adapters that no
-# longer exist, the other shelled out to DOS.
+# longer exist, the other shelled out to DOS. There is no plot screen either:
+# the plot preferences are sticky - a new surface or data plot starts out the
+# way the last one was left - and their controls live on the plot windows
+# themselves.
 OPTIONS = Menu(
     "OPTIONS:",
     ("Color", "Input", "Mute", "Notation", "Output", "Precision", "Radix"),
@@ -405,20 +414,25 @@ TRANSFER_CLEAR = Menu(
     "TRANSFER CLEAR:", ("All", "Expressions", "Functions", "Variables")
 )
 
-# The eight window commands. Every one of them starts with a letter no other
+# The seven window commands. Every one of them starts with a letter no other
 # one starts with, so none needs a capital anywhere but in front.
+#
+# `Designate` is not among them. It chose what kind of window a window was, and
+# plot windows are top-level windows of the desktop rather than leaves of this
+# tree, so Algebra is the only kind there is; its one remaining use, making a
+# window over as a fresh worksheet, is `Transfer Clear`. A second kind of tree
+# window would bring it back with it.
 WINDOW = Menu(
     "WINDOW:",
-    ("Close", "Designate", "Flip", "Goto", "Next", "Open", "Previous", "Split"),
+    ("Close", "Flip", "Goto", "Next", "Open", "Previous", "Split"),
 )
 
 WINDOW_SPLIT = Menu("WINDOW SPLIT:", ("Horizontal", "Vertical"))
 
-#: The titles of the four Window commands that ask for something.
+#: The titles of the Window commands that ask for something. `Open` asks
+#: nothing any more: with one kind of window there is nothing to choose.
 WINDOW_CLOSE = "WINDOW CLOSE:"
-WINDOW_DESIGNATE = "WINDOW DESIGNATE:"
 WINDOW_GOTO = "WINDOW GOTO:"
-WINDOW_OPEN = "WINDOW OPEN:"
 
 
 def window_number(title: str, number: int, count: int) -> settings.Dialog:
@@ -467,30 +481,6 @@ def window_split(vertical: bool, at: int, low: int, high: int) -> settings.Dialo
                     at,
                     minimum=low,
                     maximum=high,
-                    recorded=False,
-                ),
-            ),
-        ),
-        stored=False,
-    )
-
-
-def window_type(title: str, kind: str) -> settings.Dialog:
-    """The selection field `Window Designate` and `Window Open` share.
-
-    It opens on `kind`: the window's own type for Designate, which is what the
-    original highlights, and Algebra for Open.
-    """
-    return settings.Dialog(
-        title,
-        (
-            (
-                settings.ChoiceField(
-                    "Type",
-                    ENTER_WINDOW_TYPE,
-                    "WindowType",
-                    windows.KINDS,
-                    kind,
                     recorded=False,
                 ),
             ),
@@ -810,6 +800,7 @@ TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
         "Declare": DECLARE,
         "Manage": MANAGE,
         "Options": OPTIONS,
+        "Plot": PLOT,
         "Transfer": TRANSFER,
         "Window": WINDOW,
     },

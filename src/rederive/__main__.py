@@ -40,10 +40,11 @@ if TYPE_CHECKING:
 USAGE = "usage: rederive [--version] [-m|-u|-t|-d] FILE ..."
 
 #: The switch that says what this program is and what it carries, instead of
-#: starting the app. A release is a binary with its own interpreter and its own
-#: sympy inside it, so what it runs is not what the machine has installed and there
-#: is no way to find out from outside. That makes this the first thing to ask a user
-#: for, and the build workflow reads it too, against `.python-version` and `uv.lock`.
+#: starting the app. A release is a binary with its own interpreter, its own sympy
+#: and its own Qt inside it, so what it runs is not what the machine has installed
+#: and there is no way to find out from outside. That makes this the first thing to
+#: ask a user for, and the build workflow reads it too, against `.python-version`
+#: and `uv.lock`.
 VERSION = "--version"
 
 #: How a switch says the files after it are to be read. The original wrote
@@ -165,17 +166,35 @@ def _reported(skipped: int) -> str:
     return f"{skipped} {lines} not read"
 
 
+def _toolkit() -> str:
+    """The Qt and pyqtgraph a plot would be drawn with, or the reason there is none.
+
+    Which Qt a build carries is the first question a plot that misbehaves raises, and
+    a bundle carries its own, so nothing outside it can answer. The import is the
+    answer either way: a machine whose Qt will not load is one where the Plot command
+    cannot work, and saying so here costs nothing, where refusing to print a version
+    at all would cost a user the rest of the lines.
+    """
+    try:
+        import pyqtgraph
+        from pyqtgraph.Qt import QtCore
+    except ImportError as missing:
+        return f"Qt unusable ({missing})"
+
+    return f"Qt {QtCore.qVersion()}\npyqtgraph {pyqtgraph.__version__}"
+
+
 def provenance() -> str:
-    """This program's version, and the interpreter and sympy it is running on.
+    """This program's version, and the interpreter, sympy and Qt it is running on.
 
     One `name version` per line, so that a person can read it and a workflow can
     check it without parsing prose.
 
-    Sympy is imported here and nowhere else on this side of the program. The app
-    process is kept clear of it - the mathematics belongs to the worker, and
+    Sympy is imported here and nowhere else on this side of the program, and the
+    toolkit only here and in the plot host. The app process is kept clear of both -
+    the mathematics belongs to the worker and the windows to the host, and
     `tests/test_packages.py` holds this module to that - which is affordable because
-    this path prints its four lines and leaves rather than going on to open a
-    session.
+    this path prints its lines and leaves rather than going on to open a session.
     """
     import platform
 
@@ -185,6 +204,7 @@ def provenance() -> str:
         f"rederive {__version__}\n"
         f"Python {platform.python_version()}\n"
         f"sympy {sympy.__version__}\n"
+        f"{_toolkit()}\n"
         f"platform {platform.system().lower()} {platform.machine()}"
     )
 

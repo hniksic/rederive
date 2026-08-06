@@ -4,6 +4,11 @@ Rederive releases ship as a single self-contained binary for Linux, macOS and Wi
 needing no Python and no dependencies. You can run that file as it is, install it
 properly, or skip the binaries and run Rederive from source.
 
+The binaries want a system from the last few years: Ubuntu 22.04, Debian 12 or RHEL 9
+and newer on Linux, macOS 13 and newer, Windows 10 and newer. They are a bit over a
+hundred megabytes to download. From source, Rederive asks for Python 3.11 and nothing
+else.
+
 ## Trying it out
 
 Download one file and run it. It needs no Python and installs nothing, and you uninstall
@@ -48,8 +53,9 @@ old console window, which has neither the colors nor the mouse support Rederive 
 
 ## Installing it
 
-The single file above unpacks itself into a temporary directory every time it starts.
-Installing avoids that.
+The single file above unpacks itself into a temporary directory every time it starts -
+a quarter of a gigabyte of it, most of it Qt, which costs a few seconds of every launch.
+Installing avoids that, and is worth doing for anything past a first look.
 
 **Windows:** download and run
 [`rederive-setup.exe`](https://github.com/hniksic/rederive/releases/latest/download/rederive-setup.exe).

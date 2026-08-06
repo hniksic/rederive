@@ -169,7 +169,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from os.path import commonprefix
 from pathlib import Path
@@ -192,8 +192,10 @@ from rederive.model import building, state, windows, worksheet
 from rederive.model import help as helps
 from rederive.model import session as sessions
 from rederive.model.expr import Node
+from rederive.model.plotting import Unplottable, classify, learned, preferences
 from rederive.model.session import Session
 from rederive.model.settings import (
+    PLOT_PREFERENCES,
     ChoiceField,
     Dialog,
     DialogEditor,
@@ -201,7 +203,10 @@ from rederive.model.settings import (
     TextField,
 )
 from rederive.model.windows import Window, Windows
-from rederive.syntax import LANGUAGES, DeriveSyntaxError, Language
+from rederive.plot import PREFIX, UNAVAILABLE, available
+from rederive.plot import protocol as plots
+from rederive.plot.proxy import PlotError, PlotProxy
+from rederive.syntax import LANGUAGES, DeriveSyntaxError, Language, write_expression
 from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
 from rederive.ui.theme import COLOR_SETTINGS, Palette
@@ -443,6 +448,24 @@ SOLVING = "Solving"
 #: is a question for the engine and so can cost something, though it hardly
 #: ever does.
 READING = "Reading expression"
+#: How the Plot command names itself while it runs. It reaches the engine for
+#: the variables of the expression and then the plot host, which on the first
+#: plot of a session is a process starting up, so it is worth a clock.
+PLOTTING = "Plotting"
+#: What the message line says when a plot has landed. No window is named -
+#: windows are titled by their contents, and the one the plot went to has just
+#: been raised - and the second wording is how replacement teaches itself: a
+#: plot that replaced a curve already there says so in one word.
+PLOTTED = "Plotting {label}"
+REPLOTTED = "Replotting {label}"
+#: What Plot says when there is nothing highlighted to plot.
+NOTHING_TO_PLOT = "no expression to plot"
+#: What the message line says when a plot window sends a traced point home.
+#: The new entry is named by its label, so the next command can ask for it.
+POINT_ENTERED = "Entered {text} as {label}"
+#: How long a point sent home waits before asking again, while a running
+#: command's computing thread owns the worksheets.
+POINT_RETRY = 0.25
 #: Seconds between two readings of the elapsed time. Fast enough that the
 #: figure looks like a clock rather than a series of guesses.
 TICK = 0.1
@@ -1061,6 +1084,17 @@ def _whole(seconds: float) -> str:
     return f"{minute}m {second}s" if not hours else f"{hours}h {minute}m {second}s"
 
 
+def _plot_reason(error: Exception) -> str:
+    """What a Plot command that went wrong says after the `Plot: ` prefix.
+
+    Every way it can go wrong has a message worth reading as it stands: an
+    expression no reading fits, an engine that died under the variables call, a
+    host that would not start. What is left is a bug, and its type name is more
+    use than nothing.
+    """
+    return str(error) or type(error).__name__
+
+
 def _reported(outcome: Outcome) -> str:
     """What the message line says about a command that has finished."""
     error = outcome.error
@@ -1234,6 +1268,12 @@ class RederiveApp(App[None]):
         #: back. `_opening_screen` is that rule.
         self.opening_session = self.windows.session
         self.greeting = True
+        #: The plot windows, which live in a child process that is not started
+        #: until something is plotted. Constructing this costs nothing: no Qt,
+        #: no numpy, no process, and the app process stays as free of all three
+        #: as it is of sympy.
+        self.plots = PlotProxy(self._plot_reported)
+        self.plots.prefer(preferences(self.settings))
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
         #: The command menu, plus whatever submenu or dialog is stacked on it.
@@ -1367,8 +1407,9 @@ class RederiveApp(App[None]):
             (menus.TRANSFER_LOAD, "Utility"): self._command_load_utility,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
             (menus.TRANSFER_SAVE, "State"): self._command_save_state,
+            (menus.PLOT, "Plot"): partial(self._command_plot, None),
+            (menus.PLOT, "New"): partial(self._command_plot, plots.Where.NEW),
             (menus.WINDOW, "Close"): self._command_window_close,
-            (menus.WINDOW, "Designate"): self._command_window_designate,
             (menus.WINDOW, "Flip"): self._command_window_flip,
             (menus.WINDOW, "Goto"): self._command_window_goto,
             (menus.WINDOW, "Next"): partial(self._command_window_step, 1),
@@ -1424,6 +1465,15 @@ class RederiveApp(App[None]):
         )
         yield MessageLine(id="message")
         yield StatusLine(id="status")
+
+    def on_unmount(self) -> None:
+        """Leaving takes the plot host with it, windows and all.
+
+        The host is a daemon child and would go anyway; asking it to stop is
+        how it goes tidily, closing its windows rather than having them
+        disappear.
+        """
+        self.plots.shutdown()
 
     def on_mount(self) -> None:
         self.query_one("#prompt-band").display = False
@@ -1515,9 +1565,8 @@ class RederiveApp(App[None]):
         opened, that window's own worksheet, nothing in it, and no help page
         over it. Everything the original gave the notice up to shows here as
         one of those - an expression to draw, a help page, a second session a
-        split or an overlay made, another worksheet Designate put in the window
-        - bar the two Clear commands, which draw over it without changing any
-        of them and so put it away themselves.
+        split or an overlay made - bar the two Clear commands, which draw over
+        it without changing any of them and so put it away themselves.
         """
         sessions = self.windows.sessions()
         return (
@@ -1599,10 +1648,18 @@ class RederiveApp(App[None]):
         Color is a property of painting, so a color change repaints everything.
         The settings that decide how an expression is drawn are not: an entry
         keeps the render it was authored with, as it does in the original.
+
+        The sticky plot preferences are neither: they belong to a process that
+        may not be running, so they are handed to the proxy, which passes them
+        on in front of the next request it sends. A state file loaded with
+        plot preferences in it arrives here the same way a control the host
+        reported does.
         """
         if changed & COLOR_SETTINGS:
             self.refresh_css()
             self.refresh_screen()
+        if changed & PLOT_PREFERENCES:
+            self.plots.prefer(preferences(self.settings))
 
     def _beep(self) -> None:
         """The error beep for a key with no command, unless Mute silenced it."""
@@ -4231,8 +4288,12 @@ class RederiveApp(App[None]):
         suffix: str = worksheet.SUFFIX,
         refused: str = UNREADABLE,
     ) -> bool:
-        """Read a file into the session, leaving the line up if it cannot be."""
-        path = worksheet.path_of(name, suffix)
+        """Read a file into the session, leaving the line up if it cannot be.
+
+        The name is resolved against the worksheets Rederive ships with as well
+        as the working directory, which is how the gallery is loaded by name.
+        """
+        path = worksheet.reading(name, suffix)
         try:
             skipped = command(path)
         except FileNotFoundError:
@@ -4300,7 +4361,7 @@ class RederiveApp(App[None]):
         stopped, which is what the manual means by issuing another Demo command
         to carry on. Any other name starts that file from its first step.
         """
-        path = worksheet.path_of(name, worksheet.DEMO_SUFFIX)
+        path = worksheet.reading(name, worksheet.DEMO_SUFFIX)
         if self.demo is None or self.demo.path != path or self.demo.done:
             try:
                 steps = worksheet.demonstration(path)
@@ -4379,20 +4440,213 @@ class RederiveApp(App[None]):
             return ""
         return demo.steps[demo.at - 1][0]
 
+    # -- Plot --------------------------------------------------------------
+    #
+    # Two commands, both about the highlighted expression. `Plot` classifies
+    # it and sends it to the receiver - the plot window the user last touched
+    # - and `New` is the same into a window of its own. Everything else about
+    # a plot lives in the plot window itself: removal is a right-click on the
+    # curve or its legend entry, and clearing is the window's own toolbar.
+    #
+    # Everything here goes through the computing thread, including the parts
+    # that are not computations. Two of the three steps can block: the
+    # variables of the expression are an engine call, and the first plot of a
+    # session starts a process that imports Qt and sympy before it answers. The
+    # message line's clock is what makes that wait legible instead of a freeze.
+    #
+    # The app holds no plot state at all. Which window is the receiver, what
+    # is in it, what it is called - the host owns all of it, because the host
+    # is the only side that sees the user touch or close a window.
+
+    def _command_plot(self, where: plots.Where | None) -> None:
+        """Plot the highlighted expression, into the receiver or a new window.
+
+        The same rules as Simplify decide what is plotted: a highlighted
+        subexpression is what gets plotted, and the whole entry otherwise. No
+        question is asked - that is the point of the command.
+        """
+        if not available():
+            self._plot_refused(UNAVAILABLE)
+            return
+        entry = self.session.selected_entry
+        if entry is None:
+            self._plot_refused(NOTHING_TO_PLOT)
+            return
+        request = f"#{entry.number}"
+        self._compute(
+            PLOTTING, partial(self._classified, request, where), self._plot_classified
+        )
+
+    def _classified(self, request: str, where: plots.Where | None) -> plots.Add:
+        """What `request` is a plot of, as the request that would draw it.
+
+        Off the event loop, because the variables of the expression are an
+        engine call and can block. Nothing here depends on any window's state -
+        polar is the window's own view mode - and nothing is sent: what comes
+        back is the request, ready to go.
+        """
+        target, label = self.session.named_target(request)
+        variables = self.session.variables(request)
+        text = write_expression(target, spaced=True)
+        plotted = classify(target, variables, text)
+        kind = plotted.kind
+        options = plotted.options
+        if kind in (plots.PlotKind.FAMILY, plots.PlotKind.SURFACES):
+            # A vector is one expression to the user and several plots in the
+            # window, whether its elements are curves or surfaces, so each of
+            # them carries the text the syntax writer made of it.
+            options = replace(
+                options,
+                texts=tuple(
+                    write_expression(element, spaced=True)
+                    for element in target.children
+                ),
+            )
+        if kind not in plots.DRAWN:
+            raise PlotError(plots.UNDRAWN.format(kind=kind.value))
+        return plots.Add(
+            # The worksheet is named by identity: two algebra overlays can
+            # each own a `#3`, and the plot list is keyed by the pair.
+            worksheet=id(self.session),
+            node=target,
+            context=self.session.context,
+            kind=kind,
+            window=where,
+            label=label,
+            text=text,
+            options=options,
+            # The parse state travels with the plot so that the window's own
+            # fields - the parameter range, a surface's domain - read a typed
+            # bound with the same grammar the worksheet does.
+            state=self.session.state,
+        )
+
+    def _plot_classified(self, outcome: Outcome) -> None:
+        """The expression is classified: send it. Nothing is ever asked.
+
+        A parametric or polar plot is drawn over one turn and its range is a
+        property of the picture, adjusted in the plot window's own toolbar
+        while it is being looked at.
+        """
+        if outcome.error is not None:
+            self._plot_refused(_plot_reason(outcome.error))
+            return
+        request = outcome.value
+        assert isinstance(request, plots.Add)
+        self._send_plot(request)
+
+    def _send_plot(self, request: plots.Add) -> None:
+        self._compute(PLOTTING, partial(self._plot, request), self._plot_done)
+
+    def _plot(self, request: plots.Add) -> str:
+        """Send one plot, off the event loop, and word the acknowledgement.
+
+        Whether the plot replaced a curve already there is only known once the
+        host has answered, which is why the sentence is made here rather than
+        by the command: a plot that replaced says `Replotting`, which is how
+        replacement teaches itself.
+        """
+        placed = self.plots.add(request)
+        worded = REPLOTTED if placed.replaced else PLOTTED
+        return worded.format(label=request.label)
+
+    def _plot_done(self, outcome: Outcome) -> None:
+        """Say where the plot landed, or why it did not."""
+        if outcome.error is not None:
+            self._plot_refused(_plot_reason(outcome.error))
+            return
+        self._plot_finished(str(outcome.value))
+
+    def _plot_finished(self, message: str) -> None:
+        """A Plot command has run, so the command menu has the screen again."""
+        del self.stack[1:]
+        self._restart_menu()
+        self._return_to_menu(message)
+
+    def _plot_refused(self, reason: str) -> None:
+        """Every plot refusal reads as one sentence off the same prefix."""
+        self._plot_finished(f"{PREFIX}{reason}")
+
+    def _plot_reported(self, event: plots.Event) -> None:
+        """An event off the proxy's reader thread, put on the event loop.
+
+        The thread is not the app's, so nothing may be read or written from
+        here but the handing over itself; a message line is a screen and the
+        screen belongs to the loop.
+        """
+        self.call_from_thread(self._plot_event, event)
+
+    def _plot_event(self, event: plots.Event) -> None:
+        """What the host has to say for itself, on the message line.
+
+        Arrives on the event loop from the proxy's reader thread. A window the
+        user closed is not worth a word - the user closed it and can see that
+        it is gone - but a curve that would not evaluate is exactly the silence
+        this design refuses to have, and a point sent home from a plot is the
+        one event that writes rather than prints.
+
+        A sticky control moved in a plot window says nothing at all: the new
+        values go into the settings store, which is where they outlive the
+        host and where a state file finds them, and the settings watcher hands
+        them back to the proxy for the host after this one.
+        """
+        if isinstance(event, plots.Trouble):
+            self._set_message(f"{PREFIX}{event.label}: {event.message}")
+        elif isinstance(event, plots.Traced):
+            self._plot_traced(event)
+        elif isinstance(event, plots.Preferred):
+            self.settings.apply(learned(event.preferences))
+
+    def _plot_traced(self, event: plots.Traced) -> None:
+        """A point sent home from a plot window: author it as a new entry.
+
+        The event names the worksheet the plot came from, but that overlay may
+        have closed since, so the entry's home is decided in two steps: the
+        originating worksheet where it is still on screen, and the active one
+        otherwise. The point was sent to be computed with, and the active
+        worksheet is where the next command happens, so landing it there beats
+        dropping a number the user explicitly asked for.
+
+        `Trouble` only prints, while this writes into a worksheet, so when the
+        event arrives matters. While a command computes, the computing thread
+        owns the worksheets, and the point waits its turn rather than racing
+        it - nothing is dropped, it lands when the command lets go. Mid-dialog
+        and mid-edit the append is safe: the entry goes in under whatever line
+        or dialog is up, the panes repaint around it, and the selection moves
+        to the new entry - which is what puts the point one `F3` away from the
+        line being edited.
+        """
+        if self.mode == MODE_COMPUTE:
+            self.set_timer(POINT_RETRY, partial(self._plot_traced, event))
+            return
+        session = next(
+            (one for one in self.windows.sessions() if id(one) == event.worksheet),
+            self.session,
+        )
+        try:
+            entry = session.author(event.text)
+        except DeriveSyntaxError as error:
+            # A point that will not read under the worksheet's settings - a
+            # digit the input base does not have - refuses in the parser's own
+            # words, exactly as the same text pasted on the author line would.
+            self._set_message(f"{PREFIX}{error}")
+            return
+        self.place_windows()
+        self._set_message(POINT_ENTERED.format(text=event.text, label=f"#{entry.number}"))
+
     # -- Window ------------------------------------------------------------
     #
-    # Eight commands over a tree of windows, of which the app owns only the
+    # Seven commands over a tree of windows, of which the app owns only the
     # screen half: which pane a window is drawn in, and how big. The tree
     # itself, the numbering and the geometry are `model.windows`.
     #
-    # Two of them can throw a worksheet away - Close, and Designate, which
-    # makes a window over rather than converting it - so both ask before they
-    # do, with the answered field still on the band.
+    # One of them can throw a worksheet away - Close - so it asks before it
+    # does, with the answered field still on the band.
     #
-    # A window of a plot type is offered because the original offers it on the
-    # same field, and refused because this program draws no plots. Everything
-    # else works for every window: splitting copies the worksheet, and the two
-    # copies are two derivations from there on.
+    # Every window in the tree is an Algebra window, plot windows being windows
+    # of the desktop instead, so `Open` makes one without asking what to make.
+    # Everything here works for every window: splitting copies the worksheet,
+    # and the two copies are two derivations from there on.
 
     def _command_window_split(self, vertical: bool) -> None:
         """Ask where to cut the active window in two."""
@@ -4462,51 +4716,15 @@ class RederiveApp(App[None]):
         self.windows.active.flip(direction)
         self._done_with_menu()
 
-    def _command_window_designate(self) -> None:
-        """Ask what type to make the active window, opening on what it is."""
-        self._ask(
-            menus.window_type(menus.WINDOW_DESIGNATE, self.windows.kind),
-            self._designate_window,
-        )
-
-    def _designate_window(self, values: dict[str, str | int]) -> None:
-        kind = str(values["WindowType"])
-        if kind != windows.ALGEBRA:
-            self._unplotted(kind)
-            return
-        if self.session.entries:
-            self._confirm_over(values, partial(self._redesignate, kind))
-            return
-        self._redesignate(kind)
-
-    def _redesignate(self, kind: str) -> None:
-        """Make the active window over as a fresh window of `kind`.
-
-        Which empties it: a type is not something a window is converted to,
-        it is what a new window in the same rectangle would be.
-        """
-        for dropped in self.windows.designate(kind, self._new_session()):
-            dropped.discard()
-        self._done_with_menu()
-
     def _command_window_open(self) -> None:
-        """Ask what type to overlay on the active window, offering Algebra."""
-        self._ask(
-            menus.window_type(menus.WINDOW_OPEN, windows.ALGEBRA), self._open_window
-        )
+        """Overlay a fresh worksheet on the active window, asking nothing.
 
-    def _open_window(self, values: dict[str, str | int]) -> None:
-        kind = str(values["WindowType"])
-        if kind != windows.ALGEBRA:
-            self._unplotted(kind)
-            return
-        self.windows.open(kind, self._new_session())
+        The original asked what type to make it, which was a question with
+        three answers; with plot windows outside the tree there is one, so the
+        command runs on the keystroke like Next and Previous.
+        """
+        self.windows.open(windows.ALGEBRA, self._new_session())
         self._done_with_menu()
-
-    def _unplotted(self, kind: str) -> None:
-        """Refuse a plot window, which is a window with nothing to put in it."""
-        self.message = f"{kind}: not implemented yet"
-        self.refresh_screen()
 
     def _new_session(self) -> Session:
         """An empty worksheet for a window that has just been made.

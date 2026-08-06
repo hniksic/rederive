@@ -2,7 +2,7 @@
 
 Rederive is a from-scratch reimplementation of Derive, the classic DOS computer algebra
 system. Written on top of [SymPy](https://www.sympy.org/en/index.html), it simplifies,
-solves, and expands a wide range of mathematical expressions and equations, both
+solves, expands and plots a wide range of mathematical expressions and equations, both
 symbolically and numerically, through an interactive menu-driven interface. What sets it
 apart from SymPy in a Jupyter notebook is how it treats the user: Rederive reads `ax+b` or
 `sinx` the way a mathematician would, and displays every result nicely typeset right in
@@ -30,8 +30,8 @@ a user-friendly CAS.
 Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
 but adapts to the 21st century where appropriate. The display is Unicode rather than code
 page 437, and everything is laid out for the terminal's actual size instead of an 80x25
-screen. The mouse and scroll wheel work, it uses the system clipboard, file names
-tab-complete, and the line editor follows Emacs conventions.
+screen. The mouse and scroll wheel work, plots use OpenGL, it uses the system clipboard,
+file names tab-complete, and the line editor follows Emacs conventions.
 
 ## Installing
 
@@ -90,6 +90,22 @@ Pressing <kbd>s</kbd> answers:
 ────
   2
 ```
+
+## Plotting
+
+Highlight an expression, press <kbd>p</kbd> for Plot and <kbd>p</kbd> again, and it is
+drawn in a plot window.
+
+Rederive works out what an expression is a plot of and draws it accordingly:
+
+* a curve for `SIN(x)/x`, 
+* one curve per element of a vector like `[x, x^2, x^3]`,
+* a parametric curve for `[3SIN(3t), 3SIN(4t)]`,
+* a polar curve for `r = f(θ)` in a window switched to polar,
+* the zero contour for an equation like `x^2 + y^2 = 9`,
+* a shaded area for an inequality, 
+* points for a matrix of numbers, and
+* a shaded surface for anything in two variables. 
 
 ## For the math nerds
 

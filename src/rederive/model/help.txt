@@ -414,7 +414,9 @@ Options       how numbers are read, worked out and printed
   Precision      exact, approximate or mixed arithmetic, and its digit count
   Radix          the number system input and output are written in
 
-Plot          no plot window in this version
+Plot          draw the highlighted expression in a plot window
+  Plot           draw it in the plot window last touched, opening one if needed
+  New            draw it in a new window, which the next plot then lands in
 Quit          leave the program, after asking whether that was meant
 Remove        take a block of expressions out of the worksheet
 Simplify      work an expression out, exactly unless Precision says otherwise
@@ -431,11 +433,10 @@ moVe          move a block of expressions elsewhere in the worksheet
 
 Window        split the screen, and move between the pieces
   Close          close a window; its neighbour takes the room it leaves
-  Designate      change what kind of window this one is
   Flip           bring the next of this window's overlays to the top
   Goto           make a numbered window the active one
   Next           make the next window active
-  Open           open another window over this one
+  Open           open another worksheet over this one
   Previous       make the previous window active
   Split          divide this window in two
     Horizontal     one above the other
@@ -449,6 +450,27 @@ utility files written for the original Derive can be read this way.
 
 Transfer Save writes a worksheet in this program's own format, and also writes
 a highlighted expression out as C, Python, Rust or Julia source.
+
+Transfer Load Derive gallery reads the worksheet of captioned plots that comes
+with the program, from whatever directory you are working in. Highlight a line,
+read its caption on the status line, and press P P to see what it draws.
+
+A plot window is a window of the desktop rather than a part of this screen,
+and it is closed the way any other window is. The picture is navigated with the
+mouse: the wheel zooms about the pointer, the left button drags the view, the
+right button sweeps out a rectangle to zoom to, and a double click centres the
+view where it lands.
+
+Plot window key commands:
+  Home or 0    the framing a fresh window opens with
+  A            frame every curve that is showing
+  + and -      zoom in and out about the middle of the view
+  arrows       move the view a quarter window; move the marker, while tracing
+  Backspace    back to where the view was; Shift-Backspace forward again
+  T or F3      trace: a marker rides a curve and the status bar reads it out
+  L and G      the legend and the grid
+  Ctrl-C       copy the picture, or the traced point, to the clipboard
+  Ctrl-S       save the picture, the sampled points, or a drawing of it
 
 Algebra window key commands:
   F1           the next window; help, while a line is being typed

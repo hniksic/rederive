@@ -340,6 +340,63 @@ RADIX = Dialog(
 )
 
 
+#: How fine a grid a state file may ask a surface for, and how big a data
+#: point may be drawn. The grid cap is the one a 3D window draws at - it clamps
+#: whatever it is handed - so a loaded number the picture would silently reduce
+#: is refused instead; twenty pixels is a point big enough to be a blob.
+PLOT_GRID_MAXIMUM = 256
+PLOT_POINT_MAXIMUM = 20
+
+# The sticky plot preferences: what a new surface's grid and a new data plot's
+# points start out as, which is however the last one was left. No dialog holds
+# them - the controls are the 3D window's own grid fields and a data plot's
+# right-click menu, and the plot host hands what they change back to the app -
+# but they are settings all the same, so that a state file carries them and a
+# session opens plotting the way it was left. Nothing is recorded: a moved
+# toggle in a plot window must not write into the worksheet.
+#
+# Equal scales is deliberately not among them. A new window always opens with
+# equal scales and the window's `1:1` toggle serves the exception; a one-off
+# framing choice that silently became the default would reshape the next
+# circle, so nothing persists.
+PLOT_FIELDS: tuple[Field, ...] = (
+    NumberField(
+        "Grid",
+        "Grid points along each axis of a new surface",
+        "PlotGrid",
+        64,
+        minimum=2,
+        maximum=PLOT_GRID_MAXIMUM,
+        recorded=False,
+    ),
+    ChoiceField(
+        "Points",
+        "How a new data plot draws its points",
+        "PlotPoints",
+        ("Discrete", "Connected"),
+        "Discrete",
+        recorded=False,
+    ),
+    NumberField(
+        "Size",
+        "Data point size in pixels",
+        "PlotPointSize",
+        5,
+        minimum=1,
+        maximum=PLOT_POINT_MAXIMUM,
+        recorded=False,
+    ),
+    ChoiceField(
+        "Mesh",
+        "How a new surface is drawn",
+        "PlotMesh",
+        ("Solid", "Wire"),
+        "Wire",
+        recorded=False,
+    ),
+)
+
+
 # -- the Manage screens ------------------------------------------------------
 #
 # The four Manage commands that set something. They say which way the
@@ -539,14 +596,23 @@ DIALOGS: tuple[Dialog, ...] = (
     COLOR_WORK,
 )
 
+#: Every field a setting lives behind: the dialogs' own, and the sticky plot
+#: preferences no dialog holds.
+_ALL_FIELDS: tuple[Field, ...] = (
+    *(field for dialog in DIALOGS for field in dialog.fields),
+    *PLOT_FIELDS,
+)
+
 DEFAULTS: dict[str, str | int] = {
-    field.setting: field.default for dialog in DIALOGS for field in dialog.fields
+    field.setting: field.default for field in _ALL_FIELDS
 }
 
+#: The sticky plot settings. What they are worth reaches a process rather than
+#: the screen, so the app watches for a change to any of them.
+PLOT_PREFERENCES: frozenset[str] = frozenset(field.setting for field in PLOT_FIELDS)
+
 #: The field that owns each setting, for reading an authored `Name := Value`.
-FIELDS: dict[str, Field] = {
-    field.setting: field for dialog in DIALOGS for field in dialog.fields
-}
+FIELDS: dict[str, Field] = {field.setting: field for field in _ALL_FIELDS}
 
 
 def _read(field: Field, value: str) -> str | int | None:
