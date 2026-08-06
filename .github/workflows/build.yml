@@ -93,8 +93,15 @@ jobs:
       # against, and nothing downstream would say so. `.python-version` says
       # which interpreter, and "Check what the binaries carry" is what holds
       # the finished bundles to it.
+      #
+      # `--extra full` is what a release is: the plot toolkit and the libraries
+      # behind the clipboard and the memory gauge are opt-in for an install from
+      # source, and a bundle built without them would start, compute and refuse
+      # to plot. It is named here rather than left to the development
+      # environment to supply, because what a release carries is not something
+      # to inherit by accident.
       - name: Install dependencies
-        run: uv sync --frozen --managed-python --group packaging
+        run: uv sync --frozen --managed-python --extra full --group packaging
 
       # A release must not be cut from code that fails its own tests, so this
       # runs before anything is built rather than beside it.

@@ -465,13 +465,26 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sympy" },
+    { name = "textual" },
+]
+
+[package.optional-dependencies]
+desktop = [
+    { name = "psutil" },
+    { name = "pyperclip" },
+]
+full = [
     { name = "psutil" },
     { name = "pyopengl" },
     { name = "pyperclip" },
     { name = "pyqtgraph" },
     { name = "pyside6-essentials" },
-    { name = "sympy" },
-    { name = "textual" },
+]
+plot = [
+    { name = "pyopengl" },
+    { name = "pyqtgraph" },
+    { name = "pyside6-essentials" },
 ]
 
 [package.dev-dependencies]
@@ -479,6 +492,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-xdist" },
+    { name = "rederive", extra = ["full"] },
 ]
 packaging = [
     { name = "pyinstaller" },
@@ -487,20 +501,27 @@ packaging = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
-    { name = "psutil", specifier = ">=7" },
-    { name = "pyopengl", specifier = ">=3.1" },
-    { name = "pyperclip", specifier = ">=1.9" },
-    { name = "pyqtgraph", specifier = ">=0.13.7" },
-    { name = "pyside6-essentials", specifier = ">=6.7" },
+    { name = "psutil", marker = "extra == 'desktop'", specifier = ">=7" },
+    { name = "psutil", marker = "extra == 'full'", specifier = ">=7" },
+    { name = "pyopengl", marker = "extra == 'full'", specifier = ">=3.1" },
+    { name = "pyopengl", marker = "extra == 'plot'", specifier = ">=3.1" },
+    { name = "pyperclip", marker = "extra == 'desktop'", specifier = ">=1.9" },
+    { name = "pyperclip", marker = "extra == 'full'", specifier = ">=1.9" },
+    { name = "pyqtgraph", marker = "extra == 'full'", specifier = ">=0.13.7" },
+    { name = "pyqtgraph", marker = "extra == 'plot'", specifier = ">=0.13.7" },
+    { name = "pyside6-essentials", marker = "extra == 'full'", specifier = ">=6.7" },
+    { name = "pyside6-essentials", marker = "extra == 'plot'", specifier = ">=6.7" },
     { name = "sympy", specifier = ">=1.14" },
     { name = "textual", specifier = ">=0.86" },
 ]
+provides-extras = ["desktop", "full", "plot"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-xdist", specifier = ">=3.6" },
+    { name = "rederive", extras = ["full"] },
 ]
 packaging = [{ name = "pyinstaller", specifier = ">=6.21" }]
 

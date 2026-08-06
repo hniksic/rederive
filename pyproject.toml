@@ -6,19 +6,41 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
+# The screen, the mathematics and the arrays a curve is sampled into: what the
+# program cannot be without, and all of it pure Python or a wheel that is built
+# for every machine there is. Everything that needs a desktop underneath it is
+# an extra below, which is what lets the package be installed somewhere that
+# has no desktop - a container, a server, a browser.
 dependencies = [
     "textual>=0.86",
     "sympy>=1.14",
-    "psutil>=7",
-    "pyperclip>=1.9",
-    # Essentials rather than the `pyside6` meta-package, which drags in
-    # `pyside6-addons` - a third of a gigabyte of Qt3D, Charts, WebEngine and
-    # DataVisualization that a plot window never touches.
+    "numpy>=1.26",
+]
+
+# Opt-in, so `pip install rederive` is the slim install and `rederive[full]` is
+# the whole program. Nearly everyone comes in through the released binary,
+# which bundles everything either way; the cost of the split lands on installs
+# from source, which is why `INSTALL.md` names the extras.
+[project.optional-dependencies]
+# What a plot window is drawn with. Essentials rather than the `pyside6`
+# meta-package, which drags in `pyside6-addons` - a third of a gigabyte of
+# Qt3D, Charts, WebEngine and DataVisualization that a plot window never
+# touches. Without these the Plot command refuses in a sentence and nothing
+# else changes.
+plot = [
     "pyside6-essentials>=6.7",
     "pyqtgraph>=0.13.7",
     "pyopengl>=3.1",
-    "numpy>=1.26",
 ]
+# What the program asks the machine it is on: the resident set behind the
+# memory gauge and the engine's cap, and the desktop's own clipboard. Without
+# these the gauge is empty and a copy takes the terminal's road alone.
+desktop = [
+    "psutil>=7",
+    "pyperclip>=1.9",
+]
+# The whole program, for an install that wants it without naming the parts.
+full = ["rederive[plot,desktop]"]
 
 [project.scripts]
 rederive = "rederive.__main__:main"
@@ -37,7 +59,13 @@ packages = ["src/rederive"]
 path = "src/rederive/__init__.py"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-xdist>=3.6"]
+# The environment anyone working on this program gets, extras and all. The
+# suite draws plot windows, reads a resident set and hands text to a clipboard,
+# so a development environment without the extras would run a smaller suite
+# than the program is answerable to - `uv run pytest` has to be the whole of
+# it. Naming the package's own extra here is what makes `uv sync` and `uv run`
+# install them without anyone having to remember a flag.
+dev = ["rederive[full]", "pytest>=8.0", "pytest-asyncio>=0.24", "pytest-xdist>=3.6"]
 # What builds the standalone executable, in a group of its own so that the
 # ordinary environment does not carry it. `packaging/rederive.spec` says how.
 packaging = ["pyinstaller>=6.21"]

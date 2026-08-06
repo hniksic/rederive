@@ -39,8 +39,13 @@ platform, from a clean checkout of the tag. On Linux, install `libxcb-cursor0` f
 a bundle carries the libraries the build machine had, and without it Qt's xcb plugin
 ships incomplete and the binary opens no window on X11.
 
+The `full` extra is named because a release bundles the whole program. The plot
+toolkit and the two libraries behind the clipboard and the memory gauge are opt-in
+for an install from source, and a binary that quietly left them out would be a
+release nobody asked for.
+
 ```
-uv sync --frozen --group packaging
+uv sync --frozen --extra full --group packaging
 uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm
 uv run --group packaging pyinstaller packaging/rederive.spec --noconfirm \
     --distpath dist/tree -- --tree

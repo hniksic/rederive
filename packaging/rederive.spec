@@ -21,6 +21,13 @@ directory beside it. Nothing is unpacked at run time because nothing is packed;
 this is the form a release tars up for people who want the program installed
 rather than tried. `RELEASING.md` says what is done with either.
 
+Either form is built out of an environment carrying the `full` extra, which is what
+`RELEASING.md` and the build workflow ask for. The plot toolkit and the two
+libraries behind the clipboard and the memory gauge are opt-in for an install from
+source, and a bundle built without them is a program that starts, computes and
+refuses to plot - which is a supported way to install Rederive and not a way to
+release it. `smoke.py` catches it: `--version` has to name a Qt.
+
 `packaging/smoke.py` is what says whether a build works, and it should be run
 against both: a bundle can import cleanly and still be missing a file it only reads
 when the user asks for help.

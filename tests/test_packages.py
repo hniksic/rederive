@@ -11,6 +11,13 @@ worker, and an import that quietly puts it in the app process instead is invisib
 from the inside - everything still works, a third of a second and some thirty
 megabytes later. So that one is tested from a fresh interpreter too, by asking what
 ended up in `sys.modules`.
+
+The third rule is about what the install has. The plot toolkit, psutil and pyperclip
+are opt-in extras, so `pip install rederive` is a machine where none of them exist,
+and the client half has to import there - a program that refuses to start because
+nobody asked for a plot window is not a slim install, it is a broken one. That is
+also what makes the package installable somewhere the wheels do not exist at all,
+which is what a browser is.
 """
 
 from __future__ import annotations
@@ -37,7 +44,10 @@ CLIENT_SIDE = [
     "rederive.engine",
     "rederive.engine.boundary",
     "rederive.engine.client",
+    "rederive.memory",
     "rederive.model.session",
+    "rederive.platform",
+    "rederive.plot.proxy",
     "rederive.ui.app",
     "rederive.__main__",
 ]
@@ -82,6 +92,52 @@ def test_the_app_side_imports_no_toolkit(module: str) -> None:
         [sys.executable, "-c", program], check=True, capture_output=True, text=True
     )
     assert imported.stdout.strip() == "[]", f"{module} imports {imported.stdout}"
+
+
+#: The wheels an install need not have: the `plot` extra and the `desktop` one.
+#: No client-half module may import one of them at its top, however far down the
+#: chain it is - what reaches for a clipboard, a resident set or a toolkit has to
+#: do it where it is asked for, so that an install without them still starts.
+OPTIONAL = ("PySide6", "pyqtgraph", "OpenGL", "psutil", "pyperclip")
+
+#: A machine where none of them exist, made out of one that has them all. A
+#: finder in front of every other refuses those names the way an import of a
+#: wheel that was never fetched is refused, and the check under it is what stops
+#: this from passing because the refusing quietly stopped working.
+ABSENT = """
+import sys
+
+
+class Absent:
+    def find_spec(self, name, path=None, target=None):
+        if name.partition(".")[0] in {names}:
+            raise ModuleNotFoundError(f"No module named {{name!r}}", name=name)
+        return None
+
+
+sys.meta_path.insert(0, Absent())
+
+for name in {names}:
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        continue
+    raise AssertionError(f"{{name}} was imported; this machine is not the slim one")
+"""
+
+
+@pytest.mark.parametrize("module", CLIENT_SIDE)
+def test_the_app_side_imports_with_no_extras_installed(module: str) -> None:
+    """A bare `pip install rederive` is a program, and this is what says so.
+
+    The extras are opt-in, so this is the ordinary install rather than a corner of
+    one, and every way of breaking it is invisible on a development machine: an
+    import written at the top of a module instead of inside the one function that
+    needs it works perfectly here and fails on every install that took the package
+    at its word.
+    """
+    program = ABSENT.format(names=set(OPTIONAL)) + f"\nimport {module}\n"
+    subprocess.run([sys.executable, "-c", program], check=True)
 
 
 def test_the_entry_point_imports_no_screen() -> None:
