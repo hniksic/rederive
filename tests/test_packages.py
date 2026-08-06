@@ -40,6 +40,12 @@ PACKAGES = [
 #: in the process where the computing happens. `rederive.engine` is on the list
 #: because a package `__init__` is run by every import of anything below it, so an
 #: engine that greeted its own submodules with sympy would defeat all the rest.
+#: `rederive.web` is on it in full, and every module of it is the app side by
+#: definition: the browser runs the UI in the page's own Pyodide and the
+#: mathematics in a worker's, so a sympy import there would cost a second
+#: interpreter's worth of it in the instance that draws the screen. The one
+#: exception is `rederive.web.worker`, which is that other interpreter's entry
+#: and is meant to import the whole engine.
 CLIENT_SIDE = [
     "rederive.engine",
     "rederive.engine.boundary",
@@ -48,8 +54,14 @@ CLIENT_SIDE = [
     "rederive.memory",
     "rederive.model.session",
     "rederive.platform",
+    "rederive.platform.web",
     "rederive.plot.proxy",
     "rederive.ui.app",
+    "rederive.web",
+    "rederive.web.boot",
+    "rederive.web.driver",
+    "rederive.web.engine",
+    "rederive.web.plots",
     "rederive.__main__",
 ]
 
