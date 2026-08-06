@@ -23,6 +23,14 @@ be an empty file per worker and per test, forever.
 Two private methods sit in the table beside the six public ones, so that the
 parent's abort and memory tests do not have to find a real computation slow
 enough or hungry enough to test with.
+
+`methods` is that table, and it is public because this process is not the only
+one that serves it: a browser's worker reads `postMessage` where this one reads
+a pipe, and it answers out of the same table rather than out of a copy. What is
+here besides the table is the pipe, the tty and the limits, which belong to a
+child process alone - the connection's type is imported for the annotations
+only, so that a runtime with no `_multiprocessing` under it can still read this
+module for what it shares.
 """
 
 from __future__ import annotations
@@ -35,14 +43,17 @@ import tempfile
 import time
 import traceback
 from collections.abc import Callable
-from multiprocessing.connection import Connection
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from multiprocessing.connection import Connection
 
 __all__ = [
     "BUG",
     "MEMORY",
     "READY",
     "log_path",
+    "methods",
     "serve",
 ]
 
@@ -87,9 +98,9 @@ def serve(connection: Connection, cap: int | None) -> None:
     _take_the_log(os.getpid())
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     _apply_limits(cap)
-    methods = _methods()
+    table = methods()
     connection.send((READY, "ready"))
-    _loop(connection, methods)
+    _loop(connection, table)
 
 
 def _loop(connection: Connection, methods: dict[str, Callable[..., Any]]) -> None:
@@ -274,7 +285,7 @@ def _limit(resource: Any, name: str, value: int) -> None:
         pass
 
 
-def _methods() -> dict[str, Callable[..., Any]]:
+def methods() -> dict[str, Callable[..., Any]]:
     """The table of what a request may ask for.
 
     The engine is imported here rather than at module scope: importing sympy is
