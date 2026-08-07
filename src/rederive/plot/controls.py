@@ -35,6 +35,7 @@ something that has a name and can be offered.
 
 from __future__ import annotations
 
+from collections.abc import Container
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
@@ -546,18 +547,28 @@ def choices(one: Control, page: bool = False) -> tuple[Entry, ...]:
     )
 
 
-def menu(state: State, page: bool = False) -> tuple[Entry, ...]:
+def menu(
+    state: State, page: bool = False, offers: Container[str] | None = None
+) -> tuple[Entry, ...]:
     """The context menu of a window in this state, as it should currently read.
 
     Labels resolved, toggles ticked, and anything the state has nothing for
     left out: a menu is about the window it was raised over, and an entry that
     would name a curve the click was not near has nothing to name.
+
+    `offers` is what the backend asking can actually do, where it cannot yet do
+    everything. A control it has nothing behind is left out rather than offered
+    dead, and it is left out here rather than by the renderer so that the rules
+    fall around what is left: a group whose every entry has gone takes its rule
+    with it.
     """
     resolve = _flat if isinstance(state, Flat) else _solid
     controls = FLAT if isinstance(state, Flat) else SOLID
     entries: list[Entry] = []
     group: int | None = None
     for one in listed(controls):
+        if offers is not None and one.name not in offers:
+            continue
         entry = resolve(one, state, page)
         if entry is None:
             continue
@@ -566,7 +577,9 @@ def menu(state: State, page: bool = False) -> tuple[Entry, ...]:
     return tuple(entries)
 
 
-def card(state: State, page: bool = False) -> tuple[Entry, ...]:
+def card(
+    state: State, page: bool = False, offers: Container[str] | None = None
+) -> tuple[Entry, ...]:
     """The menu one legend row offers, which is about a plot and not a view.
 
     A menu of its own rather than the canvas's, because half of a canvas menu
@@ -580,7 +593,11 @@ def card(state: State, page: bool = False) -> tuple[Entry, ...]:
     names = ("plot.remove", "points.connect") if flat else ("surface.wire", "plot.remove")
     controls = FLAT if flat else SOLID
     resolve = _flat if flat else _solid
-    found = (resolve(control(name, controls), state, page) for name in names)
+    found = (
+        resolve(control(name, controls), state, page)
+        for name in names
+        if offers is None or name in offers
+    )
     return tuple(entry for entry in found if entry is not None)
 
 

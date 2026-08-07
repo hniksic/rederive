@@ -18,12 +18,14 @@ between them, which is the whole of what stage 5 wrote in Python.
 """
 
 import asyncio
+import types
 
 import numpy as np
 import pytest
 from fakepage import FakeEngine, FakePage, FakeSolids, bridge
 
 from rederive.engine.context import Angle, Context
+from rederive.plot import controls
 from rederive.plot import protocol as plots
 from rederive.plot.model import Plot, Surface, written
 from rederive.plot.protocol import PlotKind
@@ -181,6 +183,19 @@ async def test_a_closed_pane_hands_its_kind_on_and_says_so(session, page):
     assert session.windows == {}
 
 
+async def test_a_pane_that_reframes_for_a_new_curve_says_it_in_pythons_words(
+    session, page
+):
+    # The page decides that a curve arrived with none of itself in view and
+    # which way it reframed; what is said about it is the sentence the desktop
+    # says in the same circumstance, naming the curve as the plot list does.
+    session.add(_landing("SIN(x) + 40"))
+    page.panes[1].say["fitted"](1, True)
+    assert page.panes[1].message == "#1  SIN(x) + 40: y autoscaled to fit"
+    page.panes[1].say["fitted"](1, False)
+    assert page.panes[1].message == "#1  SIN(x) + 40: autoscaled to fit"
+
+
 async def test_a_legend_row_hides_a_curve_without_removing_it(session, page):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
@@ -191,8 +206,12 @@ async def test_a_legend_row_hides_a_curve_without_removing_it(session, page):
 
 async def test_the_menus_remove_takes_a_plot_out_for_good(session, page):
     session.add(_landing("SIN(x)"))
-    page.panes[1].say["drop"](1)
-    assert page.panes[1].plots == {}
+    pane = page.panes[1]
+    # The menu is raised over the curve, which is what the entry is about, and
+    # what comes back afterwards is the name of a control and nothing else.
+    assert "Remove #1  SIN(x)" in _labels(pane.say["menu"](_flat(pointed=1)))
+    pane.say["command"]("plot.remove", None)
+    assert pane.plots == {}
     assert session.describe().windows[0].plots == ()
 
 
@@ -200,18 +219,28 @@ async def test_joining_a_data_plots_points_is_sticky(session, page):
     heard = []
     session.events = heard.append
     session.add(_landing("[[1, 2], [3, 4]]", kind=PlotKind.DATA, variables=()))
-    page.panes[1].say["connect"](1, True)
-    assert page.panes[1].plots[1]["connected"] is True
+    pane = page.panes[1]
+    assert _labels(pane.say["card"](_flat(pointed=1))) == [
+        "Remove #1  [[1, 2], [3, 4]]",
+        "Connect points",
+    ]
+    pane.say["command"]("points.connect", None)
+    assert pane.plots[1]["connected"] is True
     assert heard[-1] == plots.Preferred(plots.Prefer(connected=True))
 
 
 async def test_the_polar_toggle_rereads_every_curve_in_the_pane(session, page):
     session.add(_landing("SIN(3x)"))
     pane = page.panes[1]
-    pane.say["polar"](True)
+    pane.say["command"]("view.polar", None)
     assert pane.plots[1]["kind"] == "polar"
-    pane.say["polar"](False)
+    # The page is told, since the rings it draws and the r and θ it reads the
+    # pointer out in follow the mode, and so is the button that shows it.
+    assert (pane.polar, pane.buttons["view.polar"]) == (True, True)
+    assert pane.message == "Polar: curves are read as r = f(θ)"
+    pane.say["command"]("view.polar", None)
     assert pane.plots[1]["kind"] == "curve"
+    assert pane.message == "Polar off: curves are read as y = f(x)"
 
 
 # -- what a pane asks the worker for ----------------------------------------------
@@ -362,6 +391,220 @@ async def test_a_dragged_view_costs_one_sampling_per_curve_and_not_one_per_frame
     page.handlers["landed"](engine.sent[-1][0], "")
     await settle()
     assert len(engine.sent) == 2
+
+
+# -- what a pane offers -------------------------------------------------------------
+#
+# The commands of a pane, their words, their keys and the order a menu stands
+# them in are `plot/controls.py`'s, and a pane renders them. So the table below
+# is checked in rather than derived: it is what a person would otherwise have to
+# read off two files and compare by eye, and it is asserted against both sides -
+# against the description the desktop's windows render, and against the menu and
+# the key ladder this backend actually hands the page.
+
+
+#: What a 2D window offers, command by command: the words a menu writes it with,
+#: the key a desktop presses it by, the key a page presses it by, and whether
+#: the browser can do it yet. A platform short of a key is a platform that has
+#: none for that command - Ctrl+W closes a tab, so the page answers to the
+#: letter alone - and a command that is not served is left off the browser's
+#: menu rather than offered dead.
+FLAT_CONTROLS = (
+    ("range.set", "Set range...", "", "", False),
+    ("view.all", "View all", "A", "a", True),
+    ("view.home", "Home framing", "Home", "Home", True),
+    ("view.back", "Back", "Backspace", "Backspace", False),
+    ("trace", "Trace", "T", "t", True),
+    ("grid", "Grid", "G", "g", True),
+    ("legend", "Legend", "L", "l", True),
+    ("image.copy", "Copy image", "Ctrl+C", "Ctrl+C", False),
+    ("image.export", "Export...", "Ctrl+S", "Ctrl+S", False),
+    ("clear", "Clear", "Del", "Delete", False),
+    ("close", "Close", "Q", "q", True),
+    ("plot.remove", "Remove", "", "", True),
+    ("points.connect", "Connect points", "", "", True),
+    ("points.size", "Point size", "", "", False),
+)
+
+#: And what a 3D window offers, on the same terms.
+SOLID_CONTROLS = (
+    ("camera.home", "Home view", "Home", "Home", True),
+    ("camera.xy", "Face the xy plane", "1", "1", True),
+    ("camera.xz", "Face the xz plane", "2", "2", True),
+    ("camera.yz", "Face the yz plane", "3", "3", True),
+    ("camera.spin", "Rotate", "R", "r", True),
+    ("view.inspect", "View...", "", "v", True),
+    ("image.copy", "Copy image", "Ctrl+C", "Ctrl+C", False),
+    ("image.export", "Export...", "Ctrl+S", "Ctrl+S", False),
+    ("surface.remove", "Remove", "", "", True),
+    ("clear", "Clear", "Del", "Delete", False),
+    ("close", "Close", "Q", "q", True),
+)
+
+
+def _flat(pointed=None, **fields):
+    """The snapshot a 2D pane hands over when a menu opens, as the page builds it."""
+    state = {"tracing": False, "grid": True, "legend": True, "equal": True}
+    return types.SimpleNamespace(pointed=pointed, **{**state, **fields})
+
+
+def _deep(pointed=None, **fields):
+    """The same for a 3D pane, which has a camera where the other has a view."""
+    state = {"spinning": False, "boxed": True, "legend": True}
+    return types.SimpleNamespace(pointed=pointed, **{**state, **fields})
+
+
+def _labels(entries):
+    return [entry["label"] for entry in entries]
+
+
+def _listing(entries):
+    """The `Remove` entry of a 3D menu, which is a submenu of what the pane holds."""
+    return next(entry for entry in entries if entry["name"] == "surface.remove")
+
+
+def _described(table):
+    """The table as `plot/controls.py` has it, in the shape checked in above."""
+    return tuple(
+        (
+            one.name,
+            controls.plain(one),
+            (controls.keys(one) or ("",))[0],
+            (controls.keys(one, page=True) or ("",))[0],
+        )
+        for one in controls.listed(table)
+    )
+
+
+@pytest.mark.parametrize(
+    ("checked", "table"),
+    [(FLAT_CONTROLS, controls.FLAT), (SOLID_CONTROLS, controls.SOLID)],
+)
+def test_neither_backend_may_move_a_word_a_key_or_a_place_by_itself(checked, table):
+    # The whole of the checked-in table against the description both backends
+    # render: a menu that changed its words, its keys or its order in one of
+    # them changed them in the description, and the description is here.
+    assert _described(table) == tuple(row[:4] for row in checked)
+
+
+async def test_the_browser_serves_what_the_table_says_it_serves(session, page, solids):
+    # The other half of the same claim, asked of this backend: what a pane may
+    # be asked for is the served column, and a pane is handed exactly that much.
+    session.add(_landing("SIN(x)"))
+    session.add(_plotted("x*y", "#2"))
+    for checked, pane in (
+        (FLAT_CONTROLS, page.panes[1]),
+        (SOLID_CONTROLS, solids.panes[2]),
+    ):
+        named = [row[0] for row in checked]
+        offered = [one["name"] for one in pane.commands if one["name"] in named]
+        assert offered == [row[0] for row in checked if row[4]]
+
+
+async def test_a_pane_renders_the_menu_the_desktop_renders_less_what_it_cannot_do(
+    session, page
+):
+    session.add(_landing("SIN(x)"))
+    entries = page.panes[1].say["menu"](_flat())
+    assert [(entry["name"], entry["label"]) for entry in entries] == [
+        ("view.all", "View all"),
+        ("view.home", "Home framing"),
+        ("trace", "Trace"),
+        ("grid", "Grid"),
+        ("legend", "Legend"),
+        ("close", "Close"),
+    ]
+    assert {entry["name"] for entry in entries} <= {
+        row[0] for row in FLAT_CONTROLS if row[4]
+    }
+    # The keys are the page's own spelling of the same bindings, and the rules
+    # fall around what is left: a group the browser can serve one entry of has
+    # one entry under its rule.
+    assert [entry["keys"][0] for entry in entries] == ["a", "Home", "t", "g", "l", "q"]
+    assert [entry["name"] for entry in entries if entry["separated"]] == [
+        "trace",
+        "close",
+    ]
+
+
+async def test_a_menu_is_read_off_the_pane_as_it_opens(session, page):
+    session.add(_landing("SIN(x)"))
+    pane = page.panes[1]
+
+    def ticked(state):
+        return [entry["label"] for entry in pane.say["menu"](state) if entry["checked"]]
+
+    assert ticked(_flat()) == ["Grid", "Legend"]
+    assert ticked(_flat(tracing=True, grid=False)) == ["Trace", "Legend"]
+
+
+async def test_a_control_the_page_names_reaches_the_thing_it_names(session, page):
+    session.add(_landing("SIN(x)"))
+    pane = page.panes[1]
+    for name in ("view.all", "view.home", "trace", "grid", "legend"):
+        pane.say["command"](name, None)
+    assert pane.done == ["autoscale", "home", "trace", "grid", "legend"]
+    # The two zooms are keys with no entry, and the factor is `plot/actions.py`'s
+    # rather than the page's.
+    pane.say["command"]("view.zoom.in", None)
+    pane.say["command"]("view.zoom.out", None)
+    assert pane.done[-2:] == [("zoom", 0.5), ("zoom", 2.0)]
+    # A name the pane has nothing for is a menu somebody left open, and does
+    # nothing at all rather than raising into a click handler.
+    pane.say["command"]("image.export", None)
+    assert len(pane.done) == 7
+
+
+async def test_a_solid_pane_offers_the_camera_and_what_it_holds(session, solids):
+    session.add(_plotted("SIN(x y)"))
+    session.add(_plotted("x^2 - y^2", "#2"))
+    pane = solids.panes[1]
+    entries = pane.say["menu"](_deep())
+    assert _labels(entries) == [
+        "Home view",
+        "Face the xy plane",
+        "Face the xz plane",
+        "Face the yz plane",
+        "Rotate",
+        "View...",
+        "Remove",
+        "Close",
+    ]
+    # The submenu lists what the pane holds, in the order it holds them, and an
+    # item names its surface by where it stands in that list.
+    listing = _listing(entries)
+    assert _labels(listing["items"]) == ["#1  SIN(x y)", "#2  x^2 - y^2"]
+    pane.say["command"]("surface.remove", listing["items"][1]["value"])
+    assert _labels(_listing(pane.say["menu"](_deep()))["items"]) == ["#1  SIN(x y)"]
+
+
+async def test_the_camera_a_preset_looks_from_is_the_desktops(session, solids):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    # A fresh pane opens on the camera `plot/actions.py` names, and Home view
+    # returns to it; a preset turns the camera and leaves it standing where it
+    # was, which is what a distance of zero means.
+    assert pane.camera == (30.0, -60.0, 23.0)
+    pane.say["command"]("camera.xz", None)
+    assert pane.camera == (0.0, -90.0, 0.0)
+    assert pane.message == "Facing the xz plane"
+    pane.say["command"]("camera.home", None)
+    assert pane.camera == (30.0, -60.0, 23.0)
+    # And what a turning pane says names the key that stops it in the page's own
+    # spelling of it, which is not the desktop's.
+    pane.say["command"]("camera.spin", None)
+    assert pane.spinning == "Rotating - r stops it"
+
+
+async def test_a_solids_legend_row_offers_the_menu_about_that_surface(session, solids):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    # `Draw as wire mesh` is the per-surface exception and is not served yet, so
+    # the row offers the one thing that is rather than an entry that would do
+    # nothing.
+    assert _labels(pane.say["card"](_deep(pointed=1))) == ["Remove #1  SIN(x y)"]
+    pane.say["command"]("plot.remove", None)
+    assert pane.plots == {}
 
 
 async def settle():
@@ -760,9 +1003,9 @@ async def test_the_mesh_box_flips_every_surface_and_is_sticky(session, solids):
     session.add(_plotted("x^2 - y^2", "#2"))
     pane = solids.panes[1]
     assert [spec["wire"] for spec in pane.plots.values()] == [True, True]
-    pane.say["wire"](False)
+    pane.say["command"]("mesh", None)
     assert [spec["wire"] for spec in pane.plots.values()] == [False, False]
-    assert pane.wired is False
+    assert pane.buttons["mesh"] is False
     assert heard[-1] == plots.Preferred(plots.Prefer(wire=False))
 
 

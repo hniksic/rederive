@@ -27,11 +27,20 @@ import types
 
 
 class FakePane:
-    """One pane as the backend speaks to one, recording what it is told."""
+    """One pane as the backend speaks to one, recording what it is told.
 
-    def __init__(self, number, debounce, handlers):
+    The picture is the page's on this side of the seam too, so the methods a
+    command reaches - framing the view, flipping the grid, riding a curve - do
+    nothing here but say that they were called. What a test then asks is which
+    of them the name of a control arrived at, which is the whole of what the
+    dispatch has to get right.
+    """
+
+    def __init__(self, number, debounce, commands, handlers):
         self.number = number
         self.debounce = debounce
+        #: What the pane was told it may offer, as `plot/controls.py` says it.
+        self.commands = commands
         self.say = handlers
         self.plots = {}
         self.order = []
@@ -39,11 +48,45 @@ class FakePane:
         self.current = False
         self.presented = 0
         self.dismissed = 0
+        self.message = ""
+        self.polar = False
+        #: Which buttons of the tool row are lit, by the control each one is.
+        self.buttons = {}
+        #: Every call a command reached the picture by, in order.
+        self.done = []
         #: What the pane would be showing, which the backend reads back for a
         #: `Describe` and for every sampling it asks for.
         self.shown = [-5.0, 5.0, -4.0, 4.0, 800.0, 640.0]
         #: Every `starting` the backend announced, as a plot and a generation.
         self.started = []
+
+    def autoscale(self):
+        self.done.append("autoscale")
+
+    def home(self):
+        self.done.append("home")
+
+    def zoom(self, factor):
+        self.done.append(("zoom", factor))
+
+    def trace(self):
+        self.done.append("trace")
+
+    def grid(self):
+        self.done.append("grid")
+
+    def legend(self):
+        self.done.append("legend")
+
+    def polarized(self, polar):
+        self.polar = bool(polar)
+        self.done.append(("polarized", self.polar))
+
+    def lit(self, name, on):
+        self.buttons[name] = bool(on)
+
+    def said(self, message):
+        self.message = message
 
     def add(self, serial, spec):
         self.plots[serial] = spec
@@ -81,8 +124,8 @@ class FakePage:
         self.handlers = None
         self.stopped = 0
 
-    def open(self, number, debounce, handlers):
-        pane = FakePane(number, debounce, handlers)
+    def open(self, number, debounce, commands, handlers):
+        pane = FakePane(number, debounce, commands, handlers)
         self.panes[number] = pane
         return pane
 
@@ -96,8 +139,10 @@ class FakePage:
 class FakeSolid:
     """One 3D pane as the backend speaks to one, recording what it is told."""
 
-    def __init__(self, number, handlers):
+    def __init__(self, number, commands, handlers):
         self.number = number
+        #: What the pane was told it may offer, as `plot/controls.py` says it.
+        self.commands = commands
         self.say = handlers
         self.plots = {}
         self.order = []
@@ -105,12 +150,38 @@ class FakeSolid:
         self.current = False
         self.presented = 0
         self.dismissed = 0
-        self.wired = False
         self.message = ""
+        #: Where the camera was last put, as elevation, azimuth and distance.
+        self.camera = None
+        self.spinning = ""
+        #: Which buttons of the tool row are lit, by the control each one is.
+        self.buttons = {}
+        #: Every call a command reached the picture by, in order.
+        self.done = []
         #: What the six fields of the tool row are showing.
         self.fields = ()
         #: Every `starting` the backend announced, as a surface and a generation.
         self.started = []
+
+    def look(self, elevation, azimuth, distance):
+        self.camera = (elevation, azimuth, distance)
+        self.done.append("look")
+
+    def spin(self, rotating):
+        self.spinning = rotating
+        self.done.append("spin")
+
+    def inspect(self):
+        self.done.append("inspect")
+
+    def box(self):
+        self.done.append("box")
+
+    def legend(self):
+        self.done.append("legend")
+
+    def lit(self, name, on):
+        self.buttons[name] = bool(on)
 
     def add(self, serial, spec):
         self.plots[serial] = spec
@@ -136,9 +207,6 @@ class FakeSolid:
     def domain(self, *fields):
         self.fields = fields
 
-    def meshed(self, wired):
-        self.wired = bool(wired)
-
     def said(self, message):
         self.message = message
 
@@ -154,8 +222,8 @@ class FakeSolids:
         self.handlers = None
         self.stopped = 0
 
-    def open(self, number, handlers):
-        pane = FakeSolid(number, handlers)
+    def open(self, number, commands, handlers):
+        pane = FakeSolid(number, commands, handlers)
         self.panes[number] = pane
         return pane
 

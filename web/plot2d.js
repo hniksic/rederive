@@ -21,6 +21,16 @@
 // The samples never pass through Python. They come off the worker as typed
 // arrays, are drawn from here, and what goes back to the main thread's Python is
 // the request number and whatever would not evaluate.
+//
+// Nor does this file own what a pane offers. The commands, their words, their
+// keys and the order a menu stands them in are `plot/controls.py`'s, the same
+// table the desktop's window renders; a pane is handed the ones this backend
+// serves when it is made and the menu as it should currently read when a right
+// click asks for one, and it answers with the name of a control. What is kept
+// here is the view - the framing, the toggles, what the pointer is over - since
+// a drag that had to ask Python where it was would be a drag nobody could use.
+
+import * as controls from './controls.js';
 
 // The colors the canvas itself is drawn in, which are `plot/qt/window2d.py`'s.
 // Near-black rather than black, so that a curve in a black-adjacent color still
@@ -128,8 +138,8 @@ export function wire(term) {
 // One pane, opened where the plot session asked for one. What comes back is
 // what the session's window handle calls into: everything here is a method
 // Python names, and nothing else on this side is reachable from there.
-export function open(number, debounce, handlers) {
-  const pane = new Pane(number, debounce, handlers);
+export function open(number, debounce, commands, handlers) {
+  const pane = new Pane(number, debounce, commands, handlers);
   panes.set(number, pane);
   return pane;
 }
@@ -165,13 +175,16 @@ export function heard(message) {
 // -- one pane -------------------------------------------------------------------
 
 class Pane {
-  constructor(number, debounce, handlers) {
+  constructor(number, debounce, commands, handlers) {
     this.number = number;
     // How long the view has to stand still before the curves are sampled for
     // it, which is `plot/resample.py`'s figure and not this file's: long enough
     // that a drag is one re-sample rather than sixty, short enough that letting
     // go of the mouse feels like the end of the gesture.
     this.debounce = debounce;
+    // What this pane offers, as `plot/controls.py` describes it: the keys, the
+    // buttons and the words are read off this and are spelled nowhere here.
+    this.commands = commands;
     this.say = handlers;
     this.plots = new Map();
     this.order = [];
@@ -180,8 +193,8 @@ class Pane {
     // Whether the two axes show the same number of units per pixel, which is
     // what a fresh pane opens on and what makes a circle round.
     this.equal = true;
-    this.grid = true;
-    this.legendShown = true;
+    this.ruled = true;
+    this.listed = true;
     this.tracing = null;
     this.traceAt = 0;
     this.tracePoint = null;
@@ -211,14 +224,20 @@ class Pane {
     pane.innerHTML =
       '<div class="plot-bar"><span class="plot-title"></span>' +
       '<button class="plot-close" title="Close">×</button></div>' +
+      '<div class="plot-tools"></div>' +
       '<div class="plot-canvas"><div class="plot-legend"></div></div>' +
       '<div class="plot-status"></div>';
     this.element = pane;
     this.bar = pane.querySelector('.plot-bar');
     this.titleText = pane.querySelector('.plot-title');
+    this.tools = pane.querySelector('.plot-tools');
     this.canvas = pane.querySelector('.plot-canvas');
-    this.legend = pane.querySelector('.plot-legend');
+    this.card = pane.querySelector('.plot-legend');
     this.status = pane.querySelector('.plot-status');
+    this.buttons = controls.bar(this.tools, this.commands, (name) => {
+      this.say.command(name, null);
+      this.element.focus();
+    });
     surface().appendChild(pane);
     pane.querySelector('.plot-close').addEventListener('click', () => {
       this.dismiss();
@@ -352,14 +371,14 @@ class Pane {
       fresh: false,
     });
     if (!this.order.includes(serial)) this.order.push(serial);
-    this._legend();
+    this._relabel();
   }
 
   respec(serial, spec) {
     const plot = this.plots.get(serial);
     if (plot === undefined) return;
     Object.assign(plot, spec);
-    this._legend();
+    this._relabel();
     this.plot.redraw();
   }
 
@@ -367,7 +386,7 @@ class Pane {
     this.plots.delete(serial);
     this.order = this.order.filter((one) => one !== serial);
     if (this.tracing === serial) this._traceOff();
-    this._legend();
+    this._relabel();
     this.plot.redraw();
   }
 
@@ -686,13 +705,13 @@ class Pane {
     return chip;
   }
 
-  _legend() {
-    if (!this.legendShown || this.order.length === 0) {
-      this.legend.style.display = 'none';
+  _relabel() {
+    if (!this.listed || this.order.length === 0) {
+      this.card.style.display = 'none';
       return;
     }
-    this.legend.style.display = '';
-    this.legend.textContent = '';
+    this.card.style.display = '';
+    this.card.textContent = '';
     for (const serial of this.order) {
       const plot = this.plots.get(serial);
       if (plot === undefined) continue;
@@ -707,11 +726,19 @@ class Pane {
       // part of an expression.
       name.textContent = plot.name;
       row.append(swatch, name);
+      // The left button takes a curve out of the picture and puts it back; the
+      // right one opens the menu about that curve, which is the same menu the
+      // canvas offers about whatever a click there was over.
       row.addEventListener('pointerdown', (event) => {
         event.stopPropagation();
-        this.say.hide(serial, !plot.hidden);
+        if (event.button === 0) this.say.hide(serial, !plot.hidden);
       });
-      this.legend.appendChild(row);
+      row.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this._card(event, serial);
+      });
+      this.card.appendChild(row);
     }
   }
 
@@ -937,6 +964,13 @@ class Pane {
     this._home();
   }
 
+  // The keyed zoom, which is about the middle of the picture: the wheel and the
+  // pinch are about the point they happened at, and a key happened nowhere.
+  zoom(factor) {
+    const over = this.plot.over;
+    this._zoom(factor, over.clientWidth / 2, over.clientHeight / 2, over);
+  }
+
   // Every plot's rectangle, unioned. The rectangles come off the worker with the
   // samples, so nothing here scans an array to find one.
   autoscale() {
@@ -970,16 +1004,18 @@ class Pane {
       high >= this.shown.y0 && low <= this.shown.y1;
     if (inside) return;
     // The aspect lock goes when a window reframes itself to fit: a range chosen
-    // to hold a curve is not a range equal scales would have given.
+    // to hold a curve is not a range equal scales would have given. What is
+    // said about it is Python's - a graph is reframed in y alone and says so -
+    // and this side says which of the two happened.
     this._unlock();
-    if (plot.kind === CURVE || plot.kind === FAMILY) {
+    const graph = plot.kind === CURVE || plot.kind === FAMILY;
+    if (graph) {
       const pad = 0.1 * (high - low || 1);
       this._look(this.shown.x0, this.shown.x1, low - pad, high + pad);
-      this.said(`${plot.label}: y autoscaled to fit`);
-      return;
+    } else {
+      this._look(...padded([left, right, low, high]));
     }
-    this._look(...padded([left, right, low, high]));
-    this.said(`${plot.label}: autoscaled to fit`);
+    this.say.fitted(plot.serial, graph);
   }
 
   // -- trace and features -------------------------------------------------------
@@ -1107,29 +1143,21 @@ class Pane {
 
   // -- the keyboard and the menu ------------------------------------------------
 
+  // The gestures first, since they are what a key means while a marker is up
+  // and are named by no entry of any menu; then the ladder, which is the keys
+  // the description says this pane answers to. A key that is in neither is left
+  // to the browser.
   _pressed(event) {
     const key = event.key;
-    const table = {
-      t: () => this.trace(),
-      T: () => this.trace(),
-      F3: () => this.trace(),
-      a: () => this.autoscale(),
-      A: () => this.autoscale(),
-      h: () => this.home(),
-      H: () => this.home(),
-      Home: () => this.home(),
-      g: () => this.toggleGrid(),
-      G: () => this.toggleGrid(),
-      l: () => this.toggleLegend(),
-      L: () => this.toggleLegend(),
-      p: () => this.togglePolar(),
-      P: () => this.togglePolar(),
-      Enter: () => this.sendHome(),
-      Escape: () => this._traceOff(),
-    };
     if (key === 'Tab') {
       event.preventDefault();
       this.snap(event.shiftKey);
+      return;
+    }
+    if (key === 'Enter' || key === 'Escape') {
+      event.preventDefault();
+      if (key === 'Enter') this.sendHome();
+      else this._traceOff();
       return;
     }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
@@ -1144,10 +1172,10 @@ class Pane {
       else this._pan(0, key === 'ArrowUp' ? 0.25 : -0.25);
       return;
     }
-    const command = table[key];
-    if (command !== undefined) {
+    const command = controls.pressed(this.commands, event);
+    if (command !== null) {
       event.preventDefault();
-      command();
+      this.say.command(command, null);
     }
   }
 
@@ -1159,43 +1187,65 @@ class Pane {
     );
   }
 
-  toggleGrid() {
-    this.grid = !this.grid;
-    for (const axis of this.plot.axes) axis.grid.show = this.grid;
+  grid() {
+    this.ruled = !this.ruled;
+    for (const axis of this.plot.axes) axis.grid.show = this.ruled;
     this.plot.redraw(false, true);
   }
 
-  toggleLegend() {
-    this.legendShown = !this.legendShown;
-    this._legend();
+  legend() {
+    this.listed = !this.listed;
+    this._relabel();
   }
 
-  togglePolar() {
-    this.polar = !this.polar;
-    this.say.polar(this.polar);
+  // Which way the polar reading stands, which is Python's to say: what a curve
+  // is read as decides what is sampled for it, and this side draws the rings
+  // and reads the pointer out in r and θ.
+  polarized(polar) {
+    this.polar = Boolean(polar);
     this.plot.redraw();
   }
 
+  // One button of the tool row, on or off, by the name of the control it is.
+  lit(name, on) {
+    controls.lit(this.buttons, name, on);
+  }
+
+  // -- the menus -----------------------------------------------------------
+
+  // The canvas menu, which is about the view and about whatever the click was
+  // over. Both halves are Python's answer to the snapshot below; what is left
+  // here is where to put the popup.
   _menu(event) {
     const at = this._pointedPlot(event);
-    const items = [
-      ['Trace', () => this.trace()],
-      ['View all', () => this.autoscale()],
-      ['Home', () => this.home()],
-      [this.grid ? 'Hide grid' : 'Show grid', () => this.toggleGrid()],
-      [this.legendShown ? 'Hide legend' : 'Show legend', () => this.toggleLegend()],
-      [this.polar ? 'Leave polar' : 'Polar', () => this.togglePolar()],
-    ];
-    if (at !== null && at.kind === DATA) {
-      items.push([
-        at.connected ? 'Loose points' : 'Connect points',
-        () => this.say.connect(at.serial, !at.connected),
-      ]);
-    }
-    if (at !== null) {
-      items.push([`Remove ${at.label}`, () => this.say.drop(at.serial)]);
-    }
-    show(this.canvas, event, items);
+    const state = this._state(at === null ? null : at.serial);
+    this._offer(event, this.say.menu(state));
+  }
+
+  // The menu one legend row offers, which is about that curve alone.
+  _card(event, serial) {
+    this._offer(event, this.say.card(this._state(serial)));
+  }
+
+  // Either menu, put up where the click was: what comes back is the name of a
+  // control, which goes where every other one goes.
+  _offer(event, entries) {
+    controls.menu(this.canvas, event, entries, (name, value) =>
+      this.say.command(name, value));
+  }
+
+  // This pane as the description of its controls has to read it: the little of
+  // the view state a menu depends on, and the serial of whatever the click was
+  // over. Small on purpose, and it crosses only when a menu opens - the drag
+  // that moved the view never asked anybody anything.
+  _state(pointed) {
+    return {
+      tracing: this.tracing !== null,
+      grid: this.ruled,
+      legend: this.listed,
+      equal: this.equal,
+      pointed,
+    };
   }
 
   // Which curve the pointer is on, for the menu that is about one. The nearest
@@ -1291,29 +1341,4 @@ function shading(message, color) {
   off.height = message.ny;
   off.getContext('2d').putImageData(image, 0, 0);
   return off;
-}
-
-// The context menu, which is the pane's own rather than a chart library's.
-function show(where, event, items) {
-  const menu = document.createElement('div');
-  menu.className = 'plot-menu';
-  menu.style.left = `${event.offsetX}px`;
-  menu.style.top = `${event.offsetY}px`;
-  for (const [text, run] of items) {
-    const item = document.createElement('div');
-    item.className = 'plot-item';
-    item.textContent = text;
-    item.addEventListener('pointerdown', (press) => {
-      press.stopPropagation();
-      menu.remove();
-      run();
-    });
-    menu.appendChild(item);
-  }
-  const away = () => {
-    menu.remove();
-    window.removeEventListener('pointerdown', away, true);
-  };
-  window.addEventListener('pointerdown', away, true);
-  where.appendChild(menu);
 }

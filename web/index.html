@@ -135,9 +135,10 @@
   /* The card a solid is drawn on fills the canvas area under it; three.js sizes
      the element itself, and this is what stops a stale size from stretching it. */
   .plot-card { display: block; width: 100% !important; height: 100% !important; }
-  /* The second row of a 3D pane: the domain, the grid and the three controls
-     that are not the camera. A 2D pane has none of this - what a flat picture
-     is framed by is where the mouse left it. */
+  /* The second row of a pane: the buttons `plot/controls.py` gives a word to,
+     and in a 3D pane the domain and the grid in front of them. A toggle stands
+     here rather than on a menu when its state is worth reading without opening
+     anything. */
   .plot-tools {
     display: flex;
     align-items: center;
@@ -242,8 +243,36 @@
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 6px;
   }
-  .plot-item { padding: 3px 12px; cursor: pointer; white-space: nowrap; }
+  /* One line of a menu: the tick, the words, and the key that does the same
+     thing with no menu open. The last column is what makes the menu the place
+     the keyboard is learned, and what stands in it is the page's own spelling
+     of the binding, which `plot/controls.py` writes beside the desktop's. */
+  .plot-item {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 3px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
   .plot-item:hover { background: rgba(101, 178, 241, 0.22); color: #cfe6fb; }
+  /* Where one group of the menu ends and the next begins, which is a property
+     of the description rather than of anything here. */
+  .plot-item.ruled {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px solid #2b2b34;
+  }
+  .plot-item.off { color: #5c606b; cursor: default; }
+  .plot-item.off:hover { background: transparent; color: #5c606b; }
+  .plot-tick { flex: none; width: 9px; }
+  .plot-text { flex: 1; }
+  .plot-keys { color: #7d8595; }
+  /* A submenu stands beside the entry it hangs off and opens under the
+     pointer, which needs no state and so cannot be left open. */
+  .plot-deeper { display: none; left: 100%; top: -5px; }
+  .plot-item:hover > .plot-deeper { display: block; }
   /* uPlot draws the axes and their numbers and nothing else; the strokes are
      drawn on its canvas by `plot2d.js`, so its own series never show. */
   .uplot, .u-wrap { background: #0c0c10; }

@@ -20,9 +20,17 @@
 // clipped to - arrive spelled by the same function the desktop's inspector
 // spells them with. What this file writes for itself is where the camera is,
 // which is a fact about the page and not a value of anything.
+//
+// Nor does it own what a pane offers. The commands, their words, their keys and
+// the order a menu stands them in are `plot/controls.py`'s, the same table the
+// desktop's window renders, and where the camera goes for each of them is
+// `plot/actions.py`'s; a pane is handed the ones this backend serves when it is
+// made and the menu as it should currently read when a right click asks for
+// one, and it answers with the name of a control.
 
 import * as THREE from 'three';
 import { OrbitControls } from './three/OrbitControls.js';
+import * as controls from './controls.js';
 
 // The canvas colors, which are `plot/qt/window3d.py`'s: the same near-black the
 // 2D pane draws on, and a box drawn in a gray that reads against it without
@@ -47,30 +55,19 @@ const AMBIENT = 2.4;
 const DIRECTIONAL = 0.95;
 const LAMP = [0.4, -0.6, 0.69];
 
-// The camera a fresh pane opens with and `Home` returns to, which is the
-// desktop's: a three-quarter view from above, far enough out that the whole box
-// is in the picture. Elevation and azimuth in degrees, distance in world units.
-//
 // The field of view is measured across the picture, as pyqtgraph measures it
 // and as three.js does not - three.js takes the angle up it - so the two are
 // converted below. A pane and a window of the same shape would otherwise frame
-// the same box at two different sizes.
-const CAMERA = { elevation: 30, azimuth: -60, distance: 23 };
+// the same box at two different sizes. Where the camera stands is not here at
+// all: `plot/actions.py` says where a pane opens and where each preset looks
+// from, and a pane is told.
 const FIELD_OF_VIEW = 60;
 const NEAR = 0.5;
 const FAR = 500;
 
-// The three presets, as elevation and azimuth: face the xy plane from above,
-// the xz plane from the front, the yz plane from the side.
-const PLANES = {
-  xy: [90, -90],
-  xz: [0, -90],
-  yz: [0, 0],
-};
-
-// How far one arrow key turns the camera, and how fast `R` turns it by itself.
-// A rotation is for reading a shape from every side while the eye stays still,
-// so it is slow: a turn takes half a minute.
+// How far one arrow key turns the camera, and how fast a rotation turns it by
+// itself. A rotation is for reading a shape from every side while the eye stays
+// still, so it is slow: a turn takes half a minute.
 const ORBIT_DEGREES = 5;
 const SPIN_DEGREES = 0.4;
 
@@ -94,6 +91,10 @@ const FIELDS = ['x0', 'x1', 'y0', 'y1', 'nx', 'ny'];
 // How much of a hidden legend row is left standing. Dimmed rather than struck
 // through: a hidden surface is a surface that is still in the pane.
 const LEGEND_FADED = 0.4;
+
+// How far the pointer may move between a right-button press and its release and
+// still count as a click that opens the menu rather than a pan of the camera.
+const CLICK_SLOP_PX = 4;
 
 // The one place a plot pane is put, laid over the terminal and letting the
 // pointer through everywhere it has no pane. The 2D panes are in the same
@@ -147,8 +148,8 @@ export function wire(term) {
 // One pane, opened where the plot session asked for one. What comes back is
 // what the session's window handle calls into: everything here is a method
 // Python names, and nothing else on this side is reachable from there.
-export function open(number, handlers) {
-  const pane = new Solid(number, handlers);
+export function open(number, commands, handlers) {
+  const pane = new Solid(number, commands, handlers);
   panes.set(number, pane);
   return pane;
 }
@@ -188,23 +189,22 @@ export function heard(message) {
 // -- one pane -------------------------------------------------------------------
 
 class Solid {
-  constructor(number, handlers) {
+  constructor(number, commands, handlers) {
     this.number = number;
+    // What this pane offers, as `plot/controls.py` describes it: the keys, the
+    // buttons and the words are read off this and are spelled nowhere here.
+    this.commands = commands;
     this.say = handlers;
     this.plots = new Map();
     this.order = [];
-    this.box = null;
-    // Whether the surfaces here are drawn as the wire grid of their samples.
-    // Python's answer and not this side's: the look is a sticky preference, and
-    // the side that holds it is the side that hands it to the next pane.
-    this.wired = false;
-    this.legendShown = true;
-    this.readoutShown = false;
+    this.standing = null;
+    this.listed = true;
+    this.boxed = true;
+    this.inspecting = false;
     this.message = '';
     this.spinning = null;
     this._build();
     this._scene();
-    this.home();
   }
 
   // -- the furniture ---------------------------------------------------------
@@ -230,7 +230,7 @@ class Solid {
     this.titleText = pane.querySelector('.plot-title');
     this.tools = pane.querySelector('.plot-tools');
     this.canvas = pane.querySelector('.plot-canvas');
-    this.legend = pane.querySelector('.plot-legend');
+    this.card = pane.querySelector('.plot-legend');
     this.readout = pane.querySelector('.plot-readout');
     this.status = pane.querySelector('.plot-status');
     surface().appendChild(pane);
@@ -245,11 +245,30 @@ class Solid {
     pane.addEventListener('keydown', (event) => this._pressed(event));
     this._toolbar();
     this._movable();
+    this._menued();
     this._watch();
     pane.focus();
   }
 
-  // The domain, the grid, and the two things the picture itself answers to.
+  // A right click on the picture opens the menu, unless it was a drag: the
+  // right button also pans the camera, and a menu at the end of a pan would be
+  // a menu nobody asked for.
+  _menued() {
+    let from = null;
+    this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    this.canvas.addEventListener('pointerdown', (event) => {
+      from = event.button === 2 ? { x: event.clientX, y: event.clientY } : null;
+    });
+    this.canvas.addEventListener('pointerup', (event) => {
+      if (from === null || event.button !== 2) return;
+      const moved =
+        Math.abs(event.clientX - from.x) + Math.abs(event.clientY - from.y);
+      from = null;
+      if (moved <= CLICK_SLOP_PX) this._menu(event);
+    });
+  }
+
+  // The domain, the grid, and the buttons the description gives a word to.
   // Everything else about a 3D pane is the camera, and the camera is the mouse.
   _toolbar() {
     this.fields = {};
@@ -285,30 +304,10 @@ class Solid {
     field('nx');
     put('×');
     field('ny');
-    this.meshButton = this._button(
-      'mesh',
-      'Draw every surface as the wire grid of its samples (M)',
-      () => this.say.wire(!this.wired),
-    );
-    this.viewButton = this._button(
-      'view',
-      'The box and the camera as numbers (V)',
-      () => this.toggleReadout(),
-    );
-    this._button('home', 'The camera a pane opens on (H)', () => this.home());
-  }
-
-  _button(text, title, run) {
-    const button = document.createElement('button');
-    button.className = 'plot-toggle';
-    button.textContent = text;
-    button.title = title;
-    button.addEventListener('click', () => {
-      run();
+    this.buttons = controls.bar(this.tools, this.commands, (name) => {
+      this.say.command(name, null);
       this.element.focus();
     });
-    this.tools.appendChild(button);
-    return button;
   }
 
   // Dragging by the title bar, which is what a pane has instead of a window
@@ -455,7 +454,7 @@ class Solid {
     this.plots.set(serial, plot);
     if (!this.order.includes(serial)) this.order.push(serial);
     if (this.world !== undefined) plot.enter(this.world);
-    this._legend();
+    this._relabel();
     this._paint();
   }
 
@@ -463,15 +462,15 @@ class Solid {
     const plot = this.plots.get(serial);
     if (plot === undefined) return;
     plot.respec(spec);
-    this._legend();
+    this._relabel();
     this._paint();
   }
 
-  // Which way the pane's `mesh` box stands, which is Python's to say: the look
-  // is sticky, and what a fresh pane opens on is what the last one was left in.
-  meshed(wired) {
-    this.wired = Boolean(wired);
-    this.meshButton.classList.toggle('on', this.wired);
+  // One button of the tool row, on or off, by the name of the control it is.
+  // Which way the `mesh` box stands is Python's to say: the look is sticky, and
+  // what a fresh pane opens on is what the last one was left in.
+  lit(name, on) {
+    controls.lit(this.buttons, name, on);
   }
 
   remove(serial) {
@@ -480,7 +479,7 @@ class Solid {
     plot.leave();
     this.plots.delete(serial);
     this.order = this.order.filter((one) => one !== serial);
-    this._legend();
+    this._relabel();
     this._paint();
   }
 
@@ -543,7 +542,7 @@ class Solid {
     plot.upload(message);
     if (message.world) this._stand(message);
     this.said(message.words || '');
-    this._legend();
+    this._relabel();
     this._readout();
     this._paint();
     // What the surface asks for in z, and what it was drawn in. The pane on the
@@ -556,7 +555,7 @@ class Solid {
   // it. Nothing here works it out: the floor, the height and the numbers behind
   // them are Python's, and what is done with them is twelve lines and a scale.
   _stand(message) {
-    this.box = message;
+    this.standing = message;
     if (this.frame === undefined) return;
     const half = message.world / 2;
     const up = message.height / 2;
@@ -576,7 +575,7 @@ class Solid {
     });
     points.needsUpdate = true;
     this.frame.geometry.computeBoundingSphere();
-    this.frame.visible = true;
+    this.frame.visible = this.boxed;
   }
 
   // -- drawing ----------------------------------------------------------------
@@ -586,13 +585,13 @@ class Solid {
     this.renderer.render(this.world, this.camera);
   }
 
-  _legend() {
-    if (!this.legendShown || this.order.length === 0) {
-      this.legend.style.display = 'none';
+  _relabel() {
+    if (!this.listed || this.order.length === 0) {
+      this.card.style.display = 'none';
       return;
     }
-    this.legend.style.display = '';
-    this.legend.textContent = '';
+    this.card.style.display = '';
+    this.card.textContent = '';
     for (const serial of this.order) {
       const plot = this.plots.get(serial);
       if (plot === undefined) continue;
@@ -611,17 +610,15 @@ class Solid {
         event.stopPropagation();
         if (event.button === 0) this.say.hide(serial, !plot.hidden);
       });
-      // The right button on a row takes the surface out of the pane, which is
-      // what the desktop's legend offers on the same click. Hiding is one
-      // button and removing is the other, because the two are what a plot list
-      // is for and a 3D pane has no menu to put them in.
+      // The right button on a row opens the menu about that surface, which is
+      // the same one the desktop's legend offers on the same click: hiding is
+      // one button and what is done to the surface itself is the other.
       row.addEventListener('contextmenu', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        this.said(`Removed ${plot.name}`);
-        this.say.drop(serial);
+        this._card(event, serial);
       });
-      this.legend.appendChild(row);
+      this.card.appendChild(row);
     }
   }
 
@@ -630,13 +627,13 @@ class Solid {
   // is reachable with the mouse and the fields; what it adds is exactness, and
   // a 3D picture is one of the few places where that is worth a panel.
   _readout() {
-    if (!this.readoutShown) {
+    if (!this.inspecting) {
       this.readout.style.display = 'none';
       return;
     }
     this.readout.style.display = '';
     if (this.camera === undefined) return;
-    const box = this.box;
+    const box = this.standing;
     const camera = this.where();
     const lines = [];
     if (box !== null) {
@@ -674,31 +671,24 @@ class Solid {
     };
   }
 
-  // The camera put where those three numbers say, which is where every preset
-  // and every arrow key leaves it.
+  // The camera put where those three numbers say, which is where every preset,
+  // every arrow key and a fresh pane leaves it. A distance of zero is no
+  // distance at all: the presets turn the camera and leave it standing where it
+  // was, so how far out the reader is looking from is not theirs to say.
   look(elevation, azimuth, distance) {
+    if (this.camera === undefined) return;
+    const far = distance || this.where().distance;
     const up = (elevation * Math.PI) / 180;
     const around = (azimuth * Math.PI) / 180;
     this.camera.position.set(
-      distance * Math.cos(up) * Math.cos(around),
-      distance * Math.cos(up) * Math.sin(around),
-      distance * Math.sin(up),
+      far * Math.cos(up) * Math.cos(around),
+      far * Math.cos(up) * Math.sin(around),
+      far * Math.sin(up),
     );
     this.controls.target.set(0, 0, 0);
     this.controls.update();
     this._readout();
     this._paint();
-  }
-
-  home() {
-    if (this.camera === undefined) return;
-    this.look(CAMERA.elevation, CAMERA.azimuth, CAMERA.distance);
-  }
-
-  face(plane) {
-    const [elevation, azimuth] = PLANES[plane];
-    this.look(elevation, azimuth, this.where().distance);
-    this.said(`Facing the ${plane} plane`);
   }
 
   orbit(across, up) {
@@ -710,9 +700,11 @@ class Solid {
     );
   }
 
-  // `R`: turn the picture slowly, or stop turning it. Slow on purpose - a
-  // rotation is for reading a shape from every side while the eye stays still.
-  spin() {
+  // Turn the picture slowly, or stop turning it. Slow on purpose - a rotation
+  // is for reading a shape from every side while the eye stays still. The
+  // sentence is Python's, and names the key that stops it in the page's own
+  // spelling.
+  spin(rotating) {
     if (this.spinning !== null) {
       cancelAnimationFrame(this.spinning);
       this.spinning = null;
@@ -723,7 +715,7 @@ class Solid {
       this.orbit(SPIN_DEGREES, 0);
       this.spinning = requestAnimationFrame(turn);
     };
-    this.said('Rotating - R stops it');
+    this.said(rotating);
     this.spinning = requestAnimationFrame(turn);
   }
 
@@ -733,42 +725,82 @@ class Solid {
     this.say.framed(...FIELDS.map((name) => this.fields[name].value.trim()));
   }
 
-  toggleLegend() {
-    this.legendShown = !this.legendShown;
-    this._legend();
+  legend() {
+    this.listed = !this.listed;
+    this._relabel();
   }
 
-  toggleReadout() {
-    this.readoutShown = !this.readoutShown;
-    this.viewButton.classList.toggle('on', this.readoutShown);
+  // The box the picture stands in, on or off. It is drawn from the numbers the
+  // last answer carried, so a pane with nothing in it has nothing to show.
+  box() {
+    this.boxed = !this.boxed;
+    if (this.frame !== undefined) {
+      this.frame.visible = this.boxed && this.standing !== null;
+    }
+    this._paint();
+  }
+
+  // The panel of numbers behind the picture, which is what this pane has where
+  // the desktop opens an inspector.
+  inspect() {
+    this.inspecting = !this.inspecting;
+    this.lit('view.inspect', this.inspecting);
     this._readout();
   }
 
-  _pressed(event) {
-    const table = {
-      h: () => this.home(),
-      H: () => this.home(),
-      Home: () => this.home(),
-      m: () => this.say.wire(!this.wired),
-      M: () => this.say.wire(!this.wired),
-      l: () => this.toggleLegend(),
-      L: () => this.toggleLegend(),
-      v: () => this.toggleReadout(),
-      V: () => this.toggleReadout(),
-      r: () => this.spin(),
-      R: () => this.spin(),
-      1: () => this.face('xy'),
-      2: () => this.face('xz'),
-      3: () => this.face('yz'),
-      ArrowLeft: () => this.orbit(ORBIT_DEGREES, 0),
-      ArrowRight: () => this.orbit(-ORBIT_DEGREES, 0),
-      ArrowUp: () => this.orbit(0, ORBIT_DEGREES),
-      ArrowDown: () => this.orbit(0, -ORBIT_DEGREES),
+  // -- the menus -----------------------------------------------------------
+
+  // The canvas menu, which is where to look from and what the pane holds. Every
+  // word of it is Python's answer to the snapshot below.
+  _menu(event) {
+    this._offer(event, this.say.menu(this._state(null)));
+  }
+
+  // The menu one legend row offers, which is about that surface alone.
+  _card(event, serial) {
+    this._offer(event, this.say.card(this._state(serial)));
+  }
+
+  // Either menu, put up where the click was: what comes back is the name of a
+  // control, which goes where every other one goes.
+  _offer(event, entries) {
+    controls.menu(this.canvas, event, entries, (name, value) =>
+      this.say.command(name, value));
+  }
+
+  // This pane as the description of its controls has to read it: the panels and
+  // the camera, which are the page's, and the serial of whatever the click was
+  // over. What the surfaces are called and how they are drawn is Python's and
+  // is not sent back to it.
+  _state(pointed) {
+    return {
+      spinning: this.spinning !== null,
+      boxed: this.boxed,
+      legend: this.listed,
+      pointed,
     };
-    const command = table[event.key];
-    if (command !== undefined) {
+  }
+
+  // The gestures first - the arrow keys turn the camera and no menu entry names
+  // them - and then the ladder, which is the keys the description says this
+  // pane answers to.
+  _pressed(event) {
+    const turns = {
+      ArrowLeft: [ORBIT_DEGREES, 0],
+      ArrowRight: [-ORBIT_DEGREES, 0],
+      ArrowUp: [0, ORBIT_DEGREES],
+      ArrowDown: [0, -ORBIT_DEGREES],
+    };
+    const turn = turns[event.key];
+    if (turn !== undefined) {
       event.preventDefault();
-      command();
+      this.orbit(turn[0], turn[1]);
+      return;
+    }
+    const command = controls.pressed(this.commands, event);
+    if (command !== null) {
+      event.preventDefault();
+      this.say.command(command, null);
     }
   }
 }

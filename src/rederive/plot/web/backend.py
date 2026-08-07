@@ -31,6 +31,15 @@ makes one at a time the right number here is that the worker is one thread of
 one interpreter - a second request in flight would queue inside it rather than
 beside it - and what makes the queue worth having is that a drag would otherwise
 post sixty samplings of a curve nobody has looked at yet.
+
+What a pane offers is the third thing that crosses, and it crosses the way the
+samples do not: rarely. `plot/controls.py` says what either kind of window does,
+in what words, under what keys and in what order, and a pane here renders none
+of it - the page is handed the controls this backend can serve when it is made,
+and the menu as it should currently read when a right click asks for one. The
+page answers with the name of a control and nothing else. Which means the view
+still lives where a drag can reach it without asking anybody, and the words
+still live where there is one of them.
 """
 
 from __future__ import annotations
@@ -40,7 +49,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rederive.engine.context import Angle
-from rederive.plot import protocol, resample, view
+from rederive.plot import actions, controls, protocol, resample, view
 from rederive.plot.model import (
     FUNCTIONS,
     PALETTE,
@@ -208,12 +217,18 @@ class Pane:
         self.polar = False
         self._counter = 0
         self._serial = 0
+        #: The plot the last menu was raised over, which is what the entries
+        #: about one plot act on. Held here rather than sent back with the
+        #: click, as the desktop's windows hold it: what the page knows about a
+        #: plot is a serial, and what a command needs is the plot.
+        self._pointed: Shown | None = None
         self.page = backend.page.open(
             number,
             # How long the view has to stand still before the curves are
             # sampled for it. `plot/resample.py` says it for both backends, so
             # a drag debounces the same in a browser as it does on a desktop.
             resample.RESAMPLE_DELAY_MS,
+            _controls(controls.FLAT, self.commands()),
             backend.handed(
                 {
                     "changed": self.changed,
@@ -222,14 +237,16 @@ class Pane:
                     "traced": self.traced,
                     "scanned": self.scanned,
                     "author": self.author,
-                    "polar": self.repolar,
                     "home": self.home,
-                    "connect": self.connect,
+                    "fitted": self.fitted,
                     "hide": self.hide,
-                    "drop": self.drop,
+                    "menu": self.menu,
+                    "card": self.card,
+                    "command": self.command,
                 }
             ),
         )
+        self.page.lit("view.polar", self.polar)
 
     # -- what the session asks ---------------------------------------------
 
@@ -367,9 +384,32 @@ class Pane:
         (left, right), (low, high) = view.home_range(float(width), float(height))
         return _js([left, right, low, high])
 
+    def fitted(self, serial: Any, graph: Any) -> None:
+        """A new plot had none of itself in view, so the page reframed for it.
+
+        The sentence is `plot/actions.py`'s, which is the one a desktop window
+        says in the same circumstance, and it names the curve the way the plot
+        list names it. What the page decides is which of the two happened: a
+        graph is framed in y alone, its abscissa being what it was sampled over.
+        """
+        plot = self._plot(serial)
+        if plot is None:
+            return
+        said = actions.AUTOSCALED_Y if graph else actions.AUTOSCALED
+        self.page.said(said.format(named=plot.named))
+
     def repolar(self, polar: bool) -> None:
-        """The view's polar toggle moved: reread every curve it applies to."""
+        """The polar toggle moved: reread every curve it applies to.
+
+        The reading is the view's rather than one curve's, and it is this
+        side's rather than the page's: which kind a curve is drawn as decides
+        what is sampled for it, and the page is told so that its own grid and
+        its pointer readout follow.
+        """
         self.polar = bool(polar)
+        self.page.polarized(self.polar)
+        self.page.lit("view.polar", self.polar)
+        self.page.said(actions.POLAR_ON if self.polar else actions.POLAR_OFF)
         for plot in self.plots:
             reread = view.reread(plot.kind, self.polar)
             if reread is None:
@@ -378,16 +418,13 @@ class Pane:
             self.page.respec(plot.serial, self._spec(plot))
             self._start(plot)
 
-    def connect(self, serial: int, connected: bool) -> None:
-        """A data plot's right-click menu joined its points, or let them loose.
+    def connect(self, plot: Shown, connected: bool) -> None:
+        """Join a data plot's points, or let them loose.
 
         Sticky, as it is on the desktop: what the menu was last told is what
         the next data plot starts out as, and the app is told so that a state
         file keeps it.
         """
-        plot = self._plot(serial)
-        if plot is None:
-            return
         plot.connected = bool(connected)
         self.page.respec(plot.serial, self._spec(plot))
         self.session.adjusted(connected=plot.connected)
@@ -406,12 +443,6 @@ class Pane:
         self.page.respec(plot.serial, self._spec(plot))
         if not plot.hidden:
             self._start(plot)
-
-    def drop(self, serial: int) -> None:
-        """The menu's `Remove`: take one plot out of the pane for good."""
-        plot = self._plot(serial)
-        if plot is not None:
-            self.remove(plot)
 
     def traced(self, serial: int, at: float) -> None:
         """Read one curve out where the marker now is."""
@@ -455,6 +486,95 @@ class Pane:
         )
         key = (self.number, FEATURES, plot.serial)
         self.session.sample(key, lambda _report: request, self._said)
+
+    # -- the controls ------------------------------------------------------
+
+    def commands(self) -> dict[str, Callable[[Any], None]]:
+        """What this pane does, by the name `plot.controls` gives each thing.
+
+        The dispatch table, and with it the whole of what the pane offers: a
+        control that is not here is left off the menu and out of the key
+        ladder, so what the browser cannot yet do it does not pretend to. A
+        name arrives from the page, is looked up here, and what it names is
+        either a call back into the picture - the view is the page's, and a
+        drag must never wait on this side - or something about the plot list,
+        which is this side's own.
+        """
+        return {
+            "view.all": lambda _value: self.page.autoscale(),
+            "view.home": lambda _value: self.page.home(),
+            "view.zoom.in": lambda _value: self.page.zoom(1 / actions.ZOOM_FACTOR),
+            "view.zoom.out": lambda _value: self.page.zoom(actions.ZOOM_FACTOR),
+            "trace": lambda _value: self.page.trace(),
+            "grid": lambda _value: self.page.grid(),
+            "legend": lambda _value: self.page.legend(),
+            "view.polar": lambda _value: self.repolar(not self.polar),
+            "close": lambda _value: self.close(),
+            "plot.remove": lambda _value: self._drop(),
+            "points.connect": lambda _value: self._reconnect(),
+        }
+
+    def command(self, name: Any, value: Any = None) -> None:
+        """Do the thing the page named, which is a control's own name.
+
+        A name the table has nothing for does nothing at all: a menu the user
+        left open while the pane emptied under it is the ordinary way that
+        happens, and an exception raised into a click handler would be a page
+        that stopped listening.
+        """
+        run = self.commands().get(str(name))
+        if run is not None:
+            run(value)
+
+    def menu(self, state: Any) -> Any:
+        """The context menu of this pane, as it should currently read.
+
+        Answered when the click happens rather than kept, because nothing on it
+        is the menu's own: trace is taken hold of by a key and let go of with
+        Escape, and a tick standing for what the menu last did would be wrong
+        the first time anything else did it.
+        """
+        return _entries(
+            controls.menu(self._snapshot(state), page=True, offers=self.commands())
+        )
+
+    def card(self, state: Any) -> Any:
+        """The menu one legend row offers, which is about a plot and not a view."""
+        return _entries(
+            controls.card(self._snapshot(state), page=True, offers=self.commands())
+        )
+
+    def _snapshot(self, state: Any) -> controls.Flat:
+        """This pane as the description of its controls has to read it.
+
+        Half of it is the page's, since the page is the side that holds the
+        view and everything that goes with it, and half is this side's: which
+        curve a click was over arrives as a serial, and what a menu has to say
+        about that curve is read off the plot the serial names.
+        """
+        self._pointed = pointed = self._plot(_field(state, "pointed"))
+        return controls.Flat(
+            tracing=bool(_field(state, "tracing")),
+            grid=bool(_field(state, "grid")),
+            legend=bool(_field(state, "legend")),
+            polar=self.polar,
+            equal=bool(_field(state, "equal")),
+            pointed=None
+            if pointed is None
+            else controls.Pointed(
+                named=pointed.named, kind=pointed.kind, connected=pointed.connected
+            ),
+        )
+
+    def _drop(self) -> None:
+        """The menu's `Remove`: take the plot it was raised over out for good."""
+        if self._pointed is not None:
+            self.remove(self._pointed)
+
+    def _reconnect(self) -> None:
+        """The menu's `Connect points`, which goes the way the entry read."""
+        if self._pointed is not None:
+            self.connect(self._pointed, not self._pointed.connected)
 
     # -- sampling ----------------------------------------------------------
 
@@ -511,6 +631,8 @@ class Pane:
     # -- the pane's own bookkeeping ----------------------------------------
 
     def _plot(self, serial: Any) -> Shown | None:
+        if serial is None:
+            return None
         for plot in self.plots:
             if plot.serial == int(serial):
                 return plot
@@ -595,22 +717,31 @@ class Solid:
         self.zrange: tuple[float, float] | None = None
         self._counter = 0
         self._serial = 0
+        #: The surface the last menu was raised over, which is what the entries
+        #: about one surface act on.
+        self._pointed: Standing | None = None
         self.page = backend.solids.open(
             number,
+            _controls(controls.SOLID, self.commands()),
             backend.handed(
                 {
                     "closed": self.dismissed,
                     "touched": self.touched,
                     "framed": self.framed,
                     "stood": self.stood,
-                    "wire": self.rewire,
                     "hide": self.hide,
-                    "drop": self.drop,
+                    "menu": self.menu,
+                    "card": self.card,
+                    "command": self.command,
                 }
             ),
         )
         self._show()
-        self.page.meshed(self.wired)
+        self.page.lit("mesh", self.wired)
+        # The camera a fresh pane opens on, which is `plot/actions.py`'s and not
+        # the page's: a browser opening on a different view from a desktop would
+        # be two programs.
+        self._look(actions.CAMERA)
 
     # -- what the session asks ---------------------------------------------
 
@@ -779,7 +910,7 @@ class Solid:
         for plot in self.plots:
             plot.wire = self.wired
             self.page.respec(plot.serial, self._spec(plot))
-        self.page.meshed(self.wired)
+        self.page.lit("mesh", self.wired)
         self.session.adjusted(wire=self.wired)
 
     def hide(self, serial: Any, hidden: Any) -> None:
@@ -796,11 +927,105 @@ class Solid:
         self.page.respec(plot.serial, self._spec(plot))
         self._rebox()
 
-    def drop(self, serial: Any) -> None:
-        """The menu's `Remove`: take one surface out of the pane for good."""
-        plot = self._plot(serial)
-        if plot is not None:
-            self.remove(plot)
+    # -- the controls ------------------------------------------------------
+
+    def commands(self) -> dict[str, Callable[[Any], None]]:
+        """What this pane does, by the name `plot.controls` gives each thing.
+
+        A 3D pane is a camera and most of its list is where to look from, which
+        is the page's arithmetic over vertices that are already on the card:
+        nothing here starts an evaluation, and that is the promise the whole
+        picture is built on. What is not here is what this backend cannot yet
+        do, and what it cannot do it does not offer.
+        """
+        return {
+            "camera.home": lambda _value: self._look(actions.CAMERA),
+            "camera.xy": lambda _value: self._face("camera.xy"),
+            "camera.xz": lambda _value: self._face("camera.xz"),
+            "camera.yz": lambda _value: self._face("camera.yz"),
+            "camera.spin": lambda _value: self.page.spin(self._rotating()),
+            "view.inspect": lambda _value: self.page.inspect(),
+            "surface.remove": lambda value: self._remove_at(value),
+            "close": lambda _value: self.close(),
+            "mesh": lambda _value: self.rewire(not self.wired),
+            "box": lambda _value: self.page.box(),
+            "legend": lambda _value: self.page.legend(),
+            "plot.remove": lambda _value: self._drop(),
+        }
+
+    def command(self, name: Any, value: Any = None) -> None:
+        """Do the thing the page named, which is a control's own name."""
+        run = self.commands().get(str(name))
+        if run is not None:
+            run(value)
+
+    def menu(self, state: Any) -> Any:
+        """The context menu of this pane, as it should currently read."""
+        return _entries(
+            controls.menu(self._snapshot(state), page=True, offers=self.commands())
+        )
+
+    def card(self, state: Any) -> Any:
+        """The menu one legend row offers, which is about a surface."""
+        return _entries(
+            controls.card(self._snapshot(state), page=True, offers=self.commands())
+        )
+
+    def _snapshot(self, state: Any) -> controls.Solid:
+        """This pane as the description of its controls has to read it.
+
+        What the surfaces are called and how they are drawn is this side's, the
+        camera and the panels are the page's, and the two are put together here
+        rather than either side keeping a copy of the other's half.
+        """
+        self._pointed = pointed = self._plot(_field(state, "pointed"))
+        return controls.Solid(
+            spinning=bool(_field(state, "spinning")),
+            wired=self.wired,
+            boxed=bool(_field(state, "boxed")),
+            legend=bool(_field(state, "legend")),
+            surfaces=tuple(plot.named for plot in self.plots),
+            pointed=None
+            if pointed is None
+            else controls.Pointed(
+                named=pointed.named, kind=pointed.kind, wire=pointed.wire
+            ),
+        )
+
+    def _look(self, camera: actions.Camera) -> None:
+        """Put the camera where those three numbers say.
+
+        A distance of zero is what the three presets carry and means no
+        distance at all: they turn the camera and leave it standing where it
+        was, since how far out the reader is looking from is not theirs to say.
+        """
+        self.page.look(camera.elevation, camera.azimuth, camera.distance)
+
+    def _face(self, name: str) -> None:
+        """Look straight at the plane one of the presets stands for.
+
+        Which plane that is belongs to the control, beside the words it is
+        offered under and the key that presses it.
+        """
+        one = controls.control(name, controls.SOLID)
+        self._look(actions.facing(one.value))
+        self.page.said(actions.FACING.format(plane=one.value))
+
+    def _rotating(self) -> str:
+        """What a pane says while it is turning, naming the key that stops it."""
+        keys = controls.keys(controls.control("camera.spin", controls.SOLID), page=True)
+        return actions.ROTATING.format(key=keys[0])
+
+    def _remove_at(self, value: Any) -> None:
+        """The `Remove` submenu: the surface standing at that place in the list."""
+        at = int(value)
+        if 0 <= at < len(self.plots):
+            self.remove(self.plots[at])
+
+    def _drop(self) -> None:
+        """The row menu's `Remove`: take one surface out of the pane for good."""
+        if self._pointed is not None:
+            self.remove(self._pointed)
 
     # -- evaluation --------------------------------------------------------
 
@@ -877,6 +1102,8 @@ class Solid:
     # -- the pane's own bookkeeping ----------------------------------------
 
     def _plot(self, serial: Any) -> Standing | None:
+        if serial is None:
+            return None
         for plot in self.plots:
             if plot.serial == int(serial):
                 return plot
@@ -1025,6 +1252,77 @@ def _solid(plot: Standing) -> Surface:
     return Surface(
         **{name: getattr(plot, name) for name in Surface.__dataclass_fields__}
     )
+
+
+def _controls(table: tuple[controls.Control, ...], served: dict[str, Any]) -> Any:
+    """The controls a pane offers, as the page needs them to render one.
+
+    Handed over once, when the pane is made, because none of it changes: the
+    keys a control answers to, the word a toolbar button carries and the
+    sentence it says under the pointer are the table's, and what varies with
+    the state of the window is the menu rather than the list. What is left out
+    is what this backend has nothing behind, so the page cannot draw a button
+    for a thing that would do nothing.
+    """
+    return _js(
+        [
+            {
+                "name": one.name,
+                "keys": list(controls.keys(one, page=True)),
+                "bar": one.bar,
+                "hint": one.hint,
+                "toggle": one.kind is controls.Kind.TOGGLE,
+            }
+            for one in table
+            if one.name in served
+        ]
+    )
+
+
+def _entries(entries: tuple[controls.Entry, ...]) -> Any:
+    """One menu as it should currently read, as the page draws one.
+
+    Everything resolved: the words, the key this platform presses, the tick,
+    the greying and where the rules fall. A page that had to consult anything
+    else to draw a line of this has been handed too little.
+    """
+    return _js(
+        [
+            {
+                "name": entry.name,
+                "label": entry.label,
+                "keys": list(entry.keys),
+                "checked": entry.checked,
+                "enabled": entry.enabled,
+                "separated": entry.separated,
+                "value": entry.value,
+                "items": [
+                    {
+                        "name": item.name,
+                        "label": item.label,
+                        "keys": [],
+                        "checked": False,
+                        "enabled": True,
+                        "separated": False,
+                        "value": item.value,
+                        "items": [],
+                    }
+                    for item in entry.items
+                ],
+            }
+            for entry in entries
+        ]
+    )
+
+
+def _field(state: Any, name: str) -> Any:
+    """One field of the snapshot the page handed over, or nothing for it.
+
+    The snapshot is a plain object the page builds when a menu opens, and a
+    field it has no answer for is a field this backend does not need: a pane
+    that cannot show a thing has no state for it either.
+    """
+    return getattr(state, name, None)
 
 
 def _grid(count: Any) -> int:
