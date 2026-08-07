@@ -956,6 +956,22 @@ def test_a_fresh_pane_opens_no_flatter_than_a_fresh_window():
     assert pane[1] / pane[0] >= int(opens[2]) / int(opens[1])
 
 
+@pytest.mark.parametrize("module", ("plot2d.js", "plot3d.js"))
+def test_a_pane_is_put_where_the_one_placement_says_and_not_where_it_likes(module):
+    """Two kinds of pane share a page, so they share where a pane opens.
+
+    A module that worked its own corner out would cascade on its own, and two
+    panes of different kinds would open on top of each other; it would also be
+    the arithmetic written twice, which is the thing this seam exists to stop.
+    Where the corner actually lands only a browser can measure, since it is the
+    size of the viewport that decides it.
+    """
+    source = (PAGE / module).read_text(encoding="utf-8")
+    body = _drawing(module, "Pane" if module == "plot2d.js" else "Solid")
+    assert "import * as place from './place.js';" in source
+    assert "place.pane(pane, PANE_WIDTH, PANE_HEIGHT);" in _method(body, "_build")
+
+
 def test_a_marker_on_a_function_follows_the_pointer_and_one_on_a_curve_does_not():
     """Which is what makes trace feel like pointing at the curve.
 

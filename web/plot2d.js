@@ -46,6 +46,7 @@
 
 import * as controls from './controls.js';
 import * as sheets from './forms.js';
+import * as place from './place.js';
 
 // The colors the canvas itself is drawn in, which are `plot/qt/window2d.py`'s.
 // Near-black rather than black, so that a curve in a black-adjacent color still
@@ -125,8 +126,8 @@ const LEGEND_FADED = 0.4;
 const LEGEND_PX = 12;
 const LEGEND_MARGIN_PX = 10;
 
-// Where a fresh pane is put and how big it is, and how far the next one is
-// offset so that two panes are two panes and not one on top of another.
+// How big a fresh pane is. Where it is put is `place.js`'s, which both kinds of
+// pane share so that they cascade off one another.
 //
 // The height is not a matter of taste. A fresh view is x in [-5, 5] with the
 // ordinate following from equal scales, so what a pane opens showing is decided
@@ -141,7 +142,6 @@ const LEGEND_MARGIN_PX = 10;
 // middle of the view is on the picture here exactly as it is there.
 const PANE_WIDTH = 720;
 const PANE_HEIGHT = 590;
-const PANE_STEP = 28;
 
 // The kinds, spelled as `plot/protocol.py` spells them. The page is told which
 // kind a plot is and reads nothing else into it.
@@ -169,7 +169,6 @@ const DOUBLE_PX = 6;
 // The one place a plot pane is put, laid over the terminal and letting the
 // pointer through everywhere it has no pane.
 let root = null;
-let opened = 0;
 let landed = () => {};
 let terminal = null;
 
@@ -334,11 +333,7 @@ class Pane {
     const pane = document.createElement('div');
     pane.className = 'plot-pane';
     pane.tabIndex = 0;
-    const offset = (opened++ % 6) * PANE_STEP;
-    pane.style.left = `${40 + offset}px`;
-    pane.style.top = `${40 + offset}px`;
-    pane.style.width = `${PANE_WIDTH}px`;
-    pane.style.height = `${PANE_HEIGHT}px`;
+    place.pane(pane, PANE_WIDTH, PANE_HEIGHT);
     pane.innerHTML =
       '<div class="plot-bar"><span class="plot-title"></span>' +
       '<button class="plot-close" title="Close">×</button></div>' +

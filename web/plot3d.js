@@ -44,6 +44,7 @@ import * as THREE from 'three';
 import { OrbitControls } from './three/OrbitControls.js';
 import * as controls from './controls.js';
 import * as sheets from './forms.js';
+import * as place from './place.js';
 
 // The canvas colors, which are `plot/qt/window3d.py`'s: the same near-black the
 // 2D pane draws on, and a box drawn in a gray that reads against it without
@@ -94,11 +95,10 @@ const SPIN_DEGREES = 0.4;
 const WIRE_OFFSET = [1, 2];
 const WIRE_WIDTH = 2;
 
-// Where a fresh pane is put and how big it is, and how far the next one is
-// offset so that two panes are two panes and not one on top of another.
+// How big a fresh pane is. Where it is put is `place.js`'s, which both kinds of
+// pane share so that they cascade off one another.
 const PANE_WIDTH = 760;
 const PANE_HEIGHT = 620;
-const PANE_STEP = 28;
 
 // How far a tick mark and its number stand out of the box, and how far out the
 // name of an axis does, in the world units the box is measured in. The
@@ -142,7 +142,6 @@ const CLICK_SLOP_PX = 4;
 // pointer through everywhere it has no pane. The 2D panes are in the same
 // layer, so a solid and a curve stack the way two windows do.
 let root = null;
-let opened = 0;
 let landed = () => {};
 let terminal = null;
 
@@ -291,11 +290,7 @@ class Solid {
     const pane = document.createElement('div');
     pane.className = 'plot-pane';
     pane.tabIndex = 0;
-    const offset = (opened++ % 6) * PANE_STEP;
-    pane.style.left = `${40 + offset}px`;
-    pane.style.top = `${40 + offset}px`;
-    pane.style.width = `${PANE_WIDTH}px`;
-    pane.style.height = `${PANE_HEIGHT}px`;
+    place.pane(pane, PANE_WIDTH, PANE_HEIGHT);
     pane.innerHTML =
       '<div class="plot-bar"><span class="plot-title"></span>' +
       '<button class="plot-close" title="Close">×</button></div>' +
