@@ -196,7 +196,9 @@ def test_only_the_qt_backend_names_a_toolkit() -> None:
     for path in sorted(root.rglob("*.py")):
         if TOOLKIT_PACKAGE in path.as_posix():
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
+        # Named, because the sources hold the display's glyphs and Windows would
+        # otherwise read them through whatever code page it is set to.
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 named = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):

@@ -8,6 +8,8 @@ ahead of the commands that will go through it and would otherwise have nothing h
 it to a filesystem that exists.
 """
 
+import os
+
 import pytest
 
 from rederive import platform
@@ -69,12 +71,14 @@ def test_a_file_reads_back_as_the_bytes_it_was_written_as(tmp_path):
     """Written as text and read back as bytes, which is the asymmetry the callers have.
 
     A file Rederive writes is UTF-8; a file it reads may be the code page 437 the
-    original wrote, and only the caller knows enough to try both.
+    original wrote, and only the caller knows enough to try both. The line endings are
+    the ones the system writes text with, which on Windows is what a Derive file has
+    always carried.
     """
     storage = DesktopStorage()
     path = tmp_path / "sheet.mth"
     storage.write(path, "x^2 - 4\n")
-    assert storage.read(path) == b"x^2 - 4\n"
+    assert storage.read(path) == b"x^2 - 4" + os.linesep.encode()
     assert storage.exists(path)
     assert not storage.is_directory(path)
     assert storage.is_directory(tmp_path)
