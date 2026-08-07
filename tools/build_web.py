@@ -170,6 +170,10 @@ def main(arguments: list[str] | None = None) -> int:
                 "pyodide": "pyodide/",
                 "channel": parsed.channel,
                 "version": parsed.version,
+                # This package's own version, read off the wheel just built. The
+                # loading screen says it, and there is no Python running yet for
+                # the page to ask.
+                "rederive": package[0].name.split("-")[1] if package else "",
                 # What each Pyodide loads. The page's own instance takes the
                 # app and no mathematics; the worker takes the engine and the
                 # sympy that answers with it.

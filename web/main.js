@@ -32,26 +32,49 @@ import * as solids from './plot3d.js';
 const SCREEN = 'screen';
 const MANIFEST = 'manifest.json';
 
-// What the page says for itself while there is nothing else to look at. It is
-// written against a measurement rather than an apology, and the one thing it
-// must not do is imply that something is wrong: a first visit spends most of
-// its time on the wire.
+// The title page, in the words the program opens with itself. What loads here
+// stands where the greeting will stand and says the same things, so that the
+// screen the program takes over is the one that was already there.
+const TITLE = 'R E D E R I V E';
+const TAGLINE = 'A Mathematical Assistant';
+
+// What the page says for itself while there is nothing else to look at. The
+// first paragraph is what the program is, since a minute spent waiting is the
+// one minute a visitor will read anything at all; the second is what the wait
+// is for, written against a measurement rather than an apology. The one thing
+// neither may do is imply that something is wrong: a first visit spends most
+// of its time on the wire.
+//
+// A paragraph is one string and is broken to the terminal it finds, since a
+// phone is forty columns wide and prose hard-wrapped at seventy-six reads on
+// one as every second line half empty.
 const OPENING = [
-  'Rederive',
-  '',
-  'The whole program runs in this tab - the interpreter, the algebra and the',
-  'plotting - with nothing behind it but a file server. About 24 MB comes down',
-  'the first time, over a connection that compresses, and is cached afterwards.',
-  'What follows that is compiling Python a desktop would have compiled once.',
-  '',
+  'Rederive simplifies, solves, expands and plots, symbolically and' +
+    ' numerically, and typesets its answers. The menu along the foot of the' +
+    ' screen is the whole of the interface.',
+  'All of it runs in this tab. About 24 MB comes down the first time and is' +
+    ' cached afterwards, and what follows that is compiling Python a desktop' +
+    ' would have compiled once.',
 ];
 
-// And what it says once the screen is up, about the two waits that are still to
-// come. Both are sympy and numpy warming up inside the engine worker, and both
-// happen exactly once.
-const AFTERWARDS =
-  'The first Simplify and the first plot each take a moment longer than the ones\r\n' +
-  'after them, while the engine worker warms up.\r\n';
+// The widest the prose is set, however wide the window is: text is read across,
+// and a line that runs the whole of a desktop screen is not.
+const COLUMNS = 72;
+
+// Four quadrants, turning, and how long each is held. They are block elements
+// rather than the braille a spinner is usually made of because xterm draws
+// these itself under the canvas and WebGL renderers, so no font on the machine
+// has to have them.
+const SPINNER = ['▘', '▝', '▗', '▖'];
+const TICK = 125;
+
+// Bold for the name, dim for what is said around it, green for a phase that is
+// done. The loading screen is the one place this file writes any style at all:
+// everything after it is the terminal the program itself has written.
+const BOLD = '\x1b[1m';
+const DIM = '\x1b[2m';
+const DONE = '\x1b[32m';
+const PLAIN = '\x1b[0m';
 
 // The font the display is measured in. DejaVu is what stage 0 checked the
 // typeset math against; the rest are what a machine without it is likely to
@@ -71,19 +94,108 @@ const say = (term, text) => term.write(text + '\r\n');
 const timings = {};
 const mark = (name, since) => {
   timings[name] = Math.round(performance.now() - since);
-  return performance.now();
 };
 
-// One line of the loading screen, opened when a phase starts and closed with
-// what it cost. A user watching a page load wants to know that it is still
-// going and roughly how far along it is, and the honest way to say both is to
-// name each piece as it is fetched and to print the seconds it took.
-const starting = (term, what) => term.write('  ' + what.padEnd(22, '.') + ' ');
-const finished = (term, name, since) => {
-  const at = mark(name, since);
-  term.write((timings[name] / 1000).toFixed(1) + ' s\r\n');
-  return at;
+// The turning of whichever phase is running, which nothing else on the page may
+// be writing over: it lives out here so that the handler that reports a failure
+// can stop it before it says anything.
+let ticking = null;
+const stop = () => {
+  clearInterval(ticking);
+  ticking = null;
 };
+
+// Prose broken to a width, on spaces, which is the one thing a terminal will
+// not do for itself.
+function wrapped(text, width) {
+  const lines = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    if (line && line.length + 1 + word.length > width) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = line ? line + ' ' + word : word;
+    }
+  }
+  return line ? lines.concat(line) : lines;
+}
+
+// The loading screen, and what drives it a phase at a time.
+//
+// The block is placed as a whole: its height is counted before a line of it is
+// written, so that the page can be a title page rather than output run down
+// from the top corner. High rather than halfway, which is how the program
+// spaces its own greeting, and hard against the top of a window too short to
+// spare the room.
+//
+// The version is the one thing here the page cannot know for itself, so the
+// name goes up first and everything under it waits for the manifest.
+function opening(term) {
+  const width = Math.min(COLUMNS, Math.max(24, term.cols - 4));
+  const left = ' '.repeat(Math.max(0, Math.floor((term.cols - width) / 2)));
+  const paragraphs = OPENING.map((text) => wrapped(text, width));
+  // The two names, the version, the prose and the three phases, with the blank
+  // lines that space them.
+  const height = 5 + paragraphs.reduce((n, lines) => n + lines.length + 1, 0) + 3;
+  const centred = (text) =>
+    left + ' '.repeat(Math.max(0, Math.floor((width - text.length) / 2))) + text;
+
+  term.write('\r\n'.repeat(Math.max(0, Math.floor((term.rows - height) / 3))));
+  say(term, BOLD + centred(TITLE) + PLAIN);
+  say(term, DIM + centred(TAGLINE) + PLAIN);
+
+  // One line of the loading screen, opened when a phase starts and closed with
+  // what it cost. A user watching a page load wants to know that it is still
+  // going and roughly how far along it is, and the honest way to say both is to
+  // name each piece as it is fetched, to keep something turning while it is,
+  // and to print the seconds it took. The line is rewritten from its start
+  // each time rather than appended to, which is what lets the count run.
+  let phase = null;
+  const named = (what) =>
+    '\r\x1b[K' + left + '  ' + what + ' ' +
+    DIM + '.'.repeat(Math.max(2, 22 - what.length)) + PLAIN + ' ';
+  const opened = (what) => {
+    phase = { what, since: performance.now() };
+    term.write(named(what));
+  };
+
+  return {
+    version(release) {
+      say(term, '');
+      // A build that names no version leaves the line blank rather than the
+      // block a line shorter than it was placed for.
+      say(term, release ? DIM + centred('Version ' + release) + PLAIN : '');
+      say(term, '');
+      for (const lines of paragraphs) {
+        for (const text of lines) say(term, left + text);
+        say(term, '');
+      }
+    },
+
+    starting(what) {
+      opened(what);
+      ticking = setInterval(() => {
+        const spent = performance.now() - phase.since;
+        const turn = SPINNER[Math.floor(spent / TICK) % SPINNER.length];
+        term.write(named(phase.what) + turn + ' ' + (spent / 1000).toFixed(1) + ' s');
+      }, TICK);
+    },
+
+    finished(name) {
+      stop();
+      mark(name, phase.since);
+      const spent = (timings[name] / 1000).toFixed(1);
+      term.write(named(phase.what) + DONE + spent + ' s' + PLAIN + '\r\n');
+    },
+
+    // The last phase stands still. What follows it is the program taking the
+    // screen for itself, and a timer still turning would be writing over it.
+    last(what) {
+      opened(what);
+    },
+  };
+}
 
 function terminal() {
   const term = new Terminal({
@@ -224,24 +336,21 @@ async function main() {
   files.wire(term);
   plots.wire(term);
   solids.wire(term);
-  for (const line of OPENING) say(term, line);
+  const screen = opening(term);
   const started = performance.now();
   const manifest = await (await fetch(MANIFEST)).json();
-  let at = performance.now();
+  screen.version(manifest.rederive);
 
-  starting(term, 'the interpreter');
+  screen.starting('the interpreter');
   const { loadPyodide } = await import('./' + manifest.pyodide + 'pyodide.mjs');
   const pyodide = await loadPyodide({ indexURL: manifest.pyodide });
-  at = finished(term, 'runtime', at);
-  starting(term, 'the program');
+  screen.finished('runtime');
+  screen.starting('the program');
   // The app instance and nothing under it: no sympy here, ever. The engine
   // worker loads its own, in the interpreter where the computing happens.
   await pyodide.loadPackage(manifest.page, { messageCallback: () => {} });
-  at = finished(term, 'package', at);
-  say(term, '');
-  term.write(AFTERWARDS);
-  say(term, '');
-  starting(term, 'the screen');
+  screen.finished('package');
+  screen.last('the screen');
 
   pyodide.globals.set('TERMINAL', term);
   pyodide.globals.set('SPAWN', () => spawn(manifest));
@@ -268,7 +377,9 @@ await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES)
 main().catch((error) => {
   // Never silence: whatever went wrong goes where the user is looking as well
   // as into the console, since a page that stops loading and says nothing is
-  // indistinguishable from a page that is still loading.
+  // indistinguishable from a page that is still loading. The loading screen is
+  // stopped first, so that nothing is still counting under the report.
+  stop();
   console.error(error);
   const term = window.rederive && window.rederive.term;
   const said = '\r\n' + String(error && error.stack ? error.stack : error) + '\r\n';
