@@ -122,7 +122,9 @@ const LEGEND_FADED = 0.4;
 // How the plot list is written into an exported picture: the size of the words
 // and how far in from the corner they stand, in logical pixels. The card itself
 // is a floating element and no part of the canvas, so an export that did not
-// write the names would be a picture that had lost half of what it showed.
+// write the names would be a picture that had lost half of what it showed. The
+// margin is the card's inset as well, so the picture that leaves the pane has
+// its names where the pane has them.
 const LEGEND_PX = 12;
 const LEGEND_MARGIN_PX = 10;
 
@@ -302,6 +304,9 @@ class Pane {
     // When and where the last click on the picture was, which is how the second
     // one is known to be the second.
     this.doubling = null;
+    // Where the legend card was last put, so that a frame which did not move the
+    // picture's corner does not touch the DOM.
+    this.cardAt = null;
     // The traced point as the worker spelled it, which is what Ctrl+C carries
     // while the marker is up.
     this.tracedText = '';
@@ -739,7 +744,7 @@ class Pane {
       ctx.fillStyle = PAPER;
       ctx.fillRect(0, 0, shot.width, shot.height);
       ctx.drawImage(source, 0, 0);
-      this._namePlots(ctx, shot.width, devicePixelRatio);
+      this._namePlots(ctx, devicePixelRatio);
       return shot;
     });
   }
@@ -772,19 +777,19 @@ class Pane {
     }
   }
 
-  _namePlots(ctx, wide, ratio) {
+  _namePlots(ctx, ratio) {
     if (!this.listed || this.order.length === 0) return;
     const size = LEGEND_PX * ratio;
     ctx.save();
     ctx.font = `${size}px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif`;
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     let down = LEGEND_MARGIN_PX * ratio;
     for (const serial of this.order) {
       const plot = this.plots.get(serial);
       if (plot === undefined || plot.hidden) continue;
       ctx.fillStyle = this._ink(plot);
-      ctx.fillText(plot.name, wide - LEGEND_MARGIN_PX * ratio, down);
+      ctx.fillText(plot.name, LEGEND_MARGIN_PX * ratio, down);
       down += size * 1.4;
     }
     ctx.restore();
@@ -893,6 +898,7 @@ class Pane {
   _draw(u) {
     const ctx = u.ctx;
     const ratio = devicePixelRatio;
+    this._placeCard(u);
     ctx.save();
     ctx.beginPath();
     ctx.rect(u.bbox.left, u.bbox.top, u.bbox.width, u.bbox.height);
@@ -912,6 +918,24 @@ class Pane {
     }
     this._marker(u, ctx, ratio);
     ctx.restore();
+  }
+
+  // The card in the top left corner of the picture, which is the corner
+  // `Window2D._place_legend` puts the desktop's card in. Not the corner of the
+  // pane: how far in the picture starts depends on how wide the numbers down the
+  // left edge have made the axis, and that changes as the view moves - so the
+  // inset is worked out here, where the layout is known, rather than written
+  // into the stylesheet. Only when it has moved, since this runs once a frame.
+  _placeCard(u) {
+    const ratio = devicePixelRatio;
+    const left = Math.round(u.bbox.left / ratio + LEGEND_MARGIN_PX);
+    const top = Math.round(u.bbox.top / ratio + LEGEND_MARGIN_PX);
+    if (this.cardAt !== null && this.cardAt.left === left && this.cardAt.top === top) {
+      return;
+    }
+    this.cardAt = { left, top };
+    this.card.style.left = `${left}px`;
+    this.card.style.top = `${top}px`;
   }
 
   // The axis lines go through the origin, because that is where mathematics

@@ -238,10 +238,18 @@
     overflow: hidden;
   }
   /* The legend is a floating card rather than a column beside the picture: the
-     picture is the subject, and the list of what is in it is a note on top. */
+     picture is the subject, and the list of what is in it is a note on top.
+
+     The top left corner, which is where `Window2D._place_legend` puts the
+     desktop's card. Which corner it is is presentation and has no shared
+     spelling - a stylesheet is not something `plot/` can write - so the two are
+     kept in step by hand, and a change here is a change there. Both panes wear
+     this class, so a solid box and a flat picture agree by construction; a flat
+     pane moves the card further in by the width of the numbers down its left
+     edge, which only its own layout knows. */
   .plot-legend {
     position: absolute;
-    right: 10px;
+    left: 10px;
     top: 8px;
     z-index: 3;
     padding: 5px 8px;

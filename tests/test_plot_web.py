@@ -994,6 +994,42 @@ def test_a_marker_on_a_function_follows_the_pointer_and_one_on_a_curve_does_not(
     assert moved.index("this.said(") > moved.index("return;", riding)
 
 
+def test_the_legend_card_stands_in_the_corner_a_plot_window_stands_it_in():
+    """Which corner a legend is in has no shared spelling, and so has to be read.
+
+    `plot/controls.py` says what a control is called and `plot/forms.py` what a
+    field asks for, but where a floating card sits is a stylesheet on one side
+    and a widget move on the other, and nothing makes the two agree. They drifted
+    apart once already - a window's card in the top left, a pane's in the top
+    right - so what each of them says is compared here.
+    """
+    card = re.search(
+        r"\.plot-legend \{(.*?)\n  \}", (PAGE / "index.html").read_text("utf-8"), re.S
+    )
+    assert card is not None, "the page styles its legend card in one rule"
+    assert re.search(r"^\s*left:", card.group(1), re.M)
+    assert re.search(r"^\s*top:", card.group(1), re.M)
+    assert "right:" not in card.group(1) and "bottom:" not in card.group(1)
+    window = (WINDOWS / "window2d.py").read_text(encoding="utf-8")
+    placed = window[window.index("def _place_legend") :]
+    assert "topLeft()" in placed[: placed.index("\n    def ")]
+
+
+@pytest.mark.parametrize("module, named, fake", DRAWN)
+def test_the_names_written_into_an_exported_picture_stand_where_the_card_does(
+    module, named, fake
+):
+    """A picture that leaves a pane carries its plot list, in the same corner.
+
+    The card is an element and no part of the canvas, so the names are painted
+    on by hand when the picture is taken. Painted into the other corner they
+    would be a picture nobody could lay beside the pane it came from.
+    """
+    body = _method(_drawing(module, named), "_namePlots")
+    assert "ctx.textAlign = 'left';" in body
+    assert "ctx.fillText(plot.name, LEGEND_MARGIN_PX * ratio, down);" in body
+
+
 def test_the_page_calls_the_same_two_kinds_parametrized_that_the_protocol_does():
     """One vocabulary of kinds, as there is one spelling of a control.
 

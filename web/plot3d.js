@@ -1093,23 +1093,23 @@ class Solid {
     ctx.fillStyle = BACKGROUND;
     ctx.fillRect(0, 0, shot.width, shot.height);
     ctx.drawImage(source, 0, 0);
-    this._namePlots(ctx, shot.width, shot.width / Math.max(source.clientWidth, 1));
+    this._namePlots(ctx, shot.width / Math.max(source.clientWidth, 1));
     return shot;
   }
 
-  _namePlots(ctx, wide, ratio) {
+  _namePlots(ctx, ratio) {
     if (!this.listed || this.order.length === 0) return;
     const size = LEGEND_PX * ratio;
     ctx.save();
     ctx.font = `${size}px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif`;
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     let down = LEGEND_MARGIN_PX * ratio;
     for (const serial of this.order) {
       const plot = this.plots.get(serial);
       if (plot === undefined || plot.hidden) continue;
       ctx.fillStyle = plot.color;
-      ctx.fillText(plot.name, wide - LEGEND_MARGIN_PX * ratio, down);
+      ctx.fillText(plot.name, LEGEND_MARGIN_PX * ratio, down);
       down += size * 1.4;
     }
     ctx.restore();
