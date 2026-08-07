@@ -36,11 +36,13 @@ class FakePane:
     dispatch has to get right.
     """
 
-    def __init__(self, number, debounce, commands, handlers):
+    def __init__(self, number, debounce, commands, strip, handlers):
         self.number = number
         self.debounce = debounce
         #: What the pane was told it may offer, as `plot/controls.py` says it.
         self.commands = commands
+        #: The parameter range strip, as `plot/forms.py` describes it.
+        self.strip = strip
         self.say = handlers
         self.plots = {}
         self.order = []
@@ -59,12 +61,45 @@ class FakePane:
         self.shown = [-5.0, 5.0, -4.0, 4.0, 800.0, 640.0]
         #: Every `starting` the backend announced, as a plot and a generation.
         self.started = []
+        #: Whether there is anything to frame, which is what `View all` reports
+        #: rather than says: the sentence about it is Python's.
+        self.framable = True
+        #: What the axes are named, and which plot the range fields are about.
+        self.axes = ("", "")
+        self.parameters = (None, "", "", "")
+        #: The form now up over the pane, as the page was handed it.
+        self.form = None
+        self.values = ()
 
     def autoscale(self):
         self.done.append("autoscale")
+        if self.framable:
+            self.shown = [-2.0, 2.0, -1.0, 1.0, *self.shown[4:]]
+        return self.framable
 
-    def home(self):
-        self.done.append("home")
+    def reframe(self, x0, x1, y0, y1, equal):
+        self.done.append(("reframe", (x0, x1, y0, y1), equal))
+        self.shown = [x0, x1, y0, y1, *self.shown[4:]]
+
+    def equalize(self):
+        self.done.append("equalize")
+
+    def named(self, across, up):
+        self.axes = (across, up)
+
+    def parametrized(self, serial, name, low, high):
+        self.parameters = (serial, name, low, high)
+
+    def ask(self, form, values):
+        self.form = form
+        self.values = tuple(values)
+        self.done.append("ask")
+
+    def copy(self):
+        self.done.append("copy")
+
+    def export(self):
+        self.done.append("export")
 
     def zoom(self, factor):
         self.done.append(("zoom", factor))
@@ -124,8 +159,8 @@ class FakePage:
         self.handlers = None
         self.stopped = 0
 
-    def open(self, number, debounce, commands, handlers):
-        pane = FakePane(number, debounce, commands, handlers)
+    def open(self, number, debounce, commands, strip, handlers):
+        pane = FakePane(number, debounce, commands, strip, handlers)
         self.panes[number] = pane
         return pane
 
@@ -244,6 +279,10 @@ class FakeEngine:
     def __init__(self):
         self.sent = []
         self.lost = None
+        #: What the next request whose answer is a value comes back with, in
+        #: the order they are asked for. Empty is a worker that answers with
+        #: nothing at all, which is a refusal like any other.
+        self.answers = []
         self._number = 0
 
     def numbered(self):
@@ -252,6 +291,11 @@ class FakeEngine:
 
     async def ask(self, number, method, args):
         self.sent.append((number, method, args[0]))
+
+    async def value(self, method, args):
+        """One request whose answer is Python's rather than the page's."""
+        self.sent.append((self.numbered(), method, args[0]))
+        return self.answers.pop(0) if self.answers else ()
 
 
 class Proxy:

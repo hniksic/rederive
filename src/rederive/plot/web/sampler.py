@@ -56,7 +56,7 @@ from rederive.plot.model import (
 )
 from rederive.plot.protocol import PARAMETRIZED, PlotKind
 from rederive.plot.web import protocol
-from rederive.plot.web.protocol import Features, Grid, Sample, Trace
+from rederive.plot.web.protocol import Features, Grid, Numbers, Sample, Trace
 
 __all__ = ["Closures", "methods"]
 
@@ -133,7 +133,7 @@ class Gridded(Surface):
 
 
 def methods(post: Callable[[dict[str, Any]], None]) -> dict[str, Callable[..., Any]]:
-    """The four plot requests, over one cache of closures.
+    """The plot requests, over one cache of closures.
 
     `post` is how a partial answer reaches the page: the uniform pass of a
     sampling is drawn while the refinement is still running, and it arrives as
@@ -147,7 +147,25 @@ def methods(post: Callable[[dict[str, Any]], None]) -> dict[str, Callable[..., A
         protocol.TRACE: lambda request: _traced(held, request),
         protocol.FEATURES: lambda request: _found(held, request),
         protocol.GRID: lambda request: _gridded(held, request),
+        protocol.NUMBERS: _numbers,
     }
+
+
+# -- what a typed bound is worth -----------------------------------------------
+
+
+def _numbers(request: Numbers) -> tuple[float, ...]:
+    """Evaluate the trees a form collected, which is why `-π` is an answer.
+
+    The shortest thing this worker does, and the reason it is asked at all: the
+    text was parsed where it was typed, and turning a tree into a float wants
+    the closures and so wants sympy. A tree worth nothing finite comes back as a
+    NaN rather than as a failure, since a field of nonsense is a sentence for
+    the form to say and not a request that went wrong.
+    """
+    return tuple(
+        evaluate.number(node, request.context, float("nan")) for node in request.nodes
+    )
 
 
 # -- one sampling -------------------------------------------------------------

@@ -35,6 +35,8 @@ __all__ = [
     "AUTOSCALED_Y",
     "CAMERA",
     "FACING",
+    "FRAMED_ALL",
+    "NOTHING_FRAMED",
     "ORBIT_DEGREES",
     "PAN_SHARE",
     "PLANES",
@@ -68,6 +70,13 @@ FRESH_PADDING = 0.1
 #: directions and is framed in both.
 AUTOSCALED_Y = "{named}: y autoscaled to fit"
 AUTOSCALED = "{named}: autoscaled to fit"
+
+#: What a window says when `View all` has been asked for. The one framing
+#: command worth a word either way: it either moved the view a long way, which
+#: is worth confirming, or it found nothing to move it around, which looks
+#: exactly like a command that did nothing at all.
+FRAMED_ALL = "Framed on everything drawn"
+NOTHING_FRAMED = "Nothing to frame yet"
 
 #: What a window says when the polar reading goes on and off. The reading is
 #: the view's rather than one plot's, so the sentence is about every curve in

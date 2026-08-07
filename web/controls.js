@@ -49,11 +49,27 @@ function matches(key, event) {
 // Which control a key press is, or null where it is none of them. The order is
 // the description's, so a key claimed by two controls goes to the one the table
 // names first - and the table is the only place that can be argued with.
+//
+// A control the description says arrives as an event is passed over here, keys
+// and all. Cancelling the keydown of such a stroke is exactly what must not
+// happen - it cancels the thing the browser was about to offer - so the ladder
+// does not claim it and `evented` below is how the pane hears it instead.
 export function pressed(commands, event) {
   for (const one of commands) {
+    if (one.event) continue;
     for (const key of one.keys) {
       if (matches(key, event)) return one.name;
     }
+  }
+  return null;
+}
+
+// Which control a page event of this name is, or null where none of them is
+// heard that way. Copy image is the whole of the list, and which event carries
+// it is the description's to say rather than this file's to know.
+export function evented(commands, name) {
+  for (const one of commands) {
+    if (one.event === name) return one.name;
   }
   return null;
 }

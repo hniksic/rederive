@@ -171,6 +171,44 @@
   }
   .plot-toggle:hover { color: #dde3ec; border-color: #3a3a46; }
   .plot-toggle.on { color: #cfe6fb; border-color: rgba(101, 178, 241, 0.55); }
+  .plot-toggle.primary { color: #cfe6fb; border-color: rgba(101, 178, 241, 0.55); }
+  /* Where one answer of a strip of fields ends and the next begins. A domain in
+     x, a domain in y and a grid are three answers, not six numbers in a row. */
+  .plot-divider {
+    width: 1px;
+    align-self: stretch;
+    margin: 0 4px;
+    background: #2b2b34;
+  }
+  /* A dialog, as a page has one: an overlay over the pane that raised it, which
+     takes the keyboard while it is up and hands it back when it goes. What it
+     asks for is `plot/forms.py`'s, the same description the desktop draws as a
+     QDialog, so the two ask for the same things in the same words. */
+  .plot-form {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(6, 6, 9, 0.55);
+  }
+  .plot-sheet {
+    min-width: 240px;
+    padding: 12px 14px;
+    background: #16161c;
+    border: 1px solid #2b2b34;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+  .plot-form-head { margin-bottom: 10px; }
+  .plot-form-title { color: #dde3ec; font-weight: 600; }
+  .plot-form-sub { color: #7d8595; }
+  .plot-group { margin-bottom: 10px; }
+  .plot-group-title { margin-bottom: 5px; color: #8d93a0; }
+  .plot-grid { display: grid; gap: 6px 8px; align-items: center; }
+  .plot-entry { display: flex; align-items: center; gap: 6px; }
+  .plot-answers { display: flex; justify-content: flex-end; gap: 6px; }
   /* The numbers behind the picture, in the corner opposite the legend. */
   .plot-readout {
     position: absolute;

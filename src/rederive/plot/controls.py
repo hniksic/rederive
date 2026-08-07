@@ -114,6 +114,13 @@ class Control:
     #: What a control that is one of a set stands for - which plane a camera
     #: preset faces.
     value: str = ""
+    #: The event a page hears this control through, where its key does not
+    #: arrive as a key press. Copy image is the whole of the list: a page that
+    #: cancels the Ctrl+C keydown cancels the copy it was about to be offered,
+    #: so the browser hands the command over as a `copy` event instead and the
+    #: key ladder leaves the stroke alone. The key is still the key, which is
+    #: why it stays written where every other one is.
+    event: str = ""
 
 
 @dataclass(frozen=True)
@@ -262,6 +269,7 @@ FLAT: tuple[Control, ...] = (
         label="Copy image",
         keys=("Ctrl+C",),
         web=("Ctrl+C",),
+        event="copy",
         group=2,
     ),
     Control(
@@ -409,6 +417,7 @@ SOLID: tuple[Control, ...] = (
         label="Copy image",
         keys=("Ctrl+C",),
         web=("Ctrl+C",),
+        event="copy",
         group=1,
     ),
     Control(

@@ -29,8 +29,21 @@
 // click asks for one, and it answers with the name of a control. What is kept
 // here is the view - the framing, the toggles, what the pointer is over - since
 // a drag that had to ask Python where it was would be a drag nobody could use.
+// The one thing kept here that a command needs is therefore handed over when
+// the command runs: a gesture says where the view stood before it moved it, so
+// that Back has a history to step through without a keystroke ever crossing.
+//
+// The dialogs are `plot/forms.py`'s in the same way, drawn by `forms.js`, and
+// what is typed into one goes back as text - the parsing and the arithmetic are
+// Python's, which is what lets a bound be written `-π` here as it is on a
+// desktop.
+//
+// Copying and exporting are the one pair this file answers outright. A canvas
+// has no painter path to write a vector file out of, so what leaves a pane is
+// pixels, and the sentence Python says about it says so.
 
 import * as controls from './controls.js';
+import * as sheets from './forms.js';
 
 // The colors the canvas itself is drawn in, which are `plot/qt/window2d.py`'s.
 // Near-black rather than black, so that a curve in a black-adjacent color still
@@ -67,6 +80,13 @@ const CLICK_SLOP_PX = 4;
 // How much of a hidden legend row is left standing. Dimmed rather than struck
 // through: a hidden curve is a curve that is still in the pane.
 const LEGEND_FADED = 0.4;
+
+// How the plot list is written into an exported picture: the size of the words
+// and how far in from the corner they stand, in logical pixels. The card itself
+// is a floating element and no part of the canvas, so an export that did not
+// write the names would be a picture that had lost half of what it showed.
+const LEGEND_PX = 12;
+const LEGEND_MARGIN_PX = 10;
 
 // Where a fresh pane is put and how big it is, and how far the next one is
 // offset so that two panes are two panes and not one on top of another.
@@ -131,15 +151,35 @@ function capture(element, event) {
 // Called by the page as it builds itself, so that a pane which closes while it
 // holds the keyboard knows where to hand it back. The terminal is the only
 // other thing on the page that takes keys.
+//
+// The copy event is listened for here for a reason of its own. Ctrl+C reaches a
+// pane as a `copy` and not as a key press: a page that cancels the keydown
+// cancels the copy the browser was about to offer it, so the key ladder leaves
+// the stroke alone and this is where it arrives. The listener is the document's
+// because a copy event is raised where the selection is rather than on whatever
+// holds the keyboard, and it goes to the pane that has focus - which is also
+// what keeps it away from the terminal, xterm.js having its own copy.
 export function wire(term) {
   terminal = term;
+  document.addEventListener('copy', (event) => {
+    const pane = holding();
+    if (pane !== null) pane._copied(event);
+  });
+}
+
+// The pane the keyboard is in, or null while it is anywhere else.
+function holding() {
+  for (const pane of panes.values()) {
+    if (pane.element.contains(document.activeElement)) return pane;
+  }
+  return null;
 }
 
 // One pane, opened where the plot session asked for one. What comes back is
 // what the session's window handle calls into: everything here is a method
 // Python names, and nothing else on this side is reachable from there.
-export function open(number, debounce, commands, handlers) {
-  const pane = new Pane(number, debounce, commands, handlers);
+export function open(number, debounce, commands, strip, handlers) {
+  const pane = new Pane(number, debounce, commands, strip, handlers);
   panes.set(number, pane);
   return pane;
 }
@@ -175,7 +215,7 @@ export function heard(message) {
 // -- one pane -------------------------------------------------------------------
 
 class Pane {
-  constructor(number, debounce, commands, handlers) {
+  constructor(number, debounce, commands, strip, handlers) {
     this.number = number;
     // How long the view has to stand still before the curves are sampled for
     // it, which is `plot/resample.py`'s figure and not this file's: long enough
@@ -185,6 +225,9 @@ class Pane {
     // What this pane offers, as `plot/controls.py` describes it: the keys, the
     // buttons and the words are read off this and are spelled nowhere here.
     this.commands = commands;
+    // The parameter range as `plot/forms.py` describes it, which is the one
+    // strip of fields a flat pane has.
+    this.description = strip;
     this.say = handlers;
     this.plots = new Map();
     this.order = [];
@@ -198,6 +241,9 @@ class Pane {
     this.tracing = null;
     this.traceAt = 0;
     this.tracePoint = null;
+    // The traced point as the worker spelled it, which is what Ctrl+C carries
+    // while the marker is up.
+    this.tracedText = '';
     this.features = null;
     this.message = '';
     this.reading = '';
@@ -205,6 +251,12 @@ class Pane {
     this.waiting = false;
     this.pending = null;
     this.featureBackwards = false;
+    // Which plot the parameter range fields are about, or null while the pane
+    // holds nothing with a parameter in it. Python says which.
+    this.ranged = null;
+    // The dialog now up over the pane, so that a second `Set range...` replaces
+    // its own overlay rather than standing a second one on top of it.
+    this.sheet = null;
     this._build();
     this._frame();
     this._home();
@@ -238,6 +290,10 @@ class Pane {
       this.say.command(name, null);
       this.element.focus();
     });
+    // The parameter range stands after the buttons and only while there is a
+    // plot for it to be about: a range of nothing is not a control.
+    this.range = sheets.strip(this.tools, this.description, () => this._ranged());
+    this.range.show(false);
     surface().appendChild(pane);
     pane.querySelector('.plot-close').addEventListener('click', () => {
       this.dismiss();
@@ -303,6 +359,12 @@ class Pane {
     const axis = {
       stroke: MUTED,
       font,
+      // What the axis is a plot against, where Python has a name for it. Null
+      // rather than empty, since an axis with a label of no words still takes
+      // the room a label needs.
+      label: null,
+      labelFont: font,
+      labelSize: 14,
       grid: { show: true, stroke: GRID_COLOR, width: 1 },
       ticks: { show: true, stroke: GRID_COLOR, width: 1, size: 4 },
     };
@@ -327,9 +389,10 @@ class Pane {
 
   // The default framing is Python's - `plot/view.py` says what a fresh window
   // shows, and a browser opening on a different rectangle from a desktop would
-  // be two programs.
+  // be two programs. Every framing after this one arrives through `reframe`,
+  // which is the same call with the numbers already worked out.
   _home() {
-    this.equal = true;
+    this._locked(true);
     const [x0, x1, y0, y1] = this.say.home(
       this.plot.bbox.width / devicePixelRatio,
       this.plot.bbox.height / devicePixelRatio,
@@ -410,6 +473,65 @@ class Pane {
     this.element.classList.toggle('current', Boolean(current));
   }
 
+  // What the axes are plots against, as Python worked it out off the plot list.
+  // The room uPlot leaves for an axis depends on whether it has a label, so a
+  // name that changed lays the picture out again rather than merely redrawing
+  // it - and one that did not change does neither.
+  named(across, up) {
+    const [one, two] = [across || null, up || null];
+    if (this.plot.axes[0].label === one && this.plot.axes[1].label === two) return;
+    this.plot.axes[0].label = one;
+    this.plot.axes[1].label = two;
+    this._resized();
+  }
+
+  // Which plot the parameter range fields are about, under what name, and the
+  // two bounds as Python spells them. Nothing on this side writes a number into
+  // a field: what stands there is what the range came back as.
+  parametrized(serial, name, low, high) {
+    this.ranged = serial === null || serial === undefined ? null : serial;
+    this.range.show(this.ranged !== null);
+    if (this.ranged === null) return;
+    this.range.rename('parameter', { parameter: name });
+    const fields = this.range.fields;
+    if (!fields.get('low').matches(':focus')) fields.get('low').value = low;
+    if (!fields.get('high').matches(':focus')) fields.get('high').value = high;
+  }
+
+  // Look at exactly this rectangle, with the scales locked or not as the
+  // framing that asked for it left them. Every framing Python decides - the
+  // history, the four typed bounds, Home - arrives here.
+  reframe(x0, x1, y0, y1, equal) {
+    this._locked(Boolean(equal));
+    this._look(x0, x1, y0, y1);
+  }
+
+  // The `1:1` button: hold the two axes to the same scale, or let them go.
+  equalize() {
+    this._locked(!this.equal);
+    const { x0, x1, y0, y1 } = this.shown;
+    this._look(x0, x1, y0, y1);
+  }
+
+  // One form, put up over the pane and filled with the values it opens on.
+  // What is asked for and in what words is Python's; what comes back is the
+  // text, in the order the description lists the fields.
+  ask(form, values) {
+    if (this.sheet !== null) this.sheet();
+    this.sheet = sheets.ask(
+      this.element,
+      form,
+      values,
+      (said) => this.say.typed(form.name, said),
+      () => {
+        this.sheet = null;
+        // The keyboard goes back to the pane, which is where it was before the
+        // menu that raised the dialog took it away.
+        this.element.focus();
+      },
+    );
+  }
+
   // The view as Python reads it: four bounds and the size of the canvas, which
   // is the tolerance every sampling is measured against.
   view() {
@@ -423,7 +545,147 @@ class Pane {
     ];
   }
 
+  // -- the picture, off the pane ----------------------------------------------
+
+  // The command's copy, which is what the menu entry reaches. The key reaches
+  // `_copied` below instead, and both end on the same two roads: a traced point
+  // is text, and everything else is the picture.
+  copy() {
+    const text = this.tracing !== null ? this.tracedText : '';
+    if (!text) {
+      this._copyImage();
+      return;
+    }
+    const clipboard = navigator.clipboard;
+    if (clipboard === undefined || clipboard.writeText === undefined) {
+      this.say.copied(text, 'navigator.clipboard is unavailable');
+      return;
+    }
+    clipboard.writeText(text).then(
+      () => this.say.copied(text, ''),
+      (refused) => this.say.copied(text, String(refused)),
+    );
+  }
+
+  // Ctrl+C, arriving as the event it has to arrive as. The default is cancelled
+  // so that a pane with nothing selected does not copy an empty string over
+  // whatever was on the clipboard.
+  //
+  // A traced point goes through the event's own clipboard, which is the road
+  // that needs no permission of anybody: the browser is offering to be written
+  // into, and text is what it will take. A picture cannot go that way - a
+  // DataTransfer carries strings - so it goes through `navigator.clipboard`,
+  // which is granted or refused, and a refusal is a sentence and not a silence.
+  _copied(event) {
+    if (controls.evented(this.commands, 'copy') === null) return;
+    event.preventDefault();
+    const text = this.tracing !== null ? this.tracedText : '';
+    if (text && event.clipboardData !== null) {
+      event.clipboardData.setData('text/plain', text);
+      this.say.copied(text, '');
+      return;
+    }
+    this._copyImage();
+  }
+
+  _copyImage() {
+    const shot = this._photograph();
+    const clipboard = navigator.clipboard;
+    if (typeof ClipboardItem === 'undefined' || clipboard === undefined
+        || clipboard.write === undefined) {
+      this.say.copied('', 'ClipboardItem is unavailable');
+      return;
+    }
+    shot.toBlob((blob) => {
+      if (blob === null) {
+        this.say.copied('', 'canvas.toBlob gave nothing');
+        return;
+      }
+      clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(
+        () => this.say.copied('', ''),
+        (refused) => this.say.copied('', String(refused)),
+      );
+    }, 'image/png');
+  }
+
+  // Export, which in a tab is a download: an object URL and a link clicked from
+  // here, since that is the only way a file leaves a page.
+  //
+  // A PNG and deliberately not an SVG. The desktop's export is a painter path
+  // replayed onto a vector device, and there is no such path here: every stroke
+  // of this picture is drawn straight onto a canvas, a shaded region *is* a
+  // bitmap, and writing an SVG would mean a second renderer for every kind -
+  // parity of code where the plan asks for parity of capability. So what leaves
+  // is the picture at the size it is drawn, and Python's sentence says the size
+  // rather than letting anybody discover it later.
+  export() {
+    const shot = this._photograph();
+    const name = `plot${this.number}.png`;
+    shot.toBlob((blob) => {
+      if (blob === null) {
+        this.say.exported(name, 0, 0, 'canvas.toBlob gave nothing');
+        return;
+      }
+      try {
+        const address = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = address;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Freed on the next turn of the loop: revoked while the download is
+        // still starting, the file is taken away from it.
+        setTimeout(() => URL.revokeObjectURL(address), 0);
+      } catch (refused) {
+        this.say.exported(name, 0, 0, String(refused));
+        return;
+      }
+      this.say.exported(name, shot.width, shot.height, '');
+    }, 'image/png');
+  }
+
+  // The pane as one image: the ground it is drawn on, the picture, and the
+  // names of what is in it.
+  //
+  // The ground is painted rather than inherited - the canvas itself is
+  // transparent and the color is the element's - so a picture pasted into a
+  // document is not a picture of white curves on nothing. The legend is a card
+  // floating over the canvas rather than anything drawn into it, so the names
+  // are written on afterwards, exactly as the desktop's export writes them.
+  _photograph() {
+    const source = this.plot.ctx.canvas;
+    const shot = document.createElement('canvas');
+    shot.width = source.width;
+    shot.height = source.height;
+    const ctx = shot.getContext('2d');
+    ctx.fillStyle = BACKGROUND;
+    ctx.fillRect(0, 0, shot.width, shot.height);
+    ctx.drawImage(source, 0, 0);
+    this._namePlots(ctx, shot.width, devicePixelRatio);
+    return shot;
+  }
+
+  _namePlots(ctx, wide, ratio) {
+    if (!this.listed || this.order.length === 0) return;
+    const size = LEGEND_PX * ratio;
+    ctx.save();
+    ctx.font = `${size}px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    let down = LEGEND_MARGIN_PX * ratio;
+    for (const serial of this.order) {
+      const plot = this.plots.get(serial);
+      if (plot === undefined || plot.hidden) continue;
+      ctx.fillStyle = plot.color;
+      ctx.fillText(plot.name, wide - LEGEND_MARGIN_PX * ratio, down);
+      down += size * 1.4;
+    }
+    ctx.restore();
+  }
+
   dismiss() {
+    if (this.sheet !== null) this.sheet();
     // Where the keys go next. A pane that had them - the close button it was
     // shut with is inside it - would otherwise leave them on nothing, and the
     // program would look as though it had stopped listening.
@@ -454,7 +716,13 @@ class Pane {
       plot.xs = typed(message.xs, plot.label);
       plot.ys = typed(message.ys, plot.label);
       plot.bounds = message.bounds && message.bounds.length ? message.bounds : null;
-      if (message.trange) plot.trange = message.trange;
+      if (message.trange) {
+        plot.trange = message.trange;
+        // The range came back with the arrays, so this side is the first to
+        // know it; what the fields say about it is Python's to spell, as every
+        // other number in a field of this pane is.
+        this.say.spanned(plot.serial, message.trange[0], message.trange[1]);
+      }
     }
     if (!message.partial && plot.fresh) {
       plot.fresh = false;
@@ -776,11 +1044,13 @@ class Pane {
         banding = null;
         this._band(null);
         pinch = spread();
+        this._remember();
         event.preventDefault();
         return;
       }
       if (event.button === 0) {
         panning = { x: event.offsetX, y: event.offsetY, view: { ...this.shown } };
+        this._remember();
       } else if (event.button === 2) {
         banding = { x: event.offsetX, y: event.offsetY, moved: 0 };
         this._band(banding);
@@ -843,6 +1113,7 @@ class Pane {
     });
     over.addEventListener('wheel', (event) => {
       event.preventDefault();
+      this._remember();
       // Shift holds the width and Ctrl the height, which is how one axis is
       // stretched against the other.
       this._zoom(
@@ -914,6 +1185,7 @@ class Pane {
     });
     const one = value(band.x, band.y);
     const two = value(x, y);
+    this._remember();
     // A rubber band is a rectangle the user drew, and drawing one is asking for
     // that rectangle rather than for a square-scaled version of it.
     this._unlock();
@@ -949,7 +1221,24 @@ class Pane {
   // A gesture that asked for one axis has asked for unequal scales, and gets
   // them until the framing is put back to what a pane opens on.
   _unlock() {
-    this.equal = false;
+    this._locked(false);
+  }
+
+  // The aspect lock, and the button that shows where it stands. The lock is the
+  // page's own state - a rubber band releases it without asking anybody - which
+  // is why the button is lit from here and not from Python.
+  _locked(equal) {
+    this.equal = equal;
+    this.lit('scales.equal', equal);
+  }
+
+  // Say where the view stands, before a gesture moves it off. Once per gesture
+  // rather than once per frame, which is what makes a history of somewhere the
+  // user was rather than of every pixel they passed through; Python keeps it,
+  // because stepping back through one is a command and `plot/view.py` already
+  // says what a step comes to.
+  _remember() {
+    this.say.remembered(this.shown.x0, this.shown.x1, this.shown.y0, this.shown.y1);
   }
 
   // A view change asks for a sampling, once the view has stopped changing. The
@@ -960,19 +1249,18 @@ class Pane {
     if (this.tracing !== null) this._retrace();
   }
 
-  home() {
-    this._home();
-  }
-
   // The keyed zoom, which is about the middle of the picture: the wheel and the
   // pinch are about the point they happened at, and a key happened nowhere.
   zoom(factor) {
     const over = this.plot.over;
+    this._remember();
     this._zoom(factor, over.clientWidth / 2, over.clientHeight / 2, over);
   }
 
-  // Every plot's rectangle, unioned. The rectangles come off the worker with the
-  // samples, so nothing here scans an array to find one.
+  // Every plot's rectangle, unioned, and whether there was one to find. The
+  // rectangles come off the worker with the samples, so nothing here scans an
+  // array for one; what is said about the answer is Python's, which is why this
+  // reports rather than speaks.
   autoscale() {
     let box = null;
     for (const plot of this.plots.values()) {
@@ -982,13 +1270,10 @@ class Pane {
         Math.min(box[2], plot.bounds[2]), Math.max(box[3], plot.bounds[3]),
       ];
     }
-    if (box === null) {
-      this.said('Nothing to frame yet');
-      return;
-    }
+    if (box === null) return false;
     this._unlock();
     this._look(...padded(box));
-    this.said('Framed on everything drawn');
+    return true;
   }
 
   // A new plot with points but none of them in view. Exactly when the
@@ -1148,6 +1433,11 @@ class Pane {
   // the description says this pane answers to. A key that is in neither is left
   // to the browser.
   _pressed(event) {
+    // A key typed into a field stays in the field it was typed into, which is
+    // the bargain the desktop's toolbar fields make as well. The fields stop
+    // their own keys from getting here; this is what keeps a field added later
+    // from having to remember to.
+    if (event.target.tagName === 'INPUT') return;
     const key = event.key;
     if (key === 'Tab') {
       event.preventDefault();
@@ -1182,6 +1472,7 @@ class Pane {
   _pan(across, up) {
     const dx = across * (this.shown.x1 - this.shown.x0);
     const dy = up * (this.shown.y1 - this.shown.y0);
+    this._remember();
     this._look(
       this.shown.x0 + dx, this.shown.x1 + dx, this.shown.y0 + dy, this.shown.y1 + dy,
     );
@@ -1209,6 +1500,18 @@ class Pane {
   // One button of the tool row, on or off, by the name of the control it is.
   lit(name, on) {
     controls.lit(this.buttons, name, on);
+  }
+
+  // A parameter range field was left or Enter was pressed in one: hand both
+  // bounds over as they were typed. What they read as is Python's, since `-π`
+  // is an answer here and reading one is a parse and an evaluation.
+  _ranged() {
+    if (this.ranged === null) return;
+    this.say.ranged(
+      this.ranged,
+      this.range.fields.get('low').value.trim(),
+      this.range.fields.get('high').value.trim(),
+    );
   }
 
   // -- the menus -----------------------------------------------------------

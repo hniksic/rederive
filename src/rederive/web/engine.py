@@ -44,6 +44,11 @@ share, and a request with no answer to this side needs no slot; what actually
 orders a sampling against a Simplify is the worker, which is one thread of one
 interpreter and takes its messages as they come.
 
+One member of that family answers here rather than there, and `value` is it:
+what four typed bounds are worth is four floats, which nothing draws. It rides
+the pending slot like a Simplify, because that is what a request with an answer
+to this side is.
+
 The price of sharing is worth naming. A drag posted behind an integral waits for
 the integral, and a Simplify pressed mid-drag waits for the one sampling in
 flight - bounded, since sampling is depth- and size-capped, but real. And Esc
@@ -266,6 +271,17 @@ class WebEngine:
         """
         self._number += 1
         return self._number
+
+    async def value(self, method: str, args: tuple[Any, ...]) -> Any:
+        """Send one plot request whose answer is a value rather than a picture.
+
+        What four typed bounds are worth is four floats, and floats belong to
+        the side that asked rather than to the side that draws - so this one
+        takes the pending slot and the lock the six calls take, and answers the
+        way they answer. It is on the second family's road only because the
+        worker's method is a plot method.
+        """
+        return await self._await(method, args)
 
     async def ask(self, number: int, method: str, args: tuple[Any, ...]) -> None:
         """Send one request whose answer is the page's rather than Python's.

@@ -23,21 +23,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rederive.engine.context import Context
+from rederive.model.expr import Node
 from rederive.plot.model import Plot, Surface
 
-__all__ = ["DRAWING", "Features", "Grid", "Sample", "Trace"]
+__all__ = ["DRAWING", "Features", "Grid", "Numbers", "Sample", "Trace"]
 
-#: The names the four requests travel under in the worker's request table.
-#: They sit beside the six engine calls rather than in a channel of their own,
-#: because the worker is one thread and a second channel would only queue in
-#: front of the same interpreter.
+#: The names the requests travel under in the worker's request table. They sit
+#: beside the six engine calls rather than in a channel of their own, because
+#: the worker is one thread and a second channel would only queue in front of
+#: the same interpreter.
 SAMPLE = "plot_sample"
 TRACE = "plot_trace"
 FEATURES = "plot_features"
 GRID = "plot_grid"
+NUMBERS = "plot_numbers"
 
-#: All four together, which is how the worker's dispatcher tells a request
-#: whose answer is arrays from one whose answer is a pickle.
+#: The four that answer in arrays, which is how the worker's dispatcher tells a
+#: request whose answer is the page's from one whose answer is a pickle. What is
+#: not on this list comes back to the main thread's Python, `Numbers` being the
+#: one such request: four floats are not a picture.
 DRAWING = (SAMPLE, TRACE, FEATURES, GRID)
 
 
@@ -108,6 +113,24 @@ class Features:
     xrange: tuple[float, float]
     yrange: tuple[float, float]
     size: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class Numbers:
+    """What typed bounds are worth, asked of the side that can work it out.
+
+    The one request here whose answer is four floats rather than a picture, and
+    the reason a page can take `-π` for an edge of a view. The text was read
+    where it was typed - `plot/forms.py` parses it under the grammar the plot
+    arrived with, and parsing is the half with no mathematics in it - so what
+    crosses is trees, and what comes back is what they are worth. A tree that is
+    worth no finite number comes back as a NaN, which is a refusal the form
+    knows the sentence for.
+    """
+
+    pane: int
+    nodes: tuple[Node, ...]
+    context: Context
 
 
 @dataclass(frozen=True)

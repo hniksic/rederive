@@ -40,6 +40,15 @@ and the menu as it should currently read when a right click asks for one. The
 page answers with the name of a control and nothing else. Which means the view
 still lives where a drag can reach it without asking anybody, and the words
 still live where there is one of them.
+
+What a pane asks to be told crosses the same way, and `plot/forms.py` is where
+it is written: the four bounds of a view and the parameter range of a curve are
+fields, words and refusal sentences, and the page draws an overlay and a tool
+row out of them exactly as the desktop draws a dialog and a toolbar. The text
+comes back here as text. It is parsed on this side, which costs nothing, and
+what the trees are worth is asked of the worker - so `-π` is an answer in a
+browser for the same reason it is one on a desktop, and the thread that paints
+the screen still holds no mathematics.
 """
 
 from __future__ import annotations
@@ -48,9 +57,10 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
-from rederive.engine.context import Angle
-from rederive.plot import actions, controls, protocol, resample, view
+from rederive.engine.context import Angle, Context
+from rederive.plot import actions, controls, forms, protocol, resample, view
 from rederive.plot.model import (
+    FIELDS,
     FUNCTIONS,
     PALETTE,
     PAPER_PALETTE,
@@ -58,11 +68,13 @@ from rederive.plot.model import (
     SOLID_PAPER,
     Plot,
     Surface,
+    roughly,
     written,
 )
-from rederive.plot.protocol import PlotKind, Prefer, WindowKind
+from rederive.plot.protocol import PARAMETRIZED, PlotKind, Prefer, WindowKind
 from rederive.plot.session import said
 from rederive.plot.web import protocol as asking
+from rederive.syntax import ParseState
 
 __all__ = ["Pane", "Shown", "Solid", "Standing", "WebBackend", "WorkerExecutor"]
 
@@ -71,6 +83,24 @@ __all__ = ["Pane", "Shown", "Solid", "Standing", "WebBackend", "WorkerExecutor"]
 #: one per pixel it passed over.
 TRACE = "trace"
 FEATURES = "features"
+#: And the job that reads four typed bounds. Keyed too, so a form applied twice
+#: while the first answer is still out costs one evaluation.
+RANGE = "range"
+
+#: What a pane says about a picture that has left it. Copying and exporting are
+#: the one pair of commands each backend is left to answer outright - a painter
+#: path on one side and a canvas on the other share nothing worth describing -
+#: so the words a page says about them are here, beside the page, rather than in
+#: the table both backends read.
+COPIED_IMAGE = "Copied the plot to the clipboard"
+COPIED_POINT = "Copied {text}"
+CLIPBOARD_REFUSED = "The browser did not allow the clipboard: {trouble}"
+#: The sentence a download owes. It names pixels because that is what it is: a
+#: canvas has no painter path to write an SVG out of, so what a page can export
+#: is the picture at the size it is drawn, and saying the size is what makes the
+#: difference from the desktop's vector file legible rather than a surprise.
+DOWNLOADED = "Downloaded {name}, {wide} by {tall} pixels"
+DOWNLOAD_REFUSED = "The browser refused the download: {trouble}"
 
 #: What a 3D pane says when a field will not read. The domain fields take
 #: numbers here and expressions on the desktop, which is the one thing a
@@ -215,6 +245,16 @@ class Pane:
         #: Whether the view reads a univariate curve as r = f(θ). The page's
         #: toggle sets it and every curve in the pane is reread on the spot.
         self.polar = False
+        #: Where the view has been and whether the scales are locked equal. The
+        #: ranges themselves stay on the page, which is the side a drag talks
+        #: to; what is here is the history, which is a command and not a
+        #: gesture, and `plot/actions.py` is where either becomes a framing.
+        self._framing = actions.Framing()
+        #: The parse state and the context a typed bound is read under: the last
+        #: plot's, since a framing belongs to the pane and the worksheet that
+        #: last plotted into it is its reader.
+        self._state = ParseState()
+        self._context = Context()
         self._counter = 0
         self._serial = 0
         #: The plot the last menu was raised over, which is what the entries
@@ -222,6 +262,9 @@ class Pane:
         #: click, as the desktop's windows hold it: what the page knows about a
         #: plot is a serial, and what a command needs is the plot.
         self._pointed: Shown | None = None
+        #: The plot the marker was last put on, which is how taking hold of a
+        #: curve chooses whose parameter range the tool row is about.
+        self._ridden: Shown | None = None
         self.page = backend.page.open(
             number,
             # How long the view has to stand still before the curves are
@@ -229,6 +272,7 @@ class Pane:
             # a drag debounces the same in a browser as it does on a desktop.
             resample.RESAMPLE_DELAY_MS,
             _controls(controls.FLAT, self.commands()),
+            _strip(forms.TRANGE),
             backend.handed(
                 {
                     "changed": self.changed,
@@ -243,9 +287,18 @@ class Pane:
                     "menu": self.menu,
                     "card": self.card,
                     "command": self.command,
+                    "remembered": self.remembered,
+                    "typed": self.typed,
+                    "ranged": self.ranged,
+                    "spanned": self.spanned,
+                    "copied": self.copied,
+                    "exported": self.exported,
                 }
             ),
         )
+        # The polar reading is this side's and is lit from here; the aspect
+        # lock is the page's, being view state a rubber band releases without
+        # asking anybody, and the page lights that one itself.
         self.page.lit("view.polar", self.polar)
 
     # -- what the session asks ---------------------------------------------
@@ -270,8 +323,10 @@ class Pane:
         self._serial += 1
         shown.serial = self._serial
         # The angle unit is the worksheet's, and a pane reads its numbers out
-        # in whatever unit the expressions in it are written in.
+        # in whatever unit the expressions in it are written in; the grammar and
+        # the context a typed bound is read under come from the same place.
         self.degrees = plot.context.angle is Angle.DEGREE
+        self._state, self._context = plot.state, plot.context
         # Polar is the view's, not the plot's: a univariate curve arriving in a
         # polar pane is read as r = f(θ) from the start.
         reread = view.reread(shown.kind, self.polar)
@@ -280,6 +335,8 @@ class Pane:
         self.plots.append(shown)
         self.page.add(shown.serial, self._spec(shown))
         self.retitle()
+        self._axes()
+        self._parameter()
         self._start(shown, fresh=True)
         return shown
 
@@ -288,7 +345,24 @@ class Pane:
         if plot in self.plots:
             self.plots.remove(plot)
             self.page.remove(plot.serial)
+        if self._ridden is plot:
+            self._ridden = None
+        if self._pointed is plot:
+            self._pointed = None
         self.retitle()
+        self._axes()
+        self._parameter()
+
+    def clear(self) -> None:
+        """The Del key and the tool row's `clear`: start this picture over.
+
+        The pane it acts on is the pane the key was pressed in, so there is
+        nothing to infer and nothing to report. The axis names go with the
+        curves that named them and the range fields with the plots that owned
+        them.
+        """
+        for plot in list(self.plots):
+            self.remove(plot)
 
     def find(self, worksheet: int, label: str) -> Shown | None:
         """The plot a worksheet and a label name, if this pane has it."""
@@ -417,6 +491,10 @@ class Pane:
             plot.kind = reread
             self.page.respec(plot.serial, self._spec(plot))
             self._start(plot)
+        # A curve read as r = f(θ) is a curve with a parameter, so the range
+        # fields and the axis names both follow the reading.
+        self._axes()
+        self._parameter()
 
     def connect(self, plot: Shown, connected: bool) -> None:
         """Join a data plot's points, or let them loose.
@@ -444,11 +522,111 @@ class Pane:
         if not plot.hidden:
             self._start(plot)
 
+    def remembered(self, x0: Any, x1: Any, y0: Any, y1: Any) -> None:
+        """The page is about to move the view: keep where it stands.
+
+        Called once per gesture rather than once per frame, which is where the
+        desktop's windows call it too - a range signal arrives after the change
+        and the thing worth keeping is what was there before it. The history is
+        this side's because Back is a command and `plot/view.py` already says
+        what a step through one comes to; the ranges are the page's because a
+        drag must never wait on this side for one.
+        """
+        self._framing.remember(((float(x0), float(x1)), (float(y0), float(y1))))
+
+    def typed(self, name: Any, values: Any) -> None:
+        """A form was applied: read what was typed into it.
+
+        The one form a 2D pane has is its four bounds, and they are expressions
+        rather than floats - `-π` is what a person types, and a field that
+        special-cased a constant or two would be a parser by stealth. So the
+        text is parsed whole by `plot/forms.py`, under the grammar the last plot
+        arrived with, and what the trees are worth is asked of the worker, which
+        is the side that can answer it. Nothing on the page's thread evaluates
+        anything, and a bound is no exception.
+        """
+        if str(name) != forms.RANGE.name:
+            return
+        texts = [str(one) for one in values]
+        nodes = forms.parsed(texts, self._state)
+        if nodes is None:
+            self.page.said(forms.EXPRESSIONS)
+            return
+        request = asking.Numbers(pane=self.number, nodes=nodes, context=self._context)
+        self.session.sample((self.number, RANGE), lambda _report: request, self._framed)
+
+    def ranged(self, serial: Any, low: Any, high: Any) -> None:
+        """A parameter range field was left: sample that plot over what it says.
+
+        The same bargain the four bounds make, and the same parse: a text that
+        will not read is refused in words and the fields go back to the range
+        the plot is actually drawn over, which the page already has. A bound
+        that reads but is worth nothing finite reverts when the sampling
+        answers, keeping the range the plot had.
+        """
+        plot = self._plot(serial)
+        if plot is None:
+            return
+        bounds = forms.parsed((str(low), str(high)), plot.state)
+        if bounds is None:
+            self._parameter()
+            self.page.said(
+                forms.PARAMETER_EXPRESSIONS.format(parameter=plot.parameter)
+            )
+            return
+        plot.bounds = bounds
+        self._start(plot)
+
+    def spanned(self, serial: Any, low: Any, high: Any) -> None:
+        """A sampling came back with the parameter range it was taken over.
+
+        The page says it because the numbers arrived with the arrays and were
+        drawn before this side heard anything at all - the same shape a 3D pane
+        reports the z a surface stood in. What is done with them is this side's:
+        the range fields show what the curve is actually drawn over, which is
+        also how a bound that was worth nothing announces itself, by reverting.
+        """
+        plot = self._plot(serial)
+        if plot is None:
+            return
+        plot.trange = (float(low), float(high))
+        plot.bounds = None
+        if plot is self._ranged_plot():
+            self._parameter()
+
+    def copied(self, text: Any, trouble: Any) -> None:
+        """The page has put the picture on the clipboard, or was not allowed to.
+
+        Never silent either way. A page's clipboard is granted or refused - a
+        tab Chromium has not seen the user click in is refused outright - and a
+        copy that did nothing and said nothing would look exactly like a key
+        that is not bound to anything.
+        """
+        if trouble:
+            self.page.said(CLIPBOARD_REFUSED.format(trouble=str(trouble)))
+            return
+        point = str(text or "")
+        self.page.said(COPIED_POINT.format(text=point) if point else COPIED_IMAGE)
+
+    def exported(self, name: Any, wide: Any, tall: Any, trouble: Any) -> None:
+        """The picture has left the tab as a download, or the browser refused."""
+        if trouble:
+            self.page.said(DOWNLOAD_REFUSED.format(trouble=str(trouble)))
+            return
+        self.page.said(
+            DOWNLOADED.format(name=str(name), wide=int(wide), tall=int(tall))
+        )
+
     def traced(self, serial: int, at: float) -> None:
         """Read one curve out where the marker now is."""
         plot = self._plot(serial)
         if plot is None:
             return
+        if plot is not self._ridden:
+            # Taking hold of a curve is how a plot is chosen, so the range
+            # fields follow the marker onto whatever it is riding.
+            self._ridden = plot
+            self._parameter()
         request = asking.Trace(
             pane=self.number,
             plot=plot.serial,
@@ -501,17 +679,25 @@ class Pane:
         which is this side's own.
         """
         return {
-            "view.all": lambda _value: self.page.autoscale(),
-            "view.home": lambda _value: self.page.home(),
+            "range.set": lambda _value: self._ask_range(),
+            "view.all": lambda _value: self._framed_all(),
+            "view.home": lambda _value: self._homed(),
+            "view.back": lambda _value: self._step(-1),
+            "view.forward": lambda _value: self._step(1),
             "view.zoom.in": lambda _value: self.page.zoom(1 / actions.ZOOM_FACTOR),
             "view.zoom.out": lambda _value: self.page.zoom(actions.ZOOM_FACTOR),
             "trace": lambda _value: self.page.trace(),
             "grid": lambda _value: self.page.grid(),
             "legend": lambda _value: self.page.legend(),
+            "image.copy": lambda _value: self.page.copy(),
+            "image.export": lambda _value: self.page.export(),
+            "clear": lambda _value: self.clear(),
             "view.polar": lambda _value: self.repolar(not self.polar),
+            "scales.equal": lambda _value: self.page.equalize(),
             "close": lambda _value: self.close(),
             "plot.remove": lambda _value: self._drop(),
             "points.connect": lambda _value: self._reconnect(),
+            "points.size": lambda value: self._resize(value),
         }
 
     def command(self, name: Any, value: Any = None) -> None:
@@ -575,6 +761,145 @@ class Pane:
         """The menu's `Connect points`, which goes the way the entry read."""
         if self._pointed is not None:
             self.connect(self._pointed, not self._pointed.connected)
+
+    def _resize(self, value: Any) -> None:
+        """How big a data plot's points are drawn, off its own menu. Sticky too."""
+        plot = self._pointed
+        if plot is None or plot.kind is not PlotKind.DATA:
+            return
+        plot.point_size = float(value)
+        self.page.respec(plot.serial, self._spec(plot))
+        self.session.adjusted(point_size=plot.point_size)
+
+    # -- framing -----------------------------------------------------------
+
+    def _apply(self, framed: actions.Framed) -> None:
+        """Do what a framing command came to, which is where a command ends.
+
+        The arithmetic and the history are `plot/actions.py`'s; what is left is
+        the two things the page has to be told - where to look and whether the
+        scales are still locked - and the sentence, if there is one. A framing
+        of nothing is a command that found nothing to do, and the view stays.
+        """
+        if framed.ranges is not None:
+            (left, right), (low, high) = framed.ranges
+            self.page.reframe(left, right, low, high, self._framing.equal)
+        if framed.message:
+            self.page.said(framed.message)
+
+    def _step(self, direction: int) -> None:
+        """Backspace and Shift-Backspace: where the view has been."""
+        self._apply(self._framing.stepped(self._where(), direction))
+
+    def _homed(self) -> None:
+        """The default framing: x in [-5, 5], the origin centred, equal scales.
+
+        The scales relock, so that Home is the framing every pane opens with and
+        a released `1:1` is a departure from it like any pan or zoom.
+        """
+        width, height = self._size()
+        self._apply(self._framing.home(self._where(), width, height))
+
+    def _framed_all(self) -> None:
+        """`View all`: frame everything drawn, and say which of the two happened.
+
+        The framing is the page's - the rectangle each curve wants came off the
+        worker with its samples, so nothing has to be scanned for it - and the
+        words are `plot/actions.py`'s, as every other sentence a pane says is.
+        """
+        self._framing.remember(self._where())
+        found = bool(self.page.autoscale())
+        self.page.said(actions.FRAMED_ALL if found else actions.NOTHING_FRAMED)
+
+    def _ask_range(self) -> None:
+        """The menu's `Set range...`: the four bounds of the view, typed.
+
+        The one place in this pane where a framing is written rather than
+        gestured, and it is `plot/forms.py`'s four fields - the same four the
+        desktop's dialog draws, in the same words, filled from the view as it
+        stands so that a form opened to change one edge is three edges already
+        right.
+        """
+        (left, right), (low, high) = self._where()
+        self.page.ask(
+            _form(forms.RANGE, self.number),
+            _js([roughly(one) for one in (left, right, low, high)]),
+        )
+
+    def _framed(self, answer: Any) -> None:
+        """The typed bounds are worth numbers: frame the view on them, or refuse.
+
+        Every way of not being a framing gets its own sentence, which is the
+        whole of what this is for: a form that swallowed a bound it could not
+        read would be a form nobody could tell from one that worked. A worker
+        that never answered is one of those ways, and what it said about itself
+        is a better sentence than anything this could write about the bounds.
+        """
+        if isinstance(answer, str) and answer:
+            self.page.said(answer)
+            return
+        values = tuple(answer) if isinstance(answer, (tuple, list)) else ()
+        if len(values) != 4:
+            self.page.said(forms.NOT_NUMBERS)
+            return
+        trouble = forms.framed(values)
+        if trouble:
+            self.page.said(trouble)
+            return
+        left, right, bottom, top = values
+        self._apply(self._framing.typed(self._where(), ((left, right), (bottom, top))))
+        self.page.said(forms.showing(left, right, bottom, top))
+
+    # -- the axes and the parameter range ----------------------------------
+
+    def _axes(self) -> None:
+        """Name the axes after what is being plotted against, as the desktop does.
+
+        The abscissa carries the name of the variable, which is the whole of
+        what a 2D picture knows about names; the ordinate carries the label of
+        the one curve there is, and nothing once there are several - a stack of
+        names down the side of the canvas is what the legend is for. The kinds
+        with nothing to say say nothing: a parametric pair is not a plot against
+        t, and a pane holding one beside `SIN(x)` still has an x axis.
+        """
+        names = {plot.abscissa for plot in self.plots} - {""}
+        single = self.plots[0] if len(self.plots) == 1 else None
+        if single is not None and single.kind in FIELDS:
+            up = single.axes[1]
+        elif single is not None and single.label and single.kind in FUNCTIONS:
+            up = single.label
+        else:
+            up = ""
+        self.page.named(names.pop() if len(names) == 1 else "", up)
+
+    def _parameter(self) -> None:
+        """Say which plot the tool row's range fields are about, or that none is.
+
+        The curve the marker is riding, since taking hold of a curve is how a
+        plot is selected; otherwise the parametrized plot added last. The bounds
+        go over spelled, in the function every field and tick label of either
+        backend is spelled by: nothing on the page writes a number.
+        """
+        plot = self._ranged_plot()
+        if plot is None:
+            self.page.parametrized(None, "", "", "")
+            return
+        self.page.parametrized(
+            plot.serial,
+            plot.parameter,
+            written(plot.trange[0]),
+            written(plot.trange[1]),
+        )
+
+    def _ranged_plot(self) -> Shown | None:
+        """The plot the range fields are about, or None where there is none."""
+        ridden = self._ridden
+        if ridden is not None and ridden in self.plots and ridden.kind in PARAMETRIZED:
+            return ridden
+        for plot in reversed(self.plots):
+            if plot.kind in PARAMETRIZED:
+                return plot
+        return None
 
     # -- sampling ----------------------------------------------------------
 
@@ -1173,11 +1498,20 @@ class WorkerExecutor:
         the queue move: the arrays are already on the screen by the time it is
         called.
         """
+        self._arrived(number, str(trouble or ""))
+
+    def _arrived(self, number: Any, answer: Any) -> None:
+        """One request is over, however it answered, and the queue moves on.
+
+        A sampling answers with whatever the page could not draw, a request for
+        what typed bounds are worth answers with the numbers, and neither is
+        this class's business past letting go of the flight.
+        """
         flight = self._flight
         if flight is None or flight[0] != int(number):
             return
         self._flight = None
-        self.deliver(flight[1], str(trouble or ""))
+        self.deliver(flight[1], answer)
         self._pull()
 
     def lost(self, reason: str) -> None:
@@ -1215,11 +1549,21 @@ class WorkerExecutor:
         A worker that is booting is waited for and a worker that is down is
         replaced, both of which are the engine's own policy; what is left is a
         refusal, and a refusal is a `Trouble` like any other.
+
+        Which door the answer comes back through is the request's own: a picture
+        goes to the page and reaches this side as an acknowledgement, and what
+        typed bounds are worth comes back here, since nothing draws four floats.
         """
+        method = _named(request)
         try:
-            await self._engine.ask(number, _named(request), (request,))
+            if method in asking.DRAWING:
+                await self._engine.ask(number, method, (request,))
+                return
+            answer = await self._engine.value(method, (request,))
         except Exception as error:
             self.landed(number, said(error))
+            return
+        self._arrived(number, answer)
 
 
 def _named(request: Any) -> str:
@@ -1230,6 +1574,8 @@ def _named(request: Any) -> str:
         return asking.TRACE
     if isinstance(request, asking.Grid):
         return asking.GRID
+    if isinstance(request, asking.Numbers):
+        return asking.NUMBERS
     return asking.FEATURES
 
 
@@ -1272,10 +1618,79 @@ def _controls(table: tuple[controls.Control, ...], served: dict[str, Any]) -> An
                 "bar": one.bar,
                 "hint": one.hint,
                 "toggle": one.kind is controls.Kind.TOGGLE,
+                # The event a page hears this one through instead of a key
+                # press, where there is one: the key ladder leaves such a
+                # stroke alone, because cancelling it would cancel the thing
+                # the browser was about to offer.
+                "event": one.event,
             }
             for one in table
             if one.name in served
         ]
+    )
+
+
+def _form(form: forms.Form, number: int) -> Any:
+    """One dialog as the page needs it to draw an overlay.
+
+    Everything `plot/forms.py` says about it and nothing else: what is asked
+    for, in what words, under what headings, with what answers at the bottom.
+    The page lays it out its own way - a page has no dialog and no button box -
+    but it invents no field and no word, which is what makes the overlay and the
+    desktop's dialog the same form.
+    """
+    return _js(
+        {
+            "name": form.name,
+            "heading": form.heading.format(number=number),
+            "title": form.title.format(number=number),
+            "subtitle": form.subtitle,
+            "fields": [
+                {"name": one.name, "label": one.label, "width": one.width}
+                for one in form.fields
+            ],
+            "groups": [
+                {
+                    "title": group.title,
+                    "heads": list(group.heads),
+                    "rows": [
+                        {"label": row.label, "fields": list(row.fields)}
+                        for row in group.rows
+                    ],
+                }
+                for group in form.groups
+            ],
+            "buttons": [
+                {"label": one.label, "role": str(one.role), "primary": one.primary}
+                for one in form.buttons
+            ],
+        }
+    )
+
+
+def _strip(strip: forms.Strip) -> Any:
+    """One run of fields along a tool row, as the page needs it to build one.
+
+    The pieces in the order they stand, a word or a field or a divider each,
+    which is the whole of the layout: a strip is a row and not a form.
+    """
+    return _js(
+        {
+            "name": strip.name,
+            "fields": [
+                {"name": one.name, "label": one.label, "width": one.width}
+                for one in strip.fields
+            ],
+            "pieces": [
+                {
+                    "word": one.word,
+                    "entry": one.entry,
+                    "divider": one.divider,
+                    "name": one.name,
+                }
+                for one in strip.pieces
+            ],
+        }
     )
 
 
