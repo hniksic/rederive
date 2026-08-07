@@ -53,6 +53,7 @@ __all__ = [
     "Role",
     "Row",
     "Strip",
+    "alike",
     "counts",
     "domained",
     "evaluating",
@@ -351,11 +352,15 @@ def framed(values: Sequence[float]) -> str:
 def domained(values: Sequence[float]) -> str:
     """Why a typed domain is not a rectangle, in words, or nothing at all.
 
-    A bound that would not evaluate came back as the value it was replacing, so
-    a field of nonsense reverts by arithmetic rather than by a case; an
-    inverted domain is the one refusal left to make.
+    Two ways of not being one, and which of them a backend can meet depends on
+    what it can hand the evaluation. A desktop's fields answer with the value
+    they were replacing, so a bound worth nothing reverts by arithmetic there
+    and only an inverted domain is left; a page's come back as a NaN, which is
+    refused by name rather than allowed to become a rectangle nobody typed.
     """
     x0, x1, y0, y1 = values
+    if not all(math.isfinite(value) for value in values):
+        return NOT_NUMBERS
     return DOMAIN_BACKWARDS if x1 <= x0 or y1 <= y0 else ""
 
 
@@ -377,3 +382,15 @@ def evaluating(grid: tuple[int, int]) -> str:
 def spanned(center: float, length: float) -> tuple[float, float]:
     """The two edges an axis of the inspector's box describes."""
     return (center - length / 2, center + length / 2)
+
+
+def alike(one: Sequence[float], other: Sequence[float]) -> bool:
+    """Whether two ranges are the same range, allowing for what a field wrote.
+
+    A number that went out to a field as `16.6667` and came back is the same
+    number for this purpose: what is being asked is whether somebody typed
+    something, not whether two floats are equal. Which is a question about a
+    form rather than about arithmetic, and is why it lives here.
+    """
+    span = max(abs(other[1] - other[0]), 1e-12)
+    return all(abs(a - b) <= 1e-4 * span for a, b in zip(one, other))

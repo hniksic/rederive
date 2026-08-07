@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rederive.plot import view
+from rederive.plot.model import written
 from rederive.plot.view import Ranges
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ __all__ = [
     "AUTOSCALED",
     "AUTOSCALED_Y",
     "CAMERA",
+    "CLIPPED",
     "FACING",
     "FRAMED_ALL",
     "NOTHING_FRAMED",
@@ -49,6 +51,7 @@ __all__ = [
     "Camera",
     "Framed",
     "Framing",
+    "clipped",
     "facing",
 ]
 
@@ -263,7 +266,17 @@ SPIN_DEGREES = 0.4
 FACING = "Facing the {plane} plane"
 ROTATING = "Rotating - {key} stops it"
 
+#: What a 3D window says when a spike sent its box to the middle of the values
+#: rather than to the whole of them. The picture is then missing what was cut
+#: away, which is exactly why it has to be said.
+CLIPPED = "z clipped to the 1st-99th percentile: {low} to {high}"
+
 
 def facing(plane: str) -> Camera:
     """Where to look from to have one coordinate plane face the reader."""
     return PLANES[plane]
+
+
+def clipped(low: float, high: float) -> str:
+    """The sentence a clipped box owes, in the numbers a window spells with."""
+    return CLIPPED.format(low=written(low), high=written(high))

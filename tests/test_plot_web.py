@@ -434,10 +434,10 @@ SOLID_CONTROLS = (
     ("camera.yz", "Face the yz plane", "3", "3", True),
     ("camera.spin", "Rotate", "R", "r", True),
     ("view.inspect", "View...", "", "v", True),
-    ("image.copy", "Copy image", "Ctrl+C", "Ctrl+C", False),
-    ("image.export", "Export...", "Ctrl+S", "Ctrl+S", False),
+    ("image.copy", "Copy image", "Ctrl+C", "Ctrl+C", True),
+    ("image.export", "Export...", "Ctrl+S", "Ctrl+S", True),
     ("surface.remove", "Remove", "", "", True),
-    ("clear", "Clear", "Del", "Delete", False),
+    ("clear", "Clear", "Del", "Delete", True),
     ("close", "Close", "Q", "q", True),
 )
 
@@ -456,7 +456,7 @@ def _flat(pointed=None, **fields):
 
 def _deep(pointed=None, **fields):
     """The same for a 3D pane, which has a camera where the other has a view."""
-    state = {"spinning": False, "boxed": True, "legend": True}
+    state = {"spinning": False, "boxed": True, "names": True, "legend": True}
     return types.SimpleNamespace(pointed=pointed, **{**state, **fields})
 
 
@@ -606,8 +606,16 @@ async def test_a_solid_pane_offers_the_camera_and_what_it_holds(session, solids)
         "Face the yz plane",
         "Rotate",
         "View...",
+        "Copy image",
+        "Export...",
         "Remove",
+        "Clear",
         "Close",
+    ]
+    # Which is the whole of the menu the desktop offers a window holding a
+    # surface: nothing is left off, so the two lists are one list.
+    assert [entry["name"] for entry in entries] == [
+        row[0] for row in SOLID_CONTROLS if row[4]
     ]
     # The submenu lists what the pane holds, in the order it holds them, and an
     # item names its surface by where it stands in that list.
@@ -638,12 +646,83 @@ async def test_the_camera_a_preset_looks_from_is_the_desktops(session, solids):
 async def test_a_solids_legend_row_offers_the_menu_about_that_surface(session, solids):
     session.add(_plotted("SIN(x y)"))
     pane = solids.panes[1]
-    # `Draw as wire mesh` is the per-surface exception and is not served yet, so
-    # the row offers the one thing that is rather than an entry that would do
-    # nothing.
-    assert _labels(pane.say["card"](_deep(pointed=1))) == ["Remove #1  SIN(x y)"]
+    # The per-surface exception first and what removes the surface second, in
+    # the words and the order the desktop's legend offers them.
+    assert _labels(pane.say["card"](_deep(pointed=1))) == [
+        "Draw solid",
+        "Remove #1  SIN(x y)",
+    ]
     pane.say["command"]("plot.remove", None)
     assert pane.plots == {}
+
+
+async def test_one_surfaces_wire_is_its_own_exception_and_not_the_panes(
+    session, solids
+):
+    heard = []
+    session.events = heard.append
+    session.add(_plotted("SIN(x y)"))
+    session.add(_plotted("x^2 - y^2", "#2"))
+    pane = solids.panes[1]
+    pane.say["command"]("mesh", None)
+    assert [spec["wire"] for spec in pane.plots.values()] == [False, False]
+    heard.clear()
+    # The row menu flips one surface and nothing else: the `mesh` button stands
+    # where it was and nothing goes back to the sticky preferences, since an
+    # exception is not what the next surface should arrive as.
+    pane.say["card"](_deep(pointed=1))
+    assert _labels(pane.say["card"](_deep(pointed=1))) == [
+        "Draw as wire mesh",
+        "Remove #1  SIN(x y)",
+    ]
+    pane.say["command"]("surface.wire", None)
+    assert [spec["wire"] for spec in pane.plots.values()] == [True, False]
+    assert pane.buttons["mesh"] is False
+    assert heard == []
+    # And the entry then reads the other way round, off the surface itself.
+    assert _labels(pane.say["card"](_deep(pointed=1)))[0] == "Draw solid"
+
+
+async def test_del_clears_a_solid_pane_and_takes_the_axis_names_with_it(
+    session, solids
+):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    assert pane.axes == ("x", "y", "z")
+    pane.say["command"]("clear", None)
+    assert pane.plots == {}
+    assert session.describe().windows[0].plots == ()
+
+
+async def test_the_axes_of_a_solid_are_named_by_the_first_surfaces_expression(
+    session, solids
+):
+    # A pane with nothing in it is told the three letters every reader supplies
+    # anyway; a surface names them after its own variables, and the vertical one
+    # after whatever the expression called it.
+    session.add(_landing("u^2 + v^2", kind=PlotKind.SURFACE, variables=("u", "v")))
+    assert solids.panes[1].axes == ("u", "v", "z")
+
+
+async def test_a_solids_picture_leaves_the_pane_and_says_what_happened(
+    session, solids
+):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    for name in ("image.copy", "image.export"):
+        pane.say["command"](name, None)
+    assert pane.done[-2:] == ["copy", "export"]
+    # And the sentences are the flat pane's own, since what they are about is a
+    # browser rather than a picture.
+    pane.say["copied"]("", "")
+    assert pane.message == "Copied the plot to the clipboard"
+    pane.say["copied"]("", "NotAllowedError: Write permission denied")
+    assert pane.message == (
+        "The browser did not allow the clipboard:"
+        " NotAllowedError: Write permission denied"
+    )
+    pane.say["exported"]("plot1.png", 1520, 1240, "")
+    assert pane.message == "Downloaded plot1.png, 1520 by 1240 pixels"
 
 
 # -- the commands that are more than a menu entry ----------------------------------
@@ -1231,10 +1310,14 @@ async def test_a_typed_grid_evaluates_again_and_the_next_pane_opens_on_it(
     session.add(_plotted("SIN(x y)"))
     await drain(page_of(solids), engine)
     engine.sent.clear()
+    engine.answers.append((-2.0, 2.0, -2.0, 2.0))
     solids.panes[1].say["framed"]("-2", "2", "-2", "2", "32", "32")
+    # Twice: what the bounds are worth comes back first, and the evaluation
+    # over the domain they came to goes out behind it.
+    await settle()
     await settle()
     assert heard[-1] == plots.Preferred(plots.Prefer(grid=32))
-    request = engine.sent[0][2]
+    request = engine.sent[-1][2]
     assert request.xdomain == (-2.0, 2.0)
     assert request.grid == (32, 32)
     assert solids.panes[1].message == "Evaluating over the new domain at 32 by 32"
@@ -1242,18 +1325,74 @@ async def test_a_typed_grid_evaluates_again_and_the_next_pane_opens_on_it(
     assert session.describe().windows[0].xrange == (-2.0, 2.0)
 
 
-async def test_a_domain_field_that_will_not_read_is_put_back(session, solids, engine):
+async def test_a_typed_domain_is_read_by_the_engine_so_minus_pi_is_an_answer(
+    session, solids, engine
+):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    # The strip is `plot/forms.py`'s, handed over when the pane is made, and the
+    # bounds in it are expressions rather than floats - parsed where they were
+    # typed and evaluated where the numbers are, exactly as a flat pane's are.
+    assert pane.strip["name"] == "domain"
+    assert [one["name"] for one in pane.strip["fields"]] == [
+        "x0",
+        "x1",
+        "y0",
+        "y1",
+        "nx",
+        "ny",
+    ]
+    await drain(page_of(solids), engine)
+    engine.sent.clear()
+    engine.answers.append((-np.pi, np.pi, -5.0, 5.0))
+    pane.say["framed"]("-π", "π", "-5", "5", "64", "64")
+    await settle()
+    await settle()
+    assert engine.sent[0][1] == asking.NUMBERS
+    assert engine.sent[-1][2].xdomain == pytest.approx((-np.pi, np.pi))
+    assert pane.fields[:2] == (written(-np.pi), written(np.pi))
+
+
+@pytest.mark.parametrize(
+    ("texts", "worth", "said"),
+    [
+        (
+            ("(", "5", "-5", "5", "64", "64"),
+            None,
+            "The domain bounds are expressions, like -π or 2π",
+        ),
+        (("-5", "5", "-5", "5", "x", "64"), None, "The grid is a pair of numbers"),
+        (
+            ("5", "-5", "-5", "5", "64", "64"),
+            (5.0, -5.0, -5.0, 5.0),
+            "The domain runs from a lower bound to a higher one",
+        ),
+        (
+            ("1/0", "5", "-5", "5", "64", "64"),
+            (float("nan"), 5.0, -5.0, 5.0),
+            "The bounds have to be worth numbers, like -π or 2π",
+        ),
+    ],
+)
+async def test_a_domain_that_is_not_one_says_in_what_way(
+    session, solids, engine, texts, worth, said
+):
+    # Never silence, in every way a domain can fail to be one, and the fields go
+    # back to what the pane is actually evaluating over: a text that will not
+    # parse never reaches the worker, a grid that is not a pair of counts is
+    # refused before it does, and one that parses to nothing worth a number and
+    # one that runs backwards each have a sentence of their own.
     session.add(_plotted("SIN(x y)"))
     await drain(page_of(solids), engine)
     engine.sent.clear()
     pane = solids.panes[1]
-    pane.say["framed"]("-π", "5", "-5", "5", "64", "64")
-    assert pane.message == "The domain is four numbers, the grid two"
-    assert pane.fields == ("-5", "5", "-5", "5", "64", "64")
-    pane.say["framed"]("5", "-5", "-5", "5", "64", "64")
-    assert pane.message == "The domain runs from a lower bound to a higher one"
+    if worth is not None:
+        engine.answers.append(worth)
+    pane.say["framed"](*texts)
     await settle()
-    assert engine.sent == []
+    assert pane.message == said
+    assert pane.fields == ("-5", "5", "-5", "5", "64", "64")
+    assert not any(one[1] == asking.GRID for one in engine.sent)
 
 
 async def test_the_mesh_box_flips_every_surface_and_is_sticky(session, solids):
@@ -1282,9 +1421,9 @@ async def test_one_surface_in_a_pane_is_drawn_in_the_box_it_asked_for(
     session.add(_plotted("SIN(x y)"))
     await settle()
     engine.sent.clear()
-    # What the page says when it has drawn: the extent the values wanted, and
+    # What the page says when it has drawn: what the values measure in z, and
     # the box they were placed in. The same, for a surface standing alone.
-    solids.panes[1].say["stood"](1, [-1.0, 1.0], [-1.0, 1.0])
+    solids.panes[1].say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-1.0, 1.0])
     await settle()
     assert engine.sent == []
 
@@ -1294,15 +1433,45 @@ async def test_two_surfaces_are_drawn_in_one_box(session, solids, engine):
     session.add(_plotted("x^2 - y^2", "#2"))
     pane = solids.panes[1]
     await settle()
-    pane.say["stood"](1, [-1.0, 1.0], [-1.0, 1.0])
+    pane.say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-1.0, 1.0])
     await answered(solids, engine)
     at = len(engine.sent)
     # The second surface reaches higher, so the box grows and every mesh built
     # to the box that is gone - both of them - is asked for again in the new one.
-    pane.say["stood"](2, [-25.0, 25.0], [-1.0, 1.0])
+    pane.say["stood"](2, [-25.0, 25.0, -25.0, 25.0], [-1.0, 1.0])
     await answered(solids, engine)
     asked = engine.sent[at:]
     assert asked and all(one[2].zrange == (-25.0, 25.0) for one in asked)
+
+
+async def test_a_pooled_box_that_cuts_a_spike_says_so_in_the_desktops_words(
+    session, solids
+):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    # The whole of these values runs far past their middle 98%, which is what a
+    # spike is: the box takes the middle, and the sentence about it is the one
+    # `plot/actions.py` writes for both windows.
+    pane.say["stood"](1, [-500.0, 500.0, -3.0, 3.0], [-500.0, 500.0])
+    assert pane.message == "z clipped to the 1st-99th percentile: -3 to 3"
+
+
+def test_a_pooled_box_is_the_box_a_window_holding_the_arrays_would_build():
+    from rederive.plot import view as framing
+    from rederive.plot.surface import extent, spanned
+
+    # The desktop has the values and the browser has four numbers a surface, and
+    # the two arrive at one box because the pooling is one function that both of
+    # them call. A window measures and pools in one breath; a pane measures in
+    # the worker, sends the summary and pools on the main thread.
+    gentle = np.linspace(-1.0, 1.0, 400)
+    spiked = np.concatenate([np.linspace(-3.0, 3.0, 399), [900.0]])
+    assert framing.pooled([spanned(gentle), spanned(spiked)]) == extent(
+        [gentle, spiked]
+    )
+    (low, high), clipped = extent([gentle, spiked])
+    assert clipped is True
+    assert (low, high) == pytest.approx((-3.0, 3.0), abs=0.1)
 
 
 async def answered(solids, engine):
@@ -1311,6 +1480,77 @@ async def answered(solids, engine):
     if engine.sent:
         solids.handlers["landed"](engine.sent[-1][0], "")
     await settle()
+
+
+async def test_the_inspector_is_the_form_the_desktops_dialog_is(session, solids):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    # The same nine fields in the same three groups, and the three answers the
+    # desktop's dialog offers - which is the one form that names its own.
+    assert pane.form["name"] == "view"
+    assert [one["name"] for one in pane.form["fields"]] == [
+        *("cx", "cy", "cz", "lx", "ly", "lz"),
+        *("azimuth", "elevation", "distance"),
+    ]
+    assert [group["heads"] for group in pane.form["groups"]] == [
+        ["x", "y", "z"],
+        ["azimuth", "elevation", "distance"],
+    ]
+    assert [one["label"] for one in pane.form["buttons"]] == [
+        "Apply",
+        "Autoscale z",
+        "Close",
+    ]
+    # It opens on the box the pane is standing in, spelled by Python: the domain
+    # and the z are this side's, and the camera is the page's to fill in.
+    pane.say["command"]("view.inspect", None)
+    assert pane.inspected == ("0", "0", "0", "10", "10", "2")
+
+
+async def test_the_inspector_sets_the_box_and_the_camera(session, solids, engine):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    await drain(page_of(solids), engine)
+    engine.sent.clear()
+    # A center and a length an axis, and where to look from: the domain moves,
+    # the surface is evaluated over it, and the camera goes where it was told.
+    pane.say["typed"](
+        "view", ["1", "0", "0", "4", "10", "2", "45", "20", "30"], "apply"
+    )
+    await settle()
+    assert pane.fields == ("-1", "3", "-5", "5", "64", "64")
+    assert engine.sent[-1][2].xdomain == (-1.0, 3.0)
+    assert pane.camera == (20.0, 45.0, 30.0)
+    # And a box that is not numbers is refused rather than swallowed.
+    pane.say["typed"]("view", ["a"] * 9, "apply")
+    assert pane.message == "The view is described in numbers"
+
+
+async def test_a_typed_z_outranks_the_data_until_autoscale_gives_it_back(
+    session, solids, engine
+):
+    session.add(_plotted("SIN(x y)"))
+    pane = solids.panes[1]
+    pane.say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-1.0, 1.0])
+    await drain(page_of(solids), engine)
+    engine.sent.clear()
+    # Somebody who asks for -4 to 4 in z wants the surface cut off at 4, so the
+    # mesh is built to it and the next measurement does not autoscale it away.
+    pane.say["typed"](
+        "view", ["0", "0", "0", "10", "10", "8", "0", "0", "20"], "apply"
+    )
+    await settle()
+    assert engine.sent[0][2].zrange == (-4.0, 4.0)
+    assert pane.inspected == ("0", "0", "0", "10", "10", "8")
+    pane.say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-4.0, 4.0])
+    await drain(page_of(solids), engine)
+    engine.sent.clear()
+    # `Autoscale z` hands the extent back to the data, and the surface is asked
+    # for again in the box its own values want.
+    pane.say["typed"]("view", [""] * 9, "reset")
+    await settle()
+    assert engine.sent[0][2].zrange is None
+    assert pane.inspected == ("0", "0", "0", "10", "10", "2")
 
 
 async def test_a_surface_that_would_not_evaluate_reports_itself(
@@ -1387,6 +1627,26 @@ def test_a_surfaces_box_is_the_one_the_desktops_inspector_reads():
     # tick labels are spelled by: the page shows what Python wrote.
     assert answer["reading"]["lengths"] == [written(one) for one in box.lengths]
     assert answer["reading"]["lengths"][:2] == ["10", "10"]
+
+
+def test_the_writing_on_the_box_is_chosen_and_spelled_where_the_numbers_are():
+    from rederive.plot.surface import ticks
+
+    answer = _standing(_grid("SIN(x y)"))
+    box = _geometry("SIN(x y)")["box"]
+    # A tick a page draws is a coordinate in the box's own world units and a
+    # string: the ruler is `plot/surface.py`'s, the spelling is `written`, and
+    # the page projects a point it was handed and works out neither.
+    across = answer["ticks"]["x"]
+    assert [one["text"] for one in across] == [
+        written(value) for value in ticks(*box.x)
+    ]
+    assert [one["at"] for one in across] == pytest.approx(
+        [float(box.across(value)) for value in ticks(*box.x)]
+    )
+    assert [one["text"] for one in answer["ticks"]["z"]] == [
+        written(value) for value in ticks(*box.z)
+    ]
 
 
 def test_a_grid_of_n_by_n_is_n_squared_vertices_and_twice_the_faces():

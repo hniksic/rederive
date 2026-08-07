@@ -42,13 +42,20 @@ still lives where a drag can reach it without asking anybody, and the words
 still live where there is one of them.
 
 What a pane asks to be told crosses the same way, and `plot/forms.py` is where
-it is written: the four bounds of a view and the parameter range of a curve are
+it is written: the four bounds of a view, the parameter range of a curve, the
+domain a solid is evaluated over and the box and camera of its inspector are
 fields, words and refusal sentences, and the page draws an overlay and a tool
 row out of them exactly as the desktop draws a dialog and a toolbar. The text
 comes back here as text. It is parsed on this side, which costs nothing, and
 what the trees are worth is asked of the worker - so `-π` is an answer in a
 browser for the same reason it is one on a desktop, and the thread that paints
 the screen still holds no mathematics.
+
+The one number a 3D pane works out for itself is the box its surfaces stand in,
+and it works it out with the desktop's own arithmetic: what crosses from the
+worker is four numbers a surface, and `plot/view.py` says how several of those
+become one z. A picture in a browser and a picture on a desktop are therefore
+clipped at the same height, by one rule written in one place.
 """
 
 from __future__ import annotations
@@ -83,9 +90,11 @@ __all__ = ["Pane", "Shown", "Solid", "Standing", "WebBackend", "WorkerExecutor"]
 #: one per pixel it passed over.
 TRACE = "trace"
 FEATURES = "features"
-#: And the job that reads four typed bounds. Keyed too, so a form applied twice
-#: while the first answer is still out costs one evaluation.
+#: And the two jobs that read typed bounds - the four of a flat view and the
+#: four of a solid's domain. Keyed too, so a form applied twice while the first
+#: answer is still out costs one evaluation.
 RANGE = "range"
+DOMAIN = "domain"
 
 #: What a pane says about a picture that has left it. Copying and exporting are
 #: the one pair of commands each backend is left to answer outright - a painter
@@ -101,13 +110,6 @@ CLIPBOARD_REFUSED = "The browser did not allow the clipboard: {trouble}"
 #: difference from the desktop's vector file legible rather than a surprise.
 DOWNLOADED = "Downloaded {name}, {wide} by {tall} pixels"
 DOWNLOAD_REFUSED = "The browser refused the download: {trouble}"
-
-#: What a 3D pane says when a field will not read. The domain fields take
-#: numbers here and expressions on the desktop, which is the one thing a
-#: browser's toolbar cannot do: `-π` is a tree, and what a tree is worth is
-#: arithmetic that lives in the worker.
-NOT_NUMBERS = "The domain is four numbers, the grid two"
-INVERTED = "The domain runs from a lower bound to a higher one"
 
 
 class Shown(Plot):
@@ -152,9 +154,10 @@ class Standing(Surface):
     #: Which evaluation the page is drawing. A job whose generation has moved
     #: on is a job about a domain that is gone, and the page drops its answer.
     generation: int = 0
-    #: The z extent this surface's own values ask for, once they have been
-    #: evaluated, and the one its mesh was last built to.
-    wanted: tuple[float, float] | None = None
+    #: What this surface's own values measure in z, once they have been
+    #: evaluated, and the box its mesh was last built to. The first is the
+    #: summary `plot/view.py` pools into the second over the whole pane.
+    span: view.Span | None = None
     standing: tuple[float, float] | None = None
 
 
@@ -534,8 +537,13 @@ class Pane:
         """
         self._framing.remember(((float(x0), float(x1)), (float(y0), float(y1))))
 
-    def typed(self, name: Any, values: Any) -> None:
+    def typed(self, name: Any, values: Any, role: Any = None) -> None:
         """A form was applied: read what was typed into it.
+
+        `role` is which answer of the form was pressed, which for a pane with
+        one form and one answer is always the same one and is read anyway: the
+        seam is the same seam a solid's inspector uses, and a handler that only
+        worked for a form with a single button would be two seams.
 
         The one form a 2D pane has is its four bounds, and they are expressions
         rather than floats - `-π` is what a person types, and a field that
@@ -545,7 +553,7 @@ class Pane:
         is the side that can answer it. Nothing on the page's thread evaluates
         anything, and a bound is no exception.
         """
-        if str(name) != forms.RANGE.name:
+        if str(name) != forms.RANGE.name or not _applying(role):
             return
         texts = [str(one) for one in values]
         nodes = forms.parsed(texts, self._state)
@@ -595,27 +603,12 @@ class Pane:
             self._parameter()
 
     def copied(self, text: Any, trouble: Any) -> None:
-        """The page has put the picture on the clipboard, or was not allowed to.
-
-        Never silent either way. A page's clipboard is granted or refused - a
-        tab Chromium has not seen the user click in is refused outright - and a
-        copy that did nothing and said nothing would look exactly like a key
-        that is not bound to anything.
-        """
-        if trouble:
-            self.page.said(CLIPBOARD_REFUSED.format(trouble=str(trouble)))
-            return
-        point = str(text or "")
-        self.page.said(COPIED_POINT.format(text=point) if point else COPIED_IMAGE)
+        """The page has put the picture on the clipboard, or was not allowed to."""
+        _copied(self.page, text, trouble)
 
     def exported(self, name: Any, wide: Any, tall: Any, trouble: Any) -> None:
         """The picture has left the tab as a download, or the browser refused."""
-        if trouble:
-            self.page.said(DOWNLOAD_REFUSED.format(trouble=str(trouble)))
-            return
-        self.page.said(
-            DOWNLOADED.format(name=str(name), wide=int(wide), tall=int(tall))
-        )
+        _exported(self.page, name, wide, tall, trouble)
 
     def traced(self, serial: int, at: float) -> None:
         """Read one curve out where the marker now is."""
@@ -1011,10 +1004,10 @@ class Solid:
 
     The box is the one piece of bookkeeping the 2D side has no counterpart for.
     Two surfaces in one picture are being compared, so they stand in one box or
-    the picture lies; the box is the union of what each surface's values ask
-    for, and a surface whose mesh was built to a different one is asked for
-    again. A pane holding one surface therefore evaluates once for it: the
-    surface says what the box is and is drawn in the box it said.
+    the picture lies; the box is what `plot/view.py` pools each surface's
+    measurements into, and a surface whose mesh was built to a different one is
+    asked for again. A pane holding one surface therefore evaluates once for it:
+    the surface says what the box is and is drawn in the box it said.
     """
 
     kind = WindowKind.THREE_D
@@ -1038,8 +1031,19 @@ class Solid:
         #: How a surface arriving here is drawn: the sticky look the last
         #: surface anywhere was left in, and thereafter this pane's own toggle.
         self.wired = bool(wire)
-        #: The z the picture stands in, once anything in it has been evaluated.
-        self.zrange: tuple[float, float] | None = None
+        #: The z the picture stands in, and the one the inspector nailed down
+        #: where somebody typed it - a typed extent is an answer and is not
+        #: autoscaled away by the next surface.
+        self.zrange = view.DEFAULT_ZRANGE
+        self._fixed: tuple[float, float] | None = None
+        #: The parse state and the context a typed bound is read under: the last
+        #: surface's, since the domain belongs to the pane and the worksheet that
+        #: last plotted into it is its reader.
+        self._state = ParseState()
+        self._context = Context()
+        #: Which domain edit is the latest, so the numbers a superseded edit
+        #: evaluated to cannot land on top of a newer one's.
+        self._edit = 0
         self._counter = 0
         self._serial = 0
         #: The surface the last menu was raised over, which is what the entries
@@ -1048,6 +1052,8 @@ class Solid:
         self.page = backend.solids.open(
             number,
             _controls(controls.SOLID, self.commands()),
+            _strip(forms.DOMAIN),
+            _form(forms.VIEW, number),
             backend.handed(
                 {
                     "closed": self.dismissed,
@@ -1058,10 +1064,14 @@ class Solid:
                     "menu": self.menu,
                     "card": self.card,
                     "command": self.command,
+                    "typed": self.typed,
+                    "copied": self.copied,
+                    "exported": self.exported,
                 }
             ),
         )
         self._show()
+        self._axes()
         self.page.lit("mesh", self.wired)
         # The camera a fresh pane opens on, which is `plot/actions.py`'s and not
         # the page's: a browser opening on a different view from a desktop would
@@ -1088,9 +1098,13 @@ class Solid:
             standing.wire = self.wired
         self._serial += 1
         standing.serial = self._serial
+        # The grammar and the context a typed domain is read under come from
+        # the worksheet that last plotted here, as a flat pane's bounds do.
+        self._state, self._context = plot.state, plot.context
         self.plots.append(standing)
         self.page.add(standing.serial, self._spec(standing))
         self.retitle()
+        self._axes()
         self._start(standing)
         return standing
 
@@ -1099,8 +1113,21 @@ class Solid:
         if plot in self.plots:
             self.plots.remove(plot)
             self.page.remove(plot.serial)
+        if self._pointed is plot:
+            self._pointed = None
         self.retitle()
+        self._axes()
         self._rebox()
+
+    def clear(self) -> None:
+        """The Del key and the tool row's `clear`: start this picture over.
+
+        The pane it acts on is the pane the key was pressed in, so there is
+        nothing to infer and nothing to report. The axis names go with the
+        surfaces that named them.
+        """
+        for plot in list(self.plots):
+            self.remove(plot)
 
     def find(self, worksheet: int, label: str) -> Standing | None:
         """The surface a worksheet and a label name, if this pane has it."""
@@ -1171,55 +1198,84 @@ class Solid:
     def framed(self, *typed: Any) -> None:
         """The domain and the grid as somebody has just typed them.
 
-        The one place in this pane where typing changes what is computed. Six
-        numbers, and numbers is what they must be: the desktop's fields read
-        expressions - `-π` is an answer there - and what a tree is worth is
-        arithmetic that lives where the closures do, which is too far away for
-        a field to wait on. A field that does not read is put back rather than
-        argued with, since the value it would take is on the screen beside it.
+        The one place in this pane where typing changes what is computed. The
+        domain fields read expressions rather than floats - `-π` and `2π` are
+        answers - parsed here under the grammar the last surface arrived with;
+        what the trees are worth is arithmetic, so they go to the worker and the
+        domain moves when the numbers come back. The grid is a pair of counts
+        and stays one. A field that will not read is put back rather than argued
+        with, since the value it would take is on the screen beside it.
         """
-        try:
-            bounds = tuple(float(str(value)) for value in typed[:4])
-            grid = (_grid(float(str(typed[4]))), _grid(float(str(typed[5]))))
-        except ValueError:
+        texts = [str(one) for one in typed]
+        grid = forms.counts(texts[4:6])
+        if grid is None:
             self._show()
-            self.page.said(NOT_NUMBERS)
+            self.page.said(forms.GRID_NUMBERS)
             return
-        if bounds[1] <= bounds[0] or bounds[3] <= bounds[2]:
+        bounds = forms.parsed(texts[:4], self._state)
+        if bounds is None:
             self._show()
-            self.page.said(INVERTED)
+            self.page.said(forms.DOMAIN_EXPRESSIONS)
             return
+        self._edit += 1
+        edit = self._edit
+        request = asking.Numbers(pane=self.number, nodes=bounds, context=self._context)
+        self.session.sample(
+            (self.number, DOMAIN),
+            lambda _report: request,
+            lambda answer: self._domained(edit, grid, answer),
+        )
+
+    def _domained(self, edit: int, grid: tuple[int, int], answer: Any) -> None:
+        """The typed bounds are worth numbers: take them, or put the old ones back.
+
+        A bound that would not evaluate came back as a NaN, which is one of the
+        two ways `plot/forms.py` knows a typed domain not to be a rectangle; a
+        worker that never answered at all says so in its own words, which are
+        better than anything this could write about the bounds.
+        """
+        if edit != self._edit:
+            return
+        if isinstance(answer, str) and answer:
+            self._show()
+            self.page.said(answer)
+            return
+        values = tuple(answer) if isinstance(answer, (tuple, list)) else ()
+        if len(values) != 4:
+            self._show()
+            self.page.said(forms.DOMAIN_EXPRESSIONS)
+            return
+        trouble = forms.domained(values)
+        if trouble:
+            self._show()
+            self.page.said(trouble)
+            return
+        x0, x1, y0, y1 = (float(value) for value in values)
         if grid != self.grid:
             # A typed grid is sticky: the next pane opens on it. The sticky
             # value is one count per axis, so a rectangular grid hands on its
             # finer axis. The domain is not sticky - it is a framing, like a 2D
             # view - so only the grid goes back.
             self.session.adjusted(grid=max(grid))
-        changed = (bounds[:2], bounds[2:], grid) != (
-            self.xdomain,
-            self.ydomain,
-            self.grid,
-        )
-        self.xdomain, self.ydomain, self.grid = bounds[:2], bounds[2:], grid
+        changed = ((x0, x1), (y0, y1), grid) != (self.xdomain, self.ydomain, self.grid)
+        self.xdomain, self.ydomain, self.grid = (x0, x1), (y0, y1), grid
         self._show()
         if changed:
-            self.page.said(
-                f"Evaluating over the new domain at {grid[0]} by {grid[1]}"
-            )
+            self.page.said(forms.evaluating(grid))
             self.reevaluate()
 
-    def stood(self, serial: Any, wanted: Any, drawn: Any) -> None:
-        """A surface has been drawn: what it asks for in z, and what it got.
+    def stood(self, serial: Any, span: Any, drawn: Any) -> None:
+        """A surface has been drawn: what its values measure, and the box it got.
 
         The page says it because the numbers came back with the arrays and were
         drawn before this side heard anything at all. What is done with them is
-        this side's: the box is the union of what the surfaces ask for, and a
-        mesh built to any other box is asked for again.
+        this side's: the box is what `plot/view.py` pools the measurements into,
+        and a mesh built to any other box is asked for again.
         """
         plot = self._plot(serial)
         if plot is None:
             return
-        plot.wanted = _pair(wanted)
+        plot.span = _span(span)
         plot.standing = _pair(drawn)
         self._rebox()
 
@@ -1269,12 +1325,17 @@ class Solid:
             "camera.xz": lambda _value: self._face("camera.xz"),
             "camera.yz": lambda _value: self._face("camera.yz"),
             "camera.spin": lambda _value: self.page.spin(self._rotating()),
-            "view.inspect": lambda _value: self.page.inspect(),
+            "view.inspect": lambda _value: self._inspect(),
+            "image.copy": lambda _value: self.page.copy(),
+            "image.export": lambda _value: self.page.export(),
             "surface.remove": lambda value: self._remove_at(value),
+            "clear": lambda _value: self.clear(),
             "close": lambda _value: self.close(),
             "mesh": lambda _value: self.rewire(not self.wired),
             "box": lambda _value: self.page.box(),
+            "names": lambda _value: self.page.naming(),
             "legend": lambda _value: self.page.legend(),
+            "surface.wire": lambda _value: self._rewire_one(),
             "plot.remove": lambda _value: self._drop(),
         }
 
@@ -1308,6 +1369,7 @@ class Solid:
             spinning=bool(_field(state, "spinning")),
             wired=self.wired,
             boxed=bool(_field(state, "boxed")),
+            named=bool(_field(state, "names")),
             legend=bool(_field(state, "legend")),
             surfaces=tuple(plot.named for plot in self.plots),
             pointed=None
@@ -1352,6 +1414,107 @@ class Solid:
         if self._pointed is not None:
             self.remove(self._pointed)
 
+    def _rewire_one(self) -> None:
+        """One surface between wire and solid: the legend row's own exception.
+
+        An exception rather than a default, so it hands nothing back to the
+        sticky preferences and leaves the `mesh` button - the every-surface
+        control - where it was. Nothing is evaluated for it: both drawings are
+        on the card already.
+        """
+        plot = self._pointed
+        if plot is None:
+            return
+        plot.wire = not plot.wire
+        self.page.respec(plot.serial, self._spec(plot))
+
+    # -- the numbers behind the picture ------------------------------------
+
+    def _inspect(self) -> None:
+        """The `View...` form: the box and the camera as numbers to be typed.
+
+        The box is this side's, so it goes over spelled; the camera is the
+        page's, being a fact about where a reader is standing rather than a
+        value of anything, and the page fills those three itself. Whoever owns
+        the number writes it.
+        """
+        self.page.inspect(_js([written(value) for value in self._reading()]))
+
+    def _reading(self) -> tuple[float, ...]:
+        """The box as the inspector asks for it: a center and a length an axis."""
+        spans = (self.xdomain, self.ydomain, self.zrange)
+        return (
+            *((low + high) / 2 for low, high in spans),
+            *(high - low for low, high in spans),
+        )
+
+    def typed(self, name: Any, values: Any, role: Any = None) -> None:
+        """The inspector was answered: take the numbers, or give the z back.
+
+        Three answers and three sentences' worth of difference between them.
+        `Autoscale z` hands the extent back to the data, which is what undoes a
+        typed one; `Apply` is nine numbers, and nine numbers is what they must
+        be - a box and a camera are lengths and angles rather than expressions,
+        as they are on the desktop. Either way the fields are filled again, so
+        that what the picture is now standing in is what they say.
+        """
+        if str(name) != forms.VIEW.name:
+            return
+        if str(role or "") == forms.Role.RESET:
+            self.autoscale_z()
+            self._showing()
+            return
+        if not _applying(role):
+            return
+        read = forms.numbers([str(one) for one in values])
+        if read is None or len(read) != 9:
+            self.page.said(forms.NUMBERS)
+            self._showing()
+            return
+        spans = [
+            forms.spanned(middle, width)
+            for middle, width in zip(read[:3], read[3:6])
+        ]
+        azimuth, elevation, distance = read[6:]
+        self.reframe(spans[0], spans[1], spans[2])
+        self.page.look(elevation, azimuth, max(distance, 0.1))
+        self._showing()
+
+    def reframe(
+        self,
+        xdomain: tuple[float, float],
+        ydomain: tuple[float, float],
+        zrange: tuple[float, float],
+    ) -> None:
+        """The inspector's answer: a box typed rather than arrived at.
+
+        A typed z extent is an opinion and outranks the autoscale from then on -
+        somebody who asked for -1 to 1 in z wants to see the surface cut off at
+        1, and a picture that reframed itself on the next plot would be
+        answering a question nobody asked. The extent that was already on the
+        screen is not such an opinion, though: applying a change of camera must
+        not quietly freeze the z the data chose, so an unedited field changes
+        nothing.
+        """
+        moved = (xdomain, ydomain) != (self.xdomain, self.ydomain)
+        self.xdomain, self.ydomain = xdomain, ydomain
+        self._show()
+        if zrange[1] > zrange[0] and not forms.alike(zrange, self.zrange):
+            self._fixed = self.zrange = zrange
+        if moved:
+            self.reevaluate()
+        else:
+            self._rebox()
+
+    def autoscale_z(self) -> None:
+        """Give the z extent back to the data, undoing a typed one."""
+        self._fixed = None
+        self._rebox()
+
+    def _showing(self) -> None:
+        """Fill the inspector's box fields again, wherever it is still up."""
+        self.page.showing(_js([written(value) for value in self._reading()]))
+
     # -- evaluation --------------------------------------------------------
 
     def reevaluate(self) -> None:
@@ -1389,8 +1552,11 @@ class Solid:
 
         A surface alone in a picture decides the box, because its own values
         are the whole of what the picture holds; one arriving beside others is
-        drawn in theirs and may move it once it has been evaluated.
+        drawn in theirs and may move it once it has been evaluated. A typed
+        extent overrules both, being an answer rather than a measurement.
         """
+        if self._fixed is not None:
+            return self._fixed
         others = [
             one
             for one in self.plots
@@ -1399,18 +1565,26 @@ class Solid:
         return self.zrange if others else None
 
     def _rebox(self) -> None:
-        """The box every surface stands in, and the meshes that are not in it."""
+        """The box every surface stands in, and the meshes that are not in it.
+
+        The pooling is `plot/view.py`'s, which is the same arithmetic the
+        desktop's window arrives at its box by: what crosses from the worker is
+        four numbers a surface rather than the values, and the rule for putting
+        several of those together is written once and read from both sides.
+        """
         asked = [
-            plot.wanted
-            for plot in self.plots
-            if plot.visible and plot.wanted is not None
+            plot.span for plot in self.plots if plot.visible and plot.span is not None
         ]
-        if not asked:
+        found = (self._fixed, False) if self._fixed is not None else view.pooled(asked)
+        if found is None:
             return
-        self.zrange = (min(low for low, _ in asked), max(high for _, high in asked))
+        zrange, clipped = found
+        moved, self.zrange = zrange != self.zrange, zrange
         for plot in self.plots:
-            if plot.visible and plot.standing not in (None, self.zrange):
+            if plot.visible and plot.standing not in (None, zrange):
                 self._start(plot)
+        if clipped and moved:
+            self.page.said(actions.clipped(*zrange))
 
     def _answered(self, plot: Standing, answer: Any) -> None:
         """One evaluation is over, as the page reported it.
@@ -1456,6 +1630,27 @@ class Solid:
             written(self.grid[0]),
             written(self.grid[1]),
         )
+
+    def _axes(self) -> None:
+        """What the three axes are called, taken from the first surface there is.
+
+        The names are the expression's own - the two floor variables in the
+        engine's canonical order, and the vertical one where an equation named
+        it. A pane holding two surfaces of the same two variables is the
+        ordinary case, and one holding two of different ones has to pick: the
+        first surface named the axes and the others are drawn over them.
+        """
+        first = self.plots[0] if self.plots else None
+        names = ("x", "y", "z") if first is None else (*first.axes, first.vertical)
+        self.page.named(*names)
+
+    def copied(self, text: Any, trouble: Any) -> None:
+        """The page has put the picture on the clipboard, or was not allowed to."""
+        _copied(self.page, text, trouble)
+
+    def exported(self, name: Any, wide: Any, tall: Any, trouble: Any) -> None:
+        """The picture has left the tab as a download, or the browser refused."""
+        _exported(self.page, name, wide, tall, trouble)
 
 
 class WorkerExecutor:
@@ -1753,6 +1948,46 @@ def _pair(values: Any) -> tuple[float, float] | None:
     """
     numbers = [float(value) for value in values] if values is not None else []
     return (numbers[0], numbers[1]) if len(numbers) == 2 else None
+
+
+def _span(values: Any) -> view.Span | None:
+    """What one surface measured in z, out of the four numbers the page carried."""
+    numbers = [float(value) for value in values] if values is not None else []
+    return view.Span(*numbers) if len(numbers) == 4 else None
+
+
+def _applying(role: Any) -> bool:
+    """Whether the answer a form came back with is the one that takes the text.
+
+    A form that describes no buttons of its own is answered with the pair every
+    dialog has, and its accepting half arrives without a role at all - which is
+    the same answer as `Apply` and is read as one.
+    """
+    return str(role or forms.Role.APPLY) == forms.Role.APPLY
+
+
+def _copied(page: Any, text: Any, trouble: Any) -> None:
+    """What a pane says about a picture that has gone to the clipboard, or not.
+
+    Never silent either way. A page's clipboard is granted or refused - a tab
+    Chromium has not seen the user click in is refused outright - and a copy
+    that did nothing and said nothing would look exactly like a key that is not
+    bound to anything. One function for both kinds of pane, because the
+    sentence is about a browser rather than about a picture.
+    """
+    if trouble:
+        page.said(CLIPBOARD_REFUSED.format(trouble=str(trouble)))
+        return
+    point = str(text or "")
+    page.said(COPIED_POINT.format(text=point) if point else COPIED_IMAGE)
+
+
+def _exported(page: Any, name: Any, wide: Any, tall: Any, trouble: Any) -> None:
+    """And what it says about one that has left the tab as a download."""
+    if trouble:
+        page.said(DOWNLOAD_REFUSED.format(trouble=str(trouble)))
+        return
+    page.said(DOWNLOADED.format(name=str(name), wide=int(wide), tall=int(tall)))
 
 
 def _trouble(answer: Any) -> str:

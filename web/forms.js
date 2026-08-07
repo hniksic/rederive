@@ -13,9 +13,9 @@
 // a pane whose ladder heard the letters being typed into a field would frame
 // the view every time somebody wrote an `a`.
 
-// What a strip's divider is drawn as, and how much of a form's own layout is
-// worth keeping: a page has no button box, so the answers stand in a row in the
-// order the description gives them.
+// The roles a form's answers come in, as `plot/forms.py` spells them. A page
+// has no button box, so the answers stand in a row in the order the description
+// gives them, and what each does is its role and never its words.
 const APPLY = 'apply';
 const CLOSE = 'close';
 
@@ -31,11 +31,19 @@ const STANDARD = [
 // Put one form up over an element, filled with the values it opens on.
 //
 // `done` is handed what the fields say, in the order the description lists
-// them, and the overlay closes behind it. Nothing here argues with what was
-// typed: a form collects strings, and the side that asked for them is the side
-// that knows what they have to be. `gone` is told whichever way it closed, so
-// that the pane can stop holding a dialog that is no longer there. What comes
-// back is how to close it from outside.
+// them, and the role of the answer that was pressed. Nothing here argues with
+// what was typed: a form collects strings, and the side that asked for them is
+// the side that knows what they have to be. `gone` is told whichever way it
+// closed, so that the pane can stop holding a dialog that is no longer there.
+//
+// A form that describes its own answers stays up until one of them says Close,
+// which is what the desktop's inspector is - a sheet standing beside the
+// picture while the picture is worked on. A form that takes the standard pair
+// closes on either of them, which is what a dialog is. Neither rule is written
+// here twice: it is whether the description named any buttons.
+//
+// What comes back is how to close it from outside and how to write into it,
+// since a form that follows the picture has to be told when the picture moved.
 export function ask(where, form, values, done, gone) {
   const held = document.activeElement;
   const overlay = document.createElement('div');
@@ -52,6 +60,7 @@ export function ask(where, form, values, done, gone) {
   });
 
   let up = true;
+  const sticky = form.buttons.length > 0;
   const away = () => {
     if (!up) return;
     up = false;
@@ -62,13 +71,13 @@ export function ask(where, form, values, done, gone) {
     if (held !== null && held.focus !== undefined) held.focus();
     if (gone !== undefined) gone();
   };
-  const apply = () => {
+  const apply = (role) => {
     const said = form.fields.map((one) => {
       const edit = fields.get(one.name);
       return edit === undefined ? '' : edit.value.trim();
     });
-    away();
-    done(said);
+    if (!sticky) away();
+    done(said, role);
   };
   sheet.appendChild(answers(form, apply, away));
 
@@ -80,7 +89,7 @@ export function ask(where, form, values, done, gone) {
     event.stopPropagation();
     if (event.key === 'Enter') {
       event.preventDefault();
-      apply();
+      apply(APPLY);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       away();
@@ -98,7 +107,18 @@ export function ask(where, form, values, done, gone) {
     first.focus();
     first.select();
   }
-  return away;
+  return {
+    close: away,
+    // Write into the fields a description names, leaving the rest as they are.
+    // A field somebody is typing into is left alone as well: a form that
+    // follows the picture must not take a half-typed number away.
+    fill(written) {
+      for (const [name, text] of Object.entries(written)) {
+        const edit = fields.get(name);
+        if (edit !== undefined && edit !== document.activeElement) edit.value = text;
+      }
+    },
+  };
 }
 
 // What the form is about, and the one thing worth knowing that the fields
@@ -179,7 +199,10 @@ function answers(form, apply, away) {
     if (one.primary) button.classList.add('primary');
     button.type = 'button';
     button.textContent = one.label;
-    button.addEventListener('click', one.role === CLOSE ? away : apply);
+    button.addEventListener('click', () => {
+      if (one.role === CLOSE) away();
+      else apply(one.role);
+    });
     row.appendChild(button);
   }
   return row;

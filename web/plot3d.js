@@ -17,20 +17,33 @@
 // Nothing here renders an expression and nothing here evaluates one. A
 // surface's name is the line Python wrote with the syntax writer, and the
 // numbers behind the picture - the box's center, its lengths, the z it was
-// clipped to - arrive spelled by the same function the desktop's inspector
-// spells them with. What this file writes for itself is where the camera is,
-// which is a fact about the page and not a value of anything.
+// clipped to, every number along its edges - arrive spelled by the same
+// function the desktop's inspector spells them with. What this file writes for
+// itself is where the camera is, which is a fact about the page and not a value
+// of anything.
+//
+// The writing on the box is DOM and not geometry. A tick number is a `<span>`
+// put where the same projection the card draws with says the point is, which
+// costs one vector each per camera move and comes out at the screen's own
+// resolution - where a font baked onto the card would cost a texture, a shader
+// and a picture that softens as it is turned. What Python chose and spelled is
+// where the ticks fall and what they read; this side projects a point it was
+// handed and writes nothing.
 //
 // Nor does it own what a pane offers. The commands, their words, their keys and
 // the order a menu stands them in are `plot/controls.py`'s, the same table the
 // desktop's window renders, and where the camera goes for each of them is
 // `plot/actions.py`'s; a pane is handed the ones this backend serves when it is
 // made and the menu as it should currently read when a right click asks for
-// one, and it answers with the name of a control.
+// one, and it answers with the name of a control. The domain it is evaluated
+// over and the box and camera of its inspector are `plot/forms.py`'s in the
+// same way, drawn by `forms.js`, and what is typed into either goes back as
+// text - so `-π` is an answer in a page as it is on a desktop.
 
 import * as THREE from 'three';
 import { OrbitControls } from './three/OrbitControls.js';
 import * as controls from './controls.js';
+import * as sheets from './forms.js';
 
 // The canvas colors, which are `plot/qt/window3d.py`'s: the same near-black the
 // 2D pane draws on, and a box drawn in a gray that reads against it without
@@ -38,6 +51,8 @@ import * as controls from './controls.js';
 const BACKGROUND = '#0c0c10';
 const BOX_COLOR = 0x969696;
 const BOX_ALPHA = 0.43;
+const TICK_COLOR = 0x969696;
+const TICK_ALPHA = 0.78;
 
 // The light the card adds to the light Python baked in. Half of a vertex's
 // color is already how the surface lies to a fixed lamp - that is what makes a
@@ -85,12 +100,39 @@ const PANE_WIDTH = 760;
 const PANE_HEIGHT = 620;
 const PANE_STEP = 28;
 
-// The six numbers of the tool row, in the order they stand in it.
-const FIELDS = ['x0', 'x1', 'y0', 'y1', 'nx', 'ny'];
+// How far a tick mark and its number stand out of the box, and how far out the
+// name of an axis does, in the world units the box is measured in. The
+// desktop's numbers, so that the two pictures are furnished alike.
+const TICK_OUT = 0.35;
+const LABEL_OUT = 1.05;
+const NAME_OUT = 2.3;
+
+// How nearly an axis has to point at the camera before its numbers are dropped,
+// as the cosine of the angle between them: about five degrees. Facing the xy
+// plane makes the whole z axis one point of the screen, and five numbers
+// stacked on that point are five numbers about nothing.
+const EDGE_ON = 0.996;
+
+// The three axes, in the order the box reports its ticks and its names in.
+const AXES = ['x', 'y', 'z'];
+
+// How the plot list is written into an exported picture: the size of the words
+// and how far in from the corner they stand, in logical pixels. The card is a
+// picture of the scene alone, and the legend is a floating element over it, so
+// an export that did not write the names would be a picture that had lost half
+// of what it showed.
+const LEGEND_PX = 12;
+const LEGEND_MARGIN_PX = 10;
 
 // How much of a hidden legend row is left standing. Dimmed rather than struck
 // through: a hidden surface is a surface that is still in the pane.
 const LEGEND_FADED = 0.4;
+
+// Why a picture cannot leave a pane that has no card in it. The refusal a
+// browser with no usable WebGL earns, said where the pane is looked at rather
+// than swallowed: a copy that did nothing and said nothing would look exactly
+// like a key bound to nothing.
+const NO_CARD = 'this pane has no 3D drawing to take a picture of';
 
 // How far the pointer may move between a right-button press and its release and
 // still count as a click that opens the menu rather than a pan of the camera.
@@ -141,15 +183,36 @@ function capture(element, event) {
 // Called by the page as it builds itself, so that a pane which closes while it
 // holds the keyboard knows where to hand it back. The terminal is the only
 // other thing on the page that takes keys.
+//
+// The copy event is listened for here for the reason `plot2d.js` listens for
+// its own. Ctrl+C reaches a pane as a `copy` and not as a key press: a page
+// that cancels the keydown cancels the copy the browser was about to offer it,
+// so the key ladder leaves the stroke alone and this is where it arrives. The
+// listener is the document's because a copy event is raised where the selection
+// is rather than on whatever holds the keyboard, and it goes to the pane that
+// has focus - which is what keeps it away from the terminal and from a flat
+// pane alike.
 export function wire(term) {
   terminal = term;
+  document.addEventListener('copy', (event) => {
+    const pane = holding();
+    if (pane !== null) pane._copied(event);
+  });
+}
+
+// The 3D pane the keyboard is in, or null while it is anywhere else.
+function holding() {
+  for (const pane of panes.values()) {
+    if (pane.element.contains(document.activeElement)) return pane;
+  }
+  return null;
 }
 
 // One pane, opened where the plot session asked for one. What comes back is
 // what the session's window handle calls into: everything here is a method
 // Python names, and nothing else on this side is reachable from there.
-export function open(number, commands, handlers) {
-  const pane = new Solid(number, commands, handlers);
+export function open(number, commands, strip, form, handlers) {
+  const pane = new Solid(number, commands, strip, form, handlers);
   panes.set(number, pane);
   return pane;
 }
@@ -189,18 +252,30 @@ export function heard(message) {
 // -- one pane -------------------------------------------------------------------
 
 class Solid {
-  constructor(number, commands, handlers) {
+  constructor(number, commands, strip, form, handlers) {
     this.number = number;
     // What this pane offers, as `plot/controls.py` describes it: the keys, the
     // buttons and the words are read off this and are spelled nowhere here.
     this.commands = commands;
+    // The domain and the grid as a strip of fields, and the box and the camera
+    // as a form: both are `plot/forms.py`'s, and neither is laid out here.
+    this.description = strip;
+    this.viewForm = form;
     this.say = handlers;
     this.plots = new Map();
     this.order = [];
     this.standing = null;
     this.listed = true;
     this.boxed = true;
-    this.inspecting = false;
+    // Whether the numbers along the box edges and the names of the axes are
+    // drawn, which is the one furnishing with nothing else to say its state.
+    this.named = true;
+    // What the three axes are called. Python says, taking them from the first
+    // surface's own expression.
+    this.axes = [...AXES];
+    // The inspector now up over the pane, so that a second `View...` closes it
+    // rather than standing a second one on top of it.
+    this.sheet = null;
     this.message = '';
     this.spinning = null;
     this._build();
@@ -223,7 +298,7 @@ class Solid {
       '<button class="plot-close" title="Close">×</button></div>' +
       '<div class="plot-tools"></div>' +
       '<div class="plot-canvas"><div class="plot-legend"></div>' +
-      '<div class="plot-readout"></div></div>' +
+      '<div class="plot-marks"></div></div>' +
       '<div class="plot-status"></div>';
     this.element = pane;
     this.bar = pane.querySelector('.plot-bar');
@@ -231,7 +306,10 @@ class Solid {
     this.tools = pane.querySelector('.plot-tools');
     this.canvas = pane.querySelector('.plot-canvas');
     this.card = pane.querySelector('.plot-legend');
-    this.readout = pane.querySelector('.plot-readout');
+    // Where the writing on the box goes: a layer over the card that the pointer
+    // passes straight through, holding one element per number and per name.
+    this.writing = pane.querySelector('.plot-marks');
+    this.labels = [];
     this.status = pane.querySelector('.plot-status');
     surface().appendChild(pane);
     pane.querySelector('.plot-close').addEventListener('click', () => {
@@ -270,40 +348,14 @@ class Solid {
 
   // The domain, the grid, and the buttons the description gives a word to.
   // Everything else about a 3D pane is the camera, and the camera is the mouse.
+  //
+  // The strip is `plot/forms.py`'s, down to the word standing in front of each
+  // field and the hairline between one answer and the next: a domain in x, a
+  // domain in y and a grid are three answers rather than six numbers in a row,
+  // and the desktop's toolbar is laid out from the same description.
   _toolbar() {
-    this.fields = {};
-    const put = (text) => {
-      const label = document.createElement('span');
-      label.className = 'plot-label';
-      label.textContent = text;
-      this.tools.appendChild(label);
-    };
-    const field = (name) => {
-      const edit = document.createElement('input');
-      edit.className = 'plot-field';
-      edit.spellcheck = false;
-      // Enter and leaving the field are the same answer, which is what a
-      // toolbar field means everywhere: the numbers now in the six of them.
-      edit.addEventListener('change', () => this._framed());
-      edit.addEventListener('keydown', (event) => {
-        event.stopPropagation();
-        if (event.key === 'Enter') this._framed();
-      });
-      this.fields[name] = edit;
-      this.tools.appendChild(edit);
-    };
-    put('x:');
-    field('x0');
-    put('…');
-    field('x1');
-    put('y:');
-    field('y0');
-    put('…');
-    field('y1');
-    put('grid:');
-    field('nx');
-    put('×');
-    field('ny');
+    this.strip = sheets.strip(this.tools, this.description, () => this._framed());
+    this.fields = this.description.fields.map((one) => one.name);
     this.buttons = controls.bar(this.tools, this.commands, (name) => {
       this.say.command(name, null);
       this.element.focus();
@@ -349,6 +401,7 @@ class Solid {
     const height = Math.max(this.canvas.clientHeight, 120);
     this.renderer.setSize(width, height, false);
     this._lens(width, height);
+    this._anchor();
     this._paint();
   }
 
@@ -369,7 +422,13 @@ class Solid {
   // happened. Never a blank rectangle and no explanation.
   _scene() {
     try {
-      this.renderer = new THREE.WebGLRenderer({ antialias: true });
+      // The drawing buffer is kept because a picture leaving the pane is read
+      // off it, and a card that cleared after every frame would hand back a
+      // blank rectangle to whoever asked for one a moment later.
+      this.renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        preserveDrawingBuffer: true,
+      });
     } catch (error) {
       this.said(`3D drawing is not available: ${error && error.message}`);
       return;
@@ -406,19 +465,20 @@ class Solid {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = false;
     this.controls.addEventListener('change', () => {
-      this._readout();
+      this._anchor();
+      this._followed();
       this._paint();
     });
     this.frame = this._frame();
     this.world.add(this.frame);
+    this.marks = this._marks();
+    this.world.add(this.marks);
   }
 
-  // The box the picture stands in: twelve edges and nothing else.
-  //
-  // The desktop draws numbers along three of them, which wants a font on a
-  // card; here the numbers are in the tool row and the readout, where they are
-  // also editable. What the edges are for is the same either way - a surface
-  // floating in the dark is a shape nobody can tell the size of.
+  // The box the picture stands in: twelve edges, and the numbers along three of
+  // them. A surface floating in the dark is a shape nobody can tell the size
+  // of, and a box with no writing on it is a shape nobody can tell the scale
+  // of - so both are drawn, the edges as geometry and the writing as DOM.
   _frame() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute(
@@ -431,6 +491,24 @@ class Solid {
       opacity: BOX_ALPHA,
     });
     const lines = new THREE.LineSegments(geometry, material);
+    lines.visible = false;
+    return lines;
+  }
+
+  // The dashes standing out of the three edges the numbers are written along.
+  // Rebuilt on every camera move, which is a few dozen coordinates and no
+  // geometry at all: the edges that carry them change as the picture turns.
+  _marks() {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+    const lines = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: TICK_COLOR,
+        transparent: true,
+        opacity: TICK_ALPHA,
+      }),
+    );
     lines.visible = false;
     return lines;
   }
@@ -503,11 +581,58 @@ class Solid {
     this.element.classList.toggle('current', Boolean(current));
   }
 
-  // The six numbers of the tool row, as Python spells them. It owns the domain
-  // and the grid; these fields show what it has and hand back what was typed.
-  domain(x0, x1, y0, y1, nx, ny) {
-    const values = [x0, x1, y0, y1, nx, ny];
-    FIELDS.forEach((name, at) => { this.fields[name].value = values[at]; });
+  // The six numbers of the tool row, as Python spells them and in the order the
+  // description stands its fields in. It owns the domain and the grid; these
+  // fields show what it has and hand back what was typed.
+  domain(...values) {
+    this.fields.forEach((name, at) => {
+      const edit = this.strip.fields.get(name);
+      if (edit !== undefined) edit.value = values[at];
+    });
+  }
+
+  // What the three axes are called, which is the first surface's own reading of
+  // its expression. Python takes them off the plot list; nothing here invents a
+  // letter, and an empty pane is told the three every reader supplies anyway.
+  named(across, along, up) {
+    this.axes = [across, along, up];
+    this._anchor();
+  }
+
+  // The inspector, opened over the pane or taken away again. The six box
+  // numbers arrive spelled by Python, which owns the domain and the z; the
+  // three camera numbers are the page's, being where a reader is standing
+  // rather than a value of anything. Whoever owns the number writes it.
+  inspect(box) {
+    if (this.sheet !== null) {
+      this.sheet.close();
+      return;
+    }
+    const at = this.where();
+    this.sheet = sheets.ask(
+      this.element,
+      this.viewForm,
+      [...box, rounded(at.azimuth), rounded(at.elevation), rounded(at.distance)],
+      (said, role) => this.say.typed(this.viewForm.name, said, role),
+      () => {
+        this.sheet = null;
+        this.lit('view.inspect', false);
+        this.element.focus();
+      },
+    );
+    this.lit('view.inspect', true);
+  }
+
+  // The box fields filled again after an answer moved the picture, wherever the
+  // inspector is still up. The camera half follows the mouse instead, in
+  // `_followed` below, which is what the form's own subtitle promises.
+  showing(box) {
+    if (this.sheet === null) return;
+    const written = {};
+    this.viewForm.fields.forEach((one, at) => {
+      if (at < box.length) written[one.name] = box[at];
+    });
+    this.sheet.fill(written);
   }
 
   said(text) {
@@ -516,6 +641,7 @@ class Solid {
   }
 
   dismiss() {
+    if (this.sheet !== null) this.sheet.close();
     // Where the keys go next. A pane that had them - the close button it was
     // shut with is inside it - would otherwise leave them on nothing, and the
     // program would look as though it had stopped listening.
@@ -543,12 +669,11 @@ class Solid {
     if (message.world) this._stand(message);
     this.said(message.words || '');
     this._relabel();
-    this._readout();
     this._paint();
-    // What the surface asks for in z, and what it was drawn in. The pane on the
-    // Python side is what decides between the two, since one box for the window
-    // is a rule about a picture and not about a surface.
-    this.say.stood(message.plot, message.wanted, message.zrange);
+    // What the surface's values measure in z, and the box it was drawn in. The
+    // pane on the Python side is what pools the first into the second, since
+    // one box for the window is a rule about a picture and not about a surface.
+    this.say.stood(message.plot, message.span, message.zrange);
   }
 
   // The box every surface in the pane stands in, as the answer just described
@@ -576,6 +701,7 @@ class Solid {
     points.needsUpdate = true;
     this.frame.geometry.computeBoundingSphere();
     this.frame.visible = this.boxed;
+    this._anchor();
   }
 
   // -- drawing ----------------------------------------------------------------
@@ -622,38 +748,133 @@ class Solid {
     }
   }
 
-  // The numbers behind the picture: the box as Python wrote it, the camera as
-  // the page has it, and how much geometry there is to look at. Everything here
-  // is reachable with the mouse and the fields; what it adds is exactness, and
-  // a 3D picture is one of the few places where that is worth a panel.
-  _readout() {
-    if (!this.inspecting) {
-      this.readout.style.display = 'none';
+  // -- the writing on the box ---------------------------------------------------
+
+  // Put the tick marks and the numbers on the box edges nearest the camera.
+  //
+  // Three edges carry them: the two bottom edges of the side the camera is on,
+  // which is where a number sits in front of the picture rather than behind it,
+  // and for the upright axis the far vertical edge, which is the one the
+  // surface does not stand in front of. Which edges those are changes as the
+  // view turns, so this runs on every camera move; it is a few dozen positions
+  // and no geometry at all.
+  //
+  // An axis pointing at the camera is left unnumbered. Facing the xy plane
+  // makes the whole z axis one point of the screen, and five numbers stacked on
+  // that point are five numbers about nothing; the axis keeps its name, which
+  // is all there is to say about it from there.
+  //
+  // Where each number falls and what it reads is Python's, in the same function
+  // and off the same ruler the desktop's window uses. What is worked out here
+  // is which edge it stands against and where that lands on the screen.
+  _anchor() {
+    const box = this.standing;
+    if (this.camera === undefined || box === null) {
+      this._write([], []);
       return;
     }
-    this.readout.style.display = '';
-    if (this.camera === undefined) return;
-    const box = this.standing;
-    const camera = this.where();
-    const lines = [];
-    if (box !== null) {
-      lines.push(`center   ${box.reading.center.join('   ')}`);
-      lines.push(`length   ${box.reading.lengths.join('   ')}`);
-      lines.push(`z        ${box.reading.z.join(' … ')}`);
+    const half = box.world / 2;
+    const floor = -box.height / 2;
+    const at = this.camera.position;
+    const nearY = at.y < 0 ? -half : half;
+    const nearX = at.x < 0 ? -half : half;
+    const farX = -nearX;
+    const farY = -nearY;
+    const outY = Math.sign(nearY);
+    const outX = Math.sign(nearX);
+    // The upright edge is a corner, so its numbers stand out along both floor
+    // directions at once rather than along either.
+    const up = [Math.sign(farX) * 0.7, Math.sign(farY) * 0.7];
+    const headOn = this._headOn();
+    const ticks = box.ticks || {};
+    const segments = [];
+    const written = [];
+    const ruler = (axis, foot, out) => {
+      if (headOn[AXES.indexOf(axis)]) return;
+      for (const tick of ticks[axis] || []) {
+        const from = foot(tick.at);
+        segments.push(from, stepped(from, out, TICK_OUT));
+        written.push({ where: stepped(from, out, LABEL_OUT), text: tick.text });
+      }
+    };
+    ruler('x', (value) => [value, nearY, floor], [0, outY, 0]);
+    ruler('y', (value) => [nearX, value, floor], [outX, 0, 0]);
+    ruler('z', (value) => [farX, farY, value], [up[0], up[1], 0]);
+    const names = [
+      [0, nearY + outY * NAME_OUT, floor],
+      [nearX + outX * NAME_OUT, 0, floor],
+      [farX + up[0] * NAME_OUT, farY + up[1] * NAME_OUT, -floor * 0.9],
+    ];
+    this.axes.forEach((name, axis) => {
+      if (name) written.push({ where: names[axis], text: name, name: true });
+    });
+    this._write(segments, written);
+  }
+
+  // Which axes point so nearly at the camera that they have no length on the
+  // screen. The camera looks along the line from itself to the box's center, so
+  // an axis is edge-on exactly when it is parallel to that line - which is what
+  // each of the three presets makes one of them.
+  _headOn() {
+    const at = this.camera.position;
+    const length = Math.hypot(at.x, at.y, at.z);
+    if (!length) return [false, false, false];
+    return [at.x, at.y, at.z].map((value) => Math.abs(value) / length > EDGE_ON);
+  }
+
+  // The dashes as geometry and the words as DOM, both from what `_anchor` just
+  // worked out.
+  //
+  // What a frame costs is one projected point and two style writes per number,
+  // which for a box of five ticks an axis and three names is under twenty of
+  // each. The elements are pooled and their text is left alone where it has not
+  // changed: a rotation runs this sixty times a second, and a layer emptied and
+  // refilled that often is a layer the browser lays out that often.
+  _write(segments, written) {
+    if (this.marks !== undefined) {
+      const flat = new Float32Array(segments.length * 3);
+      segments.forEach((point, at) => flat.set(point, at * 3));
+      this.marks.geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+      this.marks.geometry.computeBoundingSphere();
+      // The dashes belong to the box and the words to the naming, which is how
+      // the desktop's two toggles divide them: a box with no numbers beside it
+      // still says where its divisions fall.
+      this.marks.visible = this.boxed && segments.length > 0;
     }
-    lines.push(
-      `camera   azimuth ${rounded(camera.azimuth)}` +
-      `   elevation ${rounded(camera.elevation)}` +
-      `   distance ${rounded(camera.distance)}`,
-    );
-    for (const serial of this.order) {
-      const plot = this.plots.get(serial);
-      if (plot === undefined) continue;
-      lines.push(
-        `${plot.label}   ${plot.vertices} vertices   ${plot.triangles} triangles`,
-      );
+    const shown = this.named ? written : [];
+    while (this.labels.length < shown.length) {
+      const label = document.createElement('span');
+      label.className = 'plot-mark';
+      this.writing.appendChild(label);
+      this.labels.push(label);
     }
-    this.readout.textContent = lines.join('\n');
+    this.labels.forEach((label, at) => {
+      if (at >= shown.length) {
+        label.style.display = 'none';
+        return;
+      }
+      const one = shown[at];
+      const spot = this._project(one.where);
+      label.style.display = '';
+      label.classList.toggle('name', Boolean(one.name));
+      if (label.textContent !== one.text) label.textContent = one.text;
+      label.style.left = `${spot.x}px`;
+      label.style.top = `${spot.y}px`;
+    });
+  }
+
+  // One point of the box on the screen, through the very projection the card
+  // draws the box with - which is what makes a number sit against the edge it
+  // is about however the picture is turned.
+  _project(where) {
+    const point = new THREE.Vector3(where[0], where[1], where[2]);
+    point.project(this.camera);
+    const wide = this.canvas.clientWidth;
+    const tall = this.canvas.clientHeight;
+    return {
+      x: (point.x * 0.5 + 0.5) * wide,
+      y: (-point.y * 0.5 + 0.5) * tall,
+    };
   }
 
   // -- the camera --------------------------------------------------------------
@@ -687,7 +908,8 @@ class Solid {
     );
     this.controls.target.set(0, 0, 0);
     this.controls.update();
-    this._readout();
+    this._anchor();
+    this._followed();
     this._paint();
   }
 
@@ -722,7 +944,25 @@ class Solid {
   // -- the fields, the toggles and the keyboard ---------------------------------
 
   _framed() {
-    this.say.framed(...FIELDS.map((name) => this.fields[name].value.trim()));
+    this.say.framed(
+      ...this.fields.map((name) => {
+        const edit = this.strip.fields.get(name);
+        return edit === undefined ? '' : edit.value.trim();
+      }),
+    );
+  }
+
+  // The camera half of the inspector, kept up to date while it is open, which
+  // is what the form's own subtitle promises: it is a readout as well as a
+  // field. The three numbers are the page's own, so the page spells them.
+  _followed() {
+    if (this.sheet === null) return;
+    const at = this.where();
+    this.sheet.fill({
+      azimuth: String(rounded(at.azimuth)),
+      elevation: String(rounded(at.elevation)),
+      distance: String(rounded(at.distance)),
+    });
   }
 
   legend() {
@@ -737,15 +977,135 @@ class Solid {
     if (this.frame !== undefined) {
       this.frame.visible = this.boxed && this.standing !== null;
     }
+    this._anchor();
     this._paint();
   }
 
-  // The panel of numbers behind the picture, which is what this pane has where
-  // the desktop opens an inspector.
-  inspect() {
-    this.inspecting = !this.inspecting;
-    this.lit('view.inspect', this.inspecting);
-    this._readout();
+  // The numbers along the box edges and the names of the axes, or neither.
+  naming() {
+    this.named = !this.named;
+    this._anchor();
+    this._paint();
+  }
+
+  // -- the picture, off the pane ------------------------------------------------
+
+  // The command's copy, which is what the menu entry reaches. The key reaches
+  // `_copied` below instead, and both end on the same road: a 3D pane has no
+  // reading to carry, so what leaves it is always the picture.
+  copy() {
+    this._copyImage();
+  }
+
+  // Ctrl+C, arriving as the event it has to arrive as. The default is cancelled
+  // so that a pane with nothing selected does not copy an empty string over
+  // whatever was on the clipboard.
+  _copied(event) {
+    if (controls.evented(this.commands, 'copy') === null) return;
+    event.preventDefault();
+    this._copyImage();
+  }
+
+  _copyImage() {
+    const shot = this._photograph();
+    const clipboard = navigator.clipboard;
+    if (shot === null) {
+      this.say.copied('', NO_CARD);
+      return;
+    }
+    if (typeof ClipboardItem === 'undefined' || clipboard === undefined
+        || clipboard.write === undefined) {
+      this.say.copied('', 'ClipboardItem is unavailable');
+      return;
+    }
+    shot.toBlob((blob) => {
+      if (blob === null) {
+        this.say.copied('', 'canvas.toBlob gave nothing');
+        return;
+      }
+      clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(
+        () => this.say.copied('', ''),
+        (refused) => this.say.copied('', String(refused)),
+      );
+    }, 'image/png');
+  }
+
+  // Export, which in a tab is a download: an object URL and a link clicked from
+  // here, since that is the only way a file leaves a page.
+  //
+  // A PNG, which is also what the desktop's 3D window exports: there is no
+  // painter path behind a card, so a picture of a solid is pixels on either
+  // side of the program. The sentence Python says names the size.
+  export() {
+    const shot = this._photograph();
+    const name = `plot${this.number}.png`;
+    if (shot === null) {
+      this.say.exported(name, 0, 0, NO_CARD);
+      return;
+    }
+    shot.toBlob((blob) => {
+      if (blob === null) {
+        this.say.exported(name, 0, 0, 'canvas.toBlob gave nothing');
+        return;
+      }
+      try {
+        const address = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = address;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Freed on the next turn of the loop: revoked while the download is
+        // still starting, the file is taken away from it.
+        setTimeout(() => URL.revokeObjectURL(address), 0);
+      } catch (refused) {
+        this.say.exported(name, 0, 0, String(refused));
+        return;
+      }
+      this.say.exported(name, shot.width, shot.height, '');
+    }, 'image/png');
+  }
+
+  // The pane as one image: the card, and the names of what is standing on it.
+  //
+  // The scene is painted first, because a drawing buffer is only guaranteed to
+  // hold what was last rendered into it. The legend and the writing on the box
+  // are DOM over the card rather than anything drawn into it, so the plot list
+  // is written on afterwards, exactly as the desktop's export writes it. A pane
+  // with no card at all answers with nothing, and the caller says so rather
+  // than handing back a blank rectangle.
+  _photograph() {
+    if (this.renderer === undefined) return null;
+    this._paint();
+    const source = this.renderer.domElement;
+    const shot = document.createElement('canvas');
+    shot.width = source.width;
+    shot.height = source.height;
+    const ctx = shot.getContext('2d');
+    ctx.fillStyle = BACKGROUND;
+    ctx.fillRect(0, 0, shot.width, shot.height);
+    ctx.drawImage(source, 0, 0);
+    this._namePlots(ctx, shot.width, shot.width / Math.max(source.clientWidth, 1));
+    return shot;
+  }
+
+  _namePlots(ctx, wide, ratio) {
+    if (!this.listed || this.order.length === 0) return;
+    const size = LEGEND_PX * ratio;
+    ctx.save();
+    ctx.font = `${size}px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    let down = LEGEND_MARGIN_PX * ratio;
+    for (const serial of this.order) {
+      const plot = this.plots.get(serial);
+      if (plot === undefined || plot.hidden) continue;
+      ctx.fillStyle = plot.color;
+      ctx.fillText(plot.name, wide - LEGEND_MARGIN_PX * ratio, down);
+      down += size * 1.4;
+    }
+    ctx.restore();
   }
 
   // -- the menus -----------------------------------------------------------
@@ -776,6 +1136,7 @@ class Solid {
     return {
       spinning: this.spinning !== null,
       boxed: this.boxed,
+      names: this.named,
       legend: this.listed,
       pointed,
     };
@@ -973,8 +1334,14 @@ function typed(array, label, kind = Float32Array) {
   return array;
 }
 
-// A camera angle as the readout shows one. The numbers of the box are spelled
+// A camera angle as the inspector shows one. The numbers of the box are spelled
 // in Python, where they mean something; these are the page's own.
 function rounded(value) {
   return Number(value.toFixed(2));
+}
+
+// One point of the box stepped out of it, along a direction and by a distance,
+// which is where a tick mark ends and where its number stands.
+function stepped(from, out, far) {
+  return [from[0] + out[0] * far, from[1] + out[1] * far, from[2] + out[2] * far];
 }

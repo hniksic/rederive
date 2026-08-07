@@ -174,10 +174,13 @@ class FakePage:
 class FakeSolid:
     """One 3D pane as the backend speaks to one, recording what it is told."""
 
-    def __init__(self, number, commands, handlers):
+    def __init__(self, number, commands, strip, form, handlers):
         self.number = number
         #: What the pane was told it may offer, as `plot/controls.py` says it.
         self.commands = commands
+        #: The domain strip and the inspector, as `plot/forms.py` describes them.
+        self.strip = strip
+        self.form = form
         self.say = handlers
         self.plots = {}
         self.order = []
@@ -195,6 +198,10 @@ class FakeSolid:
         self.done = []
         #: What the six fields of the tool row are showing.
         self.fields = ()
+        #: What the three axes are called, and the box the inspector was last
+        #: opened on or filled with.
+        self.axes = ()
+        self.inspected = None
         #: Every `starting` the backend announced, as a surface and a generation.
         self.started = []
 
@@ -206,11 +213,27 @@ class FakeSolid:
         self.spinning = rotating
         self.done.append("spin")
 
-    def inspect(self):
+    def inspect(self, box):
+        self.inspected = tuple(box)
         self.done.append("inspect")
+
+    def showing(self, box):
+        self.inspected = tuple(box)
+
+    def named(self, across, along, up):
+        self.axes = (across, along, up)
 
     def box(self):
         self.done.append("box")
+
+    def naming(self):
+        self.done.append("names")
+
+    def copy(self):
+        self.done.append("copy")
+
+    def export(self):
+        self.done.append("export")
 
     def legend(self):
         self.done.append("legend")
@@ -257,8 +280,8 @@ class FakeSolids:
         self.handlers = None
         self.stopped = 0
 
-    def open(self, number, commands, handlers):
-        pane = FakeSolid(number, commands, handlers)
+    def open(self, number, commands, strip, form, handlers):
+        pane = FakeSolid(number, commands, strip, form, handlers)
         self.panes[number] = pane
         return pane
 

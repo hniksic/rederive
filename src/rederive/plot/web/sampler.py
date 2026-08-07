@@ -40,7 +40,7 @@ from typing import Any
 
 import numpy as np
 
-from rederive.plot import evaluate, resample
+from rederive.plot import actions, evaluate, resample, view
 from rederive.plot import surface as geometry
 from rederive.plot.model import (
     FIELDS,
@@ -359,26 +359,26 @@ def _built(
 ) -> dict[str, Any]:
     """The mesh, the wire and the shading of one grid, placed in one box.
 
-    Two z ranges travel back and they are different questions. The box is what
-    the vertices were placed in, which is the pane's where the pane has one;
-    `wanted` is what this surface's own values ask for, which is what the pane
-    unions to arrive at the box in the first place. A pane with one surface
-    gets the same two numbers twice and evaluates once for them.
+    Three z's travel back and they are three different questions. The box is
+    what the vertices were placed in, which is the pane's where the pane has
+    one; `wanted` is the box this surface would stand in alone; and `span` is
+    what its values measure, which is the summary the pane pools with every
+    other surface's to arrive at the box in the first place. A pane with one
+    surface gets the same answer three ways and evaluates once for it.
     """
-    found = geometry.extent([values])
-    if found is None:
+    span = geometry.spanned(values)
+    if span is None:
         return _undrawn() | {
             "empty": True,
             "words": f"{surface.label}: no real values over this domain",
         }
+    found = view.pooled([span])
+    assert found is not None
     wanted, clipped = found
     zrange = wanted if request.zrange is None else request.zrange
     said = ""
     if clipped and request.zrange is None:
-        said = (
-            "z clipped to the 1st-99th percentile:"
-            f" {roughly(wanted[0])} to {roughly(wanted[1])}"
-        )
+        said = actions.clipped(*wanted)
     box = geometry.Box(request.xdomain, request.ydomain, zrange)
     vertexes, faces, shading = geometry.mesh(xs, ys, values, box, boundary)
     points, shades = geometry.wire(xs, ys, values, box, boundary)
@@ -389,6 +389,7 @@ def _built(
         "wire": _placed(points),
         "wirecolors": _tinted(shades, surface.color),
         "wanted": [float(wanted[0]), float(wanted[1])],
+        "span": [span.low, span.high, span.inner_low, span.inner_high],
         "clipped": bool(clipped),
         "words": said,
     } | _box(box)
@@ -417,7 +418,9 @@ def _box(box: geometry.Box) -> dict[str, Any]:
     The reading is spelled here rather than by the page, in the function the
     desktop's fields and tick labels are spelled by, so that the two programs
     say the same number the same way and neither has to be trusted with the
-    other's arithmetic.
+    other's arithmetic. The tick marks go the same way and for the same reason,
+    and they carry a world coordinate each so that the page has only to project
+    a point it was handed.
     """
     return {
         "world": float(geometry.WORLD),
@@ -430,7 +433,29 @@ def _box(box: geometry.Box) -> dict[str, Any]:
             "lengths": [written(value) for value in box.lengths],
             "z": [written(box.z[0]), written(box.z[1])],
         },
+        "ticks": {
+            "x": _marks(box.x, box.across),
+            "y": _marks(box.y, box.along),
+            "z": _marks(box.z, box.up),
+        },
     }
+
+
+def _marks(
+    span: tuple[float, float], place: Callable[..., Any]
+) -> list[dict[str, Any]]:
+    """The round numbers of one axis: where each stands in the box, and its words.
+
+    Chosen and spelled where the numbers are. `plot/surface.py` says what a
+    ruler is divided in, for both backends, and `written` is the one function
+    either of them spells a number with; what crosses is a coordinate in the
+    box's own world units and a string, so the page projects a point and writes
+    nothing.
+    """
+    return [
+        {"at": float(place(value)), "text": written(value)}
+        for value in geometry.ticks(span[0], span[1])
+    ]
 
 
 def _undrawn() -> dict[str, Any]:
@@ -446,6 +471,7 @@ def _undrawn() -> dict[str, Any]:
         "wire": np.empty(0, dtype=np.float32),
         "wirecolors": np.empty(0, dtype=np.float32),
         "wanted": [],
+        "span": [],
         "clipped": False,
     }
 

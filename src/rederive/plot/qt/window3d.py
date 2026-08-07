@@ -75,7 +75,7 @@ from rederive.plot.surface import (
     ticks,
     wire,
 )
-from rederive.plot.view import DEFAULT_DOMAIN, DEFAULT_GRID
+from rederive.plot.view import DEFAULT_DOMAIN, DEFAULT_GRID, DEFAULT_ZRANGE
 from rederive.syntax import ParseState
 
 __all__ = ["Drawn", "Window3D"]
@@ -300,7 +300,7 @@ class Window3D(QtWidgets.QMainWindow):
         #: The z range now drawn, and the one the inspector nailed down where
         #: somebody typed it - a typed extent is an answer and is not autoscaled
         #: away by the next surface.
-        self.zrange = (-1.0, 1.0)
+        self.zrange = DEFAULT_ZRANGE
         #: What the three axes are called, which is the first surface's reading
         #: of the expression until there is one.
         self.axis_names = ("x", "y", "z")
@@ -782,11 +782,7 @@ class Window3D(QtWidgets.QMainWindow):
             self._draw(surface)
         self._anchor()
         if clipped:
-            low, high = self.zrange
-            self.say(
-                "z clipped to the 1st-99th percentile:"
-                f" {written(low)} to {written(high)}"
-            )
+            self.say(actions.clipped(*self.zrange))
 
     @property
     def box_now(self) -> Box:
@@ -1083,7 +1079,7 @@ class Window3D(QtWidgets.QMainWindow):
         moved = (xdomain, ydomain) != (self.xdomain, self.ydomain)
         self.xdomain, self.ydomain = xdomain, ydomain
         self._show_domain()
-        if zrange[1] > zrange[0] and not _alike(zrange, self.zrange):
+        if zrange[1] > zrange[0] and not forms.alike(zrange, self.zrange):
             self._fixed = zrange
         if moved:
             self.reevaluate()
@@ -1487,15 +1483,4 @@ class _on_paper:
             window._draw(surface)
         window._relabel()
         window._anchor()
-
-
-def _alike(one: tuple[float, float], other: tuple[float, float]) -> bool:
-    """Whether two ranges are the same range, allowing for what a field wrote.
-
-    A number that went out to a field as `16.6667` and came back is the same
-    number for this purpose: what is being asked is whether somebody typed
-    something, not whether two floats are equal.
-    """
-    span = max(abs(other[1] - other[0]), 1e-12)
-    return all(abs(a - b) <= 1e-4 * span for a, b in zip(one, other))
 

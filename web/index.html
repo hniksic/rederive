@@ -85,9 +85,9 @@
   .plot-pane {
     position: absolute;
     /* A stacking context of its own, so that what floats inside a pane - the
-       legend, the readout, the chip - floats inside that pane and not over the
-       pane in front of it. Without it a positioned child is painted in the
-       page's own stacking order, where it outranks every pane raised later. */
+       legend, the writing on a box, the chip - floats inside that pane and not
+       over the pane in front of it. Without it a positioned child is painted in
+       the page's own stacking order, where it outranks every pane raised later. */
     z-index: 0;
     pointer-events: auto;
     display: flex;
@@ -209,19 +209,25 @@
   .plot-grid { display: grid; gap: 6px 8px; align-items: center; }
   .plot-entry { display: flex; align-items: center; gap: 6px; }
   .plot-answers { display: flex; justify-content: flex-end; gap: 6px; }
-  /* The numbers behind the picture, in the corner opposite the legend. */
-  .plot-readout {
+  /* The writing on a 3D box: the number at each tick and the name of each axis,
+     laid over the card and projected onto it by `plot3d.js`. DOM rather than a
+     font baked onto the card, so a number is drawn at the screen's own
+     resolution and costs a projected point rather than a texture. The layer
+     lets the pointer through everywhere, the camera being the mouse's. */
+  .plot-marks {
     position: absolute;
-    left: 10px;
-    bottom: 8px;
-    z-index: 3;
-    padding: 5px 8px;
-    background: rgba(17, 17, 23, 0.88);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 9px;
-    white-space: pre;
-    color: #b6bcc7;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    overflow: hidden;
   }
+  .plot-mark {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    color: #d0d0d0;
+  }
+  .plot-mark.name { color: #dde3ec; }
   .plot-status {
     padding: 4px 10px;
     min-height: 17px;

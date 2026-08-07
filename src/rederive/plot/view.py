@@ -16,9 +16,10 @@ window's, because they are the picture's rather than the mathematics'.
 
 A 3D window is framed by a domain rather than by a view - the mouse turns the
 picture and never re-evaluates it - so what it has here is the rectangle it
-opens on and how finely that is sampled. They are here rather than in either
-window because both backends open on them, and a browser opening on a different
-rectangle from a desktop would be two programs.
+opens on, how finely that is sampled, and how several surfaces arrive at the one
+z they are all drawn in. They are here rather than in either window because both
+backends open on them, and a browser opening on a different rectangle from a
+desktop would be two programs.
 
 Numpy is imported where it is used rather than at the top, and the three
 functions that use it are the three that take arrays of samples. The rest -
@@ -31,6 +32,7 @@ library into the instance that paints the screen.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rederive.plot.protocol import PlotKind
@@ -39,15 +41,20 @@ if TYPE_CHECKING:
     import numpy as np
 
 __all__ = [
+    "CLIP_FACTOR",
     "DEFAULT_DOMAIN",
     "DEFAULT_GRID",
+    "DEFAULT_ZRANGE",
     "MAX_GRID",
+    "PERCENTILES",
     "History",
+    "Span",
     "axis_at",
     "fitting",
     "framing",
     "home_range",
     "polar",
+    "pooled",
     "reread",
 ]
 
@@ -62,8 +69,72 @@ DEFAULT_DOMAIN = (-5.0, 5.0)
 DEFAULT_GRID = 64
 MAX_GRID = 256
 
+#: The z a 3D window stands in before anything has been evaluated into it. A
+#: box has to have a height for there to be a picture at all, and this is the
+#: one it has while it is empty.
+DEFAULT_ZRANGE = (-1.0, 1.0)
+
+#: When the z a box stands in is taken from the middle of the values rather
+#: than from the whole of them. A picture whose full range is four times its
+#: middle 98% has a spike in it, and drawing to the spike draws everything else
+#: as a floor.
+PERCENTILES = (1.0, 99.0)
+CLIP_FACTOR = 4.0
+
 #: A range, as everything here passes one around: two bounds each way.
 Ranges = tuple[tuple[float, float], tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class Span:
+    """What one surface's values ask for in z: all of them, and the middle of them.
+
+    Two ranges rather than one, because which of them a box takes is a question
+    about the picture and not about the surface. A spike is worth cutting away
+    only when it would flatten everything standing beside it, and what is
+    standing beside it is the rest of the window - so a surface reports both
+    ranges and `pooled` decides between them.
+
+    Four numbers rather than the values themselves, which is what lets a browser
+    have the same box as a desktop: the values are in the worker, the box is the
+    pane's, and four numbers a surface is what can cross between them.
+    """
+
+    low: float
+    high: float
+    inner_low: float
+    inner_high: float
+
+
+def pooled(spans: Sequence[Span]) -> tuple[tuple[float, float], bool] | None:
+    """The z every surface in one picture stands in, and whether a spike was cut.
+
+    One box for the window rather than one per surface: two surfaces in the same
+    picture are being compared, and comparing them through two vertical scales
+    would be a picture that lies. So what the box holds is the union of what
+    they ask for, and the middle it falls back to is the union of their middles -
+    the surface whose bulk reaches highest is the one that decides the lid, and
+    a spike in any of them is still a spike.
+
+    None where nothing has a finite value at all, which is a message rather than
+    a picture. Arithmetic over single numbers throughout, so that a browser's
+    main thread can pool what its worker measured.
+    """
+    if not spans:
+        return None
+    low = min(span.low for span in spans)
+    high = max(span.high for span in spans)
+    tight = (
+        min(span.inner_low for span in spans),
+        max(span.inner_high for span in spans),
+    )
+    clipped = False
+    if tight[1] > tight[0] and (high - low) > CLIP_FACTOR * (tight[1] - tight[0]):
+        low, high, clipped = tight[0], tight[1], True
+    if high <= low:
+        # A plane is a surface too, and a box of no height cannot be divided by.
+        low, high = low - 1.0, high + 1.0
+    return (low, high), clipped
 
 
 def home_range(width: float, height: float) -> Ranges:

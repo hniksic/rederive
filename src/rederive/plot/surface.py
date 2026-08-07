@@ -40,8 +40,9 @@ from typing import Any
 import numpy as np
 
 from rederive.plot import evaluate
+from rederive.plot.view import PERCENTILES, Span, pooled
 
-__all__ = ["Box", "brightened", "extent", "mesh", "place", "ticks", "wire"]
+__all__ = ["Box", "brightened", "extent", "mesh", "place", "spanned", "ticks", "wire"]
 
 #: The side of the square floor every surface is drawn over, and half of it,
 #: which is where the box walls are. World units, and they mean nothing else:
@@ -55,12 +56,6 @@ HALF = WORLD / 2
 #: line, and then it is exaggerated to this much so that there is a shape to
 #: look at rather than a lid.
 MIN_HEIGHT = 0.15
-
-#: When the z extent is taken from the percentiles rather than from the data.
-#: A surface whose full range is four times its middle 98% has a spike in it,
-#: and drawing to the spike is drawing everything else as a floor.
-PERCENTILES = (1.0, 99.0)
-CLIP_FACTOR = 4.0
 
 #: How a vertex's brightness is arrived at. Height is half of it - the ramp
 #: runs from `DIM` at the floor of the box to 1 at the lid - and how the
@@ -147,35 +142,41 @@ def place(values: Any, span: tuple[float, float], length: float) -> np.ndarray:
     return length * ((array - low) / width - 0.5)
 
 
-def extent(arrays: Sequence[np.ndarray]) -> tuple[tuple[float, float], bool] | None:
-    """The z range the box takes, and whether the percentiles decided it.
+def spanned(values: np.ndarray) -> Span | None:
+    """What one grid asks for in z: the whole of its finite values and the middle.
 
-    The whole finite data, unless the data is mostly one thing and a little of
-    another: a single pole in a corner of the grid can be a thousand times the
-    rest of the surface, and drawing to it makes every other feature a flat
-    floor. The 1st and 99th percentiles are then the box, the spike leaves the
-    mesh, and the window says that it did.
+    The measuring half of a box, and the only half that needs the values. What
+    is done with the two ranges is `plot/view.py`'s `pooled`, over every surface
+    in the window at once - a single pole in a corner of the grid can be a
+    thousand times the rest of the surface, and whether that is worth cutting
+    away is a question about the picture rather than about this array.
 
     None where there is nothing finite at all, which is the message rather than
     a picture.
     """
-    finite: list[np.ndarray] = []
-    for array in arrays:
-        flat = np.asarray(array, dtype=np.float64).ravel()
-        finite.append(flat[np.isfinite(flat)])
-    values = np.concatenate(finite) if finite else np.empty(0)
-    if not values.size:
+    flat = np.asarray(values, dtype=np.float64).ravel()
+    finite = flat[np.isfinite(flat)]
+    if not finite.size:
         return None
-    low, high = float(np.min(values)), float(np.max(values))
-    inner = np.percentile(values, PERCENTILES)
-    tight = (float(inner[0]), float(inner[1]))
-    clipped = False
-    if tight[1] > tight[0] and (high - low) > CLIP_FACTOR * (tight[1] - tight[0]):
-        low, high, clipped = tight[0], tight[1], True
-    if high <= low:
-        # A plane is a surface too, and a box of no height cannot be divided by.
-        low, high = low - 1.0, high + 1.0
-    return (low, high), clipped
+    inner = np.percentile(finite, PERCENTILES)
+    return Span(
+        low=float(np.min(finite)),
+        high=float(np.max(finite)),
+        inner_low=float(inner[0]),
+        inner_high=float(inner[1]),
+    )
+
+
+def extent(arrays: Sequence[np.ndarray]) -> tuple[tuple[float, float], bool] | None:
+    """The z range a box of these arrays takes, and whether a spike was cut out.
+
+    Measure each, then pool: the two halves are separate because only the first
+    of them needs the arrays, and a browser has the arrays in one interpreter
+    and the box in another. A window with the values in hand asks for both at
+    once, which is what this is.
+    """
+    spans = [span for span in (spanned(array) for array in arrays) if span is not None]
+    return pooled(spans)
 
 
 def mesh(

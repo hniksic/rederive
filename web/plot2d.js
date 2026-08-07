@@ -517,12 +517,12 @@ class Pane {
   // What is asked for and in what words is Python's; what comes back is the
   // text, in the order the description lists the fields.
   ask(form, values) {
-    if (this.sheet !== null) this.sheet();
+    if (this.sheet !== null) this.sheet.close();
     this.sheet = sheets.ask(
       this.element,
       form,
       values,
-      (said) => this.say.typed(form.name, said),
+      (said, role) => this.say.typed(form.name, said, role),
       () => {
         this.sheet = null;
         // The keyboard goes back to the pane, which is where it was before the
@@ -685,7 +685,7 @@ class Pane {
   }
 
   dismiss() {
-    if (this.sheet !== null) this.sheet();
+    if (this.sheet !== null) this.sheet.close();
     // Where the keys go next. A pane that had them - the close button it was
     // shut with is inside it - would otherwise leave them on nothing, and the
     // program would look as though it had stopped listening.
