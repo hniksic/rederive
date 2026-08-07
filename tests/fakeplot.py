@@ -6,9 +6,32 @@ them, and this is what lets them be asked without one. It is the second
 implementation of `plot.backend` that the desktop program does not have yet, so
 it is also where the protocol gets read back: a window here answers exactly the
 calls the session makes and no others.
+
+What a window's menu offers is now such a question too. The controls are a
+table and a menu is that table answered against a snapshot, so what a menu
+should read can be said on a machine with no display, no toolkit and no window
+at all - which is exactly the claim the seam makes.
 """
 
-from rederive.plot import protocol
+from rederive.plot import controls, protocol
+
+
+def offered(state):
+    """What a menu offers a window in this state: the words and the first key.
+
+    One pair per entry, in the order the menu draws them. A control with no key
+    on this platform says so with an empty one rather than being left out, since
+    a menu entry that answers to nothing is still a menu entry.
+    """
+    return [
+        (entry.label, entry.keys[0] if entry.keys else "")
+        for entry in controls.menu(state)
+    ]
+
+
+def ticked(state):
+    """Which of a menu's entries are switched on, by the words they read."""
+    return [entry.label for entry in controls.menu(state) if entry.checked]
 
 
 class FakeWindow:

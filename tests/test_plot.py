@@ -25,16 +25,17 @@ and no toolkit at all, which is also how they say that the seam is real.
 """
 
 import asyncio
+import dataclasses
 
 import numpy as np
 import pytest
-from fakeplot import FakeBackend, InlineExecutor
+from fakeplot import FakeBackend, InlineExecutor, offered, ticked
 from screen import band, highlighted, message, prompt
 
 from rederive.engine.context import Context
 from rederive.model.plotting import Unplottable, classify
 from rederive.model.session import Session
-from rederive.plot import evaluate
+from rederive.plot import actions, controls, evaluate
 from rederive.plot import protocol as plots
 from rederive.plot.model import Plot, Surface
 from rederive.plot.protocol import PlotKind
@@ -1425,12 +1426,138 @@ def test_the_export_pens_carry_the_same_weight(flat):
     assert plot.item.opts["pen"].widthF() == CURVE_WIDTH * flat.devicePixelRatioF()
 
 
+# -- one spelling of a control --------------------------------------------------
+#
+# What either window offers, in what words, in what order and under what keys is
+# one table in `plot.controls`, and what a menu should currently read is that
+# table answered against a snapshot of the window. Neither the table nor the
+# answer needs a display, which is what these ask: a menu is a thing a test can
+# read out loud on a machine with no toolkit at all, and a backend that renders
+# it has nowhere else to get a word from.
+
+
+def test_a_menu_is_described_off_a_snapshot_and_needs_no_window():
+    # The whole of a 2D menu, in the words and the order the table gives them,
+    # for a window nothing has been clicked on: the tail is about whatever the
+    # click was over and there is nothing there to be about.
+    assert offered(controls.Flat()) == [
+        ("Set range...", ""),
+        ("View all", "A"),
+        ("Home framing", "Home"),
+        ("Back", "Backspace"),
+        ("Trace", "T"),
+        ("Grid", "G"),
+        ("Legend", "L"),
+        ("Copy image", "Ctrl+C"),
+        ("Export...", "Ctrl+S"),
+        ("Clear", "Del"),
+        ("Close", "Q"),
+    ]
+    # A 3D window is a camera, so its menu is where to look from; what the
+    # toolbar shows the state of is not repeated on it.
+    assert offered(controls.Solid()) == [
+        ("Home view", "Home"),
+        ("Face the xy plane", "1"),
+        ("Face the xz plane", "2"),
+        ("Face the yz plane", "3"),
+        ("Rotate", "R"),
+        ("View...", ""),
+        ("Copy image", "Ctrl+C"),
+        ("Export...", "Ctrl+S"),
+        ("Remove", ""),
+        ("Clear", "Del"),
+        ("Close", "Q"),
+    ]
+
+
+def test_the_tail_of_a_menu_is_about_whatever_the_click_was_over():
+    curve = controls.Pointed(named="#1: SIN(x)", kind=PlotKind.CURVE)
+    points = controls.Pointed(named="#2", kind=PlotKind.DATA)
+    # A click on a curve can only be asking to remove it; the two things a data
+    # plot can be asked come with a data plot and with nothing else.
+    tail = [label for label, _ in offered(controls.Flat(pointed=curve))[11:]]
+    assert tail == ["Remove #1: SIN(x)"]
+    tail = [label for label, _ in offered(controls.Flat(pointed=points))[11:]]
+    assert tail == ["Remove #2", "Connect points", "Point size"]
+    # The connect entry says which way it would go, which is the other way.
+    connected = dataclasses.replace(points, connected=True)
+    assert "Disconnect points" in [
+        label for label, _ in offered(controls.Flat(pointed=connected))
+    ]
+    # And the sizes it offers are written down rather than worked out.
+    sizes = next(
+        entry
+        for entry in controls.menu(controls.Flat(pointed=points))
+        if entry.name == "points.size"
+    )
+    assert [item.label for item in sizes.items] == ["3 px", "5 px", "8 px", "12 px"]
+
+
+def test_the_ticks_of_a_menu_are_the_windows_and_not_the_menus():
+    # Nothing on a menu is the menu's own: a curve is taken hold of by a click
+    # and the grid by its key, so every tick is read off the snapshot.
+    assert ticked(controls.Flat()) == ["Grid", "Legend"]
+    assert ticked(controls.Flat(tracing=True, grid=False)) == ["Trace", "Legend"]
+    assert ticked(controls.Solid()) == []
+    assert ticked(controls.Solid(spinning=True)) == ["Rotate"]
+
+
+def test_the_remove_submenu_lists_what_a_3d_window_holds():
+    entry = next(
+        one
+        for one in controls.menu(controls.Solid(surfaces=("#1: x*y", "#2: x+y")))
+        if one.name == "surface.remove"
+    )
+    assert [item.label for item in entry.items] == ["#1: x*y", "#2: x+y"]
+    # An item names the surface by where it stands in the window's own list,
+    # which is what a backend removes it by.
+    assert [item.value for item in entry.items] == [0, 1]
+    # A submenu of an empty window is offered greyed rather than left off:
+    # what it would list is what the window is empty of.
+    empty = next(
+        one for one in controls.menu(controls.Solid()) if one.name == "surface.remove"
+    )
+    assert empty.items == () and not empty.enabled
+
+
+def test_a_legend_rows_menu_is_the_canvas_menus_own_words():
+    # A menu of its own, because half of a canvas menu is about the view and a
+    # click on a legend row is about one plot - but the words are the canvas
+    # menu's, which is what makes the row and the plot one target.
+    points = controls.Pointed(named="#2", kind=PlotKind.DATA, connected=True)
+    card = controls.card(controls.Flat(pointed=points))
+    assert [entry.label for entry in card] == ["Remove #2", "Disconnect points"]
+    # A 3D row offers the per-surface exception the toolbar's every-surface box
+    # is not, and says which way it would go.
+    solid = controls.Pointed(named="#1", kind=PlotKind.SURFACE, wire=True)
+    card = controls.card(controls.Solid(pointed=solid))
+    assert [entry.label for entry in card] == ["Draw solid", "Remove #1"]
+    assert [entry.label for entry in controls.card(controls.Solid())] == []
+
+
+def test_a_page_has_its_own_spelling_of_a_key_and_says_where_it_has_none():
+    # The two alphabets a key is written in. They are two spellings of one
+    # binding rather than two opinions about it, and a key the browser keeps
+    # for itself is simply short of the second - Ctrl+W closes a tab.
+    close = controls.control("close", controls.FLAT)
+    assert (close.keys, close.web) == (("Q", "Ctrl+W"), ("q",))
+    trace = controls.control("trace", controls.FLAT)
+    assert (trace.keys, trace.web) == (("T", "F3"), ("t", "F3"))
+    assert [entry.keys for entry in controls.menu(controls.Flat(), page=True)][:4] == [
+        (),
+        ("a",),
+        ("Home", "0", "h"),
+        ("Backspace",),
+    ]
+
+
 # -- the windows' own menus -----------------------------------------------------
 #
-# Both windows answer a right click with a menu written here rather than with
-# pyqtgraph's, and every entry carries the key that does the same thing with no
-# menu open. What these ask is that the menu is ours whole, that a key does its
-# thing exactly once, and that a key typed into a toolbar field is text.
+# Both windows answer a right click with a menu rendered from that table rather
+# than with pyqtgraph's, and every entry carries the key that does the same
+# thing with no menu open. What these ask is that the menu is ours whole, that
+# it says what the description says, that a key does its thing exactly once, and
+# that a key typed into a toolbar field is text.
 
 
 def _entries(menu):
@@ -1483,6 +1610,36 @@ def test_the_canvas_menu_is_the_windows_own_and_not_pyqtgraphs(flat):
     assert not flat.item.menuEnabled()
     words = {text for text, _ in _entries(flat.menu)}
     assert not words & {"Mouse Mode", "Plot Options", "X axis", "Y axis", "View All"}
+
+
+def _shown(menu):
+    """What a menu that has been opened is actually offering, ticks and all."""
+    return [
+        (action.text(), action.isChecked())
+        for action in menu.actions()
+        if not action.isSeparator() and action.isVisible()
+    ]
+
+
+def test_the_menu_a_window_opens_is_the_description_rendered(flat):
+    # The tie between the two halves: the window keeps the view state and hands
+    # over a snapshot, `plot.controls` says what the menu should read, and what
+    # comes up is that and nothing the window thought of for itself.
+    plot = flat.add(_plot("[[1, 2], [3, 4]]", PlotKind.DATA, ()))
+    flat.toggle_grid()
+    flat._pointed = plot
+    flat.menu.aboutToShow.emit()
+    described = [
+        (entry.label, entry.checked) for entry in controls.menu(flat.snapshot())
+    ]
+    assert _shown(flat.menu) == described
+    assert (f"Remove {plot.named}", False) in described
+    # And a window nothing was clicked on offers the head of the same menu.
+    flat._pointed = None
+    flat.menu.aboutToShow.emit()
+    assert _shown(flat.menu) == [
+        (entry.label, entry.checked) for entry in controls.menu(flat.snapshot())
+    ]
 
 
 class _Click:
@@ -1541,7 +1698,7 @@ def test_view_all_is_this_windows_autoscale_and_is_remembered(flat):
     flat.canvas.setRange(xRange=(-1.0, 1.0), yRange=(-1.0, 1.0), padding=0)
     framed = tuple(tuple(span) for span in flat.canvas.viewRange())
     _entry(flat.menu, "View all").trigger()
-    assert flat._history.last == framed
+    assert flat._framing.history.last == framed
     assert not flat.equal.isChecked()
     (left, right), (low, high) = flat.canvas.viewRange()
     # The curve is a third of a unit tall over the whole sampled abscissa, and
@@ -1595,7 +1752,7 @@ def test_the_set_range_dialog_frames_the_view_on_what_is_typed(flat):
     assert not flat.equal.isChecked()
     # The framing it replaced is one Backspace away, and the window says what
     # it is now showing.
-    assert flat._history.last == framed
+    assert flat._framing.history.last == framed
     assert flat.status.text().startswith("Showing -1 ≤ x ≤ 6.28319")
 
 
@@ -2111,6 +2268,19 @@ def test_the_3d_menu_is_the_cameras_list_with_its_keys(deep):
     assert deep.status.text() == "Facing the xy plane"
 
 
+def test_the_3d_menu_a_window_opens_is_the_description_rendered(deep):
+    # The same tie the 2D window makes: the window hands over a snapshot,
+    # `plot.controls` says what the menu should read, and what comes up is
+    # that.
+    deep.add(_surface("x*y"))
+    deep.spin()
+    deep.menu.aboutToShow.emit()
+    assert _shown(deep.menu) == [
+        (entry.label, entry.checked) for entry in controls.menu(deep.snapshot())
+    ]
+    assert ("Rotate", True) in _shown(deep.menu)
+
+
 def test_the_3d_menu_lists_every_surface_under_remove(deep):
     entry = _entry(deep.menu, "Remove")
     deep.menu.aboutToShow.emit()
@@ -2138,6 +2308,44 @@ def test_the_rotate_entry_is_read_off_the_timer_that_turns_the_picture(deep):
     deep.menu.aboutToShow.emit()
     assert not rotate.isChecked()
     assert not deep._spin.isActive()
+
+
+def test_the_inspector_is_the_view_as_the_nine_numbers_it_is(deep):
+    from rederive.plot import forms
+
+    # A form of named fields rather than a screen: the box as where it is and
+    # how big it is, and where it is looked at from. It opens on the picture as
+    # it stands, so a dialog opened to move one number is eight already right.
+    deep.add(_surface("x*y"))
+    deep.inspector()
+    sheet = deep._inspector
+    assert sheet.said(("cx", "lx")) == ("0", "10")
+    assert sheet.fields["azimuth"].text() == str(int(actions.CAMERA.azimuth))
+    # Applied, a typed box is the box, and a typed z outranks the autoscale.
+    for name, text in (("cz", "0"), ("lz", "2"), ("distance", "30")):
+        sheet.fields[name].setText(text)
+    sheet.answered(forms.Role.APPLY)
+    assert deep.zrange == pytest.approx((-1.0, 1.0))
+    assert deep.view.cameraParams()["distance"] == pytest.approx(30.0)
+    # Giving the z back to the data undoes that, and the fields say so.
+    sheet.answered(forms.Role.RESET)
+    assert deep.zrange != (-1.0, 1.0)
+    assert sheet.fields["lz"].text() != "2"
+    # A field that is not a number is refused in words and the form reverts.
+    sheet.fields["cx"].setText("π")
+    sheet.answered(forms.Role.APPLY)
+    assert deep.status.text() == forms.NUMBERS
+    assert sheet.fields["cx"].text() == "0"
+
+
+def test_the_inspector_follows_the_camera_while_it_is_open(deep):
+    deep.inspector()
+    sheet = deep._inspector
+    was = sheet.fields["azimuth"].text()
+    deep.face("xy")
+    # A readout as well as a form, which is what the subtitle promises.
+    assert sheet.fields["azimuth"].text() != was
+    assert sheet.fields["elevation"].text() == "90"
 
 
 def test_a_right_click_that_stays_put_is_what_asks_for_the_3d_menu(deep):

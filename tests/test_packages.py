@@ -55,7 +55,11 @@ PACKAGES = [
 #: them would put a numerical library in the instance that paints the screen.
 #: `rederive.plot.web.sampler` is the exception and the mirror of
 #: `rederive.web.worker`: it is the half that computes, and it runs where sympy
-#: and numpy already are.
+#: and numpy already are. The description of the controls, what a command does
+#: to a view and the fields a dialog is made of are on the list for the plainest
+#: reason of all: a page reads a menu, answers a key and opens an overlay on the
+#: thread that paints, and none of the three is allowed to cost it a numerical
+#: library on the way.
 CLIENT_SIDE = [
     "rederive.engine",
     "rederive.engine.boundary",
@@ -65,7 +69,10 @@ CLIENT_SIDE = [
     "rederive.model.session",
     "rederive.platform",
     "rederive.platform.web",
+    "rederive.plot.actions",
     "rederive.plot.backend",
+    "rederive.plot.controls",
+    "rederive.plot.forms",
     "rederive.plot.model",
     "rederive.plot.proxy",
     "rederive.plot.resample",

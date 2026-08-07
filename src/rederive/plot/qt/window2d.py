@@ -57,7 +57,7 @@ import pyqtgraph.exporters  # noqa: F401  - registers the exporters copy and exp
 from pyqtgraph.Qt import QtCore, QtGui, QtSvg, QtWidgets
 
 from rederive.engine.context import Angle, Context
-from rederive.plot import evaluate, protocol, resample, view
+from rederive.plot import actions, controls, evaluate, forms, protocol, resample, view
 from rederive.plot.model import (
     FIELDS,
     FUNCTIONS,
@@ -70,9 +70,9 @@ from rederive.plot.model import (
 )
 from rederive.plot.protocol import PlotKind
 from rederive.plot.qt import theme
-from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
+from rederive.syntax import ParseState
 
-__all__ = ["Drawn", "Legend", "Window2D"]
+__all__ = ["Drawn", "Legend", "Sheet", "Window2D"]
 
 #: The window's own colors. Near-black rather than black, so that a curve in
 #: black-adjacent color still reads and so that the window does not look like
@@ -117,10 +117,10 @@ MODIFIERS = (
 )
 
 #: How far the arrow keys move the trace marker, in pixels, plain and with
-#: Shift; and how far they pan the view, as a fraction of it.
+#: Shift. How far they pan a view that has no marker on it is a property of the
+#: view rather than of the marker, and is `plot.actions`'.
 NUDGE_PX = 1.0
 NUDGE_FAST_PX = 10.0
-PAN_SHARE = 0.25
 
 #: How far the arrow keys move the marker along a parametric curve, as a
 #: fraction of the parameter range, plain and with Shift. A five-hundredth is
@@ -131,9 +131,6 @@ STEP_FAST_SHARE = 1 / 50
 #: How solid a region's fill is. Enough to read as shading, little enough that
 #: a curve crossing it is still a curve.
 REGION_ALPHA = 0.25
-
-#: The sizes a data plot's right-click menu offers to draw its points at.
-POINT_SIZES = (3.0, 5.0, 8.0, 12.0)
 
 #: How the legend card is laid out, in logical pixels: the length of the color
 #: sample, the gap on either side of it, the room the eye affordance takes at
@@ -171,13 +168,16 @@ PARAMETRIZED = protocol.PARAMETRIZED
 
 def commanded(
     owner: Any,
-    keyed: dict[tuple[int, int], Any],
-    text: str,
+    keyed: dict[tuple[int, int], Any] | None,
+    one: controls.Control,
     handler: Callable[..., None],
-    keys: Sequence[str] = (),
-    checkable: bool = False,
 ) -> Any:
     """One thing a window does, as the menu entry and the keys that do it.
+
+    What the entry says and what it answers to are the control's and never this
+    file's: the words, the keys and the order they stand in are `plot.controls`'
+    table, and both window kinds build their menus by walking it. That is what
+    keeps the desktop's menu and the browser's the same menu.
 
     The keys are written on the action and put in `keyed`, which is the table
     the window's `keyPressEvent` dispatches from. Qt is never asked to press
@@ -189,19 +189,35 @@ def commanded(
     column, the ladder presses them, and a key typed into a toolbar field stays
     text in the field it was typed into, since a field with the keyboard takes
     it first.
-
-    Both window kinds build their menus through this, which is what keeps the
-    key a menu entry advertises and the key that works the same key.
     """
-    action = QtGui.QAction(text, owner)
-    action.setCheckable(checkable)
+    action = QtGui.QAction(controls.plain(one), owner)
+    action.setCheckable(one.kind is controls.Kind.TOGGLE)
+    keys = controls.keys(one)
     if keys:
         action.setShortcuts([QtGui.QKeySequence(key) for key in keys])
         action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
         action.setShortcutVisibleInContextMenu(True)
-        for sequence in action.shortcuts():
-            stroke = sequence[0]
-            keyed[(stroke.keyboardModifiers().value, int(stroke.key()))] = action
+        if keyed is not None:
+            for sequence in action.shortcuts():
+                stroke = sequence[0]
+                keyed[(stroke.keyboardModifiers().value, int(stroke.key()))] = action
+    action.triggered.connect(handler)
+    return action
+
+
+def buttoned(owner: Any, one: controls.Control, handler: Callable[..., None]) -> Any:
+    """One control as the button a toolbar draws it with.
+
+    A button of its own rather than the menu's action, because the two are
+    written differently - a bar says `clear` where a menu says `Clear` - and
+    both spellings are the control's. A toggle standing on a bar shows its own
+    state where it stands, which is worth more than an entry that has to be
+    opened to be read.
+    """
+    action = QtGui.QAction(one.bar, owner)
+    action.setCheckable(one.kind is controls.Kind.TOGGLE)
+    if one.hint:
+        action.setToolTip(one.hint)
     action.triggered.connect(handler)
     return action
 
@@ -209,6 +225,41 @@ def commanded(
 def pressed(ev: Any) -> tuple[int, int]:
     """The stroke a key event is, spelled the way a command table is keyed."""
     return ((ev.modifiers() & MODIFIERS).value, int(ev.key()))
+
+
+def rendered(
+    offered: dict[str, Any], entries: Sequence[controls.Entry]
+) -> dict[str, controls.Entry]:
+    """Put what a menu should currently read onto the actions that draw it.
+
+    The description is the whole of the decision - the words, the ticks, what
+    is greyed and what is not there at all - and this is the whole of the
+    rendering. An action the description has nothing to say about is an entry
+    about a plot no click was near, and goes away rather than standing greyed.
+    """
+    shown = {entry.name: entry for entry in entries}
+    for name, action in offered.items():
+        entry = shown.get(name)
+        action.setVisible(entry is not None)
+        if entry is None:
+            continue
+        action.setText(entry.label)
+        action.setChecked(entry.checked)
+        action.setEnabled(entry.enabled)
+    return shown
+
+
+def loosened(one: controls.Control) -> tuple[int, ...]:
+    """The keys of a control, as the key alone with whatever else was held.
+
+    The exact stroke is what a command table is keyed by, and a few keys cannot
+    be: a `+` is a shifted `=` on most keyboards, so what arrives is the layout's
+    business rather than the window's, and the bare letters a picture answers to
+    have always answered whatever else was down.
+    """
+    return tuple(
+        int(QtGui.QKeySequence(key)[0].key()) for key in controls.keys(one)
+    )
 
 
 @dataclass
@@ -621,10 +672,11 @@ class Window2D(QtWidgets.QMainWindow):
         #: of the picture, flipped by the toolbar toggle, never of one plot.
         self.polar = False
         self.current = False
-        #: Ranges the view has been at. Every gesture pushes before it changes
-        #: anything, so stepping back is stepping to the range the last gesture
-        #: left.
-        self._history = view.History()
+        #: Where the view has been, whether the scales are locked equal, and
+        #: whether anybody has moved the framing the window opened with. Every
+        #: gesture pushes before it changes anything, so stepping back is
+        #: stepping to the range the last gesture left.
+        self._framing = actions.Framing()
         self._counter = 0
         #: Which curve trace is riding, or None while trace is off.
         self._tracing: int | None = None
@@ -653,10 +705,6 @@ class Window2D(QtWidgets.QMainWindow):
         #: that a row clicked twice replaces its own animation rather than
         #: racing it.
         self._fades: dict[int, Any] = {}
-        #: Whether the view is still the default framing, nobody having moved
-        #: it. Every gesture that changes the range clears it, since the
-        #: default framing is a thing to be given up rather than returned to.
-        self._default = True
         self._build()
         self.retitle()
         self.home()
@@ -734,39 +782,18 @@ class Window2D(QtWidgets.QMainWindow):
         layout.setSpacing(0)
         bar = QtWidgets.QToolBar()
         bar.setMovable(False)
-        self.equal = QtGui.QAction("1:1", self)
-        self.equal.setCheckable(True)
+        handlers = self._handlers()
+        self.equal = self._button(bar, "scales.equal", handlers)
         self.equal.setChecked(True)
-        self.equal.setToolTip("Equal scales on both axes")
-        self.equal.triggered.connect(self._equal_scales)
-        bar.addAction(self.equal)
-        self.polar_toggle = QtGui.QAction("polar", self)
-        self.polar_toggle.setCheckable(True)
-        self.polar_toggle.setToolTip("Show every curve as r = f(θ)")
-        self.polar_toggle.triggered.connect(self._polar_mode)
-        bar.addAction(self.polar_toggle)
+        self.polar_toggle = self._button(bar, "view.polar", handlers)
         bar.addWidget(theme.divider())
-        self.clear_action = QtGui.QAction("clear", self)
-        self.clear_action.setToolTip("Remove every plot from this window (Del)")
-        self.clear_action.triggered.connect(self.clear)
-        bar.addAction(self.clear_action)
+        self.clear_action = self._button(bar, "clear", handlers)
         theme.dangerous(bar, self.clear_action)
         # The parameter range of the selected parametric or polar plot. Hidden
         # while the window holds no such plot, since a range of nothing is not
         # a control; the actions are kept so showing it back is one call, and
         # the hairline in front of them goes away with the group it divides.
-        self.range_name = QtWidgets.QLabel("")
-        self.range_low = self._range_field()
-        self.range_high = self._range_field()
-        self._range_actions = (
-            bar.addWidget(theme.divider()),
-            bar.addWidget(self.range_name),
-            bar.addWidget(self.range_low),
-            bar.addWidget(QtWidgets.QLabel(" … ")),
-            bar.addWidget(self.range_high),
-        )
-        for action in self._range_actions:
-            action.setVisible(False)
+        self._range_actions = self._range_strip(bar)
         layout.addWidget(bar)
         layout.addWidget(self.plot, 1)
         layout.addWidget(self._status_line())
@@ -799,14 +826,49 @@ class Window2D(QtWidgets.QMainWindow):
         across.addWidget(self.readout, 0)
         return line
 
-    def _range_field(self) -> QtWidgets.QLineEdit:
+    def _button(self, bar: Any, name: str, handlers: dict[str, Any]) -> Any:
+        """One control of this window as the button the toolbar draws it with."""
+        action = buttoned(self, controls.control(name, controls.FLAT), handlers[name])
+        bar.addAction(action)
+        return action
+
+    def _range_strip(self, bar: Any) -> tuple[Any, ...]:
+        """The parameter range as a run of fields along the bar.
+
+        What stands there, in what order and under what words is `plot.forms`',
+        as the dialogs are: a range asked for on a toolbar and one asked for in
+        an overlay are the same two bounds. The whole strip is one thing to
+        show and hide, the hairline in front of it going away with the group it
+        divides.
+        """
+        self.range_fields: dict[str, QtWidgets.QLineEdit] = {}
+        raised = []
+        for piece in forms.TRANGE.pieces:
+            if piece.divider:
+                raised.append(bar.addWidget(theme.divider()))
+            elif piece.entry:
+                edit = self._range_field(forms.TRANGE.field(piece.entry))
+                self.range_fields[piece.entry] = edit
+                raised.append(bar.addWidget(edit))
+            else:
+                label = QtWidgets.QLabel("" if piece.name else piece.word)
+                if piece.name:
+                    self.range_name = label
+                raised.append(bar.addWidget(label))
+        self.range_low = self.range_fields["low"]
+        self.range_high = self.range_fields["high"]
+        for action in raised:
+            action.setVisible(False)
+        return tuple(raised)
+
+    def _range_field(self, one: forms.Field) -> QtWidgets.QLineEdit:
         """One range bound, which the keyboard only reaches when clicked in.
 
         The keys of this window pan, zoom and trace, and a field that took the
         focus when the window opened would swallow them - the same bargain the
         3D window's domain fields make.
         """
-        edit = theme.field(64)
+        edit = theme.field(one.width)
         edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         edit.editingFinished.connect(self._range_edited)
         return edit
@@ -850,10 +912,10 @@ class Window2D(QtWidgets.QMainWindow):
         difference of screen samples and call the answer a derivative, and axis
         submenus whose names say nothing about the fields inside them - while
         saying nothing at all about trace, about the history, or about any other
-        word this window knows. So it is not pruned but replaced: every entry
-        here is something the window does, and each carries the key that does
-        the same thing with no menu open, which makes the menu the place the
-        keyboard is learned.
+        word this window knows. So it is not pruned but replaced: what comes up
+        is `plot.controls`' table, every entry of which is something the window
+        does, each carrying the key that does the same thing with no menu open,
+        which makes the menu the place the keyboard is learned.
 
         The tail is about whatever the click was pointing at rather than about
         the window, which is why it is written when the menu opens.
@@ -867,72 +929,116 @@ class Window2D(QtWidgets.QMainWindow):
         #: Every key the menu advertises, by the stroke that presses it. The
         #: table `keyPressEvent` dispatches from.
         self._keyed: dict[tuple[int, int], Any] = {}
+        #: The keys of the controls no entry names, by the key alone.
+        self._loose: dict[int, Any] = {}
+        #: The action each entry of the menu is drawn by, by the name of the
+        #: control it stands for. What the entries then say is read off the
+        #: description whenever the menu opens.
+        self._offered: dict[str, Any] = {}
         self.menu = QtWidgets.QMenu(self)
-        self.menu.aboutToShow.connect(self._read_toggles)
-        self._command("Set range...", self.set_range)
-        self._command("View all", self.autoscale, ("A",))
-        self._command("Home framing", self.home, ("Home", "0"))
-        self._command("Back", lambda: self.step_history(-1), ("Backspace",))
-        self.menu.addSeparator()
-        self._trace_entry = self._command(
-            "Trace", self.trace, ("T", "F3"), checkable=True
-        )
-        self._grid_entry = self._command(
-            "Grid", self.toggle_grid, ("G",), checkable=True
-        )
-        self._legend_entry = self._command(
-            "Legend", self.toggle_legend, ("L",), checkable=True
-        )
-        self.menu.addSeparator()
-        self._command("Copy image", self.copy_image, ("Ctrl+C",))
-        self._command("Export...", self.export, ("Ctrl+S",))
-        self._command("Clear", self.clear, ("Del",))
-        self._command("Close", self.close, ("Q", "Ctrl+W"))
-        self.menu.addSeparator()
-        self._remove_action = self._command("Remove", self._remove_pointed)
-        self._data_actions = self._point_actions(self.menu)
+        self.menu.aboutToShow.connect(self._read_menu)
+        self._make_controls()
         self._pointed: Drawn | None = None
 
-    def _command(
-        self,
-        text: str,
-        handler: Callable[..., None],
-        keys: Sequence[str] = (),
-        checkable: bool = False,
-    ) -> Any:
-        """One entry of the menu, its keys written on it and in the key table."""
-        action = commanded(self, self._keyed, text, handler, keys, checkable)
-        self.menu.addAction(action)
-        return action
+    def _make_controls(self) -> None:
+        """Walk the control table: an action each, and the menu in its order.
 
-    def _read_toggles(self) -> None:
-        """Read the three switched entries off the window as the menu opens.
-
-        Read rather than remembered, because none of the three is this menu's
-        alone: trace is taken hold of by clicking a curve and let go of with
-        Escape, and a tick that stood for what the menu last did would be wrong
-        the first time anything else did it.
+        The table is where the words, the keys and the order are; what happens
+        here is only that they become Qt. A rule is drawn wherever the group
+        changes, so a menu regrouped in `plot.controls` is regrouped in both
+        backends at once.
         """
-        self._trace_entry.setChecked(self._tracing is not None)
-        self._grid_entry.setChecked(self._grid)
-        self._legend_entry.setChecked(self._legend)
+        handlers = self._handlers()
+        group: int | None = None
+        for one in controls.FLAT:
+            if not one.menu and not controls.keys(one):
+                continue
+            if one.kind is controls.Kind.CHOICE:
+                action = self._choice(one)
+            else:
+                keyed = self._keyed if one.menu else None
+                action = commanded(self, keyed, one, handlers[one.name])
+            if not one.menu:
+                for key in loosened(one):
+                    self._loose[key] = action
+                continue
+            if group is not None and one.group != group:
+                self.menu.addSeparator()
+            group = one.group
+            self.menu.addAction(action)
+            self._offered[one.name] = action
 
-    def _point_actions(self, menu: Any) -> tuple[Any, ...]:
-        """The two things a data plot can be asked, wherever it is right-clicked.
+    def _handlers(self) -> dict[str, Callable[..., None]]:
+        """What each control of this window does, by the control's own name."""
+        return {
+            "range.set": self.set_range,
+            "view.all": self.autoscale,
+            "view.home": self.home,
+            "view.back": lambda: self.step_history(-1),
+            "view.forward": lambda: self.step_history(1),
+            "view.zoom.in": lambda: self.zoom(1 / actions.ZOOM_FACTOR),
+            "view.zoom.out": lambda: self.zoom(actions.ZOOM_FACTOR),
+            "trace": self.trace,
+            "grid": self.toggle_grid,
+            "legend": self.toggle_legend,
+            "image.copy": self.copy_image,
+            "image.export": self.export,
+            "clear": self.clear,
+            "close": self.close,
+            "plot.remove": self._remove_pointed,
+            "points.connect": self._toggle_connected,
+            "scales.equal": self._equal_scales,
+            "view.polar": self._polar_mode,
+        }
 
-        Connecting the points is the difference between a scatter and a
-        polyline, and the size is how a hundred points and a hundred thousand
-        are both made readable. Both live on the plot's own menu rather than
-        in a settings dialog, and both are sticky: the way a data plot is left
-        is the way the next one arrives, which the session is told about below.
+    def _choice(self, one: controls.Control) -> Any:
+        """A control offering alternatives, as the submenu that lists them.
+
+        The alternatives never change - a menu of point sizes offers four
+        sizes whatever a point is currently drawn at - so they are written once
+        here and the value each carries comes back with the click.
         """
-        connect = menu.addAction("Connect points", self._toggle_connected)
-        sizes = menu.addMenu("Point size")
-        for size in POINT_SIZES:
+        sizes = QtWidgets.QMenu(controls.plain(one), self)
+        for item in controls.choices(one):
             sizes.addAction(
-                f"{size:g} px", lambda _=False, size=size: self._set_point_size(size)
+                item.label,
+                lambda _=False, size=item.value: self._set_point_size(float(size)),
             )
-        return (connect, sizes.menuAction())
+        return sizes.menuAction()
+
+    def _read_menu(self) -> None:
+        """Read the menu off the window as it opens, which is where it is decided.
+
+        Read rather than remembered, because nothing on it is the menu's alone:
+        trace is taken hold of by clicking a curve and let go of with Escape,
+        and a tick that stood for what the menu last did would be wrong the
+        first time anything else did it. What the entries should say is
+        `plot.controls`' answer to a snapshot of this window; all that is left
+        here is putting that answer on the actions.
+        """
+        rendered(self._offered, controls.menu(self.snapshot()))
+
+    def snapshot(self) -> controls.Flat:
+        """This window as the description of its controls has to read it.
+
+        Small, and handed over rather than reached for: the window keeps the
+        view state - it is the side that draws it and the side a drag talks to -
+        and Python is told the little of it a menu depends on when a menu is
+        about to be read.
+        """
+        pointed = self._pointed
+        return controls.Flat(
+            tracing=self._tracing is not None,
+            grid=self._grid,
+            legend=self._legend,
+            polar=self.polar,
+            equal=self._framing.equal,
+            pointed=None
+            if pointed is None
+            else controls.Pointed(
+                named=pointed.named, kind=pointed.kind, connected=pointed.connected
+            ),
+        )
 
     # -- the plot list -----------------------------------------------------
 
@@ -1246,7 +1352,10 @@ class Window2D(QtWidgets.QMainWindow):
         if plot.kind is PlotKind.IMPLICIT:
             self.say(f"{plot.label}: no solutions in view for {span}")
             return
-        self.say(f"{plot.label}: no real values for {span} - try A to autoscale")
+        # The key the sentence points at is the one the menu advertises, read
+        # off the table rather than written out a second time here.
+        key = controls.keys(controls.control("view.all", controls.FLAT))[0]
+        self.say(f"{plot.label}: no real values for {span} - try {key} to autoscale")
 
     def _frame_new(self, plot: Drawn) -> None:
         """Autoscale for a new plot that has points but none of them in view.
@@ -1263,17 +1372,15 @@ class Window2D(QtWidgets.QMainWindow):
         """
         if plot.kind in FIELDS:
             return
-        fitted = view.fitting(plot.xs, plot.ys, self.canvas.viewRange())
-        if fitted is None:
-            return
-        self._unlock()
-        self._default = False
-        if plot.kind in FUNCTIONS:
-            self.canvas.setYRange(*fitted[1], padding=0.1)
-            self.say(f"{plot.label}: y autoscaled to fit")
-            return
-        self.canvas.setRange(xRange=fitted[0], yRange=fitted[1], padding=0.1)
-        self.say(f"{plot.label}: autoscaled to fit")
+        self._apply(
+            self._framing.fresh(
+                self._where(),
+                plot.xs,
+                plot.ys,
+                plot.kind in FUNCTIONS,
+                plot.label,
+            )
+        )
 
     def resample(self) -> None:
         """Re-sample every visible curve for the range now shown."""
@@ -1328,11 +1435,12 @@ class Window2D(QtWidgets.QMainWindow):
             action.setVisible(plot is not None)
         if plot is None:
             return
-        self.range_name.setText(f"   {plot.parameter}: ")
-        for edit, value in (
-            (self.range_low, plot.trange[0]),
-            (self.range_high, plot.trange[1]),
-        ):
+        named = next(
+            piece for piece in forms.TRANGE.pieces if piece.name == "parameter"
+        )
+        self.range_name.setText(named.word.format(parameter=plot.parameter))
+        for name, value in (("low", plot.trange[0]), ("high", plot.trange[1])):
+            edit = self.range_fields[name]
             if not edit.hasFocus():
                 edit.setText(roughly(value))
 
@@ -1351,17 +1459,39 @@ class Window2D(QtWidgets.QMainWindow):
         plot = self._ranged_plot()
         if plot is None:
             return
-        try:
-            low = parse_expression(self.range_low.text().strip(), plot.state).node
-            high = parse_expression(self.range_high.text().strip(), plot.state).node
-        except DeriveSyntaxError:
+        bounds = forms.parsed(
+            (self.range_low.text(), self.range_high.text()), plot.state
+        )
+        if bounds is None:
             self._show_trange()
-            self.say(f"The {plot.parameter} bounds are expressions, like -π or 2π")
+            self.say(forms.PARAMETER_EXPRESSIONS.format(parameter=plot.parameter))
             return
-        plot.bounds = (low, high)
+        plot.bounds = bounds
         self._start(plot)
 
     # -- framing -----------------------------------------------------------
+
+    def _apply(self, framed: actions.Framed) -> None:
+        """Do what a framing command came to, which is where a command ends.
+
+        The arithmetic and the history are `plot.actions`'; what is left here
+        is the two things a toolkit has to be told - the lock and the range -
+        and the sentence, if there is one. A framing of nothing is a command
+        that found nothing to do, and the view stays where it is.
+        """
+        self.equal.setChecked(self._framing.equal)
+        self.canvas.setAspectLocked(self._framing.equal, ratio=1.0)
+        if framed.ranges is not None:
+            if framed.ordinate:
+                self.canvas.setYRange(*framed.ranges[1], padding=framed.padding)
+            else:
+                self.canvas.setRange(
+                    xRange=framed.ranges[0],
+                    yRange=framed.ranges[1],
+                    padding=framed.padding,
+                )
+        if framed.message:
+            self.say(framed.message)
 
     def home(self) -> None:
         """The default framing: x in [-5, 5], the origin centred, equal scales.
@@ -1369,12 +1499,11 @@ class Window2D(QtWidgets.QMainWindow):
         The scales relock, so that Home is the framing every window opens with
         and a released `1:1` is a departure from it like any pan or zoom.
         """
-        self.remember()
-        self.equal.setChecked(True)
-        self.canvas.setAspectLocked(True, ratio=1.0)
-        xrange, yrange = view.home_range(self.canvas.width(), self.canvas.height())
-        self.canvas.setRange(xRange=xrange, yRange=yrange, padding=0)
-        self._default = True
+        self._apply(
+            self._framing.home(
+                self._where(), self.canvas.width(), self.canvas.height()
+            )
+        )
 
     def set_range(self) -> None:
         """The menu's `Set range...`: the four bounds of the view, typed.
@@ -1404,12 +1533,9 @@ class Window2D(QtWidgets.QMainWindow):
         worth is arithmetic the sampling thread does. Nothing in this window
         evaluates on the Qt thread, and a bound is no exception.
         """
-        try:
-            nodes = tuple(
-                parse_expression(text.strip(), self._state).node for text in texts
-            )
-        except DeriveSyntaxError:
-            self.say("The bounds are expressions, like -π or 2π")
+        nodes = forms.parsed(texts, self._state)
+        if nodes is None:
+            self.say(forms.EXPRESSIONS)
             return
         context = self._context
 
@@ -1428,20 +1554,16 @@ class Window2D(QtWidgets.QMainWindow):
         way it goes for every other framing that is about fitting: somebody who
         asks for these four numbers is asking for these four numbers.
         """
-        if isinstance(answer, Exception) or not all(np.isfinite(v) for v in answer):
-            self.say("The bounds have to be worth numbers, like -π or 2π")
+        if isinstance(answer, Exception):
+            self.say(forms.NOT_NUMBERS)
+            return
+        trouble = forms.framed(answer)
+        if trouble:
+            self.say(trouble)
             return
         left, right, bottom, top = answer
-        if right <= left or top <= bottom:
-            self.say("A range runs from a lower bound to a higher one")
-            return
-        self.remember()
-        self._unlock()
-        self.canvas.setRange(xRange=(left, right), yRange=(bottom, top), padding=0)
-        self.say(
-            f"Showing {roughly(left)} ≤ x ≤ {roughly(right)}"
-            f"   {roughly(bottom)} ≤ y ≤ {roughly(top)}"
-        )
+        self._apply(self._framing.typed(self._where(), ((left, right), (bottom, top))))
+        self.say(forms.showing(left, right, bottom, top))
 
     def autoscale(self) -> None:
         """Frame every visible plot, which is what `A` and `View all` do.
@@ -1450,22 +1572,21 @@ class Window2D(QtWidgets.QMainWindow):
         view shows and so agrees with any framing - and is left out rather
         than counted as nothing.
         """
-        self.remember()
-        self._unlock()
-        framed = view.framing(
+        framed = self._framing.everything(
+            self._where(),
             [
                 (plot.xs, plot.ys)
                 for plot in self.plots
                 if plot.visible and plot.kind is not PlotKind.REGION
-            ]
+            ],
         )
-        if framed is None:
+        self._apply(framed)
+        if framed.ranges is None:
             self.canvas.autoRange()
-            return
-        self.canvas.setRange(xRange=framed[0], yRange=framed[1], padding=0.05)
 
     def _equal_scales(self, checked: bool) -> None:
         """The `1:1` toolbar toggle, which relocks or releases equal scales."""
+        self._framing.equal = bool(checked)
         self.canvas.setAspectLocked(checked, ratio=1.0)
 
     def _polar_mode(self, checked: bool) -> None:
@@ -1496,11 +1617,7 @@ class Window2D(QtWidgets.QMainWindow):
             self._start(plot)
         self._axis_names()
         self._show_trange()
-        self.say(
-            "Polar: curves are read as r = f(θ)"
-            if checked
-            else "Polar off: curves are read as y = f(x)"
-        )
+        self.say(actions.POLAR_ON if checked else actions.POLAR_OFF)
 
     def _reread(self, plot: Drawn) -> bool:
         """Give `plot` the kind the view mode reads it as, saying if it moved.
@@ -1515,24 +1632,12 @@ class Window2D(QtWidgets.QMainWindow):
         plot.kind = reread
         return True
 
-    def _unlock(self) -> None:
-        """Release equal scales, for a framing that is about fitting."""
-        self.equal.setChecked(False)
-        self.canvas.setAspectLocked(False)
-
     def center_on(self, point: Any) -> None:
         """Double-click: put the clicked point in the middle of the canvas."""
-        self.remember()
-        (left, right), (low, high) = self.canvas.viewRange()
-        width, height = (right - left) / 2, (high - low) / 2
-        self.canvas.setRange(
-            xRange=(point.x() - width, point.x() + width),
-            yRange=(point.y() - height, point.y() + height),
-            padding=0,
-        )
+        self._apply(self._framing.centred(self._where(), point.x(), point.y()))
 
     def zoom(self, factor: float) -> None:
-        """`+` and `-`: a factor of two about the middle of the view."""
+        """Zoom in and out, by a factor about the middle of the view."""
         self.remember()
         self.canvas.scaleBy((factor, factor))
 
@@ -1545,28 +1650,12 @@ class Window2D(QtWidgets.QMainWindow):
     # -- view history ------------------------------------------------------
 
     def remember(self) -> None:
-        """Push the range as it is now, before something changes it.
-
-        Called by every gesture rather than by a range signal, because a signal
-        arrives after the change and the thing worth keeping is what was there
-        before it.
-        """
-        here = self._where()
-        if here is None:
-            return
-        self._default = False
-        self._history.remember(here)
+        """Push the range as it is now, before a gesture changes it."""
+        self._framing.remember(self._where())
 
     def step_history(self, direction: int) -> None:
         """Backspace and Shift-Backspace: where the view has been."""
-        here = self._where()
-        if here is None:
-            return
-        stepped = self._history.step(direction, here)
-        if stepped is None:
-            return
-        self._unlock()
-        self.canvas.setRange(xRange=stepped[0], yRange=stepped[1], padding=0)
+        self._apply(self._framing.stepped(self._where(), direction))
 
     def _where(self) -> tuple[tuple[float, float], tuple[float, float]] | None:
         """The range the view is at now, or None where there is not one yet."""
@@ -2138,30 +2227,19 @@ class Window2D(QtWidgets.QMainWindow):
         what makes the legend and the curve one target with two places to hit
         it.
         """
-        plot = self._pointed
-        assert plot is not None
+        handlers = self._handlers()
         menu = QtWidgets.QMenu(self)
-        menu.addAction(f"Remove {plot.named}", self._remove_pointed)
-        if plot.kind is PlotKind.DATA:
-            self._name_connect(self._point_actions(menu)[0], plot)
+        for entry in controls.card(self.snapshot()):
+            menu.addAction(entry.label, handlers[entry.name])
         menu.exec(at)
 
     def prepare_menu(self, point: Any) -> None:
-        """Say what a right-click on the canvas was pointing at, if anything."""
-        self._pointed = self.at(point) or self._region_at(point)
-        self._remove_action.setVisible(self._pointed is not None)
-        data = self._pointed is not None and self._pointed.kind is PlotKind.DATA
-        for action in self._data_actions:
-            action.setVisible(data)
-        if self._pointed is not None:
-            self._remove_action.setText(f"Remove {self._pointed.named}")
-        if data:
-            self._name_connect(self._data_actions[0], self._pointed)
+        """Say what a right-click on the canvas was pointing at, if anything.
 
-    def _name_connect(self, action: Any, plot: Drawn | None) -> None:
-        """Say which way the connect entry would go, which is the other way."""
-        if plot is not None:
-            action.setText("Disconnect points" if plot.connected else "Connect points")
+        What the menu then offers about it is read when the menu opens, since
+        that is where every other entry is read too.
+        """
+        self._pointed = self.at(point) or self._region_at(point)
 
     def _toggle_connected(self) -> None:
         """Connect a data plot's points into a polyline, or take the line away.
@@ -2351,22 +2429,20 @@ class Window2D(QtWidgets.QMainWindow):
 
         Every key a menu entry advertises is dispatched off the menu's own
         table, so the key that works and the key the menu names are one key and
-        neither can fire twice. What is left written out here are the keys no
-        entry has: the ones that mean one thing while a marker is up and another
-        while it is not, and the ones that are gestures rather than commands.
+        neither can fire twice; the keys of the commands no entry names - the
+        step forward through the history, the two zooms - are the second table,
+        which is matched on the key alone.
+
+        What is left written out here are the gestures: the keys that mean one
+        thing while a marker is up and another while it is not, and which no
+        control could name because they are not one command.
         """
         key = ev.key()
         shift = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
         keys = QtCore.Qt.Key
-        command = self._keyed.get(pressed(ev))
+        command = self._keyed.get(pressed(ev)) or self._loose.get(key)
         if command is not None:
             command.trigger()
-        elif shift and key == keys.Key_Backspace:
-            self.step_history(1)
-        elif key in (keys.Key_Plus, keys.Key_Equal):
-            self.zoom(0.5)
-        elif key == keys.Key_Minus:
-            self.zoom(2.0)
         elif key == keys.Key_Escape and self._tracing is not None:
             self._trace_off()
         elif key in (keys.Key_Tab, keys.Key_Backtab) and self._tracing is not None:
@@ -2378,13 +2454,13 @@ class Window2D(QtWidgets.QMainWindow):
             if self._tracing is not None:
                 self._trace_step(key == keys.Key_Left, shift)
             else:
-                self.pan(step * PAN_SHARE, 0.0)
+                self.pan(step * actions.PAN_SHARE, 0.0)
         elif key in (keys.Key_Up, keys.Key_Down):
             step = 1 if key == keys.Key_Up else -1
             if self._tracing is not None:
                 self._trace_curve(-step)
             else:
-                self.pan(0.0, step * PAN_SHARE)
+                self.pan(0.0, step * actions.PAN_SHARE)
         else:
             super().keyPressEvent(ev)
             return
@@ -2451,9 +2527,9 @@ class Window2D(QtWidgets.QMainWindow):
         framing and how a window dragged wider goes on showing x in [-5, 5]
         rather than drifting outwards as the aspect lock makes room.
         """
-        if self._default and self.canvas.width() > 1:
+        if self._framing.default and self.canvas.width() > 1:
             self.home()
-            self._history.clear()
+            self._framing.history.clear()
         self._place_legend()
         self._timer.start()
 
@@ -2491,14 +2567,139 @@ TRACEABLE = frozenset(
 )
 
 
-class Bounds(QtWidgets.QDialog):
+class Sheet(QtWidgets.QDialog):
+    """A `plot.forms` form, drawn as a dialog.
+
+    What is asked for, in what words, under what headings and with what answers
+    at the bottom is the form's; what is here is the QDialog it becomes. Both
+    dialogs either window has are one of these, which is what makes them look
+    alike without anybody having arranged that they should.
+
+    The fields are filled by whoever opened it and argued with by whoever reads
+    them: a form collects strings and hands them over.
+    """
+
+    def __init__(self, window: Any, form: forms.Form) -> None:
+        super().__init__(window)
+        self._window = window
+        self.form = form
+        self.setWindowTitle(form.heading.format(number=window.number))
+        self.fields: dict[str, QtWidgets.QLineEdit] = {}
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+        layout.addWidget(self._headed())
+        for group in form.groups:
+            layout.addWidget(self._grouped(group))
+        layout.addWidget(self._buttons())
+
+    def _headed(self) -> QtWidgets.QWidget:
+        """What the dialog is about, and the one thing worth knowing about it."""
+        holder = QtWidgets.QWidget()
+        column = QtWidgets.QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(1)
+        title = QtWidgets.QLabel(self.form.title.format(number=self._window.number))
+        title.setStyleSheet(f"color: {theme.FIELD_TEXT}; font-weight: 600;")
+        subtitle = QtWidgets.QLabel(self.form.subtitle)
+        subtitle.setStyleSheet(f"color: {theme.DIM};")
+        column.addWidget(title)
+        column.addWidget(subtitle)
+        return holder
+
+    def _grouped(self, group: forms.Group) -> QtWidgets.QWidget:
+        """One run of fields, laid out as the thing it describes.
+
+        A group whose rows are named puts the name at the head of the row and
+        the columns over the fields; one whose fields name themselves puts each
+        label in front of its own field. Both are the same grid.
+        """
+        box = QtWidgets.QGroupBox(group.title)
+        grid = QtWidgets.QGridLayout(box)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        headed = any(row.label for row in group.rows)
+        for column, head in enumerate(group.heads):
+            grid.addWidget(self._head(head), 0, column + (1 if headed else 0))
+        for row, line in enumerate(group.rows, start=1 if group.heads else 0):
+            if headed:
+                grid.addWidget(self._label(line.label), row, 0)
+            for column, name in enumerate(line.fields):
+                one = self.form.field(name)
+                at = column * (1 if group.heads else 2) + (1 if headed else 0)
+                if one.label:
+                    grid.addWidget(self._label(one.label), row, at)
+                grid.addWidget(self._field(one), row, at + (1 if one.label else 0))
+        return box
+
+    def _buttons(self) -> QtWidgets.QWidget:
+        """The answers the form offers, the one it is for being the accented one.
+
+        One button box rather than a row built by hand, so that the platform
+        puts the buttons where the platform puts buttons. A form that names no
+        buttons takes the platform's own pair, since accepting and cancelling
+        are words nobody has to choose.
+        """
+        if not self.form.buttons:
+            standard = QtWidgets.QDialogButtonBox.StandardButton
+            buttons = QtWidgets.QDialogButtonBox(standard.Ok | standard.Cancel)
+            buttons.button(standard.Ok).setObjectName(theme.PRIMARY)
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
+            return buttons
+        roles = {
+            forms.Role.APPLY: QtWidgets.QDialogButtonBox.ButtonRole.ApplyRole,
+            forms.Role.RESET: QtWidgets.QDialogButtonBox.ButtonRole.ResetRole,
+            forms.Role.CLOSE: QtWidgets.QDialogButtonBox.ButtonRole.RejectRole,
+        }
+        buttons = QtWidgets.QDialogButtonBox()
+        for one in self.form.buttons:
+            button = buttons.addButton(one.label, roles[one.role])
+            if one.primary:
+                button.setObjectName(theme.PRIMARY)
+        buttons.clicked.connect(
+            lambda button: self.answered(self._role(button.text()))
+        )
+        return buttons
+
+    def _role(self, label: str) -> forms.Role:
+        """Which of the form's answers a button carries, by the words on it."""
+        return next(one.role for one in self.form.buttons if one.label == label)
+
+    def answered(self, role: forms.Role) -> None:
+        """One of the form's own buttons was pressed. Nothing, until overridden."""
+
+    def _field(self, one: forms.Field) -> QtWidgets.QLineEdit:
+        edit = theme.field(one.width)
+        self.fields[one.name] = edit
+        return edit
+
+    def _label(self, text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setStyleSheet(f"color: {theme.TEXT};")
+        return label
+
+    def _head(self, text: str) -> QtWidgets.QLabel:
+        head = QtWidgets.QLabel(text)
+        head.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
+        head.setStyleSheet(f"color: {theme.DIM};")
+        return head
+
+    def said(self, names: Sequence[str]) -> tuple[str, ...]:
+        """What these fields say, in the order they were asked for."""
+        return tuple(self.fields[name].text() for name in names)
+
+    def fill(self, values: dict[str, float]) -> None:
+        """Put numbers in the fields, written the way the window writes them."""
+        for name, value in values.items():
+            self.fields[name].setText(roughly(value))
+
+
+class Bounds(Sheet):
     """The four edges of the view, as four fields: the framing typed out.
 
     Everything here is reachable with the mouse, and what this adds is
-    exactness - the same bargain the 3D window's inspector makes. It is
-    deliberately a form and not a screen: left, right, bottom and top are what
-    a framing is, and the four are laid out as the picture is, the horizontal
-    pair over the vertical one.
+    exactness - the same bargain the 3D window's inspector makes.
 
     The fields open on the view as it stands, so a dialog opened to change one
     edge is three edges already right, and they read expressions rather than
@@ -2507,84 +2708,22 @@ class Bounds(QtWidgets.QDialog):
     collects four strings and closes.
     """
 
-    #: The four bounds, in the order the window takes them, with the label each
-    #: is asked for by and where in the two-by-two form it stands.
-    FIELDS = (
-        ("left", "Left", 0, 0),
-        ("right", "Right", 0, 1),
-        ("bottom", "Bottom", 1, 0),
-        ("top", "Top", 1, 1),
-    )
+    #: The four bounds, in the order the window reads them.
+    ORDER = ("left", "right", "bottom", "top")
 
     def __init__(self, window: Window2D) -> None:
-        super().__init__(window)
-        self._window = window
-        self.setWindowTitle(f"Range of plot {window.number}")
-        self.fields: dict[str, QtWidgets.QLineEdit] = {}
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(10)
-        layout.addWidget(self._headed())
-        layout.addWidget(self._form())
-        layout.addWidget(self._buttons())
+        super().__init__(window, forms.RANGE)
         self.refresh()
-
-    def _headed(self) -> QtWidgets.QWidget:
-        """What the dialog is about, and what a field will take."""
-        holder = QtWidgets.QWidget()
-        column = QtWidgets.QVBoxLayout(holder)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(1)
-        title = QtWidgets.QLabel(f"Range - plot {self._window.number}")
-        title.setStyleSheet(f"color: {theme.FIELD_TEXT}; font-weight: 600;")
-        subtitle = QtWidgets.QLabel("expressions, like -π or 2π")
-        subtitle.setStyleSheet(f"color: {theme.DIM};")
-        column.addWidget(title)
-        column.addWidget(subtitle)
-        return holder
-
-    def _form(self) -> QtWidgets.QWidget:
-        group = QtWidgets.QGroupBox("Bounds")
-        grid = QtWidgets.QGridLayout(group)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
-        for name, shown, row, column in self.FIELDS:
-            label = QtWidgets.QLabel(shown)
-            label.setStyleSheet(f"color: {theme.TEXT};")
-            grid.addWidget(label, row, column * 2)
-            grid.addWidget(self._field(name), row, column * 2 + 1)
-        return group
-
-    def _buttons(self) -> QtWidgets.QWidget:
-        """The two answers, the one that frames the picture being the accented one."""
-        standard = QtWidgets.QDialogButtonBox.StandardButton
-        buttons = QtWidgets.QDialogButtonBox(standard.Ok | standard.Cancel)
-        buttons.button(standard.Ok).setObjectName(theme.PRIMARY)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        return buttons
-
-    def _field(self, name: str) -> QtWidgets.QLineEdit:
-        edit = theme.field(90)
-        self.fields[name] = edit
-        return edit
 
     def refresh(self) -> None:
         """Fill the fields from the view as it now stands."""
         (left, right), (bottom, top) = self._window.canvas.viewRange()
-        for name, value in (
-            ("left", left),
-            ("right", right),
-            ("bottom", bottom),
-            ("top", top),
-        ):
-            self.fields[name].setText(roughly(value))
+        self.fill(dict(zip(self.ORDER, (left, right, bottom, top))))
 
     @property
-    def typed(self) -> tuple[str, str, str, str]:
+    def typed(self) -> tuple[str, ...]:
         """What the four fields say, in the order the window reads them."""
-        said = [self.fields[name].text() for name, *_ in self.FIELDS]
-        return said[0], said[1], said[2], said[3]
+        return self.said(self.ORDER)
 
 
 def _contour(

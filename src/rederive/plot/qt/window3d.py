@@ -38,7 +38,7 @@ and a message naming what happened.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from typing import Any
 
@@ -50,15 +50,19 @@ from pyqtgraph.opengl.GLGraphicsItem import GLOptions
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Context
-from rederive.plot import evaluate, protocol, resample
+from rederive.plot import actions, controls, evaluate, forms, protocol, resample
 from rederive.plot.model import SOLID_PALETTE, SOLID_PAPER, Surface, written
 from rederive.plot.qt import theme
 from rederive.plot.qt.window2d import (
     CLICK_SLOP_PX,
     CURVE_WIDTH,
     Legend,
+    Sheet,
+    buttoned,
     commanded,
+    loosened,
     pressed,
+    rendered,
 )
 from rederive.plot.surface import (
     HALF,
@@ -71,8 +75,8 @@ from rederive.plot.surface import (
     ticks,
     wire,
 )
-from rederive.plot.view import DEFAULT_DOMAIN, DEFAULT_GRID, MAX_GRID
-from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
+from rederive.plot.view import DEFAULT_DOMAIN, DEFAULT_GRID
+from rederive.syntax import ParseState
 
 __all__ = ["Drawn", "Window3D"]
 
@@ -105,27 +109,6 @@ WIRE_OCCLUDER = {
     GL.GL_POLYGON_OFFSET_FILL: True,
     "glPolygonOffset": WIRE_OFFSET,
 }
-
-#: The camera a fresh window opens with and `Home` returns to: a three-quarter
-#: view from above, far enough out that the whole cube is in the picture.
-CAMERA_ELEVATION = 30.0
-CAMERA_AZIMUTH = -60.0
-CAMERA_DISTANCE = 23.0
-
-#: The three presets, as elevation and azimuth: face the xy plane from above,
-#: the xz plane from the front, the yz plane from the side.
-PLANES = {
-    "xy": (90.0, -90.0),
-    "xz": (0.0, -90.0),
-    "yz": (0.0, 0.0),
-}
-
-#: How far one arrow key turns the camera, and how fast `R` turns it by itself.
-#: A rotation is for reading a shape from every side while the eye stays still,
-#: so it is slow: a turn takes half a minute.
-ORBIT_DEGREES = 5.0
-SPIN_MS = 33
-SPIN_DEGREES = 0.4
 
 #: The most tick marks an axis may draw - the pool of text items is made once
 #: and never grown, since items cannot be added to the view while it is
@@ -306,10 +289,10 @@ class Window3D(QtWidgets.QMainWindow):
         self.xdomain = DEFAULT_DOMAIN
         self.ydomain = DEFAULT_DOMAIN
         # The grid the window opens with is the sticky one the session holds -
-        # the grid the last surface was given - clamped here as a typed one
-        # is: a window never samples finer than it can draw, whoever asked.
-        square = int(min(max(grid, 2), MAX_GRID))
-        self.grid = (square, square)
+        # the grid the last surface was given - clamped as a typed one is: a
+        # window never samples finer than it can draw, whoever asked.
+        counted = forms.counts((str(grid), str(grid)))
+        self.grid = counted if counted is not None else (DEFAULT_GRID, DEFAULT_GRID)
         #: How a surface arriving here is drawn - the sticky look the last
         #: surface anywhere was left in, and thereafter whatever this window's
         #: own `mesh` box says.
@@ -339,6 +322,9 @@ class Window3D(QtWidgets.QMainWindow):
         self._legend = True
         self._papered = False
         self._inspector: Inspector | None = None
+        #: The surface a right click on a legend row was about, which is what
+        #: that row's own menu is then read for.
+        self._pointed: Drawn | None = None
         self._build()
         self.retitle()
         self.home()
@@ -360,8 +346,8 @@ class Window3D(QtWidgets.QMainWindow):
         self._furnish()
         self.setCentralWidget(self._laid_out())
         self._spin = QtCore.QTimer(self)
-        self._spin.setInterval(SPIN_MS)
-        self._spin.timeout.connect(lambda: self.view.orbit(-SPIN_DEGREES, 0.0))
+        self._spin.setInterval(actions.SPIN_MS)
+        self._spin.timeout.connect(lambda: self.view.orbit(-actions.SPIN_DEGREES, 0.0))
         self.resize(760, 620)
 
     def _laid_out(self) -> QtWidgets.QWidget:
@@ -404,41 +390,29 @@ class Window3D(QtWidgets.QMainWindow):
         bar = QtWidgets.QToolBar()
         bar.setMovable(False)
         self.fields: dict[str, QtWidgets.QLineEdit] = {}
-        bar.addWidget(QtWidgets.QLabel("x:"))
-        bar.addWidget(self._field("x0", self.xdomain[0]))
-        bar.addWidget(QtWidgets.QLabel(" … "))
-        bar.addWidget(self._field("x1", self.xdomain[1]))
-        bar.addWidget(theme.divider())
-        bar.addWidget(QtWidgets.QLabel("y:"))
-        bar.addWidget(self._field("y0", self.ydomain[0]))
-        bar.addWidget(QtWidgets.QLabel(" … "))
-        bar.addWidget(self._field("y1", self.ydomain[1]))
-        bar.addWidget(theme.divider())
-        bar.addWidget(QtWidgets.QLabel("grid:"))
-        bar.addWidget(self._field("nx", self.grid[0]))
-        bar.addWidget(QtWidgets.QLabel(" x "))
-        bar.addWidget(self._field("ny", self.grid[1]))
-        bar.addWidget(theme.divider())
-        self.mesh_action = QtGui.QAction("mesh", self)
-        self.mesh_action.setCheckable(True)
+        for piece in forms.DOMAIN.pieces:
+            if piece.divider:
+                bar.addWidget(theme.divider())
+            elif piece.entry:
+                bar.addWidget(self._field(forms.DOMAIN.field(piece.entry)))
+            else:
+                bar.addWidget(QtWidgets.QLabel(piece.word))
+        self._show_domain()
+        handlers = self._handlers()
+        self.mesh_action = self._button(bar, "mesh", self._mesh_mode)
         self.mesh_action.setChecked(self.wired)
-        self.mesh_action.setToolTip(
-            "Draw every surface as the wire grid of its samples (M)"
-        )
-        self.mesh_action.triggered.connect(self._mesh_mode)
-        bar.addAction(self.mesh_action)
-        self.inspect = QtGui.QAction("view...", self)
-        self.inspect.setToolTip("The box and the camera as numbers")
-        self.inspect.triggered.connect(self.inspector)
-        bar.addAction(self.inspect)
-        self.clear_action = QtGui.QAction("clear", self)
-        self.clear_action.setToolTip("Remove every surface from this window (Del)")
-        self.clear_action.triggered.connect(self.clear)
-        bar.addAction(self.clear_action)
+        self.inspect = self._button(bar, "view.inspect", handlers["view.inspect"])
+        self.clear_action = self._button(bar, "clear", handlers["clear"])
         theme.dangerous(bar, self.clear_action)
         return bar
 
-    def _field(self, name: str, value: float) -> QtWidgets.QLineEdit:
+    def _button(self, bar: Any, name: str, handler: Callable[..., None]) -> Any:
+        """One control of this window as the button the toolbar draws it with."""
+        action = buttoned(self, controls.control(name, controls.SOLID), handler)
+        bar.addAction(action)
+        return action
+
+    def _field(self, one: forms.Field) -> QtWidgets.QLineEdit:
         """One toolbar number, which the keyboard only reaches when clicked in.
 
         The keys of this window are the camera's - `1` faces the xy plane - and
@@ -446,11 +420,10 @@ class Window3D(QtWidgets.QMainWindow):
         So the fields are click-only, and finishing an edit hands the keyboard
         straight back.
         """
-        edit = theme.field(52)
-        edit.setText(written(value))
+        edit = theme.field(one.width)
         edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         edit.editingFinished.connect(self._edited)
-        self.fields[name] = edit
+        self.fields[one.name] = edit
         return edit
 
     def _furnish(self) -> None:
@@ -499,55 +472,119 @@ class Window3D(QtWidgets.QMainWindow):
         off, because what it would list is what the window is empty of.
         """
         #: Every key the menu advertises, by the stroke that presses it. The
-        #: table `keyPressEvent` dispatches from.
+        #: table `keyPressEvent` dispatches from, beside the one for the keys
+        #: no entry names, which is matched on the key alone.
         self._keyed: dict[tuple[int, int], Any] = {}
+        self._loose: dict[int, Any] = {}
+        #: The action each entry of the menu is drawn by, by the name of the
+        #: control it stands for.
+        self._offered: dict[str, Any] = {}
         self.menu = QtWidgets.QMenu(self)
         self.menu.aboutToShow.connect(self._read_menu)
-        self._command("Home view", self.home, ("Home", "0"))
-        # The three presets in the order `PLANES` holds them, which is the order
-        # the number keys have always been in.
-        for plane, key in zip(PLANES, ("1", "2", "3")):
-            self._command(
-                f"Face the {plane} plane",
-                lambda _=False, plane=plane: self.face(plane),
-                (key,),
-            )
-        self._spin_entry = self._command("Rotate", self.spin, ("R",), checkable=True)
-        self.menu.addSeparator()
-        self._command("View...", self.inspector)
-        self._command("Copy image", self.copy_image, ("Ctrl+C",))
-        self._command("Export...", self.export, ("Ctrl+S",))
-        self.menu.addSeparator()
-        self._remove_menu = self.menu.addMenu("Remove")
-        self._command("Clear", self.clear, ("Del",))
-        self._command("Close", self.close, ("Q", "Ctrl+W"))
+        self._make_controls()
 
-    def _command(
-        self,
-        text: str,
-        handler: Callable[..., None],
-        keys: Sequence[str] = (),
-        checkable: bool = False,
-    ) -> Any:
-        """One entry of the menu, its keys written on it and in the key table."""
-        action = commanded(self, self._keyed, text, handler, keys, checkable)
-        self.menu.addAction(action)
-        return action
+    def _make_controls(self) -> None:
+        """Walk the control table: an action each, and the menu in its order.
+
+        The words, the keys, the order and where the rules fall are
+        `plot.controls`', so a menu regrouped there is regrouped in both
+        backends at once. What happens here is only that they become Qt.
+        """
+        handlers = self._handlers()
+        group: int | None = None
+        for one in controls.SOLID:
+            if not one.menu and not controls.keys(one):
+                continue
+            if one.kind is controls.Kind.LIST:
+                self._remove_menu = QtWidgets.QMenu(controls.plain(one), self)
+                action = self._remove_menu.menuAction()
+            else:
+                keyed = self._keyed if one.menu else None
+                action = commanded(self, keyed, one, handlers[one.name])
+            if not one.menu:
+                for key in loosened(one):
+                    self._loose[key] = action
+                continue
+            if group is not None and one.group != group:
+                self.menu.addSeparator()
+            group = one.group
+            self.menu.addAction(action)
+            self._offered[one.name] = action
+
+    def _handlers(self) -> dict[str, Callable[..., None]]:
+        """What each control of this window does, by the control's own name."""
+        return {
+            "camera.home": self.home,
+            "camera.xy": self._facing("camera.xy"),
+            "camera.xz": self._facing("camera.xz"),
+            "camera.yz": self._facing("camera.yz"),
+            "camera.spin": self.spin,
+            "view.inspect": self.inspector,
+            "image.copy": self.copy_image,
+            "image.export": self.export,
+            "clear": self.clear,
+            "close": self.close,
+            "mesh": lambda: self.mesh_action.trigger(),
+            "box": self._toggle_box,
+            "names": self._toggle_names,
+            "legend": self._toggle_legend,
+            "surface.wire": self._wire_pointed,
+            "plot.remove": self._remove_pointed,
+        }
+
+    def _facing(self, name: str) -> Callable[[], None]:
+        """Face the plane one of the three presets stands for.
+
+        Which plane that is belongs to the control, beside the words it is
+        offered under and the key that presses it: a preset with the plane
+        taken out of it would be three entries and three lambdas that had to be
+        kept in the same order.
+        """
+        plane = controls.control(name, controls.SOLID).value
+        return lambda: self.face(plane)
 
     def _read_menu(self) -> None:
-        """Read the menu off the window as it opens: what turns, and what is in it.
+        """Read the menu off the window as it opens, which is where it is decided.
 
-        The rotation is a timer and says for itself whether it is running, which
-        is what the tick is drawn from; a tick remembering what the menu last
-        did would be wrong the first time `R` was pressed instead.
+        Nothing on it is the menu's own: the rotation is a timer and says for
+        itself whether it is running, and a tick remembering what the menu last
+        did would be wrong the first time the key was pressed instead. What the
+        entries should say is `plot.controls`' answer to a snapshot of this
+        window, and the surfaces under `Remove` are part of that answer, since
+        what a window holds changes and the menu does not.
         """
-        self._spin_entry.setChecked(self._spin.isActive())
+        shown = rendered(self._offered, controls.menu(self.snapshot()))
+        self._relist(shown["surface.remove"])
+
+    def _relist(self, entry: controls.Entry) -> None:
+        """Fill the `Remove` submenu with the surfaces the window now holds.
+
+        An item names its surface by where it stands in the window's own list,
+        which is the one thing about a plot that survives being described.
+        """
         self._remove_menu.clear()
-        for surface in self.plots:
+        for item in entry.items:
             self._remove_menu.addAction(
-                surface.named, lambda _=False, surface=surface: self.remove(surface)
+                item.label,
+                lambda _=False, at=int(item.value or 0): self.remove(self.plots[at]),
             )
-        self._remove_menu.setEnabled(bool(self.plots))
+
+    def snapshot(self) -> controls.Solid:
+        """This window as the description of its controls has to read it."""
+        pointed = self._pointed
+        return controls.Solid(
+            spinning=self._spin.isActive(),
+            wired=self.wired,
+            boxed=self._boxed,
+            named=self._named,
+            legend=self._legend,
+            surfaces=tuple(surface.named for surface in self.plots),
+            pointed=None
+            if pointed is None
+            else controls.Pointed(
+                named=pointed.named, kind=pointed.kind, wire=pointed.wire
+            ),
+        )
 
     def _menu_at(self, point: Any) -> None:
         """A right click on the picture: the window's menu, where it was asked for."""
@@ -954,24 +991,20 @@ class Window3D(QtWidgets.QMainWindow):
         reverted rather than argued with, since the value it would take is on
         the screen beside it.
         """
-        try:
-            grid = (int(self._read("nx")), int(self._read("ny")))
-        except ValueError:
-            self._show_domain()
-            self.say("The grid is a pair of numbers")
-            return
-        grid = (
-            int(min(max(grid[0], 2), MAX_GRID)),
-            int(min(max(grid[1], 2), MAX_GRID)),
+        grid = forms.counts(
+            (self.fields["nx"].text(), self.fields["ny"].text())
         )
-        try:
-            bounds = tuple(
-                parse_expression(self.fields[name].text().strip(), self._state).node
-                for name in ("x0", "x1", "y0", "y1")
-            )
-        except DeriveSyntaxError:
+        if grid is None:
             self._show_domain()
-            self.say("The domain bounds are expressions, like -π or 2π")
+            self.say(forms.GRID_NUMBERS)
+            return
+        bounds = forms.parsed(
+            [self.fields[name].text() for name in ("x0", "x1", "y0", "y1")],
+            self._state,
+        )
+        if bounds is None:
+            self._show_domain()
+            self.say(forms.DOMAIN_EXPRESSIONS)
             return
         self._edit += 1
         edit = self._edit
@@ -1001,11 +1034,12 @@ class Window3D(QtWidgets.QMainWindow):
         """
         if edit != self._edit or isinstance(answer, Exception):
             return
-        x0, x1, y0, y1 = answer
-        if x1 <= x0 or y1 <= y0:
+        trouble = forms.domained(answer)
+        if trouble:
             self._show_domain()
-            self.say("The domain runs from a lower bound to a higher one")
+            self.say(trouble)
             return
+        x0, x1, y0, y1 = answer
         if grid != self.grid:
             # A typed grid is sticky: the next surface window opens on it. The
             # sticky value is one count per axis, so a rectangular grid hands
@@ -1016,11 +1050,8 @@ class Window3D(QtWidgets.QMainWindow):
         self.xdomain, self.ydomain, self.grid = (x0, x1), (y0, y1), grid
         self._show_domain()
         if changed:
-            self.say(f"Evaluating over the new domain at {grid[0]} by {grid[1]}")
+            self.say(forms.evaluating(grid))
             self.reevaluate()
-
-    def _read(self, name: str) -> float:
-        return float(self.fields[name].text().strip())
 
     def _show_domain(self) -> None:
         """Put the window's own numbers back in the fields, however they got there."""
@@ -1069,25 +1100,28 @@ class Window3D(QtWidgets.QMainWindow):
         """The default camera: a three-quarter view with the whole cube in it."""
         self.view.setCameraPosition(
             pos=pg.Vector(0.0, 0.0, 0.0),
-            distance=CAMERA_DISTANCE,
-            elevation=CAMERA_ELEVATION,
-            azimuth=CAMERA_AZIMUTH,
+            distance=actions.CAMERA.distance,
+            elevation=actions.CAMERA.elevation,
+            azimuth=actions.CAMERA.azimuth,
         )
 
     def face(self, plane: str) -> None:
-        """`1`, `2`, `3`: look straight at one of the three coordinate planes."""
-        elevation, azimuth = PLANES[plane]
-        self.view.setCameraPosition(elevation=elevation, azimuth=azimuth)
-        self.say(f"Facing the {plane} plane")
+        """Look straight at one of the three coordinate planes."""
+        camera = actions.facing(plane)
+        self.view.setCameraPosition(
+            elevation=camera.elevation, azimuth=camera.azimuth
+        )
+        self.say(actions.FACING.format(plane=plane))
 
     def spin(self) -> None:
-        """`R`: turn the picture slowly, or stop turning it."""
+        """Turn the picture slowly, or stop turning it."""
         if self._spin.isActive():
             self._spin.stop()
             self._quiet()
             return
         self._spin.start()
-        self.say("Rotating - R stops it")
+        key = controls.keys(controls.control("camera.spin", controls.SOLID))[0]
+        self.say(actions.ROTATING.format(key=key))
 
     def inspector(self) -> None:
         """The `view...` dialog: the box and the camera as editable numbers."""
@@ -1105,12 +1139,11 @@ class Window3D(QtWidgets.QMainWindow):
             return
         surface = self.plots[row]
         if button == QtCore.Qt.MouseButton.RightButton:
+            self._pointed = surface
+            handlers = self._handlers()
             menu = QtWidgets.QMenu(self)
-            menu.addAction(
-                "Draw solid" if surface.wire else "Draw as wire mesh",
-                lambda: self.toggle_wire(surface),
-            )
-            menu.addAction(f"Remove {surface.named}", lambda: self.remove(surface))
+            for entry in controls.card(self.snapshot()):
+                menu.addAction(entry.label, handlers[entry.name])
             menu.exec(QtGui.QCursor.pos())
             return
         surface.hidden = not surface.hidden
@@ -1143,6 +1176,35 @@ class Window3D(QtWidgets.QMainWindow):
         """
         surface.wire = not surface.wire
         self._draw(surface)
+
+    def _wire_pointed(self) -> None:
+        """The wire override, for the surface a legend row was right-clicked on."""
+        if self._pointed is not None:
+            self.toggle_wire(self._pointed)
+
+    def _remove_pointed(self) -> None:
+        """Take out the surface a legend row was right-clicked on."""
+        if self._pointed is not None:
+            self.remove(self._pointed)
+            self._pointed = None
+
+    # -- the three furnishings ----------------------------------------------
+
+    def _toggle_box(self) -> None:
+        """The box, its axis rays and its tick marks, or the picture alone."""
+        self._boxed = not self._boxed
+        for item in (self.box, self.rays, self.marks):
+            item.setVisible(self._boxed)
+
+    def _toggle_names(self) -> None:
+        """The numbers along the box edges and the names of the axes, or neither."""
+        self._named = not self._named
+        self._anchor()
+
+    def _toggle_legend(self) -> None:
+        """The plot list card, or the bare picture."""
+        self._legend = not self._legend
+        self.legend.setVisible(self._legend and bool(self.plots))
 
     # -- export ------------------------------------------------------------
 
@@ -1213,38 +1275,25 @@ class Window3D(QtWidgets.QMainWindow):
 
         Every key a menu entry advertises is dispatched off the menu's own
         table, so the key that works and the key the menu names are one key and
-        neither can fire twice. What is left written out here are the keys no
-        entry has: the three furnishings, the `mesh` box the toolbar already
-        shows the state of, and the arrows, which are the camera's.
+        neither can fire twice; the keys of the controls no entry names - the
+        three furnishings and the `mesh` box the toolbar already shows the state
+        of - are the second table, matched on the key alone as they always have
+        been. What is left written out here are the arrows, which are the
+        camera's own gesture rather than a command.
         """
         key = ev.key()
         keys = QtCore.Qt.Key
-        command = self._keyed.get(pressed(ev))
+        command = self._keyed.get(pressed(ev)) or self._loose.get(key)
         if command is not None:
             command.trigger()
-        elif key == keys.Key_B:
-            self._boxed = not self._boxed
-            for item in (self.box, self.rays, self.marks):
-                item.setVisible(self._boxed)
-        elif key == keys.Key_X:
-            self._named = not self._named
-            self._anchor()
-        elif key == keys.Key_L:
-            self._legend = not self._legend
-            self.legend.setVisible(self._legend and bool(self.plots))
-        elif key == keys.Key_M:
-            # M rather than W, deliberately: Ctrl-W closes the window, and a
-            # frequent toggle one slipped modifier from destroying the picture
-            # would be a poor place for it.
-            self.mesh_action.trigger()
         elif key == keys.Key_Left:
-            self.view.orbit(ORBIT_DEGREES, 0.0)
+            self.view.orbit(actions.ORBIT_DEGREES, 0.0)
         elif key == keys.Key_Right:
-            self.view.orbit(-ORBIT_DEGREES, 0.0)
+            self.view.orbit(-actions.ORBIT_DEGREES, 0.0)
         elif key == keys.Key_Up:
-            self.view.orbit(0.0, ORBIT_DEGREES)
+            self.view.orbit(0.0, actions.ORBIT_DEGREES)
         elif key == keys.Key_Down:
-            self.view.orbit(0.0, -ORBIT_DEGREES)
+            self.view.orbit(0.0, -actions.ORBIT_DEGREES)
         else:
             super().keyPressEvent(ev)
             return
@@ -1332,7 +1381,7 @@ class Window3D(QtWidgets.QMainWindow):
         super().closeEvent(ev)
 
 
-class Inspector(QtWidgets.QDialog):
+class Inspector(Sheet):
     """The numbers behind the picture: the box, and where it is looked at from.
 
     Everything here is reachable with the mouse and the toolbar; what this adds
@@ -1341,117 +1390,29 @@ class Inspector(QtWidgets.QDialog):
     and a 3D picture is one of the few places where a number typed is worth
     more than a gesture made.
 
-    The numbers are grouped the way the picture is: the box first, as three
-    columns of an axis each, and where it is looked at from second. The camera
-    half is a readout as well as a field, following the picture while the
-    dialog is up, which is why the heading says so.
+    What is asked for and how it is grouped is `plot.forms`' `VIEW`: the box
+    first, as three columns of an axis each, and where it is looked at from
+    second. The camera half is a readout as well as a field, following the
+    picture while the dialog is up, which is why the heading says so - and that
+    is the whole of what this adds to the form.
     """
 
-    #: The box, as a person reads one: a row of three numbers for where it is
-    #: and a row of three for how big it is, under the axis each column is
-    #: about. Six fields in a list is the same six numbers with the shape taken
-    #: out of them.
-    BOX = (("center", ("cx", "cy", "cz")), ("length", ("lx", "ly", "lz")))
-    AXES = ("x", "y", "z")
-
-    #: Where the box is looked at from, which is one row of three.
+    #: The nine numbers, in the three groups they are read and written in.
+    CENTER = ("cx", "cy", "cz")
+    LENGTHS = ("lx", "ly", "lz")
     CAMERA = ("azimuth", "elevation", "distance")
 
     def __init__(self, window: Window3D) -> None:
-        super().__init__(window)
-        self._window = window
-        self.setWindowTitle(f"View of plot {window.number}")
-        self.fields: dict[str, QtWidgets.QLineEdit] = {}
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(10)
-        layout.addWidget(self._headed())
-        layout.addWidget(self._box_group())
-        layout.addWidget(self._camera_group())
-        layout.addWidget(self._buttons())
+        super().__init__(window, forms.VIEW)
         window.view.moved.connect(self._camera_moved)
-
-    def _headed(self) -> QtWidgets.QWidget:
-        """What the dialog is about, and the one thing worth knowing about it.
-
-        That the camera numbers follow the picture is the difference between a
-        form and an instrument, and it is not a thing anybody would guess from
-        three fields with numbers in them.
-        """
-        holder = QtWidgets.QWidget()
-        column = QtWidgets.QVBoxLayout(holder)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(1)
-        title = QtWidgets.QLabel(f"View - plot {self._window.number}")
-        title.setStyleSheet(f"color: {theme.FIELD_TEXT}; font-weight: 600;")
-        subtitle = QtWidgets.QLabel("follows the camera while open")
-        subtitle.setStyleSheet(f"color: {theme.DIM};")
-        column.addWidget(title)
-        column.addWidget(subtitle)
-        return holder
-
-    def _box_group(self) -> QtWidgets.QWidget:
-        group = QtWidgets.QGroupBox("Box")
-        grid = QtWidgets.QGridLayout(group)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
-        for column, axis in enumerate(self.AXES):
-            grid.addWidget(self._column_head(axis), 0, column + 1)
-        for row, (shown, names) in enumerate(self.BOX, start=1):
-            grid.addWidget(self._label(shown), row, 0)
-            for column, name in enumerate(names):
-                grid.addWidget(self._field(name), row, column + 1)
-        return group
-
-    def _camera_group(self) -> QtWidgets.QWidget:
-        group = QtWidgets.QGroupBox("Camera")
-        grid = QtWidgets.QGridLayout(group)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
-        for column, name in enumerate(self.CAMERA):
-            grid.addWidget(self._column_head(name), 0, column)
-            grid.addWidget(self._field(name), 1, column)
-        return group
-
-    def _buttons(self) -> QtWidgets.QWidget:
-        """The three answers: give the z back, leave, or take what is typed.
-
-        One button box rather than a row built by hand, so that the platform
-        puts the buttons where the platform puts buttons; `Apply` is the
-        accented one, being the only one of the three that does what the
-        dialog is for.
-        """
-        roles = QtWidgets.QDialogButtonBox.ButtonRole
-        buttons = QtWidgets.QDialogButtonBox()
-        buttons.addButton("Apply", roles.ApplyRole).setObjectName(theme.PRIMARY)
-        buttons.addButton("Autoscale z", roles.ResetRole)
-        buttons.addButton("Close", roles.RejectRole)
-        buttons.clicked.connect(self._clicked)
-        return buttons
-
-    def _field(self, name: str) -> QtWidgets.QLineEdit:
-        edit = theme.field(90)
-        self.fields[name] = edit
-        return edit
-
-    def _label(self, text: str) -> QtWidgets.QLabel:
-        label = QtWidgets.QLabel(text)
-        label.setStyleSheet(f"color: {theme.TEXT};")
-        return label
-
-    def _column_head(self, text: str) -> QtWidgets.QLabel:
-        head = QtWidgets.QLabel(text)
-        head.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
-        head.setStyleSheet(f"color: {theme.DIM};")
-        return head
 
     def refresh(self) -> None:
         """Fill the fields from the window as it now stands."""
         box = self._window.box_now
         camera = self._window.view.cameraParams()
-        values = dict(zip(("cx", "cy", "cz"), box.center))
-        values.update(zip(("lx", "ly", "lz"), box.lengths))
-        for name in ("azimuth", "elevation", "distance"):
+        values = dict(zip(self.CENTER, box.center))
+        values.update(zip(self.LENGTHS, box.lengths))
+        for name in self.CAMERA:
             values[name] = float(camera.get(name, 0.0))
         for name, value in values.items():
             self.fields[name].setText(written(value))
@@ -1461,40 +1422,34 @@ class Inspector(QtWidgets.QDialog):
         if not self.isVisible():
             return
         camera = self._window.view.cameraParams()
-        for name in ("azimuth", "elevation", "distance"):
+        for name in self.CAMERA:
             self.fields[name].setText(written(float(camera.get(name, 0.0))))
 
-    def _clicked(self, button: Any) -> None:
-        text = button.text()
-        if text == "Close":
+    def answered(self, role: forms.Role) -> None:
+        """One of the three answers: give the z back, leave, or take what is typed."""
+        if role is forms.Role.CLOSE:
             self.close()
-        elif text == "Autoscale z":
+        elif role is forms.Role.RESET:
             self._window.autoscale_z()
             self.refresh()
         else:
-            self._apply()
+            self._take()
 
-    def _apply(self) -> None:
-        try:
-            center = [float(self.fields[name].text()) for name in ("cx", "cy", "cz")]
-            lengths = [float(self.fields[name].text()) for name in ("lx", "ly", "lz")]
-            camera = {
-                name: float(self.fields[name].text())
-                for name in ("azimuth", "elevation", "distance")
-            }
-        except ValueError:
-            self._window.say("The view is described in numbers")
+    def _take(self) -> None:
+        """Apply the typed box and camera, or say that they are not numbers."""
+        read = forms.numbers(self.said((*self.CENTER, *self.LENGTHS, *self.CAMERA)))
+        if read is None:
+            self._window.say(forms.NUMBERS)
             self.refresh()
             return
         spans = [
-            (middle - width / 2, middle + width / 2)
-            for middle, width in zip(center, lengths)
+            forms.spanned(middle, width)
+            for middle, width in zip(read[:3], read[3:6])
         ]
+        azimuth, elevation, distance = read[6:]
         self._window.reframe(spans[0], spans[1], spans[2])
         self._window.view.setCameraPosition(
-            distance=max(camera["distance"], 0.1),
-            elevation=camera["elevation"],
-            azimuth=camera["azimuth"],
+            distance=max(distance, 0.1), elevation=elevation, azimuth=azimuth
         )
         self.refresh()
 
