@@ -112,6 +112,34 @@ def test_a_worker_that_can_be_measured_is_measured():
         memory.worker_holds(None)
 
 
+def test_a_busy_worker_reports_out_of_its_collector_and_not_on_every_pass(monkeypatch):
+    """The rule the browser's gauge moves by while a computation is running.
+
+    The collection itself is not staged here - what is being checked is which
+    passes are worth a look at the heap, and a test that filled one to find out
+    would be measuring the machine it happens to run on.
+    """
+    import time
+
+    from rederive.web import worker
+
+    looks = []
+    monkeypatch.setattr(worker, "_held", lambda: looks.append(1))
+    # The end of a collection, and the first since the last look: report.
+    monkeypatch.setattr(worker, "_looked", 0.0)
+    worker._collected("stop", {})
+    assert len(looks) == 1
+    # The start of the same collection is the same figure asked twice.
+    worker._collected("start", {})
+    assert len(looks) == 1
+    # And a collection that comes round again straight away is passed over:
+    # an expansion collects thousands of times a second, and a gauge nobody can
+    # read that fast is not worth the looking.
+    monkeypatch.setattr(worker, "_looked", time.monotonic())
+    worker._collected("stop", {})
+    assert len(looks) == 1
+
+
 def test_a_tab_reads_its_own_heap_and_says_nothing_outside_one():
     """The reading a browser has, asked for where there is no browser.
 

@@ -50,8 +50,9 @@ the pending slot like a Simplify, because that is what a request with an answer
 to this side is.
 
 One message the worker sends was never asked for at all: how far its heap has
-grown, which it says after each answer because it is the half of the status
-line's memory gauge nothing on this side can measure. Nothing waits on it and
+grown, which is the half of the status line's memory gauge nothing on this side
+can measure. It arrives after each answer and during long ones too, so the
+gauge moves while a computation is still running. Nothing waits on it and
 nothing is owed for it - it is read where it lands and put in the gauge.
 
 The price of sharing is worth naming. A drag posted behind an integral waits for

@@ -286,16 +286,16 @@ class Web:
         return heap()
 
     def measures_processes(self) -> bool:
-        """No, which is what turns the engine's memory watchdog off.
+        """No: a heap is a gauge and the watchdog wants something else.
 
-        A gauge and a watchdog want different things, and the heap answers only
-        the first. A watchdog has to watch a computation while it runs, and
-        nothing here can: a Web Worker's memory is invisible from outside it,
-        and from inside it nothing is answered at all while Python is busy - a
-        worker in a long simplify is a thread that runs no timers and reads no
-        messages until it is done.
+        What this turns off is the desktop engine's cap, which reads a worker's
+        resident set from outside and kills it at a ceiling. Neither half of
+        that is here. Nothing outside a Web Worker can read its memory - the
+        figure the gauge shows is one the worker sends - and the figure itself
+        is a high-water mark that never comes down, so a cap read off it would
+        go on holding a program to a size it let go of long ago.
 
-        The other candidates answer no better. `performance.memory` is
+        Nor is there a better reading to be had. `performance.memory` is
         Chromium's alone, is quantised to the point of meaninglessness and does
         not count WebAssembly memory; `measureUserAgentSpecificMemory` is
         Chromium's too, wants the page cross-origin isolated, and resolves at

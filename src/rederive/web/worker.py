@@ -26,7 +26,9 @@ instance that paints the screen.
 One thing it says was not asked for, and that is how far its heap has grown.
 The status line's gauge is about the program, the program is two instances, and
 this is the one nothing outside can measure - so it reports, and the page's
-engine remembers the last figure.
+engine remembers the last figure. It reports while it is working as well as
+between requests, out of the collector, which is the only part of a busy worker
+that comes round often enough to say anything.
 
 What the desktop worker does that this one does not is take the tty off the
 program and open a log. A worker has no tty to take, and what it prints goes to
@@ -41,8 +43,10 @@ as the child process's.
 
 from __future__ import annotations
 
+import gc
 import pickle
 import sys
+import time
 import traceback
 from collections.abc import Callable
 from typing import Any
@@ -51,6 +55,25 @@ from rederive.engine.worker import BUG, MEMORY, READY, methods
 from rederive.plot.web import protocol as plots
 
 __all__ = ["serve"]
+
+#: How often the worker may look at its own heap while it is working. Often
+#: enough that a gauge on the page moves while a long computation runs, seldom
+#: enough that the looking is no part of what the computation costs: a
+#: collection during an expansion comes round thousands of times a second, and
+#: reading the heap on every one of them would be measuring rather than
+#: computing.
+HEAP_PERIOD_SECONDS = 0.25
+
+#: When the heap was last looked at, and what was said about it. A figure that
+#: has not moved is not sent again: WebAssembly memory only ever grows, so most
+#: of what a look finds is what the last one found.
+_looked = 0.0
+_said: int | None = None
+
+#: Whether a report is being made now, which is the one thing a report must not
+#: start another of: it allocates, an allocation can collect, and a collection
+#: is what called this.
+_reporting = False
 
 
 def serve() -> None:
@@ -73,6 +96,7 @@ def serve() -> None:
 
     table = methods() | sampler.methods(_drawing)
     js.self.onmessage = create_proxy(lambda event: _asked(table, event.data))
+    gc.callbacks.append(_collected)
     _post(pickle.dumps((READY, "ready")))
     _held()
 
@@ -107,24 +131,62 @@ def _held() -> None:
     Worker's memory is its own. So it says so, after every request it serves and
     once when it comes up.
 
-    Here rather than on a timer because a timer would be no fresher. A worker
-    running a computation runs nothing else - no timer, no message - so the
-    moment an answer goes out is the first moment there is anything new to say
-    and the last before the next silence.
-
     A message of its own, and a plain one rather than a pickle: the page's
     engine knows it by its field the way it knows a sampling by its own, and
     nothing about a gauge is worth a numbered request or a place in the
     protocol every other answer is read under.
     """
-    import js
-    from pyodide.ffi import to_js
+    global _looked, _said, _reporting
 
-    from rederive.platform.web import heap
+    _reporting = True
+    try:
+        import js
+        from pyodide.ffi import to_js
 
-    size = heap()
-    if size is not None:
+        from rederive.platform.web import heap
+
+        _looked = time.monotonic()
+        size = heap()
+        if size is None or size == _said:
+            return
+        _said = size
         js.self.postMessage(to_js({"heap": size}, dict_converter=js.Object.fromEntries))
+    except Exception:
+        # A gauge is not worth an error, and this one runs in the middle of
+        # other people's work: a browser that would not take the message, or a
+        # heap too full to build one, costs the field its next figure and
+        # nothing else.
+        pass
+    finally:
+        _reporting = False
+
+
+def _collected(phase: str, _info: dict[str, Any]) -> None:
+    """Report the heap from inside a collection, which is the one way to report at all.
+
+    A worker in the middle of a computation is a thread running Python and
+    nothing else: no timer fires, no message is read, and the request that
+    started it will not return for however long it takes. So a gauge that only
+    spoke between requests sat still through exactly the computation somebody
+    was watching it for - which is the one time a memory reading is worth
+    looking at.
+
+    The collector is where the program is instead. An expansion that is filling
+    the heap is collecting constantly, so the figure follows the work; a
+    computation that allocates nothing collects nothing and has nothing new to
+    say, which is the right answer rather than a missing one. Neither is a
+    timer, and neither pretends to be: the reading is fresh to within a
+    collection, and a program that has stopped allocating stops reporting.
+
+    The end of a collection rather than the start of one, which is half the
+    calls for the same figure, and only every `HEAP_PERIOD_SECONDS` however
+    often collections come round.
+    """
+    if phase != "stop" or _reporting:
+        return
+    if time.monotonic() - _looked < HEAP_PERIOD_SECONDS:
+        return
+    _held()
 
 
 def _drawing(answer: dict[str, Any]) -> None:

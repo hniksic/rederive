@@ -17,10 +17,10 @@ each:
   figure is as fresh as the moment it is asked for.
 * `worker_holds` says what it *reported*, for an environment that cannot. That
   is the browser, where nothing outside a Web Worker can read its heap, so the
-  worker says what it holds on its way past. Such a figure is as old as the
-  worker's last answer - a worker in the middle of a computation answers
-  nothing, its own timers included - which is as fresh as a reading there can
-  be.
+  worker says what it holds as it goes. Such a figure is as old as whenever the
+  worker last spoke, which is after each answer and, while it is working, out
+  of its own collector - so the gauge moves during a long computation, in step
+  with the allocating that is what moves it.
 
 A worker that has died, has not been spawned yet or has said nothing yet
 contributes nothing, silently - a gauge is not worth an error.
@@ -59,7 +59,8 @@ def worker_holds(size: int | None) -> None:
 
     For a worker nobody outside it can measure. The figure replaces whatever
     the last one said rather than adding to it: it is a reading of the same
-    heap and not a second heap.
+    heap and not a second heap, and they arrive as fast as the worker cares to
+    send them.
     """
     global _reported
     _reported = size
