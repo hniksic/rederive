@@ -13,8 +13,7 @@ Rederive is a worksheet rather than a calculator. An expression is entered
 with the Author command and numbered as it arrives, and nothing at all is
 worked out until a command is aimed at it. Every answer becomes a new numbered
 expression of its own, so a session reads down the screen as a record of what
-was asked and what came of it. Nothing a command computes replaces what it was
-computed from.
+was asked and what came of it.
 
 Driving a menu:
   Space, Tab            move the highlight to the next option
@@ -23,61 +22,53 @@ Driving a menu:
   a capital letter      run the option that letter names, from anywhere
   Esc                   leave a submenu, or abandon the command being answered
 
-Every option carries exactly one capital letter, and that letter invokes it
-wherever the highlight happens to be standing. Usually it is the first letter:
-A authors, S simplifies, Q quits. Where two options of one menu would want the
-same letter the capital moves along the word instead, which is why the command
-menu reads soLve, moVe and approX.
+Every option has one capital letter, usually the first: A authors, S
+simplifies, Q quits. When the first letter is already taken, a later one is
+capitalized instead: soLve, moVe, approX.
 
 A first session:
   press A, type x^3 - x, press Enter
   press F for Factor, then Enter at each question it asks
   press S for Simplify, then Enter
 
-Every question a command asks comes up with an answer already on it, so a
-command is usually carried through by pressing Enter as many times as it asks.
+Every question comes with a default answer filled in, so a command is usually
+completed by pressing Enter at each question.
 
 Naming an expression:
   the arrow keys   move the highlight from one expression to the next
-  #3               expression 3, wherever it now stands on the screen
+  #3               expression 3, named by its number
   Jump             move the highlight to a numbered expression at once
 
-A command that wants an expression opens with the label of the highlighted one
-already on its line, so Enter alone answers it. Moving the highlight while
-that line is up takes the label along with it. The label is the safer of the
-two ways to answer: it goes on meaning the same expression after a Remove or a
-moVe has changed what stands where.
+A command that asks for an expression starts with the label of the highlighted
+one already on its line, so Enter alone answers it. Moving the highlight
+updates the label. A label like #3 keeps meaning the same expression even
+after Remove or moVe has moved things around on the screen.
 
-Using the mouse:
-  a menu option    click it to run it, as its own capital letter does
-  an expression    click it to highlight it, again to go one part deeper
-  a value          click it to set it, on an Options screen or any question
-  the wheel        scrolls the history; with Shift held, sideways over an
-                   expression too wide for the pane
-  another window   click in it to make it the active one
+The mouse works everywhere: menu options, Options screens, windows and
+expressions can all be clicked. Clicking an expression highlights it, and each
+further click goes one part deeper into it. The wheel scrolls the history;
+with Shift held, sideways over an expression too wide for the pane.
 
 Every gesture stands for a key, so nothing here needs the mouse and nothing is
-reachable only with it. Text swept out with the button held down is the
-terminal's own selection rather than an expression, and Ctrl-C copies that
-while it stands. A sweep over the line being typed marks out a stretch of it
-instead, which Ctrl-C copies and Ctrl-X takes off the line.
+reachable only with it. Dragging selects text, not expressions: Ctrl-C copies
+the selection, and on the line being typed Ctrl-X cuts it.
 
 Exact before approximate:
   Simplify   work an expression out exactly, however long the answer
   approX     work it out as a number, to the precision now set
-  Options Precision   which of the two Simplify does
+  Options Precision   whether Simplify answers exactly or numerically
 
 An answer is kept exact wherever it can be, so Simplify of 1/3 + 1/6 is 1/2
 and not 0.5, and the square root of 2 stays a square root. approX is how a
 number is asked for.
 
-Not guessing:
+Declarations:
   Declare Variable   give a variable a value, or a domain to simplify over
   Declare Function   define a function of your own
 
-A simplification that would only be right for some values of a variable waits
-until something says which values those are. Until then the expression stands
-as it is, which is the honest answer rather than a wrong one.
+A simplification that is only right for some values of a variable waits for a
+declaration: LN(x^2 - x) - LN(x) becomes LN(x - 1) only once x is declared
+positive. Until then the expression is left as it is.
 
 Files, screen and settings:
   Transfer Save    write the worksheet out
@@ -87,24 +78,22 @@ Files, screen and settings:
   Manage           which transformations the simplifier applies
   Window           split the screen, so two parts of one session show at once
   Help             this help
-  Quit             leave, after asking whether that was meant
+  Quit             leave the program, after asking for confirmation
 
 %topic Editing | line Editing commands | Line Editing Commands
 
-The keys below apply to every line the program reads: the Author line, the
-lines the Declare and Calculus commands read, the value lines of Manage
-Substitute, the operand lines of Build and the lines that name a file. F6 is
-about an expression, so it applies to the lines that take one and not to a line
-collecting a variable, a file name or an annotation.
+The keys below apply to every line the program reads, from the Author line to
+a line naming a file.
 
 Special key commands:
   F1           display this help; the line being typed is kept
-  F6           hand the sideways arrow keys to the line, or to the highlight
-  Ctrl-C       copy what is marked out, or the highlighted expression
-  Ctrl-X       cut what is marked out on the line
+  F6           switch the Left and Right keys between the line and the
+               highlight; only on lines that take an expression
+  Ctrl-C       copy what is selected, or the highlighted expression
+  Ctrl-X       cut what is selected on the line
   Ctrl-V       paste what was copied onto the line
-  Ins          switch between making room for a character and typing over one
-  Tab          on a line naming a file, complete the name and open the list
+  Ins          switch between inserting characters and typing over them
+  Tab          on a line naming a file, complete the name and list the matches
   Enter        accept the line
   Ctrl-Enter   accept it, and simplify the expression the command enters
   Esc          abandon the command; on an open list of names, close the list
@@ -115,44 +104,37 @@ Cursor movement commands:
   End          to the end of it
 
 Text selection commands:
-  Shift-Left, Shift-Right   mark out one more character, one fewer
-  Shift-Home, Shift-End     mark out to the start of the line, to the end
-  the mouse                 sweep over the line with the button held down
+  Shift-Left, Shift-Right   select one more character, one fewer
+  Shift-Home, Shift-End     select to the start of the line, to the end
+  the mouse                 drag over the line with the button held down
 
-Ctrl-C copies what is marked out and Ctrl-X takes it off the line, keeping the
-copy for Ctrl-V. With nothing marked out, Ctrl-C copies the highlighted
-expression instead and Ctrl-X says there is nothing to cut, cutting being
-about the line and nothing else. The label a command offers on its line comes
-up selected so that typing replaces it, but that is the command's offering
-rather than a selection of yours, and neither key acts on it.
+With nothing selected, Ctrl-C copies the highlighted expression instead. The
+label a command puts on its line comes up selected so that typing replaces it;
+Ctrl-C and Ctrl-X leave it alone.
 
 Text deletion commands:
   Backspace    delete the character before the cursor
   Delete       delete the character under it
   Ctrl-W       delete the word before the cursor
-  Ctrl-U       delete the line before the cursor
+  Ctrl-U       delete everything before the cursor
   Ctrl-K       delete the line from the cursor on
   Ctrl-Y       put back what the last deletion took out
   Alt-Y        after Ctrl-Y, put back an earlier deletion instead
 
-What was deleted stands until the program is left, so Ctrl-Y is also how a
-piece of one line is carried onto another.
+Deleted text is kept for the whole session, so a piece of one line can be
+deleted and put back on another.
 
-The status line says which of the two typing modes is in force: Ovr stands
-there while a character typed types over what is already at the cursor, and
-nothing stands there while it makes room for itself. Lin stands beside it while
-the sideways arrow keys belong to the line rather than to the highlight. Both
-words are about the line being typed, so neither stands there without one.
+The status line shows Ovr while typing overwrites the character at the cursor,
+and Lin while the Left and Right keys belong to the line rather than to the
+highlight.
 
-Expression highlighting commands. These go on working while a line is being
-typed, a line of text having nothing vertical to do with them, which is what
-makes it possible to move onto an expression and then copy it onto the line. The
-variable line Factor and Expand read is the one line that holds the highlight
-still:
+Expression highlighting commands. These keep working while a line is being
+typed, so an expression can be highlighted and then copied onto the line; only
+the variable line of Factor and Expand keeps the highlight where it is:
   Up, Down            the previous, the next expression
-  PgUp, PgDn          a paneful back, a paneful forward
+  PgUp, PgDn          a screenful back, a screenful forward
   Ctrl-Home, Ctrl-End the first, the last expression
-  Ctrl-PgUp, Ctrl-PgDn  the same two
+  Ctrl-PgUp, Ctrl-PgDn  the same as Ctrl-Home and Ctrl-End
   Ctrl-Left, Ctrl-Right scroll sideways over an expression wider than the pane
 
 Sub-expression highlighting commands. Press F6, or set Options Input Use to
@@ -162,21 +144,20 @@ instead of along the line:
   Left    back to the part before it
   Down    deeper into the highlighted part
   Up      back out to the part holding it
-  Home    the first part alongside
-  End     the last part alongside
+  Home    the first part at this depth
+  End     the last part at this depth
 
 What is highlighted is what a command acts on, so a subexpression can be
 factored, approximated or substituted for on its own without the expression
 around it being disturbed.
 
-A click walks the same tree from the other end. The first one highlights the
-expression it lands on and each one after it goes a part deeper towards what
-the pointer is over, so a term of a long sum is reached without having to hit
-the single character it is drawn as. A click on a part of the expression
-holding the one highlighted - the operator between two terms belongs to the sum
-and to neither term - goes back out to it, and a click on the number in front
-of the expression highlights the whole of it again. The arrow key mode does not
-apply: a click reaches a subexpression whichever way F6 has left the keys.
+Clicks reach subexpressions too. The first click highlights the whole
+expression, and each further click goes one part deeper towards what the
+pointer is over, so a term of a long sum is reached without aiming at a single
+character. A click just outside the highlighted part - on the operator joining
+it to its neighbour, say - goes back out one level, and a click on the number
+in front of the expression highlights the whole of it again. Clicks work the
+same in either arrow-key mode.
 
 Entering Greek letters, special constants and operators:
   Alt-A  alpha     Alt-B  beta      Alt-D  delta     Alt-N  epsilon
@@ -190,30 +171,29 @@ Entering Greek letters, special constants and operators:
 
 Every one of them can be spelled out instead - alpha, pi, inf, sqrt, #e, #i -
 and the spelling is what the program prints back either way, so nothing has to
-be entered with an Alt key. Alt-minus needs a terminal that reports a modified
-key; where it does not, plus-or-minus is written +-.
+be entered with an Alt key. If Alt-minus does not work in your terminal, type
++- instead.
 
 %topic Functions | Functions and constants | Functions, Constants, and Operators
 
 A name is a function where it is followed by an argument list and a variable
 where it is not. Case is ignored unless Options Input Case says otherwise, so
-SIN, Sin and sin are one function. Nothing here computes when it is authored:
-what is entered is entered as written, and Simplify or approX is what works it
-out.
+SIN, Sin and sin are one function. Entering SIN(0.5) computes nothing;
+Simplify or approX works it out.
 
 Constants:
   pi                 the ratio of a circle's circumference to its diameter
   #e                 the base of the natural logarithms
   #i                 the square root of -1
-  inf                infinity; -inf is the other end
+  inf                infinity; -inf is negative infinity
   deg                one degree, so 90 deg is a right angle
   euler_gamma        Euler's constant
   true, false        the two truth values
-  ?                  an unknown value
+  ?                  an unknown value, written in answers that have none
 
 Operators:
   u + v, u - v       sum and difference
-  u*v, u v           product; a space or nothing between multiplies too
+  u*v, u v           product; x y and 3x multiply too
   u/v                quotient
   u^v                power
   u!                 factorial
@@ -225,22 +205,24 @@ Operators:
   u +- v             both u + v and u - v at once
   x := u             give the variable x the value u
   f(x) := u          define a function
-  x :epsilon Real    declare what x ranges over
+  x :epsilon Real    declare what x ranges over; :epsilon is typed as
+                     written, or as :∈
 
 Relational operators:
   u = v, u /= v      equal, not equal
-  u < v, u <= v      less than, not greater than
-  u > v, u >= v      greater than, not less than
+  u < v, u <= v      less than, less than or equal
+  u > v, u >= v      greater than, greater than or equal
 
 Boolean operators and functions:
   NOT u              negation
   u AND v, u OR v    conjunction, disjunction
   u XOR v            exclusive disjunction
   u IMP v            implication
-  TRUTH_TABLE(p, q, ..., u, ...)  the table of u over the variables named
+  TRUTH_TABLE(p, q, ..., u, ...)  the truth table of the expressions u over
+                                  the variables named before them
 
 Solving equations and relations:
-  SOLVE(u, x)        solve u for x, which is what the soLve command writes
+  SOLVE(u, x)        solve u for x; the soLve command writes this for you
   LHS(u), RHS(u)     the sides of a relation, or of each relation in a vector
 
 Exponential and logarithmic functions:
@@ -255,7 +237,7 @@ Trigonometric functions:
 
 Inverse trigonometric functions:
   ASIN(z), ACOS(z), ATAN(z)  the inverses of the first three
-  ATAN(y, x)                 the angle of the point (x, y), by quadrant
+  ATAN(y, x)                 the angle of the point (x, y), quadrant included
   ACOT(z), ASEC(z), ACSC(z)  the inverses of the other three
 
 The angle mode set by Manage Trigonometry Angle says whether an argument is
@@ -291,7 +273,7 @@ Probability and statistical functions:
   RMS(...)           the root mean square
   VAR(...)           the variance
   STDEV(...)         the standard deviation
-  NORMAL(z), NORMAL(z, m, s)  the normal distribution, standard or not
+  NORMAL(z), NORMAL(z, m, s)  the cumulative normal distribution
 
 Error and special functions:
   ERF(z), ERFC(z)    the error function and its complement
@@ -302,14 +284,14 @@ Number theory functions:
   GCD(...), LCM(...) the greatest common divisor, the least common multiple
   PRIME(n)           whether n is prime
   NEXT_PRIME(n)      the least prime above n
-  QUOTIENT(u, v)     how many times v goes into u
-  REMAINDER(u, v)    what is left of u when v has gone into it
+  QUOTIENT(u, v)     the integer quotient of u by v
+  REMAINDER(u, v)    the remainder of u divided by v
   POLY_GCD(u, v)     the greatest common divisor of two polynomials
 
 Expression decomposition functions:
-  NUMERATOR(u), DENOMINATOR(u)   the two halves of a quotient
-  TERMS(u)           what u is written as the sum of, as a vector
-  FACTORS(u)         what u is written as the product of, as a vector
+  NUMERATOR(u), DENOMINATOR(u)   the top and the bottom of a fraction
+  TERMS(u)           the terms of the sum u, as a vector
+  FACTORS(u)         the factors of the product u, as a vector
   VARIABLES(u)       the free variables of u, the main one first
   NUMBER(u)          whether u simplifies to a number
   APPROX(u), APPROX(u, n)  u as a number, at the set precision or at n digits
@@ -318,7 +300,8 @@ Calculus functions:
   DIF(u, x), DIF(u, x, n)      the derivative, to the first or the nth order
   INT(u, x)                    the indefinite integral
   INT(u, x, a, b)              the definite integral between a and b
-  LIM(u, x, a), LIM(u, x, a, d)  the limit at a; d says from which side
+  LIM(u, x, a), LIM(u, x, a, d)  the limit at a; d > 0 from the right,
+                                 d < 0 from the left
   SUM(u, k, a, b)              the sum over k from a to b
   PRODUCT(u, k, a, b)          the product over the same range
   TAYLOR(u, x, a, n)           the Taylor polynomial of degree n about a
@@ -330,15 +313,15 @@ Generating vectors and matrices:
   ITERATE(u, x, a), ITERATE(u, x, a, n)    the last element of that sequence
   IDENTITY_MATRIX(n) the n by n identity matrix
 
-The values an index runs over are said in four ways, and VECTOR, SELECT and
-ITERATES all read them alike: a count on its own, a first and a last, a first
-and a last and a step, or a vector of the values themselves.
+The values an index runs over can be given in four ways, and VECTOR, SELECT
+and ITERATES all read them alike: a count on its own, a first and a last, a
+first and a last and a step, or a vector of the values themselves.
 
 Vector manipulation functions:
   DIMENSION(v)               how many elements v has
   ELEMENT(v, i)              element i, counting from one
   ELEMENT(m, i, j)           element j of row i of a matrix
-  APPEND(v, w, ...)          the elements of each, run into one vector
+  APPEND(v, w, ...)          the elements of each, joined into one vector
   REVERSE_VECTOR(v)          the elements in the other order
   INSERT_ELEMENT(u, v, n)    v with u written in before its nth element
   DELETE_ELEMENT(v, n)       v with its nth element gone
@@ -354,7 +337,7 @@ Vector and matrix operations:
   TRACE(m)           the trace
   ROW_REDUCE(m), ROW_REDUCE(m, b)  the reduced echelon form
   CHARPOLY(m, z)     the characteristic polynomial in z
-  EIGENVALUES(m, z)  its zeros, written as equations in z
+  EIGENVALUES(m, z)  the eigenvalues of m, as equations in z
 
 Vector calculus:
   GRAD(u), GRAD(u, a)          the gradient of a scalar field
@@ -368,9 +351,9 @@ serves cartesian, cylindrical and spherical coordinates.
 
 %topic Algebra | Algebra window commands | Algebra Window Command Menu
 
-Move the highlight with Space or Tab and press Enter, or type the one capital
-letter the option carries. Esc leaves a submenu without choosing anything, and
-abandons a command that has begun to ask questions.
+Move the highlight with Space or Tab and press Enter, or type the option's
+capital letter. Esc leaves a submenu without choosing anything, and abandons a
+command that has begun to ask questions.
 
 Author        enter an expression as the next numbered entry, unsimplified
 Build         put an expression together from ones already on the screen
@@ -396,7 +379,7 @@ Jump          move the highlight to a numbered expression
 soLve         solve an expression for its unknowns
 
 Manage        how expressions are kept, and how they are simplified
-  Annotate       change what the status line says an expression came from
+  Annotate       attach a note to an expression, shown on the status line
   Branch         which of several roots a radical stands for
   Exponential    whether exponentials are collected or expanded
   Logarithm      whether logarithms are collected or expanded
@@ -408,16 +391,17 @@ Manage        how expressions are kept, and how they are simplified
 Options       how numbers are read, worked out and printed
   Color          the colors of the menu bands and of the work area
   Input          typing over or inserting, case sensitivity, arrow key mode
-  Mute           whether a refused key beeps
+  Mute           whether an invalid keypress beeps
   Notation       the style answers are printed in, and how many digits
-  Output         built-up or compressed display, and the times operator
+  Output         built-up or compressed display, and which multiplication
+                 sign is printed
   Precision      exact, approximate or mixed arithmetic, and its digit count
   Radix          the number system input and output are written in
 
 Plot          draw the highlighted expression in a plot window
-  Plot           draw it in the plot window last touched, opening one if needed
-  New            draw it in a new window, which the next plot then lands in
-Quit          leave the program, after asking whether that was meant
+  Plot           draw it in the most recently used plot window
+  New            draw it in a new window; later plots then go to it
+Quit          leave the program, after asking for confirmation
 Remove        take a block of expressions out of the worksheet
 Simplify      work an expression out, exactly unless Precision says otherwise
 
@@ -428,12 +412,12 @@ Transfer      reading and writing files, and starting over
   Clear          throw expressions, functions or variables away
   Demo           run a demonstration file, one step per keystroke
 
-Unremove      put the last block Remove took out back, wherever it is wanted
+Unremove      put back the last block Remove took out, asking where
 moVe          move a block of expressions elsewhere in the worksheet
 
 Window        split the screen, and move between the pieces
-  Close          close a window; its neighbour takes the room it leaves
-  Flip           bring the next of this window's overlays to the top
+  Close          close a window
+  Flip           show the next of the worksheets opened over this one
   Goto           make a numbered window the active one
   Next           make the next window active
   Open           open another worksheet over this one
@@ -445,47 +429,145 @@ Window        split the screen, and move between the pieces
 approX        work an expression out as a number, to the precision now set
 
 Transfer Load Utility reads a file of definitions without numbering what it
-reads, which is how a library of functions is brought into a session. The
-utility files written for the original Derive can be read this way.
+reads; use it to bring a library of functions into a session. The utility
+files written for the original Derive can be read this way.
 
 Transfer Save writes a worksheet in this program's own format, and also writes
 a highlighted expression out as C, Python, Rust or Julia source.
 
 Transfer Load Derive gallery reads the worksheet of captioned plots that comes
-with the program, from whatever directory you are working in. Highlight a line,
-read its caption on the status line, and press P P to see what it draws.
+with the program. Highlight a line, read its caption on the status line, and
+press P P to see what it draws.
 
-A plot window is a window of the desktop rather than a part of this screen,
-and it is closed the way any other window is. The picture is navigated with the
-mouse: the wheel zooms about the pointer, the left button drags the view, the
-right button sweeps out a rectangle to zoom to, and a double click centres the
-view where it lands.
-
-Plot window key commands:
-  Home or 0    the framing a fresh window opens with
-  A            frame every curve that is showing
-  + and -      zoom in and out about the middle of the view
-  arrows       move the view a quarter window; move the marker, while tracing
-  Backspace    back to where the view was; Shift-Backspace forward again
-  T or F3      trace: a marker rides a curve and the status bar reads it out
-  L and G      the legend and the grid
-  Ctrl-C       copy the picture, or the traced point, to the clipboard
-  Ctrl-S       save the picture, the sampled points, or a drawing of it
+Plot draws the highlighted expression in a window of its own; the Plotting
+subject of this help covers the plot windows.
 
 Algebra window key commands:
-  F1           the next window; help, while a line is being typed
-  Shift-F1     the previous window
-  F2           bring the next of this window's overlays to the top
+  F1           switch to the next window; while typing a line, this help
+  Shift-F1     switch to the previous window
+  F2           show the next of the worksheets opened over this window
   Shift-F2     the previous one
-  F6           hand the sideways arrow keys to the line, or to the highlight
+  F6           switch the Left and Right keys between the line and the
+               highlight
   Ctrl-C       copy what is selected, or the highlighted expression
   Ctrl-X       cut what is selected on the line being typed
   Ctrl-V       paste what was copied onto the line being typed
   Esc          abandon the question being asked; stop a running computation
 
-A command that reaches the engine says on the message line how long it has
-been running, and Esc stops it. What it had computed is thrown away and the
-worksheet stands as it did.
+A long computation shows on the message line how long it has been running.
+Esc stops it and leaves the worksheet unchanged.
+
+%topic Plot | Plotting expressions | Plotting Expressions
+
+Plot draws the highlighted expression in a plot window:
+
+Plot          draw in the most recently used plot window, opening one if needed
+New           draw in a new window; later plots then go to it
+
+The expression itself decides what kind of picture it makes, and with it which
+of the two kinds of window it opens.
+
+Expressions that open a 2D window:
+  one variable, or none    a curve: SIN(x)/x, x^2 - 1, 3
+  u = v                    the curve where the two sides are equal
+  an inequality            the area where it holds: x^2 + y^2 < 9
+  [u, v]                   a parametric curve: [3SIN(3t), 3SIN(4t)]
+  [u, v, w] and longer     a curve for each: [x, x^2, x^3]
+  [a, b] of numbers        a point; a vector of pairs draws them all
+
+A pair of expressions makes a parametric curve, a pair of plain numbers a
+point. To draw two curves together, Plot each expression in turn.
+
+Expressions that open a 3D window:
+  two variables            a surface: 1/(9 + x^2 + y^2)
+  z = f(x, y)              a surface, z on the vertical axis
+  a vector of either form  a surface for each, in one picture
+
+Plotting an expression again replaces its old curve rather than adding one.
+An expression in three or more variables cannot be plotted. The axes take
+their names from the expression's own variables.
+
+A plot window is an ordinary window of the desktop, with buttons and fields
+along its top edge and a menu on right click.
+
+Driving a 2D window with the mouse:
+  wheel                 zoom about the pointer; Ctrl only x, Shift only y
+  drag                  move the view
+  right drag            mark a rectangle to zoom into
+  double click          centre the view there
+  click on a curve      trace it (see below)
+  click a legend entry  hide that plot, or show it again
+  right click           the window's menu
+
+The menu also acts on the plot the click was over: remove it, or join a data
+plot's points and change their size.
+
+2D window keys:
+  Home or 0    back to the starting view
+  A            fit everything drawn into the view
+  + and -      zoom in and out
+  arrows       move the view
+  Backspace    the previous view; Shift-Backspace forward again
+  T or F3      trace on and off
+  G and L      show or hide the grid and the legend
+  Del          remove every plot
+  Ctrl-C       copy the picture; while tracing, the marked point
+  Ctrl-S       save the picture to a file
+  Q            close the window
+
+Set range... on the menu lets you type the four bounds of the view, as
+expressions: -π is a valid bound. A fresh window shows -5 to 5 with the same
+scale on both axes, so a circle is round. After A fits everything in, the two
+scales may differ; the 1:1 button or Home makes them equal again. A plot drawn
+entirely outside the current view is fitted into it automatically.
+
+The polar button switches the window to polar coordinates: every curve is then
+drawn as r = f(θ), with its variable as the angle. A parametric or polar curve
+is first drawn for parameter values from -π to π; type other bounds into the
+fields at the top of the window to change that.
+
+Trace follows a curve with a marker and shows the coordinates under it. On an
+ordinary curve the marker follows the pointer; the keys move it too:
+  left, right    along the curve; faster with Shift
+  up, down       onto another curve
+  Tab            to the next root, maximum, minimum or intersection with
+                 another curve; Shift-Tab to the previous one
+  Enter          add the marked point to the worksheet as a new expression
+  Ctrl-C         copy the marked point
+  Esc            stop tracing
+
+The points Tab finds are exact enough to calculate with. Where the curve has
+no value, like SIN(x)/x at x = 0, tracing shows that too.
+
+In a 3D window the mouse and keys move only the camera:
+  drag         turn the picture; Shift-drag slides it
+  wheel        nearer and further
+  arrows       turn a step at a time
+  Home or 0    back to the starting view
+  1, 2, 3      look straight at the xy, xz or yz plane
+  R            spin slowly; R again stops
+  M            draw the surfaces as wire mesh, or shaded
+  B            show or hide the box around the surfaces
+  X            show or hide the numbers and names along the box edges
+  L            show or hide the legend
+  Del          remove every surface
+  Ctrl-C, Ctrl-S, Q   as in a 2D window
+
+The surfaces are computed over the domain given in the fields at the top, on a
+grid of the given fineness; changing either recomputes them. The view...
+button shows the plotted region and the camera as numbers you can edit; its
+Autoscale z button returns to the automatic height after you have typed one.
+A surface running off to infinity has its spike cut short, so that the rest of
+the shape stays visible.
+
+Ctrl-S saves a PNG image or, from a 2D window, an SVG drawing that scales in
+print. Copies and saved files use dark lines on a white background, ready for
+printing, and include the legend.
+
+Options Plot sets the defaults for new plots: the grid of a surface, wire or
+shaded, and whether data points are joined and how large they are drawn.
+Changing one of these in a plot window changes the default too, and the
+defaults are remembered between sessions.
 
 %topic State | current State of system | System Control Settings
 

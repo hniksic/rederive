@@ -93,7 +93,9 @@ async def test_help_opens_over_the_worksheet(app):
         await pilot.press("a", *"x+1", "enter")
         assert work_area(app) == ["#1:  x + 1"]
         await pilot.press("h")
-        assert band(app) == [" HELP: Basics Editing Functions Algebra State Resume"]
+        assert band(app) == [
+            " HELP: Basics Editing Functions Algebra Plot State Resume"
+        ]
         assert highlighted(app) == "Basics"
         assert message(app) == "Enter option"
         assert title(app) == helps.MENU_TITLE

@@ -6,10 +6,12 @@ overlaid and nothing dimmed underneath. It had exactly two levels: a menu of
 subjects, and a subject read a page at a time. There were no links, no index
 and no search; the section numbers printed through the text pointed at the
 paper manual, and following one meant picking the manual up. That shape is
-kept here, less the parts that were about paper, less the two plot subjects -
-whose menus and framing dialogs are not this program's, its plot windows being
-windows of the desktop that are driven with a mouse - and less the subject
-listing the utility files, this program shipping none of its own.
+kept here, less the parts that were about paper, and less the subject listing
+the utility files, this program shipping none of its own. The original's two
+plot subjects are one here: they were a menu apiece and this program's plot
+windows have no menus to list, being windows of the desktop that are driven
+with a mouse, while the one thing worth a page - what an expression is a plot
+of - is the same question in both dimensions.
 
 Nothing in this module draws anything. A topic is a run of blocks, a block is
 a run of source lines that belong on one page together, and laying one out is
