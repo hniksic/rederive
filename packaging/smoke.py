@@ -174,6 +174,7 @@ class Terminal:
         )
         os.close(slave)
         self._seen = b""
+        self._session = b""
 
     def type(self, keys: str) -> None:
         os.write(self._master, keys.encode())
@@ -191,7 +192,14 @@ class Terminal:
         self.wait_for(COMMAND_MENU)
 
     def wait_for(self, text: str, patience: float = PATIENCE) -> None:
-        """Read until `text` is on the screen, or say what was there instead."""
+        """Read until `text` is on the screen, or say what was there instead.
+
+        Only what arrives from here on can match. The app draws the same command menu
+        after every command, so a wait that accepted what was on the screen already
+        would pass on the last command's frame rather than this one's. That makes a
+        failure's evidence narrow, which is what `self._session` is for: it holds
+        everything the app has drawn since it started, and the failure reads off both.
+        """
         import select
 
         self._seen = b""
@@ -201,11 +209,14 @@ class Terminal:
                 return
             if select.select([self._master], [], [], 0.05)[0]:
                 try:
-                    self._seen += os.read(self._master, 65536)
+                    arrived = os.read(self._master, 65536)
                 except OSError:
                     break
+                self._seen += arrived
+                self._session += arrived
         raise Failed(
-            f"waited {patience:.0f}s for {text!r}, screen held:\n{_shown(self._seen)}"
+            f"waited {patience:.0f}s for {text!r}, {_arrival(self._seen)}. "
+            f"The session so far:\n{_shown(self._session)}"
         )
 
     def finish(self) -> int:
@@ -229,10 +240,24 @@ def _plain(data: bytes) -> str:
     return text
 
 
-def _shown(data: bytes) -> str:
+def _arrival(seen: bytes) -> str:
+    """Which of the two failures this was, they having nothing to do with each other.
+
+    Nothing drawn at all means the app never answered: it is wedged behind something,
+    or gone with the pty still open. Something drawn that did not match means it did
+    answer and the answer was not the one expected, which is a question about the
+    answer rather than about whether one came. A bare timeout says neither, and the
+    two are worth a different morning each.
+    """
+    if not seen:
+        return "and nothing was drawn in that time"
+    return f"and {len(seen)} bytes were drawn that did not hold it"
+
+
+def _shown(data: bytes, keep: int = 40) -> str:
     """The last of the screen, for a failure to be read against."""
     lines = [line.rstrip() for line in _plain(data).splitlines() if line.strip()]
-    return "\n".join(f"    {line}" for line in lines[-12:])
+    return "\n".join(f"    {line}" for line in lines[-keep:])
 
 
 def _simplify(terminal: Terminal, expression: str, expected: str) -> None:
