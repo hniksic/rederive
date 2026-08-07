@@ -52,6 +52,12 @@ def highlighted(app):
     return options[0] if options else None
 
 
+def pointed(app):
+    """The band word the pointer is marking, or None if it is marking none."""
+    words = styled(app.query_one(band_id(app)), app.palette.styles["option-pointed"])
+    return words[0] if words else None
+
+
 def content(app, number=None):
     """The Static holding a window's expressions; the active window's by default."""
     pane = app.work_area if number is None else app.panes[app.windows.numbered(number)]

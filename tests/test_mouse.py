@@ -22,6 +22,7 @@ from screen import (
     highlighted,
     highlighted_expression,
     message,
+    pointed,
     prompt,
     work_area,
 )
@@ -73,16 +74,27 @@ async def click_on(pilot, app, text, row=None, number=None):
     raise AssertionError(f"{text!r} is not on the work area")
 
 
-async def click_word(pilot, app, word):
-    """Click a word of the command band, wherever it has been laid out."""
-    await pilot.pause()
-    widget = app.query_one(band_id(app))
+def word_cell(app, word):
+    """The command band, and the cell it has drawn `word` in."""
     for row, line in enumerate(band(app)):
         column = line.find(word)
         if column != -1:
-            await pilot.click(widget, offset=(column, row))
-            return
+            return app.query_one(band_id(app)), (column, row)
     raise AssertionError(f"{word!r} is not on the band")
+
+
+async def click_word(pilot, app, word):
+    """Click a word of the command band, wherever it has been laid out."""
+    await pilot.pause()
+    widget, at = word_cell(app, word)
+    await pilot.click(widget, offset=at)
+
+
+async def hover_word(pilot, app, word):
+    """Rest the pointer on a word of the command band."""
+    await pilot.pause()
+    widget, at = word_cell(app, word)
+    await pilot.hover(widget, offset=at)
 
 
 async def wheel(
@@ -343,6 +355,75 @@ async def test_a_click_chooses_a_help_subject_and_comes_back(app):
         assert band(app)[0].startswith(" HELP:")
         await click_word(pilot, app, "Resume")
         assert band(app)[0].startswith(" COMMAND:")
+
+
+# -- pointing at a menu word ---------------------------------------------------
+
+
+async def test_the_word_under_the_pointer_is_marked(app):
+    """Which is the whole of what the mark says: this word is a click away."""
+    async with app.run_test() as pilot:
+        assert pointed(app) is None
+        await hover_word(pilot, app, "Simplify")
+        assert pointed(app) == "Simplify"
+
+
+async def test_the_mark_follows_the_pointer_to_the_next_word(app):
+    """One word at a time, wherever on the band the words have been laid out."""
+    async with app.run_test() as pilot:
+        await hover_word(pilot, app, "Author")
+        assert pointed(app) == "Author"
+        await hover_word(pilot, app, "Window")
+        assert pointed(app) == "Window"
+
+
+async def test_the_mark_goes_away_where_there_is_no_word_under_the_pointer(app):
+    async with app.run_test() as pilot:
+        await hover_word(pilot, app, "Author")
+        await pilot.hover(app.query_one("#menu"), offset=(2, 0))
+        assert pointed(app) is None
+
+
+async def test_the_mark_goes_away_when_the_pointer_leaves_the_band(app):
+    async with app.run_test() as pilot:
+        await hover_word(pilot, app, "Author")
+        await pilot.hover(content(app), offset=(0, 0))
+        assert pointed(app) is None
+
+
+async def test_the_highlighted_word_takes_the_mark_as_well(app):
+    """The two say different things, so the pointer resting on the highlight
+    shows both rather than hiding one under the other."""
+    async with app.run_test() as pilot:
+        await hover_word(pilot, app, "Author")
+        assert highlighted(app) == "Author"
+        assert pointed(app) == "Author"
+
+
+async def test_a_submenu_marks_its_own_words_rather_than_the_ones_it_came_from(app):
+    """The mark is a cell of the band, not a word of the menu that was on it:
+    a submenu with nothing where the pointer stands marks nothing."""
+    async with app.run_test() as pilot:
+        await hover_word(pilot, app, "Window")
+        await click_word(pilot, app, "Window")
+        assert band(app)[0].startswith(" WINDOW:")
+        assert pointed(app) is None
+        await hover_word(pilot, app, "Goto")
+        assert pointed(app) == "Goto"
+
+
+async def test_no_word_is_marked_while_a_question_is_up(app):
+    """Nothing on the band answers a click then, so nothing on it invites one."""
+    async with app.run_test() as pilot:
+        await author(pilot, "x")
+        await hover_word(pilot, app, "Quit")
+        await click_word(pilot, app, "Quit")
+        assert message(app) == "Abandon expressions (Y/N)?"
+        assert pointed(app) is None
+        await hover_word(pilot, app, "Author")
+        assert pointed(app) is None
+        await pilot.press("n")
+        assert pointed(app) == "Author"
 
 
 # -- clicking an Options dialog ------------------------------------------------

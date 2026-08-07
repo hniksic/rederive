@@ -787,6 +787,11 @@ class MenuBand(Band):
     Where each word was drawn is kept as it is drawn, so that a click can be
     answered with the word it landed on. The words are the only thing on the
     band a mouse has any business with: the title is a caption.
+
+    The word the pointer is resting on is underlined, which is the one thing
+    the band says about the mouse rather than about the session: a menu of
+    words a keyboard drives does not otherwise look clickable, and a mark that
+    follows the pointer is how it says that it is.
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -796,6 +801,12 @@ class MenuBand(Band):
         #: The columns each word took, as row, first column, last column and
         #: which word of the menu it is.
         self._words: list[tuple[int, int, int, int]] = []
+        #: The screen cell the pointer is resting on, or None while it is
+        #: resting on nothing this band offers. Kept as a cell rather than as a
+        #: word, so that a band drawn again - a submenu opened under a pointer
+        #: that has not moved, a terminal resized - marks whatever word now
+        #: stands there.
+        self._pointer: Offset | None = None
 
     def say(self, text: str) -> None:
         """Put one line of plain text on the band in place of a menu.
@@ -821,11 +832,30 @@ class MenuBand(Band):
             )
             words += [(row, start, end, index) for start, end, index in placed]
             rows.append(line)
+        self._mark(rows, words)
         shown = self.put(rows)
         self._words = [word for word in words if word[0] < shown]
 
-    def word_at(self, offset: Offset) -> int | None:
-        """Which word of the menu the screen cell `offset` is on, if any is."""
+    def point_at(self, offset: Offset | None) -> None:
+        """Rest the pointer on the screen cell `offset`, or on nothing at all.
+
+        The band is drawn again only when this changes which word the pointer
+        is over, a word being as many cells wide as it has letters and the
+        pointer crossing every one of them on its way across.
+        """
+        moved = self.word_at(offset) != self.word_at(self._pointer)
+        self._pointer = offset
+        if moved and self._showing is not None:
+            self.show(*self._showing)
+
+    def word_at(self, offset: Offset | None) -> int | None:
+        """Which word of the menu the screen cell `offset` is on, if any is.
+
+        None where the cell is on none of them, and where there is no cell:
+        a pointer that is off the band is on no word.
+        """
+        if offset is None:
+            return None
         point = self.within(offset)
         for row, start, end, index in self._words:
             if row == point.y and start <= point.x < end:
@@ -836,6 +866,20 @@ class MenuBand(Band):
         """Lay the menu out again for the width the terminal now has."""
         if self._showing is not None:
             self.show(*self._showing)
+
+    def _mark(self, rows: list[Text], words: list[tuple[int, int, int, int]]) -> None:
+        """Underline the word the pointer is resting on, if it is on one.
+
+        Read off the layout just made rather than off the last one, so that a
+        word that has moved under a pointer standing still is the word marked.
+        """
+        if self._pointer is None:
+            return
+        point = self.within(self._pointer)
+        for row, start, end, _ in words:
+            if row == point.y and start <= point.x < end:
+                rows[row].stylize(self.colors["option-pointed"], start, end)
+                return
 
     def _rows(self, menu: Menu, prefix: int) -> list[list[int]]:
         """Which words go on each row, as indices into the menu.

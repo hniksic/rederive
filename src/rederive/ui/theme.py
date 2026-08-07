@@ -97,6 +97,13 @@ class Palette:
             "frame": self.color("frame"),
             "option": self.color("option"),
             "option-highlight": self.inverse("option", over="menu-background"),
+            # The word the pointer is resting on. An attribute rather than a
+            # color, so that it says "this can be clicked" without competing
+            # with the highlight beside it and without asking a color scheme
+            # for a ninth slot; a mark laid over a style rather than one that
+            # replaces it, so that the pointer can rest on the highlighted word
+            # and both are legible at once.
+            "option-pointed": "underline",
             "prompt": self.color("prompt"),
             "status": self.color("status"),
         }

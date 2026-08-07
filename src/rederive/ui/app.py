@@ -181,6 +181,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.errors import NoWidget
+from textual.geometry import Offset
 from textual.suggester import Suggester
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -1618,6 +1619,12 @@ class RederiveApp(App[None]):
             assert isinstance(cursor, MenuCursor)
             # A confirmation takes the highlight off the menu entirely.
             highlighted = None if self.mode == MODE_CONFIRM else cursor.index
+            # And so it takes the pointer's mark off, the words having stopped
+            # answering: where a click is taken is a thing about the mode as
+            # much as about where the pointer is, and the mode is what has just
+            # changed. The pointer's own position is the app's, since a mouse
+            # that has not moved has sent nothing to read it off.
+            self._point(self.mouse_position)
             self.query_one(MenuBand).show(cursor.menu, highlighted)
         self.query_one(MessageLine).show(self.message)
         # The annotation belongs to the entry, so it follows the selection: it
@@ -2018,6 +2025,31 @@ class RederiveApp(App[None]):
             if pane is not None:
                 self._clicked_entry(pane, event)
 
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """The pointer moving: mark the menu word it has come to rest on.
+
+        The one gesture that ends in no handler a key ends in, because it does
+        nothing to the session. What it does is say that the words are there to
+        be clicked at all, which a band of words the keyboard drives says
+        nowhere else. It marks only where a click would be taken, so that
+        nothing lights up that would not answer.
+        """
+        self._point(event.screen_offset)
+
+    def _point(self, at: Offset | None) -> None:
+        """Tell the menu band where the pointer is, or that it is nowhere."""
+        self.query_one(MenuBand).point_at(at if self.picking else None)
+
+    @property
+    def picking(self) -> bool:
+        """Whether a click on a menu word would invoke it.
+
+        A dialog stands on the same band, and a confirmation leaves the menu up
+        with nothing on it to pick; a computation under way answers no click at
+        all, and a demonstration answers every one of them with its next step.
+        """
+        return self.mode in MENU_MODES and self.editor is None
+
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         self._wheel(1, event)
 
@@ -2052,7 +2084,7 @@ class RederiveApp(App[None]):
         stands on the same band, and a confirmation leaves the menu up with
         nothing on it to pick.
         """
-        if self.mode not in MENU_MODES or self.editor is not None:
+        if not self.picking:
             return
         index = band.word_at(event.screen_offset)
         if index is not None:
