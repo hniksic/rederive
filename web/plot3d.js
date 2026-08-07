@@ -359,9 +359,12 @@ class Solid {
   _toolbar() {
     this.strip = sheets.strip(this.tools, this.description, () => this._framed());
     this.fields = this.description.fields.map((one) => one.name);
+    // The keyboard is taken back from the button before the command runs rather
+    // than after it, so that `view...` keeps the focus it gives to the first
+    // field of the inspector it raises.
     this.buttons = controls.bar(this.tools, this.commands, (name) => {
-      this.say.command(name, null);
       this.element.focus();
+      this.say.command(name, null);
     });
   }
 

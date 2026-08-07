@@ -167,6 +167,12 @@ function line(entry, run, away) {
   }
   item.addEventListener('pointerdown', (press) => {
     press.stopPropagation();
+    // Cancelling the press is what leaves the keyboard where the command puts
+    // it. A menu entry is not something a page can focus, so the press would
+    // otherwise be followed by the browser handing focus to the document - and
+    // a command that raises a dialog and focuses its first field would have that
+    // field taken off it again the moment this handler returned.
+    press.preventDefault();
     away();
     run(entry.name, entry.value === undefined ? null : entry.value);
   });

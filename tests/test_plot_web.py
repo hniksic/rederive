@@ -790,6 +790,10 @@ async def test_a_solids_picture_leaves_the_pane_and_says_what_happened(
 #: the package: they are the page, and the package is what the page loads.
 PAGE = Path(__file__).resolve().parent.parent / "web"
 
+#: And where the desktop's windows are, for the one thing a pane has to agree
+#: with them about that neither side can be asked for without a toolkit.
+WINDOWS = Path(__file__).resolve().parent.parent / "src" / "rederive" / "plot" / "qt"
+
 #: Which module draws which kind of pane, under what name on either side of the
 #: seam. The backend's class and the page's carry the same name because they
 #: are the two halves of one thing.
@@ -848,6 +852,101 @@ def test_every_call_the_backend_makes_on_a_pane_is_one_the_pane_answers(
     assert called, "the backend calls into a pane by name, so there is a list"
     assert called <= _methods(_drawing(module, named))
     assert called <= {name for name in dir(fake) if not name.startswith("_")}
+
+
+# -- the three things about a pane that only its own source says -------------------
+#
+# Still no JavaScript. What is read below is the shape of three rules that hold
+# nowhere else: a page hands the keyboard to the document after a press on
+# anything it cannot focus, a wheel is turned by a distance rather than a number
+# of times, and what a fresh pane opens showing follows from how tall it stands.
+# None of the three is visible from Python - the fake page has no DOM, no
+# pointer, no focus and no size - and each of them has already been got wrong
+# once, so what can be asserted about them is asserted here.
+
+
+def _handler(source, opening):
+    """One event handler of a page module, from its listener to its brace."""
+    body = source[source.index(opening) :]
+    return body[: body.index("});")]
+
+
+def test_a_press_on_a_menu_entry_is_cancelled_so_a_command_keeps_the_keyboard():
+    """A command that raises a dialog must be left holding what it focused.
+
+    The browser's answer to a press on something it cannot focus - a menu
+    entry, the space beside a field - is to hand the keyboard to the document,
+    and it does it after the handler has run. So a dialog raised from a menu
+    entry has its first field taken off it again unless the press was
+    cancelled, and an overlay whose keys go to the document behind it answers
+    to neither Enter nor Escape.
+    """
+    controls_js = (PAGE / "controls.js").read_text(encoding="utf-8")
+    assert "press.preventDefault();" in _handler(
+        controls_js, "item.addEventListener('pointerdown'"
+    )
+    forms_js = (PAGE / "forms.js").read_text(encoding="utf-8")
+    assert "event.preventDefault();" in _handler(
+        forms_js, "overlay.addEventListener('pointerdown'"
+    )
+
+
+@pytest.mark.parametrize("module", ("plot2d.js", "plot3d.js"))
+def test_a_tool_button_takes_the_keyboard_back_before_its_command_runs(module):
+    """And the same rule for the buttons, which a page can focus.
+
+    A button keeps the keyboard once it is pressed, so a pane has to take it
+    back; taking it back after the command has run is what leaves `view...`
+    raising an inspector that cannot be typed into.
+    """
+    source = (PAGE / module).read_text(encoding="utf-8")
+    run = _handler(source, "controls.bar(this.tools")
+    assert run.index("this.element.focus()") < run.index("this.say.command(")
+
+
+def test_the_wheel_zooms_by_how_far_it_was_turned_rather_than_once_per_event():
+    """A trackpad is a wheel that reports a stream of very small turns.
+
+    A factor applied whole per event is right for a mouse, which fires one
+    event per detent, and compounds into a zoom of several hundred for a
+    trackpad. So the factor is raised to the distance scrolled, in whichever of
+    the three units the page reported it in, and one turn of a wheel comes to
+    about what one turn of a wheel comes to on a desktop - where pyqtgraph
+    scales by 1.02 raised to the wheel's angle in eighths of a degree, and a
+    detent is fifteen degrees of it.
+    """
+    source = (PAGE / "plot2d.js").read_text(encoding="utf-8")
+    listener = _handler(source, "over.addEventListener('wheel'")
+    assert "wheeled(event)" in listener
+    turned = source[source.index("function wheeled(event)") :]
+    turned = turned[: turned.index("\n}\n")]
+    assert "event.deltaY" in turned and "event.deltaMode" in turned
+    factor = float(re.search(r"const WHEEL_FACTOR = ([\d.]+);", source).group(1))
+    assert 0.8 < factor / 1.02**15 < 1.25
+
+
+def test_a_fresh_pane_opens_no_flatter_than_a_fresh_window():
+    """Because what a fresh view shows follows from the shape of the picture.
+
+    x runs from -5 to 5 and the ordinate follows from equal scales, so two
+    programs whose pictures are different shapes open on different rectangles -
+    which `plot/view.py` says is two programs. A pane has to stand taller than
+    a window for its width rather than merely as tall, since it spends more of
+    itself on chrome: a title bar of its own, and wider gutters for the numbers
+    along the edges. How much taller only a browser can measure; that it is at
+    least as tall is measurable here.
+    """
+    source = (PAGE / "plot2d.js").read_text(encoding="utf-8")
+    pane = tuple(
+        int(re.search(rf"const PANE_{name} = (\d+);", source).group(1))
+        for name in ("WIDTH", "HEIGHT")
+    )
+    # By path rather than by import: this file is the browser's half of the
+    # tests and runs where no toolkit is installed.
+    window = (WINDOWS / "window2d.py").read_text(encoding="utf-8")
+    opens = re.search(r"self\.resize\((\d+), (\d+)\)", window)
+    assert opens is not None, "the desktop window opens at a size, and this reads it"
+    assert pane[1] / pane[0] >= int(opens[2]) / int(opens[1])
 
 
 # -- the commands that are more than a menu entry ----------------------------------

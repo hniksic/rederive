@@ -97,9 +97,23 @@ export function ask(where, form, values, done, gone) {
   });
   // A click outside the sheet is the same answer as Cancel, and a click inside
   // it must not reach the pane, whose own listeners would raise and refocus it.
+  //
+  // A press on the sheet itself - a heading, a rule, the space between two
+  // fields - is cancelled, since none of those is something a page can focus and
+  // the browser answers a press on such a thing by handing the keyboard to the
+  // document. An overlay whose keys were going to the document behind it would
+  // answer to neither Enter nor Escape. What can be focused is left alone: the
+  // fields, the buttons, and the words in front of a field, which are labels and
+  // reach their field by being pressed.
   overlay.addEventListener('pointerdown', (event) => {
     event.stopPropagation();
-    if (event.target === overlay) away();
+    if (event.target === overlay) {
+      away();
+      return;
+    }
+    if (event.target.closest('input, button, label') === null) {
+      event.preventDefault();
+    }
   });
   where.appendChild(overlay);
   const first = form.fields.length ? fields.get(form.fields[0].name) : undefined;

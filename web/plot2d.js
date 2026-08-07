@@ -90,6 +90,30 @@ const STEP_FAST_SHARE = 1 / 50;
 // still count as a click that opens the menu rather than a rubber band.
 const CLICK_SLOP_PX = 4;
 
+// How far a wheel zooms, and what one turn of one is worth in the units a page
+// reports a scroll in.
+//
+// The factor is raised to the distance scrolled rather than applied whole per
+// event, because a mouse fires one event per detent and a trackpad fires a
+// stream of small ones: a step per event is right for the first and turns a
+// short two-finger drag into a zoom of several hundred for the second. The
+// desktop is proportional in the same way - pyqtgraph scales by 1.02 raised to
+// the wheel's angle - but that rate is in Qt's eighth-of-a-degree units, which a
+// page has no equivalent of, so the number here is this file's own and it is
+// only the outcome that is comparable: one detent is 1.25 in a pane and 1.02^15,
+// or 1.35, in a window.
+//
+// A page reports a scroll in pixels, in lines or in pages, and no two browsers
+// agree on which; nothing measures a line or a page for us, so those two are
+// what a line of text and a screenful of them come to. The cap is what stops one
+// oversized event - a page of scroll, or a driver that batches a flick - from
+// throwing the view away in a single frame.
+const WHEEL_FACTOR = 1.25;
+const WHEEL_DETENT_PX = 100;
+const WHEEL_LINE_PX = 40;
+const WHEEL_PAGE_PX = 800;
+const WHEEL_MAX_DETENTS = 3;
+
 // How much of a hidden legend row is left standing. Dimmed rather than struck
 // through: a hidden curve is a curve that is still in the pane.
 const LEGEND_FADED = 0.4;
@@ -103,8 +127,20 @@ const LEGEND_MARGIN_PX = 10;
 
 // Where a fresh pane is put and how big it is, and how far the next one is
 // offset so that two panes are two panes and not one on top of another.
+//
+// The height is not a matter of taste. A fresh view is x in [-5, 5] with the
+// ordinate following from equal scales, so what a pane opens showing is decided
+// by the shape of its picture - and `plot/view.py` says that a browser opening
+// on a different rectangle from a desktop would be two programs. The desktop
+// window is 760 by 560 and gives 723 by 482 of that to the picture, a picture
+// two thirds as tall as it is wide; a pane spends more of itself on chrome,
+// having a title bar of its own that a window gets from the window manager and
+// wider gutters for the numbers along its edges, so it has to stand taller to
+// leave a picture of the same shape behind. These are the numbers that do: they
+// leave about 640 by 427, which is two thirds, and `2*x + 3` traced at the
+// middle of the view is on the picture here exactly as it is there.
 const PANE_WIDTH = 720;
-const PANE_HEIGHT = 500;
+const PANE_HEIGHT = 590;
 const PANE_STEP = 28;
 
 // The kinds, spelled as `plot/protocol.py` spells them. The page is told which
@@ -303,9 +339,12 @@ class Pane {
     this.canvas = pane.querySelector('.plot-canvas');
     this.card = pane.querySelector('.plot-legend');
     this.status = pane.querySelector('.plot-status');
+    // The keyboard is taken back from the button before the command runs rather
+    // than after it, so that a command which raises a dialog keeps the focus it
+    // gives to the dialog's first field.
     this.buttons = controls.bar(this.tools, this.commands, (name) => {
-      this.say.command(name, null);
       this.element.focus();
+      this.say.command(name, null);
     });
     // The parameter range stands after the buttons and only while there is a
     // plot for it to be about: a range of nothing is not a control.
@@ -1188,9 +1227,10 @@ class Pane {
       event.preventDefault();
       this._remember();
       // Shift holds the width and Ctrl the height, which is how one axis is
-      // stretched against the other.
+      // stretched against the other, and is what the desktop's wheel takes them
+      // to mean as well.
       this._zoom(
-        event.deltaY > 0 ? 1.25 : 0.8,
+        wheeled(event),
         event.offsetX,
         event.offsetY,
         over,
@@ -1668,6 +1708,15 @@ function typed(array, label) {
 
 function middle(range) {
   return range === undefined || range === null ? 0 : (range[0] + range[1]) / 2;
+}
+
+// What one wheel event zooms by: how far it scrolled, as a number of detents,
+// and the factor raised to that. The distance arrives in pixels, in lines or in
+// pages, and `deltaMode` is which of the three - 0, 1 and 2 in that order.
+function wheeled(event) {
+  const perUnit = [1, WHEEL_LINE_PX, WHEEL_PAGE_PX][event.deltaMode] || 1;
+  const detents = (event.deltaY * perUnit) / WHEEL_DETENT_PX;
+  return WHEEL_FACTOR ** clamp(detents, -WHEEL_MAX_DETENTS, WHEEL_MAX_DETENTS);
 }
 
 function clamp(value, low, high) {
