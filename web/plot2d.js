@@ -301,6 +301,10 @@ class Pane {
     this.tracing = null;
     this.traceAt = 0;
     this.tracePoint = null;
+    // The chip beside the marker, made when the first one is drawn. An element
+    // and not a stroke, so a redraw does not take it away the way it takes the
+    // ring: whatever decides there is no marker has to put the chip away too.
+    this.chipElement = null;
     // When and where the last click on the picture was, which is how the second
     // one is known to be the second.
     this.doubling = null;
@@ -1066,10 +1070,17 @@ class Pane {
   // a dashed hairline down to the abscissa, because half of what a reading means
   // is where along the axis it is; and the chip, which says what the status line
   // says without the eye having to travel to the bottom of the pane for it.
+  //
+  // Every way out of here puts the chip away, since every way out is a frame
+  // with no marker in it: trace let go of, the traced curve removed, a reading
+  // not answered yet. The ring and the hairline need no such thing - they are
+  // strokes, and the frame they are not drawn in is a frame without them.
   _marker(u, ctx, ratio) {
-    if (this.tracing === null || this.tracePoint === null) return;
-    const plot = this.plots.get(this.tracing);
-    if (plot === undefined) return;
+    const plot = this.tracing === null ? undefined : this.plots.get(this.tracing);
+    if (plot === undefined || this.tracePoint === null) {
+      if (this.chipElement !== null) this.chipElement.style.display = 'none';
+      return;
+    }
     const px = u.valToPos(this.tracePoint.x, 'x', true);
     const py = u.valToPos(this.tracePoint.y, 'y', true);
     ctx.save();
