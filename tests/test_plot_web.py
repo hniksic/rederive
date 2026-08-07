@@ -516,6 +516,15 @@ def test_neither_backend_may_move_a_word_a_key_or_a_place_by_itself(checked, tab
     assert _described(table) == tuple(row[:4] for row in checked)
 
 
+def test_a_page_rewords_one_entry_and_no_others():
+    # The exception to a word being written once, pinned so that it stays one
+    # exception: `paged` is for a command a page does differently, not for a
+    # backend to reword a menu.
+    for table in (controls.FLAT, controls.SOLID):
+        reworded = {one.name: one.paged for one in table if one.paged}
+        assert reworded == {"image.export": "Export"}
+
+
 async def test_the_browser_serves_what_the_table_says_it_serves(session, page, solids):
     # The other half of the same claim, asked of this backend: what a pane may
     # be asked for is the served column, and a pane is handed exactly that much.
@@ -531,6 +540,9 @@ async def test_the_browser_serves_what_the_table_says_it_serves(session, page, s
 
 
 async def test_a_pane_renders_the_menu_the_desktop_renders(session, page):
+    # Word for word, with the one exception the table itself writes down: a page
+    # exports without asking anything, so its entry is `Export` and not the
+    # desktop's `Export...`.
     session.add(_landing("SIN(x)"))
     entries = page.panes[1].say["menu"](_flat())
     assert [(entry["name"], entry["label"]) for entry in entries] == [
@@ -542,7 +554,7 @@ async def test_a_pane_renders_the_menu_the_desktop_renders(session, page):
         ("grid", "Grid"),
         ("legend", "Legend"),
         ("image.copy", "Copy image"),
-        ("image.export", "Export..."),
+        ("image.export", "Export"),
         ("clear", "Clear"),
         ("close", "Close"),
     ]
@@ -656,7 +668,7 @@ async def test_a_solid_pane_offers_the_camera_and_what_it_holds(session, solids)
         "Rotate",
         "View...",
         "Copy image",
-        "Export...",
+        "Export",
         "Remove",
         "Clear",
         "Close",

@@ -27,6 +27,11 @@ whichever case it arrives in. A key a page may not have - Ctrl+W and its
 neighbours belong to the browser - is simply not in the second column, and the
 control says so by being short of one rather than by pretending.
 
+A label may be written twice for the same sort of reason, and one is: `paged`
+is the words a page uses where a page does something else. It is not a licence
+to reword an entry - it exists because a menu's `...` is a promise of a dialog,
+and the one command whose page has no dialog to put up must not make it.
+
 What is not here is the gestures. The arrow keys, Escape, Tab and Enter mean
 one thing while a trace marker is up and another while it is not, no menu entry
 names them, and they belong to whatever answers a key press. A control is
@@ -108,6 +113,10 @@ class Control:
     #: The label a toggle takes while it is on, where it says its state in
     #: words rather than with a tick.
     flipped: str = ""
+    #: The words a page writes it with, where what the page does is not what the
+    #: desktop does. Export is the whole of the list: a trailing `...` promises
+    #: a dialog, and a download that cannot ask for a name has none to offer.
+    paged: str = ""
     #: What a choice offers, and the words one of its items is written with.
     choices: tuple[float, ...] = ()
     item: str = ""
@@ -275,6 +284,7 @@ FLAT: tuple[Control, ...] = (
     Control(
         name="image.export",
         label="Export...",
+        paged="Export",
         keys=("Ctrl+S",),
         web=("Ctrl+S",),
         group=2,
@@ -423,6 +433,7 @@ SOLID: tuple[Control, ...] = (
     Control(
         name="image.export",
         label="Export...",
+        paged="Export",
         keys=("Ctrl+S",),
         web=("Ctrl+S",),
         group=1,
@@ -661,7 +672,12 @@ def _made(
     one: Control, state: State, page: bool, checked: bool, flipped: bool
 ) -> Entry:
     """The entry a control comes to, with the words a menu draws filled in."""
-    label = one.flipped if flipped and one.flipped else one.label
+    if flipped and one.flipped:
+        label = one.flipped
+    elif page and one.paged:
+        label = one.paged
+    else:
+        label = one.label
     if state.pointed is not None:
         label = label.replace(PLOT, state.pointed.named)
     return Entry(

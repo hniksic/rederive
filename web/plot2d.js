@@ -691,13 +691,19 @@ class Pane {
   // Export, which in a tab is a download: an object URL and a link clicked from
   // here, since that is the only way a file leaves a page.
   //
-  // A PNG and deliberately not an SVG. The desktop's export is a painter path
-  // replayed onto a vector device, and there is no such path here: every stroke
-  // of this picture is drawn straight onto a canvas, a shaded region *is* a
-  // bitmap, and writing an SVG would mean a second renderer for every kind -
-  // parity of code where the plan asks for parity of capability. So what leaves
-  // is the picture at the size it is drawn, and Python's sentence says the size
-  // rather than letting anybody discover it later.
+  // This is a workaround and falls short of the desktop's export twice over. It
+  // writes a PNG where the desktop offers a PNG or an SVG, and it writes it at
+  // whatever size the pane happens to be, which is no size anybody chose - a
+  // picture for a document wants the size the document wants. The reason is
+  // that the desktop replays a painter path onto a vector device and there is
+  // no such path here: every stroke is drawn straight onto a canvas and a
+  // shaded region *is* a bitmap. Writing an SVG therefore means a second
+  // renderer, drawing the same picture into paths instead of pixels. That is
+  // real work rather than a reason not to, and it is what this should grow.
+  //
+  // Until it does: the size goes into the sentence Python says, so that what
+  // was written is not left to be discovered, and the menu entry drops the
+  // desktop's ellipsis, nothing being asked for before the file goes.
   export() {
     const name = `plot${this.number}.png`;
     this._photograph().then((shot) => {
