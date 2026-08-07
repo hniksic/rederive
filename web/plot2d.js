@@ -151,10 +151,13 @@ const PARAMETRIC = 'parametric';
 const POLAR = 'polar';
 const DATA = 'data';
 
-// Which kinds a marker can ride, and which a feature scan works on. Both are
-// `plot/model.py`'s answer: a region has no f(x) a marker could be at a point of.
+// Which kinds a marker can ride, which a feature scan works on, and which are
+// ridden at a parameter rather than at an abscissa. All three are
+// `plot/protocol.py`'s answer: a region has no f(x) a marker could be at a point
+// of, and a curve that doubles back has no abscissa that names one place on it.
 const RIDEABLE = new Set([CURVE, FAMILY, PARAMETRIC, POLAR]);
 const SCANNED = new Set([CURVE, FAMILY]);
+const PARAMETRIZED = new Set([PARAMETRIC, POLAR]);
 
 // The one place a plot pane is put, laid over the terminal and letting the
 // pointer through everywhere it has no pane.
@@ -489,6 +492,9 @@ class Pane {
       ...spec,
       xs: null,
       ys: null,
+      // The parameter each sample came from, which only a curve ridden at one
+      // has and which is how a click on such a curve names a place on it.
+      ts: null,
       region: null,
       regionPaper: null,
       extent: null,
@@ -812,9 +818,11 @@ class Pane {
       plot.regionPaper = shading(message, plot.paper);
       plot.extent = message.extent;
       plot.xs = null;
+      plot.ts = null;
     } else {
       plot.xs = typed(message.xs, plot.label);
       plot.ys = typed(message.ys, plot.label);
+      plot.ts = message.ts ? typed(message.ts, plot.label) : null;
       plot.bounds = message.bounds && message.bounds.length ? message.bounds : null;
       if (message.trange) {
         plot.trange = message.trange;
@@ -1196,7 +1204,7 @@ class Pane {
         this._band(banding, event.offsetX, event.offsetY);
         return;
       }
-      this._pointed(event.offsetX, event.offsetY, over);
+      this._pointed(event.offsetX, event.offsetY);
     });
     // A gesture is over before it is acted on, rather than after. What the
     // release comes to - a rectangle to look at, or a menu - can be a long way
@@ -1206,9 +1214,19 @@ class Pane {
       down.delete(event.pointerId);
       if (down.size < 2) pinch = null;
       const banded = banding;
+      const panned = panning;
       panning = null;
       banding = null;
-      if (banded === null) return;
+      if (banded === null) {
+        // A left press let go where it was pressed is a click and not a pan of
+        // no distance, and a click on the picture is a gesture of its own.
+        if (panned !== null && event.type === 'pointerup') {
+          const moved = Math.abs(event.offsetX - panned.x) +
+            Math.abs(event.offsetY - panned.y);
+          if (moved <= CLICK_SLOP_PX) this._clicked(event);
+        }
+        return;
+      }
       this._band(null);
       if (banded.moved > CLICK_SLOP_PX) {
         this._zoomTo(banded, event.offsetX, event.offsetY, over);
@@ -1256,14 +1274,40 @@ class Pane {
     );
   }
 
-  // The pointer readout: where the pointer is, which is the one number on this
-  // side that is not a value of anything and so is the one this file may write.
-  _pointed(x, y, over) {
-    if (this.tracing !== null) return;
-    const at = {
+  // Where a place on the picture is, in the units the picture is drawn in.
+  _value(x, y) {
+    const over = this.plot.over;
+    return {
       x: this.shown.x0 + (x / over.clientWidth) * (this.shown.x1 - this.shown.x0),
       y: this.shown.y1 - (y / over.clientHeight) * (this.shown.y1 - this.shown.y0),
     };
+  }
+
+  // The pointer readout: where the pointer is, which is the one number on this
+  // side that is not a value of anything and so is the one this file may write.
+  // And the marker, while one is up and is the kind that follows the pointer.
+  //
+  // A marker riding a parametric curve stays where it is: its place is a
+  // parameter value, and the pointer's x is not one - the arrow keys and a click
+  // are how it moves. A marker on a function follows the pointer, which is what
+  // makes trace feel like pointing at the curve.
+  //
+  // The readout gives way to the marker, because a pane has one line to say
+  // things on where the desktop's window has two: there the pointer's position
+  // is a widget of its own beside the status line the trace sentence is written
+  // on, and here they would be the same line. What a person is reading while a
+  // marker is up is the curve's own value, which arrives on that line with every
+  // move the marker makes; a readout would take it away again as fast as it came.
+  _pointed(x, y) {
+    const at = this._value(x, y);
+    if (this.tracing !== null) {
+      const plot = this.plots.get(this.tracing);
+      if (plot !== undefined && !PARAMETRIZED.has(plot.kind)) {
+        this.traceAt = at.x;
+        this._retrace();
+      }
+      return;
+    }
     if (this.polar) {
       this.said(
         `r: ${Math.hypot(at.x, at.y).toFixed(6)}` +
@@ -1272,6 +1316,57 @@ class Pane {
       return;
     }
     this.said(`x: ${at.x.toFixed(6)}   y: ${at.y.toFixed(6)}`);
+  }
+
+  // A left click on the picture: take hold of the curve it landed on.
+  //
+  // Which is how trace is entered with the mouse, and how the curve being ridden
+  // is changed while it is on, as it is on the desktop.
+  _clicked(event) {
+    const plot = this._pointedPlot(event);
+    if (plot !== null) this._takeHold(plot, this._value(event.offsetX, event.offsetY));
+  }
+
+  // Trace `plot`, at the place the click was pointing at.
+  //
+  // Which place that is depends on what the curve is parametrized by. A function
+  // is ridden at an abscissa and the click names one; a parametric or polar curve
+  // is ridden at a parameter, which a point in the plane does not name at all -
+  // so the click snaps to the nearest point that was actually sampled, and the
+  // parameter it came from is where the marker goes.
+  _takeHold(plot, at) {
+    if (!RIDEABLE.has(plot.kind)) return;
+    const held = this.tracing === plot.serial;
+    if (!held) this.features = null;
+    this.tracing = plot.serial;
+    if (!PARAMETRIZED.has(plot.kind)) {
+      this.traceAt = at.x;
+    } else {
+      const nearest = this._nearest(plot, at);
+      if (nearest !== null) this.traceAt = nearest;
+      else if (!held) this.traceAt = middle(plot.trange);
+    }
+    this._retrace();
+  }
+
+  // The parameter of the sampled point nearest a place on the picture, or null
+  // where the curve has no samples to measure against. Measured in pixels, which
+  // is what the eye measures it in: how near a curve looks is how near it is.
+  _nearest(plot, at) {
+    if (plot.xs === null || plot.ts === null) return null;
+    const over = this.plot.over;
+    const across = (this.shown.x1 - this.shown.x0) / Math.max(over.clientWidth, 1);
+    const up = (this.shown.y1 - this.shown.y0) / Math.max(over.clientHeight, 1);
+    let best = null;
+    for (let index = 0; index < plot.ts.length; index += 1) {
+      const away = Math.hypot(
+        (plot.xs[index] - at.x) / across, (plot.ys[index] - at.y) / up,
+      );
+      if (Number.isFinite(away) && (best === null || away < best.away)) {
+        best = { away, at: plot.ts[index] };
+      }
+    }
+    return best === null ? null : best.at;
   }
 
   _band(state, x, y) {
@@ -1431,7 +1526,7 @@ class Pane {
     this.tracing = rideable[0];
     this.features = null;
     const plot = this.plots.get(this.tracing);
-    this.traceAt = plot.kind === PARAMETRIC || plot.kind === POLAR
+    this.traceAt = PARAMETRIZED.has(plot.kind)
       ? middle(plot.trange)
       : (this.shown.x0 + this.shown.x1) / 2;
     this._retrace();
@@ -1463,7 +1558,7 @@ class Pane {
     const plot = this.plots.get(this.tracing);
     if (plot === undefined) return;
     const direction = backwards ? -1 : 1;
-    if (plot.kind === PARAMETRIC || plot.kind === POLAR) {
+    if (PARAMETRIZED.has(plot.kind)) {
       const [low, high] = plot.trange || [-Math.PI, Math.PI];
       const share = fast ? STEP_FAST_SHARE : STEP_SHARE;
       this.traceAt = clamp(this.traceAt + direction * share * (high - low), low, high);
@@ -1669,10 +1764,7 @@ class Pane {
   // does for itself.
   _pointedPlot(event) {
     const over = this.plot.over;
-    const at = {
-      x: this.shown.x0 + (event.offsetX / over.clientWidth) * (this.shown.x1 - this.shown.x0),
-      y: this.shown.y1 - (event.offsetY / over.clientHeight) * (this.shown.y1 - this.shown.y0),
-    };
+    const at = this._value(event.offsetX, event.offsetY);
     const across = (this.shown.x1 - this.shown.x0) / over.clientWidth;
     const up = (this.shown.y1 - this.shown.y0) / over.clientHeight;
     let best = null;

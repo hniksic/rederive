@@ -854,21 +854,28 @@ def test_every_call_the_backend_makes_on_a_pane_is_one_the_pane_answers(
     assert called <= {name for name in dir(fake) if not name.startswith("_")}
 
 
-# -- the three things about a pane that only its own source says -------------------
+# -- the things about a pane that only its own source says -------------------------
 #
-# Still no JavaScript. What is read below is the shape of three rules that hold
-# nowhere else: a page hands the keyboard to the document after a press on
+# Still no JavaScript. What is read below is the shape of a handful of rules that
+# hold nowhere else: a page hands the keyboard to the document after a press on
 # anything it cannot focus, a wheel is turned by a distance rather than a number
-# of times, and what a fresh pane opens showing follows from how tall it stands.
-# None of the three is visible from Python - the fake page has no DOM, no
-# pointer, no focus and no size - and each of them has already been got wrong
-# once, so what can be asserted about them is asserted here.
+# of times, what a fresh pane opens showing follows from how tall it stands, and
+# a marker on a function follows the pointer. None of them is visible from Python
+# - the fake page has no DOM, no pointer, no focus and no size - and each has
+# already been got wrong once, so what can be asserted about them is asserted
+# here.
 
 
 def _handler(source, opening):
     """One event handler of a page module, from its listener to its brace."""
     body = source[source.index(opening) :]
     return body[: body.index("});")]
+
+
+def _method(body, named):
+    """One method of a page's class, from its name to the brace that closes it."""
+    start = body.index(f"\n  {named}(")
+    return body[start : body.index("\n  }\n", start)]
 
 
 def test_a_press_on_a_menu_entry_is_cancelled_so_a_command_keeps_the_keyboard():
@@ -947,6 +954,46 @@ def test_a_fresh_pane_opens_no_flatter_than_a_fresh_window():
     opens = re.search(r"self\.resize\((\d+), (\d+)\)", window)
     assert opens is not None, "the desktop window opens at a size, and this reads it"
     assert pane[1] / pane[0] >= int(opens[2]) / int(opens[1])
+
+
+def test_a_marker_on_a_function_follows_the_pointer_and_one_on_a_curve_does_not():
+    """Which is what makes trace feel like pointing at the curve.
+
+    A marker riding a parametric curve stays where it is - its place is a
+    parameter value and the pointer's x is not one - and a marker on a function
+    goes where the pointer is. `Window2D._moved` is the same rule on the
+    desktop, and a pane that gave up as soon as a marker was up would be a pane
+    whose trace mode answered only to the keyboard.
+
+    The pointer readout gives way to the marker, because a pane has one line to
+    say things on where the window has two. What a person reads while a marker
+    is up is the curve's own value, and a readout would write over it.
+    """
+    moved = _method(_drawing("plot2d.js", "Pane"), "_pointed")
+    assert "if (this.tracing !== null) return;" not in moved
+    riding = moved.index("this.tracing !== null")
+    assert "PARAMETRIZED.has(plot.kind)" in moved[riding:]
+    assert "this.traceAt = at.x" in moved[riding:]
+    assert "this._retrace()" in moved[riding:]
+    assert moved.index("this.said(") > moved.index("return;", riding)
+
+
+def test_the_page_calls_the_same_two_kinds_parametrized_that_the_protocol_does():
+    """One vocabulary of kinds, as there is one spelling of a control.
+
+    Which kinds are ridden at a parameter rather than at an abscissa decides
+    what the pointer does, what an arrow key steps by and what a click snaps to.
+    A page that read a kind of its own into that list would be a second answer
+    to a question `plot/protocol.py` has already answered.
+    """
+    source = (PAGE / "plot2d.js").read_text(encoding="utf-8")
+    named = re.search(r"const PARAMETRIZED = new Set\(\[([^\]]*)\]\);", source)
+    assert named is not None, "the page names the parametrized kinds in one place"
+    spelled = {
+        re.search(rf"const {name.strip()} = '([^']+)';", source).group(1)
+        for name in named.group(1).split(",")
+    }
+    assert spelled == {str(kind) for kind in plots.PARAMETRIZED}
 
 
 # -- the commands that are more than a menu entry ----------------------------------
@@ -1246,6 +1293,14 @@ def test_a_parametric_pair_comes_back_as_a_path_and_its_range():
     assert answer["trange"] == pytest.approx([-np.pi, np.pi])
     radius = np.hypot(answer["xs"].astype(np.float64), answer["ys"].astype(np.float64))
     assert np.allclose(radius[np.isfinite(radius)], 1.0, atol=1e-5)
+    # The parameter each sample came from crosses with the samples, which is what
+    # lets a click on a curve that doubles back name a place on it: a point in
+    # the plane is not a parameter, so the page snaps to the nearest sample and
+    # rides on from the parameter that one came from.
+    assert answer["ts"].shape == answer["xs"].shape
+    turned = answer["ts"].astype(np.float64)
+    assert np.allclose(np.cos(turned), answer["xs"].astype(np.float64), atol=1e-5)
+    assert np.all(np.diff(turned) >= 0)
 
 
 def test_a_polar_curve_is_composed_where_the_numbers_are():

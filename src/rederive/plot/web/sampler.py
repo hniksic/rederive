@@ -212,7 +212,15 @@ def _drawn(
 def _path(
     held: Closures, plot: Riding, answer: Any, request: Sample
 ) -> dict[str, Any]:
-    """A parametric or polar curve, and the note that it gave up refining."""
+    """A parametric or polar curve, and the note that it gave up refining.
+
+    The parameter each sample came from crosses with the samples, which no other
+    kind sends and which one gesture needs: a click on a curve that doubles back
+    names a point in the plane, and a point in the plane is not a parameter. The
+    page snaps such a click to the sample nearest it and rides on from the
+    parameter that sample came from, which is what the desktop's window does with
+    the same array.
+    """
     pair, inner, sampled, trange = answer
     _remember(held, plot, inner, pair)
     said = ""
@@ -224,7 +232,11 @@ def _path(
     return (
         _stroke(sampled.xs, sampled.ys)
         | _empty(plot, sampled.xs, sampled.ys, request)
-        | {"trange": [float(trange[0]), float(trange[1])], "words": said}
+        | {
+            "ts": np.ascontiguousarray(sampled.ts, dtype=np.float32).ravel(),
+            "trange": [float(trange[0]), float(trange[1])],
+            "words": said,
+        }
     )
 
 
