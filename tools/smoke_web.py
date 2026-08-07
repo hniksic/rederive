@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the built demo in a real browser and ask it one question.
+"""Boot the web build in a real browser and ask it one question.
 
     uv run --with playwright python tools/smoke_web.py
     ... --directory build/web --browser chromium --shots build/shots
@@ -7,7 +7,7 @@
 What it does is what a user does in their first ten seconds: open the page, wait
 for the menu, author `(x + 1)^2 - (x - 1)^2`, simplify it, and read `4·x` off
 the screen. Everything between those keystrokes and that answer is the whole
-demo - Pyodide in two instances, the Textual driver, xterm.js, the engine worker
+build - Pyodide in two instances, the Textual driver, xterm.js, the engine worker
 and the pickles between them - so a run that gets the answer has exercised the
 lot, and one that does not says which step it stopped at.
 
@@ -18,11 +18,11 @@ nothing about whether the mathematics arrived.
 
 **Nothing here is a timing.** Stage 0 measured Playwright's Firefox running
 WebAssembly some eight times slower than the machine's own, so the waits below
-are generous on purpose and none of them means anything about how fast the demo
+are generous on purpose and none of them means anything about how fast the build
 is.
 
 The page is served by `python -m http.server`, which is what a static host is
-without the compression - the demo names no other host at run time, so a
+without the compression - the build names no other host at run time, so a
 directory and a port are the whole of what it needs.
 """
 
@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 #: difference of two squares, because it is the README's own example and
 #: because its answer is one line of two characters: an answer that has to be
 #: matched across a two-dimensional render would be testing the display rather
-#: than the demo.
+#: than the build.
 AUTHORED = "(x+1)^2-(x-1)^2"
 ANSWER = "4·x"
 
@@ -74,7 +74,7 @@ def main(arguments: list[str] | None = None) -> int:
     parsed = _command_line(arguments)
     directory = Path(parsed.directory).resolve()
     if not (directory / "index.html").is_file():
-        raise SystemExit(f"{directory}: not a built demo - run tools/build_web.py")
+        raise SystemExit(f"{directory}: not a web build - run tools/build_web.py")
     shots = Path(parsed.shots).resolve() if parsed.shots else None
     if shots is not None:
         shots.mkdir(parents=True, exist_ok=True)
@@ -96,7 +96,7 @@ def main(arguments: list[str] | None = None) -> int:
 
 
 def _command_line(arguments: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Smoke-test the built browser demo.")
+    parser = argparse.ArgumentParser(description="Smoke-test the web build.")
     parser.add_argument("--directory", default=str(ROOT / "build" / "web"))
     parser.add_argument(
         "--browser",

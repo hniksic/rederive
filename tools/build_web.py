@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble the browser demo: a directory a static file server can serve as it is.
+"""Assemble the web build: a directory a static file server can serve as it is.
 
     python3 tools/build_web.py                 # into build/web
     python3 tools/build_web.py --output DIR
@@ -17,7 +17,7 @@ What it gathers, and where each part comes from:
 * `web/`, which is the page itself.
 
 **Nothing is fetched at run time.** Every URL the page names is under the
-directory this writes, which is what lets the demo work offline, behind a
+directory this writes, which is what lets the build work offline, behind a
 proxy, and on a static host that is not allowed to reach anywhere else.
 
 Two things about that directory are worth knowing before it is served.
@@ -27,7 +27,7 @@ connection whose server compresses, and nearly all of it is the precompiled
 sympy wheel, numpy and the stdlib. The JavaScript is a rounding error beside
 them - three.js, the biggest piece of it, is 0.8 MB and 0.2 MB compressed.
 `python -m http.server` does not compress at all, which is fine for a look and
-wrong for a demo anyone else is going to load; GitHub Pages does.
+wrong for a page anyone else is going to load; GitHub Pages does.
 
 And it needs no headers. There is no `SharedArrayBuffer` here and no
 `setInterruptBuffer`, so no COOP or COEP is called for: the abort is a
@@ -54,7 +54,7 @@ ROOT = HERE.parent
 
 #: Which Pyodide the page runs on. Pinned rather than tracked: anything older
 #: than 314 ships sympy 1.13.3, which is below this package's floor, and a
-#: release the demo has not been tried on is not one to hand a user.
+#: release the build has not been tried on is not one to hand a user.
 PYODIDE = "314.0.3"
 
 #: Where a release's files live. The `pyc` channel is a directory beside the
@@ -98,13 +98,13 @@ NPM = (
 )
 
 #: Which file of each package the page loads, and which directory of the built
-#: demo it lands in. The UMD and IIFE builds, because they are what these
+#: page it lands in. The UMD and IIFE builds, because they are what these
 #: packages ship for a plain `<script>` tag and what their own examples use.
 #: three.js is the exception and is taken as modules, which is the only form it
 #: ships in: the minified module, the core it imports beside it, and the one
 #: control out of the examples tree that the panes use. Nothing else of that
 #: tree is copied - it is a few megabytes of loaders and post-processing for a
-#: demo that orbits a mesh.
+#: example that orbits a mesh.
 BUNDLED = {
     "@xterm/xterm": ("lib/xterm.js", "css/xterm.css"),
     "@xterm/addon-fit": ("lib/addon-fit.js",),
@@ -190,7 +190,7 @@ def main(arguments: list[str] | None = None) -> int:
 
 
 def _command_line(arguments: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the browser demo directory.")
+    parser = argparse.ArgumentParser(description="Build the web directory.")
     parser.add_argument("--output", default=str(ROOT / "build" / "web"))
     parser.add_argument("--cache", default=str(ROOT / "build" / "vendor"))
     parser.add_argument("--version", default=PYODIDE, help="which Pyodide to vendor")

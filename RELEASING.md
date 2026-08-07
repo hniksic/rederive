@@ -17,6 +17,11 @@ Names carry no version, so that INSTALL.md's
 Plus `install.sh`, which the Unix instructions pipe into `sh`, and
 `SHA256SUMS` over everything.
 
+The web build is a release artifact too, and the one nobody downloads: it is
+hosted rather than attached, at <https://hniksic.github.io/rederive/>, and every
+release replaces what is there. README links to it, so it has to name the same
+version the rest of the table does.
+
 ## Procedure
 
 Bump `__version__` in `src/rederive/__init__.py`, which is where the version is
@@ -34,12 +39,19 @@ on the release page beside the generated notes.
 builds on all three platforms, checks every build, compiles and test-installs the
 Windows installer, and publishes the release.
 
-The same tag sets `.github/workflows/web.yml` going, which builds the browser demo,
-opens it in Chromium and Firefox, and publishes it to GitHub Pages. The two workflows
-run beside each other and neither waits on the other: the page carries a wheel built
-from the tagged source rather than anything the release attaches. That is what keeps
-README's [live demo](https://hniksic.github.io/rederive/) link on the latest release
-without the link itself ever changing.
+Once the release is up, that workflow calls `.github/workflows/web.yml`, which builds
+the web build, opens it in Chromium and Firefox, and publishes it to GitHub Pages.
+Last rather than beside, and that order is the point: README sends a reader to a page
+that calls itself the latest release, so a build that fails on one platform must
+publish neither. The page carries a wheel built from the tagged source rather than
+anything the release attaches, and its link never changes.
+
+Run the build by hand on master before tagging. `build.yml` has a `workflow_dispatch`
+trigger for it, it takes the same three platforms through the same checks, and it makes
+no release and publishes no page - the two last jobs want a tag. What that buys is
+finding out that a platform is broken while no tag exists and nothing is public, which
+is the cheap end of the problem. v1.1.0 was tagged without it and macOS failed its
+smoke check twice, leaving a page up for a release that was never made.
 
 To build by hand instead - there is no cross-compilation, so this is once per
 platform, from a clean checkout of the tag. On Linux, install `libxcb-cursor0` first:

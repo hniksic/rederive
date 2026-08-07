@@ -276,3 +276,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes
+
+  # The web build goes up last, after the release it belongs to exists. It is a
+  # release artifact like the three binaries above, differing only in being hosted
+  # rather than downloaded, and README sends a reader to a page that calls itself
+  # the latest release. So the page may never be ahead of the release: a build that
+  # fails on one platform publishes no release and must publish no page either.
+  #
+  # `web.yml` owns how it is built and checked, and is called rather than copied so
+  # there is one description of that and not two. A called workflow gets the
+  # permissions the caller hands it, which is why they are named here.
+  web:
+    name: Web
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/web.yml
+    with:
+      publish: true

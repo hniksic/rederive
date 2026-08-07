@@ -1,38 +1,46 @@
-name: Web demo
+name: Web build
 
-# The browser demo, built and then actually opened. `test.yml` runs the suite on
+# The web build, built and then actually opened. `test.yml` runs the suite on
 # three operating systems and says nothing about the page: everything the port
 # added lives between Pyodide, a Textual driver and xterm.js, and none of it is
 # reachable from pytest. So this builds the directory and asks a real browser one
 # question - author an expression, simplify it, read the answer off the screen -
 # which is the shortest path that goes through every piece.
 #
-# Publishing is a release and nothing else: a tag republishes the page, so that
-# the link README points at is the latest release running. Otherwise it happens
-# only when someone asks for it by hand. See the `publish` job.
+# Publishing does not happen on a tag of its own accord. `build.yml` calls this
+# workflow once it has built every platform and made the release, so that a page
+# saying it is the latest release cannot go up before the release it names does.
+# The other way in is by hand, for a build to be put up deliberately.
 on:
   push:
     branches: [master]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the built demo to GitHub Pages
+        description: Publish the web build to GitHub Pages
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      publish:
+        description: Publish the web build to GitHub Pages
+        type: boolean
+        default: true
 
 # A second push supersedes the first, as in the suite: there is nothing to learn
 # from finishing a run of code that has already been replaced. A run that may
-# publish is exempt, a tag and a hand-started publish both being things that
-# happen once and are meant to finish.
+# publish is exempt, being a thing that happens once and is meant to finish.
+#
+# `inputs` is unset on a push and on a pull request, which reads as false and
+# leaves those cancelling each other as before.
 concurrency:
   group: web-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && !inputs.publish }}
+  cancel-in-progress: ${{ !inputs.publish }}
 
 jobs:
   smoke:
-    name: Build and open the demo
+    name: Build it and open it
     runs-on: ubuntu-24.04
     # The build fetches Pyodide, npm and the wheels, and then two browsers boot a
     # Python interpreter each. Ten minutes is the ordinary run; anything past
@@ -58,7 +66,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --managed-python --no-dev
 
-      - name: Build the demo
+      - name: Build the web version
         run: python3 tools/build_web.py
 
       # Playwright is a correctness gate here and nothing else. Its Firefox runs
@@ -67,11 +75,11 @@ jobs:
       - name: Install the browsers
         run: uv run --with playwright playwright install --with-deps chromium firefox
 
-      - name: Open the demo in Chromium and Firefox
+      - name: Open it in Chromium and Firefox
         run: uv run --with playwright python tools/smoke_web.py --shots build/shots
 
       # The screen either browser was looking at, kept whether the run passed or
-      # failed: a demo that broke is a picture worth having, and one that worked
+      # failed: a build that broke is a picture worth having, and one that worked
       # is worth comparing the next one against.
       - name: Keep the screenshots
         if: always()
@@ -81,20 +89,23 @@ jobs:
           path: build/shots
           if-no-files-found: ignore
 
-  # Publishing is a tag, or someone opening this workflow from the Actions tab,
-  # ticking the box and starting it. Never a push to a branch, never a pull
+  # Publishing is `build.yml` asking for it at the end of a release, or someone
+  # ticking the box in the Actions tab. Never a push to a branch, never a pull
   # request, and never a consequence of the smoke test passing on its own: the
-  # gate runs first and a demo that a browser could not open is not published,
-  # but passing it is not what decides to put a demo in front of people.
+  # gate runs first and a build that a browser could not open is not published,
+  # but passing it is not what decides to put one in front of people.
+  #
+  # Both ways in carry the same input, so the one condition covers them. It has
+  # to be the input rather than the event: inside a called workflow the event is
+  # the caller's - a tag reads as `push` here - and there is no event name that
+  # means "was called".
   #
   # Between releases the page therefore sits at the last tag while master moves
   # on, which is what makes the README link mean the release it claims to be.
   publish:
     name: Publish to GitHub Pages
     needs: smoke
-    if: >-
-      startsWith(github.ref, 'refs/tags/v')
-      || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    if: inputs.publish
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -127,7 +138,7 @@ jobs:
       # Built again rather than carried over from the smoke job, so that what is
       # published is a directory this job made out of this commit and nothing
       # else. It is four minutes and it removes a whole class of question.
-      - name: Build the demo
+      - name: Build the web version
         run: python3 tools/build_web.py
 
       - uses: actions/configure-pages@v5

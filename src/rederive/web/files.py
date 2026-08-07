@@ -18,7 +18,7 @@ is a command:
 The settings are here too, for want of anywhere better: a tab has no shell to
 be started from and no home directory to keep a state file in, so it writes one
 into the store every time it is hidden and reads it back before the screen is
-built. That is what makes the demo remember how it was left.
+built. That is what makes the web build remember how it was left.
 
 Every DOM call is the page's, through the module `web/files.js`. What is here
 is which file goes where and what is said about it.
