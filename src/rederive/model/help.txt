@@ -455,22 +455,8 @@ Transfer Load Derive gallery reads the worksheet of captioned plots that comes
 with the program, from whatever directory you are working in. Highlight a line,
 read its caption on the status line, and press P P to see what it draws.
 
-A plot window is a window of the desktop rather than a part of this screen,
-and it is closed the way any other window is. The picture is navigated with the
-mouse: the wheel zooms about the pointer, the left button drags the view, the
-right button sweeps out a rectangle to zoom to, and a double click centres the
-view where it lands.
-
-Plot window key commands:
-  Home or 0    the framing a fresh window opens with
-  A            frame every curve that is showing
-  + and -      zoom in and out about the middle of the view
-  arrows       move the view a quarter window; move the marker, while tracing
-  Backspace    back to where the view was; Shift-Backspace forward again
-  T or F3      trace: a marker rides a curve and the status bar reads it out
-  L and G      the legend and the grid
-  Ctrl-C       copy the picture, or the traced point, to the clipboard
-  Ctrl-S       save the picture, the sampled points, or a drawing of it
+Plot draws the highlighted expression in a window of its own; the Plotting
+subject of this help covers the plot windows.
 
 Algebra window key commands:
   F1           the next window; help, while a line is being typed
@@ -486,6 +472,118 @@ Algebra window key commands:
 A command that reaches the engine says on the message line how long it has
 been running, and Esc stops it. What it had computed is thrown away and the
 worksheet stands as it did.
+
+%topic Plot | Plotting expressions | Plotting Expressions
+
+Plot draws the highlighted expression in a plot window:
+
+Plot          draw in the most recently used plot window, opening one if needed
+New           draw in a new window; later plots then go to it
+
+The expression itself decides what kind of picture it makes, and with it which
+of the two kinds of window it opens.
+
+Expressions that open a 2D window:
+  one variable, or none    a curve: SIN(x)/x, x^2 - 1, 3
+  u = v                    the curve where the two sides are equal
+  an inequality            the area where it holds: x^2 + y^2 < 9
+  [u, v]                   a parametric curve: [3SIN(3t), 3SIN(4t)]
+  [u, v, w] and longer     a curve for each: [x, x^2, x^3]
+  [a, b] of numbers        a point; a vector of pairs draws them all
+
+A pair of expressions makes a parametric curve, a pair of plain numbers a
+point. To draw two curves together, Plot each expression in turn.
+
+Expressions that open a 3D window:
+  two variables            a surface: 1/(9 + x^2 + y^2)
+  z = f(x, y)              a surface, z on the vertical axis
+  a vector of either form  a surface for each, in one picture
+
+Plotting an expression again replaces its old curve rather than adding one.
+An expression in three or more variables cannot be plotted. The axes take
+their names from the expression's own variables.
+
+A plot window is an ordinary window of the desktop, with buttons and fields
+along its top edge and a menu on right click.
+
+Driving a 2D window with the mouse:
+  wheel                 zoom about the pointer; Ctrl only x, Shift only y
+  drag                  move the view
+  right drag            mark a rectangle to zoom into
+  double click          centre the view there
+  click on a curve      trace it (see below)
+  click a legend entry  hide that plot, or show it again
+  right click           the window's menu
+
+The menu also acts on the plot the click was over: remove it, or join a data
+plot's points and change their size.
+
+2D window keys:
+  Home or 0    back to the starting view
+  A            fit everything drawn into the view
+  + and -      zoom in and out
+  arrows       move the view
+  Backspace    the previous view; Shift-Backspace forward again
+  T or F3      trace on and off
+  G and L      show or hide the grid and the legend
+  Del          remove every plot
+  Ctrl-C       copy the picture; while tracing, the marked point
+  Ctrl-S       save the picture to a file
+  Q            close the window
+
+Set range... on the menu lets you type the four bounds of the view, as
+expressions: -π is a valid bound. A fresh window shows -5 to 5 with the same
+scale on both axes, so a circle is round. After A fits everything in, the two
+scales may differ; the 1:1 button or Home makes them equal again. A plot drawn
+entirely outside the current view is fitted into it automatically.
+
+The polar button switches the window to polar coordinates: every curve is then
+drawn as r = f(θ), with its variable as the angle. A parametric or polar curve
+is first drawn for parameter values from -π to π; type other bounds into the
+fields at the top of the window to change that.
+
+Trace follows a curve with a marker and shows the coordinates under it. On an
+ordinary curve the marker follows the pointer; the keys move it too:
+  left, right    along the curve; faster with Shift
+  up, down       onto another curve
+  Tab            to the next root, maximum, minimum or intersection with
+                 another curve; Shift-Tab to the previous one
+  Enter          add the marked point to the worksheet as a new expression
+  Ctrl-C         copy the marked point
+  Esc            stop tracing
+
+The points Tab finds are exact enough to calculate with. Where the curve has
+no value, like SIN(x)/x at x = 0, tracing shows that too.
+
+In a 3D window the mouse and keys move only the camera:
+  drag         turn the picture; Shift-drag slides it
+  wheel        nearer and further
+  arrows       turn a step at a time
+  Home or 0    back to the starting view
+  1, 2, 3      look straight at the xy, xz or yz plane
+  R            spin slowly; R again stops
+  M            draw the surfaces as wire mesh, or shaded
+  B            show or hide the box around the surfaces
+  X            show or hide the numbers and names along the box edges
+  L            show or hide the legend
+  Del          remove every surface
+  Ctrl-C, Ctrl-S, Q   as in a 2D window
+
+The surfaces are computed over the domain given in the fields at the top, on a
+grid of the given fineness; changing either recomputes them. The view...
+button shows the plotted region and the camera as numbers you can edit; its
+Autoscale z button returns to the automatic height after you have typed one.
+A surface running off to infinity has its spike cut short, so that the rest of
+the shape stays visible.
+
+Ctrl-S saves a PNG image or, from a 2D window, an SVG drawing that scales in
+print. Copies and saved files use dark lines on a white background, ready for
+printing, and include the legend.
+
+Options Plot sets the defaults for new plots: the grid of a surface, wire or
+shaded, and whether data points are joined and how large they are drawn.
+Changing one of these in a plot window changes the default too, and the
+defaults are remembered between sessions.
 
 %topic State | current State of system | System Control Settings
 
