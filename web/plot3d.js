@@ -269,7 +269,10 @@ class Solid {
     this.boxed = true;
     // Whether the numbers along the box edges and the names of the axes are
     // drawn, which is the one furnishing with nothing else to say its state.
-    this.named = true;
+    // Spelled apart from `named` below, which is what Python calls to say what
+    // the three axes are: a field and a method of one name are one name, and
+    // the field would answer the call.
+    this.lettered = true;
     // What the three axes are called. Python says, taking them from the first
     // surface's own expression.
     this.axes = [...AXES];
@@ -370,6 +373,11 @@ class Solid {
   // that has left it - which every drag does, a bar being twenty pixels tall.
   // The camera needs nothing of the sort: OrbitControls reads pointers itself
   // and has read a finger since long before this pane existed.
+  //
+  // The keyboard is handed over by hand. Cancelling the press is what stops the
+  // drag from selecting the title as text, and it also cancels the focus the
+  // press would have given the pane - so a pane taken hold of by its bar would
+  // answer to none of its keys.
   _movable() {
     let from = null;
     this.bar.addEventListener('pointerdown', (event) => {
@@ -377,6 +385,7 @@ class Solid {
       from = { x: event.clientX, y: event.clientY, left: this.element.offsetLeft,
                top: this.element.offsetTop };
       capture(this.bar, event);
+      this.element.focus();
       event.preventDefault();
     });
     this.bar.addEventListener('pointermove', (event) => {
@@ -841,7 +850,7 @@ class Solid {
       // still says where its divisions fall.
       this.marks.visible = this.boxed && segments.length > 0;
     }
-    const shown = this.named ? written : [];
+    const shown = this.lettered ? written : [];
     while (this.labels.length < shown.length) {
       const label = document.createElement('span');
       label.className = 'plot-mark';
@@ -983,7 +992,7 @@ class Solid {
 
   // The numbers along the box edges and the names of the axes, or neither.
   naming() {
-    this.named = !this.named;
+    this.lettered = !this.lettered;
     this._anchor();
     this._paint();
   }
@@ -1136,7 +1145,7 @@ class Solid {
     return {
       spinning: this.spinning !== null,
       boxed: this.boxed,
-      names: this.named,
+      names: this.lettered,
       legend: this.listed,
       pointed,
     };

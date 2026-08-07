@@ -321,6 +321,29 @@ class FakeEngine:
         return self.answers.pop(0) if self.answers else ()
 
 
+class JsNull:
+    """The page's `null` as Pyodide hands one over: falsy, and not `None`.
+
+    Pyodide keeps a page's two words for having no answer apart. A field the
+    page does not have arrives as `None`; a field it has and has put `null` in
+    arrives as this, which is falsy - so a test of truth still passes - and is
+    not `None` - so a test of identity does not. A snapshot saying that a menu
+    was raised over no curve is built in JavaScript and says it this way, so
+    the fake page says it this way too and the seam is asked the question it is
+    actually asked.
+    """
+
+    def __bool__(self):
+        return False
+
+    def __repr__(self):
+        return "jsnull"
+
+
+#: The one of them, as `pyodide.ffi` holds the one of its own.
+jsnull = JsNull()
+
+
 class Proxy:
     """A Python callable as JavaScript holds one: callable, and destroyable.
 
@@ -423,6 +446,7 @@ def bridge():
     ffi = types.ModuleType("pyodide.ffi")
     ffi.create_proxy = Proxy
     ffi.to_js = lambda value, dict_converter=None: value
+    ffi.jsnull = jsnull
     pyodide = types.ModuleType("pyodide")
     pyodide.ffi = ffi
     sys.modules["js"] = js

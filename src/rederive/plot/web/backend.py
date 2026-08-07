@@ -703,7 +703,7 @@ class Pane:
         """
         run = self.commands().get(str(name))
         if run is not None:
-            run(value)
+            run(_given(value))
 
     def menu(self, state: Any) -> Any:
         """The context menu of this pane, as it should currently read.
@@ -962,6 +962,12 @@ class Pane:
         `named` is what the app wrote, cut to a line. Nothing on the page ever
         renders an expression, which is the same rule that keeps the desktop's
         windows from doing it.
+
+        Two colors rather than one, as the desktop's windows hold: a curve is
+        drawn in the first on a dark pane and in the second on the white ground
+        a picture leaving the pane is drawn on. Both are `plot/model.py`'s, so
+        a plot copied out of a browser is the color it is copied out of a
+        window in.
         """
         return _js(
             {
@@ -969,6 +975,7 @@ class Pane:
                 "label": plot.label,
                 "name": plot.named,
                 "color": plot.color,
+                "paper": plot.paper,
                 "connected": bool(plot.connected),
                 "size": float(plot.point_size),
                 "hidden": bool(plot.hidden),
@@ -1343,7 +1350,7 @@ class Solid:
         """Do the thing the page named, which is a control's own name."""
         run = self.commands().get(str(name))
         if run is not None:
-            run(value)
+            run(_given(value))
 
     def menu(self, state: Any) -> Any:
         """The context menu of this pane, as it should currently read."""
@@ -1932,7 +1939,40 @@ def _field(state: Any, name: str) -> Any:
     field it has no answer for is a field this backend does not need: a pane
     that cannot show a thing has no state for it either.
     """
-    return getattr(state, name, None)
+    return _given(getattr(state, name, None))
+
+
+#: What `_nothing` answers where there is no page to have a null of its own: an
+#: object no value crossing a seam can be, so that the comparison is false
+#: rather than absent.
+_NEVER = object()
+
+
+def _given(value: Any) -> Any:
+    """One value off the page, with its two spellings of nothing read as one.
+
+    A page has two words for having no answer - `null` where it means none and
+    `undefined` where it has no field at all - and Pyodide keeps them apart:
+    `undefined` arrives as `None`, and `null` arrives as a `JsNull` that is
+    falsy but is not `None`. A menu raised over no curve carries the first of
+    those, so anything asked whether it was handed a plot has to be asked in
+    the one word Python has for nothing rather than in either of the page's.
+    """
+    return None if value is None or value is _nothing() else value
+
+
+def _nothing() -> Any:
+    """The page's own `null`, or a sentinel where there is no page to have one.
+
+    Reached for inside the call, as every other piece of the runtime is: this
+    module is read by the tests on a desktop, where `pyodide` is not installed
+    and nothing can be a JavaScript null in the first place.
+    """
+    try:
+        from pyodide.ffi import jsnull
+    except ImportError:
+        return _NEVER
+    return jsnull
 
 
 def _grid(count: Any) -> int:

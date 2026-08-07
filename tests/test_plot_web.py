@@ -18,11 +18,21 @@ between them, which is the whole of what stage 5 wrote in Python.
 """
 
 import asyncio
+import re
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
-from fakepage import FakeEngine, FakePage, FakeSolids, bridge
+from fakepage import (
+    FakeEngine,
+    FakePage,
+    FakePane,
+    FakeSolid,
+    FakeSolids,
+    bridge,
+    jsnull,
+)
 
 from rederive.engine.context import Angle, Context
 from rederive.plot import controls
@@ -31,7 +41,7 @@ from rederive.plot.model import Plot, Surface, written
 from rederive.plot.protocol import PlotKind
 from rederive.plot.session import PlotSession
 from rederive.plot.web import protocol as asking
-from rederive.plot.web import sampler
+from rederive.plot.web import backend, sampler
 from rederive.plot.web.backend import WebBackend, WorkerExecutor
 from rederive.syntax import ParseState, parse_expression
 
@@ -136,6 +146,12 @@ async def test_a_pane_names_a_plot_with_what_the_app_wrote(session, page):
     assert spec["name"] == "#7  SIN(x)/x + COS(x)"
     assert spec["kind"] == "curve"
     assert spec["color"] == "#ffffff"
+    # Two colors, as the desktop's windows hold: the second is what the same
+    # curve is drawn in on the white ground a picture leaving the pane is drawn
+    # on. Both are `plot/model.py`'s, so a plot copied out of a browser is the
+    # color it is copied out of a window in - and a white curve is black there,
+    # white on white paper being an empty picture.
+    assert spec["paper"] == "#000000"
 
 
 async def test_replotting_a_label_keeps_its_color_and_replaces_its_curve(session, page):
@@ -448,13 +464,20 @@ SOLID_CONTROLS = (
 _POINTED = ("plot.remove", "points.connect", "points.size")
 
 
-def _flat(pointed=None, **fields):
-    """The snapshot a 2D pane hands over when a menu opens, as the page builds it."""
+def _flat(pointed=jsnull, **fields):
+    """The snapshot a 2D pane hands over when a menu opens, as the page builds it.
+
+    A click over no curve is the page's own `null` rather than Python's `None`:
+    the snapshot is built in JavaScript, it has the field, and what it has put
+    in the field is nothing. Pyodide hands the two over as two different
+    things, so a test that said `None` here would be asking the seam an easier
+    question than the page asks it.
+    """
     state = {"tracing": False, "grid": True, "legend": True, "equal": True}
     return types.SimpleNamespace(pointed=pointed, **{**state, **fields})
 
 
-def _deep(pointed=None, **fields):
+def _deep(pointed=jsnull, **fields):
     """The same for a 3D pane, which has a camera where the other has a view."""
     state = {"spinning": False, "boxed": True, "names": True, "legend": True}
     return types.SimpleNamespace(pointed=pointed, **{**state, **fields})
@@ -550,11 +573,37 @@ async def test_a_menu_is_read_off_the_pane_as_it_opens(session, page):
     assert ticked(_flat(tracing=True, grid=False)) == ["Trace", "Legend"]
 
 
+async def test_a_menu_raised_over_nothing_is_a_menu_about_the_view(
+    session, page, solids
+):
+    """The page's `null` is nothing, in either kind of pane.
+
+    A right click on empty canvas is the ordinary way a menu is asked for, and
+    what the snapshot then carries where a plot would be is the page's own word
+    for having none. Read as an answer rather than as nothing it is a serial to
+    be looked up, and looking it up is where a menu stops being a menu - so
+    both kinds are asked here, both being handed the same word.
+    """
+    session.add(_landing("SIN(x)"))
+    session.add(_plotted("SIN(x y)"))
+    flat, deep = page.panes[1], solids.panes[2]
+    assert _labels(flat.say["menu"](_flat()))[0] == "Set range..."
+    assert _labels(deep.say["menu"](_deep()))[0] == "Home view"
+    # And the tail that is about one plot is absent rather than about a plot
+    # nobody pointed at, which is the same answer as for a field with nothing
+    # in it at all.
+    assert "Remove #1  SIN(x)" not in _labels(flat.say["menu"](_flat()))
+    assert _labels(flat.say["card"](_flat())) == []
+    assert _labels(deep.say["card"](_deep())) == []
+
+
 async def test_a_control_the_page_names_reaches_the_thing_it_names(session, page):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
     for name in ("view.all", "trace", "grid", "legend", "image.copy", "image.export"):
-        pane.say["command"](name, None)
+        # With the value the page sends where a control carries none, which is
+        # `null` and not an omitted argument.
+        pane.say["command"](name, jsnull)
     assert pane.done == [
         "autoscale", "trace", "grid", "legend", "copy", "export"
     ]
@@ -723,6 +772,82 @@ async def test_a_solids_picture_leaves_the_pane_and_says_what_happened(
     )
     pane.say["exported"]("plot1.png", 1520, 1240, "")
     assert pane.message == "Downloaded plot1.png, 1520 by 1240 pixels"
+
+
+# -- the two files the page draws with -----------------------------------------------
+#
+# Nothing here runs any JavaScript. What it reads is the source of the page's
+# two plotting modules, for the one thing about a pane that decides whether the
+# seam works at all and that no amount of Python can see from this side: a pane
+# is an object, everything Python asks of one it asks by name, and a field of
+# that name is that name. `this.named = true` written beside `named(across,
+# along, up)` is a pane whose axes cannot be told what they are called, and the
+# fake page cannot show it - the fake is Python, where the same collision is
+# spelled differently and where a fake that had it would be a fake nobody would
+# write.
+
+#: Where the page's own files are, which is beside the tests rather than in
+#: the package: they are the page, and the package is what the page loads.
+PAGE = Path(__file__).resolve().parent.parent / "web"
+
+#: Which module draws which kind of pane, under what name on either side of the
+#: seam. The backend's class and the page's carry the same name because they
+#: are the two halves of one thing.
+DRAWN = (("plot2d.js", "Pane", FakePane), ("plot3d.js", "Solid", FakeSolid))
+
+
+def _drawing(module, named):
+    """One class of one of the page's modules, as its own run of the file."""
+    source = (PAGE / module).read_text(encoding="utf-8")
+    start = source.index(f"\nclass {named} {{\n")
+    return source[start : source.index("\n}\n", start)]
+
+
+def _methods(body):
+    """The methods a class declares, which are its members at one indent."""
+    return set(re.findall(r"^  (?:async )?([A-Za-z_$][\w$]*)\(", body, re.M))
+
+
+def _fields(body):
+    """The fields it puts on itself, wherever in it that is done."""
+    return set(re.findall(r"this\.([A-Za-z_$][\w$]*)\s*=[^=]", body))
+
+
+def _asked(named):
+    """Every call one backend pane makes into the page it draws through."""
+    source = Path(backend.__file__).read_text(encoding="utf-8")
+    start = source.index(f"\nclass {named}:\n")
+    body = source[start : source.find("\n\nclass ", start + 1)]
+    return set(re.findall(r"self\.page\.([A-Za-z_]\w*)\(", body))
+
+
+@pytest.mark.parametrize("module, named, fake", DRAWN)
+def test_no_field_of_a_pane_carries_the_name_of_one_of_its_methods(module, named, fake):
+    """A pane's own bookkeeping may not be spelled like anything it does.
+
+    Python reaches a pane's methods by name and JavaScript has one namespace
+    for both, so a field assigned in the constructor silently replaces the
+    method it is named after - and the call that finds it says only that a
+    boolean is not callable, from the far side of a proxy.
+    """
+    body = _drawing(module, named)
+    assert _methods(body) & _fields(body) == set()
+
+
+@pytest.mark.parametrize("module, named, fake", DRAWN)
+def test_every_call_the_backend_makes_on_a_pane_is_one_the_pane_answers(
+    module, named, fake
+):
+    """And the seam is the same shape on all three sides of it.
+
+    The page is what a browser calls, the fake is what these tests call, and a
+    name the backend uses that either is short of is a call that would go
+    nowhere - in a browser, or in every test at once.
+    """
+    called = _asked(named)
+    assert called, "the backend calls into a pane by name, so there is a list"
+    assert called <= _methods(_drawing(module, named))
+    assert called <= {name for name in dir(fake) if not name.startswith("_")}
 
 
 # -- the commands that are more than a menu entry ----------------------------------

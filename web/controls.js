@@ -113,8 +113,6 @@ export function menu(where, event, entries, run) {
   const box = where.getBoundingClientRect();
   const element = document.createElement('div');
   element.className = 'plot-menu';
-  element.style.left = `${event.clientX - box.left}px`;
-  element.style.top = `${event.clientY - box.top}px`;
   const away = () => {
     element.remove();
     window.removeEventListener('pointerdown', away, true);
@@ -124,7 +122,23 @@ export function menu(where, event, entries, run) {
   // before whatever was under it hears the press.
   window.addEventListener('pointerdown', away, true);
   where.appendChild(element);
+  place(element, box, event);
   return element;
+}
+
+// Where a menu stands: at the pointer, and back inside the picture wherever
+// that would put an entry outside it. The element it is put in has its
+// overflow clipped - a pane is a window and a picture does not spill out of one
+// - so a menu hanging over the edge is a menu whose last entries cannot be
+// read or reached. Measured after it is in the DOM, since how tall it is is
+// how many entries the description gave it.
+function place(element, box, event) {
+  const wide = element.offsetWidth;
+  const tall = element.offsetHeight;
+  const left = event.clientX - box.left;
+  const top = event.clientY - box.top;
+  element.style.left = `${Math.max(0, Math.min(left, box.width - wide))}px`;
+  element.style.top = `${Math.max(0, Math.min(top, box.height - tall))}px`;
 }
 
 // One line of a menu, and the submenu under it where it has one.

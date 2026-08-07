@@ -40,7 +40,9 @@
 //
 // Copying and exporting are the one pair this file answers outright. A canvas
 // has no painter path to write a vector file out of, so what leaves a pane is
-// pixels, and the sentence Python says about it says so.
+// pixels, and the sentence Python says about it says so. What leaves is drawn
+// on paper rather than on the pane's near-black, as the desktop's window draws
+// it: a dark picture pasted into a document is a black rectangle.
 
 import * as controls from './controls.js';
 import * as sheets from './forms.js';
@@ -54,6 +56,17 @@ const BACKGROUND = '#0c0c10';
 const AXIS_COLOR = '#909090';
 const GRID_COLOR = 'rgba(144, 144, 144, 0.18)';
 const MUTED = '#7d8595';
+
+// And the colors a picture that is leaving the pane is drawn in, which are
+// `plot/qt/window2d.py`'s `_on_paper`: a white ground, every curve in the
+// second color the plot list holds for it, the numbers on the axes in black
+// and the axes through the origin in a gray that reads on paper. A dark
+// picture pasted into a document is a black rectangle, so what leaves is drawn
+// the way it would be printed. The ruling and the tick marks are left as they
+// are, being the desktop's `#909090` at its own alpha on either ground.
+const PAPER = '#ffffff';
+const PAPER_TEXT = '#000000';
+const PAPER_AXIS = '#404040';
 
 // The stroke that draws mathematics, in logical pixels, and the furniture's
 // hairlines. The weight is what makes a curve read as the subject rather than
@@ -257,6 +270,10 @@ class Pane {
     // The dialog now up over the pane, so that a second `Set range...` replaces
     // its own overlay rather than standing a second one on top of it.
     this.sheet = null;
+    // Whether what is being drawn is going to leave the pane. Set for the one
+    // redraw a photograph is taken off and cleared again before anything else
+    // is painted, so the screen never shows the paper colors.
+    this.papered = false;
     this._build();
     this._frame();
     this._home();
@@ -315,6 +332,11 @@ class Pane {
   //
   // The pointer is captured by the bar, so the drag follows a finger or a mouse
   // that has left it - which every drag does, a bar being twenty pixels tall.
+  //
+  // The keyboard is handed over by hand, as it is over the picture. Cancelling
+  // the press is what stops the drag from selecting the title as text, and it
+  // also cancels the focus the press would have given the pane - so a pane
+  // taken hold of by its bar would answer to none of its keys.
   _movable() {
     let from = null;
     this.bar.addEventListener('pointerdown', (event) => {
@@ -322,6 +344,7 @@ class Pane {
       from = { x: event.clientX, y: event.clientY, left: this.element.offsetLeft,
                top: this.element.offsetTop };
       capture(this.bar, event);
+      this.element.focus();
       event.preventDefault();
     });
     this.bar.addEventListener('pointermove', (event) => {
@@ -428,6 +451,7 @@ class Pane {
       xs: null,
       ys: null,
       region: null,
+      regionPaper: null,
       extent: null,
       bounds: null,
       generation: 0,
@@ -589,23 +613,24 @@ class Pane {
   }
 
   _copyImage() {
-    const shot = this._photograph();
     const clipboard = navigator.clipboard;
     if (typeof ClipboardItem === 'undefined' || clipboard === undefined
         || clipboard.write === undefined) {
       this.say.copied('', 'ClipboardItem is unavailable');
       return;
     }
-    shot.toBlob((blob) => {
-      if (blob === null) {
-        this.say.copied('', 'canvas.toBlob gave nothing');
-        return;
-      }
-      clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(
-        () => this.say.copied('', ''),
-        (refused) => this.say.copied('', String(refused)),
-      );
-    }, 'image/png');
+    this._photograph().then((shot) => {
+      shot.toBlob((blob) => {
+        if (blob === null) {
+          this.say.copied('', 'canvas.toBlob gave nothing');
+          return;
+        }
+        clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(
+          () => this.say.copied('', ''),
+          (refused) => this.say.copied('', String(refused)),
+        );
+      }, 'image/png');
+    }, (refused) => this.say.copied('', String(refused)));
   }
 
   // Export, which in a tab is a download: an object URL and a link clicked from
@@ -619,34 +644,35 @@ class Pane {
   // is the picture at the size it is drawn, and Python's sentence says the size
   // rather than letting anybody discover it later.
   export() {
-    const shot = this._photograph();
     const name = `plot${this.number}.png`;
-    shot.toBlob((blob) => {
-      if (blob === null) {
-        this.say.exported(name, 0, 0, 'canvas.toBlob gave nothing');
-        return;
-      }
-      try {
-        const address = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = address;
-        link.download = name;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        // Freed on the next turn of the loop: revoked while the download is
-        // still starting, the file is taken away from it.
-        setTimeout(() => URL.revokeObjectURL(address), 0);
-      } catch (refused) {
-        this.say.exported(name, 0, 0, String(refused));
-        return;
-      }
-      this.say.exported(name, shot.width, shot.height, '');
-    }, 'image/png');
+    this._photograph().then((shot) => {
+      shot.toBlob((blob) => {
+        if (blob === null) {
+          this.say.exported(name, 0, 0, 'canvas.toBlob gave nothing');
+          return;
+        }
+        try {
+          const address = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = address;
+          link.download = name;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          // Freed on the next turn of the loop: revoked while the download is
+          // still starting, the file is taken away from it.
+          setTimeout(() => URL.revokeObjectURL(address), 0);
+        } catch (refused) {
+          this.say.exported(name, 0, 0, String(refused));
+          return;
+        }
+        this.say.exported(name, shot.width, shot.height, '');
+      }, 'image/png');
+    }, (refused) => this.say.exported(name, 0, 0, String(refused)));
   }
 
   // The pane as one image: the ground it is drawn on, the picture, and the
-  // names of what is in it.
+  // names of what is in it, all in the colors a picture is read on paper in.
   //
   // The ground is painted rather than inherited - the canvas itself is
   // transparent and the color is the element's - so a picture pasted into a
@@ -654,16 +680,46 @@ class Pane {
   // floating over the canvas rather than anything drawn into it, so the names
   // are written on afterwards, exactly as the desktop's export writes them.
   _photograph() {
-    const source = this.plot.ctx.canvas;
-    const shot = document.createElement('canvas');
-    shot.width = source.width;
-    shot.height = source.height;
-    const ctx = shot.getContext('2d');
-    ctx.fillStyle = BACKGROUND;
-    ctx.fillRect(0, 0, shot.width, shot.height);
-    ctx.drawImage(source, 0, 0);
-    this._namePlots(ctx, shot.width, devicePixelRatio);
-    return shot;
+    return this._onPaper(() => {
+      const source = this.plot.ctx.canvas;
+      const shot = document.createElement('canvas');
+      shot.width = source.width;
+      shot.height = source.height;
+      const ctx = shot.getContext('2d');
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(0, 0, shot.width, shot.height);
+      ctx.drawImage(source, 0, 0);
+      this._namePlots(ctx, shot.width, devicePixelRatio);
+      return shot;
+    });
+  }
+
+  // The pane in paper colors for as long as a photograph takes, which is
+  // `plot/qt/window2d.py`'s `_on_paper` on a canvas.
+  //
+  // What the curves, the shading and the axes through the origin are drawn in
+  // the pane reads off `papered` as it draws them. What the numbers along the
+  // axes are drawn in is uPlot's, so its two strokes are swapped and put back.
+  //
+  // The picture is waited for rather than assumed: uPlot commits a redraw in a
+  // microtask rather than in the call, and a photograph taken in the call
+  // would be a photograph of the colors the pane had before. Waiting for a
+  // microtask is not waiting for a frame - the two swaps still fall between
+  // two paints - so the file is on paper and the pane on the screen stays dark
+  // throughout, exactly as the desktop's window does.
+  async _onPaper(take) {
+    const strokes = this.plot.axes.map((axis) => axis.stroke);
+    this.papered = true;
+    for (const axis of this.plot.axes) axis.stroke = () => PAPER_TEXT;
+    this.plot.redraw(false, true);
+    try {
+      await null;
+      return take();
+    } finally {
+      this.papered = false;
+      this.plot.axes.forEach((axis, at) => { axis.stroke = strokes[at]; });
+      this.plot.redraw(false, true);
+    }
   }
 
   _namePlots(ctx, wide, ratio) {
@@ -677,7 +733,7 @@ class Pane {
     for (const serial of this.order) {
       const plot = this.plots.get(serial);
       if (plot === undefined || plot.hidden) continue;
-      ctx.fillStyle = plot.color;
+      ctx.fillStyle = this._ink(plot);
       ctx.fillText(plot.name, wide - LEGEND_MARGIN_PX * ratio, down);
       down += size * 1.4;
     }
@@ -709,7 +765,12 @@ class Pane {
       return;
     }
     if (message.shape === 'region') {
+      // Both washes at once, the truth grid being what either is made of and
+      // arriving only here. Made once when the samples land rather than once a
+      // frame, since a drag redraws sixty times over a grid the worker sent
+      // once - and a picture leaving the pane has its own wash ready.
       plot.region = shading(message, plot.color);
+      plot.regionPaper = shading(message, plot.paper);
       plot.extent = message.extent;
       plot.xs = null;
     } else {
@@ -769,6 +830,14 @@ class Pane {
 
   // -- drawing ----------------------------------------------------------------
 
+  // What one plot is drawn in: the color it is read on the screen in, or the
+  // one it is read on paper in while a picture is being taken. Both are the
+  // plot list's own, so a curve copied out of a pane is the color the same
+  // curve copied out of a window is.
+  _ink(plot) {
+    return this.papered ? plot.paper : plot.color;
+  }
+
   _draw(u) {
     const ctx = u.ctx;
     const ratio = devicePixelRatio;
@@ -802,7 +871,7 @@ class Pane {
     const up = (this.shown.y1 - this.shown.y0) / Math.max(u.bbox.height / ratio, 1);
     const at = (low, high, pixel) => Math.min(Math.max(0, low + pixel), high - pixel);
     ctx.save();
-    ctx.strokeStyle = AXIS_COLOR;
+    ctx.strokeStyle = this.papered ? PAPER_AXIS : AXIS_COLOR;
     ctx.lineWidth = ratio;
     ctx.beginPath();
     const x = u.valToPos(at(this.shown.x0, this.shown.x1, across), 'x', true);
@@ -853,7 +922,7 @@ class Pane {
   // path is broken here and started again on the far side.
   _stroke(u, ctx, plot, ratio) {
     ctx.save();
-    ctx.strokeStyle = plot.color;
+    ctx.strokeStyle = this._ink(plot);
     ctx.lineWidth = CURVE_WIDTH * ratio;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -881,7 +950,7 @@ class Pane {
   _points(u, ctx, plot, ratio) {
     if (plot.connected) this._stroke(u, ctx, plot, ratio);
     ctx.save();
-    ctx.fillStyle = plot.color;
+    ctx.fillStyle = this._ink(plot);
     const radius = (plot.size / 2) * ratio;
     for (let index = 0; index < plot.xs.length; index += 1) {
       const x = plot.xs[index];
@@ -899,7 +968,7 @@ class Pane {
   // purpose: the boundary of a region is only known to the grid's accuracy, and
   // a fill drawn sharper than that would be claiming more than was computed.
   _region(u, ctx, plot) {
-    const off = plot.region;
+    const off = this.papered ? plot.regionPaper : plot.region;
     const [x0, x1, y0, y1] = plot.extent;
     const left = u.valToPos(x0, 'x', true);
     const right = u.valToPos(x1, 'x', true);
@@ -922,7 +991,7 @@ class Pane {
     const px = u.valToPos(this.tracePoint.x, 'x', true);
     const py = u.valToPos(this.tracePoint.y, 'y', true);
     ctx.save();
-    ctx.strokeStyle = plot.color;
+    ctx.strokeStyle = this._ink(plot);
     ctx.globalAlpha = HAIRLINE_ALPHA;
     ctx.setLineDash([4 * ratio, 4 * ratio]);
     ctx.lineWidth = ratio;
@@ -1090,19 +1159,23 @@ class Pane {
       }
       this._pointed(event.offsetX, event.offsetY, over);
     });
+    // A gesture is over before it is acted on, rather than after. What the
+    // release comes to - a rectangle to look at, or a menu - can be a long way
+    // from here, and a band still on the picture because something along that
+    // road went wrong would follow the pointer about with no button held.
     const release = (event) => {
       down.delete(event.pointerId);
       if (down.size < 2) pinch = null;
-      if (banding !== null) {
-        this._band(null);
-        if (banding.moved > CLICK_SLOP_PX) {
-          this._zoomTo(banding, event.offsetX, event.offsetY, over);
-        } else {
-          this._menu(event);
-        }
-      }
+      const banded = banding;
       panning = null;
       banding = null;
+      if (banded === null) return;
+      this._band(null);
+      if (banded.moved > CLICK_SLOP_PX) {
+        this._zoomTo(banded, event.offsetX, event.offsetY, over);
+      } else {
+        this._menu(event);
+      }
     };
     over.addEventListener('pointerup', release);
     over.addEventListener('pointercancel', release);
