@@ -58,6 +58,28 @@ from pyqtgraph.Qt import QtCore, QtGui, QtSvg, QtWidgets
 
 from rederive.engine.context import Angle, Context
 from rederive.plot import actions, controls, evaluate, forms, protocol, resample, view
+from rederive.plot.appearance import (
+    AXIS_COLOR,
+    BACKGROUND,
+    CHIP_OFFSET_PX,
+    CLICK_SLOP_PX,
+    CURVE_WIDTH,
+    GRID_ALPHA,
+    HAIRLINE_ALPHA,
+    HIT_PX,
+    LEGEND_FADED,
+    MARKER_PX,
+    MARKER_WIDTH,
+    NUDGE_FAST_PX,
+    NUDGE_PX,
+    PAPER_AXIS,
+    POLAR_CLOSEST_PX,
+    POLAR_RINGS,
+    POLAR_SPOKES,
+    REGION_ALPHA,
+    STEP_FAST_SHARE,
+    STEP_SHARE,
+)
 from rederive.plot.model import (
     FIELDS,
     FUNCTIONS,
@@ -74,45 +96,17 @@ from rederive.syntax import ParseState
 
 __all__ = ["Drawn", "Legend", "Sheet", "Window2D"]
 
-#: The window's own colors. Near-black rather than black, so that a curve in
-#: black-adjacent color still reads and so that the window does not look like
-#: a hole in the desktop. What is around the canvas - the bar, the fields, the
+#: The one color of the picture that is this window's alone: what a marker's
+#: ring and the numbers along the axes are written in. The rest of what the
+#: canvas is painted and ruled in is `plot.appearance`', which the page's panes
+#: draw from as well. What is around the canvas - the bar, the fields, the
 #: status line - is the chrome's business and lives in `theme`.
-BACKGROUND = "#0c0c10"
-AXIS_COLOR = "#909090"
-GRID_ALPHA = 0.18
 TEXT_COLOR = "#d0d0d0"
-
-#: How a polar picture is ruled: about this many rings out to the edge of the
-#: view, a spoke every full turn divided this many ways, and no grid at all
-#: where the rings would fall closer together than this many pixels, a grid
-#: that dense being a wash over the picture rather than something to read
-#: against. The page's pane rules its own polar picture on the same numbers.
-POLAR_RINGS = 5
-POLAR_SPOKES = 12
-POLAR_CLOSEST_PX = 2.0
-
-#: How wide the stroke that draws mathematics is, in logical pixels. The curve
-#: pen, a data plot's connecting polyline, the legend sample drawn with the
-#: item's own pen and the export pens all take their width from here, and the
-#: 3D window's wire borrows it, so the weight is the same on screen, in the
-#: swatch and in a pasted PNG. The furniture keeps its hairlines - axis lines
-#: at one pixel, the grid at its alpha - which is what makes a curve read as
-#: the subject rather than as more scaffolding.
-CURVE_WIDTH = 2.0
 
 #: The pixels an exported SVG is measured in, per inch. Qt's SVG writer counts
 #: 72 to the inch and every other Qt paint device counts these, so this is what
 #: makes the file the size of the picture it was taken from.
 SVG_DPI = 96
-
-#: How far the pointer may move between a right-button press and its release
-#: and still count as a click that opens the context menu rather than a
-#: rubber-band zoom of no area.
-CLICK_SLOP_PX = 4.0
-
-#: How near a curve the pointer has to be, in pixels, to be pointing at it.
-HIT_PX = 6.0
 
 #: The modifiers a key of these windows is written with. What else the keyboard
 #: reports about a press - the keypad flag a `0` typed on the numeric pad
@@ -125,22 +119,6 @@ MODIFIERS = (
     | QtCore.Qt.KeyboardModifier.MetaModifier
 )
 
-#: How far the arrow keys move the trace marker, in pixels, plain and with
-#: Shift. How far they pan a view that has no marker on it is a property of the
-#: view rather than of the marker, and is `plot.actions`'.
-NUDGE_PX = 1.0
-NUDGE_FAST_PX = 10.0
-
-#: How far the arrow keys move the marker along a parametric curve, as a
-#: fraction of the parameter range, plain and with Shift. A five-hundredth is
-#: about a pixel on a curve that crosses the window once.
-STEP_SHARE = 1 / 500
-STEP_FAST_SHARE = 1 / 50
-
-#: How solid a region's fill is. Enough to read as shading, little enough that
-#: a curve crossing it is still a curve.
-REGION_ALPHA = 0.25
-
 #: How the legend card is laid out, in logical pixels: the length of the color
 #: sample, the gap on either side of it, the room the eye affordance takes at
 #: the right end of a row, and how tall a row is drawn.
@@ -149,25 +127,14 @@ LEGEND_GAP = 8
 LEGEND_EYE = 16
 LEGEND_ROW = 19
 
-#: How much of a hidden row is left standing. Dimmed rather than struck
-#: through: a hidden curve is a curve that is still in the window, and the row
-#: has to read as one of the list rather than as a mistake in it.
-LEGEND_FADED = 0.4
-
 #: How long a curve takes to come back when its legend row is clicked. The
 #: hiding is instant - what is hidden is hidden the moment it is asked for -
 #: and only the return is eased, since that is the half the eye follows.
 FADE_MS = 150
 
-#: The trace marker: a ring rather than a filled dot, so the point it names is
-#: still visible under it, and the pen that draws the ring. The hairline down
-#: to the axis is drawn in the same color at this much of it, and the value
-#: chip rides this far from the point so that a pointer over the marker never
-#: covers what the marker says.
-MARKER_PX = 11.0
-MARKER_WIDTH = 2.0
-HAIRLINE_ALPHA = 0.45
-CHIP_OFFSET_PX = 12.0
+#: How round the corners of the trace marker's value chip are. The rest of what
+#: the marker is drawn at - the ring, its pen, the hairline's alpha and how far
+#: the chip rides from the point - is `plot.appearance`'.
 CHIP_RADIUS = 4.0
 
 #: The kinds parametrized by something else than the abscissa, which are the
@@ -2952,7 +2919,7 @@ class _on_paper:
         for edge in ("bottom", "left"):
             window.item.getAxis(edge).setTextPen(pg.mkPen("k"))
         for line in window.axes:
-            line.setPen(pg.mkPen("#404040"))
+            line.setPen(pg.mkPen(PAPER_AXIS))
 
     def __exit__(self, *_: Any) -> None:
         window = self._window

@@ -39,6 +39,15 @@
 // over and the box and camera of its inspector are `plot/forms.py`'s in the
 // same way, drawn by `forms.js`, and what is typed into either goes back as
 // text - so `-π` is an answer in a page as it is on a desktop.
+//
+// And what the picture is drawn *at* is `plot/appearance.py`'s: the ground, the
+// box and the marks along its edges, the direction the light comes from, the
+// shove that makes the wire a wire, how far a tick number stands out of the
+// box. Those are the numbers a pane and the desktop's window have to agree
+// about, so they are written once and handed over with `dress` before the first
+// pane opens. What is left here is what only a card has - the field of view,
+// the weight of the two lamps three.js is asked for - which has nothing on the
+// other side to disagree with.
 
 import * as THREE from 'three';
 import { OrbitControls } from './three/OrbitControls.js';
@@ -46,30 +55,30 @@ import * as controls from './controls.js';
 import * as sheets from './forms.js';
 import * as place from './place.js';
 
-// The canvas colors, which are `plot/qt/window3d.py`'s: the same near-black the
-// 2D pane draws on, and a box drawn in a gray that reads against it without
-// competing with the surface standing in it.
-const BACKGROUND = '#0c0c10';
-const BOX_COLOR = 0x969696;
-const BOX_ALPHA = 0.43;
-const TICK_COLOR = 0x969696;
-const TICK_ALPHA = 0.78;
+// What the picture is drawn at, which is `plot/appearance.py`'s and arrives
+// with `dress` below: the ground, the box and the marks along its edges, the
+// direction the light comes from, the wire's shove and how far a tick number
+// stands out of the box. Not one of them is written here, because every one of
+// them is a number this pane and the desktop's window have to agree about, and
+// a number written twice is a number the two backends can drift apart on.
+let look = null;
 
-// The light the card adds to the light Python baked in. Half of a vertex's
-// color is already how the surface lies to a fixed lamp - that is what makes a
-// fold in the middle of a surface show - so what is asked of three.js is the
-// rest: a broad ambient that keeps the baked shading readable, and one
-// directional lamp from `surface.py`'s own direction, so that turning the
-// picture moves a highlight across it the way turning a solid does.
+// How much light the card adds to the light Python baked in. Half of a
+// vertex's color is already how the surface lies to a fixed lamp - that is what
+// makes a fold in the middle of a surface show - so what is asked of three.js
+// is the rest: a broad ambient that keeps the baked shading readable, and one
+// directional lamp from `look.lamp`, which is the direction the shading was
+// baked to, so that turning the picture moves a highlight across it the way
+// turning a solid does.
 //
-// The numbers are near π rather than near one because three.js lights are in
-// physical units and a diffuse surface gives back a π-th of what falls on it.
-// What they are chosen to add up to is the desktop's own brightness - the
-// vertex color itself, which is what pyqtgraph draws with no lighting at all -
-// so the two programs draw one surface at one weight, with the lamp for relief.
+// The two weights are the page's own and have no desktop twin: three.js lights
+// are in physical units and a diffuse surface gives back a π-th of what falls
+// on it, which is why they are near π rather than near one. What they are
+// chosen to add up to is the desktop's own brightness - the vertex color
+// itself, which is what pyqtgraph draws with no lighting at all - so the two
+// programs draw one surface at one weight, with the lamp for relief.
 const AMBIENT = 2.4;
 const DIRECTIONAL = 0.95;
-const LAMP = [0.4, -0.6, 0.69];
 
 // The field of view is measured across the picture, as pyqtgraph measures it
 // and as three.js does not - three.js takes the angle up it - so the two are
@@ -87,31 +96,10 @@ const FAR = 500;
 const ORBIT_DEGREES = 5;
 const SPIN_DEGREES = 0.4;
 
-// How far the wire's occluder is pushed away from the camera. The lines lie on
-// the very faces they are being depth-tested against, so a shove backwards is
-// what makes the wire a wire rather than a stitch - and the shove is far too
-// slight to let a line on the far side of the shape through. The desktop's
-// numbers, in the same (factor, units) the depth buffer reads them as.
-const WIRE_OFFSET = [1, 2];
-const WIRE_WIDTH = 2;
-
 // How big a fresh pane is. Where it is put is `place.js`'s, which both kinds of
 // pane share so that they cascade off one another.
 const PANE_WIDTH = 760;
 const PANE_HEIGHT = 620;
-
-// How far a tick mark and its number stand out of the box, and how far out the
-// name of an axis does, in the world units the box is measured in. The
-// desktop's numbers, so that the two pictures are furnished alike.
-const TICK_OUT = 0.35;
-const LABEL_OUT = 1.05;
-const NAME_OUT = 2.3;
-
-// How nearly an axis has to point at the camera before its numbers are dropped,
-// as the cosine of the angle between them: about five degrees. Facing the xy
-// plane makes the whole z axis one point of the screen, and five numbers
-// stacked on that point are five numbers about nothing.
-const EDGE_ON = 0.996;
 
 // The three axes, in the order the box reports its ticks and its names in.
 const AXES = ['x', 'y', 'z'];
@@ -124,19 +112,11 @@ const AXES = ['x', 'y', 'z'];
 const LEGEND_PX = 12;
 const LEGEND_MARGIN_PX = 10;
 
-// How much of a hidden legend row is left standing. Dimmed rather than struck
-// through: a hidden surface is a surface that is still in the pane.
-const LEGEND_FADED = 0.4;
-
 // Why a picture cannot leave a pane that has no card in it. The refusal a
 // browser with no usable WebGL earns, said where the pane is looked at rather
 // than swallowed: a copy that did nothing and said nothing would look exactly
 // like a key bound to nothing.
 const NO_CARD = 'this pane has no 3D drawing to take a picture of';
-
-// How far the pointer may move between a right-button press and its release and
-// still count as a click that opens the menu rather than a pan of the camera.
-const CLICK_SLOP_PX = 4;
 
 // The one place a plot pane is put, laid over the terminal and letting the
 // pointer through everywhere it has no pane. The 2D panes are in the same
@@ -197,6 +177,14 @@ export function wire(term) {
     const pane = holding();
     if (pane !== null) pane._copied(event);
   });
+}
+
+// What every pane is drawn at, handed over once before the first one opens.
+// `plot/appearance.py` is where all of it is written down, for the desktop's
+// windows and these panes alike; nothing here argues with any of it, and
+// nothing here has a color or a length of its own to argue with.
+export function dress(description) {
+  look = description;
 }
 
 // The 3D pane the keyboard is in, or null while it is anywhere else.
@@ -340,7 +328,7 @@ class Solid {
       const moved =
         Math.abs(event.clientX - from.x) + Math.abs(event.clientY - from.y);
       from = null;
-      if (moved <= CLICK_SLOP_PX) this._menu(event);
+      if (moved <= look.slop) this._menu(event);
     });
   }
 
@@ -452,13 +440,13 @@ class Solid {
     // would make the browser's picture a lighter one than the desktop's, so the
     // card writes what it was given.
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-    this.renderer.setClearColor(new THREE.Color(BACKGROUND), 1);
+    this.renderer.setClearColor(new THREE.Color(look.ground), 1);
     this.renderer.domElement.className = 'plot-card';
     this.canvas.appendChild(this.renderer.domElement);
     this.world = new THREE.Scene();
     this.world.add(new THREE.AmbientLight(0xffffff, AMBIENT));
     const lamp = new THREE.DirectionalLight(0xffffff, DIRECTIONAL);
-    lamp.position.set(LAMP[0], LAMP[1], LAMP[2]).multiplyScalar(100);
+    lamp.position.set(look.lamp[0], look.lamp[1], look.lamp[2]).multiplyScalar(100);
     this.world.add(lamp);
     this.camera = new THREE.PerspectiveCamera(FIELD_OF_VIEW, 1, NEAR, FAR);
     this._lens(
@@ -493,9 +481,9 @@ class Solid {
       new THREE.BufferAttribute(new Float32Array(24 * 3), 3),
     );
     const material = new THREE.LineBasicMaterial({
-      color: BOX_COLOR,
+      color: look.box.color,
       transparent: true,
-      opacity: BOX_ALPHA,
+      opacity: look.box.alpha,
     });
     const lines = new THREE.LineSegments(geometry, material);
     lines.visible = false;
@@ -511,9 +499,9 @@ class Solid {
     const lines = new THREE.LineSegments(
       geometry,
       new THREE.LineBasicMaterial({
-        color: TICK_COLOR,
+        color: look.tick.color,
         transparent: true,
-        opacity: TICK_ALPHA,
+        opacity: look.tick.alpha,
       }),
     );
     lines.visible = false;
@@ -730,7 +718,7 @@ class Solid {
       if (plot === undefined) continue;
       const row = document.createElement('div');
       row.className = 'plot-row';
-      row.style.opacity = plot.hidden ? LEGEND_FADED : 1;
+      row.style.opacity = plot.hidden ? look.faded : 1;
       const swatch = document.createElement('span');
       swatch.className = 'plot-swatch';
       swatch.style.background = plot.color;
@@ -800,17 +788,17 @@ class Solid {
       if (headOn[AXES.indexOf(axis)]) return;
       for (const tick of ticks[axis] || []) {
         const from = foot(tick.at);
-        segments.push(from, stepped(from, out, TICK_OUT));
-        written.push({ where: stepped(from, out, LABEL_OUT), text: tick.text });
+        segments.push(from, stepped(from, out, look.out.tick));
+        written.push({ where: stepped(from, out, look.out.label), text: tick.text });
       }
     };
     ruler('x', (value) => [value, nearY, floor], [0, outY, 0]);
     ruler('y', (value) => [nearX, value, floor], [outX, 0, 0]);
     ruler('z', (value) => [farX, farY, value], [up[0], up[1], 0]);
     const names = [
-      [0, nearY + outY * NAME_OUT, floor],
-      [nearX + outX * NAME_OUT, 0, floor],
-      [farX + up[0] * NAME_OUT, farY + up[1] * NAME_OUT, -floor * 0.9],
+      [0, nearY + outY * look.out.name, floor],
+      [nearX + outX * look.out.name, 0, floor],
+      [farX + up[0] * look.out.name, farY + up[1] * look.out.name, -floor * 0.9],
     ];
     this.axes.forEach((name, axis) => {
       if (name) written.push({ where: names[axis], text: name, name: true });
@@ -826,7 +814,7 @@ class Solid {
     const at = this.camera.position;
     const length = Math.hypot(at.x, at.y, at.z);
     if (!length) return [false, false, false];
-    return [at.x, at.y, at.z].map((value) => Math.abs(value) / length > EDGE_ON);
+    return [at.x, at.y, at.z].map((value) => Math.abs(value) / length > look.edge);
   }
 
   // The dashes as geometry and the words as DOM, both from what `_anchor` just
@@ -1090,7 +1078,7 @@ class Solid {
     shot.width = source.width;
     shot.height = source.height;
     const ctx = shot.getContext('2d');
-    ctx.fillStyle = BACKGROUND;
+    ctx.fillStyle = look.ground;
     ctx.fillRect(0, 0, shot.width, shot.height);
     ctx.drawImage(source, 0, 0);
     this._namePlots(ctx, shot.width / Math.max(source.clientWidth, 1));
@@ -1203,11 +1191,11 @@ class Standing {
       flatShading: false,
     });
     this.occluder = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(BACKGROUND),
+      color: new THREE.Color(look.ground),
       side: THREE.DoubleSide,
       polygonOffset: true,
-      polygonOffsetFactor: WIRE_OFFSET[0],
-      polygonOffsetUnits: WIRE_OFFSET[1],
+      polygonOffsetFactor: look.wire.offset[0],
+      polygonOffsetUnits: look.wire.offset[1],
     });
     this.mesh = new THREE.Mesh(this.geometry, this.lit);
     this.mesh.visible = false;
@@ -1217,7 +1205,7 @@ class Standing {
     // it read is the solid hiding the half of it that is behind.
     this.lines = new THREE.LineSegments(
       this.strands,
-      new THREE.LineBasicMaterial({ vertexColors: true, linewidth: WIRE_WIDTH }),
+      new THREE.LineBasicMaterial({ vertexColors: true, linewidth: look.wire.width }),
     );
     this.lines.visible = false;
     this.respec(spec);

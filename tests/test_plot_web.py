@@ -35,7 +35,7 @@ from fakepage import (
 )
 
 from rederive.engine.context import Angle, Context
-from rederive.plot import controls
+from rederive.plot import appearance, controls
 from rederive.plot import protocol as plots
 from rederive.plot.model import Plot, Surface, written
 from rederive.plot.protocol import PlotKind
@@ -537,6 +537,51 @@ async def test_the_browser_serves_what_the_table_says_it_serves(session, page, s
         named = [row[0] for row in checked]
         offered = [one["name"] for one in pane.commands if one["name"] in named]
         assert offered == [row[0] for row in checked if row[4]]
+
+
+def test_neither_drawing_module_is_left_a_color_or_a_length_of_its_own(
+    session, page, solids
+):
+    # What a picture is drawn at is `plot/appearance.py`'s, which is the module
+    # the desktop's windows import: a number written in a drawing module as
+    # well is a number the two backends can drift apart on. Both modules are
+    # dressed with the one description, before any pane exists to be drawn.
+    assert page.look is solids.look
+    assert page.panes == {} and solids.panes == {}
+    look = page.look
+    assert look["ground"] == appearance.BACKGROUND
+    assert look["stroke"] == appearance.CURVE_WIDTH
+    assert look["hit"] == appearance.HIT_PX
+    assert look["marker"]["size"] == appearance.MARKER_PX
+    assert look["nudge"] == {
+        "slow": appearance.NUDGE_PX,
+        "fast": appearance.NUDGE_FAST_PX,
+    }
+    assert look["polar"] == {
+        "rings": appearance.POLAR_RINGS,
+        "spokes": appearance.POLAR_SPOKES,
+        "closest": appearance.POLAR_CLOSEST_PX,
+    }
+    assert look["lamp"] == list(appearance.LIGHT)
+    assert look["out"] == {
+        "tick": appearance.TICK_OUT,
+        "label": appearance.LABEL_OUT,
+        "name": appearance.NAME_OUT,
+    }
+
+
+def test_the_page_is_handed_its_colors_in_the_units_a_page_reads(session, page):
+    # The two conversions between the module and the description, which are the
+    # only arithmetic in the seam: the canvas takes a tint as `rgba(...)` and
+    # the card takes one as an integer with its alpha beside it.
+    look = page.look
+    assert look["grid"] == "rgba(144, 144, 144, 0.18)"
+    assert appearance.AXIS_COLOR == "#909090" and appearance.GRID_ALPHA == 0.18
+    red, green, blue, alpha = appearance.BOX_COLOR
+    assert look["box"] == {
+        "color": (red << 16) | (green << 8) | blue,
+        "alpha": alpha / 255,
+    }
 
 
 async def test_a_pane_renders_the_menu_the_desktop_renders(session, page):

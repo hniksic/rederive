@@ -65,7 +65,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rederive.engine.context import Angle, Context
-from rederive.plot import actions, controls, forms, protocol, resample, view
+from rederive.plot import actions, appearance, controls, forms, protocol, resample, view
 from rederive.plot.model import (
     FIELDS,
     FUNCTIONS,
@@ -174,6 +174,14 @@ class WebBackend:
         self.engine = engine
         self.panes: dict[int, Any] = {}
         self._proxies: list[Any] = []
+        # What a picture is drawn at, handed over once and to both modules:
+        # the ground, the ruling, the weight of a stroke, how far a tick number
+        # stands out of a box. `plot/appearance.py` says all of it for the
+        # desktop's windows and these panes alike, so neither module carries a
+        # color or a length of its own to disagree with.
+        look = _look()
+        page.dress(look)
+        solids.dress(look)
 
     def open(
         self, session: Any, kind: WindowKind, number: int, preferences: Prefer
@@ -1811,6 +1819,83 @@ def _solid(plot: Standing) -> Surface:
     return Surface(
         **{name: getattr(plot, name) for name in Surface.__dataclass_fields__}
     )
+
+
+def _look() -> Any:
+    """What a picture is drawn at, as the page needs it to draw one.
+
+    One description for both drawing modules, since a flat picture and a solid
+    one are painted on one ground and stroked at one weight; each reads the
+    part of it that is about the picture it draws. Handed over once, when the
+    backend starts, because none of it ever changes.
+
+    Everything in it is `plot/appearance.py`'s, which is the module the
+    desktop's windows draw from - so a number here is a number the two backends
+    cannot disagree about. The two conversions are the page's own units and
+    nothing more: a color the canvas wants as `rgba(...)` and one the card
+    wants as an integer with its alpha beside it.
+    """
+    return _js(
+        {
+            "ground": appearance.BACKGROUND,
+            "axis": appearance.AXIS_COLOR,
+            "grid": _rgba(appearance.AXIS_COLOR, appearance.GRID_ALPHA),
+            "paper": appearance.PAPER_AXIS,
+            "stroke": appearance.CURVE_WIDTH,
+            "slop": appearance.CLICK_SLOP_PX,
+            "hit": appearance.HIT_PX,
+            "region": appearance.REGION_ALPHA,
+            "faded": appearance.LEGEND_FADED,
+            "marker": {
+                "size": appearance.MARKER_PX,
+                "width": appearance.MARKER_WIDTH,
+                "hairline": appearance.HAIRLINE_ALPHA,
+                "chip": appearance.CHIP_OFFSET_PX,
+            },
+            # In pixels along a curve whose parameter is the abscissa, and as a
+            # share of the parameter range along one whose is not on the screen
+            # at all.
+            "nudge": {"slow": appearance.NUDGE_PX, "fast": appearance.NUDGE_FAST_PX},
+            "step": {
+                "slow": appearance.STEP_SHARE,
+                "fast": appearance.STEP_FAST_SHARE,
+            },
+            "polar": {
+                "rings": appearance.POLAR_RINGS,
+                "spokes": appearance.POLAR_SPOKES,
+                "closest": appearance.POLAR_CLOSEST_PX,
+            },
+            "box": _ink(appearance.BOX_COLOR),
+            "tick": _ink(appearance.TICK_COLOR),
+            "lamp": list(appearance.LIGHT),
+            "wire": {
+                "offset": list(appearance.WIRE_OFFSET),
+                "width": appearance.CURVE_WIDTH,
+            },
+            # How far a tick mark, its number and an axis' name stand out of the
+            # box, and how nearly an axis may point at the camera before its
+            # numbers are dropped.
+            "out": {
+                "tick": appearance.TICK_OUT,
+                "label": appearance.LABEL_OUT,
+                "name": appearance.NAME_OUT,
+            },
+            "edge": appearance.EDGE_ON,
+        }
+    )
+
+
+def _rgba(color: str, alpha: float) -> str:
+    """One `#rrggbb` at an alpha, as the canvas takes a color."""
+    red, green, blue = (int(color[at : at + 2], 16) for at in (1, 3, 5))
+    return f"rgba({red}, {green}, {blue}, {alpha})"
+
+
+def _ink(rgba: tuple[int, int, int, int]) -> dict[str, Any]:
+    """One (red, green, blue, alpha) out of 255, as the card takes a color:
+    the three packed into an integer, and the alpha as a share of one."""
+    red, green, blue, alpha = rgba
+    return {"color": (red << 16) | (green << 8) | blue, "alpha": alpha / 255}
 
 
 def _controls(table: tuple[controls.Control, ...], served: dict[str, Any]) -> Any:

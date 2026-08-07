@@ -40,6 +40,7 @@ from typing import Any
 import numpy as np
 
 from rederive.plot import evaluate
+from rederive.plot.appearance import LIGHT
 from rederive.plot.view import PERCENTILES, Span, pooled
 
 __all__ = ["Box", "brightened", "extent", "mesh", "place", "spanned", "ticks", "wire"]
@@ -64,9 +65,9 @@ MIN_HEIGHT = 0.15
 #: same color; a light is what makes a fold in the middle of a surface show.
 #: The light is baked into the vertex colors rather than computed by a shader,
 #: which is what keeps the mesh free of normals and the frame rate free of
-#: anything.
+#: anything. Where it shines from is `plot.appearance`', since the page's card
+#: shines a lamp of its own from the same direction.
 DIM = 0.30
-LIGHT = (0.40, -0.60, 0.69)
 AMBIENT = 0.20
 HEIGHT_SHARE = 0.5
 

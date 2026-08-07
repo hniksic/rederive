@@ -158,6 +158,12 @@ class FakePage:
         self.panes = {}
         self.handlers = None
         self.stopped = 0
+        #: What the panes were told a picture is drawn at, as
+        #: `plot/appearance.py` says it.
+        self.look = None
+
+    def dress(self, description):
+        self.look = description
 
     def open(self, number, debounce, commands, strip, handlers):
         pane = FakePane(number, debounce, commands, strip, handlers)
@@ -279,6 +285,12 @@ class FakeSolids:
         self.panes = {}
         self.handlers = None
         self.stopped = 0
+        #: What the panes were told a picture is drawn at, as
+        #: `plot/appearance.py` says it.
+        self.look = None
+
+    def dress(self, description):
+        self.look = description
 
     def open(self, number, commands, strip, form, handlers):
         pane = FakeSolid(number, commands, strip, form, handlers)

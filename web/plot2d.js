@@ -38,6 +38,14 @@
 // Python's, which is what lets a bound be written `-π` here as it is on a
 // desktop.
 //
+// And what the picture is drawn *at* is `plot/appearance.py`'s: the ground, the
+// ruling, the weight of a stroke, the trace marker, how far the arrow keys move
+// it, how the polar grid is spaced. Those are the numbers a pane and the
+// desktop's window have to agree about, so they are written once and handed
+// over with `dress` before the first pane opens. What is left here is what only
+// a page has - the wheel, the double click, the size a pane opens at - which
+// has nothing on the other side to disagree with.
+//
 // Copying and exporting are the one pair this file answers outright. A canvas
 // has no painter path to write a vector file out of, so what leaves a pane is
 // pixels, and the sentence Python says about it says so. What leaves is drawn
@@ -48,48 +56,28 @@ import * as controls from './controls.js';
 import * as sheets from './forms.js';
 import * as place from './place.js';
 
-// The colors the canvas itself is drawn in, which are `plot/qt/window2d.py`'s.
-// Near-black rather than black, so that a curve in a black-adjacent color still
-// reads and so that the pane does not look like a hole in the page. Everything
-// around the canvas - the bar, the legend card, the status line - is the
-// chrome's business and is in the style sheet, as `theme.py` is on the desktop.
-const BACKGROUND = '#0c0c10';
-const AXIS_COLOR = '#909090';
-const GRID_COLOR = 'rgba(144, 144, 144, 0.18)';
-const MUTED = '#7d8595';
+// What the picture is drawn at, which is `plot/appearance.py`'s and arrives
+// with `dress` below: the ground and the ruling, the weight of a stroke, the
+// trace marker, how far the arrow keys move it, and how the polar grid is
+// ruled. Not one of them is written here, because every one of them is a
+// number this pane and the desktop's window have to agree about, and a number
+// written twice is a number the two backends can drift apart on.
+let look = null;
 
-// And the colors a picture that is leaving the pane is drawn in, which are
-// `plot/qt/window2d.py`'s `_on_paper`: a white ground, every curve in the
-// second color the plot list holds for it, the numbers on the axes in black
-// and the axes through the origin in a gray that reads on paper. A dark
-// picture pasted into a document is a black rectangle, so what leaves is drawn
-// the way it would be printed. The ruling and the tick marks are left as they
-// are, being the desktop's `#909090` at its own alpha on either ground.
+// The colors a picture that is *leaving* the pane is drawn in, which are the
+// page's own: a white ground, every curve in the second color the plot list
+// holds for it, and the numbers on the axes in black. A dark picture pasted
+// into a document is a black rectangle, so what leaves is drawn the way it
+// would be printed. The axes through the origin take `look.paper`, the one
+// gray of the furniture that has to change to stay readable there; the ruling
+// and the tick marks are left as they are, reading on either ground.
 const PAPER = '#ffffff';
 const PAPER_TEXT = '#000000';
-const PAPER_AXIS = '#404040';
 
-// The stroke that draws mathematics, in logical pixels, and the furniture's
-// hairlines. The weight is what makes a curve read as the subject rather than
-// as more scaffolding.
-const CURVE_WIDTH = 2;
-const MARKER_PX = 11;
-const MARKER_WIDTH = 2;
-const HAIRLINE_ALPHA = 0.45;
-const CHIP_OFFSET_PX = 12;
-const REGION_ALPHA = 0.25;
-
-// How far the arrow keys move the marker: a pixel at a time along a function,
-// whose parameter is the abscissa, and a five-hundredth of the parameter range
-// along a curve whose parameter is not on the screen at all.
-const NUDGE_PX = 1;
-const NUDGE_FAST_PX = 10;
-const STEP_SHARE = 1 / 500;
-const STEP_FAST_SHARE = 1 / 50;
-
-// How far the pointer may move between a right-button press and its release and
-// still count as a click that opens the menu rather than a rubber band.
-const CLICK_SLOP_PX = 4;
+// The chrome's dimmest weight, which the numbers along the axes are written
+// in. A pane's chrome is the style sheet's, as the desktop's is `theme.py`'s,
+// and this is the one of its colors the canvas itself writes with.
+const MUTED = '#7d8595';
 
 // How far a wheel zooms, and what one turn of one is worth in the units a page
 // reports a scroll in.
@@ -114,10 +102,6 @@ const WHEEL_DETENT_PX = 100;
 const WHEEL_LINE_PX = 40;
 const WHEEL_PAGE_PX = 800;
 const WHEEL_MAX_DETENTS = 3;
-
-// How much of a hidden legend row is left standing. Dimmed rather than struck
-// through: a hidden curve is a curve that is still in the pane.
-const LEGEND_FADED = 0.4;
 
 // How the plot list is written into an exported picture: the size of the words
 // and how far in from the corner they stand, in logical pixels. The card itself
@@ -225,6 +209,14 @@ export function wire(term) {
     const pane = holding();
     if (pane !== null) pane._copied(event);
   });
+}
+
+// What every pane is drawn at, handed over once before the first one opens.
+// `plot/appearance.py` is where all of it is written down, for the desktop's
+// windows and these panes alike; nothing here argues with any of it, and
+// nothing here has a color or a length of its own to argue with.
+export function dress(description) {
+  look = description;
 }
 
 // The pane the keyboard is in, or null while it is anywhere else.
@@ -444,8 +436,8 @@ class Pane {
       label: null,
       labelFont: font,
       labelSize: 14,
-      grid: { show: true, stroke: GRID_COLOR, width: 1 },
-      ticks: { show: true, stroke: GRID_COLOR, width: 1, size: 4 },
+      grid: { show: true, stroke: look.grid, width: 1 },
+      ticks: { show: true, stroke: look.grid, width: 1, size: 4 },
     };
     this.plot = new uPlot(
       {
@@ -462,7 +454,7 @@ class Pane {
       [[0, 1], [0, 0]],
       this.canvas,
     );
-    this.plot.root.style.background = BACKGROUND;
+    this.plot.root.style.background = look.ground;
     this._gestures(this.plot.over);
   }
 
@@ -957,7 +949,7 @@ class Pane {
     const up = (this.shown.y1 - this.shown.y0) / Math.max(u.bbox.height / ratio, 1);
     const at = (low, high, pixel) => Math.min(Math.max(0, low + pixel), high - pixel);
     ctx.save();
-    ctx.strokeStyle = this.papered ? PAPER_AXIS : AXIS_COLOR;
+    ctx.strokeStyle = this.papered ? look.paper : look.axis;
     ctx.lineWidth = ratio;
     ctx.beginPath();
     const x = u.valToPos(at(this.shown.x0, this.shown.x1, across), 'x', true);
@@ -996,9 +988,9 @@ class Pane {
     const up = Math.abs(u.valToPos(step, 'y', true) - origin.y);
     // Rings closer together than a couple of pixels are a wash rather than a
     // grid, and a wash over the picture is worse than no grid at all.
-    if (!(Math.min(across, up) > 2)) return;
+    if (!(Math.min(across, up) > look.polar.closest)) return;
     ctx.save();
-    ctx.strokeStyle = GRID_COLOR;
+    ctx.strokeStyle = look.grid;
     ctx.lineWidth = ratio;
     for (let ring = 1; ring <= Math.floor(reach / step) + 1; ring += 1) {
       ctx.beginPath();
@@ -1006,8 +998,8 @@ class Pane {
       ctx.stroke();
     }
     const far = Math.hypot(u.bbox.width, u.bbox.height);
-    for (let turn = 0; turn < 12; turn += 1) {
-      const angle = (turn * Math.PI) / 6;
+    for (let turn = 0; turn < look.polar.spokes; turn += 1) {
+      const angle = (turn * 2 * Math.PI) / look.polar.spokes;
       const dx = across * Math.cos(angle);
       const dy = -up * Math.sin(angle);
       const length = Math.hypot(dx, dy) || 1;
@@ -1026,7 +1018,7 @@ class Pane {
   _stroke(u, ctx, plot, ratio) {
     ctx.save();
     ctx.strokeStyle = this._ink(plot);
-    ctx.lineWidth = CURVE_WIDTH * ratio;
+    ctx.lineWidth = look.stroke * ratio;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -1102,7 +1094,7 @@ class Pane {
     const py = u.valToPos(this.tracePoint.y, 'y', true);
     ctx.save();
     ctx.strokeStyle = this._ink(plot);
-    ctx.globalAlpha = HAIRLINE_ALPHA;
+    ctx.globalAlpha = look.marker.hairline;
     ctx.setLineDash([4 * ratio, 4 * ratio]);
     ctx.lineWidth = ratio;
     ctx.beginPath();
@@ -1111,9 +1103,9 @@ class Pane {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
-    ctx.lineWidth = MARKER_WIDTH * ratio;
+    ctx.lineWidth = look.marker.width * ratio;
     ctx.beginPath();
-    ctx.arc(px, py, (MARKER_PX / 2) * ratio, 0, 2 * Math.PI);
+    ctx.arc(px, py, (look.marker.size / 2) * ratio, 0, 2 * Math.PI);
     ctx.stroke();
     ctx.restore();
     this._chip(u, px, py, plot);
@@ -1151,12 +1143,12 @@ class Pane {
     // point too near a corner for either side to fit gets a chip pushed back
     // inside instead: a chip over its own ring can still be read, and one over
     // the numbers along the edge cannot.
-    const beside = px / ratio + CHIP_OFFSET_PX + chip.offsetWidth > right
-      ? px / ratio - CHIP_OFFSET_PX - chip.offsetWidth
-      : px / ratio + CHIP_OFFSET_PX;
-    const above = py / ratio - CHIP_OFFSET_PX - chip.offsetHeight < top
-      ? py / ratio + CHIP_OFFSET_PX
-      : py / ratio - CHIP_OFFSET_PX - chip.offsetHeight;
+    const beside = px / ratio + look.marker.chip + chip.offsetWidth > right
+      ? px / ratio - look.marker.chip - chip.offsetWidth
+      : px / ratio + look.marker.chip;
+    const above = py / ratio - look.marker.chip - chip.offsetHeight < top
+      ? py / ratio + look.marker.chip
+      : py / ratio - look.marker.chip - chip.offsetHeight;
     chip.style.left = `${clamp(beside, left, Math.max(right - chip.offsetWidth, left))}px`;
     chip.style.top = `${clamp(above, top, Math.max(bottom - chip.offsetHeight, top))}px`;
   }
@@ -1180,7 +1172,7 @@ class Pane {
       if (plot === undefined) continue;
       const row = document.createElement('div');
       row.className = 'plot-row';
-      row.style.opacity = plot.hidden ? LEGEND_FADED : 1;
+      row.style.opacity = plot.hidden ? look.faded : 1;
       const swatch = document.createElement('span');
       swatch.className = 'plot-swatch';
       swatch.style.background = plot.color;
@@ -1302,12 +1294,12 @@ class Pane {
         if (panned !== null && event.type === 'pointerup') {
           const moved = Math.abs(event.offsetX - panned.x) +
             Math.abs(event.offsetY - panned.y);
-          if (moved <= CLICK_SLOP_PX) this._clicked(event);
+          if (moved <= look.slop) this._clicked(event);
         }
         return;
       }
       this._band(null);
-      if (banded.moved > CLICK_SLOP_PX) {
+      if (banded.moved > look.slop) {
         this._zoomTo(banded, event.offsetX, event.offsetY, over);
       } else {
         this._menu(event);
@@ -1655,10 +1647,10 @@ class Pane {
     const direction = backwards ? -1 : 1;
     if (PARAMETRIZED.has(plot.kind)) {
       const [low, high] = plot.trange || [-Math.PI, Math.PI];
-      const share = fast ? STEP_FAST_SHARE : STEP_SHARE;
+      const share = fast ? look.step.fast : look.step.slow;
       this.traceAt = clamp(this.traceAt + direction * share * (high - low), low, high);
     } else {
-      const pixels = fast ? NUDGE_FAST_PX : NUDGE_PX;
+      const pixels = fast ? look.nudge.fast : look.nudge.slow;
       const across = (this.shown.x1 - this.shown.x0) /
         Math.max(this.plot.bbox.width / devicePixelRatio, 1);
       this.traceAt += direction * pixels * across;
@@ -1880,7 +1872,7 @@ class Pane {
         const dx = (plot.xs[index] - at.x) / across;
         const dy = (plot.ys[index] - at.y) / up;
         const distance = Math.hypot(dx, dy);
-        if (distance < 8 && (best === null || distance < best.distance)) {
+        if (distance < look.hit && (best === null || distance < best.distance)) {
           best = { plot, distance };
         }
       }
@@ -1926,11 +1918,12 @@ function padded([left, right, low, high]) {
   return [left - 0.1 * wide, right + 0.1 * wide, low - 0.1 * tall, high + 0.1 * tall];
 }
 
-// A round step at about a tenth of the reach, which is what the rings of a
-// polar grid are spaced by.
+// What the rings of a polar grid are spaced by: a round step, chosen so that
+// about as many of them reach the edge of the view as the description asks
+// for.
 function ruled(reach) {
   if (!(reach > 0)) return 0;
-  const rough = reach / 5;
+  const rough = reach / look.polar.rings;
   const power = Math.pow(10, Math.floor(Math.log10(rough)));
   for (const step of [1, 2, 5, 10]) {
     if (step * power >= rough) return step * power;
@@ -1956,7 +1949,7 @@ function shading(message, color) {
     pixels[to] = red;
     pixels[to + 1] = green;
     pixels[to + 2] = blue;
-    pixels[to + 3] = message.mask[at] ? Math.round(REGION_ALPHA * 255) : 0;
+    pixels[to + 3] = message.mask[at] ? Math.round(look.region * 255) : 0;
   }
   const off = document.createElement('canvas');
   off.width = message.nx;

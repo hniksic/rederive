@@ -51,11 +51,21 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from rederive.engine.context import Context
 from rederive.plot import actions, controls, evaluate, forms, protocol, resample
+from rederive.plot.appearance import (
+    BACKGROUND,
+    BOX_COLOR,
+    CLICK_SLOP_PX,
+    CURVE_WIDTH,
+    EDGE_ON,
+    LABEL_OUT,
+    NAME_OUT,
+    TICK_COLOR,
+    TICK_OUT,
+    WIRE_OFFSET,
+)
 from rederive.plot.model import SOLID_PALETTE, SOLID_PAPER, Surface, written
 from rederive.plot.qt import theme
 from rederive.plot.qt.window2d import (
-    CLICK_SLOP_PX,
-    CURVE_WIDTH,
     Legend,
     Sheet,
     buttoned,
@@ -80,13 +90,10 @@ from rederive.syntax import ParseState
 
 __all__ = ["Drawn", "Window3D"]
 
-#: The window's own colors, which are the 2D window's, so that two plot
-#: windows side by side are two windows of one program. What is around the
-#: picture - the bar, the fields, the status line - is the chrome's business
-#: and lives in `theme`.
-BACKGROUND = "#0c0c10"
-BOX_COLOR = (150, 150, 150, 110)
-TICK_COLOR = (150, 150, 150, 200)
+#: What the numbers along the box edges are written in, which is the 2D
+#: window's own ink. The ground, the box and the tick marks are
+#: `plot.appearance`', which the page's panes draw from as well, so that a
+#: window and a pane side by side are two pictures of one program.
 TEXT_COLOR = "#d0d0d0"
 
 #: The same three, for the white background every image export is taken on.
@@ -94,16 +101,9 @@ PAPER_BOX = (40, 40, 40, 230)
 PAPER_TICK = (60, 60, 60, 255)
 PAPER_TEXT = "#000000"
 
-#: How far the wire's occluder is pushed away from the camera, as OpenGL's
-#: (factor, units) pair. The occluder is the surface's own triangles, so the
-#: lines lie exactly on it and the depth test would decide their pixels by
-#: rounding - a wire stitched out of dashes. A small shove backwards settles
-#: it: the lines win everywhere they touch the surface, and the shove is far
-#: too slight to let a line on the far side through.
-WIRE_OFFSET = (1.0, 2.0)
-
-#: The GL state that shove is asked for in - the stock opaque state, which is
-#: what every other item here draws under, and the polygon offset over it.
+#: The GL state the wire's shove is asked for in - the stock opaque state,
+#: which is what every other item here draws under, and the polygon offset
+#: over it.
 WIRE_OCCLUDER = {
     **GLOptions["opaque"],
     GL.GL_POLYGON_OFFSET_FILL: True,
@@ -118,15 +118,6 @@ MAX_TICKS = 9
 #: What a window with no usable OpenGL says instead of drawing. The reason is
 #: the toolkit's own words, which are the only ones that name a missing driver.
 NO_OPENGL = "3D drawing is not available: {reason}"
-
-#: How nearly an axis has to point at the camera before its numbers are dropped,
-#: as the cosine of the angle between them: about five degrees.
-EDGE_ON = 0.996
-
-#: How far a tick mark and its number stand out of the box, in world units.
-TICK_OUT = 0.35
-LABEL_OUT = 1.05
-NAME_OUT = 2.3
 
 
 @dataclass
