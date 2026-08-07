@@ -1255,6 +1255,34 @@ def test_the_range_fields_adjust_a_reread_curve_like_a_born_polar_one(flat):
     assert plot.trange == pytest.approx((-np.pi, np.pi))
 
 
+def test_a_polar_window_is_ruled_by_rings_instead_of_lines(flat):
+    # One ruling or the other, and the Grid toggle is about whichever of the
+    # two this view is under - the same rule the page's pane draws by.
+    assert flat.item.ctrl.xGridCheck.isChecked()
+    assert not flat.rings.isVisible()
+    flat.polar_toggle.trigger()
+    assert not flat.item.ctrl.xGridCheck.isChecked()
+    assert flat.rings.isVisible()
+    flat.toggle_grid()
+    assert not flat.rings.isVisible()
+    # And an unruled window that comes back out of polar stays unruled: the
+    # toggle is a property of the window and not of the mode.
+    flat.polar_toggle.trigger()
+    assert not flat.item.ctrl.xGridCheck.isChecked()
+    flat.toggle_grid()
+    assert flat.item.ctrl.xGridCheck.isChecked()
+    assert not flat.rings.isVisible()
+
+
+def test_the_rings_stand_at_numbers_a_reader_can_add_up(qt):
+    from rederive.plot.qt.window2d import _ruled
+
+    # About five rings out to the edge of the view, each at one, two or five
+    # times a power of ten. A view of no extent is ruled by nothing.
+    assert [_ruled(reach) for reach in (5.0, 10.0, 47.0, 0.5)] == [1.0, 2.0, 10.0, 0.1]
+    assert _ruled(0.0) == 0.0
+
+
 def test_the_clear_button_empties_its_own_window(flat):
     # The toolbar's clear acts on the window it is drawn in - there is nothing
     # to infer and nothing to report - and the range fields go away with the

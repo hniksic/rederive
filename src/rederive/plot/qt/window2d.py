@@ -83,6 +83,15 @@ AXIS_COLOR = "#909090"
 GRID_ALPHA = 0.18
 TEXT_COLOR = "#d0d0d0"
 
+#: How a polar picture is ruled: about this many rings out to the edge of the
+#: view, a spoke every full turn divided this many ways, and no grid at all
+#: where the rings would fall closer together than this many pixels, a grid
+#: that dense being a wash over the picture rather than something to read
+#: against. The page's pane rules its own polar picture on the same numbers.
+POLAR_RINGS = 5
+POLAR_SPOKES = 12
+POLAR_CLOSEST_PX = 2.0
+
 #: How wide the stroke that draws mathematics is, in logical pixels. The curve
 #: pen, a data plot's connecting polyline, the legend sample drawn with the
 #: item's own pen and the export pens all take their width from here, and the
@@ -659,6 +668,75 @@ class _Chip(pg.TextItem):
         )
 
 
+class _PolarGrid(pg.UIGraphicsItem):
+    """The rings and spokes a polar picture is read against.
+
+    Drawn here because the chart library has no polar anything, and drawn at
+    all because a curve given as r = f(θ) is read in r and θ: a picture of one
+    crossed by lines of constant x and y is ruled against numbers nobody is
+    reading it in.
+
+    A ring is one value of r and a spoke one value of θ, and both are loci in
+    the plane rather than shapes on the screen. Since the item paints in the
+    view's own coordinates that comes out right by itself: with the scales
+    locked equal - which is what a window opens at - the rings are circles, and
+    with them released they are the ellipses constant r actually is there. The
+    pen is cosmetic so the hairline stays one however far the picture is
+    zoomed, and the painting is clipped to the view because a ring larger than
+    the window is most of the ring.
+
+    The page's pane draws the same picture on the same rule; see
+    `web/plot2d.js`'s `_polarGrid`.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pen = pg.mkPen(_tinted(AXIS_COLOR, GRID_ALPHA))
+        self._pen.setCosmetic(True)
+
+    def paint(self, painter: Any, *arguments: Any) -> None:
+        rect = self.boundingRect()
+        reach = max(
+            abs(rect.left()), abs(rect.right()), abs(rect.top()), abs(rect.bottom())
+        )
+        step = _ruled(reach)
+        across, up = self.pixelWidth(), self.pixelHeight()
+        if step <= 0 or not across or not up:
+            return
+        if min(step / across, step / up) <= POLAR_CLOSEST_PX:
+            return
+        painter.setClipRect(rect)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(self._pen)
+        origin = QtCore.QPointF(0.0, 0.0)
+        for ring in range(1, int(reach / step) + 2):
+            painter.drawEllipse(origin, ring * step, ring * step)
+        # Twice the reach, which reaches the far corner of the view from the
+        # origin whichever corner that is: nothing needs the spokes to end
+        # anywhere in particular, only to leave the picture.
+        far = 2.0 * reach
+        for spoke in range(POLAR_SPOKES):
+            angle = spoke * 2.0 * np.pi / POLAR_SPOKES
+            end = QtCore.QPointF(far * np.cos(angle), far * np.sin(angle))
+            painter.drawLine(origin, end)
+
+
+def _ruled(reach: float) -> float:
+    """A round step at about a fifth of the reach, which the rings are spaced by.
+
+    One, two or five times a power of ten, so that a ring stands at a number
+    somebody can add up in their head while looking at the picture.
+    """
+    if not (reach > 0):
+        return 0.0
+    rough = reach / POLAR_RINGS
+    power = 10.0 ** np.floor(np.log10(rough))
+    for multiple in (1.0, 2.0, 5.0):
+        if multiple * power >= rough:
+            return float(multiple * power)
+    return float(10.0 * power)
+
+
 class Window2D(QtWidgets.QMainWindow):
     """One top-level 2D plot window and everything that happens inside it."""
 
@@ -715,9 +793,10 @@ class Window2D(QtWidgets.QMainWindow):
         self.canvas = Canvas(self)
         self.plot = pg.PlotWidget(viewBox=self.canvas, background=BACKGROUND)
         self.item = self.plot.getPlotItem()
-        self.item.showGrid(x=True, y=True, alpha=GRID_ALPHA)
         self._strip_spines()
         self._origin_axes()
+        self._polar_grid()
+        self._ruling()
         self._make_menu()
         self.legend = Legend(self.plot)
         self.legend.picked.connect(self._legend_clicked)
@@ -903,6 +982,28 @@ class Window2D(QtWidgets.QMainWindow):
         for line in self.axes:
             line.setZValue(-10)
             self.item.addItem(line, ignoreBounds=True)
+
+    def _polar_grid(self) -> None:
+        """The rings and spokes, made once and shown while the view is polar.
+
+        Under the two axis lines, which are the picture's own furniture and are
+        read over anything ruling it.
+        """
+        self.rings = _PolarGrid()
+        self.rings.setZValue(-11)
+        self.item.addItem(self.rings, ignoreBounds=True)
+
+    def _ruling(self) -> None:
+        """Rule the picture the way the view is read, or leave it unruled.
+
+        One grid or the other, never both: a polar picture crossed by lines of
+        constant x and y is two scaffolds over one drawing, and the rings are
+        the one of them r and θ can be read off. The `Grid` toggle is about
+        whichever of the two this view is under.
+        """
+        ruled = self._grid and not self.polar
+        self.item.showGrid(x=ruled, y=ruled, alpha=GRID_ALPHA)
+        self.rings.setVisible(self._grid and self.polar)
 
     def _make_menu(self) -> None:
         """The window's own context menu: what it does, and the keys that do it.
@@ -1598,10 +1699,11 @@ class Window2D(QtWidgets.QMainWindow):
         reinterpreted curve is drawn over one full turn, whatever x-range it
         happened to be viewed at, and the toolbar's range fields are where a
         different piece of θ is asked for - the same way for a curve read
-        polar as for one born polar. The axis labels, the pointer readout and
-        trace all follow the mode.
+        polar as for one born polar. The ruling, the axis labels, the pointer
+        readout and trace all follow the mode.
         """
         self.polar = checked
+        self._ruling()
         active = self._active
         for plot in self.plots:
             if not self._reread(plot):
@@ -2156,7 +2258,7 @@ class Window2D(QtWidgets.QMainWindow):
     def toggle_grid(self) -> None:
         """`G` and the menu's `Grid`: the ruling under the picture, or none."""
         self._grid = not self._grid
-        self.item.showGrid(x=self._grid, y=self._grid, alpha=GRID_ALPHA)
+        self._ruling()
 
     def toggle_legend(self) -> None:
         """`L` and the menu's `Legend`: the plot list card, or the bare picture.

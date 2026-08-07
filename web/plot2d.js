@@ -913,7 +913,7 @@ class Pane {
     ctx.beginPath();
     ctx.rect(u.bbox.left, u.bbox.top, u.bbox.width, u.bbox.height);
     ctx.clip();
-    if (this.polar) this._polarGrid(u, ctx, ratio);
+    if (this.polar && this.ruled) this._polarGrid(u, ctx, ratio);
     this._axisLines(u, ctx, ratio);
     for (const serial of this.order) {
       const plot = this.plots.get(serial);
@@ -973,6 +973,17 @@ class Pane {
   // The rings and spokes a polar picture is read against. Not a library
   // requirement and never was: the curve is sampled as x = r cos θ, y = r sin θ
   // where the numbers are, and what is left is a few dozen lines of arcs.
+  //
+  // Both are loci in the plane rather than shapes on the screen: a ring is one
+  // value of r and a spoke one value of θ, so each is measured in the two units
+  // the view is drawn at. With the scales locked equal - which is what a pane
+  // opens at - the two are one number and the rings are circles. With them
+  // released a ring is an ellipse, because that is where constant r is when a
+  // unit across is not a unit up, and a circle drawn there would be a ring
+  // nobody could read a radius off.
+  //
+  // The desktop window draws the same picture on the same rule; see
+  // `plot/qt/window2d.py`'s `_PolarGrid`.
   _polarGrid(u, ctx, ratio) {
     const reach = Math.max(
       Math.abs(this.shown.x0), Math.abs(this.shown.x1),
@@ -981,22 +992,28 @@ class Pane {
     const step = ruled(reach);
     if (!(step > 0)) return;
     const origin = { x: u.valToPos(0, 'x', true), y: u.valToPos(0, 'y', true) };
-    const unit = Math.abs(u.valToPos(step, 'x', true) - origin.x);
-    if (!(unit > 2)) return;
+    const across = Math.abs(u.valToPos(step, 'x', true) - origin.x);
+    const up = Math.abs(u.valToPos(step, 'y', true) - origin.y);
+    // Rings closer together than a couple of pixels are a wash rather than a
+    // grid, and a wash over the picture is worse than no grid at all.
+    if (!(Math.min(across, up) > 2)) return;
     ctx.save();
     ctx.strokeStyle = GRID_COLOR;
     ctx.lineWidth = ratio;
-    for (let radius = unit; radius <= reach / step * unit + unit; radius += unit) {
+    for (let ring = 1; ring <= Math.floor(reach / step) + 1; ring += 1) {
       ctx.beginPath();
-      ctx.arc(origin.x, origin.y, radius, 0, 2 * Math.PI);
+      ctx.ellipse(origin.x, origin.y, ring * across, ring * up, 0, 0, 2 * Math.PI);
       ctx.stroke();
     }
     const far = Math.hypot(u.bbox.width, u.bbox.height);
     for (let turn = 0; turn < 12; turn += 1) {
       const angle = (turn * Math.PI) / 6;
+      const dx = across * Math.cos(angle);
+      const dy = -up * Math.sin(angle);
+      const length = Math.hypot(dx, dy) || 1;
       ctx.beginPath();
       ctx.moveTo(origin.x, origin.y);
-      ctx.lineTo(origin.x + far * Math.cos(angle), origin.y - far * Math.sin(angle));
+      ctx.lineTo(origin.x + (far * dx) / length, origin.y + (far * dy) / length);
       ctx.stroke();
     }
     ctx.restore();
@@ -1766,8 +1783,17 @@ class Pane {
 
   grid() {
     this.ruled = !this.ruled;
-    for (const axis of this.plot.axes) axis.grid.show = this.ruled;
+    this._ruling();
     this.plot.redraw(false, true);
+  }
+
+  // Which grid the picture is read against: the rings and spokes while it is
+  // polar and the ruled lines while it is not, and neither while the toggle is
+  // off. One or the other, never both - a polar picture crossed by a
+  // rectangular grid is two scaffolds over one drawing, and the rings are the
+  // one of them that r and θ can be read off.
+  _ruling() {
+    for (const axis of this.plot.axes) axis.grid.show = this.ruled && !this.polar;
   }
 
   legend() {
@@ -1780,7 +1806,8 @@ class Pane {
   // and reads the pointer out in r and θ.
   polarized(polar) {
     this.polar = Boolean(polar);
-    this.plot.redraw();
+    this._ruling();
+    this.plot.redraw(true, true);
   }
 
   // One button of the tool row, on or off, by the name of the control it is.
