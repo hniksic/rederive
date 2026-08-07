@@ -3,9 +3,15 @@ name: Test
 # The suite, on every system a release is built for. Building a binary says
 # nothing about whether the program is right, and until this ran the only thing
 # testing Rederive was whoever last typed `uv run pytest`.
+# A branch is often somewhere to experiment or to keep a copy safe, and neither is
+# worth three operating systems. What a pull request builds is the merge result,
+# which is the thing worth knowing about; a branch nobody has proposed yet can be
+# asked about by hand.
 on:
   push:
+    branches: [master]
   pull_request:
+  workflow_dispatch:
 
 # A second push supersedes the first; there is nothing to learn from finishing a
 # run of code that has already been replaced.
