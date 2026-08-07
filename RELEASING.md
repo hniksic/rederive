@@ -34,6 +34,13 @@ on the release page beside the generated notes.
 builds on all three platforms, checks every build, compiles and test-installs the
 Windows installer, and publishes the release.
 
+The same tag sets `.github/workflows/web.yml` going, which builds the browser demo,
+opens it in Chromium and Firefox, and publishes it to GitHub Pages. The two workflows
+run beside each other and neither waits on the other: the page carries a wheel built
+from the tagged source rather than anything the release attaches. That is what keeps
+README's [live demo](https://hniksic.github.io/rederive/) link on the latest release
+without the link itself ever changing.
+
 To build by hand instead - there is no cross-compilation, so this is once per
 platform, from a clean checkout of the tag. On Linux, install `libxcb-cursor0` first:
 a bundle carries the libraries the build machine had, and without it Qt's xcb plugin

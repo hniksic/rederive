@@ -9,6 +9,9 @@ apart from SymPy in a Jupyter notebook is how it treats the user: Rederive reads
 the terminal. The UI, inherited from Derive, is tiny and opinionated, but discoverable and
 built for humans.
 
+**[Try it live](https://hniksic.github.io/rederive/)**. (Takes a moment to load on the
+first visit.)
+
 <p align="center"><img src="demo.webp" alt="An animated Rederive session" width="700"></p>
 
 ## Motivation

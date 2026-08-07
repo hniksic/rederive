@@ -7,11 +7,13 @@ name: Web demo
 # question - author an expression, simplify it, read the answer off the screen -
 # which is the shortest path that goes through every piece.
 #
-# Publishing is not part of that and does not happen here unless someone asks for
-# it by hand: see the `publish` job.
+# Publishing is a release and nothing else: a tag republishes the page, so that
+# the link README points at is the latest release running. Otherwise it happens
+# only when someone asks for it by hand. See the `publish` job.
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -21,10 +23,12 @@ on:
         default: false
 
 # A second push supersedes the first, as in the suite: there is nothing to learn
-# from finishing a run of code that has already been replaced.
+# from finishing a run of code that has already been replaced. A run that may
+# publish is exempt, a tag and a hand-started publish both being things that
+# happen once and are meant to finish.
 concurrency:
   group: web-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && !inputs.publish }}
 
 jobs:
   smoke:
@@ -77,20 +81,32 @@ jobs:
           path: build/shots
           if-no-files-found: ignore
 
-  # Publishing is deliberate and manual. It runs only when someone opens this
-  # workflow from the Actions tab, ticks the box and starts it - never on a push,
-  # never on a pull request, and never as a consequence of the smoke test passing.
-  # A demo is a thing you decide to put in front of people.
+  # Publishing is a tag, or someone opening this workflow from the Actions tab,
+  # ticking the box and starting it. Never a push to a branch, never a pull
+  # request, and never a consequence of the smoke test passing on its own: the
+  # gate runs first and a demo that a browser could not open is not published,
+  # but passing it is not what decides to put a demo in front of people.
+  #
+  # Between releases the page therefore sits at the last tag while master moves
+  # on, which is what makes the README link mean the release it claims to be.
   publish:
     name: Publish to GitHub Pages
     needs: smoke
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       pages: write
       id-token: write
+    # One deploy at a time across every run of this workflow, and none of them
+    # cancelled: a tag and a hand-started publish that meet queue rather than
+    # race, and neither is stopped halfway through writing a site.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
