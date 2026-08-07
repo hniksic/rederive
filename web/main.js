@@ -33,9 +33,9 @@ const SCREEN = 'screen';
 const MANIFEST = 'manifest.json';
 
 // What the page says for itself while there is nothing else to look at. It is
-// written against a measurement rather than an apology - see
-// `research/web-demo-channel.md` - and the one thing it must not do is imply
-// that something is wrong: a first visit spends most of its time on the wire.
+// written against a measurement rather than an apology, and the one thing it
+// must not do is imply that something is wrong: a first visit spends most of
+// its time on the wire.
 const OPENING = [
   'Rederive',
   '',

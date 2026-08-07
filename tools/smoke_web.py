@@ -19,7 +19,7 @@ nothing about whether the mathematics arrived.
 **Nothing here is a timing.** Stage 0 measured Playwright's Firefox running
 WebAssembly some eight times slower than the machine's own, so the waits below
 are generous on purpose and none of them means anything about how fast the demo
-is. What the seconds are measured with is `research/web-demo-channel.md`.
+is.
 
 The page is served by `python -m http.server`, which is what a static host is
 without the compression - the demo names no other host at run time, so a
