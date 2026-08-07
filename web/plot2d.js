@@ -1091,24 +1091,40 @@ class Pane {
   // which curve is being ridden, and the chip has room for numbers.
   _chip(u, px, py, plot) {
     const chip = this.chipElement || (this.chipElement = this._chipElement());
-    if (!this.reading) {
+    const ratio = devicePixelRatio;
+    const left = u.bbox.left / ratio;
+    const top = u.bbox.top / ratio;
+    const right = left + u.bbox.width / ratio;
+    const bottom = top + u.bbox.height / ratio;
+    // A point off the picture takes its chip with it. The ring and the hairline
+    // are drawn on the canvas inside the clip the picture is drawn in, so they
+    // simply leave the view the way the desktop's do; the chip is an element and
+    // an element let out of the picture is drawn over the tool row above it. The
+    // reading is on the status line either way, so a marker off the picture is
+    // one whose value can still be read - just not beside a point nobody can see.
+    const showing = this.reading &&
+      px >= u.bbox.left && px <= u.bbox.left + u.bbox.width &&
+      py >= u.bbox.top && py <= u.bbox.top + u.bbox.height;
+    if (!showing) {
       chip.style.display = 'none';
       return;
     }
     chip.style.display = '';
     chip.style.color = plot.color;
     chip.textContent = this.reading.split('   ').slice(1).join('\n');
-    // Up and to the right of the marker, which is where the pointer is not,
-    // and around to the other side wherever that would put it off the picture.
-    const ratio = devicePixelRatio;
-    const wide = this.canvas.clientWidth;
-    const overRight = px / ratio + CHIP_OFFSET_PX + chip.offsetWidth > wide;
-    const overTop = py / ratio - CHIP_OFFSET_PX - chip.offsetHeight < 0;
-    chip.style.left = `${px / ratio + (overRight ? -CHIP_OFFSET_PX : CHIP_OFFSET_PX)}px`;
-    chip.style.top = `${py / ratio + (overTop ? CHIP_OFFSET_PX : -CHIP_OFFSET_PX)}px`;
-    chip.style.transform = `translate(${overRight ? '-100%' : '0'}, ${
-      overTop ? '0' : '-100%'
-    })`;
+    // Up and to the right of the marker, which is where the pointer is not, and
+    // around to the other side wherever that would put it off the picture. A
+    // point too near a corner for either side to fit gets a chip pushed back
+    // inside instead: a chip over its own ring can still be read, and one over
+    // the numbers along the edge cannot.
+    const beside = px / ratio + CHIP_OFFSET_PX + chip.offsetWidth > right
+      ? px / ratio - CHIP_OFFSET_PX - chip.offsetWidth
+      : px / ratio + CHIP_OFFSET_PX;
+    const above = py / ratio - CHIP_OFFSET_PX - chip.offsetHeight < top
+      ? py / ratio + CHIP_OFFSET_PX
+      : py / ratio - CHIP_OFFSET_PX - chip.offsetHeight;
+    chip.style.left = `${clamp(beside, left, Math.max(right - chip.offsetWidth, left))}px`;
+    chip.style.top = `${clamp(above, top, Math.max(bottom - chip.offsetHeight, top))}px`;
   }
 
   _chipElement() {

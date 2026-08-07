@@ -1030,6 +1030,21 @@ def test_the_names_written_into_an_exported_picture_stand_where_the_card_does(
     assert "ctx.fillText(plot.name, LEGEND_MARGIN_PX * ratio, down);" in body
 
 
+def test_the_trace_chip_stays_inside_the_picture_wherever_the_marker_is():
+    """A marker off the picture is a chip drawn over the tool row above it.
+
+    The ring and its hairline are drawn on the canvas inside the clip the
+    picture is drawn in, so they leave the view the way the desktop's do. The
+    chip is an element, which nothing clips for it: it is hidden where its point
+    is outside the picture and kept inside it where the point is near an edge.
+    The reading is on the status line either way, so nothing is silenced.
+    """
+    body = _method(_drawing("plot2d.js", "Pane"), "_chip")
+    hidden = body.index("chip.style.display = 'none';")
+    assert "u.bbox.left" in body[:hidden] and "u.bbox.top" in body[:hidden]
+    assert body.count("clamp(") == 2
+
+
 def test_the_page_calls_the_same_two_kinds_parametrized_that_the_protocol_does():
     """One vocabulary of kinds, as there is one spelling of a control.
 
