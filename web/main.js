@@ -222,6 +222,8 @@ function spawn(manifest) {
 async function main() {
   const term = terminal();
   files.wire(term);
+  plots.wire(term);
+  solids.wire(term);
   for (const line of OPENING) say(term, line);
   const started = performance.now();
   const manifest = await (await fetch(MANIFEST)).json();

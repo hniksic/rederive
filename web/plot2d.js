@@ -82,12 +82,19 @@ const SCANNED = new Set([CURVE, FAMILY]);
 let root = null;
 let opened = 0;
 let landed = () => {};
+let terminal = null;
 
 // Every open pane by its number, which is the number the plot session names it
 // by at both ends. Exported because `main.js` hangs this module off
 // `window.rederive`, where the console and a driving script can read what the
 // page is actually showing; nothing in the program writes to it.
 export const panes = new Map();
+
+// The keyboard back to the terminal, as `files.js` does it for its buttons.
+// Nothing else on the page reads keys, so there is nowhere else to put them.
+function focus() {
+  if (terminal !== null) terminal.focus();
+}
 
 function surface() {
   if (root === null) {
@@ -110,6 +117,13 @@ function capture(element, event) {
 }
 
 // -- what Python calls ---------------------------------------------------------
+
+// Called by the page as it builds itself, so that a pane which closes while it
+// holds the keyboard knows where to hand it back. The terminal is the only
+// other thing on the page that takes keys.
+export function wire(term) {
+  terminal = term;
+}
 
 // One pane, opened where the plot session asked for one. What comes back is
 // what the session's window handle calls into: everything here is a method
@@ -391,10 +405,15 @@ class Pane {
   }
 
   dismiss() {
+    // Where the keys go next. A pane that had them - the close button it was
+    // shut with is inside it - would otherwise leave them on nothing, and the
+    // program would look as though it had stopped listening.
+    const held = this.element.contains(document.activeElement);
     if (this.observer) this.observer.disconnect();
     if (this.plot) this.plot.destroy();
     this.element.remove();
     panes.delete(this.number);
+    if (held) focus();
   }
 
   // -- what the worker says ---------------------------------------------------
