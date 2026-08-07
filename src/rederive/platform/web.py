@@ -1,11 +1,12 @@
-"""The environment a browser tab provides: a page's clipboard, a store, no gauge.
+"""The environment a browser tab provides: a page's clipboard, a store, a heap.
 
 Three of the four answers here are shorter than the desktop's because a tab is
-a smaller machine. There is no resident set to read, so the memory gauge is
-empty and the engine's watchdog never runs; there is no Qt, so what a plot
-would be drawn with is nothing; and the clipboard is the page's, asked for
-through `navigator.clipboard` and refused as often as it is granted - which is
-why it is the one answer here that reports a refusal in words.
+a smaller machine. The memory gauge reads the size of this instance's own
+WebAssembly heap, there being no resident set and nothing outside an instance
+that can measure it; there is no Qt, so what a plot would be drawn with is
+nothing; and the clipboard is the page's, asked for through
+`navigator.clipboard` and refused as often as it is granted - which is why it
+is the one answer here that reports a refusal in words.
 
 Storage is the long one, because a tab has no filesystem and has three things
 instead, and a file goes to whichever of them fits what it is for:
@@ -38,7 +39,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-__all__ = ["Web", "WebStorage"]
+__all__ = ["Web", "WebStorage", "heap"]
 
 #: What localStorage keeps the store under. One key holding the whole of it, as
 #: JSON: worksheets are a few kilobytes each, and a store written in one piece
@@ -271,18 +272,36 @@ class Web:
     # -- memory ------------------------------------------------------------
 
     def process_bytes(self, pid: int | None = None) -> int | None:
-        """Nothing: a tab cannot see a worker's heap, its own included."""
-        return None
+        """This interpreter's heap: the WebAssembly memory it has taken.
+
+        Not a resident set, a tab having none, but the nearest reading there
+        is - and nearer in spirit to what this gauge replaced than a resident
+        set ever was, the original having shown how much of its own workspace
+        muLISP was holding.
+
+        `pid` is ignored. There are no processes here to tell apart: an
+        instance can read its own heap and nobody else's, so the question this
+        answers is always about the interpreter asking it.
+        """
+        return heap()
 
     def measures_processes(self) -> bool:
         """No, which is what turns the engine's memory watchdog off.
 
-        There is no reading to be had. `performance.memory` is Chromium's
-        alone, is the whole tab rather than the worker, and is quantised to
-        the point of meaninglessness; a Web Worker's heap is not exposed at
-        all. So the engine runs uncapped here and an allocation that goes too
-        far is the browser killing the worker, which arrives as a death like
-        any other.
+        A gauge and a watchdog want different things, and the heap answers only
+        the first. A watchdog has to watch a computation while it runs, and
+        nothing here can: a Web Worker's memory is invisible from outside it,
+        and from inside it nothing is answered at all while Python is busy - a
+        worker in a long simplify is a thread that runs no timers and reads no
+        messages until it is done.
+
+        The other candidates answer no better. `performance.memory` is
+        Chromium's alone, is quantised to the point of meaninglessness and does
+        not count WebAssembly memory; `measureUserAgentSpecificMemory` is
+        Chromium's too, wants the page cross-origin isolated, and resolves at
+        the next collection rather than when it is asked. So the engine runs
+        uncapped here and an allocation that goes too far is the browser
+        killing the worker, which arrives as a death like any other.
         """
         return False
 
@@ -301,6 +320,38 @@ class Web:
         """
         toolkit = "Qt unusable (no toolkit in the browser)"
         return f"{toolkit}\n{_runtime()}\nplatform {_agent()}"
+
+
+def heap() -> int | None:
+    """How many bytes of WebAssembly memory this instance has, or None outside one.
+
+    `_module` is Pyodide's own handle on the Emscripten instance and its heap
+    views are the linear memory itself, so the length of one is the size of the
+    heap. Two things to know about the figure. It is what the runtime has taken
+    rather than what Python is using, since the allocator hands out of it and
+    gives back into it; and WebAssembly memory grows and never shrinks, so it
+    is a high-water mark - a program that has let go of a large expression goes
+    on reporting what holding it cost.
+
+    Both are why this is the gauge and not the watchdog: it says what the tab
+    is carrying, which is what somebody watching the status line wants to know,
+    and it cannot say that a computation has just released anything.
+
+    The handle is private to Pyodide, hence the guard around every step: a
+    release that moves it costs the field its figure and nothing else.
+
+    Called by the engine worker as well as by the page, each about itself,
+    which is why it is a function here rather than a method on `Web` - the
+    worker sets no platform up, having nothing else to ask one for.
+    """
+    try:
+        import pyodide_js
+    except ImportError:  # read outside a browser, which the tests do
+        return None
+    try:
+        return int(pyodide_js._module.HEAPU8.length)
+    except Exception:
+        return None
 
 
 def _say(refused: Callable[[str], None] | None, sentence: str) -> None:

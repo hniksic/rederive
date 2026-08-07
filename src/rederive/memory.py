@@ -2,15 +2,28 @@
 
 The status line shows the figure where the original showed its muLISP heap
 gauge. The reading itself belongs to the environment and comes from
-`rederive.platform`, which asks psutil on a desktop and has nothing to ask
-anywhere else; what is here is what the gauge makes of it. Where the platform
-will not answer the answer is None and the field stays empty rather than
-showing a figure that might be wrong.
+`rederive.platform`, which asks psutil on a desktop and reads the size of its
+own WebAssembly heap in a browser; what is here is what the gauge makes of it.
+Where the platform will not answer the answer is None and the field stays empty
+rather than showing a figure that might be wrong.
 
-The program is two processes once the engine worker is up, and the gauge is
-about the program: `register_worker` says which process the second one is, and
-the reading is the two added together. A worker that has died or has not been
-spawned yet contributes nothing, silently - a gauge is not worth an error.
+The program is two interpreters once the engine worker is up, and the gauge is
+about the program, so the reading is the two added together. How the second one
+is read is the difference between the environments, and there is a call for
+each:
+
+* `register_worker` says which *process* it is, for an environment that can
+  measure a program it did not start from outside. That is the desktop, and the
+  figure is as fresh as the moment it is asked for.
+* `worker_holds` says what it *reported*, for an environment that cannot. That
+  is the browser, where nothing outside a Web Worker can read its heap, so the
+  worker says what it holds on its way past. Such a figure is as old as the
+  worker's last answer - a worker in the middle of a computation answers
+  nothing, its own timers included - which is as fresh as a reading there can
+  be.
+
+A worker that has died, has not been spawned yet or has said nothing yet
+contributes nothing, silently - a gauge is not worth an error.
 """
 
 from __future__ import annotations
@@ -28,11 +41,28 @@ _UNITS = (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10))
 #: neither has any business knowing about the other.
 _worker: int | None = None
 
+#: And what a worker that can only be read from the inside last said it holds.
+#: The other half of the same slot, kept apart from it because the two are read
+#: differently: this figure is already a size, where `_worker` is something to
+#: go and measure.
+_reported: int | None = None
+
 
 def register_worker(pid: int | None) -> None:
     """Say which process the engine worker is, or None once it is gone."""
     global _worker
     _worker = pid
+
+
+def worker_holds(size: int | None) -> None:
+    """Say what the engine worker has just reported holding, or None once it is gone.
+
+    For a worker nobody outside it can measure. The figure replaces whatever
+    the last one said rather than adding to it: it is a reading of the same
+    heap and not a second heap.
+    """
+    global _reported
+    _reported = size
 
 
 def process_bytes(pid: int | None = None) -> int | None:
@@ -56,18 +86,16 @@ def measures_processes() -> bool:
 
 
 def resident_bytes() -> int | None:
-    """What the program holds: this process, plus the worker where there is one.
+    """What the program holds: this interpreter, plus the worker where there is one.
 
-    None when this process will not be read at all. A worker that will not be
-    read is simply left out, since the figure without it is still true about
-    the program and better than no figure.
+    None when this one will not be read at all. A worker that will not be read
+    is simply left out, since the figure without it is still true about the
+    program and better than no figure.
     """
     own = process_bytes()
     if own is None:
         return None
-    if _worker is None:
-        return own
-    worker = process_bytes(_worker)
+    worker = _reported if _worker is None else process_bytes(_worker)
     return own if worker is None else own + worker
 
 

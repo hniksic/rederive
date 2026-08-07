@@ -49,6 +49,11 @@ what four typed bounds are worth is four floats, which nothing draws. It rides
 the pending slot like a Simplify, because that is what a request with an answer
 to this side is.
 
+One message the worker sends was never asked for at all: how far its heap has
+grown, which it says after each answer because it is the half of the status
+line's memory gauge nothing on this side can measure. Nothing waits on it and
+nothing is owed for it - it is read where it lands and put in the gauge.
+
 The price of sharing is worth naming. A drag posted behind an integral waits for
 the integral, and a Simplify pressed mid-drag waits for the one sampling in
 flight - bounded, since sampling is depth- and size-capped, but real. And Esc
@@ -64,6 +69,7 @@ import pickle
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from rederive import memory
 from rederive.engine import worker
 from rederive.engine.boundary import Amount, Result
 from rederive.engine.client import (
@@ -358,6 +364,13 @@ class WebEngine:
             # field rather than by a type, because what a pickle arrives as is
             # a typed array and so is half of what a sampling answers with.
             return
+        held = getattr(data, "heap", None)
+        if held is not None:
+            # The worker saying how far its heap has grown, which is the half
+            # of the memory gauge nothing on this side can measure. Recognized
+            # the same way and answered the same way: nothing waits on it.
+            memory.worker_holds(int(held))
+            return
         message = pickle.loads(_bytes(data))
         if message[0] == worker.READY:
             self._greeted()
@@ -456,6 +469,10 @@ class WebEngine:
             made.terminate()
         for proxy in proxies:
             proxy.destroy()
+        # Whatever the gauge was carrying for it goes with it. A terminated
+        # worker's heap went back to the browser, and a figure kept after that
+        # would be the program reporting memory nothing is holding.
+        memory.worker_holds(None)
 
 
 def _post(made: Any, payload: bytes) -> None:

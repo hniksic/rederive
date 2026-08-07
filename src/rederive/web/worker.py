@@ -23,6 +23,11 @@ listener picks up. The main thread's Python sees such a message go past and
 reads nothing out of it, which is what keeps a numerical library out of the
 instance that paints the screen.
 
+One thing it says was not asked for, and that is how far its heap has grown.
+The status line's gauge is about the program, the program is two instances, and
+this is the one nothing outside can measure - so it reports, and the page's
+engine remembers the last figure.
+
 What the desktop worker does that this one does not is take the tty off the
 program and open a log. A worker has no tty to take, and what it prints goes to
 the page's console, which is the browser's log file and needs no opening.
@@ -69,6 +74,7 @@ def serve() -> None:
     table = methods() | sampler.methods(_drawing)
     js.self.onmessage = create_proxy(lambda event: _asked(table, event.data))
     _post(pickle.dumps((READY, "ready")))
+    _held()
 
 
 def _asked(table: dict[str, Callable[..., Any]], data: Any) -> None:
@@ -83,12 +89,42 @@ def _asked(table: dict[str, Callable[..., Any]], data: Any) -> None:
     except MemoryError:
         _post(_trouble(number, MEMORY))
         _close()
+        return
     except Exception:
         # Including `RecursionError`, which costs the answer and not the
         # worker: the engine promises never to raise on parser output, so
         # anything arriving here is a bug worth surfacing and not worth a
         # fresh Pyodide.
         _post(_trouble(number, BUG))
+    _held()
+
+
+def _held() -> None:
+    """Say what this worker's heap has grown to, the answer being on its way out.
+
+    The status line's memory gauge is about the program and the program is two
+    instances, and this is the half that cannot be measured from outside: a Web
+    Worker's memory is its own. So it says so, after every request it serves and
+    once when it comes up.
+
+    Here rather than on a timer because a timer would be no fresher. A worker
+    running a computation runs nothing else - no timer, no message - so the
+    moment an answer goes out is the first moment there is anything new to say
+    and the last before the next silence.
+
+    A message of its own, and a plain one rather than a pickle: the page's
+    engine knows it by its field the way it knows a sampling by its own, and
+    nothing about a gauge is worth a numbered request or a place in the
+    protocol every other answer is read under.
+    """
+    import js
+    from pyodide.ffi import to_js
+
+    from rederive.platform.web import heap
+
+    size = heap()
+    if size is not None:
+        js.self.postMessage(to_js({"heap": size}, dict_converter=js.Object.fromEntries))
 
 
 def _drawing(answer: dict[str, Any]) -> None:
