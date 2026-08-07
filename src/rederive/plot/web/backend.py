@@ -291,6 +291,7 @@ class Pane:
                     "card": self.card,
                     "command": self.command,
                     "remembered": self.remembered,
+                    "centred": self.centred,
                     "typed": self.typed,
                     "ranged": self.ranged,
                     "spanned": self.spanned,
@@ -536,6 +537,16 @@ class Pane:
         drag must never wait on this side for one.
         """
         self._framing.remember(((float(x0), float(x1)), (float(y0), float(y1))))
+
+    def centred(self, x: Any, y: Any) -> None:
+        """A double click on the picture: that point, put in the middle of it.
+
+        The gesture is the page's and the framing is `plot/actions.py`'s, so what
+        crosses is the point that was clicked and nothing about the view: the
+        history it pushes is the history Back steps through, and a view centred
+        by mistake is one step from the view it replaced.
+        """
+        self._apply(self._framing.centred(self._where(), float(x), float(y)))
 
     def typed(self, name: Any, values: Any, role: Any = None) -> None:
         """A form was applied: read what was typed into it.

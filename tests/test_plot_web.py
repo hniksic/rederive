@@ -1024,6 +1024,27 @@ async def test_backspace_steps_back_through_where_the_view_has_been(session, pag
     assert len(pane.done) == standing
 
 
+async def test_a_double_click_puts_what_it_landed_on_in_the_middle_of_the_view(
+    session, page
+):
+    """The desktop's `center_on`, which the page had no way of asking for.
+
+    The gesture is the page's, since counting two clicks is the page's business,
+    and everything after it is `plot/actions.py`'s: the view keeps its size, and
+    the framing it left is pushed so that the view is one Backspace from where
+    it was.
+    """
+    session.add(_landing("SIN(x)"))
+    pane = page.panes[1]
+    pane.shown = [-5.0, 5.0, -4.0, 4.0, 800.0, 640.0]
+    pane.say["centred"](2.0, 1.0)
+    # The lock stays on, a view moved without being resized having the scales it
+    # had; every other framing that is about fitting releases it.
+    assert pane.done[-1] == ("reframe", (-3.0, 7.0, -3.0, 5.0), True)
+    pane.say["command"]("view.back", None)
+    assert pane.done[-1] == ("reframe", (-5.0, 5.0, -4.0, 4.0), False)
+
+
 async def test_a_typed_range_is_read_by_the_engine_so_minus_pi_is_an_answer(
     session, page, engine
 ):

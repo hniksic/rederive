@@ -159,6 +159,13 @@ const RIDEABLE = new Set([CURVE, FAMILY, PARAMETRIC, POLAR]);
 const SCANNED = new Set([CURVE, FAMILY]);
 const PARAMETRIZED = new Set([PARAMETRIC, POLAR]);
 
+// How close together in time and in place two clicks have to be to be the one
+// gesture that centres the view. The page counts them itself because a press on
+// the picture is cancelled - that is what makes a drag a drag rather than a
+// selection - and a cancelled press is one no `dblclick` follows.
+const DOUBLE_MS = 400;
+const DOUBLE_PX = 6;
+
 // The one place a plot pane is put, laid over the terminal and letting the
 // pointer through everywhere it has no pane.
 let root = null;
@@ -293,6 +300,9 @@ class Pane {
     this.tracing = null;
     this.traceAt = 0;
     this.tracePoint = null;
+    // When and where the last click on the picture was, which is how the second
+    // one is known to be the second.
+    this.doubling = null;
     // The traced point as the worker spelled it, which is what Ctrl+C carries
     // while the marker is up.
     this.tracedText = '';
@@ -1318,13 +1328,29 @@ class Pane {
     this.said(`x: ${at.x.toFixed(6)}   y: ${at.y.toFixed(6)}`);
   }
 
-  // A left click on the picture: take hold of the curve it landed on.
+  // A left click on the picture: the middle of the view, or a curve.
   //
-  // Which is how trace is entered with the mouse, and how the curve being ridden
-  // is changed while it is on, as it is on the desktop.
+  // Two clicks in the same place put that place in the middle of the canvas, and
+  // one on a curve takes hold of it. Both are the desktop's gestures, and there
+  // as here the first of a pair of clicks is still a click: a double click over
+  // a curve traces it and then centres on it.
   _clicked(event) {
+    const at = this._value(event.offsetX, event.offsetY);
+    const before = this.doubling;
+    const twice = before !== null &&
+      event.timeStamp - before.when < DOUBLE_MS &&
+      Math.abs(event.offsetX - before.x) + Math.abs(event.offsetY - before.y) < DOUBLE_PX;
+    this.doubling = twice
+      ? null
+      : { when: event.timeStamp, x: event.offsetX, y: event.offsetY };
+    if (twice) {
+      // The arithmetic and the history are `plot/actions.py`'s, as they are for
+      // every other framing: what crosses is the point that was clicked.
+      this.say.centred(at.x, at.y);
+      return;
+    }
     const plot = this._pointedPlot(event);
-    if (plot !== null) this._takeHold(plot, this._value(event.offsetX, event.offsetY));
+    if (plot !== null) this._takeHold(plot, at);
   }
 
   // Trace `plot`, at the place the click was pointing at.
