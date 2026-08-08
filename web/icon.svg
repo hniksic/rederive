@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The derivative itself: a curve and its tangent at a point. The colors are
+       the page's own - the plot pane's dark card and the accent blue - so the
+       tab wears what the app wears. The tangent really is the tangent: the
+       curve is B(t) = (1-t)^2 (12,47) + 2(1-t)t (43,49) + t^2 (51,13) and the
+       line touches it at t = 0.52, computed rather than eyeballed. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#191922"/>
+      <stop offset="1" stop-color="#0b0b0f"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="14" fill="url(#tile)"
+        stroke="#2b2b34" stroke-width="1.5"/>
+  <!-- The ruling of a plot pane, faint, so the tile reads as a plot. -->
+  <path d="M 13 8 V 56 M 8 49 H 56" stroke="#23232b" stroke-width="1.5"
+        fill="none"/>
+  <!-- The tangent, under the curve so the line kisses it rather than cuts it. -->
+  <path d="M 22.66 53.13 L 51.91 25.84" stroke="#e8b45a" stroke-width="3"
+        stroke-linecap="round" fill="none"/>
+  <path d="M 12 47 Q 43 49 51 13" stroke="#65b2f1" stroke-width="4.5"
+        stroke-linecap="round" fill="none"/>
+  <circle cx="38.02" cy="38.8" r="3.4" fill="#f4e3c0"/>
+</svg>
