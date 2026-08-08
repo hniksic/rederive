@@ -232,7 +232,8 @@ RATIONAL_FORM = [
     # The denominator keeps whatever shape it was written in: Derive answers
     # this with the two factors standing, not with a quartic underneath. It
     # writes the numerator `2*(x^2 + y^2 + 18)`, which is the same number of
-    # terms with the 2 taken outside.
+    # terms with the 2 taken outside and is not a form this can hold - see
+    # `test_a_numeric_factor_stays_among_the_terms_it_divides`.
     ("1/(9 + x^2 + (y - 3)^2) + 1/(9 + x^2 + (y + 3)^2)",
      "(2*x^2 + 2*y^2 + 36)/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y + 18))"),
     # A denominator free of the primary variable belongs to a coefficient, so
@@ -248,6 +249,41 @@ RATIONAL_FORM = [
 @pytest.mark.parametrize(("text", "expected"), RATIONAL_FORM, ids=str)
 def test_a_sum_of_ratios_is_written_over_one_denominator(text, expected):
     assert simp(text) == expected
+
+
+#: What a quotient's numerator has in common, written outside it, which is the
+#: form Derive's own gcd leaves behind and prints. Checked against the original.
+NUMERATOR_CONTENT = [
+    ("(x^2 + x)/n", "x*(x + 1)/n"),
+    ("(a x + a y)/z", "a*(x + y)/z"),
+    ("(x y + x)/z", "x*(y + 1)/z"),
+    ("(n^2 + n)/(x + 1)", "n*(n + 1)/(x + 1)"),
+    ("(x^2 + x)/(2 y)", "x*(x + 1)/(2*y)"),
+    # A common factor and not a factorization: these two have nothing in
+    # common term by term, and Derive prints them as they stand as well.
+    ("(x^2 - 1)/(y + 1)", "(x^2 - 1)/(y + 1)"),
+    ("(x^2 + 2 x + 1)/y", "(x^2 + 2*x + 1)/y"),
+    # Nothing divided is no numerator to read: a polynomial keeps its terms.
+    ("x^2 + x", "x^2 + x"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), NUMERATOR_CONTENT, ids=str)
+def test_a_quotient_carries_its_numerator_s_common_factor_outside(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_numeric_factor_stays_among_the_terms_it_divides():
+    """`(2*x + 2)/y` and not `2*(x + 1)/y`, where Derive writes the second.
+
+    Not a judgement about which reads better. Sympy multiplies a number back
+    over a sum as it builds one, so the second form is one no answer can be
+    written in: printing it and reading the print back gives the first, and an
+    entry whose text and tree disagree is what `test_simplify_corpus` fails on.
+    A factor with a variable in it survives that round trip and is taken out.
+    """
+    assert simp("(2 x + 2)/y") == "(2*x + 2)/y"
+    assert simp("(2 x y + 2 y)/z") == "2*y*(x + 1)/z"
 
 
 #: A number in front of a sum, which is the same rule seen from the other side:

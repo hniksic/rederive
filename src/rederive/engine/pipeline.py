@@ -497,6 +497,7 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
         # may be decidable now, so the conditionals are offered once more.
         thawed = _reconditioned(_thawed(expression, frozen), context)
         expression = _resolved(thawed, context, _kept)
+    expression = _numerators(expression)
     return approximated(_commanded(_canonical(expression), context), context)
 
 
@@ -1022,7 +1023,51 @@ def _restored(expression: sp.Basic, formulas: dict[sp.Basic, sp.Basic]) -> sp.Ba
     for value, factored in formulas.items():
         if _same_polynomial(expression, value):
             return factored
-    return _attempt(expression, lambda e: e.xreplace(formulas)) or expression
+    # Asked for explicitly rather than by truth value: an answer that is a
+    # relation raises when a `Basic` is used as a condition, and one that is
+    # zero is falsy.
+    swapped = _attempt(expression, lambda e: e.xreplace(formulas))
+    return expression if swapped is None else swapped
+
+
+def _numerators(expression: sp.Basic) -> sp.Basic:
+    """The common factor of a quotient's numerator, written outside it.
+
+    Derive's rational functions carry their numerator as content times a
+    primitive part, which is what a gcd leaves behind and what it prints:
+    `(n^2 + n)/(x + 1)` is `n*(n + 1)/(x + 1)`. Only a common factor is taken
+    out, not a factorization - `(x^2 - 1)/(y + 1)` and `(x^2 + 2*x + 1)/y`
+    are printed as they stand, both there and here.
+    """
+
+    def rewrite(quotient: sp.Basic) -> sp.Basic:
+        numerator, denominator = sp.fraction(quotient)
+        if not isinstance(numerator, sp.Add) or not denominator.free_symbols:
+            return quotient
+        candidate = _attempt(numerator, sp.factor_terms)
+        if candidate is None or not isinstance(candidate, sp.Mul):
+            return quotient
+        # A numeric factor is left where it was. Sympy multiplies a number back
+        # over a sum as it builds one, so `2*(x + 1)/y` is not a form this can
+        # hold: the answer would print as one expression and read back as
+        # another, which the corpus checks for and Derive's own `2*(x^2 + y^2 +
+        # 18)/...` is.
+        if candidate.as_coeff_Mul()[1].is_Add:
+            return quotient
+        return candidate / denominator
+
+    rewritten = _attempt(expression, lambda e: e.replace(_is_quotient, rewrite))
+    return expression if rewritten is None else rewritten
+
+
+def _is_quotient(expression: sp.Basic) -> bool:
+    # A `Mul` need not be one of expressions: an undecidable four-argument `IF`
+    # carries a truth value, and sympy builds a product out of that too.
+    if not isinstance(expression, sp.Mul):
+        return False
+    if not all(isinstance(factor, sp.Expr) for factor in expression.args):
+        return False
+    return sp.fraction(expression)[1] != 1
 
 
 def _same_polynomial(expression: sp.Basic, value: sp.Basic) -> bool:
