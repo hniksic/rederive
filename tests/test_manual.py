@@ -171,6 +171,8 @@ NEVER_TO_HOLD = {
         "absolute-value bars cannot be read back in; the engine writes ABS",
     "test_the_piecewise_functions[MIN(x, y)-(x + y)/2 - |x - y|/2]":
         "absolute-value bars cannot be read back in; the engine writes ABS",
+    "test_a_square_rooted_is_an_absolute_value_where_the_variable_is_real":
+        "absolute-value bars cannot be read back in; the engine writes ABS",
     "test_trigonometry[ACOS(z)-pi/2 - ASIN(z)]":
         "the arc rules of 6.4 are equivalences, not rewrites; ACOS stays ACOS",
     "test_trigonometry[ACOT(z)-pi/2 - ATAN(z)]":
@@ -217,55 +219,140 @@ NOT_YET_HELD = {
     # instead of wedging the suite.
     "test_the_integral_the_manual_does_by_substitution",
     "test_the_iterates_of_the_manuals_fixed_point",
-    # Individual gaps, not yet diagnosed to a family.
-    "test_a_logarithm_difference_waits_for_a_domain_that_justifies_it",
-    "test_a_negative_order_of_differentiation_is_an_antiderivative",
+    # Collect finds the identity and writes it over two bars where the manual
+    # prints one, `COS(w - z)/2 - COS(z + w)/2`. That spelling is the one the
+    # manual's own SINH(z) and CHI(x) lines ask for, and the same gap holds MAX,
+    # MIN and NORMAL above. The argument is the other way round too: sympy signs
+    # an even or odd argument alphabetically, giving `w - z` where the order list
+    # makes `z` the main name and the manual writes `z - w`.
     "test_a_product_of_sines_collects_into_the_manuals_identity[COS(z)*"
     "COS(w)-(COS(z - w) + COS(z + w))/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
     "COS(w)-(SIN(z - w) + SIN(z + w))/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
     "SIN(w)-(COS(z - w) - COS(z + w))/2]",
-    "test_a_reversed_characteristic_interval_changes_sign",
-    "test_a_sine_of_a_sixteenth_of_pi_expands_into_radicals",
-    "test_a_singular_matrix_has_no_inverse_to_answer_with",
-    "test_a_square_rooted_is_an_absolute_value_where_the_variable_is_real",
+    # The identity is right and its order is not: a product puts the off-list
+    # `w` ahead of the listed `z`, which is what COMB(z, w) needs on its own page
+    # - `z!/(w!*(z - w)!)` - and the reverse of what these three want. Nothing
+    # read so far tells the two apart, and a rule that serves these breaks COMB.
+    # The sine wants one thing more, its terms turned round so that
+    # `SIN(z)*COS(w)` leads, where COS ahead of SIN in a sum puts `COS(z)` first.
     "test_an_angle_sum_expands_into_the_manuals_identity[COS(z + "
     "w)-COS(z)*COS(w) - SIN(z)*SIN(w)]",
     "test_an_angle_sum_expands_into_the_manuals_identity[SIN(z + "
     "w)-SIN(z)*COS(w) + COS(z)*SIN(w)]",
-    "test_an_empty_definition_makes_a_name_a_function_and_not_a_variable",
     "test_an_expanded_exponential_of_a_sum_is_a_product",
-    "test_an_expression_typed_with_a_trailing_equals_shows_both_sides",
-    "test_an_iteration_count_bounds_the_iterates",
-    "test_approx_takes_the_digits_it_is_given",
-    "test_arithmetic_on_a_whole_equation[(x^2 + 5*x + 6 = 0) - 6-x^2 + 5*x = -6]",
-    "test_arithmetic_on_a_whole_equation[4*(x^2 + 5*x + 6 = 0)-4*x^2 + 20*x + 24 = 0]",
-    "test_arithmetic_on_a_whole_equation[EXP(LN(x) = 5)-x = #e^5]",
+    # The manual's noise digits are Derive's binary floats, and an approximate
+    # number here is a rational - the simplest one within the tolerance - so it
+    # carries no error of its own to propagate. SQRT(10001) is exactly 20001/200,
+    # the cancellation is total, and 0.005 stands where Derive shows 0.00499722;
+    # `1.73205` is exactly 173205/100000, so re-approximating it at ten digits
+    # gives 1.73205 back where Derive's stored float reads 1.732050657; and the
+    # two fractions of the SQRT are quotients of whole numbers, exact at six
+    # digits, so Approximate mode reaches the 2/3 the manual keeps for Mixed.
+    # Rounding every arithmetic step instead answers 0.666534, not the manual's
+    # 0.666622. Holding these means emulating Derive's binary arithmetic bit for
+    # bit, which is a different answer to what an approximate number is.
     "test_catastrophic_cancellation_is_reported_as_the_manual_reports_it",
-    "test_exact_mode_denests_the_manuals_radicals[(243*SQRT(5) - "
-    "294*SQRT(3))^(1/3)-3*SQRT(5) - 2*SQRT(3)]",
+    "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
+    "test_reapproximating_an_approximation_keeps_its_error",
+    # The value is the manual's and the spelling is the engine's: APPROX(SQRT(3),
+    # 10) is 262087/151316, which is 1.732050807 to ten digits, and Rational
+    # notation writes the ratio. Two decisions stand between the two - an
+    # approximate number is a rational, and how many digits it is shown to is the
+    # notation's business rather than the call's - and `test_simplify` records
+    # both.
+    "test_approx_takes_the_digits_it_is_given",
+    # Two causes in one case. Exact mode needs the denesting the radical below
+    # wants: the line is (SQRT(3) + 1)^(3/2) over twice itself, and simplify,
+    # radsimp and sqrtdenest all leave it standing. Mixed mode then differs in
+    # noise and not in mathematics, and the two pull against each other, since
+    # rounding is the last step of the pipeline and an exact mode that reached
+    # 1/2 would have Mixed show 1/2 too.
+    "test_the_three_modes_on_an_expression_worth_one_half",
+    # The denesting holds and the order it is written in does not. A kernel that
+    # holds no variable sorts by its spelling, so a sum of pure surds comes out
+    # by ascending radicand. Neither direction fits the manual: 3.8 p.42 prints
+    # `SQRT(3) + SQRT(2)` and 6.3 p.104 prints `-SQRT(2)/8 - SQRT(6)/8 + 1/2`.
     "test_exact_mode_denests_the_manuals_radicals[SQRT(5 + "
     "2*SQRT(6))-SQRT(3) + SQRT(2)]",
-    "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
-    "test_newtons_finds_the_manuals_nonlinear_solution",
-    "test_reapproximating_an_approximation_keeps_its_error",
+    # A line the engine builds rather than computes - a Substitute, a Build, a
+    # Calculus operand, the copy a part-Simplify splices its answer into - is
+    # written in the tight author spelling where these want the printer's spaced
+    # one: `y+2*x` for `y + 2*x`. Which spelling such a line takes is one
+    # decision for all of them, and the tight one is what `test_manage` and
+    # `test_commands` record. The subexpression case also names its operand
+    # `#1'`, which is an annotation rather than a request: the line parser reads
+    # `#1'` as nothing at all. The root case wants `k^(1/3)^6` besides, without
+    # the fence the right-associative `^` needs to read back as the tree shown.
     "test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone",
-    "test_square_brackets_make_a_vector_rather_than_a_group",
     "test_substituting_a_root_for_a_variable_reaches_what_a_subexpression_cannot",
     "test_substitutions_for_variables_are_made_all_at_once",
+    # CHI is expanded to the difference of signs the manual gives for the case
+    # where the comparisons cannot be made, which the original answers with in
+    # every other case too, so `CHI(3, x, 1)` comes back `SIGN(x - 3)/2 -
+    # SIGN(x - 1)/2`. That is `-CHI(1, x, 3)` term for term; holding the manual's
+    # spelling needs CHI kept as a head wherever its endpoints are ordered
+    # numbers, which the `CHI(a, x, b)` case beside it expects the sign form of.
+    "test_a_reversed_characteristic_interval_changes_sign",
+    # The answer is written about the most main variable it holds, and with none
+    # of `a`, `b`, `w` on the order list that is `a`. With `w` at the head of the
+    # list the engine prints the manual's line character for character, so the
+    # whole gap is which variable is main. The list cannot simply grow a `w`:
+    # COVARIANT_METRIC_TENSOR's `v^2 + w^2` on p.238 has `v` more main than `w`,
+    # which is what unlisted names being alphabetical gives.
     "test_the_characteristic_variable_defaults_to_w",
-    "test_the_clairaut_equation_the_manual_solves",
+    # NEWTONS comes back as the ITERATES it is defined as. Three things stand in
+    # the way: `GRAD(u, x)` over a vector `u` is an inert head and not the
+    # Jacobian SOLVE.MTH builds its augmented matrix from; `LIM(m, [x, y],
+    # [a, b])` over a matrix is not carried out; and the file's iteration
+    # variable `xk` lexes as `x*k` under Character input, so ITERATES is handed a
+    # product where a variable belongs.
+    "test_newtons_finds_the_manuals_nonlinear_solution",
+    # Two gaps, both in what ODE1.MTH's own definitions need. A four-argument
+    # `IF` decides its test before the calculus pass runs, so `IF(DIF(u, x), ...)`
+    # - how the file asks whether an expression depends on a variable - is
+    # undecidable where Derive answers it. And an assignment written inside a
+    # function body is performed when the body is defined rather than when the
+    # call is made, so loading the file leaves `a_` standing for
+    # `SEP(p, q, x, y, x0, y0)` with the parameters unwritten - and `a_` is where
+    # DSOLVE1 reads its answer back out of.
     "test_the_first_order_equation_the_manual_solves",
-    "test_the_inverse_of_the_manuals_function",
-    "test_the_manuals_three_by_three_system_solved_by_inversion",
-    "test_the_pair_of_the_manuals_nonlinear_system_that_solve_can_take",
+    # `LIM(u, x, a)` where `a` holds `x` is no limit - nothing approaches a
+    # moving point - and the file means the substitution: `LIM((x*v - y)^2, y,
+    # x*v - y)` is `y^2`. The engine builds a sympy limit, so the second
+    # condition comes back as a tower of SUBS over DIF over LIM. Reading such a
+    # call as the substitution gets it to `2*v*x^2 - 2*x*y - 2*v = 0`, one common
+    # factor short of the manual's line, and costs test_simplify's
+    # `test_a_derivative_a_substitution_binds_is_not_evaluated`.
+    "test_the_clairaut_equation_the_manual_solves",
+    # `F(4)` comes back `mu^2`. A pass writes a recursive body in once, so
+    # `DIF(F(3), mu)` differentiates an opaque call that mentions no `mu` and
+    # answers zero, leaving only the `- mu*G(n - 1)` term; the empty `G(n) :=`
+    # changes nothing, the same session without it answering the same. Holding a
+    # calculus head over a call still waiting for its body reaches the manual's
+    # value, but the terms then pile up unevaluated and the size guard stops the
+    # unfolding four levels down.
+    "test_an_empty_definition_makes_a_name_a_function_and_not_a_variable",
+    # The brackets are read as the vector they are and the scalar goes in; what
+    # comes back is `[3*x + 3*y]`. The element is then written in the normal form
+    # of its main variable, which multiplies the three through where the manual's
+    # `[3*(x + y)]` keeps it folded.
+    "test_square_brackets_make_a_vector_rather_than_a_group",
+    # `2^3=` parses to a `showvalue` node, and turning that into `2^3 = 8` means
+    # computing the 8 while the line is being authored. `Session.author` is the
+    # one entry point that computes nothing: every calculation the session makes
+    # is awaited through `Runner`, which the app fills with a child process so
+    # that a long one can be aborted and the drawing process knows no sympy.
+    "test_an_expression_typed_with_a_trailing_equals_shows_both_sides",
+    # The terms are the manual's own; the order they are printed in is not.
+    # Expand's answer is ordered by the rule every sum is, where a term with a
+    # sum under the bar closes the sum it belongs to - which is the original's
+    # rule too, `(x^3 + 1)/(x + 2) + y` being `x^2 - 2*x + y - 7/(x + 2) + 4`.
+    # Here the manual puts the partial fractions first instead, `(x - 3)^-1`
+    # ahead of `(x + 2)^-2` ahead of `(x + 2)^-1`, which is no order in the
+    # degree of x. One rule cannot give both.
     "test_the_partial_fraction_expansion_of_the_manual",
-    "test_the_quadratic_formula_as_a_radical_factoring",
-    "test_the_series_inverse_of_a_function_that_has_no_closed_one",
-    "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 0)-0]",
-    "test_the_taylor_polynomials_of_the_manual[TAYLOR(SQRT(x), x, 0, 2)-?]",
-    "test_the_three_modes_on_an_expression_worth_one_half",
 }
 
 
@@ -1894,9 +1981,15 @@ async def test_the_series_solution_of_an_equation_that_has_no_closed_one(loaded)
 
 
 async def test_the_series_inverse_of_a_function_that_has_no_closed_one(loaded):
-    # 9.1 p.230.
+    # 9.1 p.230, where the printed call is one argument short: it passes four
+    # to the `TAYLOR_INVERSE(u, x, y, x0, n)` the same page declares. Read as
+    # written it binds `y := 0` and `x0 := 3` and leaves `n` free, and the
+    # original answers it with a sum over that free `n` about the point 3 -
+    # which is what this engine answers it with too. The line the manual prints
+    # is what the five-argument call gives, and the answer being written in `y`
+    # is what says so.
     session = loaded("SOLVE.MTH")
-    assert (await session.simplify("TAYLOR_INVERSE(x*#e^x, x, 0, 3)")).text == (
+    assert (await session.simplify("TAYLOR_INVERSE(x*#e^x, x, y, 0, 3)")).text == (
         "3*y^3/2 - y^2 + y"
     )
 

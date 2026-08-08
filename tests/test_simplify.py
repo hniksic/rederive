@@ -111,6 +111,11 @@ RADICALS = [
     ("SQRT(1/12)", "SQRT(3)/6"),
     ("SQRT(4 - 2*SQRT(3))", "SQRT(3) - 1"),
     ("SQRT(2)*SQRT(3)", "SQRT(6)"),
+    # A cube root denests too, where the radicand is a sum of surds that some
+    # cube of one is. Sympy denests square roots and no others, so this is the
+    # minimal polynomial factored over the field the surds generate.
+    ("(243*SQRT(5) - 294*SQRT(3))^(1/3)", "3*SQRT(5) - 2*SQRT(3)"),
+    ("(10 + 6*SQRT(3))^(1/3)", "SQRT(3) + 1"),
 ]
 
 COMBINATORIAL = [
@@ -815,18 +820,21 @@ def test_an_integral_that_will_not_evaluate_survives_as_itself():
     assert simp("INT(SIN(x)/LN(x), x)") == "INT(SIN(x)/LN(x), x)"
 
 
-def test_a_taylor_polynomial_that_does_not_exist_survives_as_itself():
-    """No polynomial, no answer.
+def test_a_taylor_polynomial_that_does_not_exist_is_undefined():
+    """No derivatives at the point, no polynomial.
 
-    The derivatives of `SQRT(x)` at zero are not finite, so there is no first
-    order Taylor polynomial; Derive answers such a case with complex infinity
-    or `?`, and the expansion the head stands for comes back instead. What
-    sympy has for it - the series `SQRT(x)`, which is no polynomial - would be
-    an answer to a different question.
+    The derivatives of `SQRT(x)` at zero are not finite, so no term past the
+    zeroth can be summed and the answer is `?`, which is what Derive answers
+    such a case with. What sympy has for it - the series `SQRT(x)`, which is no
+    polynomial - would be an answer to a different question.
     """
-    assert simp("TAYLOR(SQRT(x), x, 0, 1)") == "TAYLOR(SQRT(x), x, 0, 1)"
-    assert simp("TAYLOR(LN(x), x, 0, 2)") == "TAYLOR(LN(x), x, 0, 2)"
-    # An order that is no order to expand to leaves the head alone as well.
+    assert simp("TAYLOR(SQRT(x), x, 0, 1)") == "?"
+    assert simp("TAYLOR(LN(x), x, 0, 2)") == "?"
+    # The order the derivatives do reach is the polynomial of that order, and
+    # `SQRT(0)` is a value like any other: the manual's `TAYLOR(SQRT(x), x, 0,
+    # 0)` is 0.
+    assert simp("TAYLOR(SQRT(x), x, 0, 0)") == "0"
+    # An order that is no order to expand to leaves the head alone.
     assert simp("TAYLOR(SIN(x), x, 0, n)") == "TAYLOR(SIN(x), x, 0, n)"
 
 
@@ -1321,7 +1329,7 @@ def test_plus_or_minus_simplifies_its_argument_and_seals_it_in():
 
 
 def test_a_singular_matrix_inverse_comes_back_unsimplified():
-    assert simp("[[1, 2], [2, 4]]^-1") == "[[1, 2], [2, 4]]^(-1)"
+    assert simp("[[1, 2], [2, 4]]^-1") == "[[1, 2], [2, 4]]^-1"
     assert simp("[[1, 2], [3, 4]]^-1") == "[[-2, 1], [3/2, -1/2]]"
 
 
@@ -2830,15 +2838,6 @@ def test_a_heading_heads_its_column_only_while_it_is_a_heading():
     assert once.text.startswith("[[p, q, p XOR q], ")
     again = simplify(once.node, Context())
     assert again.text.startswith("[[p, q, NOT p AND q OR p AND NOT q], ")
-
-
-# -- what the engine does not do yet ------------------------------------------
-
-
-@pytest.mark.skip(reason="no cube-root denesting: sqrtdenest handles squares only")
-def test_a_nested_cube_root_is_denested():
-    # Derive gets this one; sympy has no cube-root denesting to borrow.
-    assert simp("(243*SQRT(5) - 294*SQRT(3))^(1/3)") == "3*SQRT(5) - 2*SQRT(3)"
 
 
 #: The expressions the corpus holds that settle only on a second pass are

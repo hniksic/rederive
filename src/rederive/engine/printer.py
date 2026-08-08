@@ -800,10 +800,28 @@ class AuthorPrinter(sp.StrPrinter):
         `-2 + 2*#i` keeps its minus, the real part leading whatever its sign.
         """
         terms = _term_order(super()._as_ordered_terms(expr, order), self.context.order)
-        if len(terms) == 2 and terms[0].could_extract_minus_sign():
-            if not terms[1].could_extract_minus_sign() and not terms[1].has(sp.I):
+        if len(terms) == 2 and self._minus_first(terms[0]):
+            if not self._minus_first(terms[1]) and not terms[1].has(sp.I):
                 return [terms[1], terms[0]]
         return terms
+
+    def _minus_first(self, term: sp.Basic) -> bool:
+        """Whether `term` is written with a leading minus sign.
+
+        Sympy's own sign extraction answers for all but one kind of term: a
+        quotient hands its numerator's sign out in front of the bar, which is a
+        rule of the writing rather than of the expression. The two meet only in
+        the text, so a quotient is asked by writing it.
+        """
+        if term.could_extract_minus_sign():
+            return True
+        if not isinstance(term, sp.Mul):
+            return False
+        if not all(isinstance(factor, sp.Expr) for factor in term.args):
+            return False
+        if sp.fraction(term)[1] == 1:
+            return False
+        return self._print(term).startswith("-")
 
     # -- names --------------------------------------------------------------
 
@@ -894,11 +912,14 @@ class AuthorPrinter(sp.StrPrinter):
         A power of `#e` is left alone. Sympy holds `#e^(-z)` as an exponential
         rather than a power, and `#e^(-z)/2` is what the notation writes it as.
 
-        Sign extraction is sympy's, with one addition: a bracket that is
+        Sign extraction is sympy's, with two additions. A bracket that is
         nothing but negated terms hands its sign to the product, so that a
         coefficient of `-b - 2` is written `- z*(b + 2)` and not
-        `z*(-b - 2)`. The order of the factors is the order list's, here and
-        in `_beside`.
+        `z*(-b - 2)`. And a numerator that would lead with a minus hands its
+        sign to the whole quotient, `-(x^2 - y^2 - 2)/2` rather than
+        `(-x^2 + y^2 + 2)/2`: a rational function carries its numerator's sign
+        out in front of the bar, where a sum standing on its own keeps it.
+        The order of the factors is the order list's, here and in `_beside`.
         """
         sign = ""
         level = precedence(expr)
@@ -922,6 +943,12 @@ class AuthorPrinter(sp.StrPrinter):
                 below.append(factor.base if power == 1 else factor.base**power)
             else:
                 above.append(factor)
+        if below:
+            for index, factor in enumerate(above):
+                if self._leads_negative(factor):
+                    above[index] = -factor
+                    sign = "" if sign else "-"
+                    break
 
         def written(parts):
             return [self.parenthesize(part, level, strict=False) for part in parts]
@@ -934,6 +961,18 @@ class AuthorPrinter(sp.StrPrinter):
             # which is the same number drawn as a fraction inside a fraction.
             text += "/(" + "*".join(written(below)) + ")"
         return sign + text
+
+    def _leads_negative(self, factor: sp.Basic) -> bool:
+        """Whether a bracket would be written with a leading minus sign.
+
+        The terms in the order they will be written in, which is where the
+        rule that turns a pair round comes in: `2 - x` leads with a plus and
+        `-x^2 + y^2 + 2` does not.
+        """
+        if not isinstance(factor, sp.Add):
+            return False
+        terms = self._as_ordered_terms(factor)
+        return bool(terms) and terms[0].could_extract_minus_sign()
 
     def _beside(self, written: str, rest) -> str:
         """A coefficient already written, times the rest of its product.

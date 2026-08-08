@@ -43,7 +43,7 @@ command total. Nothing sympy does can turn a valid entry into an error.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from fractions import Fraction
 from math import gcd
 
@@ -304,13 +304,53 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
 
     `decide` off is soLve's pipeline, which wants the sides simplified and the
     relation left standing to be solved.
+
+    Two matrices of one shape are related element by element, which is what
+    section 8.5 reads a solved system off: `[[x], [y], [z]] = A^-1 . b` comes
+    back as the three equations it stands for.
     """
     left = _transform(expression.lhs, context, decide)
     right = _transform(expression.rhs, context, decide)
+    spread = _spread(expression.func, left, right, context, decide)
+    if spread is not None:
+        return spread
+    return _stated(expression.func, left, right, context, decide)
+
+
+def _spread(
+    func, left: sp.Basic, right: sp.Basic, context: Context, decide: bool
+) -> sp.Basic | None:
+    """A relation between two matrices, stated of each pair of elements.
+
+    None where the sides are not two matrices of one shape, which is a
+    statement about the matrices themselves and is decided whole. The answer
+    keeps the shape it was made from, a row of them being written flat as any
+    one-row matrix is.
+    """
+    if not isinstance(left, sp.MatrixBase) or not isinstance(right, sp.MatrixBase):
+        return None
+    if left.shape != right.shape or not left.rows or not left.cols:
+        return None
+    rows = [
+        InertVector(
+            *(
+                _stated(func, left[row, col], right[row, col], context, decide)
+                for col in range(left.cols)
+            )
+        )
+        for row in range(left.rows)
+    ]
+    return rows[0] if left.rows == 1 else InertVector(*rows)
+
+
+def _stated(
+    func, left: sp.Basic, right: sp.Basic, context: Context, decide: bool
+) -> sp.Basic:
+    """One relation over two sides already simplified, answered where it decides."""
     try:
-        relation = expression.func(left, right, evaluate=False)
+        relation = func(left, right, evaluate=False)
     except Exception:
-        relation = expression.func(left, right)
+        relation = func(left, right)
     if not (decide and isinstance(relation, Relational) and _comparable(relation)):
         return relation
     held = _decide(relation, context)
@@ -958,10 +998,18 @@ def _summation(head: sp.Sum, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Ba
     prints `n*(n + 1)*(6*n^3 + 9*n^2 + n - 1)/30` all the same. That is also
     why the pair goes into `formulas`: a factorization that is longer is one
     `_multiplied_out` would otherwise take straight back apart.
+
+    A formula is what a range of unknown length is answered by, and only that.
+    A range of known length is added up term by term, and the total is a sum
+    like any other: `SOLVE.MTH`'s Lagrange expansion over three terms is
+    `3*y^3/2 - y^2 + y` in the manual (9.1, p.230), not that polynomial's
+    factorization.
     """
     value = _attempt(head, lambda s: s.doit(deep=False))
     if value is None:
         return _undecided(head)
+    if _counted(head):
+        return value
     if isinstance(value, sp.MatrixBase):
         # A sum of vectors is summed element by element, and each element is a
         # closed form of its own: `SUM([k, k^2], k, 0, n)` is a vector of the
@@ -969,6 +1017,18 @@ def _summation(head: sp.Sum, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Ba
         entries = _attempt(value, lambda m: m.applyfunc(lambda e: _factored(e, formulas)))
         return value if entries is None else entries
     return _factored(value, formulas)
+
+
+def _counted(head: sp.Sum) -> bool:
+    """Whether every range of `head` holds a known number of terms.
+
+    Which is what tells a sum that was added up from one a formula answered.
+    A bound that is a symbol makes the count unknown, and so does an infinite
+    one: neither `SUM(k, k, 1, n)` nor `SUM(2^-k, k, 0, inf)` is a row of terms.
+    """
+    return all(
+        len(limit) == 3 and (limit[2] - limit[1]).is_Integer for limit in head.limits
+    )
 
 
 def _factored(value: sp.Basic, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Basic:
@@ -2309,18 +2369,136 @@ def _power_terms(power: sp.Pow) -> int:
 
 
 def _denested(expression: sp.Basic) -> sp.Basic:
-    """Every square root denested on its own.
+    """Every radical denested on its own.
 
     One radical at a time rather than the whole expression at once, because
     `sqrtdenest` gives up on a sum of nested roots and gets each of them
     separately: `SQRT(5 + SQRT(24)) + SQRT(5 - SQRT(24))` is `2*SQRT(3)` only
     if the two terms are denested apart.
+
+    `sqrtdenest` is a square root's rule and the whole of what sympy offers.
+    Section 3.8's other example is a cube root of a sum of surds, which is
+    `_flat_root`'s.
     """
     return expression.replace(
-        lambda e: isinstance(e, sp.Pow) and e.exp is sp.S.Half,
-        sp.sqrtdenest,
+        lambda e: isinstance(e, sp.Pow) and e.exp.is_Rational and e.exp.q > 1,
+        lambda e: sp.sqrtdenest(e) if e.exp is sp.S.Half else _flat_root(e),
         simultaneous=False,
     )
+
+
+#: How big a polynomial denesting a root of surds may work in. An nth root of
+#: a number written over k square roots satisfies one of degree n*2^k at worst,
+#: which is twelve for 3.8's own `(243*SQRT(5) - 294*SQRT(3))^(1/3)` and four
+#: as it turns out. The bound is read off the radical before any polynomial is
+#: built, so a taller tower of roots costs nothing to decline: what it would
+#: cost is the point, a minimal polynomial of a few hundred terms being
+#: minutes of work to prove a root nobody expected does not exist.
+_DENESTING_DEGREE = 12
+
+#: The variable the minimal polynomial of a radical is written in.
+_ROOT = sp.Dummy("root")
+
+
+def _flat_root(power: sp.Pow) -> sp.Basic:
+    """A root of a sum of surds written without the outer root, where it can be.
+
+    `(243*SQRT(5) - 294*SQRT(3))^(1/3)` is `3*SQRT(5) - 2*SQRT(3)`: the cube
+    root is a number of the very field the radicand is written in, so it has a
+    spelling with one root fewer. Whether it does is a question about the
+    minimal polynomial - the root denests exactly when that polynomial has a
+    linear factor over the field the surds generate - and factoring over an
+    extension is what answers it.
+
+    The linear factor is the candidate and not the answer: a quartic over the
+    field offers four of them, one per branch, and only one is the value of the
+    principal root the radicand was written with. So a candidate is kept only
+    once raising it back is the radicand again and its value is the radical's
+    own.
+    """
+    exponent = power.exp
+    if exponent.p != 1 or not power.base.is_number or power.base.is_Rational:
+        return power
+    field = _surd_field(power.base)
+    if field is None or exponent.q * 2 ** len(field) > _DENESTING_DEGREE:
+        return power
+    try:
+        minimal = sp.minimal_polynomial(power, _ROOT)
+        factored = sp.factor(minimal, extension=list(field))
+    except Exception:
+        return power
+    for factor in sp.Mul.make_args(factored):
+        candidate = _linear_root(factor)
+        if candidate is None or candidate.count_ops() >= power.count_ops():
+            continue
+        if sp.expand(sp.radsimp(candidate**exponent.q - power.base)) != 0:
+            continue
+        if _same_number(candidate, power):
+            return candidate
+    return power
+
+
+def _surd_field(radicand: sp.Basic) -> tuple[sp.Basic, ...] | None:
+    """The square roots `radicand` is written over, or None if it is not written
+    over square roots.
+
+    A sum of rational multiples of square roots of rationals is what denesting
+    has a field for, and the degree of that field is what the bound above is
+    read from. Anything else - a transcendental, a nested root, a cube root
+    among the terms - is left alone rather than handed to a factoring that
+    would have to build the field first.
+    """
+    surds = set()
+    for term in sp.Add.make_args(radicand):
+        for factor in sp.Mul.make_args(term):
+            if factor.is_Rational:
+                continue
+            root = _rational_square_root(factor)
+            if root is None:
+                return None
+            surds.add(root)
+    if not surds:
+        return None
+    return tuple(sorted(surds, key=sp.default_sort_key))
+
+
+def _rational_square_root(factor: sp.Basic) -> sp.Basic | None:
+    """`SQRT(5)` for `SQRT(5)` and for `1/SQRT(5)`, and None for anything else."""
+    if not isinstance(factor, sp.Pow) or abs(factor.exp) != sp.S.Half:
+        return None
+    if not (factor.base.is_Rational and factor.base.is_positive):
+        return None
+    return sp.sqrt(factor.base)
+
+
+def _linear_root(factor: sp.Basic) -> sp.Basic | None:
+    """The root of `factor`, if it is linear in the variable it is written in."""
+    try:
+        polynomial = sp.Poly(factor, _ROOT)
+    except sp.PolynomialError:
+        return None
+    if polynomial.degree() != 1:
+        return None
+    above, below = polynomial.all_coeffs()
+    return sp.radsimp(-below / above)
+
+
+def _same_number(candidate: sp.Basic, power: sp.Pow) -> bool:
+    """Whether `candidate` is the very value `power` stands for.
+
+    The algebra has already said the two are roots of one number; this is what
+    tells the branches of it apart, and thirty digits are enough for that
+    because two branches of a root are a whole angle apart and not a rounding
+    apart. The comparison is against the size of the value for the same
+    reason: what would fail a fixed tolerance is a large root, where the two
+    branches are further apart still.
+    """
+    try:
+        difference = complex(sp.N(candidate - power, 30))
+        size = abs(complex(sp.N(power, 30)))
+    except (TypeError, ValueError):
+        return False
+    return abs(difference) < 1e-20 * (1 + size)
 
 
 # -- what each mode selects --------------------------------------------------
@@ -2609,7 +2787,8 @@ def _logarithms(expression: sp.Basic, context: Context) -> sp.Basic:
     `logcombine` and `expand_log` both take a `force` argument that assumes
     every argument positive. It is not used, in either direction: `LN(x^2 - x)
     - LN(x)` collects only once `x` has been declared away from the values that
-    would make it false.
+    would make it false. What the declaration is worth is `_nonnegatively`'s
+    business.
 
     Auto is the mixed direction 6.2 describes, the sum rule rightward and the
     power rule leftward: `3*LN(2) + LN(5)` collects to `LN(40)` and `LN(256)`
@@ -2620,11 +2799,41 @@ def _logarithms(expression: sp.Basic, context: Context) -> sp.Basic:
     """
     match context.logarithm:
         case Direction.COLLECT:
-            return _forced(expression, sp.logcombine)
+            return _forced(expression, _nonnegatively(sp.logcombine))
         case Direction.EXPAND:
-            return _forced(expression, sp.expand_log)
-    expression = _gated(expression, sp.logcombine)
+            return _forced(expression, _nonnegatively(sp.expand_log))
+    expression = _gated(expression, _nonnegatively(sp.logcombine))
     return _forced(expression, _extracted_powers)
+
+
+def _nonnegatively(rewrite: Rewrite) -> Rewrite:
+    """`rewrite` run with every nonnegative variable standing up as a positive one.
+
+    6.2 states the logarithm rules for a nonnegative argument, and sympy's
+    carry a strictly positive one: `logcombine` and `expand_log` ask whether an
+    argument `is_positive`, so a variable declared `[0, inf)` is one they pass
+    over. Between the two conditions lies the single point zero, where both
+    sides of every rule are the same infinity, so the manual's condition is the
+    one to work under.
+
+    A declared variable only. An undeclared one is neither, and `LN(x^2 - x) -
+    LN(x)` stays apart under it, which is the whole of what the rules are gated
+    on.
+    """
+
+    def run(expression: sp.Basic) -> sp.Basic:
+        standing = {
+            symbol: sp.Dummy(symbol.name, **{**symbol.assumptions0, "positive": True})
+            for symbol in expression.free_symbols
+            if isinstance(symbol, sp.Symbol) and symbol.is_nonnegative
+            if not symbol.is_positive
+        }
+        if not standing:
+            return rewrite(expression)
+        back = {dummy: symbol for symbol, dummy in standing.items()}
+        return rewrite(expression.xreplace(standing)).xreplace(back)
+
+    return run
 
 
 def _extracted_powers(expression: sp.Basic) -> sp.Basic:
@@ -2815,7 +3024,17 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
             # `10^7·π` is `10^7·355/113` worked out and then rounded, which is
             # `31415929` and not the `31415900` that six digits of the product
             # would leave.
-            return _rounded(_approximated(expression, digits), digits)
+            #
+            # What the first pass already rounded is left alone by the second,
+            # since rounding an approximate number again is not idempotent: the
+            # tolerance is measured from wherever the value now stands, so a
+            # second pass may reach a simpler rational a whole tolerance away
+            # and cost the last digit shown. Only what the exact arithmetic
+            # between the approximate numbers made of them is rounded here.
+            approximate: set[sp.Rational] = set()
+            return _rounded(
+                _approximated(expression, digits, approximate), digits, approximate
+            )
         case Precision.MIXED:
             return _approximated(expression, digits)
     return expression
@@ -2828,17 +3047,23 @@ def _evalf(expression: sp.Basic, digits: int) -> sp.Basic:
         return expression
 
 
-def _rounded(expression: sp.Basic, digits: int) -> sp.Basic:
+def _rounded(
+    expression: sp.Basic, digits: int, approximate: Set[sp.Rational] = frozenset()
+) -> sp.Basic:
     """Every number in `expression` as the simplest rational at this precision.
 
     Which is what Derive's approximate numbers are, so this is what makes
     `2*y*3` come out `6*y` in every precision mode - only the numbers that
     actually need digits get them - and what leaves an approximate answer an
     exact value that `Notation := Rational` can write out in full.
+
+    A number in `approximate` is one this precision has already rounded, and it
+    stands as it is.
     """
     try:
         return expression.replace(
-            lambda part: isinstance(part, sp.Rational | sp.Float),
+            lambda part: isinstance(part, sp.Rational | sp.Float)
+            and part not in approximate,
             lambda part: _simplest(part, digits),
             simultaneous=False,
         )
@@ -2851,7 +3076,9 @@ def _simplest(number: sp.Basic, digits: int) -> sp.Rational:
     return sp.Rational(simplest(Fraction(value.p, value.q), digits))
 
 
-def _approximated(expression: sp.Basic, digits: int) -> sp.Basic:
+def _approximated(
+    expression: sp.Basic, digits: int, approximate: set[sp.Rational] | None = None
+) -> sp.Basic:
     """Approximate the irrational operations, keep the rational ones exact.
 
     Innermost first, so that a rational subexpression is computed before
@@ -2860,14 +3087,19 @@ def _approximated(expression: sp.Basic, digits: int) -> sp.Basic:
     in and never reaches it.
 
     What each irrational is replaced by is a rational, since that is what an
-    approximate number is; the arithmetic around it stays exact.
+    approximate number is; the arithmetic around it stays exact. `approximate`
+    collects those rationals for the caller, which is how the rounding of the
+    finished answer knows what it has already rounded.
     """
+
+    def approximation(part: sp.Basic) -> sp.Basic:
+        value = _approximate(part, digits)
+        if approximate is not None and value is not part:
+            approximate.add(value)
+        return value
+
     try:
-        return expression.replace(
-            _needs_digits,
-            lambda part: _approximate(part, digits),
-            simultaneous=False,
-        )
+        return expression.replace(_needs_digits, approximation, simultaneous=False)
     except Exception:
         return expression
 

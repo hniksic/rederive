@@ -255,17 +255,30 @@ def _split(base: sp.Expr, variable: sp.Symbol, complex_allowed: bool) -> sp.Expr
     conjugates: list[sp.Expr] = []
     for root, multiplicity in roots.items():
         if complex_allowed or root.is_real is not False:
-            # Written `x + (-r)` rather than `x - r` so that a root already
-            # carrying a minus sign has it folded into the numerator
-            # `together` builds, which is where the original puts it:
-            # `x + (SQRT(b^2 - 4*a*c) + b)/(2*a)`, not `x - (-b - SQRT(...))/(2*a)`.
-            product.append((variable + sp.together(-root)) ** multiplicity)
+            product.append(_linear(variable, root) ** multiplicity)
         else:
             conjugates.extend([root] * multiplicity)
     paired = _paired(conjugates, variable)
     if paired is None:
         return base
     return sp.Mul(*product, *paired)
+
+
+def _linear(variable: sp.Symbol, root: sp.Expr) -> sp.Expr:
+    """The factor `x - r`, with the minus sign wherever the original puts it.
+
+    Over a common denominator either way, since a root of a quadratic is a
+    quotient and the original writes it as one. Which side of the bar the sign
+    lands on is what is left to choose, and the original leaves it out of the
+    numerator: the quadratic formula's two factors are
+    `x + (SQRT(b^2 - 4*a*c) + b)/(2*a)` and `x - (SQRT(b^2 - 4*a*c) - b)/(2*a)`
+    (4.6, p.79), each written with the sign in the operator rather than on the
+    leading term underneath it.
+    """
+    root = sp.together(root)
+    if root.could_extract_minus_sign():
+        return variable + sp.together(-root)
+    return variable - root
 
 
 def _paired(roots: list[sp.Expr], variable: sp.Symbol) -> list[sp.Expr] | None:

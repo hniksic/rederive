@@ -208,9 +208,16 @@ class Taylor(sp.Function):
         expansion is cut off before, so the order asked for is one less than
         the one passed on. The order term goes: a Taylor polynomial is a
         polynomial, which is also the test of whether one was found - a series
-        in fractional powers, or one with a logarithm in it, is not one, and
-        the head stays as it was written rather than answer with something that
-        is no polynomial.
+        in fractional powers, or one with a logarithm in it, is no polynomial,
+        and such an expansion is not what was asked for.
+
+        Where it is not one, the definition answers instead. A series and a
+        Taylor polynomial are the same thing only where the function has the
+        derivatives the polynomial is summed from, and where it has not, the
+        definition says what the original says: `TAYLOR(SQRT(x), x, 0, 0)` is
+        0, the value at the point being all the order asks for, and
+        `TAYLOR(SQRT(x), x, 0, 2)` is `?`, the first derivative at zero being
+        infinite (7.3, p.176).
         """
         expression, variable, point, order = self.args
         if not (order.is_Integer and order >= 0):
@@ -219,7 +226,52 @@ class Taylor(sp.Function):
             series = expression.series(variable, point, int(order) + 1).removeO()
         except Exception:
             return self
-        return series if series.is_polynomial(variable) else self
+        if series.is_polynomial(variable):
+            return series
+        summed = _summed_from_derivatives(expression, variable, point, int(order))
+        return self if summed is None else summed
+
+
+def _summed_from_derivatives(
+    expression: sp.Basic, variable: sp.Basic, point: sp.Basic, order: int
+) -> sp.Basic | None:
+    """The Taylor polynomial as its definition writes it, term by term.
+
+    Every term is a derivative at the point over a factorial, and a derivative
+    that is not finite there leaves the whole polynomial undefined - `?`, which
+    is `nan`. A point the derivatives cannot be read at leaves nothing to sum
+    and comes back as none.
+    """
+    terms: list[sp.Basic] = []
+    derivative = expression
+    for degree in range(order + 1):
+        try:
+            if degree:
+                derivative = sp.diff(derivative, variable)
+            coefficient = _at_the_point(derivative, variable, point)
+        except Exception:
+            return None
+        if coefficient is None:
+            return None
+        if coefficient.has(sp.nan, sp.zoo) or coefficient.is_infinite:
+            return sp.nan
+        terms.append(coefficient * (variable - point) ** degree / sp.factorial(degree))
+    return sp.Add(*terms)
+
+
+def _at_the_point(
+    expression: sp.Basic, variable: sp.Basic, point: sp.Basic
+) -> sp.Basic | None:
+    """What `expression` is worth at `point`: its value, or its limit there.
+
+    The limit is what a derivative that is `0/0` at the point is worth, which
+    is what every derivative of `EXP(-1/x^2)` at zero is.
+    """
+    value = expression.subs(variable, point)
+    if not (value.has(sp.nan, sp.zoo) or value.is_infinite):
+        return value
+    limit = sp.limit(expression, variable, point)
+    return None if isinstance(limit, sp.Limit) else limit
 
 
 class Approx(sp.Function):
@@ -563,14 +615,52 @@ class _Converter:
 
     # -- operators ----------------------------------------------------------
 
+    def over_equations(
+        self, build: Callable[[list[sp.Basic]], sp.Basic], operands: list[sp.Basic]
+    ) -> sp.Basic | None:
+        """`build` done to both sides of whichever `operands` are equations.
+
+        Sections 4.13 pp.108-111: an equation is an expression like any other,
+        so arithmetic on one is arithmetic on both of its sides.
+        `(x^2 + 5*x + 6 = 0) - 6` is `x^2 + 5*x = -6`, `4*(x^2 + 5*x + 6 = 0)`
+        is `4*x^2 + 20*x + 24 = 0`, and `EXP(LN(x) = 5)` is `x = #e^5`. An
+        operand that is no equation stands for itself on either side, and
+        several equations are taken side by side.
+
+        None where there is no equation among the operands, which is the
+        ordinary case and leaves the caller to build what it was going to
+        build.
+
+        Equality and nothing else. Whatever is done to both sides of an
+        equation leaves an equation, which is what makes the mapping sound for
+        every operation there is; an order relation survives less than that -
+        multiplying by a negative reverses it - so one stands as it was
+        written.
+        """
+        if not any(isinstance(operand, sp.Equality) for operand in operands):
+            return None
+        sides = [
+            [
+                operand.args[index] if isinstance(operand, sp.Equality) else operand
+                for operand in operands
+            ]
+            for index in (0, 1)
+        ]
+        return self._related(sp.Eq, build(sides[0]), build(sides[1]))
+
     def _sum(self, node: Node) -> sp.Basic:
         """A run of terms, with one operator per gap."""
         operators = str(node.value)
-        terms = [self.convert(node.children[0])]
-        for index, child in enumerate(node.children[1:]):
-            term = self.convert(child)
-            terms.append(-term if operators[index] == "-" else term)
-        return sp.Add(*terms)
+
+        def added(terms: list[sp.Basic]) -> sp.Basic:
+            signed = [terms[0]]
+            for index, term in enumerate(terms[1:]):
+                signed.append(-term if operators[index] == "-" else term)
+            return sp.Add(*signed)
+
+        terms = self._children(node)
+        mapped = self.over_equations(added, terms)
+        return added(terms) if mapped is None else mapped
 
     def _product(self, node: Node) -> sp.Basic:
         """A run of factors.
@@ -584,6 +674,10 @@ class _Converter:
         matrices, and `_dot` is where that product is built.
         """
         factors = self._children(node)
+        mapped = self.over_equations(self._multiplied, factors)
+        return self._multiplied(factors) if mapped is None else mapped
+
+    def _multiplied(self, factors: list[sp.Basic]) -> sp.Basic:
         if not any(_symbolic_matrix(factor) for factor in factors):
             try:
                 return sp.Mul(*factors)
@@ -603,8 +697,17 @@ class _Converter:
             return self._dot(left, right)
 
     def _binop(self, node: Node) -> sp.Basic:
-        left, right = self._children(node)
-        match str(node.value):
+        operands = self._children(node)
+        operator = str(node.value)
+
+        def applied(sides: list[sp.Basic]) -> sp.Basic:
+            return self._operated(operator, sides[0], sides[1])
+
+        mapped = self.over_equations(applied, operands)
+        return applied(operands) if mapped is None else mapped
+
+    def _operated(self, operator: str, left: sp.Basic, right: sp.Basic) -> sp.Basic:
+        match operator:
             case "/":
                 # Dividing by a matrix is multiplying by its inverse, which is
                 # the only reading the notation has for it. Sympy declines the
@@ -623,6 +726,11 @@ class _Converter:
                 try:
                     return left**right
                 except Exception:
+                    # A power sympy declines over a matrix written out is a
+                    # singular one's inverse. It is the same unevaluated head a
+                    # symbolic matrix's is, and `u^-1` is what it prints as.
+                    if isinstance(left, sp.MatrixBase):
+                        return sp.MatPow(left, right)
                     return sp.Pow(left, right, evaluate=False)
         return self._dot(left, right)
 
@@ -659,8 +767,17 @@ class _Converter:
         return Dot(left, right)
 
     def _unop(self, node: Node) -> sp.Basic:
-        operand = self.convert(node.children[0])
-        match str(node.value):
+        operator = str(node.value)
+
+        def applied(sides: list[sp.Basic]) -> sp.Basic:
+            return self._prefixed(operator, sides[0])
+
+        operands = [self.convert(node.children[0])]
+        mapped = self.over_equations(applied, operands)
+        return applied(operands) if mapped is None else mapped
+
+    def _prefixed(self, operator: str, operand: sp.Basic) -> sp.Basic:
+        match operator:
             case "-":
                 return -operand
             case "+-":
@@ -855,9 +972,18 @@ class _Converter:
         take a side of until the `SOLVE` has become the vector it stands for.
         The head may stand anywhere inside the argument, `RHS(SOLVE(z, y) SUB
         1)` being how the shipped ODE library reads a solution out.
+
+        A function of numbers given an equation is applied to both sides of it,
+        `MAPPED_OVER_EQUATIONS` saying which functions those are.
         """
         if any(_holds_command(argument) for argument in args):
             return self.opaque(name, args)
+        if name in MAPPED_OVER_EQUATIONS:
+            mapped = self.over_equations(
+                lambda sides: self.call(name, sides), list(args)
+            )
+            if mapped is not None:
+                return mapped
         handler = FUNCTIONS.get(name) or SYMPY_HEADS.get(name)
         if handler is None:
             return self.opaque(name, args)
@@ -1055,7 +1181,61 @@ def _direct(func: Callable[..., sp.Basic]) -> Handler:
 
 
 def _trig(func: Callable[..., sp.Basic]) -> Handler:
-    return lambda conv, args: func(conv.angle_in(_one(args)))
+    """A trigonometric head, its argument read in the angular unit in force.
+
+    The special angles sympy spells differently from the original are worked
+    out here rather than left to it; everything else is sympy's own value.
+    """
+
+    def handler(conv: _Converter, args: list) -> sp.Basic:
+        argument = conv.angle_in(_one(args))
+        halved = _halved_angle(func, argument)
+        return func(argument) if halved is None else halved
+
+    return handler
+
+
+#: The odd parts of a denominator whose angle has a value in radicals. Section
+#: 6.3 p.104 names them: an argument of `pi/n` comes out algebraic for `n` a
+#: power of two times 1, 3, 5 or 15. Any other odd part - `pi/7`, `pi/56` - has
+#: no radical to be written with, and waits as the call it was written as.
+_ALGEBRAIC_PARTS = frozenset({1, 3, 5, 15})
+
+
+def _halved_angle(func: Callable[..., sp.Basic], argument: sp.Basic) -> sp.Basic | None:
+    """The sine or cosine of `argument`, worked out by halving, or `None`.
+
+    The original reaches an angle with more than two factors of two under it by
+    the half-angle formula, and writes the nested square root that comes out:
+    `SIN(pi/24)` is `SQRT(-SQRT(2)/8 - SQRT(6)/8 + 1/2)`, the root of half of
+    one less the cosine of `pi/12`. Sympy reaches the same angle by an angle
+    difference instead, so `SIN(pi/24)` is a sum of two radicals there, and
+    `SIN(pi/16)` is no value at all: sympy has no table entry for a sixteenth
+    and no rule that builds one.
+
+    Only where a third factor of two is under the angle. A denominator of `m`,
+    `2*m` or `4*m` is one sympy already has the flat value for - `SQRT(2)/2`,
+    `SQRT(6)/4 - SQRT(2)/4` - and halving into those would write a nested root
+    where neither writes one.
+
+    Which of the two roots the formula gives is the one the sign of the value
+    picks, and the value is a number here, so the sign is read off it. It is
+    never zero: a vanishing sine or cosine needs a denominator of 1 or 2.
+    """
+    if func not in (sp.sin, sp.cos):
+        return None
+    turns = argument / sp.pi
+    if not turns.is_Rational or turns.q % 8:
+        return None
+    if turns.q // (turns.q & -turns.q) not in _ALGEBRAIC_PARTS:
+        return None
+    doubled = 2 * argument
+    cosine = _halved_angle(sp.cos, doubled)
+    if cosine is None:
+        cosine = sp.cos(doubled)
+    whole = (1 - cosine) if func is sp.sin else (1 + cosine)
+    root = sp.sqrt(whole / 2)
+    return -root if sp.N(func(argument)) < 0 else root
 
 
 def _arctrig(func: Callable[..., sp.Basic]) -> Handler:
@@ -1787,10 +1967,18 @@ def _variables(conv: _Converter, args: list) -> sp.Basic:
 
 
 def _dif(conv: _Converter, args: list) -> sp.Basic:
-    """`DIF(u, x)` and `DIF(u, x, n)`, unevaluated. `.doit()` is a decision."""
+    """`DIF(u, x)` and `DIF(u, x, n)`, unevaluated. `.doit()` is a decision.
+
+    A negative order is an antiderivative taken that many times (7.4, p.177):
+    `DIF(u, x, -2)` is the second antiderivative, which is `INT(INT(u, x), x)`.
+    Sympy has no head for a derivative of negative order, and the integral is
+    the same computation waiting in the same place.
+    """
     if len(args) == 2:
         return sp.Derivative(args[0], args[1], evaluate=False)
     expression, variable, order = args
+    if order.is_Integer and order.is_negative:
+        return sp.Integral(expression, *[variable] * int(-order))
     return sp.Derivative(expression, (variable, order), evaluate=False)
 
 
@@ -2685,10 +2873,59 @@ def _inverted(body: sp.Basic, names: list) -> sp.Basic:
         raise ValueError("no inverse of a system")
     (name,) = names
     point = sp.Dummy("t")
-    solutions = sp.solve(sp.Eq(body, point), name)
-    if len(solutions) != 1:
+    undone = _undone(body, name, point)
+    if undone is None:
         raise ValueError("not invertible")
-    return solutions[0].subs(point, name)
+    return undone.subs(point, name)
+
+
+def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None:
+    """`body = value` solved for `name`, by the principal branch where it has one.
+
+    A periodic function solves for as many values as it has periods, and the
+    inverse Derive answers with is the principal one and no other:
+    `INVERSE(SIN(x/b), x)` is `b*ASIN(x)` (9.21, p.285). So where the equation
+    solves to more than one value the outermost call is undone by the function
+    that inverts it, and what it was applied to is undone in turn - which is
+    the principal branch by construction, `ASIN` being what `SIN` inverts to.
+
+    None where nothing here undoes it: a call with no inverse to name, or an
+    equation that solves to nothing.
+    """
+    solutions = sp.solve(sp.Eq(body, value), name)
+    if len(solutions) == 1:
+        return solutions[0]
+    if not (isinstance(body, sp.Function) and len(body.args) == 1):
+        return None
+    inverse = _inverse_function(body)
+    if inverse is None:
+        return None
+    return _undone(body.args[0], name, inverse(value))
+
+
+#: What inverts a function sympy names no inverse for, because the function is
+#: not one to one and sympy answers only where the inverse is unambiguous. The
+#: principal branch is the answer here, which is the branch the notation's own
+#: inverse names: `ASIN` for `SIN`, and so on down the pairs.
+_PRINCIPAL_INVERSES = {
+    sp.sin: sp.asin,
+    sp.cos: sp.acos,
+    sp.sec: sp.asec,
+    sp.csc: sp.acsc,
+    sp.cosh: sp.acosh,
+    sp.sech: sp.asech,
+}
+
+
+def _inverse_function(body: sp.Basic) -> Callable | None:
+    """What undoes the call `body`, or none where nothing here does."""
+    principal = _PRINCIPAL_INVERSES.get(type(body))
+    if principal is not None:
+        return principal
+    try:
+        return body.inverse()
+    except (AttributeError, ValueError, NotImplementedError):
+        return None
 
 
 def _elements_of(matrix: sp.MatrixBase) -> list[sp.Basic]:
@@ -3392,3 +3629,23 @@ def _sympy_heads() -> dict[str, Handler]:
 #: of arguments, a vector where a tuple belongs, as `MEIJERG` carries - raises
 #: and falls back to the inert head, like any other entry.
 SYMPY_HEADS: dict[str, Handler] = _sympy_heads()
+
+
+#: Which functions an equation given to one maps over, section 4.13 p.111:
+#: `EXP(LN(x) = 5)` is `x = #e^5`. Every one of them is a function of numbers,
+#: which is the whole of the rule - applying such a function to both sides of an
+#: equation is the only reading it has for one.
+#:
+#: The functions left out are the ones an equation is an argument to rather than
+#: a number for. `LHS` and `RHS` take a side of it, `SOLVE` solves it, `IF` asks
+#: whether it holds, and mapping over the equation would take from each of them
+#: the very thing it was given. A name with no reading at all is left out too: an
+#: inert head is whatever the user's own function is, and nobody here knows that
+#: it is a function of numbers.
+MAPPED_OVER_EQUATIONS: frozenset[str] = (
+    frozenset(_TRIGONOMETRIC)
+    | frozenset(_INVERSE_TRIGONOMETRIC)
+    | frozenset(_DIRECT)
+    | frozenset(SYMPY_HEADS)
+    | {"ATAN", "ACOT", "ERF", "LOG", "SIGN", "STEP", "FLOOR", "MOD", "MODS"}
+)

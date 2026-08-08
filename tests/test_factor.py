@@ -125,11 +125,12 @@ def test_a_root_nobody_can_place_is_treated_as_real():
     """The quadratic formula, where nothing is known about a, b or c.
 
     Derive splits this, so a root that cannot be *shown* to be real has to be
-    allowed rather than rejected. Its form is the original's with the sign of
-    the second factor carried inside the numerator instead of before it.
+    allowed rather than rejected, and the form is the original's own (4.6,
+    p.79): each factor written with the sign of its root in the operator rather
+    than on the leading term of the numerator.
     """
     assert fact("a*x^2 + b*x + c", RADICAL, ("x",)) == (
-        "a*(x + (SQRT(b^2 - 4*a*c) + b)/(2*a))*(x + (b - SQRT(b^2 - 4*a*c))/(2*a))"
+        "a*(x + (SQRT(b^2 - 4*a*c) + b)/(2*a))*(x - (SQRT(b^2 - 4*a*c) - b)/(2*a))"
     )
 
 
