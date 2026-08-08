@@ -458,6 +458,52 @@ def test_a_one_point_interval_is_a_value():
     assert simp("x + 1", declared("x :epsilon Real [7, 7]")) == "8"
 
 
+# -- absolute values and signs ------------------------------------------------
+
+#: One real quantity written three ways. A product holding two of `ABS(u)`,
+#: `SIGN(u)` and `u` says the same thing twice and comes back saying it once,
+#: whichever of the three is the shorter way to say it.
+SIGNED = [
+    ("ABS(x)*SIGN(x)", "x", None),
+    ("ABS(x)/SIGN(x)", "x", None),
+    ("x*SIGN(x)", "ABS(x)", None),
+    ("x/ABS(x)", "SIGN(x)", None),
+    ("ABS(x)/x", "SIGN(x)", None),
+    ("SIGN(x)^2", "1", None),
+    ("SIGN(x)^3", "SIGN(x)", None),
+    ("1/SIGN(x)", "SIGN(x)", None),
+    ("ABS(x)^2", "x^2", None),
+    # The argument is whatever it is written about, and the rest of the product
+    # is no part of the group it makes.
+    ("ABS(SIN(x))*SIGN(SIN(x))", "SIN(x)", None),
+    ("ABS(x - 1)/SIGN(x - 1)", "x - 1", None),
+    ("y*ABS(x)*SIGN(x)", "x*y", None),
+    ("ABS(x)*SIGN(y)", "ABS(x)*SIGN(y)", None),
+    # One of the three by itself is what it is, and so is a bare power.
+    ("ABS(x)", "ABS(x)", None),
+    ("SIGN(x)", "SIGN(x)", None),
+    ("x^3", "x^3", None),
+    # Zero is the point the identities are a licence at rather than a fact -
+    # `SIGN(0)` is zero, so the left side is undefined there and the right side
+    # is not - and a declaration away from zero makes them facts.
+    ("ABS(x)*SIGN(x)", "x", POSITIVE_X),
+    ("SIGN(x)^2", "1", POSITIVE_X),
+    ("x/ABS(x)", "1", POSITIVE_X),
+    # Off the real line there is nothing to fold: `SIGN(z)` is `z/|z|` there,
+    # whose square is not one and whose product with `ABS(z)` sympy will not
+    # collect either.
+    ("ABS(z)*SIGN(z)", "SIGN(z)*ABS(z)", declared("z :epsilon Complex")),
+    ("ABS(z)/SIGN(z)", "ABS(z)/SIGN(z)", declared("z :epsilon Complex")),
+    ("SIGN(z)^2", "SIGN(z)^2", declared("z :epsilon Complex")),
+    ("z/ABS(z)", "z/ABS(z)", declared("z :epsilon Complex")),
+]
+
+
+@pytest.mark.parametrize(("text", "expected", "context"), SIGNED, ids=str)
+def test_an_absolute_value_and_a_sign_are_one_quantity(text, expected, context):
+    assert simp(text, context) == expected
+
+
 # -- trigonometry -------------------------------------------------------------
 
 TRIGONOMETRY = [
