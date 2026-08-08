@@ -652,7 +652,7 @@ CALCULUS = [
     ("INT(1/x, x, 1, 2)", "LN(2)"),
     ("INT(1/x^2, x, 1, inf)", "1"),
     ("SUM(1/k^2, k, 1, 5)", "5269/3600"),
-    ("SUM(k^2, k, 1, m)", "m^3/3 + m^2/2 + m/6"),
+    ("SUM(k^2, k, 1, m)", "m*(m + 1)*(2*m + 1)/6"),
     ("PRODUCT(n^2, n, 1, m)", "m!^2"),
     # A third argument that is a vector names the values the index takes
     # instead of the ends of a range, for both heads.
@@ -675,6 +675,49 @@ CALCULUS = [
 @pytest.mark.parametrize(("text", "expected"), CALCULUS, ids=str)
 def test_a_calculus_head_is_evaluated(text, expected):
     assert simp(text) == expected
+
+
+SUMMATION_FORMULAS = [
+    ("SUM(k, k, 0, n)", "n*(n + 1)/2"),
+    ("SUM(k^2, k, 1, n)", "n*(n + 1)*(2*n + 1)/6"),
+    ("SUM(k^3, k, 0, n)", "n^2*(n + 1)^2/4"),
+    ("SUM(k(k + 1), k, 1, n)", "n*(n + 1)*(n + 2)/3"),
+    ("SUM(a k + b, k, 0, n)", "(a*n + 2*b)*(n + 1)/2"),
+    # Longer factored than expanded, and factored all the same: the shape is
+    # the formula's and not an economy. Derive prints this one as
+    # `n*(n + 1)*(6*n^3 + 9*n^2 + n - 1)/30`, which is the same product one
+    # factor short.
+    ("SUM(k^4, k, 1, n)", "n*(n + 1)*(2*n + 1)*(3*n^2 + 3*n - 1)/30"),
+    # A vector is summed element by element, and each element is a formula.
+    ("SUM([k, k^2], k, 0, n)", "[n*(n + 1)/2, n*(n + 1)*(2*n + 1)/6]"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SUMMATION_FORMULAS, ids=str)
+def test_a_summation_formula_keeps_the_shape_it_comes_in(text, expected):
+    """Derive's closed forms for a sum are factored, and Simplify leaves them so.
+
+    Sympy hands back Faulhaber's polynomial multiplied out, and writing it as
+    the original writes it is what this is. Not a factoring rule: the same
+    polynomial authored by hand is left exactly as it was authored, which is
+    what `test_a_polynomial_is_not_factored_for_having_a_common_factor` holds.
+    """
+    assert simp(text) == expected
+
+
+def test_a_polynomial_is_not_factored_for_having_a_common_factor():
+    # Factoring is the Factor command's business. The formula above keeps its
+    # own shape; nothing gives this one a shape it did not have.
+    assert simp("n^2/2 + n/2") == "n^2/2 + n/2"
+    assert simp("n^2 + n") == "n^2 + n"
+
+
+def test_a_closed_form_inside_a_larger_answer_is_the_larger_answer_s_to_shape():
+    # The formula is kept where it stands whole, and nowhere else: what it is
+    # part of is simplified as anything else is.
+    assert simp("SIN(SUM(k, k, 0, n))") == "SIN(n*(n + 1)/2)"
+    assert simp("SUM(k, k, 0, n)/n") == "n/2 + 1/2"
+    assert simp("SUM(k, k, 0, n) - n^2/2") == "n/2"
 
 
 def test_an_integral_a_rewrite_leaves_behind_is_evaluated_too():
@@ -2461,8 +2504,10 @@ DEMO_CALCULUS = [
     ),
     ("TAYLOR (#e^x, x, 0, 5)", "x^5/120 + x^4/24 + x^3/6 + x^2/2 + x + 1"),
     ("TAYLOR (LN COS (a x), x, 0, 7)", "-a^6*x^6/45 - a^4*x^4/12 - a^2*x^2/2"),
-    ("SUM (k, k, 0, n)", "n^2/2 + n/2"),
-    ("SUM (k^3, k, 0, n)", "n^4/4 + n^3/2 + n^2/4"),
+    # The closed form keeps the shape the summation formula has, which is the
+    # factored one the demo's own screen shows.
+    ("SUM (k, k, 0, n)", "n*(n + 1)/2"),
+    ("SUM (k^3, k, 0, n)", "n^2*(n + 1)^2/4"),
     ("SUM (2^-k, k, 0, inf)", "2"),
     ("PRODUCT (2 k, k, 1, n)", "2^n*n!"),
 ]

@@ -459,7 +459,8 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
         return _transform(expression, context, decide)
     expression, held = _held(expression)
     tried: set[sp.Basic] = set()
-    expression = _calculus(expression, context, tried)
+    formulas: dict[sp.Basic, sp.Basic] = {}
+    expression = _calculus(expression, context, tried, formulas)
     expression = _numeric(expression)
     # Before the rewrites rather than after, so that what the declared
     # intervals settle is settled for them too: `ABS(x) + ABS(x - 1)` over
@@ -476,7 +477,7 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     # most of what Derive's `F_1A` costs - but the alternative is an answer
     # that reaches its form only on a second Simplify.
     if expression.has(*_CALCULUS):
-        expression = _calculus(expression, context, tried)
+        expression = _calculus(expression, context, tried, formulas)
     # The normal form, and the one step that is not gated on getting shorter:
     # a sum is written about its primary variable whether or not that pays.
     # Before the placeholders go back, so that a frozen `IF`'s branches - which
@@ -488,6 +489,7 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     # underneath is their own coefficient and not a denominator the sum is
     # written over. `x^2/6 + x/2` is what was authored and what comes back.
     expression = normal_form(expression, context.order, over_numbers=False)
+    expression = _restored(expression, formulas)
     expression = _thawed(expression, held)
     if frozen:
         # A conditional comes back where its placeholder was applied, which
@@ -849,7 +851,10 @@ def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
 
 
 def _calculus(
-    expression: sp.Basic, context: Context, tried: set[sp.Basic] | None = None
+    expression: sp.Basic,
+    context: Context,
+    tried: set[sp.Basic] | None = None,
+    formulas: dict[sp.Basic, sp.Basic] | None = None,
 ) -> sp.Basic:
     """`.doit()` on every calculus head, innermost first, until none is new.
 
@@ -861,6 +866,9 @@ def _calculus(
 
     `tried` is that record, and a caller running this more than once over one
     expression passes its own so that the second run inherits it.
+
+    `formulas` is what `_summation` writes the shape of a closed form into, for
+    `_restored` to put back at the end of the pipeline.
     """
     if tried is None:
         tried = set()
@@ -877,7 +885,7 @@ def _calculus(
 
         def evaluate(head: sp.Basic) -> sp.Basic:
             offered.add(head)
-            return _evaluate(head, context)
+            return _evaluate(head, context, formulas)
 
         try:
             rewritten = expression.replace(pending, evaluate, simultaneous=False)
@@ -895,7 +903,9 @@ def _calculus(
 _ROUNDS = 3
 
 
-def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
+def _evaluate(
+    head: sp.Basic, context: Context, formulas: dict[sp.Basic, sp.Basic] | None = None
+) -> sp.Basic:
     """One head evaluated, or the head itself if it will not evaluate."""
     if isinstance(head, Approx):
         return _approximation(head, context)
@@ -905,6 +915,8 @@ def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
         return head
     if isinstance(head, sp.Product):
         return _product(head)
+    if isinstance(head, sp.Sum):
+        return _summation(head, formulas)
     try:
         value = head.doit(deep=False)
     except Exception:
@@ -923,6 +935,106 @@ def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
     value, digits = head.args
     approximate = context.with_precision(Precision.APPROXIMATE, int(digits))
     return approximated(value, approximate)
+
+
+def _summation(head: sp.Sum, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Basic:
+    """A sum, with a closed form that is a polynomial written factored.
+
+    Derive's summation formulas are factored and stay that way: `SUM(k, k, 0,
+    n)` is `n*(n + 1)/2`, `SUM(k^2, k, 1, n)` is `n*(n + 1)*(2*n + 1)/6` and
+    `SUM(k^3, k, 0, n)` is `n^2*(n + 1)^2/4`, none of which Simplify then
+    multiplies out. Sympy answers with Faulhaber's polynomial expanded, so the
+    factoring is done here, where the closed form arrives.
+
+    Here and not in the pipeline, because the pipeline factors nothing and the
+    original does not either: `n^2/2 + n/2` authored as it stands is what
+    Derive prints back, and turning that into a product is the Factor command's
+    business. What is kept is the shape the formula came in, which is a
+    property of this answer rather than of every expression equal to it.
+
+    Not gated on getting shorter, because the original does not gate it
+    either: `SUM(k^4, k, 1, n)` is longer factored than expanded and Derive
+    prints `n*(n + 1)*(6*n^3 + 9*n^2 + n - 1)/30` all the same. That is also
+    why the pair goes into `formulas`: a factorization that is longer is one
+    `_multiplied_out` would otherwise take straight back apart.
+    """
+    value = _attempt(head, lambda s: s.doit(deep=False))
+    if value is None:
+        return _undecided(head)
+    if isinstance(value, sp.MatrixBase):
+        # A sum of vectors is summed element by element, and each element is a
+        # closed form of its own: `SUM([k, k^2], k, 0, n)` is a vector of the
+        # two formulas and not of Faulhaber's two polynomials.
+        entries = _attempt(value, lambda m: m.applyfunc(lambda e: _factored(e, formulas)))
+        return value if entries is None else entries
+    return _factored(value, formulas)
+
+
+def _factored(value: sp.Basic, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Basic:
+    """One closed form, factored where there is a polynomial to factor.
+
+    A sum sympy could not do is not a closed form and has nothing to factor.
+    """
+    if value.has(sp.Sum) or not _polynomial(value):
+        return value
+    factored = _attempt(value, sp.factor)
+    if factored is None or factored == value:
+        return value
+    if formulas is not None:
+        formulas[value] = factored
+    return factored
+
+
+def _polynomial(value: sp.Basic) -> bool:
+    """Whether `value` is a polynomial, and one with a variable in it.
+
+    A number has nothing to factor and `factor` would rewrite it anyway - it
+    writes 12 as `2^2*3` - so `SUM(k, k, 1, 5)` stays 15.
+
+    Asked of whatever a head evaluated to, which need not be an expression at
+    all: a sum of truth values is a truth value, and that is not a polynomial
+    however the question is answered.
+    """
+    try:
+        return bool(value.free_symbols) and value.is_polynomial() is True
+    except Exception:
+        return False
+
+
+def _restored(expression: sp.Basic, formulas: dict[sp.Basic, sp.Basic]) -> sp.Basic:
+    """The closed forms of `_summation`, back where a rewrite multiplied one out.
+
+    Only where the whole of one still stands. A closed form that went on to be
+    added to something, divided by something or written about another variable
+    is part of a larger answer, and that answer is the pipeline's to shape:
+    `SUM(k, k, 0, n)/n` is `(n + 1)/2` in the original too, and not
+    `n*(n + 1)/(2*n)`.
+
+    Which is asked twice, because a polynomial standing whole has more than one
+    spelling by the time it gets here: the rewrites can put one over its common
+    denominator, and `(10*n^9 + ... - 3*n)/90` is the same answer as the terms
+    it distributes to and no longer the same tree. So an answer that is the
+    formula and nothing else is recognised by its value, and one standing
+    inside a larger answer - the argument of a `SIN`, say - by its shape.
+    """
+    if not formulas:
+        return expression
+    for value, factored in formulas.items():
+        if _same_polynomial(expression, value):
+            return factored
+    return _attempt(expression, lambda e: e.xreplace(formulas)) or expression
+
+
+def _same_polynomial(expression: sp.Basic, value: sp.Basic) -> bool:
+    """Whether `expression` is the polynomial `value`, however it is written."""
+    if expression == value:
+        return True
+    if not (_polynomial(expression) and expression.free_symbols == value.free_symbols):
+        return False
+    try:
+        return sp.expand(expression - value) == sp.S.Zero
+    except Exception:
+        return False
 
 
 def _product(head: sp.Product) -> sp.Basic:
