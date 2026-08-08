@@ -71,6 +71,7 @@ from rederive.engine.context import Angle, Direction, Precision, TrigPower
 from rederive.engine.remote import RemoteEngine
 from rederive.model.session import Session
 from rederive.syntax import ParseState, parse_expression
+from sexpr import to_sexpr
 
 
 def parse(text, state=None):
@@ -276,18 +277,6 @@ NOT_YET_HELD = {
     # `SQRT(3) + SQRT(2)` and 6.3 p.104 prints `-SQRT(2)/8 - SQRT(6)/8 + 1/2`.
     "test_exact_mode_denests_the_manuals_radicals[SQRT(5 + "
     "2*SQRT(6))-SQRT(3) + SQRT(2)]",
-    # A line the engine builds rather than computes - a Substitute, a Build, a
-    # Calculus operand, the copy a part-Simplify splices its answer into - is
-    # written in the tight author spelling where these want the printer's spaced
-    # one: `y+2*x` for `y + 2*x`. Which spelling such a line takes is one
-    # decision for all of them, and the tight one is what `test_manage` and
-    # `test_commands` record. The subexpression case also names its operand
-    # `#1'`, which is an annotation rather than a request: the line parser reads
-    # `#1'` as nothing at all. The root case wants `k^(1/3)^6` besides, without
-    # the fence the right-associative `^` needs to read back as the tree shown.
-    "test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone",
-    "test_substituting_a_root_for_a_variable_reaches_what_a_subexpression_cannot",
-    "test_substitutions_for_variables_are_made_all_at_once",
     # CHI is expanded to the difference of signs the manual gives for the case
     # where the comparisons cannot be made, which the original answers with in
     # every other case too, so `CHI(3, x, 1)` comes back `SIGN(x - 3)/2 -
@@ -1406,13 +1395,18 @@ def test_the_algebra_the_manual_simplifies(text, expected):
 
 
 async def test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone(session):
-    # 4.2 p.61: only the parenthesized sum is simplified, and the annotation
-    # says so with a prime.
+    # 4.2 p.61: with the parenthesized sum highlighted, the answer is a copy of
+    # the whole line in which only that part is simplified, and the annotation
+    # says so with a prime. The command is asked for `#1` and not for `#1'`:
+    # 3.3 p.51 states that a subexpression cannot be named by label at all, so
+    # the prime is what the derivation is written with rather than a request.
     session.author("(5*x - 3*x + 1)^7 - x")
     session.select_entry(0)
+    session.move_right()
     session.move_down()
-    part = await session.simplify("#1'")
-    assert part.text == "(2*x + 1)^7 - x"
+    assert session.highlighted_text == "5*x-3*x+1"
+    part = await session.simplify("#1")
+    assert to_sexpr(part.node) == to_sexpr(parse("(2*x + 1)^7 - x"))
     assert part.annotation == "Simp(#1')"
 
 
@@ -1590,19 +1584,40 @@ def test_the_partial_fraction_expansion_of_the_manual():
 # -- 4.8 substituting values --------------------------------------------------
 
 def test_substitutions_for_variables_are_made_all_at_once(session):
-    # 4.8 p.85: which is what lets a pair of variables trade places.
+    # 4.8 p.85: which is what lets a pair of variables trade places. What the
+    # page states is the simultaneity - `x + 2*y` interchanged is `y + 2*x` and
+    # not the `x + 2*x` that writing one in and then the other would give. The
+    # tree is what says so: a substituted line is held in the author spelling,
+    # the manual prints its own typeset one, and the two are one expression.
     session.author("x + 2*y")
-    assert session.substitute("#1", {"x": "y", "y": "x"}).text == "y + 2*x"
+    substituted = session.substitute("#1", {"x": "y", "y": "x"})
+    assert to_sexpr(substituted.node) == to_sexpr(parse("y + 2*x"))
+
+
+def test_substituting_a_subexpression_takes_only_what_matches_it(session):
+    # 4.8 p.86: k for the subexpression t³ in t⁶ + t³ is `t⁶ + k`, and not the
+    # `k² + k` that the same replacement made of t would reach, because a
+    # subexpression goes in only where it stands written.
+    session.author("t^6 + t^3")
+    session.select_entry(0)
+    session.move_right()
+    session.move_right()
+    assert session.highlighted_text == "t^3"
+    assert to_sexpr(session.substitute_part("#1", "k").node) == to_sexpr(
+        parse("t^6 + k")
+    )
 
 
 def test_substituting_a_root_for_a_variable_reaches_what_a_subexpression_cannot(
     session,
 ):
-    # 4.8 p.86: k for t³ in t⁶ + t³ replaces only what is written that way,
-    # but k^(1/3) for t reaches both.
+    # 4.8 p.86: `k² + k` is what the page says to reach by writing k^(1/3) in
+    # for t and simplifying. It prints no intermediate line, and there is no
+    # spelling of one to print: `^` folds right, so the `k^(1/3)^6` a flat
+    # writing would give reads back as `k^((1/3)^6)`.
     session.author("t^6 + t^3")
-    assert session.substitute("#1", {"t": "k^(1/3)"}).text == "k^(1/3)^6 + k^(1/3)^3"
-    assert simp("(k^(1/3))^6 + (k^(1/3))^3") == "k^2 + k"
+    substituted = session.substitute("#1", {"t": "k^(1/3)"})
+    assert simp(substituted.text) == "k^2 + k"
 
 
 def test_substituting_before_simplifying_can_lose_the_answer_simplifying_keeps():
