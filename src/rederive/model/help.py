@@ -46,6 +46,10 @@ RETURN = "Return to Rederive"
 NEXT = "Next"
 PREVIOUS = "Previous"
 
+#: The subject F1 opens on a line being typed, that being what the keys are
+#: about when there is a line to use them on.
+EDITING = "Editing"
+
 #: The two rows a topic page spends before its text: the title, and the blank
 #: line under it. The Help Menu carries its own title inside its body, being a
 #: centred document rather than a titled page.

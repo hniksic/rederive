@@ -2881,14 +2881,28 @@ class RederiveApp(App[None]):
         self._open_help(MODE_MENU, ENTER_OPTION)
 
     def action_help(self) -> None:
-        """F1 on a line being typed, which keeps the line for the way back."""
-        self._open_help(self.mode, self.message)
+        """F1 on a line being typed, which keeps the line for the way back.
 
-    def _open_help(self, resume: str, message: str) -> None:
-        """Put help up, over whatever the screen was doing."""
+        It opens on line editing rather than on the subject menu: the key is
+        pressed with a line half typed, and what is wanted then is the keys
+        that work on that line. Resume off that subject uncovers the subject
+        menu the same as any other, so the rest of the document is still one
+        key away.
+        """
+        self._open_help(self.mode, self.message, helps.EDITING)
+
+    def _open_help(self, resume: str, message: str, word: str | None = None) -> None:
+        """Put help up, over whatever the screen was doing.
+
+        A `word` opens that subject straight away, with the subject menu left
+        underneath it to come back to.
+        """
         self.helping = Helping(resume, message)
         self.mode = MODE_HELP
         self.stack.append(MenuCursor(menus.HELP))
+        if word is not None:
+            self.helping.topic = helps.BY_WORD[word]
+            self.stack.append(MenuCursor(menus.HELP_PAGES[word]))
         # A line goes off the screen with its text intact: nothing is read off
         # it until it comes back, and nothing writes to it while it is gone. An
         # open list of names goes for good, since it stands in the rows help is

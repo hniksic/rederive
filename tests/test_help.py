@@ -166,13 +166,18 @@ async def test_escape_is_resume(app):
         assert band(app)[0].startswith(" COMMAND:")
 
 
-async def test_f1_reads_help_and_gives_the_line_back(app):
+async def test_f1_opens_line_editing_and_gives_the_line_back(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x^2+1")
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")
         await pilot.press("f1")
+        assert title(app) == helps.BY_WORD[helps.EDITING].title
+        assert band(app) == [" HELP EDITING: Next Previous Resume"]
+        # Resume off that subject uncovers the subject menu, and the one after
+        # it the line, with what was typed on it still there.
+        await pilot.press("n", "escape")
         assert title(app) == helps.MENU_TITLE
-        await pilot.press("e", "n", "escape", "escape")
+        await pilot.press("escape")
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")
         assert message(app) == "Enter expression (press F1 for help)"
         await pilot.press("enter")
