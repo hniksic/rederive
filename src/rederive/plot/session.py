@@ -211,10 +211,10 @@ class PlotSession:
         drawing = curves(preferred(request, self.preferences))
         # A family that has grown shorter leaves elements behind, and an
         # element of a plot that is no longer there is a curve nobody can
-        # account for.
+        # account for. A request that asked to be alone leaves nothing at all.
         kept = {plot.label for plot in drawing}
         for plot in list(window.plots):
-            if (
+            if request.alone or (
                 plot.worksheet == request.worksheet
                 and plot.label.startswith(f"{request.label}.")
                 and plot.label not in kept

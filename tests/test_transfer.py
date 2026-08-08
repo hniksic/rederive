@@ -1266,6 +1266,22 @@ async def test_a_demonstration_that_has_run_out_starts_over(app, demo):
         assert band(app) == [" adds two numbers"]
 
 
+async def test_a_demonstration_can_start_from_anywhere_on_the_screen(app, demo):
+    """The page's demo menu is a click, and a click can land on any screen."""
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x+")
+        app.demonstrate(demo.name)
+        await pilot.pause()
+        # The author line it interrupted is gone, and the step is up.
+        assert band(app) == [" adds two numbers"]
+        assert entries(app) == ["2+3", "5"]
+        # Nothing of the abandoned line is left pending: the demonstration ends
+        # at the command menu, not back on somebody's half-typed expression.
+        await pilot.press("space", "space")
+        assert band(app)[0].startswith(" COMMAND:")
+        assert message(app) == "Enter option"
+
+
 async def test_a_demonstration_file_that_is_nothing_leaves_the_line_up(app):
     async with app.run_test() as pilot:
         await pilot.press("t", "d", *"nothing.dmo", "enter")
@@ -1281,3 +1297,27 @@ def test_a_demonstration_is_its_comments_and_the_lines_under_them(tmp_path):
         ("", "no comment here"),
         ("two", "c"),
     )
+
+
+def test_a_quoted_line_is_the_comment_of_the_step_under_it(tmp_path):
+    """Which is how the original's plot galleries are written."""
+    path = tmp_path / "gallery.mth"
+    path.write_text('"A spike:"\n\n2*SIN(LN(ABS(x)))\n\n"A saddle:"\n\ny^2-x^2\n')
+    assert worksheet.demonstration(path) == (
+        ("A spike:", "2*SIN(LN(ABS(x)))"),
+        ("A saddle:", "y^2-x^2"),
+    )
+
+
+def test_a_line_with_more_on_it_than_a_string_is_a_step(tmp_path):
+    """A string is an expression wherever it stands beside one."""
+    path = tmp_path / "gallery.mth"
+    path.write_text('"a" + "b"\n\n["x", 1]\n')
+    assert worksheet.demonstration(path) == (("", '"a" + "b"'), ("", '["x", 1]'))
+
+
+def test_the_end_of_a_dos_file_is_not_a_step(tmp_path):
+    """Every file the original wrote ends in Ctrl-Z, and nothing after it is text."""
+    path = tmp_path / "show.dmo"
+    path.write_bytes(b"; one\r\na+b\r\n\x1a")
+    assert worksheet.demonstration(path) == (("one", "a+b"),)

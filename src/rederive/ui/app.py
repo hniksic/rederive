@@ -626,12 +626,17 @@ class Demonstration:
     the menu goes, and the demonstration waits there for a key. Esc leaves it
     where it is, which is what `at` is for - naming the same file again picks
     the demonstration up rather than starting it over.
+
+    A plot gallery is the same script with a picture for an answer, which is
+    the whole of what `plotting` says.
     """
 
     path: Path
     #: The comment and the expression of each step, in file order.
     steps: tuple[tuple[str, str], ...]
     at: int = 0
+    #: Whether a step is drawn rather than simplified.
+    plotting: bool = False
 
     @property
     def done(self) -> bool:
@@ -4412,14 +4417,42 @@ class RederiveApp(App[None]):
     def _command_demo(self) -> None:
         self._ask_file(DEMO_PROMPT, self._demo, worksheet.DEMO_SUFFIX)
 
-    def _demo(self, name: str) -> None:
+    def demonstrate(self, name: str, plotting: bool = False) -> None:
+        """Run `name` as a demonstration, from wherever the program is.
+
+        What the page's demo menu comes in by, which is a click and can land on
+        any screen the program has. A demonstration takes the screen, so
+        whatever was on it - a prompt part way through, a help page, a
+        suspended demonstration of another file - is left behind first.
+
+        A gallery is refused where a plot is, and in the same sentence: what it
+        demonstrates is a window, and there is no window to be had.
+        """
+        self.greeting = False
+        self.helping = None
+        self.mode = MODE_MENU
+        # Every half-answered command goes with the screen it was on, which is
+        # what `_end_prompt` is: a line abandoned leaves nothing pending behind
+        # it, and a demonstration is nobody's answer to a question.
+        self._end_prompt()
+        if plotting and not available():
+            self._plot_refused(UNAVAILABLE)
+            return
+        self._demo(name, plotting)
+
+    def _demo(self, name: str, plotting: bool = False) -> None:
         """Start the demonstration in `name`, or pick up the suspended one.
 
         Naming the file a suspended demonstration came from resumes it where it
         stopped, which is what the manual means by issuing another Demo command
         to carry on. Any other name starts that file from its first step.
+
+        `plotting` is what the file demonstrates: the original's plot galleries
+        are scripts whose steps are pictures rather than answers, and the only
+        difference between the two is what a step does once it is authored.
         """
-        path = worksheet.reading(name, worksheet.DEMO_SUFFIX)
+        suffix = worksheet.SUFFIX if plotting else worksheet.DEMO_SUFFIX
+        path = worksheet.reading(name, suffix)
         if self.demo is None or self.demo.path != path or self.demo.done:
             try:
                 steps = worksheet.demonstration(path)
@@ -4429,7 +4462,7 @@ class RederiveApp(App[None]):
             except OSError:
                 self._refuse_file(CANNOT_READ)
                 return
-            self.demo = Demonstration(path, steps)
+            self.demo = Demonstration(path, steps, plotting=plotting)
         # A demonstration simplifies each step as it takes it, so a file named
         # with Ctrl-Enter has nothing left to ask for.
         self.simplifying = None
@@ -4439,13 +4472,13 @@ class RederiveApp(App[None]):
         self._demo_step()
 
     def _demo_step(self) -> None:
-        """Author the next expression and set its Simplify going.
+        """Author the next expression and set its computation going.
 
         A step that does not parse is passed over rather than stopping the
         demonstration: a script is not a worksheet, and there is nothing on the
-        line to correct. The Simplify is dispatched rather than run, so the
-        step's own computation is as abortable as any other; what happens when
-        it lands is `_demo_simplified`.
+        line to correct. The work is dispatched rather than run, so the step's
+        own computation is as abortable as any other; what happens when it
+        lands is `_demo_ready`.
         """
         demo = self.demo
         assert demo is not None
@@ -4457,22 +4490,43 @@ class RederiveApp(App[None]):
             except DeriveSyntaxError:
                 continue
             request = f"#{self.session.entries[-1].number}"
-            self._compute(
-                SIMPLIFYING,
-                partial(self.session.simplify, request),
-                self._demo_simplified,
-            )
+            if demo.plotting:
+                self._compute(
+                    PLOTTING, partial(self._demo_plot, request), self._demo_ready
+                )
+            else:
+                self._compute(
+                    SIMPLIFYING,
+                    partial(self.session.simplify, request),
+                    self._demo_ready,
+                )
             return
         self._end_demo()
 
-    def _demo_simplified(self, outcome: Outcome) -> None:
+    async def _demo_plot(self, request: str) -> object:
+        """Draw the step, the picture being what a plot gallery demonstrates.
+
+        Classifying and drawing in one, rather than the two computations the
+        Plot command makes of them: a demonstration has nothing to say between
+        them, and one step is one wait.
+
+        The picture is the only one the window keeps. A gallery is a sequence
+        of unrelated curves, and the eleventh drawn over the ten before it is
+        a picture of nothing.
+        """
+        drawing = await self._classified(request, None)
+        return await self._plot(replace(drawing, alone=True))
+
+    def _demo_ready(self, outcome: Outcome) -> None:
         """The step's answer is in: show it and wait on a key.
 
-        A refusal passes the step over as an unparsable one does. Anything
-        else - an abort above all - ends the demonstration where it stands,
-        which is where a suspended one is picked up from.
+        A refusal passes the step over as an unparsable one does - a gallery
+        line that is a picture of nothing is a line to walk past, exactly as a
+        line that will not parse is. Anything else - an abort above all - ends
+        the demonstration where it stands, which is where a suspended one is
+        picked up from.
         """
-        if isinstance(outcome.error, DeriveSyntaxError):
+        if isinstance(outcome.error, (DeriveSyntaxError, PlotError, Unplottable)):
             self._demo_step()
             return
         if outcome.error is not None:

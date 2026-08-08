@@ -1,4 +1,4 @@
-"""What the page runs: build the program on a browser's four answers, and start.
+"""What the page runs: build the program on what a browser answers with, and start.
 
 `start` is the whole of the browser's entry point, and it is `__main__.main` with
 each of its three machines swapped for the thing a tab has instead. The engine
@@ -45,6 +45,7 @@ from rederive.model.session import Session
 from rederive.platform.web import Web
 from rederive.ui import app as ui
 from rederive.ui.app import RederiveApp
+from rederive.web.demos import Demos
 from rederive.web.driver import BrowserDriver
 from rederive.web.engine import WebEngine
 from rederive.web.files import Files
@@ -84,15 +85,18 @@ class PageApp(RederiveApp):
         return BrowserDriver.on(self._terminal)
 
 
-async def start(terminal: Any, spawn: Any, plots: Any, solids: Any, page: Any) -> None:
+async def start(
+    terminal: Any, spawn: Any, plots: Any, solids: Any, page: Any, demos: Any
+) -> None:
     """Run Rederive on this page until the user leaves it.
 
-    Five things the page owns and this side cannot make: the xterm.js the
+    Six things the page owns and this side cannot make: the xterm.js the
     program draws on, what makes an engine worker, the two modules that open a
     plot pane - one for a flat picture and one for a solid, which share no
-    drawing at all - and the file gestures, which are a download, a picker and
-    an address. All of them are DOM elements, script URLs and canvases, and
-    none of them is anything Python could have built.
+    drawing at all - the file gestures, which are a download, a picker and an
+    address, and the menu that downloads a demonstration. All of them are DOM
+    elements, script URLs and canvases, and none of them is anything Python
+    could have built.
 
     What happens between the session and the app is what a tab has instead of a
     command line: the settings this page was last left with are applied, and a
@@ -109,6 +113,10 @@ async def start(terminal: Any, spawn: Any, plots: Any, solids: Any, page: Any) -
     files.settings()
     app = PageApp(session, terminal, WebPlots(plots, solids, engine), files.opening())
     files.attend()
+    # Held for as long as the program runs: the proxies the menu is wired with
+    # live inside it, and JS would be left pointing at freed callbacks.
+    demonstrations = Demos(demos, app, platform.current().storage())
+    demonstrations.attend()
     try:
         await app.run_async()
     finally:

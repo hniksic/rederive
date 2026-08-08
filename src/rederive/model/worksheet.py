@@ -41,6 +41,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from rederive import platform
+from rederive.syntax.source import END_MARKER
 
 #: What a file is called when the name typed has no extension of its own.
 SUFFIX = ".mth"
@@ -58,6 +59,12 @@ LIBRARY = "worksheets"
 
 COMMENT = ";"
 CONTINUATION = "~"
+
+#: The other way a file carries a line of prose: a line that is nothing but a
+#: quoted string. The original's own plot galleries are written that way -
+#: `"A spike:"` above the expression it names - because a string is an
+#: expression there and a worksheet had nowhere else to put a caption.
+QUOTE = '"'
 
 #: The line length a file is written to, and the shortest one that can be
 #: written at all: a line needs room for a character and the tilde that
@@ -123,7 +130,7 @@ def annotations_of(text: str) -> dict[int, str]:
     """
     found: dict[int, str] = {}
     pending = ""
-    for number, line in enumerate(text.splitlines(), start=1):
+    for number, line in enumerate(_lines(text), start=1):
         stripped = line.strip()
         if not stripped:
             continue
@@ -136,19 +143,37 @@ def annotations_of(text: str) -> dict[int, str]:
     return found
 
 
-def text_of(path: Path) -> str:
-    """A file's text. Raises, as reading a file does, before anything changes.
+def _lines(text: str) -> list[str]:
+    """A file's lines, as the reader sees them.
+
+    The Ctrl-Z that ends a DOS text file is not one of them, and neither is
+    anything behind it: every file the original wrote carries one, and a line
+    made of it would be read as an expression nobody wrote.
+    """
+    end = text.find(END_MARKER)
+    return (text if end < 0 else text[:end]).splitlines()
+
+
+def decoded(raw: bytes) -> str:
+    """What a math file's bytes say, whichever of the two encodings wrote them.
 
     UTF-8 is what Rederive writes. A file the original wrote is code page 437,
     which only shows in one where a glyph left ASCII - a Greek variable name,
     almost always - and that is what the fallback reads. Code page 437 decodes
     any byte at all, so a file is never refused for what is in it.
     """
-    raw = platform.current().storage().read(path)
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return raw.decode("cp437")
+
+
+def text_of(path: Path) -> str:
+    """A file's text. Raises, as reading a file does, before anything changes.
+
+    The two encodings are `decoded`'s; what is here is the reading itself.
+    """
+    return decoded(platform.current().storage().read(path))
 
 
 def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
@@ -158,14 +183,23 @@ def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
     than an annotation, so it is read the same way and the comments are what is
     kept. A `~` continuation still joins its lines, and a step with no comment
     above it is one whose band is blank.
+
+    A line that is nothing but a quoted string is a comment here too. The
+    original's plot galleries are scripts of that shape - a caption, then the
+    expression it names - and they are demonstrations in everything but the
+    extension they were given.
     """
     text = text_of(path)
     comments = annotations_of(text)
     steps = []
     pending: list[str] = []
-    for number, line in enumerate(text.splitlines(), start=1):
+    caption = ""
+    for number, line in enumerate(_lines(text), start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith(COMMENT):
+            continue
+        if _captioning(stripped):
+            caption = stripped[1:-1].strip()
             continue
         pending.append(stripped)
         if stripped.endswith(CONTINUATION):
@@ -173,9 +207,23 @@ def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
             continue
         # The comment belongs to the line the expression started on.
         start = number - len(pending) + 1
-        steps.append((comments.get(start, ""), "".join(pending)))
+        steps.append((comments.get(start, caption), "".join(pending)))
         pending = []
+        caption = ""
     return tuple(steps)
+
+
+def _captioning(line: str) -> bool:
+    """Whether a line is a quoted string and nothing else, and so a comment.
+
+    Only a whole line counts, and only one string on it. A string is an
+    expression like any other where it stands beside one - `["x", 1]` is a
+    vector with a string in it, `"a" + "b"` is a sum of two - and what makes
+    this one prose is that the line is the string and nothing more.
+    """
+    if len(line) < 2 or not line.startswith(QUOTE) or not line.endswith(QUOTE):
+        return False
+    return QUOTE not in line[1:-1]
 
 
 def path_of(name: str, suffix: str = SUFFIX) -> Path:

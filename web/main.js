@@ -23,8 +23,11 @@
 // sent, and xterm.js draws them exactly as a terminal would.
 //
 // Every URL named below is relative to this file. Nothing is fetched from a
-// CDN, which is what `tools/build_web.py` is for.
+// CDN, which is what `tools/build_web.py` is for. The one thing this page ever
+// asks another host for is one of the original's demonstrations, and only when
+// the user has chosen one: see `demos.js`.
 
+import * as demos from './demos.js';
 import * as files from './files.js';
 import * as plots from './plot2d.js';
 import * as solids from './plot3d.js';
@@ -334,6 +337,7 @@ function spawn(manifest) {
 async function main() {
   const term = terminal();
   files.wire(term);
+  demos.wire(term);
   plots.wire(term);
   solids.wire(term);
   const screen = opening(term);
@@ -357,7 +361,8 @@ async function main() {
   pyodide.globals.set('PLOTS', plots);
   pyodide.globals.set('SOLIDS', solids);
   pyodide.globals.set('FILES', files);
-  window.rederive = { term, pyodide, timings, plots, solids, files };
+  pyodide.globals.set('DEMOS', demos);
+  window.rederive = { term, pyodide, timings, plots, solids, files, demos };
   term.onRender(() => {
     if (timings.prompt === undefined) mark('prompt', started);
   });
@@ -367,7 +372,7 @@ async function main() {
   await pyodide.runPythonAsync(`
 from rederive.web.boot import start
 
-await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES)
+await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES, DEMOS)
 `);
   mark('session', started);
   say(term, '');

@@ -2452,6 +2452,14 @@ def test_a_plots_arrival_counts_as_a_touch(registry):
     assert window.title == "SIN(x) - Rederive plot (current)"
 
 
+def test_a_plot_that_asked_to_be_alone_empties_the_window_first(registry):
+    """What a gallery draws with: the last picture goes when the next arrives."""
+    registry.add(_landing("SIN(x)", "#1"))
+    registry.add(_landing("COS(x)", "#2"))
+    window = registry.windows[registry.add(_landing("TAN(x)", "#3", alone=True)).window]
+    assert [plot.label for plot in window.plots] == ["#3"]
+
+
 def test_touching_a_window_makes_it_the_receiver(registry):
     one = registry.add(_landing("SIN(x)", "#1")).window
     two = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
@@ -3010,6 +3018,87 @@ async def test_a_plot_that_replaces_a_curve_says_replotting(app):
         app.plots.placed = plots.Placed(1, replaced=True)
         await pilot.press("p", "p")
         assert message(app) == "Replotting #1"
+
+
+# -- the plot galleries -------------------------------------------------------
+#
+# The original shipped three files of expressions worth looking at, captioned
+# with quoted strings, and they are demonstrations in everything but what a
+# step does with its expression: it is drawn rather than simplified. The page's
+# demo menu is what runs one, and this is what running one does.
+
+
+@pytest.fixture
+def gallery(tmp_path):
+    path = tmp_path / "plot2d.mth"
+    path.write_text('"A spike:"\n\n2*SIN(x)\n\n"A saddle:"\n\ny^2-x^2\n')
+    return path
+
+
+async def test_a_gallery_draws_one_step_at_a_time(app, gallery):
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        # The caption takes the band the menu was on, and it waits there.
+        assert band(app) == [" A spike:"]
+        # The picture is the answer, so the line says what a demonstration's
+        # line says rather than what a Plot command's does.
+        assert message(app) == "Press any key to continue"
+        request = app.plots.sent[0]
+        assert request.label == "#1"
+        assert request.kind is PlotKind.CURVE
+        await pilot.press("space")
+        assert band(app) == [" A saddle:"]
+        # The second step is a surface, and goes where a surface goes: nothing
+        # about a gallery decides which window its pictures land in.
+        assert app.plots.sent[1].kind is PlotKind.SURFACE
+        assert app.plots.sent[1].window is None
+        # The last step done, the command menu has the screen again.
+        await pilot.press("space")
+        assert band(app)[0].startswith(" COMMAND:")
+        assert message(app) == "Enter option"
+
+
+async def test_a_gallery_step_is_the_only_picture_the_window_keeps(app, gallery):
+    """A gallery is unrelated pictures, and one over the last is neither."""
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        await pilot.press("space")
+        assert [request.alone for request in app.plots.sent] == [True, True]
+
+
+async def test_a_gallery_line_that_will_not_draw_is_walked_past(app, gallery):
+    """As a line that will not parse is: a script is not a worksheet."""
+    gallery.write_text('"Not a picture:"\n\nx+y+z\n\n"A spike:"\n\n2*SIN(x)\n')
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        assert band(app) == [" A spike:"]
+        assert [request.text for request in app.plots.sent] == ["2*SIN(x)"]
+
+
+async def test_a_gallery_leaves_its_expressions_on_the_worksheet(app, gallery):
+    """Every step is authored, which is what makes the pictures replottable."""
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        await pilot.press("space", "space")
+        assert [entry.text for entry in app.session.entries] == ["2*SIN(x)", "y^2-x^2"]
+
+
+async def test_a_gallery_without_a_display_is_refused_as_a_plot_is(
+    app, gallery, monkeypatch
+):
+    import rederive.ui.app as app_module
+
+    monkeypatch.setattr(app_module, "available", lambda: False)
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        assert message(app) == "Plot: needs a graphical display"
+        assert app.plots.sent == []
+        assert app.session.entries == []
 
 
 async def test_plotting_without_a_display_is_refused_but_still_offered(

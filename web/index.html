@@ -56,6 +56,46 @@
     #chrome { opacity: 1; }
     #chrome button { padding: 8px 14px; }
   }
+  /* The demonstrations on offer, under the button that offers them. Inside
+     `#chrome` so that a pointer on the menu is a pointer on the controls and
+     none of it fades while it is being read. */
+  #gallery {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 6px;
+    min-width: 15em;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    background: rgba(17, 17, 23, 0.97);
+    border: 1px solid #2b2b34;
+    border-radius: 6px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  }
+  #gallery[hidden] { display: none; }
+  .gallery-heading {
+    padding: 6px 8px 3px;
+    color: #6f7684;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  #chrome .gallery-item {
+    padding: 4px 8px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    text-align: left;
+  }
+  #chrome .gallery-item:hover {
+    background: rgba(101, 178, 241, 0.14);
+    border-color: transparent;
+    color: #dde3ec;
+  }
+  @media (hover: none) {
+    #chrome .gallery-item { padding: 8px; }
+  }
   /* What the page says for itself, about the things that happen beside the
      program rather than inside it. The message line belongs to Rederive. */
   #notice {
@@ -338,12 +378,19 @@
 <div id="screen"></div>
 <div id="panes"></div>
 <div id="chrome">
+  <button id="demo" type="button" aria-haspopup="true" aria-expanded="false"
+          title="Run one of the original Derive's own demonstrations">
+    Demos
+  </button>
   <button id="pick" type="button" title="Bring a worksheet into this page">
     Open file
   </button>
   <button id="link" type="button" title="Put this worksheet in the address">
     Link
   </button>
+  <!-- Filled from the list in `demos.js`, which is the only place the
+       demonstrations are named. -->
+  <div id="gallery" hidden></div>
 </div>
 <!-- A file picker opens on a click and on nothing a program can do, which is
      why the input is here rather than made when it is wanted. `.mth` and its

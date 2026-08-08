@@ -229,6 +229,11 @@ class Add:
     domain - take expressions rather than floats, and the syntax reader is
     dependency-free, so the window parses what is typed in them under this
     state and evaluates it under the plot's own context.
+
+    `alone` empties the window of everything else first, which is what a
+    demonstration draws with: a gallery is a sequence of unrelated pictures,
+    and one drawn over the last is a picture of neither. Nothing a user
+    commands sets it - Plot adds and the window's own toolbar clears.
     """
 
     worksheet: int
@@ -240,6 +245,7 @@ class Add:
     text: str = ""
     options: Options = field(default_factory=Options)
     state: ParseState = field(default_factory=ParseState)
+    alone: bool = False
 
 
 @dataclass(frozen=True)
