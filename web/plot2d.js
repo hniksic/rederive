@@ -537,10 +537,15 @@ class Pane {
     plot.fresh = plot.fresh || fresh;
   }
 
-  present() {
+  // `quietly` is a step of a demonstration: the pane is shown and raised, and
+  // the keyboard goes back to the terminal rather than to it. Given back rather
+  // than never taken, because a pane takes it in more than one place - a pane
+  // built for this plot focuses itself, and so does raising one.
+  present(quietly) {
     this.element.style.display = '';
     this.raise();
-    this.element.focus();
+    if (quietly) focus();
+    else this.element.focus();
   }
 
   retitle(title, current) {

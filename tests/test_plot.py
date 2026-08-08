@@ -2452,12 +2452,26 @@ def test_a_plots_arrival_counts_as_a_touch(registry):
     assert window.title == "SIN(x) - Rederive plot (current)"
 
 
-def test_a_plot_that_asked_to_be_alone_empties_the_window_first(registry):
+def test_a_demonstrations_step_empties_the_window_first(registry):
     """What a gallery draws with: the last picture goes when the next arrives."""
     registry.add(_landing("SIN(x)", "#1"))
     registry.add(_landing("COS(x)", "#2"))
-    window = registry.windows[registry.add(_landing("TAN(x)", "#3", alone=True)).window]
+    landed = registry.add(_landing("TAN(x)", "#3", demonstrating=True))
+    window = registry.windows[landed.window]
     assert [plot.label for plot in window.plots] == ["#3"]
+
+
+def test_a_demonstrations_step_is_shown_without_taking_the_keyboard(registry):
+    """The program is waiting for a key, so the keyboard stays where it is.
+
+    A plot anyone asked for is welcome to it: a window is brought to the front
+    to be worked in, and only a demonstration is driven from somewhere else.
+    """
+    commanded = registry.windows[registry.add(_landing("SIN(x)", "#1")).window]
+    assert commanded.presented == 1 and not commanded.quietly
+    landed = registry.add(_landing("COS(x)", "#2", demonstrating=True))
+    shown = registry.windows[landed.window]
+    assert shown.presented == 2 and shown.quietly
 
 
 def test_touching_a_window_makes_it_the_receiver(registry):
@@ -3065,7 +3079,7 @@ async def test_a_gallery_step_is_the_only_picture_the_window_keeps(app, gallery)
         app.demonstrate(str(gallery), plotting=True)
         await pilot.pause()
         await pilot.press("space")
-        assert [request.alone for request in app.plots.sent] == [True, True]
+        assert [request.demonstrating for request in app.plots.sent] == [True, True]
 
 
 async def test_a_gallery_line_that_will_not_draw_is_walked_past(app, gallery):

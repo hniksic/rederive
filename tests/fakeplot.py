@@ -71,8 +71,9 @@ class FakeWindow:
                 return plot
         return None
 
-    def present(self):
+    def present(self, quietly=False):
         self.presented += 1
+        self.quietly = quietly
 
     def retitle(self, current=None):
         if current is not None:

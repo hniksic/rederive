@@ -137,8 +137,9 @@ class FakePane:
     def starting(self, serial, generation, fresh):
         self.started.append((serial, generation, fresh))
 
-    def present(self):
+    def present(self, quietly=False):
         self.presented += 1
+        self.quietly = quietly
 
     def retitle(self, title, current):
         self.title = title
@@ -261,8 +262,9 @@ class FakeSolid:
     def starting(self, serial, generation):
         self.started.append((serial, generation))
 
-    def present(self):
+    def present(self, quietly=False):
         self.presented += 1
+        self.quietly = quietly
 
     def retitle(self, title, current):
         self.title = title

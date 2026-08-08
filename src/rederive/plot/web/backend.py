@@ -383,9 +383,9 @@ class Pane:
                 return plot
         return None
 
-    def present(self) -> None:
+    def present(self, quietly: bool = False) -> None:
         """A plot has landed here: show the pane and put it in front."""
-        self.page.present()
+        self.page.present(quietly)
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the pane by what it holds, saying whether it is the receiver."""
@@ -1162,9 +1162,9 @@ class Solid:
                 return plot
         return None
 
-    def present(self) -> None:
+    def present(self, quietly: bool = False) -> None:
         """A plot has landed here: show the pane and put it in front."""
-        self.page.present()
+        self.page.present(quietly)
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the pane by what it holds, saying whether it is the receiver."""

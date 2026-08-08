@@ -230,10 +230,14 @@ class Add:
     dependency-free, so the window parses what is typed in them under this
     state and evaluates it under the plot's own context.
 
-    `alone` empties the window of everything else first, which is what a
-    demonstration draws with: a gallery is a sequence of unrelated pictures,
-    and one drawn over the last is a picture of neither. Nothing a user
-    commands sets it - Plot adds and the window's own toolbar clears.
+    `demonstrating` says this plot is a step of a demonstration rather than a
+    command, which changes two things about how it lands. The window is emptied
+    of everything else first, a gallery being a sequence of unrelated pictures
+    where one drawn over the last is a picture of neither; and the window is
+    shown without taking the keyboard, because the program is waiting for a key
+    to take the next step and the keyboard has to stay where the program is.
+    Nothing a user commands sets it: a plot anyone asked for is welcome to the
+    keyboard, and Plot adds where a demonstration replaces.
     """
 
     worksheet: int
@@ -245,7 +249,7 @@ class Add:
     text: str = ""
     options: Options = field(default_factory=Options)
     state: ParseState = field(default_factory=ParseState)
-    alone: bool = False
+    demonstrating: bool = False
 
 
 @dataclass(frozen=True)

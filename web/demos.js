@@ -8,55 +8,54 @@
 // The list, the titles and every address come from `rederive.model.demos` and
 // arrive with `attend`, because a desktop wanting the same menu wants the same
 // nine files. What is *here* is the browser's half and only that: a menu, a
-// download, and the relays a page needs because a page can be refused for
-// being one. Until Python has attended there is no menu, which is why the
-// button says so rather than opening an empty one.
+// download, and one thing a page needs that nothing else does - a relay, for
+// the road that is closed to pages. Until Python has attended there is no menu,
+// which is why the button says so rather than opening an empty one.
 //
-// **Every part of this is about the wait**, because the wait is the whole of
-// what stands between a click and the demonstration:
+// **Two roads, and the second one exists for a reason that has been seen to
+// happen.** Ordinarily a demonstration is one file of a few kilobytes, taken
+// out of a DOS diskette image by the archive itself; two images carry the same
+// set, so both are asked at once and the first answer wins. But both of those
+// go through one piece of machinery - the archive's extractor - and that is
+// the piece that fails: the extractor for one of the two items answers nothing
+// but 503. When it takes both images down at once, the whole diskette is
+// fetched instead and opened here. That download is three hundred kilobytes
+// against one, which is why it is the second road and not the first, and it
+// brings back all nine demonstrations, which is why none of them is ever
+// downloaded twice.
 //
-// * A demonstration already in the page is not downloaded at all. The store
-//   outlives the tab, so the second viewing of one starts at once.
-// * Opening the menu warms the connection to the archives. A TLS handshake
-//   started while the eye is still going down a list of nine titles is a
-//   handshake nobody waits for.
-// * Every address is asked at once and the first answer wins. The files live
-//   inside archive images of two DOS releases and both carry the same set, so
-//   an image that is slow or refusing today costs nothing while the other is
-//   up.
-// * The relays join that same race a moment later, if nothing has answered.
-//   Late rather than at once, because they are strangers' servers, free and
-//   promised to nobody: a direct answer is the ordinary case and no third
-//   party needs to be told which demonstration anyone chose.
+// The whole diskette is the one address a page may not read directly - the
+// archive sends no CORS headers with it - so that road, and only that road,
+// goes through a relay.
 //
 // What a file *is* stays Python's, as everything else across this seam does.
 // The page knows a title and a URL, and hands over bytes.
 
 import { said } from './files.js';
 
-// Public relays that fetch a URL and answer with the CORS headers a page needs.
-// Each takes the address it is to fetch as one query field, percent-encoded.
-// Nothing here is relied on: they are worth one attempt each, and the day none
-// of them answers either is the day this button says so.
+// Python says things about a demonstration too - which command runs it again,
+// why one was refused - and it says them through this module, that being the
+// object it was handed. One notice box, one way of writing in it, whichever
+// side has something to say.
+export { said };
+
+// Public relays: they fetch a URL, follow the redirect the archive answers
+// with, and hand back the body with the header that lets a page read it. Free
+// servers promised to nobody, so they are asked all at once and the first to
+// answer is the one used - on any given day some of them are rate-limited or
+// down, and that is expected rather than a problem to be solved.
 const RELAYS = [
   'https://api.cors.lol/?url={url}',
   'https://api.codetabs.com/v1/proxy?quest={url}',
   'https://corsproxy-8uo5.onrender.com/?url={url}',
 ];
 
-// How long the archives are given before the relays join the race. Generous,
-// because a relay fetches the same archive through one more hop and so only
-// ever wins where the direct road is blocked rather than slow: a download that
-// is merely taking its time is not worth telling a stranger about. The wait is
-// not paid where it would matter - the relays start the instant every archive
-// has failed, however early that is.
-const HEDGE_MS = 1500;
-
-// What a demonstration file may be before it is taken for one. A relay that
-// answers with its own error page answers it with a 200, so a page that only
-// looked at the status would put an HTML apology on the worksheet: these files
-// are a few kilobytes of DOS text and nothing about them starts with a tag.
-const LARGEST = 65536;
+// What a demonstration file may be before it is taken for one, and what the
+// whole diskette may be. A relay that answers with its own error page answers
+// it with a 200, so a page that only looked at the status would put an HTML
+// apology on the worksheet.
+const LARGEST_FILE = 65536;
+const LARGEST_IMAGE = 4 * 1024 * 1024;
 
 let terminal = null;
 let handlers = null;
@@ -89,9 +88,9 @@ export function wire(term) {
   });
 }
 
-// Python's side: the demonstrations on offer, whether one is here already, and
-// what to do with one that has been downloaded. The menu is built here because
-// this is when there is anything to build it out of.
+// Python's side: the demonstrations on offer, where the whole diskette is,
+// whether one is here already, and what to do with what comes back. The menu
+// is built here because this is when there is anything to build it out of.
 export function attend(given) {
   handlers = given;
   fill(menu, given.demos);
@@ -120,8 +119,8 @@ function fill(where, demos) {
   }
 }
 
-// The menu is open, so a download is likely: open the connections it would
-// need now, while the list is being read. Once per page - a preconnect that is
+// The menu is open, so a download is likely: open the connection it would need
+// now, while the list is being read. Once per page - a preconnect that is
 // already made is not made again, and the browser drops an unused one itself.
 function warm() {
   if (warmed) return;
@@ -163,58 +162,123 @@ async function chose(demo) {
       return;
     }
   }
-  handlers.chose(demo.file, bytes);
+  // Said rather than thrown. What is on the other side of this call is Python,
+  // and a refusal from it inside an async function is an unhandled rejection -
+  // a line in a console nobody has open, and a page where nothing happened.
+  try {
+    handlers.chose(demo.file, bytes);
+  } catch (error) {
+    said(`${demo.file} could not be started: ${error}`);
+    throw error;
+  }
   if (terminal !== null) terminal.focus();
 }
 
-// The file, from whichever address answers first. One race, entered by every
-// archive at once and by the relays a moment later: asking one after another
-// would add the waits together, and asking the relays at once would tell three
-// strangers about a download that was never going to need them.
-function fetched(demo) {
-  const answered = { yet: false };
-  const direct = demo.urls.map((url) =>
-    got(url).then((bytes) => {
-      answered.yet = true;
-      return bytes;
-    }),
-  );
-  // The relays enter when the archives have had their moment, or the instant
-  // every one of them has failed - whichever comes first, so a refusal costs
-  // nothing at all and a slow answer costs one wait rather than two.
-  const late = Promise.race([after(HEDGE_MS), Promise.allSettled(direct)]);
-  const relayed = RELAYS.map((relay, index) =>
-    late.then(() => {
-      // The race is already won; the losers of it ask nobody anything.
-      if (answered.yet) throw new Error('the archive answered first');
-      // Round robin over the archives rather than all of them through the
-      // first: what a relay is for is an archive that will not answer a page,
-      // and sending every relay to the same one would relay the same refusal.
-      const url = demo.urls[index % demo.urls.length];
-      return got(relay.replace('{url}', encodeURIComponent(url)));
-    }),
-  );
-  return Promise.any([...direct, ...relayed]);
+// The file: out of whichever image answers first, or out of the whole diskette
+// when neither will. Both images are asked at once rather than in turn, since
+// the slow case is a server thinking and asking one after the other would add
+// the waits together.
+async function fetched(demo) {
+  try {
+    return await Promise.any(demo.urls.map((url) => got(url, LARGEST_FILE)));
+  } catch (refused) {
+    said(`The archive will not open ${demo.file}; fetching the whole diskette...`);
+    try {
+      return await unpacked(demo.file);
+    } catch {
+      // The archive's own refusal rather than the diskette's: the first road
+      // is the one that was meant to work, and its failure is the one worth
+      // reading.
+      throw refused;
+    }
+  }
 }
 
-async function got(url) {
+// The whole diskette, opened here. Every demonstration in it is kept, since
+// they have all been paid for; the one that was asked for is handed back.
+async function unpacked(file) {
+  const relayed = RELAYS.map((relay) =>
+    got(relay.replace('{url}', encodeURIComponent(handlers.image)), LARGEST_IMAGE),
+  );
+  const found = await entries(await Promise.any(relayed));
+  for (const demo of handlers.demos) {
+    const bytes = found.get(demo.file);
+    if (bytes !== undefined && demo.file !== file) handlers.keep(demo.file, bytes);
+  }
+  const wanted = found.get(file);
+  if (wanted === undefined) throw new Error(`the diskette has no ${file}`);
+  return wanted;
+}
+
+async function got(url, largest) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`the server said ${response.status}`);
   // Bytes rather than text: these are DOS files, and which of the two
   // encodings one is written in is a question Python already answers.
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!plausible(bytes)) throw new Error('what came back was not a math file');
+  if (!bytes.length || bytes.length > largest || bytes[0] === 0x3c) {
+    throw new Error('what came back was not a file of the original');
+  }
   return bytes;
 }
 
-// Whether what came back can be a demonstration at all: something, not too
-// much of it, and not a web page.
-function plausible(bytes) {
-  return bytes.length > 0 && bytes.length <= LARGEST && bytes[0] !== 0x3c;
+// -- the diskette --------------------------------------------------------------
+//
+// Enough of a zip reader for one written in 1996: the central directory, and
+// deflate. No library, because a browser is already a deflate implementation
+// and every file in this one is either stored or deflated - a zip needs a
+// reader in the megabytes only to cover what nothing here uses.
+
+const SIGNATURE_END = 0x06054b50;
+const SIGNATURE_ENTRY = 0x02014b50;
+const STORED = 0;
+const DEFLATED = 8;
+
+// The end record is last in the file and holds a comment nobody writes, so it
+// is found by looking back from the end rather than by seeking to it.
+const LOOKBACK = 1024;
+
+async function entries(zip) {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  let at = -1;
+  for (let back = 22; back <= Math.min(LOOKBACK, zip.length); back++) {
+    if (view.getUint32(zip.length - back, true) === SIGNATURE_END) {
+      at = zip.length - back;
+      break;
+    }
+  }
+  if (at < 0) throw new Error('the diskette is not a zip file');
+  let entry = view.getUint32(at + 16, true);
+  const count = view.getUint16(at + 10, true);
+  const found = new Map();
+  for (let index = 0; index < count; index++) {
+    if (view.getUint32(entry, true) !== SIGNATURE_ENTRY) break;
+    const method = view.getUint16(entry + 10, true);
+    const compressed = view.getUint32(entry + 20, true);
+    const nameLength = view.getUint16(entry + 28, true);
+    const extraLength = view.getUint16(entry + 30, true);
+    const commentLength = view.getUint16(entry + 32, true);
+    const start = view.getUint32(entry + 42, true);
+    const name = new TextDecoder().decode(
+      zip.subarray(entry + 46, entry + 46 + nameLength),
+    );
+    // The local header repeats the name and carries its own extra field, whose
+    // length is its own: where the bytes start is only knowable from here.
+    const local =
+      30 + view.getUint16(start + 26, true) + view.getUint16(start + 28, true);
+    const body = zip.subarray(start + local, start + local + compressed);
+    if (method === STORED) found.set(name, body);
+    else if (method === DEFLATED) found.set(name, await inflated(body));
+    entry += 46 + nameLength + extraLength + commentLength;
+  }
+  return found;
 }
 
-function after(milliseconds) {
-  return new Promise((wake) => setTimeout(wake, milliseconds));
+async function inflated(body) {
+  const stream = new Blob([body])
+    .stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 // What went wrong, in one clause. `Promise.any` reports every failure at once,

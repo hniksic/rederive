@@ -4515,7 +4515,7 @@ class RederiveApp(App[None]):
         a picture of nothing.
         """
         drawing = await self._classified(request, None)
-        return await self._plot(replace(drawing, alone=True))
+        return await self._plot(replace(drawing, demonstrating=True))
 
     def _demo_ready(self, outcome: Outcome) -> None:
         """The step's answer is in: show it and wait on a key.

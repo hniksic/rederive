@@ -20,20 +20,24 @@ written for - the original's own first line is "Interesting expressions to plot
 in a 2D-plot window". The extensions say the same thing by accident: the scripts
 are `.DMO` and the galleries are `.MTH`.
 
-**About the addresses.** Both are Internet Archive items opened one file at a
-time out of an archive image - a zip of the Derive 3.14 diskette, a rar of
-Derive 4. That endpoint is also the only one of theirs a page may read: the
-whole-file download carries no CORS headers at all, so a browser cannot take
-the zip and unpack it. Two images carry the same set, so every demonstration
-can be asked of both at once and whichever answers first is the one that runs -
-an image that is slow or refusing today costs nothing while the other is up.
+**About the addresses.** `SOURCES` are Internet Archive items opened one file
+at a time out of an archive image - a zip of the Derive 3.14 diskette, a rar of
+Derive 4. Two images carry the same set, so every demonstration can be asked of
+both at once and whichever answers first is the one that runs: an image that is
+slow or refusing today costs nothing while the other is up.
+
+`IMAGE` is the same diskette taken whole, and it is there because both of those
+go through one piece of machinery - the archive's own extractor - and that is
+the piece observed to fail. It costs three hundred kilobytes rather than one,
+and a zip has to be opened at the other end, so it is nobody's first choice; it
+is the road that is still there when the others are not.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["DEMOS", "GALLERIES", "SCRIPTS", "SOURCES", "Demo", "named"]
+__all__ = ["DEMOS", "GALLERIES", "IMAGE", "SCRIPTS", "SOURCES", "Demo", "named"]
 
 #: Where a file of a DOS release is reached, by the name it has inside the
 #: image. Formatted with the file name and nothing else: every name in the
@@ -44,6 +48,17 @@ SOURCES = (
     "https://archive.org/download/derive-for-dos-v-4/"
     "DERIVE%20for%20DOS%20V4.rar/DERIVE%20for%20DOS%2F{file}",
 )
+
+#: The whole of the Derive 3.14 diskette, as one file. Three hundred kilobytes
+#: against a demonstration's one, and every demonstration is inside it.
+#:
+#: The road that does not go through the archive's extractor, and so the one
+#: left when the extractor is the thing that is down - which is not a
+#: hypothetical: the `derive-v-3` item's extractor answers nothing but 503 and
+#: has for as long as this was being written. Whoever takes this road pays for
+#: it in bytes and in having to open a zip, and gets all nine files for the
+#: one download.
+IMAGE = "https://archive.org/download/derive314cas/DERIVE_3.14.zip"
 
 #: What a menu offers the two kinds under. A gallery is a demonstration too,
 #: and the heading is what says how it differs.

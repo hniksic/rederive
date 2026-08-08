@@ -66,7 +66,7 @@ class Demos:
         self._proxies: list[Any] = []
 
     def attend(self) -> None:
-        """Hand the page the menu, the relays and what a choice on it does.
+        """Hand the page the menu, the addresses, and what a choice on it does.
 
         All at once, since none of them is any use alone: a menu with nothing
         behind it offers what cannot be run, and a handler with no menu in
@@ -76,10 +76,10 @@ class Demos:
         import js
         from pyodide.ffi import create_proxy, to_js
 
-        table = {"chose": self.chose, "kept": self.kept}
+        table = {"chose": self.chose, "keep": self.keep, "kept": self.kept}
         proxies = {name: create_proxy(call) for name, call in table.items()}
         self._proxies = list(proxies.values())
-        given = {**proxies, "demos": _offered()}
+        given = {**proxies, "demos": _offered(), "image": catalogue.IMAGE}
         self._page.attend(to_js(given, dict_converter=js.Object.fromEntries))
 
     def kept(self, file: str) -> bool:
@@ -92,6 +92,18 @@ class Demos:
         """
         demo = catalogue.named(file)
         return demo is not None and self._storage.exists(Path(demo.file))
+
+    def keep(self, file: str, data: Any) -> None:
+        """Put a demonstration in the page without running it.
+
+        What the page does with the eight it did not ask for. Taking the whole
+        diskette is one download and nine files, and throwing eight of them
+        away would mean paying for them again one at a time.
+        """
+        demo = catalogue.named(file)
+        if demo is None:
+            return
+        self._storage.keep(Path(demo.file), worksheet.decoded(_bytes(data)))
 
     def chose(self, file: str, data: Any = None) -> None:
         """Run this demonstration, keeping the bytes the page brought with it.
@@ -110,11 +122,20 @@ class Demos:
         if not self._app.is_running:
             self._page.said(TOO_SOON)
             return
-        if data is not None:
+        # Whether the page brought anything, asked of the value and not of its
+        # identity: a page has two words for having nothing, and only one of
+        # them is `None`. An argument it left out arrives as `None`; a `null`
+        # it passed arrives as a JavaScript null, which is falsy and is not
+        # `None`, and which has no bytes in it to read.
+        if data:
             self._storage.keep(Path(demo.file), worksheet.decoded(_bytes(data)))
         said = DRAWING if demo.plotting else RUNNING
         self._page.said(said.format(name=demo.file))
-        self._app.demonstrate(demo.file, demo.plotting)
+        # Onto the loop rather than from here. A click on the page arrives on
+        # a DOM callback, and a demonstration is a screen: the screen belongs
+        # to the loop, exactly as it does for an event off a plot pane. Called
+        # from here the demonstration would be set going and never drawn.
+        self._app.call_next(self._app.demonstrate, demo.file, demo.plotting)
 
 
 def _offered() -> list[dict[str, Any]]:

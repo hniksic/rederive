@@ -1322,11 +1322,17 @@ class Window3D(QtWidgets.QMainWindow):
             yrange=(float(self.ydomain[0]), float(self.ydomain[1])),
         )
 
-    def present(self) -> None:
-        """A plot has landed here: show this window and put it in front."""
+    def present(self, quietly: bool = False) -> None:
+        """A plot has landed here: show this window and put it in front.
+
+        A demonstration's step is shown without being activated: the keys that
+        take it belong to the program, and a window that took them would leave
+        the demonstration waiting for a key nobody can press.
+        """
         self.show()
         self.raise_()
-        self.activateWindow()
+        if not quietly:
+            self.activateWindow()
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the window by what it holds, and say whether the next plot lands here.

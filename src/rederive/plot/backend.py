@@ -45,8 +45,13 @@ class WindowHandle(Protocol):
     def find(self, worksheet: int, label: str) -> Any | None:
         """The plot a worksheet and a label name, if this window has it."""
 
-    def present(self) -> None:
-        """Show this window and bring it to the front: a plot has landed in it."""
+    def present(self, quietly: bool = False) -> None:
+        """Show this window and bring it to the front: a plot has landed in it.
+
+        `quietly` shows it without taking the keyboard, which is what a step of
+        a demonstration lands with: the program is waiting for a key to take the
+        next step, so the keyboard has to stay where the program is.
+        """
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the window by what it holds, saying whether it is the receiver."""

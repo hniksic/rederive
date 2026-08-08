@@ -214,7 +214,7 @@ class PlotSession:
         # account for. A request that asked to be alone leaves nothing at all.
         kept = {plot.label for plot in drawing}
         for plot in list(window.plots):
-            if request.alone or (
+            if request.demonstrating or (
                 plot.worksheet == request.worksheet
                 and plot.label.startswith(f"{request.label}.")
                 and plot.label not in kept
@@ -227,7 +227,7 @@ class PlotSession:
         )
         for plot in drawing:
             window.add(plot)
-        window.present()
+        window.present(request.demonstrating)
         self.touched(window.number)
         return protocol.Placed(window.number, replaced)
 

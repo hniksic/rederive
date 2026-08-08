@@ -563,10 +563,15 @@ class Solid {
     if (plot !== undefined) plot.generation = generation;
   }
 
-  present() {
+  // `quietly` is a step of a demonstration: the pane is shown and raised, and
+  // the keyboard goes back to the terminal rather than to it. Given back rather
+  // than never taken, because a pane takes it in more than one place - a pane
+  // built for this plot focuses itself, and so does raising one.
+  present(quietly) {
     this.element.style.display = '';
     this.raise();
-    this.element.focus();
+    if (quietly) focus();
+    else this.element.focus();
     // A pane made while the page was busy may never have been measured.
     this._resized();
   }
