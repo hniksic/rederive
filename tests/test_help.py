@@ -172,16 +172,43 @@ async def test_f1_opens_line_editing_and_gives_the_line_back(app):
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")
         await pilot.press("f1")
         assert title(app) == helps.BY_WORD[helps.EDITING].title
-        assert band(app) == [" HELP EDITING: Next Previous Resume"]
-        # Resume off that subject uncovers the subject menu, and the one after
-        # it the line, with what was typed on it still there.
+        assert band(app) == [" HELP EDITING: Next Previous Subjects Resume"]
+        # One Resume gives the line back, wherever in the subject it is pressed
+        # and with what was typed on it still there.
         await pilot.press("n", "escape")
-        assert title(app) == helps.MENU_TITLE
-        await pilot.press("escape")
+        assert app.helping is None
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")
         assert message(app) == "Enter expression (press F1 for help)"
         await pilot.press("enter")
         assert [entry.text for entry in app.session.entries] == ["x^2+1"]
+
+
+async def test_reading_the_editing_subject_through_ends_at_the_line(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x^2+1")
+        await pilot.press("f1")
+        editing = helps.BY_WORD[helps.EDITING]
+        for _ in range(len(helps.pages(editing, app.settings, 18, 80))):
+            await pilot.press("n")
+        assert app.helping is None
+        assert prompt(app) == ("AUTHOR expression:", "x^2+1")
+
+
+async def test_subjects_opens_the_rest_of_the_document_over_the_line(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x^2+1")
+        await pilot.press("f1", "s")
+        assert title(app) == helps.MENU_TITLE
+        # A subject picked off that menu is read under it and comes back to it,
+        # which is where it was opened from.
+        await pilot.press("f")
+        assert title(app) == helps.BY_WORD["Functions"].title
+        await pilot.press("escape")
+        assert title(app) == helps.MENU_TITLE
+        # And the menu itself stands where the subject stood: over the line.
+        await pilot.press("escape")
+        assert app.helping is None
+        assert prompt(app) == ("AUTHOR expression:", "x^2+1")
 
 
 async def test_f1_at_the_command_menu_is_still_the_next_window(app):

@@ -2875,6 +2875,12 @@ class RederiveApp(App[None]):
     # uncovers whatever asked for help - the command menu, or the submenu a
     # half-answered command was picked from. The prompt line is not on that
     # stack, and what it was asking is remembered in the `Helping` instead.
+    #
+    # F1 goes one level deep and not two: it opens the line editing subject
+    # itself, since that is what a reader with a line half typed is asking
+    # about, and what stands under that subject is the line. So Resume from it
+    # means the line and nothing else, and the subject carries a `Subjects`
+    # word that puts the menu up in its place for the rest of the document.
 
     def _command_help(self) -> None:
         """The Help command: the subject menu, over the worksheet."""
@@ -2885,24 +2891,25 @@ class RederiveApp(App[None]):
 
         It opens on line editing rather than on the subject menu: the key is
         pressed with a line half typed, and what is wanted then is the keys
-        that work on that line. Resume off that subject uncovers the subject
-        menu the same as any other, so the rest of the document is still one
-        key away.
+        that work on that line. The subject stands on its own there, with
+        nothing under it but the line, so Resume gives the line straight back
+        and `Subjects` is what opens the rest of the document.
         """
         self._open_help(self.mode, self.message, helps.EDITING)
 
     def _open_help(self, resume: str, message: str, word: str | None = None) -> None:
         """Put help up, over whatever the screen was doing.
 
-        A `word` opens that subject straight away, with the subject menu left
-        underneath it to come back to.
+        A `word` opens that subject instead of the subject menu, and one level
+        deep rather than two: what it stands on is what help was asked from.
         """
         self.helping = Helping(resume, message)
         self.mode = MODE_HELP
-        self.stack.append(MenuCursor(menus.HELP))
-        if word is not None:
+        if word is None:
+            self.stack.append(MenuCursor(menus.HELP))
+        else:
             self.helping.topic = helps.BY_WORD[word]
-            self.stack.append(MenuCursor(menus.HELP_PAGES[word]))
+            self.stack.append(MenuCursor(menus.HELP_PAGES_ALONE[word]))
         # A line goes off the screen with its text intact: nothing is read off
         # it until it comes back, and nothing writes to it while it is gone. An
         # open list of names goes for good, since it stands in the rows help is
@@ -2925,14 +2932,31 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _read_help(self, word: str) -> None:
-        """Next, Previous or Resume, off the menu a subject is read under."""
+        """A word off the menu a subject is read under, whichever of them."""
         if word == helps.RESUME:
             self._help_back()
+        elif word == helps.SUBJECTS:
+            self._show_subjects()
         else:
             self._turn_help(1 if word == helps.NEXT else -1)
 
+    def _show_subjects(self) -> None:
+        """Subjects: the menu of them, in place of the subject on the screen.
+
+        In place and not on top of it, which is what keeps Resume meaning the
+        one thing: F1 opened a subject over the line, so the menu it leads to
+        stands over the line too, and one Resume from either gives the line
+        back. A subject picked off that menu goes on top of it as usual, the
+        menu being what it was opened from and so what it comes back to.
+        """
+        assert self.helping is not None
+        self.helping.topic = None
+        self.helping.page = 0
+        self.stack[-1] = MenuCursor(menus.HELP)
+        self.refresh_screen()
+
     def _turn_help(self, step: int) -> None:
-        """Turn a page; past the last one is out to the subject menu.
+        """Turn a page; past the last one is out to where it was opened from.
 
         Which is the original's way out and worth keeping: a subject read
         through ends where it was started from, with no key pressed to leave
@@ -2948,10 +2972,15 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _help_back(self) -> None:
-        """Resume: up one level, and out of help from the top one."""
+        """Resume: up one level, and out of help from the top one.
+
+        Which level is the top one is a question for the stack rather than for
+        the screen: a subject reached through the subject menu uncovers it,
+        and one F1 opened directly has nothing of help under it and so leaves.
+        """
         assert self.helping is not None
         self.stack.pop()
-        if self.helping.topic is not None:
+        if isinstance(self.top, MenuCursor) and self.top.menu is menus.HELP:
             self.helping.topic = None
             self.helping.page = 0
             self._restart_menu()

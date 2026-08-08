@@ -47,8 +47,10 @@ NEXT = "Next"
 PREVIOUS = "Previous"
 
 #: The subject F1 opens on a line being typed, that being what the keys are
-#: about when there is a line to use them on.
+#: about when there is a line to use them on, and the word that leads from it
+#: to the menu of every other subject.
 EDITING = "Editing"
+SUBJECTS = "Subjects"
 
 #: The two rows a topic page spends before its text: the title, and the blank
 #: line under it. The Help Menu carries its own title inside its body, being a
