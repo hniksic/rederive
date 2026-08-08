@@ -2,7 +2,7 @@
 
 import sys
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 # CPython refuses to convert between an int and a decimal numeral of more than
 # 4300 digits, the conversion being quadratic and the limit a defence against
