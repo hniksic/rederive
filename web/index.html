@@ -41,7 +41,10 @@
     z-index: 20;
     display: flex;
     gap: 6px;
-    opacity: 0.28;
+    /* Faded, but not so far that it reads as disabled: the program owns the
+       screen and these are the page around it, and a control nobody notices is
+       a control nobody uses. Full strength the moment it is pointed at. */
+    opacity: 0.45;
     transition: opacity 0.15s;
     font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
   }
