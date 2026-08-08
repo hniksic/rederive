@@ -166,14 +166,19 @@ async def answered_within(session, engine, ask, patience=PATIENCE):
 #: reason. These are decisions, not gaps: an unexpected pass here means the
 #: engine drifted off a recorded decision, and the drift is what to look at.
 NEVER_TO_HOLD = {
+    # The bars read in and the screen draws them; what will not carry them is
+    # `.text`, which is the author spelling and has one name for the function
+    # whichever way it was typed. `|u|` is a `Kind.ABS` and the `ABS(u)` a
+    # simplified answer holds is a call, so the two are not one tree either.
+    # MAX and MIN want the single bar of `(x + y)/2` besides.
     "test_the_number_theory_functions[LCM(m, n)-|m*n|/GCD(n, m)]":
-        "absolute-value bars cannot be read back in; the engine writes ABS",
+        "the writer spells every absolute value ABS; the screen draws the bars",
     "test_the_piecewise_functions[MAX(x, y)-|x - y|/2 + (x + y)/2]":
-        "absolute-value bars cannot be read back in; the engine writes ABS",
+        "the writer spells every absolute value ABS; the screen draws the bars",
     "test_the_piecewise_functions[MIN(x, y)-(x + y)/2 - |x - y|/2]":
-        "absolute-value bars cannot be read back in; the engine writes ABS",
+        "the writer spells every absolute value ABS; the screen draws the bars",
     "test_a_square_rooted_is_an_absolute_value_where_the_variable_is_real":
-        "absolute-value bars cannot be read back in; the engine writes ABS",
+        "the writer spells every absolute value ABS; the screen draws the bars",
     "test_trigonometry[ACOS(z)-pi/2 - ASIN(z)]":
         "the arc rules of 6.4 are equivalences, not rewrites; ACOS stays ACOS",
     "test_trigonometry[ACOT(z)-pi/2 - ATAN(z)]":
@@ -231,19 +236,25 @@ NOT_YET_HELD = {
     "COS(w)-SIN(z - w)/2 + SIN(z + w)/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
     "SIN(w)-COS(z - w)/2 - COS(z + w)/2]",
-    # The manual's noise digits are Derive's binary floats, and an approximate
-    # number here is a rational - the simplest one within the tolerance - so it
-    # carries no error of its own to propagate. SQRT(10001) is exactly 20001/200,
-    # the cancellation is total, and 0.005 stands where Derive shows 0.00499722;
-    # `1.73205` is exactly 173205/100000, so re-approximating it at ten digits
-    # gives 1.73205 back where Derive's stored float reads 1.732050657; and the
-    # two fractions of the SQRT are quotients of whole numbers, exact at six
-    # digits, so Approximate mode reaches the 2/3 the manual keeps for Mixed.
-    # Rounding every arithmetic step instead answers 0.666534, not the manual's
-    # 0.666622. Holding these means emulating Derive's binary arithmetic bit for
-    # bit, which is a different answer to what an approximate number is.
+    # An approximate number is a rational here and in the original both, the
+    # simplest one standing for the value: under Rational notation the original
+    # shows pi as 355/113 and SQRT(3) as 5042/2911, neither of them a power of
+    # two underneath. What differs is the tolerance the simplest one is sought
+    # within, and the digits these want are what that difference comes to.
+    # SQRT(10001) is exactly 20001/200 here, so the cancellation is total and
+    # 0.005 stands where the manual reports 0.00499722; the two fractions of the
+    # SUM are quotients of whole numbers, exact at six digits, so Approximate
+    # mode reaches the 2/3 the manual keeps for Mixed, and rounding every step
+    # instead answers 0.666534 rather than the page's 0.666622. Reaching these
+    # means finding the rule the original picks its rational by.
     "test_catastrophic_cancellation_is_reported_as_the_manual_reports_it",
     "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
+    # The lesson of 3.8 p.45 holds and its digits do not: an approximation
+    # re-approximated keeps the error it was made with. What the page has is a
+    # decimal read back in, which the original answers 1.73205 as this engine
+    # does; re-simplifying the approximation itself is what keeps the error, and
+    # the original answers that with the 1.732050841 its 5042/2911 comes to.
+    # This case asks the first and expects the second.
     "test_reapproximating_an_approximation_keeps_its_error",
     # The value is the manual's and the spelling is the engine's: APPROX(SQRT(3),
     # 10) is 262087/151316, which is 1.732050807 to ten digits, and Rational
@@ -712,8 +723,6 @@ PIECEWISE = [
     ("SIGN(-3)", "-1"),
     # 6.7 p.111: the sign of zero is indeterminate, and ±1 is a value.
     ("SIGN(0)", "±1"),
-    ("MAX(x, y)", "|x - y|/2 + (x + y)/2"),
-    ("MIN(x, y)", "(x + y)/2 - |x - y|/2"),
     ("STEP(x)", "SIGN(x)/2 + 1/2"),
     ("FLOOR(5.73)", "5"),
     ("MOD(m, 0)", "m"),
@@ -725,6 +734,8 @@ PIECEWISE = [
     ("CHI(1, 2, 3)", "1"),
     ("CHI(2, 1, 3)", "0"),
     ("CHI(1, 3, 2)", "0"),
+    ("MAX(x, y)", "|x - y|/2 + (x + y)/2"),
+    ("MIN(x, y)", "(x + y)/2 - |x - y|/2"),
     ("CHI(a, x, b)", "SIGN(x - a)/2 - SIGN(x - b)/2"),
 ]
 
