@@ -206,10 +206,10 @@ async def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("(x^2 - 1) + SIN(z)")
     part(session, "right")
     answer = await session.factor("#1")
-    # The splice is fenced and the line's own fences stay, so the text carries
-    # a pair more than it needs. What is drawn comes from the tree, where a
-    # fence is a matter of precedence, so the extra pair shows up nowhere.
-    assert answer.text == "(((x + 1)*(x - 1)))+SIN(z)"
+    # The part came out from between fences the line still has, so the answer
+    # goes back between them rather than bringing a second pair. What is drawn
+    # comes from the tree either way, where a fence is a matter of precedence.
+    assert answer.text == "((x + 1)*(x - 1))+SIN(z)"
     assert answer.layout.lines == ("(x + 1)·(x - 1) + SIN(z)",)
     assert answer.annotation == "Fctr(#1')"
 

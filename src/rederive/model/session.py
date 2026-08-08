@@ -80,6 +80,7 @@ from rederive.display import DisplayOptions, Layout, Region, render
 # below does not resolve, and the one place that does need the other half says so in
 # an import of its own, which is `_computing_here`.
 from rederive.engine import client as engine
+from rederive.engine.replacing import same_expression
 from rederive.model import data, state, worksheet
 from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
@@ -1062,19 +1063,33 @@ class Session:
 
         The answer is spliced into the entry's own text and the whole line read
         back, so that the new entry's spans index its text exactly as an
-        authored line's do. The splice is fenced unless it is a single atom,
-        and fences the line already carries are left where they are: a pair too
-        many changes nothing about how the line reads or is drawn, since what
-        is drawn comes from the tree, where a fence is a matter of precedence
-        rather than of text. A pair too few would change what the line says.
+        authored line's do.
         """
         part = self.selected_node
         assert part is not None
         result = await run(part, self.context, self.state)
-        fragment = result.text if result.node.is_atom else f"({result.text})"
-        text = entry.text[: part.start] + fragment + entry.text[part.end :]
-        node = parse_expression(text, self.state).node
+        text, node = self._spliced(entry, part, result.text)
         return self._append(text, node, f"{prefix}(#{entry.number}')")
+
+    def _spliced(self, entry: Entry, part: Node, fragment: str) -> tuple[str, Node]:
+        """`entry`'s text with `fragment` written where `part` stands, and read back.
+
+        A fence too few would change what the line says, so the fenced splice is
+        what the answer falls back on. One too many says the same thing, but the
+        text is what a saved file holds, and the slot a part came out of often
+        carries fences already: the highlighted sum of `(5*x - 3*x + 1)^7` stood
+        between a pair the line still has. So the bare splice is what is taken
+        wherever the line reads back as the same expression either way, which is
+        the question asked here rather than guessed at from precedence.
+        """
+        fenced = entry.text[: part.start] + f"({fragment})" + entry.text[part.end :]
+        node = parse_expression(fenced, self.state).node
+        bare = entry.text[: part.start] + fragment + entry.text[part.end :]
+        try:
+            plain = parse_expression(bare, self.state).node
+        except DeriveSyntaxError:
+            return fenced, node
+        return (bare, plain) if same_expression(plain, node) else (fenced, node)
 
     # -- declaring ---------------------------------------------------------
     #

@@ -62,7 +62,7 @@ def replaced(node: Node, replacements: Sequence[Replacement]) -> Node:
     becomes an entry.
     """
     for target, value in replacements:
-        if _same(node, target):
+        if same_expression(node, target):
             return value
     children = tuple(replaced(child, replacements) for child in node.children)
     if children == node.children:
@@ -70,17 +70,21 @@ def replaced(node: Node, replacements: Sequence[Replacement]) -> Node:
     return Node(node.kind, node.start, node.end, children, node.value, node.surface)
 
 
-def _same(one: Node, other: Node) -> bool:
+def same_expression(one: Node, other: Node) -> bool:
     """Whether two trees are the same expression, wherever they were written.
 
     A `Node` carries where it was read from as well as what it says, and two
     occurrences of `t^3` in one line carry different offsets. How it was
     spelled is not part of the question either: `2x` and `2*x` are one product,
-    and a numeral is what it is worth rather than the digits it was typed as.
+    a numeral is what it is worth rather than the digits it was typed as, and a
+    pair of fences the grammar did not need is no part of what a line says.
     """
     return (
         one.kind is other.kind
         and one.value == other.value
         and len(one.children) == len(other.children)
-        and all(_same(a, b) for a, b in zip(one.children, other.children, strict=True))
+        and all(
+            same_expression(a, b)
+            for a, b in zip(one.children, other.children, strict=True)
+        )
     )
