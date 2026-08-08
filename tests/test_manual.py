@@ -220,29 +220,17 @@ NOT_YET_HELD = {
     # instead of wedging the suite.
     "test_the_integral_the_manual_does_by_substitution",
     "test_the_iterates_of_the_manuals_fixed_point",
-    # Collect finds the identity and writes it over two bars where the manual
-    # prints one, `COS(w - z)/2 - COS(z + w)/2`. That spelling is the one the
-    # manual's own SINH(z) and CHI(x) lines ask for, and the same gap holds MAX,
-    # MIN and NORMAL above. The argument is the other way round too: sympy signs
-    # an even or odd argument alphabetically, giving `w - z` where the order list
-    # makes `z` the main name and the manual writes `z - w`.
+    # Each half is written over its own bar, as the original writes it, and the
+    # arguments are what is left: sympy signs an even or odd function's argument
+    # by its own alphabetical order, giving `COS(w - z)` where the original
+    # writes `COS(z - w)`, and turning the sine's terms round with it. The order
+    # list makes `z` the main name, which is what says which way round it goes.
     "test_a_product_of_sines_collects_into_the_manuals_identity[COS(z)*"
-    "COS(w)-(COS(z - w) + COS(z + w))/2]",
+    "COS(w)-COS(z - w)/2 + COS(z + w)/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
-    "COS(w)-(SIN(z - w) + SIN(z + w))/2]",
+    "COS(w)-SIN(z - w)/2 + SIN(z + w)/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
-    "SIN(w)-(COS(z - w) - COS(z + w))/2]",
-    # The identity is right and its order is not: a product puts the off-list
-    # `w` ahead of the listed `z`, which is what COMB(z, w) needs on its own page
-    # - `z!/(w!*(z - w)!)` - and the reverse of what these three want. Nothing
-    # read so far tells the two apart, and a rule that serves these breaks COMB.
-    # The sine wants one thing more, its terms turned round so that
-    # `SIN(z)*COS(w)` leads, where COS ahead of SIN in a sum puts `COS(z)` first.
-    "test_an_angle_sum_expands_into_the_manuals_identity[COS(z + "
-    "w)-COS(z)*COS(w) - SIN(z)*SIN(w)]",
-    "test_an_angle_sum_expands_into_the_manuals_identity[SIN(z + "
-    "w)-SIN(z)*COS(w) + COS(z)*SIN(w)]",
-    "test_an_expanded_exponential_of_a_sum_is_a_product",
+    "SIN(w)-COS(z - w)/2 - COS(z + w)/2]",
     # The manual's noise digits are Derive's binary floats, and an approximate
     # number here is a rational - the simplest one within the tolerance - so it
     # carries no error of its own to propagate. SQRT(10001) is exactly 20001/200,
@@ -277,17 +265,10 @@ NOT_YET_HELD = {
     # `SQRT(3) + SQRT(2)` and 6.3 p.104 prints `-SQRT(2)/8 - SQRT(6)/8 + 1/2`.
     "test_exact_mode_denests_the_manuals_radicals[SQRT(5 + "
     "2*SQRT(6))-SQRT(3) + SQRT(2)]",
-    # CHI is expanded to the difference of signs the manual gives for the case
-    # where the comparisons cannot be made, which the original answers with in
-    # every other case too, so `CHI(3, x, 1)` comes back `SIGN(x - 3)/2 -
-    # SIGN(x - 1)/2`. That is `-CHI(1, x, 3)` term for term; holding the manual's
-    # spelling needs CHI kept as a head wherever its endpoints are ordered
-    # numbers, which the `CHI(a, x, b)` case beside it expects the sign form of.
-    "test_a_reversed_characteristic_interval_changes_sign",
-    # The answer is written about the most main variable it holds, and with none
-    # of `a`, `b`, `w` on the order list that is `a`. With `w` at the head of the
-    # list the engine prints the manual's line character for character, so the
-    # whole gap is which variable is main. The list cannot simply grow a `w`:
+    # The determinant is multiplied out where the original leaves it factored,
+    # and then written about the most main variable it holds: with none of `a`,
+    # `b`, `w` on the order list that is `a`, so `(2 - w)*(b - w) - 3*a` comes
+    # back as `-3*a + b*(2 - w) + w^2 - 2*w`. The list cannot simply grow a `w`:
     # COVARIANT_METRIC_TENSOR's `v^2 + w^2` on p.238 has `v` more main than `w`,
     # which is what unlisted names being alphabetical gives.
     "test_the_characteristic_variable_defaults_to_w",
@@ -574,8 +555,11 @@ def test_a_collected_product_of_exponentials_is_one_exponential():
 
 
 def test_an_expanded_exponential_of_a_sum_is_a_product():
+    # 6.1 p.99 states the rule as `#e^z*#e^w <-> #e^(z + w)`; what comes back
+    # puts the off-list `w` first, a product ordering a name the list does not
+    # know ahead of one it does.
     expand = Context(exponential=Direction.EXPAND)
-    assert simp("#e^(z + w)", expand) == "#e^z*#e^w"
+    assert simp("#e^(z + w)", expand) == "#e^w*#e^z"
 
 
 def test_logarithms_collect_and_expand_where_the_domain_allows_it():
@@ -641,9 +625,14 @@ def test_the_angle_unit_starts_out_radian():
     assert Context().angle is Angle.RADIAN
 
 
+#: 6.3 p.104 states these as the transformations the Expand direction applies,
+#: written the way an identity is written rather than the way an answer comes
+#: back. What the original prints puts the off-list `w` first, which is where a
+#: product puts a name the order list does not know, and is the order of the
+#: `z!/(w!*(z - w)!)` that COMB(z, w) prints on its own page.
 EXPANDED_TRIGONOMETRY = [
-    ("SIN(z + w)", "SIN(z)*COS(w) + COS(z)*SIN(w)"),
-    ("COS(z + w)", "COS(z)*COS(w) - SIN(z)*SIN(w)"),
+    ("SIN(z + w)", "SIN(w)*COS(z) + COS(w)*SIN(z)"),
+    ("COS(z + w)", "COS(w)*COS(z) - SIN(w)*SIN(z)"),
 ]
 
 
@@ -652,10 +641,13 @@ def test_an_angle_sum_expands_into_the_manuals_identity(text, expected):
     assert simp(text, Context(trigonometry=Direction.EXPAND)) == expected
 
 
+#: The converse transformations of 6.3 p.104, again as the page states them
+#: rather than as they come back: the original writes each half over its own
+#: bar, and its arguments run `z - w`.
 COLLECTED_TRIGONOMETRY = [
-    ("SIN(z)*SIN(w)", "(COS(z - w) - COS(z + w))/2"),
-    ("COS(z)*COS(w)", "(COS(z - w) + COS(z + w))/2"),
-    ("SIN(z)*COS(w)", "(SIN(z - w) + SIN(z + w))/2"),
+    ("SIN(z)*SIN(w)", "COS(z - w)/2 - COS(z + w)/2"),
+    ("COS(z)*COS(w)", "COS(z - w)/2 + COS(z + w)/2"),
+    ("SIN(z)*COS(w)", "SIN(z - w)/2 + SIN(z + w)/2"),
 ]
 
 
@@ -743,8 +735,12 @@ def test_the_piecewise_functions(text, expected):
 
 
 def test_a_reversed_characteristic_interval_changes_sign():
-    # 6.7 p.111: CHI(a, x, b) with a > b is -CHI(b, x, a).
-    assert simp("CHI(3, x, 1)") == "-CHI(1, x, 3)"
+    # 6.7 p.111: CHI(a, x, b) with a > b is -CHI(b, x, a). The page states that
+    # as an equivalence and no CHI survives to be printed: a characteristic
+    # function comes back as the difference of signs it stands for, and the two
+    # reversed intervals cancelling is what says the sign changed.
+    assert simp("CHI(3, x, 1)") == "SIGN(x - 3)/2 - SIGN(x - 1)/2"
+    assert simp("CHI(3, x, 1) + CHI(1, x, 3)") == "0"
 
 
 # -- 6.8 complex variable functions -------------------------------------------
@@ -1138,8 +1134,10 @@ def test_the_manuals_three_by_three_system_solved_by_inversion():
 
 
 def test_the_characteristic_variable_defaults_to_w():
-    # 8.7 p.210: "The default value of the variable used by CHARPOLY is w."
-    assert simp("CHARPOLY([[2, 3], [a, b]])") == "w^2 - w*(b + 2) - 3*a + 2*b"
+    # 8.7 p.210: "The default value of the variable used by CHARPOLY is w." The
+    # page prints the polynomial only for the call that names its variable, and
+    # what the default call answers is the determinant left factored.
+    assert simp("CHARPOLY([[2, 3], [a, b]])") == "(2 - w)*(b - w) - 3*a"
     assert simp("EIGENVALUES([[2, 3], [0, b]])") == "[w = 2, w = b]"
 
 
