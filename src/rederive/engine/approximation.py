@@ -7,7 +7,7 @@ the value to the precision asked for. Approximating π to six digits gives
 approximate answer is as exact a value as any other: it is just a different
 value from the one it approximates.
 
-Three consequences the original is recognisable by:
+Three consequences:
 
 * A number that needs no digits does not get any. The simplest rational
   standing in for 5 is 5, and the one standing in for two thirds is two
@@ -15,10 +15,20 @@ Three consequences the original is recognisable by:
   `0.666666`, cut rather than rounded up to `0.666667`.
 * A value keeps the digits it is shown by. `SQRT(3)` is `1.73205` and not the
   `1.73204` that a simpler rational a little below it would show.
-* Rounding happens to the numbers going in, not to the arithmetic between
-  them. The manual's own exercise turns on it: the two fractions of
-  `SQRT(3422357/2313 - 1140443/771)` are rounded before they are subtracted,
-  so approximate mode does not reach the exactly 2/3 that Mixed mode does.
+* Rounding reaches the numbers that need digits, and not the arithmetic
+  between them. What gets a rational to stand for it is an irrational; a
+  quotient of two whole numbers is an exact value already and stays the one it
+  is. So `10^7*pi` is `10^7*355/113` worked out and then rounded, which is
+  `31415929` and not the `31415900` that six digits of pi multiplied out
+  would leave.
+
+Where this parts from the manual: 3.8 p.46 turns on the two fractions of
+`SQRT(3422357/2313 - 1140443/771)` being rounded before they are subtracted,
+which is what would leave Approximate mode short of the exactly 2/3 that Mixed
+mode reaches. Both are quotients of whole numbers, so neither is rounded here
+and both modes answer 2/3. Rounding every step instead does not reach the
+manual's digits either, and what its 0.666622 really records is binary
+floating point; `test_manual` holds the case and says so.
 
 "To the precision asked for" is a tolerance, and it is one digit tighter than
 the digits shown. The looser reading - the simplest rational that displays the
