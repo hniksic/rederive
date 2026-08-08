@@ -136,6 +136,7 @@ the variable line of Factor and Expand keeps the highlight where it is:
   Ctrl-Home, Ctrl-End the first, the last expression
   Ctrl-PgUp, Ctrl-PgDn  the same as Ctrl-Home and Ctrl-End
   Ctrl-Left, Ctrl-Right scroll sideways over an expression wider than the pane
+  <, >                  the same, where the Ctrl keys never reach the program
 
 Sub-expression highlighting commands. Press F6, or set Options Input Use to
 Subexpression, and the sideways keys walk into the highlighted expression

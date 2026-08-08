@@ -1239,6 +1239,11 @@ class RederiveApp(App[None]):
         # too wide for the pane. They move no selection, so they are not nav.
         Binding("ctrl+right", "scroll_work(1)", "Right", priority=True, show=False),
         Binding("ctrl+left", "scroll_work(-1)", "Left", priority=True, show=False),
+        # The same two commands under a spelling no window manager takes for
+        # itself, for the terminals where the Ctrl keys never arrive. They are
+        # characters, so they only scroll where nothing is waiting to be typed.
+        Binding(">", "scroll_work_typed(1)", "Right", priority=True, show=False),
+        Binding("<", "scroll_work_typed(-1)", "Left", priority=True, show=False),
     ]
 
     def __init__(
@@ -1845,6 +1850,12 @@ class RederiveApp(App[None]):
             return self.mode in MENU_MODES
         if action == "scroll_work":
             return self.mode == MODE_MENU
+        if action == "scroll_work_typed":
+            # `<` and `>` scroll where the Ctrl keys do, save that a field
+            # collecting text has the better claim on a character: they are the
+            # spelling for a terminal whose window manager eats Ctrl-Left and
+            # Ctrl-Right, not a second command.
+            return self.mode == MODE_MENU and self.editor is None
         if action == "help":
             # F1 is help on a line and the next window everywhere else, which
             # is the original's split. Asking for help from inside help would
@@ -2657,6 +2668,10 @@ class RederiveApp(App[None]):
         """Ctrl-Right and Ctrl-Left, over a selected render wider than the pane."""
         self.work_area.scroll_across(direction)
         self.refresh_screen()
+
+    def action_scroll_work_typed(self, direction: int) -> None:
+        """`>` and `<`, which scroll exactly as the Ctrl keys do."""
+        self.action_scroll_work(direction)
 
     def _move_highlight(self, step: int) -> None:
         cursor = self.top

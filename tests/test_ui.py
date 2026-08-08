@@ -2899,3 +2899,38 @@ async def test_a_highlight_scrolled_off_the_left_is_not_painted(app):
         await pilot.press("ctrl+right")
         assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
         assert highlighted_expression(app) == ""
+
+
+# -- and the same scroll spelled without a modifier ----------------------------
+#
+# A window manager that keeps Ctrl-Left and Ctrl-Right for itself leaves the
+# pane no way to be scrolled by hand, so `<` and `>` say the same thing. They
+# are characters, which is what the rest of these are about: they scroll only
+# where nothing is waiting to be typed into.
+
+
+async def test_the_angle_brackets_scroll_as_the_ctrl_keys_do(app):
+    async with app.run_test() as pilot:
+        await scrolled(pilot, [">", ">"])
+        assert work_area(app)[2] == "#2:  " + WIDE[2 * STEP :]
+        await pilot.press("<")
+        assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
+
+
+async def test_an_angle_bracket_typed_on_a_line_is_text(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.press(*"x<3")
+        assert prompt(app) == ("AUTHOR expression:", "x<3")
+        await pilot.press("enter")
+        assert entries(app)[-1] == "x<3"
+
+
+async def test_an_angle_bracket_typed_into_a_field_is_text(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "x^2*y")
+        await pilot.press("c", "l", "enter", "enter")
+        await pilot.press("<")
+        assert band(app) == [
+            " CALCULUS LIMIT: Point: <                  From:(Both)Left Right"
+        ]
