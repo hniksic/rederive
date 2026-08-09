@@ -2053,8 +2053,8 @@ def test_the_utility_files_matrix_minor():
 
 def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
     """A relation is a statement, and a statement that says something definite
-    is simplified by saying it. Every row here was checked against Derive 4.11
-    under DOSBox, which answers all six `true` or `false`.
+    is simplified by saying it. Every row here was checked against the
+    original, which answers all six `true` or `false`.
 
     The judgement is three-valued: `3*x = x^2 + c` settles nothing and so comes
     back as it was authored, sides simplified and the relation standing. That

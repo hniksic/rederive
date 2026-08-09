@@ -36,6 +36,11 @@ between two unfoldings: it is where the test of the `IF` is decided and where
 the arithmetic on the counted-down argument is done. A size bound ends the
 passes for a recursion that never arrives.
 
+A call with nothing unknown left in it does not wait for the passes. It is run
+to its value where it stands, innermost first, before step 3 can meet it - that
+is `_calls_worked_out`, and it is what keeps a recursion whose steps
+differentiate one another from carrying every level at once.
+
 Every rewrite is offered inside a `try`, and a rewrite that raises is a rewrite
 that was not worth having: the previous form stands. That is what makes the
 command total. Nothing sympy does can turn a valid entry into an error.
@@ -44,6 +49,7 @@ command total. Nothing sympy does can turn a valid entry into an error.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from math import gcd
 
 import sympy as sp
@@ -203,6 +209,10 @@ def simplified(
     it has to reach is `x = @1`, every value there is.
     """
     context = context or Context()
+    if not _working.depth:
+        # A command of its own, and whatever the last one made of a recursion
+        # says nothing about this one.
+        _working.stuck = False
     result = _once(node, context, decide)
     for _ in range(_UNFOLDS - 1):
         if not _unfolds_further(result, context):
@@ -248,6 +258,11 @@ def _unfolds_further(result: sp.Basic, context: Context) -> bool:
     """
     if not context.functions:
         return False
+    if _working.depth and _working.stuck:
+        # A call being worked out where it stands, whose recursion has already
+        # failed to arrive. Whatever further passes reach is thrown away by
+        # `_worked_out`, which wants the value or nothing.
+        return False
     try:
         calls = result.atoms(AppliedUndef)
     except Exception:
@@ -262,6 +277,102 @@ def _unfolds_further(result: sp.Basic, context: Context) -> bool:
 #: `RAISE(b, 256)` takes two hundred and fifty-seven of them, and Derive's
 #: recursions are written to count down one at a time.
 _UNFOLDS = 300
+
+
+def _calls_worked_out(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
+    """Every call in `expression` that can be worked out, worked out where it stands.
+
+    A pass a level is enough for a recursion that collapses as it goes and too
+    slow for one whose steps have to wait for each other. 10.7's mutual
+    recursion is the second kind: each body differentiates the calls one level
+    down, a derivative of a call still waiting for its body has to wait for it,
+    and the pass writes all four calls of a body in at once - so `F(4)` is two
+    hundred and fifty-six unfinished `DIF` towers over `F(0)`, past the size
+    bound above before a single one of them can be differentiated. Derive works
+    such a call out where it stands, innermost first, and then every
+    intermediate is the small expression the recursion actually computes.
+
+    Innermost first is what the walk gives for nothing: sympy rebuilds a node
+    from its rewritten arguments, so a call inside another is worked out before
+    the call around it, and the recursion below carries the rest.
+
+    Only a call with nothing unknown left in it. `F(n - 1)` under a symbolic `n`
+    has no value to arrive at, and running the recursion at it would unfold it
+    a level a pass until a bound stopped it. That is what the passes are for,
+    and a call they leave standing is left standing here.
+    """
+    if not context.functions:
+        return expression
+
+    def waiting(call: sp.Basic) -> bool:
+        return (
+            isinstance(call, AppliedUndef)
+            and type(call).__name__ in context.functions
+            and not call.free_symbols
+        )
+
+    def worked(call: sp.Basic) -> sp.Basic:
+        return _worked_out(call, context, decide)
+
+    try:
+        return expression.replace(waiting, worked)
+    except Exception:
+        return expression
+
+
+def _worked_out(call: sp.Basic, context: Context, decide: bool) -> sp.Basic:
+    """One call put through the whole of Simplify, or the call as it stands.
+
+    A value still waiting for a body of its own is no answer: the recursion did
+    not arrive within what this was given, and what belongs where the call
+    stands is the call itself, so that the passes get their turn after all.
+    It is the end of working calls out for this command too, which is what
+    `stuck` records: a recursion that will not arrive is one every call in it
+    will fail to arrive at, and trying each of them again inside every pass of
+    every level above is how a bounded fallback turns into an unbounded one.
+    """
+    if _working.stuck or _working.depth >= _NESTING:
+        return call
+    _working.depth += 1
+    try:
+        value = simplified(from_sympy(call, context).exact, context, decide)
+    except Exception:
+        value = None
+    finally:
+        _working.depth -= 1
+    if value is None or _awaits_a_body(value, context):
+        _working.stuck = True
+        return call
+    return value
+
+
+#: How many calls deep one of these evaluations may stand. A recursion that
+#: counts down arrives long before this; one that does not - `F(n) :=
+#: DIF(F(n + 1), x)` - would otherwise nest until Python's own stack said so,
+#: and what it has to do instead is hand the call back and let the passes
+#: answer with the tower they have built.
+_NESTING = 32
+
+
+@dataclass
+class _WorkingOut:
+    """How far into working calls out where they stand the pipeline now is.
+
+    Module state, and it may be that because a command is a computation with
+    nothing else running beside it: one at a time in one process, so what is
+    counted here is counted along the branch being evaluated. `simplified`
+    entered at depth nothing is a new command, and it starts this over.
+
+    `depth` is how many calls the evaluation stands inside. `stuck` says that
+    one of them did not arrive, after which the passes carry the recursion
+    exactly as they did before any of this.
+    """
+
+    depth: int = 0
+    stuck: bool = False
+
+
+_working = _WorkingOut()
 
 
 # -- by shape ----------------------------------------------------------------
@@ -499,6 +610,11 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
         # taken, and a vector is simplified element by element - the same
         # answer whether the matrix was written or arrived at.
         return _transform(expression, context, decide)
+    # After the conditionals are set aside, so that a call standing in a branch
+    # no test has chosen is not computed; and before the heads, which is the
+    # whole point - a derivative of a call that has arrived is a derivative and
+    # not another thing to wait for.
+    expression = _calls_worked_out(expression, context, decide)
     expression, held = _held(expression)
     tried: set[sp.Basic] = set()
     formulas: dict[sp.Basic, sp.Basic] = {}
@@ -1064,6 +1180,12 @@ def _awaits_a_body(head: sp.Basic, context: Context) -> bool:
     it as it stands answers zero where the value it is waiting for depends on
     `mu` throughout. The pass that writes the body in comes round again, so what
     the head has to do is wait for it.
+
+    What reaches here is a call that could not be worked out where it stood -
+    one whose arguments still hold a variable, or one whose recursion did not
+    arrive - since `_calls_worked_out` has already run over the expression.
+    `_worked_out` asks this of a whole value for that second reading: a value
+    still holding such a call is a recursion that has not answered.
     """
     if not context.functions:
         return False

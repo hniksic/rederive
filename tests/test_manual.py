@@ -278,17 +278,15 @@ NOT_YET_HELD = {
     # again, and an entry whose text and tree disagree is what
     # `test_simplify_corpus` fails on. A difference in spelling only.
     "test_the_clairaut_equation_the_manual_solves",
-    # `F(4)` comes back an unfinished tower of `DIF` over `F(0)`. A calculus
-    # head over a call still waiting for its body waits for it, which is what
-    # makes `F(3)` the `3*mu*sigma` it is; but a pass writes each pending body
-    # in one level at a time, and nothing collapses until the innermost `F(0)`
-    # answers, so by four levels down the tree is past the size guard. Derive
-    # works such a call out where it stands, innermost first, which is what
-    # keeps every intermediate small. Reached with the guard lifted, the value
-    # is the manual's and the spelling is
-    # `3*epsilon*mu + mu^2 - 15*mu*sigma^2` - the same common `mu` that holds
-    # the accumulator version above. The empty `G(n) :=` changes nothing either
-    # way, the same session without it answering the same.
+    # `F(4)` is the manual's value, `3*epsilon*mu + mu^2 - 15*mu*sigma^2`, and
+    # the very expression the accumulator version above answers with: a call
+    # with nothing unknown left in it is run to its value where it stands,
+    # innermost first, so each level of derivatives collapses before the one
+    # above it is taken rather than all four standing at once and going past
+    # the size bound. What is left is the `mu` the page takes out of the three
+    # terms, which is that entry's residue and no other - `normal.py` records
+    # why no common factor is taken back out of a finished sum. A difference in
+    # spelling only.
     "test_an_empty_definition_makes_a_name_a_function_and_not_a_variable",
     # The brackets are read as the vector they are, the scalar goes into the one
     # element, and `[3*x + 3*y]` comes back. What differs is how that element is
