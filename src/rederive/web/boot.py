@@ -68,6 +68,10 @@ class PageApp(RederiveApp):
     """
 
     CSS_PATH = str(Path(ui.__file__).parent / RederiveApp.CSS_PATH)
+    #: The opening notice's last line, minus the demonstrations: the page has a
+    #: button that offers them by name, so pointing at the keystrokes that
+    #: reach the same menu would be pointing away from what is on the screen.
+    GREETING_LINE = ui.GREETING_HELP
 
     def __init__(
         self,
@@ -117,6 +121,10 @@ async def start(
     # live inside it, and JS would be left pointing at freed callbacks.
     demonstrations = Demos(demos, app, platform.current().storage())
     demonstrations.attend()
+    # And the command that offers the same nine downloads the same way. What
+    # the app has instead is `urlopen` on a thread, which is two things a tab
+    # has not got.
+    app.fetcher = demonstrations.brought
     try:
         await app.run_async()
     finally:

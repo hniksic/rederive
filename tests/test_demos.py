@@ -16,6 +16,10 @@ The app is faked to the depth this code touches it, which is one question and
 one call. What a demonstration then *does* is the app's own, and is tested with
 a real app in `test_transfer` and `test_plot`.
 
+The seam is crossed the other way too, and the section after that is what
+happens then: `Transfer Demo` offers the same nine in the menu band of a page,
+and a command in a tab has no download of its own to make.
+
 The desktop's half of the same seam is the last section: the roads a machine
 with sockets takes to the same nine files, over a `urlopen` that answers out of
 a table. The menu those come in by is `test_transfer` too.
@@ -35,6 +39,8 @@ from rederive import fetch, platform
 from rederive.model import demos as catalogue
 from rederive.model import worksheet
 from rederive.platform.web import Web
+from rederive.ui.app import RederiveApp
+from rederive.web.boot import PageApp
 from rederive.web.demos import Demos
 
 SCRIPT = b"; adds two numbers\r\n2 + 3\r\n\x1a"
@@ -81,12 +87,12 @@ def test_the_page_module_exports_everything_python_calls_on_it():
     demonstration half started.
     """
     source = (Path(__file__).resolve().parents[1] / "web" / "demos.js").read_text()
-    pattern = r"^export (?:function\s+(\w+)|\{([^}]*)\})"
+    pattern = r"^export (?:async\s+)?(?:function\s+(\w+)|\{([^}]*)\})"
     exported = set()
     for name, group in re.findall(pattern, source, re.M):
         exported.update([name] if name else (word.strip() for word in group.split(",")))
-    # `wire` is the page's own; the other two are what this module reaches for.
-    assert {"wire", "attend", "said"} <= exported
+    # `wire` is the page's own; the other three are what this module reaches for.
+    assert {"wire", "attend", "said", "brought"} <= exported
 
 
 # -- the page's menu ----------------------------------------------------------
@@ -288,6 +294,47 @@ def test_a_demonstration_asked_for_too_early_is_refused_in_words(page):
     # And nothing was kept: the file is downloaded again next time, which is
     # the next thing the user will do.
     assert not platform.current().storage().exists(Path("ALGEBRA.DMO"))
+
+
+# -- the command that offers the same nine ------------------------------------
+#
+# `Transfer Demo` is in the menu band of a page as it is on a desktop, and a
+# command running in a tab has nothing to download with: sockets are not a thing
+# a tab has. So it fetches with the page, and what arrives is kept the way a tab
+# keeps a file rather than written the way a desktop writes one.
+
+
+async def test_the_command_downloads_through_the_page(demos, page, arith):
+    page.archive["ARITH.DMO"] = SCRIPT
+    assert await demos.brought(arith) == SCRIPT
+    assert page.fetched == ["ARITH.DMO"]
+    # In the page afterwards, under the name the original gave it, so nothing
+    # is downloaded twice and the Transfer commands find it.
+    assert kept(page, "ARITH.DMO")
+    assert worksheet.demonstration(Path("ARITH.DMO")) == (
+        ("adds two numbers", "2 + 3"),
+    )
+    # And nothing left the tab. A save is a download here, and nobody asking to
+    # be shown a demonstration asked for a copy of the file on their disk.
+    assert page.downloads == []
+
+
+async def test_a_download_the_page_refuses_says_so_in_one_sentence(demos, arith):
+    """The browser's stack is for a console; a message line has room for a line.
+
+    Nothing is on offer from the fake page, which is every road to the archive
+    being shut - the state the second of them was written for.
+    """
+    with pytest.raises(OSError, match="^the server said 503$"):
+        await demos.brought(arith)
+    assert not platform.current().storage().exists(Path("ARITH.DMO"))
+
+
+def test_the_pages_opening_notice_points_at_the_button_and_not_the_keystrokes():
+    """The demonstrations are a click away there, which is nearer than T D."""
+    assert "T D" in RederiveApp.GREETING_LINE
+    assert "T D" not in PageApp.GREETING_LINE
+    assert "help" in PageApp.GREETING_LINE
 
 
 # -- the desktop's own download -----------------------------------------------

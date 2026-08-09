@@ -12,6 +12,11 @@
 // the road that is closed to pages. Until Python has attended there is no menu,
 // which is why the button says so rather than opening an empty one.
 //
+// The download has two callers, since the same nine are offered twice: the menu
+// under the button, and the program's own Transfer Demo command, which comes
+// back over the seam for it. A tab has one road out and it is the browser's,
+// whichever side of the seam the choice was made on.
+//
 // **Two roads, and the second one exists for a reason that has been seen to
 // happen.** Ordinarily a demonstration is one file of a few kilobytes, taken
 // out of a DOS diskette image by the archive itself; two images carry the same
@@ -172,6 +177,28 @@ async function chose(demo) {
     throw error;
   }
   if (terminal !== null) terminal.focus();
+}
+
+// The same download, asked for from Python's side of the menu. The program has
+// a Transfer Demo command that offers the same nine, and a command running in a
+// tab cannot reach the archive itself: fetching is the browser's wherever the
+// choice was made, and only the fetching comes here. What goes back is bytes -
+// which file this is, where it is kept and what a step of it does stay Python's,
+// exactly as they are for a choice made on the menu above.
+export async function brought(file) {
+  const demo =
+    handlers === null
+      ? undefined
+      : handlers.demos.find((entry) => entry.file === file);
+  if (demo === undefined) throw new Error(`${file} is not on the menu here`);
+  try {
+    return await fetched(demo);
+  } catch (error) {
+    // One sentence rather than the pile `Promise.any` throws: what is on the
+    // other side of this is a message line with room for one.
+    const first = reason(error);
+    throw new Error(first && first.message ? first.message : String(first));
+  }
 }
 
 // The file: out of whichever image answers first, or out of the whole diskette

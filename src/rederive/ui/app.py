@@ -609,6 +609,10 @@ GREETING = (
 #: keystrokes rather than one: the original's own tour of itself is three keys
 #: away, and nothing else on the screen would ever say so.
 GREETING_FOOTER = "Press H for help, T D for demos"
+#: The same line where the demonstrations are already in front of the user. A
+#: page offers them on a button of its own, so the keystrokes are worth nothing
+#: there and the help is the only thing the notice has left to say.
+GREETING_HELP = "Press H for help"
 
 
 class FileNames(Suggester):
@@ -1151,6 +1155,10 @@ class RederiveApp(App[None]):
     CSS_PATH = "rederive.tcss"
     TITLE = "Rederive"
     AUTO_FOCUS = None
+    #: The last line of the opening notice. A subclass whose environment shows
+    #: the demonstrations off by itself says the other one, there being no
+    #: reason to point at two keystrokes for something already on the screen.
+    GREETING_LINE = GREETING_FOOTER
     # Nothing on screen belongs to anything but the pane itself.
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
@@ -1413,6 +1421,11 @@ class RederiveApp(App[None]):
         #: The one being downloaded, or None while none is. One at a time: two
         #: would be two demonstrations racing for the same worksheet.
         self.fetching: str | None = None
+        #: How one of the original's demonstrations is fetched when it is not
+        #: here yet, and where it is kept once it is. The desktop's own sockets
+        #: unless something puts its own in - a tab has no sockets and one road
+        #: out, which is the browser's, and `rederive.web.demos` is that road.
+        self.fetcher: Callable[[catalogue.Demo], Awaitable[bytes]] = self._downloaded
         #: Whether a plot window closed while the demonstration was waiting
         #: over it, which is a click on its way here: closing a window gives
         #: this one the keyboard back, and the click that closed it comes with.
@@ -1618,7 +1631,9 @@ class RederiveApp(App[None]):
             elif self.greeting:
                 # Which is the one window there is: the notice stands only
                 # while the screen is the one the program opened with.
-                pane.show_greeting(GREETING, GREETING_FOOTER, rect.height, rect.width)
+                pane.show_greeting(
+                    GREETING, self.GREETING_LINE, rect.height, rect.width
+                )
             else:
                 session = window.session
                 pane.show(session.entries, session.selected, session.selection_rect())
@@ -4556,17 +4571,39 @@ class RederiveApp(App[None]):
         self.run_worker(self._fetching(demo))
 
     async def _fetching(self, demo: catalogue.Demo) -> None:
-        """Wait for a demonstration to come over the network, then run it.
+        """Wait for a demonstration to arrive, then run it.
 
         On a task of its own, since a download is the one thing this program
         does that can take a visible while: the loop goes on repainting, and the
         menu stays up and readable under the message that says what is awaited.
 
+        Where the bytes come from is `fetcher`'s business and not this one's,
+        and so is where they are kept on the way past. What is left here is the
+        waiting, the refusal, and the running of what arrived - from the text in
+        hand rather than from the file, since a store that would not take the
+        file is not worth stopping a demonstration for.
+        """
+        try:
+            raw = await self.fetcher(demo)
+        except OSError as trouble:
+            self._beep()
+            self._set_message(CANNOT_FETCH.format(name=demo.file, trouble=trouble))
+            return
+        finally:
+            self.fetching = None
+        self.demonstrate(demo.file, demo.plotting, worksheet.decoded(raw))
+
+    async def _downloaded(self, demo: catalogue.Demo) -> bytes:
+        """One of the nine off the network, kept in the working directory.
+
+        The desktop's road out, and the default one: a caller whose environment
+        downloads some other way - a browser, which has one road out and it is
+        the page's - hands its own in as `fetcher`.
+
         The file is kept before it is run, so that the name works from then on -
         `Transfer Demo` finds it, and so does `Transfer Load Derive` for a
-        gallery. A directory that will not take it is not worth stopping for:
-        the demonstration runs from the text in hand, and only the sparing of
-        the second download is lost.
+        gallery - and so are the eight nobody asked for, where the whole
+        diskette had to come over to bring the one that was.
         """
         # Imported here rather than at the top, because it is the import that
         # costs: urllib carries http, email and ssl behind it, and a page - which
@@ -4575,21 +4612,11 @@ class RederiveApp(App[None]):
         from rederive import fetch
 
         kept: list[tuple[str, bytes]] = []
-        try:
-            raw = await asyncio.to_thread(fetch.fetched, demo, _appending(kept))
-        except OSError as trouble:
-            self._beep()
-            self._set_message(CANNOT_FETCH.format(name=demo.file, trouble=trouble))
-            return
-        finally:
-            self.fetching = None
-        # The eight nobody asked for, where the whole diskette had to come over
-        # to bring the one that was asked for. They have been paid for already.
+        raw = await asyncio.to_thread(fetch.fetched, demo, _appending(kept))
         for file, data in kept:
             self._keep_demonstration(file, data)
-        text = worksheet.decoded(raw)
         self._keep_demonstration(demo.file, raw)
-        self.demonstrate(demo.file, demo.plotting, text)
+        return raw
 
     def _keep_demonstration(self, file: str, raw: bytes) -> None:
         """Write a downloaded demonstration out under its own name, if it can be.

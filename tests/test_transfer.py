@@ -1448,6 +1448,29 @@ async def test_a_directory_that_will_not_take_the_file_still_runs_it(
         assert not Path("ARITH.DMO").exists()
 
 
+async def test_the_environments_own_download_is_what_a_demonstration_comes_by(
+    app, downloaded
+):
+    """A tab has no sockets, so what fetches is handed in rather than assumed.
+
+    Where the file is then kept goes with it: a page remembers a file by name
+    and a desktop writes one, and neither is the other's to do.
+    """
+    asked = []
+
+    async def brought(demo):
+        asked.append(demo.file)
+        return SHOW
+
+    app.fetcher = brought
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "a")
+        assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
+        assert asked == ["ARITH.DMO"]
+        assert downloaded.asked == []
+        assert not Path("ARITH.DMO").exists()
+
+
 async def test_a_gallery_is_refused_before_anything_is_downloaded(
     app, downloaded, monkeypatch
 ):

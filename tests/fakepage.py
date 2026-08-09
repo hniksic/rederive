@@ -335,6 +335,11 @@ class FakeEngine:
         return self.answers.pop(0) if self.answers else ()
 
 
+#: What a page reports when no road to the archive is open, the way a browser
+#: reports it: the name of the error, the sentence, and the stack under them.
+SHUT = "Error: the server said 503\n    at got (demos.js:214:11)"
+
+
 class JsNull:
     """The page's `null` as Pyodide hands one over: falsy, and not `None`.
 
@@ -425,13 +430,34 @@ class Clipboard:
 
 
 class FakeTab:
-    """The page's file module, as `WebStorage` and `Files` call into it."""
+    """The page as `WebStorage`, `Files` and `Demos` call into it.
+
+    Two modules in a browser and one here, there being nothing to collide: the
+    files module and the demonstration menu share no call, and a test that has
+    to tell them apart reads which list was written to.
+    """
 
     def __init__(self):
         self.downloads = []
         self.notices = []
         self.fragment = None
         self.handlers = None
+        #: What a download through the page answers with, by the name that was
+        #: asked for: bytes, or the failure it is refused with. A name with
+        #: nothing behind it is every road to the archive being shut.
+        self.archive = {}
+        #: Every file the page was asked to fetch, in order.
+        self.fetched = []
+
+    async def brought(self, file):
+        """The download `demos.js` does, as Python awaits one."""
+        self.fetched.append(file)
+        answer = self.archive.get(file)
+        if isinstance(answer, BaseException):
+            raise answer
+        if answer is None:
+            raise RuntimeError(SHUT)
+        return answer
 
     def download(self, name, text):
         self.downloads.append((name, text))

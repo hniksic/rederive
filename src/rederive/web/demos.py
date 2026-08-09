@@ -19,6 +19,14 @@ the store under its own name, exactly as a picked file does, and then the app is
 told to demonstrate it. That it came off the network is not something the rest
 of the program has to know, and afterwards the file is in the page like any
 other - `Transfer Demo ALGEBRA` runs it again.
+
+The seam is crossed the other way too, and for the same nine. `Transfer Demo`
+offers them in the menu band as well - a page is the program, and a command is
+not taken away because a button does the same thing - and a command running in
+a tab has nothing to download with: sockets are not a thing a tab has. So the
+app is handed `brought` as the way it fetches, and the command reaches the
+archive by the page's own road. What it does with what arrives is the app's
+own, and is the same either way.
 """
 
 from __future__ import annotations
@@ -52,6 +60,11 @@ TOO_SOON = "Rederive is still starting; try the demonstration again in a moment"
 #: a user can do reaches this; what it is for is saying so out loud rather than
 #: running a file nobody named.
 UNKNOWN = "{name} is not one of the original's demonstrations"
+
+#: What a download that failed without saying why is reported as. The browser
+#: says why in every case there is, so this is the empty message rather than a
+#: message of its own.
+NOT_FETCHED = "the browser refused the download"
 
 
 class Demos:
@@ -137,6 +150,28 @@ class Demos:
         # from here the demonstration would be set going and never drawn.
         self._app.call_next(self._app.demonstrate, demo.file, demo.plotting)
 
+    async def brought(self, demo: catalogue.Demo) -> bytes:
+        """Download this demonstration through the page, and keep it by name.
+
+        What `Transfer Demo` fetches with here. The command offers the same
+        nine as the menu on the button, and there is nothing behind it in a tab
+        to fetch them with: the page has the only road out, so the command
+        borrows it and the answer comes back as bytes.
+
+        Kept rather than written, which is the difference between this and the
+        desktop's. A save is a download in a tab, and nobody asking for a
+        demonstration asked for a copy of the file on their disk; the store is
+        what makes the name mean something afterwards, and it is all that is
+        wanted. The eight a whole diskette brought with it are already in it,
+        the page having kept them itself on the way past.
+        """
+        try:
+            raw = _bytes(await self._page.brought(demo.file))
+        except Exception as trouble:
+            raise OSError(_sentence(trouble)) from None
+        self._storage.keep(Path(demo.file), worksheet.decoded(raw))
+        return raw
+
 
 def _offered() -> list[dict[str, Any]]:
     """The catalogue in the shape the page builds a menu out of.
@@ -154,6 +189,19 @@ def _offered() -> list[dict[str, Any]]:
         }
         for demo in catalogue.DEMOS
     ]
+
+
+def _sentence(trouble: Exception) -> str:
+    """What went wrong, in the one line a message line has room for.
+
+    A rejection arrives as an exception whose text is the browser's: the name
+    of the error, its message, and under them the stack where the browser kept
+    one. The stack is for a console, and `Error` is what a browser calls one
+    that is no particular kind - both go, and what is left is the sentence the
+    download failed with, as the desktop's own refusal would read.
+    """
+    said = str(trouble).strip().splitlines()
+    return said[0].removeprefix("Error: ") if said else NOT_FETCHED
 
 
 def _bytes(data: Any) -> bytes:
