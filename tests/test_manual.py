@@ -267,10 +267,18 @@ NOT_YET_HELD = {
     # the accumulator version above. The empty `G(n) :=` changes nothing either
     # way, the same session without it answering the same.
     "test_an_empty_definition_makes_a_name_a_function_and_not_a_variable",
-    # The brackets are read as the vector they are and the scalar goes in; what
-    # comes back is `[3*x + 3*y]`. The element is then written in the normal form
-    # of its main variable, which multiplies the three through where the manual's
-    # `[3*(x + y)]` keeps it folded.
+    # The brackets are read as the vector they are, the scalar goes into the one
+    # element, and `[3*x + 3*y]` comes back. What differs is how that element is
+    # written, and the vector has nothing to do with it: `3*(x + y)` is already
+    # the two terms by the time it is a tree at all, sympy multiplying a number
+    # back over a sum as it builds one, so `[3*(x + y)]` is a form no answer can
+    # be written in - printing it and reading the print back gives the terms
+    # again, and an entry whose text and tree disagree is what
+    # `test_simplify_corpus` fails on. `test_simplify`'s `test_a_numeric_factor_
+    # stays_among_the_terms_it_divides` records that decision, and `normal.py`
+    # records why the three is not gathered back out afterwards either. The same
+    # collision `test_the_clairaut_equation_the_manual_solves` meets, seen here
+    # with a vector around it. A difference in spelling only.
     "test_square_brackets_make_a_vector_rather_than_a_group",
     # The terms are the manual's own; the order they are printed in is not.
     # Expand's answer is ordered by the rule every sum is, where a term with a
