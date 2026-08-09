@@ -53,6 +53,19 @@ where an integer falls between them. That is what "simplest" means here, and
 it is why π comes out 355/113 - not because a coarse tolerance let it, but
 because π is approximated by 355/113 far better than a denominator of 113 has
 any right to be.
+
+The original can be asked what it does rather than reasoned about: under
+Rational notation with NotationDigits at 32 it prints an approximation as the
+ratio it is. Asked that way, the original confirms the tolerance above wherever
+its own value is accurate - its π over three to nine digits is 333/106,
+355/113, 103993/33102, 208341/66317, the first convergent inside 10^-(digits +
+1) every time - and shows that where it is not, no tolerance would have helped.
+Its SQRT(10001) at six digits is 180109/1801, where 20001/200 is simpler and
+two hundred times nearer; its SQRT(2) at three digits is 379/268, where 239/169
+is simpler and three times nearer. Those are not a choice of rational but the
+error of its own square root, which works a digit or two past the precision
+asked for. `test_manual`'s `NOT_YET_HELD` records which of the manual's pages
+that costs.
 """
 
 from __future__ import annotations

@@ -183,47 +183,70 @@ NOT_YET_HELD = {
     "COS(w)-SIN(z - w)/2 + SIN(z + w)/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
     "SIN(w)-COS(z - w)/2 - COS(z + w)/2]",
-    # An approximate number is a rational here and in the original both, the
-    # simplest one standing for the value: under Rational notation the original
-    # shows pi as 355/113 and SQRT(3) as 5042/2911, neither of them a power of
-    # two underneath. What differs is the tolerance the simplest one is sought
-    # within, and the digits these want are what that difference comes to.
-    # SQRT(10001) is exactly 20001/200 here, so the cancellation is total and
-    # 0.005 stands where the manual reports 0.00499722; the two fractions of the
-    # SUM are quotients of whole numbers, exact at six digits, so Approximate
-    # mode reaches the 2/3 the manual keeps for Mixed, and rounding every step
-    # instead answers 0.666534 rather than the page's 0.666622. Reaching these
-    # means finding the rule the original picks its rational by.
+    # An approximate number is a rational in the original as well, and the
+    # program will say which one: under Rational notation with NotationDigits
+    # at 32 an approximation prints as the ratio it is. At six digits the
+    # original answers pi with 355/113, SQRT(3) with 5042/2911, SQRT(10001)
+    # with 180109/1801 and SQRT(2) with 4756/3363; at three digits SQRT(2) is
+    # 379/268. The last three say that no rule can be read off the value,
+    # because the original's answer is not a function of it: 20001/200 is
+    # simpler than 180109/1801 and two hundred times nearer SQRT(10001),
+    # 239/169 is simpler than 379/268 and three times nearer SQRT(2), and
+    # 4756/3363 is not a best approximation of SQRT(2) at all but the mediant
+    # of two of them. What those digits record is the error of the original's
+    # own square root, which works a digit or two past the precision asked for
+    # and hands the rounding a value already wrong in the place that decides.
+    # Where the original's value is accurate the tolerance this engine uses is
+    # confirmed: its pi walks 333/106, 355/113, 103993/33102, 208341/66317
+    # over three to nine digits, which is exactly the first convergent inside
+    # 10^-(digits + 1).
+    #
+    # Rounding an exact rational, where there is nothing to compute and no
+    # error to inherit, settles it a second time. The two fractions of 3.8
+    # p.46 come back 81379/55 and 553211/374 at six digits; `simplest` already
+    # answers the first, and no one tolerance answers both, since 81379/55
+    # needs at least 4.25e-8 of the value and 553211/374 needs under 7.5e-9.
+    # So the original is not seeking the simplest rational within a tolerance
+    # either, and the five below are what that unknown comes to.
+    #
+    # 0.00499722 is the original's answer and not the page's alone. It is
+    # 180109/1801 - 100 written out, so it cannot be had without the square
+    # root that produced it.
     "test_catastrophic_cancellation_is_reported_as_the_manual_reports_it",
+    # 0.666622 is the original's too, and it is SQRT(81379/55 - 553211/374),
+    # which is SQRT(831/1870). The engine rounds the first fraction the same
+    # way and the second to 34021/23, which is where the 0.666534 that rounding
+    # every step gives comes from. Beyond the tolerance a second thing stands
+    # in the way whatever the tolerance is: sympy subtracts the two fractions
+    # as it builds them, so nothing downstream ever sees them apart.
     "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
-    # The lesson of 3.8 p.45 holds and its digits do not: an approximation
-    # re-approximated keeps the error it was made with. What the page has is a
-    # decimal read back in, which the original answers 1.73205 as this engine
-    # does; re-simplifying the approximation itself is what keeps the error, and
-    # the original answers that with the 1.732050841 its 5042/2911 comes to.
-    # This case asks the first and expects the second.
+    # The one of the five the original does not answer either. It reads
+    # 1.73205 back in and re-approximates it to 1.73205, as this engine does,
+    # and re-approximating its own SQRT(3) gives the 1.732050841 that
+    # 5042/2911 comes to. The page's 1.732050657 is neither.
     "test_reapproximating_an_approximation_keeps_its_error",
-    # The value is the manual's and the spelling is the engine's: APPROX(SQRT(3),
-    # 10) is 262087/151316, which is 1.732050807 to ten digits, and Rational
-    # notation writes the ratio. Two decisions stand between the two - an
-    # approximate number is a rational, and how many digits it is shown to is the
-    # notation's business rather than the call's - and `test_simplify` records
-    # both.
+    # The one of the five that is not the tolerance's business at all. The
+    # original prints an approximation to the digits it was made to whatever
+    # the notation asks for: with NotationDigits at six, APPROX(SQRT(3), 10)
+    # still comes out 1.732050807. The engine's value is already that -
+    # 262087/151316 is 1.732050807 to ten digits - and only the printing is
+    # short. Holding it means an approximation carrying the count it was made
+    # with as far as the printer, which is a change to how one is written and
+    # not to which rational it is.
     "test_approx_takes_the_digits_it_is_given",
     # Exact mode answers the manual's 1/2 and Mixed mode is what is left. The
     # line is (SQRT(3) + 1)^(3/2) over twice itself, which no rule that works
     # one radical at a time sees and `_flattened` reads off the whole
     # quotient's minimal polynomial. Mixed then shows that 1/2 where the page
-    # has 0.499999: rounding is the last step of the pipeline, so a Mixed
-    # answer is an exact one rounded and an exact 1/2 has nothing irrational
-    # left in it to round, where the original approximates as it simplifies
-    # and its last digit is the drift of that. Approximating this line the
-    # original's way - innermost first, before anything is simplified - does
-    # not reach the page either: an approximate number here is the simplest
-    # rational within the tolerance, which drifts to 43764486865/87528971078,
-    # and that is 0.500000 at six digits. So what is left of this case is the
-    # one question the four above ask, which rational an approximate number
-    # is, plus the order the rounding and the simplifying happen in.
+    # and the original both have 0.499999: rounding is the last step of the
+    # pipeline, so a Mixed answer is an exact one rounded and an exact 1/2 has
+    # nothing irrational left in it to round, where the original approximates
+    # as it simplifies and its last digit is the drift of that. Approximating
+    # this line innermost first, before anything is simplified, does not reach
+    # the page either: the simplest rational within the tolerance drifts to
+    # 43764486865/87528971078, which is 0.500000 at six digits. So this one
+    # wants the order the rounding and the simplifying happen in as well as
+    # the square roots the four above want.
     "test_the_three_modes_on_an_expression_worth_one_half",
     # The determinant is multiplied out where the original leaves it factored,
     # and then written about the most main variable it holds: with none of `a`,
