@@ -435,21 +435,19 @@ class Traced:
 
 @dataclass(frozen=True)
 class Stepped:
-    """A key was pressed in a window a demonstration's step is waiting in.
+    """A key with no meaning to a plot window was pressed in one, mid-demonstration.
 
     The demonstration is the program's and so is the message line that asks for
     a key, but the picture is in a window of the desktop's - and a desktop
-    hands a new window the keyboard whether or not the window asked for it.
-    GNOME does. So the key that the line asks for lands here as often as it
-    lands in the program, and the window sends it back rather than reading it:
-    `stopping` is Esc, which suspends the demonstration where it stands, and
-    anything else is the next step.
+    hands a window that has just appeared the keyboard whether or not it asked
+    for it. GNOME does. So the key that the line asks for lands there as often
+    as it lands in the program, and the window sends it back.
 
-    Only while a step is waiting. A window nothing is waiting on reads its own
-    keys, which are a window full of commands.
+    Only the keys the window has no use for: Space, Enter and their like. What
+    the window itself answers to it goes on answering to, so a gallery can be
+    traced, turned over and zoomed on its way past, and Esc closes the picture
+    rather than the demonstration - which is what Esc does in the program.
     """
-
-    stopping: bool = False
 
 
 @dataclass(frozen=True)

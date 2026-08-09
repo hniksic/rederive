@@ -1107,8 +1107,8 @@ class InlineSession:
         self.authored = []
         #: The sticky preference values windows have handed back, merged.
         self.adjustments = {}
-        #: The keys windows have sent back while a demonstration waited in
-        #: them, each True where it was the Esc that stops one.
+        #: One entry per key a window has sent back while a demonstration
+        #: waited in it. The key itself is nobody's business by then.
         self.steps = []
 
     def sample(self, key, work, done, report=None):
@@ -1130,8 +1130,8 @@ class InlineSession:
     def author(self, worksheet, text):
         self.authored.append((worksheet, text))
 
-    def stepped(self, stopping):
-        self.steps.append(stopping)
+    def stepped(self):
+        self.steps.append(None)
 
     def adjusted(self, **values):
         self.adjustments.update(values)
@@ -1173,24 +1173,17 @@ def _plot(text, kind, variables, label="#1"):
 
 
 def test_a_demonstrations_picture_stands_over_the_program_until_it_is_let_go(flat, qt):
-    """The terminal has the keyboard and fills the screen; the picture is above it.
-
-    Both halves are the same predicament: the key that takes the next step is
-    pressed where the program is, and a window that gave way to the program
-    would leave nothing to look at while it was pressed.
-    """
+    """The program waiting on a key fills the screen, so the picture is above it."""
     from pyqtgraph.Qt import QtCore
 
     on_top = QtCore.Qt.WindowType.WindowStaysOnTopHint
     flat.present(demonstrating=True)
     assert flat.windowFlags() & on_top
-    assert flat.testAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
     # A second step is the same window again, and nothing flickers for it.
     flat.present(demonstrating=True)
     assert flat.windowFlags() & on_top
     flat.release()
     assert not flat.windowFlags() & on_top
-    assert not flat.testAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
     # And a window nothing is waiting on is left exactly as it was.
     flat.release()
     assert not flat.windowFlags() & on_top
@@ -1204,32 +1197,60 @@ def _typed(key):
     )
 
 
-def test_a_key_in_a_demonstrations_window_goes_back_to_the_program(flat, qt):
+def test_a_key_this_window_has_no_use_for_goes_back_to_the_program(flat, qt):
     """The desktop gives the new window the keyboard whatever the window asked.
 
     So the key the message line asks for is pressed here as often as it is
-    pressed in the program, and the window reads none of its own while a step
-    is waiting in it: any key continues, wherever it is pressed.
+    pressed in the program, and the keys that are nobody's here - Space, Enter
+    - are sent back rather than dropped.
     """
     from pyqtgraph.Qt import QtCore
 
     flat.present(demonstrating=True)
     flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Space))
-    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Escape))
-    # Esc travels as itself: it is the one key that means something else.
-    assert flat.session.steps == [False, True]
-    # And a window nothing is waiting in reads its own keys again.
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Return))
+    assert flat.session.steps == [None, None]
+    # And a window nothing is waiting in has no program to send them to.
     flat.release()
     flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Space))
-    assert flat.session.steps == [False, True]
+    assert flat.session.steps == [None, None]
 
 
-def test_a_plot_of_ones_own_takes_the_keyboard_and_stays_among_the_others(flat, qt):
+def test_the_windows_own_keys_stay_the_windows_during_a_demonstration(flat, qt):
+    """A gallery can be traced and panned on its way past."""
+    from pyqtgraph.Qt import QtCore
+
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    flat.present(demonstrating=True)
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_T))
+    assert flat._tracing is not None
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Left))
+    assert flat.session.steps == []
+
+
+def test_escape_in_a_plot_window_closes_the_picture(flat, qt):
+    """And not the demonstration: stopping one is the program's own Esc.
+
+    On a trace it is the marker that goes first, that being what Esc has always
+    meant there, and the second one closes the window.
+    """
+    from pyqtgraph.Qt import QtCore
+
+    flat.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+    flat.present(demonstrating=True)
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_T))
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Escape))
+    assert flat._tracing is None and flat.isVisible()
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Escape))
+    assert not flat.isVisible()
+    assert flat.session.steps == []
+
+
+def test_a_plot_of_ones_own_stays_among_the_other_windows(flat, qt):
     flat.present()
     from pyqtgraph.Qt import QtCore
 
     assert not flat.windowFlags() & QtCore.Qt.WindowType.WindowStaysOnTopHint
-    assert not flat.testAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
 
 def test_a_parametric_plot_draws_at_once_over_one_turn(flat):
@@ -2006,9 +2027,10 @@ def test_a_solid_demonstration_stands_over_the_program_too(deep, qt):
     on_top = QtCore.Qt.WindowType.WindowStaysOnTopHint
     deep.present(demonstrating=True)
     assert deep.windowFlags() & on_top
-    # And its keys go back to the program, the arrows that orbit among them.
+    # Space is nobody's here and goes back; the arrows go on turning the solid.
+    deep.keyPressEvent(_typed(QtCore.Qt.Key.Key_Space))
     deep.keyPressEvent(_typed(QtCore.Qt.Key.Key_Left))
-    assert deep.session.steps == [False]
+    assert deep.session.steps == [None]
     deep.release()
     assert not deep.windowFlags() & on_top
 
@@ -3209,10 +3231,6 @@ async def test_a_key_pressed_in_the_picture_steps_the_gallery(app, gallery):
         app._plot_event(plots.Stepped())
         await pilot.pause()
         assert band(app) == [" A saddle:"]
-        # And Esc there stops it where Esc here would.
-        app._plot_event(plots.Stepped(stopping=True))
-        assert band(app)[0].startswith(" COMMAND:")
-        assert app.plots.released == 1
 
 
 async def test_a_key_from_a_window_with_nothing_waiting_is_dropped(app, gallery):

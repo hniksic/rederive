@@ -48,12 +48,11 @@ class WindowHandle(Protocol):
     def present(self, demonstrating: bool = False) -> None:
         """Show this window and bring it to the front: a plot has landed in it.
 
-        `demonstrating` shows it without taking the keyboard, which is what a
-        step of a demonstration lands with: the program is waiting for a key to
-        take the next step, so the keyboard has to stay where the program is.
-        Where a window can be above another one it also stays above, until
-        `release`, so that the program waiting for that key cannot bury the
-        picture it is waiting over.
+        `demonstrating` says the plot is a step of a demonstration, which the
+        program is now waiting over a key for. Where a window can be above
+        another one it then stays above until `release`, so that the program
+        waiting for that key - a terminal, and usually a large one - cannot
+        bury the picture it is waiting on.
         """
 
     def release(self) -> None:

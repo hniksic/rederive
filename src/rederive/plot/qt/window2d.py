@@ -2508,23 +2508,26 @@ class Window2D(QtWidgets.QMainWindow):
 
         What is left written out here are the gestures: the keys that mean one
         thing while a marker is up and another while it is not, and which no
-        control could name because they are not one command.
+        control could name because they are not one command. Esc is the last of
+        them, and off a trace it closes the window - a picture is dismissed the
+        way every other thing that stands over a screen is.
 
-        None of them while a demonstration's step is waiting here: the message
-        line says any key continues, and this window is where the desktop is
-        likely to have put the keyboard, so any key has to mean that here too.
+        A key with no meaning here at all is the program's when a
+        demonstration's step is waiting in this window, since this is where the
+        desktop is likely to have put the keyboard: Space and Enter step the
+        demonstration, and the window's own keys go on being the window's.
         """
-        if self._demonstrating:
-            self._stepping(ev)
-            return
         key = ev.key()
         shift = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
         keys = QtCore.Qt.Key
         command = self._keyed.get(pressed(ev)) or self._loose.get(key)
         if command is not None:
             command.trigger()
-        elif key == keys.Key_Escape and self._tracing is not None:
-            self._trace_off()
+        elif key == keys.Key_Escape:
+            if self._tracing is not None:
+                self._trace_off()
+            else:
+                self.close()
         elif key in (keys.Key_Tab, keys.Key_Backtab) and self._tracing is not None:
             self.snap(shift or key == keys.Key_Backtab)
         elif key in (keys.Key_Return, keys.Key_Enter) and self._tracing is not None:
@@ -2541,6 +2544,8 @@ class Window2D(QtWidgets.QMainWindow):
                 self._trace_curve(-step)
             else:
                 self.pan(0.0, step * actions.PAN_SHARE)
+        elif self._demonstrating:
+            self._stepping(ev)
         else:
             super().keyPressEvent(ev)
             return
@@ -2578,63 +2583,53 @@ class Window2D(QtWidgets.QMainWindow):
     def present(self, demonstrating: bool = False) -> None:
         """A plot has landed here: show this window and put it in front.
 
-        A demonstration's step is shown without being activated, and it *stays*
-        in front until `release` says the demonstration is over. Both halves of
-        that are about the same predicament: the keys that take the next step
-        belong to the program, so the keyboard has to stay where the program
-        is - and the program is usually a terminal filling the screen, which
-        would bury the picture the moment it was clicked on. Above it, the
-        picture is there to be looked at while the key that replaces it is
-        pressed in the window behind.
+        A demonstration's step stays in front, until `release` says the
+        demonstration is over: the program running it is a terminal that fills
+        the screen, and would bury the picture the moment it was clicked on.
+
+        Which of the two windows then has the keyboard is the desktop's to
+        decide and not worth arguing with - it hands a window that has just
+        appeared the focus whatever the window asks - so nothing here asks.
+        What answers the question instead is `keyPressEvent`: a key this window
+        has no use for goes back to the program while a step is waiting here.
         """
         self._keep_in_front(demonstrating)
         self.show()
         self.raise_()
-        if not demonstrating:
-            self._activate()
+        self.activateWindow()
 
     def release(self) -> None:
         """The demonstration is over: an ordinary window among the others again.
 
-        Shown again because dropping the flag hid it, and shown for the last
-        time without being activated: the demonstration ended at the program's
-        menu, and the keyboard belongs there.
+        Shown again because dropping the flag hid it. Its keys are its own from
+        here, there being no demonstration left to hand any of them to.
         """
         if not self._demonstrating:
             return
         self._keep_in_front(False)
         self.show()
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
 
     def _keep_in_front(self, demonstrating: bool) -> None:
         """Put the window above the others, or let it back among them.
 
-        The attribute is set before the flag and cleared after the window is
-        showing again, because changing a window flag hides the window: every
-        path through here shows it again, and a show that activated would take
-        the keyboard off the program that is waiting for the next keystroke.
+        Changing a window flag hides the window, which is why every caller
+        shows it again.
         """
         if demonstrating == self._demonstrating:
             return
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self._demonstrating = demonstrating
         self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, demonstrating)
 
-    def _activate(self) -> None:
-        """Take the keyboard, which an ordinary plot of one's own is welcome to."""
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
-        self.activateWindow()
-
     def _stepping(self, ev: Any) -> None:
-        """Hand a key back to the program, a demonstration's step being its own.
+        """Hand a key this window has no use for back to the program.
 
-        The window asks not to be activated and is activated anyway - a desktop
-        gives a window that has just appeared the keyboard whatever the window
-        asked for - so the key the program is waiting for arrives here. Sending
-        it back is what makes `any key` true wherever it is pressed. Esc travels
-        as itself, being the one key that means something else.
+        Which is what makes `any key to continue` true of the window the
+        picture is in as well as of the one the message is on. Only the keys
+        that are nobody's here travel: what the window itself answers to it
+        goes on answering to, so a gallery can be traced, turned over and
+        zoomed on its way past.
         """
-        self.session.stepped(ev.key() == QtCore.Qt.Key.Key_Escape)
+        self.session.stepped()
         ev.accept()
 
     def retitle(self, current: bool | None = None) -> None:

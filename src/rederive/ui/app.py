@@ -4946,21 +4946,18 @@ class RederiveApp(App[None]):
     def _plot_stepped(self, event: plots.Stepped) -> None:
         """A key pressed in a demonstration's window, taken as pressed here.
 
-        Which is what makes the message line honest. The window holding the
+        Which is what makes the message line honest: the window holding the
         step is the one the desktop is likeliest to have given the keyboard to,
-        whatever the window asked for, so `any key to continue` has to be true
-        there as well as here - and so does the Esc beside it.
+        so `any key to continue` has to be true there as well as here. Only the
+        keys that window had no use for arrive, Esc among the ones that do not
+        - Esc there closes the picture, and stopping the demonstration is this
+        screen's own Esc.
 
-        A key that arrives with no demonstration waiting is a key from a window
-        that has not been told yet, and is dropped: the two sides are a pipe
-        apart, and the last step of one demonstration can be answered while
-        this side has already finished with it.
+        A key that arrives with no demonstration waiting is dropped: the two
+        sides are a pipe apart, and a step can be answered after this side has
+        finished with the demonstration it belonged to.
         """
-        if self.mode != MODE_DEMO:
-            return
-        if event.stopping:
-            self._suspend_demo()
-        else:
+        if self.mode == MODE_DEMO:
             self._demo_step()
 
     def _plot_traced(self, event: plots.Traced) -> None:

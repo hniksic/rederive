@@ -281,14 +281,15 @@ class PlotSession:
         """A traced point a window sends home, to be authored into a worksheet."""
         self.event(protocol.Traced(worksheet, text))
 
-    def stepped(self, stopping: bool) -> None:
-        """A key pressed in a window a demonstration's step is waiting in.
+    def stepped(self) -> None:
+        """A key nobody here wanted, pressed in a window a step is waiting in.
 
-        Nothing is done with it here: what a key means to a demonstration is
-        the app's, this side holding no demonstration at all. All this window
-        knew was that its picture was a step and that a key arrived in it.
+        Nothing is done with it: what a key means to a demonstration is the
+        app's, this side holding no demonstration at all. All the window knew
+        was that its picture was a step and that a key it had no use for
+        arrived in it.
         """
-        self.event(protocol.Stepped(stopping))
+        self.event(protocol.Stepped())
 
     def adjusted(self, **values: Any) -> None:
         """A sticky control was left in a new position, named by its `Prefer` field.
