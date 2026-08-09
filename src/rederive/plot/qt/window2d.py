@@ -2598,13 +2598,25 @@ class Window2D(QtWidgets.QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def release(self) -> None:
+    def release(self, finished: bool = False) -> None:
         """The demonstration is over: an ordinary window among the others again.
 
         Shown again because dropping the flag hid it. Its keys are its own from
         here, there being no demonstration left to hand any of them to.
+
+        `finished` is a demonstration that ran to its end, and then the window
+        goes with it: what stood here was the demonstration's screen. A
+        demonstration that was stopped leaves its picture, which is what makes
+        Esc the way to keep one.
+
+        A window no step was waiting in is left alone either way. It is
+        somebody's own plot, and a gallery that ended beside it is not a reason
+        to touch it.
         """
         if not self._demonstrating:
+            return
+        if finished:
+            self.close()
             return
         self._keep_in_front(False)
         self.show()

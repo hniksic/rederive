@@ -250,6 +250,9 @@ class Pane:
         self.plots: list[Shown] = []
         self.current = False
         self.title = ""
+        #: Whether a demonstration's step is waiting in this pane, which is
+        #: what decides whether the pane goes when the demonstration ends.
+        self.demonstrating = False
         #: Whether the expressions in this pane are written in degrees, which
         #: is what a polar curve is composed in and what a reading is in.
         self.degrees = False
@@ -385,10 +388,20 @@ class Pane:
 
     def present(self, demonstrating: bool = False) -> None:
         """A plot has landed here: show the pane and put it in front."""
+        self.demonstrating = demonstrating
         self.page.present(demonstrating)
 
-    def release(self) -> None:
-        """Nothing to do: a pane of the page is in front of nothing."""
+    def release(self, finished: bool = False) -> None:
+        """The demonstration is over: its pane goes where it ran to its end.
+
+        A pane is in front of nothing, so there is nothing to put back; what is
+        left of this is the one thing a page has in common with a desktop here.
+        The pane a gallery was shown in was the gallery's screen, and the
+        worksheet is what the page goes back to when there is no next step.
+        """
+        if self.demonstrating and finished:
+            self.close()
+        self.demonstrating = False
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the pane by what it holds, saying whether it is the receiver."""
@@ -1050,6 +1063,9 @@ class Solid:
         self.plots: list[Standing] = []
         self.current = False
         self.title = ""
+        #: Whether a demonstration's step is waiting in this pane, which is
+        #: what decides whether the pane goes when the demonstration ends.
+        self.demonstrating = False
         self.xdomain = view.DEFAULT_DOMAIN
         self.ydomain = view.DEFAULT_DOMAIN
         # The grid the pane opens with is the sticky one the session holds -
@@ -1167,10 +1183,20 @@ class Solid:
 
     def present(self, demonstrating: bool = False) -> None:
         """A plot has landed here: show the pane and put it in front."""
+        self.demonstrating = demonstrating
         self.page.present(demonstrating)
 
-    def release(self) -> None:
-        """Nothing to do: a pane of the page is in front of nothing."""
+    def release(self, finished: bool = False) -> None:
+        """The demonstration is over: its pane goes where it ran to its end.
+
+        A pane is in front of nothing, so there is nothing to put back; what is
+        left of this is the one thing a page has in common with a desktop here.
+        The pane a gallery was shown in was the gallery's screen, and the
+        worksheet is what the page goes back to when there is no next step.
+        """
+        if self.demonstrating and finished:
+            self.close()
+        self.demonstrating = False
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the pane by what it holds, saying whether it is the receiver."""

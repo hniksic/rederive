@@ -193,7 +193,7 @@ class PlotSession:
                 self.prefer(request)
                 reply(protocol.Done())
             elif isinstance(request, protocol.Release):
-                self.release()
+                self.release(request.finished)
                 reply(protocol.Done())
             elif isinstance(request, protocol.Shutdown):
                 reply(protocol.Done())
@@ -244,15 +244,21 @@ class PlotSession:
         """Remember what the next window and the next plot are to be built with."""
         self.preferences = preferences
 
-    def release(self) -> None:
-        """The demonstration is over: every window is an ordinary window again.
+    def release(self, finished: bool = False) -> None:
+        """The demonstration is over: its windows are ordinary windows again.
 
-        All of them rather than the one that was drawn into. A gallery of
-        surfaces and curves fills two windows, both of them were kept in front
-        as their steps landed, and what ended ended for both.
+        Or gone, where it ran to its end: a gallery's window is the screen the
+        demonstration was shown on, and the last step is not a picture anybody
+        asked to keep. Every window is told, and each answers for itself -
+        whether a step was waiting in it is the window's own knowledge, and a
+        window somebody opened for a plot of their own must not be swept up
+        with them.
+
+        Told over a copy of the registry, since a window that closes takes
+        itself out of it on the way.
         """
-        for window in self.windows.values():
-            window.release()
+        for window in list(self.windows.values()):
+            window.release(finished)
 
     def shutdown(self) -> None:
         """End the windows and whatever runs them: the app has gone."""

@@ -4704,7 +4704,8 @@ class RederiveApp(App[None]):
                     self._demo_ready,
                 )
             return
-        self._end_demo()
+        # Out of steps, which is the one ending that takes the picture with it.
+        self._end_demo(finished=True)
 
     async def _demo_plot(self, request: str) -> object:
         """Draw the step, the picture being what a plot gallery demonstrates.
@@ -4743,13 +4744,16 @@ class RederiveApp(App[None]):
         """Esc leaves the demonstration where it is, to be picked up later."""
         self._end_demo()
 
-    def _end_demo(self, message: str = ENTER_OPTION) -> None:
+    def _end_demo(self, message: str = ENTER_OPTION, finished: bool = False) -> None:
         """The demonstration has stopped, whichever of its four ways it stopped in.
 
-        A gallery's last picture is left on the screen, and is let go of here:
-        the window has been standing over this one so that a step could be
-        looked at while the key that replaces it was pressed, and with nothing
-        waiting on it any more it goes back to being a window like the others.
+        A gallery's window is let go of here. It has been standing over this one
+        so that a step could be looked at while the key that replaces it was
+        pressed, and with nothing waiting on it any more it is either an
+        ordinary window again or gone: `finished` is the demonstration that ran
+        to its end, and its last picture goes with it, the window having been
+        the demonstration's screen rather than a window anyone opened. Stopping
+        one is how a picture worth keeping is kept.
 
         On a task, because it is a word to the plot host and the host is a
         process: what waits for its answer must not be this loop. The key that
@@ -4758,7 +4762,7 @@ class RederiveApp(App[None]):
         return before it can carry anything else - the answer included.
         """
         if self.demo is not None and self.demo.plotting:
-            self.run_worker(self.plots.release())
+            self.run_worker(self.plots.release(finished))
         self.closed_window = False
         self.mode = MODE_MENU
         self.query_one("#menu").display = True

@@ -302,7 +302,7 @@ class Prefer:
 
 @dataclass(frozen=True)
 class Release:
-    """The demonstration is over: no window need stay in front for it any more.
+    """The demonstration is over: its windows are nobody's screen any more.
 
     A step of a gallery arrives with `demonstrating` set and is left above the
     other windows, the program that is waiting for the next key being a
@@ -311,10 +311,19 @@ class Release:
     that is - a demonstration ends on a key, on Esc, on a step that refused, or
     on the last step there was.
 
+    `finished` is the last of those four: a demonstration that ran to its end
+    takes its windows with it, the window having been the demonstration's own
+    screen rather than a window anyone opened. The other three leave the
+    picture standing, which is what makes Esc the way to keep one - a surface
+    worth turning over is a reason to stop a gallery, and stopping it must not
+    be what takes it away.
+
     Sent to a host that is running and to no other: a demonstration that opened
     no window has nothing to release, and starting a host to tell it so would
     open a toolkit to say nothing.
     """
+
+    finished: bool = False
 
 
 @dataclass(frozen=True)

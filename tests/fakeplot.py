@@ -80,9 +80,13 @@ class FakeWindow:
         self.quietly = demonstrating
         self.demonstrating = demonstrating
 
-    def release(self):
+    def release(self, finished=False):
+        if not self.demonstrating:
+            return
         self.released += 1
         self.demonstrating = False
+        if finished:
+            self.close()
 
     def retitle(self, current=None):
         if current is not None:

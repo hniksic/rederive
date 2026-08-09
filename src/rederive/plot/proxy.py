@@ -199,8 +199,8 @@ class PlotProxy:
             return reply.windows
         raise PlotError(_unexpected(reply))
 
-    async def release(self) -> None:
-        """Say that the demonstration is over, so its window stops staying in front.
+    async def release(self, finished: bool = False) -> None:
+        """Say that the demonstration is over, so its window is nobody's screen.
 
         Awaited on a thread, as `add` is, and for a sharper reason than `add`
         has. This is asked as a demonstration ends, and what ended it may have
@@ -220,12 +220,12 @@ class PlotProxy:
         """
         if not self.running:
             return
-        await asyncio.to_thread(self._release)
+        await asyncio.to_thread(self._release, finished)
 
-    def _release(self) -> None:
+    def _release(self, finished: bool) -> None:
         """The round trip itself, on whatever thread is willing to wait for it."""
         try:
-            self._ask(protocol.Release())
+            self._ask(protocol.Release(finished))
         except PlotError:
             pass
 

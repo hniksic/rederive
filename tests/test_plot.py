@@ -1217,10 +1217,17 @@ def test_a_demonstrations_picture_stands_over_the_program_until_it_is_let_go(fla
     flat.present(demonstrating=True)
     assert flat.windowFlags() & on_top
     flat.release()
-    assert not flat.windowFlags() & on_top
+    assert not flat.windowFlags() & on_top and flat.isVisible()
     # And a window nothing is waiting on is left exactly as it was.
-    flat.release()
-    assert not flat.windowFlags() & on_top
+    flat.release(finished=True)
+    assert flat.isVisible()
+
+
+def test_a_gallery_that_ran_out_closes_the_window_it_was_shown_in(flat, qt):
+    """The picture was the demonstration's screen rather than anyone's plot."""
+    flat.present(demonstrating=True)
+    flat.release(finished=True)
+    assert not flat.isVisible()
 
 
 def _typed(key):
@@ -2626,6 +2633,15 @@ def test_a_demonstration_that_is_over_lets_every_window_go(registry):
     assert all(window.released == 1 for window in registry.windows.values())
 
 
+def test_a_demonstration_that_ran_out_closes_the_windows_it_drew_in(registry):
+    """And only those: a window somebody opened for a plot of their own stays."""
+    theirs = registry.add(_landing("SIN(x)", "#1")).window
+    shown = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
+    registry.add(_landing("TAN(x)", "#3", window=shown, demonstrating=True))
+    registry.handle(plots.Release(finished=True), lambda reply: None)
+    assert sorted(registry.windows) == [theirs]
+
+
 def test_touching_a_window_makes_it_the_receiver(registry):
     one = registry.add(_landing("SIN(x)", "#1")).window
     two = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
@@ -3005,8 +3021,10 @@ class Answering:
         #: responsible for is handing it over at all.
         self.preferences = []
         #: How many times the app has said that a demonstration is over, so its
-        #: window need not stay in front of the terminal any more.
+        #: window need not stay in front of the terminal any more, and whether
+        #: the last of them ran to its end and took its window with it.
         self.released = 0
+        self.finished = None
 
     def _answer(self, request):
         self.sent.append(request)
@@ -3024,8 +3042,9 @@ class Answering:
     def prefer(self, preferences):
         self.preferences.append(preferences)
 
-    async def release(self):
+    async def release(self, finished=False):
         self.released += 1
+        self.finished = finished
 
     def shutdown(self):
         pass
@@ -3231,21 +3250,25 @@ async def test_a_gallery_draws_one_step_at_a_time(app, gallery):
         assert message(app) == "Enter option"
 
 
-async def test_a_gallery_lets_its_window_go_however_it_ended(app, gallery):
-    """The picture stands over the terminal only while a key is owed it."""
+async def test_a_gallery_that_ran_out_takes_its_window_with_it(app, gallery):
+    """The window was the demonstration's screen, and the tour is over."""
     async with app.run_test() as pilot:
         app.demonstrate(str(gallery), plotting=True)
         await pilot.pause()
         assert app.plots.released == 0
-        await pilot.press("escape")
-        await pilot.pause()
-        assert app.plots.released == 1
-        # And again where it ends by running out rather than by Esc.
-        app.demonstrate(str(gallery), plotting=True)
-        await pilot.pause()
         await pilot.press("space", "space")
         await pilot.pause()
-        assert app.plots.released == 2
+        assert (app.plots.released, app.plots.finished) == (1, True)
+
+
+async def test_a_gallery_somebody_stopped_leaves_its_picture_standing(app, gallery):
+    """Which is what makes Esc the way to keep a picture worth looking at."""
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert (app.plots.released, app.plots.finished) == (1, False)
 
 
 async def test_a_script_has_no_window_to_let_go_of(app, tmp_path):
