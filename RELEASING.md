@@ -39,6 +39,19 @@ on the release page beside the generated notes.
 builds on all three platforms, checks every build, compiles and test-installs the
 Windows installer, and publishes the release.
 
+`tools/release.py` does those three steps, for convenience and so that the version
+and the tag cannot disagree - both come from its one argument:
+
+```
+python3 tools/release.py <version>          # bump, commit, tag
+python3 tools/release.py <version> --push    # and push master and the tag
+```
+
+It refuses to run anywhere but a clean, checked-out master, and refuses a tag that
+already exists. Pushing is opt-in because it is what starts the workflow; without
+`--push` it prints the push command and leaves it to be run once the build below has
+been done by hand, which the script cannot check for.
+
 Once the release is up, that workflow calls `.github/workflows/web.yml`, which builds
 the web build, opens it in Chromium and Firefox, and publishes it to GitHub Pages.
 Last rather than beside, and that order is the point: README sends a reader to a page
