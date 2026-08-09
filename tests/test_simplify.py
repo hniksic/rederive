@@ -1995,6 +1995,33 @@ def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
     assert simp("x + 2*x = c + x*x") == "3*x = x^2 + c"
 
 
+def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
+    """Two matrices of one shape are related element by element rather than
+    compared whole, and each of the relations that come out is judged on its own.
+    That is what section 8.5 reads a solved system off: `[[x], [y], [z]] = A^-1 .
+    b` is the three equations it stands for. The answer keeps the shape it was
+    made from, except that a single row is written flat as any one-row matrix is.
+
+    Sides the pairing does not fit are a statement about the two things
+    themselves, and that statement is decided whole."""
+    assert simp("[x, y] = [1, 2]") == "[x = 1, y = 2]"
+    assert simp("[[x], [y]] = [[1], [2]]") == "[[x = 1], [y = 2]]"
+    assert simp("[x, y] < [1, 2]") == "[x < 1, y < 2]"
+    spread = simp("[[a, b], [c, d]] = [[1, 2], [3, 4]]")
+    assert spread == "[[a = 1, b = 2], [c = 3, d = 4]]"
+    assert simp("[[1, 2], [3, 4]] = [[1, 2], [3, 4]]") == "[[true, true], [true, true]]"
+    assert simp("[x, y] = [1, 2, 3]") == "false"
+
+
+def test_the_system_of_section_eight_five_is_solved_by_inverting_its_matrix():
+    """The manual's own use for the rule above, in exact arithmetic: the three
+    quotients are what its 2.91059, 0.175496 and 1.58278 round to."""
+    solved = simp(
+        "[[x], [y], [z]] = [[5, 3, -7], [2, -8, 1], [-1, 9, 4]]^-1 . [[4], [6], [5]]"
+    )
+    assert solved == "[[x = 879/302], [y = 53/302], [z = 239/151]]"
+
+
 def test_only_the_reals_are_ordered_so_a_complex_variable_decides_nothing():
     """`x < x + 1` is a fact about the reals and says nothing about the complex
     plane, where `<` has no meaning to be true of. Equality is a question every
