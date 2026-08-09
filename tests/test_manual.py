@@ -222,8 +222,6 @@ NOT_YET_HELD = {
     # own sum and test are worked out, and what stands is PARTS(2).
     "test_the_worked_examples_of_the_number_theory_file[PARTS(4)-5]",
     "test_the_worked_examples_of_the_number_theory_file[DISTINCT_PARTS(4)-2]",
-    "test_the_worked_examples_of_the_vector_utility_file[RANK([[2, 3, "
-    "5], [4, 6, 10], [1, 2, 3]])-2]",
     # Sympy never comes back for these two of the manual's own sessions; they
     # are asked through the worker engine under PATIENCE and fail saying so,
     # instead of wedging the suite.

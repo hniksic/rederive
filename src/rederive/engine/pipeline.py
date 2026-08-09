@@ -949,7 +949,7 @@ def _evaluate(
 ) -> sp.Basic:
     """One head evaluated, or the head itself if it will not evaluate."""
     if _awaits_a_body(head, context):
-        return head
+        return _written_out(head)
     if isinstance(head, Approx):
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
@@ -983,6 +983,58 @@ def _awaits_a_body(head: sp.Basic, context: Context) -> bool:
     except Exception:
         return False
     return any(type(call).__name__ in context.functions for call in calls)
+
+
+def _written_out(head: sp.Basic) -> sp.Basic:
+    """A sum or product of a known number of terms, written out as those terms.
+
+    What a head waiting for a body may still have done to it. Writing a counted
+    range out decides nothing the body might yet say - each term is the summand
+    with a number in place of the index, and the call inside it is exactly the
+    call that was there - and it is what lets the call come round at all: a
+    recursion over `v SUB n_` with the index still a symbol has no length to
+    stop at, so the pass that writes bodies in unfolds it a level per pass
+    forever. `VECTOR.MTH`'s `NONZERO_ROWS` counts rows that way, and the three
+    terms of its sum are three recursions over a row each, every one of which
+    ends.
+
+    Anything else waits, including a range whose length is unknown: there is
+    nothing to write out there, and the body is what will say how long it is.
+    """
+    if not isinstance(head, (sp.Sum, sp.Product)) or not _counted(head):
+        return head
+    value = _attempt(head, lambda h: h.doit(deep=False))
+    if value is None:
+        value = _attempt(head, _term_by_term)
+    return head if value is None else value
+
+
+def _term_by_term(head: sp.Sum | sp.Product) -> sp.Basic | None:
+    """The terms of one counted range, joined, with nothing else rebuilt.
+
+    `.doit()` substitutes by rebuilding the summand, and a rebuilt relation is
+    one sympy decides: over a head it has no reality for - `1 > DIMENSION(u)`,
+    which is how `ZERO_VECTOR` asks whether it has run off the end of a vector
+    - it declines the comparison and raises instead of leaving the statement
+    standing. The engine assembles its own relations unevaluated for that
+    reason, so a substitution that has to go through one is made the same way.
+
+    One range of whole-numbered bounds only. A nest of them is the ordinary
+    summation's business, and this is the way round a body that is still to be
+    written in.
+    """
+    if len(head.limits) != 1:
+        return None
+    index, low, high = head.limits[0]
+    if not (low.is_Integer and high.is_Integer):
+        return None
+    joined = sp.Add if isinstance(head, sp.Sum) else sp.Mul
+    with sp.evaluate(False):
+        terms = [
+            head.function.xreplace({index: sp.Integer(value)})
+            for value in range(int(low), int(high) + 1)
+        ]
+    return joined(*terms)
 
 
 def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
@@ -1039,7 +1091,7 @@ def _summation(head: sp.Sum, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Ba
     return _factored(value, formulas)
 
 
-def _counted(head: sp.Sum) -> bool:
+def _counted(head: sp.Sum | sp.Product) -> bool:
     """Whether every range of `head` holds a known number of terms.
 
     Which is what tells a sum that was added up from one a formula answered.

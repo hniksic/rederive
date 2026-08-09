@@ -2497,6 +2497,23 @@ def test_a_calculus_head_waits_for_the_body_of_the_call_under_it():
     assert simp("F(2)", context) == "2"
 
 
+def test_a_counted_sum_is_written_out_for_the_recursion_under_it():
+    """A range of known length is written out even where a body is still owed.
+
+    `NONZERO_ROWS` of VECTOR.MTH counts the rows of a matrix by summing a
+    recursion over `m SUB n_`, and with the index still a symbol that recursion
+    has nothing to stop at: it runs off the end of a vector whose length is
+    unknown, a level per pass, and never arrives. Written out first, each term
+    recurses over one row and every one of them ends.
+    """
+    nonzero = parse("IF(i > DIMENSION(v), 0, IF(v SUB i = 0, NONZERO(v, i + 1), 1, 1))")
+    rows = parse("SUM(NONZERO(m SUB k, 1), k, 1, DIMENSION(m))")
+    context = Context(
+        functions={"NONZERO": (("v", "i"), nonzero), "ROWS": (("m",), rows)}
+    )
+    assert simp("ROWS([[1, 0], [0, 0], [0, 3]])", context) == "2"
+
+
 def test_two_spellings_of_one_variable_are_one_variable():
     """Case-insensitively, `x` and `X` name the same thing.
 
