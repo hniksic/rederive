@@ -82,8 +82,13 @@ class WebPlots:
     def prefer(self, preferences: protocol.Prefer) -> None:
         self.session.prefer(preferences)
 
-    def release(self) -> None:
-        """The demonstration is over. Nothing moves: a pane is in front of nothing."""
+    async def release(self) -> None:
+        """The demonstration is over. Nothing moves: a pane is in front of nothing.
+
+        A coroutine because the proxy's is one, and its is one because a host
+        is a process to wait for. Here the answer is known before the call
+        returns, exactly as `add`'s is.
+        """
         self.session.release()
 
     def describe(self) -> tuple[protocol.WindowInfo, ...]:

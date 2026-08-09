@@ -26,6 +26,7 @@ and no toolkit at all, which is also how they say that the seam is real.
 
 import asyncio
 import dataclasses
+import threading
 
 import numpy as np
 import pytest
@@ -1026,6 +1027,39 @@ def test_describing_with_no_host_answers_nothing_without_starting_one():
 
     proxy = proxy_module.PlotProxy()
     assert proxy.describe() == ()
+    assert proxy.starts == 0
+
+
+async def test_letting_a_demonstration_go_is_waited_for_off_the_loop(monkeypatch):
+    """Nothing that waits for the host may be waited for on the app's loop.
+
+    This is the call where that rule was learned. A demonstration can be ended
+    by a key pressed in the plot window, and the key travels on the proxy's
+    reader thread, which hands it to the loop and waits there for it to be
+    taken - so a wait on the loop for the host's answer is a wait for the one
+    thread that could bring it. What that cost was one reply timeout of a dead
+    screen, and a live host declared dead at the end of it.
+    """
+    from rederive.plot import proxy as proxy_module
+
+    proxy = proxy_module.PlotProxy()
+    holding = threading.Event()
+    monkeypatch.setattr(type(proxy), "running", property(lambda self: True))
+    monkeypatch.setattr(proxy, "_ask", lambda request: holding.wait(5.0))
+    letting_go = asyncio.create_task(proxy.release())
+    # The loop turns while the host is being waited for, which is the whole of
+    # what is being asked here.
+    await asyncio.sleep(0)
+    assert not letting_go.done()
+    holding.set()
+    await letting_go
+
+
+async def test_letting_go_with_no_host_says_nothing_and_starts_none():
+    from rederive.plot import proxy as proxy_module
+
+    proxy = proxy_module.PlotProxy()
+    await proxy.release()
     assert proxy.starts == 0
 
 
@@ -2990,7 +3024,7 @@ class Answering:
     def prefer(self, preferences):
         self.preferences.append(preferences)
 
-    def release(self):
+    async def release(self):
         self.released += 1
 
     def shutdown(self):
@@ -3204,11 +3238,13 @@ async def test_a_gallery_lets_its_window_go_however_it_ended(app, gallery):
         await pilot.pause()
         assert app.plots.released == 0
         await pilot.press("escape")
+        await pilot.pause()
         assert app.plots.released == 1
         # And again where it ends by running out rather than by Esc.
         app.demonstrate(str(gallery), plotting=True)
         await pilot.pause()
         await pilot.press("space", "space")
+        await pilot.pause()
         assert app.plots.released == 2
 
 

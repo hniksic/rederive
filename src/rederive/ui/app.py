@@ -4750,9 +4750,15 @@ class RederiveApp(App[None]):
         the window has been standing over this one so that a step could be
         looked at while the key that replaces it was pressed, and with nothing
         waiting on it any more it goes back to being a window like the others.
+
+        On a task, because it is a word to the plot host and the host is a
+        process: what waits for its answer must not be this loop. The key that
+        ended the demonstration may have been pressed in the plot window, and
+        the thread carrying that key over is waiting for this very call to
+        return before it can carry anything else - the answer included.
         """
         if self.demo is not None and self.demo.plotting:
-            self.plots.release()
+            self.run_worker(self.plots.release())
         self.closed_window = False
         self.mode = MODE_MENU
         self.query_one("#menu").display = True

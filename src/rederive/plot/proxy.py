@@ -199,8 +199,19 @@ class PlotProxy:
             return reply.windows
         raise PlotError(_unexpected(reply))
 
-    def release(self) -> None:
+    async def release(self) -> None:
         """Say that the demonstration is over, so its window stops staying in front.
+
+        Awaited on a thread, as `add` is, and for a sharper reason than `add`
+        has. This is asked as a demonstration ends, and what ended it may have
+        been a key pressed in the plot window - an event the reader thread is
+        still inside of, since it hands events to the app's loop and waits
+        there for them to be taken. Asking for this answer *on* that loop would
+        be waiting for the one thread that could deliver it, which is a wait of
+        exactly one reply timeout and ends with a live host declared dead.
+
+        So the rule the whole class rests on: nothing that waits for the host
+        may be called from the app's event loop.
 
         Nothing where there is no host: a demonstration that drew nothing
         started none, and starting one to tell it that nothing is waiting would
@@ -209,6 +220,10 @@ class PlotProxy:
         """
         if not self.running:
             return
+        await asyncio.to_thread(self._release)
+
+    def _release(self) -> None:
+        """The round trip itself, on whatever thread is willing to wait for it."""
         try:
             self._ask(protocol.Release())
         except PlotError:
