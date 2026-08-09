@@ -62,6 +62,38 @@ COLUMNS, ROWS = 100, 30
 #: load is nobody's to predict, and a slow answer is not a wrong one.
 PATIENCE = 30.0
 
+#: How long the screen has to have stood still for a failure to call it settled. Set
+#: above a second, which is the rate of the fastest thing that repaints without anyone
+#: asking: a running computation writes its elapsed time in whole seconds, so a screen
+#: with one under way is redrawn that often and nothing about that is progress.
+SETTLED = 1.5
+
+#: A control sequence, which is everything in the stream that is not a character to be
+#: placed. Written out rather than reached for from a library so that this script goes
+#: on being one file with nothing behind it. The first branch is a CSI, whose parameters
+#: and final byte are read because the cursor is moved by one of them; the rest carry a
+#: title, name a character set, or are the two-byte escapes, and are matched to be
+#: skipped. The parameters are split in two so that a private sequence - `?1049h` and
+#: the like, which no reading here wants - leaves `parameters` empty and is stepped over
+#: with the others.
+#:
+#: The fourth branch is the one whose terminator never came. It can only be the last
+#: thing in the data, the app having been mid-write when the wait gave up, and it has to
+#: be recognised where it is: what would otherwise match is the two-byte escape below
+#: it, which takes the `\x1b[` and leaves the parameter digits to be drawn as if they
+#: were an answer.
+CONTROL = re.compile(
+    r"\x1b\[(?P<parameters>[0-9;]*)[0-9;?<>=!\"$' ]*(?P<final>[@-~])"
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+    r"|\x1b[()][A-B0-9]"
+    r"|\x1b[\[\]][^\x1b]*\Z"
+    r"|\x1b."
+)
+
+#: The final bytes that move the cursor somewhere absolute, which is the whole of the
+#: motion the app writes: it addresses a row and writes the row.
+CURSOR = ("H", "f")
+
 #: What the expansion of `(x + 1)^7` puts on the screen. A fragment of the middle of
 #: the line, so that neither the 2D layout of the exponents above it nor the width of
 #: the window can move it out of reach.
@@ -196,14 +228,21 @@ class Terminal:
 
         Only what arrives from here on can match. The app draws the same command menu
         after every command, so a wait that accepted what was on the screen already
-        would pass on the last command's frame rather than this one's. That makes a
-        failure's evidence narrow, which is what `self._session` is for: it holds
-        everything the app has drawn since it started, and the failure reads off both.
+        would pass on the last command's frame rather than this one's.
+
+        That makes a failure's evidence narrow, and the two halves of what is reported
+        answer the two halves of the question. `self._session` is everything the app
+        has drawn since it started, which is what a screen has to be replayed from: a
+        frame is written as the differences from the one before it, so bytes that begin
+        at this wait draw an incomplete picture. The volume and the timing come from
+        `self._seen` alone, which is the only part of the stream this wait is about.
         """
         import select
 
         self._seen = b""
-        deadline = time.monotonic() + patience
+        started = time.monotonic()
+        deadline = started + patience
+        drawn: float | None = None
         while time.monotonic() < deadline:
             if text in _plain(self._seen):
                 return
@@ -212,11 +251,13 @@ class Terminal:
                     arrived = os.read(self._master, 65536)
                 except OSError:
                     break
+                drawn = time.monotonic()
                 self._seen += arrived
                 self._session += arrived
         raise Failed(
-            f"waited {patience:.0f}s for {text!r}, {_arrival(self._seen)}. "
-            f"The session so far:\n{_shown(self._session)}"
+            f"waited {patience:.0f}s for {text!r}. "
+            f"{_arrival(self._seen, None if drawn is None else deadline - drawn)}\n"
+            f"The screen it waited in front of:\n{_shown(self._session)}"
         )
 
     def finish(self) -> int:
@@ -240,24 +281,83 @@ def _plain(data: bytes) -> str:
     return text
 
 
-def _arrival(seen: bytes) -> str:
-    """Which of the two failures this was, they having nothing to do with each other.
+def _arrival(seen: bytes, quiet: float | None) -> str:
+    """Which of the three failures this was, they having nothing to do with each other.
 
     Nothing drawn at all means the app never answered: it is wedged behind something,
-    or gone with the pty still open. Something drawn that did not match means it did
-    answer and the answer was not the one expected, which is a question about the
-    answer rather than about whether one came. A bare timeout says neither, and the
-    two are worth a different morning each.
+    or gone with the pty still open. Drawing that stopped and stayed stopped means it
+    did answer, settled, and settled on something other than what was expected, which
+    is a question about the answer rather than about whether one came. Drawing that
+    went on to the deadline means the loop is alive and something under it is not: a
+    screen is repainted for the clock and the memory gauge whatever else has stalled,
+    so paint arriving to the last moment says the app is waiting too.
+
+    The three are worth a different morning each, and a bare timeout says none of them.
     """
-    if not seen:
-        return "and nothing was drawn in that time"
-    return f"and {len(seen)} bytes were drawn that did not hold it"
+    if not seen or quiet is None:
+        return "Nothing was drawn in that time."
+    volume = f"{len(seen)} bytes were drawn and none held it"
+    if quiet > SETTLED:
+        return f"{volume}; the last of them {quiet:.1f}s before the deadline."
+    return f"{volume}, the last still arriving as it ran out."
 
 
-def _shown(data: bytes, keep: int = 40) -> str:
-    """The last of the screen, for a failure to be read against."""
-    lines = [line.rstrip() for line in _plain(data).splitlines() if line.strip()]
-    return "\n".join(f"    {line}" for line in lines[-keep:])
+def _screen(data: bytes) -> list[str]:
+    """The rows of the terminal, replayed from everything written to it.
+
+    Escape sequences are obeyed here rather than deleted. Deleting them concatenates
+    the fragments of every repaint into something that reads like a screen and is not
+    one - a status bar written at the far corner lands spliced onto the end of whatever
+    line was drawn before it, and a frame drawn twice appears twice.
+
+    Little has to be understood to place a character correctly, because little is what
+    the app writes. It repaints by addressing a row and writing the whole of it, so the
+    only moves this honours are the absolute ones; nothing it sends erases, scrolls or
+    inserts. Everything else - colour, the alternate screen, mouse reporting, the
+    terminal's replies to its own questions - decides how a character looks or how the
+    session behaves and never where a character goes, so it is recognised in order to
+    be stepped over. So is the one the timeout cut in half, which is why a failure's
+    screen ends in the app's own last row rather than in the digits of a colour.
+    """
+    grid = [[" "] * COLUMNS for _ in range(ROWS)]
+    text = data.decode("utf-8", "replace")
+    row = column = position = 0
+    while position < len(text):
+        control = CONTROL.match(text, position) if text[position] == "\x1b" else None
+        if control is not None:
+            position = control.end()
+            if control["final"] in CURSOR:
+                where = (control["parameters"].split(";") + ["", ""])[:2]
+                row = min(max(int(where[0] or 1) - 1, 0), ROWS - 1)
+                column = min(max(int(where[1] or 1) - 1, 0), COLUMNS - 1)
+            continue
+        character = text[position]
+        position += 1
+        if character == "\r":
+            column = 0
+        elif character == "\n":
+            row = min(row + 1, ROWS - 1)
+        elif character >= " " and column < COLUMNS:
+            grid[row][column] = character
+            column += 1
+    return ["".join(cells).rstrip() for cells in grid]
+
+
+def _shown(data: bytes) -> str:
+    """The screen as the terminal held it, indented to sit under the failure.
+
+    Blank rows between two written ones are the layout the app chose and are kept. The
+    ones above and below everything it wrote are the empty part of a worksheet that
+    fills from the foot, and say nothing worth the lines they take in a log.
+    """
+    lines = _screen(data)
+    while lines and not lines[-1]:
+        lines.pop()
+    while lines and not lines[0]:
+        lines.pop(0)
+    if not lines:
+        return "    (nothing was ever drawn on it)"
+    return "\n".join(f"    {line}" for line in lines)
 
 
 def _simplify(terminal: Terminal, expression: str, expected: str) -> None:
