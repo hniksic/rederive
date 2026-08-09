@@ -439,8 +439,10 @@ a highlighted expression out as C, Python, Rust or Julia source.
 
 Transfer Demo lists the original Derive's own demonstrations. Those files are
 not Rederive's to ship, so the first viewing of one downloads it from the
-Internet Archive and keeps it under its own name, where a file saved here is
-kept; every viewing after that runs from the file and waits for nothing.
+Internet Archive. The download is held for as long as the program is running,
+and nothing is written to disk; use Transfer Save to keep what a demonstration
+leaves in the worksheet. A file of that name in the working directory - one you
+saved, or the original's own - is read instead of anything being downloaded.
 
 Transfer Load Derive gallery reads the worksheet of captioned plots that comes
 with the program. Highlight a line, read its caption on the status line, and

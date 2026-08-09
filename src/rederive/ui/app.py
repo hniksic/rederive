@@ -1132,9 +1132,9 @@ def _plot_reason(error: Exception) -> str:
 def _appending(kept: list[tuple[str, bytes]]) -> Callable[[str, bytes], None]:
     """A place for a download to put the files nobody asked for.
 
-    They arrive on the thread the download runs on, and a file is written from
-    the loop like everything else the program keeps, so what the thread is given
-    is a list rather than the writing itself.
+    They arrive on the thread the download runs on, and what becomes of them is
+    the loop's, as everything the program holds on to is, so what the thread is
+    given is a list rather than the keeping itself.
     """
     return lambda file, data: kept.append((file, data))
 
@@ -1426,6 +1426,12 @@ class RederiveApp(App[None]):
         #: unless something puts its own in - a tab has no sockets and one road
         #: out, which is the browser's, and `rederive.web.demos` is that road.
         self.fetcher: Callable[[catalogue.Demo], Awaitable[bytes]] = self._downloaded
+        #: What has been downloaded in this run, by the name the original gave
+        #: it. A demonstration is shown rather than installed: nothing is
+        #: written to the directory the program was started in, and what is
+        #: worth keeping of one is the worksheet it leaves behind. The second
+        #: viewing of one is instant and the next run downloads it again.
+        self.downloads: dict[str, str] = {}
         #: Whether a plot window closed while the demonstration was waiting
         #: over it, which is a click on its way here: closing a window gives
         #: this one the keyboard back, and the click that closed it comes with.
@@ -4546,10 +4552,11 @@ class RederiveApp(App[None]):
     def _command_demonstration(self, demo: catalogue.Demo) -> None:
         """Run one of the original's own demonstrations, fetching it if need be.
 
-        The nine are files like any other once they are here, so one that is
-        here is simply run - by the name the original gave it, which is the name
-        it was kept under. What is different about them is only how the first
-        viewing gets its file.
+        Three places it can be, in the order they are looked in. A file of that
+        name is one, and it wins: somebody with the original's own diskette, or
+        who saved the demonstration with `Transfer Save`, means that file rather
+        than a download. The download of an earlier viewing is the second, and
+        the network is the last.
 
         A gallery is refused before anything is downloaded rather than after:
         what it demonstrates is a plot window, and paying for a file to be told
@@ -4566,6 +4573,9 @@ class RederiveApp(App[None]):
         if platform.current().storage().exists(path):
             self.demonstrate(demo.file, demo.plotting)
             return
+        if demo.file in self.downloads:
+            self.demonstrate(demo.file, demo.plotting, self.downloads[demo.file])
+            return
         self.fetching = demo.file
         self._set_message(FETCHING.format(name=demo.file))
         self.run_worker(self._fetching(demo))
@@ -4578,10 +4588,10 @@ class RederiveApp(App[None]):
         menu stays up and readable under the message that says what is awaited.
 
         Where the bytes come from is `fetcher`'s business and not this one's,
-        and so is where they are kept on the way past. What is left here is the
-        waiting, the refusal, and the running of what arrived - from the text in
-        hand rather than from the file, since a store that would not take the
-        file is not worth stopping a demonstration for.
+        and so is what becomes of them afterwards. What is left here is the
+        waiting, the refusal, and the running of what arrived - which is run
+        from the text in hand, that being the only place a demonstration just
+        downloaded is certain to be.
         """
         try:
             raw = await self.fetcher(demo)
@@ -4594,16 +4604,19 @@ class RederiveApp(App[None]):
         self.demonstrate(demo.file, demo.plotting, worksheet.decoded(raw))
 
     async def _downloaded(self, demo: catalogue.Demo) -> bytes:
-        """One of the nine off the network, kept in the working directory.
+        """One of the nine off the network, remembered for as long as this runs.
 
         The desktop's road out, and the default one: a caller whose environment
         downloads some other way - a browser, which has one road out and it is
         the page's - hands its own in as `fetcher`.
 
-        The file is kept before it is run, so that the name works from then on -
-        `Transfer Demo` finds it, and so does `Transfer Load Derive` for a
-        gallery - and so are the eight nobody asked for, where the whole
-        diskette had to come over to bring the one that was.
+        Remembered rather than written. Nobody asking to be shown a
+        demonstration asked for a file in the directory they started the program
+        in, and a viewing that leaves nine of them behind is worse: the whole
+        diskette brings the eight nobody asked for with it, and they are held
+        here too so that none of them is downloaded twice in one run. What is
+        worth keeping of a demonstration is what it left in the worksheet, and
+        `Transfer Save` is how that is kept.
         """
         # Imported here rather than at the top, because it is the import that
         # costs: urllib carries http, email and ssl behind it, and a page - which
@@ -4613,24 +4626,9 @@ class RederiveApp(App[None]):
 
         kept: list[tuple[str, bytes]] = []
         raw = await asyncio.to_thread(fetch.fetched, demo, _appending(kept))
-        for file, data in kept:
-            self._keep_demonstration(file, data)
-        self._keep_demonstration(demo.file, raw)
+        for file, data in [*kept, (demo.file, raw)]:
+            self.downloads[file] = worksheet.decoded(data)
         return raw
-
-    def _keep_demonstration(self, file: str, raw: bytes) -> None:
-        """Write a downloaded demonstration out under its own name, if it can be.
-
-        Quietly where it cannot. What a failure costs is one more download the
-        next time this demonstration is asked for, and the screen it would be
-        reported on is about to belong to the demonstration itself.
-        """
-        try:
-            platform.current().storage().write(
-                worksheet.path_of(file), worksheet.decoded(raw)
-            )
-        except OSError:
-            pass
 
     def demonstrate(
         self, name: str, plotting: bool = False, text: str | None = None

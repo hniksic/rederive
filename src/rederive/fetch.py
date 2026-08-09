@@ -57,8 +57,8 @@ def fetched(demo: Demo, keep: Callable[[str, bytes], None] | None = None) -> byt
     one piece of machinery for both images, so it shuts for both at once - the
     whole diskette comes over instead and is opened here. Every demonstration
     in it is then paid for, which is what `keep` is for: the eight that were not
-    asked for are handed over to be written, so that none of them is ever
-    fetched again.
+    asked for are handed over to whoever is holding on to them, so that none of
+    them is ever fetched twice.
     """
     try:
         return _raced(demo.urls)

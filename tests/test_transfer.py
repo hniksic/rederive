@@ -1321,7 +1321,9 @@ async def test_a_demonstration_file_that_is_nothing_leaves_the_line_up(app):
 # asked for a file name because the demonstrations were on the diskette it was
 # started from, and here they have to be named before they can be had. The
 # download itself is `test_demos`; what is asked here is the menu in front of
-# it, and that a file which arrives is run and kept.
+# it, and what becomes of a demonstration that arrives - which is that it is
+# shown and remembered, and that the directory it was watched in is left as it
+# was found.
 
 
 SHOW = b"; adds two numbers\r\n2 + 3\r\n\x1a"
@@ -1368,18 +1370,22 @@ async def test_the_demonstrations_are_offered_as_a_menu_of_their_own(app):
         assert len({mnemonic(word) for word in words}) == len(words)
 
 
-async def test_a_demonstration_that_is_not_here_is_downloaded_and_kept(
+async def test_a_demonstration_that_is_not_here_is_downloaded_and_remembered(
     app, downloaded
 ):
     async with app.run_test() as pilot:
         await pilot.press("t", "d", "a")
         assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
         assert entries(app) == ["2+3", "5"]
-        # Kept under the name the original gave it, so it is a file like any
-        # other from now on and nothing is downloaded twice.
         assert downloaded.asked == ["ARITH.DMO"]
-        kept = worksheet.demonstration(Path("ARITH.DMO"))
-        assert kept == (("adds two numbers", "2 + 3"),)
+        # Nothing was installed anywhere: what was asked for was a demonstration
+        # and not a file, and the directory it was watched in is as it was.
+        assert not Path("ARITH.DMO").exists()
+        # It is remembered for as long as the program runs, so a second viewing
+        # waits for nothing and nothing is downloaded twice.
+        await pilot.press("space", "t", "d", "a")
+        assert band(app) == [" adds two numbers"]
+        assert downloaded.asked == ["ARITH.DMO"]
 
 
 async def test_a_demonstration_that_is_here_is_not_downloaded_again(app, downloaded):
@@ -1391,15 +1397,17 @@ async def test_a_demonstration_that_is_here_is_not_downloaded_again(app, downloa
 
 
 async def test_the_files_the_diskette_brought_with_it_are_kept_too(app, downloaded):
+    """They have been paid for, so none of them is downloaded again in this run."""
     downloaded.also["TRIG.DMO"] = b"; the sine\r\nSIN(0)\r\n\x1a"
     async with app.run_test() as pilot:
         await pilot.press("t", "d", "a")
         assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
-        assert Path("TRIG.DMO").exists()
-        # And the one that was kept without being run is run without a download.
+        # The one nobody asked for is run without a download, and is no more a
+        # file than the one that was asked for.
         await pilot.press("space", "t", "d", "t")
         assert band(app) == [" the sine"]
         assert downloaded.asked == ["ARITH.DMO"]
+        assert not Path("TRIG.DMO").exists()
 
 
 async def test_a_demonstration_that_will_not_come_says_so_and_leaves_the_menu(
@@ -1434,10 +1442,15 @@ async def test_a_second_demonstration_waits_for_the_one_on_its_way(app, monkeypa
         assert not Path("ALGEBRA.DMO").exists()
 
 
-async def test_a_directory_that_will_not_take_the_file_still_runs_it(
+async def test_watching_a_demonstration_writes_nothing_anywhere(
     app, downloaded, monkeypatch
 ):
-    """A demonstration is worth more than the sparing of the second download."""
+    """Not the file it came in, and not under any other name either.
+
+    Asked of the one call every write in the program goes through, rather than
+    of the directory: a demonstration that wrote itself out somewhere else
+    would leave the directory looking as clean as this one does.
+    """
     monkeypatch.setattr(
         DesktopStorage, "write", lambda *_: (_ for _ in ()).throw(OSError("read-only"))
     )
@@ -1445,7 +1458,7 @@ async def test_a_directory_that_will_not_take_the_file_still_runs_it(
         await pilot.press("t", "d", "a")
         assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
         assert entries(app) == ["2+3", "5"]
-        assert not Path("ARITH.DMO").exists()
+        assert list(Path().iterdir()) == []
 
 
 async def test_the_environments_own_download_is_what_a_demonstration_comes_by(
@@ -1453,8 +1466,8 @@ async def test_the_environments_own_download_is_what_a_demonstration_comes_by(
 ):
     """A tab has no sockets, so what fetches is handed in rather than assumed.
 
-    Where the file is then kept goes with it: a page remembers a file by name
-    and a desktop writes one, and neither is the other's to do.
+    What becomes of the bytes goes with it: a page keeps a demonstration by
+    name in its own store, and a desktop holds one for as long as it runs.
     """
     asked = []
 
