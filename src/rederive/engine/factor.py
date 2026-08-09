@@ -28,7 +28,8 @@ from rederive.engine.boundary import DEFAULT_AMOUNT, Amount, Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.factoring import factored_expression
 from rederive.engine.from_sympy import from_sympy
-from rederive.engine.pipeline import approximated, simplified
+from rederive.engine.approximation import approximated
+from rederive.engine.pipeline import simplified
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 

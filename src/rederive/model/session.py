@@ -89,6 +89,7 @@ from rederive.syntax import (
     ClearWhat,
     Declaration,
     DeriveSyntaxError,
+    InputMode,
     Language,
     ParseResult,
     ParseState,
@@ -1647,19 +1648,37 @@ class Session:
         definitions land on screen. So nothing is appended, no numbering moves,
         and the session goes on naming the worksheet it already had.
 
+        A library's own text is read in Word input mode whatever mode the
+        session is in, so that every name in it is taken whole. The files were
+        written that way: SOLVE.MTH iterates over an `xk` which is one variable
+        and not `x*k`, and a library that only read correctly under a setting
+        the user happens to hold would be no library. Character mode is the
+        Author line's rule and stays the Author line's; what it decides is how
+        the reader's own letters run together, not how a file spells the names
+        it defines. The mode in force is put back from the settings afterwards,
+        those being the one store, so a file that assigns `InputMode` still
+        changes the session's - as any line that assigns a setting does.
+
         Returns how many of the file's expressions did not parse.
         """
         source = Source.from_file(worksheet.text_of(path), str(path))
         skipped = 0
-        for start, stop in source_lines(source):
-            try:
-                result = parse_expression(source.text[start:stop].strip(), self.state)
-            except DeriveSyntaxError:
-                skipped += 1
-                continue
-            for declaration in result.declarations:
-                self.declare(declaration)
-            self._define(result.node, result.declarations)
+        self.state.declare(SettingDeclaration("InputMode", str(InputMode.WORD)))
+        try:
+            for start, stop in source_lines(source):
+                try:
+                    line = source.text[start:stop].strip()
+                    result = parse_expression(line, self.state)
+                except DeriveSyntaxError:
+                    skipped += 1
+                    continue
+                for declaration in result.declarations:
+                    self.declare(declaration)
+                self._define(result.node, result.declarations)
+        finally:
+            self.state.declare(
+                SettingDeclaration("InputMode", str(self.settings["InputMode"]))
+            )
         return skipped
 
     def load_data(self, path: Path) -> int:

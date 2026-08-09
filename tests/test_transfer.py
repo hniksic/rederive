@@ -471,6 +471,25 @@ def test_a_utility_line_that_does_not_parse_is_counted(session, file):
     assert session.load_utility(file) == 1
 
 
+async def test_a_utility_files_names_are_read_whole(session, file):
+    """A library is read in Word input mode whatever mode the session is in.
+
+    The session is in Character mode here, where an authored `ab` is `a*b`;
+    the file's `ab` is one variable, which is what makes SOLVE.MTH's `xk` an
+    iteration variable rather than a product.
+    """
+    file.write_text("SECOND(ab, cd) := cd - ab\n")
+    assert session.load_utility(file) == 0
+    assert (await session.simplify("SECOND(2, 5)")).text == "3"
+
+
+async def test_loading_a_utility_file_leaves_the_input_mode_alone(session, file):
+    """Word mode is how the file is read, not a setting the reading changes."""
+    file.write_text("CUBE(t) := t^3\n")
+    session.load_utility(file)
+    assert (await session.simplify("ab")).text == "a*b"
+
+
 # -- loading a data file -----------------------------------------------------
 
 

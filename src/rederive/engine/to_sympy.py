@@ -32,7 +32,7 @@ from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean, BooleanFunction
 
-from rederive.engine.approximation import simplest
+from rederive.engine.approximation import GUARD, approximated, simplest
 from rederive.engine.context import (
     Angle,
     Context,
@@ -2432,7 +2432,17 @@ def _limit(conv: _Converter, args: list) -> sp.Basic:
 def _approached(
     expression: sp.Basic, variable: sp.Basic, point: sp.Basic, direction: str
 ) -> sp.Basic:
-    """One limit: the head sympy holds it in, or the substitution it means."""
+    """One limit: the head sympy holds it in, or the substitution it means.
+
+    A matrix is approached element by element, sympy having no limit of a
+    matrix and the limit of one being the matrix of the limits. That is how
+    SOLVE.MTH's `NEWTON_AUX` writes the current iterate into a whole augmented
+    matrix at once, with `LIM(a, x, xk)` over the `a` its caller built.
+    """
+    if isinstance(expression, sp.MatrixBase):
+        return expression.applyfunc(
+            lambda element: _approached(element, variable, point, direction)
+        )
     if point.has(variable):
         return MovingLimit(expression, variable, point)
     return sp.Limit(expression, variable, point, dir=direction)
@@ -2672,13 +2682,43 @@ def _appended(conv: _Converter, args: list) -> sp.Basic:
     append, transpose back. A single matrix is the exception the manual names
     separately, and it flattens: `APPEND([[a, b], [c, d]])` is `[a, b, c, d]`,
     not the matrix it started as.
+
+    A plain vector appended to a matrix of its width is one row of that matrix,
+    which is what SOLVE.MTH's `NEWTONS` writes its system under its gradients
+    with. A row of a matrix is a vector here and a matrix of one row is that
+    same vector, there being one shape for both, so the `[u]` of
+    `APPEND(GRAD(u, x), [u])` reaches this already flattened to `u`. Joining a
+    vector of rows to a vector of scalars is ragged nonsense; reading the
+    scalars as the row they are exactly the width of is the matrix Derive
+    answers.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return _vector_of(list(args[0]))
+    width = _stacked_width(args)
     elements: list[sp.Basic] = []
     for vector in args:
-        elements.extend(_elements_of(_matrix(vector)))
+        matrix = _matrix(vector)
+        if width is not None and matrix.rows == 1 and matrix.cols == width:
+            elements.append(matrix)
+        else:
+            elements.extend(_elements_of(matrix))
     return _vector_of(elements)
+
+
+def _stacked_width(args: list) -> int | None:
+    """The one row width the matrices among `args` all have, if there is one.
+
+    None where no argument is a matrix of more than one row - which is every
+    call that only joins vectors, so `APPEND([a, b], [c, d])` is `[a, b, c, d]`
+    and not a matrix - and none where two matrices disagree about their width,
+    a vector being no row of both.
+    """
+    widths = {
+        argument.cols
+        for argument in args
+        if isinstance(argument, sp.MatrixBase) and argument.rows > 1
+    }
+    return widths.pop() if len(widths) == 1 else None
 
 
 def _place(index: sp.Basic, count: int) -> int:
@@ -2882,15 +2922,44 @@ def _updated(conv: _Converter, body: sp.Basic, names: list, values: list) -> lis
     be read while the variables were variables are read again, as they are for
     a generated vector's elements, and a system's update has to come back as
     many values as it consumed.
+
+    An iterate is worked out as a number where the precision mode says numbers
+    are worked out, which is not merely faster but is what an iteration in that
+    mode means: every iterate is an answer the sequence shows, and the next step
+    reads it as a number going in. Left exact, each step writes the whole of the
+    last one into every transcendental head it holds, and SOLVE.MTH's `NEWTONS`
+    over `#e^(x*y)` and `ATAN(x*y)` builds a tower six deep that no amount of
+    time reduces to the six digits the page prints.
     """
     written = body.subs(_bindings(body, names, values), simultaneous=True)
     written = _retried(conv, written)
+    written = _worked_out(written, conv.context)
     if len(names) == 1:
         return [written]
     elements = _elements_of(_matrix(written))
     if len(elements) != len(names):
         raise ValueError("not that many values")
     return elements
+
+
+def _worked_out(value: sp.Basic, context: Context) -> sp.Basic:
+    """`value` with its numbers worked out, if the precision mode works any out.
+
+    A value on its way to another computation rather than to the screen, so it
+    is carried at the guard digits and not at the digits shown. That is what the
+    guard is for - the digits asked for are meant to be the value's own rather
+    than a rounding of a rounding - and an iteration is where it tells: the
+    manual's `ITERATES(#e^(-x/20), x, 1, 5)` shows `0.953441` at its fourth
+    iterate, which is the value's own sixth digit and not the `0.953440` that
+    rounding every step to six leaves.
+
+    Exact and Mixed work no number out early. An exact iteration is exact all
+    the way, however large that grows.
+    """
+    if context.precision is not Precision.APPROXIMATE:
+        return value
+    digits = context.precision_digits + GUARD
+    return approximated(value, context.with_precision(Precision.APPROXIMATE, digits))
 
 
 def _bindings(body: sp.Basic, names: list, values: list) -> dict:
@@ -3183,11 +3252,19 @@ def _reoffered(conv: _Converter, found: sp.Basic) -> sp.Basic:
     something that was no matrix while `a` was a variable, so the operator
     stayed where it stood; once the call under it answers a matrix there is a
     transpose to take.
+
+    A limit the head answers with is taken here rather than left for the
+    pipeline, because the heads standing over this one are offered their
+    operands in the same walk and a limit is no operand to work with.
+    SOLVE.MTH's `NEWTON_AUX` is `ROW_REDUCE(LIM(a, x, xk))`: with the iterate
+    written in there is a matrix of numbers to reduce, and left as a matrix of
+    limits it is instead a matrix whose entries sympy tries to prove nonzero by
+    factoring them.
     """
     if isinstance(found, Transposed):
         return found.args[0].T
     name = "ELEMENT" if isinstance(found, Subscript) else type(found).__name__
-    return conv.call(name, found.args)
+    return _limits_taken(conv.call(name, found.args))
 
 
 def _identity_matrix(conv: _Converter, args: list) -> sp.Basic:
@@ -3222,12 +3299,20 @@ def _row_reduce(conv: _Converter, args: list) -> sp.Basic:
     out holding `X` wherever `A` was nonsingular. A second argument that is a
     vector is one such column, `A . X = b` being the everyday case and the one
     VECTOR.MTH's `APPROX_EIGENVECTOR` is written in terms of.
+
+    The entries are the numbers they stand for where the precision mode says
+    they are. Choosing a pivot means asking of each candidate whether it is
+    zero, and sympy answers an entry it cannot decide by simplifying it: over a
+    Newton step, whose entries are exponentials and arctangents of one another,
+    that is a factorization of a polynomial in several transcendental
+    generators and it does not come back. An approximate number is a rational,
+    and whether a rational is zero is a question with an answer.
     """
     matrix, *rest = args
-    matrix = _matrix(matrix)
+    matrix = _worked_out(_matrix(matrix), conv.context)
     if not rest:
         return matrix.rref()[0]
-    adjoined = _matrix(_one(rest))
+    adjoined = _worked_out(_matrix(_one(rest)), conv.context)
     if adjoined.rows == 1 and matrix.rows != 1:
         adjoined = adjoined.T
     return sp.Matrix.hstack(matrix, adjoined).rref()[0]
@@ -3311,16 +3396,31 @@ def _gradient(conv: _Converter, args: list) -> sp.Basic:
     derivative with respect to it has to be divided by that to be a rate the
     other elements can be compared against.
 
-    A vector has no gradient here: the manual's GRAD takes an expression, and
-    VECTOR.MTH builds the Jacobian of a vector out of one GRAD per element -
-    `VECTOR(GRAD(u SUB m_, alpha), m_, DIMENSION(u))`. The body of that is
-    converted while `m_` is still a variable, so the field GRAD is handed is the
-    inert `ELEMENT(u, m_)`, a head carrying the whole vector `u`. Differentiating
-    one of those is sympy's matrix chain rule and answers a matrix of nonsense,
-    so a field with a vector still standing in it is refused: the call stays as
-    written and is offered again once the index has a value.
+    A vector of expressions has one gradient per element, and those gradients
+    stand side by side as the columns of the matrix this answers: element
+    `[i][j]` is how fast element `j` of the field grows along coordinate `i`, so
+    a row is one coordinate's rates across the whole field. That is the
+    transpose of the Jacobian `VECTOR.MTH` builds a row at a time as
+    `JACOBIAN(u, alpha)`, and SOLVE.MTH's `NEWTONS` is what says which way round
+    it goes: ``APPEND(GRAD(u, x), [u])` `` writes the field under the gradients
+    and transposes the lot, which is the augmented matrix `[J | u]` whose row
+    reduction is one Newton step. The other way round it would solve against the
+    transposed Jacobian and converge to nothing.
+
+    A vector standing *under* a head is another matter and is refused. The body
+    of `VECTOR(GRAD(u SUB m_, alpha), m_, DIMENSION(u))` is converted while `m_`
+    is still a variable, so the field GRAD is handed there is the inert
+    `ELEMENT(u, m_)`, a head carrying the whole vector `u`. Differentiating one
+    of those is sympy's matrix chain rule and answers a matrix of nonsense, so
+    the call stays as written and is offered again once the index has a value.
     """
     expression, *rest = args
+    if isinstance(expression, sp.MatrixBase):
+        variables, scales = _coordinates(conv, rest)
+        columns = [
+            _gradient_of(element, variables, scales) for element in _field(expression)
+        ]
+        return _vector_of([_vector_of(list(row)) for row in zip(*columns, strict=True)])
     if _holds_vector(expression):
         raise TypeError("not an expression")
     variables, scales = _coordinates(conv, rest)

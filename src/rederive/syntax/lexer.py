@@ -334,8 +334,15 @@ class Lexer:
         if self._is_call_head(run, after):
             return Token(TokenKind.NAME, pos, end, run, run, is_function=True)
 
-        # Step 2: longest match against known names.
-        for length in range(len(run), 0, -1):
+        # Step 2: longest match against known names. Only the whole run is a
+        # candidate in Word mode, where a run is one name and a known name
+        # inside it is a name inside it and nothing more: `xk` is `xk` however
+        # long `x` has been declared, which is what SOLVE.MTH's iteration
+        # variable needs. In Character mode a shorter prefix is what makes
+        # `tera*x` readable as `terax`.
+        longest = len(run)
+        shortest = 1 if self.state.input_mode == InputMode.CHARACTER else longest
+        for length in range(longest, shortest - 1, -1):
             if length < len(run) and run[length] == "_":
                 # An underscore run belongs to the name in front of it, so a
                 # declared `x` does not match the first letter of `x_`: they

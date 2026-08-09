@@ -205,8 +205,17 @@ def _binding(
     Derive answers. Textual substitution is what a Derive definition is, and
     capture is part of it.
 
-    A second argument that is no name binds nothing. `SUM(v)` over a vector's
-    elements has none either, and both walk like any other call.
+    A vector of names binds every one of them, which is what an iterated limit
+    and a system's iteration are written with: `LIM(u, [x, y], [a, b])` and
+    `ITERATE([k, j + k], [j, k], [0, 1], n)`. A parameter supplied with such a
+    vector is one of these too, and SOLVE.MTH turns on its being read as one -
+    `NEWTON_AUX`'s `LIM(a, x, xk)` is called with `[x, y]` for `x`, and a
+    parameter left standing there is a limit in a variable the caller never
+    named.
+
+    A second argument that is no name and no vector of names binds nothing.
+    `SUM(v)` over a vector's elements has none either, and both walk like any
+    other call.
 
     `BINDING_THROUGHOUT` is the exception to where the binding stops. A root sum
     runs its summand over the roots of a polynomial written in the same variable,
@@ -214,25 +223,20 @@ def _binding(
     it, and an assigned `t` reaches none of `ROOT_SUM(p, t, u)`.
     """
     head = node.children[0]
-    if len(arguments) < 2 or arguments[1].kind is not Kind.NAME:
+    if len(arguments) < 2 or _variables_of(arguments[1]) is None:
         walked = tuple(_walk(argument, scope, context) for argument in arguments)
         return replace(node, children=(head, *walked))
-    body, index, *rest = arguments
-    supplied = scope.arguments.get(str(index.value))
-    if supplied is not None and supplied.kind is Kind.NAME:
-        index = supplied
-        inner = replace(scope, bound=scope.bound | {str(index.value)})
-    else:
-        name = str(index.value)
-        inner = replace(
-            scope,
-            arguments={
-                parameter: written
-                for parameter, written in scope.arguments.items()
-                if parameter != name
-            },
-            bound=scope.bound | {name},
-        )
+    body, written_index, *rest = arguments
+    index, shadowed = _index(written_index, scope)
+    inner = replace(
+        scope,
+        arguments={
+            parameter: written
+            for parameter, written in scope.arguments.items()
+            if parameter not in shadowed
+        },
+        bound=scope.bound | set(_variables_of(index) or ()),
+    )
     outer = inner if str(head.value) in BINDING_THROUGHOUT else scope
     written = (
         _walk(body, inner, context),
@@ -240,6 +244,44 @@ def _binding(
         *(_walk(argument, outer, context) for argument in rest),
     )
     return replace(node, children=(head, *written))
+
+
+def _variables_of(index: Node) -> tuple[str, ...] | None:
+    """The variables `index` names, or None where it names none.
+
+    One name, or a vector of them. An empty vector and a vector holding
+    anything but names are no binding position at all.
+    """
+    if index.kind is Kind.NAME:
+        return (str(index.value),)
+    if index.kind is not Kind.VECTOR or not index.children:
+        return None
+    if any(child.kind is not Kind.NAME for child in index.children):
+        return None
+    return tuple(str(child.value) for child in index.children)
+
+
+def _index(index: Node, scope: _Scope) -> tuple[Node, frozenset[str]]:
+    """The variable a binding call ranges over, and what stands for itself.
+
+    A parameter in this position is written in, because the name a call
+    supplies is the name the body ranges over. What it is written in with has
+    to name variables itself, and where it does not - a parameter supplied with
+    a number, or with an expression - the parameter is left standing and
+    shadows the argument in the body, there being no other name to range over.
+    """
+    if index.kind is Kind.NAME:
+        supplied = scope.arguments.get(str(index.value))
+        if supplied is None or _variables_of(supplied) is None:
+            return index, frozenset({str(index.value)})
+        return supplied, frozenset()
+    written = []
+    shadowed = set()
+    for child in index.children:
+        replacement, hidden = _index(child, scope)
+        written.append(replacement)
+        shadowed |= hidden
+    return replace(index, children=tuple(written)), frozenset(shadowed)
 
 
 def _fundef(node: Node, scope: _Scope, context: Context) -> Node:

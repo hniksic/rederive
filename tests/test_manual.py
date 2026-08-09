@@ -277,13 +277,6 @@ NOT_YET_HELD = {
     # COVARIANT_METRIC_TENSOR's `v^2 + w^2` on p.238 has `v` more main than `w`,
     # which is what unlisted names being alphabetical gives.
     "test_the_characteristic_variable_defaults_to_w",
-    # NEWTONS comes back as the ITERATES it is defined as. Three things stand in
-    # the way: `GRAD(u, x)` over a vector `u` is an inert head and not the
-    # Jacobian SOLVE.MTH builds its augmented matrix from; `LIM(m, [x, y],
-    # [a, b])` over a matrix is not carried out; and the file's iteration
-    # variable `xk` lexes as `x*k` under Character input, so ITERATES is handed a
-    # product where a variable belongs.
-    "test_newtons_finds_the_manuals_nonlinear_solution",
     # The equation is solved: `DSOLVE1` answers the manual's `x^2*y + y - 1 = 0`.
     # What is left is the line after it, where the initial condition is written
     # into that solution and the manual says to "see that it simplifies to 0=0".

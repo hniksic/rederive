@@ -116,6 +116,17 @@ def test_word_mode_takes_a_keyword_operator_inside_a_name():
     assert sexpr("xSUBy", ParseState(input_mode=InputMode.WORD)) == "xsuby"
 
 
+def test_word_mode_takes_a_run_whole_over_a_name_declared_inside_it():
+    # A declared name matching the front of a run is what Character mode is
+    # for. In Word mode the run is the name: `xk` is `xk` however long `x` has
+    # been declared, which is what SOLVE.MTH's iteration variable needs.
+    state = ParseState()
+    state.declare(VariableDeclaration("x", has_value=True))
+    assert sexpr("xk", state) == "(juxt x k)"
+    state.input_mode = InputMode.WORD
+    assert sexpr("xk", state) == "xk"
+
+
 def test_a_setting_the_caller_ignores_changes_nothing():
     source = Source.from_file("InputMode:=Word\nxyz\n")
     state = ParseState()

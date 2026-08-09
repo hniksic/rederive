@@ -320,6 +320,24 @@ def test_a_binding_function_given_no_variable_binds_nothing():
     assert written("SUM(v)", context) == same_as("SUM([1, 2, 3])")
 
 
+def test_a_vector_of_names_binds_every_one_of_them():
+    # An iterated limit ranges over each of them, so an assigned `x` reaches
+    # neither the vector nor the expression under it.
+    context = Context(assignments={"x": parse("5")})
+    assert written("LIM(x + y, [x, y], [1, 2])", context) == same_as(
+        "LIM(x + y, [x, y], [1, 2])"
+    )
+
+
+def test_a_parameter_supplied_with_a_vector_of_names_is_written_in():
+    # SOLVE.MTH's `NEWTON_AUX(a, x, x0, n)` limits over its parameter `x`, and
+    # `NEWTONS` calls it with the vector of variables to solve for. Left
+    # standing, the limit would be taken in a variable nobody named. The body
+    # takes the vector too, a definition being textual substitution throughout.
+    context = Context(functions={"F": (("x",), parse("LIM(x*y, x, 1)"))})
+    assert written("F([u, v])", context) == same_as("LIM([u, v]*y, [u, v], 1)")
+
+
 # -- substitution: labels -----------------------------------------------------
 
 

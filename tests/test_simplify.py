@@ -752,6 +752,10 @@ CALCULUS = [
     # after another, which is the substitution `x = 0` alone cannot make.
     ("LIM(x^2 + y^2, [x, y], [2, 3])", "13"),
     ("LIM(SIN(x)/x + y, [x, y], [0, 1])", "2"),
+    # A matrix is approached element by element, which is how SOLVE.MTH writes
+    # an iterate into a whole augmented matrix at once.
+    ("LIM([[SIN(x)/x, x + y], [x^2, 3]], x, 0)", "[[1, y], [0, 3]]"),
+    ("LIM([[x*y, x + y], [x^2, y]], [x, y], [1, 2])", "[[2, 3], [1, 2]]"),
     # The order is the maximum degree, and a derivative that simplifies to zero
     # at the expansion point costs a term: this one has no even powers.
     ("TAYLOR(c*SIN(x), x, 0, 6)", "c*x^5/120 - c*x^3/6 + c*x"),
@@ -1659,11 +1663,16 @@ VECTOR_CALCULUS = [
     ("DIV([x, 0, 0])", "1"),
     ("VECTOR_POTENTIAL([x, 0, 0])", "[0, -x*z, 0]"),
     ("CURL(VECTOR_POTENTIAL([x, 0, 0]))", "[x, 0, -z]"),
-    # Arguments the operators can make nothing of: a vector has no gradient, a
-    # single variable is no coordinate system, curl and vector potential are
-    # defined in the plane and in space and nowhere else. Each comes back the
-    # call it was written as.
-    ("GRAD([1, 2])", "GRAD([1, 2])"),
+    # A vector of expressions has one gradient per element, and those gradients
+    # stand side by side as the columns of the answer: row `i` holds the rates
+    # along coordinate `i` across the whole field. That is the transpose of
+    # VECTOR.MTH's JACOBIAN, and it is the way round SOLVE.MTH's NEWTONS needs -
+    # `APPEND(GRAD(u, x), [u])`` is the augmented matrix of one Newton step.
+    ("GRAD([x*y, x + y], [x, y])", "[[y, 1], [x, 1]]"),
+    ("GRAD([1, 2])", "[[0, 0], [0, 0], [0, 0]]"),
+    # Arguments the operators can make nothing of: a single variable is no
+    # coordinate system, curl and vector potential are defined in the plane and
+    # in space and nowhere else. Each comes back the call it was written as.
     ("GRAD(u, x)", "GRAD(u, x)"),
     ("CURL([a, b, c, d])", "CURL([a, b, c, d])"),
     ("VECTOR_POTENTIAL([a, b])", "VECTOR_POTENTIAL([a, b])"),
@@ -1909,6 +1918,11 @@ STRUCTURE = [
     ("APPEND([[a, b], [c, d], [e, f]])", "[a, b, c, d, e, f]"),
     ("APPEND([[a, b], [c, d]], [[e, f], [g, h]])", "[[a, b], [c, d], [e, f], [g, h]]"),
     ("APPEND([a, b])", "[a, b]"),
+    # A row of a matrix is a vector and a matrix of one row is that vector too,
+    # so a vector as wide as a matrix it is appended to is one more row of it.
+    # `NEWTONS` writes its system under its gradients that way.
+    ("APPEND([[a, b], [c, d]], [e, f])", "[[a, b], [c, d], [e, f]]"),
+    ("APPEND([e, f], [[a, b], [c, d]])", "[[e, f], [a, b], [c, d]]"),
 ]
 
 

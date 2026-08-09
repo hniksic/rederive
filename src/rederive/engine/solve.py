@@ -34,7 +34,8 @@ import sympy as sp
 from rederive.engine.boundary import Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.from_sympy import from_sympy
-from rederive.engine.pipeline import approximated, simplified
+from rederive.engine.approximation import approximated
+from rederive.engine.pipeline import simplified
 from rederive.engine.solving import solutions
 from rederive.engine.to_sympy import to_sympy
 from rederive.model.expr import Node
