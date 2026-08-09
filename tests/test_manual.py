@@ -264,12 +264,6 @@ NOT_YET_HELD = {
     # rounding is the last step of the pipeline and an exact mode that reached
     # 1/2 would have Mixed show 1/2 too.
     "test_the_three_modes_on_an_expression_worth_one_half",
-    # The denesting holds and the order it is written in does not. A kernel that
-    # holds no variable sorts by its spelling, so a sum of pure surds comes out
-    # by ascending radicand. Neither direction fits the manual: 3.8 p.42 prints
-    # `SQRT(3) + SQRT(2)` and 6.3 p.104 prints `-SQRT(2)/8 - SQRT(6)/8 + 1/2`.
-    "test_exact_mode_denests_the_manuals_radicals[SQRT(5 + "
-    "2*SQRT(6))-SQRT(3) + SQRT(2)]",
     # The determinant is multiplied out where the original leaves it factored,
     # and then written about the most main variable it holds: with none of `a`,
     # `b`, `w` on the order list that is `a`, so `(2 - w)*(b - w) - 3*a` comes

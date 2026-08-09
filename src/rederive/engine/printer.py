@@ -267,6 +267,9 @@ def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
     An imaginary term leads with the `#i` in the same way, whatever it is
     multiplied by, so that the real part of a complex number is written first
     however that part is spelled: `1 + SQRT(3)*#i` and not `SQRT(3)*#i + 1`.
+
+    A term made of nothing but constants has no variable to compare, and then
+    its own value decides: `_constant_key` says which way.
     """
     kernels = sorted(
         (
@@ -276,7 +279,32 @@ def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
         ),
         key=lambda kernel: (kernel[0] != _UNDER, kernel[0] != _IMAGINARY, kernel),
     )
+    if kernels and all(kernel[0] == _CONSTANT for kernel in kernels):
+        return (_constant_key(term), _AFTER_EVERY_KERNEL)
     return (*kernels, _AFTER_EVERY_KERNEL)
+
+
+def _constant_key(term: sp.Basic) -> tuple:
+    """Where a term holding no variable sorts among the others that hold none:
+    by its own value, the largest first.
+
+    There being no variable to be more or less main, size is what is left to
+    order by, and the original orders by it descending: 3.8 p.42 writes the
+    denesting of `SQRT(5 + 2*SQRT(6))` as `SQRT(3) + SQRT(2)`, 3.8 p.47 writes
+    a cube root's as `3*SQRT(5) - 2*SQRT(3)`, and 6.3 p.104 writes `SIN(pi/24)`
+    over `-SQRT(2)/8 - SQRT(6)/8 + 1/2`. The last is the one that says the
+    coefficient counts rather than the radicand alone: the two surds run 2 then
+    6 there and 3 then 2 on p.42, and only the value of the whole term - a
+    minus sign included - puts both the manual's way round.
+
+    A term whose value is no real number, which is what a complex constant
+    outside the `#i` the imaginary place already catches comes to, sorts behind
+    every term that has one and among those by its spelling.
+    """
+    try:
+        return (_CONSTANT, 0, -float(term), "")
+    except (TypeError, ValueError):
+        return (_CONSTANT, 1, 0.0, str(term))
 
 
 def _kernel_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
