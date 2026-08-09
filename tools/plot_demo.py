@@ -191,7 +191,7 @@ class Standin(PlotProxy):
         super().__init__()
         self._recorder = recorder
 
-    def add(self, request: plots.Add) -> plots.Placed:
+    async def add(self, request: plots.Add) -> plots.Placed:
         return self._recorder.asked(request)
 
     def prefer(self, preferences: plots.Prefer) -> None:
