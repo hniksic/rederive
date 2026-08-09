@@ -302,7 +302,8 @@ Calculus functions:
   INT(u, x)                    the indefinite integral
   INT(u, x, a, b)              the definite integral between a and b
   LIM(u, x, a), LIM(u, x, a, d)  the limit at a; d > 0 from the right,
-                                 d < 0 from the left
+                                 d < 0 from the left; an a written in x
+                                 substitutes instead of approaching
   SUM(u, k, a, b)              the sum over k from a to b
   PRODUCT(u, k, a, b)          the product over the same range
   TAYLOR(u, x, a, n)           the Taylor polynomial of degree n about a

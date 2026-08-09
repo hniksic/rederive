@@ -141,7 +141,7 @@ def test_a_head_that_binds_a_variable_comes_through_as_itself():
     is exactly what Simplify already answers."""
     text = "DIF(LIM(F(y), y, 2*x - y), y)"
     assert exp(text) == simplify(parse(text), Context()).text
-    assert "SUBS(DIF(LIM(F(y), xi_2, 2*x - y), xi_2), [xi_2], [y])" in exp(text)
+    assert "SUBS(DIF(F(xi_1), xi_1), [xi_1], [2*x - y])" in exp(text)
 
 
 def test_an_integrand_stays_inside_its_integral():

@@ -58,6 +58,7 @@ __all__ = [
     "FunDef",
     "InertVector",
     "Logical",
+    "MovingLimit",
     "PlusMinus",
     "Power",
     "StringLiteral",
@@ -272,6 +273,40 @@ def _at_the_point(
         return value
     limit = sp.limit(expression, variable, point)
     return None if isinstance(limit, sp.Limit) else limit
+
+
+class MovingLimit(sp.Function):
+    """`LIM(u, x, a)` where `a` mentions `x`: the substitution, held until asked.
+
+    Nothing approaches a moving point, so such a call is no limit at all, and
+    what the original does with it is substitute: `LIM((x*v - y)^2, y, x*v -
+    y)` is `y^2`, the whole `y` being replaced at once by what the point says.
+    Sympy refuses to build a limit of this shape, which is exactly right and
+    leaves the meaning to be supplied here.
+
+    `ODE1.MTH` is written around it. `CLAIRAUT` differentiates the equation
+    with `y` standing for `x*v - y` and then puts the point back, and both
+    steps are this call; `HOMOGENEOUS` and `GEN_HOM` change variables the same
+    way.
+
+    A head rather than the substitution itself, because the substitution has to
+    happen after whatever stands under it has been worked out. `LIM(DIF(LIM(p,
+    y, x*v - y), y), y, x*v - y)` substitutes into a derivative, and one still
+    unevaluated would come back a `SUBS` that nothing then opens. So this waits
+    where the calculus heads wait, and the pipeline evaluates it after the
+    derivative underneath it, by which time there is a polynomial to put the
+    point into.
+    """
+
+    nargs = 3
+
+    def doit(self, deep: bool = False, **hints) -> sp.Basic:
+        """The substitution, or this head where it will not go through."""
+        expression, variable, point = self.args
+        try:
+            return expression.subs(variable, point)
+        except Exception:
+            return self
 
 
 class Approx(sp.Function):
@@ -2378,15 +2413,29 @@ def _limit(conv: _Converter, args: list) -> sp.Basic:
     for substituting where substitution alone would divide by zero. Iterated
     and not multivariate: `LIM(u, [x, y], [a, b])` need not agree with
     `LIM(u, [y, x], [b, a])`, and the manual says so.
+
+    A point that mentions the variable is no point to approach, and that call
+    is the substitution `MovingLimit` describes. A side written on one says
+    nothing either, there being nothing to come at from a side, so it is
+    dropped along with the limit.
     """
     if isinstance(args[1], sp.MatrixBase):
         return _iterated_limit(args)
     if len(args) == 3:
-        return sp.Limit(*args, dir="+-")
+        return _approached(*args, "+-")
     expression, variable, point, side = args
     if not side:
-        return sp.Limit(expression, variable, point, dir="+-")
-    return sp.Limit(expression, variable, point, dir="+" if side > 0 else "-")
+        return _approached(expression, variable, point, "+-")
+    return _approached(expression, variable, point, "+" if side > 0 else "-")
+
+
+def _approached(
+    expression: sp.Basic, variable: sp.Basic, point: sp.Basic, direction: str
+) -> sp.Basic:
+    """One limit: the head sympy holds it in, or the substitution it means."""
+    if point.has(variable):
+        return MovingLimit(expression, variable, point)
+    return sp.Limit(expression, variable, point, dir=direction)
 
 
 def _iterated_limit(args: list) -> sp.Basic:
@@ -2409,7 +2458,7 @@ def _iterated_limit(args: list) -> sp.Basic:
     if len(names) != len(values):
         raise ValueError("not a point for every variable")
     for name, value in zip(names, values, strict=True):
-        expression = sp.Limit(expression, name, _limits_taken(value), dir="+-")
+        expression = _approached(expression, name, _limits_taken(value), "+-")
     return expression
 
 

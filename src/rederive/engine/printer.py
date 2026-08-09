@@ -136,6 +136,7 @@ _ORDERINGS = ("<", "<=", ">", ">=")
 _FUNCTION_NAMES = {
     "Antidifference": "SUM",
     "Antiquotient": "PRODUCT",
+    "MovingLimit": "LIM",
     "log": "LN",
     "arg": "PHASE",
     "atan2": "ATAN",

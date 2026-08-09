@@ -296,13 +296,16 @@ NOT_YET_HELD = {
     # does_not_stands` records and what the engine follows. The page and the
     # program disagree and no one rule gives both.
     "test_the_first_order_equation_the_manual_solves",
-    # `LIM(u, x, a)` where `a` holds `x` is no limit - nothing approaches a
-    # moving point - and the file means the substitution: `LIM((x*v - y)^2, y,
-    # x*v - y)` is `y^2`. The engine builds a sympy limit, so the second
-    # condition comes back as a tower of SUBS over DIF over LIM. Reading such a
-    # call as the substitution gets it to `2*v*x^2 - 2*x*y - 2*v = 0`, one common
-    # factor short of the manual's line, and costs test_simplify's
-    # `test_a_derivative_a_substitution_binds_is_not_evaluated`.
+    # Both conditions are the manual's, the second up to one common factor:
+    # `2*v*x^2 - 2*x*y - 2*v = 0` where the page writes `2*(v*x^2 - x*y - v) =
+    # 0`. That is the same decision `test_the_manuals_mutual_recursion_written_
+    # with_accumulators` above meets, seen once more from the manual's side, and
+    # `test_simplify`'s `test_a_numeric_factor_stays_among_the_terms_it_divides`
+    # says why a number in particular cannot come out: sympy multiplies one back
+    # over a sum as it builds one, so `2*(v*x^2 - x*y - v)` is a form no answer
+    # can be written in - printing it and reading the print back gives the terms
+    # again, and an entry whose text and tree disagree is what
+    # `test_simplify_corpus` fails on. A difference in spelling only.
     "test_the_clairaut_equation_the_manual_solves",
     # `F(4)` comes back an unfinished tower of `DIF` over `F(0)`. A calculus
     # head over a call still waiting for its body waits for it, which is what

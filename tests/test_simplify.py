@@ -859,14 +859,17 @@ def test_a_taylor_polynomial_that_does_not_exist_is_undefined():
 def test_a_derivative_a_substitution_binds_is_not_evaluated():
     """What sympy holds under a `SUBS` is held on purpose.
 
-    Differentiating a limit whose endpoint moves gives the slope of `F` at a
-    point, written as a derivative over a bound variable and a substitution
-    into it. That derivative looks like the derivative of a constant and is
-    not one, so nothing inside the substitution is evaluated - and the answer
-    is the same on the second pass as on the first.
+    Differentiating an unknown function of a moving argument gives the slope of
+    `F` at that argument, written as a derivative over a bound variable and a
+    substitution into it. That derivative looks like the derivative of a
+    constant and is not one, so nothing inside the substitution is evaluated -
+    and the answer is the same on the second pass as on the first.
+
+    The argument here is written as the substitution `LIM(F(y), y, 2*x - y)`
+    is, so the chain rule contributes the minus in front.
     """
     once = simplify(parse("DIF(LIM(F(y), y, 2*x - y), y)"), Context())
-    assert "SUBS(DIF(LIM(F(y), xi_2, 2*x - y), xi_2), [xi_2], [y])" in once.text
+    assert once.text == "-SUBS(DIF(F(xi_1), xi_1), [xi_1], [2*x - y])"
     assert simplify(once.node, Context()).text == once.text
 
 
@@ -1158,6 +1161,25 @@ def test_a_limit_that_settles_or_runs_away_is_no_interval():
     assert simp("LIM(SIN(x)/x, x, 0)") == "1"
     assert simp("LIM(1/x, x, 0)") == "±inf"
     assert simp("LIM(FLOOR(x), x, 1)") == "?"
+
+
+def test_a_limit_towards_a_moving_point_is_the_substitution_it_means():
+    """Nothing approaches a point that moves with the variable.
+
+    `LIM(u, x, a)` where `a` mentions `x` is no limit, and what it means is the
+    substitution: every `x` goes at once and none of them again, so
+    `LIM((x*v - y)^2, y, x*v - y)` is `y^2`. `ODE1.MTH` is written around this -
+    `CLAIRAUT` changes variables with it twice in one line - and a side written
+    on such a call says nothing, there being nothing to come at from a side.
+    """
+    assert simp("LIM((x*v - y)^2, y, x*v - y)") == "y^2"
+    assert simp("LIM(x^2, x, x + 1)") == "(x + 1)^2"
+    assert simp("LIM(x^2, x, x + 1, 1)") == "(x + 1)^2"
+    # And the substitution happens after what stands under it is worked out, so
+    # that a derivative is differentiated before the point is written into it.
+    assert simp("LIM(DIF(LIM((x*v - y)^2, y, x*v - y), y), y, x*v - y)") == (
+        "2*v*x - 2*y"
+    )
 
 
 # -- special values -----------------------------------------------------------

@@ -81,6 +81,7 @@ from rederive.engine.to_sympy import (
     FunDef,
     InertVector,
     Logical,
+    MovingLimit,
     PlusMinus,
     Taylor,
     as_condition,
@@ -110,6 +111,7 @@ _CALCULUS = (
     sp.Limit,
     Antidifference,
     Antiquotient,
+    MovingLimit,
     Taylor,
     Approx,
 )
