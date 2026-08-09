@@ -2083,12 +2083,34 @@ def _approximation(conv: _Converter, args: list) -> sp.Basic:
     The number that comes back carries the digits it was asked for, but the
     printer writes every float at the session's precision, so a count above
     that one is computed and not shown.
+
+    A count that is a number has to be a workable one, and anything else is
+    carried as it stands: NUMBER.MTH asks `PARTS(i_)` for a count written in
+    `i_`, and what the index is worth is not known until the sum around the call
+    is written out. `digit_count` is asked again when the rounding happens.
     """
     value, *rest = args
     digits = _one(rest) if rest else sp.Integer(conv.context.precision_digits)
-    if not (isinstance(digits, sp.Integer) and digits > 0):
+    if digits.is_number and digit_count(digits) is None:
         raise ValueError("not a precision")
     return Approx(value, digits)
+
+
+def digit_count(digits: sp.Basic) -> int | None:
+    """The whole number of digits `digits` asks for, or None where it asks for none.
+
+    A count need not be written as a whole number. NUMBER.MTH asks `PARTS` for
+    `LOG(1/(4*n*SQRT(3))*EXP(pi*SQRT(2*n/3)), 10) + 5` digits, which is 5.78
+    where `n` is 4: the digits an estimate of the answer needs, plus five to
+    spare. What can be worked to is the digits that are whole there, so the
+    count is the floor of what was asked for, and less than one digit is no
+    precision at all.
+    """
+    try:
+        whole = sp.floor(digits)
+    except Exception:
+        return None
+    return int(whole) if whole.is_Integer and whole > 0 else None
 
 
 def _conditional(conv: _Converter, args: list) -> sp.Basic:

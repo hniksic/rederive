@@ -214,14 +214,6 @@ NOT_YET_HELD = {
     # it stands, so it has two fixed points for the one expression. This is that
     # decision met from the manual's side, and a difference in spelling only.
     "test_the_manuals_mutual_recursion_written_with_accumulators",
-    # NUMBER.MTH redefines PARTS as the manual's closed form rather than the
-    # recursion above, so this one is a single pass that ends in an inert
-    # APPROX: sympy is asked for a closed form for nested sums over symbolic
-    # limits, and what comes back is the FLOOR(APPROX(SUM(...))) it went in as.
-    # DISTINCT_PARTS is redefined over PARTS and gets there the same way: its
-    # own sum and test are worked out, and what stands is PARTS(2).
-    "test_the_worked_examples_of_the_number_theory_file[PARTS(4)-5]",
-    "test_the_worked_examples_of_the_number_theory_file[DISTINCT_PARTS(4)-2]",
     # Sympy never comes back for these two of the manual's own sessions; they
     # are asked through the worker engine under PATIENCE and fail saying so,
     # instead of wedging the suite.

@@ -85,6 +85,7 @@ from rederive.engine.to_sympy import (
     Taylor,
     as_condition,
     authored_conditionals,
+    digit_count,
     is_conditional,
     outsized,
     reread,
@@ -536,9 +537,40 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
         # need not be where it was frozen: an index written in is a test that
         # may be decidable now, so the conditionals are offered once more.
         thawed = _reconditioned(_thawed(expression, frozen), context)
-        expression = _resolved(thawed, context, _kept)
+        # And what is still undecidable is set aside again, so that the heads a
+        # decision brought into the open are the only ones worked out.
+        opened, standing = _conditionals(thawed, context)
+        expression = _thawed(_taken(opened, context, tried, formulas), standing)
     expression = _numerators(expression)
     return approximated(_commanded(_canonical(expression), context), context)
+
+
+def _taken(
+    expression: sp.Basic,
+    context: Context,
+    tried: set[sp.Basic],
+    formulas: dict[sp.Basic, sp.Basic],
+) -> sp.Basic:
+    """A branch only now taken, with the heads standing in it worked out.
+
+    What stood under a test nothing could decide was set aside whole, heads and
+    all, so the branch that turns out to be the answer is the one part of the
+    expression nothing has run over. NUMBER.MTH's `DISTINCT_PARTS` arrives that
+    way: it is a sum whose terms each guard a `PARTS` behind a test in the
+    index, no test decides until the sum has been written out, and what the one
+    surviving term holds is the `FLOOR(APPROX(SUM(...)))` `PARTS` is written as.
+
+    The heads and the normal form, which is what a branch that skipped the
+    pipeline is short of. The rewrites are not offered again: they have run over
+    everything that was not frozen, and a branch is written as its author wrote
+    it.
+    """
+    if not expression.has(*_CALCULUS):
+        return expression
+    worked = _calculus(expression, context, tried, formulas)
+    if worked == expression:
+        return expression
+    return normal_form(worked, context.order, over_numbers=False)
 
 
 def _held(expression: sp.Basic) -> tuple[sp.Basic, dict[sp.Basic, sp.Basic]]:
@@ -954,8 +986,12 @@ def _evaluate(
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
         return _integral(head)
-    if isinstance(head, (sp.Sum, sp.Product)) and not _searchable(head):
-        return head
+    if isinstance(head, (sp.Sum, sp.Product)):
+        written = _stopping_short(head, context, formulas)
+        if written is not None:
+            return written
+        if not _searchable(head):
+            return head
     if isinstance(head, sp.Product):
         return _product(head)
     if isinstance(head, sp.Sum):
@@ -1019,22 +1055,96 @@ def _term_by_term(head: sp.Sum | sp.Product) -> sp.Basic | None:
     standing. The engine assembles its own relations unevaluated for that
     reason, so a substitution that has to go through one is made the same way.
 
-    One range of whole-numbered bounds only. A nest of them is the ordinary
-    summation's business, and this is the way round a body that is still to be
-    written in.
+    One range only. A nest of them is the ordinary summation's business, and
+    this is the way round a body that is still to be written in, or an end that
+    falls between two terms.
     """
     if len(head.limits) != 1:
         return None
-    index, low, high = head.limits[0]
-    if not (low.is_Integer and high.is_Integer):
+    index = head.limits[0][0]
+    values = _run_of(head.limits[0])
+    if values is None:
         return None
     joined = sp.Add if isinstance(head, sp.Sum) else sp.Mul
     with sp.evaluate(False):
-        terms = [
-            head.function.xreplace({index: sp.Integer(value)})
-            for value in range(int(low), int(high) + 1)
-        ]
+        terms = [head.function.xreplace({index: value}) for value in values]
     return joined(*terms)
+
+
+def _run_of(limit: sp.Tuple) -> list[sp.Basic] | None:
+    """The values one index runs through, or None where they are not all known.
+
+    The index starts at the low end and steps by one for as long as it does not
+    pass the high one, which is Derive's reading of a range and is what makes an
+    end between two terms mean anything: `k_` from 1 to 3.459 is 1, 2 and 3. An
+    end below the start is a range of no terms rather than no range.
+
+    Both ends have to be numbers - a symbolic one is a range of unknown length,
+    whatever the count of steps between the two comes to - and there have to be
+    few enough of them to be worth writing down.
+    """
+    if len(limit) != 3:
+        return None
+    _, low, high = limit
+    steps = _attempt(high - low, sp.floor) if low.is_number else None
+    if steps is None or not steps.is_Integer:
+        return None
+    if steps < 0:
+        return []
+    if steps >= _WRITTEN_OUT:
+        return None
+    return [low + step for step in range(int(steps) + 1)]
+
+
+#: How many terms a range may be written out as. What this costs is one
+#: substitution a term and then a pipeline over all of them at once, so the
+#: bound is on the writing rather than on the arithmetic: a range longer than
+#: this is one whose terms nobody wants to read, and it stands as it was
+#: written. Derive's own utility files reach four.
+_WRITTEN_OUT = 1000
+
+
+def _stopping_short(
+    head: sp.Sum | sp.Product, context: Context, formulas: dict[sp.Basic, sp.Basic] | None
+) -> sp.Basic | None:
+    """A range whose end falls between two terms, written out and worked out.
+
+    `PARTS` bounds Rademacher's series by `SQRT(n)/LOG(n, 11)`, which for `n` of
+    4 is `LN(11)/LN(2)`: 3.459, and no whole number of steps from the 1 the
+    index starts at. Derive runs the index up while it does not pass the end, so
+    what is asked for is three terms. Sympy reads the bound as the `n` of a
+    closed form instead and puts it into Faulhaber's polynomial, which answers a
+    sum of logarithms where three numbers were meant.
+
+    The terms are worked out here rather than left to the round that follows,
+    because the head this one stands under is entitled to a number: `PARTS`
+    writes `FLOOR(APPROX(SUM(...)))`, and a floor handed an argument that still
+    holds a sum asks sympy to approximate that sum, which over a summand
+    carrying a floor of its own goes into the Euler-Maclaurin formula and
+    raises. Every inner range is concrete once the outer index is bound, so what
+    the recursion works out is a number and the floor gets one.
+
+    None for a range that ends on a term, which is the ordinary summation's
+    business and where every closed form Derive prints comes from.
+    """
+    if not any(_ends_between_terms(limit) for limit in head.limits):
+        return None
+    written = _attempt(head, _term_by_term)
+    return None if written is None else _calculus(written, context, formulas=formulas)
+
+
+def _ends_between_terms(limit: sp.Tuple) -> bool:
+    """Whether one range stops between the term it reaches and the next.
+
+    An endless range does not: `SUM(2^-k, k, 0, inf)` ends nowhere, and what
+    answers it is the closed form.
+    """
+    if len(limit) != 3:
+        return False
+    span = limit[2] - limit[1]
+    if not (span.is_number and span.is_real and span.is_finite):
+        return False
+    return not span.is_Integer
 
 
 def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
@@ -1044,9 +1154,17 @@ def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
     the call asked for rather than the one the session is set to, and whatever
     precision that is. So the same rules hold inside a call as outside one: a
     number that needs no digits gets none, and `APPROX(2 + 3)` is 5.
+
+    A count that is still no number is one nothing can round to, and the head
+    waits for it the way it waits for the value: `PARTS(i_)` asks for a count
+    written in the index of the sum it stands in, which is a number once that
+    sum has been written out.
     """
     value, digits = head.args
-    approximate = context.with_precision(Precision.APPROXIMATE, int(digits))
+    count = digit_count(digits)
+    if count is None:
+        return head
+    approximate = context.with_precision(Precision.APPROXIMATE, count)
     return approximated(value, approximate)
 
 

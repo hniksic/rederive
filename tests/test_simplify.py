@@ -792,6 +792,24 @@ def test_a_summation_formula_keeps_the_shape_it_comes_in(text, expected):
     assert simp(text) == expected
 
 
+def test_a_range_that_stops_between_two_terms_is_written_out():
+    """The index runs up while it does not pass the end, which is Derive's rule.
+
+    Sympy reads an end that is no whole number of steps away as the `n` of a
+    closed form and puts it into Faulhaber's polynomial, which answers a
+    polynomial in the bound where a row of terms was meant. NUMBER.MTH's
+    `PARTS` bounds Rademacher's series that way - `SQRT(n)/LOG(n, 11)`, which
+    is 3.459 where `n` is 4 - and the terms are what its answer is made of.
+    """
+    assert simp("SUM(k, k, 1, 3.5)") == "6"
+    assert simp("SUM(k^2, k, 1, LN(11)/LN(2))") == "14"
+    assert simp("PRODUCT(k, k, 1, 3.5)") == "6"
+    # An end below the start is a range of no terms rather than no range.
+    assert simp("SUM(k, k, 1, 1/2)") == "0"
+    # An endless range ends nowhere, and what answers it is the closed form.
+    assert simp("SUM(2^-k, k, 0, inf)") == "2"
+
+
 def test_a_polynomial_is_not_factored_for_having_a_common_factor():
     # Factoring is the Factor command's business. The formula above keeps its
     # own shape; nothing gives this one a shape it did not have.
@@ -2205,6 +2223,19 @@ def test_a_decided_conditional_simplifies_the_branch_it_took():
     assert simp("1 + IF(2 = 2, 3, 4)") == "4"
 
 
+def test_a_branch_a_written_out_sum_decides_is_worked_out_too():
+    """A test undecidable where it was written can be decided where it lands.
+
+    The conditional is set aside whole while the sum is written out, and each
+    term brings it back with an index in it - which is a test that decides, and
+    a branch nothing has yet run over. So the heads in it are offered once
+    more, and the answer is a number rather than a head standing in a sum.
+    NUMBER.MTH's `DISTINCT_PARTS` reaches its answer exactly this way.
+    """
+    assert simp("SUM(IF(k = 2, INT(x, x, 0, k), 0), k, 1, 2)") == "2"
+    assert simp("SUM(IF(k = 2, SUM(j, j, 1, k), 0), k, 1, 2)") == "3"
+
+
 def test_a_conditional_answer_keeps_the_test_that_qualifies_it():
     """A sum that has a closed form only where it converges answers with that
     condition attached, and the condition is exactly the kind nothing can
@@ -2362,6 +2393,23 @@ def test_what_the_approx_function_leaves_shows_its_digits(text, expected):
 def test_the_approx_function_takes_the_digits_it_is_given():
     # Twelve digits of pi, which is a nearer rational than six digits' 355/113.
     assert simp("APPROX(pi, 12)") == "5419351/1725033"
+
+
+def test_a_digit_count_is_the_digits_of_it_that_are_whole():
+    """A count need not be written as a whole number, and is worked to as one.
+
+    NUMBER.MTH asks `PARTS` for `LOG(1/(4*n*SQRT(3))*EXP(pi*SQRT(2*n/3)), 10) +
+    5` digits - an estimate of the answer's size, plus five to spare - which is
+    5.78 where `n` is 4. What can be worked to is the digits that are whole.
+    """
+    assert simp("APPROX(pi, 12.5)") == simp("APPROX(pi, 12)")
+    assert simp("APPROX(pi, LN(11)/LN(2) + 9)") == simp("APPROX(pi, 12)")
+    # A count that is no number at all is one nothing can round to, and the
+    # head waits for it: an index is a number once the sum is written out.
+    assert simp("APPROX(pi, n)") == "APPROX(pi, n)"
+    assert simp("SUM(APPROX(pi, k + 11), k, 0, 1)") == simp(
+        "APPROX(pi, 11) + APPROX(pi, 12)"
+    )
 
 
 @pytest.mark.parametrize(
