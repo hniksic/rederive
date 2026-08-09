@@ -83,7 +83,7 @@ jobs:
       # is worth comparing the next one against.
       - name: Keep the screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screens
           path: build/shots
@@ -141,15 +141,15 @@ jobs:
       - name: Build the web version
         run: python3 tools/build_web.py
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       # Pages serves this compressed, which is the difference between 24 MB and
       # 64 MB on a first visit. It sets no COOP or COEP headers and needs to set
       # none: there is no `SharedArrayBuffer` here, so nothing on the page asks
       # for cross-origin isolation.
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: build/web
 
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
