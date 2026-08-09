@@ -2158,6 +2158,11 @@ class Window2D(QtWidgets.QMainWindow):
         Function curves only in this first version - a parametric curve's
         notable points are a different question, being about a path rather than
         about a graph.
+
+        The scan itself is a job like any other, so the first Tab on a curve
+        steps once the answer is in and every later one steps at once. What is
+        waited for is a scan and never a redraw: the window pans, zooms and
+        closes throughout.
         """
         plot = self._active
         if plot is None:
@@ -2166,24 +2171,23 @@ class Window2D(QtWidgets.QMainWindow):
             self.say(f"Tracing {plot.named}: features are found on function curves")
             return
         if plot.features is None:
-            self._find_features(plot)
-        found = self._next_feature(plot, backwards)
-        if found is None:
-            self.say(
-                f"Tracing {plot.named}: no further feature"
-                f" to the {'left' if backwards else 'right'}"
-            )
+            self._find_features(plot, backwards)
             return
-        self._trace_to(found.x)
-        self.say(f"Tracing {plot.named}: {self._named_feature(plot, found)}")
+        self._snapped(plot, backwards)
 
-    def _find_features(self, plot: Drawn) -> None:
-        """Work out this curve's notable points for the samples now drawn.
+    def _find_features(self, plot: Drawn, backwards: bool) -> None:
+        """Ask the sampling thread for this curve's notable points, and then step.
 
-        Kept on the plot until the samples change, since Tab is pressed
-        repeatedly and the scan is over every interval of the curve; every
-        re-sample throws them away, which is what keeps a feature about the
-        picture that is on the screen.
+        The scan refines every candidate interval on the closure, which is
+        evaluation and so belongs where this window sends all of it: a job on
+        the session's sampler, under the rule `_take_range` states. Keyed by
+        the window and the curve, as the browser keys the same request, so a
+        second Tab pressed before the first has answered replaces the pending
+        scan rather than queueing another.
+
+        The answer is kept on the plot until the samples change, since Tab is
+        pressed repeatedly; every re-sample throws it away, which is what keeps
+        a feature about the picture that is on the screen.
         """
         others = [
             other
@@ -2194,10 +2198,57 @@ class Window2D(QtWidgets.QMainWindow):
             and other.closure is not None
         ]
         assert plot.closure is not None
-        plot.features = evaluate.features(
-            plot.xs, plot.ys, plot.closure, [other.closure for other in others]
+        generation = plot.generation
+        crossed = tuple(other.named for other in others)
+        # Read here rather than in the job, for the reason `resample` gives:
+        # by the time it runs, the view may have moved and the arrays under
+        # the plot may have been replaced.
+        xs, ys, closure = plot.xs, plot.ys, plot.closure
+        closures = [other.closure for other in others]
+
+        def work(_report: Callable[..., None]) -> Any:
+            return evaluate.features(xs, ys, closure, closures)
+
+        self.session.sample(
+            (self.number, "features", id(plot)),
+            work,
+            lambda answer: self._scanned(plot, generation, crossed, backwards, answer),
         )
-        plot.crossed = tuple(other.named for other in others)
+
+    def _scanned(
+        self,
+        plot: Drawn,
+        generation: int,
+        crossed: tuple[str, ...],
+        backwards: bool,
+        answer: Any,
+    ) -> None:
+        """The scan is in: keep it, and take the step that asked for it.
+
+        Dropped where the ground has moved under it - the curve re-sampled,
+        trace let go of, or the marker moved to another curve - because what
+        the key press meant was a step along the curve it was pressed on.
+        """
+        if plot.generation != generation or self._active is not plot:
+            return
+        if isinstance(answer, Exception):
+            self.say(f"{plot.label}: {answer}")
+            return
+        plot.features = answer
+        plot.crossed = crossed
+        self._snapped(plot, backwards)
+
+    def _snapped(self, plot: Drawn, backwards: bool) -> None:
+        """Move the marker to the next feature past it, or say there is none."""
+        found = self._next_feature(plot, backwards)
+        if found is None:
+            self.say(
+                f"Tracing {plot.named}: no further feature"
+                f" to the {'left' if backwards else 'right'}"
+            )
+            return
+        self._trace_to(found.x)
+        self.say(f"Tracing {plot.named}: {self._named_feature(plot, found)}")
 
     def _next_feature(self, plot: Drawn, backwards: bool) -> Any:
         """The first feature past the marker, in the direction asked for.

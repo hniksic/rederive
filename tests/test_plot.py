@@ -1171,6 +1171,33 @@ class InlineSession:
         self.adjustments.update(values)
 
 
+class QueuedSession(InlineSession):
+    """A session that holds each job until a test runs it, as a thread does.
+
+    What `InlineSession` cannot show: that a window asked for an evaluation
+    rather than doing it where it stood. A job that is only ever run before
+    `sample` returns looks exactly like one that was never submitted at all.
+    """
+
+    def __init__(self):
+        super().__init__()
+        #: The jobs submitted and not yet run, as (key, work, done) triples.
+        self.jobs = []
+
+    def sample(self, key, work, done, report=None):
+        self.jobs.append((key, work, done))
+
+    def run(self):
+        """Run the jobs queued so far, leaving anything they queue for later."""
+        queued, self.jobs = self.jobs, []
+        for _key, work, done in queued:
+            try:
+                answer = work(lambda *arguments: None)
+            except Exception as error:
+                answer = error
+            done(answer)
+
+
 @pytest.fixture(scope="module")
 def qt():
     """A Qt application in this process, offscreen, or a skip without one."""
@@ -1469,6 +1496,57 @@ def test_enter_while_tracing_sends_the_refined_point_home(flat):
     assert flat.session.authored == [(1, "[1.570796, 1.000000]")]
     # The window says so where the user is looking.
     assert flat.status.text() == "Sent [1.570796, 1.000000] to the worksheet"
+
+
+def test_the_feature_scan_is_asked_for_rather_than_done_on_the_qt_thread(qt):
+    from rederive.plot.qt.window2d import Window2D
+
+    # The scan refines every candidate interval of the curve on its closure,
+    # which is evaluation: it goes to the sampler like every other evaluation
+    # this window does, so Tab on a dense curve cannot freeze the window.
+    session = QueuedSession()
+    window = Window2D(1, session)
+    try:
+        window.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+        session.run()  # the sampling the curve arrived asking for
+        window.trace()
+        window.snap(False)
+        # Nothing is scanned yet. The job is queued under a key of its own, and
+        # the marker still sits where trace put it.
+        keys = [key for key, _work, _done in session.jobs]
+        assert [key[:2] for key in keys] == [(1, "features")]
+        assert window.plots[0].features is None
+        assert "x = 0.000000" in window.status.text()
+        # And with the job run, the step Tab asked for happens: the maximum at
+        # π/2, refined on the closure rather than read off a sample.
+        session.run()
+        assert window.plots[0].features
+        assert window.status.text().endswith("maximum at x = 1.570796")
+    finally:
+        window.close()
+
+
+def test_a_feature_scan_answering_after_a_re_sample_is_dropped(qt):
+    from rederive.plot.qt.window2d import Window2D
+
+    # The answer is about the samples the scan was asked over, so a view that
+    # has moved on discards it rather than stepping the marker onto a feature
+    # of a picture nobody is looking at.
+    session = QueuedSession()
+    window = Window2D(1, session)
+    try:
+        window.add(_plot("SIN(x)", PlotKind.CURVE, ("x",)))
+        session.run()
+        window.trace()
+        window.snap(False)
+        # The curve is sampled again while the scan is still queued, which is
+        # what a drag does to a scan asked for just before it.
+        window.resample()
+        session.run()
+        assert window.plots[0].features is None
+        assert "maximum" not in window.status.text()
+    finally:
+        window.close()
 
 
 def test_the_point_sent_home_is_the_text_ctrl_c_copies(flat, qt):
