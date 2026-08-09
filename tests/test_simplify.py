@@ -116,6 +116,25 @@ RADICALS = [
     # minimal polynomial factored over the field the surds generate.
     ("(243*SQRT(5) - 294*SQRT(3))^(1/3)", "3*SQRT(5) - 2*SQRT(3)"),
     ("(10 + 6*SQRT(3))^(1/3)", "SQRT(3) + 1"),
+    # 3.8 p.47's quotient, where no one root of the four is anything simpler on
+    # its own: the numerator is `(SQRT(3) + 1)^(3/2)` and the denominator twice
+    # it, so the value is a number of the field `SQRT(3)` generates and the
+    # whole quotient at once is what shows it.
+    ("(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)", "1/2"),
+    # The value need not be rational, only a number of that field.
+    (
+        "SQRT(3)*(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)",
+        "SQRT(3)/2",
+    ),
+    # And a variable standing beside it is no reason to leave the number alone.
+    ("x*(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)", "x/2"),
+    # The same three roots put together another way stand, that value being
+    # `(SQRT(3) + 1)^(3/2)/2` - one root deeper than the field, so there is no
+    # shorter spelling of it to find.
+    (
+        "(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))^2/SQRT(24*SQRT(3) + 40)",
+        "(SQRT(3*SQRT(3) + 3) + SQRT(SQRT(3) + 1))^2/SQRT(24*SQRT(3) + 40)",
+    ),
 ]
 
 COMBINATORIAL = [

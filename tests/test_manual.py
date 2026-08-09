@@ -257,12 +257,20 @@ NOT_YET_HELD = {
     # notation's business rather than the call's - and `test_simplify` records
     # both.
     "test_approx_takes_the_digits_it_is_given",
-    # Two causes in one case. Exact mode needs the denesting the radical below
-    # wants: the line is (SQRT(3) + 1)^(3/2) over twice itself, and simplify,
-    # radsimp and sqrtdenest all leave it standing. Mixed mode then differs in
-    # noise and not in mathematics, and the two pull against each other, since
-    # rounding is the last step of the pipeline and an exact mode that reached
-    # 1/2 would have Mixed show 1/2 too.
+    # Exact mode answers the manual's 1/2 and Mixed mode is what is left. The
+    # line is (SQRT(3) + 1)^(3/2) over twice itself, which no rule that works
+    # one radical at a time sees and `_flattened` reads off the whole
+    # quotient's minimal polynomial. Mixed then shows that 1/2 where the page
+    # has 0.499999: rounding is the last step of the pipeline, so a Mixed
+    # answer is an exact one rounded and an exact 1/2 has nothing irrational
+    # left in it to round, where the original approximates as it simplifies
+    # and its last digit is the drift of that. Approximating this line the
+    # original's way - innermost first, before anything is simplified - does
+    # not reach the page either: an approximate number here is the simplest
+    # rational within the tolerance, which drifts to 43764486865/87528971078,
+    # and that is 0.500000 at six digits. So what is left of this case is the
+    # one question the four above ask, which rational an approximate number
+    # is, plus the order the rounding and the simplifying happen in.
     "test_the_three_modes_on_an_expression_worth_one_half",
     # The determinant is multiplied out where the original leaves it factored,
     # and then written about the most main variable it holds: with none of `a`,

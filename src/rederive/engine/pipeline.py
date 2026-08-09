@@ -2124,6 +2124,7 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     expression = _logarithms(expression, context)
     expression = _exponentials(expression, context)
     expression = _gated(expression, _denested)
+    expression = _gated(expression, _flattened)
     return _gated(expression, sp.radsimp)
 
 
@@ -2726,22 +2727,151 @@ def _linear_root(factor: sp.Basic) -> sp.Basic | None:
     return sp.radsimp(-below / above)
 
 
-def _same_number(candidate: sp.Basic, power: sp.Pow) -> bool:
-    """Whether `candidate` is the very value `power` stands for.
+def _same_number(candidate: sp.Basic, value: sp.Basic) -> bool:
+    """Whether `candidate` is the very number `value` stands for.
 
-    The algebra has already said the two are roots of one number; this is what
-    tells the branches of it apart, and thirty digits are enough for that
+    The algebra has already said the two are roots of one polynomial; this is
+    what tells the roots of it apart, and thirty digits are enough for that
     because two branches of a root are a whole angle apart and not a rounding
     apart. The comparison is against the size of the value for the same
     reason: what would fail a fixed tolerance is a large root, where the two
     branches are further apart still.
     """
     try:
-        difference = complex(sp.N(candidate - power, 30))
-        size = abs(complex(sp.N(power, 30)))
+        difference = complex(sp.N(candidate - value, 30))
+        size = abs(complex(sp.N(value, 30)))
     except (TypeError, ValueError):
         return False
     return abs(difference) < 1e-20 * (1 + size)
+
+
+def _flattened(expression: sp.Basic) -> sp.Basic:
+    """Every constant written over a nested radical reduced to the field its own
+    surds generate.
+
+    `_denested` works one radical at a time, which is as far as a radical's own
+    rule reaches: 3.8 p.47's
+    `(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)` is 1/2,
+    and no one of its four roots is anything simpler on its own. What makes it
+    a half is the whole quotient at once - the numerator is `(SQRT(3) + 1)^(3/2)`
+    and the denominator twice that - so the question `_flat_root` asks of a root
+    is asked here of a sum or a product: whether its value has a spelling in the
+    field the surds it is written over generate.
+
+    Only a constant holding a root of something irrational is asked. Roots of
+    rationals are combined by sympy's own arithmetic as they are built, so a
+    constant with none of the nesting has already had every reduction of this
+    kind that there is to have, and the minimal polynomial would only confirm it
+    at a price.
+    """
+    return expression.replace(
+        lambda part: isinstance(part, sp.Add | sp.Mul), _flat_part, simultaneous=False
+    )
+
+
+def _flat_part(part: sp.Add | sp.Mul) -> sp.Basic:
+    """`part` with the number in it flattened.
+
+    A sum keeps every constant term of it as a term of its own, so a sum is
+    reached by the walk that finds it. A product does not: `x` times the
+    quotient of 3.8 is one product of five factors, and the number the walk
+    should be asking about has to be gathered back out of it first.
+    """
+    if part.is_number:
+        return _flat_value(part)
+    if not isinstance(part, sp.Mul):
+        return part
+    constants = [factor for factor in part.args if factor.is_number]
+    if len(constants) < 2:
+        return part
+    value = sp.Mul(*constants)
+    flat = _flat_value(value)
+    if flat is value:
+        return part
+    return flat * sp.Mul(*[factor for factor in part.args if not factor.is_number])
+
+
+#: How big a field the value of a constant is looked for in, read off the
+#: radicals written in it the way `_DENESTING_DEGREE` is read off one radical:
+#: the product of their orders, which is sixteen for the quotient of 3.8 and
+#: four as it turns out. The cost of being generous is what sets it - a tower
+#: two roots taller is a minimal polynomial of degree sixty-four, minutes of
+#: work to prove that a value nobody expected to be simpler is not.
+_FLATTENING_DEGREE = 16
+
+
+def _flat_value(constant: sp.Basic) -> sp.Basic:
+    """`constant` written over one field fewer, where its value lies in one.
+
+    The same three steps as `_flat_root`: the minimal polynomial says what the
+    value is a root of, factoring that over the field the surds generate offers
+    a linear factor per branch, and only the branch whose value is this one is
+    kept - thirty digits telling the branches apart, since a shorter spelling
+    that is a different number is the one mistake this can make.
+    """
+    field, degree = _radical_field(constant)
+    if field is None or degree > _FLATTENING_DEGREE:
+        return constant
+    try:
+        minimal = sp.minimal_polynomial(constant, _ROOT)
+        factored = sp.factor(minimal, extension=list(field))
+    except Exception:
+        return constant
+    for factor in sp.Mul.make_args(factored):
+        candidate = _linear_root(factor)
+        if candidate is None or candidate.count_ops() >= constant.count_ops():
+            continue
+        if _same_number(candidate, constant):
+            return candidate
+    return constant
+
+
+def _radical_field(constant: sp.Basic) -> tuple[tuple[sp.Basic, ...] | None, int]:
+    """The roots of rationals `constant` is written over and the degree they
+    bound, or None where it is not a nested radical of them.
+
+    The generators are the roots whose radicand is a rational, which are the
+    ones a field can be built from; the degree is the product of the orders of
+    every root in the constant, an upper bound on the field it all lives in.
+    Anything but rational arithmetic over such roots - a transcendental, a
+    variable, a root of a negative - is nothing to ask a minimal polynomial
+    about, and neither is a constant whose roots are all roots of rationals,
+    which is already as flat as it gets.
+    """
+    generators: set[sp.Basic] = set()
+    orders: dict[sp.Pow, int] = {}
+    if not _over_radicals(constant, generators, orders):
+        return None, 0
+    if not generators or all(root.base.is_Rational for root in orders):
+        return None, 0
+    degree = 1
+    for order in orders.values():
+        degree *= order
+    return tuple(sorted(generators, key=sp.default_sort_key)), degree
+
+
+def _over_radicals(
+    part: sp.Basic, generators: set[sp.Basic], orders: dict[sp.Pow, int]
+) -> bool:
+    """Whether `part` is rational arithmetic over roots of positive rationals,
+    collecting those roots and the order of every root on the way."""
+    if part.is_Rational:
+        return True
+    if isinstance(part, sp.Add | sp.Mul):
+        return all(_over_radicals(argument, generators, orders) for argument in part.args)
+    if not (isinstance(part, sp.Pow) and part.exp.is_Rational):
+        return False
+    if not _over_radicals(part.base, generators, orders):
+        return False
+    if part.exp.q > 1:
+        orders[part] = part.exp.q
+        if part.base.is_Rational:
+            if not part.base.is_positive:
+                return False
+            # The qth root itself and not the power of it that is written: the
+            # two generate one field, and the root is the shorter way to say so.
+            generators.add(sp.Pow(part.base, sp.Rational(1, part.exp.q)))
+    return True
 
 
 # -- what each mode selects --------------------------------------------------
