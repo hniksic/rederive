@@ -1107,6 +1107,9 @@ class InlineSession:
         self.authored = []
         #: The sticky preference values windows have handed back, merged.
         self.adjustments = {}
+        #: The keys windows have sent back while a demonstration waited in
+        #: them, each True where it was the Esc that stops one.
+        self.steps = []
 
     def sample(self, key, work, done, report=None):
         try:
@@ -1126,6 +1129,9 @@ class InlineSession:
 
     def author(self, worksheet, text):
         self.authored.append((worksheet, text))
+
+    def stepped(self, stopping):
+        self.steps.append(stopping)
 
     def adjusted(self, **values):
         self.adjustments.update(values)
@@ -1188,6 +1194,34 @@ def test_a_demonstrations_picture_stands_over_the_program_until_it_is_let_go(fla
     # And a window nothing is waiting on is left exactly as it was.
     flat.release()
     assert not flat.windowFlags() & on_top
+
+
+def _typed(key):
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    return QtGui.QKeyEvent(
+        QtCore.QEvent.Type.KeyPress, key, QtCore.Qt.KeyboardModifier.NoModifier
+    )
+
+
+def test_a_key_in_a_demonstrations_window_goes_back_to_the_program(flat, qt):
+    """The desktop gives the new window the keyboard whatever the window asked.
+
+    So the key the message line asks for is pressed here as often as it is
+    pressed in the program, and the window reads none of its own while a step
+    is waiting in it: any key continues, wherever it is pressed.
+    """
+    from pyqtgraph.Qt import QtCore
+
+    flat.present(demonstrating=True)
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Space))
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Escape))
+    # Esc travels as itself: it is the one key that means something else.
+    assert flat.session.steps == [False, True]
+    # And a window nothing is waiting in reads its own keys again.
+    flat.release()
+    flat.keyPressEvent(_typed(QtCore.Qt.Key.Key_Space))
+    assert flat.session.steps == [False, True]
 
 
 def test_a_plot_of_ones_own_takes_the_keyboard_and_stays_among_the_others(flat, qt):
@@ -1972,6 +2006,9 @@ def test_a_solid_demonstration_stands_over_the_program_too(deep, qt):
     on_top = QtCore.Qt.WindowType.WindowStaysOnTopHint
     deep.present(demonstrating=True)
     assert deep.windowFlags() & on_top
+    # And its keys go back to the program, the arrows that orbit among them.
+    deep.keyPressEvent(_typed(QtCore.Qt.Key.Key_Left))
+    assert deep.session.steps == [False]
     deep.release()
     assert not deep.windowFlags() & on_top
 
@@ -3162,6 +3199,30 @@ async def test_a_script_has_no_window_to_let_go_of(app, tmp_path):
         await pilot.pause()
         await pilot.press("space")
         assert app.plots.released == 0
+
+
+async def test_a_key_pressed_in_the_picture_steps_the_gallery(app, gallery):
+    """Wherever the desktop put the keyboard, the key means what the line says."""
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        app._plot_event(plots.Stepped())
+        await pilot.pause()
+        assert band(app) == [" A saddle:"]
+        # And Esc there stops it where Esc here would.
+        app._plot_event(plots.Stepped(stopping=True))
+        assert band(app)[0].startswith(" COMMAND:")
+        assert app.plots.released == 1
+
+
+async def test_a_key_from_a_window_with_nothing_waiting_is_dropped(app, gallery):
+    """The two sides are a pipe apart, so a late one arrives after the end."""
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        await pilot.press("escape")
+        app._plot_event(plots.Stepped())
+        assert band(app)[0].startswith(" COMMAND:")
 
 
 async def test_a_window_closed_under_a_step_does_not_step_it(app, gallery):

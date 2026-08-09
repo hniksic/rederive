@@ -47,6 +47,7 @@ __all__ = [
     "Reply",
     "Request",
     "Shutdown",
+    "Stepped",
     "Traced",
     "Trouble",
     "Where",
@@ -433,6 +434,25 @@ class Traced:
 
 
 @dataclass(frozen=True)
+class Stepped:
+    """A key was pressed in a window a demonstration's step is waiting in.
+
+    The demonstration is the program's and so is the message line that asks for
+    a key, but the picture is in a window of the desktop's - and a desktop
+    hands a new window the keyboard whether or not the window asked for it.
+    GNOME does. So the key that the line asks for lands here as often as it
+    lands in the program, and the window sends it back rather than reading it:
+    `stopping` is Esc, which suspends the demonstration where it stands, and
+    anything else is the next step.
+
+    Only while a step is waiting. A window nothing is waiting on reads its own
+    keys, which are a window full of commands.
+    """
+
+    stopping: bool = False
+
+
+@dataclass(frozen=True)
 class Preferred:
     """A sticky control moved in a plot window, and these are the values now.
 
@@ -448,4 +468,4 @@ class Preferred:
     preferences: Prefer
 
 
-Event = Closed | Trouble | Traced | Preferred
+Event = Closed | Trouble | Traced | Stepped | Preferred

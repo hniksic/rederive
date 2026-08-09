@@ -4934,12 +4934,34 @@ class RederiveApp(App[None]):
             # Said in `on_click`: the click that closed a demonstration's
             # window is on its way here behind this, and is not a cue.
             self.closed_window = self.mode == MODE_DEMO
+        elif isinstance(event, plots.Stepped):
+            self._plot_stepped(event)
         elif isinstance(event, plots.Trouble):
             self._set_message(f"{PREFIX}{event.label}: {event.message}")
         elif isinstance(event, plots.Traced):
             self._plot_traced(event)
         elif isinstance(event, plots.Preferred):
             self.settings.apply(learned(event.preferences))
+
+    def _plot_stepped(self, event: plots.Stepped) -> None:
+        """A key pressed in a demonstration's window, taken as pressed here.
+
+        Which is what makes the message line honest. The window holding the
+        step is the one the desktop is likeliest to have given the keyboard to,
+        whatever the window asked for, so `any key to continue` has to be true
+        there as well as here - and so does the Esc beside it.
+
+        A key that arrives with no demonstration waiting is a key from a window
+        that has not been told yet, and is dropped: the two sides are a pipe
+        apart, and the last step of one demonstration can be answered while
+        this side has already finished with it.
+        """
+        if self.mode != MODE_DEMO:
+            return
+        if event.stopping:
+            self._suspend_demo()
+        else:
+            self._demo_step()
 
     def _plot_traced(self, event: plots.Traced) -> None:
         """A point sent home from a plot window: author it as a new entry.

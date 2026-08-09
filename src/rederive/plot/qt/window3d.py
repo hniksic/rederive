@@ -316,9 +316,10 @@ class Window3D(QtWidgets.QMainWindow):
         #: The surface a right click on a legend row was about, which is what
         #: that row's own menu is then read for.
         self._pointed: Drawn | None = None
-        #: Whether this window is being kept above the others, which is what a
-        #: step of a demonstration is shown as and nothing else is.
-        self._on_top = False
+        #: Whether a demonstration's step is waiting in this window: it is kept
+        #: above the others while one is, and every key in it belongs to the
+        #: program that is running the demonstration rather than to this window.
+        self._demonstrating = False
         self._build()
         self.retitle()
         self.home()
@@ -1267,7 +1268,14 @@ class Window3D(QtWidgets.QMainWindow):
         of - are the second table, matched on the key alone as they always have
         been. What is left written out here are the arrows, which are the
         camera's own gesture rather than a command.
+
+        None of them while a demonstration's step is waiting here: the message
+        line says any key continues, and this window is where the desktop is
+        likely to have put the keyboard, so any key has to mean that here too.
         """
+        if self._demonstrating:
+            self._stepping(ev)
+            return
         key = ev.key()
         keys = QtCore.Qt.Key
         command = self._keyed.get(pressed(ev)) or self._loose.get(key)
@@ -1347,7 +1355,7 @@ class Window3D(QtWidgets.QMainWindow):
         time without being activated: the demonstration ended at the program's
         menu, and the keyboard belongs there.
         """
-        if not self._on_top:
+        if not self._demonstrating:
             return
         self._keep_in_front(False)
         self.show()
@@ -1361,16 +1369,28 @@ class Window3D(QtWidgets.QMainWindow):
         path through here shows it again, and a show that activated would take
         the keyboard off the program that is waiting for the next keystroke.
         """
-        if demonstrating == self._on_top:
+        if demonstrating == self._demonstrating:
             return
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self._on_top = demonstrating
+        self._demonstrating = demonstrating
         self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, demonstrating)
 
     def _activate(self) -> None:
         """Take the keyboard, which an ordinary plot of one's own is welcome to."""
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
         self.activateWindow()
+
+    def _stepping(self, ev: Any) -> None:
+        """Hand a key back to the program, a demonstration's step being its own.
+
+        The window asks not to be activated and is activated anyway - a desktop
+        gives a window that has just appeared the keyboard whatever the window
+        asked for - so the key the program is waiting for arrives here. Sending
+        it back is what makes `any key` true wherever it is pressed. Esc travels
+        as itself, being the one key that means something else.
+        """
+        self.session.stepped(ev.key() == QtCore.Qt.Key.Key_Escape)
+        ev.accept()
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the window by what it holds, and say whether the next plot lands here.
