@@ -530,7 +530,7 @@ def test_a_vertex_beyond_the_clip_drops_its_faces_like_a_hole(solid):
         solid.mesh(xs, ys, values, whole)[1]
     )
     heights = solid.mesh(xs, ys, values, clipped)[0][:, 2]
-    assert heights.max() <= clipped.height / 2 + 1e-6
+    assert heights.max() <= solid.HALF + 1e-6
 
 
 def test_the_extent_is_the_data_until_a_spike_would_crush_it(solid):
@@ -553,17 +553,23 @@ def test_a_flat_surface_still_gets_a_box_to_stand_in(solid):
     assert clipped is False
 
 
-def test_the_box_keeps_the_true_height_until_it_would_be_a_tower(solid):
-    # A hemisphere of radius 1 over a floor of 4 is a quarter as tall as it is
-    # wide, and is drawn that way - which is what makes it read as a dome.
-    dome = solid.Box((-2.0, 2.0), (-2.0, 2.0), (0.0, 1.0))
-    assert dome.height == pytest.approx(solid.WORLD * 0.25)
-    # A z range of five times the domain would be a tower nothing fits in.
-    tower = solid.Box((-5.0, 5.0), (-5.0, 5.0), (-25.0, 25.0))
-    assert tower.height == solid.WORLD
-    # And a sheet is exaggerated rather than drawn as a line.
-    sheet = solid.Box((-5.0, 5.0), (-5.0, 5.0), (-0.001, 0.001))
-    assert sheet.height == pytest.approx(solid.WORLD * solid.MIN_HEIGHT)
+def test_every_range_is_stretched_onto_the_same_cube(solid):
+    # Whatever the three ranges are, each is stretched onto the same cube: a
+    # surface of tiny range is a shape and not a lid, and one of huge range is
+    # a shape and not a wall.
+    for span in ((0.0, 0.001), (0.0, 1.0), (-1e6, 1e6)):
+        box = solid.Box((-5.0, 5.0), (-5.0, 5.0), span)
+        assert box.up(span[0]) == pytest.approx(-solid.HALF)
+        assert box.up(span[1]) == pytest.approx(solid.HALF)
+    # So a surface and the same surface scaled are one picture, which is what
+    # makes the z axis numbers the only place the size of the values is said.
+    xs, ys, values = _grid(lambda x, y: 1.0 / (9.0 + x**2 + y**2))
+    box = solid.Box((-2.0, 2.0), (-2.0, 2.0), solid.extent([values])[0])
+    scaled = 100.0 * values
+    lifted = solid.Box((-2.0, 2.0), (-2.0, 2.0), solid.extent([scaled])[0])
+    assert solid.mesh(xs, ys, values, box)[0] == pytest.approx(
+        solid.mesh(xs, ys, scaled, lifted)[0]
+    )
 
 
 def test_the_box_reports_its_center_and_its_lengths(solid):
@@ -702,7 +708,7 @@ def test_an_unbounded_boundary_value_is_trimmed_by_the_clip(solid):
     box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-2.0, 1.0))
     vertexes, faces, shading = solid.mesh(xs, ys, values, box, boundary)
     used = vertexes[np.unique(faces.reshape(-1))]
-    top = box.height / 2
+    top = solid.HALF
     assert used[:, 2].min() >= -top - 1e-5
     assert used[:, 2].max() <= top + 1e-5
     assert used[:, 2].min() == pytest.approx(-top, abs=1e-5)
@@ -773,7 +779,7 @@ def test_a_wire_segment_beyond_the_clip_is_trimmed_to_it(solid):
     boundary = evaluate.grid_boundary(logged, xs, ys, values)
     box = solid.Box((-2.0, 2.0), (-2.0, 2.0), (-2.0, 1.0))
     points, _ = solid.wire(xs, ys, values, box, boundary)
-    top = box.height / 2
+    top = solid.HALF
     assert points[:, 2].min() >= -top - 1e-5
     assert points[:, 2].max() <= top + 1e-5
     assert points[:, 2].min() == pytest.approx(-top, abs=1e-5)

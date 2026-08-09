@@ -2045,7 +2045,6 @@ def test_a_surfaces_box_is_the_one_the_desktops_inspector_reads():
     box = _geometry("SIN(x y)")["box"]
     assert answer["center"] == pytest.approx(list(box.center))
     assert answer["lengths"] == pytest.approx(list(box.lengths))
-    assert answer["height"] == pytest.approx(box.height)
     assert answer["world"] == 10.0
     # And the numbers arrive spelled, in the function the desktop's fields and
     # tick labels are spelled by: the page shows what Python wrote.

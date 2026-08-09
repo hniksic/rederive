@@ -423,9 +423,9 @@ def _about_solid(request: Grid) -> dict[str, Any]:
 def _box(box: geometry.Box) -> dict[str, Any]:
     """The box the vertices stand in, as the numbers behind the picture.
 
-    World units for the drawing - the floor is always the same square and the
-    height is the one proportion kept - and data units for the reading, which
-    are what the desktop's inspector shows and what the axis numbers say.
+    World units for the drawing - the cube the three ranges are stretched onto,
+    the same cube every time - and data units for the reading, which are what
+    the desktop's inspector shows and what the axis numbers say.
 
     The reading is spelled here rather than by the page, in the function the
     desktop's fields and tick labels are spelled by, so that the two programs
@@ -436,7 +436,6 @@ def _box(box: geometry.Box) -> dict[str, Any]:
     """
     return {
         "world": float(geometry.WORLD),
-        "height": float(box.height),
         "center": [float(value) for value in box.center],
         "lengths": [float(value) for value in box.lengths],
         "zrange": [float(box.z[0]), float(box.z[1])],

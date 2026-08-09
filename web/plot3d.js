@@ -677,16 +677,18 @@ class Solid {
   }
 
   // The box every surface in the pane stands in, as the answer just described
-  // it. Nothing here works it out: the floor, the height and the numbers behind
-  // them are Python's, and what is done with them is twelve lines and a scale.
+  // it. Nothing here works it out: the cube and the numbers behind it are
+  // Python's, and what is done with them is twelve lines and a scale.
   _stand(message) {
     this.standing = message;
     if (this.frame === undefined) return;
     const half = message.world / 2;
-    const up = message.height / 2;
+    const low = [
+      [-half, -half], [half, -half], [half, half], [-half, half],
+    ];
     const corners = [
-      [-half, -half, -up], [half, -half, -up], [half, half, -up], [-half, half, -up],
-      [-half, -half, up], [half, -half, up], [half, half, up], [-half, half, up],
+      ...low.map(([x, y]) => [x, y, -half]),
+      ...low.map(([x, y]) => [x, y, half]),
     ];
     const edges = [
       [0, 1], [1, 2], [2, 3], [3, 0],
@@ -774,7 +776,7 @@ class Solid {
       return;
     }
     const half = box.world / 2;
-    const floor = -box.height / 2;
+    const floor = -half;
     const at = this.camera.position;
     const nearY = at.y < 0 ? -half : half;
     const nearX = at.x < 0 ? -half : half;

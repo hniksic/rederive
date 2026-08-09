@@ -8,13 +8,13 @@ backend draw the same solid: three.js is handed exactly these vertices, these
 triangles and these colors.
 
 **The picture is drawn in a box of the program's choosing, not the data's.** The
-floor is always the same square, whatever rectangle the domain is, and the
-height is the true proportion of the z range to the floor - until that
-proportion is one no picture can hold, when it is capped at the floor's own
-length or lifted off it. So a surface whose z runs to a million reads as a shape
-rather than as a wall, a hemisphere over its own disc reads as a hemisphere, and
-a camera that frames one surface frames every other one. The numbers along the
-box edges carry the truth; the geometry carries the form.
+box is a cube, and each of the three ranges is stretched onto it on its own: a
+domain of any rectangle onto the same square floor, and a z of any range onto
+the same height. So a surface whose z runs to a millionth reads as a shape and
+not as a lid, one whose z runs to a million reads as a shape and not as a wall,
+a plot of `f` and a plot of `100*f` are the same picture, and a camera that
+frames one surface frames every other one. The numbers along the box edges carry
+the truth; the geometry carries the form.
 
 **The z extent is the data's, within reason.** It autoscales to the finite
 values of every surface in the window, and where a spike would crush everything
@@ -45,18 +45,11 @@ from rederive.plot.view import PERCENTILES, Span, pooled
 
 __all__ = ["Box", "brightened", "extent", "mesh", "place", "spanned", "ticks", "wire"]
 
-#: The side of the square floor every surface is drawn over, and half of it,
-#: which is where the box walls are. World units, and they mean nothing else:
-#: the axis numbers are the only quantities in a 3D window with units.
+#: The side of the cube every surface is drawn in, and half of it, which is
+#: where the box walls are. World units, and they mean nothing else: the axis
+#: numbers are the only quantities in a 3D window with units.
 WORLD = 10.0
 HALF = WORLD / 2
-
-#: How short the box may be drawn, as a fraction of its floor. The height is
-#: the true one - a dome of radius 1 over a floor of 4 is drawn as a dome and
-#: not as a bullet - until the surface is so flat that the true height is a
-#: line, and then it is exaggerated to this much so that there is a shape to
-#: look at rather than a lid.
-MIN_HEIGHT = 0.15
 
 #: How a vertex's brightness is arrived at. Height is half of it - the ramp
 #: runs from `DIM` at the floor of the box to 1 at the lid - and how the
@@ -89,9 +82,11 @@ class Box:
 
     Everything drawn is placed through this and nothing else, which is what
     keeps one mapping between the numbers a reader sees and the geometry the
-    card draws. The floor is always the same square, whatever rectangle the
-    domain is - the axis numbers say what it is - and the height is the one
-    proportion kept, because that is what tells a dome from a bullet.
+    card draws. The cube it maps onto is always the same cube, whatever the
+    three ranges are: a picture that kept the proportion of z to the floor
+    would have to squash a surface of small range into a lid to do it, and one
+    that kept the proportion of y to x would be at the mercy of the domain the
+    reader happened to ask for. The axis numbers say what each range is.
     """
 
     x: tuple[float, float]
@@ -106,23 +101,6 @@ class Box:
     def lengths(self) -> tuple[float, float, float]:
         return tuple(float(high - low) for low, high in (self.x, self.y, self.z))
 
-    @property
-    def height(self) -> float:
-        """How tall the box is drawn, in world units.
-
-        In proportion to the floor while the proportion is one a picture can
-        hold: a surface whose z runs ten times its domain would be a tower and
-        is drawn at the height of the floor instead, and one whose z barely
-        varies would be a sheet and is drawn at a fraction of it. Between those
-        two the height is true, which is the interesting range - a hemisphere
-        over its own disc has to read as a hemisphere.
-        """
-        across, along, up = self.lengths
-        floor = float(np.sqrt(abs(across) * abs(along)))
-        if not np.isfinite(floor) or floor <= 0 or not np.isfinite(up) or up <= 0:
-            return WORLD
-        return WORLD * min(max(up / floor, MIN_HEIGHT), 1.0)
-
     def across(self, values: Any) -> np.ndarray:
         return place(values, self.x, WORLD)
 
@@ -130,7 +108,7 @@ class Box:
         return place(values, self.y, WORLD)
 
     def up(self, values: Any) -> np.ndarray:
-        return place(values, self.z, self.height)
+        return place(values, self.z, WORLD)
 
 
 def place(values: Any, span: tuple[float, float], length: float) -> np.ndarray:
@@ -222,7 +200,7 @@ def mesh(
     heights = np.clip((zs - low) / (high - low), 0.0, 1.0)
     lit = _lit(np.where(finite, box.up(zs), np.nan))
     shading = HEIGHT_SHARE * (DIM + (1.0 - DIM) * heights) + (1.0 - HEIGHT_SHARE) * lit
-    upright = np.where(inside, box.up(zs), -box.height / 2)
+    upright = np.where(inside, box.up(zs), -HALF)
     across, along = np.meshgrid(box.across(xs), box.along(ys), indexing="ij")
     vertexes = np.stack([across, along, upright], axis=-1).reshape(-1, 3)
     index = np.arange(zs.size).reshape(zs.shape)

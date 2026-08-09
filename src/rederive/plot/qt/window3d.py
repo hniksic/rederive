@@ -781,24 +781,21 @@ class Window3D(QtWidgets.QMainWindow):
         return Box(self.xdomain, self.ydomain, self.zrange)
 
     def _reshape(self) -> None:
-        """Stand the box and the axis rays up to the height the data asks for.
+        """Stand the axis rays up where the data's origin is in the box.
 
-        The rays start where the data's origin is, when the box holds it, which
-        is the same convention the 2D window draws its axes by: an axis belongs
-        at zero, and a picture framed away from zero shows it at the edge
-        instead of not at all.
+        The rays start there when the box holds it, which is the same
+        convention the 2D window draws its axes by: an axis belongs at zero,
+        and a picture framed away from zero shows it at the edge instead of not
+        at all. The box itself never changes shape - it is the cube the three
+        ranges are stretched onto - so only the rays are placed here.
         """
         box = self.box_now
-        height = box.height
-        self.box.setSize(WORLD, WORLD, height)
-        self.box.resetTransform()
-        self.box.translate(-HALF, -HALF, -height / 2)
         origin = (
             float(np.clip(box.across(0.0), -HALF, HALF)),
             float(np.clip(box.along(0.0), -HALF, HALF)),
-            float(np.clip(box.up(0.0), -height / 2, height / 2)),
+            float(np.clip(box.up(0.0), -HALF, HALF)),
         )
-        self.rays.setSize(HALF - origin[0], HALF - origin[1], height / 2 - origin[2])
+        self.rays.setSize(*(HALF - value for value in origin))
         self.rays.resetTransform()
         self.rays.translate(*origin)
 
@@ -867,7 +864,7 @@ class Window3D(QtWidgets.QMainWindow):
         which is all there is to say about it from there.
         """
         box = self.box_now
-        floor = -box.height / 2
+        floor = -HALF
         camera = self.view.cameraPosition()
         head_on = self._head_on()
         near_y = -HALF if camera.y() < 0 else HALF
