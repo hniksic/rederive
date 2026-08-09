@@ -68,6 +68,41 @@ async def test_an_answer_can_be_simplified_again(session):
     assert session.entries[-1].annotation == "Simp(#2)"
 
 
+# -- the author line's trailing `=` -------------------------------------------
+
+
+async def test_a_trailing_equals_equates_the_line_to_its_value(session):
+    entry = await session.show_value("2 (8 + 7) / 3^2=")
+    # One entry holding both sides, and the user's own line rather than a step
+    # taken on an earlier entry.
+    assert texts(session) == ["2*(8 + 7)/3^2 = 10/3"]
+    assert entry.annotation == "User"
+
+
+async def test_a_trailing_equals_computes_with_what_the_lines_before_it_defined(session):
+    session.author("x := 5")
+    assert (await session.show_value("x^2=")).text == "x^2 = 25"
+
+
+async def test_a_line_without_a_trailing_equals_is_simply_authored(session):
+    entry = await session.show_value("2 (8 + 7) / 3^2")
+    assert texts(session) == ["2*(8+7)/3^2"]
+    assert entry.annotation == "User"
+
+
+def test_a_trailing_equals_is_what_shows_a_value(session):
+    assert session.shows_value("2^3=")
+    assert not session.shows_value("2^3")
+    with pytest.raises(DeriveSyntaxError):
+        session.shows_value("2^3 +")
+
+
+async def test_a_trailing_equals_that_does_not_parse_appends_nothing(session):
+    with pytest.raises(DeriveSyntaxError):
+        await session.show_value("2^3 +=")
+    assert texts(session) == []
+
+
 # -- part of an entry --------------------------------------------------------
 
 

@@ -481,12 +481,84 @@ class Session:
         What the line declares is applied before it is drawn, so a hand-written
         `DisplayFormat := Compressed` prints itself compressed, as it does in
         the original.
+
+        A line typed with a trailing `=` is entered here as the `showvalue` it
+        parses to, and nothing is computed for it either. What that line asks
+        for is `show_value`, which is a command because the value costs
+        something.
+        """
+        result = self._authored(text)
+        return self._append(result.source.text, result.node)
+
+    def _authored(self, text: str) -> ParseResult:
+        """Parse `text` as an author line, and apply what the line declares.
+
+        The whole of authoring except the appending, so that the trailing `=`
+        line declares and defines exactly what the same line without it does.
         """
         result = self._redrawn(parse_expression(text, self.state))
         for declaration in result.declarations:
             self.declare(declaration)
         self._define(result.node, result.declarations)
-        return self._append(result.source.text, result.node)
+        return result
+
+    def shows_value(self, text: str) -> bool:
+        """Whether `text` is an author line typed with a trailing `=`.
+
+        Parsing costs nothing, so this is what the app asks before it decides
+        which way to enter a line: an append it can make where it stands, or a
+        computation to put on a task of its own.
+
+        Raises `DeriveSyntaxError` when `text` does not parse, which is what
+        entering it would raise too.
+        """
+        return parse_expression(text, self.state).node.kind is Kind.SHOWVALUE
+
+    async def show_value(self, text: str) -> Entry:
+        """Enter `text`, whose trailing `=` asks for its value beside it.
+
+        `2^3=` enters `2^3 = 8` (manual section 3.1): the expression as it was
+        typed, equated to what it simplifies to. The `=` belongs to the line
+        rather than to the expression, so the parser hands it back as a
+        `showvalue` over what was typed, and this is where that becomes an
+        equation.
+
+        A command and not part of `author` because the value has to be
+        computed, and every computation the session makes goes through the
+        runner - which the app fills with a child process, so that a long one
+        can be aborted and the process drawing the screen knows no mathematics.
+        `author` is the entry point that computes nothing, and stays one.
+
+        A line with no trailing `=` is simply authored, so this serves the
+        whole author line and the app need only decide how to wait for it.
+
+        What is entered is the user's line and is annotated as one: the `=` was
+        typed rather than commanded, and the entry stands for the line and not
+        for a step taken on some earlier entry.
+
+        Raises `DeriveSyntaxError` and appends nothing when the line does not
+        parse.
+        """
+        result = self._authored(text)
+        if result.node.kind is not Kind.SHOWVALUE:
+            return self._append(result.source.text, result.node)
+        shown = result.node.children[0]
+        answer = await self.runner.simplify(shown, self.context, self.state)
+        line, node = self._equated(shown, answer.node)
+        exact = None if answer.value is None else self._equated(shown, answer.value)[1]
+        return self._append(line, node, AUTHORED, exact)
+
+    def _equated(self, shown: Node, value: Node) -> tuple[str, Node]:
+        """`shown = value` written out and read back, as one expression.
+
+        Written in the spelling an answer is written in, blanks around the
+        relation and around every sum sign, because half of what this line
+        shows is an answer. It is read back for the reason every other command
+        reads its answer back: an entry's spans have to index the text it
+        carries, or no part of it can be highlighted.
+        """
+        text = write_expression(Node(Kind.REL, 0, 0, (shown, value), "="), spaced=True)
+        return text, parse_expression(text, self.state).node
 
     def _redrawn(self, result: ParseResult) -> ParseResult:
         """`result` written back out from its tree and read again.

@@ -272,12 +272,6 @@ NOT_YET_HELD = {
     # of its main variable, which multiplies the three through where the manual's
     # `[3*(x + y)]` keeps it folded.
     "test_square_brackets_make_a_vector_rather_than_a_group",
-    # `2^3=` parses to a `showvalue` node, and turning that into `2^3 = 8` means
-    # computing the 8 while the line is being authored. `Session.author` is the
-    # one entry point that computes nothing: every calculation the session makes
-    # is awaited through `Runner`, which the app fills with a child process so
-    # that a long one can be aborted and the drawing process knows no sympy.
-    "test_an_expression_typed_with_a_trailing_equals_shows_both_sides",
     # The terms are the manual's own; the order they are printed in is not.
     # Expand's answer is ordered by the rule every sum is, where a term with a
     # sum under the bar closes the sum it belongs to - which is the original's
@@ -352,9 +346,13 @@ async def test_the_manuals_first_arithmetic_is_not_simplified_until_asked(sessio
     assert simplified.annotation == "Simp(#1)"
 
 
-def test_an_expression_typed_with_a_trailing_equals_shows_both_sides(session):
+async def test_an_expression_typed_with_a_trailing_equals_shows_both_sides(session):
     # 3.2 p.29: `2^3=` displays the unsimplified form equated to the answer.
-    assert session.author("2^3=").text == "2^3 = 8"
+    # Through `show_value` rather than `author` because the answer is computed:
+    # `author` parses and appends, and every computation the session makes is
+    # awaited through the runner. The page's line is what is asserted either
+    # way.
+    assert (await session.show_value("2^3=")).text == "2^3 = 8"
 
 
 # -- 3.4 the functions the chapter introduces ---------------------------------

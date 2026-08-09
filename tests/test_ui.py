@@ -42,7 +42,8 @@ def authored(app, *texts):
     The Author line does no more than hand what was typed to `Session.author`,
     so this leaves the same worksheet behind, with the last entry selected
     whole. It is for setting a test up when the keys under test are the ones
-    pressed afterwards.
+    pressed afterwards. A line with a trailing `=` is the one the line does
+    more with, and belongs on the line itself.
     """
     for text in texts:
         app.session.author(text)
@@ -231,6 +232,25 @@ async def test_author_appends_and_selects_the_new_entry(app):
         assert highlighted_expression(app) == "x·(x + 1)"
         assert message(app) == "Enter option"
         assert text_of(app.query_one("#status")).plain.strip().startswith("User")
+
+
+async def test_a_trailing_equals_enters_the_value_beside_what_was_typed(app):
+    async with app.run_test() as pilot:
+        await author(pilot, "2^3=")
+        # One entry, and the user's own: the `=` was typed, not commanded.
+        assert entries(app) == ["2^3 = 8"]
+        assert annotation(app) == "User"
+        # Computed, so it is timed like every other computation.
+        assert message(app).startswith("Compute time:")
+
+
+async def test_ctrl_enter_on_a_trailing_equals_is_enter(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.press(*"2^3=")
+        await pilot.press("ctrl+j")
+        # The value is there already; there is nothing left to simplify.
+        assert entries(app) == ["2^3 = 8"]
 
 
 @pytest.mark.parametrize("key", ["ctrl+j", "ctrl+enter"], ids=str)

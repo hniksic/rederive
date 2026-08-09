@@ -5079,11 +5079,25 @@ class RederiveApp(App[None]):
         way Esc does. A line that does not parse is not entered. Derive says
         so, beeps, and leaves the line up with the cursor where it stopped
         reading - which may be anywhere to the right of the mistake.
+
+        A line typed with a trailing `=` enters the value beside what was
+        typed, and that value has to be computed: it goes on a task like every
+        other computation, so the clock runs and Esc reaches it. Every other
+        line is appended where it stands, there being nothing to wait for.
         """
         if not text.strip():
             self._end_prompt(done=False)
             return
         try:
+            if self.session.shows_value(text):
+                # Ctrl-Enter on such a line is Enter: the line has asked for
+                # its value already, and simplifying the equation it enters
+                # would only decide it true.
+                self.simplifying = None
+                self._compute(
+                    SIMPLIFYING, partial(self.session.show_value, text), self._derived
+                )
+                return
             self.session.author(text)
         except DeriveSyntaxError as error:
             self._refused(error)
