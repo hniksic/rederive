@@ -49,9 +49,6 @@ exercise elsewhere is left out.
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import contextmanager, suppress
-
 import pytest
 
 from rederive.engine.computing import (
@@ -68,7 +65,6 @@ from rederive.engine.computing import (
     solve,
 )
 from rederive.engine.context import Angle, Direction, Precision, TrigPower
-from rederive.engine.remote import RemoteEngine
 from rederive.model.session import Session
 from rederive.syntax import ParseState, parse_expression
 from sexpr import to_sexpr
@@ -124,44 +120,6 @@ async def answer(session, *lines):
     return (await session.simplify(lines[-1])).text
 
 
-#: How long a manual session is given to answer before it is called a hang.
-#: Two of the manual's own lines do not come back at all, and a test that
-#: wedges the suite says less than one that fails - so those two are asked
-#: through the worker engine, which is the half of the program Esc can stop.
-#: The bound only has to be long enough to tell "never" from "slow": these two
-#: run out of it every time, so keeping it short is what keeps the suite quick
-#: while still reporting an unexpected pass if either ever starts answering.
-PATIENCE = 2.0
-
-
-@contextmanager
-def abortable():
-    """A session whose engine computes in a worker, so a runaway can be killed."""
-    engine = RemoteEngine()
-    try:
-        yield Session(runner=engine), engine
-    finally:
-        engine.shutdown()
-
-
-async def answered_within(session, engine, ask, patience=PATIENCE):
-    """What `ask(session)` answers, or a failure saying it never did.
-
-    `ask` hands back the command to wait for, so the bound can be put on the
-    waiting and not on the command. One that runs out of it is stopped the way
-    a user stops one - `engine.abort` is Esc - and what is reported is that it
-    never answered rather than whatever the abort raised.
-    """
-    asking = asyncio.ensure_future(ask(session))
-    answered, _ = await asyncio.wait((asking,), timeout=patience)
-    if not answered:
-        engine.abort()
-        with suppress(BaseException):
-            await asyncio.wait_for(asking, patience)
-        pytest.fail(f"no answer in {patience:.0f} seconds")
-    return asking.result()
-
-
 #: The manual's promises this engine has decided not to keep, test id to
 #: reason. These are decisions, not gaps: an unexpected pass here means the
 #: engine drifted off a recorded decision, and the drift is what to look at.
@@ -214,11 +172,6 @@ NOT_YET_HELD = {
     # it stands, so it has two fixed points for the one expression. This is that
     # decision met from the manual's side, and a difference in spelling only.
     "test_the_manuals_mutual_recursion_written_with_accumulators",
-    # Sympy never comes back for these two of the manual's own sessions; they
-    # are asked through the worker engine under PATIENCE and fail saying so,
-    # instead of wedging the suite.
-    "test_the_integral_the_manual_does_by_substitution",
-    "test_the_iterates_of_the_manuals_fixed_point",
     # Each half is written over its own bar, as the original writes it, and the
     # arguments are what is left: sympy signs an even or odd function's argument
     # by its own alphabetical order, giving `COS(w - z)` where the original
@@ -1213,15 +1166,13 @@ def test_a_vector_potential_is_checked_by_taking_its_curl_back():
 
 # == Chapter 10: Programming ==================================================
 
-async def test_the_iterates_of_the_manuals_fixed_point():
+async def test_the_iterates_of_the_manuals_fixed_point(session):
     # 10.1 p.253: iteration stops when a value repeats, and x0 heads the
     # vector. The manual is explicit that this one has to be approximated:
-    # iterated exactly it never repeats, so it never stops.
-    with abortable() as (session, engine):
-        answer = await answered_within(
-            session, engine, lambda s: s.approx("ITERATES(#e^(-x/20), x, 1)")
-        )
-    assert answer.text == (
+    # iterated exactly it never repeats, so it never stops. Repeating is at the
+    # digits shown, which is why the vector ends in three copies of the value it
+    # converges to: the first two of them differ where nothing is printed.
+    assert (await session.approx("ITERATES(#e^(-x/20), x, 1)")).text == (
         "[1, 0.951229, 0.953551, 0.953441, 0.953446, 0.953446, 0.953446]"
     )
 
@@ -2191,16 +2142,13 @@ async def test_the_continued_fraction_of_e(loaded):
 
 # -- 9.21 MISC.MTH ------------------------------------------------------------
 
-async def test_the_integral_the_manual_does_by_substitution(tmp_path):
-    # 9.21 p.285.
-    with abortable() as (session, engine):
-        session.load_utility(written(tmp_path, "MISC.MTH"))
-        answer = await answered_within(
-            session,
-            engine,
-            lambda s: s.simplify("INT_SUBST(t*SIN(t^2), t, t^2)"),
-        )
-    assert answer.text == "-COS(t^2)/2"
+async def test_the_integral_the_manual_does_by_substitution(loaded):
+    # 9.21 p.285: the substitution is `t^2`, so what is written in is the
+    # inverse of it.
+    session = loaded("MISC.MTH")
+    assert (await session.simplify("INT_SUBST(t*SIN(t^2), t, t^2)")).text == (
+        "-COS(t^2)/2"
+    )
 
 
 async def test_the_inverse_of_the_manuals_function(loaded):

@@ -2804,12 +2804,17 @@ def _iterate(conv: _Converter, args: list) -> sp.Basic:
     Counted, that is the `n`th update and there is no more to ask. Uncounted,
     the sequence ended by repeating something, and only a value that repeated
     *itself* is a value the iteration arrived at: a longer cycle converges to
-    nothing, and the manual's answer for that is `?`.
+    nothing, and the manual's answer for that is `?`. Repeating is the same
+    question `_until_repeated` stopped on, so it is asked the same way, at the
+    digits the two would be shown to.
     """
     sequence = _sequence(conv, args)
     if len(args) > 3:
         return sequence[-1]
-    return sequence[-1] if sequence[-1] == sequence[-2] else sp.nan
+    came_round = _as_shown(sequence[-1], conv.context) == _as_shown(
+        sequence[-2], conv.context
+    )
+    return sequence[-1] if came_round else sp.nan
 
 
 def _sequence(conv: _Converter, args: list) -> list[sp.Basic]:
@@ -2843,15 +2848,27 @@ def _until_repeated(
     `ITERATES(1/x, x, 2)` is `[2, 1/2, 2]` - which is what tells `ITERATE`
     whether the cycle it found has length one.
 
+    Coming round is asked of the iterates as they are shown, not as they are
+    carried. An approximate iterate is carried at the guard digits, so a
+    converging sequence goes on differing in digits nobody sees and would run to
+    the bound below before two of its elements were ever equal; what the manual
+    prints is the sequence stopping where the screen stops changing.
+    `ITERATES(#e^(-x/20), x, 1)` is the case, and it is why the vector ends in
+    three copies of `0.953446` rather than two - the first two differ at the
+    seventh digit and the third does not. Where the mode works no number out
+    the iterate is exact and shows as itself, so this is exact equality again.
+
     What Derive does when nothing ever repeats is iterate until memory is gone.
     That is no answer an engine can give, so an iteration that has not come
     round within the bounds below comes back the call it was written as.
     """
     iterates = [_state(names, values)]
+    shown = [_as_shown(iterates[-1], conv.context)]
     for _ in range(_ITERATIONS):
         values = _updated(conv, body, names, values)
         iterates.append(_state(names, values))
-        if iterates[-1] in iterates[:-1]:
+        shown.append(_as_shown(iterates[-1], conv.context))
+        if shown[-1] in shown[:-1]:
             return iterates
         if outsized(iterates[-1]):
             break
@@ -2962,6 +2979,18 @@ def _worked_out(value: sp.Basic, context: Context) -> sp.Basic:
     return approximated(value, context.with_precision(Precision.APPROXIMATE, digits))
 
 
+def _as_shown(value: sp.Basic, context: Context) -> sp.Basic:
+    """`value` as the screen would have it, which is what two iterates compare by.
+
+    The counterpart of `_worked_out`: that carries an iterate at the guard
+    digits, and this is the value those digits stand for. Only a mode that works
+    numbers out has anything to strip, an exact iterate being its own display.
+    """
+    if context.precision is not Precision.APPROXIMATE:
+        return value
+    return approximated(value, context)
+
+
 def _bindings(body: sp.Basic, names: list, values: list) -> dict:
     """What to write into the body: each variable, and each of its subscripts.
 
@@ -3022,12 +3051,19 @@ def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None
     that inverts it, and what it was applied to is undone in turn - which is
     the principal branch by construction, `ASIN` being what `SIN` inverts to.
 
+    A power is the same case without a call to name: an even one solves to a
+    root and its negative, and the principal one is the reciprocal power. That
+    is the inverse `INT_SUBST(t*SIN(t^2), t, t^2)` substitutes with, the
+    manual's own `SQRT(t)` for its `t^2` (9.21, p.285).
+
     None where nothing here undoes it: a call with no inverse to name, or an
     equation that solves to nothing.
     """
     solutions = sp.solve(sp.Eq(body, value), name)
     if len(solutions) == 1:
         return solutions[0]
+    if isinstance(body, sp.Pow) and body.base.has(name) and not body.exp.has(name):
+        return _undone(body.base, name, sp.Pow(value, 1 / body.exp))
     if not (isinstance(body, sp.Function) and len(body.args) == 1):
         return None
     inverse = _inverse_function(body)

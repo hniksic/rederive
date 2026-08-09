@@ -1811,11 +1811,12 @@ ITERATION = [
     # `INVERSE(u, x) := ITERATE(u, x, x, -1)` on.
     ("ITERATES(TAN(x), x, x, -1)", "[x, ATAN(x)]"),
     ("ITERATES(x + 1, x, 0, -2)", "[0, -1, -2]"),
-    # Where there is a choice of inverses there is no inverse function, and the
-    # call comes back as written. Derive takes the principal one and answers
-    # `[2, SQRT(2)]`; choosing among roots is soLve's business, and an
-    # iteration is not going to make that choice on its own.
-    ("ITERATES(x^2, x, 2, -1)", "ITERATES(x^2, x, 2, -1)"),
+    # Where there is a choice of inverses the principal one is taken, as Derive
+    # takes it: a power is undone by the reciprocal power and a call by the
+    # function that inverts it. MISC.MTH's INT_SUBST is what rests on it - the
+    # manual substitutes `t^2` by inverting it to `SQRT(t)` (9.21, p.285) - so
+    # declining the choice would leave one of the manual's own sessions unread.
+    ("ITERATES(x^2, x, 2, -1)", "[2, SQRT(2)]"),
     # An iteration that neither comes round nor was counted comes back as
     # written: Derive runs one until memory is gone, which is no answer to
     # give. Neither is a count that is still a name.
