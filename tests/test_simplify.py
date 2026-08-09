@@ -2060,6 +2060,19 @@ def test_logic(text, expected):
     assert simp(text) == expected
 
 
+def test_a_bitwise_operator_is_read_again_once_its_operands_are_numbers():
+    """`12 AND k_` waits, and both readings are offered afresh when it stops.
+
+    Which of the two an operator is depends on what stands under it, and what
+    stands there is a variable until something writes a value in.
+    `NUMBER.MTH`'s `LUCAS` tests a bit of its argument with `(n AND d_) = 0`,
+    where `d_` is the iteration's own variable and is a number only once an
+    iterate is taken.
+    """
+    assert simp("VECTOR(12 AND k_, k_, 1, 4)") == "[0, 0, 0, 4]"
+    assert simp("ITERATES(IF((12 AND d_) = 0, 2*d_, d_/2), d_, 1, 3)") == "[1, 2, 4, 2]"
+
+
 #: A truth table: the columns as they were written, then one row per
 #: assignment, the last variable changing fastest and `true` before `false`.
 TRUTH_TABLES = [
@@ -2093,6 +2106,10 @@ def test_truth_tables(text, expected):
 CONDITIONALS = [
     ("IF(2 = 2, 1, 2)", "1", None),
     ("IF(2 = 3, 1, 2)", "2", None),
+    # A test that is a conjunction of relations is decided link by link, which
+    # is how `NUMBER.MTH` writes `FIBONACCI`'s guard on a whole number.
+    ("IF(2 >= 0 AND FLOOR(2) = 2, 1, 2)", "1", None),
+    ("IF(2 >= 0 AND FLOOR(5/2) = 5/2, 1, 2)", "2", None),
     # No else clause and a false test: the value is unknown.
     ("IF(2 = 3, 1)", "?", None),
     ("IF(x > 0, 1, -1)", "1", POSITIVE_X),
@@ -2436,6 +2453,21 @@ def test_a_defined_function_is_replaced_by_its_body():
     assert simp("ACCELERATION(6, 2)", context) == "3"
     # Partial application: the parameter nobody supplied stays as its name.
     assert simp("ACCELERATION(6)", context) == "6/m"
+
+
+def test_a_calculus_head_waits_for_the_body_of_the_call_under_it():
+    """A call whose definition is not written in yet is no constant.
+
+    One pass writes a body in and the next carries the recursion on, so `F(1)`
+    stands unresolved while the pass that unfolded `F(2)` is running. It
+    mentions no `x`, and differentiating it as it stands would answer zero for
+    something that is a derivative of `x^2` throughout.
+    """
+    body = parse("IF(n = 0, x^2, DIF(F(n - 1), x))")
+    context = Context(functions={"F": (("n",), body)})
+    assert simp("F(0)", context) == "x^2"
+    assert simp("F(1)", context) == "2*x"
+    assert simp("F(2)", context) == "2"
 
 
 def test_two_spellings_of_one_variable_are_one_variable():

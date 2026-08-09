@@ -30,7 +30,7 @@ import sympy as sp
 from sympy.concrete.gosper import gosper_term
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
-from sympy.logic.boolalg import Boolean
+from sympy.logic.boolalg import Boolean, BooleanFunction
 
 from rederive.engine.approximation import simplest
 from rederive.engine.context import (
@@ -407,22 +407,16 @@ _RELATIONS: dict[str, Callable[..., sp.Basic]] = {
     ">=": sp.Ge,
 }
 
-_BOOLEAN: dict[Kind, Callable[..., sp.Basic]] = {
-    Kind.NOT: sp.Not,
-    Kind.AND: sp.And,
-    Kind.OR: sp.Or,
-    Kind.XOR: sp.Xor,
-    Kind.IMP: sp.Implies,
-}
-
 #: How each boolean operator reads as a bitwise one on integers, two's
-#: complement throughout: `NOT 5` is -6 and `3 OR 5` is 7.
-_BITWISE: dict[Kind, Callable[..., int]] = {
-    Kind.NOT: lambda a: ~a,
-    Kind.AND: lambda a, b: a & b,
-    Kind.OR: lambda a, b: a | b,
-    Kind.XOR: lambda a, b: a ^ b,
-    Kind.IMP: lambda a, b: ~a | b,
+#: complement throughout: `NOT 5` is -6 and `3 OR 5` is 7. Under the word the
+#: operator is written and held under, since an operator held for want of
+#: operands to read is offered both readings again by that word.
+_BITWISE: dict[str, Callable[..., int]] = {
+    "NOT": lambda a: ~a,
+    "AND": lambda a, b: a & b,
+    "OR": lambda a, b: a | b,
+    "XOR": lambda a, b: a ^ b,
+    "IMP": lambda a, b: ~a | b,
 }
 
 _LOGICAL_NAMES: dict[Kind, str] = {
@@ -915,16 +909,7 @@ class _Converter:
 
     def _logical(self, node: Node) -> sp.Basic:
         """Boolean on booleans, bitwise on integers."""
-        operands = self._children(node)
-        if operands and all(isinstance(operand, sp.Integer) for operand in operands):
-            try:
-                return sp.Integer(_BITWISE[node.kind](*(int(o) for o in operands)))
-            except TypeError:
-                pass
-        try:
-            return _BOOLEAN[node.kind](*(_settled(o) for o in operands))
-        except Exception:
-            return Logical(sp.Symbol(_LOGICAL_NAMES[node.kind]), *operands)
+        return _connected(_LOGICAL_NAMES[node.kind], self._children(node))
 
     # -- definitions, which convert their value and keep their shape --------
 
@@ -2225,9 +2210,17 @@ def _test(test: sp.Basic) -> sp.Basic:
     The test of a conditional is the exception, `Piecewise` being entitled to
     answer its own conditions, and an unevaluated relation is also the one form
     of a condition it mishandles.
+
+    A conjunction of relations is where that matters most, since a held link
+    inside one is a link sympy cannot decide and a `Piecewise` refuses to be
+    built over. `NUMBER.MTH` writes `FIBONACCI`'s guard as
+    `n >= 0 AND FLOOR(n) = n`, and both links are settled the moment `n` is a
+    number.
     """
     if test.is_Relational:
         return test.func(test.lhs, test.rhs)
+    if isinstance(test, BooleanFunction) and test.args:
+        return test.func(*(_test(operand) for operand in test.args))
     return test
 
 
@@ -2984,15 +2977,39 @@ def _reread_head(conv: _Converter, found: sp.Basic) -> sp.Basic:
 
 
 def _relogical(found: Logical) -> sp.Basic:
-    """A held boolean operator, offered to sympy again over its operands now."""
+    """A held boolean operator, read again over the operands it has now.
+
+    Both readings are offered afresh. A held `AND` whose operands have since
+    become numbers is the bitwise one - `LUCAS`'s `(n AND d_) = 0` tests a bit
+    of `n`, and `d_` is a number only once the iteration writes it in - and one
+    whose operands have become statements is the boolean one.
+    """
     word, *operands = found.args
-    head = _BOOLEAN_HEADS.get(str(word))
-    if head is None:
-        return found
-    try:
-        return head(*(_settled(operand) for operand in operands))
-    except Exception:
-        return found
+    return _connected(str(word), operands)
+
+
+def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
+    """`AND` and its neighbours over these operands: what the operands make it.
+
+    Bitwise on integers, boolean on anything sympy will read as a statement,
+    and the inert `Logical` where it is neither yet - an operand that is still
+    a variable, or a call nobody has answered. The inert one is offered again
+    by `_relogical` as soon as anything under it is worked out.
+    """
+    bitwise = _BITWISE.get(word)
+    numbers = operands and all(isinstance(operand, sp.Integer) for operand in operands)
+    if bitwise is not None and numbers:
+        try:
+            return sp.Integer(bitwise(*(int(operand) for operand in operands)))
+        except TypeError:
+            pass
+    head = _BOOLEAN_HEADS.get(word)
+    if head is not None:
+        try:
+            return head(*(_settled(operand) for operand in operands))
+        except Exception:
+            pass
+    return Logical(sp.Symbol(word), *operands)
 
 
 #: The sympy head each operator word a `Logical` carries stands for, which is

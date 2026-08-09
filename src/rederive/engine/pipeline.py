@@ -948,6 +948,8 @@ def _evaluate(
     head: sp.Basic, context: Context, formulas: dict[sp.Basic, sp.Basic] | None = None
 ) -> sp.Basic:
     """One head evaluated, or the head itself if it will not evaluate."""
+    if _awaits_a_body(head, context):
+        return head
     if isinstance(head, Approx):
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
@@ -963,6 +965,24 @@ def _evaluate(
     except Exception:
         return _undecided(head)
     return head if value is None else value
+
+
+def _awaits_a_body(head: sp.Basic, context: Context) -> bool:
+    """Whether a call whose definition is still to be written in stands under `head`.
+
+    Such a call is not the constant it looks like. `F(n) := IF(n = 0, 1,
+    m*DIF(F(n - 1), mu) + ...)` mentions no `mu` in `F(3)`, and differentiating
+    it as it stands answers zero where the value it is waiting for depends on
+    `mu` throughout. The pass that writes the body in comes round again, so what
+    the head has to do is wait for it.
+    """
+    if not context.functions:
+        return False
+    try:
+        calls = head.atoms(AppliedUndef)
+    except Exception:
+        return False
+    return any(type(call).__name__ in context.functions for call in calls)
 
 
 def _approximation(head: sp.Basic, context: Context) -> sp.Basic:

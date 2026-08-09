@@ -206,18 +206,22 @@ NOT_YET_HELD = {
     "10, x)-(66*x^10 - 330*x^9 + 495*x^8 - 462*x^6 + 330*x^4 - 99*x^2 + 5)/66]",
     "test_the_worked_examples_of_the_number_theory_file[EULER_POLY(10, "
     "x)-x*(x^9 - 5*x^8 + 30*x^6 - 126*x^4 + 255*x^2 - 155)]",
-    # A recursive definition is unfolded eagerly, before the index that would
-    # stop it is bound, so these run into the size guard where Derive's lazy
-    # IF-guarded recursion terminates. The mutual recursion also differentiates
-    # DIF(f, mu) while f is still an opaque recursive call.
+    # The accumulators carry the manual's own values - `FG(4)` is
+    # `[3*epsilon*mu + mu^2 - 15*mu*sigma^2, 6*mu*sigma]` - and the page factors
+    # the `mu` its three terms share. `normal.py` says why no common factor is
+    # taken back out of a finished sum: the original does not do it
+    # consistently, `y*x^2 + 2*y*x + 2*y` authored as it stands coming back as
+    # it stands, so it has two fixed points for the one expression. This is that
+    # decision met from the manual's side, and a difference in spelling only.
     "test_the_manuals_mutual_recursion_written_with_accumulators",
-    "test_the_worked_examples_of_the_number_theory_file[DISTINCT_PARTS(4)-2]",
-    "test_the_worked_examples_of_the_number_theory_file[FIBONACCI(10)-55]",
     # NUMBER.MTH redefines PARTS as the manual's closed form rather than the
     # recursion above, so this one is a single pass that ends in an inert
     # APPROX: sympy is asked for a closed form for nested sums over symbolic
     # limits, and what comes back is the FLOOR(APPROX(SUM(...))) it went in as.
+    # DISTINCT_PARTS is redefined over PARTS and gets there the same way: its
+    # own sum and test are worked out, and what stands is PARTS(2).
     "test_the_worked_examples_of_the_number_theory_file[PARTS(4)-5]",
+    "test_the_worked_examples_of_the_number_theory_file[DISTINCT_PARTS(4)-2]",
     "test_the_worked_examples_of_the_vector_utility_file[RANK([[2, 3, "
     "5], [4, 6, 10], [1, 2, 3]])-2]",
     # Sympy never comes back for these two of the manual's own sessions; they
@@ -307,13 +311,17 @@ NOT_YET_HELD = {
     # factor short of the manual's line, and costs test_simplify's
     # `test_a_derivative_a_substitution_binds_is_not_evaluated`.
     "test_the_clairaut_equation_the_manual_solves",
-    # `F(4)` comes back `mu^2`. A pass writes a recursive body in once, so
-    # `DIF(F(3), mu)` differentiates an opaque call that mentions no `mu` and
-    # answers zero, leaving only the `- mu*G(n - 1)` term; the empty `G(n) :=`
-    # changes nothing, the same session without it answering the same. Holding a
-    # calculus head over a call still waiting for its body reaches the manual's
-    # value, but the terms then pile up unevaluated and the size guard stops the
-    # unfolding four levels down.
+    # `F(4)` comes back an unfinished tower of `DIF` over `F(0)`. A calculus
+    # head over a call still waiting for its body waits for it, which is what
+    # makes `F(3)` the `3*mu*sigma` it is; but a pass writes each pending body
+    # in one level at a time, and nothing collapses until the innermost `F(0)`
+    # answers, so by four levels down the tree is past the size guard. Derive
+    # works such a call out where it stands, innermost first, which is what
+    # keeps every intermediate small. Reached with the guard lifted, the value
+    # is the manual's and the spelling is
+    # `3*epsilon*mu + mu^2 - 15*mu*sigma^2` - the same common `mu` that holds
+    # the accumulator version above. The empty `G(n) :=` changes nothing either
+    # way, the same session without it answering the same.
     "test_an_empty_definition_makes_a_name_a_function_and_not_a_variable",
     # The brackets are read as the vector they are and the scalar goes in; what
     # comes back is `[3*x + 3*y]`. The element is then written in the normal form
