@@ -4,8 +4,9 @@ Derive shipped a tour of itself - six scripts of a comment and an expression,
 over and over, and three galleries of expressions worth drawing - and those
 files are still the best thing to show the program off with. They are not
 Rederive's to ship, so what is here is a catalogue rather than the files: the
-name each one has, what to call it in a menu, which of the two kinds of
-demonstration it is, and the addresses it can be downloaded from.
+name each one has, what to call it in a menu - a page's title and a menu band's
+one word - which of the two kinds of demonstration it is, and the addresses it
+can be downloaded from.
 
 Fetching is deliberately not here. A browser downloads with `fetch` and a
 desktop with whatever a desktop has, and neither can do the other's; what both
@@ -75,6 +76,10 @@ class Demo:
     #: What a menu calls it. The original named these by their subject and so
     #: does this, in the words a menu has room for.
     title: str
+    #: The same thing in one word, for a menu whose words are typed at rather
+    #: than clicked: the capital in it is the letter that chooses it, as the
+    #: capital in every option of the program's own menus is.
+    word: str
     #: Whether its steps are drawn rather than simplified.
     plotting: bool = False
 
@@ -98,15 +103,15 @@ class Demo:
 #: ordered them - arithmetic first, calculus late - and then the three
 #: galleries, from the flat to the solid.
 DEMOS: tuple[Demo, ...] = (
-    Demo("ARITH.DMO", "Arithmetic"),
-    Demo("ALGEBRA.DMO", "Algebra"),
-    Demo("TRIG.DMO", "Trigonometry"),
-    Demo("FUNCTION.DMO", "Elementary functions"),
-    Demo("CALCULUS.DMO", "Calculus"),
-    Demo("MATRIX.DMO", "Vectors and matrices"),
-    Demo("PLOT2D.MTH", "2D plots", plotting=True),
-    Demo("PLOTPARA.MTH", "Parametric plots", plotting=True),
-    Demo("PLOT3D.MTH", "3D plots", plotting=True),
+    Demo("ARITH.DMO", "Arithmetic", "Arithmetic"),
+    Demo("ALGEBRA.DMO", "Algebra", "alGebra"),
+    Demo("TRIG.DMO", "Trigonometry", "Trigonometry"),
+    Demo("FUNCTION.DMO", "Elementary functions", "Functions"),
+    Demo("CALCULUS.DMO", "Calculus", "Calculus"),
+    Demo("MATRIX.DMO", "Vectors and matrices", "Matrices"),
+    Demo("PLOT2D.MTH", "2D plots", "2D-plots", plotting=True),
+    Demo("PLOTPARA.MTH", "Parametric plots", "Parametric", plotting=True),
+    Demo("PLOT3D.MTH", "3D plots", "3D-plots", plotting=True),
 )
 
 

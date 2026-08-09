@@ -639,7 +639,7 @@ async def test_a_click_steps_a_demonstration(app, tmp_path):
     path = tmp_path / "show.dmo"
     path.write_text("; adds two numbers\n2 + 3\n\n; and a symbolic one\n(x+1)^2\n")
     async with app.run_test() as pilot:
-        await pilot.press("t", "d", *str(path), "enter")
+        await pilot.press("t", "d", "o", *str(path), "enter")
         assert band(app) == [" adds two numbers"]
         await pilot.click(content(app), offset=(2, 0))
         assert band(app) == [" and a symbolic one"]

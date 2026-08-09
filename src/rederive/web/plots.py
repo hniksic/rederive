@@ -1,11 +1,11 @@
 """The plot windows a browser has: panes in the page, and no process behind them.
 
-The app talks to plotting through five calls - `add`, `prefer`, `describe`,
-`shutdown` and the callback events arrive on - and on the desktop the object
-behind them is a proxy for a child process holding Qt. A browser has no such
-process and needs none: the windows are panes in the page this app is already
-drawing on, so what the five calls reach is the plot session itself, in this
-interpreter, with nothing between them and it.
+The app talks to plotting through a handful of calls - `add`, `prefer`,
+`describe`, `release`, `shutdown` and the callback events arrive on - and on the
+desktop the object behind them is a proxy for a child process holding Qt. A
+browser has no such process and needs none: the windows are panes in the page
+this app is already drawing on, so what those calls reach is the plot session
+itself, in this interpreter, with nothing between them and it.
 
 That is the whole of the browser's answer to the plot host. `PlotSession` is the
 same class the desktop runs in its host process, holding the same window
@@ -36,7 +36,7 @@ __all__ = ["WebPlots"]
 
 
 class WebPlots:
-    """The five calls, answered by a plot session whose windows are panes."""
+    """The same calls, answered by a plot session whose windows are panes."""
 
     def __init__(self, page: Any, solids: Any, engine: Any) -> None:
         executor = WorkerExecutor(engine)
@@ -81,6 +81,10 @@ class WebPlots:
 
     def prefer(self, preferences: protocol.Prefer) -> None:
         self.session.prefer(preferences)
+
+    def release(self) -> None:
+        """The demonstration is over. Nothing moves: a pane is in front of nothing."""
+        self.session.release()
 
     def describe(self) -> tuple[protocol.WindowInfo, ...]:
         """What panes are open and what is in them."""

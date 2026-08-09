@@ -750,6 +750,9 @@ class Window2D(QtWidgets.QMainWindow):
         #: that a row clicked twice replaces its own animation rather than
         #: racing it.
         self._fades: dict[int, Any] = {}
+        #: Whether this window is being kept above the others, which is what a
+        #: step of a demonstration is shown as and nothing else is.
+        self._on_top = False
         self._build()
         self.retitle()
         self.home()
@@ -2564,17 +2567,55 @@ class Window2D(QtWidgets.QMainWindow):
             yrange=(float(low), float(high)),
         )
 
-    def present(self, quietly: bool = False) -> None:
+    def present(self, demonstrating: bool = False) -> None:
         """A plot has landed here: show this window and put it in front.
 
-        A demonstration's step is shown without being activated: the keys that
-        take it belong to the program, and a window that took them would leave
-        the demonstration waiting for a key nobody can press.
+        A demonstration's step is shown without being activated, and it *stays*
+        in front until `release` says the demonstration is over. Both halves of
+        that are about the same predicament: the keys that take the next step
+        belong to the program, so the keyboard has to stay where the program
+        is - and the program is usually a terminal filling the screen, which
+        would bury the picture the moment it was clicked on. Above it, the
+        picture is there to be looked at while the key that replaces it is
+        pressed in the window behind.
         """
+        self._keep_in_front(demonstrating)
         self.show()
         self.raise_()
-        if not quietly:
-            self.activateWindow()
+        if not demonstrating:
+            self._activate()
+
+    def release(self) -> None:
+        """The demonstration is over: an ordinary window among the others again.
+
+        Shown again because dropping the flag hid it, and shown for the last
+        time without being activated: the demonstration ended at the program's
+        menu, and the keyboard belongs there.
+        """
+        if not self._on_top:
+            return
+        self._keep_in_front(False)
+        self.show()
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+
+    def _keep_in_front(self, demonstrating: bool) -> None:
+        """Put the window above the others, or let it back among them.
+
+        The attribute is set before the flag and cleared after the window is
+        showing again, because changing a window flag hides the window: every
+        path through here shows it again, and a show that activated would take
+        the keyboard off the program that is waiting for the next keystroke.
+        """
+        if demonstrating == self._on_top:
+            return
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self._on_top = demonstrating
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, demonstrating)
+
+    def _activate(self) -> None:
+        """Take the keyboard, which an ordinary plot of one's own is welcome to."""
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+        self.activateWindow()
 
     def retitle(self, current: bool | None = None) -> None:
         """Title the window by what it holds, and say whether the next plot lands here.

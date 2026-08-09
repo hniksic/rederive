@@ -45,12 +45,24 @@ class WindowHandle(Protocol):
     def find(self, worksheet: int, label: str) -> Any | None:
         """The plot a worksheet and a label name, if this window has it."""
 
-    def present(self, quietly: bool = False) -> None:
+    def present(self, demonstrating: bool = False) -> None:
         """Show this window and bring it to the front: a plot has landed in it.
 
-        `quietly` shows it without taking the keyboard, which is what a step of
-        a demonstration lands with: the program is waiting for a key to take the
-        next step, so the keyboard has to stay where the program is.
+        `demonstrating` shows it without taking the keyboard, which is what a
+        step of a demonstration lands with: the program is waiting for a key to
+        take the next step, so the keyboard has to stay where the program is.
+        Where a window can be above another one it also stays above, until
+        `release`, so that the program waiting for that key cannot bury the
+        picture it is waiting over.
+        """
+
+    def release(self) -> None:
+        """No demonstration is waiting on this window any more.
+
+        What `present` did for a demonstration is undone here, and only that:
+        the window keeps its place, its plots and its title. An environment
+        where windows have no order to be kept at the front of has nothing to
+        do about this.
         """
 
     def retitle(self, current: bool | None = None) -> None:

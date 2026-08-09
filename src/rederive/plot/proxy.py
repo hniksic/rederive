@@ -99,7 +99,7 @@ class PlotError(Exception):
 
 
 class PlotProxy:
-    """The plot host as four method calls, with a process behind them or not.
+    """The plot host as a few method calls, with a process behind them or not.
 
     One request is in flight at a time. The host is single-threaded from the
     protocol's point of view - its Qt loop takes requests in the order they
@@ -146,7 +146,7 @@ class PlotProxy:
         process = self._process
         return process is not None and process.is_alive()
 
-    # -- the four requests -------------------------------------------------
+    # -- the requests ------------------------------------------------------
 
     async def add(self, request: protocol.Add) -> protocol.Placed:
         """Plot an expression, and say which window took it.
@@ -198,6 +198,21 @@ class PlotProxy:
         if isinstance(reply, protocol.Windows):
             return reply.windows
         raise PlotError(_unexpected(reply))
+
+    def release(self) -> None:
+        """Say that the demonstration is over, so its window stops staying in front.
+
+        Nothing where there is no host: a demonstration that drew nothing
+        started none, and starting one to tell it that nothing is waiting would
+        open a Qt toolkit to say nothing. Nothing either where the host has
+        died, which is a message the demonstration's own step already carried.
+        """
+        if not self.running:
+            return
+        try:
+            self._ask(protocol.Release())
+        except PlotError:
+            pass
 
     def shutdown(self) -> None:
         """End the host for good, which is what leaving the app comes to.

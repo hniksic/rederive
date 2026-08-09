@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rederive.model import building, settings
+from rederive.model import building, demos, settings
 from rederive.model import help as helps
 from rederive.model.session import Bounds
 
@@ -398,6 +398,30 @@ COLOR = Menu("OPTIONS COLOR:", ("Menu", "Work"))
 TRANSFER = Menu("TRANSFER:", ("Load", "Save", "Merge", "Clear", "Demo"))
 
 TRANSFER_LOAD = Menu("TRANSFER LOAD:", ("Derive", "State", "daTa", "Utility"))
+
+#: What the file prompt of the original's Demo command is called, now that the
+#: nine demonstrations it was nearly always used for are words of their own.
+DEMO_OTHER = "Other"
+
+#: The demonstrations, as options rather than as a file to be named.
+#:
+#: This is the one place the desktop departs from the original's Transfer menu,
+#: and the reason is what the command was for. Derive's Demo asked for a file
+#: name because the file was already there - the demonstrations sat on the
+#: diskette the program itself was started from, and there was nowhere else a
+#: demonstration could have come from. Here they have to be named before they
+#: can be had, so they are named on a menu, and `Other` is the original's own
+#: command for a demonstration file of your own.
+#:
+#: The break falls where the scripts end: the six whose steps are simplified on
+#: the first line, the three galleries whose steps are drawn on the second.
+#: Every word carries a letter no other one carries, the two plot galleries
+#: telling themselves apart by their digit the way `2D-plot` and `3D-plot` do.
+TRANSFER_DEMO = Menu(
+    "TRANSFER DEMO:",
+    tuple(demo.word for demo in demos.DEMOS) + (DEMO_OTHER,),
+    first_line=sum(1 for demo in demos.DEMOS if not demo.plotting),
+)
 
 # The original's four targets were Basic, C, Fortran and Pascal, the languages
 # a 1990s reader would paste an expression into. The command is the same
@@ -828,6 +852,7 @@ TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
         "Load": TRANSFER_LOAD,
         "Save": TRANSFER_SAVE,
         "Clear": TRANSFER_CLEAR,
+        "Demo": TRANSFER_DEMO,
     },
     TRANSFER_SAVE: {"Options": settings.SAVE},
 }

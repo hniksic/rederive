@@ -49,6 +49,10 @@ class FakeWindow:
         self.title = ""
         #: How many times a plot has landed here and been brought to the front.
         self.presented = 0
+        #: Whether a demonstration is being kept in front here, and how often
+        #: one has been let go of.
+        self.demonstrating = False
+        self.released = 0
 
     def add(self, plot):
         existing = self.find(plot.worksheet, plot.label)
@@ -71,9 +75,14 @@ class FakeWindow:
                 return plot
         return None
 
-    def present(self, quietly=False):
+    def present(self, demonstrating=False):
         self.presented += 1
-        self.quietly = quietly
+        self.quietly = demonstrating
+        self.demonstrating = demonstrating
+
+    def release(self):
+        self.released += 1
+        self.demonstrating = False
 
     def retitle(self, current=None):
         if current is not None:

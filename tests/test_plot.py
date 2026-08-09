@@ -30,7 +30,7 @@ import dataclasses
 import numpy as np
 import pytest
 from fakeplot import FakeBackend, InlineExecutor, offered, ticked
-from screen import band, highlighted, message, prompt
+from screen import band, content, highlighted, message, prompt
 
 from rederive.engine.context import Context
 from rederive.model.plotting import Unplottable, classify
@@ -1166,6 +1166,38 @@ def _plot(text, kind, variables, label="#1"):
     )
 
 
+def test_a_demonstrations_picture_stands_over_the_program_until_it_is_let_go(flat, qt):
+    """The terminal has the keyboard and fills the screen; the picture is above it.
+
+    Both halves are the same predicament: the key that takes the next step is
+    pressed where the program is, and a window that gave way to the program
+    would leave nothing to look at while it was pressed.
+    """
+    from pyqtgraph.Qt import QtCore
+
+    on_top = QtCore.Qt.WindowType.WindowStaysOnTopHint
+    flat.present(demonstrating=True)
+    assert flat.windowFlags() & on_top
+    assert flat.testAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    # A second step is the same window again, and nothing flickers for it.
+    flat.present(demonstrating=True)
+    assert flat.windowFlags() & on_top
+    flat.release()
+    assert not flat.windowFlags() & on_top
+    assert not flat.testAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    # And a window nothing is waiting on is left exactly as it was.
+    flat.release()
+    assert not flat.windowFlags() & on_top
+
+
+def test_a_plot_of_ones_own_takes_the_keyboard_and_stays_among_the_others(flat, qt):
+    flat.present()
+    from pyqtgraph.Qt import QtCore
+
+    assert not flat.windowFlags() & QtCore.Qt.WindowType.WindowStaysOnTopHint
+    assert not flat.testAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+
 def test_a_parametric_plot_draws_at_once_over_one_turn(flat):
     plot = _plot("[SIN(t), COS(t)]", PlotKind.PARAMETRIC, ("t",))
     plot = flat.add(plot)
@@ -1933,6 +1965,17 @@ def deep(space):
     window.close()
 
 
+def test_a_solid_demonstration_stands_over_the_program_too(deep, qt):
+    """A gallery of surfaces is watched the same way one of curves is."""
+    from pyqtgraph.Qt import QtCore
+
+    on_top = QtCore.Qt.WindowType.WindowStaysOnTopHint
+    deep.present(demonstrating=True)
+    assert deep.windowFlags() & on_top
+    deep.release()
+    assert not deep.windowFlags() & on_top
+
+
 def test_the_domain_fields_read_expressions(deep):
     surface = Surface(
         worksheet=1,
@@ -2480,6 +2523,16 @@ def test_a_demonstrations_step_is_shown_without_taking_the_keyboard(registry):
     assert shown.presented == 2 and shown.quietly
 
 
+def test_a_demonstration_that_is_over_lets_every_window_go(registry):
+    """A gallery of curves and surfaces fills two, and both were kept in front."""
+    registry.add(_landing("SIN(x)", "#1", demonstrating=True))
+    registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW, demonstrating=True))
+    assert all(window.demonstrating for window in registry.windows.values())
+    registry.handle(plots.Release(), lambda reply: None)
+    assert not any(window.demonstrating for window in registry.windows.values())
+    assert all(window.released == 1 for window in registry.windows.values())
+
+
 def test_touching_a_window_makes_it_the_receiver(registry):
     one = registry.add(_landing("SIN(x)", "#1")).window
     two = registry.add(_landing("COS(x)", "#2", window=plots.Where.NEW)).window
@@ -2858,6 +2911,9 @@ class Answering:
         #: one and sends it in front of the next request; what the app is
         #: responsible for is handing it over at all.
         self.preferences = []
+        #: How many times the app has said that a demonstration is over, so its
+        #: window need not stay in front of the terminal any more.
+        self.released = 0
 
     def _answer(self, request):
         self.sent.append(request)
@@ -2874,6 +2930,9 @@ class Answering:
 
     def prefer(self, preferences):
         self.preferences.append(preferences)
+
+    def release(self):
+        self.released += 1
 
     def shutdown(self):
         pass
@@ -3063,7 +3122,7 @@ async def test_a_gallery_draws_one_step_at_a_time(app, gallery):
         assert band(app) == [" A spike:"]
         # The picture is the answer, so the line says what a demonstration's
         # line says rather than what a Plot command's does.
-        assert message(app) == "Press any key to continue"
+        assert message(app) == "Press any key to continue, ESC to stop"
         request = app.plots.sent[0]
         assert request.label == "#1"
         assert request.kind is PlotKind.CURVE
@@ -3077,6 +3136,62 @@ async def test_a_gallery_draws_one_step_at_a_time(app, gallery):
         await pilot.press("space")
         assert band(app)[0].startswith(" COMMAND:")
         assert message(app) == "Enter option"
+
+
+async def test_a_gallery_lets_its_window_go_however_it_ended(app, gallery):
+    """The picture stands over the terminal only while a key is owed it."""
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        assert app.plots.released == 0
+        await pilot.press("escape")
+        assert app.plots.released == 1
+        # And again where it ends by running out rather than by Esc.
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        await pilot.press("space", "space")
+        assert app.plots.released == 2
+
+
+async def test_a_script_has_no_window_to_let_go_of(app, tmp_path):
+    """Nothing is sent where nothing was drawn: a host would have to start."""
+    path = tmp_path / "show.dmo"
+    path.write_text("; adds two numbers\n2 + 3\n")
+    async with app.run_test() as pilot:
+        app.demonstrate(str(path))
+        await pilot.pause()
+        await pilot.press("space")
+        assert app.plots.released == 0
+
+
+async def test_a_window_closed_under_a_step_does_not_step_it(app, gallery):
+    """Closing a window must not answer it with another one.
+
+    The click that closes a plot window gives this window the keyboard back,
+    and most desktops hand that click through to the program underneath - where
+    a demonstration would take it for the cue to draw the next picture. The
+    window's own report of its closing is what tells the two apart.
+    """
+    async with app.run_test() as pilot:
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        app._plot_event(plots.Closed(1))
+        await pilot.click(content(app), offset=(2, 0))
+        assert band(app) == [" A spike:"]
+        assert len(app.plots.sent) == 1
+        # And the next click is the user's own again.
+        await pilot.click(content(app), offset=(2, 0))
+        assert band(app) == [" A saddle:"]
+
+
+async def test_a_window_closed_with_no_demonstration_waiting_is_nothing(app, gallery):
+    """A click after it is a click: only a demonstration is owed one."""
+    async with app.run_test() as pilot:
+        app._plot_event(plots.Closed(1))
+        app.demonstrate(str(gallery), plotting=True)
+        await pilot.pause()
+        await pilot.click(content(app), offset=(2, 0))
+        assert band(app) == [" A saddle:"]
 
 
 async def test_a_gallery_step_is_the_only_picture_the_window_keeps(app, gallery):

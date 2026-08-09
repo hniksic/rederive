@@ -43,6 +43,7 @@ __all__ = [
     "Prefer",
     "Preferred",
     "Refused",
+    "Release",
     "Reply",
     "Request",
     "Shutdown",
@@ -299,11 +300,28 @@ class Prefer:
 
 
 @dataclass(frozen=True)
+class Release:
+    """The demonstration is over: no window need stay in front for it any more.
+
+    A step of a gallery arrives with `demonstrating` set and is left above the
+    other windows, the program that is waiting for the next key being a
+    terminal that would otherwise bury the picture the moment it was touched.
+    That has to end when the demonstration does, and only the app knows when
+    that is - a demonstration ends on a key, on Esc, on a step that refused, or
+    on the last step there was.
+
+    Sent to a host that is running and to no other: a demonstration that opened
+    no window has nothing to release, and starting a host to tell it so would
+    open a toolkit to say nothing.
+    """
+
+
+@dataclass(frozen=True)
 class Shutdown:
     """Close every window and end the host, which is what leaving the app is."""
 
 
-Request = Add | Describe | Prefer | Shutdown
+Request = Add | Describe | Prefer | Release | Shutdown
 
 
 # -- replies ------------------------------------------------------------------

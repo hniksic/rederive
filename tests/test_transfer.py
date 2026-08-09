@@ -7,6 +7,11 @@ differs on purpose - it says so when a line of a file will not parse - the test
 that pins the difference says why.
 """
 
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 from screen import (
     annotation,
@@ -23,8 +28,10 @@ from screen import (
     text_of,
 )
 
+from rederive import fetch
 from rederive.model import worksheet
 from rederive.model.session import Session
+from rederive.platform.desktop import DesktopStorage
 from rederive.syntax import LANGUAGES
 from rederive.ui import menu as menus
 from rederive.ui.app import RederiveApp
@@ -1248,13 +1255,13 @@ def demo(tmp_path):
 
 async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo):
     async with app.run_test() as pilot:
-        await pilot.press("t", "d")
-        assert prompt(app) == ("TRANSFER DEMO file:", "")
+        await pilot.press("t", "d", "o")
+        assert prompt(app) == ("TRANSFER DEMO OTHER file:", "")
         assert message(app) == "Enter filename (TAB completes, opens the list)"
         await pilot.press(*demo.name, "enter")
         # The comment takes the band the menu was on, and it waits there.
         assert band(app) == [" adds two numbers"]
-        assert message(app) == "Press any key to continue"
+        assert message(app) == "Press any key to continue, ESC to stop"
         assert entries(app) == ["2+3", "5"]
         await pilot.press("space")
         assert band(app) == [" and a symbolic one"]
@@ -1267,21 +1274,21 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
 
 async def test_escape_suspends_a_demonstration_where_it_stands(app, demo):
     async with app.run_test() as pilot:
-        await pilot.press("t", "d", *demo.name, "enter")
+        await pilot.press("t", "d", "o", *demo.name, "enter")
         await pilot.press("escape")
         assert band(app)[0].startswith(" COMMAND:")
         # Free to do anything, and naming the same file picks it up again.
         await pilot.press("a", *"z", "enter")
-        await pilot.press("t", "d", *demo.name, "enter")
+        await pilot.press("t", "d", "o", *demo.name, "enter")
         assert band(app) == [" and a symbolic one"]
         assert entries(app) == ["2+3", "5", "z", "(x+1)^2", "(x + 1)^2"]
 
 
 async def test_a_demonstration_that_has_run_out_starts_over(app, demo):
     async with app.run_test() as pilot:
-        await pilot.press("t", "d", *demo.name, "enter")
+        await pilot.press("t", "d", "o", *demo.name, "enter")
         await pilot.press("space", "space")
-        await pilot.press("t", "d", *demo.name, "enter")
+        await pilot.press("t", "d", "o", *demo.name, "enter")
         assert band(app) == [" adds two numbers"]
 
 
@@ -1303,9 +1310,153 @@ async def test_a_demonstration_can_start_from_anywhere_on_the_screen(app, demo):
 
 async def test_a_demonstration_file_that_is_nothing_leaves_the_line_up(app):
     async with app.run_test() as pilot:
-        await pilot.press("t", "d", *"nothing.dmo", "enter")
+        await pilot.press("t", "d", "o", *"nothing.dmo", "enter")
         assert message(app) == "File not found"
-        assert prompt(app)[0] == "TRANSFER DEMO file:"
+        assert prompt(app)[0] == "TRANSFER DEMO OTHER file:"
+
+
+# -- the original's own demonstrations ----------------------------------------
+#
+# The one place the desktop departs from the original's Transfer menu: Derive
+# asked for a file name because the demonstrations were on the diskette it was
+# started from, and here they have to be named before they can be had. The
+# download itself is `test_demos`; what is asked here is the menu in front of
+# it, and that a file which arrives is run and kept.
+
+
+SHOW = b"; adds two numbers\r\n2 + 3\r\n\x1a"
+
+
+@pytest.fixture
+def downloaded(monkeypatch):
+    """What comes over the wire, and a record of what was asked of the wire."""
+    asked = []
+
+    def fetched(demo, keep=None):
+        asked.append(demo.file)
+        if isinstance(brought.get(demo.file, SHOW), OSError):
+            raise brought[demo.file]
+        for file, data in also.items():
+            keep(file, data)
+        return brought.get(demo.file, SHOW)
+
+    brought: dict[str, object] = {}
+    also: dict[str, bytes] = {}
+    monkeypatch.setattr(fetch, "fetched", fetched)
+    return SimpleNamespace(asked=asked, brought=brought, also=also)
+
+
+async def settled(pilot, condition, patience=2.0):
+    """Wait for the download's task, which runs off the loop."""
+    deadline = time.monotonic() + patience
+    while time.monotonic() < deadline and not condition():
+        await pilot.pause(0.002)
+    return condition()
+
+
+async def test_the_demonstrations_are_offered_as_a_menu_of_their_own(app):
+    """Nine words and the original's own command, which is `Other`."""
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d")
+        assert band(app) == [
+            " TRANSFER DEMO: Arithmetic alGebra Trigonometry Functions Calculus Matrices",
+            "                2D-plots Parametric 3D-plots Other",
+        ]
+        assert highlighted(app) == "Arithmetic"
+        # Every word answers to a letter of its own, the galleries to a digit.
+        words = menus.TRANSFER_DEMO.words
+        assert len({mnemonic(word) for word in words}) == len(words)
+
+
+async def test_a_demonstration_that_is_not_here_is_downloaded_and_kept(
+    app, downloaded
+):
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "a")
+        assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
+        assert entries(app) == ["2+3", "5"]
+        # Kept under the name the original gave it, so it is a file like any
+        # other from now on and nothing is downloaded twice.
+        assert downloaded.asked == ["ARITH.DMO"]
+        kept = worksheet.demonstration(Path("ARITH.DMO"))
+        assert kept == (("adds two numbers", "2 + 3"),)
+
+
+async def test_a_demonstration_that_is_here_is_not_downloaded_again(app, downloaded):
+    Path("ARITH.DMO").write_text("; already here\n1 + 1\n")
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "a")
+        assert band(app) == [" already here"]
+        assert downloaded.asked == []
+
+
+async def test_the_files_the_diskette_brought_with_it_are_kept_too(app, downloaded):
+    downloaded.also["TRIG.DMO"] = b"; the sine\r\nSIN(0)\r\n\x1a"
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "a")
+        assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
+        assert Path("TRIG.DMO").exists()
+        # And the one that was kept without being run is run without a download.
+        await pilot.press("space", "t", "d", "t")
+        assert band(app) == [" the sine"]
+        assert downloaded.asked == ["ARITH.DMO"]
+
+
+async def test_a_demonstration_that_will_not_come_says_so_and_leaves_the_menu(
+    app, downloaded
+):
+    downloaded.brought["ARITH.DMO"] = OSError("the server said 503")
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "a")
+        assert await settled(pilot, lambda: "503" in message(app))
+        assert message(app) == "ARITH.DMO could not be downloaded: the server said 503"
+        # Still on the menu, so the next one is one keystroke away.
+        assert band(app)[0].startswith(" TRANSFER DEMO:")
+
+
+async def test_a_second_demonstration_waits_for_the_one_on_its_way(app, monkeypatch):
+    holding = threading.Event()
+
+    def fetched(demo, keep=None):
+        holding.wait(2.0)
+        return SHOW
+
+    monkeypatch.setattr(fetch, "fetched", fetched)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "a")
+        assert message(app) == "Fetching ARITH.DMO from the Internet Archive..."
+        await pilot.press("t", "d", "g")
+        assert message(app) == (
+            "ARITH.DMO is still on its way; the next one can be asked for after"
+        )
+        holding.set()
+        assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
+        assert not Path("ALGEBRA.DMO").exists()
+
+
+async def test_a_directory_that_will_not_take_the_file_still_runs_it(
+    app, downloaded, monkeypatch
+):
+    """A demonstration is worth more than the sparing of the second download."""
+    monkeypatch.setattr(
+        DesktopStorage, "write", lambda *_: (_ for _ in ()).throw(OSError("read-only"))
+    )
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "a")
+        assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
+        assert entries(app) == ["2+3", "5"]
+        assert not Path("ARITH.DMO").exists()
+
+
+async def test_a_gallery_is_refused_before_anything_is_downloaded(
+    app, downloaded, monkeypatch
+):
+    """What it demonstrates is a plot window, and there is no window to be had."""
+    monkeypatch.setattr("rederive.ui.app.available", lambda: False)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "3")
+        assert message(app) == "Plot: needs a graphical display"
+        assert downloaded.asked == []
 
 
 def test_a_demonstration_is_its_comments_and_the_lines_under_them(tmp_path):

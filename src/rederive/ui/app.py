@@ -166,6 +166,7 @@ and the command simplifies what it built instead of appending it, which is what
 
 from __future__ import annotations
 
+import asyncio
 import re
 import threading
 import time
@@ -190,6 +191,7 @@ from textual.widgets.input import Selection
 from rederive import __version__, platform
 from rederive.engine.client import Amount, EngineAborted
 from rederive.model import building, state, windows, worksheet
+from rederive.model import demos as catalogue
 from rederive.model import help as helps
 from rederive.model import session as sessions
 from rederive.model.expr import Node
@@ -557,7 +559,7 @@ MERGE_PROMPT = " TRANSFER MERGE file: "
 SAVE_PROMPT = " TRANSFER SAVE DERIVE file: "
 SAVE_SOURCE_PROMPT = " TRANSFER SAVE {word} file: "
 SAVE_STATE_PROMPT = " TRANSFER SAVE STATE file: "
-DEMO_PROMPT = " TRANSFER DEMO file: "
+DEMO_PROMPT = " TRANSFER DEMO OTHER file: "
 ENTER_FILE = "Enter filename (TAB completes, opens the list)"
 #: What the message line says while that list is open, being the keys that are
 #: worth knowing there and are not the ones the line itself already answers.
@@ -573,8 +575,23 @@ UNREADABLE = "{count} expression{s} could not be read"
 UNSET = "{count} setting{s} could not be read"
 #: What the state prompts offer when nothing has been read or written yet.
 STATE_FILE = "rederive.ini"
-#: What the message line says between two steps of a demonstration.
-PRESS_ANY_KEY = "Press any key to continue"
+#: What the message line says between two steps of a demonstration. Esc is
+#: named because a demonstration is the one thing in the program that goes on
+#: taking the screen by itself, and nobody watching one should have to wonder
+#: whether they are in it until the last step.
+PRESS_ANY_KEY = "Press any key to continue, ESC to stop"
+
+#: What it says while one of the original's demonstrations is on its way. The
+#: name is the file's rather than the menu's word: what is being waited for is
+#: a file, and it is the name the demonstration answers to afterwards.
+FETCHING = "Fetching {name} from the Internet Archive..."
+#: And when it does not arrive. Every road was tried before this is said, so
+#: what it carries is the refusal of the one that was meant to work.
+CANNOT_FETCH = "{name} could not be downloaded: {trouble}"
+#: What a second demonstration asked for over the first one's download is
+#: answered with. Two at once would be two screens racing for the same
+#: worksheet, and the one already asked for is the one on its way.
+STILL_FETCHING = "{name} is still on its way; the next one can be asked for after"
 
 #: The opening notice, standing across the pane until something else is drawn
 #: there. The original filled its screen with a version, an address, a fax
@@ -588,8 +605,10 @@ GREETING = (
     "",
     f"Version {__version__}",
 )
-#: The line the notice stands at the foot of the pane, away from the name.
-GREETING_FOOTER = "Press H for help"
+#: The line the notice stands at the foot of the pane, away from the name. Two
+#: keystrokes rather than one: the original's own tour of itself is three keys
+#: away, and nothing else on the screen would ever say so.
+GREETING_FOOTER = "Press H for help, T D for demos"
 
 
 class FileNames(Suggester):
@@ -1106,6 +1125,16 @@ def _plot_reason(error: Exception) -> str:
     return str(error) or type(error).__name__
 
 
+def _appending(kept: list[tuple[str, bytes]]) -> Callable[[str, bytes], None]:
+    """A place for a download to put the files nobody asked for.
+
+    They arrive on the thread the download runs on, and a file is written from
+    the loop like everything else the program keeps, so what the thread is given
+    is a list rather than the writing itself.
+    """
+    return lambda file, data: kept.append((file, data))
+
+
 def _reported(outcome: Outcome) -> str:
     """What the message line says about a command that has finished."""
     error = outcome.error
@@ -1381,6 +1410,13 @@ class RederiveApp(App[None]):
         self.helping: Helping | None = None
         #: The demonstration under way, running or suspended.
         self.demo: Demonstration | None = None
+        #: The one being downloaded, or None while none is. One at a time: two
+        #: would be two demonstrations racing for the same worksheet.
+        self.fetching: str | None = None
+        #: Whether a plot window closed while the demonstration was waiting
+        #: over it, which is a click on its way here: closing a window gives
+        #: this one the keyboard back, and the click that closed it comes with.
+        self.closed_window = False
         #: How the message line names the computation now running, or None
         #: while none is.
         self.computing: str | None = None
@@ -1424,7 +1460,7 @@ class RederiveApp(App[None]):
             (menus.DECLARE, "Variable"): self._command_declare_variable,
             (menus.DECLARE, "Matrix"): self._command_declare_matrix,
             (menus.DECLARE, "vectoR"): self._command_declare_vector,
-            (menus.TRANSFER, "Demo"): self._command_demo,
+            (menus.TRANSFER_DEMO, menus.DEMO_OTHER): self._command_demo,
             (menus.TRANSFER, "Merge"): self._command_merge,
             (menus.TRANSFER_CLEAR, "All"): self._command_clear_all,
             (menus.TRANSFER_CLEAR, "Expressions"): self._command_clear_expressions,
@@ -1460,6 +1496,12 @@ class RederiveApp(App[None]):
         for language in LANGUAGES:
             self.commands[(menus.TRANSFER_SAVE, language.word)] = partial(
                 self._command_save_source, language
+            )
+        # And the nine demonstrations differ only in which file they run, so
+        # they are one command told which one off the catalogue.
+        for demonstration in catalogue.DEMOS:
+            self.commands[(menus.TRANSFER_DEMO, demonstration.word)] = partial(
+                self._command_demonstration, demonstration
             )
 
     # -- composition -------------------------------------------------------
@@ -2023,10 +2065,21 @@ class RederiveApp(App[None]):
         A computation under way answers none of them, as it answers no key but
         Esc, and a demonstration takes a click the way it takes any key: as the
         cue for the next step.
+
+        One click is not the user's own, and it is the one that arrives when a
+        demonstration's plot window has just been closed: the desktop hands the
+        keyboard back to this window, and most desktops hand the click that did
+        it straight through to the program underneath. Closing a window must
+        not step a demonstration - that would answer a window the user shut
+        with another one - so that click is dropped and the next one is taken
+        as any other is.
         """
         if self.mode == MODE_COMPUTE:
             return
         if self.mode == MODE_DEMO:
+            if self.closed_window:
+                self.closed_window = False
+                return
             self._demo_step()
             return
         widget = self._under(event)
@@ -4475,7 +4528,86 @@ class RederiveApp(App[None]):
     def _command_demo(self) -> None:
         self._ask_file(DEMO_PROMPT, self._demo, worksheet.DEMO_SUFFIX)
 
-    def demonstrate(self, name: str, plotting: bool = False) -> None:
+    def _command_demonstration(self, demo: catalogue.Demo) -> None:
+        """Run one of the original's own demonstrations, fetching it if need be.
+
+        The nine are files like any other once they are here, so one that is
+        here is simply run - by the name the original gave it, which is the name
+        it was kept under. What is different about them is only how the first
+        viewing gets its file.
+
+        A gallery is refused before anything is downloaded rather than after:
+        what it demonstrates is a plot window, and paying for a file to be told
+        there is no window to draw it in would be the wrong order.
+        """
+        if self.fetching is not None:
+            self._beep()
+            self._set_message(STILL_FETCHING.format(name=self.fetching))
+            return
+        if demo.plotting and not available():
+            self._plot_refused(UNAVAILABLE)
+            return
+        path = worksheet.reading(demo.file)
+        if platform.current().storage().exists(path):
+            self.demonstrate(demo.file, demo.plotting)
+            return
+        self.fetching = demo.file
+        self._set_message(FETCHING.format(name=demo.file))
+        self.run_worker(self._fetching(demo))
+
+    async def _fetching(self, demo: catalogue.Demo) -> None:
+        """Wait for a demonstration to come over the network, then run it.
+
+        On a task of its own, since a download is the one thing this program
+        does that can take a visible while: the loop goes on repainting, and the
+        menu stays up and readable under the message that says what is awaited.
+
+        The file is kept before it is run, so that the name works from then on -
+        `Transfer Demo` finds it, and so does `Transfer Load Derive` for a
+        gallery. A directory that will not take it is not worth stopping for:
+        the demonstration runs from the text in hand, and only the sparing of
+        the second download is lost.
+        """
+        # Imported here rather than at the top, because it is the import that
+        # costs: urllib carries http, email and ssl behind it, and a page - which
+        # downloads with the browser's own `fetch` and never comes this way -
+        # would otherwise pay for all of them to draw a menu.
+        from rederive import fetch
+
+        kept: list[tuple[str, bytes]] = []
+        try:
+            raw = await asyncio.to_thread(fetch.fetched, demo, _appending(kept))
+        except OSError as trouble:
+            self._beep()
+            self._set_message(CANNOT_FETCH.format(name=demo.file, trouble=trouble))
+            return
+        finally:
+            self.fetching = None
+        # The eight nobody asked for, where the whole diskette had to come over
+        # to bring the one that was asked for. They have been paid for already.
+        for file, data in kept:
+            self._keep_demonstration(file, data)
+        text = worksheet.decoded(raw)
+        self._keep_demonstration(demo.file, raw)
+        self.demonstrate(demo.file, demo.plotting, text)
+
+    def _keep_demonstration(self, file: str, raw: bytes) -> None:
+        """Write a downloaded demonstration out under its own name, if it can be.
+
+        Quietly where it cannot. What a failure costs is one more download the
+        next time this demonstration is asked for, and the screen it would be
+        reported on is about to belong to the demonstration itself.
+        """
+        try:
+            platform.current().storage().write(
+                worksheet.path_of(file), worksheet.decoded(raw)
+            )
+        except OSError:
+            pass
+
+    def demonstrate(
+        self, name: str, plotting: bool = False, text: str | None = None
+    ) -> None:
         """Run `name` as a demonstration, from wherever the program is.
 
         What the page's demo menu comes in by, which is a click and can land on
@@ -4496,9 +4628,11 @@ class RederiveApp(App[None]):
         if plotting and not available():
             self._plot_refused(UNAVAILABLE)
             return
-        self._demo(name, plotting)
+        self._demo(name, plotting, text)
 
-    def _demo(self, name: str, plotting: bool = False) -> None:
+    def _demo(
+        self, name: str, plotting: bool = False, text: str | None = None
+    ) -> None:
         """Start the demonstration in `name`, or pick up the suspended one.
 
         Naming the file a suspended demonstration came from resumes it where it
@@ -4508,12 +4642,20 @@ class RederiveApp(App[None]):
         `plotting` is what the file demonstrates: the original's plot galleries
         are scripts whose steps are pictures rather than answers, and the only
         difference between the two is what a step does once it is authored.
+
+        `text` is the file, for the one caller that has it already: a
+        demonstration just downloaded has its bytes in hand and may have failed
+        to be written anywhere, so what it runs is what came over the wire.
         """
         suffix = worksheet.SUFFIX if plotting else worksheet.DEMO_SUFFIX
         path = worksheet.reading(name, suffix)
         if self.demo is None or self.demo.path != path or self.demo.done:
             try:
-                steps = worksheet.demonstration(path)
+                steps = (
+                    worksheet.demonstration(path)
+                    if text is None
+                    else worksheet.steps_of(text)
+                )
             except FileNotFoundError:
                 self._refuse_file(FILE_NOT_FOUND)
                 return
@@ -4540,6 +4682,9 @@ class RederiveApp(App[None]):
         """
         demo = self.demo
         assert demo is not None
+        # A window closed under the step that has just been taken is not a
+        # click owed by the step about to be: the flag lives inside one wait.
+        self.closed_window = False
         while not demo.done:
             _, text = demo.steps[demo.at]
             demo.at += 1
@@ -4599,6 +4744,16 @@ class RederiveApp(App[None]):
         self._end_demo()
 
     def _end_demo(self, message: str = ENTER_OPTION) -> None:
+        """The demonstration has stopped, whichever of its four ways it stopped in.
+
+        A gallery's last picture is left on the screen, and is let go of here:
+        the window has been standing over this one so that a step could be
+        looked at while the key that replaces it was pressed, and with nothing
+        waiting on it any more it goes back to being a window like the others.
+        """
+        if self.demo is not None and self.demo.plotting:
+            self.plots.release()
+        self.closed_window = False
         self.mode = MODE_MENU
         self.query_one("#menu").display = True
         self._return_to_menu(message)
@@ -4764,16 +4919,22 @@ class RederiveApp(App[None]):
 
         Arrives on the event loop from the proxy's reader thread. A window the
         user closed is not worth a word - the user closed it and can see that
-        it is gone - but a curve that would not evaluate is exactly the silence
-        this design refuses to have, and a point sent home from a plot is the
-        one event that writes rather than prints.
+        it is gone - but it is worth remembering while a demonstration is
+        waiting, since the click that closed it is about to arrive here and is
+        not the cue it would look like. A curve that would not evaluate is
+        exactly the silence this design refuses to have, and a point sent home
+        from a plot is the one event that writes rather than prints.
 
         A sticky control moved in a plot window says nothing at all: the new
         values go into the settings store, which is where they outlive the
         host and where a state file finds them, and the settings watcher hands
         them back to the proxy for the host after this one.
         """
-        if isinstance(event, plots.Trouble):
+        if isinstance(event, plots.Closed):
+            # Said in `on_click`: the click that closed a demonstration's
+            # window is on its way here behind this, and is not a cue.
+            self.closed_window = self.mode == MODE_DEMO
+        elif isinstance(event, plots.Trouble):
             self._set_message(f"{PREFIX}{event.label}: {event.message}")
         elif isinstance(event, plots.Traced):
             self._plot_traced(event)

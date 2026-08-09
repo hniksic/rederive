@@ -65,7 +65,7 @@ async def test_the_opening_notice_stands_across_the_empty_pane(app):
             "R E D E R I V E",
             "A Mathematical Assistant",
             f"Version {__version__}",
-            "Press H for help",
+            "Press H for help, T D for demos",
         ]
         # Centred across the pane, and clear of the top of it and the bottom.
         width = app.query_one("#panes").size.width

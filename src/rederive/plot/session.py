@@ -192,6 +192,9 @@ class PlotSession:
             elif isinstance(request, protocol.Prefer):
                 self.prefer(request)
                 reply(protocol.Done())
+            elif isinstance(request, protocol.Release):
+                self.release()
+                reply(protocol.Done())
             elif isinstance(request, protocol.Shutdown):
                 reply(protocol.Done())
                 self.shutdown()
@@ -240,6 +243,16 @@ class PlotSession:
     def prefer(self, preferences: protocol.Prefer) -> None:
         """Remember what the next window and the next plot are to be built with."""
         self.preferences = preferences
+
+    def release(self) -> None:
+        """The demonstration is over: every window is an ordinary window again.
+
+        All of them rather than the one that was drawn into. A gallery of
+        surfaces and curves fills two windows, both of them were kept in front
+        as their steps landed, and what ended ended for both.
+        """
+        for window in self.windows.values():
+            window.release()
 
     def shutdown(self) -> None:
         """End the windows and whatever runs them: the app has gone."""

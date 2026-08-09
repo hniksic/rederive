@@ -177,7 +177,12 @@ def text_of(path: Path) -> str:
 
 
 def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
-    """The steps of a demonstration file: each comment with the line under it.
+    """The steps of the demonstration file at `path`. Raises, as reading does."""
+    return steps_of(text_of(path))
+
+
+def steps_of(text: str) -> tuple[tuple[str, str], ...]:
+    """The steps of a demonstration: each comment with the line under it.
 
     A demonstration file is a math file whose comments carry the script rather
     than an annotation, so it is read the same way and the comments are what is
@@ -188,8 +193,11 @@ def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
     original's plot galleries are scripts of that shape - a caption, then the
     expression it names - and they are demonstrations in everything but the
     extension they were given.
+
+    The text rather than the file, because a demonstration that has just been
+    downloaded is text before it is a file, and is to run whether or not the
+    directory it landed in would take it.
     """
-    text = text_of(path)
     comments = annotations_of(text)
     steps = []
     pending: list[str] = []

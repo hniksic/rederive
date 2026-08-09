@@ -412,7 +412,7 @@ Transfer      reading and writing files, and starting over
   Save           write a worksheet, settings or source code out
   Merge          read a worksheet in after the expressions already there
   Clear          throw expressions, functions or variables away
-  Demo           run a demonstration file, one step per keystroke
+  Demo           run one of the original's demonstrations, or one of your own
 
 Unremove      put back the last block Remove took out, asking where
 moVe          move a block of expressions elsewhere in the worksheet
@@ -436,6 +436,10 @@ files written for the original Derive can be read this way.
 
 Transfer Save writes a worksheet in this program's own format, and also writes
 a highlighted expression out as C, Python, Rust or Julia source.
+
+Transfer Demo lists the original Derive's own demonstrations. Those files are
+not Rederive's to ship, so the first viewing of one downloads it from the
+Internet Archive and keeps it in the working directory under its own name.
 
 Transfer Load Derive gallery reads the worksheet of captioned plots that comes
 with the program. Highlight a line, read its caption on the status line, and

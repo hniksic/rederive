@@ -15,16 +15,23 @@ of the two kinds of demonstration.
 The app is faked to the depth this code touches it, which is one question and
 one call. What a demonstration then *does* is the app's own, and is tested with
 a real app in `test_transfer` and `test_plot`.
+
+The desktop's half of the same seam is the last section: the roads a machine
+with sockets takes to the same nine files, over a `urlopen` that answers out of
+a table. The menu those come in by is `test_transfer` too.
 """
 
 import re
+import time
+import zipfile
 from functools import partial
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from fakepage import FakeTab, browser, jsnull
 
-from rederive import platform
+from rederive import fetch, platform
 from rederive.model import demos as catalogue
 from rederive.model import worksheet
 from rederive.platform.web import Web
@@ -281,3 +288,127 @@ def test_a_demonstration_asked_for_too_early_is_refused_in_words(page):
     # And nothing was kept: the file is downloaded again next time, which is
     # the next thing the user will do.
     assert not platform.current().storage().exists(Path("ALGEBRA.DMO"))
+
+
+# -- the desktop's own download -----------------------------------------------
+#
+# The other half of the seam `web/demos.js` is: what a machine with sockets does
+# when one of the nine is asked for and is not on the disk. Nothing here opens
+# one - `urlopen` is answered by a table of what each address holds - so what is
+# tested is the roads and the guards, which is all of this module that is not
+# the standard library.
+
+
+class Answer:
+    """What `urlopen` hands back, as much of it as this reads."""
+
+    def __init__(self, raw: bytes) -> None:
+        self.raw = raw
+
+    def read(self, size: int = -1) -> bytes:
+        return self.raw if size < 0 else self.raw[:size]
+
+    def __enter__(self) -> "Answer":
+        return self
+
+    def __exit__(self, *_: object) -> bool:
+        return False
+
+
+def serving(held, slow=()):
+    """An answering `urlopen`: `held` by address, an OSError where there is none.
+
+    An address in `slow` answers after a moment, which is how a race is put the
+    way round a test wants it.
+    """
+
+    def opened(url, timeout=None):
+        if url in slow:
+            time.sleep(0.05)
+        if url not in held:
+            raise OSError(f"the server said 503: {url}")
+        return Answer(held[url])
+
+    return opened
+
+
+def diskette(files):
+    """A zip of the shape the archive holds, its names inside a directory."""
+    raw = BytesIO()
+    with zipfile.ZipFile(raw, "w") as image:
+        for name, data in files.items():
+            image.writestr(f"DERIVE_3.14/{name}", data)
+    return raw.getvalue()
+
+
+@pytest.fixture
+def arith():
+    return catalogue.named("ARITH.DMO")
+
+
+def test_the_first_source_to_answer_is_the_one_the_file_comes_off(
+    monkeypatch, arith
+):
+    """Both are asked at once, so the slow one costs nothing while the other is up."""
+    first, second = arith.urls
+    monkeypatch.setattr(fetch, "urlopen", serving({second: SCRIPT}, slow=[first]))
+    assert fetch.fetched(arith) == SCRIPT
+
+
+def test_a_source_that_refuses_is_passed_over_for_one_that_does_not(
+    monkeypatch, arith
+):
+    monkeypatch.setattr(fetch, "urlopen", serving({arith.urls[1]: SCRIPT}))
+    assert fetch.fetched(arith) == SCRIPT
+
+
+@pytest.mark.parametrize(
+    "answered",
+    [b"", b"<html>the archive is sorry</html>", b"x" * (fetch.LARGEST_FILE + 1)],
+    ids=["nothing", "an apology", "something far too big"],
+)
+def test_what_comes_back_has_to_be_a_file_of_the_originals(
+    monkeypatch, arith, answered
+):
+    """A relay answers its own error page with a 200, so the status says little."""
+    held = dict.fromkeys(arith.urls, answered)
+    monkeypatch.setattr(fetch, "urlopen", serving(held))
+    with pytest.raises(OSError, match="not a file of the original"):
+        fetch.fetched(arith)
+
+
+def test_the_whole_diskette_is_the_road_left_when_neither_source_opens_one(
+    monkeypatch, arith
+):
+    """One piece of machinery opens both images, so both shut at once."""
+    image = diskette({demo.file: SCRIPT for demo in catalogue.DEMOS})
+    monkeypatch.setattr(fetch, "urlopen", serving({catalogue.IMAGE: image}))
+    assert fetch.fetched(arith) == SCRIPT
+
+
+def test_the_diskette_hands_over_the_eight_nobody_asked_for(monkeypatch, arith):
+    """They have been paid for, so none of them is ever downloaded again."""
+    image = diskette({demo.file: SCRIPT for demo in catalogue.DEMOS})
+    monkeypatch.setattr(fetch, "urlopen", serving({catalogue.IMAGE: image}))
+    kept = {}
+    fetch.fetched(arith, lambda file, data: kept.update({file: data}))
+    assert sorted(kept) == sorted(
+        demo.file for demo in catalogue.DEMOS if demo.file != arith.file
+    )
+
+
+def test_the_archives_refusal_is_the_one_reported_when_no_road_is_open(
+    monkeypatch, arith
+):
+    """The first road is the one that was meant to work, so it is the one read."""
+    monkeypatch.setattr(fetch, "urlopen", serving({}))
+    with pytest.raises(OSError, match="the server said 503"):
+        fetch.fetched(arith)
+
+
+def test_a_diskette_that_will_not_open_leaves_the_archives_refusal_standing(
+    monkeypatch, arith
+):
+    monkeypatch.setattr(fetch, "urlopen", serving({catalogue.IMAGE: b"not a zip"}))
+    with pytest.raises(OSError, match="the server said 503"):
+        fetch.fetched(arith)
