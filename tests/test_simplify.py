@@ -2247,6 +2247,32 @@ def test_a_conditional_answer_keeps_the_test_that_qualifies_it():
     )
 
 
+def test_a_test_holding_a_calculus_head_is_worked_out_before_it_is_asked():
+    """`DIF(u, x)` is how ODE1.MTH asks whether `u` depends on `x`.
+
+    Read as the comparison with zero that a test with no relation in it is, an
+    unevaluated `Derivative` decides nothing, and a four-argument `IF` would go
+    straight to its unknown clause where Derive answers. So the heads in a test
+    are taken first: the answer is the derivative and not the `Derivative`.
+    """
+    assert simp("IF(DIF(y, x), 1, 2, 3)") == "1"
+    assert simp("IF(DIF(x, x), 1, 2, 3)") == "2"
+    assert simp("IF(DIF((DIF(x^2 + 1, x) - DIF(2*x*y, y))/(2*x*y), x), 1, 2, 3)") == "1"
+
+
+def test_an_assignment_in_a_test_is_performed_and_read_back_in_the_branches():
+    """`IF("no" = a := u, ..., a, a)` is how ODE1.MTH's `DSOLVE1` is written.
+
+    The assignment happens where the test is evaluated, and the name it assigns
+    stands for the value in the branches that come after it - which is what lets
+    one method be tried once and its answer read back out. A branch that assigns
+    the name again binds only within itself, since only one branch is ever taken.
+    """
+    assert simp('IF("no" = a_ := 2 + 3, 1, a_, a_)') == "5"
+    assert simp('IF("no" = a_ := "no", a_, 2, 2)') == '"no"'
+    assert simp('IF(1 = a_ := 1, IF(2 = b_ := 2 + 3, 0, b_, b_), a_, a_)') == "5"
+
+
 #: What an undecidable four-argument `IF` leaves standing where the rest of the
 #: pipeline expects an expression: the unknown clause is whatever was written.
 #: Both shapes reach the gated rewrites, and both are in Derive's own utility

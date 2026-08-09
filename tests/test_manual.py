@@ -284,14 +284,17 @@ NOT_YET_HELD = {
     # variable `xk` lexes as `x*k` under Character input, so ITERATES is handed a
     # product where a variable belongs.
     "test_newtons_finds_the_manuals_nonlinear_solution",
-    # Two gaps, both in what ODE1.MTH's own definitions need. A four-argument
-    # `IF` decides its test before the calculus pass runs, so `IF(DIF(u, x), ...)`
-    # - how the file asks whether an expression depends on a variable - is
-    # undecidable where Derive answers it. And an assignment written inside a
-    # function body is performed when the body is defined rather than when the
-    # call is made, so loading the file leaves `a_` standing for
-    # `SEP(p, q, x, y, x0, y0)` with the parameters unwritten - and `a_` is where
-    # DSOLVE1 reads its answer back out of.
+    # The equation is solved: `DSOLVE1` answers the manual's `x^2*y + y - 1 = 0`.
+    # What is left is the line after it, where the initial condition is written
+    # into that solution and the manual says to "see that it simplifies to 0=0".
+    # The engine answers `true`, and section 10.3 says why the manual expects
+    # otherwise: "when a relation is simplified, its two sides are simplified
+    # independently and DERIVE makes no attempt to determine the truth or
+    # falsehood of the relation", only the test of an `IF` being decided. The
+    # original decides a bare relation all the same, which is what
+    # `test_simplify`'s `test_a_relation_that_decides_is_decided_and_one_that_
+    # does_not_stands` records and what the engine follows. The page and the
+    # program disagree and no one rule gives both.
     "test_the_first_order_equation_the_manual_solves",
     # `LIM(u, x, a)` where `a` holds `x` is no limit - nothing approaches a
     # moving point - and the file means the substitution: `LIM((x*v - y)^2, y,

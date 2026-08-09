@@ -737,6 +737,7 @@ def _resolved(
             settled = _cases(head, context)
             return freeze(settled) if isinstance(settled, sp.Piecewise) else settled
         test, *branches = head.args
+        test, branches = _performed(test, branches)
         decided = _decide(test, context)
         if not branches:
             # A test and nothing else is that test as a number, one or zero.
@@ -755,6 +756,48 @@ def _resolved(
         return expression.replace(is_conditional, resolve, simultaneous=False)
     except Exception:
         return expression
+
+
+def _performed(
+    test: sp.Basic, branches: list[sp.Basic]
+) -> tuple[sp.Basic, list[sp.Basic]]:
+    """A test that assigns, carried out over the branches it guards.
+
+    The value stands where the assignment did, and the name it assigns stands
+    for that value in every branch.
+
+    An assignment written inside an expression is Derive's way of computing
+    something once and reading it back where the answer belongs. ODE1.MTH's
+    `DSOLVE1` is built out of them: `IF("inapplicable" = a_ := SEP(...), ...,
+    a_, a_)` tries a method, asks whether it declined, and answers with what it
+    found. The assignment happens when the test is evaluated, which is here, and
+    the branches are what comes after it.
+
+    A branch is the only place the name is written in. What a branch of its own
+    assigns is that branch's business - only one of them is ever taken - so a
+    nested conditional, which `replace` reaches first, binds its own name before
+    this one writes anything in.
+    """
+    if not test.has(Assign):
+        return test, branches
+    written: dict[sp.Basic, sp.Basic] = {}
+
+    def perform(found: sp.Basic) -> sp.Basic:
+        target, _operator, *values = found.args
+        if not values or not isinstance(target, sp.Symbol):
+            return found
+        written[target] = values[-1]
+        return values[-1]
+
+    try:
+        performed = test.replace(
+            lambda found: isinstance(found, Assign), perform, simultaneous=False
+        )
+    except Exception:
+        return test, branches
+    if not written:
+        return test, branches
+    return performed, [branch.xreplace(written) for branch in branches]
 
 
 def _placeholder(head: sp.Basic, index: int) -> sp.Basic:
@@ -864,7 +907,16 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
     A test that is no relation at all is a comparison with zero written short,
     the same reading the conversion gives one, so that the inert four-argument
     `IF` decides its test by the rule the rest of them do.
+
+    A test holding a calculus head is worked out before it is asked, since a
+    head standing unevaluated decides nothing: `DIF(u, x)` is how ODE1.MTH asks
+    whether `u` depends on `x`, and the answer is the derivative and not the
+    `Derivative`. The heads are taken here rather than left to the pass that
+    takes the rest, because deciding is what chooses which branch that pass
+    ever sees.
     """
+    if test.has(*_CALCULUS):
+        test = _calculus(test, context)
     test = as_condition(test)
     for candidate in _truths(test, context):
         if candidate is sp.true:

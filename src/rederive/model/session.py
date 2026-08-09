@@ -565,13 +565,19 @@ class Session:
         in the tree and nowhere else, so this is what carries `x := 5` to the
         next command. A setting is not a variable: `Notation := Mixed` defines
         nothing, and the declarations say which names those are.
+
+        A function body defines nothing by being written down. `DSOLVE1(p, q,
+        x, y, x0, y0, a_) := IF("inapplicable" = a_ := ..., ...)` assigns `a_`
+        every time it is called and never when it is defined, so the walk stops
+        at a body: taking the assignment here would leave `a_` standing for the
+        body's own call with the parameters unwritten.
         """
         settings = {
             declaration.setting
             for declaration in declarations
             if isinstance(declaration, SettingDeclaration)
         }
-        for found in _subtrees(node):
+        for found in _defining(node):
             match found.kind:
                 case Kind.ASSIGN:
                     self._assigned(found, settings)
@@ -2212,3 +2218,17 @@ def _subtrees(node: Node) -> Iterator[Node]:
     yield node
     for child in node.children:
         yield from _subtrees(child)
+
+
+def _defining(node: Node) -> Iterator[Node]:
+    """`node` and everything under it that a line defines something by holding.
+
+    Everywhere `_subtrees` goes except inside a function body, which is a
+    recipe and not a line: what it assigns is assigned when the function is
+    called.
+    """
+    yield node
+    if node.kind is Kind.FUNDEF:
+        return
+    for child in node.children:
+        yield from _defining(child)

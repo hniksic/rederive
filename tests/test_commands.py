@@ -160,6 +160,19 @@ async def test_every_definition_on_a_line_is_recorded(session):
     assert (await session.simplify("#2")).text == "6"
 
 
+async def test_an_assignment_in_a_body_is_made_when_the_function_is_called(session):
+    """A body is a recipe and not a line, which is what ODE1.MTH's `DSOLVE1`
+    needs: it assigns a scratch parameter in its own test and reads the answer
+    back out of it in its branches. Taking the assignment where the definition
+    was written would leave that name standing for the body's own call with the
+    parameters unwritten, and every later use of the function would read it.
+    """
+    session.author("F(u, a_) := IF(0 = a_ := u^2 - 1, 1, a_, a_)")
+    assert session.assignments == {}
+    session.author("F(3)")
+    assert (await session.simplify("#2")).text == "8"
+
+
 def test_a_setting_is_not_a_variable(session):
     session.author("Notation := Mixed")
     assert session.assignments == {}
