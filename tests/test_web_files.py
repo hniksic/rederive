@@ -116,7 +116,7 @@ def test_a_file_handed_over_is_kept_and_never_sent_back_out(storage, page):
 def test_a_file_on_the_filesystem_is_read_when_the_store_has_none(storage, tmp_path):
     """The store first and MEMFS behind it, for a path that names something real."""
     on_disk = tmp_path / "ondisk.mth"
-    on_disk.write_text("x + 1\n", encoding="utf-8")
+    on_disk.write_text("x + 1\n", encoding="utf-8", newline="\n")
     assert storage.exists(on_disk)
     assert storage.read(on_disk) == b"x + 1\n"
 
