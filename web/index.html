@@ -49,6 +49,21 @@
     font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
   }
   #chrome:hover, #chrome:focus-within { opacity: 1; }
+  /* Three of these controls are the program's and one is the page's own. The
+     program's do nothing at all until it has drawn its screen, and nothing
+     again once it has ended, so they stand only while it is running rather than
+     inviting a click that can only be answered with an excuse. Which ones those
+     are is said in the markup, once per control; the link to the source is good
+     whatever the tab is doing. */
+  #chrome:not(.running) [data-program] { display: none; }
+  /* A control with something under it, and the box that something is positioned
+     against: a menu hangs off the control it belongs to rather than off a corner
+     of the row, so that adding or reordering controls cannot leave it pointing
+     at the wrong one. */
+  #chrome .control {
+    position: relative;
+    display: flex;
+  }
   /* One of these is an anchor rather than a button, since where it goes is an
      address and a browser has its own ways of following one. It is dressed as
      its neighbours so that the row reads as a row. */
@@ -72,13 +87,14 @@
     #chrome { opacity: 1; }
     #chrome button, #chrome a { padding: 8px 14px; }
   }
-  /* The demonstrations on offer, under the button that offers them. Inside
-     `#chrome` so that a pointer on the menu is a pointer on the controls and
-     none of it fades while it is being read. */
+  /* The demonstrations on offer, under the button that offers them: the corner
+     of the button it hangs from, since it is a child of that button's control.
+     Inside `#chrome` so that a pointer on the menu is a pointer on the controls
+     and none of it fades while it is being read. */
   #gallery {
     position: absolute;
     top: 100%;
-    right: 0;
+    left: 0;
     margin-top: 6px;
     min-width: 15em;
     display: flex;
@@ -394,25 +410,36 @@
 <div id="screen"></div>
 <div id="panes"></div>
 <div id="chrome">
-  <button id="demo" type="button" aria-haspopup="true" aria-expanded="false"
-          title="Run one of the original Derive's own demonstrations">
-    Demos
-  </button>
-  <button id="pick" type="button" title="Bring a worksheet into this page">
+  <!-- The button and the menu it opens are one control, which is what keeps the
+       menu under the button: where it hangs is a fact about the pair rather
+       than a corner of the row measured by hand.
+
+       `data-program` is on the three controls that ask the program for
+       something, and they stand only while there is a program to ask. -->
+  <div class="control" data-program>
+    <button id="demo" type="button" aria-haspopup="true" aria-expanded="false"
+            title="Run one of the original Derive's own demonstrations">
+      Demos
+    </button>
+    <!-- Filled from the list in `demos.js`, which is the only place the
+         demonstrations are named. -->
+    <div id="gallery" hidden></div>
+  </div>
+  <button id="pick" type="button" data-program
+          title="Bring a worksheet into this page">
     Open file
   </button>
-  <button id="link" type="button" title="Put this worksheet in the address">
+  <button id="link" type="button" data-program
+          title="Put this worksheet in the address">
     Link
   </button>
   <!-- The one control that leaves the page, which is why it opens a tab of its
-       own rather than taking this one away from a running program. -->
+       own rather than taking this one away from a running program - and the one
+       that is worth a click whatever the tab is doing. -->
   <a id="source" href="https://github.com/hniksic/rederive" target="_blank"
      rel="noopener" title="Rederive's source on GitHub">
     GitHub
   </a>
-  <!-- Filled from the list in `demos.js`, which is the only place the
-       demonstrations are named. -->
-  <div id="gallery" hidden></div>
 </div>
 <!-- A file picker opens on a click and on nothing a program can do, which is
      why the input is here rather than made when it is wanted. `.mth` and its

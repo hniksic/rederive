@@ -34,6 +34,9 @@ import * as solids from './plot3d.js';
 
 const SCREEN = 'screen';
 const CHROME = 'chrome';
+// What the stylesheet reads to know there is a program behind the controls that
+// ask it for something. The markup says which controls those are.
+const RUNNING = 'running';
 const MANIFEST = 'manifest.json';
 
 // The title page, in the words the program opens with itself. What loads here
@@ -385,22 +388,33 @@ function spawn(manifest) {
   return worker;
 }
 
-// The keyboard belongs to the program, whatever on the page is pressed. A
+// The row of controls in the corner: the two things about it that are the
+// page's own rather than any one control's.
+//
+// **The keyboard belongs to the program, whatever on the page is pressed.** A
 // button or a link takes the focus when it is clicked, and the keystroke after
 // that would be the page's rather than the program's - a `q` that quits nothing
 // - so the press's default is cancelled, which leaves the focus in the terminal
 // and still delivers the click. One listener for the whole corner, since this
 // is true of every control in it and of the menu under one of them; what a
 // control does once it has been used stays its own module's business.
+//
+// **And most of them are the program's.** Which ones is marked in the markup;
+// all this holds is whether there is a program behind them, which is a fact
+// about the page and known here and nowhere else.
 function chrome() {
-  document
-    .getElementById(CHROME)
-    .addEventListener('mousedown', (event) => event.preventDefault());
+  const row = document.getElementById(CHROME);
+  row.addEventListener('mousedown', (event) => event.preventDefault());
+  return {
+    working(state) {
+      row.classList.toggle(RUNNING, state);
+    },
+  };
 }
 
 async function main() {
   const term = terminal();
-  chrome();
+  const corner = chrome();
   files.wire(term);
   demos.wire(term);
   plots.wire(term);
@@ -428,8 +442,15 @@ async function main() {
   pyodide.globals.set('FILES', files);
   pyodide.globals.set('DEMOS', demos);
   window.rederive = { term, pyodide, timings, plots, solids, files, demos };
+  // The first frame the program draws for itself, which is the moment there is
+  // something behind the controls that ask it for anything: by now Python has
+  // handed each of those modules what it does, and everything the corner offers
+  // is answerable. It is also where the wait is taken as over, and the two are
+  // the same instant rather than two guesses at it.
   term.onRender(() => {
-    if (timings.prompt === undefined) mark('prompt', started);
+    if (timings.prompt !== undefined) return;
+    mark('prompt', started);
+    corner.working(true);
   });
 
   // `run_async` and never `run`: there is one thread here and the loop is the
@@ -440,6 +461,7 @@ from rederive.web.boot import start
 await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES, DEMOS)
 `);
   mark('session', started);
+  corner.working(false);
   ending(term);
 }
 
