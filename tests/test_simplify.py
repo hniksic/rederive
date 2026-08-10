@@ -752,8 +752,9 @@ def test_a_numeric_power_that_is_complex_is_written_in_rectangular_form(text, ex
 CALCULUS = [
     ("DIF(SIN(a*x^2), x)", "2*a*x*COS(a*x^2)"),
     ("DIF(x^2, x, 2)", "2"),
-    # `F` was never given a body, so it differentiates symbolically.
-    ("DIF(F(x)^3, x)", "3*F(x)^2*DIF(F(x), x)"),
+    # `F` was never given a body, so it differentiates symbolically and the
+    # chain rule stops at the prime.
+    ("DIF(F(x)^3, x)", "3*F(x)^2*F'(x)"),
     ("INT(x*SIN(x), x)", "SIN(x) - x*COS(x)"),
     ("INT(1/x, x, 1, 2)", "LN(2)"),
     ("INT(1/x^2, x, 1, inf)", "1"),
@@ -889,11 +890,64 @@ def test_a_derivative_a_substitution_binds_is_not_evaluated():
     and the answer is the same on the second pass as on the first.
 
     The argument here is written as the substitution `LIM(F(y), y, 2*x - y)`
-    is, so the chain rule contributes the minus in front.
+    is, so the chain rule contributes the minus in front. A function of one
+    argument is a prime and a function of two is the substitution spelled out;
+    both hold the same thing and both come back as themselves.
     """
     once = simplify(parse("DIF(LIM(F(y), y, 2*x - y), y)"), Context())
-    assert once.text == "-SUBS(DIF(F(xi_1), xi_1), [xi_1], [2*x - y])"
+    assert once.text == "-F'(2*x - y)"
     assert simplify(once.node, Context()).text == once.text
+    two = simplify(parse("DIF(LIM(G(y, z), y, 2*x - y), y)"), Context())
+    assert two.text == "-SUBS(DIF(G(xi_1, z), xi_1), [xi_1], [2*x - y])"
+    assert simplify(two.node, Context()).text == two.text
+
+
+def test_the_derivative_of_an_undefined_function_is_written_with_primes():
+    """`BB'(r)`, which is what the original prints and what it reads back.
+
+    `DIF(BB(r), r)` says the same thing at twice the length, and that is the
+    whole of the case: a four by four matrix of Ricci components is readable in
+    primes and is not readable in `DIF`. One mark per order, and the mark is on
+    the function rather than on the call, so the point it is taken at is
+    whatever the chain rule left there.
+    """
+    assert simp("DIF(BB(r), r)") == "BB'(r)"
+    assert simp("DIF(BB(r), r, 3)") == "BB'''(r)"
+    assert simp("DIF(BB(r)^2, r)") == "2*BB'(r)*BB(r)"
+    assert simp("DIF(BB(r^2), r)") == "2*r*BB'(r^2)"
+    # And the notation reads back what it wrote, in either direction.
+    assert simp("BB''(r)") == "BB''(r)"
+    assert simp("DIF(BB'(r), r)") == "BB''(r)"
+    assert simp("INT(BB'(r), r)") == "BB(r)"
+
+
+def test_a_function_of_several_arguments_keeps_the_derivative_it_is_written_as():
+    """A prime says which order and not which argument.
+
+    The original prints `DIF(G(x, y), x)` for the slope in the first of two,
+    and so does this: `G'(x, y)` would be an answer that did not say what it
+    was the derivative with respect to. It is read on the way in, though, since
+    the original reads it - as the slope in the first argument, which is a
+    substitution wherever the first argument is not a variable of its own.
+    """
+    assert simp("DIF(G(x, y), x)") == "DIF(G(x, y), x)"
+    assert simp("G'(x, y)") == "DIF(G(x, y), x)"
+    assert simp("G'(x, x)") == "SUBS(DIF(G(xi, x), xi), [xi], [x])"
+
+
+def test_a_prime_differentiates_a_function_that_has_a_body():
+    """`F(r) := r^2` makes `F'` the doubling function, at whatever point.
+
+    Differentiated and then taken at the point, never the other way round:
+    `F'(r^2)` is twice `r^2` and not twice `r`, and substituting first would
+    give the second.
+    """
+    context = Context(functions={"F": (("r",), parse("r^2"))})
+    assert simp("F'(r)", context) == "2*r"
+    assert simp("F'(r^2)", context) == "2*r^2"
+    assert simp("F''(r)", context) == "2"
+    # A head the tables know is differentiated the same way.
+    assert simp("SIN'(x)") == "COS(x)"
 
 
 def test_a_conditional_whose_branches_are_vectors_simplifies_elementwise():

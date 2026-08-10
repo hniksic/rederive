@@ -401,6 +401,19 @@ f(x,y):=x+y    =>    (fundef F (params x y) (+ x y))
 SIN[x]    =>    (apply SIN (vec x))
 SIN{x}    =>    ERROR@3    # rejection confirmed; offset not machine-checked
 
+## Group: The derivative prime
+
+[state: InputMode=Word; CaseMode=Insensitive; InputBase=10]
+[declared: fun BB/1; fun CC/2]
+BB'(r)    =>    (call BB' r)
+BB''(r)    =>    (call BB'' r)
+BB'''(r)    =>    (call BB''' r)
+BB'(r^2)    =>    (call BB' (^ r 2))
+2BB'(r)    =>    (juxt 2 (call BB' r))
+CC'(u, v)    =>    (call CC' u v)
+DIF(BB'(r), r)    =>    (call DIF (call BB' r) r)
+INT(BB'(r), r)    =>    (call INT (call BB' r) r)
+
 ## Group: Bare (parenthesis-free) application
 
 [state: InputMode=Character; CaseMode=Insensitive; InputBase=10]
@@ -803,7 +816,6 @@ IF[n=0, 1, 2]    =>    (apply IF (vec (rel n = 0) 1 2))
 x == y    =>    ERROR@3    # rejection confirmed; offset not machine-checked
 1..10    =>    ERROR@2    # rejection confirmed; offset not machine-checked
 {1,...,10}    =>    ERROR@0    # rejection confirmed; offset not machine-checked
-F'(u)    =>    ERROR@1    # rejection confirmed; offset not machine-checked
 a \ b    =>    ERROR@2    # rejection confirmed; offset not machine-checked
 a && b    =>    ERROR@2    # rejection confirmed; offset not machine-checked
 $x    =>    ERROR@0    # rejection confirmed; offset not machine-checked

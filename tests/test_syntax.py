@@ -313,6 +313,46 @@ def test_authored_expressions_stay_inert():
     assert sexpr("2+3") == "(+ 2 3)"
 
 
+# -- the derivative prime ----------------------------------------------------
+#
+# `BB'(r)` is what the original prints for the derivative of a function nobody
+# defined, and what it reads back. The marks are part of the name, so the
+# grammar above knows nothing about them: what follows one is a call.
+
+
+def primed(text):
+    """`text` parsed with `BB` declared as a function of one argument."""
+    state = ParseState(input_mode=InputMode.WORD)
+    state.declare(FunctionDeclaration("BB", ("u",), has_body=False))
+    return sexpr(text, state)
+
+
+def test_a_prime_on_an_applied_function_is_part_of_its_name():
+    assert primed("BB'(r)") == "(call BB' r)"
+    assert primed("BB''(r)") == "(call BB'' r)"
+    assert primed("BB'(r^2)") == "(call BB' (^ r 2))"
+    assert primed("CC'(u, v)") == "(call CC' u v)"
+
+
+def test_a_prime_binds_no_tighter_than_the_call_it_is_part_of():
+    # An atom, so the product and the power around it read as they always did.
+    assert primed("2BB'(r)") == "(juxt 2 (call BB' r))"
+    assert primed("BB'(r)^2") == "(^ (call BB' r) 2)"
+
+
+@pytest.mark.parametrize("text", ["BB'", "BB' + 1", "BB '(r)", "b'(r)", "'(2 + 3)"])
+def test_an_apostrophe_that_derives_nothing_is_the_error_it_always_was(text):
+    """Three things make a prime, and anything else is no notation at all.
+
+    The marks have to touch the name, there has to be an argument list after
+    them, since a derivative is a function and not a value, and what carries
+    them has to be a name that could be applied at all. `b` is a letter here
+    and a letter is no function.
+    """
+    with pytest.raises(DeriveSyntaxError):
+        primed(text)
+
+
 # -- errors -----------------------------------------------------------------
 
 

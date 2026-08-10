@@ -46,7 +46,7 @@ from dataclasses import dataclass, field, replace
 from rederive.engine.context import Context
 from rederive.model.expr import Kind, Node
 from rederive.syntax import ParseState
-from rederive.syntax.names import BINDING_FUNCTIONS, BINDING_THROUGHOUT
+from rederive.syntax.names import BINDING_FUNCTIONS, BINDING_THROUGHOUT, PRIME_MARK
 
 __all__ = ["named_as_declared", "substitute"]
 
@@ -171,6 +171,9 @@ def _call(node: Node, scope: _Scope, context: Context) -> Node:
     if name in BINDING_FUNCTIONS:
         return _binding(node, arguments, scope, context)
     substituted = tuple(_walk(argument, scope, context) for argument in arguments)
+    derived = _derived(name, substituted, scope, context)
+    if derived is not None:
+        return derived
     definition = context.functions.get(name)
     if definition is None or name in scope.functions:
         return replace(node, children=(head, *substituted))
@@ -184,6 +187,54 @@ def _call(node: Node, scope: _Scope, context: Context) -> Node:
         labels=scope.labels,
     )
     return _walk(body, deeper, context)
+
+
+def _derived(
+    name: str, arguments: tuple[Node, ...], scope: _Scope, context: Context
+) -> Node | None:
+    """`F'(a)` where `F` is a definition: its body, derived and taken at `a`.
+
+    A prime is a derivative of the function and not of the call, so the body is
+    differentiated in its own first parameter and only then is the argument
+    written in - `F(r) := r^2` makes `F'(r^2)` twice `r^2` and not twice `r`.
+    Ordinary substitution cannot say that, since the point may mention the very
+    name being differentiated over, so the argument arrives as the point of a
+    limit. That is the original's own reading: what it prints for a derivative
+    it cannot take as a whole is `lim d/d@ F(@)` at the point.
+
+    The parameter is what the limit is taken over, which needs no name of its
+    own: it stands for itself inside the body, and the point outside the limit
+    is read in the caller's scope whether or not it is spelled the same.
+
+    None where there are no marks, or nothing defined under them. A function
+    nobody defined has no body to differentiate and stays the call it is, for
+    `to_sympy` to read as a derivative of a function of itself.
+    """
+    base = name.rstrip(PRIME_MARK)
+    order = len(name) - len(base)
+    definition = context.functions.get(base)
+    if not order or definition is None or base in scope.functions or not arguments:
+        return None
+    parameters, body = definition
+    if not parameters:
+        return None
+    deeper = _Scope(
+        arguments=dict(zip(parameters[1:], arguments[1:], strict=False)),
+        bound=frozenset({parameters[0]}),
+        variables=scope.variables,
+        functions=scope.functions | {base},
+        labels=scope.labels,
+    )
+    index = Node(Kind.NAME, 0, 0, (), parameters[0])
+    taken = [_walk(body, deeper, context), index]
+    if order > 1:
+        taken.append(Node(Kind.NUMBER, 0, 0, (), str(order)))
+    return _called("LIM", _called("DIF", *taken), index, arguments[0])
+
+
+def _called(name: str, *arguments: Node) -> Node:
+    """A call node built rather than parsed, whose spans index nothing."""
+    return Node(Kind.CALL, 0, 0, (Node(Kind.NAME, 0, 0, (), name), *arguments))
 
 
 def _binding(

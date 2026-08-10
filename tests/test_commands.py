@@ -185,7 +185,7 @@ async def test_a_parameter_is_not_a_variable_the_session_gains(session):
     """
     session.author("FF(a) := a^2")
     assert session.state.variables == {}
-    assert (await session.simplify("DIF(A(t), t)")).text == "DIF(A(t), t)"
+    assert (await session.simplify("DIF(A(t), t)")).text == "A'(t)"
     assert (await session.simplify("FF(3)")).text == "9"
 
 

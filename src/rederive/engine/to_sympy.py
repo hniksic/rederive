@@ -43,7 +43,7 @@ from rederive.engine.context import (
 )
 from rederive.engine.ordering import main_order
 from rederive.model.expr import Kind, Node
-from rederive.syntax.names import BUILTIN_FUNCTIONS
+from rederive.syntax.names import BUILTIN_FUNCTIONS, PRIME_MARK
 from rederive.syntax.writer import write_expression
 
 __all__ = [
@@ -1015,6 +1015,9 @@ class _Converter:
         """
         if any(_holds_command(argument) for argument in args):
             return self.opaque(name, args)
+        primed = self._primed(name, args)
+        if primed is not None:
+            return primed
         if name in MAPPED_OVER_EQUATIONS:
             mapped = self.over_equations(
                 lambda sides: self.call(name, sides), list(args)
@@ -1029,6 +1032,51 @@ class _Converter:
         except Exception:
             result = None
         return self.opaque(name, args) if result is None else result
+
+    def _primed(self, name: str, args: Sequence[sp.Basic]) -> sp.Basic | None:
+        """`BB'(r)`: a function derived as many times as it carries marks.
+
+        The derivative is with respect to the first argument, which is what
+        `CC'(u, v)` means in the original, and it is taken before the point is
+        written in: `BB'(r^2)` is `BB'` at `r^2`, not the derivative of
+        `BB(r^2)`. A point that is a variable the other arguments do not
+        mention says that already, and gives the plainer `DIF(BB(r), r)` that
+        prints back as the same prime; anything else needs the substitution,
+        since `CC'(u, u)` is the slope in the first argument alone and
+        `DIF(CC(u, u), u)` is the slope in both.
+
+        The head under the marks is looked up like any other, so `SIN'(x)` is
+        the derivative of the sine. Only a head nobody has defined stays a
+        derivative of itself, and that is the one the printer writes a prime
+        for.
+
+        None where there is nothing to derive, and none where the head declines
+        to be: an inert call under the marks reads back as the same marks, the
+        way any head the tables cannot make sense of does.
+        """
+        base = name.rstrip(PRIME_MARK)
+        order = len(name) - len(base)
+        if not order or not base or not args:
+            return None
+        try:
+            return self._derivative_at(base, order, list(args))
+        except Exception:
+            return None
+
+    def _derivative_at(
+        self, base: str, order: int, args: list[sp.Basic]
+    ) -> sp.Basic | None:
+        point = args[0]
+        if isinstance(point, sp.Symbol) and not any(
+            argument.has(point) for argument in args[1:]
+        ):
+            return sp.Derivative(self.call(base, [point, *args[1:]]), (point, order))
+        variable = sp.Dummy("xi")
+        head = self.call(base, [variable, *args[1:]])
+        derivative = sp.Derivative(head, (variable, order))
+        if not isinstance(head, AppliedUndef):
+            return derivative.doit().subs(variable, point)
+        return sp.Subs(derivative, (variable,), (point,))
 
     def opaque(self, name: str, args: Sequence[sp.Basic]) -> sp.Basic:
         """An inert application: it survives, and it prints back as itself."""

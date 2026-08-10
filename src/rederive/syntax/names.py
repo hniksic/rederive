@@ -56,6 +56,13 @@ GREEK_VARIABLES: frozenset[str] = frozenset(
 
 KEYWORD_OPERATORS: frozenset[str] = frozenset("SUB AND OR XOR IMP NOT".split())
 
+# The derivative mark, written on a function name and applied: `BB'(r)` is the
+# derivative of `BB`, taken at `r`, and one mark is one order. It is part of the
+# name rather than an operator of its own, which is why it is here and not in
+# `OPERATORS`. Transposition is the backtick, so the apostrophe is free for
+# this and means nothing anywhere else.
+PRIME_MARK = "'"
+
 # Settings the parser must accept as ordinary assignments. The first three
 # change how later expressions lex; the rest are passed through untouched.
 PARSING_SETTINGS: frozenset[str] = frozenset("InputMode CaseMode InputBase".split())

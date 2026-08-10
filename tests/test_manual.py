@@ -920,7 +920,7 @@ def test_the_derivatives_of_the_manual(text, expected):
 async def test_the_derivative_of_a_declared_arbitrary_function(session):
     # 7.2 p.173: with F an arbitrary function, the chain rule stops at F'.
     session.declare_arbitrary("F", ["x"])
-    assert (await session.simplify("DIF(F(x)^3, x)")).text == "3*F(x)^2*DIF(F(x), x)"
+    assert (await session.simplify("DIF(F(x)^3, x)")).text == "3*F(x)^2*F'(x)"
 
 
 def test_a_negative_order_of_differentiation_is_an_antiderivative():

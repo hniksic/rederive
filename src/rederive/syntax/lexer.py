@@ -334,6 +334,12 @@ class Lexer:
         if self._is_call_head(run, after):
             return Token(TokenKind.NAME, pos, end, run, run, is_function=True)
 
+        # `BB'(r)`: the primes belong to the name, so what follows is a call
+        # like any other and only the engine has to know what one means.
+        primed = self._primed_name(pos, run, end)
+        if primed is not None:
+            return primed
+
         # Step 2: longest match against known names. Only the whole run is a
         # candidate in Word mode, where a run is one name and a known name
         # inside it is a name inside it and nothing more: `xk` is `xk` however
@@ -401,6 +407,42 @@ class Lexer:
             return False
         known = self.state.resolve(run)
         return known is None or known.is_function or known.is_displaceable
+
+    def _primed_name(self, pos: int, run: str, end: int) -> Token | None:
+        """`BB'`, `BB''`: a function name carrying the marks that derive it.
+
+        Three things make one. The primes have to touch the name, since an
+        apostrophe with a space in front of it is nobody's derivative; there
+        has to be an argument list after them, because a derivative is a
+        function and `BB'` alone applies to nothing; and the name has to be one
+        that could be applied at all, which is a known function or the upper
+        case run `_is_call_head` would have taken. Everything else leaves the
+        apostrophe the error it has always been.
+        """
+        stop = end
+        while stop < self.limit and self.text[stop] == names.PRIME_MARK:
+            stop += 1
+        if stop == end:
+            return None
+        after = self.skip_space(stop)
+        if not self.at(after, "("):
+            return None
+        known = self.state.resolve(run)
+        if known is not None and known.is_function:
+            canonical = known.canonical
+        elif self._is_call_head(run, after):
+            canonical = run
+        else:
+            return None
+        marks = self.text[end:stop]
+        return Token(
+            TokenKind.NAME,
+            pos,
+            stop,
+            canonical + marks,
+            run + marks,
+            is_function=True,
+        )
 
     def new_variable(self, run: str) -> str:
         """The canonical spelling of a name this expression is declaring.

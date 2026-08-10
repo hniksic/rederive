@@ -32,6 +32,8 @@ from rederive.syntax import ParseState, parse_expression
 
 x, y, z = sp.symbols("x y z", real=True)
 n = sp.Symbol("n", integer=True)
+F = sp.Function("F")
+xi = sp.Dummy("xi")
 
 
 def written(expression, context=None):
@@ -114,6 +116,28 @@ def test_how_an_expression_is_written(expression, expected):
     ids=str,
 )
 def test_an_unevaluated_calculus_head_is_written_as_its_own_call(expression, expected):
+    assert written(expression) == expected
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (sp.Derivative(F(x), x, evaluate=False), "F'(x)"),
+        (sp.Derivative(F(x), (x, 2), evaluate=False), "F''(x)"),
+        # The chain rule leaves the derivative of the function itself, taken at
+        # a point that is no variable, which sympy holds as a substitution.
+        (sp.Subs(sp.Derivative(F(xi), xi, evaluate=False), (xi,), (x**2,)), "F'(x^2)"),
+        # A slope in one of two arguments has to say which, so it stays a `DIF`.
+        (sp.Derivative(F(x, y), x, evaluate=False), "DIF(F(x, y), x)"),
+        # And a head sympy has a name for is written under that name: the prime
+        # is for the functions nobody defined.
+        (sp.Derivative(sp.sin(x), x, evaluate=False), "DIF(SIN(x), x)"),
+    ],
+    ids=str,
+)
+def test_the_derivative_of_an_undefined_function_is_written_with_primes(
+    expression, expected
+):
     assert written(expression) == expected
 
 
@@ -295,7 +319,8 @@ REREAD = [
     sp.Matrix([[x, 1], [0, y]]),
     sp.Eq(x**2, y, evaluate=False),
     sp.Integral(sp.sin(x) / x, (x, 0, sp.oo)),
-    sp.Derivative(sp.Function("F")(x), (x, 3), evaluate=False),
+    sp.Derivative(F(x), (x, 3), evaluate=False),
+    sp.Subs(sp.Derivative(F(xi), xi, evaluate=False), (xi,), (x**2,)),
     sp.Function("SOLVE")(sp.Eq(x, 1, evaluate=False), x),
     sp.Symbol("x SUB 1", real=True) + 1,
     -sp.Symbol("tera", real=True),

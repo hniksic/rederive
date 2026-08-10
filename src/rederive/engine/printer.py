@@ -87,7 +87,7 @@ from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES, precedence
 from rederive.engine import notation
 from rederive.engine.context import Context, Notation
 from rederive.engine.ordering import main_order
-from rederive.syntax.names import GREEK_GLYPHS
+from rederive.syntax.names import GREEK_GLYPHS, PRIME_MARK
 
 # How tightly the inert heads bind. Sympy's `parenthesize` reads these by class
 # name, and without an entry it takes any `Function` for a call as tight as
@@ -1265,6 +1265,9 @@ class AuthorPrinter(sp.StrPrinter):
     # -- calculus heads that reached the output unevaluated -----------------
 
     def _print_Derivative(self, expr):
+        primed = self._primed(expr, expr.variable_count[0][0])
+        if primed is not None:
+            return primed
         text = self._print(expr.expr)
         for variable, count in expr.variable_count:
             parts = [text, self._print(variable)]
@@ -1272,6 +1275,32 @@ class AuthorPrinter(sp.StrPrinter):
                 parts.append(self._print(count))
             text = f"DIF({', '.join(parts)})"
         return text
+
+    def _primed(self, expr, point) -> str | None:
+        """`BB'(r)`: `expr` written as the derivative of the function itself.
+
+        What the original writes for the one shape it has a prime for - a
+        function nobody defined, of one argument, differentiated with respect
+        to that argument - and `2*BB'(r)*BB(r)` for the derivative of `BB(r)^2`
+        is why it is worth having: a matrix of Ricci components written in
+        `DIF` is unreadable and the same matrix in primes is not.
+
+        `point` is where the derivative is taken, which is the argument itself
+        for a plain `Derivative` and the substituted point for the `Subs` the
+        chain rule leaves - `2*r*BB'(r^2)`. A function of two arguments has no
+        prime here, because the original prints none: `DIF(CC(u, v), u)` says
+        which argument it is about and `CC'(u, v)` would not.
+        """
+        if len(expr.variable_count) != 1:
+            return None
+        variable, count = expr.variable_count[0]
+        call = expr.expr
+        if not isinstance(call, AppliedUndef) or len(call.args) != 1:
+            return None
+        if call.args[0] != variable or not count.is_Integer or count < 1:
+            return None
+        marks = PRIME_MARK * int(count)
+        return f"{function_name(call)}{marks}({self._print(point)})"
 
     def _print_Integral(self, expr):
         return self._limited("INT", expr)
@@ -1360,7 +1389,16 @@ class AuthorPrinter(sp.StrPrinter):
 
         Sympy prints this one itself, in mixed case, and a name that changed
         case on the way out would not be a fixed point.
+
+        The chain rule is what puts most of these here, and the one it leaves
+        over an undefined function is a prime rather than a substitution:
+        `DIF(BB(r^2), r)` is `2*r*BB'(r^2)`.
         """
+        inner, variables, points = expr.args
+        if isinstance(inner, sp.Derivative) and len(variables) == len(points) == 1:
+            primed = self._primed(inner, points[0])
+            if primed is not None and inner.variable_count[0][0] == variables[0]:
+                return primed
         return f"SUBS({self.stringify(expr.args, ', ')})"
 
     def _print_MatrixBase(self, expr):

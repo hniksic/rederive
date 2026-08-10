@@ -139,9 +139,9 @@ def test_a_head_that_binds_a_variable_comes_through_as_itself():
     it binds and the points they take. Rewriting those reads them as something
     else, so what Expand has nothing to expand it hands back untouched - which
     is exactly what Simplify already answers."""
-    text = "DIF(LIM(F(y), y, 2*x - y), y)"
+    text = "DIF(LIM(G(y, z), y, 2*x - y), y)"
     assert exp(text) == simplify(parse(text), Context()).text
-    assert "SUBS(DIF(F(xi_1), xi_1), [xi_1], [2*x - y])" in exp(text)
+    assert "SUBS(DIF(G(xi_1, z), xi_1), [xi_1], [2*x - y])" in exp(text)
 
 
 def test_an_integrand_stays_inside_its_integral():
