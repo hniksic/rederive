@@ -615,6 +615,9 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     # whole point - a derivative of a call that has arrived is a derivative and
     # not another thing to wait for.
     expression = _calls_worked_out(expression, context, decide)
+    # Before the substitutions go behind placeholders, because that is the last
+    # point at which an outer pass can still see one.
+    expression = _substitutions(expression, context)
     expression, held = _held(expression)
     tried: set[sp.Basic] = set()
     formulas: dict[sp.Basic, sp.Basic] = {}
@@ -690,6 +693,71 @@ def _taken(
     return normal_form(worked, context.order, over_numbers=False)
 
 
+def _substitutions(expression: sp.Basic, context: Context) -> sp.Basic:
+    """Every substitution carried out, and every derivative of one taken.
+
+    `_held` puts a `Subs` behind a placeholder for the length of the pass, and
+    the placeholder is opaque to everything - including the derivative standing
+    over it, which is one thing that had every right to look. Both of the
+    things an outer pass may do to a substitution are done here, while there is
+    still a substitution to do them to.
+
+    Carrying one out is the first. A `Subs` that binds nothing but an ordinary
+    expression is a substitution waiting rather than a value: `SUBS(BB(u), [u],
+    [r^2])` says `BB` at `r^2` and comes to `BB(r^2)`, which is then a call
+    like any other. Only a `Subs` holding a derivative over what it binds is
+    left standing, since that derivative is unevaluated on purpose.
+
+    The chain rule is the second. `DIF(BB'(r^2), r)` is `2*r*BB''(r^2)`, and
+    sympy reaches it without opening anything: differentiating a `Subs` raises
+    the order of the derivative inside and leaves the point where it was. So
+    the protection and the differentiation were never in conflict - the
+    placeholder was.
+
+    A call still waiting for its body is the exception, and waits. What the
+    body says is what it depends on, and a slope taken before it arrives is the
+    zero `_awaits_a_body` exists to refuse.
+    """
+    if not expression.has(sp.Subs):
+        return expression
+
+    def carried(whole: sp.Basic) -> sp.Basic:
+        return whole.replace(_is_plain_substitution, _done, simultaneous=False)
+
+    def sloped(whole: sp.Basic) -> sp.Basic:
+        def slope(head: sp.Basic) -> sp.Basic:
+            return head if _awaits_a_body(head, context) else _done(head)
+
+        return whole.replace(_is_slope_of_substitution, slope, simultaneous=False)
+
+    made = _attempt(expression, carried)
+    expression = expression if made is None else made
+    if not expression.has(sp.Subs):
+        return expression
+    taken = _attempt(expression, sloped)
+    return expression if taken is None else taken
+
+
+def _is_plain_substitution(expression: sp.Basic) -> bool:
+    """Whether a substitution binds nothing that has to stay unevaluated."""
+    return isinstance(expression, sp.Subs) and not expression.expr.has(sp.Derivative)
+
+
+def _is_slope_of_substitution(expression: sp.Basic) -> bool:
+    return isinstance(expression, sp.Derivative) and expression.expr.has(sp.Subs)
+
+
+def _done(head: sp.Basic) -> sp.Basic:
+    """One head evaluated a single level down, or itself where it will not.
+
+    A level and no further, so that what stands under it is left as it was
+    written: the point a substitution is taken at, and the derivative an
+    enclosing one raises the order of.
+    """
+    value = _attempt(head, lambda standing: standing.doit(deep=False))
+    return head if value is None else value
+
+
 def _held(expression: sp.Basic) -> tuple[sp.Basic, dict[sp.Basic, sp.Basic]]:
     """Every `Subs` set aside, with what to put back in its place.
 
@@ -698,6 +766,15 @@ def _held(expression: sp.Basic) -> tuple[sp.Basic, dict[sp.Basic, sp.Basic]]:
     not the slope of a constant, though it looks like one once the variable it
     is taken over has been bound. Evaluating inside would answer zero, so
     nothing inside is touched at all.
+
+    Nothing outside can look either, and what was entitled to has already
+    looked: `_substitutions` runs first, because a derivative standing over a
+    placeholder is a derivative over something with no slope to give.
+
+    The placeholder is a function of what the head names, which is what keeps
+    the difference between having no slope and having a slope of zero. A `Subs`
+    at a point that mentions nothing gets a name rather than a function, and
+    there the zero is the answer: `BB'(2)` really does not vary with `r`.
     """
     if not expression.has(sp.Subs):
         return expression, {}

@@ -921,6 +921,57 @@ def test_the_derivative_of_an_undefined_function_is_written_with_primes():
     assert simp("INT(BB'(r), r)") == "BB(r)"
 
 
+def test_a_prime_at_a_moving_point_is_differentiated_again():
+    """`DIF(BB'(r^2), r)` is `2*r*BB''(r^2)`: one more mark, the same point.
+
+    A prime taken somewhere other than at a variable of its own is a derivative
+    held at a point, and the derivative it holds is unevaluated on purpose -
+    nothing may look inside. Differentiating it needs nothing from inside
+    either: the chain rule raises the order by one, leaves the point where it
+    was, and puts the slope of the point in front. Which is what the original
+    answers, at every order and through whatever the point is written as.
+    """
+    assert simp("DIF(BB'(r^2), r)") == "2*r*BB''(r^2)"
+    assert simp("DIF(BB''(r^2), r)") == "2*r*BB'''(r^2)"
+    assert simp("DIF(BB'(SIN(r)), r)") == "BB''(SIN(r))*COS(r)"
+    assert simp("DIF(BB'(x*y), x)") == "y*BB''(x*y)"
+    assert simp("DIF(BB'(r^2), r, 2)") == "4*r^2*BB'''(r^2) + 2*BB''(r^2)"
+    assert simp("DIF(BB'(r^2), r, 3)") == "8*r^3*BB''''(r^2) + 12*r*BB'''(r^2)"
+    assert simp("DIF(r*BB'(r^2), r)") == "2*r^2*BB''(r^2) + BB'(r^2)"
+    # The neighbours, which say the same thing about a call rather than about a
+    # prime, and a prime at a point that moves nowhere.
+    assert simp("DIF(BB(r^2), r)") == "2*r*BB'(r^2)"
+    assert simp("DIF(BB(r^2), r, 2)") == "4*r^2*BB''(r^2) + 2*BB'(r^2)"
+    assert simp("DIF(BB'(r), r)") == "BB''(r)"
+    assert simp("DIF(BB'(r)^2, r)") == "2*BB'(r)*BB''(r)"
+    assert simp("DIF(BB'(r^2), r, 0)") == "BB'(r^2)"
+    # A slope taken at a number is a number, and a number does not depend on r.
+    assert simp("DIF(BB'(2), r)") == "0"
+    # A function of two arguments has no prime to print, so the answer is the
+    # `DIF` or the substitution the original writes the same thing as.
+    assert simp("DIF(G'(x, y), x)") == "DIF(G(x, y), x, 2)"
+    assert simp("DIF(G'(x^2, y), x)") == "2*x*SUBS(DIF(G(xi, y), xi, 2), [xi], [x^2])"
+
+
+def test_a_substitution_binding_no_derivative_is_carried_out():
+    """`SUBS` is a value where it holds a derivative and a substitution where not.
+
+    What may not be looked inside is the slope of an unknown function at a
+    point, which is unevaluated because evaluating it would answer the zero a
+    constant's slope is. A `SUBS` over anything else is holding no such thing:
+    it is a substitution nobody has made yet, and making it is the whole of
+    what it says.
+    """
+    assert simp("SUBS(x^2, [x], [3])") == "9"
+    assert simp("SUBS(x^2 + y, [x, y], [3, 4])") == "13"
+    assert simp("SUBS(BB(u), [u], [r^2])") == "BB(r^2)"
+    assert simp("DIF(SUBS(BB(u), [u], [r^2]), r)") == "2*r*BB'(r^2)"
+    # And the one that does hold a derivative keeps it, at the point it was
+    # taken at, whether or not something outside differentiates it again.
+    assert simp("SUBS(DIF(BB(u), u), [u], [r^2])") == "BB'(r^2)"
+    assert simp("DIF(SUBS(DIF(BB(u), u), [u], [r^2]), r)") == "2*r*BB''(r^2)"
+
+
 def test_a_function_of_several_arguments_keeps_the_derivative_it_is_written_as():
     """A prime says which order and not which argument.
 
