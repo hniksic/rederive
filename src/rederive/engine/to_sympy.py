@@ -842,11 +842,17 @@ class _Converter:
     def _sub(self, node: Node) -> sp.Basic:
         """Element access on a vector, a subscripted variable otherwise.
 
+        A vector is either of the two ways one is held: a matrix, and the inert
+        vector everything deeper than a matrix is. Both are indexed, so `SUB`
+        chains as far as there are dimensions and `q SUB 2 SUB 1 SUB 2` reads a
+        number out of a vector of matrices. A base that is no vector at all is
+        the subscripted name `x SUB 1` instead.
+
         An index that is a vector reaches through as many dimensions as it
         holds, `m SUB [2, 3]` being `m SUB 2 SUB 3`.
         """
         base, index = self._children(node)
-        if not isinstance(base, sp.MatrixBase):
+        if not isinstance(base, (sp.MatrixBase, InertVector)):
             return self._subscript(node.children[0], base, index)
         element = _at(base, index)
         if element is None:

@@ -1429,6 +1429,19 @@ VECTORS = [
     ("ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 2)", "[[5, 6], [7, 8]]"),
     ("ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 2, 1, 2)", "6"),
     ("VECTOR([[k, k], [k, k]], k, 2)", "[[[1, 1], [1, 1]], [[2, 2], [2, 2]]]"),
+    # `SUB` is the other spelling of `ELEMENT` and reaches as deep, one
+    # dimension per index, however the index is written. That is the spelling
+    # the shipped utility files index a table of Christoffel symbols with.
+    ("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB 2 SUB 1 SUB 2", "6"),
+    ("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB [2, 1, 2]", "6"),
+    ("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB 2", "[[5, 6], [7, 8]]"),
+    # An index that is no index yet keeps the access whole, so that a generator
+    # writing a number in later has one to make.
+    (
+        "[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB 4",
+        "ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 4)",
+    ),
+    ("VECTOR([[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB i SUB 1 SUB 2, i, 2)", "[2, 6]"),
     # Two indices on an ordinary matrix reach what they always did, and an
     # index past the end is no index and keeps the head.
     ("ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 3)", "4"),

@@ -186,6 +186,27 @@ def test_a_subscript_on_a_matrix_selects_a_row():
     assert convert("[[1, 2], [3, 4]] SUB 2") == sp.Matrix(1, 2, [3, 4])
 
 
+def test_a_subscript_reaches_through_every_dimension_there_is():
+    """`SUB` is `ELEMENT` under another spelling, so it goes as deep.
+
+    A base is a vector however the vector is held, the inert one a vector of
+    matrices is included, and each index in the chain takes an element out of
+    what the one before reached."""
+    assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB 2 SUB 1 SUB 2") == 6
+    assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB [2, 1, 2]") == 6
+
+
+def test_a_subscript_on_a_vector_with_no_index_yet_keeps_the_access():
+    """An index still a variable leaves the access itself to be made later.
+
+    That is what a generated `VECTOR` body rests on: the body is converted
+    while the index is a variable, and the call is worth making again once a
+    number has been written in."""
+    held = convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB i")
+    assert isinstance(held, AppliedUndef)
+    assert type(held).__name__ == "ELEMENT"
+
+
 def test_a_transpose_of_a_matrix_is_a_matrix_and_of_a_scalar_is_the_scalar():
     # 8.5 p.205: the transpose of a scalar is the scalar, and everything not
     # declared nonscalar is one. What is no expression at all keeps the head.
