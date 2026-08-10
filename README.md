@@ -154,6 +154,26 @@ Within its chosen scope, however, Rederive strives to be small and dependable. T
 trade-off defined the original: keep the system simple, but powerful enough to be useful,
 especially in the classroom.
 
+## How Rederive was built
+
+Rederive is largely AI-coded. I directed the implementation, following the UI and
+mathematical behavior of the original, and diverging where it made sense to do so. A
+from-scratch reimplementation of a commercial CAS is not a weekend project, and AI
+assistance is what finally made it feasible for one person, decades after I first wished
+for it.
+
+Note, however, that the *mathematics* is not AI-written. Every simplification, solution,
+and integral is computed by [SymPy](https://www.sympy.org/en/index.html), a symbolic
+mathematics library developed and tested by humans for two decades. Rederive is the
+interface: the parser, the typesetting, the menus, and the layer that decides which SymPy
+machinery to invoke and how to present what comes back. That layer is held to account by a
+test suite, much of it checking behavior against the responses from the original Derive
+recorded in preserved manuals and other sources.
+
+If AI provenance bothers you, that is a reasonable position. But this is not a demo
+one-shotted in an afternoon: it is versioned, maintained, and used by its author, and bug
+reports are welcome.
+
 ## License
 
 Rederive is distributed under the terms of the MIT license.  See [LICENSE](LICENSE) for
