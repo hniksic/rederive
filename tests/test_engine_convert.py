@@ -271,6 +271,17 @@ def test_a_flat_vector_is_a_row_and_a_nested_one_is_a_matrix():
     assert convert("[[1, 2], [3, 4]]") == sp.Matrix([[1, 2], [3, 4]])
 
 
+def test_a_vector_of_matrices_keeps_its_elements_whole():
+    """A matrix has two dimensions and no more, so a deeper vector is none.
+
+    Stacking the elements would run the rows of the two 2x2 matrices together
+    into one 2x4 and lose the dimension that was written, which is the
+    dimension a table of Christoffel symbols is built out of."""
+    vector = convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]")
+    assert isinstance(vector, InertVector)
+    assert vector.args == (sp.Matrix([[1, 2], [3, 4]]), sp.Matrix([[5, 6], [7, 8]]))
+
+
 def test_a_ragged_vector_stays_inert():
     assert isinstance(convert("[[1, 2], [3]]"), InertVector)
 
@@ -339,6 +350,8 @@ def test_showing_a_value_converts_the_child():
         ("TRACE([[1, 2], [3, 4]])", 5),
         ("DIMENSION([1, 2, 3])", 3),
         ("ELEMENT([1, 2, 3], 2)", 2),
+        ("ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 3)", 4),
+        ("ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 2, 1, 2)", 6),
         ("IDENTITY_MATRIX(2)", sp.eye(2)),
         ("CROSS([1, 0, 0], [0, 1, 0])", sp.Matrix(1, 3, [0, 0, 1])),
     ],

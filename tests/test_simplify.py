@@ -1421,6 +1421,22 @@ VECTORS = [
     ("[[2, 3, 5], [7, 1, 4]] SUB [2, 3]", "4"),
     ("ELEMENT([[2, 3, 5], [7, 1, 4]], [2, 3])", "4"),
     ("[[2, 3, 5], [7, 1, 4]] SUB [2]", "[7, 1, 4]"),
+    # Two dimensions are all a matrix has, so a vector of matrices stays a
+    # vector of matrices rather than being flattened into one 2x4. It counts
+    # two elements, and `ELEMENT` takes an index for every dimension there is.
+    ("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]", "[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]"),
+    ("DIMENSION([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])", "2"),
+    ("ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 2)", "[[5, 6], [7, 8]]"),
+    ("ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 2, 1, 2)", "6"),
+    ("VECTOR([[k, k], [k, k]], k, 2)", "[[[1, 1], [1, 1]], [[2, 2], [2, 2]]]"),
+    # Two indices on an ordinary matrix reach what they always did, and an
+    # index past the end is no index and keeps the head.
+    ("ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 3)", "4"),
+    ("ELEMENT([[2, 3, 5], [7, 1, 4]], 2)", "[7, 1, 4]"),
+    (
+        "ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 4)",
+        "ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 4)",
+    ),
     # Shapes that will not multiply keep the operator, unevaluated: better the
     # expression back than a guess at which product was meant.
     ("[[1, 2], [3, 4]] . [1, 2, 3]", "[[1, 2], [3, 4]] . [1, 2, 3]"),

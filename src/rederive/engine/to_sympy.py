@@ -883,7 +883,13 @@ class _Converter:
         return applied ** self.convert(exponent)
 
     def _vector(self, node: Node) -> sp.Basic:
-        """A vector of vectors is a matrix; a flat one is a row.
+        """A vector of rows is a matrix; a flat one is a row.
+
+        Only of rows: a matrix has two dimensions and no more, so a vector
+        whose elements are matrices themselves stays a vector, its elements
+        left whole. Stacking them would run the rows of
+        `[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]` together into a 2x4 and lose
+        the dimension that was written.
 
         Ragged or mixed vectors are no matrix at all, and stay inert.
         """
@@ -893,7 +899,12 @@ class _Converter:
         elements = self._children(node)
         if all(row.kind is Kind.VECTOR for row in rows):
             widths = {len(row.children) for row in rows}
-            if len(widths) == 1 and widths != {0} and _all_matrices(elements):
+            if (
+                len(widths) == 1
+                and widths != {0}
+                and _all_matrices(elements)
+                and all(element.rows == 1 for element in elements)
+            ):
                 try:
                     return sp.Matrix([list(row) for row in elements])
                 except Exception:
@@ -2591,7 +2602,12 @@ def _dimension(conv: _Converter, args: list) -> sp.Basic:
 
 
 def _element_of(conv: _Converter, args: list) -> sp.Basic:
-    """`ELEMENT(v, i)` and `ELEMENT(m, i, j)`, counting from 1.
+    """`ELEMENT(v, i)`, `ELEMENT(m, i, j)`, and on for as many dimensions as
+    there are, counting from 1.
+
+    Each index in turn takes an element out of what the one before reached, so
+    the head goes as deep as it is given indices: `ELEMENT(q, 2, 1, 2)` reads
+    a number out of a vector of matrices.
 
     A vector of relations is a vector too, and taking one out of it is how the
     shipped ODE library reads a solution: `RHS((SOLVE(z, y)) SUB 1)`.
@@ -2599,13 +2615,14 @@ def _element_of(conv: _Converter, args: list) -> sp.Basic:
     An index that is itself a vector is the indices in turn, so that
     `m SUB [2, 3]` reaches what `m SUB 2 SUB 3` reaches.
     """
-    if len(args) == 2:
-        element = _at(args[0], args[1])
-        if element is None:
+    value, *indices = args
+    if not indices:
+        raise ValueError("no index")
+    for index in indices:
+        value = _at(value, index)
+        if value is None:
             raise ValueError("not an index")
-        return element
-    matrix, row, column = args
-    return _matrix(matrix)[int(row) - 1, int(column) - 1]
+    return value
 
 
 def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
