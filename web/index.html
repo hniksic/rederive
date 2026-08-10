@@ -49,7 +49,10 @@
     font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
   }
   #chrome:hover, #chrome:focus-within { opacity: 1; }
-  #chrome button {
+  /* One of these is an anchor rather than a button, since where it goes is an
+     address and a browser has its own ways of following one. It is dressed as
+     its neighbours so that the row reads as a row. */
+  #chrome button, #chrome a {
     padding: 3px 10px;
     background: rgba(17, 17, 23, 0.9);
     border: 1px solid #2b2b34;
@@ -57,13 +60,17 @@
     color: #b6bcc7;
     cursor: pointer;
     font: inherit;
+    text-decoration: none;
   }
-  #chrome button:hover { color: #dde3ec; border-color: rgba(101, 178, 241, 0.55); }
+  #chrome button:hover, #chrome a:hover {
+    color: #dde3ec;
+    border-color: rgba(101, 178, 241, 0.55);
+  }
   /* A finger is not a pointer: on a touch screen nothing is ever hovered, so
      the controls stand at full strength rather than waiting to be pointed at. */
   @media (hover: none) {
     #chrome { opacity: 1; }
-    #chrome button { padding: 8px 14px; }
+    #chrome button, #chrome a { padding: 8px 14px; }
   }
   /* The demonstrations on offer, under the button that offers them. Inside
      `#chrome` so that a pointer on the menu is a pointer on the controls and
@@ -397,6 +404,12 @@
   <button id="link" type="button" title="Put this worksheet in the address">
     Link
   </button>
+  <!-- The one control that leaves the page, which is why it opens a tab of its
+       own rather than taking this one away from a running program. -->
+  <a id="source" href="https://github.com/hniksic/rederive" target="_blank"
+     rel="noopener" title="Rederive's source on GitHub">
+    GitHub
+  </a>
   <!-- Filled from the list in `demos.js`, which is the only place the
        demonstrations are named. -->
   <div id="gallery" hidden></div>
