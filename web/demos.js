@@ -84,13 +84,18 @@ export function wire(term) {
     if (menu.hidden) warm();
     show(menu.hidden);
   });
-  // A menu closes on anything that is not a choice: the next click anywhere,
-  // Esc, or the keyboard leaving it. The terminal is behind all of this and
-  // gets the keystroke either way, which is why Esc is not swallowed.
+  // A menu closes on anything that is not a choice: the next click anywhere, or
+  // Esc. The terminal is behind all of this and gets the keystroke either way,
+  // which is why Esc is not swallowed.
+  //
+  // Heard on the way down rather than on the way up, because the keyboard is
+  // the terminal's while the menu stands open and xterm stops a key it has
+  // handled from going any further. A listener on the bubble would never hear
+  // the Esc that closes this.
   document.addEventListener('click', () => show(false));
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') show(false);
-  });
+  }, true);
 }
 
 // Python's side: the demonstrations on offer, where the whole diskette is,

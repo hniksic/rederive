@@ -33,6 +33,7 @@ import * as plots from './plot2d.js';
 import * as solids from './plot3d.js';
 
 const SCREEN = 'screen';
+const CHROME = 'chrome';
 const MANIFEST = 'manifest.json';
 
 // The title page, in the words the program opens with itself. What loads here
@@ -59,6 +60,10 @@ const OPENING = [
     ' cached afterwards, and what follows that is compiling Python a desktop' +
     ' would have compiled once.',
 ];
+
+// What the page says once the program has left the screen to it again.
+const ENDED = 'Rederive has ended.';
+const AGAIN = 'Press Enter or click here to start it again.';
 
 // The widest the prose is set, however wide the window is: text is read across,
 // and a line that runs the whole of a desktop screen is not.
@@ -124,27 +129,43 @@ function wrapped(text, width) {
   return line ? lines.concat(line) : lines;
 }
 
+// Where the page sets its own writing: a column no wider than `COLUMNS`,
+// centred in the window, and a way of centring one line inside that column. The
+// title page and the card that closes a session are laid out through this, so
+// the words a session ends with stand where the words it opened with stood.
+function frame(term) {
+  const width = Math.min(COLUMNS, Math.max(24, term.cols - 4));
+  const left = ' '.repeat(Math.max(0, Math.floor((term.cols - width) / 2)));
+  return {
+    width,
+    left,
+    centred: (text) =>
+      left + ' '.repeat(Math.max(0, Math.floor((width - text.length) / 2))) + text,
+  };
+}
+
+// A block of that width, placed as a title page rather than run down from the
+// top corner: high rather than halfway, which is how the program spaces its own
+// greeting, and hard against the top of a window too short to spare the room.
+function placed(term, height) {
+  term.write('\r\n'.repeat(Math.max(0, Math.floor((term.rows - height) / 3))));
+}
+
 // The loading screen, and what drives it a phase at a time.
 //
 // The block is placed as a whole: its height is counted before a line of it is
-// written, so that the page can be a title page rather than output run down
-// from the top corner. High rather than halfway, which is how the program
-// spaces its own greeting, and hard against the top of a window too short to
-// spare the room.
+// written, which is what `placed` is for.
 //
 // The version is the one thing here the page cannot know for itself, so the
 // name goes up first and everything under it waits for the manifest.
 function opening(term) {
-  const width = Math.min(COLUMNS, Math.max(24, term.cols - 4));
-  const left = ' '.repeat(Math.max(0, Math.floor((term.cols - width) / 2)));
+  const { width, left, centred } = frame(term);
   const paragraphs = OPENING.map((text) => wrapped(text, width));
   // The two names, the version, the prose and the three phases, with the blank
   // lines that space them.
   const height = 5 + paragraphs.reduce((n, lines) => n + lines.length + 1, 0) + 3;
-  const centred = (text) =>
-    left + ' '.repeat(Math.max(0, Math.floor((width - text.length) / 2))) + text;
 
-  term.write('\r\n'.repeat(Math.max(0, Math.floor((term.rows - height) / 3))));
+  placed(term, height);
   say(term, BOLD + centred(TITLE) + PLAIN);
   say(term, DIM + centred(TAGLINE) + PLAIN);
 
@@ -198,6 +219,36 @@ function opening(term) {
       opened(what);
     },
   };
+}
+
+// The end of a session, on the screen the program hands back.
+//
+// A tab cannot start the program again where it stopped: Pyodide is loaded once
+// per page, so beginning again is a reload, and the only thing this card has to
+// say is how to ask for one. It offers the gesture as well as the words, since
+// a reader who has just quit is looking at this screen and not at the browser's
+// toolbar - and it is Enter or a click rather than any key at all, so that a
+// hand resting on the keyboard does not restart anything.
+//
+// The screen is cleared first. What is under it is the loading screen the
+// program covered up, and a farewell written over the top of a half-finished
+// title page is the one thing this card must not look like.
+function ending(term) {
+  const { centred } = frame(term);
+  // Nothing is typed at this screen, and a cursor left blinking under the last
+  // line reads as a prompt that answers nothing.
+  term.write('\x1b[?25l\x1b[2J\x1b[H');
+  placed(term, 5);
+  say(term, BOLD + centred(TITLE) + PLAIN);
+  say(term, DIM + centred(TAGLINE) + PLAIN);
+  say(term, '');
+  say(term, centred(ENDED));
+  say(term, DIM + centred(AGAIN) + PLAIN);
+  const again = () => location.reload();
+  term.onKey(({ domEvent }) => {
+    if (domEvent.key === 'Enter') again();
+  });
+  document.getElementById(SCREEN).addEventListener('click', again);
 }
 
 function terminal() {
@@ -334,8 +385,22 @@ function spawn(manifest) {
   return worker;
 }
 
+// The keyboard belongs to the program, whatever on the page is pressed. A
+// button or a link takes the focus when it is clicked, and the keystroke after
+// that would be the page's rather than the program's - a `q` that quits nothing
+// - so the press's default is cancelled, which leaves the focus in the terminal
+// and still delivers the click. One listener for the whole corner, since this
+// is true of every control in it and of the menu under one of them; what a
+// control does once it has been used stays its own module's business.
+function chrome() {
+  document
+    .getElementById(CHROME)
+    .addEventListener('mousedown', (event) => event.preventDefault());
+}
+
 async function main() {
   const term = terminal();
+  chrome();
   files.wire(term);
   demos.wire(term);
   plots.wire(term);
@@ -375,8 +440,7 @@ from rederive.web.boot import start
 await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES, DEMOS)
 `);
   mark('session', started);
-  say(term, '');
-  say(term, 'Rederive has ended. Reload the page to start it again.');
+  ending(term);
 }
 
 main().catch((error) => {
