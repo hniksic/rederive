@@ -319,7 +319,44 @@ def _members(found: sp.Set) -> list[sp.Basic] | None:
     if isinstance(found, sp.ImageSet) and found.base_sets == (sp.S.Integers,):
         representative = _representative(found)
         return None if representative is None else [representative]
+    if isinstance(found, sp.Complement):
+        return _remaining(*found.args)
     return None
+
+
+def _remaining(inside: sp.Set, excluded: sp.Set) -> list[sp.Basic] | None:
+    """The members of `inside` that are not provably members of `excluded`.
+
+    `SOLVE(1 - 2*m/r = 0, r)` is what this is here for: sympy answers
+    `Complement({2*m}, {0})`, because dividing by `r` is only allowed where `r`
+    is not zero, and `2*m` is zero for one value of `m`. Dropping a candidate
+    needs proof that it is excluded, and there is none here - `m` is an
+    undeclared parameter, and an undecidable case is not an exclusion - so
+    `2*m` stands and the answer is the original's own `r = 2*m`. Nothing is
+    papered over by that: with `m` literally zero the residual is the constant
+    1, sympy answers with the empty set, and no solution is offered at all.
+
+    Only a finite `inside` is read this way. The complement of a solution
+    family is a set no finite list of relations describes - removing one member
+    of `2*pi*n` leaves the rest, and there is no notation for the rest - so
+    None is the answer there, and the residual equation is what gets appended.
+    """
+    if not isinstance(inside, sp.FiniteSet) or not isinstance(excluded, sp.FiniteSet):
+        return None
+    return [value for value in inside.args if not _provably_holds(excluded, value)]
+
+
+def _provably_holds(excluded: sp.Set, value: sp.Basic) -> bool:
+    """Whether `excluded` provably holds `value`, undecided counting as no.
+
+    Sympy's own membership test answers with a boolean where it knows and with
+    an undecided `Contains` or equation where it does not, and only the boolean
+    true is proof.
+    """
+    try:
+        return excluded.contains(value) is sp.true
+    except Exception:
+        return False
 
 
 #: The indices a family is sampled at, nearest the origin first. Two periods

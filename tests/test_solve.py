@@ -208,7 +208,9 @@ def test_an_unsolved_inequality_keeps_its_operator():
 #: `FiniteSet` and the whole complex plane each arrive as a set, and author
 #: notation has no word for any of them: a chain is how a range is written, an
 #: entry apiece is how a union is, no entries at all is how emptiness is, and
-#: `@n` is how "every value there is" is.
+#: `@n` is how "every value there is" is. `Complement` is the sixth head and
+#: has a section of its own below, because what it comes to depends on what can
+#: be proved about the values it excludes.
 SETS = [
     ("x^2 < 1", ["-1 < x < 1"]),
     ("x^2 > 1", ["x < -1", "x > 1"]),
@@ -245,6 +247,53 @@ def test_a_chained_answer_reads_back_as_what_it_says():
     assert answer.text == "-2 < x < 2"
     assert answer.node.kind is parse("-2 < x < 2").kind
     assert answer.node == parse("-2 < x < 2")
+
+
+# -- excluded values ----------------------------------------------------------
+#
+# A rational equation whose numerator holds a parameter is the shape: sympy
+# answers `Complement({2*m}, {0})` for `1 - 2*m/r = 0`, because the division by
+# `r` it undid is only allowed where `r` is not zero. The reading is the
+# conservative one - a candidate is dropped only where it is provably excluded -
+# and it lands on the original's own answers.
+
+
+EXCLUSIONS = [
+    # The original answers `[r = 2*m]`, and so does this: `2*m` is not provably
+    # zero. Nothing is hidden by keeping it, since `m` being zero makes the
+    # residual the constant 1 and leaves no solution to offer at all.
+    ("1 - 2*m/r = 0", "r", ["r = 2*m"]),
+    ("1 - 2*0/r = 0", "r", []),
+    # Provably excluded, and the only candidate there was: no solution.
+    ("1/r = 0", "r", []),
+    ("a/x = b", "x", ["x = a/b"]),
+    ("(x^2 - a^2)/(x*(x - a)) = 0", "x", ["x = -a"]),
+    ("1/x + 1/(x + a) = 0", "x", ["x = -a/2"]),
+    ("(r^2 - a)/(r - 1) = 0", "r", ["r = -SQRT(a)", "r = SQRT(a)"]),
+]
+
+
+@pytest.mark.parametrize(("text", "variable", "expected"), EXCLUSIONS, ids=str)
+def test_a_candidate_survives_unless_it_is_provably_excluded(text, variable, expected):
+    assert sol(text, (variable,)) == expected
+
+
+def test_a_declaration_that_settles_the_exclusion_answers_the_same():
+    """Declaring the parameter nonzero decides what was undecided, and the
+    answer may not move for it: a proof that the exclusion does not bite says
+    the same thing the absence of a proof that it does was already worth."""
+    state = ParseState()
+    name, domain = domain_of_node(parse("m :epsilon Real (0, inf)", state))
+    context = Context(domains={name: domain})
+    assert sol("1 - 2*m/r = 0", ("r",), context=context) == ["r = 2*m"]
+
+
+def test_an_exclusion_from_a_solution_family_is_left_unanswered():
+    """`SIN(x)/(x - a) = 0` excludes `a` from the multiples of pi, and there is
+    no way to write what is left: the family is infinite, so removing one of
+    its members from it leaves a set no finite list of relations describes. The
+    residual equation is the honest answer, and an invented one is not."""
+    assert sol("SIN(x)/(x - a) = 0", ("x",)) == ["SIN(x)/(x - a) = 0"]
 
 
 # -- systems ------------------------------------------------------------------
