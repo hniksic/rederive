@@ -110,6 +110,17 @@ async def test_the_definitions_own_variables_become_the_parameters(session):
     assert (await session.simplify("#2")).text == "5"
 
 
+def test_the_parameters_are_not_variables_of_the_session(session):
+    """The command declares a function, and nothing else.
+
+    Its parameters are known names only while the body is read: a later
+    `A(t)` is a call, and would not be if `a` were a variable now.
+    """
+    session.declare_function("hyp", "sqrt(a^2 + b^2)")
+    assert session.state.variables == {}
+    assert session.declarable("a")
+
+
 def test_the_parameters_are_ordered_most_main_first(session):
     """`x`, `y` and `z` are the order list; the rest follow alphabetically."""
     assert session.declare_function("p", "y + a + x + z + b").text.startswith(

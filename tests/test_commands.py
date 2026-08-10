@@ -175,6 +175,47 @@ async def test_a_function_definition_reaches_the_next_command(session):
     assert (await session.simplify("#2")).text == "8"
 
 
+async def test_a_parameter_is_not_a_variable_the_session_gains(session):
+    """A parameter belongs to the definition and not to the session.
+
+    A name in front of a parenthesis is read as a call unless it is a known
+    variable, so a parameter left behind would change how a later line reads:
+    the scale factor `A(t)` of a metric would silently become `a*t` because
+    some earlier definition happened to name a parameter `a`.
+    """
+    session.author("FF(a) := a^2")
+    assert session.state.variables == {}
+    assert (await session.simplify("DIF(A(t), t)")).text == "DIF(A(t), t)"
+    assert (await session.simplify("FF(3)")).text == "9"
+
+
+async def test_a_parameter_leaves_the_variable_it_shadowed_alone(session):
+    session.author("a := 5")
+    session.author("FF(a) := a^2")
+    assert (await session.simplify("a")).text == "5"
+    assert (await session.simplify("FF(3)")).text == "9"
+
+
+async def test_a_parameter_leaves_a_shadowed_domain_in_force(session):
+    session.author("z :epsilon Real (0, inf)")
+    session.author("FF(z) := z^2")
+    assert (await session.simplify("SQRT(z^2)")).text == "z"
+
+
+async def test_no_parameter_of_a_definition_is_left_behind(session):
+    """Several at once, and one whose body defines a function of its own.
+
+    The Christoffel symbols of general relativity are written `CHR(a, b, c)`,
+    which is where three parameters at once and a later `A(t)` meet.
+    """
+    session.author("CHR(a, b, c) := a + b + c")
+    session.author("OUTER(uu) := INNER(vv) := vv + uu")
+    session.author("SS(uu) := SUM(uu k, k, 1, 4)")
+    assert session.state.variables == {}
+    assert (await session.simplify("CHR(1, 2, 3)")).text == "6"
+    assert (await session.simplify("SS(2)")).text == "20"
+
+
 async def test_a_parameter_names_the_variable_a_sum_ranges_over(session):
     """A definition is written in as text, index and all.
 

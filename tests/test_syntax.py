@@ -16,6 +16,7 @@ from rederive.syntax import (
     SettingDeclaration,
     Source,
     VariableDeclaration,
+    VariableInfo,
     parse_expression,
     parse_source,
 )
@@ -147,16 +148,16 @@ def test_an_empty_right_hand_side_declares_a_variable_without_a_value():
     assert declarations == (VariableDeclaration("meter", has_value=False),)
 
 
-def test_a_definition_declares_the_function_and_its_parameters():
+def test_a_definition_declares_the_function_and_not_its_parameters():
+    # The parameters are known names while the body is read and no longer, so
+    # what the line declares is the function alone.
     result = parse("LINE(x,y,m,t):=y+m*(t-x)")
-    assert result.declarations[:4] == (
-        VariableDeclaration("x"),
-        VariableDeclaration("y"),
-        VariableDeclaration("m"),
-        VariableDeclaration("t"),
-    )
     assert result.declarations[-1] == FunctionDeclaration(
         "LINE", ("x", "y", "m", "t"), has_body=True
+    )
+    assert not any(
+        isinstance(declaration, VariableDeclaration)
+        for declaration in result.declarations
     )
 
 
@@ -193,12 +194,25 @@ def test_a_setting_value_stands_where_its_function_could_not():
         parse("SIN")
 
 
-def test_the_parameters_of_a_definition_stay_declared():
-    # The one deliberate exception: the body cannot be lexed otherwise, and
-    # the registration persists, so a later bare `mx+mf` is not `m*x + m*f`.
+def test_the_parameters_of_a_definition_do_not_outlive_it():
+    # `mx` has to be one name for the body of `FIT3(mx,mf):=mx+mf` to be lexed
+    # at all, and is `m*x` again once the definition is read: a parameter is a
+    # name the body uses and not one the session gained.
     state = ParseState()
     parse("FIT3(mx,mf):=mx+mf", state)
-    assert sexpr("mx+mf", state) == "(+ mx mf)"
+    assert sexpr("mx+mf", state) == "(+ (juxt m x) (juxt m f))"
+
+
+def test_a_parameter_hands_back_the_variable_it_shadowed():
+    # Value, domain and all: `tera` was the user's before the definition
+    # borrowed the name, and is the user's afterwards.
+    state = ParseState()
+    parse("tera:=10^12", state)
+    state.declare(VariableDeclaration("tera", has_value=True))
+    state.declare(DomainDeclaration("tera", "Real"))
+    parse("FIT(tera):=tera^2", state)
+    assert state.variables == {"tera": VariableInfo("tera", True, "Real")}
+    assert sexpr("terab", state) == "(juxt tera b)"
 
 
 def test_clearing_the_table_makes_a_name_split_again():

@@ -462,10 +462,11 @@ def test_an_entry_keeps_the_render_it_was_authored_with():
     assert second.layout.lines == ("a*b",)
 
 
-def test_a_definition_reaches_the_lines_that_follow():
+def test_a_declaration_reaches_the_lines_that_follow():
     session = Session()
-    session.author("F(mx, mf) := mx + mf")
-    # Without the definition, Character mode would read this as a product.
+    session.author("mx := 3")
+    session.author("mf := 4")
+    # Without the declarations, Character mode would read these as products.
     assert session.author("mx + mf").layout.lines == ("mx + mf",)
 
 

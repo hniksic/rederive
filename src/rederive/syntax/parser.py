@@ -33,6 +33,7 @@ from rederive.syntax.state import (
     Declaration,
     DomainDeclaration,
     FunctionDeclaration,
+    NameBinding,
     SettingDeclaration,
     VariableDeclaration,
     fold,
@@ -551,18 +552,21 @@ class Parser:
     def function_definition(self, name: Token) -> _Parsed:
         """`F(x,y) := body`, or `F(x,y):=` for an arbitrary function.
 
-        The parameters are registered as known variables before the body is
-        lexed, because the body cannot be lexed otherwise, and they stay
-        registered afterwards: after `FIT3(mx,mf):=mx+mf`, a later bare `mx+mf`
-        is `mx + mf` and not `m*x + m*f`.
+        The parameters are registered as known variables for the length of the
+        body and no longer. Registering them is unavoidable, since `F(mx,mf) :=
+        mx+mf` cannot be lexed otherwise: in Character mode `mx` is `m*x` until
+        something declares it. Keeping them afterwards is a leak - the session
+        would gain a variable the user never asked for, and after `FF(a):=a^2`
+        a later `A(t)` would read as the product `a*t` rather than as a call.
         """
         self.advance()
         self.expect("(", "'('")
         if _is_op(self.peek(), ")"):
             raise self.error(self.peek().start, "a parameter")
         parameters: list[Node] = []
+        shadowed: list[NameBinding] = []
         while True:
-            parameters.append(self.parameter())
+            parameters.append(self.parameter(shadowed))
             if not _is_op(self.peek(), ","):
                 break
             self.advance()
@@ -580,8 +584,11 @@ class Parser:
         spelled = tuple(str(parameter.value) for parameter in parameters)
         self._declare(FunctionDeclaration(str(name.value), spelled, has_body=False))
         body = None
-        if not self._ends_assignment(self.peek()):
-            body = self.assignment()
+        try:
+            if not self._ends_assignment(self.peek()):
+                body = self.assignment()
+        finally:
+            self._release(shadowed, str(name.value))
         children = (params_node,) if body is None else (params_node, body.node)
         end = operator.end if body is None else body.hi
         if body is not None:
@@ -589,12 +596,33 @@ class Parser:
         node = Node(Kind.FUNDEF, name.start, end, children, name.value)
         return _Parsed(node, name.start, end)
 
-    def parameter(self) -> Node:
+    def parameter(self, shadowed: list[NameBinding]) -> Node:
+        """One formal parameter, declared for as long as the body is read.
+
+        Declared in the caller's state but not reported to it: a parameter is a
+        name the body uses, not one the user declared, so what `_release` takes
+        away again must not come back through the caller. `shadowed` collects
+        what each name stood for beforehand, which is what puts a genuine
+        session variable of the same name back.
+        """
         token = self.lexer.name_run_at(self.pos)
         self.pos = token.end
         canonical = self.lexer.new_variable(token.value)
-        self._declare(VariableDeclaration(canonical))
+        shadowed.append(self.lexer.state.binding(canonical))
+        self.lexer.state.declare(VariableDeclaration(canonical))
         return Node(Kind.NAME, token.start, token.end, (), canonical, _surface(token))
+
+    def _release(self, shadowed: list[NameBinding], defined: str) -> None:
+        """Undo the parameter declarations, latest first.
+
+        Latest first because a name written twice was shadowed by its own first
+        declaration the second time. A parameter spelled like the function
+        being defined is left alone: the definition head has taken that name
+        over since, and it is the head's now.
+        """
+        for binding in reversed(shadowed):
+            if binding.name != defined:
+                self.lexer.state.rebind(binding)
 
     def domain_declaration(self, name: Token) -> _Parsed:
         """`x :ε Real [0, inf)`.
@@ -652,8 +680,10 @@ class Parser:
     def _declare(self, declaration: Declaration) -> None:
         """Register now, and report it too.
 
-        The one place the parser touches the caller's state: a definition head
-        must be in the table before its own body is lexed.
+        A definition head must be in the table before its own body is lexed,
+        which is why the parser touches the caller's state at all. The other
+        place it does, `parameter`, registers without reporting, because a
+        parameter is not a name the caller gains.
         """
         self.lexer.state.declare(declaration)
         self.declarations.append(declaration)

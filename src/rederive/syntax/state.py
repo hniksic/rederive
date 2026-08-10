@@ -106,6 +106,19 @@ class VariableInfo:
 
 
 @dataclass(frozen=True)
+class NameBinding:
+    """What one name stood for at some moment, enough to put it back.
+
+    A name is a variable, or a function, or neither, so all three states have
+    to be recorded for a scoped declaration to be undone exactly.
+    """
+
+    name: str
+    variable: VariableInfo | None = None
+    function: FunctionInfo | None = None
+
+
+@dataclass(frozen=True)
 class NameInfo:
     """What a spelling resolves to."""
 
@@ -270,6 +283,30 @@ class ParseState:
                 self.variables[name] = VariableInfo(name, has_value, domain)
             case SettingDeclaration(setting=setting, value=value):
                 self._apply_setting(setting, value)
+        self.revision += 1
+
+    def binding(self, name: str) -> NameBinding:
+        """What `name` stands for right now, for `rebind` to restore later."""
+        return NameBinding(name, self.variables.get(name), self.functions.get(name))
+
+    def rebind(self, binding: NameBinding) -> None:
+        """Put a name back the way `binding` found it.
+
+        For a declaration that is only good for part of a parse, such as the
+        formal parameter of a definition, which has to be a known name while
+        the body is lexed and must not outlive it. Taking a name away changes
+        as much as adding one did, so this bumps the revision as `declare`
+        does: a name that came and went again leaves the table the size it
+        found it, and the lexer caches tokens against both.
+        """
+        if binding.variable is None:
+            self.variables.pop(binding.name, None)
+        else:
+            self.variables[binding.name] = binding.variable
+        if binding.function is None:
+            self.functions.pop(binding.name, None)
+        else:
+            self.functions[binding.name] = binding.function
         self.revision += 1
 
     def clear(self, what: ClearWhat) -> None:
