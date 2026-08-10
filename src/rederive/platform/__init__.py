@@ -47,7 +47,7 @@ class Storage(Protocol):
     A path is what the calls are keyed by wherever they land, because a path is
     what the user typed and what the status line shows. What an environment
     with no filesystem does with one is its own business - the browser's store
-    keys by the name and reads the shipped worksheets off MEMFS behind it - and
+    keys by the name and reads the wheel's own files off MEMFS behind it - and
     nothing above here may depend on the answer.
     """
 

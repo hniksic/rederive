@@ -2876,38 +2876,6 @@ def test_the_wire_handed_back_is_the_next_surface_windows_look(windowed, space):
     assert window.mesh_action.isChecked()
 
 
-# -- the gallery ---------------------------------------------------------------
-
-
-async def test_every_line_of_the_gallery_is_a_captioned_plot():
-    """The shipped worksheet, read as the Plot command reads it.
-
-    A gallery whose lines have stopped classifying as what their captions say
-    they are is worse than no gallery, so every line goes through the same
-    classification the command does. `VECTOR(...)` is the one line that is not a
-    plot as it stands - its caption says to simplify it into a matrix first -
-    and it is here as the reading it has before that, a constant.
-    """
-    from rederive.model import worksheet
-
-    session = Session()
-    assert session.load(worksheet.reading("gallery")) == 0
-    kinds = []
-    for entry in session.entries:
-        assert entry.annotation, entry.text
-        variables = await session.variables(f"#{entry.number}")
-        plotted = classify(entry.node, variables, entry.text)
-        kinds.append(plotted.kind)
-    assert set(kinds) >= {
-        PlotKind.CURVE,
-        PlotKind.FAMILY,
-        PlotKind.PARAMETRIC,
-        PlotKind.IMPLICIT,
-        PlotKind.REGION,
-        PlotKind.SURFACE,
-    }
-
-
 # -- the preferences -----------------------------------------------------------
 #
 # The sticky plot values live in the settings store, screenless, and they have

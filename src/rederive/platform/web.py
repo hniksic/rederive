@@ -18,10 +18,10 @@ instead, and a file goes to whichever of them fits what it is for:
 * **a download**, which is where a save actually goes. It is the only way out
   of a tab and the only copy the user can keep, open in another program or
   send to anyone.
-* **MEMFS**, read-only as far as this is concerned, which is where the
-  worksheets the wheel carries are unpacked. `gallery.mth` is read off it by
-  `pathlib` exactly as it is on a desktop, which is why the store is asked
-  first and the filesystem behind it.
+* **MEMFS**, read-only as far as this is concerned, which is where the wheel is
+  unpacked. A path that names something on it is read by `pathlib` exactly as
+  it is on a desktop, which is why the store is asked first and the filesystem
+  behind it.
 
 A file the user hands over - picked or dropped on the page - arrives through
 `keep`, which is the store without the download: it came from a disk and
@@ -116,9 +116,8 @@ class WebStorage:
         """What is in a directory: the store's own names and MEMFS's behind them.
 
         A prompt completes from this, so what it offers is what a name would
-        find. The worksheets the wheel carries are not among them, for the
-        reason `worksheet.matches` gives: the same list completes a save, and
-        offering the name of a file of the program's own there would be a lie.
+        find. A tab's working directory holds nothing the user did not put
+        there, so the store is nearly always the whole of the answer.
         """
         found = {Path(name).name for name in self._files if _in(name, directory)}
         try:

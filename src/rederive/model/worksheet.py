@@ -20,12 +20,6 @@ Reading is the syntax package's job - `Source.from_file` strips the comments
 and joins the continuations. This module says what those comments *meant*, and
 how a file is written.
 
-It also says where a file is looked for. A few worksheets are part of the
-program rather than of anyone's directory - the plot gallery is the first - and
-they live inside the package, so a name that the working directory has nothing
-of is looked for among them. Only reads look there, and a file of your own
-always wins: see `reading`.
-
 Nothing here opens a file itself. Reading one, listing a directory and asking
 whether a name is there all go through `platform.current().storage()`, which on
 a desktop is `pathlib` with one call in front of it and in a browser is a store
@@ -37,7 +31,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from importlib.resources import files
 from pathlib import Path
 
 from rederive import platform
@@ -50,12 +43,6 @@ SUFFIX = ".mth"
 #: something else: a demonstration script and a file of numbers.
 DEMO_SUFFIX = ".dmo"
 DATA_SUFFIX = ".dat"
-
-#: The package directory the worksheets Rederive ships with live in, named
-#: relative to the `rederive` package. A name typed in full is looked for there
-#: when the working directory has no such file, which is how
-#: `Transfer Load Derive gallery` finds the gallery from anywhere.
-LIBRARY = "worksheets"
 
 COMMENT = ";"
 CONTINUATION = "~"
@@ -244,38 +231,6 @@ def path_of(name: str, suffix: str = SUFFIX) -> Path:
     """
     path = Path(name.strip()).expanduser()
     return path if path.suffix else path.with_suffix(suffix)
-
-
-def reading(name: str, suffix: str = SUFFIX) -> Path:
-    """The file a typed name asks to be read, the shipped ones included.
-
-    `path_of`, and then the library if that named nothing: a bare name that is
-    not in the working directory may be one of the files Rederive ships with,
-    and those are found by name from wherever the program was started. Derive
-    did the same with the `.MTH` files that sat beside `DERIVE.EXE`.
-
-    Only reads go through here. A save resolves with `path_of` alone, so that
-    `Transfer Save gallery` writes a file of your own in the directory you are
-    working in rather than over the one the program came with.
-    """
-    storage = platform.current().storage()
-    path = path_of(name, suffix)
-    if path.parent == Path() and not storage.exists(path):
-        shipped = library() / path.name
-        if storage.exists(shipped) and not storage.is_directory(shipped):
-            return shipped
-    return path
-
-
-def library() -> Path:
-    """Where the worksheets that are part of the program itself live.
-
-    Inside the package, so that they travel with an installed copy the way the
-    help text does. A zipped install has no such directory, which is why
-    nothing here minds a path that does not exist: the fallback simply finds
-    nothing and the name means what it said.
-    """
-    return Path(str(files("rederive"))) / LIBRARY
 
 
 def matches(name: str, suffix: str = SUFFIX) -> list[str]:

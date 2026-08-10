@@ -4483,12 +4483,8 @@ class RederiveApp(App[None]):
         suffix: str = worksheet.SUFFIX,
         refused: str = UNREADABLE,
     ) -> bool:
-        """Read a file into the session, leaving the line up if it cannot be.
-
-        The name is resolved against the worksheets Rederive ships with as well
-        as the working directory, which is how the gallery is loaded by name.
-        """
-        path = worksheet.reading(name, suffix)
+        """Read a file into the session, leaving the line up if it cannot be."""
+        path = worksheet.path_of(name, suffix)
         try:
             skipped = command(path)
         except FileNotFoundError:
@@ -4569,7 +4565,7 @@ class RederiveApp(App[None]):
         if demo.plotting and not available():
             self._plot_refused(UNAVAILABLE)
             return
-        path = worksheet.reading(demo.file)
+        path = worksheet.path_of(demo.file)
         if platform.current().storage().exists(path):
             self.demonstrate(demo.file, demo.plotting)
             return
@@ -4673,7 +4669,7 @@ class RederiveApp(App[None]):
         to be written anywhere, so what it runs is what came over the wire.
         """
         suffix = worksheet.SUFFIX if plotting else worksheet.DEMO_SUFFIX
-        path = worksheet.reading(name, suffix)
+        path = worksheet.path_of(name, suffix)
         if self.demo is None or self.demo.path != path or self.demo.done:
             try:
                 steps = (

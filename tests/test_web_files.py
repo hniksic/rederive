@@ -113,23 +113,20 @@ def test_a_file_handed_over_is_kept_and_never_sent_back_out(storage, page):
     assert page.downloads == []
 
 
-def test_the_worksheets_the_wheel_carries_are_read_off_the_filesystem(storage):
-    """The store first and MEMFS behind it, which is how the gallery is found.
-
-    Nothing in the store is called `gallery.mth`, so the read falls through to
-    the package's own directory - the same path `worksheet.library` names on a
-    desktop, since in a browser that directory is a real one too.
-    """
-    shipped = worksheet.library() / "gallery.mth"
-    assert storage.exists(shipped)
-    assert b"\n" in storage.read(shipped)
+def test_a_file_on_the_filesystem_is_read_when_the_store_has_none(storage, tmp_path):
+    """The store first and MEMFS behind it, for a path that names something real."""
+    on_disk = tmp_path / "ondisk.mth"
+    on_disk.write_text("x + 1\n", encoding="utf-8")
+    assert storage.exists(on_disk)
+    assert storage.read(on_disk) == b"x + 1\n"
 
 
-def test_a_worksheet_of_your_own_wins_over_the_one_the_program_ships(storage):
-    """The store is asked first, which is the desktop's rule about the library."""
-    shipped = worksheet.library() / "gallery.mth"
-    storage.keep(shipped, "mine\n")
-    assert storage.read(shipped) == b"mine\n"
+def test_a_file_of_your_own_wins_over_the_one_on_the_filesystem(storage, tmp_path):
+    """The store is asked first, wherever the path points."""
+    on_disk = tmp_path / "ondisk.mth"
+    on_disk.write_text("theirs\n", encoding="utf-8")
+    storage.keep(on_disk, "mine\n")
+    assert storage.read(on_disk) == b"mine\n"
 
 
 def test_a_listing_offers_the_store_and_the_filesystem_together(

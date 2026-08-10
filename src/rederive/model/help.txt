@@ -444,10 +444,6 @@ and nothing is written to disk; use Transfer Save to keep what a demonstration
 leaves in the worksheet. A file of that name in the working directory - one you
 saved, or the original's own - is read instead of anything being downloaded.
 
-Transfer Load Derive gallery reads the worksheet of captioned plots that comes
-with the program. Highlight a line, read its caption on the status line, and
-press P P to see what it draws.
-
 Plot draws the highlighted expression in a window of its own; the Plotting
 subject of this help covers the plot windows.
 
