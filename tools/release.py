@@ -72,8 +72,11 @@ def check_master() -> None:
 
 
 def check_clean() -> None:
-    """Refuse a dirty tree, which the version commit would otherwise sweep up."""
-    if git("status", "--porcelain"):
+    """Refuse a dirty tree, which the version commit would otherwise sweep up.
+
+    Untracked files are fine; the version commit only picks up tracked changes.
+    """
+    if git("status", "--porcelain", "--untracked-files=no"):
         die("working tree has changes; commit or stash them first")
 
 
