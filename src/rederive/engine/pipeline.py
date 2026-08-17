@@ -1108,16 +1108,87 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
     `Derivative`. The heads are taken here rather than left to the pass that
     takes the rest, because deciding is what chooses which branch that pass
     ever sees.
+
+    An equation the undeclared reals alone would settle is not settled, which
+    is `_by_default_alone`.
     """
     if test.has(*_CALCULUS):
         test = _calculus(test, context)
-    test = as_condition(test)
+    stated = _stated_test(test)
+    verdict = _verdict(as_condition(test), context)
+    if verdict is not None and _by_default_alone(stated, verdict, context):
+        return None
+    return verdict
+
+
+def _stated_test(test: sp.Basic) -> sp.Basic:
+    """The relation `test` is, held rather than answered.
+
+    `as_condition` reads a test the way sympy does, which answers a relation on
+    the spot - and a relation sympy has answered is no longer one to ask
+    anything about. This is the same reading with the answering left out, so
+    that `_by_default_alone` has the two sides in front of it.
+    """
+    if isinstance(test, (Boolean, Logical)):
+        return test
+    held = _attempt(test, lambda t: sp.Eq(t, 0, evaluate=False))
+    return test if held is None else held
+
+
+def _verdict(test: sp.Basic, context: Context) -> bool | None:
+    """Whether any reading of `test`, or the declared intervals, settle it."""
     for candidate in _truths(test, context):
         if candidate is sp.true:
             return True
         if candidate is sp.false:
             return False
     return decided(test, context)
+
+
+def _by_default_alone(test: sp.Basic, verdict: bool, context: Context) -> bool:
+    """Whether an equation is answered only by what an undeclared name defaults to.
+
+    A name no declaration reaches is real, which is Derive's factory domain and
+    what makes `SQRT(x^2)` into `ABS(x)`. Realness is no answer to an equation,
+    though: `x = #i` is where a quadratic with a negative discriminant lands,
+    and the original prints that root rather than the `false` reading `x` as
+    real would make of it. So an equation that comes apart only over the
+    reality of an undeclared name is left standing to be read as the root it
+    is.
+
+    Only equations, and only in the direction that separates the two sides: `<`
+    is a question about the reals and nothing else, so the domain is the whole
+    of what makes it askable, and an equation that holds holds whatever the
+    domain. A declared name still decides one, that being what declaring is
+    for, and so does anything the freed reading answers on its own - `[x, y] =
+    [1, 2, 3]` is two lengths and no domain.
+    """
+    if not isinstance(test, (sp.Equality, sp.Unequality)):
+        return False
+    equal = verdict if isinstance(test, sp.Equality) else not verdict
+    if equal:
+        return False
+    freed = _freed(test, context)
+    return freed is not None and _verdict(freed, context) is None
+
+
+def _freed(test: sp.Basic, context: Context) -> sp.Basic | None:
+    """`test` with every undeclared name freed of the reality it defaults to.
+
+    None where there is no such name, which is a test the domains had no hand
+    in. The freed names are complex in the sense the `Complex` declaration
+    means: not known to be real, so that no rewrite needing a real fires.
+    """
+    freeing = {
+        symbol: sp.Dummy(symbol.name, complex=True)
+        for symbol in test.free_symbols
+        if isinstance(symbol, sp.Symbol)
+        and symbol.name not in context.domains
+        and symbol.is_real is True
+    }
+    if not freeing:
+        return None
+    return _attempt(test, lambda t: t.xreplace(freeing))
 
 
 def _reconditioned(expression: sp.Basic, context: Context) -> sp.Basic:

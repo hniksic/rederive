@@ -2238,6 +2238,47 @@ def test_only_the_reals_are_ordered_so_a_complex_variable_decides_nothing():
     assert simp("x = x", COMPLEX_X) == "true"
 
 
+def test_an_undeclared_name_is_real_but_that_is_no_answer_to_an_equation():
+    """A name no declaration reaches is real, and reading one that way answers
+    an equation it has no business answering: `x = #i` would be `false` for the
+    same reason `SQRT(x^2)` is `ABS(x)`. The original prints the root instead,
+    that being what a quadratic with a negative discriminant is solved by, so
+    an equation that comes apart only over the reality of an undeclared name is
+    left standing - and so is its negation, which the same reading would make
+    `true`.
+
+    What decides one still decides it: a declaration is a statement about the
+    name and is taken as one, and two sides that differ over anything but
+    reality differ whatever the domain."""
+    assert simp("x = #i") == "x = #i"
+    assert simp("x = SQRT(-1)") == "x = #i"
+    assert simp("x + #i = 0") == "x + #i = 0"
+    assert simp("x^2 + 1 = 0") == "x^2 + 1 = 0"
+    assert simp("x /= #i") == "x /= #i"
+    assert simp("x = #i", declared("x :epsilon Real")) == "false"
+    assert simp("x = #i", COMPLEX_X) == "x = #i"
+    assert simp("x + 1 = x") == "false"
+    assert simp("ABS(x) + 1 = 0") == "false"
+    assert simp("1 = 2") == "false"
+
+
+def test_a_quadratic_whose_discriminant_turns_negative_is_answered_in_roots():
+    """The manual's quadratic with numbers substituted into it, which is where
+    an equation the domains falsify would take an answer away from a user: `10`
+    for `a`, `1.3333` for `b` and `30` for `c` puts the discriminant below zero,
+    and the root is what the original prints there."""
+    values = {name: parse(value) for name, value in (("a", "10"), ("b", "1.3333"))}
+    context = Context(assignments=values)
+    formula = "x = (SQRT(b^2 - 4*a*c) - b)/(2*a)"
+    assert simp(formula, context) == (
+        "x = SQRT(177768889 - 4000000000*c)/200000 - 13333/200000"
+    )
+    context = Context(assignments={**values, "c": parse("30")})
+    assert simp(formula, context) == (
+        "x = -13333/200000 + SQRT(119822231111)*#i/200000"
+    )
+
+
 def test_relations_joined_over_one_variable_are_solved():
     assert simp("6 >= -2*x AND 3*x /= -9") == "x > -3"
     assert simp("x < 1 AND x > 3") == "false"
