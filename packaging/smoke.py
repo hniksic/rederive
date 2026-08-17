@@ -62,6 +62,12 @@ COLUMNS, ROWS = 100, 30
 #: load is nobody's to predict, and a slow answer is not a wrong one.
 PATIENCE = 30.0
 
+#: How much of the session a failure writes out. A whole one is a hundred kilobytes or
+#: so and every byte of it is wanted, this being the only sighting of a failure anyone
+#: gets; the cap is a runaway's ceiling rather than a budget, and what it drops it says
+#: it dropped. The end is what is kept, a check having failed at the end of it.
+TRANSCRIPT = 512 * 1024
+
 #: How long the screen has to have stood still for a failure to call it settled. Set
 #: above a second, which is the rate of the fastest thing that repaints without anyone
 #: asking: a running computation writes its elapsed time in whole seconds, so a screen
@@ -257,7 +263,9 @@ class Terminal:
         raise Failed(
             f"waited {patience:.0f}s for {text!r}. "
             f"{_arrival(self._seen, None if drawn is None else deadline - drawn)}\n"
-            f"The screen it waited in front of:\n{_shown(self._session)}"
+            f"{_held(self._session, self._seen, text)}\n"
+            f"The screen it waited in front of:\n{_shown(self._session)}\n"
+            f"{_transcript(self._session)}"
         )
 
     def finish(self) -> int:
@@ -300,6 +308,73 @@ def _arrival(seen: bytes, quiet: float | None) -> str:
     if quiet > SETTLED:
         return f"{volume}; the last of them {quiet:.1f}s before the deadline."
     return f"{volume}, the last still arriving as it ran out."
+
+
+def _held(session: bytes, seen: bytes, text: str) -> str:
+    """Where the expected text was, of the four places a match has to survive.
+
+    A wait fails on one question, and that answer is worth little by itself: each form
+    below is derived from the one above it, and a match needs every one of them to have
+    kept the text. Reporting only the last conflates an app that never wrote the text
+    with a script that read correct bytes wrongly, and those are not the same morning's
+    work - the first is a bug in the program, the second a bug in here.
+
+    So each is asked separately and the rawest is asked first. The bytes are the
+    primary record: they are what the app sent, and every form under them is this
+    script's own reading of it, which can be wrong in ways the app is not. Nothing here
+    concludes anything from what it finds. A wait that reports the reason it failed
+    rather than the facts it failed on is only as good as the reasoning behind it, and
+    the reasoning is what there is least of at the point a check first goes wrong.
+    """
+    wanted = text.encode()
+    offset = session.find(wanted)
+    drawn = [line for line in _screen(session) if text in line]
+    places = (
+        ("in the bytes the app has written", offset >= 0),
+        ("in the bytes this wait was reading", wanted in seen),
+        ("in those with the escape sequences taken out", text in _plain(seen)),
+        ("on the screen replayed from them", bool(drawn)),
+    )
+    lines = [f"    {'yes' if found else 'no':<4}{where}" for where, found in places]
+    if offset >= 0:
+        lines[0] += f", from byte {offset}"
+    if drawn:
+        lines[3] += f", on {'; '.join(line.strip() for line in drawn)!r}"
+    return "Where the text was:\n" + "\n".join(lines)
+
+
+def _transcript(session: bytes) -> str:
+    """Everything the app wrote, in a form a log can carry and a reader can undo.
+
+    The screen above is this script's reading of these bytes, and the reading is the
+    part that can be wrong: a replay that mishandles one sequence draws a screen that
+    looks settled and is not what the app sent. So the bytes go in the log too, and a
+    question this script does not currently know to ask can still be put to them.
+
+    They are written the way Python writes bytes, rather than encoded: an escape
+    sequence stays legible as `\\x1b[5;1H`, a character that came out wrong is visible
+    as the bytes it came out as, and the whole is still exactly recoverable. Base64
+    would be shorter and would have to be decoded before it said anything at all.
+
+    Each line is a whole literal rather than a slice of one, which is what makes the
+    recovery exact: a stream is mostly spaces, and a line that ended in one would
+    otherwise lose it to the indentation it was printed under or to whatever the log
+    puts in front of every line. So a reader takes the literals, in order, and joins
+    what they evaluate to.
+
+    Only the log holds this. Should a failure ever need comparing with one from months
+    before, both logs have to have been read while they were still there.
+    """
+    dropped = max(len(session) - TRANSCRIPT, 0)
+    kept = session[dropped:]
+    rows = [kept[at : at + 64] for at in range(0, len(kept), 64)]
+    said = f"{len(session)} bytes"
+    if dropped:
+        said += f", of which the first {dropped} are dropped here"
+    return (
+        f"Everything the app wrote ({said}), as one bytes literal a line:\n"
+        + "\n".join(f"    {row!r}" for row in rows)
+    )
 
 
 def _screen(data: bytes) -> list[str]:
