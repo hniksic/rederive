@@ -2211,14 +2211,17 @@ def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
     made from, except that a single row is written flat as any one-row matrix is.
 
     Sides the pairing does not fit are a statement about the two things
-    themselves, and that statement is decided whole."""
+    themselves, and there the two written values are all there is to compare:
+    the original answers `[1, 2] = [1, 2, 3]` false, and leaves `[x, y] = [1,
+    2, 3]` standing as the statement about `x` and `y` that it is."""
     assert simp("[x, y] = [1, 2]") == "[x = 1, y = 2]"
     assert simp("[[x], [y]] = [[1], [2]]") == "[[x = 1], [y = 2]]"
     assert simp("[x, y] < [1, 2]") == "[x < 1, y < 2]"
     spread = simp("[[a, b], [c, d]] = [[1, 2], [3, 4]]")
     assert spread == "[[a = 1, b = 2], [c = 3, d = 4]]"
     assert simp("[[1, 2], [3, 4]] = [[1, 2], [3, 4]]") == "[[true, true], [true, true]]"
-    assert simp("[x, y] = [1, 2, 3]") == "false"
+    assert simp("[1, 2] = [1, 2, 3]") == "false"
+    assert simp("[x, y] = [1, 2, 3]") == "[x, y] = [1, 2, 3]"
 
 
 def test_the_system_of_section_eight_five_is_solved_by_inverting_its_matrix():
@@ -2238,28 +2241,50 @@ def test_only_the_reals_are_ordered_so_a_complex_variable_decides_nothing():
     assert simp("x = x", COMPLEX_X) == "true"
 
 
-def test_an_undeclared_name_is_real_but_that_is_no_answer_to_an_equation():
-    """A name no declaration reaches is real, and reading one that way answers
-    an equation it has no business answering: `x = #i` would be `false` for the
-    same reason `SQRT(x^2)` is `ABS(x)`. The original prints the root instead,
-    that being what a quadratic with a negative discriminant is solved by, so
-    an equation that comes apart only over the reality of an undeclared name is
-    left standing - and so is its negation, which the same reading would make
-    `true`.
+def test_an_equation_is_answered_by_the_arithmetic_and_not_by_the_domains():
+    """The original does not put an equation to the declared domains. `x = #i`
+    is where a quadratic with a negative discriminant lands, and it stands as
+    written whether `x` was declared real, declared complex or declared nothing
+    at all - a name nobody declared being real is what makes `SQRT(x^2)` into
+    `ABS(x)`, and that is a different question. `ABS(x) + 1 = 0` is satisfied
+    by no real and stands too: an equation asks about a value rather than
+    claiming something to be refuted from what the value is known to be.
 
-    What decides one still decides it: a declaration is a statement about the
-    name and is taken as one, and two sides that differ over anything but
-    reality differ whatever the domain."""
+    What answers one is the difference of the two sides coming out a number,
+    zero for one value and a nonzero real for two. A difference that is a
+    number and not real answers nothing, which is the answer the original
+    gives: `#i = 1` and `2*#i = #i` stand."""
     assert simp("x = #i") == "x = #i"
     assert simp("x = SQRT(-1)") == "x = #i"
+    assert simp("x = #i", declared("x :epsilon Real")) == "x = #i"
+    assert simp("x = #i", COMPLEX_X) == "x = #i"
     assert simp("x + #i = 0") == "x + #i = 0"
     assert simp("x^2 + 1 = 0") == "x^2 + 1 = 0"
     assert simp("x /= #i") == "x /= #i"
-    assert simp("x = #i", declared("x :epsilon Real")) == "false"
-    assert simp("x = #i", COMPLEX_X) == "x = #i"
+    assert simp("ABS(x) + 1 = 0") == "ABS(x) + 1 = 0"
+    assert simp("#e^x = 0") == "#e^x = 0"
+    assert simp("n = 1/2", declared("n :epsilon Integer")) == "n = 1/2"
+    assert simp("p = -1", declared("p :epsilon Real (0, inf)")) == "p = -1"
+    assert simp("y = 5", declared("y :epsilon Real (0, 1)")) == "y = 5"
+    # What the arithmetic answers is answered, and a value declaration is
+    # arithmetic: the name is the number it was declared to stand for.
     assert simp("x + 1 = x") == "false"
-    assert simp("ABS(x) + 1 = 0") == "false"
+    assert simp("x /= x") == "false"
     assert simp("1 = 2") == "false"
+    assert simp("SQRT(-4) = 2*#i") == "true"
+    assert simp("2*x = x + x") == "true"
+    assert simp("v = 5", Context(assignments={"v": parse("7")})) == "false"
+    # A number that is not real leaves the two sides where they were.
+    assert simp("#i = 1") == "#i = 1"
+    assert simp("2*#i = #i") == "2*#i = #i"
+    assert simp("x + #i = x") == "x + #i = x"
+    # Two sides written the same are one value whatever they are written out
+    # of, which is the whole of what answers the ones that have no difference.
+    assert simp("INF = INF") == "true"
+    assert simp("-INF = INF") == "false"
+    assert simp("true = true") == "true"
+    assert simp('"no" = "no"') == "true"
+    assert simp('"no" = "yes"') == '"no" = "yes"'
 
 
 def test_a_quadratic_whose_discriminant_turns_negative_is_answered_in_roots():

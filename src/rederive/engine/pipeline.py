@@ -404,16 +404,15 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
 
     `2 = 2` is `true` and `1 = 2` is `false`, which is what the original
     answers: a relation is a statement, and simplifying a statement that says
-    something definite means saying it. The judgement is three-valued and is
-    `_decide`'s, the same reading the test of an `IF` gets, so a relation that
-    settles nothing - `x = 2`, or `ABS(x) < 1` under no declaration - comes back
-    exactly as it was authored rather than as a guess.
+    something definite means saying it. The judgement is three-valued, so a
+    relation that settles nothing - `x = 2`, or `ABS(x) < 1` under no
+    declaration - comes back exactly as it was authored rather than as a guess.
 
     An ordering is asked only of sides that are real, because that is the only
     domain it means anything over: `x < x + 1` holds for a real `x` and says
-    nothing about a complex one, where sympy's own comparison declines. An
-    equation is asked whatever the domain, `=` being a question every value
-    answers.
+    nothing about a complex one, where sympy's own comparison declines. It is
+    asked the way the test of an `IF` is, declared domains and all. An equation
+    is asked of the arithmetic only, which is `_equated`.
 
     `decide` off is soLve's pipeline, which wants the sides simplified and the
     relation left standing to be solved.
@@ -466,10 +465,76 @@ def _stated(
         relation = func(left, right)
     if not (decide and isinstance(relation, Relational) and _comparable(relation)):
         return relation
-    held = _decide(relation, context)
+    held = _answered(relation, context)
     if held is None:
         return relation
     return sp.true if held else sp.false
+
+
+def _answered(relation: Relational, context: Context) -> bool | None:
+    """Whether a relation standing on its own says something definite.
+
+    An equation is answered by arithmetic alone, which is `_equated`. An
+    ordering is put the question the test of an `IF` is put, the declared
+    domains included, since what an ordering says is about where on the line a
+    value falls and that is what a domain is about.
+    """
+    if isinstance(relation, (sp.Equality, sp.Unequality)):
+        return _equated(relation, context)
+    return _decide(relation, context)
+
+
+def _equated(relation: Relational, context: Context) -> bool | None:
+    """Whether the two sides of an equation are one value, by arithmetic alone.
+
+    The original does not put an equation to the domains. `x = #i` is where a
+    quadratic with a negative discriminant lands, and it stands as written
+    whether `x` was declared real, declared complex or declared nothing at all;
+    so does `ABS(x) + 1 = 0`, which no real satisfies and which is still an
+    equation somebody may have meant to write. An equation is a question about
+    a value, not a claim to be refuted from what the value is known to be.
+
+    What answers one is the difference of the two sides coming out a number:
+    zero and the sides are the same value, a nonzero real and they are not.
+
+    A difference that is a number and not real answers nothing, which is the
+    answer the original gives: `#i = 1` and `2*#i = #i` both stand. Only the
+    reals are ordered, and off the line the one thing a difference settles is
+    being zero.
+
+    Matrices have no difference to take where the shapes do not fit, and the
+    two written values are then all there is to compare: `[1, 2] = [1, 2, 3]`
+    is false, while `[x, y] = [1, 2, 3]` says something about `x` and `y` and
+    stands.
+    """
+    if any(isinstance(side, sp.MatrixBase) for side in relation.args):
+        if relation.free_symbols:
+            return None
+        return _decide(relation, context)
+    same = _one_value(relation, context)
+    if same is None:
+        return None
+    return same is isinstance(relation, sp.Equality)
+
+
+def _one_value(relation: Relational, context: Context) -> bool | None:
+    """Whether the two sides of an equation are the same value.
+
+    Two sides that came out written the same are, whatever they are written
+    out of: `inf = inf` and `true = true` hold, and neither has a difference to
+    take. Everything else is the difference, taken over the rewrites the rest
+    of the pipeline uses so that `SIN(x)^2 + COS(x)^2 = 1` is answered too.
+    """
+    if relation.lhs == relation.rhs:
+        return True
+    difference = _attempt(relation, lambda r: _rewritten(r.lhs - r.rhs, context))
+    if difference is None or not difference.is_number:
+        return None
+    if difference.is_zero:
+        return True
+    if difference.is_zero is False and difference.is_extended_real is True:
+        return False
+    return None
 
 
 def _comparable(relation: Relational) -> bool:
@@ -1108,87 +1173,16 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
     `Derivative`. The heads are taken here rather than left to the pass that
     takes the rest, because deciding is what chooses which branch that pass
     ever sees.
-
-    An equation the undeclared reals alone would settle is not settled, which
-    is `_by_default_alone`.
     """
     if test.has(*_CALCULUS):
         test = _calculus(test, context)
-    stated = _stated_test(test)
-    verdict = _verdict(as_condition(test), context)
-    if verdict is not None and _by_default_alone(stated, verdict, context):
-        return None
-    return verdict
-
-
-def _stated_test(test: sp.Basic) -> sp.Basic:
-    """The relation `test` is, held rather than answered.
-
-    `as_condition` reads a test the way sympy does, which answers a relation on
-    the spot - and a relation sympy has answered is no longer one to ask
-    anything about. This is the same reading with the answering left out, so
-    that `_by_default_alone` has the two sides in front of it.
-    """
-    if isinstance(test, (Boolean, Logical)):
-        return test
-    held = _attempt(test, lambda t: sp.Eq(t, 0, evaluate=False))
-    return test if held is None else held
-
-
-def _verdict(test: sp.Basic, context: Context) -> bool | None:
-    """Whether any reading of `test`, or the declared intervals, settle it."""
+    test = as_condition(test)
     for candidate in _truths(test, context):
         if candidate is sp.true:
             return True
         if candidate is sp.false:
             return False
     return decided(test, context)
-
-
-def _by_default_alone(test: sp.Basic, verdict: bool, context: Context) -> bool:
-    """Whether an equation is answered only by what an undeclared name defaults to.
-
-    A name no declaration reaches is real, which is Derive's factory domain and
-    what makes `SQRT(x^2)` into `ABS(x)`. Realness is no answer to an equation,
-    though: `x = #i` is where a quadratic with a negative discriminant lands,
-    and the original prints that root rather than the `false` reading `x` as
-    real would make of it. So an equation that comes apart only over the
-    reality of an undeclared name is left standing to be read as the root it
-    is.
-
-    Only equations, and only in the direction that separates the two sides: `<`
-    is a question about the reals and nothing else, so the domain is the whole
-    of what makes it askable, and an equation that holds holds whatever the
-    domain. A declared name still decides one, that being what declaring is
-    for, and so does anything the freed reading answers on its own - `[x, y] =
-    [1, 2, 3]` is two lengths and no domain.
-    """
-    if not isinstance(test, (sp.Equality, sp.Unequality)):
-        return False
-    equal = verdict if isinstance(test, sp.Equality) else not verdict
-    if equal:
-        return False
-    freed = _freed(test, context)
-    return freed is not None and _verdict(freed, context) is None
-
-
-def _freed(test: sp.Basic, context: Context) -> sp.Basic | None:
-    """`test` with every undeclared name freed of the reality it defaults to.
-
-    None where there is no such name, which is a test the domains had no hand
-    in. The freed names are complex in the sense the `Complex` declaration
-    means: not known to be real, so that no rewrite needing a real fires.
-    """
-    freeing = {
-        symbol: sp.Dummy(symbol.name, complex=True)
-        for symbol in test.free_symbols
-        if isinstance(symbol, sp.Symbol)
-        and symbol.name not in context.domains
-        and symbol.is_real is True
-    }
-    if not freeing:
-        return None
-    return _attempt(test, lambda t: t.xreplace(freeing))
 
 
 def _reconditioned(expression: sp.Basic, context: Context) -> sp.Basic:
