@@ -168,6 +168,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 import threading
 import time
 from collections.abc import Awaitable, Mapping
@@ -1527,6 +1528,23 @@ class RederiveApp(App[None]):
 
     def get_css_variables(self) -> dict[str, str]:
         return {**super().get_css_variables(), **self.palette.css_variables()}
+
+    def get_driver_class(self) -> Any:
+        """Textual's choice, with the terminal's hangup handled where the choice was a tty.
+
+        Only Textual's own driver for Linux and macOS is stood in for, and only by
+        its own subclass: a driver named in the environment, and Windows, are left
+        as Textual has them. `driver` is imported here rather than at the top since
+        it imports the Linux driver, which Windows cannot.
+        """
+        chosen = super().get_driver_class()
+        if sys.platform == "win32":
+            return chosen
+        from textual.drivers.linux_driver import LinuxDriver
+
+        from rederive.ui.driver import TerminalDriver
+
+        return TerminalDriver if chosen is LinuxDriver else chosen
 
     @property
     def session(self) -> Session:
