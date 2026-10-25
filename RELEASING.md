@@ -110,10 +110,6 @@ Attach everything to the GitHub release.
 - On Windows the smoke script only checks that the bundle unpacks and says what it
   carries, there being no pty to drive the rest through. What covers the rest there is
   the workflow's installer check, which installs, runs and uninstalls.
-- No check anywhere draws a plot from a build: the runners have no display, and the
-  suite draws offscreen but against the source tree. What `--version` says is that the
-  toolkit imports. Before a release, open a 2D and a 3D plot from the binary by hand -
-  the 3D one especially, since PyOpenGL finds its backend by a name no build can see.
 - Nothing is signed, so macOS and Windows refuse a browser's download and SmartScreen
   warns about the installer. INSTALL.md's instructions work around that and have to
   stay in step with it. There is more of it to object to since Qt arrived - a bundle

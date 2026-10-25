@@ -14,7 +14,7 @@ The tag is annotated, for the tagger, date and message of its own that `git
 describe` and the release page both want.
 
 Everything else in the procedure - running the build by hand on master first,
-opening a plot from the binary, attaching the artifacts - is still by hand, and
+attaching the artifacts - is still by hand, and
 `--push` is what starts the workflow that does the rest, so it is opt-in.
 """
 

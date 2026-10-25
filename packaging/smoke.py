@@ -40,8 +40,7 @@ child process, and this runs where there is nothing to put one on - the app refu
 the command outright on a Linux machine with no display. What `--version` proves is
 that the bundle carries an importable Qt and pyqtgraph. Whether a window actually
 opens, and whether the backend PyOpenGL picks by name at run time came along with it,
-nothing here asks: the suite draws offscreen but does it against the source tree, so
-a build is only answered for that by someone drawing a 3D plot from it by hand.
+nothing here asks: the suite draws offscreen, but against the source tree.
 """
 
 from __future__ import annotations
