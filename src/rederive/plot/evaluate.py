@@ -151,7 +151,7 @@ def closure(
 ) -> Callable[..., np.ndarray]:
     """A numeric function of `variables` for the expression `node` names.
 
-    The pre-pass is the worker's own - `substitute` resolves labels, assigned
+    The evaluation is the worker's own - `evaluated` resolves labels, assigned
     variables and defined functions on the tree, before sympy sees any of it -
     so a plot of `#3` plots what `#3` means and a plot of `f(x)` plots the
     function the worksheet defined.
@@ -283,14 +283,13 @@ def number(node: Node | None, context: Context, default: float) -> float:
 def _converted(node: Node, context: Context) -> object:
     """The engine's reading of `node` as a sympy object.
 
-    The pre-pass is the worker's own - `substitute` resolves labels, assigned
+    The evaluation is the worker's own - `evaluated` resolves labels, assigned
     variables and defined functions on the tree, before sympy sees any of it.
     """
-    from rederive.engine.substitute import substitute
-    from rederive.engine.to_sympy import to_sympy
+    from rederive.engine.evaluate import evaluated
 
     try:
-        return to_sympy(substitute(node, context), context)
+        return evaluated(node, context)
     except Exception as error:
         raise Unplottable(_said(error)) from None
 

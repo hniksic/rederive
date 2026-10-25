@@ -398,6 +398,15 @@ def test_a_factor_head_is_factored_where_it_stands():
     )
 
 
+def test_a_factor_head_in_a_sum_is_the_sum_s_to_write():
+    """A sum is written in the normal form whatever its terms were asked to look
+    like, and a factored polynomial in one is multiplied out; a factored number is
+    no polynomial and stays. Checked against the original."""
+    assert simplify(parse("FACTOR(x^2 - 1) + x^3"), Context()).text == "x^3 + x^2 - 1"
+    assert simplify(parse("x*FACTOR(x^2 - 1) + 1"), Context()).text == "x^3 - x + 1"
+    assert simplify(parse("FACTOR(12) + 1"), Context()).text == "2^2*3 + 1"
+
+
 def test_nothing_later_undoes_a_factor_head():
     """Everything that reshapes a sum - the gated rewrites and the normal form
     alike - runs before this, so none of them is offered the chance to multiply

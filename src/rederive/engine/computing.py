@@ -47,13 +47,13 @@ from rederive.engine.client import (
     replace,
     written_as_ratio,
 )
+from rederive.engine.evaluate import evaluated
 from rederive.engine.expand import expand
 from rederive.engine.factor import factor
 from rederive.engine.from_sympy import from_sympy, parse_state_for
 from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
 from rederive.engine.solve import solve, solved
-from rederive.engine.substitute import substitute
 from rederive.engine.to_sympy import authored_conditionals, to_sympy
 from rederive.engine.variables import expression_variables
 
@@ -83,6 +83,7 @@ __all__ = [
     "decomposes",
     "domain_of_node",
     "equations_in",
+    "evaluated",
     "expand",
     "expression_variables",
     "factor",
@@ -93,7 +94,6 @@ __all__ = [
     "simplify",
     "solve",
     "solved",
-    "substitute",
     "to_sympy",
     "written_as_ratio",
 ]

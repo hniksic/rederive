@@ -5,24 +5,23 @@ because a declaration justifies it, so what matters here is which sympy
 assumption each declaration turns into, and that an undeclared variable is
 real.
 
-The substitution pre-pass is the other half of the state: assignments, function
-definitions and labels are written into the tree before anything converts it,
-and the cases below are about where that stops - a variable that reaches
-itself, a call with fewer arguments than parameters, a name a definition owns.
+The evaluation is the other half of the state: assignments, function
+definitions and labels are written in as the tree is worked out, and the cases
+below are about where that stops - a variable that reaches itself, a call with
+fewer arguments than parameters, a name a definition owns.
 """
 
 from __future__ import annotations
 
 import pytest
 import sympy as sp
-from sexpr import to_sexpr
 
 from rederive.engine.computing import (
     Context,
     Domain,
     DomainKind,
     domain_of_node,
-    substitute,
+    evaluated,
     to_sympy,
 )
 from rederive.engine.context import Angle, Branch, Direction, Precision, TrigPower
@@ -40,13 +39,13 @@ def parse(text, state=None):
 
 
 def written(text, context, state=None):
-    """`text` with everything the context knows substituted into it."""
-    return to_sexpr(substitute(parse(text, state), context))
+    """`text` worked out with everything the context knows written into it."""
+    return evaluated(parse(text, state), context)
 
 
 def same_as(text, state=None):
     """What `written` should equal when the answer is `text` itself."""
-    return to_sexpr(parse(text, state))
+    return to_sympy(parse(text, state))
 
 
 def symbol(declaration):
@@ -276,9 +275,11 @@ def test_an_argument_is_substituted_before_it_is_written_in():
     assert written("F(u)", context) == same_as("7 + 1")
 
 
-def test_a_recursive_definition_leaves_its_own_call_standing():
+def test_a_recursion_that_never_arrives_stops_at_the_nesting_bound():
+    # Every level adds one, and the call left over at the bottom is the answer's
+    # own admission that it did not finish.
     context = Context(functions={"G": (("x",), parse("G(x) + 1"))})
-    assert written("G(2)", context) == same_as("G(2) + 1")
+    assert written("G(2)", context) == same_as("G(2) + 300")
 
 
 def test_a_parameter_stands_for_itself_inside_the_definition():
@@ -298,21 +299,25 @@ def test_a_function_the_context_does_not_know_is_left_alone():
 
 def test_the_variable_a_sum_names_is_not_substituted_for():
     # `SUM(25, 5, 1, 3)` is not a sum over anything, and it is what writing an
-    # assigned value into every position would produce.
+    # assigned value into every position would produce. Over a symbolic range the
+    # sum stands; over a counted one it is 1 + 4 + 9 and not 75.
     context = Context(assignments={"x": parse("5")})
-    assert written("SUM(x^2, x, 1, 3)", context) == same_as("SUM(x^2, x, 1, 3)")
+    assert written("SUM(x^2, x, 1, n)", context) == same_as("SUM(x^2, x, 1, n)")
+    assert written("SUM(x^2, x, 1, 3)", context) == 14
 
 
 def test_an_argument_after_the_bound_variable_is_read_outside_the_binding():
     # `ITERATES(TAN(x), x, x, -1)` is from the manual: the third argument is the
     # starting value, and the `x` in it is whatever `x` means outside.
     context = Context(assignments={"x": parse("5")})
-    assert written("SUM(x^2, x, 1, x)", context) == same_as("SUM(x^2, x, 1, 5)")
+    assert written("SUM(x^2, x, 1, x)", context) == 1 + 4 + 9 + 16 + 25
 
 
 def test_a_bound_variable_shadows_a_parameter_of_the_same_name():
+    context = Context(functions={"F": (("x",), parse("SUM(x^2, x, 1, n)"))})
+    assert written("F(9)", context) == same_as("SUM(x^2, x, 1, n)")
     context = Context(functions={"F": (("x",), parse("SUM(x^2, x, 1, 3)"))})
-    assert written("F(9)", context) == same_as("SUM(x^2, x, 1, 3)")
+    assert written("F(9)", context) == 14
 
 
 def test_a_binding_function_given_no_variable_binds_nothing():

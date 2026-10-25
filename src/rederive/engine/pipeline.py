@@ -11,35 +11,32 @@ slack taken out.
 
 The sequence is:
 
-1. Substitute labels, assignments and function definitions, on the tree.
-2. Convert to sympy. Sympy's automatic evaluation already does most of what the
-   manual lists as Simplify's basic work: combining numbers, collecting like
+1. Evaluate the tree, innermost first, which is `evaluate`'s business: names
+   replaced by what they stand for, calls of defined functions worked out over
+   their arguments, and the test of every `IF` decided before a branch is
+   chosen. Sympy's automatic evaluation does most of what the manual lists as
+   Simplify's basic work on the way: combining numbers, collecting like
    factors and terms, the identities for zero and one, distributing integer
    powers over products.
-3. Evaluate the calculus heads innermost first. One that will not evaluate
-   survives to the output as itself, which is how `INT(#e^(x^2), x)` comes back
-   an integral rather than an error.
-4. Offer each remaining rewrite in turn and keep it only if it pays: fewer
-   operations, or one variable fewer. That gate is what makes
-   `(x^2 + 2*x*y + y^2)/(x^2 - y^2)` come back a ratio rather than a
-   polynomial. A mode set to Collect or Expand is an instruction rather than an
-   option, so those rewrites are applied whether or not they shorten anything.
-5. Write every sum in the normal form `normal_form` is about: a rational
-   function of the most main variable that sum holds. This one is not gated on
-   anything - it is what a normal form means - and it is where `(x + 1)^9 + y`
-   becomes a ninth-degree polynomial while `(y + 1)^9 + x` does not.
+2. On the way, as each is made, the calculus heads are worked out by
+   `_evaluate`, and the `FACTOR`, `EXPAND`, `SOLVE` and `RATE` heads are run by
+   `_commanded`. A calculus head that will not evaluate survives to the output
+   as itself, which is how `INT(#e^(x^2), x)` comes back an integral rather than
+   an error.
+3. Reduce the kernels, over the vocabulary the answer is written in: offer
+   each identity in turn and keep it only if it pays - fewer operations, or
+   one variable fewer - and apply the rules a mode set to Collect or Expand
+   asks for, that being an instruction rather than an option. The tables at
+   the end of this module are the whole of it.
+4. Write every sum and quotient in the normal form `normal_form` is about: a
+   sum as a rational function of the most main generator it holds, a product
+   cancelled and never distributed. This one is not gated on anything - it is
+   what a normal form means - and it is where `(x + 1)^9 + y` becomes a
+   ninth-degree polynomial while `(y + 1)^9 + x` does not, and where
+   `(x^2 + 2*x*y + y^2)/(x^2 - y^2)` comes back `(x + y)/(x - y)`.
+5. Spell the answer the way Derive does where that is a convention and not an
+   economy: `1/COS(x)^2` as `TAN(x)^2 + 1`, `LN(256)` as `8*LN(2)`.
 6. Approximate, if the precision mode asks for it.
-
-The sequence runs again while a user function is still standing as a call,
-because one pass unfolds a definition once and a recursion needs the pass
-between two unfoldings: it is where the test of the `IF` is decided and where
-the arithmetic on the counted-down argument is done. A size bound ends the
-passes for a recursion that never arrives.
-
-A call with nothing unknown left in it does not wait for the passes. It is run
-to its value where it stands, innermost first, before step 3 can meet it - that
-is `_calls_worked_out`, and it is what keeps a recursion whose steps
-differentiate one another from carrying every level at once.
 
 Every rewrite is offered inside a `try`, and a rewrite that raises is a rewrite
 that was not worth having: the previous form stands. That is what makes the
@@ -49,8 +46,8 @@ command total. Nothing sympy does can turn a valid entry into an error.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from math import gcd
+from typing import NamedTuple
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
@@ -68,17 +65,21 @@ from rederive.engine.context import (
     Precision,
     TrigPower,
 )
+from rederive.engine.evaluate import (
+    Commanded,
+    Environment,
+    evaluate,
+    named_as_declared,
+    released,
+)
 from rederive.engine.expanding import EXPAND_AMOUNTS, expanded_expression
 from rederive.engine.factoring import amount_named, factored_expression
 from rederive.engine.from_sympy import from_sympy
 from rederive.engine.intervals import decided, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.solving import oriented, solutions
-from rederive.engine.substitute import named_as_declared, substitute
 from rederive.engine.to_sympy import (
-    COMMAND_HEADS,
-    Antidifference,
-    Antiquotient,
+    CALCULUS_HEADS,
     Approx,
     Assign,
     annuity,
@@ -86,16 +87,10 @@ from rederive.engine.to_sympy import (
     FunDef,
     InertVector,
     Logical,
-    MovingLimit,
     PlusMinus,
-    Taylor,
     as_condition,
     authored_conditionals,
     digit_count,
-    is_conditional,
-    outsized,
-    reread,
-    to_sympy,
 )
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
@@ -103,23 +98,6 @@ from rederive.syntax.state import ParseState
 __all__ = ["approx", "approximated", "simplified", "simplify"]
 
 Rewrite = Callable[[sp.Basic], sp.Basic]
-
-#: The heads that stand for a computation nobody has asked for yet: the
-#: calculus ones, and `APPROX`, which waits for the same reason and in the same
-#: place. It has to round the value an integral came out as rather than the
-#: integral, and evaluating innermost first is exactly what gives it that.
-_CALCULUS = (
-    sp.Derivative,
-    sp.Integral,
-    sp.Sum,
-    sp.Product,
-    sp.Limit,
-    Antidifference,
-    Antiquotient,
-    MovingLimit,
-    Taylor,
-    Approx,
-)
 
 #: What `combsimp` is for. It is offered only where one of these appears,
 #: because on an ordinary polynomial it factors - `x^2 + 2*x` becomes
@@ -193,186 +171,32 @@ def simplified(
     command that wants to keep computing has no reason to print and reparse in
     between.
 
-    A pass that leaves a user function still called is run again, because that
-    is what makes a recursive definition arrive anywhere. `substitute` writes a
-    body in once and then declines, so `FACT(5)` comes out of one pass as
-    `5*FACT(4)`; only a whole further pass can decide the next `IF` and do the
-    next multiplication, since the pre-pass has no evaluator and `n - 1` is a
-    tree to it rather than a number. So the recursion lives here, around the
-    pass, where deciding the test and doing the arithmetic have already
-    happened.
-
     `decide` is what makes a relation that holds come back as `true`, and soLve
     is the one caller that turns it off. Its pipeline runs to prepare an
     equation for solving, not to answer it, and `x = x` decided to `true` on
     the way in is an equation with nothing left to solve for - where the answer
     it has to reach is `x = @1`, every value there is.
+
+    A conditional nothing could decide is suspended by the evaluation and stays
+    so through every step here, which is what leaves its branches as they were
+    written; it is shown as the conditional it is only once all of them are
+    done.
     """
     context = context or Context()
-    if not _working.depth:
-        # A command of its own, and whatever the last one made of a recursion
-        # says nothing about this one.
-        _working.stuck = False
-    result = _once(node, context, decide)
-    for _ in range(_UNFOLDS - 1):
-        if not _unfolds_further(result, context):
-            break
-        try:
-            following = _once(from_sympy(result, context).exact, context, decide)
-        except Exception:
-            break
-        if following == result:
-            # The call that is left is one nothing can write in: a definition
-            # line, or a name applied to arguments it has no body for.
-            break
-        result = following
-    return result
-
-
-def _once(node: Node, context: Context, decide: bool) -> sp.Basic:
-    """One pass: substitute, convert, and transform by shape."""
-    expression = to_sympy(substitute(node, context), context)
+    environment = Environment(
+        context,
+        decide=lambda test: _decide(test, context),
+        work_out=lambda head: _evaluate(head, context),
+        command=lambda name, values: _commanded(name, values, context),
+    )
+    expression = evaluate(node, environment)
     try:
-        return _transform(expression, context, decide)
+        result = _transform(expression, context, decide)
     except Exception:
-        # Whatever went wrong, the faithful translation of the input is still
-        # a correct answer to "simplify this".
-        return expression
-
-
-def _unfolds_further(result: sp.Basic, context: Context) -> bool:
-    """Whether another pass over `result` is worth running.
-
-    A pass is worth running while a function the session defined is still
-    standing as a call, and while what has been worked out so far is small
-    enough to keep working out. The size bound is `ITERATE`'s, and for the same
-    reason: a recursion that does not come round runs away instead, and it runs
-    away faster than any count of passes can catch.
-
-    What happens when a bound trips is that the unfinished expression stands as
-    the answer. `FACT(-1)` comes back as a product of everything counted down
-    so far times a `FACT` of a number heading away from zero - which is a true
-    rewriting of what was asked, and one that shows why it will not finish.
-    Derive itself exhausts memory there and answers nothing at all; an engine
-    that is total everywhere else has no reason to have one hole in it.
-    """
-    if not context.functions:
-        return False
-    if _working.depth and _working.stuck:
-        # A call being worked out where it stands, whose recursion has already
-        # failed to arrive. Whatever further passes reach is thrown away by
-        # `_worked_out`, which wants the value or nothing.
-        return False
-    try:
-        calls = result.atoms(AppliedUndef)
-    except Exception:
-        return False
-    if not any(type(call).__name__ in context.functions for call in calls):
-        return False
-    return not outsized(result)
-
-
-#: How many passes a recursion is given. Each is a whole Simplify, so the count
-#: is a real cost - but a small one buys nothing: the manual's own
-#: `RAISE(b, 256)` takes two hundred and fifty-seven of them, and Derive's
-#: recursions are written to count down one at a time.
-_UNFOLDS = 300
-
-
-def _calls_worked_out(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
-    """Every call in `expression` that can be worked out, worked out where it stands.
-
-    A pass a level is enough for a recursion that collapses as it goes and too
-    slow for one whose steps have to wait for each other. 10.7's mutual
-    recursion is the second kind: each body differentiates the calls one level
-    down, a derivative of a call still waiting for its body has to wait for it,
-    and the pass writes all four calls of a body in at once - so `F(4)` is two
-    hundred and fifty-six unfinished `DIF` towers over `F(0)`, past the size
-    bound above before a single one of them can be differentiated. Derive works
-    such a call out where it stands, innermost first, and then every
-    intermediate is the small expression the recursion actually computes.
-
-    Innermost first is what the walk gives for nothing: sympy rebuilds a node
-    from its rewritten arguments, so a call inside another is worked out before
-    the call around it, and the recursion below carries the rest.
-
-    Only a call with nothing unknown left in it. `F(n - 1)` under a symbolic `n`
-    has no value to arrive at, and running the recursion at it would unfold it
-    a level a pass until a bound stopped it. That is what the passes are for,
-    and a call they leave standing is left standing here.
-    """
-    if not context.functions:
-        return expression
-
-    def waiting(call: sp.Basic) -> bool:
-        return (
-            isinstance(call, AppliedUndef)
-            and type(call).__name__ in context.functions
-            and not call.free_symbols
-        )
-
-    def worked(call: sp.Basic) -> sp.Basic:
-        return _worked_out(call, context, decide)
-
-    try:
-        return expression.replace(waiting, worked)
-    except Exception:
-        return expression
-
-
-def _worked_out(call: sp.Basic, context: Context, decide: bool) -> sp.Basic:
-    """One call put through the whole of Simplify, or the call as it stands.
-
-    A value still waiting for a body of its own is no answer: the recursion did
-    not arrive within what this was given, and what belongs where the call
-    stands is the call itself, so that the passes get their turn after all.
-    It is the end of working calls out for this command too, which is what
-    `stuck` records: a recursion that will not arrive is one every call in it
-    will fail to arrive at, and trying each of them again inside every pass of
-    every level above is how a bounded fallback turns into an unbounded one.
-    """
-    if _working.stuck or _working.depth >= _NESTING:
-        return call
-    _working.depth += 1
-    try:
-        value = simplified(from_sympy(call, context).exact, context, decide)
-    except Exception:
-        value = None
-    finally:
-        _working.depth -= 1
-    if value is None or _awaits_a_body(value, context):
-        _working.stuck = True
-        return call
-    return value
-
-
-#: How many calls deep one of these evaluations may stand. A recursion that
-#: counts down arrives long before this; one that does not - `F(n) :=
-#: DIF(F(n + 1), x)` - would otherwise nest until Python's own stack said so,
-#: and what it has to do instead is hand the call back and let the passes
-#: answer with the tower they have built.
-_NESTING = 32
-
-
-@dataclass
-class _WorkingOut:
-    """How far into working calls out where they stand the pipeline now is.
-
-    Module state, and it may be that because a command is a computation with
-    nothing else running beside it: one at a time in one process, so what is
-    counted here is counted along the branch being evaluated. `simplified`
-    entered at depth nothing is a new command, and it starts this over.
-
-    `depth` is how many calls the evaluation stands inside. `stuck` says that
-    one of them did not arrive, after which the passes carry the recursion
-    exactly as they did before any of this.
-    """
-
-    depth: int = 0
-    stuck: bool = False
-
-
-_working = _WorkingOut()
+        # Whatever went wrong, the evaluated input is still a correct answer to
+        # "simplify this".
+        result = expression
+    return released(result)
 
 
 # -- by shape ----------------------------------------------------------------
@@ -668,25 +492,25 @@ def _reduced(expression: Boolean) -> sp.Basic | None:
 
 
 def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
-    """An ordinary expression, through the whole sequence."""
-    expression, frozen = _conditionals(expression, context)
-    if not frozen and isinstance(expression, sp.MatrixBase):
-        # A conditional whose branches are vectors is a vector once it has been
-        # taken, and a vector is simplified element by element - the same
-        # answer whether the matrix was written or arrived at.
-        return _transform(expression, context, decide)
-    # After the conditionals are set aside, so that a call standing in a branch
-    # no test has chosen is not computed; and before the heads, which is the
-    # whole point - a derivative of a call that has arrived is a derivative and
-    # not another thing to wait for.
-    expression = _calls_worked_out(expression, context, decide)
-    # Before the substitutions go behind placeholders, because that is the last
-    # point at which an outer pass can still see one.
-    expression = _substitutions(expression, context)
-    expression, held = _held(expression)
-    tried: set[sp.Basic] = set()
-    formulas: dict[sp.Basic, sp.Basic] = {}
-    expression = _calculus(expression, context, tried, formulas)
+    """An ordinary expression, through the whole sequence.
+
+    What a `FACTOR`, `EXPAND` or `SOLVE` head answered is the form the author
+    asked for, and every step here would take it apart - the gated rewrites ask
+    whether a candidate is shorter, and a factorization is routinely longer, and
+    the normal form would multiply a prime decomposition back into the integer
+    it decomposes. So each such answer is stood in for by a symbol of its own
+    while the steps run, and put back for the approximation alone.
+
+    Not inside a sum, though, unless it is a number. A sum is written in the
+    normal form whatever its terms were asked to look like, so
+    `FACTOR(x^2 - 1) + x^3` is `x^3 + x^2 - 1` and `x*FACTOR(x^2 - 1) + 1` is
+    `x^3 - x + 1`, while `FACTOR(12) + 1` keeps its `2^2*3`, a prime
+    decomposition being no polynomial to expand.
+    """
+    expression = _summed(expression)
+    held = {found: sp.Dummy("answer") for found in _commands(expression)}
+    if held:
+        expression = expression.xreplace(held)
     expression = _numeric(expression)
     # Before the rewrites rather than after, so that what the declared
     # intervals settle is settled for them too: `ABS(x) + ABS(x - 1)` over
@@ -694,488 +518,65 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     expression = settled(expression, context)
     expression = _rewritten(expression, context)
     expression = _factorials(expression)
-    # The rewrites can leave a head where none stood: `cancel` splits a single
-    # integrand into a sum, and each part is an integral of its own. Those have
-    # been offered to nothing yet, and an answer still holding `INT(x, x)` is
-    # not a simplified one. Asked before walking, since most expressions have
-    # no such head at all. Not cheap where it does run - a rewrite can reshape
-    # a derivative without changing what it means, and expanding it again is
-    # most of what Derive's `F_1A` costs - but the alternative is an answer
-    # that reaches its form only on a second Simplify.
-    if expression.has(*_CALCULUS):
-        expression = _calculus(expression, context, tried, formulas)
     # The normal form, and the one step that is not gated on getting shorter:
     # a sum is written about its primary variable whether or not that pays.
-    # Before the placeholders go back, so that a frozen `IF`'s branches - which
-    # nothing else in the pipeline touches either - keep the form they were
-    # written in; and before `_commanded`, so that a factorization a `FACTOR`
-    # head produces is not multiplied straight back out.
     #
     # `over_numbers` off: nothing here divided, so a number several terms carry
     # underneath is their own coefficient and not a denominator the sum is
     # written over. `x^2/6 + x/2` is what was authored and what comes back.
     expression = normal_form(expression, context.order, over_numbers=False)
-    expression = _restored(expression, formulas)
-    expression = _thawed(expression, held)
-    if frozen:
-        # A conditional comes back where its placeholder was applied, which
-        # need not be where it was frozen: an index written in is a test that
-        # may be decidable now, so the conditionals are offered once more.
-        thawed = _reconditioned(_thawed(expression, frozen), context)
-        # And what is still undecidable is set aside again, so that the heads a
-        # decision brought into the open are the only ones worked out.
-        opened, standing = _conditionals(thawed, context)
-        expression = _thawed(_taken(opened, context, tried, formulas), standing)
-    expression = _numerators(expression)
-    return approximated(_commanded(_canonical(expression), context), context)
+    expression = _spelled(expression, context)
+    if held:
+        expression = expression.xreplace(
+            {dummy: found.args[0] for found, dummy in held.items()}
+        )
+    return approximated(expression, context)
 
 
-def _taken(
-    expression: sp.Basic,
-    context: Context,
-    tried: set[sp.Basic],
-    formulas: dict[sp.Basic, sp.Basic],
-) -> sp.Basic:
-    """A branch only now taken, with the heads standing in it worked out.
+def _summed(expression: sp.Basic) -> sp.Basic:
+    """`expression` with each command's answer within a sum taken for its value,
+    where the answer is not a number."""
 
-    What stood under a test nothing could decide was set aside whole, heads and
-    all, so the branch that turns out to be the answer is the one part of the
-    expression nothing has run over. NUMBER.MTH's `DISTINCT_PARTS` arrives that
-    way: it is a sum whose terms each guard a `PARTS` behind a test in the
-    index, no test decides until the sum has been written out, and what the one
-    surviving term holds is the `FLOOR(APPROX(SUM(...)))` `PARTS` is written as.
-
-    The heads and the normal form, which is what a branch that skipped the
-    pipeline is short of. The rewrites are not offered again: they have run over
-    everything that was not frozen, and a branch is written as its author wrote
-    it.
-    """
-    if not expression.has(*_CALCULUS):
-        return expression
-    worked = _calculus(expression, context, tried, formulas)
-    if worked == expression:
-        return expression
-    return normal_form(worked, context.order, over_numbers=False)
-
-
-def _substitutions(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Every substitution carried out, and every derivative of one taken.
-
-    `_held` puts a `Subs` behind a placeholder for the length of the pass, and
-    the placeholder is opaque to everything - including the derivative standing
-    over it, which is one thing that had every right to look. Both of the
-    things an outer pass may do to a substitution are done here, while there is
-    still a substitution to do them to.
-
-    Carrying one out is the first. A `Subs` that binds nothing but an ordinary
-    expression is a substitution waiting rather than a value: `SUBS(BB(u), [u],
-    [r^2])` says `BB` at `r^2` and comes to `BB(r^2)`, which is then a call
-    like any other. Only a `Subs` holding a derivative over what it binds is
-    left standing, since that derivative is unevaluated on purpose.
-
-    The chain rule is the second. `DIF(BB'(r^2), r)` is `2*r*BB''(r^2)`, and
-    sympy reaches it without opening anything: differentiating a `Subs` raises
-    the order of the derivative inside and leaves the point where it was. So
-    the protection and the differentiation were never in conflict - the
-    placeholder was.
-
-    A call still waiting for its body is the exception, and waits. What the
-    body says is what it depends on, and a slope taken before it arrives is the
-    zero `_awaits_a_body` exists to refuse.
-    """
-    if not expression.has(sp.Subs):
-        return expression
-
-    def carried(whole: sp.Basic) -> sp.Basic:
-        return whole.replace(_is_plain_substitution, _done, simultaneous=False)
-
-    def sloped(whole: sp.Basic) -> sp.Basic:
-        def slope(head: sp.Basic) -> sp.Basic:
-            return head if _awaits_a_body(head, context) else _done(head)
-
-        return whole.replace(_is_slope_of_substitution, slope, simultaneous=False)
-
-    made = _attempt(expression, carried)
-    expression = expression if made is None else made
-    if not expression.has(sp.Subs):
-        return expression
-    taken = _attempt(expression, sloped)
-    return expression if taken is None else taken
-
-
-def _is_plain_substitution(expression: sp.Basic) -> bool:
-    """Whether a substitution binds nothing that has to stay unevaluated."""
-    return isinstance(expression, sp.Subs) and not expression.expr.has(sp.Derivative)
-
-
-def _is_slope_of_substitution(expression: sp.Basic) -> bool:
-    return isinstance(expression, sp.Derivative) and expression.expr.has(sp.Subs)
-
-
-def _done(head: sp.Basic) -> sp.Basic:
-    """One head evaluated a single level down, or itself where it will not.
-
-    A level and no further, so that what stands under it is left as it was
-    written: the point a substitution is taken at, and the derivative an
-    enclosing one raises the order of.
-    """
-    value = _attempt(head, lambda standing: standing.doit(deep=False))
-    return head if value is None else value
-
-
-def _held(expression: sp.Basic) -> tuple[sp.Basic, dict[sp.Basic, sp.Basic]]:
-    """Every `Subs` set aside, with what to put back in its place.
-
-    A `Subs` is sympy's way of writing "this derivative, at this point", and
-    the derivative in one is unevaluated on purpose: the slope of `F` at `y` is
-    not the slope of a constant, though it looks like one once the variable it
-    is taken over has been bound. Evaluating inside would answer zero, so
-    nothing inside is touched at all.
-
-    Nothing outside can look either, and what was entitled to has already
-    looked: `_substitutions` runs first, because a derivative standing over a
-    placeholder is a derivative over something with no slope to give.
-
-    The placeholder is a function of what the head names, which is what keeps
-    the difference between having no slope and having a slope of zero. A `Subs`
-    at a point that mentions nothing gets a name rather than a function, and
-    there the zero is the answer: `BB'(2)` really does not vary with `r`.
-    """
-    if not expression.has(sp.Subs):
-        return expression, {}
-    held: dict[sp.Basic, sp.Basic] = {}
-
-    def hold(head: sp.Basic) -> sp.Basic:
-        placeholder = _placeholder(head, len(held) + _SUBSTITUTIONS)
-        held[placeholder] = head
-        return placeholder
+    def valued(total: sp.Basic) -> sp.Basic:
+        return total.xreplace(
+            {
+                found: found.args[0]
+                for found in _commands(total)
+                if not found.args[0].is_number
+            }
+        )
 
     try:
-        return expression.replace(_is_substitution, hold, simultaneous=False), held
-    except Exception:
-        return expression, {}
-
-
-#: Where the placeholders for held substitutions start, so that they cannot
-#: collide with the ones a frozen conditional uses.
-_SUBSTITUTIONS = 1000
-
-
-def _is_substitution(expression: sp.Basic) -> bool:
-    return isinstance(expression, sp.Subs)
-
-
-def _canonical(expression: sp.Basic) -> sp.Basic:
-    """Rebuild every sum and product, so that what is written is what is meant.
-
-    Two things need this. `cancel` and its neighbours keep a numeric
-    coefficient outside a sum - `(n^2 + n)/2` rather than `n^2/2 + n/2` - by
-    building a product with evaluation switched off; it is the nicer thing to
-    look at and the notation cannot hold it, since reading `(n^2 + n)/2` back
-    gives the distributed form. And a frozen `IF` put back by `xreplace` lands
-    wherever its placeholder stood, which is not where sympy sorts the `IF`
-    itself, so `(c + IF(...))*#e^(-p*x)` and `#e^(-p*x)*(c + IF(...))` would be
-    the same answer printed two ways depending on which pass produced it.
-
-    Rebuilding sorts both back into the order sympy would have put them in, so
-    the text and the expression it reads back as are the same thing. A product
-    is rebuilt by `_coefficient_in`, which finishes the first of the two where
-    sympy's own construction leaves it half done.
-    """
-    try:
-        return expression.replace(_is_run, _rebuilt, simultaneous=False)
+        return expression.replace(
+            lambda found: isinstance(found, sp.Add) and found.has(Commanded), valued
+        )
     except Exception:
         return expression
 
 
-def _is_run(expression: sp.Basic) -> bool:
-    return bool(expression.is_Add or expression.is_Mul)
-
-
-def _rebuilt(run: sp.Basic) -> sp.Basic:
+def _commands(expression: sp.Basic) -> set[sp.Basic]:
     try:
-        return _coefficient_in(run) if run.is_Mul else run.func(*run.args)
+        return expression.atoms(Commanded)
     except Exception:
-        return run
-
-
-def _coefficient_in(run: sp.Basic) -> sp.Basic:
-    """A product with its fractional coefficient written into the sum beside it.
-
-    Sympy writes one in where the sum is all there is beside the number -
-    `(n^2 + n)/2` is `n^2/2 + n/2` the moment it is built - and stops the
-    moment anything else stands in the product. Derive does not stop. Its
-    answer to the manual's difference equation is `(m^2/2 + m/2 + 1)*(m - 1)!`,
-    where the half is written in although a factorial stands beside the sum,
-    because a polynomial's coefficients are rational there, term by term, the
-    way `SUM(n^2, n)` is `n^3/3 - n^2/2 + n/6`.
-
-    Not where the number would land under every term. Then it is a denominator
-    the whole sum shares, and a shared denominator is written outside the sum
-    and not into it - `_shared` in `normal_form`, read the other way round.
-    `x*(x - 1)/2` is that one: written in, it would be `x*(x/2 - 1/2)`, where
-    the two halves are the one half the product already carried.
-    """
-    rebuilt = run.func(*run.args)
-    if not rebuilt.is_Mul:
-        return rebuilt
-    coefficient, rest = rebuilt.as_coeff_Mul()
-    if not (coefficient.is_Rational and coefficient.q != 1):
-        return rebuilt
-    factors = sp.Mul.make_args(rest)
-    sums = [factor for factor in factors if factor.is_Add]
-    if len(factors) < 2 or len(sums) != 1:
-        return rebuilt
-    terms = [coefficient * term for term in sums[0].args]
-    if not any(term.as_coeff_Mul()[0].is_integer for term in terms):
-        return rebuilt
-    return sp.Mul(*(factor for factor in factors if not factor.is_Add), sp.Add(*terms))
+        return set()
 
 
 # -- IF, and asking a test whether it holds -----------------------------------
 
 
-def _conditionals(
-    expression: sp.Basic, context: Context
-) -> tuple[sp.Basic, dict[sp.Symbol, sp.Basic]]:
-    """Resolve every conditional whose test can be decided, innermost first.
-
-    Deciding the test is the whole of it. A true test leaves only the then
-    clause to simplify, a false one only the else clause - `?` when there is
-    none - and an undecidable test takes the unknown clause if the author wrote
-    one.
-
-    A conditional is an authored `IF` or the `Piecewise` it converts to, and
-    the two are resolved alike: a `Piecewise` is what sympy answers a
-    conditional integral with, and what an `IF` reads back as, so a rule that
-    held for only one of them would make an answer depend on which pass it came
-    from. Only the four-argument `IF`, whose fourth argument is the value where
-    the test cannot be decided, has no `Piecewise` to be.
-
-    With no unknown clause an undecidable `IF` comes back untouched, branches
-    and all, which is Derive's behaviour and a deliberate one: simplifying a
-    branch that may never be taken can turn a guarded division by zero into an
-    error. Such an `IF` is set aside under a placeholder for the rest of the
-    pipeline and put back at the end.
-
-    The placeholder is applied to the variables the `IF` mentions, and that is
-    not decoration. A bare symbol would hide them, and then `SUM(IF(k > 0, k,
-    0), k, 1, n)` would come back `n*IF(k > 0, k, 0)` - sympy summing what it
-    had been shown no longer depends on `k`. Standing in as a function of `k`
-    keeps the sum unevaluated, which is the true answer.
-
-    It is a function of `k` in earnest: what is remembered is the conditional
-    as a `Lambda` over those variables, and `_thawed` puts it back by applying
-    that rather than by matching what was frozen. A finite `SUM` is written out
-    by applying what it sums to each index in turn, so the placeholder reaches
-    the end as `IF0(1) + ... + IF0(100)`, and each of those terms is the
-    conditional with an index written in.
-    """
-    frozen: dict[sp.Basic, sp.Basic] = {}
-
-    def freeze(head: sp.Basic) -> sp.Basic:
-        placeholder = _placeholder(head, len(frozen))
-        frozen[placeholder] = head
-        return placeholder
-
-    return _resolved(expression, context, freeze), frozen
-
-
-def _kept(head: sp.Basic) -> sp.Basic:
-    """An undecidable conditional left standing as itself, frozen for nothing."""
-    return head
-
-
-def _resolved(
-    expression: sp.Basic, context: Context, freeze: Callable[[sp.Basic], sp.Basic]
-) -> sp.Basic:
-    """Every conditional decided that can be, the rest handed to `freeze`."""
-
-    def resolve(head: sp.Basic) -> sp.Basic:
-        if isinstance(head, sp.Piecewise):
-            settled = _cases(head, context)
-            return freeze(settled) if isinstance(settled, sp.Piecewise) else settled
-        test, *branches = head.args
-        test, branches = _performed(test, branches)
-        decided = _decide(test, context)
-        if not branches:
-            # A test and nothing else is that test as a number, one or zero.
-            if decided is None:
-                return freeze(head)
-            return sp.Integer(1) if decided else sp.Integer(0)
-        if decided is True:
-            return branches[0]
-        if decided is False:
-            return branches[1] if len(branches) > 1 else sp.nan
-        if len(branches) > 2:
-            return branches[2]
-        return freeze(head)
-
-    try:
-        return expression.replace(is_conditional, resolve, simultaneous=False)
-    except Exception:
-        return expression
-
-
-def _performed(
-    test: sp.Basic, branches: list[sp.Basic]
-) -> tuple[sp.Basic, list[sp.Basic]]:
-    """A test that assigns, carried out over the branches it guards.
-
-    The value stands where the assignment did, and the name it assigns stands
-    for that value in every branch.
-
-    An assignment written inside an expression is Derive's way of computing
-    something once and reading it back where the answer belongs. ODE1.MTH's
-    `DSOLVE1` is built out of them: `IF("inapplicable" = a_ := SEP(...), ...,
-    a_, a_)` tries a method, asks whether it declined, and answers with what it
-    found. The assignment happens when the test is evaluated, which is here, and
-    the branches are what comes after it.
-
-    A branch is the only place the name is written in. What a branch of its own
-    assigns is that branch's business - only one of them is ever taken - so a
-    nested conditional, which `replace` reaches first, binds its own name before
-    this one writes anything in.
-    """
-    if not test.has(Assign):
-        return test, branches
-    written: dict[sp.Basic, sp.Basic] = {}
-
-    def perform(found: sp.Basic) -> sp.Basic:
-        target, _operator, *values = found.args
-        if not values or not isinstance(target, sp.Symbol):
-            return found
-        written[target] = values[-1]
-        return values[-1]
-
-    try:
-        performed = test.replace(
-            lambda found: isinstance(found, Assign), perform, simultaneous=False
-        )
-    except Exception:
-        return test, branches
-    if not written:
-        return test, branches
-    return performed, [branch.xreplace(written) for branch in branches]
-
-
-def _placeholder(head: sp.Basic, index: int) -> sp.Basic:
-    """Something inert that depends on exactly what `head` depends on."""
-    variables = sorted(head.free_symbols, key=sp.default_sort_key)
-    if not variables:
-        return sp.Dummy(f"IF{index}")
-    return sp.Function(f"IF{index}", nargs=len(variables))(*variables)
-
-
-def _thawed(expression: sp.Basic, standing_in: dict[sp.Basic, sp.Basic]) -> sp.Basic:
-    """Every placeholder put back, wherever and however it was applied.
-
-    A placeholder that was applied to the variables its head mentions stands
-    for that head as a function of them, so putting it back is applying that
-    function to the arguments it is found under. Matching the placeholder as it
-    was frozen would miss `IF0(1)`, which is what a finite `SUM` leaves behind,
-    and the standing-in name would reach the reader.
-
-    One with no variables at all is a name and not a function, and there is
-    nothing to apply: it goes back where it stands.
-
-    Repeated because a head can hold a placeholder of its own - a conditional
-    frozen inside a conditional - and one pass puts back only the outer one.
-    """
-    if not standing_in:
-        return expression
-    applied: dict[type, sp.Lambda] = {}
-    named: dict[sp.Basic, sp.Basic] = {}
-    for placeholder, head in standing_in.items():
-        if isinstance(placeholder, AppliedUndef):
-            applied[type(placeholder)] = sp.Lambda(tuple(placeholder.args), head)
-        else:
-            named[placeholder] = head
-    for _ in range(len(standing_in)):
-        thawed = _thaw(expression, applied, named)
-        if thawed == expression:
-            return thawed
-        expression = thawed
-    return expression
-
-
-def _thaw(expression: sp.Basic, applied: dict[type, sp.Lambda], named: dict) -> sp.Basic:
-    """One pass of putting placeholders back: the applied ones and the named."""
-    if named:
-        expression = expression.xreplace(named)
-    if not applied:
-        return expression
-    try:
-        return expression.replace(
-            lambda found: type(found) in applied,
-            lambda found: _written_in(applied[type(found)], found.args),
-        )
-    except Exception:
-        return expression
-
-
-def _written_in(recipe: sp.Lambda, arguments: tuple) -> sp.Basic:
-    """The frozen head with these arguments written in for its variables.
-
-    By `subs` rather than by applying the `Lambda`, which writes in by
-    `xreplace` and so reaches into a sum whose index happens to be one of those
-    variables. `NUMBER.MTH` has one: a conditional that is a function of `i_`
-    and holds a sum over `i_` of its own, where a limit rewritten to `(0, 1, k_
-    - 1)` is no limit at all.
-    """
-    written = dict(zip(recipe.variables, arguments, strict=True))
-    return recipe.expr.subs(written, simultaneous=True)
-
-
-def _cases(head: sp.Piecewise, context: Context) -> sp.Basic:
-    """A case split with every case its condition decides taken out.
-
-    A case whose condition is decidably false drops out, and where a decidably
-    true one is reached the split ends there - which is the then and the else
-    clause of an `IF` under another name. What is left is the split from the
-    first undecidable case on, or `?` where every case was ruled out, since
-    outside all of its conditions a `Piecewise` has no value.
-    """
-    remaining: list[tuple[sp.Basic, sp.Basic]] = []
-    for value, condition in head.args:
-        decided = _decide(condition, context)
-        if decided is False:
-            continue
-        remaining.append((value, sp.true if decided else condition))
-        if decided:
-            break
-    if not remaining:
-        return sp.nan
-    try:
-        # One case left over that always holds is no longer a split, and sympy
-        # collapses it to its value on the way through.
-        return sp.Piecewise(*remaining)
-    except Exception:
-        return head
-
-
 def _decide(test: sp.Basic, context: Context) -> bool | None:
     """Whether `test` holds, or None when nothing available settles it.
 
-    A relation reaches here undecided, so it is offered again evaluated - which
-    is where the declared domains do their work - and then with its two sides
-    brought together by the same rewrites the rest of the pipeline uses. What
-    none of those settles is put to the declared intervals, which are the one
-    thing a symbol could not carry into the evaluation itself.
+    What the evaluation asks of the test of every `IF` it meets, before it
+    chooses a branch. A relation reaches here undecided, so it is offered again
+    evaluated - which is where the declared domains do their work - and then with
+    its two sides brought together by the same rewrites the rest of the pipeline
+    uses. What none of those settles is put to the declared intervals, which are
+    the one thing a symbol could not carry into the evaluation itself.
 
     A test that is no relation at all is a comparison with zero written short,
-    the same reading the conversion gives one, so that the inert four-argument
-    `IF` decides its test by the rule the rest of them do.
-
-    A test holding a calculus head is worked out before it is asked, since a
-    head standing unevaluated decides nothing: `DIF(u, x)` is how ODE1.MTH asks
-    whether `u` depends on `x`, and the answer is the derivative and not the
-    `Derivative`. The heads are taken here rather than left to the pass that
-    takes the rest, because deciding is what chooses which branch that pass
-    ever sees.
+    the same reading the conversion gives one.
     """
-    if test.has(*_CALCULUS):
-        test = _calculus(test, context)
     test = as_condition(test)
     for candidate in _truths(test, context):
         if candidate is sp.true:
@@ -1183,41 +584,6 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
         if candidate is sp.false:
             return False
     return decided(test, context)
-
-
-def _reconditioned(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Every test read again over the heads that have since answered.
-
-    A test the conversion could make nothing of is read as a comparison with
-    zero, which is how Derive reads a number. `IF(PRIME(n))` is one of those:
-    with `n` still a variable, what `PRIME(n)` is has not been asked, so the
-    conversion had a call and no truth-value to work from. An index written in
-    by a sum asks it, and a truth-value read as `test = 0` is read backwards -
-    so a comparison whose subject has turned into a statement becomes that
-    statement.
-
-    A subject that answers nothing new is left alone, comparison and all: `x =
-    0` is a comparison somebody wrote, and nothing here makes it a claim.
-    """
-
-    def restated(found: sp.Basic) -> sp.Basic:
-        subject = reread(found.lhs, context)
-        if not isinstance(subject, (Boolean, Logical)):
-            return found
-        return as_condition(subject)
-
-    try:
-        return expression.replace(_is_zero_test, restated, simultaneous=False)
-    except Exception:
-        return expression
-
-
-def _is_zero_test(expression: sp.Basic) -> bool:
-    return (
-        isinstance(expression, sp.Equality)
-        and expression.rhs == 0
-        and expression.lhs.has(AppliedUndef)
-    )
 
 
 def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
@@ -1234,79 +600,47 @@ def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
 # -- the calculus heads ------------------------------------------------------
 
 
-def _calculus(
-    expression: sp.Basic,
-    context: Context,
-    tried: set[sp.Basic] | None = None,
-    formulas: dict[sp.Basic, sp.Basic] | None = None,
-) -> sp.Basic:
-    """`.doit()` on every calculus head, innermost first, until none is new.
+def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
+    """One calculus head evaluated, or the head itself if it will not evaluate.
 
-    Evaluating one head can hand back others: sympy answers an integral of a
-    sum with a sum of integrals, and those have been offered to nothing yet.
-    So the rounds go on while heads keep appearing, and a head that has already
-    been tried and stood is not tried again - which is what ends them, and what
-    keeps a hard integral from being attempted twice.
+    What the evaluation asks of each head as it is made, its operands being
+    values already. A head standing unevaluated decides nothing, and this is
+    what lets a test hold one: `DIF(u, x)` is how ODE1.MTH asks whether `u`
+    depends on `x`, and the answer is the derivative and not the `Derivative`.
 
-    `tried` is that record, and a caller running this more than once over one
-    expression passes its own so that the second run inherits it.
-
-    `formulas` is what `_summation` writes the shape of a closed form into, for
-    `_restored` to put back at the end of the pipeline.
+    A head that stands is asked once more over its operands spelled the way an
+    answer spells them, where that is another spelling: a `COSH` is never
+    written in an answer, and Derive works an integral out over the
+    exponentials the hyperbolic function stands for. BESSEL.MTH's
+    `INT(#e^(-z*COSH(t))*COSH(n*t), t, 0, inf)` is two integrals that way, each
+    of an exponential, which is what Derive prints; left over the `COSH` the
+    integral would stand, and the rewrites after the evaluation would change its
+    integrand under it.
     """
-    if tried is None:
-        tried = set()
-
-    def pending(head: sp.Basic) -> bool:
-        return isinstance(head, _CALCULUS) and head not in tried
-
-    for _ in range(_ROUNDS):
-        # What this round offers is remembered only once the round is over, so
-        # that a head standing in two places is evaluated in both - and so that
-        # one sympy hands back inside its own answer, as it does for a sum it
-        # can only do under a condition, is not offered again and again.
-        offered: set[sp.Basic] = set()
-
-        def evaluate(head: sp.Basic) -> sp.Basic:
-            offered.add(head)
-            return _evaluate(head, context, formulas)
-
-        try:
-            rewritten = expression.replace(pending, evaluate, simultaneous=False)
-        except Exception:
-            return expression
-        tried |= offered
-        if rewritten == expression:
-            return rewritten
-        expression = rewritten
-    return expression
+    value = _worked_out(head, context)
+    if value != head:
+        return value
+    spelled = _attempt(head, _by_definition)
+    if spelled is None or spelled == head:
+        return head
+    again = _worked_out(spelled, context)
+    return head if again == spelled else again
 
 
-#: How many times the heads are offered. Two rounds are what the cases in hand
-#: need; the third is there so that a rewrite feeding itself cannot spin.
-_ROUNDS = 3
-
-
-def _evaluate(
-    head: sp.Basic, context: Context, formulas: dict[sp.Basic, sp.Basic] | None = None
-) -> sp.Basic:
-    """One head evaluated, or the head itself if it will not evaluate."""
-    if _awaits_a_body(head, context):
-        return _written_out(head)
+def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
+    """One head by the rule its kind is worked out by."""
+    if _unfinished(head, context):
+        return head
     if isinstance(head, Approx):
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
         return _integral(head)
-    if isinstance(head, (sp.Sum, sp.Product)):
-        written = _stopping_short(head, context, formulas)
-        if written is not None:
-            return written
-        if not _searchable(head):
-            return head
+    if isinstance(head, (sp.Sum, sp.Product)) and not _searchable(head):
+        return head
     if isinstance(head, sp.Product):
         return _product(head)
     if isinstance(head, sp.Sum):
-        return _summation(head, formulas)
+        return _summation(head)
     try:
         value = head.doit(deep=False)
     except Exception:
@@ -1314,20 +648,13 @@ def _evaluate(
     return head if value is None else value
 
 
-def _awaits_a_body(head: sp.Basic, context: Context) -> bool:
-    """Whether a call whose definition is still to be written in stands under `head`.
+def _unfinished(head: sp.Basic, context: Context) -> bool:
+    """Whether a call of a defined function stands unworked under `head`.
 
-    Such a call is not the constant it looks like. `F(n) := IF(n = 0, 1,
-    m*DIF(F(n - 1), mu) + ...)` mentions no `mu` in `F(3)`, and differentiating
-    it as it stands answers zero where the value it is waiting for depends on
-    `mu` throughout. The pass that writes the body in comes round again, so what
-    the head has to do is wait for it.
-
-    What reaches here is a call that could not be worked out where it stood -
-    one whose arguments still hold a variable, or one whose recursion did not
-    arrive - since `_calls_worked_out` has already run over the expression.
-    `_worked_out` asks this of a whole value for that second reading: a value
-    still holding such a call is a recursion that has not answered.
+    The evaluation enters every such call, so one is left only where a recursion
+    reached the nesting bound without arriving - `F(n) := DIF(F(n + 1), x)` - and
+    what stands there is no constant: it mentions no `x` only because its body was
+    never written in. Differentiating it would answer zero, so the head waits.
     """
     if not context.functions:
         return False
@@ -1336,132 +663,6 @@ def _awaits_a_body(head: sp.Basic, context: Context) -> bool:
     except Exception:
         return False
     return any(type(call).__name__ in context.functions for call in calls)
-
-
-def _written_out(head: sp.Basic) -> sp.Basic:
-    """A sum or product of a known number of terms, written out as those terms.
-
-    What a head waiting for a body may still have done to it. Writing a counted
-    range out decides nothing the body might yet say - each term is the summand
-    with a number in place of the index, and the call inside it is exactly the
-    call that was there - and it is what lets the call come round at all: a
-    recursion over `v SUB n_` with the index still a symbol has no length to
-    stop at, so the pass that writes bodies in unfolds it a level per pass
-    forever. `VECTOR.MTH`'s `NONZERO_ROWS` counts rows that way, and the three
-    terms of its sum are three recursions over a row each, every one of which
-    ends.
-
-    Anything else waits, including a range whose length is unknown: there is
-    nothing to write out there, and the body is what will say how long it is.
-    """
-    if not isinstance(head, (sp.Sum, sp.Product)) or not _counted(head):
-        return head
-    value = _attempt(head, lambda h: h.doit(deep=False))
-    if value is None:
-        value = _attempt(head, _term_by_term)
-    return head if value is None else value
-
-
-def _term_by_term(head: sp.Sum | sp.Product) -> sp.Basic | None:
-    """The terms of one counted range, joined, with nothing else rebuilt.
-
-    `.doit()` substitutes by rebuilding the summand, and a rebuilt relation is
-    one sympy decides: over a head it has no reality for - `1 > DIMENSION(u)`,
-    which is how `ZERO_VECTOR` asks whether it has run off the end of a vector
-    - it declines the comparison and raises instead of leaving the statement
-    standing. The engine assembles its own relations unevaluated for that
-    reason, so a substitution that has to go through one is made the same way.
-
-    One range only. A nest of them is the ordinary summation's business, and
-    this is the way round a body that is still to be written in, or an end that
-    falls between two terms.
-    """
-    if len(head.limits) != 1:
-        return None
-    index = head.limits[0][0]
-    values = _run_of(head.limits[0])
-    if values is None:
-        return None
-    joined = sp.Add if isinstance(head, sp.Sum) else sp.Mul
-    with sp.evaluate(False):
-        terms = [head.function.xreplace({index: value}) for value in values]
-    return joined(*terms)
-
-
-def _run_of(limit: sp.Tuple) -> list[sp.Basic] | None:
-    """The values one index runs through, or None where they are not all known.
-
-    The index starts at the low end and steps by one for as long as it does not
-    pass the high one, which is Derive's reading of a range and is what makes an
-    end between two terms mean anything: `k_` from 1 to 3.459 is 1, 2 and 3. An
-    end below the start is a range of no terms rather than no range.
-
-    Both ends have to be numbers - a symbolic one is a range of unknown length,
-    whatever the count of steps between the two comes to - and there have to be
-    few enough of them to be worth writing down.
-    """
-    if len(limit) != 3:
-        return None
-    _, low, high = limit
-    steps = _attempt(high - low, sp.floor) if low.is_number else None
-    if steps is None or not steps.is_Integer:
-        return None
-    if steps < 0:
-        return []
-    if steps >= _WRITTEN_OUT:
-        return None
-    return [low + step for step in range(int(steps) + 1)]
-
-
-#: How many terms a range may be written out as. What this costs is one
-#: substitution a term and then a pipeline over all of them at once, so the
-#: bound is on the writing rather than on the arithmetic: a range longer than
-#: this is one whose terms nobody wants to read, and it stands as it was
-#: written. Derive's own utility files reach four.
-_WRITTEN_OUT = 1000
-
-
-def _stopping_short(
-    head: sp.Sum | sp.Product, context: Context, formulas: dict[sp.Basic, sp.Basic] | None
-) -> sp.Basic | None:
-    """A range whose end falls between two terms, written out and worked out.
-
-    `PARTS` bounds Rademacher's series by `SQRT(n)/LOG(n, 11)`, which for `n` of
-    4 is `LN(11)/LN(2)`: 3.459, and no whole number of steps from the 1 the
-    index starts at. Derive runs the index up while it does not pass the end, so
-    what is asked for is three terms. Sympy reads the bound as the `n` of a
-    closed form instead and puts it into Faulhaber's polynomial, which answers a
-    sum of logarithms where three numbers were meant.
-
-    The terms are worked out here rather than left to the round that follows,
-    because the head this one stands under is entitled to a number: `PARTS`
-    writes `FLOOR(APPROX(SUM(...)))`, and a floor handed an argument that still
-    holds a sum asks sympy to approximate that sum, which over a summand
-    carrying a floor of its own goes into the Euler-Maclaurin formula and
-    raises. Every inner range is concrete once the outer index is bound, so what
-    the recursion works out is a number and the floor gets one.
-
-    None for a range that ends on a term, which is the ordinary summation's
-    business and where every closed form Derive prints comes from.
-    """
-    if not any(_ends_between_terms(limit) for limit in head.limits):
-        return None
-    written = _attempt(head, _term_by_term)
-    return None if written is None else _calculus(written, context, formulas=formulas)
-
-
-def _ends_between_terms(limit: sp.Tuple) -> bool:
-    """Whether one range stops between the term it reaches and the next.
-
-    An endless range does not: `SUM(2^-k, k, 0, inf)` ends nowhere, and what
-    answers it is the closed form.
-    """
-    if len(limit) != 3:
-        return False
-    span = limit[2] - limit[1]
-    if not (span.is_number and span.is_real and span.is_finite):
-        return False
-    return not span.is_Integer
 
 
 def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
@@ -1485,7 +686,7 @@ def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
     return approximated(value, approximate)
 
 
-def _summation(head: sp.Sum, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Basic:
+def _summation(head: sp.Sum) -> sp.Basic:
     """A sum, with a closed form that is a polynomial written factored.
 
     Derive's summation formulas are factored and stay that way: `SUM(k, k, 0,
@@ -1502,9 +703,9 @@ def _summation(head: sp.Sum, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Ba
 
     Not gated on getting shorter, because the original does not gate it
     either: `SUM(k^4, k, 1, n)` is longer factored than expanded and Derive
-    prints `n*(n + 1)*(6*n^3 + 9*n^2 + n - 1)/30` all the same. That is also
-    why the pair goes into `formulas`: a factorization that is longer is one
-    `_multiplied_out` would otherwise take straight back apart.
+    prints `n*(n + 1)*(6*n^3 + 9*n^2 + n - 1)/30` all the same. Nothing
+    after this takes it back apart, because the normal form never distributes
+    a product.
 
     A formula is what a range of unknown length is answered by, and only that.
     A range of known length is added up term by term, and the total is a sum
@@ -1521,9 +722,9 @@ def _summation(head: sp.Sum, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Ba
         # A sum of vectors is summed element by element, and each element is a
         # closed form of its own: `SUM([k, k^2], k, 0, n)` is a vector of the
         # two formulas and not of Faulhaber's two polynomials.
-        entries = _attempt(value, lambda m: m.applyfunc(lambda e: _factored(e, formulas)))
+        entries = _attempt(value, lambda m: m.applyfunc(_factored))
         return value if entries is None else entries
-    return _factored(value, formulas)
+    return _factored(value)
 
 
 def _counted(head: sp.Sum | sp.Product) -> bool:
@@ -1538,7 +739,7 @@ def _counted(head: sp.Sum | sp.Product) -> bool:
     )
 
 
-def _factored(value: sp.Basic, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.Basic:
+def _factored(value: sp.Basic) -> sp.Basic:
     """One closed form, factored where there is a polynomial to factor.
 
     A sum sympy could not do is not a closed form and has nothing to factor.
@@ -1546,10 +747,8 @@ def _factored(value: sp.Basic, formulas: dict[sp.Basic, sp.Basic] | None) -> sp.
     if value.has(sp.Sum) or not _polynomial(value):
         return value
     factored = _attempt(value, sp.factor)
-    if factored is None or factored == value:
+    if factored is None:
         return value
-    if formulas is not None:
-        formulas[value] = factored
     return factored
 
 
@@ -1565,86 +764,6 @@ def _polynomial(value: sp.Basic) -> bool:
     """
     try:
         return bool(value.free_symbols) and value.is_polynomial() is True
-    except Exception:
-        return False
-
-
-def _restored(expression: sp.Basic, formulas: dict[sp.Basic, sp.Basic]) -> sp.Basic:
-    """The closed forms of `_summation`, back where a rewrite multiplied one out.
-
-    Only where the whole of one still stands. A closed form that went on to be
-    added to something, divided by something or written about another variable
-    is part of a larger answer, and that answer is the pipeline's to shape:
-    `SUM(k, k, 0, n)/n` is `(n + 1)/2` in the original too, and not
-    `n*(n + 1)/(2*n)`.
-
-    Which is asked twice, because a polynomial standing whole has more than one
-    spelling by the time it gets here: the rewrites can put one over its common
-    denominator, and `(10*n^9 + ... - 3*n)/90` is the same answer as the terms
-    it distributes to and no longer the same tree. So an answer that is the
-    formula and nothing else is recognised by its value, and one standing
-    inside a larger answer - the argument of a `SIN`, say - by its shape.
-    """
-    if not formulas:
-        return expression
-    for value, factored in formulas.items():
-        if _same_polynomial(expression, value):
-            return factored
-    # Asked for explicitly rather than by truth value: an answer that is a
-    # relation raises when a `Basic` is used as a condition, and one that is
-    # zero is falsy.
-    swapped = _attempt(expression, lambda e: e.xreplace(formulas))
-    return expression if swapped is None else swapped
-
-
-def _numerators(expression: sp.Basic) -> sp.Basic:
-    """The common factor of a quotient's numerator, written outside it.
-
-    Derive's rational functions carry their numerator as content times a
-    primitive part, which is what a gcd leaves behind and what it prints:
-    `(n^2 + n)/(x + 1)` is `n*(n + 1)/(x + 1)`. Only a common factor is taken
-    out, not a factorization - `(x^2 - 1)/(y + 1)` and `(x^2 + 2*x + 1)/y`
-    are printed as they stand, both there and here.
-    """
-
-    def rewrite(quotient: sp.Basic) -> sp.Basic:
-        numerator, denominator = sp.fraction(quotient)
-        if not isinstance(numerator, sp.Add) or not denominator.free_symbols:
-            return quotient
-        candidate = _attempt(numerator, sp.factor_terms)
-        if candidate is None or not isinstance(candidate, sp.Mul):
-            return quotient
-        # A numeric factor is left where it was. Sympy multiplies a number back
-        # over a sum as it builds one, so `2*(x + 1)/y` is not a form this can
-        # hold: the answer would print as one expression and read back as
-        # another, which the corpus checks for and Derive's own `2*(x^2 + y^2 +
-        # 18)/...` is.
-        if candidate.as_coeff_Mul()[1].is_Add:
-            return quotient
-        return candidate / denominator
-
-    rewritten = _attempt(expression, lambda e: e.replace(_is_quotient, rewrite))
-    return expression if rewritten is None else rewritten
-
-
-def _is_quotient(expression: sp.Basic) -> bool:
-    # A `Mul` need not be one of expressions: an undecidable four-argument `IF`
-    # carries a truth value, and sympy builds a product out of that too.
-    if not isinstance(expression, sp.Mul):
-        return False
-    if not all(isinstance(factor, sp.Expr) for factor in expression.args):
-        return False
-    return sp.fraction(expression)[1] != 1
-
-
-def _same_polynomial(expression: sp.Basic, value: sp.Basic) -> bool:
-    """Whether `expression` is the polynomial `value`, however it is written."""
-    if expression == value:
-        return True
-    if not (_polynomial(expression) and expression.free_symbols == value.free_symbols):
-        return False
-    try:
-        return sp.expand(expression - value) == sp.S.Zero
     except Exception:
         return False
 
@@ -1739,7 +858,35 @@ def _integral(head: sp.Basic) -> sp.Basic:
     """
     value = _by_sympy(head)
     across = _across_a_singularity(head, value)
-    return value if across is None else across
+    if across is not None:
+        return across
+    return _by_linearity(head) if value == head else value
+
+
+def _by_linearity(head: sp.Basic) -> sp.Basic:
+    """An integral sympy left standing, as a sum of integrals where its integrand is a
+    sum in disguise.
+
+    Sympy integrates a sum term by term, keeping as an integral only the terms it
+    cannot do - but only a sum it is handed. `(x*G(x) + F(x))/G(x)` is a quotient to
+    it, and the whole integral is given up for the one term that will not integrate.
+    Derive divides the numerator into its terms and answers `INT(F(x)/G(x), x) +
+    x^2/2`. So a quotient whose numerator is a sum is written as one integral per
+    term, and those are new heads: each is integrated, or left standing, on its own,
+    and none is the integral already tried whole.
+
+    An integrand that was a sum to begin with has had its terms tried by sympy
+    already, and is not offered again.
+    """
+    integrand = head.function
+    if isinstance(integrand, sp.Add):
+        return head
+    numerator, denominator = integrand.as_numer_denom()
+    if not isinstance(numerator, sp.Add):
+        return head
+    return sp.Add(
+        *(head.func(term / denominator, *head.limits) for term in numerator.args)
+    )
 
 
 def _by_sympy(head: sp.Basic) -> sp.Basic:
@@ -1970,7 +1117,30 @@ def _without_constants(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
     coefficient, terms = _split(bare, variable)
     if not isinstance(terms, sp.Add):
         return bare
-    return coefficient * sp.Add(*(term for term in terms.args if term.has(variable)))
+    return _carried(coefficient, [term for term in terms.args if term.has(variable)])
+
+
+def _carried(coefficient: sp.Basic, terms: list[sp.Basic]) -> sp.Basic:
+    """A coefficient with a denominator times the terms of an antiderivative, kept in
+    front of the terms it still divides.
+
+    Sympy integrates `(SQRT(b^2 - 4*a*c) - b)/(2*a)` over `b` with the `1/(2*a)` in
+    front of everything, one of the terms being `-2*a*c*LN(SQRT(b^2 - 4*a*c) + b)`.
+    Left that way, the `a` inside makes the whole a quotient over `a`, and the normal
+    form writes it as one. Derive's answer is `b*(SQRT(b^2 - 4*a*c) - b)/(4*a) -
+    c*LN(SQRT(b^2 - 4*a*c) + b)`: the term the coefficient cancels into is a term of
+    its own, and the coefficient stays a single factor in front of the rest.
+
+    A coefficient with nothing symbolic underneath divides nothing and is left in
+    front of the whole sum, for the normal form to write as it would any product.
+    """
+    if not sp.fraction(coefficient)[1].free_symbols:
+        return coefficient * sp.Add(*terms)
+    carried, absorbed = [], []
+    for term in terms:
+        product = coefficient * term
+        (absorbed if not sp.fraction(product)[1].free_symbols else carried).append(term)
+    return coefficient * sp.Add(*carried) + sp.Add(*(coefficient * t for t in absorbed))
 
 
 def _bare_logarithm(call: sp.Basic, variable: sp.Basic) -> sp.Basic:
@@ -2105,61 +1275,37 @@ def _undecided(head: sp.Basic) -> sp.Basic:
 # -- the FACTOR, EXPAND and SOLVE heads ---------------------------------------
 
 
-def _commanded(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Evaluate every `FACTOR`, `EXPAND` and `SOLVE` head, innermost first.
+def _commanded(name: str, values: list, context: Context) -> sp.Basic:
+    """`FACTOR`, `EXPAND`, `SOLVE` or `RATE` run over its evaluated arguments.
 
     `FACTOR(u, amount, x, y, ...)`, `EXPAND(u, amount, x, y, ...)` and
     `SOLVE(u, x)` are the author-line spellings of three of the commands, so
     simplifying a line that carries one runs it - which is what the original
     does, and what makes the functions worth having rather than inert heads
-    that print back as themselves. All three are matched in one pass so that
-    any of them may be written inside another.
+    that print back as themselves.
 
-    Last of the rewrites on purpose, and after `normal_form` and `_canonical`
-    as well, because everything above this one would undo a factorization.
-    The gated rewrites ask whether a candidate is shorter than what it
-    replaces, and a factorization is routinely longer: `_multiplied_out`
-    offered `(x - 3)*(2*x + 1)^2` would happily multiply it back out. The
-    normal form does not ask, and would multiply out any factor that is a sum
-    in the primary variable. And `_canonical` rebuilds every product it can
-    reach, which would multiply a prime decomposition straight back into the
-    integer it decomposes.
-
-    Anything applied *to* one of these heads was left inert by the conversion,
-    there being nothing yet to apply it to, so what has changed is offered to
-    the function tables again: `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is a vector
-    of roots only once the `SOLVE` inside it has become a vector.
+    What a command works on is a simplified operand, exactly as the command
+    itself would have it, and rounding is the last thing done to its answer and
+    not the first thing done to its question: the operand is simplified at the
+    exact precision. A factorization, an expansion or a solution is then held
+    as `Commanded`, which is what keeps everything after the evaluation from
+    rewriting it; a call over one - `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` - takes it
+    as the value it is.
     """
-    try:
-        commanded = expression.replace(
-            _is_command, lambda head: _command(head, context), simultaneous=False
-        )
-    except Exception:
-        return expression
-    if commanded == expression:
-        return commanded
-    try:
-        return reread(commanded, context)
-    except Exception:
-        return commanded
-
-
-def _is_command(expression: sp.Basic) -> bool:
-    return isinstance(expression, AppliedUndef) and type(expression).__name__ in (
-        COMMAND_HEADS
-    )
-
-
-def _command(head: sp.Basic, context: Context) -> sp.Basic:
-    match type(head).__name__:
+    exact = context.with_precision(Precision.EXACT)
+    args = [
+        _transform(value, exact, decide=False) if not place or name == "RATE" else value
+        for place, value in enumerate(values)
+    ]
+    match name:
         case "SOLVE":
-            return _solve_head(head, context)
+            return Commanded(_solve_head(args, context))
         case "RATE":
-            return _rate_head(head, context)
-    return _factor_head(head, context)
+            return _rate_head(args, context)
+    return Commanded(_factor_head(name, args, context))
 
 
-def _factor_head(head: sp.Basic, context: Context) -> sp.Basic:
+def _factor_head(name: str, args: list, context: Context) -> sp.Basic:
     """One head, read as its target, its amount and its variables.
 
     The arguments after the first are a word naming the amount, a list of
@@ -2169,9 +1315,9 @@ def _factor_head(head: sp.Basic, context: Context) -> sp.Basic:
     an expression rather than an error. `EXPAND(u, Complex)` is such a call:
     Complex is an amount Factor offers and Expand does not.
     """
-    expanding = type(head).__name__ == "EXPAND"
+    expanding = name == "EXPAND"
     amounts = EXPAND_AMOUNTS if expanding else tuple(Amount)
-    target, *rest = head.args
+    target, *rest = args
     amount = DEFAULT_AMOUNT
     variables = []
     for argument in rest:
@@ -2185,7 +1331,7 @@ def _factor_head(head: sp.Basic, context: Context) -> sp.Basic:
     return factored_expression(target, amount, variables)
 
 
-def _solve_head(head: sp.Basic, context: Context) -> sp.Basic:
+def _solve_head(args: list, context: Context) -> sp.Basic:
     """`SOLVE(u, x)` and its longer forms, as the vector of what they solve to.
 
     This is the 3.x and 4.x shape and it is the one worth having: the answer is
@@ -2203,7 +1349,7 @@ def _solve_head(head: sp.Basic, context: Context) -> sp.Basic:
     files use it as though it always applied, and always-numeric is both the
     more useful reading and the one that makes the call mean one thing.
     """
-    target, *rest = head.args
+    target, *rest = args
     variables = _solved_for(rest[0]) if rest else ()
     bounds = (rest[1], rest[2]) if len(rest) >= 3 else None
     answers = solutions(target, context, variables, bounds)
@@ -2218,7 +1364,7 @@ def _solve_head(head: sp.Basic, context: Context) -> sp.Basic:
 _RATE = "i"
 
 
-def _rate_head(head: sp.Basic, context: Context) -> sp.Basic:
+def _rate_head(args: list, context: Context) -> sp.Basic:
     """`RATE(n, p, v, f, t, a, b)`: the rate between `a` and `b` the contract implies.
 
     The one financial function that is no closed form, and so the one done
@@ -2231,15 +1377,20 @@ def _rate_head(head: sp.Basic, context: Context) -> sp.Basic:
     what the original leaves behind: `RATE(36, -300, 9000, 0, 0, 0.5, 1)` is
     worth nothing better than itself.
     """
-    if not all(argument.is_number for argument in head.args):
-        return head
-    periods, payment, present, future, when, low, high = head.args
+    if len(args) != 7 or not all(argument.is_number for argument in args):
+        return _command_head("RATE", args)
+    periods, payment, present, future, when, low, high = args
     rate = sp.Symbol(_RATE)
     equation = sp.Eq(annuity(rate, periods, payment, present, future, when), 0)
     answers = solutions(equation, context, (_RATE,), (low, high))
     if len(answers) != 1 or not isinstance(answers[0], Relational):
-        return head
+        return _command_head("RATE", args)
     return answers[0].rhs
+
+
+def _command_head(name: str, args: list) -> sp.Basic:
+    """The call itself, standing, where a command has no answer to give."""
+    return sp.Function(name)(*args)
 
 
 def _solved_for(argument: sp.Basic) -> tuple[str, ...]:
@@ -2304,16 +1455,16 @@ def _ratios(expression: sp.Basic) -> sp.Basic:
     """`_AS_FACTORIALS` written out, everywhere but under a calculus head.
 
     A `COMB` inside a sum that has already declined to evaluate is left as it
-    is. Written out it makes a summand nobody has offered to sympy yet, so the
-    search for a closed form runs again - and over a ratio of factorials of the
-    index it does not come back: `SUM(COMB(n, k), k, 0, n)` is `2^n` above zero
-    and the sum itself elsewhere, and the sum it is left with would be searched
-    forever. That is `_searchable`'s point, one head further out.
+    is. Written out it makes a summand nobody has offered to sympy, and the
+    answer's own Simplify would offer it - and over a ratio of factorials of the
+    index that search does not come back: `SUM(COMB(n, k), k, 0, n)` is `2^n`
+    above zero and the sum itself elsewhere, and the sum it is left with would
+    be searched forever. That is `_searchable`'s point, one head further out.
     """
     written = _AS_FACTORIALS.get(type(expression))
     if written is not None:
         return written(*expression.args)
-    if isinstance(expression, _CALCULUS) or not expression.args:
+    if isinstance(expression, CALCULUS_HEADS) or not expression.args:
         return expression
     arguments = [_ratios(argument) for argument in expression.args]
     if all(written is argument for written, argument in zip(arguments, expression.args)):
@@ -2353,43 +1504,11 @@ def _as_factorial(argument: sp.Basic) -> sp.Basic:
     return sp.factorial(argument - 1)
 
 
-# -- the gated rewrites ------------------------------------------------------
-
-
-def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Every rewrite the settings select, each kept only if it pays."""
-    if expression.has(sp.MatrixExpr):
-        return _forced(expression, _distributed)
-    expression = _by_definition(expression)
-    expression = _branch(expression, context)
-    # After the branch, which is what settles how many values a root has: with
-    # Real asked for, `(-8)^(1/3)` is `-2` and there is no rectangle to write.
-    expression = _forced(expression, _rectangular)
-    expression = _gated(expression, _multiplied_out)
-    expression = _gated(expression, _cancelled)
-    # Forced, because what `ABS` and `SIGN` of one real argument make together
-    # is an identity rather than an economy, and because the rewrite already
-    # declines a spelling longer than the one it was given.
-    expression = _forced(expression, _folded_signs)
-    if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
-        expression = _gated(expression, sp.combsimp)
-    # Ours rather than sympy's, which collects neither these arcs nor their
-    # tangents, writes none of them about a shorter argument, and has no rule
-    # that spans two angles at once. All three are offered in every mode: an
-    # identity is not a direction to rewrite in. The complementary pair is the
-    # one taken whatever it costs, because what a pair of arcs adds up to is a
-    # fact about them and not an economy - `ATAN(t) + ACOT(t)` and
-    # `pi*SIGN(t)/2` are three operations either way, and gating that would
-    # keep the pair and throw the answer away.
-    expression = _gated(expression, _simpler_arcs)
-    expression = _forced(expression, _complementary_arcs)
-    expression = _gated(expression, _half_angles)
-    expression = _trigonometry(expression, context)
-    expression = _logarithms(expression, context)
-    expression = _exponentials(expression, context)
-    expression = _gated(expression, _denested)
-    expression = _gated(expression, _flattened)
-    return _gated(expression, sp.radsimp)
+# -- the kernel rules --------------------------------------------------------
+#
+# Each rewrite from here on is one rule about kernels. Which of them is offered, in
+# which mode, and whether it has to pay, is the business of the three tables at the
+# end of the module.
 
 
 def _distributed(expression: sp.Basic) -> sp.Basic:
@@ -2526,7 +1645,7 @@ def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
 
 
 def _forced(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
-    """`rewrite`, because a mode set away from Auto asked for it."""
+    """`rewrite`, whatever it costs: a direction asked for, a fact, or a spelling."""
     candidate = _attempt(expression, rewrite)
     return expression if candidate is None else candidate
 
@@ -2579,46 +1698,6 @@ def _compound(expression: sp.Basic) -> bool:
             if inner.exp.is_negative and not inner.base.is_number:
                 return True
     return False
-
-
-def _cancelled(expression: sp.Basic) -> sp.Basic:
-    """`cancel`, except where it would multiply something out for nothing.
-
-    Cancelling a common factor is what this is for, and it is worth having.
-    Rebuilding the denominator is not: `cancel` writes every ratio over one
-    expanded denominator, and where the normal form has already put a sum over
-    a product of sums that turns the original's own answer into a longer one.
-    `1/(9 + x^2 + (y - 3)^2) + 1/(9 + x^2 + (y + 3)^2)` is
-    `2*(x^2 + y^2 + 18)/((x^2 + y^2 - 6*y + 18)*(x^2 + y^2 + 6*y + 18))` to
-    Derive, and a quartic denominator to `cancel`.
-
-    A denominator of one factor has nothing to lose, which is every sum of
-    ratios that has not been put over a common denominator yet.
-
-    Nothing divided is nothing to cancel. Over a polynomial `cancel` can only
-    multiply out, which is what `_multiplied_out` has just declined to do, and
-    over a high power of a sum it builds every term of an expansion `_pays`
-    then throws away: `(v + w + x + y + z)^60` is six hundred thousand of them,
-    a minute and half a gigabyte to reach the answer it was written as. Asked by
-    `is_polynomial` rather than by the denominator above, since `fraction`
-    reads a sum of ratios as having no denominator at all. Derive returns that
-    power unchanged and returns it at once, which is the behaviour being kept.
-
-    What arrives here is not always an expression. An undecidable four-argument
-    `IF` simplifies to its unknown clause, and `IF(u, true, false, false)` has a
-    truth value for one; asking that for a numerator and a denominator is asking
-    the wrong question, and sympy answers it by building a `Mul` out of a
-    `BooleanFalse`, which it warns is on its way to being an error.
-    """
-    if not isinstance(expression, sp.Expr):
-        return expression
-    if expression.is_polynomial():
-        return expression
-    if len(sp.Mul.make_args(sp.fraction(expression)[1])) > 1:
-        return expression
-    if _expanded_terms(expression) > _EXPANSION:
-        return expression
-    return sp.cancel(expression)
 
 
 #: Where the three ways of writing one real quantity sit in a product. Each is
@@ -2740,140 +1819,6 @@ def _shortest_spelling(
         for count in sorted({0, 1, absolute, total})
     ]
     return min(spellings, key=sp.count_ops)
-
-
-def _multiplied_out(expression: sp.Basic) -> sp.Basic:
-    """Multiply out the structure, holding a high power of a sum together.
-
-    `x^2 - (x + (y + 1)^50)*(x - (y + 1)^50)` is a difference of squares whose
-    answer is `(y + 1)^100`, and seeing that means distributing the product
-    without also expanding the fiftieth power - which would produce a hundred
-    terms and hide the answer inside them. So each sum that already appears
-    raised to a power stands in as a single symbol, the rest is multiplied out
-    around it, and the sums come back afterwards. `(x + (a + 1)^10)^2 -
-    (a + 1)^20` is the same trick a level up: the square is expanded, the tenth
-    power is not, and what is left is `x^2 + 2*x*(a + 1)^10`.
-
-    Below `_FOLDED` the expansion is small enough to be worth having outright,
-    one power of one sum at a time. Enough of them multiplied together is not:
-    a dozen squared binomials come to half a million terms with no power held
-    at all, so what the standing-in leaves is counted before it is built, and
-    an expansion past `_EXPANSION` terms is declined the way a folded power is.
-
-    What is multiplied out gets collected back up while the power is still
-    standing in, so that `2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` comes
-    back as the fifth power times what is left of it - and that is why this
-    still earns its place beside the normal form, which writes sums and leaves
-    products alone. What this hands back is a product, and the normal form
-    leaves it exactly as it is.
-    """
-    stood_in: dict[sp.Basic, sp.Symbol] = {}
-
-    def hide(power: sp.Basic) -> sp.Basic:
-        symbol = stood_in.get(power.base)
-        if symbol is None:
-            symbol = stood_in.setdefault(power.base, sp.Dummy())
-        return symbol**power.exp
-
-    hidden = expression.replace(_is_folded_power, hide, simultaneous=False)
-    if _expanded_terms(hidden) > _EXPANSION:
-        return expression
-    expanded = _collected(sp.expand(hidden), set(stood_in.values()))
-    return expanded.xreplace({symbol: base for base, symbol in stood_in.items()})
-
-
-def _collected(expression: sp.Basic, standing_in: set[sp.Symbol]) -> sp.Basic:
-    """A sum with a standing-in power common to its terms taken back out.
-
-    `factor_terms` is the collecting, and it is offered here only where a power
-    that was stood in for comes out with it. On anything else it factors -
-    `x^2 + 2*x` becomes `x*(x + 2)` - and factoring is the Factor command's
-    business, not Simplify's.
-    """
-    if not (standing_in and isinstance(expression, sp.Add)):
-        return expression
-    candidate = _attempt(expression, sp.factor_terms)
-    if not isinstance(candidate, sp.Mul):
-        return expression
-    if not any(_stands_in(factor, standing_in) for factor in candidate.args):
-        return expression
-    return candidate
-
-
-def _stands_in(factor: sp.Basic, standing_in: set[sp.Symbol]) -> bool:
-    """Whether `factor` is one of the stood-in sums, or a power of one."""
-    base = factor.base if isinstance(factor, sp.Pow) else factor
-    return base in standing_in
-
-
-#: The exponent from which a power of a sum is left folded up.
-_FOLDED = 3
-
-
-def _is_folded_power(expression: sp.Basic) -> bool:
-    return (
-        isinstance(expression, sp.Pow)
-        and isinstance(expression.base, sp.Add)
-        # A symbol stands in for the base, so it had better commute like one.
-        and bool(expression.base.is_commutative)
-        and bool(expression.exp.is_Integer)
-        and abs(int(expression.exp)) >= _FOLDED
-    )
-
-
-#: How many terms an expansion may come to before the rewrite that would build
-#: it is not offered at all. A rewrite is kept only where it pays, and one that
-#: does not pay still costs everything it took to build and to measure - which
-#: for a high power of a sum is minutes and gigabytes for an answer thrown
-#: away. Measured over every expression in the corpus: the largest expansion
-#: any rewrite is offered there is a hundred and twenty terms, kept or not, so
-#: this stands two orders of magnitude above anything a worksheet asks for.
-_EXPANSION = 20_000
-
-
-def _expanded_terms(expression: sp.Basic) -> int:
-    """How many terms multiplying `expression` out would come to, at most.
-
-    A bound and not a count: terms that would collect are counted apart, and
-    over a limit whose purpose is to decline the expansions nobody asked for
-    that is the safe direction to be wrong in. Counted no higher than the limit
-    it is measured against, so that a power of a power cannot make the estimate
-    the expensive thing.
-    """
-    if isinstance(expression, sp.Add):
-        return min(sum(_expanded_terms(term) for term in expression.args), _CEILING)
-    if isinstance(expression, sp.Mul):
-        total = 1
-        for factor in expression.args:
-            total = min(total * _expanded_terms(factor), _CEILING)
-        return total
-    if isinstance(expression, sp.Pow):
-        return _power_terms(expression)
-    return 1
-
-
-#: What `_expanded_terms` counts up to, one term past what it is asked about.
-_CEILING = _EXPANSION + 1
-
-
-def _power_terms(power: sp.Pow) -> int:
-    """The terms a power of a sum comes to, one where it is not one.
-
-    `(u_1 + ... + u_k)^n` has `C(n + k - 1, k - 1)` terms in it, built here as
-    the product it is rather than as a binomial, so that a count already past
-    the ceiling can stop where it gets there: the number itself is not wanted,
-    only which side of the limit it falls.
-    """
-    terms = _expanded_terms(power.base)
-    if terms <= 1 or not power.exp.is_Integer or power.exp <= 0:
-        return 1
-    exponent = int(power.exp)
-    count = 1.0
-    for index in range(1, terms):
-        count *= (exponent + index) / index
-        if count > _EXPANSION:
-            return _CEILING
-    return round(count)
 
 
 def _denested(expression: sp.Basic) -> sp.Basic:
@@ -3138,36 +2083,7 @@ def _over_radicals(
     return True
 
 
-# -- what each mode selects --------------------------------------------------
-
-
-def _trigonometry(expression: sp.Basic, context: Context) -> sp.Basic:
-    """The Trigonometry and Trigpower settings.
-
-    Auto means "only where it cancels", which is what `trigsimp` does. Collect
-    is the product-to-sum and power-reduction direction, plus the phase-angle
-    rule; Expand is the angle-sum direction, and the algebraic values of the
-    special angles that come with it.
-    """
-    match context.trigonometry:
-        case Direction.EXPAND:
-            expression = _forced(expression, sp.expand_trig)
-            expression = _gated(expression, lambda e: e.rewrite(sp.sqrt))
-        case Direction.COLLECT:
-            expression = _forced(expression, _phase_angles)
-            expression = _forced(expression, TR8)
-            expression = _forced(expression, TR7)
-        case _:
-            expression = _gated(expression, sp.trigsimp)
-    # Auto adds nothing here: either `trigsimp` above has already taken the
-    # powers that cancel, or a direction was asked for and reversing part of it
-    # would be perverse.
-    match context.trigpower:
-        case TrigPower.SINES:
-            return _forced(expression, TR6)
-        case TrigPower.COSINES:
-            return _forced(expression, TR5)
-    return _forced(expression, _tangent_squares)
+# -- the trigonometric, logarithmic and power rules --------------------------
 
 
 def _tangent_squares(expression: sp.Basic) -> sp.Basic:
@@ -3418,31 +2334,6 @@ def _phase_angle(expression: sp.Basic) -> sp.Basic | None:
     return sp.sqrt(a**2 + b**2) * sp.sin(angle + sp.atan2(b, a))
 
 
-def _logarithms(expression: sp.Basic, context: Context) -> sp.Basic:
-    """The Logarithm setting, never forced past what the domains allow.
-
-    `logcombine` and `expand_log` both take a `force` argument that assumes
-    every argument positive. It is not used, in either direction: `LN(x^2 - x)
-    - LN(x)` collects only once `x` has been declared away from the values that
-    would make it false. What the declaration is worth is `_nonnegatively`'s
-    business.
-
-    Auto is the mixed direction 6.2 describes, the sum rule rightward and the
-    power rule leftward: `3*LN(2) + LN(5)` collects to `LN(40)` and `LN(256)`
-    comes apart into `8*LN(2)`. The second half is not gated on getting
-    shorter, because the shorter form is the one it gives up: a power is taken
-    out of a logarithm the way it is taken out from under a radical, where
-    `SQRT(12)` is `2*SQRT(3)` and counts no less.
-    """
-    match context.logarithm:
-        case Direction.COLLECT:
-            return _forced(expression, _nonnegatively(sp.logcombine))
-        case Direction.EXPAND:
-            return _forced(expression, _nonnegatively(sp.expand_log))
-    expression = _gated(expression, _nonnegatively(sp.logcombine))
-    return _forced(expression, _extracted_powers)
-
-
 def _nonnegatively(rewrite: Rewrite) -> Rewrite:
     """`rewrite` run with every nonnegative variable standing up as a positive one.
 
@@ -3523,55 +2414,19 @@ def _perfect_power(number: sp.Rational) -> tuple[sp.Rational, sp.Integer] | None
     return root, sp.Integer(exponent)
 
 
-def _exponentials(expression: sp.Basic, context: Context) -> sp.Basic:
-    """The Exponential setting, over the power rules sympy gates for us.
-
-    `(#e^z)^k -> #e^(k*z)` needs an integer `k` or a strip constraint on `z`;
-    `powsimp` and `expand_power_base` know that, so the validity gate is
-    theirs and the direction is ours.
-
-    One base written twice collects whatever it costs, in every mode. It is not
-    an economy but a normal form: `DIF(x^n, x)` is `n*x^n/x` to sympy and
-    `n*x^(n - 1)` to the original, and the two are the same length, so a gate
-    that counts operations would keep the first.
-    """
-    expression = _forced(expression, _collected_powers)
-    match context.exponential:
-        case Direction.COLLECT:
-            return _forced(expression, sp.powsimp)
-        case Direction.EXPAND:
-            expression = _forced(expression, sp.expand_power_exp)
-            return _forced(expression, sp.expand_power_base)
-    expression = _gated(expression, sp.powsimp)
-    expression = _gated(expression, sp.expand_power_exp)
-    return _gated(expression, sp.expand_power_base)
-
-
 def _collected_powers(expression: sp.Basic) -> sp.Basic:
     """Powers of one base in a product added, and nothing else.
+
+    Not an economy but Derive's spelling: `DIF(x^n, x)` is `n*x^n/x` to sympy and
+    `n*x^(n - 1)` to the original, and the two are the same length, so a gate that
+    counts operations would keep the first. Exponential Expand is the setting that
+    asks for powers apart, and under it Derive answers `n*x^n/x`.
 
     `combine="exp"` is the exponent rule on its own: it leaves two bases under
     one exponent alone, which is the part of `powsimp` that is a direction to
     rewrite in rather than a normal form.
     """
     return sp.powsimp(expression, combine="exp")
-
-
-def _branch(expression: sp.Basic, context: Context) -> sp.Basic:
-    """The Branch setting: which root of many an expression is allowed to mean.
-
-    Principal is sympy's own convention and needs nothing. Real asks for the
-    real root of a negative number, so `(-8)^(1/3)` is `-2` rather than the
-    principal complex value. Any lifts the domain proof off the power rules,
-    which is what lets `SQRT(x^2)` become `x` for an undeclared `x`.
-    """
-    match context.branch:
-        case Branch.REAL:
-            return _forced(expression, _real_roots)
-        case Branch.ANY:
-            expression = _forced(expression, lambda e: sp.powdenest(e, force=True))
-            return _forced(expression, lambda e: sp.powsimp(e, force=True))
-    return expression
 
 
 def _real_roots(expression: sp.Basic) -> sp.Basic:
@@ -3639,3 +2494,227 @@ def _plainly_written(value: sp.Basic) -> bool:
         for power in value.atoms(sp.Pow)
         if not power.exp.is_Integer
     )
+
+
+# -- the kernel layer --------------------------------------------------------
+#
+# Every rewrite above is a rule about kernels - the trigonometric, logarithmic,
+# exponential, sign, arc and radical calls an expression is a rational function of -
+# and what follows is the whole of where each is offered. Three tables, applied by one
+# driver: the identities offered in every mode, kept where they pay; the directions
+# the mode settings ask for; and the spelling conventions an answer is written in,
+# applied once the normal form has written its sums. The output vocabulary is the one
+# spelling applied first rather than last: it is the language the identities are
+# stated in, and `TANH(z)` reaches `(#e^(2*z) - 1)/(#e^(2*z) + 1)` only by being
+# written over exponentials before the denominators are cleared.
+
+
+class _Rule(NamedTuple):
+    """One rewrite of the kernel layer, with what it is called and why it is there.
+
+    `kept` is how an answer is taken: `_gated` keeps one that pays, `_forced` keeps
+    any. `yields_to` names a mode setting the rule is the Auto behavior of: a spelling
+    the user has asked away from is not one to impose, so `TAN(x)^2 + 1` is written
+    for `1/COS(x)^2` only while Trigpower is Auto, Cosines asking for the cosine.
+    """
+
+    name: str
+    rewrite: Rewrite
+    kept: Callable[[sp.Basic, Rewrite], sp.Basic]
+    reason: str
+    yields_to: str | None = None
+
+
+def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
+    """The kernels reduced: every identity that pays, then every direction asked for.
+
+    Over the vocabulary `_by_definition` writes, and before the normal form, which is
+    what writes the sums the rules leave behind.
+    """
+    if expression.has(sp.MatrixExpr):
+        return _forced(expression, _distributed)
+    expression = _by_definition(expression)
+    expression = _applied(expression, _IDENTITIES, context)
+    for setting, directions in _DIRECTED.items():
+        rules = directions.get(getattr(context, setting), ())
+        expression = _applied(expression, rules, context)
+    return expression
+
+
+def _spelled(expression: sp.Basic, context: Context) -> sp.Basic:
+    """The answer with Derive's spelling conventions, once its sums are written.
+
+    After the normal form, so that nothing after them rewrites what they write. Each
+    is the form Derive prints whether or not it is the shorter one: `1/COS(x)^2` is
+    `TAN(x)^2 + 1`, and `LN(256)` is `8*LN(2)`.
+    """
+    if expression.has(sp.MatrixExpr):
+        return expression
+    return _applied(expression, _SPELLINGS, context)
+
+
+def _applied(
+    expression: sp.Basic, rules: tuple[_Rule, ...], context: Context
+) -> sp.Basic:
+    for rule in rules:
+        if rule.yields_to is not None and getattr(context, rule.yields_to) != "Auto":
+            continue
+        expression = rule.kept(expression, rule.rewrite)
+    return expression
+
+
+def _combinatorial(expression: sp.Basic) -> sp.Basic:
+    """`combsimp`, where there is something combinatorial and it is affordable."""
+    if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
+        return sp.combsimp(expression)
+    return expression
+
+
+def _on_powers(rewrite: Rewrite) -> Rewrite:
+    """`rewrite`, where what it changed is a power.
+
+    The power rules rebuild every product they pass through, and sympy's product
+    distributes a number over a sum as it is built: `powsimp` hands
+    `3*x^2*(2*y + 1)` back as `x^2*(6*y + 3)` having collected nothing. Derive keeps
+    the first, and an answer that holds the same powers it was given is the same
+    answer, so that is the one kept.
+    """
+
+    def run(expression: sp.Basic) -> sp.Basic:
+        candidate = rewrite(expression)
+        if candidate.atoms(sp.Pow, sp.exp) == expression.atoms(sp.Pow, sp.exp):
+            return expression
+        return candidate
+
+    return run
+
+
+#: The identities, offered in every mode. Gated ones are economies, kept where
+#: `_pays` says the answer is simpler; forced ones are facts about the kernels they
+#: relate, where gating would keep the longer side for being no longer.
+_IDENTITIES = (
+    _Rule("signs", _folded_signs, _forced,
+          "ABS(u)*SIGN(u) is u and u/ABS(u) is SIGN(u), for a real u"),
+    _Rule("combinatorial", _combinatorial, _gated,
+          "a ratio of factorials is a binomial or a polynomial when it is shorter"),
+    # The arcs and angles are ours rather than sympy's, which collects neither these
+    # arcs nor their tangents, writes none of them about a shorter argument, and has
+    # no rule that spans two angles at once.
+    _Rule("simpler arcs", _simpler_arcs, _gated,
+          "ASIN(u/SQRT(u^2 + 1)) is ATAN(u): an arc about the shorter argument"),
+    _Rule("complementary arcs", _complementary_arcs, _forced,
+          "ASIN(u) + ACOS(u) is pi/2 and ATAN(u) + ACOT(u) is pi*SIGN(u)/2"),
+    _Rule("half angles", _half_angles, _gated,
+          "calls of fractional multiples of one angle cancel written about it"),
+    _Rule("denested", _denested, _gated,
+          "SQRT(5 + SQRT(24)) is SQRT(2) + SQRT(3): each radical denested"),
+    _Rule("flattened", _flattened, _gated,
+          "a constant over nested radicals reduced in the field its surds span"),
+    _Rule("one denominator", sp.radsimp, _gated,
+          "a denominator under a denominator is cleared, #e^(-z) put over #e^z"),
+)
+
+#: The directions, keyed by the setting that asks for them and its value. Auto, where
+#: it has rules here, means "only where it cancels", and those are gated; Collect and
+#: Expand are instructions rather than options, and forced. No rule is ever forced
+#: past a domain: the logarithm rules are sympy's without `force`, run over
+#: `_nonnegatively`'s reading of the declarations, and the power rules carry sympy's
+#: own validity gate for `(#e^z)^k -> #e^(k*z)`, so the direction is all that is
+#: chosen here.
+_DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
+    # Principal is sympy's own convention; Real takes `(-8)^(1/3)` to be -2, and Any
+    # lifts the domain proof off the power rules, so `SQRT(x^2)` is `x`.
+    "branch": {
+        Branch.REAL: (
+            _Rule("real roots", _real_roots, _forced,
+                  "an odd root of a negative number is its real root"),
+        ),
+        Branch.ANY: (
+            _Rule("any powdenest", lambda e: sp.powdenest(e, force=True), _forced,
+                  "a power of a power is one power, whatever the base"),
+            _Rule("any powsimp", lambda e: sp.powsimp(e, force=True), _forced,
+                  "powers over one exponent are one power, whatever the bases"),
+        ),
+    },
+    "trigonometry": {
+        Direction.AUTO: (
+            _Rule("trigsimp", sp.trigsimp, _gated,
+                  "trigonometric identities, where they cancel something"),
+        ),
+        Direction.COLLECT: (
+            _Rule("phase angles", _phase_angles, _forced,
+                  "a*SIN(z) + b*COS(z) is one sine, which fu's TR10i has only for a = b"),
+            _Rule("TR8", TR8, _forced, "products of calls written as sums"),
+            _Rule("TR7", TR7, _forced, "powers of cosines reduced to multiple angles"),
+        ),
+        Direction.EXPAND: (
+            _Rule("expand_trig", sp.expand_trig, _forced,
+                  "calls of sums and multiples written over single angles"),
+            _Rule("special angles", lambda e: e.rewrite(sp.sqrt), _gated,
+                  "the algebraic values of the special angles that come with it"),
+        ),
+    },
+    "trigpower": {
+        TrigPower.SINES: (
+            _Rule("TR6", TR6, _forced, "even powers of cosines written over sines"),
+        ),
+        TrigPower.COSINES: (
+            _Rule("TR5", TR5, _forced, "even powers of sines written over cosines"),
+        ),
+    },
+    # Auto is the mixed direction 6.2 describes: the sum rule rightward here, so
+    # `3*LN(2) + LN(5)` is `LN(40)`, and the power rule leftward in `_SPELLINGS`, so
+    # `LN(256)` is `8*LN(2)` the way `SQRT(12)` is `2*SQRT(3)`, shorter or not.
+    # `LN(x^2 - x) - LN(x)` collects only once `x` is declared away from the values
+    # that would make it false.
+    "logarithm": {
+        Direction.AUTO: (
+            _Rule("logcombine", _nonnegatively(sp.logcombine), _gated,
+                  "logarithms added into one, where it is shorter"),
+        ),
+        Direction.COLLECT: (
+            _Rule("logcombine", _nonnegatively(sp.logcombine), _forced,
+                  "logarithms added into one"),
+        ),
+        Direction.EXPAND: (
+            _Rule("expand_log", _nonnegatively(sp.expand_log), _forced,
+                  "a logarithm of a product taken apart"),
+        ),
+    },
+    "exponential": {
+        Direction.AUTO: (
+            _Rule("powsimp", _on_powers(sp.powsimp), _gated,
+                  "powers collected, where it is shorter"),
+            _Rule("expand_power_exp", _on_powers(sp.expand_power_exp), _gated,
+                  "a power of a sum split, where it is shorter"),
+            _Rule("expand_power_base", _on_powers(sp.expand_power_base), _gated,
+                  "a power of a product split, where it is shorter"),
+        ),
+        Direction.COLLECT: (
+            _Rule("powsimp", _on_powers(sp.powsimp), _forced, "powers collected"),
+        ),
+        Direction.EXPAND: (
+            _Rule("expand_power_exp", _on_powers(sp.expand_power_exp), _forced,
+                  "a power of a sum split"),
+            _Rule("expand_power_base", _on_powers(sp.expand_power_base), _forced,
+                  "a power of a product split"),
+        ),
+    },
+}
+
+#: The spelling conventions, applied after the normal form. None is an economy and
+#: none is gated: several lengthen what they replace, and are still the only way
+#: Derive writes the answer.
+_SPELLINGS = (
+    # After the branch, which is what settles how many values a root has: with Real
+    # asked for, `(-8)^(1/3)` is `-2` and there is no rectangle to write.
+    _Rule("rectangular", _rectangular, _forced,
+          "a numeric complex power is real part plus imaginary part"),
+    _Rule("tangent squares", _tangent_squares, _forced,
+          "1/COS(u)^(2*k) is (TAN(u)^2 + 1)^k", yields_to="trigpower"),
+    _Rule("extracted powers", _extracted_powers, _forced,
+          "LN(b^k) is k*LN(b) where 6.2 allows it", yields_to="logarithm"),
+    _Rule("collected powers", _collected_powers, _forced,
+          "powers of one base are one power: n*x^n/x is n*x^(n - 1)",
+          yields_to="exponential"),
+)

@@ -479,9 +479,12 @@ def test_a_string_the_author_wrote_is_not_an_unreadable_answer(unreadable_answer
 
 
 def test_a_sympy_bound_variable_is_written_as_an_ordinary_name():
-    # Sympy writes a `Dummy` as `_k1`, and `_k1` does not lex.
-    assert written(sp.Dummy("k1")) == "k1"
-    assert written(sp.Dummy("xi_2") + 1) == "xi_2 + 1"
+    # Sympy writes a `Dummy` as `_k1`, and `_k1` does not lex; `k1` and `xi` lex in
+    # Character mode as `k*1` and `x*i`. A letter is one name in every mode.
+    assert written(sp.Dummy("k1")) == "k"
+    assert written(sp.Dummy("xi_2") + 1) == "x + 1"
+    assert written(sp.Dummy("xi") + x) == "x + x_"
+    assert parse_expression("x + x_", ParseState()).node.children[1].value == "x_"
 
 
 def test_two_bound_variables_of_one_name_are_written_apart():
@@ -494,9 +497,9 @@ def test_two_bound_variables_of_one_name_are_written_apart():
     the written order depend on which of them came first.
     """
     first, second = sp.Dummy("k1"), sp.Dummy("k1")
-    assert written(first + 2 * second) in ("k1_ + 2*k1", "k1 + 2*k1_")
+    assert written(first + 2 * second) in ("k_ + 2*k", "k + 2*k_")
     # And a name already in use is not taken over.
-    assert written(sp.Dummy("k1") + sp.Symbol("k1", real=True)) == "k1 + k1_"
+    assert written(sp.Dummy("k1") + sp.Symbol("k", real=True)) == "k + k_"
 
 
 def test_a_dot_product_keeps_its_parentheses_inside_a_negated_product():
@@ -545,15 +548,14 @@ def test_what_doit_hands_back_reads_back(expression):
 
 
 def test_a_supplied_state_learns_the_names_only_the_answer_uses():
-    """A caller's symbol table does not know what the engine invented.
+    """A caller's symbol table does not know every name an answer carries.
 
-    Differentiating a product `n` times gives a sum over a bound variable
-    sympy names itself, and in Character mode `k1` is `k*1` until something
-    declares it. The caller's state is not the engine's to write to, so the
-    declaration goes into a copy.
+    An answer can hold a name nobody typed on this worksheet, and in Character mode
+    `k1` is `k*1` until something declares it. The caller's state is not the engine's
+    to write to, so the declaration goes into a copy.
     """
     state = ParseState()
-    invented = sp.Dummy("k1") * 2
+    invented = sp.Symbol("k1", real=True) * 2
     result = from_sympy(invented, Context(), state)
     assert result.text == "2*k1"
     assert to_sympy(result.node) == sp.Symbol("k1", real=True) * 2

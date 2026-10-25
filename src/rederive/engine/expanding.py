@@ -5,11 +5,9 @@ a sympy expression and gives one back, so it sits below `pipeline` and can be
 used by it: the `EXPAND` head an authored line may carry is evaluated during
 Simplify, and the Expand command is `expand.py` on top of both.
 
-Simplify's normal form is built on it too. Writing a sum about the one variable
-that is most main in it is this same operation about one expansion variable,
-and `held_about` and `collected_by` are here for `normal` to use rather than
-reimplement - which is why the rule that everything free of the variables is
-one opaque quantity shows up in both commands' answers.
+Simplify's normal form does the same thing about one generator at a time, in
+`normal`, which is why the rule that everything free of the variables is one
+opaque quantity shows up in both commands' answers.
 
 The manual states the goal as maximizing the number of terms that are
 algebraically independent with respect to the *expansion variables*, and the
@@ -163,10 +161,8 @@ def held_about(
 ) -> tuple[sp.Expr, dict[sp.Dummy, sp.Expr]]:
     """`expression` with everything free of `variable` stood in for, and the map back.
 
-    Public because Simplify's normal form is this same operation about one
-    variable: what is opaque to an expansion is opaque to the normal form too,
-    and both want to work on the frozen expression rather than only on the
-    answer. `xreplace` with the map puts the placeholders back.
+    Public so that the promise below can be checked on its own. `xreplace`
+    with the map puts the placeholders back.
 
     Freezing has one thing to promise, and it is checked here rather than
     trusted: putting the placeholders back has to give the expression it started
@@ -190,17 +186,6 @@ def held_about(
         return frozen, held
     whole: dict[sp.Dummy, sp.Expr] = {}
     return _held(expression, whole), whole
-
-
-def collected_by(expression: sp.Expr, variable: sp.Symbol) -> sp.Expr:
-    """A multiplied-out sum gathered back up by the powers of `variable`.
-
-    The normal form's collecting rather than Expand's, and the two differ over
-    a coefficient's numeric content: this one leaves it where it stands, so
-    that `6*x*y^2*z + 2*x*z^3` is `x*(6*y^2*z + 2*z^3)` - which is what the
-    manual's own LAPLACIAN answers.
-    """
-    return _collected(expression, (variable,), content_outside=False)
 
 
 def _polynomial(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr:
@@ -306,7 +291,6 @@ def _held(expression: sp.Expr, held: dict[sp.Dummy, sp.Expr]) -> sp.Expr:
 def _collected(
     expression: sp.Expr,
     variables: tuple[sp.Symbol, ...],
-    content_outside: bool = True,
 ) -> sp.Expr:
     """Terms carrying the same powers of every expansion variable, put together.
 
@@ -318,7 +302,8 @@ def _collected(
     common outside: `2*x*(a + b)` rather than `x*(2*a + 2*b)`, which is the
     same rule that leaves a non-expansion variable unexpanded, and which the
     manual's own expansion about `y` alone shows in `12*y^2*(x + 1)`. The
-    normal form collects the other way round - see `collected_by`.
+    normal form collects the other way round, keeping a coefficient's numeric
+    content inside.
     """
     if not isinstance(expression, sp.Add):
         return expression
@@ -329,15 +314,13 @@ def _collected(
     return sp.Add(
         *(
             sp.Mul(*(base**power for base, power in zip(variables, degrees)))
-            * _coefficient(rest, degrees, content_outside)
+            * _coefficient(rest, degrees)
             for degrees, rest in groups.items()
         )
     )
 
 
-def _coefficient(
-    terms: list[sp.Expr], degrees: tuple[sp.Expr, ...], content_outside: bool = True
-) -> sp.Expr:
+def _coefficient(terms: list[sp.Expr], degrees: tuple[sp.Expr, ...]) -> sp.Expr:
     """What the terms of one degree carry, with any common factor outside.
 
     Only where there is a degree for them to be the coefficient of. The group
@@ -348,22 +331,10 @@ def _coefficient(
     stands rather than collected, and `LN(x^2 - x) - LN(x)` is left alone
     rather than written `LN(x*(x - 1)) - LN(x)`, which is `factor_terms`
     reaching inside a logarithm to factor its argument.
-
-    Without `content_outside` what the terms have in common numerically stays
-    inside, which is the normal form's rule rather than Expand's.
     """
     if len(terms) == 1 or not any(degrees):
         return sp.Add(*terms)
-    gathered = sp.factor_terms(sp.Add(*terms))
-    return gathered if content_outside else _with_the_number_back(gathered)
-
-
-def _with_the_number_back(coefficient: sp.Expr) -> sp.Expr:
-    """`coefficient` with any numeric factor multiplied back into its sum."""
-    number, rest = coefficient.as_coeff_Mul()
-    if number is sp.S.One or not isinstance(rest, sp.Add):
-        return coefficient
-    return sp.Add(*(number * term for term in rest.args))
+    return sp.factor_terms(sp.Add(*terms))
 
 
 def _degrees(

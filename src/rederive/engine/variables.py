@@ -11,8 +11,7 @@ import sympy as sp
 
 from rederive.engine.context import Context
 from rederive.engine.ordering import main_order
-from rederive.engine.substitute import substitute
-from rederive.engine.to_sympy import to_sympy
+from rederive.engine.evaluate import evaluated
 from rederive.model.expr import Node
 
 __all__ = ["expression_variables"]
@@ -30,7 +29,7 @@ def expression_variables(node: Node, context: Context | None = None) -> tuple[st
     """
     context = context or Context()
     try:
-        expression = to_sympy(substitute(node, context), context)
+        expression = evaluated(node, context)
         symbols = expression.free_symbols
     except Exception:
         return ()

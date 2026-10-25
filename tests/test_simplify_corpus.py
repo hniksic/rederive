@@ -68,23 +68,11 @@ CORPUS = Path(__file__).parent / "corpus"
 #: nobody prunes is a record nobody trusts.
 #:
 #: * `BESSEL_Y_SERIES` writes `2/pi*(u - v/2)` with the two outside the sum and
-#:   distributes it into the sum on the second pass. Distributing it in
-#:   `_canonical` is not the answer: it settles this one and unsettles two
+#:   distributes it into the sum on the second pass. Distributing every such
+#:   number is not the answer: it settles this one and unsettles two
 #:   others, where sympy then picks the other sign for a cosine's argument or
 #:   multiplies out a term it had left folded.
-#: * `F_3A` divides `SECH(z/k)^(k+1)` by `2^(k+1)` and writes the base of the
-#:   power as `1/(2*(#e^(z/k)/2 + #e^(-z/k)/2))`, with the two outside the sum,
-#:   and multiplies it through on the second pass to reach
-#:   `1/(#e^(z/k) + #e^(-z/k))`. The same two as `BESSEL_Y_SERIES`, standing in
-#:   a power's base rather than in front of a sum.
-#: * `LIN2_CCF_HOM` writes `(p^2/4 - d/4)^(x/2)` as it stands and
-#:   `(p^2 - d)^(x/2)/2^x` on the second pass: splitting the base did not pay
-#:   until the form it was offered had changed.
-UNSETTLED = (
-    "BESSEL_Y_SERIES(",
-    "F_3A(",
-    "LIN2_CCF_HOM(",
-)
+UNSETTLED = ("BESSEL_Y_SERIES(",)
 
 
 def _library() -> dict[str, list[tuple[str, ParseState]]]:

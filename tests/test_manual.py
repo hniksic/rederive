@@ -164,14 +164,6 @@ NOT_YET_HELD = {
     "10, x)-(66*x^10 - 330*x^9 + 495*x^8 - 462*x^6 + 330*x^4 - 99*x^2 + 5)/66]",
     "test_the_worked_examples_of_the_number_theory_file[EULER_POLY(10, "
     "x)-x*(x^9 - 5*x^8 + 30*x^6 - 126*x^4 + 255*x^2 - 155)]",
-    # The accumulators carry the manual's own values - `FG(4)` is
-    # `[3*epsilon*mu + mu^2 - 15*mu*sigma^2, 6*mu*sigma]` - and the page factors
-    # the `mu` its three terms share. `normal.py` says why no common factor is
-    # taken back out of a finished sum: the original does not do it
-    # consistently, `y*x^2 + 2*y*x + 2*y` authored as it stands coming back as
-    # it stands, so it has two fixed points for the one expression. This is that
-    # decision met from the manual's side, and a difference in spelling only.
-    "test_the_manuals_mutual_recursion_written_with_accumulators",
     # Each half is written over its own bar, as the original writes it, and the
     # arguments are what is left: sympy signs an even or odd function's argument
     # by its own alphabetical order, giving `COS(w - z)` where the original
@@ -278,16 +270,6 @@ NOT_YET_HELD = {
     # again, and an entry whose text and tree disagree is what
     # `test_simplify_corpus` fails on. A difference in spelling only.
     "test_the_clairaut_equation_the_manual_solves",
-    # `F(4)` is the manual's value, `3*epsilon*mu + mu^2 - 15*mu*sigma^2`, and
-    # the very expression the accumulator version above answers with: a call
-    # with nothing unknown left in it is run to its value where it stands,
-    # innermost first, so each level of derivatives collapses before the one
-    # above it is taken rather than all four standing at once and going past
-    # the size bound. What is left is the `mu` the page takes out of the three
-    # terms, which is that entry's residue and no other - `normal.py` records
-    # why no common factor is taken back out of a finished sum. A difference in
-    # spelling only.
-    "test_an_empty_definition_makes_a_name_a_function_and_not_a_variable",
     # The brackets are read as the vector they are, the scalar goes into the one
     # element, and `[3*x + 3*y]` comes back. What differs is how that element is
     # written, and the vector has nothing to do with it: `3*(x + y)` is already

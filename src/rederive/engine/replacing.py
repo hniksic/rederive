@@ -7,9 +7,9 @@ as `3*2^2 + 5*2 + c` and not as 22. The manual makes a point of this (section
 4.8): substitution does not commute with simplification, so what was written
 in is worth looking at before anything is done to it.
 
-Not to be confused with `substitute`, the pre-pass every other command runs.
-That one writes in what a label, an assignment or a definition already stands
-for, on the way into sympy. This one writes in what the user has just typed,
+Not to be confused with the evaluation every other command starts with. That
+one writes in what a label, an assignment or a definition already stands for,
+on the way into sympy. This one writes in what the user has just typed,
 and never goes near sympy - there is nothing there for it to do that would not
 also simplify.
 

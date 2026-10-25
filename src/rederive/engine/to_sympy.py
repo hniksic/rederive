@@ -13,8 +13,9 @@ head that carries its operands and prints back to the author notation it came
 from, so that anything the engine does not understand survives a round trip
 untouched.
 
-Substitution of labels, assignments and function definitions is a separate
-pre-pass: `to_sympy` works on an unsubstituted tree just as well.
+Labels, assignments and function definitions are the evaluator's business, which
+is this conversion with an environment threaded through it (`evaluate`); on its
+own, `to_sympy` converts a label and leaves every other name a variable.
 """
 
 from __future__ import annotations
@@ -47,12 +48,14 @@ from rederive.syntax.names import BUILTIN_FUNCTIONS, PRIME_MARK
 from rederive.syntax.writer import write_expression
 
 __all__ = [
+    "CALCULUS_HEADS",
     "COMMAND_HEADS",
     "DIMENSION",
     "Antidifference",
     "Antiquotient",
     "Approx",
     "Assign",
+    "Converter",
     "Declare",
     "Dot",
     "FunDef",
@@ -67,19 +70,20 @@ __all__ = [
     "Transposed",
     "as_condition",
     "authored_conditionals",
+    "chosen_from",
     "is_conditional",
-    "outsized",
-    "reread",
+    "iterated",
+    "steps",
     "to_sympy",
+    "vector_of",
 ]
 
-#: The heads a conversion deliberately leaves standing for the pipeline to
-#: evaluate: the author-line spellings of Factor, Expand and soLve, and `RATE`,
-#: which is a bounded soLve of section 6.12's annuity under another name. Their
-#: answers depend on a simplified operand, so they cannot be worked out here,
-#: and a call over one of them cannot be worked out either - `DIMENSION` of a
-#: `SOLVE` is a number nobody knows yet. Such a call stays inert too, and
-#: `reread` is what offers it again once the head inside it is gone.
+#: The heads a conversion leaves standing for a command to evaluate: the
+#: author-line spellings of Factor, Expand and soLve, and `RATE`, which is a
+#: bounded soLve of section 6.12's annuity under another name. Their answers
+#: depend on a simplified operand, so they cannot be worked out here; the
+#: evaluation runs them once the operand is a value, and a call over one is then
+#: an ordinary call - `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is a vector of roots.
 COMMAND_HEADS = ("EXPAND", "FACTOR", "SOLVE", "RATE")
 
 
@@ -117,6 +121,24 @@ class PlusMinus(sp.Function):
     """
 
     nargs = 1
+
+
+class Gcd(sp.Function):
+    """`GCD(m, n)` of arguments that are not all numbers.
+
+    Derive's greatest common divisor is a function of integers, and one of an
+    expression stands rather than being a polynomial gcd: sympy would answer `1`
+    for two different variables, where section 6.13 has `LCM(m, n)` as
+    `|m*n|/GCD(n, m)`. It becomes the number once numbers are written in.
+    """
+
+    nargs = 2
+
+    @classmethod
+    def eval(cls, *args: sp.Basic) -> sp.Basic | None:
+        if all(argument.is_number for argument in args):
+            return _gcd_of(list(args))
+        return None
 
 
 class StringLiteral(sp.Symbol):
@@ -293,7 +315,7 @@ class MovingLimit(sp.Function):
     happen after whatever stands under it has been worked out. `LIM(DIF(LIM(p,
     y, x*v - y), y), y, x*v - y)` substitutes into a derivative, and one still
     unevaluated would come back a `SUBS` that nothing then opens. So this waits
-    where the calculus heads wait, and the pipeline evaluates it after the
+    where the calculus heads wait, and the evaluation works it out after the
     derivative underneath it, by which time there is a polynomial to put the
     point into.
     """
@@ -315,7 +337,7 @@ class Approx(sp.Function):
     Rounding is the last thing a command does, and what it has to round is the
     answer and not the question: `APPROX(INT(u, x))` must see the value that
     integral came out as. So this waits where the calculus heads wait, and the
-    pipeline that evaluates those evaluates this one after them - which the
+    evaluation that works those out works this one out after them - which the
     conversion cannot do itself, having no pipeline to call.
 
     The head carries its digit count even where the call left it out, because
@@ -411,6 +433,24 @@ class Antiquotient(sp.Function):
         return value
 
 
+#: The heads that stand for a computation: the calculus ones, and `APPROX`,
+#: which waits for the same reason. It has to round the value an integral came
+#: out as rather than the integral, and evaluating innermost first is exactly
+#: what gives it that. The evaluation works each one out where it is made.
+CALCULUS_HEADS = (
+    sp.Derivative,
+    sp.Integral,
+    sp.Sum,
+    sp.Product,
+    sp.Limit,
+    Antidifference,
+    Antiquotient,
+    MovingLimit,
+    Taylor,
+    Approx,
+)
+
+
 # -- the constant table -----------------------------------------------------
 
 #: `e` and `i` are ordinary variables; only `#e` and `#i` are the constants.
@@ -465,10 +505,10 @@ _LOGICAL_NAMES: dict[Kind, str] = {
 
 def to_sympy(node: Node, context: Context | None = None) -> sp.Basic:
     """Translate `node` into the sympy object that means the same thing."""
-    return _Converter(context or Context()).convert(node)
+    return Converter(context or Context()).convert(node)
 
 
-class _Converter:
+class Converter:
     """One conversion's worth of state: the context, and the labels in hand."""
 
     def __init__(self, context: Context, open_labels: frozenset[int] = frozenset()):
@@ -621,7 +661,7 @@ class _Converter:
         if node is None:
             return None
         try:
-            value = _Converter(replace(self.context, domains={})).convert(node)
+            value = Converter(replace(self.context, domains={})).convert(node)
         except Exception:
             return None
         return value if getattr(value, "is_number", False) else None
@@ -639,7 +679,7 @@ class _Converter:
         target = self.context.labels.get(number)
         if target is None or number in self.open_labels:
             return sp.Symbol(f"#{node.value}")
-        deeper = _Converter(self.context, self.open_labels | {number})
+        deeper = Converter(self.context, self.open_labels | {number})
         return deeper.convert(target)
 
     # -- operators ----------------------------------------------------------
@@ -851,7 +891,7 @@ class _Converter:
         An index that is a vector reaches through as many dimensions as it
         holds, `m SUB [2, 3]` being `m SUB 2 SUB 3`.
         """
-        base, index = self._children(node)
+        base, index = (self.operand(child) for child in self._children(node))
         if not isinstance(base, (sp.MatrixBase, InertVector)):
             return self._subscript(node.children[0], base, index)
         element = _at(base, index)
@@ -899,10 +939,12 @@ class _Converter:
 
         Ragged or mixed vectors are no matrix at all, and stay inert.
         """
-        rows = node.children
-        if not rows:
+        if not node.children:
             return sp.Matrix(0, 0, [])
-        elements = self._children(node)
+        return self.vector_over(node.children, self._children(node))
+
+    def vector_over(self, rows: Sequence[Node], elements: list[sp.Basic]) -> sp.Basic:
+        """The vector `rows` are written as, over the values they converted to."""
         if all(row.kind is Kind.VECTOR for row in rows):
             widths = {len(row.children) for row in rows}
             if (
@@ -1004,17 +1046,9 @@ class _Converter:
         a matrix where a number belongs - falls back to the inert head, which
         is the "return it unchanged rather than guess" rule in miniature.
 
-        A call over an unevaluated command head is such a call, and it is one
-        the pipeline will come back to: `RHS(SOLVE(u, x))` has no relation to
-        take a side of until the `SOLVE` has become the vector it stands for.
-        The head may stand anywhere inside the argument, `RHS(SOLVE(z, y) SUB
-        1)` being how the shipped ODE library reads a solution out.
-
         A function of numbers given an equation is applied to both sides of it,
         `MAPPED_OVER_EQUATIONS` saying which functions those are.
         """
-        if any(_holds_command(argument) for argument in args):
-            return self.opaque(name, args)
         primed = self._primed(name, args)
         if primed is not None:
             return primed
@@ -1077,6 +1111,10 @@ class _Converter:
         if not isinstance(head, AppliedUndef):
             return derivative.doit().subs(variable, point)
         return sp.Subs(derivative, (variable,), (point,))
+
+    def operand(self, value: sp.Basic) -> sp.Basic:
+        """`value` as an operand to take an element of. The evaluation's differs."""
+        return value
 
     def opaque(self, name: str, args: Sequence[sp.Basic]) -> sp.Basic:
         """An inert application: it survives, and it prints back as itself."""
@@ -1239,7 +1277,7 @@ def _element(matrix: sp.MatrixBase, index: sp.Basic) -> sp.Basic | None:
 
 # -- the function table -----------------------------------------------------
 
-Handler = Callable[[_Converter, list], sp.Basic]
+Handler = Callable[[Converter, list], sp.Basic]
 
 
 def _one(args: list) -> sp.Basic:
@@ -1257,7 +1295,7 @@ def _direct(func: Callable[..., sp.Basic]) -> Handler:
     spelling for. Such a call comes back as it was written.
     """
 
-    def handler(conv: _Converter, args: list) -> sp.Basic:
+    def handler(conv: Converter, args: list) -> sp.Basic:
         if any(_symbolic_matrix(argument) for argument in args):
             raise TypeError("not a scalar")
         return func(*args)
@@ -1272,7 +1310,7 @@ def _trig(func: Callable[..., sp.Basic]) -> Handler:
     out here rather than left to it; everything else is sympy's own value.
     """
 
-    def handler(conv: _Converter, args: list) -> sp.Basic:
+    def handler(conv: Converter, args: list) -> sp.Basic:
         argument = conv.angle_in(_one(args))
         halved = _halved_angle(func, argument)
         return func(argument) if halved is None else halved
@@ -1327,23 +1365,43 @@ def _arctrig(func: Callable[..., sp.Basic]) -> Handler:
     return lambda conv, args: conv.angle_out(func(_one(args)))
 
 
-def _fold(func: Callable[[sp.Basic, sp.Basic], sp.Basic]) -> Handler:
-    """`GCD` and `LCM`: the function folded over the numbers it is given.
+def _gcd_of(values: list[sp.Basic]) -> sp.Basic:
+    """The greatest common divisor of `values`, standing where they are not numbers.
 
-    Section 6.13 says those two take any number of arguments, a vector, or a
-    matrix - a vector meaning its elements and a matrix meaning each of its
-    rows, the answers making a vector. That is the same reading a statistic
-    gives its sample, so the sample is read the same way and only the fold over
-    it differs.
+    The numbers among them are one divisor between them, and a zero divides
+    nothing away: `GCD(6, 4, m)` is `GCD(2, m)` and `GCD(m, 0)` is `ABS(m)`. The
+    rest are taken two at a time from the left, `GCD(a, b, c)` being
+    `GCD(c, GCD(b, a))`.
     """
+    numbers = [value for value in values if value.is_number]
+    others = [value for value in values if not value.is_number]
+    divisor = sp.S.Zero
+    for number in numbers:
+        divisor = sp.gcd(divisor, number)
+    if not others:
+        return abs(divisor)
+    standing = ([divisor] if divisor else []) + others
+    if len(standing) == 1:
+        return sp.Abs(standing[0])
+    result = standing[0]
+    for value in standing[1:]:
+        result = Gcd(result, value)
+    return result
 
-    def over(values: list) -> sp.Basic:
-        result = values[0]
-        for value in values[1:]:
-            result = func(result, value)
-        return result
 
-    return _statistic(over)
+def _lcm_of(values: list[sp.Basic]) -> sp.Basic:
+    """The least common multiple of `values`, two at a time from the left.
+
+    Of two that are not both numbers it is the product over their greatest common
+    divisor, `LCM(m, n)` being `|m*n|/GCD(n, m)`.
+    """
+    result = values[0] if len(values) > 1 else sp.Abs(values[0])
+    for value in values[1:]:
+        if result.is_number and value.is_number:
+            result = sp.lcm(result, value)
+        else:
+            result = sp.Abs(result * value) / _gcd_of([result, value])
+    return result
 
 
 _TRIGONOMETRIC = {
@@ -1403,7 +1461,7 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
 }
 
 
-def _sign(conv: _Converter, args: list) -> sp.Basic:
+def _sign(conv: Converter, args: list) -> sp.Basic:
     """`SIGN(0)` is `+-1`, overriding sympy's `0`.
 
     Section 6.8 defines the sign of a complex number as its point on the unit
@@ -1425,12 +1483,12 @@ def _sign(conv: _Converter, args: list) -> sp.Basic:
     return sp.sign(value)
 
 
-def _step(conv: _Converter, args: list) -> sp.Basic:
+def _step(conv: Converter, args: list) -> sp.Basic:
     """`STEP(x)` is `SIGN(x)/2 + 1/2`, so `STEP(0)` is a half."""
     return sp.Heaviside(_one(args), sp.Rational(1, 2))
 
 
-def _chi(conv: _Converter, args: list) -> sp.Basic:
+def _chi(conv: Converter, args: list) -> sp.Basic:
     """`CHI(a, x, b)`: the indicator of the interval between `a` and `b`.
 
     One difference of signs, `SIGN(x - a)/2 - SIGN(x - b)/2`, which is the
@@ -1455,12 +1513,12 @@ def _chi(conv: _Converter, args: list) -> sp.Basic:
     return (_sign(conv, [value - low]) - _sign(conv, [value - high])) / 2
 
 
-def _log(conv: _Converter, args: list) -> sp.Basic:
+def _log(conv: Converter, args: list) -> sp.Basic:
     """`LOG(z)` is the natural logarithm; `LOG(z, w)` is `LN(z)/LN(w)`."""
     return sp.log(*args)
 
 
-def _normal(conv: _Converter, args: list) -> sp.Basic:
+def _normal(conv: Converter, args: list) -> sp.Basic:
     """`NORMAL(z, m, s)`: the normal distribution of mean `m` and deviation `s`.
 
     The statistical function, which is what Derive means by the name - nothing
@@ -1522,14 +1580,14 @@ def _financial(args: list, count: int) -> list:
     return args + [sp.Integer(0)] * (count - len(args))
 
 
-def _present_value(conv: _Converter, args: list) -> sp.Basic:
+def _present_value(conv: Converter, args: list) -> sp.Basic:
     """`PVAL(i, n, p, f, t)`: what the contract is worth now."""
     rate, periods, payment, future, when = _financial(args, 5)
     due = payment * (rate * when + 1)
     return ((due - future * rate) / (1 + rate) ** periods - due) / rate
 
 
-def _future_value(conv: _Converter, args: list) -> sp.Basic:
+def _future_value(conv: Converter, args: list) -> sp.Basic:
     """`FVAL(i, n, p, v, t)`: what the contract will be worth."""
     rate, periods, payment, present, when = _financial(args, 5)
     due = payment * (rate * when + 1)
@@ -1537,14 +1595,14 @@ def _future_value(conv: _Converter, args: list) -> sp.Basic:
     return (due - grown) / rate
 
 
-def _payment(conv: _Converter, args: list) -> sp.Basic:
+def _payment(conv: Converter, args: list) -> sp.Basic:
     """`PMT(i, n, v, f, t)`: what is paid each period."""
     rate, periods, present, future, when = _financial(args, 5)
     growth = (1 + rate) ** periods
     return rate * (present * growth + future) / ((1 - growth) * (rate * when + 1))
 
 
-def _periods(conv: _Converter, args: list) -> sp.Basic:
+def _periods(conv: Converter, args: list) -> sp.Basic:
     """`NPER(i, p, v, f, t)`: how many periods it runs for."""
     rate, payment, present, future, when = _financial(args, 5)
     due = payment * (rate * when + 1)
@@ -1566,7 +1624,7 @@ _STARTED = time.monotonic()
 _OUTCOMES = 2**32
 
 
-def _random(conv: _Converter, args: list) -> sp.Basic:
+def _random(conv: Converter, args: list) -> sp.Basic:
     """`RANDOM(n)`: a pseudo-random number, or the seed one is drawn from next.
 
     Section 6.13 gives four cases and lets the size of a whole `n` choose
@@ -1599,7 +1657,7 @@ def _random(conv: _Converter, args: list) -> sp.Basic:
     return sp.Integer(centiseconds)
 
 
-def _rate(conv: _Converter, args: list) -> sp.Basic:
+def _rate(conv: Converter, args: list) -> sp.Basic:
     """`RATE(n, p, v, f, t)`: the rate the contract implies, and where to look.
 
     The original shows the search rather than performing it silently: this
@@ -1615,13 +1673,13 @@ def _rate(conv: _Converter, args: list) -> sp.Basic:
     return conv.opaque("RATE", _financial(args[:5], 5) + bounds)
 
 
-def _atan(conv: _Converter, args: list) -> sp.Basic:
+def _atan(conv: Converter, args: list) -> sp.Basic:
     if len(args) == 2:
         return conv.angle_out(sp.atan2(args[0], args[1]))
     return conv.angle_out(sp.atan(_one(args)))
 
 
-def _acot(conv: _Converter, args: list) -> sp.Basic:
+def _acot(conv: Converter, args: list) -> sp.Basic:
     """`ACOT(x, y)` is `ATAN(y, x)`, which section 6.4 says it is.
 
     Two arguments name the two legs of the triangle rather than their ratio, so
@@ -1634,7 +1692,7 @@ def _acot(conv: _Converter, args: list) -> sp.Basic:
     return conv.angle_out(sp.acot(_one(args)))
 
 
-def _erf(conv: _Converter, args: list) -> sp.Basic:
+def _erf(conv: Converter, args: list) -> sp.Basic:
     """`ERF(z, w)` is `ERF(w) - ERF(z)`: the error function between the two.
 
     One argument is the error function itself, which is the same integral taken
@@ -1645,7 +1703,7 @@ def _erf(conv: _Converter, args: list) -> sp.Basic:
     return sp.erf(_one(args))
 
 
-def _absolute(conv: _Converter, args: list) -> sp.Basic:
+def _absolute(conv: Converter, args: list) -> sp.Basic:
     """`ABS(z)`, and `ABS(v)` for a vector: how far from the origin it is.
 
     Section 8.2 defines the absolute value of a vector as the square root of the
@@ -1662,7 +1720,7 @@ def _absolute(conv: _Converter, args: list) -> sp.Basic:
     return sp.sqrt(sp.Add(*squares))
 
 
-def _floor(conv: _Converter, args: list) -> sp.Basic:
+def _floor(conv: Converter, args: list) -> sp.Basic:
     """`FLOOR(m, n)` is the floor of `m/n`, and `n` defaults to 1.
 
     A vector is floored element by element, which is what NUMBER.MTH's
@@ -1675,7 +1733,7 @@ def _floor(conv: _Converter, args: list) -> sp.Basic:
     return sp.floor(numerator / denominator)
 
 
-def _mod(conv: _Converter, args: list) -> sp.Basic:
+def _mod(conv: Converter, args: list) -> sp.Basic:
     """`MOD(m, n)` is `m - n FLOOR(m, n)`; `MOD(m, 0)` is `m`."""
     value, modulus = _with_unit_default(args)
     if modulus.is_zero:
@@ -1683,7 +1741,7 @@ def _mod(conv: _Converter, args: list) -> sp.Basic:
     return value - modulus * sp.floor(value / modulus)
 
 
-def _mods(conv: _Converter, args: list) -> sp.Basic:
+def _mods(conv: Converter, args: list) -> sp.Basic:
     """`MODS(m, n)` lands in [-n/2, n/2): `m - n FLOOR(m + n/2, n)`."""
     value, modulus = _with_unit_default(args)
     if modulus.is_zero:
@@ -1713,7 +1771,7 @@ def _statistic(over: Callable[[list], sp.Basic]) -> Handler:
     else is, the formulas being written over `n` arguments for any `n`.
     """
 
-    def handler(conv: _Converter, args: list) -> sp.Basic:
+    def handler(conv: Converter, args: list) -> sp.Basic:
         if len(args) == 1:
             (value,) = args
             if isinstance(value, AppliedUndef):
@@ -1721,7 +1779,7 @@ def _statistic(over: Callable[[list], sp.Basic]) -> Handler:
             if isinstance(value, sp.MatrixBase):
                 if value.rows > 1:
                     rows = [list(value[row, :]) for row in range(value.rows)]
-                    return _vector_of([over(row) for row in rows])
+                    return vector_of([over(row) for row in rows])
                 values = list(value)
             else:
                 values = args
@@ -1770,7 +1828,7 @@ def _standard_deviation(values: list) -> sp.Basic:
     return sp.sqrt(_variance(values))
 
 
-def _fit(conv: _Converter, args: list) -> sp.Basic:
+def _fit(conv: Converter, args: list) -> sp.Basic:
     """`FIT(v, A)`: the least squares fit of a parameterized expression to data.
 
     The label vector `v` names the data variables and then the expression
@@ -1826,7 +1884,7 @@ def _fit(conv: _Converter, args: list) -> sp.Basic:
     return expression.subs(dict(zip(parameters, solution)))
 
 
-def _is_number(conv: _Converter, args: list) -> sp.Basic:
+def _is_number(conv: Converter, args: list) -> sp.Basic:
     """`NUMBER(u)`: whether `u` simplified to a number.
 
     A predicate, and it answers one of the two truth-values however the question
@@ -1843,7 +1901,7 @@ def _is_number(conv: _Converter, args: list) -> sp.Basic:
     return sp.true if isinstance(_one(args), (sp.Rational, sp.Float)) else sp.false
 
 
-def _is_prime(conv: _Converter, args: list) -> sp.Basic:
+def _is_prime(conv: Converter, args: list) -> sp.Basic:
     """`PRIME(m)`: whether `m` is a prime number.
 
     A predicate like `NUMBER`, and answering one of the two truth-values is the
@@ -1862,7 +1920,7 @@ def _is_prime(conv: _Converter, args: list) -> sp.Basic:
     return sp.true if sp.isprime(int(value)) else sp.false
 
 
-def _next_prime(conv: _Converter, args: list) -> sp.Basic:
+def _next_prime(conv: Converter, args: list) -> sp.Basic:
     """`NEXT_PRIME(m)`: the first prime above `m`, which need be no integer.
 
     Strictly above, so `NEXT_PRIME(7)` is 11. A repeat count is accepted and
@@ -1874,15 +1932,15 @@ def _next_prime(conv: _Converter, args: list) -> sp.Basic:
     return sp.Integer(sp.nextprime(int(sp.floor(value))))
 
 
-def _numerator(conv: _Converter, args: list) -> sp.Basic:
+def _numerator(conv: Converter, args: list) -> sp.Basic:
     return sp.fraction(sp.together(_one(args)))[0]
 
 
-def _denominator(conv: _Converter, args: list) -> sp.Basic:
+def _denominator(conv: Converter, args: list) -> sp.Basic:
     return sp.fraction(sp.together(_one(args)))[1]
 
 
-def _terms(conv: _Converter, args: list) -> sp.Basic:
+def _terms(conv: Converter, args: list) -> sp.Basic:
     """`TERMS(u)`: what `u` is written as the sum of, as a vector.
 
     Syntactic terms, so nothing is multiplied out first: `TERMS(x*(a + b)^2 + c)`
@@ -1898,13 +1956,13 @@ def _terms(conv: _Converter, args: list) -> sp.Basic:
     """
     value = _one(args)
     if isinstance(value, sp.MatrixBase):
-        return _vector_of([_terms(conv, [element]) for element in _elements_of(value)])
+        return vector_of([_terms(conv, [element]) for element in _elements_of(value)])
     if not isinstance(value, sp.Expr):
         raise TypeError("no terms")
-    return _vector_of(list(value.as_ordered_terms(order="grlex")))
+    return vector_of(list(value.as_ordered_terms(order="grlex")))
 
 
-def _factors(conv: _Converter, args: list) -> sp.Basic:
+def _factors(conv: Converter, args: list) -> sp.Basic:
     """`FACTORS(u)`: what `u` is written as the product of, as a vector.
 
     `TERMS`'s counterpart, and syntactic in the same way: nothing is factored
@@ -1925,11 +1983,11 @@ def _factors(conv: _Converter, args: list) -> sp.Basic:
     """
     value = _one(args)
     if isinstance(value, sp.MatrixBase):
-        return _vector_of([_factors(conv, [element]) for element in _elements_of(value)])
+        return vector_of([_factors(conv, [element]) for element in _elements_of(value)])
     if not isinstance(value, sp.Expr):
         raise TypeError("no factors")
     factors = value.as_ordered_factors() if value.is_Mul else [value]
-    return _vector_of(_by_mainness(factors))
+    return vector_of(_by_mainness(factors))
 
 
 def _by_mainness(pieces: list) -> list:
@@ -1966,15 +2024,15 @@ def _side(index: int) -> Handler:
     gives `LHS(2*x + 3)` back as `2*x + 3`.
     """
 
-    def handler(conv: _Converter, args: list) -> sp.Basic:
+    def handler(conv: Converter, args: list) -> sp.Basic:
         value = _one(args)
         if isinstance(value, sp.MatrixBase):
-            return _vector_of([handler(conv, [e]) for e in _elements_of(value)])
+            return vector_of([handler(conv, [e]) for e in _elements_of(value)])
         if isinstance(value, InertVector):
             # Which is what a vector of relations is: sympy holds no matrix of
             # them, and a vector of relations is exactly what has sides worth
             # taking.
-            return _vector_of([handler(conv, [e]) for e in value.args])
+            return vector_of([handler(conv, [e]) for e in value.args])
         if value.is_Relational:
             return value.args[index]
         return value
@@ -1982,12 +2040,12 @@ def _side(index: int) -> Handler:
     return handler
 
 
-def _quotient(conv: _Converter, args: list) -> sp.Basic:
+def _quotient(conv: Converter, args: list) -> sp.Basic:
     """`QUOTIENT(u, v)`: how many times `v` goes into `u`."""
     return _divided(args)[0]
 
 
-def _remainder(conv: _Converter, args: list) -> sp.Basic:
+def _remainder(conv: Converter, args: list) -> sp.Basic:
     """`REMAINDER(u, v)`: what is left of `u` when `v` has gone into it."""
     return _divided(args)[1]
 
@@ -2022,7 +2080,7 @@ def _divided(args: list) -> tuple[sp.Basic, sp.Basic]:
     return sp.div(numerator, denominator, _by_mainness(list(generators))[0])
 
 
-def _polynomial_gcd(conv: _Converter, args: list) -> sp.Basic:
+def _polynomial_gcd(conv: Converter, args: list) -> sp.Basic:
     """`POLY_GCD(u, v)`: the greatest common divisor of two polynomials.
 
     `GCD` over a wider domain rather than a different function, and numbers are
@@ -2032,7 +2090,7 @@ def _polynomial_gcd(conv: _Converter, args: list) -> sp.Basic:
     return sp.gcd(left, right)
 
 
-def _variables(conv: _Converter, args: list) -> sp.Basic:
+def _variables(conv: Converter, args: list) -> sp.Basic:
     """`VARIABLES(u)`: the free variables of `u`, from most main to least.
 
     Most main first is `ordering`'s order and Derive's own: the order list `x`,
@@ -2048,10 +2106,10 @@ def _variables(conv: _Converter, args: list) -> sp.Basic:
     """
     found = _one(args).free_symbols
     by_name = {symbol.name: symbol for symbol in found if type(symbol) is sp.Symbol}
-    return _vector_of([by_name[name] for name in main_order(by_name)])
+    return vector_of([by_name[name] for name in main_order(by_name)])
 
 
-def _dif(conv: _Converter, args: list) -> sp.Basic:
+def _dif(conv: Converter, args: list) -> sp.Basic:
     """`DIF(u, x)` and `DIF(u, x, n)`, unevaluated. `.doit()` is a decision.
 
     A negative order is an antiderivative taken that many times (7.4, p.177):
@@ -2067,7 +2125,7 @@ def _dif(conv: _Converter, args: list) -> sp.Basic:
     return sp.Derivative(expression, (variable, order), evaluate=False)
 
 
-def _integral(conv: _Converter, args: list) -> sp.Basic:
+def _integral(conv: Converter, args: list) -> sp.Basic:
     """`INT(u, x)` and `INT(u, x, a, b)`, both unevaluated."""
     if len(args) == 2:
         return sp.Integral(args[0], args[1])
@@ -2075,14 +2133,14 @@ def _integral(conv: _Converter, args: list) -> sp.Basic:
     return sp.Integral(expression, (variable, low, high))
 
 
-def _summation(conv: _Converter, args: list) -> sp.Basic:
+def _summation(conv: Converter, args: list) -> sp.Basic:
     """`SUM(u, k, a, b)`, and `SUM(v)` over the elements of a vector.
 
     A third argument that is a vector is the values `k` takes, rather than the
     ends of a range it runs through.
 
     An indefinite `SUM(u, k)` is the antidifference of `u`, which is a
-    computation and so waits for the pipeline the way the calculus heads do.
+    computation and so waits for the evaluation the way the calculus heads do.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Add(*args[0])
@@ -2091,13 +2149,10 @@ def _summation(conv: _Converter, args: list) -> sp.Basic:
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Add(*_over_values(conv, args))
     expression, index, low, high = args
-    terms = _over_counted(conv, args)
-    if terms is not None:
-        return sp.Add(*terms)
     return sp.Sum(expression, (index, low, high))
 
 
-def _product(conv: _Converter, args: list) -> sp.Basic:
+def _product(conv: Converter, args: list) -> sp.Basic:
     """`PRODUCT(u, k, a, b)`, and `PRODUCT(v)` over a vector's elements.
 
     A third argument that is a vector names the values, as it does for `SUM`,
@@ -2110,70 +2165,23 @@ def _product(conv: _Converter, args: list) -> sp.Basic:
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Mul(*_over_values(conv, args))
     expression, index, low, high = args
-    factors = _over_counted(conv, args)
-    if factors is not None:
-        return sp.Mul(*factors)
     return sp.Product(expression, (index, low, high))
 
 
-#: How many terms a counted sum is willing to write out one by one.
-_WRITTEN_OUT = 100
-
-
-def _over_counted(conv: _Converter, args: list) -> list[sp.Basic] | None:
-    """The body of a counted sum or product at each value of its index, or none.
-
-    None wherever sympy's own `Sum` will do, which is nearly everywhere: it has
-    closed forms this cannot reach, and a range of a thousand is no reason to
-    build a thousand terms.
-
-    What it will not do is offer a head again. `SOLVE.MTH` sums
-    `LIM(aux SUB k_, ...)/k_!*(x - x0)^k_` over `k_`, where the subscript is
-    inert while `k_` is an index; `Sum.doit` writes the index in and stops
-    there, leaving a row of `ELEMENT` calls over a vector that has been in hand
-    all along. So a short counted range whose body still holds such a head is
-    written out here, where each term can be read again.
-
-    A body holding a conditional is left alone whatever else stands in it. The
-    pipeline sets an undecidable one aside as a function of the index and puts
-    it back once the sum has written the index in, and deciding it here instead
-    would decide it while the index is still an index: that is what makes
-    `SUM(IF(PRIME(n)), n, 1, 100)` count the primes rather than find none.
-    """
-    expression, index, low, high = args
-    if type(index) is not sp.Symbol:
-        return None
-    if not (isinstance(low, sp.Integer) and isinstance(high, sp.Integer)):
-        return None
-    if not 0 <= int(high) - int(low) < _WRITTEN_OUT:
-        return None
-    if any(is_conditional(found) for found in sp.preorder_traversal(expression)):
-        return None
-    if not any(_is_rereadable(found) for found in sp.preorder_traversal(expression)):
-        return None
-    return [
-        _retried(conv, expression.subs(index, sp.Integer(value)))
-        for value in range(int(low), int(high) + 1)
-    ]
-
-
-def _over_values(conv: _Converter, args: list) -> list[sp.Basic]:
+def _over_values(conv: Converter, args: list) -> list[sp.Basic]:
     """The body of a sum or a product at each value its index is given."""
     expression, index, values = args
     if type(index) is not sp.Symbol:
         raise TypeError("not a variable")
-    return [
-        _retried(conv, expression.subs(index, value))
-        for value in _elements_of(values)
-    ]
+    return [expression.subs(index, value) for value in _elements_of(values)]
 
 
-def _taylor(conv: _Converter, args: list) -> sp.Basic:
+def _taylor(conv: Converter, args: list) -> sp.Basic:
     """`TAYLOR(u, x, a, n)`, unevaluated. Computing it is a pipeline's call."""
     return Taylor(*args)
 
 
-def _approximation(conv: _Converter, args: list) -> sp.Basic:
+def _approximation(conv: Converter, args: list) -> sp.Basic:
     """`APPROX(u)` at the session's precision, `APPROX(u, n)` at `n` digits.
 
     Unevaluated, for the reason `Approx` gives: the rounding waits for the
@@ -2213,14 +2221,14 @@ def digit_count(digits: sp.Basic) -> int | None:
     return int(whole) if whole.is_Integer and whole > 0 else None
 
 
-def _conditional(conv: _Converter, args: list) -> sp.Basic:
+def _conditional(conv: Converter, args: list) -> sp.Basic:
     """`IF(c)`, `IF(c, u)` and `IF(c, u, v)` as the case split sympy writes them as.
 
-    Which branch a case split is worth is the pipeline's business, and it is
-    the same question for a `Piecewise` that came back from an integral. What
-    has no `Piecewise` is Derive's fourth argument, the value where the test
-    cannot be decided at all; that form stays an inert head, and the pipeline
-    resolves the two alike.
+    Which branch a conditional is worth is the evaluator's business, which
+    decides the test before converting either branch; this is the conversion
+    of one written as it stands, which is what an undecidable one is shown as.
+    What has no `Piecewise` is Derive's fourth argument, the value where the
+    test cannot be decided at all; that form stays an inert head.
 
     A conditional with nothing but a test is the test as a number, one or zero,
     which is what makes `SUM(IF(PRIME(n)), n, 1, 100)` count the primes it
@@ -2255,10 +2263,10 @@ def authored_conditionals(node: Node, context: Context) -> dict[sp.Basic, str]:
     Keyed by the expression rather than spliced into it, so that a command runs
     on exactly what it ran on before and an answer's operand order and
     parentheses are decided by the conditional itself. A conditional the
-    pipeline decided is the key of nothing - what stands in the answer is the
-    arm it took, simplified - and one it reshaped, an index written into a
-    frozen `IF` above all, no longer matches what was written and is printed as
-    it now is. Both are what Derive shows.
+    evaluation decided is the key of nothing - what stands in the answer is the
+    arm it took, simplified - and one it reshaped, an argument written into a
+    function's `IF` above all, no longer matches what was written and is printed
+    as it now is. Both are what Derive shows.
 
     The conversion is the authored subtree's own, before anything writes a
     definition into it, since what is to be shown is what the author wrote.
@@ -2346,7 +2354,7 @@ def _test(test: sp.Basic) -> sp.Basic:
     return test
 
 
-def _truth_table(conv: _Converter, args: list) -> sp.Basic:
+def _truth_table(conv: Converter, args: list) -> sp.Basic:
     """`TRUTH_TABLE(p, q, ..., b1, b2, ...)`: the table, as a matrix.
 
     The leading arguments that are bare variables are the truth variables and
@@ -2376,7 +2384,7 @@ def _truth_table(conv: _Converter, args: list) -> sp.Basic:
         written = dict(zip(variables, assignment, strict=True))
         values = [_decided(expression, written) for expression in expressions]
         rows.append(InertVector(*assignment, *values))
-    return _vector_of(rows)
+    return vector_of(rows)
 
 
 #: The sympy head each logical operator lives under, and the word it is
@@ -2409,19 +2417,19 @@ def _decided(expression: sp.Basic, assignment: dict) -> sp.Basic:
     return value
 
 
-def _substitution(conv: _Converter, args: list) -> sp.Basic:
+def _substitution(conv: Converter, args: list) -> sp.Basic:
     """`SUBS(u, [x, ...], [a, ...])`, the way the printer writes sympy's `Subs`.
 
     The way back matters more here than legibility. A `Subs` holds a derivative
     that is only meaningful unevaluated - `d/dv f(v)` at `v = y` is not the
     derivative of a constant - and reading one back as an inert head would put
-    that derivative where the pipeline evaluates it, to zero.
+    that derivative where the evaluation works it out, to zero.
     """
     expression, variables, points = args
     return sp.Subs(expression, tuple(_matrix(variables)), tuple(_matrix(points)))
 
 
-def _hyper(conv: _Converter, args: list) -> sp.Basic:
+def _hyper(conv: Converter, args: list) -> sp.Basic:
     """`HYPER([a, ...], [b, ...], z)`, the way the printer writes `hyper`.
 
     Sympy's head carries tuples, which the notation has no spelling for, so it
@@ -2432,7 +2440,7 @@ def _hyper(conv: _Converter, args: list) -> sp.Basic:
     return sp.hyper(tuple(_matrix(top)), tuple(_matrix(bottom)), argument)
 
 
-def _meijerg(conv: _Converter, args: list) -> sp.Basic:
+def _meijerg(conv: Converter, args: list) -> sp.Basic:
     """`MEIJERG([[a, ...], [a, ...]], [[b, ...], [b, ...]], z)`.
 
     The G-function's four parameter lists, in the two pairs sympy holds them
@@ -2465,7 +2473,7 @@ def _parameters(value: sp.Basic) -> tuple[tuple[sp.Basic, ...], ...]:
     return tuple(tuple(row) for row in rows)
 
 
-def _limit(conv: _Converter, args: list) -> sp.Basic:
+def _limit(conv: Converter, args: list) -> sp.Basic:
     """`LIM(u, x, a)` is two-sided; a fourth argument picks a side.
 
     A zero picks neither, and is the two-sided limit again: that is what
@@ -2517,15 +2525,8 @@ def _iterated_limit(args: list) -> sp.Basic:
     """`LIM(u, [x, y], [a, b])`: the limit in `x`, and then in `y`.
 
     The first variable is approached innermost, so that the outer limit is
-    taken of what the inner one came to.
-
-    Each point is worked out before it is approached, because sympy refuses a
-    point that still holds a limit of its own. An iteration writes the previous
-    iterate in as the point - `ODE_APPR.MTH`'s `EULER` is
-    `ITERATES(v_ + h*[1, LIM(r, [x, y], v_)], v_, [x0, y0], n)` - and that
-    iterate is itself a limit of this kind until it is taken, so a chain left
-    whole would stop after its first link. The limits over the expression are
-    left for the pipeline's calculus pass, like every other one.
+    taken of what the inner one came to. Every limit is left for the
+    evaluation to take, the inner one first.
     """
     expression, variables, points = args
     names = _elements_of(variables)
@@ -2533,29 +2534,11 @@ def _iterated_limit(args: list) -> sp.Basic:
     if len(names) != len(values):
         raise ValueError("not a point for every variable")
     for name, value in zip(names, values, strict=True):
-        expression = _approached(expression, name, _limits_taken(value), "+-")
+        expression = _approached(expression, name, value, "+-")
     return expression
 
 
-def _limits_taken(value: sp.Basic) -> sp.Basic:
-    """`value` with every limit standing in it taken, innermost first.
-
-    Sympy's own `doit` works outside in for a two-sided limit, which asks gruntz
-    to find the rate of growth of an expression that is still a `Limit` and gets
-    nowhere. `replace` rebuilds from the leaves, so each limit is taken over
-    what the ones under it came to. One that will not be taken stays as it is.
-    """
-
-    def taken(found: sp.Basic) -> sp.Basic:
-        try:
-            return found.doit(deep=False)
-        except Exception:
-            return found
-
-    return value.replace(lambda found: isinstance(found, sp.Limit), taken)
-
-
-def _interval(conv: _Converter, args: list) -> sp.Basic:
+def _interval(conv: Converter, args: list) -> sp.Basic:
     """`INTERVAL(a, b)`: a value known only to lie between `a` and `b`.
 
     What a limit that stays bounded without settling comes to. `SIN(1/x)` near
@@ -2577,7 +2560,7 @@ def _interval(conv: _Converter, args: list) -> sp.Basic:
     return sp.AccumBounds(low, high)
 
 
-def _root_sum(conv: _Converter, args: list) -> sp.Basic:
+def _root_sum(conv: Converter, args: list) -> sp.Basic:
     """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`.
 
     What the logarithmic part of a rational integral comes to where the
@@ -2604,7 +2587,7 @@ def _root_sum(conv: _Converter, args: list) -> sp.Basic:
     return sp.RootSum(polynomial, sp.Lambda(variable, summand), variable)
 
 
-def _root_of(conv: _Converter, args: list) -> sp.Basic:
+def _root_of(conv: Converter, args: list) -> sp.Basic:
     """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counted from zero.
 
     One root of the kind `ROOT_SUM` sums over, and what sympy hands back where
@@ -2621,7 +2604,7 @@ def _root_of(conv: _Converter, args: list) -> sp.Basic:
     return sp.CRootOf(polynomial, variable, int(index))
 
 
-def _determinant(conv: _Converter, args: list) -> sp.Basic:
+def _determinant(conv: Converter, args: list) -> sp.Basic:
     """`DET(u)`: the number, or what section 8.8 says a symbolic one is worth.
 
     A matrix of numbers has a determinant to work out. A matrix nobody knows
@@ -2634,14 +2617,14 @@ def _determinant(conv: _Converter, args: list) -> sp.Basic:
     return _matrix(value).det()
 
 
-def _trace(conv: _Converter, args: list) -> sp.Basic:
+def _trace(conv: Converter, args: list) -> sp.Basic:
     value = _one(args)
     if _symbolic_matrix(value):
         return sp.Trace(value).doit()
     return _matrix(value).trace()
 
 
-def _dimension(conv: _Converter, args: list) -> sp.Basic:
+def _dimension(conv: Converter, args: list) -> sp.Basic:
     """How many elements a vector has, or how many rows a matrix has.
 
     A vector of relations is a vector too, and counting one is what the shipped
@@ -2655,7 +2638,7 @@ def _dimension(conv: _Converter, args: list) -> sp.Basic:
     return sp.Integer(matrix.cols if matrix.rows == 1 else matrix.rows)
 
 
-def _element_of(conv: _Converter, args: list) -> sp.Basic:
+def _element_of(conv: Converter, args: list) -> sp.Basic:
     """`ELEMENT(v, i)`, `ELEMENT(m, i, j)`, and on for as many dimensions as
     there are, counting from 1.
 
@@ -2695,7 +2678,7 @@ def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
     return value.args[number - 1] if 1 <= number <= len(value.args) else None
 
 
-def _delete_element(conv: _Converter, args: list) -> sp.Basic:
+def _delete_element(conv: Converter, args: list) -> sp.Basic:
     """`DELETE_ELEMENT(v, n)`: `v` with its `n`th element gone, counting from 1.
 
     A matrix's elements are its rows, as they are everywhere else, so what goes
@@ -2707,10 +2690,10 @@ def _delete_element(conv: _Converter, args: list) -> sp.Basic:
     vector, *rest = args
     elements = _elements_of(_matrix(vector))
     place = _place(_one(rest) if rest else sp.Integer(1), len(elements))
-    return _vector_of(elements[:place] + elements[place + 1 :])
+    return vector_of(elements[:place] + elements[place + 1 :])
 
 
-def _replace_element(conv: _Converter, args: list) -> sp.Basic:
+def _replace_element(conv: Converter, args: list) -> sp.Basic:
     """`REPLACE_ELEMENT(u, v, n)`: `v` with `u` where its `n`th element was.
 
     The new value comes first and the vector second, which is the manual's order
@@ -2719,10 +2702,10 @@ def _replace_element(conv: _Converter, args: list) -> sp.Basic:
     value, vector, *rest = args
     elements = _elements_of(_matrix(vector))
     place = _place(_one(rest) if rest else sp.Integer(1), len(elements))
-    return _vector_of(elements[:place] + [value] + elements[place + 1 :])
+    return vector_of(elements[:place] + [value] + elements[place + 1 :])
 
 
-def _insert_element(conv: _Converter, args: list) -> sp.Basic:
+def _insert_element(conv: Converter, args: list) -> sp.Basic:
     """`INSERT_ELEMENT(u, v, n)`: `v` with `u` written in before its `n`th.
 
     The new value first and the vector second, the order `REPLACE_ELEMENT`
@@ -2733,19 +2716,19 @@ def _insert_element(conv: _Converter, args: list) -> sp.Basic:
     value, vector, *rest = args
     elements = _elements_of(_matrix(vector))
     place = _place(_one(rest) if rest else sp.Integer(1), len(elements) + 1)
-    return _vector_of(elements[:place] + [value] + elements[place:])
+    return vector_of(elements[:place] + [value] + elements[place:])
 
 
-def _reversed_vector(conv: _Converter, args: list) -> sp.Basic:
+def _reversed_vector(conv: Converter, args: list) -> sp.Basic:
     """`REVERSE_VECTOR(v)`: `v` with its elements back to front.
 
     A matrix's elements are its rows, so a matrix comes back with its rows in
     the opposite order and each row as it was.
     """
-    return _vector_of(_elements_of(_matrix(_one(args)))[::-1])
+    return vector_of(_elements_of(_matrix(_one(args)))[::-1])
 
 
-def _appended(conv: _Converter, args: list) -> sp.Basic:
+def _appended(conv: Converter, args: list) -> sp.Basic:
     """`APPEND(v, w, ...)`: the elements of each, run together into one vector.
 
     A matrix's elements are its rows, so appending matrices stacks them - which
@@ -2764,7 +2747,7 @@ def _appended(conv: _Converter, args: list) -> sp.Basic:
     answers.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
-        return _vector_of(list(args[0]))
+        return vector_of(list(args[0]))
     width = _stacked_width(args)
     elements: list[sp.Basic] = []
     for vector in args:
@@ -2773,7 +2756,7 @@ def _appended(conv: _Converter, args: list) -> sp.Basic:
             elements.append(matrix)
         else:
             elements.extend(_elements_of(matrix))
-    return _vector_of(elements)
+    return vector_of(elements)
 
 
 def _stacked_width(args: list) -> int | None:
@@ -2799,7 +2782,7 @@ def _place(index: sp.Basic, count: int) -> int:
     return int(index) - 1
 
 
-def _generated_vector(conv: _Converter, args: list) -> sp.Basic:
+def _generated_vector(conv: Converter, args: list) -> sp.Basic:
     """`VECTOR(u, k, ...)`: `u` at each value `k` takes, as a vector.
 
     Four ways of saying which values those are - a count, a range, a range with
@@ -2813,11 +2796,10 @@ def _generated_vector(conv: _Converter, args: list) -> sp.Basic:
     body, index, *rest = args
     if type(index) is not sp.Symbol:
         raise TypeError("not a variable")
-    generated = [body.subs(index, value) for value in _steps(rest)]
-    return _vector_of([_retried(conv, element) for element in generated])
+    return vector_of([body.subs(index, value) for value in steps(rest)])
 
 
-def _steps(rest: list) -> list[sp.Basic]:
+def steps(rest: list) -> list[sp.Basic]:
     """The values a generated vector's variable takes, in order.
 
     `(n - m)/s + 1` of them, rounded down, which is one element for a range that
@@ -2834,11 +2816,11 @@ def _steps(rest: list) -> list[sp.Basic]:
     return [low + step * offset for offset in range(max(count, 0))]
 
 
-def _selected(conv: _Converter, args: list) -> sp.Basic:
+def _selected(conv: Converter, args: list) -> sp.Basic:
     """`SELECT(u, k, ...)`: the values of `k` for which `u(k)` holds.
 
     Which values those are is said in the same four ways `VECTOR` says it, and
-    `_steps` reads them the same. What comes back is the values themselves and
+    `steps` reads them the same. What comes back is the values themselves and
     not anything computed from them, which is the whole difference between the
     two: `SELECT(PRIME(k), k, 1, 100)` is the primes under a hundred.
 
@@ -2850,26 +2832,32 @@ def _selected(conv: _Converter, args: list) -> sp.Basic:
     body, index, *rest = args
     if type(index) is not sp.Symbol:
         raise TypeError("not a variable")
+    return chosen_from(steps(rest), lambda value: body.subs(index, value))
+
+
+def chosen_from(values: list, test: Callable[[sp.Basic], sp.Basic]) -> sp.Basic:
+    """The vector of `values` whose `test` holds; a test that does not decide raises."""
     chosen = []
-    for value in _steps(rest):
-        held = _test(_retried(conv, body.subs(index, value)))
+    for value in values:
+        held = _test(test(value))
         if held is sp.true:
             chosen.append(value)
         elif held is not sp.false:
             raise ValueError("undecided")
-    return _vector_of(chosen)
+    return vector_of(chosen)
 
 
-def _iterates(conv: _Converter, args: list) -> sp.Basic:
+def _iterates(conv: Converter, args: list) -> sp.Basic:
     """`ITERATES(u, x, x0)` and `ITERATES(u, x, x0, n)`: the sequence, as a vector.
 
     `x0`, `u(x0)`, `u(u(x0))` and so on: `n` updates make `n + 1` elements, and
     a count left out means "until a value comes round again".
     """
-    return _vector_of(_sequence(conv, args))
+    body, variable, start, *rest = args
+    return iterated("ITERATES", conv, variable, start, rest, body=body)
 
 
-def _iterate(conv: _Converter, args: list) -> sp.Basic:
+def _iterate(conv: Converter, args: list) -> sp.Basic:
     """`ITERATE(...)`: the same sequence's last element, and nothing else.
 
     Counted, that is the `n`th update and there is no more to ask. Uncounted,
@@ -2879,8 +2867,34 @@ def _iterate(conv: _Converter, args: list) -> sp.Basic:
     question `_until_repeated` stopped on, so it is asked the same way, at the
     digits the two would be shown to.
     """
-    sequence = _sequence(conv, args)
-    if len(args) > 3:
+    body, variable, start, *rest = args
+    return iterated("ITERATE", conv, variable, start, rest, body=body)
+
+
+#: What an iteration's body is at one iterate: given the variables and the
+#: values they take there, the body with those values in.
+Step = Callable[[list, list], sp.Basic]
+
+
+def iterated(
+    name: str,
+    conv: Converter,
+    variable: sp.Basic,
+    start: sp.Basic,
+    rest: list,
+    step: Step | None = None,
+    body: sp.Basic | None = None,
+) -> sp.Basic:
+    """`ITERATE` or `ITERATES` from `start`, `rest` holding the count if there is one.
+
+    `step` is what writes an iterate into the body. The conversion substitutes
+    the values into the `body` it converted; the evaluation passes a step of its
+    own, which evaluates the body afresh at every iterate.
+    """
+    sequence = _sequence(conv, variable, start, rest, step, body)
+    if name == "ITERATES":
+        return vector_of(sequence)
+    if rest:
         return sequence[-1]
     came_round = _as_shown(sequence[-1], conv.context) == _as_shown(
         sequence[-2], conv.context
@@ -2888,30 +2902,49 @@ def _iterate(conv: _Converter, args: list) -> sp.Basic:
     return sequence[-1] if came_round else sp.nan
 
 
-def _sequence(conv: _Converter, args: list) -> list[sp.Basic]:
+def _substituted(body: sp.Basic) -> Step:
+    return lambda names, values: body.subs(
+        _bindings(body, names, values), simultaneous=True
+    )
+
+
+def _sequence(
+    conv: Converter,
+    variable: sp.Basic,
+    start: sp.Basic,
+    rest: list,
+    step: Step | None,
+    body: sp.Basic | None,
+) -> list[sp.Basic]:
     """The iterates, however many were asked for.
 
     A negative count iterates the inverse of `u` instead, `|n|` times, which is
-    what `MISC.MTH` defines `INVERSE(u, x) := ITERATE(u, x, x, -1)` on.
+    what `MISC.MTH` defines `INVERSE(u, x) := ITERATE(u, x, x, -1)` on. That is
+    an inverse of the body as converted, which only a caller holding one has.
     """
-    body, variable, start, *rest = args
     names, values = _iterated_over(variable, start)
+    if step is None:
+        if body is None:
+            raise ValueError("no body to iterate")
+        step = _substituted(body)
     if not rest:
-        return _until_repeated(conv, body, names, values)
+        return _until_repeated(conv, step, names, values)
     count = _one(rest)
     if not isinstance(count, sp.Integer):
         raise TypeError("not a count")
     if count < 0:
-        body, count = _inverted(body, names), -count
+        if body is None:
+            raise ValueError("no body to invert")
+        step, count = _substituted(_inverted(body, names)), -count
     iterates = [_state(names, values)]
     for _ in range(int(count)):
-        values = _updated(conv, body, names, values)
+        values = _updated(conv, step, names, values)
         iterates.append(_state(names, values))
     return iterates
 
 
 def _until_repeated(
-    conv: _Converter, body: sp.Basic, names: list, values: list
+    conv: Converter, step: Step, names: list, values: list
 ) -> list[sp.Basic]:
     """The sequence run out to where it comes round.
 
@@ -2936,7 +2969,7 @@ def _until_repeated(
     iterates = [_state(names, values)]
     shown = [_as_shown(iterates[-1], conv.context)]
     for _ in range(_ITERATIONS):
-        values = _updated(conv, body, names, values)
+        values = _updated(conv, step, names, values)
         iterates.append(_state(names, values))
         shown.append(_as_shown(iterates[-1], conv.context))
         if shown[-1] in shown[:-1]:
@@ -2960,10 +2993,9 @@ _ITERATE_OPERATIONS = 1000
 def outsized(value: sp.Basic) -> bool:
     """Whether a value has grown past what carrying it any further is worth.
 
-    The bound an uncounted iteration stops at, and the same bound the pipeline
-    stops unfolding a recursive definition at: both are computations that run
-    until something says they have gone far enough, and how big the thing they
-    are carrying has grown is what says it.
+    The bound an uncounted iteration stops at: a computation that runs until
+    something says it has gone far enough, and how big the thing it is carrying
+    has grown is what says it.
     """
     if sp.count_ops(value) > _ITERATE_OPERATIONS:
         return True
@@ -2999,17 +3031,15 @@ def _iterated_over(variable: sp.Basic, start: sp.Basic) -> tuple[list, list]:
 
 def _state(names: list, values: list) -> sp.Basic:
     """One iterate: the value the variable took, or the vector they all took."""
-    return values[0] if len(names) == 1 else _vector_of(values)
+    return values[0] if len(names) == 1 else vector_of(values)
 
 
-def _updated(conv: _Converter, body: sp.Basic, names: list, values: list) -> list:
+def _updated(conv: Converter, step: Step, names: list, values: list) -> list:
     """The variables' next values: the body where they stand now.
 
     Every one written in at once, since the update of a system reads all of the
-    previous iterate and none of the one being built. The heads that could not
-    be read while the variables were variables are read again, as they are for
-    a generated vector's elements, and a system's update has to come back as
-    many values as it consumed.
+    previous iterate and none of the one being built, and a system's update has
+    to come back as many values as it consumed.
 
     An iterate is worked out as a number where the precision mode says numbers
     are worked out, which is not merely faster but is what an iteration in that
@@ -3019,9 +3049,7 @@ def _updated(conv: _Converter, body: sp.Basic, names: list, values: list) -> lis
     over `#e^(x*y)` and `ATAN(x*y)` builds a tower six deep that no amount of
     time reduces to the six digits the page prints.
     """
-    written = body.subs(_bindings(body, names, values), simultaneous=True)
-    written = _retried(conv, written)
-    written = _worked_out(written, conv.context)
+    written = _worked_out(step(names, values), conv.context)
     if len(names) == 1:
         return [written]
     elements = _elements_of(_matrix(written))
@@ -3175,7 +3203,7 @@ def _elements_of(matrix: sp.MatrixBase) -> list[sp.Basic]:
     return [matrix[row, :] for row in range(matrix.rows)]
 
 
-def _vector_of(elements: list) -> sp.Basic:
+def vector_of(elements: list) -> sp.Basic:
     """A vector of values that were computed rather than written.
 
     Their shape is all there is to go on, `_vector` having had the notation to
@@ -3194,54 +3222,14 @@ def _vector_of(elements: list) -> sp.Basic:
     return sp.Matrix(1, len(elements), elements)
 
 
-def _retried(conv: _Converter, value: sp.Basic) -> sp.Basic:
-    """`value` with every head that could not be read before read again.
-
-    A generated element is a converted body with a number written in, and the
-    body was converted while the variable was still a variable: `v SUB i` had no
-    index to take and became the inert `ELEMENT(v, i)`. Now that it has one, the
-    call is worth making. A head the tables still cannot make sense of comes
-    back the head it was.
-
-    A boolean sympy declined is offered again too. `PRIME(n) AND PRIME(n + 2)`
-    is a conjunction of two things sympy will not call statements, so it was
-    held inert; once the calls under it have answered, the conjunction is one
-    sympy can hold and decide.
-    """
-    return _until_settled(value, _is_retriable, lambda found: _reread_head(conv, found))
-
-
-def _is_retriable(found: sp.Basic) -> bool:
-    if isinstance(found, (AppliedUndef, Logical)):
-        return True
-    return _is_rereadable(found)
-
-
-def _reread_head(conv: _Converter, found: sp.Basic) -> sp.Basic:
-    if isinstance(found, Logical):
-        return _relogical(found)
-    return _reoffered(conv, found)
-
-
-def _relogical(found: Logical) -> sp.Basic:
-    """A held boolean operator, read again over the operands it has now.
-
-    Both readings are offered afresh. A held `AND` whose operands have since
-    become numbers is the bitwise one - `LUCAS`'s `(n AND d_) = 0` tests a bit
-    of `n`, and `d_` is a number only once the iteration writes it in - and one
-    whose operands have become statements is the boolean one.
-    """
-    word, *operands = found.args
-    return _connected(str(word), operands)
-
-
 def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
     """`AND` and its neighbours over these operands: what the operands make it.
 
     Bitwise on integers, boolean on anything sympy will read as a statement,
     and the inert `Logical` where it is neither yet - an operand that is still
-    a variable, or a call nobody has answered. The inert one is offered again
-    by `_relogical` as soon as anything under it is worked out.
+    a variable, or a call nobody has answered. An evaluation that writes a value
+    in for the variable converts the operator again and reads it then: `LUCAS`'s
+    `(n AND d_) = 0` tests a bit of `n` once its iteration has made `d_` a number.
     """
     bitwise = _BITWISE.get(word)
     numbers = operands and all(isinstance(operand, sp.Integer) for operand in operands)
@@ -3264,31 +3252,6 @@ def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
 _BOOLEAN_HEADS = {word: head for head, word in _HEADINGS.items()}
 
 
-def _until_settled(
-    value: sp.Basic,
-    query: Callable,
-    rewrite: Callable,
-    simultaneous: bool = True,
-    passes: int = 8,
-) -> sp.Basic:
-    """`replace` offered over and over, until nothing more changes.
-
-    One `replace` resolves one layer. Sympy rebuilds a parent from arguments
-    that were still inert when the parent's own query ran, so an outer head
-    made readable by an inner one answering is not seen on that pass: `[[1, 2],
-    [3, 4]] SUB m SUB m` takes the inner subscript and leaves the outer one
-    standing. Repeating until the expression stops moving finishes the whole
-    nest; the pass cap is there because a rewrite that oscillates would
-    otherwise never end.
-    """
-    for _ in range(passes):
-        rewritten = value.replace(query, rewrite, simultaneous=simultaneous)
-        if rewritten == value:
-            return rewritten
-        value = rewritten
-    return value
-
-
 def _settled(operand: sp.Basic) -> sp.Basic:
     """One operand of a boolean, written the one way a boolean can hold it.
 
@@ -3306,82 +3269,14 @@ def _settled(operand: sp.Basic) -> sp.Basic:
     return operand.canonical if isinstance(operand, Relational) else operand
 
 
-def _is_command_head(value: sp.Basic) -> bool:
-    """Whether this is a command the pipeline has yet to evaluate."""
-    return isinstance(value, AppliedUndef) and type(value).__name__ in COMMAND_HEADS
-
-
-def _holds_command(value: sp.Basic) -> bool:
-    """Whether such a head stands anywhere inside `value`."""
-    if _is_command_head(value):
-        return True
-    return any(_is_command_head(found) for found in value.atoms(AppliedUndef))
-
-
-def reread(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Every head the tables know, offered to them again.
-
-    The pipeline calls this once it has evaluated a `FACTOR`, `EXPAND` or
-    `SOLVE`, because a call written *around* one of those was left inert by the
-    conversion: there was nothing to apply it to yet. Now there is, so the same
-    tables get a second look at it, and `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))`
-    becomes the vector of roots the manual says it is.
-
-    A subscript is offered too where its base has turned into a vector, `u SUB
-    i` being `ELEMENT(u, i)` under another spelling.
-
-    Only the names the tables define. A user's own function is inert because it
-    is a user's own function, and offering it again would say nothing.
-    """
-    conv = _Converter(context)
-    return _until_settled(
-        expression,
-        _is_rereadable,
-        lambda found: _reoffered(conv, found),
-        simultaneous=False,
-    )
-
-
-def _is_rereadable(found: sp.Basic) -> bool:
-    if isinstance(found, AppliedUndef):
-        return type(found).__name__ in FUNCTIONS
-    if isinstance(found, Transposed):
-        return isinstance(found.args[0], sp.MatrixBase)
-    return isinstance(found, Subscript) and isinstance(
-        found.args[0], (sp.MatrixBase, InertVector)
-    )
-
-
-def _reoffered(conv: _Converter, found: sp.Basic) -> sp.Basic:
-    """One held head, offered to the tables now that its operand has a value.
-
-    A transpose is one of them. ``DELETE_ELEMENT(a, i)` `` was written over
-    something that was no matrix while `a` was a variable, so the operator
-    stayed where it stood; once the call under it answers a matrix there is a
-    transpose to take.
-
-    A limit the head answers with is taken here rather than left for the
-    pipeline, because the heads standing over this one are offered their
-    operands in the same walk and a limit is no operand to work with.
-    SOLVE.MTH's `NEWTON_AUX` is `ROW_REDUCE(LIM(a, x, xk))`: with the iterate
-    written in there is a matrix of numbers to reduce, and left as a matrix of
-    limits it is instead a matrix whose entries sympy tries to prove nonzero by
-    factoring them.
-    """
-    if isinstance(found, Transposed):
-        return found.args[0].T
-    name = "ELEMENT" if isinstance(found, Subscript) else type(found).__name__
-    return _limits_taken(conv.call(name, found.args))
-
-
-def _identity_matrix(conv: _Converter, args: list) -> sp.Basic:
+def _identity_matrix(conv: Converter, args: list) -> sp.Basic:
     size = _one(args)
     if not isinstance(size, sp.Integer) or size < 1:
         raise ValueError("not a size")
     return sp.eye(int(size))
 
 
-def _cross(conv: _Converter, args: list) -> sp.Basic:
+def _cross(conv: Converter, args: list) -> sp.Basic:
     """`CROSS(u, v)` over three elements each, or over two.
 
     The plane's case is the third component of the space's, the one the other
@@ -3393,7 +3288,7 @@ def _cross(conv: _Converter, args: list) -> sp.Basic:
     return left.cross(right)
 
 
-def _row_reduce(conv: _Converter, args: list) -> sp.Basic:
+def _row_reduce(conv: Converter, args: list) -> sp.Basic:
     """`ROW_REDUCE(A)`, and `ROW_REDUCE(A, B)` over the augmented matrix.
 
     The echelon form the manual describes is the reduced one - the first nonzero
@@ -3425,7 +3320,7 @@ def _row_reduce(conv: _Converter, args: list) -> sp.Basic:
     return sp.Matrix.hstack(matrix, adjoined).rref()[0]
 
 
-def _characteristic_polynomial(conv: _Converter, args: list) -> sp.Basic:
+def _characteristic_polynomial(conv: Converter, args: list) -> sp.Basic:
     """`CHARPOLY(A, v)`: `DET(A - v*IDENTITY_MATRIX(DIMENSION(A)))`.
 
     That determinant, and not the monic polynomial textbooks usually mean by the
@@ -3447,7 +3342,7 @@ def _characteristic_polynomial(conv: _Converter, args: list) -> sp.Basic:
     return polynomial if matrix.rows % 2 == 0 else -polynomial
 
 
-def _eigenvalues(conv: _Converter, args: list) -> sp.Basic:
+def _eigenvalues(conv: Converter, args: list) -> sp.Basic:
     """`EIGENVALUES(A, v)`: the zeros of `A`'s characteristic polynomial in `v`.
 
     Equations rather than bare values, `[z = 2, z = b]`, because what the
@@ -3475,10 +3370,10 @@ def _eigenvalues(conv: _Converter, args: list) -> sp.Basic:
     zeros = sorted(matrix.eigenvals(trig=True), key=sp.default_sort_key)
     if any(zero.has(sp.CRootOf) for zero in zeros):
         raise ValueError("no closed form")
-    return _vector_of([sp.Eq(variable, zero, evaluate=False) for zero in zeros])
+    return vector_of([sp.Eq(variable, zero, evaluate=False) for zero in zeros])
 
 
-def _matrix_and_variable(conv: _Converter, args: list) -> tuple[sp.MatrixBase, sp.Basic]:
+def _matrix_and_variable(conv: Converter, args: list) -> tuple[sp.MatrixBase, sp.Basic]:
     """A matrix and the variable to write an answer about it in.
 
     The variable is optional and defaults to `w`, which is the manual's default
@@ -3493,7 +3388,7 @@ def _matrix_and_variable(conv: _Converter, args: list) -> tuple[sp.MatrixBase, s
     return _matrix(matrix), variable
 
 
-def _gradient(conv: _Converter, args: list) -> sp.Basic:
+def _gradient(conv: Converter, args: list) -> sp.Basic:
     """`GRAD(u)`, and `GRAD(u, alpha)` in the coordinates `alpha` describes.
 
     The gradient of a scalar field: the vector whose element `i` says how fast
@@ -3515,11 +3410,11 @@ def _gradient(conv: _Converter, args: list) -> sp.Basic:
     transposed Jacobian and converge to nothing.
 
     A vector standing *under* a head is another matter and is refused. The body
-    of `VECTOR(GRAD(u SUB m_, alpha), m_, DIMENSION(u))` is converted while `m_`
-    is still a variable, so the field GRAD is handed there is the inert
-    `ELEMENT(u, m_)`, a head carrying the whole vector `u`. Differentiating one
-    of those is sympy's matrix chain rule and answers a matrix of nonsense, so
-    the call stays as written and is offered again once the index has a value.
+    of `VECTOR(GRAD(u SUB m_, alpha), m_, DIMENSION(u))` converted while `m_` is
+    still a variable hands GRAD the inert `ELEMENT(u, m_)`, a head carrying the
+    whole vector `u`. Differentiating one of those is sympy's matrix chain rule
+    and answers a matrix of nonsense, so the call stays as written; the
+    evaluation makes it once a value at a time, when the index has one.
     """
     expression, *rest = args
     if isinstance(expression, sp.MatrixBase):
@@ -3527,14 +3422,14 @@ def _gradient(conv: _Converter, args: list) -> sp.Basic:
         columns = [
             _gradient_of(element, variables, scales) for element in _field(expression)
         ]
-        return _vector_of([_vector_of(list(row)) for row in zip(*columns, strict=True)])
+        return vector_of([vector_of(list(row)) for row in zip(*columns, strict=True)])
     if _holds_vector(expression):
         raise TypeError("not an expression")
     variables, scales = _coordinates(conv, rest)
-    return _vector_of(_gradient_of(expression, variables, scales))
+    return vector_of(_gradient_of(expression, variables, scales))
 
 
-def _divergence(conv: _Converter, args: list) -> sp.Basic:
+def _divergence(conv: Converter, args: list) -> sp.Basic:
     """`DIV(v)`, and `DIV(v, alpha)`: how much the field `v` spreads out.
 
     The flux out of an infinitesimal coordinate box per unit of the volume it
@@ -3548,7 +3443,7 @@ def _divergence(conv: _Converter, args: list) -> sp.Basic:
     return _divergence_of(elements, variables, scales)
 
 
-def _laplacian(conv: _Converter, args: list) -> sp.Basic:
+def _laplacian(conv: Converter, args: list) -> sp.Basic:
     """`LAPLACIAN(u)`, and `LAPLACIAN(u, alpha)`: `DIV(GRAD(u))`.
 
     Which is what the manual defines it as, so it is computed that way rather
@@ -3563,7 +3458,7 @@ def _laplacian(conv: _Converter, args: list) -> sp.Basic:
     return _divergence_of(gradient, variables, scales)
 
 
-def _curl(conv: _Converter, args: list) -> sp.Basic:
+def _curl(conv: Converter, args: list) -> sp.Basic:
     """`CURL(v)`, and `CURL(v, alpha)`, for a vector of two or three elements.
 
     The circulation around an infinitesimal loop per unit of the area it
@@ -3583,7 +3478,7 @@ def _curl(conv: _Converter, args: list) -> sp.Basic:
     if len(elements) == 2:
         return _circulation(elements, variables, scales, 0, 1)
     turns = [_circulation(elements, variables, scales, *pair) for pair in _LOOPS]
-    return _vector_of(turns)
+    return vector_of(turns)
 
 
 #: Which pair of coordinates each element of a space curl turns in: the one
@@ -3594,7 +3489,7 @@ def _curl(conv: _Converter, args: list) -> sp.Basic:
 _LOOPS = ((1, 2), (2, 0), (0, 1))
 
 
-def _potential(conv: _Converter, args: list) -> sp.Basic:
+def _potential(conv: Converter, args: list) -> sp.Basic:
     """`POTENTIAL(v)`, `POTENTIAL(v, a)` and `POTENTIAL(v, a, alpha)`.
 
     The line integral of `v` from `a` to the coordinates themselves, along the
@@ -3626,7 +3521,7 @@ def _potential(conv: _Converter, args: list) -> sp.Basic:
     return walked
 
 
-def _vector_potential(conv: _Converter, args: list) -> sp.Basic:
+def _vector_potential(conv: Converter, args: list) -> sp.Basic:
     """`VECTOR_POTENTIAL(v)`, and the same optional `a` and `alpha`.
 
     A vector whose curl is `v`, for a three-element `v`. Vector potentials
@@ -3655,7 +3550,7 @@ def _vector_potential(conv: _Converter, args: list) -> sp.Basic:
     first, second, third = elements
     lifted = _leg(h1 * h3 * second, x3, start[2])
     sliced = _leg((h1 * h2 * third).subs(x3, start[2]), x2, start[1])
-    return _vector_of(
+    return vector_of(
         [
             (lifted - sliced) / h1,
             -_leg(h2 * h3 * first, x3, start[2]) / h2,
@@ -3728,7 +3623,7 @@ def _start(rest: list, count: int) -> tuple[list[sp.Basic], list]:
 
 
 def _coordinates(
-    conv: _Converter, rest: list, count: int | None = None
+    conv: Converter, rest: list, count: int | None = None
 ) -> tuple[list[sp.Basic], list[sp.Basic]]:
     """The coordinate system a differential vector operator works in.
 
@@ -3790,7 +3685,7 @@ def _matrix(value: sp.Basic) -> sp.MatrixBase:
 #: inert head over its converted arguments, which is what keeps every arbitrary
 #: user function alive through a round trip - and what makes
 #: `DIF(F(x)^3, x)` differentiable. `SOLVE` is absent for a different reason:
-#: it is `COMMAND_HEADS`, and the pipeline evaluates it.
+#: it is `COMMAND_HEADS`, and the evaluation runs it.
 FUNCTIONS: dict[str, Handler] = {
     **{name: _trig(func) for name, func in _TRIGONOMETRIC.items()},
     **{name: _arctrig(func) for name, func in _INVERSE_TRIGONOMETRIC.items()},
@@ -3813,8 +3708,10 @@ FUNCTIONS: dict[str, Handler] = {
     "NPER": _periods,
     "RATE": _rate,
     "RANDOM": _random,
-    "GCD": _fold(sp.gcd),
-    "LCM": _fold(sp.lcm),
+    # Section 6.13 has these two take any number of arguments, a vector, or a matrix
+    # of rows to answer a vector of: the reading a statistic gives its sample.
+    "GCD": _statistic(_gcd_of),
+    "LCM": _statistic(_lcm_of),
     "AVERAGE": _statistic(_average),
     "RMS": _statistic(_root_mean_square),
     "VAR": _statistic(_variance),
@@ -3900,7 +3797,7 @@ def _sympy_heads() -> dict[str, Handler]:
     function classes.
 
     Only names Derive does not define itself. Everything in the inventory has a
-    reading of its own or waits for the pipeline as `SOLVE` does, and nothing
+    reading of its own or waits for the evaluation as `SOLVE` does, and nothing
     here may displace one. What is left is names no Derive worksheet can mean
     anything else by.
 

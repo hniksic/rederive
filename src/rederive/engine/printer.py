@@ -137,6 +137,7 @@ _FUNCTION_NAMES = {
     "Antidifference": "SUM",
     "Antiquotient": "PRODUCT",
     "MovingLimit": "LIM",
+    "Substitution": "SUBS",
     "log": "LN",
     "arg": "PHASE",
     "atan2": "ATAN",
@@ -606,11 +607,11 @@ def named(expression: sp.Basic) -> sp.Basic:
     """The same expression with sympy's invented variables named as ours.
 
     A `Dummy` is an ordinary variable by the time it reaches the worksheet -
-    the bound variable the Leibniz rule introduces is written `k1` and read
-    back as the variable `k1`. Two of them can carry one name, though, which
+    the bound variable the Leibniz rule introduces is written `k` and read
+    back as the variable `k`. Two of them can carry one name, though, which
     sympy tells apart by an identity no text can hold, so they are renamed
     apart from each other and from every name already in use before anything
-    is written. Without that, `SUM(SUM(f(k1), k1, 0, n), k1, 0, n)` is written
+    is written. Without that, `SUM(SUM(f(k), k, 0, n), k, 0, n)` is written
     from an expression with two variables and read back as one with one.
 
     Order needs it too: a `Dummy` sorts by its identity where a symbol sorts by
@@ -626,7 +627,7 @@ def named(expression: sp.Basic) -> sp.Basic:
     if not dummies:
         return expression
     taken = {
-        symbol.name
+        symbol.name.lower()
         for symbol in expression.atoms(sp.Symbol)
         if not isinstance(symbol, sp.Dummy)
     }
@@ -637,10 +638,33 @@ def named(expression: sp.Basic) -> sp.Basic:
             name += "_"
         taken.add(name)
         renamed[dummy] = sp.Symbol(name, **dummy.assumptions0)
+    if expression.has(sp.Subs):
+        expression = expression.replace(sp.Subs, Substitution)
     try:
         return expression.xreplace(renamed)
     except Exception:
         return expression
+
+
+class Substitution(sp.Function):
+    """Sympy's `Subs` on its way to the worksheet, equal only to itself as written.
+
+    A `Subs` equals itself with its bound variable renamed - the name is not part of
+    what it compares by - so when `named` rebuilds `2*x*SUBS(...)` over the renamed
+    one, sympy's constructor cache hands back the product it already built over the
+    old one, dummy and all, and `G'(x, x)` would be written with a variable that
+    reads back as a product. A head whose equality is its arguments' is rebuilt
+    afresh, and the printer writes it exactly as it writes a `Subs`.
+
+    Its bound variables are no more free than a `Subs`'s are: the product is
+    ordered by the variables of what is substituted into, `r` in `BB''(SIN(r))`,
+    and not by the name the bound one happens to carry.
+    """
+
+    @property
+    def free_symbols(self) -> set[sp.Basic]:
+        inner, variables, points = self.args
+        return (inner.free_symbols - set(variables)) | points.free_symbols
 
 
 def _shapes(expression: sp.Basic) -> set[sp.Dummy]:
@@ -704,9 +728,17 @@ def _bracket(
 
 
 def _plain(name: str) -> str:
-    """A dummy's name as the lexer would read one back."""
-    stripped = name.lstrip("_")
-    return stripped if stripped[:1].isalpha() else f"v{stripped}"
+    """A dummy's name as a letter, which reads back as one name in any mode.
+
+    Character mode reads a run of letters and digits as a product of them unless the
+    run is declared, and nothing declares a name for text read back from a file:
+    sympy's `xi` would come back `x*i`, so the bound variable of `G'(x, x)`'s
+    `SUBS(DIF(G(xi, x), xi), [xi], [x])` would turn into a product and the
+    substitution into a different one. A letter followed by underscores, which
+    `named` appends to keep names apart, is one name to the lexer in either mode.
+    """
+    letter = next((char for char in name if "a" <= char.lower() <= "z"), "v")
+    return letter.lower()
 
 
 def numeral(number: int, base: int = 10) -> str:
@@ -1198,6 +1230,19 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Function(self, expr):
         return f"{function_name(expr)}({self.stringify(expr.args, ', ')})"
 
+    def _print_Gcd(self, expr):
+        """`GCD(n, m)`, its arguments in the reverse of a sum's order.
+
+        Derive writes the divisor's arguments from the least main up: `GCD(m, n)`
+        is `GCD(n, m)`, `GCD(m^2, m)` is `GCD(m, m^2)` and `GCD(m, 2)` is
+        `GCD(2, m)`.
+        """
+        order = self.context.order
+        operands = sorted(
+            expr.args, key=lambda term: _term_key(term, order), reverse=True
+        )
+        return f"GCD({self.stringify(operands, ', ')})"
+
     def _print_Min(self, expr):
         return f"MIN({self.stringify(expr.args, ', ')})"
 
@@ -1400,6 +1445,8 @@ class AuthorPrinter(sp.StrPrinter):
             if primed is not None and inner.variable_count[0][0] == variables[0]:
                 return primed
         return f"SUBS({self.stringify(expr.args, ', ')})"
+
+    _print_Substitution = _print_Subs
 
     def _print_MatrixBase(self, expr):
         """A row is written flat; anything taller is a vector of its rows."""

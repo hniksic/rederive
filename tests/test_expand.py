@@ -105,11 +105,11 @@ def test_terms_of_equal_degree_are_collected():
 
 
 def test_a_collected_coefficient_keeps_its_common_factor_outside():
-    # The `2` of the middle coefficient is inside the bracket rather than in
-    # front of it: the normal form has already written that coefficient, and
-    # it leaves a coefficient's numeric content where it stands.
+    # Simplify takes the `(x + 1)^2` both terms carry outside, so what is
+    # expanded is `(a + b)*(x + 1)^2`, and the expansion's own collecting keeps
+    # the `2` of the middle coefficient in front of the bracket.
     text = "a*(x + 1)^2 + b*(x + 1)^2"
-    assert exp(text, variables=["x"]) == "x^2*(a + b) + x*(2*a + 2*b) + a + b"
+    assert exp(text, variables=["x"]) == "x^2*(a + b) + 2*x*(a + b) + a + b"
 
 
 def test_a_factor_free_of_the_variables_is_not_reached_into():
@@ -141,7 +141,7 @@ def test_a_head_that_binds_a_variable_comes_through_as_itself():
     is exactly what Simplify already answers."""
     text = "DIF(LIM(G(y, z), y, 2*x - y), y)"
     assert exp(text) == simplify(parse(text), Context()).text
-    assert "SUBS(DIF(G(xi_1, z), xi_1), [xi_1], [2*x - y])" in exp(text)
+    assert "SUBS(DIF(G(x_, z), x_), [x_], [2*x - y])" in exp(text)
 
 
 def test_an_integrand_stays_inside_its_integral():

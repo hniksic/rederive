@@ -115,8 +115,8 @@ count with `DIMENSION` and take apart with `RHS`.
 `replace(node, replacements, state)` is Derive's Manage Substitute, and it is
 the one command that computes nothing: each replacement is a subtree to look
 for and what to write in its place, every match is replaced at once, and the
-answer is written out unsimplified. It is not `substitute`, which is the
-pre-pass every other command runs to write in what a name already stands for.
+answer is written out unsimplified. It is not the evaluation every other
+command starts with, which writes in what a name already stands for.
 
 `expression_variables(node, context)` is what a command offers before it can
 ask anything: the variables the expression holds, most main first.
