@@ -44,7 +44,7 @@ def _pairs_in(path: Path) -> list[tuple[str, str]]:
     A list counts where a parametrized test consumes it and calls `simp` with the text
     alone; an inline assert counts where it compares `simp` of one literal with another.
     """
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     consumed: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef):

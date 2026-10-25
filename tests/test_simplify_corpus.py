@@ -83,7 +83,7 @@ def _library() -> dict[str, list[tuple[str, ParseState]]]:
     """
     groups: dict[str, list[tuple[str, ParseState]]] = {}
     current: list[tuple[str, ParseState]] = []
-    for line in (CORPUS / "library-expressions.txt").read_text().splitlines():
+    for line in (CORPUS / "library-expressions.txt").read_text(encoding="utf-8").splitlines():
         if line.startswith("##"):
             current = groups.setdefault(line[2:].strip(), [])
         elif line.strip() and not line.startswith("#"):
