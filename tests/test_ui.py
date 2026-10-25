@@ -20,6 +20,7 @@ from screen import (
 from rederive import __version__, platform
 from rederive.ui import menu as menus
 from rederive.ui.app import COPIED, COPIED_TEXT, CUT_TEXT, NOTHING_TO_CUT, RederiveApp
+from rederive.ui.widgets import WorkArea
 
 
 def highlighted_menu_option(app):
@@ -2765,6 +2766,29 @@ async def test_the_declare_lines_walk_but_are_never_labelled(app, keys, line):
         assert highlighted_expression(app) == "x"
         # None of them names an expression, so none takes the label walked onto.
         assert prompt(app) == (line, offered)
+
+
+# -- keeping the selected entry in view ---------------------------------------
+
+
+async def test_a_new_entry_is_scrolled_to_even_when_the_scroll_beats_the_layout(
+    app, monkeypatch
+):
+    # Textual may run a callback scheduled after the refresh before the layout that
+    # makes room for the new entry; the scroll is then clamped to the old height.
+    # Running it at once is that ordering every time.
+    monkeypatch.setattr(
+        WorkArea,
+        "call_after_refresh",
+        lambda self, callback, *args, **kwargs: callback(*args, **kwargs),
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        for number in range(15):
+            await author(pilot, f"x+{number}")
+        await pilot.pause()
+        pane = app.work_area
+        assert pane.max_scroll_y > 0
+        assert pane.scroll_offset.y == pane.max_scroll_y
 
 
 #: A render far wider than the eighty-column pane, drawn exactly as authored,

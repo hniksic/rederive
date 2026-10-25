@@ -319,6 +319,9 @@ class WorkArea(VerticalScroll):
         #: Which of them was drawn shifted, since the shift is the selected
         #: entry's alone and a click on it has to be read past the shift.
         self._shifted: int | None = None
+        #: The rows of the selected entry, while they still wait to be scrolled into
+        #: view; see `_reveal`.
+        self._revealing: Region | None = None
 
     def reset(self) -> None:
         """Forget where this pane stands, as a pane handed to a new window must."""
@@ -328,6 +331,7 @@ class WorkArea(VerticalScroll):
         self._indent = _LABEL_WIDTH
         self._drawn = []
         self._shifted = None
+        self._revealing = None
 
     def show(
         self,
@@ -364,11 +368,29 @@ class WorkArea(VerticalScroll):
                 self.shift,
             )
         self.content.update(text)
+        self._revealing = None
         if selected is not None:
-            # After the refresh, so the new content has been laid out and the
-            # scrollable region knows how tall it is.
-            region = Region(0, starts[selected], 1, entries[selected].height)
-            self.call_after_refresh(self.scroll_to_region, region, animate=False)
+            self._revealing = Region(0, starts[selected], 1, entries[selected].height)
+            self.call_after_refresh(self._reveal)
+
+    def _reveal(self) -> None:
+        """Scroll the selected entry into view, once the layout has room for it.
+
+        A callback scheduled after the refresh can run before the layout that makes
+        the scrollable region tall enough for new content, and a scroll then is
+        clamped to the old height and leaves the newest entry below the edge. So the
+        region waits until the scrollable height takes it in, and a change of that
+        height is what asks again.
+        """
+        region = self._revealing
+        if region is None or region.bottom > self.virtual_size.height:
+            return
+        self._revealing = None
+        self.scroll_to_region(region, animate=False)
+
+    def watch_virtual_size(self) -> None:
+        if self._revealing is not None:
+            self.call_later(self._reveal)
 
     def show_help(self, lines: list[str], rows: int, width: int, titled: bool) -> None:
         """Paint a help page over this window's expressions.
@@ -386,7 +408,7 @@ class WorkArea(VerticalScroll):
         and no further.
         """
         styles = self.app.palette.styles
-        self._drawn, self._shifted = [], None
+        self._drawn, self._shifted, self._revealing = [], None, None
         page = [line[:width] for line in lines[:rows]]
         page += [""] * (rows - len(page))
         text = Text("\n".join(page), style=styles["work"], no_wrap=True)
@@ -410,7 +432,7 @@ class WorkArea(VerticalScroll):
         rather than the footer, that being the line with a key in it.
         """
         styles = self.app.palette.styles
-        self._drawn, self._shifted = [], None
+        self._drawn, self._shifted, self._revealing = [], None, None
         centred = [line.center(width).rstrip()[:width] for line in lines]
         above = max(1, (rows - len(centred) - 3) // 3)
         page = ([""] * above + centred)[: max(0, rows - 2)]
