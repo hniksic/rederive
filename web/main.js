@@ -264,8 +264,19 @@ function terminal() {
     scrollback: 0,
     // What the unicode11 addon needs before it may be loaded.
     allowProposedApi: true,
+    // The program takes the mouse, so selecting text off the screen is a
+    // modified drag, as in a desktop terminal: Shift everywhere, and Option on a
+    // Mac, where xterm.js only honors it with this set.
+    macOptionClickForcesSelection: true,
     theme: { background: '#000000', foreground: '#d0d0d0' },
   });
+  // Ctrl-C over a selection copies it, which is what a page has taught everyone
+  // to expect. Declining the key leaves the browser to fire its copy event, which
+  // xterm.js answers with the selection; with nothing selected the key goes to
+  // the program as before. Any key or click sent on clears the selection.
+  term.attachCustomKeyEventHandler((event) => !(
+    event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
+    && event.key.toLowerCase() === 'c' && term.hasSelection()));
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   const fit = new FitAddon.FitAddon();

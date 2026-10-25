@@ -21,11 +21,11 @@ time, so a term of a long sum is reachable without hitting the single character
 it is drawn as - and the wheel scrolls the pane the history stands in. Every
 gesture applies exactly where its key applies, so nothing can be reached by
 mouse that the keyboard cannot reach and nothing can be done under a
-half-answered question that a key would not do. Sweeping text out with the
-mouse is the terminal's own gesture and is left to Textual, which copies cells
-off the screen; that is a different thing from the highlight over one
-subexpression, and Ctrl-C copies whichever of the two was pointed at last. A
-sweep over the line being typed is a third thing again: the line takes the drag
+half-answered question that a key would not do. Sweeping text off the screen
+is the terminal's own gesture and is left to it: Textual's selection is off, so a
+drag over the screen does nothing here, and Shift-drag (Option-drag on a Mac)
+selects as the terminal always does under a program that takes the mouse. A
+sweep over the line being typed is a different thing: the line takes the drag
 itself and marks the stretch out as its own selection, which is what Ctrl-C and
 Ctrl-X then act on.
 
@@ -51,10 +51,10 @@ that tells the two apart.
 
 An expression moves by way of the clipboard: Ctrl-C puts what is highlighted on
 the system clipboard, both through the terminal and past it by the desktop's
-own tools, and Ctrl-V writes the copy kept here onto the line being typed. Where something is selected
-- a sweep of the screen, or a stretch marked out on the line - that is what
-Ctrl-C copies instead, a selection being the plainest way of saying what a key
-is to act on, and Ctrl-X is the same for the line with the stretch taken off it.
+own tools, and Ctrl-V writes the copy kept here onto the line being typed. Where
+a stretch of the line is marked out, that is what Ctrl-C copies instead, a
+selection being the plainest way of saying what a key is to act on, and Ctrl-X is
+the same for the line with the stretch taken off it.
 Text copied in another program comes the other way by the terminal's own paste
 key, arriving as if it had been typed: a terminal hands over the clipboard when
 its user asks and not when a program does. The original's F3 and F4, which write
@@ -498,8 +498,8 @@ BUFFER_EMPTY = "Unremove buffer empty"
 #: is not quoted back: the message line is one line, and an expression is as
 #: long as it likes.
 COPIED = "Copied the highlighted expression"
-#: And what it says when what was copied is selected text instead - a sweep of
-#: the screen, or a stretch of the line being typed.
+#: And what it says when what was copied is selected text instead - a stretch of
+#: the line being typed.
 COPIED_TEXT = "Copied the selected text"
 #: What Ctrl-X says when it has taken that stretch off the line.
 CUT_TEXT = "Cut the selected text"
@@ -1162,6 +1162,8 @@ class RederiveApp(App[None]):
     GREETING_LINE = GREETING_FOOTER
     # Nothing on screen belongs to anything but the pane itself.
     ENABLE_COMMAND_PALETTE = False
+    # Selecting text off the screen is left to the terminal; see "mouse routing".
+    ALLOW_SELECT = False
     BINDINGS = [
         # Tab completes the name where a file is being named, and steps the
         # menu everywhere else; `check_action` picks between the two, which
@@ -2093,10 +2095,9 @@ class RederiveApp(App[None]):
     # lay themselves out for the width there is rather than to fixed columns, so
     # each of them is asked what it drew at the cell rather than told.
     #
-    # Sweeping text out with the mouse is Textual's, and left to it: it copies
-    # cells off the screen, which is a different thing from the highlight over
-    # one subexpression, and the two never disagree because a click clears a
-    # sweep and a sweep moves no highlight.
+    # Sweeping text off the screen is the terminal's, which is why `ALLOW_SELECT`
+    # is off: a drag here would otherwise be Textual's own selection, drawn in
+    # colors of its own across every band it crossed.
 
     def on_click(self, event: events.Click) -> None:
         """A click, routed to whatever it was pointing at.
@@ -2258,11 +2259,6 @@ class RederiveApp(App[None]):
         window = next((each for each in self.panes if self.panes[each] is pane), None)
         if window is None or self.mode == MODE_HELP:
             return
-        if event.chain > 1:
-            # Textual reads a second click in quick succession as "select all
-            # the text of this widget". Here a repeated click means one level
-            # further in, so what the double click swept up is put back.
-            self.screen.clear_selection()
         editor = self.editor
         if window is not self.windows.active:
             if self.mode != MODE_MENU or len(self.stack) > 1:
@@ -2590,13 +2586,9 @@ class RederiveApp(App[None]):
     def action_copy_highlighted(self) -> None:
         """Ctrl-C: take a copy of what is selected, or of the highlighted expression.
 
-        Where something is selected that is what is copied, a selection being
-        the plainest way of saying what a key is to act on. Two of them count:
-        text swept out with the mouse, which is the terminal's own gesture and
-        is cleared by the copy, and a stretch marked out on the line being
-        typed. A sweep is the one pointed at last, so it comes first; nothing
-        is swept in the ordinary way of working, and one click anywhere clears
-        a sweep, so the two never disagree for long.
+        Where a stretch of the line being typed is marked out, that is what is
+        copied, a selection being the plainest way of saying what a key is to
+        act on.
 
         With nothing selected it is the highlighted expression: the whole of
         one selected whole, and just the part where the highlight is inside
@@ -2611,12 +2603,6 @@ class RederiveApp(App[None]):
         `copy_to_clipboard` above says by which roads. No road reports back,
         so the receipt on the message line is what says the key landed.
         """
-        swept = self.screen.get_selected_text()
-        if swept:
-            self.copy_to_clipboard(swept)
-            self.screen.clear_selection()
-            self._set_message(COPIED_TEXT)
-            return
         marked = self._selected_on_line()
         if marked is not None:
             self.copy_to_clipboard(marked)

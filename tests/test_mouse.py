@@ -649,8 +649,9 @@ async def test_a_click_steps_a_demonstration(app, tmp_path):
 # -- copying -------------------------------------------------------------------
 
 
-async def test_swept_text_is_what_ctrl_c_copies_while_a_sweep_stands(app):
-    """And the highlighted expression again once the sweep has been cleared."""
+async def test_a_drag_over_the_pane_selects_nothing(app):
+    """Selecting text off the screen is the terminal's, so Ctrl-C still copies the
+    highlighted expression."""
     async with app.run_test() as pilot:
         await author(pilot, "x+1")
         await pilot.pause()
@@ -658,27 +659,10 @@ async def test_swept_text_is_what_ctrl_c_copies_while_a_sweep_stands(app):
         await pilot.mouse_down(pane, offset=(0, 0))
         await pilot.hover(pane, offset=(5, 0))
         await pilot.mouse_up(pane, offset=(5, 0))
-        assert app.screen.get_selected_text() == "#1:  x"
-        await pilot.press("ctrl+c")
-        assert app.clipboard == "#1:  x"
-        assert message(app) == COPIED_TEXT
-        # The sweep is gone with the copy, so the key means the expression again.
+        assert not app.screen.get_selected_text()
         await pilot.press("ctrl+c")
         assert app.clipboard == "x+1"
         assert message(app) == COPIED
-
-
-async def test_a_click_clears_a_sweep(app):
-    async with app.run_test() as pilot:
-        await author(pilot, "x+1")
-        await pilot.pause()
-        pane = content(app)
-        await pilot.mouse_down(pane, offset=(0, 0))
-        await pilot.hover(pane, offset=(5, 0))
-        await pilot.mouse_up(pane, offset=(5, 0))
-        assert app.screen.get_selected_text()
-        await click_on(pilot, app, "x")
-        assert not app.screen.get_selected_text()
 
 
 async def test_a_sweep_over_the_line_being_typed_is_the_lines_own(app):
@@ -693,9 +677,6 @@ async def test_a_sweep_over_the_line_being_typed_is_the_lines_own(app):
         await pilot.hover(line, offset=(3, 0))
         await pilot.mouse_up(line, offset=(3, 0))
         await pilot.pause()
-        # Nothing of this reaches the screen's own selection: the widget with
-        # the mouse captured is the line, so the sweep is a stretch of it.
-        assert not app.screen.get_selected_text()
         await pilot.press("ctrl+c")
         assert app.clipboard == "x"
         assert message(app) == COPIED_TEXT
@@ -705,7 +686,7 @@ async def test_a_sweep_over_the_line_being_typed_is_the_lines_own(app):
 
 
 async def test_repeated_clicks_go_in_rather_than_sweeping_the_pane(app):
-    """A double click is Textual's "select all the text"; here it is one level in."""
+    """A double click is one level in, not a selection of the whole pane."""
     async with app.run_test() as pilot:
         await author(pilot, "(x+1)/y")
         line = work_area(app)[0]
