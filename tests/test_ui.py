@@ -12,6 +12,7 @@ from screen import (
     laid_out,
     message,
     prompt,
+    resized,
     text_of,
     work_area,
 )
@@ -157,16 +158,6 @@ async def test_an_abandoned_command_leaves_the_highlight_alone(app):
 
 
 # -- the band across a terminal that is not eighty columns --------------------
-
-
-async def resized(pilot, app, width, height):
-    """Resize the terminal, and wait for the new size to reach the band."""
-    await pilot.resize_terminal(width, height)
-    for _ in range(20):
-        if app.query_one("#menu").size.width == width:
-            return
-        await pilot.pause()
-    raise AssertionError("the resize never reached the band")
 
 
 async def test_eighty_columns_break_the_menu_where_the_menu_says(app):

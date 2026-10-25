@@ -11,6 +11,7 @@ from screen import (
     frame,
     highlighted,
     message,
+    resized,
     styled,
     window_type,
     work_area,
@@ -20,7 +21,6 @@ from rederive.model import windows
 from rederive.model.session import Session
 from rederive.model.windows import Windows
 from rederive.ui.app import RederiveApp
-from rederive.ui.widgets import Panes
 
 #: The screen the original ran on, and the one every dump here was taken from.
 SIZE = (80, 25)
@@ -38,16 +38,6 @@ async def author(pilot, text):
     await pilot.press("a")
     await pilot.press(*text)
     await pilot.press("enter")
-
-
-async def resized(pilot, app, width, height):
-    """Resize the terminal, and wait for the new size to reach the panes."""
-    await pilot.resize_terminal(width, height)
-    for _ in range(20):
-        if app.query_one(Panes).size.width == width:
-            return
-        await pilot.pause()
-    raise AssertionError("the resize never reached the panes")
 
 
 def rows(windows_, height=WORK, width=COLUMNS):

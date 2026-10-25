@@ -224,6 +224,11 @@ class Band(Static):
     command nobody can see is a command nobody can reach.
     """
 
+    #: The width the rows on the band were last laid out for, 0 before any were.
+    #: A resize reaches `size` before the band's own `on_resize` has drawn it again,
+    #: so this is what says the drawing has caught up.
+    drawn_width: int = 0
+
     @property
     def colors(self) -> dict[str, str]:
         return self.app.palette.styles
@@ -253,6 +258,7 @@ class Band(Static):
             row.truncate(self.width)
         self.styles.height = max(_BAND_ROWS, len(rows))
         self.update(Text("\n").join(rows))
+        self.drawn_width = self.width
         return len(rows)
 
     def within(self, offset: Offset) -> Offset:

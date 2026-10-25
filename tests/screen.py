@@ -35,6 +35,28 @@ async def laid_out(pilot, app, identifier):
     raise AssertionError(f"{identifier} was never laid out")
 
 
+async def resized(pilot, app, width, height):
+    """Resize the terminal, and wait until the screen has been laid out for it.
+
+    The new size reaches a widget's `size` first, and the menu is drawn again for it
+    only later, in its own `on_resize`; how tall the menu then stands is the
+    compositor's again, and the windows above it get what it leaves. So this waits
+    for the menu to have been drawn at the new width and to stand as tall as that
+    drawing asked, by which time the panes have the room that is left.
+    """
+    await pilot.resize_terminal(width, height)
+    menu = app.query_one("#menu")
+    for _ in range(50):
+        if (
+            menu.size.width == width
+            and menu.drawn_width == width
+            and menu.size.height == menu.styles.height.value
+        ):
+            return
+        await pilot.pause()
+    raise AssertionError("the resize never reached the menu")
+
+
 def band_id(app):
     """Which of the two bands is showing: a menu, or an Options dialog."""
     return "#fields" if app.editor is not None else "#menu"
