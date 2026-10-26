@@ -17,12 +17,13 @@ first visit.)
 ## Motivation
 
 Derive came out of Honolulu in 1988 and was the first computer algebra system that ran on
-machines mortals could afford. It fit on a floppy, worked on a 286 with half a megabyte of
-memory, and quietly took over maths classrooms across Europe. (I was introduced to it in a
-Croatian classroom around 1992.) It was cheap, famously close to bug-free, and you could
-learn to use it in minutes. More importantly, its ease of use and responsiveness made math
-fun in ways that are not quite matched by modern and more advanced programs, nor even by
-LLMs. Derive was discontinued in 2007 after having been acquired by Texas Instruments.
+machines mere mortals could afford. It fit on a floppy, worked on a 286 with half a
+megabyte of memory, and quietly took over math classrooms across Europe. (I was introduced
+to it in a Croatian school computer lab around 1992.) It was cheap, famously close to
+bug-free, and you could learn to use it in minutes. Its ease of use and responsiveness
+made math fun in a way not quite matched by modern and more advanced programs, nor by
+talking to an LLM. Derive was discontinued in 2007 after having been acquired by Texas
+Instruments.
 
 Rederive aims to bring the experience back on modern foundations. The important pieces
 have long existed - Python as the lingua franca of math and science,
@@ -31,15 +32,14 @@ have long existed - Python as the lingua franca of math and science,
 a user-friendly CAS.
 
 Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
-but adapts to the 21st century where appropriate. The display is Unicode rather than code
-page 437, and everything is laid out for the terminal's actual size instead of an 80x25
-screen. The mouse and scroll wheel work, plots use OpenGL, it uses the system clipboard,
-file names tab-complete, and the line editor follows Emacs conventions.
+but adopts certain 21st century idioms. The display assumes Unicode, the mouse and scroll
+wheel work, plots use OpenGL, it uses the system clipboard, file names tab-complete, and
+the line editor follows Emacs conventions.
 
 ## Installing
 
-Rederive ships as a single self-contained binary for Linux, macOS and Windows; none of
-them needs Python. On Linux and macOS, one line installs it:
+Rederive ships as a single self-contained binary for Linux, macOS and Windows. On Linux
+and macOS, one line installs it:
 
 ```
 curl -LsSf https://github.com/hniksic/rederive/releases/latest/download/install.sh | sh
@@ -163,10 +163,10 @@ finally made it feasible for one person, decades after I first wished for it.
 
 Note, however, that the *mathematics* is not AI-written. Every simplification, solution,
 and integral is computed by [SymPy](https://www.sympy.org/en/index.html), a symbolic
-mathematics library developed and tested by humans for two decades. Rederive is the
-interface: the parser, the typesetting, the menus, and the layer that decides which SymPy
-machinery to invoke and how to present what comes back. That layer is held to account by a
-test suite, much of it checking behavior against the responses from the original Derive
+mathematics library developed by humans for two decades. Rederive implements the
+menu-driven user interface, the parser, the typesetter, and the layer that decides which
+SymPy machinery to invoke and how to present what comes back. That layer is tested by an
+extensive test suite checking behavior against the responses from the original Derive
 recorded in preserved manuals and other sources.
 
 If AI provenance bothers you, that is a reasonable position. But this is not a demo
