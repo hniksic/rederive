@@ -9,8 +9,10 @@ apart from SymPy in a Jupyter notebook is how it treats the user: Rederive reads
 the terminal. The UI, inherited from Derive, is tiny and opinionated, but discoverable and
 built for humans.
 
-**[Try it live](https://hniksic.github.io/rederive/)**. (Takes a moment to load on the
-first visit.)
+<h3 align="center"><a href="https://hniksic.github.io/rederive/">Try it live in your browser</a></h3>
+<p align="center"><sub>(Takes a moment to load on the first visit.)</sub></p>
+
+<br>
 
 <p align="center"><img src="demo.webp" alt="An animated Rederive session" width="700"></p>
 
@@ -161,13 +163,12 @@ mathematics of the original, and diverging where it made sense to do so. A from-
 reimplementation of a commercial CAS is not a weekend project, and AI assistance is what
 finally made it feasible for one person, decades after I first wished for it.
 
-Note, however, that the *mathematics* is not AI-written. Every simplification, solution,
-and integral is computed by [SymPy](https://www.sympy.org/en/index.html), a symbolic
-mathematics library developed by humans for two decades. Rederive implements the
-menu-driven user interface, the parser, the typesetter, and the layer that decides which
-SymPy machinery to invoke and how to present what comes back. That layer is tested by an
-extensive test suite checking behavior against the responses from the original Derive
-recorded in preserved manuals and other sources.
+Note, however, that the *mathematics* is not AI-written. Underlying computation is
+entrusted to [SymPy](https://www.sympy.org/en/index.html), a symbolic mathematics library
+developed by humans for two decades. Rederive provides the user interface and the layer
+deciding which SymPy machinery to invoke and how to present the results. That layer is
+tested by an extensive test suite checking behavior against the responses from the
+original Derive recorded in preserved manuals and other sources.
 
 If AI provenance bothers you, that is a reasonable position. But this is not a demo
 one-shotted in an afternoon: it is used and maintained by its author, and bug reports are
