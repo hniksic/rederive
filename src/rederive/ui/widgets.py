@@ -389,8 +389,7 @@ class WorkArea(VerticalScroll):
         self.scroll_to_region(region, animate=False)
 
     def watch_virtual_size(self) -> None:
-        if self._revealing is not None:
-            self.call_later(self._reveal)
+        self._reveal()
 
     def show_help(self, lines: list[str], rows: int, width: int, titled: bool) -> None:
         """Paint a help page over this window's expressions.
