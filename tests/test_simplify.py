@@ -1067,19 +1067,119 @@ def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
     )
 
 
-def test_a_case_split_between_two_antiderivatives_is_kept():
-    """Where the cases are different functions the split is doing real work.
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(x^n, x)", "(x^(n + 1) - 1)/(n + 1)"),
+        ("INT(x^n, x, 1, 2)", "(2^(n + 1) - 1)/(n + 1)"),
+        ("INT(LN(x)^n/x, x)", "(LN(x)^(n + 1) - 1)/(n + 1)"),
+        ("INT(#e^(a*x), x)", "(#e^(a*x) - 1)/a"),
+        ("INT(a^x, x)", "(a^x - 1)/LN(a)"),
+        ("INT(x*#e^(a*x), x)", "(a*x*#e^(a*x) - #e^(a*x) + 1)/a^2"),
+        ("INT(SINH(a*x), x)", "#e^(a*x)/(2*a) + #e^(-a*x)/(2*a) - 1/a"),
+        ("INT(COS(a*x), x)", "SIN(a*x)/a"),
+    ],
+)
+def test_an_antiderivative_is_continuous_in_its_parameters(text, expected):
+    """Sympy splits `INT(x^n, x)` into `x^(n + 1)/(n + 1)` and `LN(x)` at `n = -1`.
 
-    `SIN(a*x^3 + b)/(3*a)` is an antiderivative for every `a` it is defined for,
-    which is every `a` but zero, and at zero the integrand is `x^2*COS(b)`. So
-    the case that holds unconditionally is the one the split has to be checked
-    against, and here it is `x^3*COS(b)/3`, which is no antiderivative anywhere
-    else. The original prints the first case alone; the conditional answer is this
-    engine's, and it is the more informative of the two.
+    The original prints `(x^(n + 1) - 1)/(n + 1)` with no split: the constant of
+    integration is chosen so that the formula has `LN(x)` as its limit, and then
+    it is an antiderivative for every `n`. The integrand is analytic in `n`, so the
+    integral from a fixed point is too, and the pole in sympy's formula was in its
+    constant all along. Every answer here is the original's, spelling and all.
     """
-    assert simp("INT(x^2*COS(a*x^3 + b), x)") == (
-        "IF(a /= 0, SIN(a*x^3 + b)/(3*a), x^3*COS(b)/3)"
-    )
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(SIN(a*x), x)", "(1 - COS(a*x))/a"),
+        ("INT(x*COS(a*x), x)", "(COS(a*x) + a*x*SIN(a*x) - 1)/a^2"),
+        ("INT(1/(a*x + b), x)", "(LN(a*x + b) - LN(b))/a"),
+        ("INT(x^2*COS(a*x^3 + b), x)", "(SIN(a*x^3 + b) - SIN(b))/(3*a)"),
+        ("INT((a*x + b)^n, x)", "((a*x + b)^(n + 1) - b^(n + 1))/(a*(n + 1))"),
+    ],
+)
+def test_the_constant_is_chosen_for_every_parameter_not_only_the_exponential(
+    text, expected
+):
+    """The original chooses that constant where its tables happen to.
+
+    Its `INT(SINH(a*x), x)` carries the `-1/a`, because it goes through
+    `#e^(a*x)`, and its `INT(SIN(a*x), x)` is `-COS(a*x)/a`, undefined at `a = 0`
+    for no reason the integral knows of. The same rule is applied to every
+    parameter here, so these differ from the original's answers by a constant,
+    and hold where the original's do not: `(1 - COS(a*x))/a` is `0` at `a = 0`,
+    which is the integral of `SIN(0)`.
+    """
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # The integrand itself is singular at `a = 0`.
+        ("INT(1/(a*x), x)", "LN(x)/a"),
+        # A branch point rather than a pole; nothing is a Laurent series in it.
+        ("INT(1/(x^2 + a^2), x)", "ATAN(x/a)/a"),
+        ("INT(x/(a^2 + b^2*x^4), x)", "ATAN(b*x^2/a)/(2*a*b)"),
+    ],
+)
+def test_a_pole_the_integrand_owns_is_left_in_the_antiderivative(text, expected):
+    """Only a constant of integration may be taken out.
+
+    The principal part of `LN(x)/a` at `a = 0` is `LN(x)/a` itself, which is no
+    constant, and `ATAN(x/a)` has no Laurent expansion at all; the answer is what
+    it was in both cases.
+    """
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k), k, 1, n)",
+            "SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k), k, 1, n)",
+        ),
+        (
+            "SUM(SIN(a*k)*COS(k*x) - SIN(b*k)*COS(k*x), k, 1, n)",
+            "SUM((SIN(a*k) - SIN(b*k))*COS(k*x), k, 1, n)",
+        ),
+        (
+            "SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k) + k, k, 1, n)",
+            "SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k) + k, k, 1, n)",
+        ),
+        (
+            "SUM(a*SIN(k*x) - a*SIN(k*y) - b*SIN(k*x) + b*SIN(k*y), k, 1, n)",
+            "SUM(a*SIN(k*x) - b*SIN(k*x) - a*SIN(k*y) + b*SIN(k*y), k, 1, n)",
+        ),
+    ],
+)
+def test_trigonometric_terms_are_not_searched_for_a_telescope(text, expected):
+    """Sympy asks of a two-term summand whether it telescopes, by solving for the
+    shift, and over trigonometric functions that solve is slow or never returns.
+
+    The first three ran for an hour; the fourth is the shape the Fourier series
+    of the original's `INTEGRAL.MTH` comes to once its coefficients are
+    integrated, and took ninety seconds. The sum written out is the answer
+    either way, and it has to be the answer at once.
+    """
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("SUM(SIN(k + 1)*COS(k + 1) - SIN(k)*COS(k), k, 1, n)", "SIN(n)*COS(n + 2)"),
+        ("SUM(SIN(k + 1) - SIN(k) + k, k, 1, n)", "SIN(n + 1) + n^2/2 + n/2 - SIN(1)"),
+    ],
+)
+def test_a_shifted_pair_of_trigonometric_terms_still_telescopes(text, expected):
+    """A pair the match settles never reaches the solve, and is not refused."""
+    assert simp(text) == expected
 
 
 def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
@@ -3016,11 +3116,9 @@ DEMO_CALCULUS = [
     ("INT (x^2, x, a, b)", "b^3/3 - a^3/3"),
     ("INT (1/SQRT x, x, 0, b^2)", "2*ABS(b)"),
     ("INT (INT (x y, y, 0, SQRT (r^2 - x^2)), x, 0, r)", "r^4/8"),
-    # A conditional answer is written as the `IF` the notation has for one.
-    (
-        "INT (x^2 COS (a x^3 + b), x)",
-        "IF(a /= 0, SIN(a*x^3 + b)/(3*a), x^3*COS(b)/3)",
-    ),
+    # The constant of integration is the one that makes the answer continuous
+    # at `a = 0`, where Derive's `SIN(a*x^3 + b)/(3*a)` is undefined.
+    ("INT (x^2 COS (a x^3 + b), x)", "(SIN(a*x^3 + b) - SIN(b))/(3*a)"),
     ("TAYLOR (#e^x, x, 0, 5)", "x^5/120 + x^4/24 + x^3/6 + x^2/2 + x + 1"),
     ("TAYLOR (LN COS (a x), x, 0, 7)", "-a^6*x^6/45 - a^4*x^4/12 - a^2*x^2/2"),
     # The closed form keeps the shape the summation formula has, which is the

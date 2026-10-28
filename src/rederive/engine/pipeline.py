@@ -987,14 +987,131 @@ def _antiderivative(head: sp.Basic, value: sp.Basic) -> sp.Basic:
 
     Nothing is taken out of a definite integral, where a constant does not
     cancel but is part of the answer, nor out of an integral that was not done:
-    neither has an antiderivative in hand to choose among.
+    neither has an antiderivative in hand to choose among. A definite integral's
+    split over a parameter is still dropped where it distinguishes nothing.
     """
-    if len(head.limits) != 1 or len(head.limits[0]) != 1 or value.has(sp.Integral):
+    if len(head.limits) != 1 or value.has(sp.Integral):
         return value
+    if len(head.limits[0]) != 1:
+        return _continuous(value, None)
     variable, integrand = head.limits[0][0], head.function
     if _refuted(value, integrand, variable):
         value = _by_the_manual_rules(head, integrand, variable) or value
-    return _without_constants(_single_case(value, integrand, variable), variable)
+    value = _without_constants(_single_case(value, integrand, variable), variable)
+    return _continuous(value, variable)
+
+
+def _continuous(value: sp.Basic, variable: sp.Basic | None) -> sp.Basic:
+    """An antiderivative made continuous in its parameters, where a constant does it.
+
+    `INT(x^n, x)` is `x^(n + 1)/(n + 1)` for every `n` but `-1`, and `LN(x)` there,
+    and sympy answers with that case split. But the integrand is analytic in `n` at
+    `-1`, so the integral from any fixed point is too, and the pole in the formula
+    is nowhere but in its constant of integration: `(x^(n + 1) - 1)/(n + 1)` is an
+    antiderivative for every `n`, with `LN(x)` as its limit. That is the one Derive
+    prints, and the split was never about the integral.
+
+    So every pole a parameter puts into the answer is looked at. Its principal part
+    - the terms of the Laurent expansion that blow up - is a constant of
+    integration wherever it is free of the variable, and is taken out. Where it
+    depends on the variable the integrand itself is singular there, the split is
+    doing real work, and it stays; so does one whose expansion is no Laurent series
+    at all, a fractional power or a logarithm of the parameter being a branch point
+    rather than a pole.
+
+    Derive does this where its tables happen to, which is for powers and
+    exponentials: `INT(SIN(a*x), x)` is `-COS(a*x)/a` to it, undefined at `a = 0`
+    for no reason the integral knows of. Here it is done for every parameter, and
+    the answers Derive subtracts from come out identical.
+
+    With no variable to be free of, as in a definite integral, nothing may be
+    subtracted; a split still goes where the generic case has no pole to begin
+    with, `INT(x^n, x, 1, 2)` being `(2^(n + 1) - 1)/(n + 1)` with `LN(2)` as its
+    limit.
+    """
+    folded = _attempt(value, sp.piecewise_fold)
+    if not isinstance(folded, sp.Piecewise):
+        regular, _, _ = _regularized(value, variable)
+        return regular
+    if len(folded.args) != 2 or folded.args[1][1] is not sp.true:
+        return value
+    generic, condition = folded.args[0]
+    if not isinstance(condition, sp.Ne):
+        return value
+    regular, found, kept = _regularized(generic, variable)
+    return value if kept or not found else regular
+
+
+def _regularized(
+    expression: sp.Basic, variable: sp.Basic | None
+) -> tuple[sp.Basic, bool, bool]:
+    """The expression less the constant principal parts of its parameter poles.
+
+    Returns the result, whether any pole was examined, and whether any was left in
+    place. The expansion is taken in the divisor itself rather than in the
+    parameter: `INT(a^x, x)` has its pole where `LN(a)` vanishes, and expanding in
+    `LN(a)` subtracts `1/LN(a)`, which is Derive's constant, where expanding in
+    `a - 1` would subtract `1/(a - 1)`, an uglier constant for the same answer.
+    """
+    found = kept = False
+    for divisor in _parametric_divisors(expression, variable):
+        principal = _principal_part(expression, divisor)
+        if principal is None:
+            continue
+        found = True
+        if principal == 0:
+            continue
+        if variable is None or principal.has(variable):
+            kept = True
+            continue
+        expression = expression - principal
+    return expression, found, kept
+
+
+def _parametric_divisors(expression: sp.Basic, variable: sp.Basic | None) -> list:
+    """The bases divided by in the expression that are free of the variable but not
+    of symbols: each is somewhere a parameter puts a pole into the answer."""
+    divisors = {
+        power.base
+        for power in expression.atoms(sp.Pow)
+        if power.exp.is_negative
+        and power.base.free_symbols
+        and not (variable is not None and power.base.has(variable))
+    }
+    return sorted(divisors, key=sp.default_sort_key)
+
+
+def _principal_part(expression: sp.Basic, divisor: sp.Basic) -> sp.Basic | None:
+    """The terms of the expression's Laurent expansion in the divisor that blow up
+    where it vanishes, or None where there is no such expansion to speak of.
+
+    A divisor in more than one parameter, or one that does not determine its
+    parameter, is passed over.
+    """
+    if len(divisor.free_symbols) != 1:
+        return None
+    (parameter,) = divisor.free_symbols
+    coordinate = sp.Dummy("u")
+    try:
+        inverted = sp.solve(sp.Eq(divisor, coordinate), parameter)
+    except Exception:
+        return None
+    if len(inverted) != 1:
+        return None
+    shifted = expression.subs(parameter, inverted[0])
+    expansion = _attempt(
+        shifted, lambda s: sp.expand(sp.series(s, coordinate, 0, 1).removeO())
+    )
+    if expansion is None:
+        return None
+    principal = sp.S.Zero
+    for term in sp.Add.make_args(expansion):
+        coefficient, exponent = term.as_coeff_exponent(coordinate)
+        if not exponent.is_integer or coefficient.has(coordinate):
+            return None
+        if exponent < 0:
+            principal += term
+    return principal.subs(coordinate, divisor)
 
 
 def _refuted(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
@@ -1052,10 +1169,11 @@ def _single_case(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> sp
     into an `ATAN` where `a` is positive and a pair of logarithms elsewhere, and
     the `ATAN` is the answer Derive gives for every `a`.
 
-    Where the unconditional case does not hold the split is doing real work and
-    is left alone: `INT(x^2*COS(a*x^3 + b), x)` splits on whether `a` is zero,
-    and `SIN(a*x^3 + b)/(3*a)` is the answer for every `a` it is defined for -
-    which is every `a` but the one the other case is there for.
+    Where the unconditional case does not hold the split is left alone here:
+    `INT(x^2*COS(a*x^3 + b), x)` splits on whether `a` is zero, and
+    `SIN(a*x^3 + b)/(3*a)` is the answer for every `a` it is defined for - which
+    is every `a` but the one the other case is there for. Whether that pole is
+    the integral's or only its constant's is `_continuous`'s question.
     """
     folded = _attempt(value, sp.piecewise_fold)
     if not isinstance(folded, sp.Piecewise):
@@ -1229,13 +1347,65 @@ def _searchable(head: sp.Basic) -> bool:
     Narrow on purpose. `SUM(COMB(n, k), k, 0, n)` is `2^n` and `SUM((-1)^k*
     COMB(n, k)*COMB(2*n - 2*k, n)*x^(n - 2*k), k, 0, n/2)` is Legendre's, which
     sympy answers in half a second; neither is refused.
+
+    The other search that does not come back is for a telescoping pair of
+    trigonometric terms, which `_trigonometric_terms` is the measured rule for.
     """
     for limit in head.limits:
         if len(limit) < 3 or all(bound.is_number for bound in limit[1:]):
             continue
         if _scaled_term(head.function, limit[0]):
             return False
+        if _trigonometric_terms(head.function, limit[0]):
+            return False
     return True
+
+
+def _trigonometric_terms(function: sp.Basic, index: sp.Basic) -> bool:
+    """Whether two terms of the summand carry trigonometric functions of the index
+    without being each other's shift, which is what sympy's telescoping check
+    does not come back from.
+
+    Before anything else, sympy asks of a two-term summand whether one term is the
+    other's negation shifted along the index, first by matching and then, where the
+    match fails, by solving `L(k + m) + R(k) = 0` for `m`. Over trigonometric
+    functions that solve rewrites everything as exponentials and builds
+    polynomials in them. `SUM(SIN(a*k) - SIN(b*k), k, 1, n)` takes four seconds
+    that way, the four sines the Fourier series of Derive's own `INTEGRAL.MTH`
+    comes to once its coefficients are integrated take ninety, and a product on
+    each side - `SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k), k, 1, n)` - never
+    finishes at all, whatever the frequencies. A third term is no protection,
+    since the pairs are tried in turn.
+
+    Nothing is given up: once that search fails, sympy has no way of summing a
+    trigonometric term and the sum comes back as written anyway. Except the one
+    pair the match settles - `SIN(k + 1)*COS(k + 1) - SIN(k)*COS(k)` telescopes
+    to `SIN(n)*COS(n + 2)` without the solve ever being reached - so the same
+    match is made here first, and that pair is let through. Hyperbolic terms
+    are not trigonometric to this rule: sympy sums them as the exponentials they
+    are, and comes back.
+    """
+    expanded = _attempt(function, sp.expand)
+    if expanded is None:
+        return False
+    waves = [
+        term
+        for term in sp.Add.make_args(expanded)
+        if any(f.has(index) for f in term.atoms(TrigonometricFunction))
+    ]
+    if len(waves) < 2:
+        return False
+    return len(waves) != 2 or not _shifted(waves[0], waves[1], index)
+
+
+def _shifted(left: sp.Basic, right: sp.Basic, index: sp.Basic) -> bool:
+    """Whether `right` is `-left` with the index moved by an integer, the way
+    sympy's telescoping asks it: by matching, with `left` the term it shifts."""
+    shift = sp.Wild("shift")
+    match = (-right).match(left.subs(index, index + shift))
+    if match is None or shift not in match or not match[shift].is_Integer:
+        return False
+    return (left.subs(index, index + match[shift]) + right) == 0
 
 
 def _scaled_term(function: sp.Basic, index: sp.Basic) -> bool:
