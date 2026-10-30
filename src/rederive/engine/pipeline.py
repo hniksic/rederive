@@ -860,6 +860,9 @@ def _integral(head: sp.Basic) -> sp.Basic:
     across = _across_a_singularity(head, value)
     if across is not None:
         return across
+    beyond = _beyond_convergence(head, value)
+    if beyond is not None:
+        return beyond
     return _by_linearity(head) if value == head else value
 
 
@@ -954,6 +957,82 @@ def _across_a_singularity(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
             return None
         ends.append(end)
     return ends[0] - ends[1]
+
+
+def _beyond_convergence(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
+    """A definite integral's divergent case valued, where it diverges to a sign.
+
+    Sympy answers an improper integral with a parameter in it over the condition
+    its convergence test proves: `INT(x^n, x, 1, inf)` is `-1/(n + 1)` where `n <
+    -1`, and elsewhere the integral itself, unevaluated. That is where the integral
+    diverges, and Derive says so: it works the antiderivative to its limit at each
+    end and prints the infinity it finds, so the second case is `inf` to it. Sympy
+    will find the same infinity where it knows the sign of the exponent, which the
+    parameter it was handed does not say and a dummy of known sign does.
+
+    So the complement of the condition is written as substitutions: `n < -1` fails
+    where `n` is `-1 - s` for a positive `s`, and where `n` is `-1` exactly. The
+    integral is asked again under each, and where every answer is one infinity,
+    that is the case's value. A finite answer, an unevaluated one, or two that
+    disagree keeps the integral standing: a convergence test proves convergence
+    and not divergence, and an oscillating integrand diverges to no sign at all.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 3:
+        return None
+    folded = _attempt(value, sp.piecewise_fold)
+    if not isinstance(folded, sp.Piecewise) or len(folded.args) != 2:
+        return None
+    (converged, condition), (standing, otherwise) = folded.args
+    if otherwise is not sp.true or standing != head:
+        return None
+    outcomes = set()
+    for parameter, point in _complement(condition):
+        found = _attempt(head, lambda h: _by_sympy(h.subs(parameter, point)))
+        if found is None or not found.is_infinite or found.is_extended_real is not True:
+            return None
+        outcomes.add(found)
+    if len(outcomes) != 1:
+        return None
+    return sp.Piecewise((converged, condition), (outcomes.pop(), sp.true))
+
+
+#: The inequalities a convergence condition is written in, and the only ones
+#: whose complement is a sign the parameter can be given.
+_INEQUALITIES = (sp.StrictLessThan, sp.StrictGreaterThan, sp.LessThan, sp.GreaterThan)
+
+
+def _complement(condition: sp.Basic) -> list[tuple[sp.Basic, sp.Basic]]:
+    """Where a one-parameter inequality fails, as values of its parameter.
+
+    Each is the parameter written in terms of a dummy whose sign sympy knows: the
+    complement of `g > 0` is `g = -s` for a positive `s`, and where the inequality
+    was strict, `g = 0` as well. A condition that is no such inequality - on more
+    than one parameter, or on the real part of one, or that does not determine its
+    parameter - has no complement here, and the empty list leaves nothing valued.
+    """
+    if not isinstance(condition, _INEQUALITIES) or len(condition.free_symbols) != 1:
+        return []
+    (parameter,) = condition.free_symbols
+    if isinstance(condition, (sp.StrictGreaterThan, sp.GreaterThan)):
+        excess = condition.lhs - condition.rhs
+    else:
+        excess = condition.rhs - condition.lhs
+    if excess.is_polynomial(parameter) is not True:
+        return []
+    shortfall = sp.Dummy("s", positive=True)
+    targets = [-shortfall]
+    if isinstance(condition, (sp.StrictLessThan, sp.StrictGreaterThan)):
+        targets.append(sp.S.Zero)
+    points = []
+    for target in targets:
+        try:
+            solutions = sp.solve(sp.Eq(excess, target), parameter)
+        except Exception:
+            return []
+        if len(solutions) != 1:
+            return []
+        points.append((parameter, solutions[0]))
+    return points
 
 
 def _poles_inside(

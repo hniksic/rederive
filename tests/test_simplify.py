@@ -766,6 +766,14 @@ CALCULUS = [
     ("INT(x*SIN(x), x)", "SIN(x) - x*COS(x)"),
     ("INT(1/x, x, 1, 2)", "LN(2)"),
     ("INT(1/x^2, x, 1, inf)", "1"),
+    # Sympy proves where an improper integral converges and leaves the rest
+    # standing; Derive works the antiderivative to its limit and prints the
+    # infinity it diverges to.
+    ("INT(x^n, x, 1, inf)", "IF(n < -1, -1/(n + 1), inf)"),
+    ("INT(1/x^n, x, 1, inf)", "IF(n > 1, 1/(n - 1), inf)"),
+    ("INT(x^n, x, 2, inf)", "IF(n < -1, -2*2^n/(n + 1), inf)"),
+    # Divergent by oscillation, to no sign, so the integral stands.
+    ("INT(x^n*SIN(x), x, 1, inf)", "INT(x^n*SIN(x), x, 1, inf)"),
     ("SUM(1/k^2, k, 1, 5)", "5269/3600"),
     ("SUM(k^2, k, 1, m)", "m*(m + 1)*(2*m + 1)/6"),
     ("PRODUCT(n^2, n, 1, m)", "m!^2"),
