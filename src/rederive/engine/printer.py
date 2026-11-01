@@ -87,7 +87,7 @@ from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES, precedence
 from rederive.engine import notation
 from rederive.engine.context import Context, Notation
 from rederive.engine.ordering import main_order
-from rederive.syntax.names import GREEK_GLYPHS, PRIME_MARK
+from rederive.syntax.names import BUILTIN_FUNCTIONS, GREEK_GLYPHS, PRIME_MARK
 
 # How tightly the inert heads bind. Sympy's `parenthesize` reads these by class
 # name, and without an entry it takes any `Function` for a call as tight as
@@ -555,18 +555,72 @@ def _magnitude(number: sp.Basic) -> Fraction | float:
         return 0.0
 
 
-def function_name(expression: sp.Basic) -> str:
-    """What a function head is called in author notation.
+def spelling(expression: sp.Basic) -> str | None:
+    """What a function head is called in author notation, or None if it has no name.
 
-    An inert head keeps the name it was authored with; a sympy head is
-    upper-cased, which is the spelling of a function name.
+    An inert head keeps the name it was authored with, and a head of rederive's own
+    is written under its class name upper-cased. A sympy head is written under the
+    name the table gives it or else under its class name upper-cased, but only where
+    that is a built-in function: the notation's names are the ones an author can type
+    back, and a sympy class is not one of them for being exported by sympy. A head
+    with no name is one the printer quotes, by `_unspelled`.
     """
     name = type(expression).__name__
+    if _is_digamma(expression):
+        return "DIGAMMA"
     if name in _FUNCTION_NAMES:
         return _FUNCTION_NAMES[name]
     if isinstance(expression, AppliedUndef):
         return name
-    return name.upper()
+    if type(expression).__module__.startswith("rederive."):
+        return name.upper()
+    return name.upper() if name.upper() in BUILTIN_FUNCTIONS else None
+
+
+def function_name(expression: sp.Basic) -> str:
+    """The name a function head sorts under: its spelling, or its class name
+    upper-cased where the notation has none, as for a head written by a method of
+    its own such as `n!`."""
+    return spelling(expression) or type(expression).__name__.upper()
+
+
+def is_written(expression: sp.Basic) -> bool:
+    """Whether every function head in `expression` is one the notation has a word for.
+
+    The one test of the vocabulary, made of what the printer itself does: a head is
+    written if it has a spelling or a print method of its own in `AuthorPrinter`,
+    which is how `Piecewise` comes out as `IF` and `factorial` as `n!`. A head that is
+    neither would reach the worksheet as a quoted string, so a calculus head whose
+    answer holds one is left standing instead, as Derive leaves what it cannot do.
+    """
+    try:
+        calls = expression.atoms(sp.Function)
+    except Exception:
+        return True
+    return all(_has_word(call) for call in calls)
+
+
+def _has_word(call: sp.Basic) -> bool:
+    if spelling(call) is not None:
+        return True
+    return any(f"_print_{kind.__name__}" in vars(AuthorPrinter) for kind in _own(call))
+
+
+def _own(call: sp.Basic) -> list[type]:
+    """The classes of `call` up to the generic function head, whose print method is
+    the one that asks for a spelling."""
+    kinds = []
+    for kind in type(call).__mro__:
+        if kind in (sp.Function, AppliedUndef):
+            break
+        kinds.append(kind)
+    return kinds
+
+
+def _is_digamma(expression: sp.Basic) -> bool:
+    """Whether a call is the digamma function, which sympy holds as the polygamma
+    function of order zero and the notation names on its own."""
+    return isinstance(expression, sp.polygamma) and expression.args[0] == 0
 
 
 def _degree(exponent: sp.Basic) -> tuple:
@@ -1228,7 +1282,24 @@ class AuthorPrinter(sp.StrPrinter):
     # -- functions ----------------------------------------------------------
 
     def _print_Function(self, expr):
-        return f"{function_name(expr)}({self.stringify(expr.args, ', ')})"
+        """`NAME(u, ...)`, or the call quoted where the notation has no name for it.
+
+        Inside the quotes the head is written under its sympy name, which is the
+        legible text the quotes are there to hold.
+        """
+        name = spelling(expr)
+        if name is None:
+            if not self._unspelling:
+                return self._unspelled(expr)
+            name = type(expr).__name__
+        return f"{name}({self.stringify(expr.args, ', ')})"
+
+    def _print_polygamma(self, expr):
+        """`DIGAMMA(x)` for the order-zero polygamma function, which is how it is
+        written and read: sympy has no digamma call of its own to hold."""
+        if _is_digamma(expr):
+            return f"DIGAMMA({self._print(expr.args[1])})"
+        return self._print_Function(expr)
 
     def _print_Gcd(self, expr):
         """`GCD(n, m)`, its arguments in the reverse of a sum's order.
@@ -1280,7 +1351,7 @@ class AuthorPrinter(sp.StrPrinter):
         """`DET(u)` over a matrix sympy holds rather than works out.
 
         A head of its own rather than a `Function`, so the name it is written
-        under is this and not `function_name`'s upper-casing.
+        under is this and not `spelling`'s.
         """
         return f"DET({self._print(expr.arg)})"
 
@@ -1421,11 +1492,9 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Tuple(self, expr):
         """A tuple, as the vector the notation has for one.
 
-        Sympy heads such as `hyper`, `meijerg` and `Subs` carry tuples of
-        arguments, and `(1, m + 1)` is not something the grammar reads: a
-        parenthesised list is not an expression. A vector is, so that is what
-        it is written as, and the head reads back as an inert call over
-        vectors.
+        Sympy heads such as `Subs` carry tuples of arguments, and `(1, m + 1)`
+        is not something the grammar reads: a parenthesised list is not an
+        expression. A vector is, so that is what it is written as.
         """
         return self._vector(expr.args)
 
@@ -1540,7 +1609,8 @@ class AuthorPrinter(sp.StrPrinter):
         which is the range a limit keeps to and not a set of reals. Both look
         computed and neither is, which is worse than an answer that says
         plainly it could not be written - and a quoted string is what the
-        notation has for text it cannot read.
+        notation has for text it cannot read. A sympy function the notation has
+        no name for, `hyper` say, is written the same way.
 
         Between the quotes is the text the answer would have shown without
         them, author notation wherever a part of it has one. Nothing inside is

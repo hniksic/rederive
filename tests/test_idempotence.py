@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from rederive.engine.computing import Context, simplify
-from rederive.syntax import ParseState, parse_expression
+from rederive.syntax import FunctionDeclaration, ParseState, parse_expression
 
 _HERE = Path(__file__).parent
 _SOURCES = ("test_simplify.py", "test_manual.py")
@@ -38,11 +38,45 @@ def _simp_calls(node: ast.AST) -> list[ast.Call]:
     ]
 
 
-def _pairs_in(path: Path) -> list[tuple[str, str]]:
-    """The default-context (input, expected) pairs one test file states.
+def _declared_in(function: ast.FunctionDef) -> dict[str, tuple[str, ...]]:
+    """The states a test builds with `declaring`, by the name it binds each one to."""
+    found = {}
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and getattr(node.value.func, "id", None) == "declaring"
+            and all(_is_text(argument) for argument in node.value.args)
+        ):
+            found[node.targets[0].id] = tuple(arg.value for arg in node.value.args)
+    return found
+
+
+def _functions_read_with(
+    call: ast.Call, declared: dict[str, tuple[str, ...]]
+) -> tuple[str, ...] | None:
+    """The functions a `simp` call of one literal reads its text with, or None where
+    it is given a context, or a state that is not one `declaring` built."""
+    if len(call.args) != 1 or not _is_text(call.args[0]):
+        return None
+    if not call.keywords:
+        return ()
+    if len(call.keywords) == 1 and call.keywords[0].arg == "state":
+        value = call.keywords[0].value
+        if isinstance(value, ast.Name) and value.id in declared:
+            return declared[value.id]
+    return None
+
+
+def _pairs_in(path: Path) -> list[tuple[str, str, tuple[str, ...]]]:
+    """The default-context (input, expected, functions) cases one test file states.
 
     A list counts where a parametrized test consumes it and calls `simp` with the text
     alone; an inline assert counts where it compares `simp` of one literal with another.
+    The functions are those the input is read with declared, which an inline assert
+    names by a state `declaring` built in the same test.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     consumed: set[str] = set()
@@ -67,30 +101,37 @@ def _pairs_in(path: Path) -> list[tuple[str, str]]:
             and any(getattr(target, "id", None) in consumed for target in node.targets)
         ):
             pairs.extend(
-                (element.elts[0].value, element.elts[1].value)
+                (element.elts[0].value, element.elts[1].value, ())
                 for element in node.value.elts
                 if isinstance(element, ast.Tuple)
                 and len(element.elts) == 2
                 and all(_is_text(part) for part in element.elts)
             )
-        if isinstance(node, ast.Assert) and isinstance(node.test, ast.Compare):
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        declared = _declared_in(function)
+        for node in ast.walk(function):
+            if not (isinstance(node, ast.Assert) and isinstance(node.test, ast.Compare)):
+                continue
             left = node.test.left
-            if (
+            if not (
                 isinstance(left, ast.Call)
                 and getattr(left.func, "id", None) == "simp"
-                and len(left.args) == 1
-                and not left.keywords
-                and _is_text(left.args[0])
                 and len(node.test.ops) == 1
                 and isinstance(node.test.ops[0], ast.Eq)
                 and _is_text(node.test.comparators[0])
             ):
-                pairs.append((left.args[0].value, node.test.comparators[0].value))
+                continue
+            functions = _functions_read_with(left, declared)
+            if functions is not None:
+                expected = node.test.comparators[0].value
+                pairs.append((left.args[0].value, expected, functions))
     return pairs
 
 
-def _every_pair() -> list[tuple[str, str]]:
-    seen: dict[tuple[str, str], None] = {}
+def _every_pair() -> list[tuple[str, str, tuple[str, ...]]]:
+    seen: dict[tuple[str, str, tuple[str, ...]], None] = {}
     for name in _SOURCES:
         for pair in _pairs_in(_HERE / name):
             seen.setdefault(pair, None)
@@ -143,17 +184,20 @@ CONFLICTING_SPELLINGS = {
 }
 
 
-def simp(text: str) -> str:
-    return simplify(parse_expression(text, ParseState()).node, Context()).text
+def simp(text: str, functions: tuple[str, ...] = ()) -> str:
+    state = ParseState()
+    for name in functions:
+        state.declare(FunctionDeclaration(name))
+    return simplify(parse_expression(text, state).node, Context(), state).text
 
 
 def _marked(inputs: dict[str, str], expectations: dict[str, str] | None = None) -> list:
     expectations = expectations or {}
     cases = []
-    for text, expected in EVERY_PAIR:
+    for text, expected, functions in EVERY_PAIR:
         reason = inputs.get(text) or expectations.get(expected)
         marks = pytest.mark.xfail(reason=reason, strict=True) if reason else ()
-        cases.append(pytest.param(text, expected, marks=marks))
+        cases.append(pytest.param(text, expected, functions, marks=marks))
     return cases
 
 
@@ -162,16 +206,18 @@ def test_the_pairs_are_found():
     assert len(EVERY_PAIR) > 500
 
 
-@pytest.mark.parametrize(("text", "expected"), _marked(SETTLES_LATER), ids=str)
-def test_simplifying_an_answer_again_changes_nothing(text, expected):
-    once = simp(text)
-    assert simp(once) == once
+@pytest.mark.parametrize(
+    ("text", "expected", "functions"), _marked(SETTLES_LATER), ids=str
+)
+def test_simplifying_an_answer_again_changes_nothing(text, expected, functions):
+    once = simp(text, functions)
+    assert simp(once, functions) == once
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
+    ("text", "expected", "functions"),
     _marked(SETTLES_LATER, MANUAL_SPELLINGS | CONFLICTING_SPELLINGS),
     ids=str,
 )
-def test_an_expected_answer_simplifies_to_itself(text, expected):
-    assert simp(expected) == expected
+def test_an_expected_answer_simplifies_to_itself(text, expected, functions):
+    assert simp(expected, functions) == expected

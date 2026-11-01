@@ -371,6 +371,31 @@ def test_printing_is_a_fixed_point(expression):
     assert to_sexpr(twice.node) == to_sexpr(once.node)
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (sp.erfi(x), "ERFI(x)"),
+        (sp.Ei(x), "EI(x)"),
+        (sp.Si(x), "SI(x)"),
+        (sp.Ci(x), "CI(x)"),
+        (sp.LambertW(x), "LAMBERTW(x)"),
+        (sp.LambertW(x, -1), "LAMBERTW(x, -1)"),
+        (sp.polylog(2, x), "POLYLOG(2, x)"),
+        (sp.polygamma(1, x), "POLYGAMMA(1, x)"),
+        # Sympy holds the digamma function as the polygamma function of order zero.
+        (sp.digamma(x), "DIGAMMA(x)"),
+        (sp.polygamma(0, x), "DIGAMMA(x)"),
+        (sp.gamma(x) * sp.polygamma(0, x), "GAMMA(x)*DIGAMMA(x)"),
+    ],
+    ids=str,
+)
+def test_a_special_function_is_written_under_its_name_and_reads_back(
+    expression, expected
+):
+    assert written(expression) == expected
+    assert reread(expression) == expression
+
+
 def test_a_multi_character_name_reads_back_as_one_name():
     # In Character mode `tera` is four factors until something declares it,
     # and the state `from_sympy` builds is what declares it.
@@ -403,10 +428,33 @@ def test_a_case_split_is_written_as_the_conditional_the_notation_has():
 
 
 def test_a_head_carrying_tuples_writes_them_as_vectors():
-    # `HYPER((1, 2), (3,), x)` is not readable - a parenthesised list is no
+    # `SUBS(F(y), (y,), (x,))` is not readable - a parenthesised list is no
     # expression - and a vector is.
-    assert written(sp.hyper((1, 2), (3,), x)) == "HYPER([1, 2], [3], x)"
     assert written(sp.Subs(sp.Function("F")(y), y, x)) == "SUBS(F(y), [y], [x])"
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (sp.hyper((1, 2), (3,), x), '"hyper([1, 2], [3], x)"'),
+        (sp.besselj(1, x) + 1, '"besselj(1, x)" + 1'),
+        (sp.uppergamma(y, x), '"uppergamma(y, x)"'),
+    ],
+    ids=str,
+)
+def test_a_sympy_function_without_a_name_is_written_as_a_string(
+    expression, expected, unreadable_answers
+):
+    """A sympy function the notation has no name for is not given one.
+
+    Upper-cased, `hyper` would be `HYPER`, a name nobody defined and that sympy's
+    export list alone would have made part of the notation. It is quoted instead, as
+    a set is, and noted as an answer that could not be said. The calculus heads
+    never hand one back: an answer that holds one leaves the head standing.
+    """
+    assert written(expression) == expected
+    from_sympy(expression)
+    assert unreadable_answers == [expected]
 
 
 SETS = [
@@ -534,7 +582,6 @@ def test_an_inert_head_is_parenthesised_by_what_it_is_written_as():
     "expression",
     [
         sp.Piecewise((1 / x, sp.Ne(x, 0)), (sp.oo, True)),
-        sp.hyper((1, 2), (3,), x),
         sp.Subs(sp.Function("F")(y), y, x),
         sp.Dummy("k1") * 2,
         sp.exp(sp.zoo * z),

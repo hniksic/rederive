@@ -61,6 +61,14 @@ async def test_a_line_that_does_not_parse_appends_nothing(session):
     assert texts(session) == ["x"]
 
 
+async def test_a_special_function_typed_in_lower_case_is_a_call(session):
+    # Character mode reads a run nothing names letter by letter, which would make
+    # this `ERF(i)*1`.
+    session.author("erfi(1)")
+    assert texts(session) == ["ERFI(1)"]
+    assert (await session.approx("#1")).text == "1.65042"
+
+
 async def test_an_answer_can_be_simplified_again(session):
     session.author("2 (8 + 7) / 3^2")
     await session.simplify("#1")
@@ -178,15 +186,24 @@ async def test_a_function_definition_reaches_the_next_command(session):
 async def test_a_parameter_is_not_a_variable_the_session_gains(session):
     """A parameter belongs to the definition and not to the session.
 
-    A name in front of a parenthesis is read as a call unless it is a known
-    variable, so a parameter left behind would change how a later line reads:
-    the scale factor `A(t)` of a metric would silently become `a*t` because
-    some earlier definition happened to name a parameter `a`.
+    A name is a function or a variable and not both, so a parameter left behind
+    would change how a later line reads: the scale factor `A(t)` of a metric
+    would silently become `a*t` because some later definition happened to name a
+    parameter `a`.
     """
+    session.author("A(t) :=")
     session.author("FF(a) := a^2")
     assert session.state.variables == {}
     assert (await session.simplify("DIF(A(t), t)")).text == "A'(t)"
     assert (await session.simplify("FF(3)")).text == "9"
+
+
+async def test_an_answer_in_a_function_without_a_body_reads_back(session):
+    """The function the answer is written in is the author's, and is read as theirs."""
+    session.author("F(x) :=")
+    answer = (await session.simplify("DIF(F(x)^2, x)")).text
+    assert answer == "2*F(x)*F'(x)"
+    assert (await session.simplify(answer)).text == answer
 
 
 async def test_a_parameter_leaves_the_variable_it_shadowed_alone(session):

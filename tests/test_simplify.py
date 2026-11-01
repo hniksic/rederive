@@ -18,6 +18,7 @@ import warnings
 from fractions import Fraction
 
 import pytest
+import sympy as sp
 from sexpr import to_sexpr
 
 from rederive.engine.computing import (
@@ -38,8 +39,14 @@ from rederive.engine.context import (
     Precision,
     TrigPower,
 )
+from rederive.engine.pipeline import _in_vocabulary
 from rederive.model.expr import Kind
-from rederive.syntax import ParseState, VariableDeclaration, parse_expression
+from rederive.syntax import (
+    FunctionDeclaration,
+    ParseState,
+    VariableDeclaration,
+    parse_expression,
+)
 from rederive.syntax.names import BUILTIN_FUNCTIONS
 
 
@@ -47,9 +54,28 @@ def parse(text, state=None):
     return parse_expression(text, state or ParseState()).node
 
 
+def declaring(*names):
+    """A parse state in which each of `names` is a function, as defining it makes it.
+
+    A name nothing defines is no function - before a parenthesis it is a product, of
+    its letters in Character mode - so a case about a function, with a body or
+    without one as `F(x) :=` leaves it, reads its text with the function declared.
+    """
+    state = ParseState()
+    for name in names:
+        state.declare(FunctionDeclaration(name))
+    return state
+
+
 def simp(text, context=None, state=None):
-    """`text` simplified, as the worksheet would show it."""
-    return simplify(parse(text, state), context or Context(), state).text
+    """`text` simplified, as the worksheet would show it.
+
+    Read, unless a state is given, with the functions the context defines declared,
+    which is how the session that defined them reads a line.
+    """
+    context = context or Context()
+    state = state or declaring(*context.functions)
+    return simplify(parse(text, state), context, state).text
 
 
 def declared(*declarations, **settings):
@@ -760,9 +786,6 @@ def test_a_numeric_power_that_is_complex_is_written_in_rectangular_form(text, ex
 CALCULUS = [
     ("DIF(SIN(a*x^2), x)", "2*a*x*COS(a*x^2)"),
     ("DIF(x^2, x, 2)", "2"),
-    # `F` was never given a body, so it differentiates symbolically and the
-    # chain rule stops at the prime.
-    ("DIF(F(x)^3, x)", "3*F(x)^2*F'(x)"),
     ("INT(x*SIN(x), x)", "SIN(x) - x*COS(x)"),
     ("INT(1/x, x, 1, 2)", "LN(2)"),
     ("INT(1/x^2, x, 1, inf)", "1"),
@@ -802,6 +825,17 @@ CALCULUS = [
 @pytest.mark.parametrize(("text", "expected"), CALCULUS, ids=str)
 def test_a_calculus_head_is_evaluated(text, expected):
     assert simp(text) == expected
+
+
+def test_a_function_without_a_body_is_differentiated_symbolically():
+    # `F(x) :=` gives `F` no body, so it differentiates symbolically and the chain
+    # rule stops at the prime. An arbitrary function has an arbitrary gradient, and
+    # it is written the way any other underived derivative is.
+    state = declaring("F")
+    assert simp("DIF(F(x)^3, x)", state=state) == "3*F(x)^2*F'(x)"
+    assert simp("GRAD(F(x, y, z))", state=state) == (
+        "[DIF(F(x, y, z), x), DIF(F(x, y, z), y), DIF(F(x, y, z), z)]"
+    )
 
 
 SUMMATION_FORMULAS = [
@@ -874,7 +908,10 @@ def test_an_integral_a_rewrite_leaves_behind_is_evaluated_too():
     # Cancelling this integrand splits it in two, and the part that is an
     # integral of `x` is evaluated as well: an answer still holding
     # `INT(x, x)` would not be a simplified one.
-    assert simp("INT((x*G(x) + F(x))/G(x), x)") == "INT(F(x)/G(x), x) + x^2/2"
+    state = declaring("F", "G")
+    assert simp("INT((x*G(x) + F(x))/G(x), x)", state=state) == (
+        "INT(F(x)/G(x), x) + x^2/2"
+    )
 
 
 def test_an_integral_that_will_not_evaluate_survives_as_itself():
@@ -915,12 +952,13 @@ def test_a_derivative_a_substitution_binds_is_not_evaluated():
     argument is a prime and a function of two is the substitution spelled out;
     both hold the same thing and both come back as themselves.
     """
-    once = simplify(parse("DIF(LIM(F(y), y, 2*x - y), y)"), Context())
+    state = declaring("F", "G")
+    once = simplify(parse("DIF(LIM(F(y), y, 2*x - y), y)", state), Context(), state)
     assert once.text == "-F'(2*x - y)"
-    assert simplify(once.node, Context()).text == once.text
-    two = simplify(parse("DIF(LIM(G(y, z), y, 2*x - y), y)"), Context())
+    assert simplify(once.node, Context(), state).text == once.text
+    two = simplify(parse("DIF(LIM(G(y, z), y, 2*x - y), y)", state), Context(), state)
     assert two.text == "-SUBS(DIF(G(x_, z), x_), [x_], [2*x - y])"
-    assert simplify(two.node, Context()).text == two.text
+    assert simplify(two.node, Context(), state).text == two.text
 
 
 def test_the_derivative_of_an_undefined_function_is_written_with_primes():
@@ -932,14 +970,15 @@ def test_the_derivative_of_an_undefined_function_is_written_with_primes():
     the function rather than on the call, so the point it is taken at is
     whatever the chain rule left there.
     """
-    assert simp("DIF(BB(r), r)") == "BB'(r)"
-    assert simp("DIF(BB(r), r, 3)") == "BB'''(r)"
-    assert simp("DIF(BB(r)^2, r)") == "2*BB'(r)*BB(r)"
-    assert simp("DIF(BB(r^2), r)") == "2*r*BB'(r^2)"
+    state = declaring("BB")
+    assert simp("DIF(BB(r), r)", state=state) == "BB'(r)"
+    assert simp("DIF(BB(r), r, 3)", state=state) == "BB'''(r)"
+    assert simp("DIF(BB(r)^2, r)", state=state) == "2*BB'(r)*BB(r)"
+    assert simp("DIF(BB(r^2), r)", state=state) == "2*r*BB'(r^2)"
     # And the notation reads back what it wrote, in either direction.
-    assert simp("BB''(r)") == "BB''(r)"
-    assert simp("DIF(BB'(r), r)") == "BB''(r)"
-    assert simp("INT(BB'(r), r)") == "BB(r)"
+    assert simp("BB''(r)", state=state) == "BB''(r)"
+    assert simp("DIF(BB'(r), r)", state=state) == "BB''(r)"
+    assert simp("INT(BB'(r), r)", state=state) == "BB(r)"
 
 
 def test_a_prime_at_a_moving_point_is_differentiated_again():
@@ -953,26 +992,31 @@ def test_a_prime_at_a_moving_point_is_differentiated_again():
     answers, at every order and through whatever the point is written as; how the
     terms of a higher order are then gathered is the engine's spelling.
     """
-    assert simp("DIF(BB'(r^2), r)") == "2*r*BB''(r^2)"
-    assert simp("DIF(BB''(r^2), r)") == "2*r*BB'''(r^2)"
-    assert simp("DIF(BB'(SIN(r)), r)") == "BB''(SIN(r))*COS(r)"
-    assert simp("DIF(BB'(x*y), x)") == "y*BB''(x*y)"
-    assert simp("DIF(BB'(r^2), r, 2)") == "4*r^2*BB'''(r^2) + 2*BB''(r^2)"
-    assert simp("DIF(BB'(r^2), r, 3)") == "4*r*(2*r^2*BB''''(r^2) + 3*BB'''(r^2))"
-    assert simp("DIF(r*BB'(r^2), r)") == "2*r^2*BB''(r^2) + BB'(r^2)"
+    state = declaring("BB", "G")
+    assert simp("DIF(BB'(r^2), r)", state=state) == "2*r*BB''(r^2)"
+    assert simp("DIF(BB''(r^2), r)", state=state) == "2*r*BB'''(r^2)"
+    assert simp("DIF(BB'(SIN(r)), r)", state=state) == "BB''(SIN(r))*COS(r)"
+    assert simp("DIF(BB'(x*y), x)", state=state) == "y*BB''(x*y)"
+    assert simp("DIF(BB'(r^2), r, 2)", state=state) == "4*r^2*BB'''(r^2) + 2*BB''(r^2)"
+    assert simp("DIF(BB'(r^2), r, 3)", state=state) == (
+        "4*r*(2*r^2*BB''''(r^2) + 3*BB'''(r^2))"
+    )
+    assert simp("DIF(r*BB'(r^2), r)", state=state) == "2*r^2*BB''(r^2) + BB'(r^2)"
     # The neighbours, which say the same thing about a call rather than about a
     # prime, and a prime at a point that moves nowhere.
-    assert simp("DIF(BB(r^2), r)") == "2*r*BB'(r^2)"
-    assert simp("DIF(BB(r^2), r, 2)") == "4*r^2*BB''(r^2) + 2*BB'(r^2)"
-    assert simp("DIF(BB'(r), r)") == "BB''(r)"
-    assert simp("DIF(BB'(r)^2, r)") == "2*BB'(r)*BB''(r)"
-    assert simp("DIF(BB'(r^2), r, 0)") == "BB'(r^2)"
+    assert simp("DIF(BB(r^2), r)", state=state) == "2*r*BB'(r^2)"
+    assert simp("DIF(BB(r^2), r, 2)", state=state) == "4*r^2*BB''(r^2) + 2*BB'(r^2)"
+    assert simp("DIF(BB'(r), r)", state=state) == "BB''(r)"
+    assert simp("DIF(BB'(r)^2, r)", state=state) == "2*BB'(r)*BB''(r)"
+    assert simp("DIF(BB'(r^2), r, 0)", state=state) == "BB'(r^2)"
     # A slope taken at a number is a number, and a number does not depend on r.
-    assert simp("DIF(BB'(2), r)") == "0"
+    assert simp("DIF(BB'(2), r)", state=state) == "0"
     # A function of two arguments has no prime to print, so the answer is the
     # `DIF` or the substitution the original writes the same thing as.
-    assert simp("DIF(G'(x, y), x)") == "DIF(G(x, y), x, 2)"
-    assert simp("DIF(G'(x^2, y), x)") == "2*x*SUBS(DIF(G(x_, y), x_, 2), [x_], [x^2])"
+    assert simp("DIF(G'(x, y), x)", state=state) == "DIF(G(x, y), x, 2)"
+    assert simp("DIF(G'(x^2, y), x)", state=state) == (
+        "2*x*SUBS(DIF(G(x_, y), x_, 2), [x_], [x^2])"
+    )
 
 
 def test_a_substitution_binding_no_derivative_is_carried_out():
@@ -984,14 +1028,17 @@ def test_a_substitution_binding_no_derivative_is_carried_out():
     it is a substitution nobody has made yet, and making it is the whole of
     what it says.
     """
-    assert simp("SUBS(x^2, [x], [3])") == "9"
-    assert simp("SUBS(x^2 + y, [x, y], [3, 4])") == "13"
-    assert simp("SUBS(BB(u), [u], [r^2])") == "BB(r^2)"
-    assert simp("DIF(SUBS(BB(u), [u], [r^2]), r)") == "2*r*BB'(r^2)"
+    state = declaring("BB")
+    assert simp("SUBS(x^2, [x], [3])", state=state) == "9"
+    assert simp("SUBS(x^2 + y, [x, y], [3, 4])", state=state) == "13"
+    assert simp("SUBS(BB(u), [u], [r^2])", state=state) == "BB(r^2)"
+    assert simp("DIF(SUBS(BB(u), [u], [r^2]), r)", state=state) == "2*r*BB'(r^2)"
     # And the one that does hold a derivative keeps it, at the point it was
     # taken at, whether or not something outside differentiates it again.
-    assert simp("SUBS(DIF(BB(u), u), [u], [r^2])") == "BB'(r^2)"
-    assert simp("DIF(SUBS(DIF(BB(u), u), [u], [r^2]), r)") == "2*r*BB''(r^2)"
+    assert simp("SUBS(DIF(BB(u), u), [u], [r^2])", state=state) == "BB'(r^2)"
+    assert simp("DIF(SUBS(DIF(BB(u), u), [u], [r^2]), r)", state=state) == (
+        "2*r*BB''(r^2)"
+    )
 
 
 def test_a_function_of_several_arguments_keeps_the_derivative_it_is_written_as():
@@ -1003,9 +1050,10 @@ def test_a_function_of_several_arguments_keeps_the_derivative_it_is_written_as()
     the original reads it - as the slope in the first argument, which is a
     substitution wherever the first argument is not a variable of its own.
     """
-    assert simp("DIF(G(x, y), x)") == "DIF(G(x, y), x)"
-    assert simp("G'(x, y)") == "DIF(G(x, y), x)"
-    assert simp("G'(x, x)") == "SUBS(DIF(G(x_, x), x_), [x_], [x])"
+    state = declaring("G")
+    assert simp("DIF(G(x, y), x)", state=state) == "DIF(G(x, y), x)"
+    assert simp("G'(x, y)", state=state) == "DIF(G(x, y), x)"
+    assert simp("G'(x, x)", state=state) == "SUBS(DIF(G(x_, x), x_), [x_], [x])"
 
 
 def test_a_prime_differentiates_a_function_that_has_a_body():
@@ -1201,13 +1249,13 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
     the two lines below are here to say.
 
     Only a proven no counts, which is what keeps the answers that cannot be
-    checked either way: nothing differentiates a hypergeometric series back to
-    `1/SQRT(1 - x^4)`, and refusing what cannot be checked would throw away the
-    only answer there is.
+    checked either way. Sympy's answer for `1/SQRT(1 - x^4)` is a hypergeometric
+    series, a function the notation has no name for, so that integral stands as
+    Derive leaves it.
     """
     assert simp("DIF(ATAN(x/SQRT(a))/SQRT(a), x)") == "1/(x^2 + a)"
     assert simp("DIF(x - SQRT(a)*ATAN(x/SQRT(a)), x)") == "1 - a/(x^2 + a)"
-    assert simp("INT(1/SQRT(1 - x^4), x)").startswith("x*HYPER(")
+    assert simp("INT(1/SQRT(1 - x^4), x)") == "INT(1/SQRT(1 - x^4), x)"
 
 
 INFINITE_PRODUCTS = [
@@ -1313,25 +1361,173 @@ def test_a_single_root_of_a_polynomial_approximates_to_that_root():
 def test_an_integral_answered_by_a_special_function_reads_back_as_that_function():
     """An answer is only as good as the name it is written under.
 
-    Each of these was written under a name something else answers to. `LI` is
-    sympy's offset logarithmic integral, `li(x) - li(2)`, as readily as its
-    plain one; `CHI` is Derive's chi-square distribution long before it is
-    anybody's cosh-integral. So each answer read back was a different function
-    from the one computed, with nothing to say so - which is what simplifying
-    the answer again is here to catch.
+    A name something else answers to reads back as a different function from the
+    one computed, with nothing to say so - which is what simplifying the answer
+    again is here to catch. `CHI` is Derive's chi-square distribution long before
+    it is anybody's cosh-integral, and the logarithmic integral sympy answers
+    `1/LN(x)` with has no name of its own: it is the exponential integral of the
+    logarithm, and is written as that.
     """
     for text, answer in (
-        ("INT(1/LN(x), x)", "LI(x)"),
+        ("INT(1/LN(x), x)", "EI(LN(x))"),
         ("INT(COSH(x)/x, x)", "COSH_INT(x)"),
         ("INT(SINH(x)/x, x)", "SINH_INT(x)"),
     ):
         assert simp(text) == answer
         assert simp(answer) == answer
-    # The offset integral is exactly zero at 2, which is what kept the wrong
-    # reading out of sight. The logarithmic integral there is 1.0451637801,
-    # and it waits for digits nothing can give it while sympy leaves the
-    # finiteness of `li(2)` open.
-    assert simp("APPROX(LI(2))") != "0"
+    assert simp("DIF(EI(LN(x)), x)") == "1/LN(x)"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("INT(EXP(x^2), x)", "SQRT(pi)*ERFI(x)/2"),
+        ("DIF(erfi(x), x)", "2*#e^(x^2)/SQRT(pi)"),
+        # `GAMMA(x)` is written as the factorial it is, `(x - 1)!`.
+        ("DIF(GAMMA(x), x)", "(x - 1)!*DIGAMMA(x)"),
+        ("DIF(LAMBERTW(x), x)", "LAMBERTW(x)/(x*(LAMBERTW(x) + 1))"),
+        ("INT(SIN(x)/x, x)", "SI(x)"),
+        ("INT(EXP(x)/x, x)", "EI(x)"),
+    ],
+    ids=str,
+)
+def test_a_special_function_an_elementary_operation_produces_reads_back(text, expected):
+    """The special functions rederive names beyond Derive's own are the ones its own
+    operations reach from elementary input, and each answer is a fixed point."""
+    assert simp(text) == expected
+    assert simp(expected) == expected
+
+
+def test_a_special_function_typed_in_lower_case_approximates():
+    assert approx(parse("erfi(1)"), Context(), 6).text == "1.65042"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("INT(COSH(x^2), x)", "SQRT(pi)*(ERF(x) + ERFI(x))/4"),
+        ("INT(SINH(x^2), x)", "-SQRT(pi)*(ERF(x) - ERFI(x))/4"),
+        (
+            "INT(SIN(x^2), x)",
+            "SQRT(2)*SQRT(pi)*(1 + #i)*(ERF(SQRT(2)*(1 + #i)*x/2)"
+            " - #i*ERF(SQRT(2)*(1 - #i)*x/2))/8",
+        ),
+        (
+            "INT(SIN(pi*t^2/2), t, 0, z)",
+            "(1 + #i)*(ERF(SQRT(pi)*(1 + #i)*z/2) - #i*ERF(SQRT(pi)*(1 - #i)*z/2))/4",
+        ),
+    ],
+    ids=str,
+)
+def test_a_sympy_head_without_a_name_is_written_in_functions_that_have_one(
+    text, expected
+):
+    """Sympy's Fresnel integrals are error functions of complex arguments, so an
+    answer in them is written in those."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("PRODUCT(k + a, k, 1, n)", "(a + n)!/a!"),
+        ("PRODUCT(k/(k + a), k, 1, n)", "a!*n!/(a + n)!"),
+    ],
+    ids=str,
+)
+def test_a_rising_factorial_is_a_ratio_of_factorials(text, expected):
+    """Sympy answers these products with the rising factorial of `a + 1`, which is
+    the ratio of gammas but at the poles of the gamma function, where the ratio's
+    limit is its value. Derive 4.11 answers both as below with `a` undeclared."""
+    assert simp(text) == expected
+    assert simp(text, declared("a :epsilon Real [0, inf)")) == expected
+
+
+def test_an_answer_written_over_the_error_functions_differentiates_back():
+    """The Fresnel integral written over `ERF` is the same antiderivative.
+
+    Simplify does not take the derivative's complex exponentials back to a sine, so
+    the derivative is compared with the integrand at a point.
+    """
+    derivative = to_sympy(parse(simp(f"DIF({simp('INT(SIN(x^2), x)')}, x)")))
+    x = next(iter(derivative.free_symbols))
+    assert abs(complex(derivative.subs(x, 0.7).evalf()) - math.sin(0.49)) < 1e-12
+
+
+# Positive, which is where the exponential integral of order one is `-EI(-x)`.
+X, Y = sp.symbols("x y", positive=True)
+# Of unknown sign.
+Z = sp.Symbol("z")
+
+
+@pytest.mark.parametrize(
+    ("head", "written"),
+    [
+        (sp.li(X), sp.Ei(sp.log(X))),
+        (sp.Li(X), sp.Ei(sp.log(X)) - sp.Ei(sp.log(2))),
+        (sp.expint(1, X), -sp.Ei(-X)),
+        (sp.expint(2, X), X * sp.Ei(-X) + sp.exp(-X)),
+        (sp.ceiling(X), -sp.floor(-X)),
+        (sp.beta(X, Y), sp.gamma(X) * sp.gamma(Y) / sp.gamma(X + Y)),
+        (sp.RisingFactorial(X, Y), sp.gamma(X + Y) / sp.gamma(X)),
+        (sp.loggamma(X), sp.log(sp.gamma(X))),
+        (sp.sinc(X), sp.sin(X) / X),
+        (sp.exp_polar(sp.I * sp.pi) * X + sp.polar_lift(Y), Y - X),
+    ],
+    ids=str,
+)
+def test_a_sympy_head_without_a_name_is_spelled_by_its_definition(head, written):
+    """Each spelling is the function it replaces, checked at a point as well as
+    by its form."""
+    assert _in_vocabulary(head) == written
+    point = {X: sp.Rational(7, 3), Y: sp.Rational(5, 4)}
+    assert abs(sp.N(head.subs(point) - written.subs(point))) < 1e-12
+
+
+@pytest.mark.parametrize(
+    ("head", "spelled"),
+    [
+        (sp.expint(1, Z), -sp.Ei(-Z)),
+        (sp.loggamma(Z), sp.log(sp.gamma(Z))),
+    ],
+    ids=str,
+)
+def test_a_spelling_that_holds_only_for_a_positive_argument_waits_for_one(head, spelled):
+    """`expint(1, z)` is `-EI(-z)` and `loggamma(z)` is `LN(GAMMA(z))` only for a
+    positive `z`: at `-1/2` the first is off by `pi*#i` and the second by `2*pi*#i`.
+    Where the sign of `z` is not known the head stays as it is."""
+    assert _in_vocabulary(head) == head
+    point = {Z: -sp.Rational(1, 2)}
+    assert abs(sp.N(head.subs(point) - spelled.subs(point))) > 1
+
+
+def test_a_polar_number_inside_a_branch_cut_keeps_its_sheet():
+    # `Ei(x*exp_polar(I*pi))` is `EI(-x) + pi*#i`; writing it as `EI(-x)` would drop
+    # the `pi*#i`, so the mark stays and the answer holding it is one that stands.
+    head = sp.Ei(X * sp.exp_polar(sp.I * sp.pi))
+    assert _in_vocabulary(head) == head
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A hypergeometric function to sympy.
+        "INT(1/SQRT(1 - x^4), x)",
+        # Incomplete gamma functions.
+        "INT(x^a*#e^(-x), x)",
+        "INT(x^n*#e^(-x), x, 0, inf)",
+        # The harmonic number.
+        "SUM(1/k, k, 1, n)",
+        # `-EI(EXP_POLAR(#i*pi))`, a polar number inside a function with a branch
+        # cut, which is `-EI(-1) - pi*#i` and so no value of this integral at all.
+        "INT(#e^(-x)/x, x, 1, inf)",
+    ],
+    ids=str,
+)
+def test_an_operation_sympy_answers_only_in_a_function_without_a_name_stands(text):
+    """What sympy can say only in a function the notation has no name for is not
+    worked out, as Derive leaves what it cannot do: the head stands, as written."""
+    assert simp(text) == text
 
 
 def test_an_integral_is_taken_straight_through_an_interior_singularity():
@@ -1877,12 +2073,6 @@ VECTOR_CALCULUS = [
     # the expression mentions.
     ("GRAD(x*y^2*z^3)", "[y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2]"),
     ("GRAD(x^2 + y^2)", "[2*x, 2*y, 0]"),
-    # An arbitrary function has an arbitrary gradient, and it is written the way
-    # any other underived derivative is.
-    (
-        "GRAD(F(x, y, z))",
-        "[DIF(F(x, y, z), x), DIF(F(x, y, z), y), DIF(F(x, y, z), z)]",
-    ),
     # A vector of variables names Cartesian coordinates of the caller's
     # choosing, and there may be any number of them.
     ("GRAD(c*w + x^2 + y^3 + z^4, [w, x, y, z])", "[c, 2*x, 3*y^2, 4*z^3]"),
@@ -2709,18 +2899,19 @@ def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
     assert simp(text) == expected
 
 
-#: Commands the engine has no mathematics for yet. Each must come back exactly
-#: as it went in, so that a worksheet holding one is not damaged by simplifying
-#: it.
+#: Commands the engine has no mathematics for: calls to functions declared without
+#: a body, the functions below. Each must come back exactly as it went in, so that a
+#: worksheet holding one is not damaged by simplifying it.
 OPAQUE = [
     "MY_FUNCTION(x, 2)",
     "ANOTHER(1)",
 ]
+OPAQUE_FUNCTIONS = ("MY_FUNCTION", "ANOTHER")
 
 
 @pytest.mark.parametrize("text", OPAQUE, ids=str)
 def test_what_the_engine_has_no_mathematics_for_passes_through(text):
-    assert simp(text) == text
+    assert simp(text, state=declaring(*OPAQUE_FUNCTIONS)) == text
 
 
 #: Calls to a function the engine does know, written so that they name nothing
@@ -2829,7 +3020,7 @@ def test_a_digit_count_is_the_digits_of_it_that_are_whole():
     ("text", "expected"),
     [
         # Special functions sympy does not prove finite, which are finite.
-        ("APPROX(LI(2), 15)", "1.04516"),
+        ("APPROX(EI(LN(2)), 15)", "1.04516"),
         ("APPROX(SI(2), 15)", "1.60541"),
         ("APPROX(EI(2), 15)", "4.95423"),
         ("APPROX(COSH_INT(2), 15)", "2.45266"),
@@ -2846,7 +3037,7 @@ def test_a_digit_count_is_the_digits_of_it_that_are_whole():
 def test_a_value_sympy_leaves_open_is_approximated_rather_than_refused(text, expected):
     """Finiteness is asked loosely, the way rationality is.
 
-    Sympy answers `is_finite` with `None` for `SI`, `EI`, `LI` and for any
+    Sympy answers `is_finite` with `None` for `SI` and `EI` and for any
     integral or sum it has not worked out, and demanding a proof of finiteness
     left all of them written as themselves. Only what is known to be infinite
     has no digits.
@@ -2861,8 +3052,8 @@ def test_an_approximation_holds_the_digits_it_was_asked_for():
     # The value behind the six shown above: asking for more digits gives a
     # nearer rational, which is what makes the approximation the one requested
     # rather than the one the notation happens to print.
-    assert simp("APPROX(LI(2), 6)") == "2615/2502"
-    assert simp("APPROX(LI(2), 15)") == "80302381/76832342"
+    assert simp("APPROX(EI(LN(2)), 6)") == "2615/2502"
+    assert simp("APPROX(EI(LN(2)), 15)") == "80302381/76832342"
 
 
 def test_approx_waits_for_the_value_it_is_asked_to_approximate():
@@ -2951,7 +3142,7 @@ def test_a_calculus_head_waits_for_the_body_of_the_call_under_it():
     mentions no `x`, and differentiating it as it stands would answer zero for
     something that is a derivative of `x^2` throughout.
     """
-    body = parse("IF(n = 0, x^2, DIF(F(n - 1), x))")
+    body = parse("IF(n = 0, x^2, DIF(F(n - 1), x))", declaring("F"))
     context = Context(functions={"F": (("n",), body)})
     assert simp("F(0)", context) == "x^2"
     assert simp("F(1)", context) == "2*x"
@@ -2967,8 +3158,11 @@ def test_a_counted_sum_is_written_out_for_the_recursion_under_it():
     unknown, a level per pass, and never arrives. Written out first, each term
     recurses over one row and every one of them ends.
     """
-    nonzero = parse("IF(i > DIMENSION(v), 0, IF(v SUB i = 0, NONZERO(v, i + 1), 1, 1))")
-    rows = parse("SUM(NONZERO(m SUB k, 1), k, 1, DIMENSION(m))")
+    state = declaring("NONZERO")
+    nonzero = parse(
+        "IF(i > DIMENSION(v), 0, IF(v SUB i = 0, NONZERO(v, i + 1), 1, 1))", state
+    )
+    rows = parse("SUM(NONZERO(m SUB k, 1), k, 1, DIMENSION(m))", state)
     context = Context(
         functions={"NONZERO": (("v", "i"), nonzero), "ROWS": (("m",), rows)}
     )
@@ -3337,7 +3531,8 @@ def test_printing_a_result_is_a_fixed_point(text, context):
     refers to.
     """
     context = context or Context()
-    once = simplify(parse(text), context)
+    state = declaring(*OPAQUE_FUNCTIONS)
+    once = simplify(parse(text, state), context, state)
     twice = from_sympy(to_sympy(once.node, context), context)
     assert twice.text == once.text
     assert to_sexpr(twice.node) == to_sexpr(once.node)
@@ -3359,8 +3554,9 @@ def test_simplifying_a_result_again_changes_nothing(text, context):
     A second pass that found more to do would mean the first stopped early.
     """
     context = context or Context()
-    once = simplify(parse(text), context)
-    assert simplify(once.node, context).text == once.text
+    state = declaring(*OPAQUE_FUNCTIONS)
+    once = simplify(parse(text, state), context, state)
+    assert simplify(once.node, context, state).text == once.text
 
 
 def test_a_heading_heads_its_column_only_while_it_is_a_heading():

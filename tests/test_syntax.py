@@ -128,6 +128,67 @@ def test_word_mode_takes_a_run_whole_over_a_name_declared_inside_it():
     assert sexpr("xk", state) == "xk"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("erfi(1)", "(call ERFI 1)"),
+        ("ei(x)", "(call EI x)"),
+        ("si(x)", "(call SI x)"),
+        ("ci(x)", "(call CI x)"),
+        ("digamma(x)", "(call DIGAMMA x)"),
+        ("polygamma(1, x)", "(call POLYGAMMA 1 x)"),
+        ("polylog(2, x)", "(call POLYLOG 2 x)"),
+        ("lambertw(1)", "(call LAMBERTW 1)"),
+        ("sinh_int(x)", "(call SINH_INT x)"),
+    ],
+    ids=str,
+)
+def test_a_special_function_of_rederives_own_is_typed_in_any_case(text, expected):
+    # Character mode, where a run of letters nothing names is a product of them:
+    # `erfi(1)` would be `ERF(i)*1` and `si(x)` would be `s*i*x`.
+    assert sexpr(text) == expected
+
+
+def test_a_special_function_of_rederives_own_is_found_inside_a_word():
+    # Longest match takes these names in front of the letters after them, as it
+    # takes `ERF` in `erfx`.
+    assert sexpr("erfix") == "(apply ERFI x)"
+    assert sexpr("cit") == "(apply CI t)"
+    assert sexpr("xerfi(1)") == "(juxt x (call ERFI 1))"
+    assert sexpr("velocity") == "(juxt v e l o (apply CI t) y)"
+
+
+def test_a_word_reads_around_every_known_function_name_as_derive_reads_it():
+    # Derive's rule for every function it knows, its own or one the author defines:
+    # with `CI(x) :=` and `EI(x) :=` defined there, Derive 4.11 reads each of these
+    # as below, and these names are built in here.
+    assert sexpr("height") == "(juxt h (apply EI g) h t)"
+    assert sexpr("xci(t)") == "(juxt x (call CI t))"
+    assert sexpr("velocity") == "(juxt v e l o (apply CI t) y)"
+
+
+@pytest.mark.parametrize(
+    ("text", "mode", "expected"),
+    [
+        ("FOO(x)", InputMode.CHARACTER, "(juxt f o o x)"),
+        ("foo(x)", InputMode.CHARACTER, "(juxt f o o x)"),
+        ("FOO(x)", InputMode.WORD, "(juxt foo x)"),
+        ("foo(x)", InputMode.WORD, "(juxt foo x)"),
+    ],
+    ids=str,
+)
+def test_case_does_not_make_an_unknown_name_a_function(text, mode, expected):
+    # Upper case is how a function name is printed and not what makes a name one: in
+    # Derive 4.11 `FOO(x)` reads as `f*o*o*x` in Character mode, as `foo(x)` does,
+    # until `FOO` is defined.
+    assert sexpr(text, ParseState(input_mode=mode)) == expected
+
+
+def test_an_unknown_name_with_several_arguments_is_no_call():
+    with pytest.raises(DeriveSyntaxError):
+        sexpr("FOO(x, y)")
+
+
 def test_a_setting_the_caller_ignores_changes_nothing():
     source = Source.from_file("InputMode:=Word\nxyz\n")
     state = ParseState()
@@ -236,8 +297,9 @@ def test_lookup_answers_in_canonical_spelling():
 def test_a_declared_function_outranks_a_setting_keyword():
     # Derive's own utility files define `EXACT(...)`, so the keyword value
     # `Exact` cannot keep the name to itself.
+    # Until then the keyword is what the name is, and a keyword is no function.
     state = ParseState()
-    assert sexpr("EXACT(a,b)", state) == "(call EXACT a b)"
+    assert sexpr("EXACT(a)", state) == "(juxt Exact a)"
     parse("EXACT(p,q):=p+q", state)
     assert sexpr("EXACT(a,b)", state) == "(call EXACT a b)"
 
@@ -321,9 +383,11 @@ def test_authored_expressions_stay_inert():
 
 
 def primed(text):
-    """`text` parsed with `BB` declared as a function of one argument."""
+    """`text` parsed with `BB` declared as a function of one argument and `CC` as one
+    of two."""
     state = ParseState(input_mode=InputMode.WORD)
     state.declare(FunctionDeclaration("BB", ("u",), has_body=False))
+    state.declare(FunctionDeclaration("CC", ("u", "v"), has_body=False))
     return sexpr(text, state)
 
 
@@ -340,14 +404,16 @@ def test_a_prime_binds_no_tighter_than_the_call_it_is_part_of():
     assert primed("BB'(r)^2") == "(^ (call BB' r) 2)"
 
 
-@pytest.mark.parametrize("text", ["BB'", "BB' + 1", "BB '(r)", "b'(r)", "'(2 + 3)"])
+@pytest.mark.parametrize(
+    "text", ["BB'", "BB' + 1", "BB '(r)", "b'(r)", "DD'(r)", "'(2 + 3)"]
+)
 def test_an_apostrophe_that_derives_nothing_is_the_error_it_always_was(text):
     """Three things make a prime, and anything else is no notation at all.
 
     The marks have to touch the name, there has to be an argument list after
     them, since a derivative is a function and not a value, and what carries
     them has to be a name that could be applied at all. `b` is a letter here
-    and a letter is no function.
+    and a letter is no function, and `DD` is a name nothing defines.
     """
     with pytest.raises(DeriveSyntaxError):
         primed(text)

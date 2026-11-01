@@ -26,7 +26,7 @@ from sympy.core.function import AppliedUndef
 
 from rederive.engine.boundary import Result
 from rederive.engine.context import Context, Notation
-from rederive.engine.printer import author_text, named
+from rederive.engine.printer import author_text, is_written, named
 from rederive.engine.to_sympy import FunDef, StringLiteral
 from rederive.model.expr import Kind, Node
 from rederive.syntax import (
@@ -100,6 +100,9 @@ def from_sympy(
         # notation keeps unreadable text in. It reparses, and it is as dead as
         # one that did not, so it is worth the same notice. A string the author
         # wrote is a string and not a failure.
+        _unreadable(text)
+    elif not is_written(expression):
+        # The same, for a function head quoted inside a larger answer.
         _unreadable(text)
     return Result(node, text, _exact(expression, context, state, text, authored))
 

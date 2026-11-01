@@ -1841,11 +1841,8 @@ class Session:
         """Forget every function a line has defined.
 
         The name goes from the symbol table as well as the body, so a later
-        `F(3)` is a call on a function nothing has defined - stuck, rather than
-        nine. The original goes one step further and reads it as `f*3`, its
-        Character-mode lexer making a product of a name it has never heard of;
-        Rederive reads an undefined call as a call whether or not anything was
-        ever cleared, and this command does not change that.
+        `F(3)` reads as the original reads it, as `f*3`: a name nothing defines
+        is no function, and in Character mode a product of its letters.
         """
         self.functions.clear()
         self.state.clear(ClearWhat.FUNCTIONS)

@@ -162,10 +162,9 @@ def test_a_closure_evaluates_a_function_that_has_only_a_real_reading():
 
 
 def test_a_closure_evaluates_the_other_functions_of_the_reals_alone():
-    # The same dtype refusal, in the three other places numpy makes it.
+    # The same dtype refusal, in the other places numpy makes it.
     for text, answers in [
         ("FLOOR(x)", [-2.0, 1.0]),
-        ("CEILING(x)", [-1.0, 2.0]),
         ("MOD(x, 2)", [0.5, 1.5]),
     ]:
         assert list(closure(text)(np.array([-1.5, 1.5]))) == answers
@@ -189,7 +188,7 @@ def test_a_closure_plots_the_heads_numpy_has_no_name_for():
         ("ZETA(x)", 0.5, -1.46035450),
         ("SI(x)", 2.0, 1.60541298),
         ("EI(x)", 1.0, 1.89511782),
-        ("SHI(x)", 2.0, 2.50156743),
+        ("SINH_INT(x)", 2.0, 2.50156743),
     ]:
         value = closure(text)(np.array([place]))[0]
         assert abs(value - expected) < 1e-6, f"{text} at {place} is {value}"

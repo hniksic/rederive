@@ -12,7 +12,7 @@ from __future__ import annotations
 import expr_cases
 import pytest
 from sexpr import to_sexpr
-from test_expr_library import GROUPS
+from test_expr_library import GROUPS, starting_state
 
 from rederive.model.expr import Kind, Node
 from rederive.syntax import (
@@ -194,7 +194,7 @@ def test_a_conformance_case_survives_being_written(case: expr_cases.Case) -> Non
 @pytest.mark.parametrize("group", GROUPS, ids=list(GROUPS))
 def test_a_shipped_file_survives_being_written(group: str) -> None:
     """Every expression of the utility files the original shipped."""
-    state = ParseState()
+    state = starting_state(group)
     for text in GROUPS[group]:
         result = parse_expression(text, state)
         for declaration in result.declarations:

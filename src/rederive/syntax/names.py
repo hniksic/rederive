@@ -6,7 +6,8 @@ Pure data, no logic. These sets are what make the name-resolution procedure of
 
 from __future__ import annotations
 
-BUILTIN_FUNCTIONS: frozenset[str] = frozenset(
+# The functions Derive itself defines.
+DERIVE_FUNCTIONS: frozenset[str] = frozenset(
     """
     ABS ACOS ACOSH ACOT ACOTH ACSC ACSCH APPEND APPROX ASEC ASECH ASIN ASINH
     ATAN ATANH AVERAGE CHARPOLY CHI COMB CONJ COS COSH COT COTH CROSS CSC CSCH
@@ -19,6 +20,31 @@ BUILTIN_FUNCTIONS: frozenset[str] = frozenset(
     SINH SOLVE SQRT STDEV STEP SUM TAN TANH TAYLOR TERMS TRACE TRUTH_TABLE VAR
     VARIABLES VECTOR VECTOR_POTENTIAL ZETA
     """.split()
+)
+
+# The special functions rederive adds to Derive's own. Each arises from rederive's own
+# operations on elementary input - `INT(EXP(x^2), x)` is `SQRT(pi)*ERFI(x)/2`,
+# `DIF(GAMMA(x), x)` is `GAMMA(x)*DIGAMMA(x)`, `INT(SIN(x)/x, x)` is `SI(x)` - and each
+# is standard across computer algebra systems, so an answer that holds one is written in
+# a name the author can type back, in either case. The lexer reads them exactly as it
+# reads Derive's own, inside a longer run of letters as well: Derive finds every function
+# it knows that way, its own or one the author defines, so with `CI` known `velocity` is
+# `v*e*l*o*CI(t)*y`.
+EXTENDED_FUNCTIONS: frozenset[str] = frozenset(
+    """
+    CI COSH_INT DIGAMMA EI ERFI LAMBERTW POLYGAMMA POLYLOG SI SINH_INT
+    """.split()
+)
+
+# The notation rederive adds for what a derivative leaves behind: `SUBS(u, [x], [a])` is
+# `u` with `x` set to `a` after `u` is worked out, which is how a derivative of a function
+# of several arguments, without a body, is written at a point other than its variable:
+# `DIF(G(x^2, y), x)` is `2*x*SUBS(DIF(G(x_, y), x_), [x_], [x^2])`. An answer can hold
+# one, so it is a name the author can type back, in either case, like the others.
+NOTATION_FUNCTIONS: frozenset[str] = frozenset("SUBS".split())
+
+BUILTIN_FUNCTIONS: frozenset[str] = (
+    DERIVE_FUNCTIONS | EXTENDED_FUNCTIONS | NOTATION_FUNCTIONS
 )
 
 # The functions whose second argument names a variable of their own: the index

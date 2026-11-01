@@ -29,15 +29,22 @@ binding their second argument over the first.
 ## Added built-ins
 
 Sympy answers in its own vocabulary, and some of what it returns has no name in the
-original, like `AccumBounds`. Each such class has a built-in written for it, so the answer
-has a spelling that can be read and typed back. The complete list:
+original, like `AccumBounds`. Each such class has a built-in written for it, so the
+answer has a spelling that can be read and typed back. The complete list:
 
 | name | sympy class | reached by |
 |---|---|---|
 | `ROOT_SUM(p, t, u)` | `RootSum` | rational integrand whose denominator does not factor |
 | `ROOT_OF(p, t, n)` | `CRootOf` | authored only |
 | `INTERVAL(a, b)` | `AccumBounds` | bounded limit that does not converge |
-| `COSH_INT`, `SINH_INT` | `Chi`, `Shi` | `INT(COSH(x)/x, x)` |
+| `EI` | `Ei` | `INT(EXP(x)/x, x)` |
+| `SI`, `CI` | `Si`, `Ci` | `INT(SIN(x)/x, x)`, `INT(COS(x)/x, x)` |
+| `SINH_INT`, `COSH_INT` | `Shi`, `Chi` | `INT(SINH(x)/x, x)`, `INT(COSH(x)/x, x)` |
+| `ERFI` | `erfi` | `INT(EXP(x^2), x)` |
+| `DIGAMMA` | `polygamma(0, x)` | `DIF(GAMMA(x), x)` |
+| `POLYGAMMA(n, x)` | `polygamma` | `DIF(DIGAMMA(x), x)` |
+| `POLYLOG(s, x)` | `polylog` | `SUM(x^k/k^2, k, 1, inf)` |
+| `LAMBERTW` | `LambertW` | authored only; differentiated and approximated |
 
 `ROOT_SUM` binds `t` across *all* its arguments, unlike the other bound heads, since `p`
 and `u` share the variable.
@@ -45,14 +52,15 @@ and `u` share the variable.
 Interval arithmetic propagates through `INTERVAL`: `INTERVAL(-1, 1) + 1` is
 `INTERVAL(0, 2)`.
 
-Beyond these, 118 sympy function classes are readable and printable under their
-upper-cased name, so anything an answer produces has a spelling: `SI` `CI` `EI` `LI`
-`FRESNELS` `FRESNELC` `POLYLOG` `LAMBERTW` `ELLIPTIC_K/F/E` `BESSELJ` `BESSELY` `AIRYAI`
-`UPPERGAMMA` `LOWERGAMMA` `LERCHPHI` `POLYGAMMA` `DIRACDELTA` `FACTORIAL2` `EXP_POLAR`,
-`HYPER`, `MEIJERG`. `LI` is the logarithmic integral `li`, not sympy's offset `Li`.
+The list is closed: an answer is written in these names and Derive's own, or not at all.
+An operation whose answer would need any other function (Bessel, elliptic,
+hypergeometric, ...) is left standing, as Derive leaves what it cannot do:
+`INT(1/SQRT(1 - x^4), x)` stays as written. An answer sympy gives in a function that is
+only another spelling of one of these is written in that one, so `INT(1/LN(x), x)` is
+`EI(LN(x))`, not `li(x)`.
 
-Derive shipped `SI` `CI` `EI` `LI` `ELLIPTIC_*` `BESSEL_*` as `.MTH` definitions; the
-difference is that the engine now *produces* them.
+Derive shipped `SI` `CI` `EI` as `.MTH` definitions; the difference is that the engine
+*produces* them.
 
 ## Where Rederive goes further
 
@@ -60,8 +68,7 @@ difference is that the engine now *produces* them.
 
 ```
 INT(SIN(x)/x, x)          SI(x)                          Derive: No elementary integral
-INT(1/LN(x), x)           LI(x)                          Derive: No elementary integral
-INT(SIN(x^2), x)          √2·√π·FRESNELS(√2·x/√π)/2      Derive: No elementary integral
+INT(1/LN(x), x)           EI(LN(x))                      Derive: No elementary integral
 INT(1/(x^5 - x - 1), x)   ROOT_SUM(2869·t^5 + …)         Derive: unevaluated
 ```
 

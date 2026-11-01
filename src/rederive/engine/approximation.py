@@ -238,7 +238,7 @@ def _needs_digits(expression: sp.Basic) -> bool:
 
     Finiteness is asked the same way round and for the same reason. Only what
     is known to be infinite is refused: `LN(0)` has no digits and never will,
-    while `SI(2)`, `EI(2)` and `LI(2)` are finite numbers sympy simply does not
+    while `SI(2)`, `EI(2)` and `ERFI(2)` are finite numbers sympy simply does not
     prove finite, and demanding the proof left every one of them written as
     itself. An unevaluated integral or sum is the same case, and approximating
     one numerically is what the original does with what it cannot do exactly.

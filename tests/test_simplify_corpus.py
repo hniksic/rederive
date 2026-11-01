@@ -62,17 +62,10 @@ from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
 CORPUS = Path(__file__).parent / "corpus"
 
 #: The expressions whose written form settles only on a second Simplify, each
-#: by the name it is defined under. Every one is a correct answer written in an
-#: order it does not keep, and every one is expected here exactly: one that
+#: by the name it is defined under. Every one is expected here exactly: one that
 #: starts settling fails this test as loudly as one that stops, since a record
-#: nobody prunes is a record nobody trusts.
-#:
-#: * `BESSEL_Y_SERIES` writes `2/pi*(u - v/2)` with the two outside the sum and
-#:   distributes it into the sum on the second pass. Distributing every such
-#:   number is not the answer: it settles this one and unsettles two
-#:   others, where sympy then picks the other sign for a cosine's argument or
-#:   multiplies out a term it had left folded.
-UNSETTLED = ("BESSEL_Y_SERIES(",)
+#: nobody prunes is a record nobody trusts. None is recorded at present.
+UNSETTLED: tuple[str, ...] = ()
 
 
 def _library() -> dict[str, list[tuple[str, ParseState]]]:

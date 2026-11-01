@@ -28,6 +28,7 @@ from rederive.engine.context import Angle, Branch, Direction, Precision, TrigPow
 from rederive.model.settings import Settings
 from rederive.syntax import (
     DomainDeclaration,
+    FunctionDeclaration,
     ParseState,
     VariableDeclaration,
     parse_expression,
@@ -46,6 +47,18 @@ def written(text, context, state=None):
 def same_as(text, state=None):
     """What `written` should equal when the answer is `text` itself."""
     return to_sympy(parse(text, state))
+
+
+def declaring(*names):
+    """A parse state in which each of `names` is a function, as defining it makes it.
+
+    A name nothing defines is a product of letters before a parenthesis, so a call
+    to a function the context holds has to be read with the function declared.
+    """
+    state = ParseState()
+    for name in names:
+        state.declare(FunctionDeclaration(name))
+    return state
 
 
 def symbol(declaration):
@@ -259,27 +272,29 @@ def test_a_declaration_keeps_the_variable_it_declares():
 
 def test_a_call_becomes_the_body_with_its_arguments_written_in():
     context = Context(functions={"F": (("x", "y"), parse("x^2 + y"))})
-    assert written("F(a, 3)", context) == same_as("a^2 + 3")
+    assert written("F(a, 3)", context, declaring("F")) == same_as("a^2 + 3")
 
 
 def test_a_call_with_fewer_arguments_substitutes_the_leading_parameters():
     # Derive's partial application: `ACCELERATION(6)` is `6/m`.
     context = Context(functions={"ACCELERATION": (("f", "m"), parse("f/m"))})
-    assert written("ACCELERATION(6)", context) == same_as("6/m")
+    state = declaring("ACCELERATION")
+    assert written("ACCELERATION(6)", context, state) == same_as("6/m")
 
 
 def test_an_argument_is_substituted_before_it_is_written_in():
     context = Context(
         assignments={"u": parse("7")}, functions={"F": (("x",), parse("x + 1"))}
     )
-    assert written("F(u)", context) == same_as("7 + 1")
+    assert written("F(u)", context, declaring("F")) == same_as("7 + 1")
 
 
 def test_a_recursion_that_never_arrives_stops_at_the_nesting_bound():
     # Every level adds one, and the call left over at the bottom is the answer's
     # own admission that it did not finish.
-    context = Context(functions={"G": (("x",), parse("G(x) + 1"))})
-    assert written("G(2)", context) == same_as("G(2) + 300")
+    state = declaring("G")
+    context = Context(functions={"G": (("x",), parse("G(x) + 1", state))})
+    assert written("G(2)", context, state) == same_as("G(2) + 300", state)
 
 
 def test_a_parameter_stands_for_itself_inside_the_definition():
@@ -291,7 +306,8 @@ def test_a_parameter_stands_for_itself_inside_the_definition():
 
 def test_a_function_the_context_does_not_know_is_left_alone():
     context = Context(assignments={"u": parse("7")})
-    assert written("H(u)", context) == same_as("H(7)")
+    state = declaring("H")
+    assert written("H(u)", context, state) == same_as("H(7)", state)
 
 
 # -- substitution: bound variables --------------------------------------------
@@ -314,10 +330,11 @@ def test_an_argument_after_the_bound_variable_is_read_outside_the_binding():
 
 
 def test_a_bound_variable_shadows_a_parameter_of_the_same_name():
+    state = declaring("F")
     context = Context(functions={"F": (("x",), parse("SUM(x^2, x, 1, n)"))})
-    assert written("F(9)", context) == same_as("SUM(x^2, x, 1, n)")
+    assert written("F(9)", context, state) == same_as("SUM(x^2, x, 1, n)")
     context = Context(functions={"F": (("x",), parse("SUM(x^2, x, 1, 3)"))})
-    assert written("F(9)", context) == 14
+    assert written("F(9)", context, state) == 14
 
 
 def test_a_binding_function_given_no_variable_binds_nothing():
@@ -340,7 +357,9 @@ def test_a_parameter_supplied_with_a_vector_of_names_is_written_in():
     # standing, the limit would be taken in a variable nobody named. The body
     # takes the vector too, a definition being textual substitution throughout.
     context = Context(functions={"F": (("x",), parse("LIM(x*y, x, 1)"))})
-    assert written("F([u, v])", context) == same_as("LIM([u, v]*y, [u, v], 1)")
+    assert written("F([u, v])", context, declaring("F")) == same_as(
+        "LIM([u, v]*y, [u, v], 1)"
+    )
 
 
 # -- substitution: labels -----------------------------------------------------

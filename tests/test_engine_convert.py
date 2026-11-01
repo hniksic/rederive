@@ -34,15 +34,32 @@ from rederive.engine.to_sympy import (
     Subscript,
     Taylor,
     Transposed,
-    _AMBIGUOUS_HEADS,
 )
 from rederive.model.expr import Kind
-from rederive.syntax import ParseState, parse_expression
+from rederive.syntax import (
+    DeriveSyntaxError,
+    FunctionDeclaration,
+    ParseState,
+    parse_expression,
+)
 from rederive.syntax.names import BUILTIN_FUNCTIONS
 
 
 def parse(text, state=None):
     return parse_expression(text, state or ParseState()).node
+
+
+def declaring(*names):
+    """A parse state in which each of `names` is a function, as defining it makes it.
+
+    Upper case is how a function is written and not what makes a name one: before a
+    parenthesis a name nothing defines is a product, in Character mode of its
+    letters.
+    """
+    state = ParseState()
+    for name in names:
+        state.declare(FunctionDeclaration(name))
+    return state
 
 
 def convert(text, context=None, state=None):
@@ -421,35 +438,53 @@ def test_a_substitution_converts_back_from_the_vectors_it_is_written_as():
     # Sympy holds a derivative taken at a point as a `Subs`, and it is the head
     # that says the derivative inside is not to be evaluated.
     y = sp.Symbol("y", real=True)
-    substitution = convert("SUBS(DIF(F(v), v), [v], [y])")
+    substitution = convert("SUBS(DIF(F(v), v), [v], [y])", state=declaring("F"))
     assert isinstance(substitution, sp.Subs)
     assert substitution.point == (y,)
 
 
-def test_a_hypergeometric_head_converts_back_from_the_vectors_it_is_written_as():
-    assert convert("HYPER([1, 2], [3], x)") == sp.hyper(
-        (1, 2), (3,), sp.Symbol("x", real=True)
-    )
+@pytest.mark.parametrize(
+    ("text", "letters"),
+    [
+        ("HYPER(x)", "h*y*p*e*r*x"),
+        ("MEIJERG(x)", "m*EI(j)*e*r*g*x"),
+        ("BESSELI(z)", "b*e*s*s*e*l*i*z"),
+        ("LOWERGAMMA(1, z)", "l*o*w*e*r*GAMMA(1, z)"),
+        ("LI(x)", "l*i*x"),
+    ],
+    ids=str,
+)
+def test_a_sympy_class_name_is_no_function_name(text, letters):
+    """A function is called by a name of the notation's, not by a class sympy exports.
 
-
-def test_a_g_function_converts_back_from_the_vectors_it_is_written_as():
-    """`meijerg`'s four parameter lists, in the two pairs it holds them in.
-
-    Which of the two shapes a pair is written as depends on the lengths and
-    nothing else - two lists of a length are a matrix, and a ragged pair is
-    not - so both are read here, and the ragged one is what an integral hands
-    back most often.
+    Sympy's hypergeometric and Bessel functions, its incomplete gammas and its
+    logarithmic integral have no name here, so writing one calls no sympy head: the
+    name is read as any name nothing defines is, letter by letter, and a function the
+    notation does know is found among the letters as it is in any other word. The
+    logarithmic integral is `EI(LN(x))` in the notation's own functions, and is
+    written that way.
     """
-    x = sp.Symbol("x", real=True)
-    assert convert("MEIJERG([[1, 1], []], [[1], [0]], x)") == sp.meijerg(
-        ((1, 1), ()), ((1,), (0,)), x
+    converted = convert(text)
+    assert converted == convert(letters)
+    assert not converted.atoms(
+        sp.hyper, sp.meijerg, sp.besseli, sp.lowergamma, sp.li
     )
-    assert convert("MEIJERG([[1, 2], [3, 4]], [[5, 6], [7, 8]], x)") == sp.meijerg(
-        ((1, 2), (3, 4)), ((5, 6), (7, 8)), x
-    )
-    # A half that is not a pair of lists is no G-function, and declines to the
-    # inert head rather than being guessed at.
-    assert convert("MEIJERG([1, 1], [0], x)").func is sp.Function("MEIJERG")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "HYPER([1, 2], [3], x)",
+        "MEIJERG([[1, 1], []], [[1], [0]], x)",
+        "BESSELI(1, z)",
+    ],
+    ids=str,
+)
+def test_a_sympy_class_name_takes_no_arguments(text):
+    # A name nothing defines is no function, and an argument list is only a product
+    # where it holds one argument.
+    with pytest.raises(DeriveSyntaxError):
+        parse(text)
 
 
 def test_an_interval_converts_back_to_the_bounds_a_limit_answered_with():
@@ -539,51 +574,6 @@ def test_a_root_head_given_arguments_it_cannot_take_stays_opaque(text):
     assert isinstance(convert(text), AppliedUndef)
 
 
-def test_a_sympy_head_the_printer_named_converts_back_to_that_head():
-    """The inverse of writing a sympy function as its name upper-cased.
-
-    A Bessel series comes back carrying heads the notation was never given a
-    spelling for, and reading them as inert would leave the same mathematics
-    under a different object - one that sorts by another name, so the answer
-    would settle only on a second Simplify.
-    """
-    z = sp.Symbol("z", real=True)
-    assert convert("BESSELI(1, z)") == sp.besseli(1, z)
-    assert convert("EI(z)") == sp.Ei(z)
-    assert convert("LOWERGAMMA(1, z)") == sp.lowergamma(1, z)
-
-
-def test_the_logarithmic_integral_is_the_one_the_integrator_produces():
-    """Two sympy classes answer to `LI`, and only one of them may have it.
-
-    `li` is the logarithmic integral and `Li` the same integral offset by
-    `li(2)`, so a name settled by alphabet rather than by choice reads `LI(2)`
-    as zero. Derive's own `EXP_INT.MTH` calls the unoffset one `LI(x, m)`, and
-    it is what integrating `1/LN(x)` produces, so it is what the name means.
-    """
-    x = sp.Symbol("x", real=True)
-    assert convert("LI(x)") == sp.li(x)
-    assert convert("LI(2)") == sp.li(2)
-    assert convert("LI(2)") != 0
-    assert roundtrip("LI(x)") == ("LI(x)", "LI(x)")
-
-
-def test_no_author_name_is_claimed_by_two_sympy_classes_undecided():
-    """What would have caught `LI`, and will catch the next one.
-
-    The table upper-cases a class name, and two classes can upper-case to the
-    same one; whichever the scan meets first then answers for both. A name in
-    that position has to be decided outright, and a name Derive has reserved is
-    not in that position at all, since no sympy class is given it.
-    """
-    claimed: dict[str, list[str]] = {}
-    for name in dir(sp.functions):
-        if isinstance(getattr(sp.functions, name), sp.FunctionClass):
-            claimed.setdefault(name.upper(), []).append(name)
-    contested = {name for name, classes in claimed.items() if len(classes) > 1}
-    assert not contested - set(_AMBIGUOUS_HEADS) - set(FUNCTIONS) - BUILTIN_FUNCTIONS
-
-
 def test_the_hyperbolic_integrals_are_named_rather_than_upper_cased():
     """`CHI` is Derive's, so sympy's `Chi` is given a name of its own.
 
@@ -599,6 +589,31 @@ def test_the_hyperbolic_integrals_are_named_rather_than_upper_cased():
     assert roundtrip("SINH_INT(x)") == ("SINH_INT(x)", "SINH_INT(x)")
     # The name the distribution had is still the distribution's.
     assert convert("CHI(x)") == sp.sign(x) / 2 - sp.sign(x - 1) / 2
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("EI(x)", sp.Ei(sp.Symbol("x", real=True))),
+        ("SI(x)", sp.Si(sp.Symbol("x", real=True))),
+        ("CI(x)", sp.Ci(sp.Symbol("x", real=True))),
+        ("ERFI(x)", sp.erfi(sp.Symbol("x", real=True))),
+        ("DIGAMMA(x)", sp.digamma(sp.Symbol("x", real=True))),
+        ("POLYGAMMA(1, x)", sp.polygamma(1, sp.Symbol("x", real=True))),
+        ("POLYLOG(2, x)", sp.polylog(2, sp.Symbol("x", real=True))),
+        ("LAMBERTW(x)", sp.LambertW(sp.Symbol("x", real=True))),
+    ],
+    ids=str,
+)
+def test_a_special_function_of_rederives_own_converts_and_reads_back(text, expected):
+    assert convert(text) == expected
+    assert roundtrip(text) == (text, text)
+
+
+def test_the_polygamma_function_of_order_zero_is_the_digamma_function():
+    # Sympy has no digamma call of its own to hold, so the two spellings are one.
+    assert convert("POLYGAMMA(0, x)") == convert("DIGAMMA(x)")
+    assert written("POLYGAMMA(0, x)") == "DIGAMMA(x)"
 
 
 @pytest.mark.parametrize(
@@ -621,7 +636,7 @@ def test_the_arbitrary_point_on_the_unit_circle_carries_no_assumptions():
 def test_an_arbitrary_function_is_an_opaque_head_that_can_be_differentiated():
     x = sp.Symbol("x", real=True)
     call = sp.Function("F")(x)
-    derivative = convert("DIF(F(x)^3, x)").doit()
+    derivative = convert("DIF(F(x)^3, x)", state=declaring("F")).doit()
     assert derivative == 3 * call**2 * sp.Derivative(call, x)
 
 
@@ -766,15 +781,14 @@ UNCHANGED = [
     "SOLVE(x^2 = 1, x)",
     "IF(x > 0, 1, -1)",
     "IF(x > 0, 1)",
-    "HYPER([1, 2], [3], x)",
-    "MEIJERG([[1, 1], []], [[1], [0]], x)",
     "MY_FUNCTION(x, 2)",
 ]
 
 
 @pytest.mark.parametrize("text", UNCHANGED)
 def test_an_expression_already_in_engine_form_comes_back_unchanged(text):
-    assert written(text) == text
+    # With the functions the cases call defined, as an author would have them.
+    assert written(text, state=declaring("F", "MY_FUNCTION")) == text
 
 
 def test_every_node_kind_is_covered_by_a_round_trip_case():

@@ -44,7 +44,7 @@ from rederive.engine.context import (
 )
 from rederive.engine.ordering import main_order
 from rederive.model.expr import Kind, Node
-from rederive.syntax.names import BUILTIN_FUNCTIONS, PRIME_MARK
+from rederive.syntax.names import PRIME_MARK
 from rederive.syntax.writer import write_expression
 
 __all__ = [
@@ -1058,7 +1058,7 @@ class Converter:
             )
             if mapped is not None:
                 return mapped
-        handler = FUNCTIONS.get(name) or SYMPY_HEADS.get(name)
+        handler = FUNCTIONS.get(name)
         if handler is None:
             return self.opaque(name, args)
         try:
@@ -1455,9 +1455,19 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
     # for. Upper-casing `Chi` cannot name the first: `CHI` is the chi-square
     # distribution. `COSH_INT` is free, reads in Derive's idiom, and its
     # partner is spelled to match rather than as the `SHI` upper-casing gives
-    # it - a name that still reads, being one `_sympy_heads` finds.
+    # it.
     "COSH_INT": sp.Chi,
     "SINH_INT": sp.Shi,
+    "EI": sp.Ei,
+    "SI": sp.Si,
+    "CI": sp.Ci,
+    "ERFI": sp.erfi,
+    # Sympy holds the digamma function as the polygamma function of order zero, which
+    # the printer writes back as `DIGAMMA`.
+    "DIGAMMA": sp.digamma,
+    "POLYGAMMA": sp.polygamma,
+    "POLYLOG": sp.polylog,
+    "LAMBERTW": sp.LambertW,
 }
 
 
@@ -2427,50 +2437,6 @@ def _substitution(conv: Converter, args: list) -> sp.Basic:
     """
     expression, variables, points = args
     return sp.Subs(expression, tuple(_matrix(variables)), tuple(_matrix(points)))
-
-
-def _hyper(conv: Converter, args: list) -> sp.Basic:
-    """`HYPER([a, ...], [b, ...], z)`, the way the printer writes `hyper`.
-
-    Sympy's head carries tuples, which the notation has no spelling for, so it
-    is written over vectors - and this is the way back, without which a result
-    holding one would not read back as the expression it was printed from.
-    """
-    top, bottom, argument = args
-    return sp.hyper(tuple(_matrix(top)), tuple(_matrix(bottom)), argument)
-
-
-def _meijerg(conv: Converter, args: list) -> sp.Basic:
-    """`MEIJERG([[a, ...], [a, ...]], [[b, ...], [b, ...]], z)`.
-
-    The G-function's four parameter lists, in the two pairs sympy holds them
-    in, each pair written as a vector of vectors because a tuple is what the
-    notation has no spelling for. Without the way back the printed form reads
-    as an inert head over matrices - the same text and a different object,
-    which computes nothing and sorts under another name.
-    """
-    top, bottom, argument = args
-    return sp.meijerg(_parameters(top), _parameters(bottom), argument)
-
-
-def _parameters(value: sp.Basic) -> tuple[tuple[sp.Basic, ...], ...]:
-    """One of `meijerg`'s two halves: a vector of two vectors, as tuples.
-
-    Which of the two the halves arrive as depends only on their lengths.
-    `[[1, 2], [3, 4]]` is a matrix, two lists of the same length being what a
-    matrix is; a pair of unequal ones is no matrix and reaches here as an
-    `InertVector`, and one of them is often empty. Both are the same pair of
-    rows, and anything else is not a pair of parameter lists at all.
-    """
-    if isinstance(value, InertVector):
-        rows = [_matrix(row) for row in value.args]
-    elif isinstance(value, sp.MatrixBase):
-        rows = [value[row, :] for row in range(value.rows)]
-    else:
-        raise TypeError("not parameter lists")
-    if len(rows) != 2:
-        raise ValueError("not two parameter lists")
-    return tuple(tuple(row) for row in rows)
 
 
 def _limit(conv: Converter, args: list) -> sp.Basic:
@@ -3743,8 +3709,6 @@ FUNCTIONS: dict[str, Handler] = {
     "IF": _conditional,
     "TRUTH_TABLE": _truth_table,
     "SUBS": _substitution,
-    "HYPER": _hyper,
-    "MEIJERG": _meijerg,
     "DET": _determinant,
     "TRACE": _trace,
     "DIMENSION": _dimension,
@@ -3772,57 +3736,6 @@ FUNCTIONS: dict[str, Handler] = {
 }
 
 
-#: Which sympy class an author name means where more than one class claims it.
-#: The scan below keeps the first name it meets in alphabetical order, and
-#: alphabet is no way to choose between two functions: `li` is the logarithmic
-#: integral and `Li` the same integral offset by `li(2)`, so `LI(2)` decided by
-#: sorting is zero rather than 1.045. `LI` is the logarithmic integral, which is
-#: what the integrator produces and what Derive's own `EXP_INT.MTH` calls
-#: `LI(x, m)`. `Li` is left without a name rather than given a misleading one:
-#: nothing found produces it, and whatever it is called it may not be called
-#: this.
-_AMBIGUOUS_HEADS: dict[str, Callable[..., sp.Basic]] = {"LI": sp.li}
-
-
-def _sympy_heads() -> dict[str, Handler]:
-    """The way back from a sympy head nobody in Derive has a name for.
-
-    A result can carry a function the notation was never given a spelling for -
-    `BESSELI` and `EXP_POLAR` come out of a Bessel series, `EI` out of an
-    exponential integral - and the printer writes each as its sympy class name
-    upper-cased, because that is a name the grammar can read. Without the way
-    back such a name reads as an inert head: the same mathematics, a different
-    object, which sorts by another name and makes the answer settle only on a
-    second Simplify. So the printer's rule is inverted here, over sympy's own
-    function classes.
-
-    Only names Derive does not define itself. Everything in the inventory has a
-    reading of its own or waits for the evaluation as `SOLVE` does, and nothing
-    here may displace one. What is left is names no Derive worksheet can mean
-    anything else by.
-
-    A name two classes answer to is decided by `_AMBIGUOUS_HEADS` before the
-    scan runs, so that the reading is chosen rather than sorted.
-    """
-    reserved = set(FUNCTIONS) | BUILTIN_FUNCTIONS
-    heads: dict[str, Handler] = {
-        name: _direct(head)
-        for name, head in _AMBIGUOUS_HEADS.items()
-        if name not in reserved
-    }
-    for name in dir(sp.functions):
-        head = getattr(sp.functions, name)
-        if isinstance(head, sp.FunctionClass) and name.upper() not in reserved:
-            heads.setdefault(name.upper(), _direct(head))
-    return heads
-
-
-#: What each such name converts to. A call these cannot take - the wrong number
-#: of arguments, a vector where a tuple belongs, as `MEIJERG` carries - raises
-#: and falls back to the inert head, like any other entry.
-SYMPY_HEADS: dict[str, Handler] = _sympy_heads()
-
-
 #: Which functions an equation given to one maps over, section 4.13 p.111:
 #: `EXP(LN(x) = 5)` is `x = #e^5`. Every one of them is a function of numbers,
 #: which is the whole of the rule - applying such a function to both sides of an
@@ -3838,6 +3751,5 @@ MAPPED_OVER_EQUATIONS: frozenset[str] = (
     frozenset(_TRIGONOMETRIC)
     | frozenset(_INVERSE_TRIGONOMETRIC)
     | frozenset(_DIRECT)
-    | frozenset(SYMPY_HEADS)
     | {"ATAN", "ACOT", "ERF", "LOG", "SIGN", "STEP", "FLOOR", "MOD", "MODS"}
 )

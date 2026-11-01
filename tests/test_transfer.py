@@ -402,13 +402,14 @@ async def test_clearing_variables_leaves_the_expressions(session):
 
 
 async def test_clearing_functions_takes_the_body_away(session):
-    """The name is left undefined, so a call on it is stuck rather than nine."""
+    """The name is forgotten, so `F(3)` reads as any name nothing defines does before
+    a parenthesis, as a product, rather than as nine."""
     session.author("F(u) := u^2")
     session.author("F(3)")
     assert (await session.simplify("#2")).text == "9"
     session.clear_functions()
     session.author("F(3)")
-    assert (await session.simplify("#4")).text == "F(3)"
+    assert (await session.simplify("#4")).text == "3*f"
 
 
 async def test_clearing_all_is_the_other_three_at_once(session):
@@ -417,7 +418,7 @@ async def test_clearing_all_is_the_other_three_at_once(session):
     session.clear_all()
     assert texts(session) == []
     session.author("v + F(3)")
-    assert (await session.simplify("#1")).text == "v + F(3)"
+    assert (await session.simplify("#1")).text == "3*f + v"
 
 
 # -- loading a utility file --------------------------------------------------

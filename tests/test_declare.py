@@ -113,8 +113,8 @@ async def test_the_definitions_own_variables_become_the_parameters(session):
 def test_the_parameters_are_not_variables_of_the_session(session):
     """The command declares a function, and nothing else.
 
-    Its parameters are known names only while the body is read: a later
-    `A(t)` is a call, and would not be if `a` were a variable now.
+    Its parameters are known names only while the body is read, and none of them
+    outlives it as a variable of the session's.
     """
     session.declare_function("hyp", "sqrt(a^2 + b^2)")
     assert session.state.variables == {}

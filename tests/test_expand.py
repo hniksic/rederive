@@ -25,7 +25,7 @@ from rederive.engine.computing import (
 from rederive.engine.context import Precision
 from rederive.engine import expanding
 from rederive.engine.expanding import held_about
-from rederive.syntax import ParseState, parse_expression
+from rederive.syntax import FunctionDeclaration, ParseState, parse_expression
 
 TRIVIAL = Amount.TRIVIAL
 SQUAREFREE = Amount.SQUAREFREE
@@ -139,9 +139,12 @@ def test_a_head_that_binds_a_variable_comes_through_as_itself():
     it binds and the points they take. Rewriting those reads them as something
     else, so what Expand has nothing to expand it hands back untouched - which
     is exactly what Simplify already answers."""
+    state = ParseState()
+    state.declare(FunctionDeclaration("G", ("y", "z")))
     text = "DIF(LIM(G(y, z), y, 2*x - y), y)"
-    assert exp(text) == simplify(parse(text), Context()).text
-    assert "SUBS(DIF(G(x_, z), x_), [x_], [2*x - y])" in exp(text)
+    answer = expand(parse(text, state), Context(), RATIONAL, (), state).text
+    assert answer == simplify(parse(text, state), Context(), state).text
+    assert "SUBS(DIF(G(x_, z), x_), [x_], [2*x - y])" in answer
 
 
 def test_an_integrand_stays_inside_its_integral():
@@ -406,7 +409,11 @@ def test_a_word_that_names_no_amount_is_not_an_amount():
 
 
 def test_only_expand_is_evaluated():
-    assert simplify(parse("EXPANDS((x + 1)^2)"), Context()).text == (
+    # A function of the author's whose name begins with EXPAND is a function of its
+    # own, and is read as one once it is defined.
+    state = ParseState()
+    state.declare(FunctionDeclaration("EXPANDS", ("u",)))
+    assert simplify(parse("EXPANDS((x + 1)^2)", state), Context(), state).text == (
         "EXPANDS((x + 1)^2)"
     )
 

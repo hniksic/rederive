@@ -18,7 +18,7 @@ from fractions import Fraction
 from rederive.syntax import names
 from rederive.syntax.errors import DeriveSyntaxError
 from rederive.syntax.source import Source
-from rederive.syntax.state import CaseMode, InputMode, ParseState, ascii_upper
+from rederive.syntax.state import CaseMode, InputMode, ParseState
 from rederive.syntax.tokens import Token, TokenKind
 
 _SPACE = " \t"
@@ -328,12 +328,6 @@ class Lexer:
                 is_defhead=True,
             )
 
-        # An upper-case run before `(` is a function reference: upper case is
-        # the canonical spelling of a function, so `SIDE(w)` is a call even
-        # where `quux(z)` is a product of letters.
-        if self._is_call_head(run, after):
-            return Token(TokenKind.NAME, pos, end, run, run, is_function=True)
-
         # `BB'(r)`: the primes belong to the name, so what follows is a call
         # like any other and only the engine has to know what one means.
         primed = self._primed_name(pos, run, end)
@@ -393,31 +387,15 @@ class Lexer:
             self.at(pos, op) for op in names.DOMAIN_OPERATORS
         )
 
-    def _is_call_head(self, run: str, after: int) -> bool:
-        """Whether an upper-case run before `(` names a function.
-
-        Upper case is the canonical spelling of a function, so `SIDE(w)` is a
-        call where `quux(z)` is a product of letters. A setting keyword gives
-        way here, since Derive's own files define `EXACT(...)`; a constant or a
-        declared variable does not.
-        """
-        if not self.at(after, "("):
-            return False
-        if ascii_upper(run) != run or not any("A" <= char <= "Z" for char in run):
-            return False
-        known = self.state.resolve(run)
-        return known is None or known.is_function or known.is_displaceable
-
     def _primed_name(self, pos: int, run: str, end: int) -> Token | None:
         """`BB'`, `BB''`: a function name carrying the marks that derive it.
 
         Three things make one. The primes have to touch the name, since an
         apostrophe with a space in front of it is nobody's derivative; there
         has to be an argument list after them, because a derivative is a
-        function and `BB'` alone applies to nothing; and the name has to be one
-        that could be applied at all, which is a known function or the upper
-        case run `_is_call_head` would have taken. Everything else leaves the
-        apostrophe the error it has always been.
+        function and `BB'` alone applies to nothing; and the name has to be a
+        known function, the only kind that could be applied at all. Everything
+        else leaves the apostrophe the error it has always been.
         """
         stop = end
         while stop < self.limit and self.text[stop] == names.PRIME_MARK:
@@ -428,12 +406,9 @@ class Lexer:
         if not self.at(after, "("):
             return None
         known = self.state.resolve(run)
-        if known is not None and known.is_function:
-            canonical = known.canonical
-        elif self._is_call_head(run, after):
-            canonical = run
-        else:
+        if known is None or not known.is_function:
             return None
+        canonical = known.canonical
         marks = self.text[end:stop]
         return Token(
             TokenKind.NAME,

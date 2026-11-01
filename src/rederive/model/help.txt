@@ -280,6 +280,14 @@ Error and special functions:
   ERF(z), ERFC(z)    the error function and its complement
   GAMMA(z)           the gamma function
   ZETA(z)            the Riemann zeta function
+  ERFI(z)            the imaginary error function, -#i*ERF(#i*z)
+  EI(z)              the exponential integral, of EXP(t)/t
+  SI(z), CI(z)       the sine and cosine integrals, of SIN(t)/t and COS(t)/t
+  SINH_INT(z), COSH_INT(z)  the hyperbolic sine and cosine integrals
+  DIGAMMA(z)         the logarithmic derivative of the gamma function
+  POLYGAMMA(n, z)    the nth derivative of DIGAMMA(z)
+  POLYLOG(s, z)      the polylogarithm, the sum of z^k/k^s from k = 1
+  LAMBERTW(z)        the Lambert W function, the w with w*EXP(w) = z
 
 Number theory functions:
   GCD(...), LCM(...) the greatest common divisor, the least common multiple
