@@ -1713,8 +1713,15 @@ def test_the_manuals_quadratic_is_solved_as_two_equations():
 
 
 def test_an_equation_that_cannot_be_solved_is_answered_as_an_implicit_one():
-    # 4.14 p.115: the variable is inextricable, so what comes back says so.
-    assert solutions("3^x = x^2", "x") == ["3^x - x^2 = 0"]
+    # 4.14 p.115: the variable is inextricable, so what comes back says so. The
+    # manual's own example is `3^x = x^2`, which Lambert W solves, so the case is
+    # one nothing here inverts.
+    assert solutions("COS(x) = x", "x") == ["COS(x) - x = 0"]
+
+
+def test_the_manuals_inextricable_equation_is_solved_in_lambert_w():
+    # 4.14 p.115 again: Derive gives up on it, and the one real root is in reach.
+    assert solutions("3^x = x^2", "x") == ["x = -2*LAMBERTW(LN(3)/2)/LN(3)"]
 
 
 def test_an_impossible_equation_has_no_solutions_to_answer_with():

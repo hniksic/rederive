@@ -22,9 +22,10 @@ does different things with them:
   solves in one worksheet ever mint the same one.
 * An equation nothing here can solve answers with the residual equation -
   everything moved to the left, zero on the right - which is what the original
-  appends for `3^x = x^2`. It is a normal one-entry answer and never an
+  appends for an equation it cannot solve. It is a normal one-entry answer and never an
   exception: this module promises what the rest of the engine promises, that
-  nothing the parser produced makes it raise.
+  nothing the parser produced makes it raise. The original appends one for
+  `3^x = x^2` too, which is solved here in Lambert W.
 
 Where the original's answers and ours differ they differ in spelling, and
 deliberately so in two places. A periodic equation gets a finite sample of
@@ -52,6 +53,7 @@ from rederive.engine.approximation import GUARD, simplest
 from rederive.engine.context import Context, Precision
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
+from rederive.engine.printer import is_written
 from rederive.engine.to_sympy import InertVector
 
 __all__ = ["equations_of", "oriented", "solutions", "solution_variables"]
@@ -263,9 +265,51 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
             return None
         return sp.FiniteSet(*found)
     try:
-        return sp.solveset(residual, variable, sp.S.Complexes)
+        found = sp.solveset(residual, variable, sp.S.Complexes)
     except Exception:
         return None
+    if isinstance(found, sp.ConditionSet):
+        return _inverted(residual, variable)
+    return found
+
+
+def _inverted(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """What `solve` finds where `solveset` gives up, or None.
+
+    `solveset` has no Lambert W inversion and `solve` has, so `x*#e^x = 1` is
+    `LAMBERTW(1)` from the one and a condition set from the other. `solve` keeps to the
+    variable's assumptions, which for an authored variable means real, and it then
+    answers on both real branches where there are two: `x = LN(x) + 2` has both its
+    roots. That makes an empty answer "no real solution" rather than "no solution", so
+    it is not taken for one; nor is a solution with a head the notation has no word for,
+    or one that does not check out when put back into the equation.
+    """
+    try:
+        found = sp.solve(residual, variable)
+    except Exception:
+        return None
+    if not found or not all(
+        is_written(value) and _satisfies(residual, variable, value) for value in found
+    ):
+        return None
+    return sp.FiniteSet(*found)
+
+
+def _satisfies(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
+    """Whether `value` makes `residual` vanish, exactly or else to working precision.
+
+    The numeric check is for values like `LAMBERTW(-#e^(-2), -1)`, where `simplify`
+    cannot see that the logarithm of the branch undoes it.
+    """
+    try:
+        left = residual.subs(variable, value)
+        if sp.simplify(left).is_zero:
+            return True
+        if left.free_symbols:
+            return False
+        return abs(complex(left.evalf(30))) < 1e-20
+    except Exception:
+        return False
 
 
 def _polynomial(residual: sp.Basic, variable: sp.Symbol) -> sp.Poly | None:
@@ -401,7 +445,7 @@ def _is_everything(found: sp.Set) -> bool:
 def _unsolved(expression: sp.Basic, context: Context) -> tuple[sp.Basic, ...]:
     """The residual relation, which is what anything unsolved is worth.
 
-    `3^x = x^2` comes back `3^x - x^2 = 0`: no warning, no guess, and an entry
+    `COS(x) = x` comes back `COS(x) - x = 0`: no warning, no guess, and an entry
     that says exactly what was asked without pretending to have answered it.
     The operator is kept, so an inequality nobody could solve comes back an
     inequality - moving everything to the left of a `<` does not make it an `=`.

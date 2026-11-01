@@ -1093,8 +1093,13 @@ def _antiderivative(head: sp.Basic, value: sp.Basic) -> sp.Basic:
     if len(head.limits[0]) != 1:
         return _continuous(value, None)
     variable, integrand = head.limits[0][0], head.function
+    value = _on_the_principal_sheet(value, integrand, variable)
     if _refuted(value, integrand, variable):
-        value = _by_the_manual_rules(head, integrand, variable) or value
+        value = (
+            _by_the_manual_rules(head, integrand, variable)
+            or _over_any_variable(head, integrand, variable)
+            or value
+        )
     value = _without_constants(_single_case(value, integrand, variable), variable)
     return _continuous(value, variable)
 
@@ -1223,14 +1228,98 @@ def _refuted(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
     about the rest, and the rest is where the answers this cannot check live: a
     nonelementary integral comes back as the hypergeometric series it is, and
     nothing differentiates that back to the integrand.
+
+    A difference in the variable alone can still be decided by its value, and is
+    looked at on both sides of zero where `equals` says nothing. Sympy's Meijer G
+    route answers `INT(SIN(x)/x^2, x)` over a real `x` with `SIGN(x)` terms whose
+    derivative is `2/x` off for negative `x`, and an `ABS` is where `equals` stops.
     """
     difference = _attempt(value, lambda v: sp.diff(v, variable) - integrand)
     if difference is None:
         return False
     try:
-        return difference.equals(0) is False
+        decided = difference.equals(0)
     except Exception:
         return False
+    if decided is not None or difference.free_symbols != {variable}:
+        return decided is False
+    return any(_off(difference, variable, point) for point in _SAMPLES)
+
+
+def _on_the_principal_sheet(
+    value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
+) -> sp.Basic:
+    """An antiderivative with its full turns about the origin taken out, where that
+    leaves one.
+
+    Sympy's Meijer G route answers `INT(LN(1 - x)/x, x)` with
+    `-POLYLOG(2, x*EXP_POLAR(2*pi*#i))`: the polylogarithm on the sheet a full turn
+    away, which differs from the principal one past the cut at 1 and so is a mark
+    `unpolarify` keeps. A full turn is still the number 1, though, and dropping it
+    gives `-POLYLOG(2, x)`, which is an antiderivative in its own right; any
+    antiderivative is a right answer to an indefinite integral. So the turns are
+    dropped and the result kept where it differentiates back to the integrand, which
+    is decided rather than merely not refuted. A mark of any other angle, such as the
+    half turn in `EI(x*EXP_POLAR(pi*#i))`, moves the argument and is not touched.
+    """
+    if not value.has(sp.exp_polar):
+        return value
+    stripped = _attempt(
+        value,
+        lambda v: sp.unpolarify(v).replace(
+            lambda e: isinstance(e, sp.exp_polar) and _full_turns(e.exp),
+            lambda e: sp.S.One,
+        ),
+    )
+    if stripped is None or stripped.has(*_POLAR):
+        return value
+    difference = _attempt(
+        stripped, lambda v: sp.expand_func(sp.diff(v, variable) - integrand)
+    )
+    try:
+        confirmed = difference is not None and difference.equals(0) is True
+    except Exception:
+        confirmed = False
+    return stripped if confirmed else value
+
+
+def _full_turns(angle: sp.Basic) -> bool:
+    """Whether a polar angle is a whole number of turns, and so leaves 1 where it is."""
+    turns = _attempt(angle, lambda a: a / (2 * sp.pi * sp.I))
+    return bool(turns is not None and turns.is_integer)
+
+
+#: The points a difference of one real variable is looked at, off zero and off the
+#: integers, where an integrand is most likely to be singular.
+_SAMPLES = (sp.Rational(-7, 5), sp.Rational(3, 2))
+
+
+def _off(difference: sp.Basic, variable: sp.Basic, point: sp.Basic) -> bool:
+    """Whether the difference is a finite number clearly away from zero at the point."""
+    sample = _attempt(difference, lambda d: d.subs(variable, point).evalf(30))
+    return bool(sample is not None and sample.is_finite and abs(sample) > 1e-20)
+
+
+def _over_any_variable(
+    head: sp.Basic, integrand: sp.Basic, variable: sp.Basic
+) -> sp.Basic | None:
+    """The integral again over a variable nothing is assumed of, or None.
+
+    What sympy's Meijer G route makes of a real variable is not always what it makes
+    of an unassumed one: over a real `x` it writes `ABS(x)/x` into the answer to
+    `INT(SIN(x)/x^2, x)` and gets the negative half wrong, while over a plain symbol
+    it answers `CI(x) - SIN(x)/x` plus logarithms that cancel. That answer is put to
+    the same check as any other.
+    """
+    plain = sp.Dummy("x")
+    again = _attempt(
+        sp.Integral(integrand.subs(variable, plain), plain),
+        lambda h: h.doit(deep=False),
+    )
+    if again is None or again.has(sp.Integral):
+        return None
+    again = again.subs(plain, variable)
+    return None if _refuted(again, integrand, variable) else again
 
 
 def _by_the_manual_rules(
@@ -1333,7 +1422,32 @@ def _without_constants(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
     coefficient, terms = _split(bare, variable)
     if not isinstance(terms, sp.Add):
         return bare
-    return _carried(coefficient, [term for term in terms.args if term.has(variable)])
+    kept = [term for term in terms.args if term.has(variable)]
+    return _carried(coefficient, _without_flat_logarithms(kept, variable))
+
+
+def _without_flat_logarithms(terms: list[sp.Basic], variable: sp.Basic) -> list:
+    """The terms less their logarithms, where those add up to a constant.
+
+    `LN(x^2)/2 - LN(x)` mentions the variable and is still a constant of
+    integration: its derivative is zero, and the sum is zero for positive `x` and
+    `-pi*#i` for negative. Sympy leaves such a pair in `INT(SIN(x)/x^2, x)`.
+    """
+    logarithms = [term for term in terms if _is_logarithm_term(term)]
+    if len(logarithms) < 2:
+        return terms
+    derivative = _attempt(
+        sp.Add(*logarithms), lambda s: sp.simplify(sp.diff(s, variable))
+    )
+    if derivative != 0:
+        return terms
+    return [term for term in terms if not _is_logarithm_term(term)]
+
+
+def _is_logarithm_term(term: sp.Basic) -> bool:
+    """Whether the term is a logarithm times a number."""
+    _, rest = term.as_coeff_Mul()
+    return isinstance(rest, sp.log)
 
 
 def _carried(coefficient: sp.Basic, terms: list[sp.Basic]) -> sp.Basic:
@@ -1899,7 +2013,9 @@ def _as_gamma_ratio(base: sp.Basic, count: sp.Basic) -> sp.Basic:
 #: quotient is at a zero denominator. The ratio of gammas differs from the rising
 #: factorial only at removable points in the same way, the poles of the gamma
 #: function, and is written everywhere by `_as_gamma_ratio`. The Fresnel integrals are
-#: written by `_as_error_functions`.
+#: written by `_as_error_functions`. `POLYLOG(1, z)` is `-LN(1 - z)` everywhere, cut
+#: along the same ray from 1, and is the one elementary polylogarithm sympy does not
+#: write out itself.
 _SPELLED_OVER: dict[type, Callable[..., sp.Basic]] = {
     sp.Li: lambda x: sp.Ei(sp.log(x)) - sp.Ei(sp.log(2)),
     sp.li: lambda x: sp.Ei(sp.log(x)),
@@ -1909,6 +2025,7 @@ _SPELLED_OVER: dict[type, Callable[..., sp.Basic]] = {
     sp.RisingFactorial: _as_gamma_ratio,
     sp.loggamma: _as_log_gamma,
     sp.sinc: lambda x: sp.sin(x) / x,
+    sp.polylog: lambda s, z: -sp.log(1 - z) if s == 1 else sp.polylog(s, z),
 }
 
 #: The Fresnel integrals, which are `ERF`s of complex arguments.

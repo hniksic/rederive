@@ -1176,6 +1176,23 @@ def test_the_constant_is_chosen_for_every_parameter_not_only_the_exponential(
 @pytest.mark.parametrize(
     "text, expected",
     [
+        ("INT(SIN(x)/x^2, x)", "CI(x) - SIN(x)/x"),
+        ("INT(SINH(x)/x^2, x)", "COSH_INT(x) + (#e^(-x) - #e^x)/(2*x)"),
+    ],
+)
+def test_an_antiderivative_wrong_for_negative_arguments_is_done_again(text, expected):
+    """Not in the original, which has neither `CI` nor `COSH_INT`.
+
+    Over a real variable sympy answers both with `SIGN(x)` terms that are wrong for
+    negative `x`; over a plain one it answers correctly, with `LN(x^2)/2 - LN(x)`
+    besides, which is a constant of integration and is not printed.
+    """
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
         # The integrand itself is singular at `a = 0`.
         ("INT(1/(a*x), x)", "LN(x)/a"),
         # A branch point rather than a pole; nothing is a Laurent series in it.
@@ -1388,6 +1405,10 @@ def test_an_integral_answered_by_a_special_function_reads_back_as_that_function(
         ("DIF(LAMBERTW(x), x)", "LAMBERTW(x)/(x*(LAMBERTW(x) + 1))"),
         ("INT(SIN(x)/x, x)", "SI(x)"),
         ("INT(EXP(x)/x, x)", "EI(x)"),
+        # Sympy's answer is the polylogarithm a full turn round the origin away, and
+        # the principal one is an antiderivative too.
+        ("INT(LN(1 - x)/x, x)", "-POLYLOG(2, x)"),
+        ("DIF(-POLYLOG(2, x), x)", "LN(1 - x)/x"),
     ],
     ids=str,
 )

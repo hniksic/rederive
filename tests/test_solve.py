@@ -67,7 +67,20 @@ EQUATIONS = [
     # comes back - no warning, no guess. Derive prints the quintic's residual
     # as `x^5 - x = -1`, which is its Simplify's normal form of the same thing.
     ("x^5 - x + 1 = 0", ["x^5 - x + 1 = 0"]),
-    ("3^x = x^2", ["3^x - x^2 = 0"]),
+    ("COS(x) = x", ["COS(x) - x = 0"]),
+    # Derive gives up on this one too. Lambert W inverts it, and its one real root
+    # is the answer.
+    ("3^x = x^2", ["x = -2*LAMBERTW(LN(3)/2)/LN(3)"]),
+    # Both real branches of Lambert W, where an equation has a root on each.
+    ("x = LN(x) + 2", ["x = -LAMBERTW(-#e^(-2))", "x = -LAMBERTW(-#e^(-2), -1)"]),
+    ("x*EXP(x) = 1", ["x = LAMBERTW(1)"]),
+    ("x^x = 2", ["x = #e^LAMBERTW(LN(2))"]),
+    # There is no real root, but there are complex ones, so finding no real one
+    # leaves the equation standing rather than answering that there are none.
+    ("x*EXP(x) = -1", ["x*#e^x + 1 = 0"]),
+    # `LAMBERTW(a)` is one root of several for a negative `a`, and nothing here
+    # proves it a root at all, so this stands too.
+    ("x*EXP(x) = a", ["x*#e^x - a = 0"]),
     ("x = x + 1", []),
 ]
 
@@ -373,6 +386,7 @@ def test_mixed_precision_searches_without_being_told_where():
     # Derive prints `-0.686026`, cutting the digit this engine rounds: the
     # root is -0.68602672..., which is `-0.686027` to six significant digits.
     assert sol("3^x = x^2", context=MIXED) == ["x = -0.686026"]
+    assert sol("COS(x) = x", context=MIXED) == ["x = 0.739085"]
 
 
 def test_mixed_precision_solves_exactly_where_it_can():
@@ -449,6 +463,7 @@ HEADS = [
     ("LHS(SOLVE(x^2 - 5*x + 6 = 0, x))", "[x, x]"),
     ("SOLVE(- 2*x + 3*y <= 7, x)", "[x >= (3*y - 7)/2]"),
     ("SOLVE(x^2 < 4, x)", "[-2 < x < 2]"),
+    ("SOLVE(x*EXP(x) = 1, x)", "[x = LAMBERTW(1)]"),
     # A system contributes one inner vector per solution, so that the outer
     # vector is always the list of entries the command would have appended.
     ("SOLVE([x + y = 3, x - y = 1], [x, y])", "[[x = 2, y = 1]]"),

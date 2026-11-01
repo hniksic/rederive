@@ -95,7 +95,7 @@ interval solves to one chained relation `-2 < x < 2`. Three answers are not
 solutions and are told apart on purpose - the empty tuple is "no solutions
 found", an equation that holds everywhere answers with the arbitrary value
 `x = @1` that `Context.arbitrary_index` mints, and an equation nothing can
-solve answers with its own residual equation, `3^x - x^2 = 0`. None of them is
+solve answers with its own residual equation, `COS(x) - x = 0`. None of them is
 an exception: this makes the same two promises the others do.
 
 `variables` names what to solve for, empty meaning the one variable of a
