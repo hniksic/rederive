@@ -37,6 +37,7 @@
 // The page knows a title and a URL, and hands over bytes.
 
 import { said } from './files.js';
+import { settle } from './keys.js';
 
 // Python says things about a demonstration too - which command runs it again,
 // why one was refused - and it says them through this module, that being the
@@ -154,7 +155,7 @@ function show(open) {
   if (menu === null || open === !menu.hidden) return;
   menu.hidden = !open;
   button.setAttribute('aria-expanded', String(open));
-  if (!open && terminal !== null) terminal.focus();
+  if (!open && terminal !== null) settle(terminal);
 }
 
 // A demonstration was asked for: fetch it if it is not here already, and hand
@@ -181,7 +182,7 @@ async function chose(demo) {
     said(`${demo.file} could not be started: ${error}`);
     throw error;
   }
-  if (terminal !== null) terminal.focus();
+  if (terminal !== null) settle(terminal);
 }
 
 // The same download, asked for from Python's side of the menu. The program has

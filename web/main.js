@@ -29,6 +29,7 @@
 
 import * as demos from './demos.js';
 import * as files from './files.js';
+import * as keys from './keys.js';
 import * as plots from './plot2d.js';
 import * as solids from './plot3d.js';
 
@@ -94,6 +95,15 @@ const PLAIN = '\x1b[0m';
 // fraction bars and integral rails join whatever this resolves to.
 const FONT = '"DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, monospace';
 const FONT_SIZE = 16;
+
+// How far a finger moves before a touch is a swipe rather than a tap, in
+// pixels, and how far a swipe goes for each notch of the wheel it stands for,
+// which is how far a notch moves what is under the finger: two rows down, the
+// scroll Textual gives one, and a third of the width across, which is how far
+// a notch moves an expression too wide for its pane.
+const SLOP = 10;
+const NOTCH_ROWS = 2;
+const NOTCH_SHARE = 3;
 
 // What the page says while it is loading, and where it says it: in the
 // terminal itself, since that is the one thing on the page and the program
@@ -251,7 +261,10 @@ function ending(term) {
   term.onKey(({ domEvent }) => {
     if (domEvent.key === 'Enter') again();
   });
-  document.getElementById(SCREEN).addEventListener('click', again);
+  const screen = document.getElementById(SCREEN);
+  screen.addEventListener('click', again);
+  // A tap never becomes a click here, `tapping` having cancelled it.
+  screen.addEventListener('touchend', again);
 }
 
 function terminal() {
@@ -285,10 +298,10 @@ function terminal() {
   term.open(screen);
   render(term, true);
   fit.fit();
-  term.focus();
+  keys.settle(term);
   // A click anywhere puts the keyboard back on the terminal, since there is
   // nothing else on the page for it to be on.
-  screen.addEventListener('mousedown', () => term.focus());
+  screen.addEventListener('mousedown', () => keys.settle(term));
   tapping(term, screen);
   // Refitting posts a resize, which the driver turns into the event a program
   // on a desktop would have got from SIGWINCH.
@@ -300,47 +313,132 @@ function terminal() {
   return term;
 }
 
-// A tap is a click, which is the whole of what a touch screen needs from this
-// program: the menus are words on a band, and pointing at one is how the mouse
-// works them on a desktop.
+// A tap is a click and a swipe is the wheel, which is the whole of what a touch
+// screen needs from this program: the menus are words on a band, pointing at
+// one is how the mouse works them on a desktop, and the wheel is how a pane, a
+// list and a page of help are scrolled.
 //
 // xterm.js hears nothing from a finger - it reports mouse buttons and has no
-// touch handling at all - so the report is written by hand and fed back in as
-// if the terminal had sent it. SGR, because that is the encoding the driver
+// touch handling at all - so the reports are written by hand and fed back in as
+// if the terminal had sent them. SGR, because that is the encoding the driver
 // turned on, and it is the only one that says which button was released.
+//
+// A swipe goes the way the page under it would go: a finger moving up brings in
+// what is below. It is held to the axis it set off along, and it is heard where
+// it started, which is the pane it was meant for.
 //
 // The touch is cancelled rather than let through: a tap the browser is allowed
 // to finish produces a second, synthetic mouse press a moment later, and the
 // program would see every tap twice. Cancelling it also takes away the focus a
-// tap would have given, which is why the terminal is focused by hand - and
-// focusing it inside the gesture is what puts a phone's keyboard up.
+// tap would have given, so the terminal is focused by hand where the program is
+// waiting for text - on the release, which is the half of a tap a browser lets
+// put a keyboard up. A keyboard put away with the phone's own key leaves the
+// terminal focused, and focusing it again would not bring the keyboard back,
+// which is what the blur is for.
 function tapping(term, element) {
   let at = null;
+  let from = null;
+  let axis = null;
   const within = (value, most) => Math.min(most, Math.max(1, Math.ceil(value)));
+  const measured = () =>
+    (element.querySelector('.xterm-screen') || element).getBoundingClientRect();
   const cell = (touch) => {
-    const screen = element.querySelector('.xterm-screen') || element;
-    const box = screen.getBoundingClientRect();
+    const box = measured();
     return {
       column: within((touch.clientX - box.left) / (box.width / term.cols), term.cols),
       row: within((touch.clientY - box.top) / (box.height / term.rows), term.rows),
     };
   };
   element.addEventListener('touchstart', (event) => {
-    if (event.touches.length !== 1) return;
-    at = cell(event.touches[0]);
+    if (event.touches.length !== 1) {
+      at = null;
+      return;
+    }
+    const touch = event.touches[0];
+    at = cell(touch);
+    from = { x: touch.clientX, y: touch.clientY };
+    axis = null;
     event.preventDefault();
-    term.focus();
+  }, { passive: false });
+  element.addEventListener('touchmove', (event) => {
+    if (at === null) return;
+    event.preventDefault();
+    const touch = event.touches[0];
+    const dx = from.x - touch.clientX;
+    const dy = from.y - touch.clientY;
+    if (axis === null) {
+      if (Math.hypot(dx, dy) < SLOP) return;
+      axis = Math.abs(dy) >= Math.abs(dx) ? 'y' : 'x';
+    }
+    const box = measured();
+    const across = axis === 'x';
+    const step = across ? box.width / NOTCH_SHARE : NOTCH_ROWS * box.height / term.rows;
+    const travel = across ? dx : dy;
+    const notches = Math.trunc(travel / step);
+    if (notches === 0) return;
+    // Up and down are 64 and 65, left and right 66 and 67.
+    const button = (across ? 66 : 64) + (notches > 0 ? 1 : 0);
+    for (let n = 0; n < Math.abs(notches); n += 1) {
+      term.input(`\x1b[<${button};${at.column};${at.row}M`, false);
+    }
+    if (across) from.x -= notches * step;
+    else from.y -= notches * step;
   }, { passive: false });
   element.addEventListener('touchend', (event) => {
     if (at === null) return;
-    // Press and release in one go. A finger has no button to hold down, and a
-    // press with no release would leave the program dragging.
-    term.input(`\x1b[<0;${at.column};${at.row}M`, false);
-    term.input(`\x1b[<0;${at.column};${at.row}m`, false);
-    at = null;
     event.preventDefault();
+    if (axis === null) {
+      if (keys.wanted()) {
+        if (document.activeElement === term.textarea) term.blur();
+        term.focus();
+      }
+      // Press and release in one go. A finger has no button to hold down, and
+      // a press with no release would leave the program dragging.
+      term.input(`\x1b[<0;${at.column};${at.row}M`, false);
+      term.input(`\x1b[<0;${at.column};${at.row}m`, false);
+    }
+    at = null;
   }, { passive: false });
   element.addEventListener('touchcancel', () => { at = null; });
+}
+
+// The browser's Back, as the program's Esc. A phone has a Back key and no Esc,
+// and leaving the page would end the session with nothing to bring it back.
+//
+// What Back undoes is a history entry, so one is kept above the page and put
+// back once Back has taken it. It is put back on the next touch or key rather
+// than at once, because a browser skips over an entry that was added with no
+// gesture behind it: two Backs in a row still leave the page, which is a way
+// off it that stays.
+//
+// The address under that entry is the one the page was opened at, and the
+// worksheet a link has written since is put back over it, so that taking the
+// Esc does not take the link away.
+//
+// What comes back is how to stop, for the screen the program leaves behind: once
+// there is no program, Back is the browser's again.
+function backing(term) {
+  if (!keys.TOUCH.matches) return () => {};
+  let armed = false;
+  const arm = () => {
+    if (armed) return;
+    armed = true;
+    history.pushState(null, '');
+  };
+  const back = () => {
+    armed = false;
+    const written = files.written();
+    if (written !== null) history.replaceState(null, '', written);
+    term.input('\x1b', true);
+  };
+  const gestures = ['touchend', 'keydown'];
+  for (const name of gestures) window.addEventListener(name, arm, true);
+  window.addEventListener('popstate', back);
+  return () => {
+    for (const name of gestures) window.removeEventListener(name, arm, true);
+    window.removeEventListener('popstate', back);
+    if (armed) history.back();
+  };
 }
 
 // WebGL, with canvas behind it. The two are pixel-identical - they share the
@@ -452,16 +550,19 @@ async function main() {
   pyodide.globals.set('SOLIDS', solids);
   pyodide.globals.set('FILES', files);
   pyodide.globals.set('DEMOS', demos);
+  pyodide.globals.set('KEYBOARD', keys.typing(term));
   window.rederive = { term, pyodide, timings, plots, solids, files, demos };
   // The first frame the program draws for itself, which is the moment there is
   // something behind the controls that ask it for anything: by now Python has
   // handed each of those modules what it does, and everything the corner offers
   // is answerable. It is also where the wait is taken as over, and the two are
   // the same instant rather than two guesses at it.
+  let unbacking = null;
   term.onRender(() => {
     if (timings.prompt !== undefined) return;
     mark('prompt', started);
     corner.working(true);
+    unbacking = backing(term);
   });
 
   // `run_async` and never `run`: there is one thread here and the loop is the
@@ -469,10 +570,11 @@ async function main() {
   await pyodide.runPythonAsync(`
 from rederive.web.boot import start
 
-await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES, DEMOS)
+await start(TERMINAL, SPAWN, PLOTS, SOLIDS, FILES, DEMOS, KEYBOARD)
 `);
   mark('session', started);
   corner.working(false);
+  if (unbacking !== null) unbacking();
   ending(term);
 }
 

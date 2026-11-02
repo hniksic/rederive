@@ -26,6 +26,8 @@ const NOTICE_SECONDS = 8;
 // cancels it; never revoking leaks the whole worksheet for the life of the tab.
 const REVOKE_MS = 60000;
 
+import { settle } from './keys.js';
+
 let terminal = null;
 let handlers = null;
 let notice = null;
@@ -91,8 +93,20 @@ export function download(name, text) {
 // `replaceState` rather than assigning to `location.hash`, which would put an
 // entry in the history and turn the browser's Back button into something that
 // undoes a save.
+//
+// What was written is kept as well, for the Back that a touch screen turns into
+// Esc: that steps down to the entry under this one, which has never heard of
+// the worksheet, and `written` is how it is put back there.
+let wrote = null;
+
 export function address(fragment) {
-  history.replaceState(null, '', fragment === '' ? location.pathname : '#' + fragment);
+  wrote = fragment === '' ? location.pathname : '#' + fragment;
+  history.replaceState(null, '', wrote);
+}
+
+// The address last written, or null where nothing has been.
+export function written() {
+  return wrote;
 }
 
 // What this file has instead of the program's message line, for the things
@@ -135,5 +149,5 @@ function named(id) {
 // The keyboard belongs to the terminal. A button keeps focus after a click,
 // and the next keystroke would go to it rather than to the program.
 function focus() {
-  if (terminal !== null) terminal.focus();
+  if (terminal !== null) settle(terminal);
 }

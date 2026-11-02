@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -79,28 +80,67 @@ class PageApp(RederiveApp):
         terminal: Any,
         plots: WebPlots,
         opening: str = "",
+        keyboard: Callable[[bool], None] | None = None,
     ) -> None:
         # Before the base class, which asks for the driver as it starts.
         self._terminal = terminal
+        self._keyboard = keyboard
+        #: What the page was last told, so that it is told only of a change.
+        self._typing: bool | None = None
         super().__init__(session, plotter=plots, opening=opening)
 
     def get_driver_class(self) -> Any:
         """This page's terminal, and nothing behind it to fall back to."""
         return BrowserDriver.on(self._terminal)
 
+    # -- the keyboard a touch screen draws ---------------------------------
+    #
+    # A phone's keyboard is up for as long as the terminal has the page's focus,
+    # and only the program knows when it is waiting for text. So the page is
+    # told whenever that changes, and it is the page that decides what a
+    # keyboard of its own has to do about it.
+    #
+    # Two places hear the change between them. A redraw follows every change of
+    # mode, and a change of focus is how the prompt line comes and goes - which
+    # Textual applies a beat after the redraw that asked for it.
+
+    def refresh_screen(self) -> None:
+        super().refresh_screen()
+        self._tell_typing()
+
+    def on_descendant_focus(self) -> None:
+        self._tell_typing()
+
+    def on_descendant_blur(self) -> None:
+        self._tell_typing()
+
+    def _tell_typing(self) -> None:
+        typing = self.wants_typing
+        if typing == self._typing or self._keyboard is None:
+            return
+        self._typing = typing
+        self._keyboard(typing)
+
 
 async def start(
-    terminal: Any, spawn: Any, plots: Any, solids: Any, page: Any, demos: Any
+    terminal: Any,
+    spawn: Any,
+    plots: Any,
+    solids: Any,
+    page: Any,
+    demos: Any,
+    keyboard: Any = None,
 ) -> None:
     """Run Rederive on this page until the user leaves it.
 
-    Six things the page owns and this side cannot make: the xterm.js the
+    Seven things the page owns and this side cannot make: the xterm.js the
     program draws on, what makes an engine worker, the two modules that open a
     plot pane - one for a flat picture and one for a solid, which share no
     drawing at all - the file gestures, which are a download, a picker and an
-    address, and the menu that downloads a demonstration. All of them are DOM
-    elements, script URLs and canvases, and none of them is anything Python
-    could have built.
+    address, the menu that downloads a demonstration, and what a touch screen
+    does with its keyboard when the program starts or stops waiting for text.
+    All of them are DOM elements, script URLs and canvases, and none of them is
+    anything Python could have built.
 
     What happens between the session and the app is what a tab has instead of a
     command line: the settings this page was last left with are applied, and a
@@ -115,7 +155,13 @@ async def start(
     session = Session(runner=engine)
     files = Files(page, session, platform.current().storage())
     files.settings()
-    app = PageApp(session, terminal, WebPlots(plots, solids, engine), files.opening())
+    app = PageApp(
+        session,
+        terminal,
+        WebPlots(plots, solids, engine),
+        files.opening(),
+        keyboard,
+    )
     files.attend()
     # Held for as long as the program runs: the proxies the menu is wired with
     # live inside it, and JS would be left pointing at freed callbacks.

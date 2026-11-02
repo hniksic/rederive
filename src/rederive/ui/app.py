@@ -2159,6 +2159,20 @@ class RederiveApp(App[None]):
         """
         return self.mode in MENU_MODES and self.editor is None
 
+    @property
+    def wants_typing(self) -> bool:
+        """Whether what is on screen is waiting for text that only a keyboard gives.
+
+        A line being read, a Y/N question, and a dialog's field being typed
+        into, a number or a text. A menu and a dialog's choices answer a pointer
+        as well as a letter, so they are not on the list: this is what a touch
+        screen asks before it puts its keyboard up over half the program.
+        """
+        if isinstance(self.focused, PromptLine) or self.mode == MODE_CONFIRM:
+            return True
+        editor = self.editor
+        return self.mode == MODE_MENU and editor is not None and editor.text is not None
+
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         self._wheel(1, event)
 

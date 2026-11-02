@@ -54,6 +54,7 @@
 
 import * as controls from './controls.js';
 import * as sheets from './forms.js';
+import * as keys from './keys.js';
 import * as place from './place.js';
 
 // What the picture is drawn at, which is `plot/appearance.py`'s and arrives
@@ -167,7 +168,7 @@ export const panes = new Map();
 // The keyboard back to the terminal, as `files.js` does it for its buttons.
 // Nothing else on the page reads keys, so there is nowhere else to put them.
 function focus() {
-  if (terminal !== null) terminal.focus();
+  if (terminal !== null) keys.settle(terminal);
 }
 
 function surface() {

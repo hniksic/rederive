@@ -2969,3 +2969,24 @@ async def test_an_angle_bracket_typed_into_a_field_is_text(app):
         assert band(app) == [
             " CALCULUS LIMIT: Point: <                  From:(Both)Left Right"
         ]
+
+
+# -- what a touch screen's keyboard is for -----------------------------------
+
+
+async def test_only_a_line_or_a_text_field_wants_typing(app):
+    async with app.run_test() as pilot:
+        assert not app.wants_typing
+        await pilot.press("a")
+        await pilot.pause()
+        assert app.wants_typing
+        await pilot.press("x", "enter")
+        await pilot.pause()
+        assert not app.wants_typing
+        # A menu and a dialog's choices answer a tap, and a text field does not.
+        await pilot.press("o", "r")
+        assert not app.wants_typing
+        await pilot.press("space", "space", "enter")
+        assert app.wants_typing
+        await pilot.press("escape", "escape", "escape")
+        assert not app.wants_typing
