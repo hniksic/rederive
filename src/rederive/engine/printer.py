@@ -75,6 +75,7 @@ sympy printer dispatches on the class name, so `_print_PlusMinus` finds
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from decimal import Decimal
 from fractions import Fraction
@@ -85,6 +86,7 @@ from sympy.core.relational import Relational
 from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES, precedence
 
 from rederive.engine import notation
+from rederive.engine.approximation import is_approximation
 from rederive.engine.context import Context, Notation
 from rederive.engine.ordering import main_order
 from rederive.syntax.names import BUILTIN_FUNCTIONS, GREEK_GLYPHS, PRIME_MARK
@@ -111,6 +113,8 @@ PRECEDENCE_VALUES.setdefault("Dot", PRECEDENCE["Add"] - 1)
 PRECEDENCE_VALUES.setdefault("MatMul", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 PRECEDENCE_VALUES.setdefault("Power", PRECEDENCE["Pow"])
+PRECEDENCE_VALUES.setdefault("Added", PRECEDENCE["Add"])
+PRECEDENCE_VALUES.setdefault("Quotient", PRECEDENCE["Mul"])
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -866,16 +870,33 @@ def numeral(number: int, base: int = 10) -> str:
     a letter takes a leading zero so that it cannot be read as a variable
     name: fourteen is `0E` in hexadecimal, not `E`.
     """
-    magnitude = abs(number)
-    text = ""
-    while True:
-        text = _DIGITS[magnitude % base] + text
-        magnitude //= base
-        if not magnitude:
-            break
+    text = _digits_of(abs(number), base)
     if text[0].isalpha():
         text = "0" + text
     return ("-" if number < 0 else "") + text
+
+
+#: How many digits `_digits_of` writes one at a time before it splits a number.
+_DIGIT_CHUNK = 64
+
+
+def _digits_of(magnitude: int, base: int, width: int = 0) -> str:
+    """The digits of a nonnegative `magnitude` in `base`, padded with zeros to `width`.
+
+    A long number is split in two at a power of the base near the middle of it and
+    each half written on its own, which keeps a numeral of hundreds of thousands of
+    digits a matter of a second rather than of minutes: dividing it down one digit
+    at a time takes time in the square of its length.
+    """
+    if magnitude < base**_DIGIT_CHUNK:
+        text = ""
+        while magnitude:
+            text = _DIGITS[magnitude % base] + text
+            magnitude //= base
+        return text.rjust(width, "0") if width else text or "0"
+    half = int(magnitude.bit_length() / math.log2(base)) // 2
+    high, low = divmod(magnitude, base**half)
+    return _digits_of(high, base, max(width - half, 0)) + _digits_of(low, base, half)
 
 
 def _under_the_bar(power: sp.Basic) -> bool:
@@ -1190,6 +1211,13 @@ class AuthorPrinter(sp.StrPrinter):
         the ratio; the numerals of a ratio are written in the session's base,
         as every whole number is. The decimal styles are base ten, the base
         being the one thing a decimal point numeral cannot carry.
+
+        Decimal notation writes an exact number out in full, but an approximate one
+        only to its precision: it is written as scientific notation writes it, which
+        is a plain numeral for a moderate magnitude and a power of ten outside it.
+        `APPROX(100!)` is `9.33262*10^157` rather than 158 digits of which six are
+        the number's own, and `APPROX(EXP(-100))` is `3.72007*10^-44` rather than
+        43 zeros ahead of its digits.
         """
         style, digits = self.context.notation, self.context.notation_digits
         if style is Notation.RATIONAL or (
@@ -1199,7 +1227,7 @@ class AuthorPrinter(sp.StrPrinter):
             if value.denominator == 1:
                 return numeral(value.numerator, base)
             return f"{numeral(value.numerator, base)}/{numeral(value.denominator, base)}"
-        if style is Notation.DECIMAL:
+        if style is Notation.DECIMAL and not is_approximation(value):
             return notation.decimal(value, digits)
         return notation.scientific(value, digits)
 
@@ -1704,6 +1732,24 @@ class AuthorPrinter(sp.StrPrinter):
         level = PRECEDENCE["Func"]
         base, index = expr.args
         return f"{self.parenthesize(base, level)} SUB {self.parenthesize(index, level)}"
+
+    def _print_Added(self, expr):
+        text = ""
+        for term in expr.args:
+            written = self.parenthesize(term, PRECEDENCE["Add"], strict=True)
+            if not text:
+                text = written
+            elif written.startswith("-"):
+                text += f" - {written[1:]}"
+            else:
+                text += f" + {written}"
+        return text
+
+    def _print_Quotient(self, expr):
+        level = PRECEDENCE["Mul"]
+        left, right = expr.args
+        over = self.parenthesize(right, level, strict=True)
+        return f"{self.parenthesize(left, level)}/{over}"
 
     def _print_Dot(self, expr):
         level = PRECEDENCE["Mul"]

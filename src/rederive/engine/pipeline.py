@@ -56,7 +56,7 @@ from sympy.functions.elementary.trigonometric import TrigonometricFunction
 from sympy.logic.boolalg import Boolean
 from sympy.simplify.fu import TR2, TR5, TR6, TR7, TR8, TR11
 
-from rederive.engine.approximation import approximated
+from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.boundary import DEFAULT_AMOUNT, Amount, Result
 from rederive.engine.context import (
     Branch,
@@ -123,6 +123,7 @@ _COMBSIMP = 60
 _BOOLEAN_VARIABLES = 5
 
 
+@noting_approximations
 def simplify(
     node: Node, context: Context | None = None, state: ParseState | None = None
 ) -> Result:
@@ -245,14 +246,42 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
 
     Two matrices of one shape are related element by element, which is what
     section 8.5 reads a solved system off: `[[x], [y], [z]] = A^-1 . b` comes
-    back as the three equations it stands for.
+    back as the three equations it stands for. An equation or an inequation of two
+    matrices is still one statement about them, and where the elements decide it
+    the answer is that one truth value; see `_whole`.
     """
     left = _transform(expression.lhs, context, decide)
     right = _transform(expression.rhs, context, decide)
     spread = _spread(expression.func, left, right, context, decide)
     if spread is not None:
+        if decide and expression.func in (sp.Eq, sp.Ne):
+            return _whole(expression.func, spread, left, right)
         return spread
     return _stated(expression.func, left, right, context, decide)
+
+
+def _whole(func, spread: sp.Basic, left: sp.Basic, right: sp.Basic) -> sp.Basic:
+    """An equation or inequation of two matrices, from what each pair of elements says.
+
+    Two matrices are equal when every pair of elements is and different when any
+    pair is, so `[1, 2] = [1, 3]` is `false` and `[1, 2] /= [1, 3]` is `true`. An
+    equation not yet decided is the equations of its elements, to be solved as a
+    system; an inequation not yet decided says that some pair differs, which no
+    one of its elements says, and it stands as written.
+    """
+    verdicts = _elements_of_spread(spread)
+    equal = func is sp.Eq
+    if any(verdict == (sp.false if equal else sp.true) for verdict in verdicts):
+        return sp.false if equal else sp.true
+    if all(verdict == (sp.true if equal else sp.false) for verdict in verdicts):
+        return sp.true if equal else sp.false
+    return spread if equal else sp.Ne(left, right, evaluate=False)
+
+
+def _elements_of_spread(spread: sp.Basic) -> list[sp.Basic]:
+    if isinstance(spread, InertVector):
+        return [leaf for row in spread.args for leaf in _elements_of_spread(row)]
+    return [spread]
 
 
 def _spread(

@@ -34,7 +34,7 @@ import sympy as sp
 from rederive.engine.boundary import Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.from_sympy import from_sympy
-from rederive.engine.approximation import approximated
+from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.pipeline import simplified
 from rederive.engine.solving import solutions
 from rederive.engine.to_sympy import to_sympy
@@ -44,6 +44,7 @@ from rederive.syntax.state import ParseState
 __all__ = ["solve", "solved"]
 
 
+@noting_approximations
 def solve(
     node: Node,
     context: Context | None = None,

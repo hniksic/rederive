@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from dataclasses import replace
 from fractions import Fraction
 
 import pytest
@@ -672,6 +673,17 @@ LOGARITHMS = [
     ("#e^(#i*pi)", "-1", None),
     ("LOG(8, 2)", "3", None),
     ("#e^(2*LN(x))", "x^2", None),
+    # The logarithm falls without bound as its argument falls to zero, so at zero
+    # it is minus infinity and not the unsigned infinity of a pole; a base below
+    # one turns the sign round.
+    ("LN(0)", "-inf", None),
+    ("LN(0) + 1", "-inf", None),
+    ("LN(1 - 1)", "-inf", None),
+    ("EXP(LN(0))", "0", None),
+    ("LOG(0)", "-inf", None),
+    ("LOG(0, 10)", "-inf", None),
+    ("LOG(0, 1/2)", "inf", None),
+    ("VECTOR(LN(k), k, 0, 1)", "[-inf, 0]", None),
     # `e` and `i` are ordinary variables; only `#e` and `#i` are the constants.
     ("LN(e)", "LN(e)", None),
     ("i^2", "i^2", None),
@@ -1984,6 +1996,37 @@ VECTORS = [
     # Shapes that will not multiply keep the operator, unevaluated: better the
     # expression back than a guess at which product was meant.
     ("[[1, 2], [3, 4]] . [1, 2, 3]", "[[1, 2], [3, 4]] . [1, 2, 3]"),
+    # Nor will they add. Each shape's terms are added together and the sum of the
+    # shapes stands. A matrix and a vector are two shapes like any other, as a
+    # vector and a scalar are: there is no sum to distribute over the rows.
+    ("[1, 2] + [1, 2, 3]", "[1, 2] + [1, 2, 3]"),
+    ("[1, 2] - [1, 2, 3]", "[1, 2] + [-1, -2, -3]"),
+    ("[1, 2] + [3, 4] + [1, 2, 3]", "[4, 6] + [1, 2, 3]"),
+    ("x + 1 + [1, 2] + [1, 2, 3]", "x + 1 + [1, 2] + [1, 2, 3]"),
+    ("[[1, 2], [3, 4]] + [1, 2]", "[[1, 2], [3, 4]] + [1, 2]"),
+    (
+        "[[1, 2], [3, 4]] + [[1, 2, 3], [4, 5, 6]]",
+        "[[1, 2], [3, 4]] + [[1, 2, 3], [4, 5, 6]]",
+    ),
+    ("x*([1, 2] + [1, 2, 3])", "([1, 2] + [1, 2, 3])*x"),
+    ("([1, 2] + [1, 2, 3]) + [1, 1]", "[2, 3] + [1, 2, 3]"),
+    ("[1, 2] + [1, 2, 3] - ([1, 2] + [1, 2, 3])", "[0, 0] + [0, 0, 0]"),
+    ("DET([1, 2] + [1, 2, 3])", "DET([1, 2] + [1, 2, 3])"),
+    ("[1, 2] + 5", "[1, 2] + 5"),
+    # Only a square matrix has powers, and only a square matrix has an inverse to
+    # divide by.
+    ("[[1, 2, 3], [4, 5, 6]]^(-1)", "[[1, 2, 3], [4, 5, 6]]^(-1)"),
+    ("[[1, 2, 3], [4, 5, 6]]^2", "[[1, 2, 3], [4, 5, 6]]^2"),
+    ("[[1, 2, 3], [4, 5, 6]]^n", "[[1, 2, 3], [4, 5, 6]]^n"),
+    ("[1, 2]^2", "[1, 2]^2"),
+    ("[1, 2]/[3, 4]", "[1, 2]/[3, 4]"),
+    ("2/[1, 2]", "2/[1, 2]"),
+    ("[[1, 2], [3, 4]]/[1, 2]", "[[1, 2], [3, 4]]/[1, 2]"),
+    ("[[1, 2], [3, 4]]/[[1, 2], [3, 5]]", "[[1, 0], [-3, 2]]"),
+    ("[1, 2]/[[1, 2], [3, 4]]", "[1, 0]"),
+    ("[[1, 2], [3, 4]]/[[1, 2], [2, 4]]", "[[1, 2], [3, 4]] . [[1, 2], [2, 4]]^-1"),
+    ("CROSS([1, 2], [1, 2, 3])", "CROSS([1, 2], [1, 2, 3])"),
+    ("ELEMENT([1, 2], 3)", "ELEMENT([1, 2], 3)"),
     ("a . b", "a . b"),
     # Ragged: no matrix to be, and nothing to do to it either.
     ("[[1, 2], [3]]", "[[1, 2], [3]]"),
@@ -2648,9 +2691,39 @@ def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
     assert simp("[x, y] < [1, 2]") == "[x < 1, y < 2]"
     spread = simp("[[a, b], [c, d]] = [[1, 2], [3, 4]]")
     assert spread == "[[a = 1, b = 2], [c = 3, d = 4]]"
-    assert simp("[[1, 2], [3, 4]] = [[1, 2], [3, 4]]") == "[[true, true], [true, true]]"
     assert simp("[1, 2] = [1, 2, 3]") == "false"
     assert simp("[x, y] = [1, 2, 3]") == "[x, y] = [1, 2, 3]"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Two matrices are equal when every pair of elements is, and different when
+        # any pair is: an equation of two of them is one statement, and where the
+        # elements settle it the answer is one truth value.
+        ("[1, 2] = [1, 2]", "true"),
+        ("[1, 2] = [1, 3]", "false"),
+        ("[[1, 2], [3, 4]] = [[1, 2], [3, 4]]", "true"),
+        ("[[1, 2], [3, 4]] = [[1, 2], [3, 5]]", "false"),
+        ("[SIN(x)^2 + COS(x)^2, 2] = [1, 2]", "true"),
+        # One pair that differs is enough, whatever the others say.
+        ("[1, 2] = [x, 3]", "false"),
+        # Not yet settled, the equation is the system of its elements.
+        ("[1, 2] = [x, 2]", "[1 = x, true]"),
+        # An inequation says that some pair differs, which none of its elements
+        # says alone, so one not yet settled stands whole.
+        ("[1, 2] /= [1, 3]", "true"),
+        ("[1, 2] /= [1, 2]", "false"),
+        ("[1, 2] /= [x, 3]", "true"),
+        ("[1, 2] /= [x, 2]", "[1, 2] /= [x, 2]"),
+        ("[x, y] /= [1, 2]", "[x, y] /= [1, 2]"),
+        ("[1, 2] /= [1, 2, 3]", "true"),
+        ("IF([1, 2] = [1, 2], a, b)", "a"),
+    ],
+    ids=str,
+)
+def test_an_equation_of_two_matrices_is_one_truth_value(text, expected):
+    assert simp(text) == expected
 
 
 def test_the_system_of_section_eight_five_is_solved_by_inverting_its_matrix():
@@ -3102,6 +3175,59 @@ def test_what_the_approx_function_leaves_shows_its_digits(text, expected):
     assert simp(text, DECIMAL) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # An approximate number has only its precision's digits to show, so Decimal
+        # notation writes one far from 1 with a power of ten, as Scientific does,
+        # rather than padding it out with zeros that are no digits of its own.
+        ("APPROX(#e^(pi*SQRT(163)))", "2.62537*10^17"),
+        ("APPROX(EXP(100))", "2.68811*10^43"),
+        ("APPROX(EXP(-100))", "3.72007*10^-44"),
+        ("APPROX(100!)", "9.33262*10^157"),
+        ("APPROX(LN(1 + 10^(-15)))", "1.00000*10^-15"),
+        ("APPROX(SQRT(2)*10^20)", "1.41421*10^20"),
+        ("APPROX(10^(-7))", "10^-7"),
+        ("APPROX(2^100)*x", "1.26765*10^30*x"),
+        # Approximate, a whole number of more digits than the precision has is
+        # written to the precision too.
+        ("APPROX(123456789)", "1.23456*10^8"),
+        # A moderate magnitude is written plainly.
+        ("APPROX(1234)", "1234"),
+        ("APPROX(0.000123)", "0.000123000"),
+        # An exact number is written out in full, however long.
+        ("100!", str(math.factorial(100))),
+        ("1/2^100", "0.000000000000000000000000000000788860"),
+        ("123456789", "123456789"),
+    ],
+    ids=str,
+)
+def test_decimal_notation_writes_an_approximate_number_to_its_precision(text, expected):
+    assert simp(text, DECIMAL) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("EXP(100)", "2.68811*10^43"),
+        ("2^100", "1.26765*10^30"),
+        ("x/3", "0.333333*x"),
+    ],
+    ids=str,
+)
+def test_decimal_notation_in_approximate_mode_writes_every_number_to_its_precision(
+    text, expected
+):
+    context = replace(APPROXIMATE, notation=Notation.DECIMAL)
+    assert simp(text, context) == expected
+
+
+def test_decimal_notation_in_mixed_mode_writes_only_the_approximations_shortened():
+    context = replace(MIXED, notation=Notation.DECIMAL)
+    assert simp("SQRT(2)*10^20", context) == "1.41421*10^20"
+    assert simp("10^20/3", context) == "33333333333333333333.3"
+
+
 def test_the_approx_function_takes_the_digits_it_is_given():
     # Twelve digits of pi, which is a nearer rational than six digits' 355/113.
     assert simp("APPROX(pi, 12)") == "5419351/1725033"
@@ -3137,7 +3263,7 @@ def test_a_digit_count_is_the_digits_of_it_that_are_whole():
         ("APPROX(INT(SIN(x)/x, x, 1, 2), 15)", "0.659329"),
         ("APPROX(SUM(1/(k^3 + 1), k, 1, inf), 15)", "0.686503"),
         # An infinity is refused, being the one thing that has no digits.
-        ("APPROX(LN(0), 15)", "±inf"),
+        ("APPROX(LN(0), 15)", "-inf"),
         ("APPROX(1/0, 15)", "±inf"),
     ],
     ids=str,
@@ -3254,6 +3380,13 @@ EXACT_DIGITS = [
     ("LN(1 + 10^(-15))", "1.00000*10^-15"),
     # Both powers would overflow before they are divided.
     ("2^(10^20)/2^(10^20)", "1"),
+    # Powers too big to build exactly, of a base the working precision would round
+    # to 1: the base is carried to as many more digits as the exponent has.
+    ("(1 + 10^(-20))^(10^20)", "2.71828"),
+    ("(1 + 10^(-10))^(10^10)", "2.71828"),
+    ("(1 - 10^(-20))^(10^20)", "0.367879"),
+    ("(1 + 10^(-20))^(2*10^20)", "7.38905"),
+    ("(-1 - 10^(-20))^(10^20 + 1)", "-2.71828"),
     # Catastrophic cancellation.
     ("SQRT(10001) - 100", "0.00499987"),
     # The quadrature's own error must stay below the last digit shown.
@@ -3270,8 +3403,24 @@ def test_an_approximation_shows_only_digits_of_the_value(text, expected, context
 def test_a_power_near_one_to_a_high_exponent_keeps_its_digits():
     """Rounded to the working precision, `1 + 10^-5` is 1, and so is its power.
     Computed as if exactly, as in the table above, it is close to `#e`. Only the
-    approximate mode is checked, mixed taking minutes over the exact power first."""
+    approximate mode is checked, mixed keeping the exact power of half a million
+    digits as the rational it is before it is written."""
     assert simp("(1 + 10^(-5))^(10^5)", APPROXIMATE) == "2.71826"
+
+
+def test_a_power_too_big_to_approximate_stands():
+    # `10^10^10` approximated would be a rational of ten billion digits, which is
+    # no more writable than the exact power.
+    assert simp("10^10^10", APPROXIMATE) == "10^(10^10)"
+
+
+def test_a_long_exact_answer_is_written_out_quickly():
+    """Half a million digits of numerator and denominator, written in well under
+    the time limit, where writing them one digit at a time takes minutes."""
+    written = simp("(1 + 10^(-5))^(10^5)")
+    numerator, denominator = written.split("/")
+    assert denominator == "1" + "0" * 500000
+    assert numerator.startswith("27182682371")
 
 
 @pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=["approximate", "mixed"])

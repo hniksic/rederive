@@ -57,6 +57,7 @@ __all__ = [
     "Assign",
     "Converter",
     "Declare",
+    "Added",
     "Dot",
     "FunDef",
     "InertVector",
@@ -64,6 +65,7 @@ __all__ = [
     "MovingLimit",
     "PlusMinus",
     "Power",
+    "Quotient",
     "StringLiteral",
     "Subscript",
     "Taylor",
@@ -93,6 +95,12 @@ COMMAND_HEADS = ("EXPAND", "FACTOR", "SOLVE", "RATE")
 #: legitimate work - `2^1000000` is under it, and `10000!` is a power of
 #: nothing - and far below what makes a machine swap.
 POWER_BITS = 1 << 24
+
+#: The largest power, in bits of its numerator or its denominator, that is
+#: approximated where the exact power is too big to build. Every approximate number
+#: is a rational, so an approximation of `(1/3)^10^7` would be one over a number of
+#: millions of digits, and that takes seconds to write down.
+APPROXIMATE_POWER_BITS = 1 << 22
 
 
 #: The dimension every declared nonscalar has. A nonscalar is a `MatrixSymbol`,
@@ -156,6 +164,25 @@ class Dot(sp.Function):
     nargs = 2
 
 
+class Added(sp.Function):
+    """`u + v` where the shapes will not add.
+
+    A vector and a vector of another length, or a matrix and a vector, have no sum,
+    and sympy refuses to build one. The terms are kept as they are, those of one
+    shape already added together and the scalars among them as one term in front.
+    """
+
+
+class Quotient(sp.Function):
+    """`u/v` where `v` is a vector or a matrix that is not square.
+
+    Dividing by a square matrix is multiplying by its inverse, and nothing else
+    has one: the quotient stands as written.
+    """
+
+    nargs = 2
+
+
 class Subscript(sp.Function):
     """`u SUB v` where `u` is no vector and the two are not both names.
 
@@ -182,9 +209,26 @@ class Power(sp.Function):
     its parts, and rebuilding is exactly the evaluation being refused. This
     carries the same two operands and no sympy routine can talk it into
     multiplying them out. See `_explodes` for what makes one.
+
+    Its value is still a number that can be approximated, as long as an approximate
+    number that size is cheap to write down, which `APPROXIMATE_POWER_BITS` says. It
+    is worked out in floating point, with the base evaluated to as many more bits as
+    the exponent has, since that is how much the exponent magnifies the base's error
+    by: `(1 + 10^-20)^10^20` is `#e` to twenty decimal places.
     """
 
     nargs = 2
+
+    def _eval_evalf(self, prec: int) -> sp.Float | None:
+        base, exponent = self.args
+        if not (base.is_Rational and exponent.is_Integer) or base.is_zero:
+            return None
+        size = abs(int(exponent)) * abs(float(sp.log(abs(base), 2).evalf(15)))
+        if size > APPROXIMATE_POWER_BITS:
+            return None
+        working = prec + int(exponent).bit_length() + 16
+        value = sp.Float(base, precision=working) ** exponent
+        return sp.Float(value, precision=prec)
 
 
 class InertVector(sp.Function):
@@ -725,7 +769,12 @@ class Converter:
             signed = [terms[0]]
             for index, term in enumerate(terms[1:]):
                 signed.append(-term if operators[index] == "-" else term)
-            return sp.Add(*signed)
+            if len(_added_terms(signed)) > len(signed):
+                return _unconformable_sum(signed)
+            try:
+                return sp.Add(*signed)
+            except sp.ShapeError:
+                return _unconformable_sum(signed)
 
         terms = self._children(node)
         mapped = self.over_equations(added, terms)
@@ -783,6 +832,10 @@ class Converter:
                 # division itself.
                 if _symbolic_matrix(right):
                     return self._times(left, _matrix_power(right, sp.Integer(-1)))
+                if isinstance(right, sp.MatrixBase):
+                    if not right.is_square:
+                        return Quotient(left, right)
+                    return self._times(left, self._operated("^", right, sp.Integer(-1)))
                 try:
                     return left / right
                 except Exception:
@@ -792,6 +845,10 @@ class Converter:
                     return Power(left, right)
                 if _symbolic_matrix(left):
                     return _matrix_power(left, right)
+                if isinstance(left, sp.MatrixBase) and not left.is_square:
+                    # Only a square matrix has powers. A vector's are not the
+                    # elementwise ones either, so the power stands.
+                    return Power(left, right)
                 try:
                     return left**right
                 except Exception:
@@ -1194,6 +1251,45 @@ def _matrix_power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
         return sp.MatPow(base, exponent)
 
 
+def _unconformable_sum(terms: list[sp.Basic]) -> sp.Basic:
+    """The sum of `terms` where some of them are matrices of different shapes.
+
+    Each shape's matrices are added together and the scalars are added together,
+    and what is left of the sum is those few terms, kept in the order their shapes
+    first appear.
+    """
+    scalars: list[sp.Basic] = []
+    shapes: dict[tuple[int, int], list[sp.Basic]] = {}
+    for term in _added_terms(terms):
+        if isinstance(term, sp.MatrixBase):
+            shapes.setdefault(term.shape, []).append(term)
+        else:
+            scalars.append(term)
+    added = [sp.Add(*group) for group in shapes.values()]
+    if len(added) < 2:
+        return sp.Add(*scalars, *added)
+    scalar = sp.Add(*scalars)
+    return Added(*added) if scalar == 0 else Added(scalar, *added)
+
+
+def _added_terms(terms: list[sp.Basic]) -> list[sp.Basic]:
+    """`terms` with the terms of any sum that would not add among them spliced in."""
+    spliced = []
+    for term in terms:
+        if isinstance(term, Added):
+            spliced.extend(term.args)
+        elif (
+            isinstance(term, sp.Mul)
+            and len(term.args) == 2
+            and term.args[0].is_Number
+            and isinstance(term.args[1], Added)
+        ):
+            spliced.extend(term.args[0] * part for part in term.args[1].args)
+        else:
+            spliced.append(term)
+    return spliced
+
+
 def _matrix_factors(value: sp.Basic) -> list[sp.Basic]:
     """A product's factors, so that a run of them is folded flat."""
     return list(value.args) if isinstance(value, sp.MatMul) else [value]
@@ -1422,11 +1518,23 @@ _INVERSE_TRIGONOMETRIC = {
     "ACSC": sp.acsc,
 }
 
+def _ln(value: sp.Basic) -> sp.Basic:
+    """`LN(z)`, which at zero is `-inf`.
+
+    That is the limit of the logarithm as a positive argument falls to zero, and
+    from any direction its real part `LN(ABS(z))` falls the same way. Sympy answers
+    complex infinity, as for a pole, which would let `LN(0)` be `+inf` as well.
+    """
+    if getattr(value, "is_zero", None) is True:
+        return -sp.oo
+    return sp.log(value)
+
+
 #: Functions that are their sympy counterpart applied to its arguments.
 _DIRECT: dict[str, Callable[..., sp.Basic]] = {
     "SQRT": sp.sqrt,
     "EXP": sp.exp,
-    "LN": sp.log,
+    "LN": _ln,
     "ABS": sp.Abs,
     "MAX": sp.Max,
     "MIN": sp.Min,
@@ -1525,7 +1633,11 @@ def _chi(conv: Converter, args: list) -> sp.Basic:
 
 def _log(conv: Converter, args: list) -> sp.Basic:
     """`LOG(z)` is the natural logarithm; `LOG(z, w)` is `LN(z)/LN(w)`."""
-    return sp.log(*args)
+    if len(args) == 2 and getattr(args[0], "is_zero", None) is True:
+        return _ln(args[0]) / _ln(args[1])
+    if len(args) == 2:
+        return sp.log(*args)
+    return _ln(*args)
 
 
 def _normal(conv: Converter, args: list) -> sp.Basic:

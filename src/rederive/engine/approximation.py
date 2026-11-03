@@ -75,15 +75,26 @@ that costs.
 
 from __future__ import annotations
 
-from collections.abc import Set
+import functools
+from collections.abc import Callable, Iterator, Set
+from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal
 from fractions import Fraction
+from typing import ParamSpec, TypeVar
 
 import sympy as sp
 
 from rederive.engine.context import Context, Precision
 
-__all__ = ["GUARD", "approximated", "simplest", "simplest_rational"]
+__all__ = [
+    "GUARD",
+    "approximated",
+    "is_approximation",
+    "noting_approximations",
+    "simplest",
+    "simplest_rational",
+]
 
 #: Digits carried past the ones asked for while an irrational is evaluated, so
 #: that the digits asked for are the value's own rather than a rounding of it.
@@ -145,6 +156,7 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
     being a value in its own right and the next step's number going in.
     """
     digits = context.precision_digits
+    noted = _noted.get()
     match context.precision:
         case Precision.APPROXIMATE:
             # Each number is approximated as a whole, and then what is left of
@@ -157,12 +169,75 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
             # second pass may reach a simpler rational a whole tolerance away
             # and cost the last digit shown.
             approximate: set[sp.Rational] = set()
-            return _rounded(
+            result = _rounded(
                 _approximated(expression, digits, approximate), digits, approximate
             )
+            if noted is not None:
+                noted.update(_fraction(n) for n in _atoms(result, sp.Rational))
+            return result
         case Precision.MIXED:
-            return _approximated(expression, digits)
+            approximate = set()
+            result = _approximated(expression, digits, approximate)
+            if noted is not None:
+                noted.update(_fraction(n) for n in approximate if n.is_Rational)
+            return result
     return expression
+
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+#: The approximate numbers the command being worked has produced, while one is.
+_noted: ContextVar[set[Fraction] | None] = ContextVar("noted", default=None)
+
+
+def noting_approximations(command: Callable[P, R]) -> Callable[P, R]:
+    """`command`, noting which of the numbers in its answer are approximate.
+
+    An approximate number is a rational like any other, and nothing in the value
+    tells `EXP(100)` approximated, a whole number of 44 digits of which 6 are the
+    value's own, from a whole number that is exact. The notation writes the two
+    differently - see `is_approximation` - so the numbers approximation hands back
+    are remembered for as long as the command runs, its printing included. A
+    command run inside another notes into the outer one's record, the answer being
+    one answer.
+    """
+
+    @functools.wraps(command)
+    def noting(*args: P.args, **kwargs: P.kwargs) -> R:
+        with _noting():
+            return command(*args, **kwargs)
+
+    return noting
+
+
+@contextmanager
+def _noting() -> Iterator[None]:
+    if _noted.get() is not None:
+        yield
+        return
+    token = _noted.set(set())
+    try:
+        yield
+    finally:
+        _noted.reset(token)
+
+
+def is_approximation(value: Fraction) -> bool:
+    """Whether `value` is a number approximation produced for the current command."""
+    noted = _noted.get()
+    return noted is not None and value in noted
+
+
+def _atoms(expression: sp.Basic, kind: type) -> set:
+    try:
+        return expression.atoms(kind)
+    except Exception:
+        return set()
+
+
+def _fraction(number: sp.Rational) -> Fraction:
+    return Fraction(int(number.p), int(number.q))
 
 
 def _evalf(expression: sp.Basic, digits: int) -> sp.Basic:
@@ -211,8 +286,36 @@ def simplest_rational(number: sp.Basic, digits: int) -> sp.Rational:
         value = Fraction(Decimal(str(number)))
     else:
         rational = sp.Rational(number)
-        value = Fraction(rational.p, rational.q)
+        value = _shortened(rational.p, rational.q, digits)
     return sp.Rational(simplest(value, digits))
+
+
+#: Digits past the tolerance a long rational is kept to before it is approximated.
+SHORTENED = 30
+
+
+def _shortened(numerator: int, denominator: int, digits: int) -> Fraction:
+    """`numerator/denominator`, or a rational of fewer digits next to it.
+
+    A rational of a few hundred thousand digits - `(1 + 10^-5)^10^5` worked out
+    exactly - costs seconds of arithmetic on every step of finding the simplest
+    rational near it, and nearly all of its digits are far below the tolerance.
+    Those are dropped first: what is left is a binary fraction within
+    `10^-(digits + SHORTENED)` of the value, relatively and for a large value
+    absolutely, which no choice made at a tolerance of `10^-(digits + 1)` can tell
+    from it. Its whole part is the value's own, so the nearest whole number to a
+    large value is not disturbed either.
+
+    Only a long denominator is worth shortening. Over a short one the arithmetic is
+    cheap, and a whole number is kept exactly what it is.
+    """
+    bits = int((digits + SHORTENED) * 3.33) + 64
+    if denominator.bit_length() <= 2 * bits:
+        return Fraction(numerator, denominator)
+    magnitude = abs(numerator).bit_length() - denominator.bit_length()
+    shift = bits + max(0, -magnitude)
+    value = Fraction((abs(numerator) << shift) // denominator, 1 << shift)
+    return value if numerator >= 0 else -value
 
 
 def _approximated(

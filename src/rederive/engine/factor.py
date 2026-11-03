@@ -28,7 +28,7 @@ from rederive.engine.boundary import DEFAULT_AMOUNT, Amount, Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.factoring import factored_expression
 from rederive.engine.from_sympy import from_sympy
-from rederive.engine.approximation import approximated
+from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.pipeline import simplified
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
@@ -36,6 +36,7 @@ from rederive.syntax.state import ParseState
 __all__ = ["factor", "factored"]
 
 
+@noting_approximations
 def factor(
     node: Node,
     context: Context | None = None,

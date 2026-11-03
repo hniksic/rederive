@@ -18,6 +18,10 @@ Three rules hold across the styles, and all three come from the original:
   a ten-thousandth and less than ten thousand is written as a plain decimal
   numeral whatever the digit count, which is why `1234.56` is not `1.23456·10³`.
 
+`decimal` is what Decimal notation writes an exact number as. An approximate one
+has only its precision's digits to show, and Decimal writes it the way `scientific`
+does; the printer knows which numbers those are.
+
 What the styles do *not* reach is a numeral the user wrote. `12345.6789` typed
 on the author line is shown as `12345.6` under every style, cut by
 `NotationDigits` alone; the display layer does that, and the value behind it is
