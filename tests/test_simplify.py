@@ -428,6 +428,19 @@ DOMAINS = [
     ("SQRT(x)*SQRT(y)", "SQRT(x)*SQRT(y)", None),
     ("(-1)^(2*n)", "1", declared("n :epsilon Integer")),
     ("(-1)^(2*n)", "(-1)^(2*n)", None),
+    # `pi` alone would be wrong where `m` is 0.
+    (
+        "INT(SIN(m*x)^2, x, 0, 2*pi)",
+        "IF(m /= 0, pi, 0)",
+        declared("m :epsilon Integer"),
+    ),
+    # 0 would be wrong where `m` is 2 or -2: the integral is then `pi/2` or
+    # `-pi/2`. Without a case split to say so, the integral stands.
+    (
+        "INT(SIN(m*x)*SIN(2*x), x, 0, pi)",
+        "INT(SIN(2*x)*SIN(m*x), x, 0, pi)",
+        declared("m :epsilon Integer"),
+    ),
     # `#e^(k*LN(y))` is `y^k` for positive `y` and not otherwise. Derive
     # answers it whatever `y` is; where nothing declares it, the expression is
     # the answer.
@@ -797,6 +810,10 @@ CALCULUS = [
     ("INT(x^n, x, 2, inf)", "IF(n < -1, -2*2^n/(n + 1), inf)"),
     # Divergent by oscillation, to no sign, so the integral stands.
     ("INT(x^n*SIN(x), x, 1, inf)", "INT(x^n*SIN(x), x, 1, inf)"),
+    # The halves either side of 1 cancel, which `x -> 1/x` shows.
+    ("INT(LN(x)/(1 + x^2), x, 0, inf)", "0"),
+    # The imaginary error function writes this without an imaginary unit.
+    ("INT(#e^(x^2), x, 0, 1)", "SQRT(pi)*ERFI(1)/2"),
     ("SUM(1/k^2, k, 1, 5)", "5269/3600"),
     ("SUM(k^2, k, 1, m)", "m*(m + 1)*(2*m + 1)/6"),
     ("PRODUCT(n^2, n, 1, m)", "m!^2"),
@@ -852,6 +869,31 @@ SUMMATION_FORMULAS = [
     # A vector is summed element by element, and each element is a formula.
     ("SUM([k, k^2], k, 0, n)", "[n*(n + 1)/2, n*(n + 1)*(2*n + 1)/6]"),
 ]
+
+
+#: Sums to infinity, answered only where they converge.
+INFINITE_SUMS = [
+    # A geometric series converges only inside the unit circle, and the answer says
+    # so, for the series and for its derivative.
+    ("SUM(x^k, k, 0, inf)", "IF(ABS(x) < 1, 1/(1 - x), SUM(x^k, k, 0, inf))"),
+    (
+        "SUM(k*x^(k-1), k, 1, inf)",
+        "IF(ABS(x) < 1, 1/(1 - x)^2, SUM(k*x^(k - 1), k, 1, inf))",
+    ),
+    # An oscillating sum has no value and stands.
+    ("SUM((-1)^k, k, 0, inf)", "SUM((-1)^k, k, 0, inf)"),
+    # Leibniz's series.
+    ("SUM((-1)^(k+1)/(2*k-1), k, 1, inf)", "pi/4"),
+    # `k^2 = k*(k - 1) + k`, and each part sums to `#e`.
+    ("SUM(k^2/k!, k, 0, inf)", "2*#e"),
+    # Zeta where the series converges, and the sum where it may not.
+    ("SUM(1/k^p, k, 1, inf)", "IF(p > 1, ZETA(p), SUM(k^(-p), k, 1, inf))"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), INFINITE_SUMS, ids=str)
+def test_an_infinite_sum_is_answered_where_it_converges(text, expected):
+    assert simp(text) == expected
 
 
 @pytest.mark.parametrize(("text", "expected"), SUMMATION_FORMULAS, ids=str)
@@ -1875,6 +1917,11 @@ def test_plus_or_minus_simplifies_its_argument_and_seals_it_in():
     assert simp("±1 + 1") == "±1 + 1"
 
 
+def test_a_symbolic_power_of_a_matrix_is_its_closed_form():
+    # A unipotent matrix to a symbolic power is a polynomial in `n`.
+    assert simp("[[1, 1], [0, 1]]^n") == "[[1, n], [0, 1]]"
+
+
 def test_a_singular_matrix_inverse_comes_back_unsimplified():
     assert simp("[[1, 2], [2, 4]]^-1") == "[[1, 2], [2, 4]]^-1"
     assert simp("[[1, 2], [3, 4]]^-1") == "[[-2, 1], [3/2, -1/2]]"
@@ -2576,6 +2623,15 @@ def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
     assert simp("x + 2*x = c + x*x") == "3*x = x^2 + c"
 
 
+def test_a_relation_that_holds_for_every_value_is_decided():
+    """Each holds for every value the variables can take, the last two by the
+    intervals declared for them."""
+    assert simp("x^2 >= 0") == "true"
+    positive = declared("p :epsilon Real (0, inf)", "q :epsilon Real (0, inf)")
+    assert simp("p + q > 0", positive) == "true"
+    assert simp("ABS(g) < 1", declared("g :epsilon Real (0, 1)")) == "true"
+
+
 def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
     """Two matrices of one shape are related element by element rather than
     compared whole, and each of the relations that come out is judged on its own.
@@ -3185,6 +3241,23 @@ EXACT_DIGITS = [
     ("SQRT(2) + SQRT(3) - SQRT(5 + 2*SQRT(6))", "0"),
     # An imaginary part far smaller than the real part keeps digits of its own.
     ("(SQRT(2) + #i/10^8)^2 - 2", "-1.00000*10^-16 + 2.82842*10^-8*#i"),
+    # The rest go wrong where intermediate values are rounded to the working
+    # precision; Rederive computes as if exactly and rounds only the result.
+    # A huge argument reduced by a rounded pi leaves nothing of the sine.
+    ("SIN(10^20)", "-0.645251"),
+    ("SIN(10^100)", "-0.372376"),
+    ("COS(10^10)", "0.873119"),
+    # Ramanujan's near-integer, whose exponent must be known to many more digits
+    # than the result shows.
+    ("#e^(pi*SQRT(163))", "2.62537*10^17"),
+    # The 1 would swallow the 10^-15 before the logarithm is taken.
+    ("LN(1 + 10^(-15))", "1.00000*10^-15"),
+    # Both powers would overflow before they are divided.
+    ("2^(10^20)/2^(10^20)", "1"),
+    # Catastrophic cancellation.
+    ("SQRT(10001) - 100", "0.00499987"),
+    # The quadrature's own error must stay below the last digit shown.
+    ("INT(SQRT(1 - x^4), x, 0, 1)", "0.874019"),
 ]
 
 
@@ -3192,6 +3265,13 @@ EXACT_DIGITS = [
 @pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=["approximate", "mixed"])
 def test_an_approximation_shows_only_digits_of_the_value(text, expected, context):
     assert simp(text, context) == expected
+
+
+def test_a_power_near_one_to_a_high_exponent_keeps_its_digits():
+    """Rounded to the working precision, `1 + 10^-5` is 1, and so is its power.
+    Computed as if exactly, as in the table above, it is close to `#e`. Only the
+    approximate mode is checked, mixed taking minutes over the exact power first."""
+    assert simp("(1 + 10^(-5))^(10^5)", APPROXIMATE) == "2.71826"
 
 
 @pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=["approximate", "mixed"])
@@ -3609,6 +3689,7 @@ EVERY_CASE = [
     *(
         (text, None)
         for text, _ in CALCULUS
+        + INFINITE_SUMS
         + SPECIAL
         + VECTORS
         + LINEAR_ALGEBRA

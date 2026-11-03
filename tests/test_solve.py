@@ -85,6 +85,12 @@ EQUATIONS = [
     # proves it a root at all, so this stands too.
     ("x*EXP(x) = a", ["x*#e^x - a = 0"]),
     ("x = x + 1", []),
+    # Infinity is no solution: `1/x` only tends to zero there.
+    ("1/x = 0", []),
+    # The first has the two integer roots and a negative one Lambert W writes; the
+    # second holds at 1 and, `(-1)^(-1)` being -1, at -1.
+    ("2^x = x^2", ["x = -2*LAMBERTW(LN(2)/2)/LN(2)", "x = 2", "x = 4"]),
+    ("x^x = x", ["x = -1", "x = 1"]),
 ]
 
 
@@ -211,6 +217,10 @@ INEQUALITIES = [
     # A half-line is a single relation, with the variable on the left.
     ("2*x > 6", ["x > 3"]),
     ("2*x >= 6", ["x >= 3"]),
+    # The variable is isolated, not left inside `-3 < x - 2 < 3`.
+    ("ABS(x - 2) < 3", ["-1 < x < 5"]),
+    # A periodic inequality is sampled once per family, as a periodic equation is.
+    ("SIN(x) > 0", ["0 < x < pi"]),
 ]
 
 
@@ -372,6 +382,22 @@ def test_a_system_nonlinear_in_its_variables_is_solved_too():
         "[x = -SQRT(2)/2, y = -SQRT(2)/2]",
         "[x = SQRT(2)/2, y = SQRT(2)/2]",
     ]
+    assert sol("[x*y = 6, x + y = 5]", ("x", "y")) == [
+        "[x = 2, y = 3]",
+        "[x = 3, y = 2]",
+    ]
+
+
+def test_a_nonlinear_system_with_a_cubic_resolvent_has_all_four_solutions():
+    """Eliminating `y` leaves a quartic with the root 2 and an irreducible cubic.
+
+    The cubic's three real roots are written in Cardano's radicals, which are long
+    enough that only their count is pinned here; each is a real solution of both
+    equations.
+    """
+    answers = sol("[x^2 + y = 7, x + y^2 = 11]", ("x", "y"))
+    assert len(answers) == 4
+    assert answers[0] == "[x = 2, y = 3]"
 
 
 def test_a_system_nobody_can_solve_falls_back_to_its_own_residuals():

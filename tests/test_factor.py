@@ -370,6 +370,9 @@ HEADS = [
     ("FACTOR(4*x^3 - 8*x^2 - 11*x - 3, Rational, x)", "(x - 3)*(2*x + 1)^2"),
     ("FACTOR(x^2 - 1)", "(x + 1)*(x - 1)"),
     ("FACTOR(x^2 - 2, raDical)", "(x + SQRT(2))*(x - SQRT(2))"),
+    ("FACTOR(x^4 + 1, raDical)", "(x^2 + SQRT(2)*x + 1)*(x^2 - SQRT(2)*x + 1)"),
+    ("FACTOR(x^3 - 2, raDical)", "(x - 2^(1/3))*(x^2 + 2^(1/3)*x + 2^(2/3))"),
+    ("FACTOR(x^2 + 1, Complex)", "(x + #i)*(x - #i)"),
     ("FACTOR(10!)", "2^8*3^4*5^2*7"),
     ("FACTOR([x^2 - 1, 2*x + 2], Trivial)", "[x^2 - 1, 2*(x + 1)]"),
     ("FACTOR(2*x^3 - 12*x^2 + 18*x, Trivial)", "2*x*(x^2 - 6*x + 9)"),
@@ -383,6 +386,18 @@ HEADS = [
 @pytest.mark.parametrize(("text", "expected"), HEADS, ids=str)
 def test_simplify_evaluates_a_factor_head(text, expected):
     assert simplify(parse(text), Context()).text == expected
+
+
+def test_a_factor_head_splits_what_the_radicals_split():
+    # Two quadratics over the rationals, each split by its own square root.
+    assert simplify(parse("FACTOR(x^4 - 5*x^2 + 6, raDical)"), Context()).text == (
+        "(x + SQRT(2))*(x + SQRT(3))*(x - SQRT(2))*(x - SQRT(3))"
+    )
+    # A polynomial whose coefficients hold a radical is factored over the field
+    # they lie in, even at the default amount.
+    assert simplify(parse("FACTOR(x^2 - x*SQRT(2) - x + SQRT(2))"), Context()).text == (
+        "(x - 1)*(x - SQRT(2))"
+    )
 
 
 def test_the_amount_argument_may_be_left_out():
