@@ -1320,27 +1320,58 @@ def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum
 
     `ROOT_SUM(p, t, u)` is what the notation calls that, and the answer is the
     rational part plus one. What it must never be is the rational part alone:
-    `1/(x^7 + 1)` does not integrate to `LN(x + 1)/7`, and an answer that
-    quietly loses two thirds of itself is worse than one that cannot be read.
+    `1/(x*(x^4 + x + 1))` does not integrate to `LN(x)`, and an answer that
+    quietly loses most of itself is worse than one that cannot be read.
 
     The polynomial summed over is the resolvent sympy builds and not the
-    denominator it came from, which is why the coefficients are powers of seven:
-    the roots of one are the roots of the other scaled, and the summand is
-    scaled to match.
+    denominator it came from, which is why the coefficients are not the
+    denominator's: the roots of one are the roots of the other transformed,
+    and the summand is transformed to match.
     """
-    for text, answer in (
-        (
-            "INT(1/(x^7 + 1), x)",
-            "LN(x + 1)/7 + ROOT_SUM(117649*t^6 + 16807*t^5 + 2401*t^4 + 343*t^3 "
-            "+ 49*t^2 + 7*t + 1, t, t*LN(x + 7*t))",
-        ),
-        (
-            "INT(1/(x^7 - 1), x)",
-            "LN(x - 1)/7 + ROOT_SUM(117649*t^6 + 16807*t^5 + 2401*t^4 + 343*t^3 "
-            "+ 49*t^2 + 7*t + 1, t, t*LN(x - 7*t))",
-        ),
-    ):
-        assert simp(text) == answer
+    assert simp("INT(1/(x*(x^4 + x + 1)), x)") == (
+        "LN(x) + ROOT_SUM(229*t^4 + 229*t^3 + 96*t^2 + 16*t + 1, t, "
+        "t*LN(x + 129614*t^4/1713 - 1145*t^3/1713 - 76423*t^2/1713 "
+        "- 45760*t/1713 - 6286/1713))"
+    )
+
+
+def test_an_antiderivative_is_written_in_radicals_where_the_roots_are_known():
+    """The sum over the roots is written out wherever the roots can be.
+
+    Each conjugate pair of them is a logarithm and an arctangent, and a real one
+    a logarithm, which is how Derive writes all three of these. Sympy 1.14 loses
+    its way on the first: the two pairs whose coordinates carry a cube root fall
+    out of its real-form conversion without a word, and `1/(x^6 + 16)` comes back
+    as the one arctangent in `2^(1/3)*x/2` alone - a third of the answer.
+    `engine.rational` is what makes the answer whole, and what finds the roots of
+    the quintic, which sympy's own conversion could not and so left as a
+    `ROOT_SUM`. The seventh roots of unity are cosines and sines of `pi/7`,
+    and those are what the answer to the last is written in.
+    """
+    assert simp("INT(1/(x^6 + 16), x)") == (
+        "2^(2/3)*ATAN(2^(1/3)*x/2)/48 + 2^(2/3)*ATAN(2^(1/3)*x - SQRT(3))/96 "
+        "+ 2^(2/3)*ATAN(2^(1/3)*x + SQRT(3))/96 "
+        "- 2^(2/3)*SQRT(3)*LN(x^2 - 2^(2/3)*SQRT(3)*x + 2*2^(1/3))/192 "
+        "+ 2^(2/3)*SQRT(3)*LN(x^2 + 2^(2/3)*SQRT(3)*x + 2*2^(1/3))/192"
+    )
+    assert simp("INT(1/(x^5 + 16), x)") == (
+        "-2^(3/10)*SQRT(5 - SQRT(5))*ATAN(-2^(7/10)*x/SQRT(5 - SQRT(5)) "
+        "+ SQRT(10)/(2*SQRT(5 - SQRT(5))) + SQRT(2)/(2*SQRT(5 - SQRT(5))))/80 "
+        "+ 2^(3/10)*SQRT(SQRT(5) + 5)*ATAN(2^(7/10)*x/SQRT(SQRT(5) + 5) "
+        "+ SQRT(10)/(2*SQRT(SQRT(5) + 5)) - SQRT(2)/(2*SQRT(SQRT(5) + 5)))/80 "
+        "+ (2^(4/5)*SQRT(5) - 2^(4/5))*LN(x^2 + (2^(4/5)*SQRT(5) - 2^(4/5))*x/2 "
+        "+ 2*2^(3/5))/320 + 2^(4/5)*LN(x + 2^(4/5))/80 "
+        "- (2^(4/5)*SQRT(5) + 2^(4/5))*LN(x^2 - (2^(4/5)*SQRT(5) + 2^(4/5))*x/2 "
+        "+ 2*2^(3/5))/320"
+    )
+    assert simp("INT(1/(x^7 + 1), x)") == (
+        "2*COS(pi/14)*ATAN(x/COS(pi/14) - TAN(pi/14))/7 "
+        "+ 4*SIN(pi/7)*COS(pi/7)*ATAN(x/COS(3*pi/14) + TAN(3*pi/14))/7 "
+        "+ 2*SIN(pi/7)*ATAN(x/SIN(pi/7) - 1/TAN(pi/7))/7 "
+        "- COS(pi/7)*LN(x^2 - 2*COS(pi/7)*x + 1)/7 "
+        "+ SIN(3*pi/14)*LN(x^2 + 2*SIN(3*pi/14)*x + 1)/7 "
+        "- SIN(pi/14)*LN(x^2 - 2*SIN(pi/14)*x + 1)/7 + LN(x + 1)/7"
+    )
 
 
 def test_a_sum_over_the_roots_of_a_polynomial_is_an_expression_and_not_a_string():

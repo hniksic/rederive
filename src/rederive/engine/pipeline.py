@@ -78,6 +78,7 @@ from rederive.engine.from_sympy import from_sympy
 from rederive.engine.intervals import decided, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.printer import is_written
+from rederive.engine.rational import rational_antiderivative
 from rederive.engine.solving import oriented, solutions
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
@@ -875,7 +876,9 @@ def _integral(head: sp.Basic) -> sp.Basic:
     interval, Derive prints something else, and `_across_a_singularity` is that
     something else.
     """
-    value = _by_sympy(head)
+    value = _of_a_rational_function(head)
+    if value is None:
+        value = _by_sympy(head)
     across = _across_a_singularity(head, value)
     if across is not None:
         return across
@@ -883,6 +886,57 @@ def _integral(head: sp.Basic) -> sp.Basic:
     if beyond is not None:
         return beyond
     return _by_linearity(head) if value == head else value
+
+
+def _of_a_rational_function(head: sp.Basic) -> sp.Basic | None:
+    """An integral of a rational function of its variable, done here, or None.
+
+    Sympy's rational integrator loses terms, as `engine.rational` explains, so a
+    rational integrand is not offered to it: the antiderivative is that module's,
+    and goes through the same choices as any other. A definite integral of one is
+    the difference of that antiderivative's limits at the ends, approached from
+    inside, which is Derive's way with every definite integral (7.4, p.199) and the
+    same difference sympy would take with an antiderivative that was whole. A pole
+    between the ends makes the answer the principal value, as `_across_a_singularity`
+    would make it anyway; a pole at an end makes it the infinity Derive prints; and
+    where the ends come to nothing, or the antiderivative was not had, sympy is asked
+    after all.
+
+    Only an integrand rational as a whole is taken: a rational term in a sum with a
+    transcendental one goes to sympy with the rest, and what sympy makes of it is
+    put to `_refuted` like any other answer.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) not in (1, 3):
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    if integrand.is_rational_function(variable) is not True:
+        return None
+    if len(head.limits[0]) == 1:
+        antiderivative = rational_antiderivative(integrand, variable)
+        return None if antiderivative is None else _antiderivative(head, antiderivative)
+    antiderivative = _integral(sp.Integral(integrand, variable))
+    if antiderivative.has(sp.Integral):
+        return None
+    _, low, high = head.limits[0]
+    ends = _ends(antiderivative, variable, low, high)
+    if ends is None:
+        return None
+    value = ends[0] - ends[1]
+    return None if value is sp.nan or value.has(sp.nan) else value
+
+
+def _ends(
+    antiderivative: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
+) -> list[sp.Basic] | None:
+    """The antiderivative's limits at the upper end and then the lower, each
+    approached from inside the interval, or None where either is not had."""
+    ends = []
+    for point, side in ((high, "-"), (low, "+")):
+        end = _attempt(antiderivative, lambda a: sp.limit(a, variable, point, side))
+        if end is None:
+            return None
+        ends.append(end)
+    return ends
 
 
 def _by_linearity(head: sp.Basic) -> sp.Basic:
@@ -969,12 +1023,9 @@ def _across_a_singularity(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
     antiderivative = _integral(sp.Integral(head.function, variable))
     if antiderivative.has(sp.Integral):
         return None
-    ends = []
-    for point, side in ((high, "-"), (low, "+")):
-        end = _attempt(antiderivative, lambda a: sp.limit(a, variable, point, side))
-        if end is None or not end.is_finite:
-            return None
-        ends.append(end)
+    ends = _ends(antiderivative, variable, low, high)
+    if ends is None or not all(end.is_finite for end in ends):
+        return None
     return ends[0] - ends[1]
 
 
@@ -1100,8 +1151,35 @@ def _antiderivative(head: sp.Basic, value: sp.Basic) -> sp.Basic:
             or _over_any_variable(head, integrand, variable)
             or value
         )
+    elif _parametrised(head) and value.has(sp.log):
+        value = _shorter_by_the_manual_rules(head, value, integrand, variable)
     value = _without_constants(_single_case(value, integrand, variable), variable)
     return _continuous(value, variable)
+
+
+def _shorter_by_the_manual_rules(
+    head: sp.Basic, value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
+) -> sp.Basic:
+    """The answer the manual rules give, where it pays over sympy's and holds.
+
+    Over a parameter whose sign it does not know, sympy's rational integrator can
+    tell the real roots of a denominator from the complex ones no better than the
+    reader can, and writes the logarithms it would otherwise have paired into
+    arctangents: `INT(1/(x^2 + a), x)` is `SQRT(-1/a)*LN(x + a*SQRT(-1/a))/2 -
+    SQRT(-1/a)*LN(x - a*SQRT(-1/a))/2` to it. That is an antiderivative, and the
+    manual rules have a shorter one - `ATAN(x/SQRT(a))/SQRT(a)`, under the condition
+    that `a` is positive, which `_single_case` finds says nothing - and the shorter
+    one is what Derive prints for every `a`. So where a parametrised answer carries a
+    logarithm, the manual rules are asked as well, and theirs is printed where it is
+    shorter and differentiates back unconditionally.
+    """
+    manual = _by_the_manual_rules(head, integrand, variable)
+    if manual is None:
+        return value
+    manual = _single_case(manual, integrand, variable)
+    if manual.has(sp.Piecewise) or not _pays(manual, value):
+        return value
+    return manual if _holds(manual, integrand, variable) else value
 
 
 def _continuous(value: sp.Basic, variable: sp.Basic | None) -> sp.Basic:
@@ -1229,21 +1307,23 @@ def _refuted(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
     nonelementary integral comes back as the hypergeometric series it is, and
     nothing differentiates that back to the integrand.
 
-    A difference in the variable alone can still be decided by its value, and is
-    looked at on both sides of zero where `equals` says nothing. Sympy's Meijer G
-    route answers `INT(SIN(x)/x^2, x)` over a real `x` with `SIGN(x)` terms whose
-    derivative is `2/x` off for negative `x`, and an `ABS` is where `equals` stops.
+    A difference in the variable alone is decided by its value instead, looked at
+    on both sides of zero, and `equals` is not asked. It decides more: sympy's
+    Meijer G route answers `INT(SIN(x)/x^2, x)` over a real `x` with `SIGN(x)` terms
+    whose derivative is `2/x` off for negative `x`, and an `ABS` is where `equals`
+    stops. And it costs nothing, where `equals` runs the whole of `sympy.simplify`
+    over the difference: on the antiderivative of `1/(x^7 + 1)`, three arctangents
+    and three logarithms with cosines of `pi/7` for coefficients, that is a minute.
     """
     difference = _attempt(value, lambda v: sp.diff(v, variable) - integrand)
     if difference is None:
         return False
+    if difference.free_symbols == {variable}:
+        return any(_off(difference, variable, point) for point in _SAMPLES)
     try:
-        decided = difference.equals(0)
+        return difference.equals(0) is False
     except Exception:
         return False
-    if decided is not None or difference.free_symbols != {variable}:
-        return decided is False
-    return any(_off(difference, variable, point) for point in _SAMPLES)
 
 
 def _on_the_principal_sheet(
