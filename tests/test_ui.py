@@ -2791,6 +2791,17 @@ async def test_a_new_entry_is_scrolled_to_even_when_the_scroll_beats_the_layout(
         assert pane.scroll_offset.y == pane.max_scroll_y
 
 
+async def test_solutions_that_first_overflow_the_pane_are_scrolled_to(app):
+    async with app.run_test(size=(100, 40)) as pilot:
+        await author(pilot, "x^12=12")
+        await pilot.press("l", "enter")
+        for _ in range(20):
+            await pilot.pause()
+        pane = app.work_area
+        assert pane.max_scroll_y > 0
+        assert pane.scroll_offset.y == pane.max_scroll_y
+
+
 #: A render far wider than the eighty-column pane, drawn exactly as authored,
 #: so the columns on show can be read off it by slicing.
 WIDE = " + ".join(str(number) for number in range(100, 130))

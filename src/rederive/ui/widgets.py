@@ -381,12 +381,16 @@ class WorkArea(VerticalScroll):
         clamped to the old height and leaves the newest entry below the edge. So the
         region waits until the scrollable height takes it in, and a change of that
         height is what asks again.
+
+        The scroll is forced because the pane's scrollbar is not yet up at that point
+        when this content is the first to overflow it, and Textual refuses to scroll
+        a pane without one.
         """
         region = self._revealing
         if region is None or region.bottom > self.virtual_size.height:
             return
         self._revealing = None
-        self.scroll_to_region(region, animate=False)
+        self.scroll_to_region(region, animate=False, force=True)
 
     def watch_virtual_size(self) -> None:
         self._reveal()
