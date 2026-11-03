@@ -15,12 +15,15 @@ Three consequences:
   `0.666666`, cut rather than rounded up to `0.666667`.
 * A value keeps the digits it is shown by. `SQRT(3)` is `1.73205` and not the
   `1.73204` that a simpler rational a little below it would show.
-* Rounding reaches the numbers that need digits, and not the arithmetic
-  between them. What gets a rational to stand for it is an irrational; a
-  quotient of two whole numbers is an exact value already and stays the one it
-  is. So `10^7*pi` is `10^7*355/113` worked out and then rounded, which is
-  `31415929` and not the `31415900` that six digits of pi multiplied out
-  would leave.
+* Every digit shown is the value's own. A number is worked out as if exactly,
+  with as much working precision as that takes, and rounded only then - not
+  rounded piece by piece and computed with afterwards, which lets the
+  arithmetic carry the rounding of the pieces into the answer. The thousandth
+  power of a root of 12, written in radicals, is 12 and not the `11.9994` that
+  rounding its radicals first leaves, and `SQRT(10^200 + 1) - 10^100` is
+  `5.00000*10^-101` and not the 0 of two rounded numbers cancelling. This is
+  where the original is left behind on purpose: it rounds the pieces, and
+  answers those two `12 - 0.000430980*#i` and 0.
 
 Where this parts from the manual: 3.8 p.46 turns on the two fractions of
 `SQRT(3422357/2313 - 1140443/771)` being rounded before they are subtracted,
@@ -44,7 +47,9 @@ between two of them still means something.
 
 `approximated` is the other half: what a precision mode does to a whole
 expression, which is this rule applied to every number in it that needs digits
-and to nothing else.
+and to nothing else. A number there is the largest one the expression holds:
+in `x*SQRT(2) + pi` the numbers are `SQRT(2)` and `pi`, and in `x + SQRT(3) -
+SQRT(2)` it is the difference of the two roots.
 
 The answer is the simplest rational within the tolerance, found by walking the
 continued fraction of the interval's ends: at each step the whole part they
@@ -83,6 +88,12 @@ __all__ = ["GUARD", "approximated", "simplest", "simplest_rational"]
 #: Digits carried past the ones asked for while an irrational is evaluated, so
 #: that the digits asked for are the value's own rather than a rounding of it.
 GUARD = 5
+
+#: The most digits a number is worked out to while its digits are found. Enough
+#: to see through any cancellation short of an exact zero: `SQRT(10^200 + 1) -
+#: 10^100` needs about two hundred and fifty, and a hidden zero exhausts it in
+#: milliseconds.
+MAX_DIGITS = 1000
 
 
 def simplest(value: Fraction, digits: int) -> Fraction:
@@ -136,18 +147,15 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
     digits = context.precision_digits
     match context.precision:
         case Precision.APPROXIMATE:
-            # The irrational parts are approximated, then what they make of
-            # each other is exact, and the answer is approximated once more:
-            # `10^7·π` is `10^7·355/113` worked out and then rounded, which is
-            # `31415929` and not the `31415900` that six digits of the product
-            # would leave.
+            # Each number is approximated as a whole, and then what is left of
+            # the arithmetic around them - a coefficient multiplied into a
+            # rational, say - is rounded too.
             #
             # What the first pass already rounded is left alone by the second,
             # since rounding an approximate number again is not idempotent: the
             # tolerance is measured from wherever the value now stands, so a
             # second pass may reach a simpler rational a whole tolerance away
-            # and cost the last digit shown. Only what the exact arithmetic
-            # between the approximate numbers made of them is rounded here.
+            # and cost the last digit shown.
             approximate: set[sp.Rational] = set()
             return _rounded(
                 _approximated(expression, digits, approximate), digits, approximate
@@ -159,7 +167,7 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
 
 def _evalf(expression: sp.Basic, digits: int) -> sp.Basic:
     try:
-        return expression.evalf(digits)
+        return expression.evalf(digits, maxn=MAX_DIGITS)
     except Exception:
         return expression
 
@@ -210,17 +218,23 @@ def simplest_rational(number: sp.Basic, digits: int) -> sp.Rational:
 def _approximated(
     expression: sp.Basic, digits: int, approximate: set[sp.Rational] | None = None
 ) -> sp.Basic:
-    """Approximate the irrational operations, keep the rational ones exact.
+    """Approximate each number in `expression` as a whole, outermost first.
 
-    Innermost first, so that a rational subexpression is computed before
-    anything near it is rounded: `SQRT(3422357/2313 - 1140443/771)` is exactly
-    `2/3` in Mixed mode, where Approximate rounds the two fractions on the way
-    in and never reaches it.
+    A number is worked out as if exactly and only then rounded, so every digit
+    of the answer is the value's own: `(12^(1/1000)*w)^1000`, `w` a root of
+    unity written in radicals, is 12, where rounding `12^(1/1000)` and the
+    radicals first and raising them to the thousandth power exactly would carry
+    their error a thousandfold into the answer.
 
-    What each irrational is replaced by is a rational, since that is what an
-    approximate number is; the arithmetic around it stays exact. `approximate`
-    collects those rationals for the caller, which is how the rounding of the
-    finished answer knows what it has already rounded.
+    Outermost first is what reaches the whole number rather than its pieces,
+    and a sum or a product that is only partly numeric has its numeric terms
+    worked out together: `x + SQRT(1000003) - SQRT(1000002)` is `x + 0.000499999`
+    and not two roots rounded and then subtracted.
+
+    What each number is replaced by is a rational, since that is what an
+    approximate number is. `approximate` collects those rationals for the
+    caller, which is how the rounding of the finished answer knows what it has
+    already rounded.
     """
 
     def approximation(part: sp.Basic) -> sp.Basic:
@@ -229,8 +243,23 @@ def _approximated(
             approximate.add(value)
         return value
 
+    def walk(node: sp.Basic) -> sp.Basic:
+        if _needs_digits(node):
+            return approximation(node)
+        if not isinstance(node, sp.Basic) or not node.args:
+            return node
+        if isinstance(node, sp.Add | sp.Mul):
+            numeric = [arg for arg in node.args if arg.is_number]
+            if 1 < len(numeric) < len(node.args):
+                rest = [arg for arg in node.args if not arg.is_number]
+                return node.func(walk(node.func(*numeric)), *map(walk, rest))
+        args = tuple(map(walk, node.args))
+        if args == node.args:
+            return node
+        return node.func(*args)
+
     try:
-        return expression.replace(_needs_digits, approximation, simultaneous=False)
+        return walk(expression)
     except Exception:
         return expression
 
@@ -276,10 +305,58 @@ def _approximate(part: sp.Basic, digits: int) -> sp.Basic:
     one part at a time, as the rational real part plus `#i` times the rational
     imaginary part, which is how Derive approximates it too.
     """
-    value = _evalf(part, digits + GUARD)
-    if isinstance(value, sp.Float) or value.is_Rational:
-        return simplest_rational(value, digits)
-    real, imaginary = value.as_real_imag()
-    if not all(isinstance(v, sp.Float) or v.is_Rational for v in (real, imaginary)):
+    value = _evaluated(part, digits + GUARD)
+    if value is None:
         return part
+    real, imaginary = value
+    if not imaginary:
+        return simplest_rational(real, digits)
     return simplest_rational(real, digits) + simplest_rational(imaginary, digits) * sp.I
+
+
+def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
+    """The real and imaginary parts of `part`, each correct to `digits`.
+
+    Sympy raises its working precision until the digits asked for are the
+    value's own, up to `MAX_DIGITS`. A value it cannot tell from zero by then
+    comes back with no significant digits at all, and is zero: no nonzero value
+    is that small next to the numbers it was computed from.
+
+    The precision sympy guarantees is relative to the whole of a complex value,
+    so a part far smaller than the other may be noise. Where it is below what
+    the precision can see it is taken for zero, which is what makes
+    `(12^(1/1000)*w)^1000` 12 rather than `12 + 5.06*10^-17*#i`. Where it is
+    above, the value is worked out again with as many more digits as the part is
+    smaller, so that its own digits are right too.
+    """
+    value = _evalf(part, digits)
+    parts = _parts(value)
+    if parts is None:
+        return None
+    size = max(abs(parts[0]), abs(parts[1]))
+    if not size:
+        return parts
+    smaller = min(abs(parts[0]), abs(parts[1]))
+    if smaller and smaller < size * sp.Rational(1, 10**digits):
+        parts = tuple(p if abs(p) == size else sp.Integer(0) for p in parts)
+    elif smaller:
+        extra = int(sp.ceiling(sp.log(size / smaller, 10)))
+        if extra > 0:
+            parts = _parts(_evalf(part, digits + extra)) or parts
+    return parts
+
+
+def _parts(value: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
+    """`value`'s real and imaginary parts, where both are numbers with digits."""
+    real, imaginary = value.as_real_imag()
+    parts = []
+    for number in (real, imaginary):
+        if isinstance(number, sp.Float):
+            # No significant digits: what sympy answers for a value it could
+            # not tell from zero.
+            parts.append(sp.Integer(0) if number._prec <= 1 else number)
+        elif number.is_Rational:
+            parts.append(number)
+        else:
+            return None
+    return parts[0], parts[1]

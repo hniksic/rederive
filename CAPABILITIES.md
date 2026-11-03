@@ -2,7 +2,8 @@
 
 Rederive computes through sympy, whose CAS reaches well past the one Derive shipped with.
 This file is about that surplus: the built-ins added to spell answers the original had no
-name for, and the places where the engine computes what it refused.
+name for, and the places where the engine computes what it refused. It also lists the
+places where Rederive intentionally gives a different answer.
 
 ## Derive's built-ins
 
@@ -107,3 +108,12 @@ infinities are refused.
 
 Derive expands the first of these; the largest exceeds the memory it can address, and it
 answers `Memory Full`.
+
+## Intentional differences
+
+**Approximation.** Rederive rounds only the final answer, so all displayed digits are
+correct. Derive rounds intermediate values, and the errors can show up in the result:
+
+```
+SQRT(10001) - 100      0.00499987      Derive: 0.00499722
+```

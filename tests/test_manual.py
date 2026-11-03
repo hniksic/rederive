@@ -199,25 +199,13 @@ NOT_YET_HELD = {
     # answers the first, and no one tolerance answers both, since 81379/55
     # needs at least 4.25e-8 of the value and 553211/374 needs under 7.5e-9.
     # So the original is not seeking the simplest rational within a tolerance
-    # either, and the five below are what that unknown comes to.
-    #
-    # 0.00499722 is the original's answer and not the page's alone. It is
-    # 180109/1801 - 100 written out, so it cannot be had without the square
-    # root that produced it.
-    "test_catastrophic_cancellation_is_reported_as_the_manual_reports_it",
-    # 0.666622 is the original's too, and it is SQRT(81379/55 - 553211/374),
-    # which is SQRT(831/1870). The engine rounds the first fraction the same
-    # way and the second to 34021/23, which is where the 0.666534 that rounding
-    # every step gives comes from. Beyond the tolerance a second thing stands
-    # in the way whatever the tolerance is: sympy subtracts the two fractions
-    # as it builds them, so nothing downstream ever sees them apart.
-    "test_mixed_mode_subtracts_the_fractions_before_it_rounds",
-    # The one of the five the original does not answer either. It reads
+    # either, and the two below are what that unknown comes to.
+    # The one of the two the original does not answer either. It reads
     # 1.73205 back in and re-approximates it to 1.73205, as this engine does,
     # and re-approximating its own SQRT(3) gives the 1.732050841 that
     # 5042/2911 comes to. The page's 1.732050657 is neither.
     "test_reapproximating_an_approximation_keeps_its_error",
-    # The one of the five that is not the tolerance's business at all. The
+    # The one of the two that is not the tolerance's business at all. The
     # original prints an approximation to the digits it was made to whatever
     # the notation asks for: with NotationDigits at six, APPROX(SQRT(3), 10)
     # still comes out 1.732050807. The engine's value is already that -
@@ -226,20 +214,6 @@ NOT_YET_HELD = {
     # with as far as the printer, which is a change to how one is written and
     # not to which rational it is.
     "test_approx_takes_the_digits_it_is_given",
-    # Exact mode answers the manual's 1/2 and Mixed mode is what is left. The
-    # line is (SQRT(3) + 1)^(3/2) over twice itself, which no rule that works
-    # one radical at a time sees and `_flattened` reads off the whole
-    # quotient's minimal polynomial. Mixed then shows that 1/2 where the page
-    # and the original both have 0.499999: rounding is the last step of the
-    # pipeline, so a Mixed answer is an exact one rounded and an exact 1/2 has
-    # nothing irrational left in it to round, where the original approximates
-    # as it simplifies and its last digit is the drift of that. Approximating
-    # this line innermost first, before anything is simplified, does not reach
-    # the page either: the simplest rational within the tolerance drifts to
-    # 43764486865/87528971078, which is 0.500000 at six digits. So this one
-    # wants the order the rounding and the simplifying happen in as well as
-    # the square roots the four above want.
-    "test_the_three_modes_on_an_expression_worth_one_half",
     # The determinant is multiplied out where the original leaves it factored,
     # and then written about the most main variable it holds: with none of `a`,
     # `b`, `w` on the order list that is `a`, so `(2 - w)*(b - w) - 3*a` comes
@@ -435,25 +409,27 @@ def test_reapproximating_an_approximation_keeps_its_error():
 
 
 def test_mixed_mode_subtracts_the_fractions_before_it_rounds():
-    # 3.8 p.46: approximate mode rounds first and loses it; mixed mode does
-    # the rational arithmetic exactly and lands on 2/3.
+    # 3.8 p.46: the manual shows approximate mode rounding the two fractions
+    # first and answering 0.666622. Rederive does not round before computing,
+    # so both modes reach 2/3.
     radical = "SQRT(3422357/2313 - 1140443/771)"
-    assert simp(radical, APPROXIMATE_6) == "0.666622"
+    assert simp(radical, APPROXIMATE_6) == "0.666666"
     assert simp(radical, MIXED) == "2/3"
 
 
 def test_the_three_modes_on_an_expression_worth_one_half():
-    # 3.8 p.47: exact says 1/2, approximate says 0.5, mixed drifts to 0.499999.
+    # 3.8 p.47: the manual shows exact 1/2, approximate 0.5, and mixed drifting
+    # to 0.499999. Rederive rounds only the final answer, so mixed stays 1/2.
     text = "(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/(SQRT(24*SQRT(3) + 40))"
     assert simp(text) == "1/2"
     assert simp(text, APPROXIMATE_6) == "0.5"
-    assert simp(text, MIXED) == "0.499999"
+    assert simp(text, MIXED) == "1/2"
 
 
-def test_catastrophic_cancellation_is_reported_as_the_manual_reports_it():
-    # 3.8 p.46: at six digits √10001 - 100 answers 0.00499722, of which the
-    # manual says only the first three digits are right.
-    assert simp("SQRT(10001) - 100", APPROXIMATE_6) == "0.00499722"
+def test_catastrophic_cancellation_is_computed_to_full_accuracy():
+    # 3.8 p.46: the manual shows 0.00499722 at six digits and says only the
+    # first three are right. Rederive gives the correct digits.
+    assert simp("SQRT(10001) - 100", APPROXIMATE_6) == "0.00499987"
 
 
 # -- 3.9 notation, 3.10 approximating -----------------------------------------

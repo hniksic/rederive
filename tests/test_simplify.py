@@ -3153,6 +3153,7 @@ COMPLEX_APPROXIMATED = [
     ("(-8)^(1/3)", "1 + 1.73205*#i"),
     ("LN(-1)", "3.14159*#i"),
     ("(SQRT(3) + #i)^5", "-27.7128 + 16*#i"),
+    ("(SQRT(2) + #i)^3", "-1.41421 + 5*#i"),
 ]
 
 
@@ -3162,22 +3163,35 @@ def test_a_complex_number_is_approximated_part_by_part(text, expected, context):
     assert simp(text, context) == expected
 
 
-def test_a_high_power_of_a_complex_root_is_approximated_to_a_number():
-    """A root of `x^1000 = 12`, raised back to the thousandth power.
+#: A root of `x^1000 = 12`, written in radicals the way soLve writes it.
+ROOT_OF_TWELVE = (
+    "12^(1/1000)*(SQRT(2)*SQRT(5/8 - SQRT(5)/8)/2 + SQRT(10)/8 + SQRT(2)/8"
+    " - SQRT(10)*#i/8 + SQRT(2)*#i*SQRT(5/8 - SQRT(5)/8)/2 - SQRT(2)*#i/8)"
+)
 
-    Exact simplification leaves the power standing, there being no shorter way
-    to write it, so the approximation is what has to work it out. It is close to
-    12 and not exactly 12: the root's parts are rounded before the power is
-    taken, and the power multiplies their error a thousandfold. The original
-    answers `12 - 0.000430980*#i` the same way.
-    """
-    root = (
-        "12^(1/1000)*(SQRT(2)*SQRT(5/8 - SQRT(5)/8)/2 + SQRT(10)/8 + SQRT(2)/8"
-        " - SQRT(10)*#i/8 + SQRT(2)*#i*SQRT(5/8 - SQRT(5)/8)/2 - SQRT(2)*#i/8)"
-    )
-    answer = simp(f"({root})^1000", APPROXIMATE)
-    value = complex(sp.sympify(answer.replace("#i", "I")))
-    assert abs(value - 12) < 0.001
+#: Every digit of an approximation is the value's own: a number is worked out
+#: as if exactly and rounded only then. Rounding its pieces first and computing
+#: with them exactly would let the arithmetic carry their error into the digits
+#: shown - the thousandth power of the root of twelve came out
+#: `11.9994 + 0.000252822*#i` that way, and the original answers
+#: `12 - 0.000430980*#i` - and a cancellation between rounded pieces would leave
+#: nothing of the value at all.
+EXACT_DIGITS = [
+    (f"({ROOT_OF_TWELVE})^1000", "12"),
+    ("SQRT(10^200 + 1) - 10^100", "5.00000*10^-101"),
+    ("x + SQRT(1000003) - SQRT(1000002)", "x + 0.000499999"),
+    # Zero, though nothing proves it: no nonzero value is that small next to
+    # the numbers it is made of.
+    ("SQRT(2) + SQRT(3) - SQRT(5 + 2*SQRT(6))", "0"),
+    # An imaginary part far smaller than the real part keeps digits of its own.
+    ("(SQRT(2) + #i/10^8)^2 - 2", "-1.00000*10^-16 + 2.82842*10^-8*#i"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), EXACT_DIGITS, ids=str)
+@pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=["approximate", "mixed"])
+def test_an_approximation_shows_only_digits_of_the_value(text, expected, context):
+    assert simp(text, context) == expected
 
 
 @pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=["approximate", "mixed"])
@@ -3185,11 +3199,9 @@ def test_an_approximation_is_read_from_its_decimal_digits(context):
     """Not from the binary fraction the float evaluating it is stored as.
 
     `SQRT(10^200 + 1)` evaluates to a float that shows `1.0000000000e+100` and
-    is stored as `10^100 - 1.73*10^87`. The digits are what it approximates
-    to, and the original answers the difference 0.
+    is stored as `10^100 - 1.73*10^87`. The digits are what it approximates to.
     """
     assert simp("SQRT(10^200 + 1)", context) == "10^100"
-    assert simp("SQRT(10^200 + 1) - 10^100", context) == "0"
 
 
 def test_numerals_come_back_in_the_input_base():
