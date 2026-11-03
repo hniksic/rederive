@@ -104,6 +104,12 @@ def solutions(
     """
     context = context or Context()
     constants = _Constants(context.arbitrary_index)
+    if not variables and not _named_in(expression):
+        # An equation whose variable cancelled out of it, `x/x = 1`, is still an
+        # equation in that variable: it is in what the equation divides by, and it
+        # takes any value there.
+        divided = {name for divisor in divisors for name in _named_in(divisor)}
+        variables = main_order(divided, context.order)[:1]
     try:
         return _solutions(
             expression, context, tuple(variables), bounds, tuple(divisors), constants

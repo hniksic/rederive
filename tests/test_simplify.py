@@ -521,10 +521,46 @@ INTERVALS = [
     ("IF(x < 1, a, b)", "IF(x < 1, a, b)", "x :epsilon Real (0, 2)"),
     ("x < 1", "true", "x :epsilon Real (0, 1)"),
     ("x < 1", "x < 1", "x :epsilon Real (0, 2)"),
-    # As far as the reasoning reaches, which is about as far as the bounds are
-    # linear in. A square of a bounded variable is bounded and sympy does not
-    # see it; the answer to a question nobody can settle is the expression.
-    ("ABS(x^2 - 1)", "ABS(x^2 - 1)", "x :epsilon Real (0, 1)"),
+    # A power, an absolute value or a monotone function of a bounded quantity is
+    # bounded too, by the interval arithmetic over its parts.
+    ("ABS(x^2 - 1)", "1 - x^2", "x :epsilon Real (0, 1)"),
+    ("ABS(x) < 1", "true", "x :epsilon Real (-1, 1)"),
+    ("ABS(x) < 1", "ABS(x) < 1", "x :epsilon Real [-1, 1)"),
+    ("ABS(x) <= 1", "true", "x :epsilon Real [-1, 1]"),
+    ("LN(x) < 0", "true", "x :epsilon Real (0, 1)"),
+    ("LN(x) < 0", "LN(x) < 0", "x :epsilon Real (0, 1]"),
+    ("LN(x) <= 0", "true", "x :epsilon Real (0, 1]"),
+    ("SQRT(x) < 1", "true", "x :epsilon Real (0, 1)"),
+    ("#e^x < 3", "true", "x :epsilon Real (-1, 1)"),
+    ("#e^x < 2", "#e^x < 2", "x :epsilon Real (-1, 1)"),
+    ("1/x > 1", "true", "x :epsilon Real (0, 1)"),
+    ("ATAN(x) > pi/4", "true", "x :epsilon Real (1, inf)"),
+    # The arithmetic takes each occurrence of a variable on its own, so a bound
+    # that holds only because two of them move together is not seen: `x - x^2` is
+    # positive over `(0, 1)`, and stands. The answer to a question nobody can
+    # settle is the expression.
+    ("ABS(x - x^2)", "ABS(x^2 - x)", "x :epsilon Real (0, 1)"),
+    # A step function is constant between consecutive integers.
+    ("FLOOR(x)", "0", "x :epsilon Real (0, 1)"),
+    ("FLOOR(x)", "0", "x :epsilon Real [0, 1)"),
+    ("FLOOR(x)", "FLOOR(x)", "x :epsilon Real (0, 1]"),
+    ("FLOOR(x)", "FLOOR(x)", "x :epsilon Real (-1, 1)"),
+    ("FLOOR(x + 3/2)", "1", "x :epsilon Real (-1/2, 1/2)"),
+    ("FLOOR(-x)", "-1", "x :epsilon Real (0, 1)"),
+    ("FLOOR(LN(x))", "1", "x :epsilon Real (3, 7)"),
+    # An inverse function undoes its function where the angle stays on one of its
+    # branches, moved onto the principal branch.
+    ("ASIN(SIN(x))", "x", "x :epsilon Real (-1, 1)"),
+    ("ASIN(SIN(x))", "x", "x :epsilon Real [-pi/2, pi/2]"),
+    ("ASIN(SIN(x))", "pi - x", "x :epsilon Real (2, 4)"),
+    ("ASIN(SIN(x))", "ASIN(SIN(x))", "x :epsilon Real (1, 2)"),
+    ("ACOS(COS(x))", "x", "x :epsilon Real (0, 3)"),
+    ("ACOS(COS(x))", "-x", "x :epsilon Real (-3, 0)"),
+    ("ACOS(COS(x))", "2*pi - x", "x :epsilon Real (4, 6)"),
+    ("ACOS(COS(x))", "ACOS(COS(x))", "x :epsilon Real (-1, 1)"),
+    ("ATAN(TAN(x))", "x", "x :epsilon Real (-1, 1)"),
+    ("ATAN(TAN(x))", "x - pi", "x :epsilon Real (2, 4)"),
+    ("ATAN(TAN(x))", "ATAN(TAN(x))", "x :epsilon Real (1, 2)"),
 ]
 
 
@@ -540,6 +576,8 @@ def test_two_declared_intervals_are_asked_together():
     assert simp("ABS(x - y)", box) == "y - x"
     assert simp("MAX(x, y)", box) == "y"
     assert simp("IF(x < y, a, b)", box) == "a"
+    assert simp("x*y < 3", box) == "true"
+    assert simp("x*y < 2", box) == "x*y < 2"
 
 
 def test_an_interval_costs_nothing_where_nothing_is_declared():
@@ -557,6 +595,92 @@ def test_a_rewrite_needs_a_domain_that_justifies_it(text, expected, context):
 
 def test_a_one_point_interval_is_a_value():
     assert simp("x + 1", declared("x :epsilon Real [7, 7]")) == "8"
+
+
+#: A conditional an answer comes with, where the declaration decides its condition:
+#: the case it picks, and the else case worked out where that is the one.
+DECIDED_BY_A_DECLARATION = [
+    ("SUM(x^k, k, 0, inf)", "1/(1 - x)", "x :epsilon Real (-1, 1)"),
+    ("SUM(x^k, k, 0, inf)", "1/(1 - x)", "x :epsilon Real (0, 1)"),
+    ("SUM(k*x^k, k, 0, inf)", "x/(1 - x)^2", "x :epsilon Real (0, 1)"),
+    ("SUM(x^k/k, k, 1, inf)", "-LN(1 - x)", "x :epsilon Real (-1, 1)"),
+    # Past one the series is the else case, and its terms grow without bound, so
+    # it diverges: to `inf` where they are positive and `-inf` where negative.
+    ("SUM(x^k, k, 0, inf)", "inf", "x :epsilon Real (1, inf)"),
+    ("SUM(x^k, k, 0, inf)", "inf", "x :epsilon Real [2, inf)"),
+    ("SUM(k*x^k, k, 0, inf)", "inf", "x :epsilon Real (1, inf)"),
+    ("SUM(-x^k, k, 0, inf)", "-inf", "x :epsilon Real (1, inf)"),
+    # Terms that alternate in sign have no limit to say which way the sum goes.
+    (
+        "SUM((-x)^k, k, 0, inf)",
+        "SUM(x^k*(-1)^k, k, 0, inf)",
+        "x :epsilon Real (1, inf)",
+    ),
+    # A declaration that does not decide the condition leaves it.
+    (
+        "SUM(x^k, k, 0, inf)",
+        "IF(x < 1, 1/(1 - x), SUM(x^k, k, 0, inf))",
+        "x :epsilon Real (0, 2)",
+    ),
+    # A power of a declared base that tends to zero or grows without bound.
+    ("LIM(x^t, t, inf)", "0", "x :epsilon Real (0, 1)"),
+    ("LIM(x^t, t, inf)", "inf", "x :epsilon Real (1, inf)"),
+    ("LIM(x^t, t, -inf)", "0", "x :epsilon Real (1, inf)"),
+    ("LIM(x^t, t, -inf)", "inf", "x :epsilon Real (0, 1)"),
+    # An authored test is asked the same question.
+    ("IF(ABS(x) < 1, a, b)", "a", "x :epsilon Real (-1, 1)"),
+    ("IF(LN(x) < 0, a, b)", "a", "x :epsilon Real (0, 1)"),
+    ("IF(x > 1 OR x < -1, a, b)", "b", "x :epsilon Real (-1, 1)"),
+    ("IF(x < 1 AND x > 0, a, b)", "a", "x :epsilon Real (0, 1)"),
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "declaration"), DECIDED_BY_A_DECLARATION, ids=str
+)
+def test_a_declaration_decides_the_conditional_an_answer_comes_with(
+    text, expected, declaration
+):
+    assert simp(text, declared(declaration)) == expected
+
+
+def test_a_conditional_on_a_condition_already_asked_asks_it_once():
+    # The else case of a sum of `y*x^k` is the sum of `x^k`, which comes with the
+    # same condition once more, and where the first fails so does the second.
+    assert simp("SUM(y*x^k, k, 0, inf)") == (
+        "y*IF(ABS(x) < 1, 1/(1 - x), SUM(x^k, k, 0, inf))"
+    )
+
+
+def test_a_recursion_guarded_by_a_declared_variable_stands():
+    """A test the declaration leaves open is suspended as any other is, so a
+    recursion over a declared variable does not unfold its untaken branch."""
+    body = parse("IF(n = 0, 1, n*F(n - 1))", declaring("F"))
+    functions = {"F": (("n",), body)}
+    assert simp("F(5)", Context(functions=functions)) == "120"
+    context = replace(declared("m :epsilon Integer [0, 3]"), functions=functions)
+    assert simp("F(m)", context) == "IF(m = 0, 1, m*F(m - 1))"
+    # Above two, the first tests are decided false and the recursion unfolds to the
+    # first one that is not.
+    context = replace(declared("m :epsilon Integer (2, inf)"), functions=functions)
+    assert simp("F(m)", context) == "m*(m - 1)*(m - 2)*IF(m = 3, 1, (m - 3)*F(m - 4))"
+
+
+#: A complex quantity times its conjugate is its squared modulus.
+CONJUGATE_PAIRS = [
+    ("CONJ(z)*z", "ABS(z)^2"),
+    ("z*CONJ(z) + 1", "ABS(z)^2 + 1"),
+    ("CONJ(z)^2*z", "CONJ(z)*ABS(z)^2"),
+    ("CONJ(z)*z^3", "z^2*ABS(z)^2"),
+    ("1/(z*CONJ(z))", "1/ABS(z)^2"),
+    # A quotient pairs nothing.
+    ("CONJ(z)/z", "CONJ(z)/z"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), CONJUGATE_PAIRS, ids=str)
+def test_a_conjugate_pair_is_a_squared_modulus(text, expected):
+    assert simp(text, declared("z :epsilon Complex")) == expected
 
 
 # -- absolute values and signs ------------------------------------------------
@@ -588,6 +712,14 @@ SIGNED = [
     # `SIGN(ABS(x))` is no simpler a way to say so.
     ("SIGN(x^2)", "SIGN(x^2)", None),
     ("SIGN(x^2 + 1)", "1", None),
+    # A reciprocal has the sign of what it divides by, wherever it is defined; at
+    # zero it is not, so `SIGN(1/x^2)` is 1 where `SIGN(x^2)` is not.
+    ("SIGN(1/x)", "SIGN(x)", None),
+    ("SIGN(x^(-3))", "SIGN(x)", None),
+    ("SIGN(1/x^2)", "1", None),
+    ("SIGN(1/ABS(x))", "1", None),
+    ("SIGN(1/(x + y))", "SIGN(x + y)", None),
+    ("SIGN(1/z)", "SIGN(1/z)", declared("z :epsilon Complex")),
     # Zero is the point the identities are a licence at rather than a fact -
     # `SIGN(0)` is zero, so the left side is undefined there and the right side
     # is not - and a declaration away from zero makes them facts.
@@ -1099,6 +1231,11 @@ CALCULUS = [
     ("LIM(SIN(x)/x, x, 0)", "1"),
     ("LIM(SIGN(x), x, 0, 1)", "1"),
     ("LIM(SIGN(x), x, 0, -1)", "-1"),
+    # Toward `-inf` an exponential of a base above one dies away and one of a base
+    # below one grows.
+    ("LIM(2^x, x, -inf)", "0"),
+    ("LIM((1/2)^x, x, -inf)", "inf"),
+    ("LIM(x^3, x, -inf)", "-inf"),
     # A vector of variables against a vector of points is the limits taken one
     # after another, which is the substitution `x = 0` alone cannot make.
     ("LIM(x^2 + y^2, [x, y], [2, 3])", "13"),
@@ -2479,6 +2616,18 @@ LIMITS_OVER_A_PARAMETER_S_SIGN = [
     ("LIM(TANH(a*x), x, inf)", "SIGN(a)"),
     # No one expression is both 0 and inf, and the limit stands.
     ("LIM(#e^(a*x), x, inf)", "LIM(#e^(a*x), x, inf)"),
+    # A limit that turns on which side of one the parameter is on is a conditional
+    # on it, and where it is on neither side - one, or a base whose logarithm is
+    # not real - the limit stands.
+    ("LIM(a^x, x, inf)", "IF(a > 1, inf, IF(0 < a < 1, 0, LIM(a^x, x, inf)))"),
+    ("LIM(a^x, x, -inf)", "IF(a > 1, 0, IF(0 < a < 1, inf, LIM(a^x, x, -inf)))"),
+    (
+        "LIM(x*LN(a), x, inf)",
+        "IF(a > 1, inf, IF(0 < a < 1, -inf, LIM(x*LN(a), x, inf)))",
+    ),
+    # Infinity times a sign that is the sign of the parameter is written so.
+    ("LIM(x^2/a, x, inf)", "inf*SIGN(a)"),
+    ("LIM(x/ABS(a), x, inf)", "inf"),
 ]
 
 

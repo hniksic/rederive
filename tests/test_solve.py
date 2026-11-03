@@ -302,6 +302,19 @@ def test_an_identity_solves_to_an_arbitrary_value():
 
 
 @pytest.mark.parametrize(
+    "text", ["x/x = 1", "x/(x + 2) + 2/(x + 2) = 1", "SOLVE(x/x = 1)"]
+)
+def test_an_equation_whose_variable_cancels_is_solved_for_it(text):
+    """`x/x = 1` cancels to `1 = 1` before a variable is chosen, and is still an
+    equation in `x`, the variable it divides by: every value of it, but the poles,
+    is a solution."""
+    if text.startswith("SOLVE"):
+        assert simplify(parse(text), EXACT).text == "[x = @1]"
+    else:
+        assert sol(text) == ["x = @1"]
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "(x^2 - 1)/(x - 1) = x + 1",

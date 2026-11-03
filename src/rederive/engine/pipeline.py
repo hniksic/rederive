@@ -78,7 +78,7 @@ from rederive.engine.evaluate import (
 from rederive.engine.expanding import EXPAND_AMOUNTS, expanded_expression
 from rederive.engine.factoring import amount_named, factored_expression
 from rederive.engine.from_sympy import from_sympy
-from rederive.engine.intervals import decided, settled
+from rederive.engine.intervals import covering, decided, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.printer import is_written
 from rederive.engine.rational import rational_antiderivative
@@ -548,6 +548,7 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     if held:
         expression = expression.xreplace(held)
     expression = _numeric(expression)
+    expression = _forced(expression, _spliced_cases)
     # A root of a perfect power is taken ahead of the intervals, which settle the
     # absolute value it leaves: `SQRT(x^2 + 2*x + 1)` is `-x - 1` below -1.
     expression = _forced(expression, _perfect_powers)
@@ -555,6 +556,7 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     # intervals settle is settled for them too: `ABS(x) + ABS(x - 1)` over
     # `(0, 1)` is a sum that cancels, and only once both bars are off.
     expression = settled(expression, context)
+    expression = _divergent(expression, context)
     expression = _rewritten(expression, context)
     expression = _factorials(expression)
     # The normal form, and the one step that is not gated on getting shorter:
@@ -570,6 +572,84 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
             {dummy: found.args[0] for found, dummy in held.items()}
         )
     return approximated(expression, context)
+
+
+def _spliced_cases(expression: sp.Basic) -> sp.Basic:
+    """Every conditional whose else case is a conditional, as one with the cases of
+    both, each condition asked once.
+
+    A closed form that holds under a condition comes with the head itself as the
+    else case, and that head worked out again comes with the same condition: a
+    sum of `y*x^k` is `y` times a conditional whose else case is the sum of `x^k`,
+    which is the conditional on `ABS(x) < 1` once more. Where the first condition
+    fails the second does too, so the inner case is dead and only its own else case
+    is left.
+    """
+
+    def spliced(cases: sp.Piecewise) -> sp.Basic:
+        last, condition = cases.args[-1]
+        if condition is not sp.true or not isinstance(last, sp.Piecewise):
+            return cases
+        return sp.Piecewise(*cases.args[:-1], *last.args)
+
+    if not expression.has(sp.Piecewise):
+        return expression
+    return expression.replace(lambda e: isinstance(e, sp.Piecewise), spliced)
+
+
+def _divergent(expression: sp.Basic, context: Context) -> sp.Basic:
+    """Each standing series over a declared variable that diverges, as the infinity
+    it goes to.
+
+    A series whose terms tend to a limit other than zero diverges, to `inf` where
+    that limit is positive or `inf` and to `-inf` where it is negative or `-inf`.
+    Sympy finds the limit of `h^k` only knowing which side of one `h` is on, so the
+    limit is taken over what the declaration allows `h`, written in a positive
+    variable that sympy can be told about (see `covering`): `SUM(h^k, k, 0, inf)`
+    is `inf` where `h` was declared above one, being the else case of the
+    conditional the closed form comes with.
+    """
+
+    def diverged(series: sp.Sum) -> sp.Basic:
+        if len(series.limits) != 1:
+            return series
+        term, (index, low, high) = series.function, series.limits[0]
+        if high is not sp.oo or not low.is_finite:
+            return series
+        parameters = term.free_symbols - {index}
+        if len(parameters) != 1:
+            return series
+        (parameter,) = parameters
+        values = covering(parameter, context)
+        if values is None:
+            return series
+        ends = set()
+        for value in values:
+            limit = _attempt(
+                term, lambda t: sp.limit(t.subs(parameter, value), index, sp.oo)
+            )
+            if limit is None:
+                return series
+            ends.add(_infinity_of(limit))
+        if len(ends) != 1 or None in ends:
+            return series
+        return ends.pop()
+
+    if not expression.has(sp.Sum):
+        return expression
+    return _forced(
+        expression, lambda e: e.replace(lambda h: isinstance(h, sp.Sum), diverged)
+    )
+
+
+def _infinity_of(limit: sp.Basic) -> sp.Basic | None:
+    """The infinity a series diverges to whose terms tend to `limit`, or None where
+    `limit` does not say that it diverges."""
+    if limit is sp.oo or (limit.is_finite and limit.is_positive):
+        return sp.oo
+    if limit is sp.S.NegativeInfinity or (limit.is_finite and limit.is_negative):
+        return sp.S.NegativeInfinity
+    return None
 
 
 def _summed(expression: sp.Basic) -> sp.Basic:
@@ -3164,6 +3244,10 @@ def _limit(head: sp.Limit) -> sp.Basic:
         factor = sp.S.One
     if factor != 1 and _finite_nonzero(factor):
         constant, varying = factor, rest
+    if point is sp.S.NegativeInfinity:
+        # Taken as the limit at `inf` of the reflection, which is the same limit:
+        # sympy's own way to `-inf` has `2^x` go to `inf` there.
+        varying, point, direction = varying.subs(variable, -variable), sp.oo, "-"
     asked = sp.Limit(varying, variable, point, dir=direction)
     try:
         value = asked.doit(deep=False)
@@ -3179,7 +3263,49 @@ def _limit(head: sp.Limit) -> sp.Basic:
     value = _bounds_settled(constant * value)
     if value.has(sp.gamma) and value.is_number:
         value = _forced(value, sp.simplify)
-    return value
+    split = _attempt(value, lambda v: _split_on_a_sign(v, head))
+    return value if split is None else split
+
+
+def _split_on_a_sign(value: sp.Basic, head: sp.Limit) -> sp.Basic | None:
+    """A limit that turns on the sign of a function of its one parameter, as the
+    conditional on where that function is positive and where negative.
+
+    `LIM(a^x, x, inf)` is `#e^(inf*SIGN(LN(a)))` to sympy: `inf` where `a > 1`, 0
+    where `0 < a < 1`, and nothing that says so. Each side is the answer with the
+    sign written in, and what is on neither - `a = 1`, and an `a` the logarithm is
+    not real at - is the limit itself, still to be taken. A sign of the bare
+    parameter is left as it is, `inf*SIGN(a)` saying it as plainly as a conditional
+    would.
+    """
+    value = _signs_of_reciprocals(value)
+    signs = [
+        found
+        for found in value.atoms(sp.sign)
+        if not isinstance(found.args[0], sp.Symbol)
+    ]
+    if len(signs) != 1:
+        return None
+    (signed,) = signs
+    argument = signed.args[0]
+    parameters = argument.free_symbols
+    if len(parameters) != 1 or parameters != value.free_symbols:
+        return None
+    (parameter,) = parameters
+    if not parameter.is_extended_real:
+        return None
+    cases = []
+    for sign, relation in ((1, sp.StrictGreaterThan), (-1, sp.StrictLessThan)):
+        where = sp.solve_univariate_inequality(
+            relation(argument, 0), parameter, relational=True
+        )
+        if where in (sp.true, sp.false):
+            return None
+        written = value.xreplace({signed: sp.Integer(sign)})
+        if written.has(sp.sign, sp.nan, sp.zoo):
+            return None
+        cases.append((written, where))
+    return sp.Piecewise(*cases, (head, True))
 
 
 def _limit_by_the_sign_of_a_parameter(asked: sp.Limit) -> sp.Basic | None:
@@ -3960,6 +4086,70 @@ def _compound(expression: sp.Basic) -> bool:
 #: a power of the other two - `ABS(u) = u*SIGN(u)` and `SIGN(u)^2 = 1` - so a
 #: group is no more than the exponent every one of them carries.
 _ABSOLUTE, _SIGNUM, _BARE = 0, 1, 2
+
+
+def _signs_of_reciprocals(expression: sp.Basic) -> sp.Basic:
+    """Every `SIGN` of a power to a negative exponent, written without the division.
+
+    `SIGN(1/u)` is `SIGN(u)` and `SIGN(1/u^2)` is 1 for a real `u`, and `SIGN(1/ABS(u))`
+    is 1 for any: where `u` is zero the reciprocal is undefined, and everywhere else
+    the two have the same sign. A limit that grows like `x^2/a` comes back as
+    `inf*SIGN(1/a)`, which is `inf*SIGN(a)`.
+    """
+
+    def unsigned(head: sp.sign) -> sp.Basic:
+        power = head.args[0]
+        base, exponent = power.args
+        if base.is_nonnegative:
+            return sp.S.One
+        if not (base.is_extended_real and exponent.is_integer):
+            return head
+        return sp.S.One if exponent.is_even else sp.sign(base)
+
+    return expression.replace(
+        lambda e: isinstance(e, sp.sign)
+        and isinstance(e.args[0], sp.Pow)
+        and e.args[0].exp.is_extended_negative,
+        unsigned,
+    )
+
+
+def _conjugate_pairs(expression: sp.Basic) -> sp.Basic:
+    """Every product of a complex quantity and its conjugate, as its squared modulus.
+
+    `CONJ(z)*z` is `ABS(z)^2`, and so is each pair of factors in a product of
+    powers of the two to whole exponents of one sign: `z^2*CONJ(z)` is
+    `z*ABS(z)^2`, and `1/(z*CONJ(z))` is `1/ABS(z)^2`.
+    """
+
+    def paired(product: sp.Mul) -> sp.Basic:
+        powers: dict[sp.Basic, sp.Basic] = {}
+        for factor in product.args:
+            base, exponent = factor.as_base_exp()
+            powers[base] = powers.get(base, 0) + exponent
+        changed = False
+        for base in list(powers):
+            if not isinstance(base, sp.conjugate):
+                continue
+            plain = base.args[0]
+            ours, theirs = powers.get(plain), powers[base]
+            if ours is None or not (ours.is_integer and theirs.is_integer):
+                continue
+            if (ours > 0) != (theirs > 0):
+                continue
+            common = min(ours, theirs) if ours > 0 else max(ours, theirs)
+            powers[plain] = ours - common
+            powers[base] = theirs - common
+            modulus = sp.Abs(plain)
+            powers[modulus] = powers.get(modulus, 0) + 2 * common
+            changed = True
+        if not changed:
+            return product
+        return sp.Mul(*(base**exponent for base, exponent in powers.items()))
+
+    if not expression.has(sp.conjugate):
+        return expression
+    return expression.replace(lambda e: isinstance(e, sp.Mul), paired)
 
 
 def _folded_signs(expression: sp.Basic) -> sp.Basic:
@@ -5513,6 +5703,10 @@ _IDENTITIES = (
           "PHASE(#i*x) is pi*SIGN(x)/2 for a real x"),
     _Rule("signs", _folded_signs, _forced,
           "ABS(u)*SIGN(u) is u and u/ABS(u) is SIGN(u), for a real u"),
+    _Rule("signs of reciprocals", _signs_of_reciprocals, _forced,
+          "SIGN(1/u) is SIGN(u), and SIGN(1/ABS(u)) is 1 wherever it is defined"),
+    _Rule("conjugate pairs", _conjugate_pairs, _forced,
+          "CONJ(z)*z is ABS(z)^2"),
     _Rule("combinatorial", _combinatorial, _gated,
           "a ratio of factorials is a binomial or a polynomial when it is shorter"),
     # The arcs and angles are ours rather than sympy's, which collects neither these
