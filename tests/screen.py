@@ -2,7 +2,6 @@
 plus which runs of it are in inverse video."""
 
 from rich.text import Text
-from textual.widgets import Static
 
 
 def text_of(widget):
@@ -81,9 +80,9 @@ def pointed(app):
 
 
 def content(app, number=None):
-    """The Static holding a window's expressions; the active window's by default."""
+    """The widget holding a window's expressions; the active window's by default."""
     pane = app.work_area if number is None else app.panes[app.windows.numbered(number)]
-    return pane.query_one(".work-content", Static)
+    return pane.content
 
 
 def highlighted_rows(app, number=None):

@@ -12,11 +12,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from rich.cells import cell_len
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
-from textual.geometry import Offset, Region
+from textual.geometry import Offset, Region, Size
+from textual.strip import Strip
+from textual.widget import Widget
 from textual.widgets import Input, Static
 
 from rederive import memory
@@ -151,26 +155,13 @@ def _painted(entry: Entry, offset: int = 0) -> list[str]:
     ]
 
 
-def _offsets(lines: list[str]) -> list[int]:
-    """Where each line begins once the lines are joined with newlines."""
-    offsets: list[int] = []
-    position = 0
-    for line in lines:
-        offsets.append(position)
-        position += len(line) + 1
-    return offsets
-
-
-def _invert(
-    text: Text,
-    offsets: list[int],
+def _marks(
     first: int,
     indent: int,
     rect: tuple[int, int, int, int],
-    style: str,
     offset: int = 0,
-) -> None:
-    """Highlight the selection, one row of its rectangle at a time.
+) -> dict[int, tuple[int, int]]:
+    """The columns the selection inverts on each row it covers.
 
     The rectangle covers the blanks inside it, so the highlight over a built-up
     fraction is a solid block rather than a ragged outline. `offset` is how far
@@ -179,11 +170,73 @@ def _invert(
     not painted at all.
     """
     top, left, height, width = rect
+    marks: dict[int, tuple[int, int]] = {}
     for row in range(top, top + height):
-        line = offsets[first + row] + indent
-        begin, end = line + left - offset, line + left + width - offset
-        if end > max(begin, line):
-            text.stylize(style, max(begin, line), end)
+        begin, end = max(indent + left - offset, indent), indent + left + width - offset
+        if end > begin:
+            marks[first + row] = (begin, end)
+    return marks
+
+
+class _Rows(Widget):
+    """Rows of plain text, each drawn only when the screen asks for it.
+
+    A worksheet can run to thousands of rows of which a pane shows a few dozen,
+    and a highlight moved one step has to cost what those few dozen cost. So
+    the rows are kept as plain strings with at most one inverted run on each,
+    and the height is their count rather than something measured off a
+    rendered text.
+    """
+
+    def __init__(self, **arguments: Any) -> None:
+        super().__init__(**arguments)
+        self._lines: list[str] = []
+        self._plain = ""
+        self._marked = ""
+        self._marks: dict[int, tuple[int, int]] = {}
+
+    def paint(
+        self,
+        lines: list[str],
+        plain: str,
+        marked: str = "",
+        marks: dict[int, tuple[int, int]] | None = None,
+    ) -> None:
+        """Show `lines` in the style `plain`, the `marks` runs in `marked`."""
+        relaid = len(lines) != len(self._lines)
+        self._lines, self._plain, self._marked = lines, plain, marked
+        self._marks = marks or {}
+        self.refresh(layout=relaid)
+
+    @property
+    def content(self) -> Text:
+        """What the rows show, as one text with the marked runs styled."""
+        text = Text("\n".join(self._lines), style=self._plain, no_wrap=True)
+        start = 0
+        for row, line in enumerate(self._lines):
+            mark = self._marks.get(row)
+            if mark is not None:
+                begin, end = mark
+                text.stylize(self._marked, start + begin, start + min(end, len(line)))
+            start += len(line) + 1
+        return text
+
+    def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
+        return len(self._lines)
+
+    def render_line(self, y: int) -> Strip:
+        base = self.rich_style
+        if y >= len(self._lines):
+            return Strip.blank(self.size.width, base)
+        line = self._lines[y]
+        plain = base + Style.parse(self._plain)
+        mark = self._marks.get(y)
+        if mark is None:
+            return Strip([Segment(line, plain)])
+        begin, end = mark
+        marked = base + Style.parse(self._marked)
+        pieces = [(line[:begin], plain), (line[begin:end], marked), (line[end:], plain)]
+        return Strip([Segment(piece, style) for piece, style in pieces if piece])
 
 
 def _packed(
@@ -299,7 +352,7 @@ class WorkArea(VerticalScroll):
         #
         # A class rather than an id: there is one of these per window, and an
         # id would have to be unique across all of them.
-        self.content = Static(classes="work-content")
+        self.content = _Rows(classes="work-content")
         super().__init__(self.content, *args, **kwargs)
         #: Columns the selected entry's render is currently shifted left by.
         self.shift = 0
@@ -356,18 +409,10 @@ class WorkArea(VerticalScroll):
             for index, (start, indent) in enumerate(zip(starts, indents, strict=True))
         ]
         self._shifted = selected
-        text = Text("\n".join(lines), style=styles["work"], no_wrap=True)
+        marks = None
         if selected is not None and rect is not None:
-            _invert(
-                text,
-                _offsets(lines),
-                starts[selected],
-                indents[selected],
-                rect,
-                styles["selection"],
-                self.shift,
-            )
-        self.content.update(text)
+            marks = _marks(starts[selected], indents[selected], rect, self.shift)
+        self.content.paint(lines, styles["work"], styles["selection"], marks)
         self._revealing = None
         if selected is not None:
             self._revealing = Region(0, starts[selected], 1, entries[selected].height)
@@ -414,11 +459,10 @@ class WorkArea(VerticalScroll):
         self._drawn, self._shifted, self._revealing = [], None, None
         page = [line[:width] for line in lines[:rows]]
         page += [""] * (rows - len(page))
-        text = Text("\n".join(page), style=styles["work"], no_wrap=True)
+        marks = None
         if titled and page[0].strip():
-            begin = len(page[0]) - len(page[0].lstrip())
-            text.stylize(styles["selection"], begin, len(page[0]))
-        self.content.update(text)
+            marks = {0: (len(page[0]) - len(page[0].lstrip()), len(page[0]))}
+        self.content.paint(page, styles["work"], styles["selection"], marks)
         self.call_after_refresh(self.scroll_to, 0, 0, animate=False)
 
     def show_greeting(
@@ -444,8 +488,7 @@ class WorkArea(VerticalScroll):
         if len(page) < rows:
             page.append(footer.center(width).rstrip()[:width])
         page += [""] * (rows - len(page))
-        text = Text("\n".join(page), style=styles["work"], no_wrap=True)
-        self.content.update(text)
+        self.content.paint(page, styles["work"])
 
     def pointed(self, offset: Offset) -> tuple[int, int, int] | None:
         """Which entry the screen cell `offset` is on, and where in its render.

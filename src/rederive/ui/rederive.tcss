@@ -46,7 +46,7 @@ Screen {
 
 .work-content {
     height: auto;
-    width: auto;
+    width: 1fr;
 }
 
 #rule {
