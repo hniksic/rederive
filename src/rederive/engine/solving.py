@@ -45,12 +45,11 @@ from __future__ import annotations
 
 import cmath
 from collections.abc import Iterable, Sequence
-from fractions import Fraction
 
 import sympy as sp
 from sympy.core.relational import Relational
 
-from rederive.engine.approximation import GUARD, simplest
+from rederive.engine.approximation import GUARD, simplest_rational
 from rederive.engine.context import Context, Precision
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
@@ -799,8 +798,7 @@ def _approximate(root: sp.Basic, context: Context) -> sp.Basic:
     whatever style the precision mode selected.
     """
     digits = context.precision_digits
-    exact = sp.Rational(root.evalf(digits + GUARD))
-    return sp.Rational(simplest(Fraction(exact.p, exact.q), digits))
+    return simplest_rational(root.evalf(digits + GUARD), digits)
 
 
 def _within(root: sp.Basic, low: sp.Basic, high: sp.Basic) -> bool:

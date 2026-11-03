@@ -3180,6 +3180,18 @@ def test_a_high_power_of_a_complex_root_is_approximated_to_a_number():
     assert abs(value - 12) < 0.001
 
 
+@pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=["approximate", "mixed"])
+def test_an_approximation_is_read_from_its_decimal_digits(context):
+    """Not from the binary fraction the float evaluating it is stored as.
+
+    `SQRT(10^200 + 1)` evaluates to a float that shows `1.0000000000e+100` and
+    is stored as `10^100 - 1.73*10^87`. The digits are what it approximates
+    to, and the original answers the difference 0.
+    """
+    assert simp("SQRT(10^200 + 1)", context) == "10^100"
+    assert simp("SQRT(10^200 + 1) - 10^100", context) == "0"
+
+
 def test_numerals_come_back_in_the_input_base():
     state = ParseState(input_base=16)
     assert simp("0FF + 1", Context(input_base=16), state) == "100"

@@ -71,13 +71,14 @@ that costs.
 from __future__ import annotations
 
 from collections.abc import Set
+from decimal import Decimal
 from fractions import Fraction
 
 import sympy as sp
 
 from rederive.engine.context import Context, Precision
 
-__all__ = ["GUARD", "approximated", "simplest"]
+__all__ = ["GUARD", "approximated", "simplest", "simplest_rational"]
 
 #: Digits carried past the ones asked for while an irrational is evaluated, so
 #: that the digits asked for are the value's own rather than a rounding of it.
@@ -180,16 +181,30 @@ def _rounded(
         return expression.replace(
             lambda part: isinstance(part, sp.Rational | sp.Float)
             and part not in approximate,
-            lambda part: _simplest(part, digits),
+            lambda part: simplest_rational(part, digits),
             simultaneous=False,
         )
     except Exception:
         return expression
 
 
-def _simplest(number: sp.Basic, digits: int) -> sp.Rational:
-    value = sp.Rational(number)
-    return sp.Rational(simplest(Fraction(value.p, value.q), digits))
+def simplest_rational(number: sp.Basic, digits: int) -> sp.Rational:
+    """`simplest` for a sympy number: a rational, or a float evaluation produced.
+
+    A float is read as the decimal digits it shows, not as the binary fraction
+    it is stored as. The two differ past the float's precision, and the
+    difference is no part of the value: `SQRT(10^200 + 1)` evaluates to a float
+    that shows `1.0000000000e+100` and is stored as `10^100 - 1.73*10^87`. Both
+    are within the tolerance, and the nearest of the equally simple candidates
+    would be the stored one, which leaves the binary error in a number that is
+    then computed with exactly.
+    """
+    if isinstance(number, sp.Float):
+        value = Fraction(Decimal(str(number)))
+    else:
+        rational = sp.Rational(number)
+        value = Fraction(rational.p, rational.q)
+    return sp.Rational(simplest(value, digits))
 
 
 def _approximated(
@@ -263,8 +278,8 @@ def _approximate(part: sp.Basic, digits: int) -> sp.Basic:
     """
     value = _evalf(part, digits + GUARD)
     if isinstance(value, sp.Float) or value.is_Rational:
-        return _simplest(value, digits)
+        return simplest_rational(value, digits)
     real, imaginary = value.as_real_imag()
     if not all(isinstance(v, sp.Float) or v.is_Rational for v in (real, imaginary)):
         return part
-    return _simplest(real, digits) + _simplest(imaginary, digits) * sp.I
+    return simplest_rational(real, digits) + simplest_rational(imaginary, digits) * sp.I
