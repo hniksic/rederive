@@ -3145,6 +3145,41 @@ def test_mixed_mode_approximates_the_irrational_and_keeps_the_rational_exact():
     assert simp(exercise, APPROXIMATE) != "2/3"
 
 
+#: A number that is not real is approximated as a real part and an imaginary
+#: part, each the approximate number it would be on its own. Each answer is the
+#: original's.
+COMPLEX_APPROXIMATED = [
+    ("SQRT(-2)", "1.41421*#i"),
+    ("(-8)^(1/3)", "1 + 1.73205*#i"),
+    ("LN(-1)", "3.14159*#i"),
+    ("(SQRT(3) + #i)^5", "-27.7128 + 16*#i"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), COMPLEX_APPROXIMATED, ids=str)
+@pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=["approximate", "mixed"])
+def test_a_complex_number_is_approximated_part_by_part(text, expected, context):
+    assert simp(text, context) == expected
+
+
+def test_a_high_power_of_a_complex_root_is_approximated_to_a_number():
+    """A root of `x^1000 = 12`, raised back to the thousandth power.
+
+    Exact simplification leaves the power standing, there being no shorter way
+    to write it, so the approximation is what has to work it out. It is close to
+    12 and not exactly 12: the root's parts are rounded before the power is
+    taken, and the power multiplies their error a thousandfold. The original
+    answers `12 - 0.000430980*#i` the same way.
+    """
+    root = (
+        "12^(1/1000)*(SQRT(2)*SQRT(5/8 - SQRT(5)/8)/2 + SQRT(10)/8 + SQRT(2)/8"
+        " - SQRT(10)*#i/8 + SQRT(2)*#i*SQRT(5/8 - SQRT(5)/8)/2 - SQRT(2)*#i/8)"
+    )
+    answer = simp(f"({root})^1000", APPROXIMATE)
+    value = complex(sp.sympify(answer.replace("#i", "I")))
+    assert abs(value - 12) < 0.001
+
+
 def test_numerals_come_back_in_the_input_base():
     state = ParseState(input_base=16)
     assert simp("0FF + 1", Context(input_base=16), state) == "100"

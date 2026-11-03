@@ -257,12 +257,14 @@ def _needs_digits(expression: sp.Basic) -> bool:
 def _approximate(part: sp.Basic, digits: int) -> sp.Basic:
     """The approximate number `part` stands for, or `part` where there is none.
 
-    A number whose value is not real - `SQRT(-2)` and everything else that
-    evaluates with an `I` in it - has no rational standing in for it, and is
-    left as it is rather than failing the approximation of everything around
-    it.
+    A number whose value is not real - `SQRT(-2)`, `(1 + #i)^10` - is approximated
+    one part at a time, as the rational real part plus `#i` times the rational
+    imaginary part, which is how Derive approximates it too.
     """
     value = _evalf(part, digits + GUARD)
-    if not isinstance(value, sp.Float) and not value.is_Rational:
+    if isinstance(value, sp.Float) or value.is_Rational:
+        return _simplest(value, digits)
+    real, imaginary = value.as_real_imag()
+    if not all(isinstance(v, sp.Float) or v.is_Rational for v in (real, imaginary)):
         return part
-    return _simplest(value, digits)
+    return _simplest(real, digits) + _simplest(imaginary, digits) * sp.I
