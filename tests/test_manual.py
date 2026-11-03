@@ -914,12 +914,13 @@ INTEGRALS = [
     # 7.4 p.178: an iterated integral whose inner limits carry the outer
     # variable.
     ("INT(INT(x*LN(y), y, x, 2*x), x, 0, 2)", "8*LN(2) - 32/9"),
-    # 7.4 pp.180-181: the improper integrals, including the two the manual
-    # documents as wrong and as principal values.
+    # 7.4 pp.180-181: the improper integrals. For the two through a pole the
+    # manual documents a principal value and a number it calls wrong; here they
+    # are the integrals they are, one without a value and one infinite.
     ("INT(1/x^2, x, 1, inf)", "1"),
     ("INT(1/SQRT(x), x, 0, 1)", "2"),
-    ("INT(1/x^3, x, -1, 2)", "3/8"),
-    ("INT(1/x^2, x, -1, 1)", "-2"),
+    ("INT(1/x^3, x, -1, 2)", "?"),
+    ("INT(1/x^2, x, -1, 1)", "inf"),
     ("INT(1/x^2, x, -1, 0) + INT(1/x^2, x, 0, 1)", "inf"),
 ]
 

@@ -37,7 +37,7 @@ answer has a spelling that can be read and typed back. The complete list:
 |---|---|---|
 | `ROOT_SUM(p, t, u)` | `RootSum` | rational integrand whose denominator does not factor |
 | `ROOT_OF(p, t, n)` | `CRootOf` | authored only |
-| `INTERVAL(a, b)` | `AccumBounds` | bounded limit that does not converge |
+| `INTERVAL(a, b)` | `AccumBounds` | limit that oscillates without converging |
 | `EI` | `Ei` | `INT(EXP(x)/x, x)` |
 | `SI`, `CI` | `Si`, `Ci` | `INT(SIN(x)/x, x)`, `INT(COS(x)/x, x)` |
 | `SINH_INT`, `COSH_INT` | `Shi`, `Chi` | `INT(SINH(x)/x, x)`, `INT(COSH(x)/x, x)` |
@@ -117,3 +117,7 @@ correct. Derive rounds intermediate values, and the errors can show up in the re
 ```
 SQRT(10001) - 100      0.00499987      Derive: 0.00499722
 ```
+
+**Integrals through a pole.** A definite integral through a pole inside the interval is
+`inf` or `?` rather than the difference of the antiderivative's values at the ends:
+`INT(1/x^2, x, -1, 1)` is `inf`, not `-2`.

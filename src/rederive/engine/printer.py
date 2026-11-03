@@ -1531,10 +1531,16 @@ class AuthorPrinter(sp.StrPrinter):
         return text
 
     def _print_Limit(self, expr):
+        """`LIM(u, x, a)`, with a fourth argument for a limit from one side.
+
+        An infinite point is approached from the only side it has, and sympy records
+        that side on every limit there; written out it would read as a one-sided
+        limit the author never asked for, so it is left off.
+        """
         expression, variable, point, direction = expr.args
         parts = [self._print(expression), self._print(variable), self._print(point)]
         side = {"+": "1", "-": "-1"}.get(str(direction))
-        if side is not None:
+        if side is not None and not point.is_infinite:
             parts.append(side)
         return f"LIM({', '.join(parts)})"
 
@@ -1550,9 +1556,9 @@ class AuthorPrinter(sp.StrPrinter):
         writes a solution set as a chained relation rather than as a range.
 
         A whole answer is the smaller half of what this is for. The value turns
-        up inside larger expressions as readily as on its own, `LIM(x*SIN(x),
-        x, inf)` being `inf*SIGN(INTERVAL(-1, 1))`, and a call is an atom, so
-        the precedence rules bracket it exactly as they do any other head.
+        up inside larger expressions as readily as on its own, `LIM(SIN(x), x,
+        inf) + 1` being `INTERVAL(0, 2)`, and a call is an atom, so the
+        precedence rules bracket it exactly as they do any other head.
         """
         return f"INTERVAL({self.stringify(expr.args, ', ')})"
 

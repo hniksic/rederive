@@ -285,6 +285,12 @@ class Taylor(sp.Function):
         0, the value at the point being all the order asks for, and
         `TAYLOR(SQRT(x), x, 0, 2)` is `?`, the first derivative at zero being
         infinite (7.3, p.176).
+
+        A function with a kink or a jump in it may have none of those derivatives
+        at the point, and sympy then expands it from the right alone: `ABS(x)` at
+        zero would be `x`. Such a function has a Taylor polynomial only where its
+        expansions from the two sides agree with each other and with its value,
+        and where they do not, the call stands.
         """
         expression, variable, point, order = self.args
         if not (order.is_Integer and order >= 0):
@@ -293,10 +299,48 @@ class Taylor(sp.Function):
             series = expression.series(variable, point, int(order) + 1).removeO()
         except Exception:
             return self
+        if expression.has(*_KINKED) and not _from_both_sides(
+            expression, variable, point, int(order), series
+        ):
+            return self
         if series.is_polynomial(variable):
             return series
         summed = _summed_from_derivatives(expression, variable, point, int(order))
         return self if summed is None else summed
+
+
+#: The functions that are not analytic where their argument crosses a jump or a kink.
+_KINKED = (
+    sp.Abs,
+    sp.sign,
+    sp.floor,
+    sp.ceiling,
+    sp.frac,
+    sp.Heaviside,
+    sp.Max,
+    sp.Min,
+    sp.Piecewise,
+)
+
+
+def _from_both_sides(
+    expression: sp.Basic,
+    variable: sp.Basic,
+    point: sp.Basic,
+    order: int,
+    series: sp.Basic,
+) -> bool:
+    """Whether `series`, the expansion from the right, is also the one from the left.
+
+    `ABS(x)` at zero is `x` from the right and `-x` from the left, and has no Taylor
+    polynomial there. `x*ABS(x)` is the same 0 from both sides to the first order,
+    which is all a once differentiable function promises.
+    """
+    try:
+        left = expression.series(variable, point, order + 1, dir="-").removeO()
+        return sp.expand(left - series) == 0
+    except Exception:
+        return False
 
 
 def _summed_from_derivatives(

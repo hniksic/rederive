@@ -14,6 +14,7 @@ what Derive prints or a hand-checked equal of comparable simplicity.
 from __future__ import annotations
 
 import math
+import re
 import warnings
 from dataclasses import replace
 from fractions import Fraction
@@ -856,6 +857,298 @@ def test_a_calculus_head_is_evaluated(text, expected):
     assert simp(text) == expected
 
 
+SINGULAR_INTEGRALS = [
+    # An integrand of one sign blowing up at least as fast as the reciprocal of the
+    # distance makes the integral diverge to that sign's infinity, wherever the
+    # singularity is. The antiderivative taken across it gives a finite number.
+    ("INT(1/x^2, x, -1, 1)", "inf"),
+    ("INT(1/x^4, x, -1, 1)", "inf"),
+    ("INT(1/ABS(x), x, -1, 1)", "inf"),
+    ("INT(1/x^2, x, -1, 2)", "inf"),
+    ("INT(1/(x - 1)^2, x, 0, 2)", "inf"),
+    ("INT(SEC(x)^2, x, 0, pi)", "inf"),
+    ("INT(#e^(1/x), x, -1, 1)", "inf"),
+    ("INT(1/x^2, x, -inf, inf)", "inf"),
+    ("INT(1/x^2, x, 1, -1)", "-inf"),
+    # At an end, too, and without the logarithm's imaginary part.
+    ("INT(1/x, x, -1, 0)", "-inf"),
+    ("INT(LN(x)/x, x, 0, 1)", "-inf"),
+    # Diverging to both infinities, the integral has no value: the sum of its
+    # parts is `inf - inf`. Not the principal value.
+    ("INT(1/x, x, -1, 1)", "?"),
+    ("INT(1/x, x, -1, 2)", "?"),
+    ("INT(1/x^3, x, -1, 2)", "?"),
+    ("INT(TAN(x), x, 0, pi)", "?"),
+    ("INT(1/SIN(x), x, -1, 1)", "?"),
+    ("INT(1/(x^2 - 1), x, 0, 2)", "?"),
+    ("INT(x/(x^2 - 1)^2, x, -2, 2)", "?"),
+    # Integrable singularities keep their values.
+    ("INT(1/SQRT(ABS(x)), x, -1, 1)", "4"),
+    ("INT(LN(ABS(x)), x, -1, 1)", "-2"),
+    ("INT(1/SQRT(ABS(x - 1)), x, 0, 2)", "4"),
+    ("INT(1/(x - 1)^(2/3), x, 0, 2)", "3/2 - 3*SQRT(3)*#i/2"),
+    ("INT(LN(x), x, 0, 1)", "-1"),
+    ("INT(SIN(x)/x, x, -1, 1)", "2*SI(1)"),
+    # Integrated on each side of the singularity, where the antiderivative jumps.
+    ("INT(#e^(-1/x^2)/x^2, x, -1, 1)", "SQRT(pi) - SQRT(pi)*ERF(1)"),
+    # A divergence of unknown sign is worked out on each side of the parameter's.
+    ("INT(a/x^2, x, -1, 1)", "IF(a > 0, inf, IF(a < 0, -inf, 0))"),
+    ("INT(a/x, x, -1, 1)", "IF(a /= 0, ?, 0)"),
+    # Undecided at zero, where the antiderivative's limit is not the integral's.
+    ("INT(1/(x*LN(x)), x, 0, 1/2)", "INT(1/(x*LN(x)), x, 0, 1/2)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SINGULAR_INTEGRALS, ids=str)
+def test_an_integral_is_decided_at_its_singularities(text, expected):
+    assert simp(text) == expected
+
+
+PARAMETRIC_INTEGRALS = [
+    # The sign of an infinity in the antiderivative depends on the parameter.
+    ("INT(1/(x^2 + a^2), x, 0, inf)", "pi/(2*ABS(a))"),
+    ("INT(1/(x^2 + a^2), x, -inf, inf)", "pi/ABS(a)"),
+    ("INT(a/(x^2 + a^2), x, 0, inf)", "pi*SIGN(a)/2"),
+    ("INT(1/(x^2 + a), x, 0, inf)", "IF(a > 0, pi/(2*SQRT(a)), IF(a < 0, ?, inf))"),
+    # A pole that moves with the parameter is in the interval for some values of
+    # it, and there the integral diverges; the antiderivative's difference holds
+    # only for the others.
+    ("INT(1/(x - a)^2, x, 0, 2)", "IF(0 <= a <= 2, inf, -2/(a*(2 - a)))"),
+    ("INT(1/(x + a)^2, x, 0, inf)", "IF(a <= 0, inf, 1/a)"),
+    ("INT(1/(x^2 - a^2), x, 0, inf)", "IF(a = 0, inf, ?)"),
+    (
+        "INT(1/(x - a), x, 0, 1)",
+        "IF(a = 0, inf, IF(a = 1, -inf, IF(0 < a < 1, ?, LN(1 - a) - LN(-a))))",
+    ),
+    # Where the pole cancels, the integral is a number.
+    (
+        "INT(x/(x - a), x, 0, 1)",
+        "IF(a = 0, 1, IF(a = 1, -inf, IF(0 < a < 1, ?, -a*LN(-a) + a*LN(1 - a) + 1)))",
+    ),
+    # A power of zero, which is 0 or infinite by its exponent's sign.
+    ("INT(x^n, x, 0, 1)", "IF(n > -1, 1/(n + 1), inf)"),
+    ("INT(x^n, x, 0, 2)", "IF(n > -1, 2^(n + 1)/(n + 1), inf)"),
+    ("INT(1/x^n, x, 0, 1)", "IF(n < 1, 1/(1 - n), inf)"),
+    # Convergent for one sign of the parameter, divergent to one infinity
+    # otherwise.
+    ("INT(#e^(-a*x), x, 0, inf)", "IF(a > 0, 1/a, inf)"),
+    ("INT(#e^(a*x), x, 0, inf)", "IF(a < 0, -1/a, inf)"),
+    ("INT(#e^(-a*x), x, 1, inf)", "IF(a > 0, #e^(-a)/a, inf)"),
+    ("INT(x*#e^(-a*x), x, 0, inf)", "IF(a > 0, 1/a^2, inf)"),
+    ("INT(#e^(-a*x^2), x, -inf, inf)", "IF(a > 0, SQRT(pi)/SQRT(a), inf)"),
+    ("INT(#e^(-a*x)/SQRT(x), x, 0, inf)", "IF(a > 0, SQRT(pi)/SQRT(a), inf)"),
+    ("INT(x^n*LN(x), x, 0, 1)", "IF(n > -1, -1/(n + 1)^2, -inf)"),
+    ("INT(#e^(-x)*x^n, x, 0, inf)", "IF(n > -1, n!, inf)"),
+    # One expression for every sign.
+    ("INT(SIN(a*x)/x, x, 0, inf)", "pi*SIGN(a)/2"),
+    ("INT(COS(a*x)*#e^(-x^2), x, -inf, inf)", "SQRT(pi)*#e^(-a^2/4)"),
+    # Divergent by oscillation for a negative `a`, which stays standing; the
+    # convergence condition is the sign of `a`.
+    (
+        "INT(#e^(-a*x)*SIN(x), x, 0, inf)",
+        "IF(a > 0, 1/(a^2 + 1), INT(SIN(x)*#e^(-a*x), x, 0, inf))",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), PARAMETRIC_INTEGRALS, ids=str)
+def test_a_parametric_integral_is_worked_out_on_each_side_of_a_sign(text, expected):
+    assert simp(text) == expected
+
+
+STEP_INTEGRALS = [
+    # Split where the step jumps, and each stretch integrated with the step
+    # constant.
+    ("INT(FLOOR(x), x, 0, 3)", "3"),
+    ("INT(FLOOR(x)^2, x, 0, 3)", "5"),
+    ("INT(x*FLOOR(x), x, 0, 2)", "3/2"),
+    ("INT(FLOOR(x), x, 3, 0)", "-3"),
+    ("INT(FLOOR(x), x, -1/2, 2)", "1/2"),
+    ("INT(FLOOR(x/2), x, 0, 5)", "4"),
+    ("INT(FLOOR(x^2), x, 0, 2)", "-SQRT(2) - SQRT(3) + 5"),
+    ("INT(MOD(x, 1), x, 0, 3)", "3/2"),
+    ("INT(MOD(x, 2)*x, x, 0, 3)", "4"),
+    ("INT(FLOOR(x)*SIGN(x - 3/2), x, 0, 3)", "2"),
+    ("INT(FLOOR(x)/x, x, 1, 3)", "LN(9/2)"),
+    ("INT(a*FLOOR(x), x, 0, 3)", "3*a"),
+    # A sign of something other than a polynomial, whose antiderivative holds
+    # only near the origin.
+    ("INT(ABS(SIN(x)), x, 0, 10*pi)", "20"),
+    ("INT(ABS(SIN(x)), x, -10, 10)", "2*COS(10) + 14"),
+    ("INT(SIGN(SIN(x)), x, 0, 3*pi)", "pi"),
+    ("INT(SIGN(COS(x)), x, 0, 5)", "5 - 2*pi"),
+    ("INT(ABS(LN(x)), x, 1/2, 2)", "3*LN(2)/2 - 1/2"),
+    # Jumps at no number to split at.
+    ("INT(FLOOR(x), x, 0, a)", "INT(FLOOR(x), x, 0, a)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), STEP_INTEGRALS, ids=str)
+def test_a_step_function_is_integrated_between_its_jumps(text, expected):
+    assert simp(text) == expected
+
+
+STEP_ANTIDERIVATIVES = [
+    # A sign of a periodic function jumps forever, and the antiderivative counts the
+    # jumps with a floor: each arch of `ABS(SIN(x))` adds 2.
+    ("INT(ABS(SIN(x)), x)", "2*FLOOR(x/pi) - SIGN(SIN(x))*COS(x)"),
+    ("INT(ABS(COS(x)), x)", "SIGN(COS(x))*SIN(x) + 2*FLOOR(x/pi + 1/2)"),
+    ("INT(SIGN(SIN(x)), x)", "(-pi*FLOOR(x/pi) + x - pi/2)*SIGN(SIN(x))"),
+    ("INT(ABS(SIN(2*x)), x)", "FLOOR(2*x/pi) - SIGN(SIN(2*x))*COS(2*x)/2"),
+    (
+        "INT(STEP(COS(x)), x)",
+        "-pi*SIGN(COS(x))*FLOOR(x/pi + 1/2)/2 + x*SIGN(COS(x))/2 + x/2",
+    ),
+    (
+        "INT(ABS(SIN(x))^3, x)",
+        "SIGN(SIN(x))*COS(x)^3/3 - SIGN(SIN(x))*COS(x) + 4*FLOOR(x/pi)/3",
+    ),
+    # What each arch adds grows with it, by a polynomial in the arch's number.
+    (
+        "INT(x*ABS(SIN(x)), x)",
+        "pi*FLOOR(x/pi)^2 + ABS(SIN(x)) - x*SIGN(SIN(x))*COS(x) + pi*FLOOR(x/pi)",
+    ),
+    # A floor is a constant between integers, and the constants add up.
+    ("INT(FLOOR(x), x)", "-FLOOR(x)^2/2 + x*FLOOR(x) - FLOOR(x)/2"),
+    ("INT(MOD(x, 1), x)", "FLOOR(x)^2/2 - x*FLOOR(x) + FLOOR(x)/2 + x^2/2"),
+    ("INT(FLOOR(-x), x)", "FLOOR(-x)^2/2 + x*FLOOR(-x) + FLOOR(-x)/2"),
+    (
+        "INT(x*FLOOR(x), x)",
+        "-FLOOR(x)^3/6 - FLOOR(x)^2/4 + x^2*FLOOR(x)/2 - FLOOR(x)/12",
+    ),
+    # Jumps not equally spaced, jumps not periodic, and an arch that grows
+    # geometrically have no such answer here; a split near the origin would be
+    # wrong away from it.
+    ("INT(ABS(SIN(x) - 1/2), x)", "INT(ABS(SIN(x) - 1/2), x)"),
+    ("INT(ABS(SIN(x^2)), x)", "INT(ABS(SIN(x^2)), x)"),
+    ("INT(#e^x*ABS(SIN(x)), x)", "INT(ABS(SIN(x))*#e^x, x)"),
+    ("INT(ABS(SIN(a*x)), x)", "INT(ABS(SIN(a*x)), x)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), STEP_ANTIDERIVATIVES, ids=str)
+def test_a_step_function_is_integrated_across_all_its_jumps(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("integrand", "low", "high"),
+    [
+        ("ABS(SIN(x))", "-20", "20"),
+        ("ABS(COS(x))", "31/3", "113/3"),
+        ("SIGN(SIN(x))", "-41/3", "-1/7"),
+        ("x*ABS(SIN(x))", "-13", "17"),
+        ("FLOOR(x)", "-37/3", "52/7"),
+        ("x*FLOOR(x)", "-5/2", "100/3"),
+    ],
+)
+def test_a_step_antiderivative_agrees_with_the_integral_far_from_the_origin(
+    integrand, low, high
+):
+    """The antiderivative's difference is the definite integral, which is worked out
+    stretch by stretch between the jumps."""
+    antiderivative = simp(f"INT({integrand}, x)")
+    at = {end: re.sub(r"\bx\b", f"({end})", antiderivative) for end in (low, high)}
+    integral = f"INT({integrand}, x, {low}, {high})"
+    assert simp(f"{at[high]} - ({at[low]}) - {integral}") == "0"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Sympy's substitution answers these only where `-1 < x < 1`, which is
+        # where the integrand is not real. The root substituted for gives an
+        # antiderivative on both sides.
+        ("INT(SQRT(x^2 - 1)/x, x)", "SQRT(x^2 - 1) - ATAN(SQRT(x^2 - 1))"),
+        ("INT(1/(x*SQRT(x^2 - 1)), x)", "ATAN(SQRT(x^2 - 1))"),
+        (
+            "INT(1/(x^3*SQRT(x^2 - 1)), x)",
+            "ATAN(SQRT(x^2 - 1))/2 + SQRT(x^2 - 1)/(2*x^2)",
+        ),
+        (
+            "INT(SQRT(x^2 - 4)/x^3, x)",
+            "ATAN(SQRT(x^2 - 4)/2)/4 - SQRT(x^2 - 4)/(2*x^2)",
+        ),
+        ("INT(1/(x*SQRT(x^2 - a^2)), x)", "ATAN(SQRT(x^2 - a^2)/a)/a"),
+        # The case is right as it is, but for its condition.
+        ("INT(1/(x^2*SQRT(x^2 - 1)), x)", "SQRT(x^2 - 1)/x"),
+        ("INT(SQRT(x^2 - 1)/x, x, 1, 2)", "SQRT(3) - pi/3"),
+        ("INT(SQRT(x^2 - 1)/x, x, -2, -1)", "pi/3 - SQRT(3)"),
+    ],
+)
+def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
+    """An antiderivative under a condition with no case for the other values of the
+    variable is undefined there, and no answer."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # `x*LN(a)` is a term of the antiderivative, not a constant.
+        ("INT(LN(a*x), x)", "x*LN(a*x) - x"),
+        ("INT(LN(a*x^2), x)", "x*LN(a*x^2) - 2*x"),
+        ("INT(LN(x/a), x)", "x*LN(x/a) - x"),
+        ("INT(x*LN(a*x), x)", "x^2*LN(a*x)/2 - x^2/4"),
+        ("INT(LN(2*x), x)", "x*LN(x) + (LN(2) - 1)*x"),
+        # A logarithm that is a term of its own still sheds its constant factor.
+        ("INT(1/(2*x + 2), x)", "LN(x + 1)/2"),
+    ],
+)
+def test_a_constant_inside_a_logarithm_is_shed_only_by_a_term(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(#e^(a*x)*COS(b*x), x)", "(a*COS(b*x) + b*SIN(b*x))*#e^(a*x)/(a^2 + b^2)"),
+        ("INT(#e^(a*x)*SIN(b*x), x)", "(a*SIN(b*x) - b*COS(b*x))*#e^(a*x)/(a^2 + b^2)"),
+        ("INT(COS(a*x)*#e^x, x)", "(COS(a*x) + a*SIN(a*x))*#e^x/(a^2 + 1)"),
+        (
+            "INT(SIN(a*x)*COS(b*x), x)",
+            "-(a*COS(a*x)*COS(b*x) + b*SIN(a*x)*SIN(b*x))/(a^2 - b^2)",
+        ),
+        (
+            "INT(SIN(a*x)*SIN(b*x), x)",
+            "(b*SIN(a*x)*COS(b*x) - a*SIN(b*x)*COS(a*x))/(a^2 - b^2)",
+        ),
+        # Continuous at `n = -1`, where the limit is `LN(x)^2/2`: the pole at
+        # `(n + 1)^2` is in the constant.
+        (
+            "INT(x^n*LN(x), x)",
+            "(x^(n + 1)*(n + 1)*LN(x) - x^(n + 1) + 1)/(n^2 + 2*n + 1)",
+        ),
+        # An incomplete gamma function, which the notation has no name for.
+        ("INT(x^n*#e^x, x)", "INT(x^n*#e^x, x)"),
+    ],
+)
+def test_a_parametric_antiderivative_is_the_generic_case(text, expected):
+    """Sympy splits these on parameters that make the generic formula fail: `a^2 +
+    b^2 = 0`, `a = b`, `n = -1`. Such values are a choice of measure zero, and the
+    generic case is the antiderivative printed, continuous where a constant makes
+    it so."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # `LN(SIN(x) - 1)` is complex for every real `x`; `LN(1 - SIN(x))` is the
+        # same up to a constant, and real wherever the integral is.
+        ("INT(SEC(x), x)", "LN(SIN(x) + 1)/2 - LN(1 - SIN(x))/2"),
+        ("INT(CSC(x), x)", "LN(1 - COS(x))/2 - LN(COS(x) + 1)/2"),
+        (
+            "INT(SEC(x)^3, x)",
+            "-LN(1 - SIN(x))/4 + LN(SIN(x) + 1)/4 + SIN(x)/(2*COS(x)^2)",
+        ),
+        ("INT(SEC(2*x), x)", "LN(SIN(2*x) + 1)/4 - LN(1 - SIN(2*x))/4"),
+    ],
+)
+def test_an_antiderivative_takes_no_logarithm_of_a_negative_quantity(text, expected):
+    assert simp(text) == expected
+
+
 def test_a_function_without_a_body_is_differentiated_symbolically():
     # `F(x) :=` gives `F` no body, so it differentiates symbolically and the chain
     # rule stops at the prime. An arbitrary function has an arbitrary gradient, and
@@ -990,6 +1283,86 @@ def test_a_taylor_polynomial_that_does_not_exist_is_undefined():
     assert simp("TAYLOR(SQRT(x), x, 0, 0)") == "0"
     # An order that is no order to expand to leaves the head alone.
     assert simp("TAYLOR(SIN(x), x, 0, n)") == "TAYLOR(SIN(x), x, 0, n)"
+    # The same holds for the other singularities at the point.
+    assert simp("TAYLOR(SQRT(x), x, 0, 3)") == "?"
+    assert simp("TAYLOR(LN(x), x, 0, 3)") == "?"
+    assert simp("TAYLOR(1/x, x, 0, 3)") == "?"
+
+
+TAYLOR_AT_A_KINK_OR_A_JUMP = [
+    # The expansion from the right is not the one from the left, and neither is the
+    # Taylor polynomial, which needs the derivatives at the point itself.
+    ("TAYLOR(ABS(x), x, 0, 2)", "TAYLOR(ABS(x), x, 0, 2)"),
+    ("TAYLOR(SQRT(x^2), x, 0, 2)", "TAYLOR(ABS(x), x, 0, 2)"),
+    ("TAYLOR(SIGN(x), x, 0, 2)", "TAYLOR(SIGN(x), x, 0, 2)"),
+    ("TAYLOR(x*ABS(x), x, 0, 3)", "TAYLOR(x*ABS(x), x, 0, 3)"),
+    ("TAYLOR(ABS(SIN(x)), x, 0, 3)", "TAYLOR(ABS(SIN(x)), x, 0, 3)"),
+    ("TAYLOR(FLOOR(x), x, 0, 2)", "TAYLOR(FLOOR(x), x, 0, 2)"),
+    ("TAYLOR(STEP(x), x, 0, 2)", "TAYLOR(SIGN(x)/2 + 1/2, x, 0, 2)"),
+    ("TAYLOR(MAX(x, 0), x, 0, 2)", "TAYLOR(ABS(x)/2 + x/2, x, 0, 2)"),
+    # Differentiable as often as the order asks, the function has the polynomial:
+    # `x*ABS(x)` once and `ABS(x)^3` twice, both 0.
+    ("TAYLOR(x*ABS(x), x, 0, 1)", "0"),
+    ("TAYLOR(ABS(x)^3, x, 0, 2)", "0"),
+    # Away from the kink or the jump, the function is analytic.
+    ("TAYLOR(ABS(x - 1), x, 0, 3)", "1 - x"),
+    ("TAYLOR(ABS(x), x, 1, 2)", "x"),
+    ("TAYLOR(ABS(x), x, -1, 2)", "-x"),
+    ("TAYLOR(ABS(SIN(x)), x, pi/2, 3)", "-x^2/2 + pi*x/2 - pi^2/8 + 1"),
+    ("TAYLOR(FLOOR(x), x, 1/2, 2)", "0"),
+    ("TAYLOR(MOD(x, 1), x, 1/2, 2)", "x"),
+    # Smooth but not analytic, with every derivative 0 from both sides.
+    ("TAYLOR(#e^(-1/x^2), x, 0, 4)", "0"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), TAYLOR_AT_A_KINK_OR_A_JUMP, ids=str)
+def test_a_taylor_polynomial_at_a_kink_or_a_jump_stands(text, expected):
+    """A function that is not differentiable at the point has no Taylor polynomial
+    there, and the call stands rather than answer with the expansion from one side."""
+    assert simp(text) == expected
+
+
+DERIVATIVES_OF_STEPS = [
+    # A step function is constant between its jumps and has no derivative at them, so
+    # its derivative is 0 wherever there is one.
+    ("DIF(FLOOR(x), x)", "0"),
+    ("DIF(SIGN(x), x)", "0"),
+    ("DIF(STEP(x), x)", "0"),
+    ("DIF(FLOOR(x), x, 3)", "0"),
+    ("DIF(SIGN(SIN(x)), x)", "0"),
+    ("DIF(FLOOR(x, 2), x)", "0"),
+    ("DIF(FLOOR(x)^2, x)", "0"),
+    ("DIF(MOD(x, 1), x)", "1"),
+    ("DIF(MOD(x^2, 3), x)", "2*x"),
+    # A step times a smooth function is differentiated as a constant times it.
+    ("DIF(SIGN(x)*x, x)", "SIGN(x)"),
+    ("DIF(STEP(x)*x^2, x)", "x*(SIGN(x) + 1)"),
+    ("DIF(FLOOR(x)*x, x)", "FLOOR(x)"),
+    ("DIF(FLOOR(x^2)*SIN(x), x)", "FLOOR(x^2)*COS(x)"),
+    ("DIF(SIGN(x^2 - 1)*x^3, x)", "3*x^2*SIGN(x^2 - 1)"),
+    # The derivative of an absolute value is a sign, and the one after it is the
+    # sign's.
+    ("DIF(ABS(x), x)", "SIGN(x)"),
+    ("DIF(ABS(x), x, 2)", "0"),
+    ("DIF(x*ABS(x), x, 2)", "2*SIGN(x)"),
+    ("DIF(ABS(x^2 - 1), x, 2)", "2*SIGN(x^2 - 1)"),
+    ("DIF(ABS(SIN(x)), x, 2)", "-ABS(SIN(x))"),
+    ("DIF(MAX(x^2, 1), x, 2)", "SIGN(x^2 - 1) + 1"),
+    ("DIF(x*STEP(x), x, 2)", "0"),
+    # The antiderivatives of steps differentiate back to them.
+    ("DIF(INT(FLOOR(x), x), x)", "FLOOR(x)"),
+    ("DIF(INT(SIGN(SIN(x)), x), x)", "SIGN(SIN(x))"),
+    ("DIF(INT(MOD(x, 1), x), x)", "x - FLOOR(x)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), DERIVATIVES_OF_STEPS, ids=str)
+def test_a_step_function_has_derivative_zero_between_its_jumps(text, expected):
+    """What sympy writes at a jump is a `DiracDelta`, which the notation has no name
+    for, and of a floor it writes nothing; the derivative wherever it exists is 0,
+    and that is the answer."""
+    assert simp(text) == expected
 
 
 def test_a_derivative_a_substitution_binds_is_not_evaluated():
@@ -1621,7 +1994,6 @@ def test_a_polar_number_inside_a_branch_cut_keeps_its_sheet():
         "INT(1/SQRT(1 - x^4), x)",
         # Incomplete gamma functions.
         "INT(x^a*#e^(-x), x)",
-        "INT(x^n*#e^(-x), x, 0, inf)",
         # The harmonic number.
         "SUM(1/k, k, 1, n)",
         # `-EI(EXP_POLAR(#i*pi))`, a polar number inside a function with a branch
@@ -1634,22 +2006,6 @@ def test_an_operation_sympy_answers_only_in_a_function_without_a_name_stands(tex
     """What sympy can say only in a function the notation has no name for is not
     worked out, as Derive leaves what it cannot do: the head stands, as written."""
     assert simp(text) == text
-
-
-def test_an_integral_is_taken_straight_through_an_interior_singularity():
-    """A definite integral is the difference of the antiderivative's endpoints.
-
-    Nothing looks in between, which the manual is explicit about (7.4, p.199):
-    finding the singularities inside an interval and splitting the integral
-    there is the reader's job. So a pole inside is integrated straight through.
-    Over an odd power that lands on the Cauchy principal value, the positive
-    and negative infinite areas cancelling exactly; over an even power it lands
-    on a number the manual itself calls obviously wrong, the integrand being
-    positive throughout. Split at the pole and the divergence is there to see.
-    """
-    assert simp("INT(1/x^3, x, -1, 2)") == "3/8"
-    assert simp("INT(1/x^2, x, -1, 1)") == "-2"
-    assert simp("INT(1/x^2, x, -1, 0) + INT(1/x^2, x, 0, 1)") == "inf"
 
 
 def test_a_two_sided_limit_whose_sides_disagree_is_plus_or_minus():
@@ -1673,7 +2029,7 @@ def test_a_bounded_limit_that_never_settles_is_the_range_it_keeps_to():
         ("LIM(SIN(1/x), x, 0)", "INTERVAL(-1, 1)"),
         ("LIM(COS(1/x), x, 0)", "INTERVAL(-1, 1)"),
         ("LIM(SIN(x), x, inf)", "INTERVAL(-1, 1)"),
-        ("LIM(x*SIN(x), x, inf)", "inf*SIGN(INTERVAL(-1, 1))"),
+        ("y*LIM(SIN(x), x, inf)", "INTERVAL(-1, 1)*y"),
     ):
         answered = simplify(parse(text), Context())
         assert answered.text == answer
@@ -1697,6 +2053,100 @@ def test_an_interval_goes_on_being_computed_with():
     assert simp("INT(LIM(SIN(1/x), x, 0), y)") == "INTERVAL(-1, 1)*y"
 
 
+UNBOUNDED_OSCILLATION = [
+    # Oscillation that grows without bound keeps coming back to every value, and
+    # its range is the whole line.
+    ("LIM(x*SIN(x), x, inf)", "INTERVAL(-inf, inf)"),
+    ("LIM(x*COS(x), x, inf)", "INTERVAL(-inf, inf)"),
+    ("LIM(x^2*SIN(x), x, inf)", "INTERVAL(-inf, inf)"),
+    ("LIM(#e^x*SIN(x), x, inf)", "INTERVAL(-inf, inf)"),
+    ("LIM(x*SIN(x), x, -inf)", "INTERVAL(-inf, inf)"),
+    ("LIM(SIN(1/x)/x, x, 0)", "INTERVAL(-inf, inf)"),
+    # Growth over an oscillation that keeps to one sign of zero reaches only that
+    # half of the line, and over one that never comes near zero it is no
+    # oscillation at all.
+    ("LIM(x*(SIN(x) + 1), x, inf)", "INTERVAL(0, inf)"),
+    ("LIM(-x*SIN(x)^2, x, inf)", "INTERVAL(-inf, 0)"),
+    ("LIM(#e^x*(SIN(x) - 1), x, inf)", "INTERVAL(-inf, 0)"),
+    ("LIM(x*(SIN(x) + 2), x, inf)", "inf"),
+    # The same as the tangent's, which never was a product with the sign of a range.
+    ("LIM(TAN(x), x, inf)", "INTERVAL(-inf, inf)"),
+    # The sign and absolute value of a range are ranges.
+    ("LIM(SIGN(SIN(x)), x, inf)", "INTERVAL(-1, 1)"),
+    ("LIM(ABS(SIN(x)), x, inf)", "INTERVAL(0, 1)"),
+    ("SIGN(INTERVAL(1, 2))", "1"),
+    ("ABS(INTERVAL(-2, 1))", "INTERVAL(0, 2)"),
+    ("ABS(INTERVAL(-3, -1))", "INTERVAL(1, 3)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), UNBOUNDED_OSCILLATION, ids=str)
+def test_an_unbounded_limit_that_never_settles_is_the_range_it_reaches(text, expected):
+    """`INTERVAL(-inf, inf)` and its halves, rather than infinity times the sign of a
+    range, which is what sympy leaves of these and is no value anyone can read.
+
+    The range is what the bounded case answers with too, and it is a value the rest
+    of the notation computes with, where `?` would throw away which half of the line
+    is reached.
+    """
+    assert simp(text) == expected
+
+
+LIMITS_OVER_A_PARAMETER_S_SIGN = [
+    # The arc tangent tends to a right angle of the parameter's sign, for every
+    # parameter but zero, where the function is another one altogether.
+    ("LIM(ATAN(x/a), x, inf)", "pi*SIGN(a)/2"),
+    ("LIM(ATAN(a*x), x, inf)", "pi*SIGN(a)/2"),
+    ("LIM(ATAN(a*x), x, -inf)", "-pi*SIGN(a)/2"),
+    ("LIM(TANH(a*x), x, inf)", "SIGN(a)"),
+    # No one expression is both 0 and inf, and the limit stands.
+    ("LIM(#e^(a*x), x, inf)", "LIM(#e^(a*x), x, inf)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), LIMITS_OVER_A_PARAMETER_S_SIGN, ids=str)
+def test_a_limit_that_turns_on_a_parameter_s_sign_is_written_with_it(text, expected):
+    """Not `ATAN(±inf/a)`, an unsigned infinity inside an expression, which is no
+    value: the limit for a positive and for a negative parameter, put together."""
+    assert simp(text) == expected
+
+
+LIMITS_OF_SUMS_AND_PRODUCTS = [
+    # The closed forms of these sums are generalized harmonic numbers, which are no
+    # answer, but their limits are.
+    ("LIM(SUM(1/k^2, k, 1, n), n, inf)", "pi^2/6"),
+    ("LIM(SUM(1/k^3, k, 1, n), n, inf)", "ZETA(3)"),
+    ("LIM(SUM(1/k, k, 1, n) - LN(n), n, inf)", "euler_gamma"),
+    ("LIM(SUM(1/k, k, 1, n) - LN(n + 1), n, inf)", "euler_gamma"),
+    ("LIM(SUM(1/k, k, 1, n)/LN(n), n, inf)", "1"),
+    ("LIM(SUM(1/k, k, 1, n), n, inf)", "inf"),
+    # A side written on an infinite point changes nothing.
+    ("LIM(SUM(1/k^2, k, 1, n), n, inf, -1)", "pi^2/6"),
+    # The partial products are ratios of factorials of complex arguments over a
+    # constant, `SINH(pi)/pi` for the first, and the constant is the limit.
+    ("LIM(PRODUCT(1 + 1/k^2, k, 1, n), n, inf)", "(#e^pi/2 - #e^(-pi)/2)/pi"),
+    (
+        "LIM(PRODUCT(1 + 1/k^3, k, 1, n), n, inf)",
+        "(#e^(SQRT(3)*pi) + 1)*#e^(-SQRT(3)*pi/2)/(2*pi)",
+    ),
+    ("LIM(PRODUCT(1 - 1/(4*k^2), k, 1, n), n, inf)", "2/pi"),
+    ("LIM(PRODUCT(1 - 1/k^2, k, 2, n), n, inf)", "1/2"),
+    # The constant `INT` answers in is the one a limit answers in.
+    ("INT(#e^(-x)*LN(x), x, 0, inf)", "-euler_gamma"),
+    # A limit that stays is written back as it was written: the side sympy records
+    # on an infinite point is not a one-sided limit.
+    ("LIM(SUM((-1)^k/k, k, 1, n), n, inf)", "LIM(SUM((-1)^k/k, k, 1, n), n, inf)"),
+    ("LIM(ZETA(s) - 1/(s - 1), s, 1)", "LIM(ZETA(s) - 1/(s - 1), s, 1)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), LIMITS_OF_SUMS_AND_PRODUCTS, ids=str)
+def test_a_limit_of_a_sum_is_taken_of_its_closed_form(text, expected):
+    """Only the answer is held to the functions the notation has names for, not the
+    closed form the limit is taken of."""
+    assert simp(text) == expected
+
+
 def test_a_limit_that_settles_or_runs_away_is_no_interval():
     """The range is the answer to the bounded case alone.
 
@@ -1708,6 +2158,9 @@ def test_a_limit_that_settles_or_runs_away_is_no_interval():
     assert simp("LIM(SIN(x)/x, x, 0)") == "1"
     assert simp("LIM(1/x, x, 0)") == "±inf"
     assert simp("LIM(FLOOR(x), x, 1)") == "?"
+    assert simp("LIM(SIN(x)/ABS(x), x, 0)") == "±1"
+    assert simp("LIM(ZETA(s), s, 1)") == "±inf"
+    assert simp("LIM(LN(x), x, 0)") == "-inf"
 
 
 def test_a_limit_towards_a_moving_point_is_the_substitution_it_means():
