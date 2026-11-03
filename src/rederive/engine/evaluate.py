@@ -78,6 +78,7 @@ __all__ = [
     "Commanded",
     "Environment",
     "Suspended",
+    "divisors",
     "evaluate",
     "evaluated",
     "named_as_declared",
@@ -86,7 +87,7 @@ __all__ = [
 
 Decider = Callable[[sp.Basic], bool | None]
 WorkOut = Callable[[sp.Basic], sp.Basic]
-Command = Callable[[str, list], sp.Basic]
+Command = Callable[[str, list, list], sp.Basic]
 
 
 @dataclass(frozen=True)
@@ -110,9 +111,10 @@ class Environment:
     and the declared domains; anything else gets `_plainly_decided`.
 
     `work_out` is what a calculus head is worth, and `command` runs a `FACTOR`,
-    `EXPAND`, `SOLVE` or `RATE` over its evaluated arguments. Simplify supplies
-    both. Without them those heads stand as they were made, which is what a
-    caller that only wants the variables of an expression needs.
+    `EXPAND`, `SOLVE` or `RATE` over its evaluated arguments, and over the divisors
+    of a `SOLVE`'s equation as written (see `divisors`). Simplify supplies both.
+    Without them those heads stand as they were made, which is what a caller that
+    only wants the variables of an expression needs.
 
     `writing` is the evaluation that only writes names in, which is what an
     undecidable conditional is shown as: no call is entered and no test decided,
@@ -334,8 +336,22 @@ class _Evaluator(Converter):
         made = self.call(name, values)
         if name in COMMAND_HEADS and _is_call_of(made, name):
             if self.env.command is not None and not self.env.writing:
-                return self.env.command(name, list(made.args))
+                return self.env.command(
+                    name, list(made.args), self._divisors(name, arguments)
+                )
         return self._worked(made, values)
+
+    def _divisors(self, name: str, arguments: Sequence[Node]) -> list[sp.Basic]:
+        """What the equation of a `SOLVE` divides by as written, evaluated here."""
+        if name != "SOLVE" or not arguments:
+            return []
+        found = []
+        for divisor in divisors(arguments[0]):
+            try:
+                found.append(_value_of(self.convert(divisor)))
+            except Exception:
+                continue
+        return found
 
     def _worked(self, made: sp.Basic, values: Sequence[sp.Basic]) -> sp.Basic:
         """`made` with every calculus head the call made in it worked out.
@@ -852,6 +868,53 @@ class Commanded(sp.Function):
 
 def _is_call_of(value: sp.Basic, name: str) -> bool:
     return isinstance(value, AppliedUndef) and type(value).__name__ == name
+
+
+#: The node kinds `divisors` looks inside: arithmetic, relations and calls. A
+#: definition, an assignment or a vector says nothing about where one equation is
+#: undefined.
+_ARITHMETIC = frozenset(
+    {Kind.SUM, Kind.PRODUCT, Kind.BINOP, Kind.UNOP, Kind.ABS, Kind.CALL, Kind.REL}
+)
+
+
+def divisors(node: Node) -> list[Node]:
+    """The subtrees `node` divides by as it was written, innermost ones included.
+
+    An equation is undefined where one of them is zero, and it says so only as
+    written: `x^2/x = 0` and `(x^2 - 1)/(x - 1) = 2` cancel to `x = 0` and `x + 1 = 2`
+    before anything solves them, and the one candidate each has is where the
+    equation as written has no value. So soLve is told what it divides by. A
+    denominator counts, and so does the base of a power to a negative number. What a
+    `SUM`, an `INT` or another binding function holds is skipped, its divisions being
+    in a variable of its own.
+    """
+    found: list[Node] = []
+
+    def walk(part: Node) -> None:
+        if part.kind not in _ARITHMETIC:
+            return
+        if part.kind is Kind.CALL and str(part.children[0].value) in BINDING_FUNCTIONS:
+            return
+        if part.kind is Kind.BINOP and part.value == "/":
+            found.append(part.children[1])
+        elif part.kind is Kind.BINOP and part.value == "^":
+            if _negative(part.children[1]):
+                found.append(part.children[0])
+        for child in part.children:
+            walk(child)
+
+    walk(node)
+    return found
+
+
+def _negative(exponent: Node) -> bool:
+    """Whether an exponent is a negated number, as `x^(-2)` is written."""
+    return (
+        exponent.kind is Kind.UNOP
+        and exponent.value == "-"
+        and exponent.children[0].kind is Kind.NUMBER
+    )
 
 
 def _value_of(value: sp.Basic) -> sp.Basic:

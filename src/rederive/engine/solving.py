@@ -38,13 +38,15 @@ whatever its solver happened to produce.
 Domains do not filter solutions (manual 5.4): a declaration says what a
 variable *is*, which is what decides how an answer simplifies, and never which
 of the answers are wanted. Solutions are sought over the complexes whatever a
-variable was declared.
+variable was declared, with one exception: an equation in the `ABS` of a real
+variable, undeclared ones included, is solved over the reals, since over the
+complexes its solutions are curves no list of relations describes.
 """
 
 from __future__ import annotations
 
 import cmath
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 import sympy as sp
 from sympy.core.relational import Relational
@@ -88,6 +90,7 @@ def solutions(
     context: Context | None = None,
     variables: Sequence[str] = (),
     bounds: tuple[sp.Basic, sp.Basic] | None = None,
+    divisors: Sequence[sp.Basic] = (),
 ) -> tuple[sp.Basic, ...]:
     """The entries `expression` solves to, one per worksheet line.
 
@@ -95,12 +98,16 @@ def solutions(
     it out - the one variable of a scalar, or as many of a system's most main
     as it has equations. `bounds` is the interval a numeric search is confined
     to, and is what Approximate precision asks the user for; None leaves the
-    precision mode to decide, which is exact everywhere but Mixed.
+    precision mode to decide, which is exact everywhere but Mixed. `divisors` are
+    what the equation divides by as it was written, before Simplify cancelled
+    anything: a value that provably makes one of them zero is no solution.
     """
     context = context or Context()
     constants = _Constants(context.arbitrary_index)
     try:
-        return _solutions(expression, context, tuple(variables), bounds, constants)
+        return _solutions(
+            expression, context, tuple(variables), bounds, tuple(divisors), constants
+        )
     except Exception:
         # The engine never raises on parser output, and "I could not solve
         # this" is an answer rather than a failure: the residual equation says
@@ -156,12 +163,13 @@ def _solutions(
     context: Context,
     variables: tuple[str, ...],
     bounds: tuple[sp.Basic, sp.Basic] | None,
+    divisors: tuple[sp.Basic, ...],
     constants: _Constants,
 ) -> tuple[sp.Basic, ...]:
     equations = equations_of(expression)
     if equations is not None:
         return _system(equations, context, variables, constants)
-    return _scalar(expression, context, variables, bounds, constants)
+    return _scalar(expression, context, variables, bounds, divisors, constants)
 
 
 def _scalar(
@@ -169,6 +177,7 @@ def _scalar(
     context: Context,
     variables: tuple[str, ...],
     bounds: tuple[sp.Basic, sp.Basic] | None,
+    divisors: tuple[sp.Basic, ...],
     constants: _Constants,
 ) -> tuple[sp.Basic, ...]:
     """One equation or inequality, solved for one variable."""
@@ -178,7 +187,9 @@ def _scalar(
     variable = chosen[0]
     if isinstance(expression, Relational) and not isinstance(expression, sp.Equality):
         return _inequality(expression, variable, context, constants)
-    return _equation(_residual(expression), variable, context, bounds, constants)
+    return _equation(
+        _residual(expression), variable, context, bounds, divisors, constants
+    )
 
 
 def _chosen(
@@ -213,6 +224,7 @@ def _equation(
     variable: sp.Symbol,
     context: Context,
     bounds: tuple[sp.Basic, sp.Basic] | None,
+    divisors: tuple[sp.Basic, ...],
     constants: _Constants,
 ) -> tuple[sp.Basic, ...]:
     """`residual = 0` solved for `variable`, by whatever the precision allows.
@@ -220,6 +232,11 @@ def _equation(
     Bounds mean a numeric search and nothing else, which is Approximate mode.
     Exact and Mixed both solve exactly first; where that answers nothing, Mixed
     goes looking for a real root over a widening interval and Exact stops.
+
+    An exact candidate is kept unless it is provably no solution: one that makes a
+    divisor of the equation as written zero is not (`_divides_by_zero`), and nor is
+    one a solver found for an equation it rewrote first, where putting it back
+    shows it does not hold (`_fails`).
     """
     if bounds is not None:
         return _numeric(residual, variable, bounds[0], bounds[1], context)
@@ -227,7 +244,14 @@ def _equation(
         return (_equated(variable, constants.fresh(), context),)
     found = _values(residual, variable)
     if found is not None:
-        entries = _entries(found, variable, context, constants)
+        polynomial = _polynomial(residual, variable) is not None
+
+        def admissible(value: sp.Basic) -> bool:
+            if _divides_by_zero(divisors, variable, value):
+                return False
+            return polynomial or not _fails(residual, variable, value)
+
+        entries = _entries(found, variable, context, constants, admissible)
         if entries is not None:
             return entries
     if context.precision is Precision.MIXED:
@@ -264,13 +288,73 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
         if not found or sum(found.values()) != polynomial.degree():
             return None
         return sp.FiniteSet(*found)
+    if variable.is_real and _has_absolute(residual, variable):
+        return _over_reals(residual, variable)
     try:
         found = sp.solveset(residual, variable, sp.S.Complexes)
     except Exception:
         return None
+    if found.has(sp.ConditionSet):
+        rewritten = _exponential(residual, variable)
+        if rewritten is not None:
+            found = rewritten
     if isinstance(found, sp.ConditionSet):
         return _inverted(residual, variable)
     return found
+
+
+def _has_absolute(residual: sp.Basic, variable: sp.Symbol) -> bool:
+    return any(part.has(variable) for part in residual.atoms(sp.Abs))
+
+
+def _over_reals(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """The real solutions of an equation in `ABS`, or None.
+
+    For a real variable an `ABS` is its argument or the negation of it, depending on
+    the argument's sign, so the equation is finitely many equations, each over the
+    part of the line where its signs hold, and what each solves to is kept where it
+    lies inside its own part. `solveset` over the reals does that splitting. Over
+    the complexes `ABS(x) = 3` is a whole circle, which no list of relations
+    describes, so a variable not known to be real is not solved this way. The
+    answer can be a range: `ABS(x) = x` holds for `x >= 0`.
+    """
+    try:
+        found = sp.solveset(residual, variable, sp.S.Reals)
+    except Exception:
+        return None
+    return None if found.has(sp.ConditionSet) else found
+
+
+def _exponential(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """The solutions of `residual` with every power of a positive number in the
+    variable written as a power of `#e`, or None where that solves nothing more.
+
+    `solveset` inverts `#e^x = c` over the complexes into its whole family of
+    logarithms, and leaves `3^x = c` as a condition, so `3^(2*x) - 4*3^x + 3 = 0`
+    stood where `#e^(2*x) - 3*#e^x + 2 = 0` was solved. `3^x` is `#e^(x*LN(3))`,
+    and solved in that spelling it has the same families, `x = 1` and `x = 0` being
+    their real members.
+    """
+
+    def rewritable(part: sp.Basic) -> bool:
+        return (
+            part.is_Pow
+            and part.base is not sp.E
+            and part.base.is_number
+            and part.base.is_positive is True
+            and part.exp.has(variable)
+        )
+
+    rewritten = residual.replace(
+        rewritable, lambda part: sp.exp(part.exp * sp.log(part.base))
+    )
+    if rewritten == residual:
+        return None
+    try:
+        found = sp.solveset(rewritten, variable, sp.S.Complexes)
+    except Exception:
+        return None
+    return None if found.has(sp.ConditionSet) else found
 
 
 def _binomial_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
@@ -337,6 +421,59 @@ def _satisfies(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool
         return False
 
 
+def _fails(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
+    """Whether putting `value` back into `residual` provably leaves it nonzero.
+
+    A solver that combines logarithms solves `LN(x) + LN(x - 1) = LN(6)` as
+    `x*(x - 1) = 6`, and so offers -2 as well as 3. But `LN(-2) + LN(-3)` is
+    `LN(6) + 2*pi*#i`, the principal logarithms of the two negative numbers each
+    carrying `pi*#i`, and -2 is no solution. Each candidate is therefore put back
+    and evaluated, the principal branch being the one every function is evaluated
+    on. Only a definite answer drops one: a value with a parameter left in it is
+    kept, and so is one whose evaluation fails or is not a finite number. Nonzero
+    means nonzero beyond any rounding, measured against the size of the terms.
+    """
+    try:
+        left = residual.xreplace({variable: value})
+        if left.free_symbols:
+            return False
+        found = complex(left.evalf(30))
+        sizes = [
+            abs(complex(term.xreplace({variable: value}).evalf(15)))
+            for term in sp.Add.make_args(residual)
+        ]
+        scale = max([1.0, *sizes])
+    except Exception:
+        return False
+    if not (cmath.isfinite(found) and cmath.isfinite(scale)):
+        return False
+    return abs(found) > 1e-12 * scale
+
+
+def _divides_by_zero(
+    divisors: tuple[sp.Basic, ...], variable: sp.Symbol, value: sp.Basic
+) -> bool:
+    """Whether `value` provably makes one of the equation's divisors zero.
+
+    The divisors are those of the equation as written, and the symbol in them is
+    found by name, which is how a variable is known on either side of Simplify.
+    """
+    for divisor in divisors:
+        try:
+            named = {
+                symbol: value
+                for symbol in divisor.free_symbols
+                if getattr(symbol, "name", None) == variable.name
+            }
+            if not named:
+                continue
+            if sp.simplify(divisor.xreplace(named)).is_zero is True:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _polynomial(residual: sp.Basic, variable: sp.Symbol) -> sp.Poly | None:
     """`residual` as a polynomial in `variable`, or None where it is not one."""
     try:
@@ -350,9 +487,12 @@ def _entries(
     variable: sp.Symbol,
     context: Context,
     constants: _Constants,
+    admissible: Callable[[sp.Basic], bool] = lambda value: True,
 ) -> tuple[sp.Basic, ...] | None:
     """The relations one solution set is written as, in a stable order.
 
+    The values `admissible` turns down are left out. A set that is a range, which
+    an equation in `ABS` can solve to, is written as the inequalities saying so.
     None where the set is one no finite list of relations describes, which is
     the residual equation's case.
     """
@@ -360,8 +500,8 @@ def _entries(
         return (_equated(variable, constants.fresh(), context),)
     values = _members(found)
     if values is None:
-        return None
-    return _answers(variable, values, context)
+        return _ranges(found, variable, context, constants)
+    return _answers(variable, [value for value in values if admissible(value)], context)
 
 
 def _members(found: sp.Set) -> list[sp.Basic] | None:
@@ -912,10 +1052,62 @@ def _answers(
     """
     written: list[sp.Basic] = []
     for value in _ordered(values):
-        entry = _equated(variable, value, context)
+        entry = _equated(variable, _tidied(value), context)
         if entry not in written:
             written.append(entry)
     return tuple(written)
+
+
+def _tidied(value: sp.Basic) -> sp.Basic:
+    """`value` in the plainer of two spellings a solver can leave it in.
+
+    A square root of a product of sums is the root of their expanded product
+    where that is no longer: `roots` writes `SQRT(-(x + r)*(x - r))` for what is
+    `SQRT(r^2 - x^2)`. And a negated quotient over a negative number is the
+    quotient of the two negations, `LN(3)/(LN(3) - LN(2))` rather than
+    `-LN(3)/(LN(2) - LN(3))`. Each is the same number either way.
+    """
+    try:
+        value = value.replace(_factored_radicand, _expanded_radicand)
+        return _unnegated(value)
+    except Exception:
+        return value
+
+
+def _factored_radicand(part: sp.Basic) -> bool:
+    return (
+        part.is_Pow
+        and part.exp in (sp.S.Half, -sp.S.Half)
+        and part.base.is_Mul
+        and any(factor.is_Add for factor in part.base.args)
+        and bool(part.base.free_symbols)
+    )
+
+
+def _expanded_radicand(part: sp.Basic) -> sp.Basic:
+    expanded = sp.expand(part.base)
+    if sp.count_ops(expanded) > sp.count_ops(part.base):
+        return part
+    return sp.Pow(expanded, part.exp)
+
+
+def _unnegated(value: sp.Basic) -> sp.Basic:
+    if not value.is_Mul:
+        return value
+    coefficient, rest = value.as_coeff_Mul()
+    if not coefficient.is_negative:
+        return value
+    factors = sp.Mul.make_args(rest)
+    for index, factor in enumerate(factors):
+        base = factor.base if factor.is_Pow and factor.exp == -1 else None
+        if base is None or not base.is_Add or not base.is_number:
+            continue
+        if not base.is_extended_negative:
+            continue
+        others = factors[:index] + factors[index + 1 :]
+        flipped = sp.Add(*(-term for term in base.args))
+        return sp.Mul(-coefficient, *others, sp.Pow(flipped, -1))
+    return value
 
 
 def _ordered(values: Iterable[sp.Basic]) -> list[sp.Basic]:

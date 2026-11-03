@@ -190,7 +190,9 @@ def simplified(
         context,
         decide=lambda test: _decide(test, context),
         work_out=lambda head: _evaluate(head, context),
-        command=lambda name, values: _commanded(name, values, context),
+        command=lambda name, values, divisors: _commanded(
+            name, values, divisors, context
+        ),
     )
     expression = evaluate(node, environment)
     try:
@@ -3055,7 +3057,9 @@ def _undecided(head: sp.Basic) -> sp.Basic:
 # -- the FACTOR, EXPAND and SOLVE heads ---------------------------------------
 
 
-def _commanded(name: str, values: list, context: Context) -> sp.Basic:
+def _commanded(
+    name: str, values: list, divisors: list, context: Context
+) -> sp.Basic:
     """`FACTOR`, `EXPAND`, `SOLVE` or `RATE` run over its evaluated arguments.
 
     `FACTOR(u, amount, x, y, ...)`, `EXPAND(u, amount, x, y, ...)` and
@@ -3071,6 +3075,9 @@ def _commanded(name: str, values: list, context: Context) -> sp.Basic:
     as `Commanded`, which is what keeps everything after the evaluation from
     rewriting it; a call over one - `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` - takes it
     as the value it is.
+
+    `divisors` are what a `SOLVE`'s equation divides by as written, which its
+    simplified operand may no longer show.
     """
     exact = context.with_precision(Precision.EXACT)
     args = [
@@ -3079,7 +3086,7 @@ def _commanded(name: str, values: list, context: Context) -> sp.Basic:
     ]
     match name:
         case "SOLVE":
-            return Commanded(_solve_head(args, context))
+            return Commanded(_solve_head(args, divisors, context))
         case "RATE":
             return _rate_head(args, context)
     return Commanded(_factor_head(name, args, context))
@@ -3111,7 +3118,7 @@ def _factor_head(name: str, args: list, context: Context) -> sp.Basic:
     return factored_expression(target, amount, variables)
 
 
-def _solve_head(args: list, context: Context) -> sp.Basic:
+def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic:
     """`SOLVE(u, x)` and its longer forms, as the vector of what they solve to.
 
     This is the 3.x and 4.x shape and it is the one worth having: the answer is
@@ -3132,7 +3139,7 @@ def _solve_head(args: list, context: Context) -> sp.Basic:
     target, *rest = args
     variables = _solved_for(rest[0]) if rest else ()
     bounds = (rest[1], rest[2]) if len(rest) >= 3 else None
-    answers = solutions(target, context, variables, bounds)
+    answers = solutions(target, context, variables, bounds, divisors)
     if not answers:
         return sp.Matrix(0, 0, [])
     return InertVector(*answers)

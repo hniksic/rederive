@@ -99,6 +99,109 @@ def test_an_equation_solves_to_one_entry_per_solution(text, expected):
     assert sol(text) == expected
 
 
+#: Equations a solver rewrites before it solves them - logarithms combined, a
+#: square root squared - pick up candidates that the rewritten equation has and
+#: the authored one has not, so each candidate is put back. The principal
+#: logarithm of a negative number carries `pi*#i`, which is what rules out the
+#: negative candidates here: `LN(-2) + LN(-3)` is `LN(6) + 2*pi*#i`.
+EXTRANEOUS = [
+    ("LN(x) + LN(x - 1) = LN(6)", ["x = 3"]),
+    ("LN(x) + LN(x + 1) = LN(2)", ["x = 1"]),
+    ("LN(x - 2) + LN(x - 3) = LN(2)", ["x = 4"]),
+    ("LN(x) + LN(x - 3) = LN(4)", ["x = 4"]),
+    ("2*LN(x) = LN(x + 2)", ["x = 2"]),
+    ("2*LN(x) = LN(4)", ["x = 2"]),
+    ("LOG(x, 2) + LOG(x - 2, 2) = 3", ["x = 4"]),
+    ("LOG(x, 10) + LOG(x + 21, 10) = 2", ["x = 4"]),
+    # Both candidates hold here: `LN((-3)^2)` is `LN(9)`, and so is `2*LN(3)`.
+    ("LN(x^2) = 2*LN(3)", ["x = -3", "x = 3"]),
+    ("LN(x^2 - 1) = LN(3)", ["x = -2", "x = 2"]),
+    # Squaring adds `x = 1` and `x = -1`, where the root is the negation.
+    ("SQRT(x) = x - 2", ["x = 4"]),
+    ("SQRT(x + 5) = x - 1", ["x = 4"]),
+    ("SQRT(2*x + 3) = x", ["x = 3"]),
+    ("SQRT(x) = -2", []),
+    # The principal cube root of -8 is `1 + SQRT(3)*#i`, so nothing cubes to -2.
+    ("x^(1/3) = -2", []),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), EXTRANEOUS, ids=str)
+def test_a_candidate_that_does_not_hold_is_no_solution(text, expected):
+    assert sol(text) == expected
+
+
+#: An `ABS` of a real argument is the argument or its negation, so an equation in
+#: one is finitely many equations, each over the range where its signs hold. The
+#: answer can be a range too, written as an inequality is.
+ABSOLUTE = [
+    ("ABS(x - 1) = 2", ["x = -1", "x = 3"]),
+    ("ABS(2*x - 3) = 5", ["x = -1", "x = 4"]),
+    ("ABS(x) = 3", ["x = -3", "x = 3"]),
+    ("ABS(x) = -1", []),
+    ("ABS(x^2 - 4) = 0", ["x = -2", "x = 2"]),
+    ("ABS(x^2 - 1) = 3", ["x = -2", "x = 2"]),
+    ("ABS(x + 1) = ABS(x - 3)", ["x = 1"]),
+    ("ABS(x - 1) = ABS(2*x)", ["x = -1", "x = 1/3"]),
+    ("ABS(x - 1) + ABS(x + 1) = 4", ["x = -2", "x = 2"]),
+    ("ABS(x) = x + 1", ["x = -1/2"]),
+    ("ABS(x) + x^2 = 2", ["x = -1", "x = 1"]),
+    # An undeclared parameter is real too.
+    ("ABS(x - a) = 1", ["x = a - 1", "x = a + 1"]),
+    ("ABS(x) = x", ["x >= 0"]),
+    ("ABS(x - 1) + ABS(x + 1) = 2", ["-1 <= x <= 1"]),
+    # Each family of a periodic one is sampled once, as without the `ABS`.
+    ("ABS(SIN(x)) = 1/2", ["x = -5*pi/6", "x = -pi/6", "x = pi/6", "x = 5*pi/6"]),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), ABSOLUTE, ids=str)
+def test_an_equation_in_abs_is_solved_sign_by_sign(text, expected):
+    assert sol(text) == expected
+
+
+def test_an_equation_in_abs_of_a_complex_variable_stands():
+    """`ABS(x - 1) = 2` over the complexes is a circle, which no list of
+    relations describes."""
+    state = ParseState()
+    name, domain = domain_of_node(parse("x :epsilon Complex", state))
+    context = Context(domains={name: domain})
+    assert sol("ABS(x - 1) = 2", ("x",), context=context) == ["ABS(x - 1) - 2 = 0"]
+
+
+#: A power of any positive base is a power of `#e`, and is solved as one: each
+#: equation has a family of complex solutions per root of the quadratic in `b^x`,
+#: sampled at its member nearest the origin.
+EXPONENTIALS = [
+    ("3^(2*x) - 4*3^x + 3 = 0", ["x = 0", "x = 1"]),
+    ("2^(2*x) - 5*2^x + 4 = 0", ["x = 0", "x = 2"]),
+    ("9^x - 10*3^x + 9 = 0", ["x = 0", "x = 2"]),
+    ("#e^(2*x) - 3*#e^x + 2 = 0", ["x = 0", "x = LN(2)"]),
+    # `2^x = -2` holds where `x*LN(2)` is `LN(2) + pi*#i`.
+    ("4^x - 2^(x + 1) - 8 = 0", ["x = 2", "x = 1 + #i*pi/LN(2)"]),
+    ("#e^(2*x) - 2*#e^x - 8 = 0", ["x = LN(4)", "x = LN(2) + #i*pi"]),
+    ("(1/2)^x = 4", ["x = -2"]),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), EXPONENTIALS, ids=str)
+def test_an_equation_in_powers_of_a_number_is_solved_through_logarithms(
+    text, expected
+):
+    assert sol(text) == expected
+
+
+def test_a_solution_is_written_in_its_plainer_spelling():
+    """No negated quotient over a negative number, and no factored radicand where
+    the expanded one is shorter."""
+    assert sol("2^x = 3^(x - 1)") == ["x = LN(3)/(LN(3) - LN(2))"]
+    assert sol("5^x = 2^(x + 1)") == ["x = LN(2)/(LN(5) - LN(2))"]
+    assert sol("x^2 + y^2 = r^2", ("y",)) == [
+        "y = -SQRT(r^2 - x^2)",
+        "y = SQRT(r^2 - x^2)",
+    ]
+
+
 def test_a_symbolic_equation_solves_for_whichever_variable_was_chosen():
     assert sol("a*x + b = 0", ("x",)) == ["x = -b/a"]
     assert sol("a*x + b = 0", ("a",)) == ["a = -b/x"]
@@ -320,6 +423,17 @@ EXCLUSIONS = [
     ("(x^2 - a^2)/(x*(x - a)) = 0", "x", ["x = -a"]),
     ("1/x + 1/(x + a) = 0", "x", ["x = -a/2"]),
     ("(r^2 - a)/(r - 1) = 0", "r", ["r = -SQRT(a)", "r = SQRT(a)"]),
+    # Simplify cancels each of these before anything solves it, and the one
+    # candidate left is where the equation as written divides by zero.
+    ("(x^2 - 1)/(x - 1) = 2", "x", []),
+    ("x^2/x = 0", "x", []),
+    ("(x - 1)^2/(x - 1) = 0", "x", []),
+    ("x^(-1)*x^2 = 0", "x", []),
+    ("x/(x - 2) = 2/(x - 2)", "x", []),
+    ("(x^2 - 1)/(x - 1) = 3", "x", ["x = 2"]),
+    ("x^2*(x - 2)/(x - 2) = 0", "x", ["x = 0"]),
+    # `r = 2*m` divides by zero only for one value of `m`, which is no proof.
+    ("(1 - 2*m/r)*r/r = 0", "r", ["r = 2*m"]),
 ]
 
 
@@ -517,6 +631,11 @@ HEADS = [
     ("SOLVE(- 2*x + 3*y <= 7, x)", "[x >= (3*y - 7)/2]"),
     ("SOLVE(x^2 < 4, x)", "[-2 < x < 2]"),
     ("SOLVE(x*EXP(x) = 1, x)", "[x = LAMBERTW(1)]"),
+    ("SOLVE(LN(x) + LN(x - 1) = LN(6), x)", "[x = 3]"),
+    ("SOLVE(ABS(x) = x, x)", "[x >= 0]"),
+    # The head sees what its equation divides by as written, as the command does.
+    ("SOLVE((x^2 - 1)/(x - 1) = 2, x)", "[]"),
+    ("SOLVE(x^2/x = 0, x)", "[]"),
     # A system contributes one inner vector per solution, so that the outer
     # vector is always the list of entries the command would have appended.
     ("SOLVE([x + y = 3, x - y = 1], [x, y])", "[[x = 2, y = 1]]"),

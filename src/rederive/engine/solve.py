@@ -35,6 +35,7 @@ from rederive.engine.boundary import Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.from_sympy import from_sympy
 from rederive.engine.approximation import approximated, noting_approximations
+from rederive.engine.evaluate import divisors
 from rederive.engine.pipeline import simplified
 from rederive.engine.solving import solutions
 from rederive.engine.to_sympy import to_sympy
@@ -83,6 +84,12 @@ def solved(
     context = context or Context()
     exact = context.with_precision(Precision.EXACT)
     expression = simplified(node, exact, decide=False)
+    divided = []
+    for divisor in divisors(node):
+        try:
+            divided.append(simplified(divisor, exact, decide=False))
+        except Exception:
+            continue
     interval = (
         None
         if bounds is None
@@ -90,5 +97,5 @@ def solved(
     )
     return tuple(
         approximated(answer, context)
-        for answer in solutions(expression, context, variables, interval)
+        for answer in solutions(expression, context, variables, interval, divided)
     )
