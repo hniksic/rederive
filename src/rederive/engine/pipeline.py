@@ -686,6 +686,10 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
         return _integral(head)
+    if isinstance(head, (sp.Sum, sp.Product)):
+        closed = _closed_by_rule(head, context)
+        if closed is not None:
+            return closed
     if isinstance(head, (sp.Sum, sp.Product)) and not _searchable(head):
         return head
     if isinstance(head, sp.Product):
@@ -804,6 +808,7 @@ def _summation(head: sp.Sum) -> sp.Basic:
         return _undecided(head)
     if _counted(head):
         return value
+    value = _over_the_counts(head, value)
     if isinstance(value, sp.MatrixBase):
         # A sum of vectors is summed element by element, and each element is a
         # closed form of its own: `SUM([k, k^2], k, 0, n)` is a vector of the
@@ -823,6 +828,247 @@ def _counted(head: sp.Sum | sp.Product) -> bool:
     return all(
         len(limit) == 3 and (limit[2] - limit[1]).is_Integer for limit in head.limits
     )
+
+
+#: How many counts of terms a closed form is checked at before it answers for all.
+_COUNTS_CHECKED = 6
+
+
+def _over_the_counts(head: sp.Sum, value: sp.Basic) -> sp.Basic:
+    """The closed form of a sum whose summand involves its own upper limit, held
+    to the integer counts of terms the sum is written for.
+
+    Sympy sums `SUM(COMB(n, k), k, 0, n)` as the hypergeometric series it would be
+    over every `k`, and states where that series converges, over a real `n` and over
+    any other variable: `2^n` where `n > -1`, `(x + 1)^n` under a condition on
+    `ABS(x)` as well. But the sum has a number of terms only for an integer `n`, and
+    there the series stops at `n` by itself, so the convergence condition does not
+    describe the sum at all: `(x + 1)^n` is the sum for every `x`, which is the
+    binomial theorem. Its condition is dropped where the closed form agrees with the
+    terms added up for the first several counts. Each of those ranges holds at least
+    one term, which is what a formula is written for: `SUM(COMB(n, k), k, 0, n)` at
+    `n = -1` is no sum of binomial coefficients but an empty range.
+
+    The same check is made of a closed form sympy gives with no condition at all,
+    because the symbolic shortcuts it tries first can be wrong at the smallest
+    counts: it answers `SUM((-1)^k*COMB(n, k), k, 0, n)` with 0, where the sum is
+    1 at `n = 0`. Such an answer is replaced with the hypergeometric one, `0^n`,
+    where that one holds, and the sum stands where nothing does.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 3:
+        return value
+    index, low, high = head.limits[0]
+    bounds = high.free_symbols
+    if not low.is_Integer or len(bounds) != 1:
+        return value
+    (bound,) = bounds
+    if bound == index or bound not in head.function.free_symbols:
+        return value
+    conditional = (
+        isinstance(value, sp.Piecewise)
+        and len(value.args) == 2
+        and value.args[1].cond is sp.true
+        and value.args[1].expr.has(sp.Sum)
+    )
+    if conditional:
+        candidate = value.args[0].expr
+    elif value.has(sp.Sum) or not isinstance(value, sp.Expr):
+        return value
+    else:
+        candidate = value
+    if _holds_at_the_counts(candidate, head, bound):
+        return candidate
+    hypergeometric = _attempt(
+        head.function,
+        lambda f: sp.concrete.summations.eval_sum_hyper(f, (index, low, high)),
+    )
+    if isinstance(hypergeometric, sp.Piecewise):
+        hypergeometric = hypergeometric.args[0].expr
+    if hypergeometric is not None and not hypergeometric.has(sp.Sum):
+        if _holds_at_the_counts(hypergeometric, head, bound):
+            return hypergeometric
+    return value if conditional else head
+
+
+def _holds_at_the_counts(candidate: sp.Basic, head: sp.Sum, bound: sp.Symbol) -> bool:
+    """Whether `candidate` is the sum `head` for the first `_COUNTS_CHECKED` values
+    of `bound` that give its range at least one term, whatever the other variables."""
+    index, low, high = head.limits[0]
+    reduced = _attempt(candidate, sp.gammasimp)
+    if reduced is None:
+        return False
+    checked = 0
+    for count in range(-4, 4 * _COUNTS_CHECKED):
+        top = high.subs(bound, count)
+        if not top.is_Integer or top < low:
+            continue
+        terms = head.function.subs(bound, count)
+        added = _attempt(terms, lambda t: sp.Sum(t, (index, low, top)).doit())
+        closed = _attempt(reduced, lambda c: c.subs(bound, count))
+        if added is None or closed is None or closed.has(sp.nan, sp.zoo, sp.oo):
+            return False
+        difference = _attempt(closed - added, sp.expand)
+        if difference is None:
+            return False
+        if difference != 0:
+            difference = _attempt(difference, sp.simplify)
+            if difference != 0:
+                return False
+        checked += 1
+        if checked == _COUNTS_CHECKED:
+            return True
+    return False
+
+
+def _closed_by_rule(head: sp.Sum | sp.Product, context: Context) -> sp.Basic | None:
+    """A sum or product sympy does not do, by the rule its summand's shape answers
+    to, or None where none does.
+
+    A sum of sines or cosines of the index, a product of exponentials and a sum of
+    logarithms each have a closed form that follows from one identity, where sympy
+    either leaves them standing or never comes back from the search: see
+    `_sum_of_waves`, `_product_of_powers` and `_sum_of_logarithms`. A range of known
+    length is added up term by term instead.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 3 or _counted(head):
+        return None
+    if isinstance(head, sp.Product):
+        return _product_of_powers(head, context)
+    waves = _sum_of_waves(head, context)
+    if waves is not None:
+        return waves
+    return _sum_of_logarithms(head, context)
+
+
+def _sum_of_waves(head: sp.Sum, context: Context) -> sp.Basic | None:
+    """A sum of sines and cosines of a linear function of the index, in closed form.
+
+    The terms `SIN(a*k + b)` for `k` from `p` to `q` are `N = q - p + 1` points
+    equally spaced around a circle, and their sum is the imaginary part of a
+    geometric sum of `#e^(#i*(a*k + b))`, which is
+
+        SIN(N*a/2)/SIN(a/2) * SIN(a*(p + q)/2 + b),
+
+    and the cosine likewise with `COS` of the middle angle: `SUM(SIN(k), k, 1, n)` is
+    `SIN(n/2)*SIN((n + 1)/2)/SIN(1/2)`. Where the step `a` is a multiple of `2*pi`
+    every term is the same, and the sum is `N*SIN(b)`, the value the formula tends to
+    there; where the step is a variable that may be such a multiple the answer is an
+    `IF` on it, as the geometric sum `SUM(x^k, k, 0, n)` is one on `x = 1`.
+
+    A pair of waves that are each other's negation shifted along the index is left
+    to sympy, which telescopes it to the two ends: `SUM(SIN(k + 1) - SIN(k), k, 1,
+    n)` is `SIN(n + 1) - SIN(1)`, shorter than the difference of two such products.
+
+    Terms with the same step and phase are gathered first, and a term that holds no
+    trigonometric function of the index is summed as a sum of its own. A product of
+    waves, or a wave whose amplitude depends on the index, is no such sum, and is
+    left to `_searchable`: sympy has no way of summing it and may not come back from
+    looking.
+    """
+    index, low, high = head.limits[0]
+    if low.has(sp.oo, -sp.oo) or high.has(sp.oo, -sp.oo):
+        return None
+    expanded = _attempt(head.function, sp.expand)
+    if expanded is None:
+        return None
+    waves: dict[tuple[type, sp.Basic, sp.Basic], sp.Basic] = {}
+    rest = []
+    for term in sp.Add.make_args(expanded):
+        amplitude, wave = term.as_independent(index, as_Add=False)
+        is_wave = isinstance(wave, (sp.sin, sp.cos))
+        line = _linear(wave.args[0], index) if is_wave else None
+        if line is not None:
+            key = (type(wave), *line)
+            waves[key] = waves.get(key, sp.S.Zero) + amplitude
+        elif any(f.has(index) for f in term.atoms(TrigonometricFunction)):
+            return None
+        else:
+            rest.append(term)
+    if not waves or _telescoping(expanded, index):
+        return None
+    total = sp.S.Zero
+    if rest:
+        total = _worked_out(sp.Sum(sp.Add(*rest), head.limits[0]), context)
+        if total.has(sp.Sum):
+            return None
+    count = high - low + 1
+    for (wave, step, phase), amplitude in waves.items():
+        half = step / 2
+        spread = sp.sin(count * half) / sp.sin(half)
+        generic = spread * wave(step * (low + high) / 2 + phase)
+        same = count * wave(phase)
+        if sp.sin(half).is_zero:
+            closed = same
+        elif sp.sin(half).is_zero is False:
+            closed = generic
+        else:
+            closed = sp.Piecewise((same, sp.Eq(sp.sin(half), 0)), (generic, True))
+        total += amplitude * closed
+    return total
+
+
+def _linear(argument: sp.Basic, index: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
+    """The slope and intercept of `argument` as a line in `index`, or None."""
+    try:
+        line = sp.Poly(argument, index)
+    except sp.PolynomialError:
+        return None
+    if line.degree() != 1:
+        return None
+    step, phase = line.all_coeffs()
+    if step.has(index) or phase.has(index):
+        return None
+    return step, phase
+
+
+def _product_of_powers(head: sp.Product, context: Context) -> sp.Basic | None:
+    """A product of powers of one positive base, as that base to the sum of the
+    exponents: `PRODUCT(#e^k, k, 1, n)` is `#e^(n*(n + 1)/2)` and `PRODUCT(#e^(1/k^2),
+    k, 1, inf)` is `#e^(pi^2/6)`.
+
+    The exponential is continuous, so an infinite product is the base to the
+    infinite sum, and to a sum that diverges it is `inf` or 0. Where the sum has no
+    closed form the product has none either and stands: `PRODUCT(#e^(1/k), k, 1, n)`
+    is the base to a harmonic number.
+    """
+    index = head.limits[0][0]
+    function = head.function
+    if isinstance(function, sp.exp):
+        base, exponent = sp.E, function.args[0]
+    elif isinstance(function, sp.Pow) and not function.base.has(index):
+        base, exponent = function.base, function.exp
+    else:
+        return None
+    if not exponent.has(index) or base.is_positive is not True:
+        return None
+    total = _worked_out(sp.Sum(exponent, head.limits[0]), context)
+    if total.has(sp.Sum, sp.Product):
+        return None
+    return sp.exp(total) if base == sp.E else base**total
+
+
+def _sum_of_logarithms(head: sp.Sum, context: Context) -> sp.Basic | None:
+    """A sum of logarithms, as the logarithm of the product of their arguments where
+    that has a closed form: `SUM(LN(k), k, 1, n)` is `LN(n!)` and `SUM(LN(1 + 1/k), k,
+    1, n)`, the product telescoping, is `LN(n + 1)`.
+
+    The logarithm of a product is the sum of the logarithms only of positive
+    factors, so every term the range reaches has to be known positive; and the
+    logarithm is continuous on them, so an infinite sum is the logarithm of the
+    infinite product.
+    """
+    index, low, high = head.limits[0]
+    if not isinstance(head.function, sp.log):
+        return None
+    argument = head.function.args[0]
+    step = sp.Dummy("j", integer=True, nonnegative=True)
+    reached = _attempt(argument, lambda a: a.subs(index, low + step))
+    if reached is None or reached.is_positive is not True:
+        return None
+    product = _worked_out(sp.Product(argument, head.limits[0]), context)
+    if product.has(sp.Sum, sp.Product):
+        return None
+    return sp.log(product)
 
 
 def _factored(value: sp.Basic) -> sp.Basic:
@@ -2854,9 +3100,18 @@ def _trigonometric_terms(function: sp.Basic, index: sp.Basic) -> bool:
         for term in sp.Add.make_args(expanded)
         if any(f.has(index) for f in term.atoms(TrigonometricFunction))
     ]
-    if len(waves) < 2:
-        return False
-    return len(waves) != 2 or not _shifted(waves[0], waves[1], index)
+    return len(waves) >= 2 and not _telescoping(expanded, index)
+
+
+def _telescoping(expanded: sp.Basic, index: sp.Basic) -> bool:
+    """Whether the terms of `expanded` holding trigonometric functions of the index
+    are a pair sympy telescopes, see `_trigonometric_terms`."""
+    waves = [
+        term
+        for term in sp.Add.make_args(expanded)
+        if any(f.has(index) for f in term.atoms(TrigonometricFunction))
+    ]
+    return len(waves) == 2 and _shifted(waves[0], waves[1], index)
 
 
 def _shifted(left: sp.Basic, right: sp.Basic, index: sp.Basic) -> bool:

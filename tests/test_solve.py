@@ -301,6 +301,21 @@ def test_an_identity_solves_to_an_arbitrary_value():
     assert sol("x = x") == ["x = @1"]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "(x^2 - 1)/(x - 1) = x + 1",
+        # Zero once over one denominator, which solveset answers with no solution.
+        "1/(x - 1) + 1 = x/(x - 1)",
+        "1/x + 1/(x*(x - 1)) = 1/(x - 1)",
+    ],
+)
+def test_a_rational_identity_solves_to_an_arbitrary_value(text):
+    """Every value where both sides are defined is a solution, and no finite list of
+    relations names every value but the poles."""
+    assert sol(text) == ["x = @1"]
+
+
 def test_the_arbitrary_counter_comes_from_the_context():
     """Which is what lets the session keep one counter across every command,
     and what keeps the answer a function of the tree and the context alone."""

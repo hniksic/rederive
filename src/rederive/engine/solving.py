@@ -240,7 +240,7 @@ def _equation(
     """
     if bounds is not None:
         return _numeric(residual, variable, bounds[0], bounds[1], context)
-    if residual.is_zero:
+    if residual.is_zero or _cancels(residual, variable):
         return (_equated(variable, constants.fresh(), context),)
     found = _values(residual, variable)
     if found is not None:
@@ -472,6 +472,20 @@ def _divides_by_zero(
         except Exception:
             continue
     return False
+
+
+def _cancels(residual: sp.Basic, variable: sp.Symbol) -> bool:
+    """Whether `residual` is a rational function of `variable` that is zero once its
+    terms are brought over one denominator, which makes the equation an identity.
+
+    `1/(x - 1) + 1 = x/(x - 1)` holds wherever both sides are defined, and solveset
+    answers it with the empty set; like `(x^2 - 1)/(x - 1) = x + 1`, it solves to an
+    arbitrary value.
+    """
+    try:
+        return bool(residual.is_rational_function(variable)) and sp.cancel(residual) == 0
+    except Exception:
+        return False
 
 
 def _polynomial(residual: sp.Basic, variable: sp.Symbol) -> sp.Poly | None:

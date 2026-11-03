@@ -188,8 +188,8 @@ COMBINATORIAL = [
     # be a summand nobody has offered to sympy yet, and the search for a closed
     # form over a ratio of factorials of the index does not come back.
     (
-        "SUM(COMB(n, k), k, 0, n)",
-        "IF(n > 0 OR -1 < n <= 0, 2^n, SUM(COMB(n, k), k, 0, n))",
+        "SUM(COMB(n, k)*LN(k + 1), k, 0, n)",
+        "SUM(COMB(n, k)*LN(k + 1), k, 0, n)",
     ),
 ]
 
@@ -1652,20 +1652,17 @@ def test_a_pole_the_integrand_owns_is_left_in_the_antiderivative(text, expected)
             "SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k) + k, k, 1, n)",
             "SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k) + k, k, 1, n)",
         ),
-        (
-            "SUM(a*SIN(k*x) - a*SIN(k*y) - b*SIN(k*x) + b*SIN(k*y), k, 1, n)",
-            "SUM(a*SIN(k*x) - b*SIN(k*x) - a*SIN(k*y) + b*SIN(k*y), k, 1, n)",
-        ),
     ],
 )
 def test_trigonometric_terms_are_not_searched_for_a_telescope(text, expected):
     """Sympy asks of a two-term summand whether it telescopes, by solving for the
     shift, and over trigonometric functions that solve is slow or never returns.
 
-    The first three ran for an hour; the fourth is the shape the Fourier series
-    of the original's `INTEGRAL.MTH` comes to once its coefficients are
-    integrated, and took ninety seconds. The sum written out is the answer
-    either way, and it has to be the answer at once.
+    All three ran for an hour. The sum written out is the answer either way, and it
+    has to be the answer at once. A sum of single waves, the shape the Fourier
+    series of the original's `INTEGRAL.MTH` comes to once its coefficients are
+    integrated, has a closed form and does not reach the search at all: see
+    `test_a_sum_of_waves_has_a_closed_form`.
     """
     assert simp(text) == expected
 
@@ -1679,6 +1676,125 @@ def test_trigonometric_terms_are_not_searched_for_a_telescope(text, expected):
 )
 def test_a_shifted_pair_of_trigonometric_terms_still_telescopes(text, expected):
     """A pair the match settles never reaches the solve, and is not refused."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("SUM(SIN(k), k, 1, n)", "SIN(n/2)*SIN(n/2 + 1/2)/SIN(1/2)"),
+        ("SUM(COS(k), k, 0, n)", "SIN(n/2 + 1/2)*COS(n/2)/SIN(1/2)"),
+        # A step that may be a multiple of `2*pi` makes every term the same, and the
+        # formula's denominator zero.
+        (
+            "SUM(SIN(k*x), k, 1, n)",
+            "IF(SIN(x/2) = 0, 0, SIN(n*x/2)*SIN(x*(n + 1)/2)/SIN(x/2))",
+        ),
+        (
+            "SUM(COS(k*x), k, 0, n)",
+            "IF(SIN(x/2) = 0, n + 1, SIN(x*(n + 1)/2)*COS(n*x/2)/SIN(x/2))",
+        ),
+        (
+            "SUM(COS(k*x + 1), k, 2, n + 3)",
+            "IF(SIN(x/2) = 0, COS(1)*(n + 2), "
+            "SIN(x*(n/2 + 1))*COS(x*(n + 5)/2 + 1)/SIN(x/2))",
+        ),
+        # A step that is such a multiple is decided.
+        ("SUM(COS(2*pi*k), k, 1, n)", "n"),
+        ("SUM(SIN(k*pi/2), k, 1, n)", "SQRT(2)*SIN(pi*n/4)*SIN(pi*(n/4 + 1/4))"),
+        # Each wave is summed for itself, and what is no wave by sympy.
+        (
+            "SUM(SIN(2*k + 1) + 3*COS(k), k, 1, n)",
+            "3*SIN(n/2)*COS(n/2 + 1/2)/SIN(1/2) + SIN(n)*SIN(n + 2)/SIN(1)",
+        ),
+        ("SUM(SIN(k) + k, k, 1, n)", "SIN(n/2)*SIN(n/2 + 1/2)/SIN(1/2) + n^2/2 + n/2"),
+        # The shape of a Fourier series once its coefficients are integrated, whose
+        # search for a telescope took ninety seconds: waves of the same step are
+        # gathered.
+        (
+            "SUM(a*SIN(k*x) - a*SIN(k*y) - b*SIN(k*x) + b*SIN(k*y), k, 1, n)",
+            "(a - b)*IF(SIN(x/2) = 0, 0, SIN(n*x/2)*SIN(x*(n + 1)/2)/SIN(x/2)) + "
+            "(b - a)*IF(SIN(y/2) = 0, 0, SIN(n*y/2)*SIN(y*(n + 1)/2)/SIN(y/2))",
+        ),
+        # A wave whose amplitude depends on the index is no such sum.
+        ("SUM(k*SIN(k), k, 1, n)", "SUM(k*SIN(k), k, 1, n)"),
+    ],
+)
+def test_a_sum_of_waves_has_a_closed_form(text, expected):
+    """`SIN(a*k + b)` summed over a range is the imaginary part of a geometric sum,
+    `SIN(N*a/2)/SIN(a/2)` times the wave at the middle of the range, for `N` terms.
+
+    The cosine sum is often written `SIN((n + 1/2)*x)/(2*SIN(x/2)) + 1/2`, the same
+    function. Where the step `x` is a multiple of `2*pi`, at which either form divides
+    by zero, the sum is `N` times the one term, as the geometric sum
+    `SUM(x^k, k, 0, n)` is `n + 1` at `x = 1`.
+    """
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("PRODUCT(#e^k, k, 1, n)", "#e^(n*(n + 1)/2)"),
+        ("PRODUCT(#e^(k*x), k, 0, n)", "#e^(n*x*(n + 1)/2)"),
+        ("PRODUCT(3^(k^2), k, 1, n)", "3^(n*(n + 1)*(2*n + 1)/6)"),
+        ("PRODUCT(#e^(1/k^2), k, 1, inf)", "#e^(pi^2/6)"),
+        # The exponential is continuous, and its limits are those of the exponent.
+        ("PRODUCT(#e^k, k, 1, inf)", "inf"),
+        ("PRODUCT(#e^(-k), k, 1, inf)", "0"),
+        # The exponent sums to a harmonic number, which has no name here.
+        ("PRODUCT(#e^(1/k), k, 1, n)", "PRODUCT(#e^(1/k), k, 1, n)"),
+    ],
+)
+def test_a_product_of_exponentials_is_the_exponential_of_the_sum(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("SUM(LN(k), k, 1, n)", "LN(n!)"),
+        ("SUM(LN(k^2), k, 1, n)", "LN(n!^2)"),
+        # The product telescopes.
+        ("SUM(LN(1 + 1/k), k, 1, n)", "LN(n + 1)"),
+        ("SUM(LN((k + 1)/k), k, 1, n)", "LN(n + 1)"),
+        ("SUM(LN(1 - 1/k^2), k, 2, inf)", "-LN(2)"),
+        # `LN(0)` is a term, and `x` may be negative: neither is a sum of logarithms
+        # of positive numbers.
+        ("SUM(LN(k), k, 0, n)", "SUM(LN(k), k, 0, n)"),
+        ("SUM(LN(x*k), k, 1, n)", "SUM(LN(k*x), k, 1, n)"),
+    ],
+)
+def test_a_sum_of_logarithms_is_the_logarithm_of_the_product(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("SUM(COMB(n, k), k, 0, n)", "2^n"),
+        ("SUM(COMB(n, k), k, 1, n)", "2^n - 1"),
+        ("SUM(k*COMB(n, k), k, 0, n)", "n*2^(n - 1)"),
+        ("SUM(k^2*COMB(n, k), k, 0, n)", "n*(n + 1)*2^(n - 2)"),
+        ("SUM(COMB(2*n, k), k, 0, 2*n)", "2^(2*n)"),
+        # Sympy's condition is on `ABS(x)`, where the binomial theorem has none.
+        ("SUM(COMB(n, k)*x^k, k, 0, n)", "(x + 1)^n"),
+        ("SUM(COMB(n, k)*COMB(m, k), k, 0, n)", "(m + n)!/(m!*n!)"),
+        # Sympy answers 0, which the sum is not at `n = 0`.
+        ("SUM((-1)^k*COMB(n, k), k, 0, n)", "0^n"),
+        # Sympy answers 0 here too, which the sum is not at `n = 1`, and nothing else
+        # it has holds at `n = 0`.
+        ("SUM((-1)^k*k*COMB(n, k), k, 0, n)", "SUM(k*(-1)^k*COMB(n, k), k, 0, n)"),
+    ],
+)
+def test_a_sum_up_to_its_own_parameter_holds_for_every_count(text, expected):
+    """A sum to `n` whose terms involve `n` has terms only for an integer `n`, and
+    the condition sympy attaches, which is where the series it sums over every `k`
+    converges, says nothing about it.
+
+    The closed form is checked against the terms added up for the first several
+    counts instead, and answers for a range of at least one term.
+    """
     assert simp(text) == expected
 
 
