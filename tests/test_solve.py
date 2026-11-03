@@ -63,6 +63,9 @@ EQUATIONS = [
     # Multiplicity is collapsed: the double root at zero is listed once.
     ("x^2*(8*x - 9) = 0", ["x = 0", "x = 9/8"]),
     ("LN(x) = 5", ["x = #e^5"]),
+    # Two roots of the substituted quadratic, a conjugate pair, cube to the same
+    # number, which is one solution and is listed once.
+    ("x^(1/3)/3 + 3/x^(1/3) = 1", ["x = -27"]),
     # Nothing here can solve either of these, so the residual equation is what
     # comes back - no warning, no guess. Derive prints the quintic's residual
     # as `x^5 - x = -1`, which is its Simplify's normal form of the same thing.

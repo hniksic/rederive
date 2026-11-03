@@ -336,7 +336,7 @@ def _entries(
     values = _members(found)
     if values is None:
         return None
-    return tuple(_equated(variable, value, context) for value in _ordered(values))
+    return _answers(variable, values, context)
 
 
 def _members(found: sp.Set) -> list[sp.Basic] | None:
@@ -548,7 +548,7 @@ def _ranges(
             gathered.extend(part)
         return tuple(gathered)
     if isinstance(found, sp.FiniteSet):
-        return tuple(_equated(variable, value, context) for value in _ordered(found.args))
+        return _answers(variable, found.args, context)
     if isinstance(found, sp.Interval):
         return (_span(found, variable, context, constants),)
     return None
@@ -875,6 +875,23 @@ def _relation(func, left: sp.Basic, right: sp.Basic) -> sp.Basic:
         return func(left, right, evaluate=False)
     except Exception:
         return func(left, right)
+
+
+def _answers(
+    variable: sp.Symbol, values: Iterable[sp.Basic], context: Context
+) -> tuple[sp.Basic, ...]:
+    """`x = value` for each distinct value, in the order `_ordered` gives.
+
+    Values that differ as written can be the same number once written down:
+    `solveset` answers `x^(1/3)/3 + 3/x^(1/3) = 1` with the cubes of a conjugate
+    pair, and both are -27. So repeats are dropped again after the writing.
+    """
+    written: list[sp.Basic] = []
+    for value in _ordered(values):
+        entry = _equated(variable, value, context)
+        if entry not in written:
+            written.append(entry)
+    return tuple(written)
 
 
 def _ordered(values: Iterable[sp.Basic]) -> list[sp.Basic]:
