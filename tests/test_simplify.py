@@ -152,6 +152,34 @@ RADICALS = [
     # minimal polynomial factored over the field the surds generate.
     ("(243*SQRT(5) - 294*SQRT(3))^(1/3)", "3*SQRT(5) - 2*SQRT(3)"),
     ("(10 + 6*SQRT(3))^(1/3)", "SQRT(3) + 1"),
+    # A root taken out of a root is a simplification even where the spelling without
+    # it is no shorter: the cube of the golden ratio is `2 + SQRT(5)`, and the square
+    # root of `2 + SQRT(3)` is two surds over two. One that does not denest stands.
+    ("(2 + SQRT(5))^(1/3)", "SQRT(5)/2 + 1/2"),
+    ("SQRT(2 + SQRT(3))", "SQRT(6)/2 + SQRT(2)/2"),
+    ("SQRT(4 + SQRT(15))", "SQRT(10)/2 + SQRT(6)/2"),
+    ("x*SQRT(2 + SQRT(3))", "(SQRT(6) + SQRT(2))*x/2"),
+    ("SQRT(1 + SQRT(2))", "SQRT(SQRT(2) + 1)"),
+    # A whole power of a sum of surds is a number of the field they span, and is
+    # written as one there whether or not that is shorter; so is its reciprocal. Under
+    # Expand too, which reaches the same number.
+    ("(1 + SQRT(2))^2", "2*SQRT(2) + 3"),
+    ("(1 + SQRT(2))^5", "29*SQRT(2) + 41"),
+    ("(1 + SQRT(2))^(-3)", "5*SQRT(2) - 7"),
+    ("1/(1 + SQRT(2))^2", "3 - 2*SQRT(2)"),
+    ("(1 + 2^(1/3))^3", "3*2^(2/3) + 3*2^(1/3) + 3"),
+    ("(SQRT(2) + SQRT(3) + SQRT(5))^4", "56*SQRT(15) + 64*SQRT(10) + 80*SQRT(6) + 224"),
+    ("(2 + #i)^3", "2 + 11*#i"),
+    ("(2 - #i)^2", "3 - 4*#i"),
+    ("(1 + SQRT(2))^5*x", "(29*SQRT(2) + 41)*x"),
+    ("EXPAND((SQRT(2) + 1)^3)", "5*SQRT(2) + 7"),
+    ("EXPAND((1 + 2^(1/3))^3)", "3*2^(2/3) + 3*2^(1/3) + 3"),
+    # A power whose value runs to hundreds of digits keeps its exponent, and one of a
+    # transcendental or of a variable is no number of such a field.
+    ("(1 + SQRT(2))^1000", "(SQRT(2) + 1)^1000"),
+    ("(1 + pi)^2", "(pi + 1)^2"),
+    ("(x + SQRT(2))^2", "(x + SQRT(2))^2"),
+    ("(x + 1)^5", "(x + 1)^5"),
     # 3.8 p.47's quotient, where no one root of the four is anything simpler on
     # its own: the numerator is `(SQRT(3) + 1)^(3/2)` and the denominator twice
     # it, so the value is a number of the field `SQRT(3)` generates and the
@@ -556,6 +584,10 @@ SIGNED = [
     ("ABS(x)", "ABS(x)", None),
     ("SIGN(x)", "SIGN(x)", None),
     ("x^3", "x^3", None),
+    # A square is never negative but is zero at zero, which a sign tells apart, and
+    # `SIGN(ABS(x))` is no simpler a way to say so.
+    ("SIGN(x^2)", "SIGN(x^2)", None),
+    ("SIGN(x^2 + 1)", "1", None),
     # Zero is the point the identities are a licence at rather than a fact -
     # `SIGN(0)` is zero, so the left side is undefined there and the right side
     # is not - and a declaration away from zero makes them facts.
@@ -666,6 +698,144 @@ def test_collect_writes_a_sine_and_a_cosine_as_one_phase_shifted_sine(text, expe
     assert simp(text, Context(trigonometry=Direction.COLLECT)) == expected
 
 
+#: Arctangents of numbers add up through the Gaussian integers whose arguments they
+#: are: `ATAN(p/q)` is the argument of `q + p*#i`, and a sum of them is a rational
+#: multiple of pi exactly when the product lies on an axis or a diagonal.
+ARC_TANGENT_SUMS = [
+    # `ATAN(1)` is `pi/4` as it is written, and the other two make up the rest.
+    ("ATAN(1) + ATAN(2) + ATAN(3)", "pi", None),
+    ("ATAN(2) + ATAN(3)", "3*pi/4", None),
+    ("ATAN(1/2) + ATAN(1/3)", "pi/4", None),
+    ("ATAN(-2) + ATAN(-3)", "-3*pi/4", None),
+    ("ATAN(2) - ATAN(1/3)", "pi/4", None),
+    # Machin's formula and its relatives, multiples and all.
+    ("4*ATAN(1/5) - ATAN(1/239)", "pi/4", None),
+    ("ATAN(1/2) + ATAN(1/5) + ATAN(1/8)", "pi/4", None),
+    ("2*ATAN(1/3) + ATAN(1/7)", "pi/4", None),
+    ("5*ATAN(1/7) + 2*ATAN(3/79)", "pi/4", None),
+    ("2*ATAN(2) + ATAN(4/3)", "pi", None),
+    # The part that adds to a multiple of pi does, and the rest stands beside it.
+    ("ATAN(2) + ATAN(3) + ATAN(1/7)", "3*pi/4 + ATAN(1/7)", None),
+    ("ATAN(1/2) + ATAN(1/3) + x", "x + pi/4", None),
+    ("y*ATAN(1/2) + y*ATAN(1/3)", "pi*y/4", None),
+    ("ATAN(1/2) + ATAN(1/3)", "45", Context(angle=Angle.DEGREE)),
+    # Otherwise a plain sum is one arctangent only where its argument is no larger
+    # than the ones it replaces.
+    ("ATAN(1/3) + ATAN(1/7)", "ATAN(1/2)", None),
+    ("ATAN(1/2) + ATAN(1/4)", "ATAN(1/2) + ATAN(1/4)", None),
+    ("ATAN(2) + ATAN(4)", "ATAN(4) + ATAN(2)", None),
+    ("3*ATAN(1/5)", "3*ATAN(1/5)", None),
+    # `ATAN(1/u)` is `ACOT(u)` for a real `u`, and pairs with `ATAN(u)` the same way.
+    ("ATAN(x) + ATAN(1/x)", "pi*SIGN(x)/2", None),
+    ("ATAN(x/y) + ATAN(y/x)", "pi*SIGN(x/y)/2", None),
+    ("2*ATAN(x) + 2*ATAN(1/x)", "pi*SIGN(x)", None),
+    ("ATAN(x^2) + ATAN(1/x^2)", "pi/2", None),
+    ("ATAN(z) + ATAN(1/z)", "ATAN(1/z) + ATAN(z)", declared("z :epsilon Complex")),
+]
+
+
+@pytest.mark.parametrize(("text", "expected", "context"), ARC_TANGENT_SUMS, ids=str)
+def test_arctangents_of_numbers_add_up(text, expected, context):
+    assert simp(text, context) == expected
+
+
+#: Sines and cosines of whole multiples of one angle are reduced together, over the
+#: single angle, and written the shortest of the ways that are unique: as a sum of
+#: calls of multiples, or as a polynomial in one of the two functions.
+MULTIPLE_ANGLES = [
+    # `trigsimp` rewrites the last term alone and leaves the sum half done.
+    ("SIN(x)^6 + COS(x)^6 + 3*SIN(x)^2*COS(x)^2", "1"),
+    ("SIN(x)^4 - COS(x)^4", "-COS(2*x)"),
+    ("COS(2*x) + 2*SIN(x)^2", "1"),
+    ("SIN(3*x) + 4*SIN(x)^3", "3*SIN(x)"),
+    ("SIN(2*x)*COS(x) - COS(2*x)*SIN(x)", "SIN(x)"),
+    # A quotient that cancels to a polynomial is cancelled even where that is no
+    # shorter, and is then a sum of multiples.
+    ("SIN(3*x)/SIN(x)", "2*COS(2*x) + 1"),
+    ("COS(3*x)/COS(x)", "2*COS(2*x) - 1"),
+    ("SIN(5*x)/SIN(x)", "2*COS(2*x) + 2*COS(4*x) + 1"),
+    ("(COS(x) + COS(3*x))/COS(2*x)", "2*COS(x)"),
+    ("SIN(3*x)/SIN(x) + 1", "4*COS(x)^2"),
+    # Nothing cancels in these, and nothing shorter is there to write.
+    ("SIN(x)^4 + COS(x)^4", "COS(x)^4 + SIN(x)^4"),
+    ("SIN(x)*COS(2*x)", "SIN(x)*COS(2*x)"),
+    ("SIN(3*x)/SIN(y)", "SIN(3*x)/SIN(y)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), MULTIPLE_ANGLES, ids=str)
+def test_calls_of_multiples_of_one_angle_reduce_together(text, expected):
+    assert simp(text) == expected
+
+
+#: A call of a small multiple of an arc is the algebraic function the
+#: multiple-angle formulas make of it.
+ARC_MULTIPLES = [
+    ("SIN(2*ACOS(x))", "2*x*SQRT(1 - x^2)"),
+    ("SIN(2*ASIN(x))", "2*x*SQRT(1 - x^2)"),
+    ("COS(2*ASIN(x))", "1 - 2*x^2"),
+    ("COS(3*ACOS(x))", "4*x^3 - 3*x"),
+    ("SIN(2*ATAN(x))", "2*x/(x^2 + 1)"),
+    ("TAN(2*ATAN(x))", "2*x/(1 - x^2)"),
+    ("SIN(-2*ACOS(x))", "-2*x*SQRT(1 - x^2)"),
+    # Past the bound the call stands.
+    ("SIN(5*ACOS(x))", "SIN(5*ACOS(x))"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), ARC_MULTIPLES, ids=str)
+def test_a_call_of_a_multiple_of_an_arc_is_algebraic(text, expected):
+    assert simp(text) == expected
+
+
+#: Sums and products of trigonometric values of rational multiples of pi that are
+#: rational or quadratic, as the minimal polynomial of the whole proves them to be.
+TRIGONOMETRIC_CONSTANTS = [
+    ("COS(pi/7) - COS(2*pi/7) + COS(3*pi/7)", "1/2"),
+    ("COS(2*pi/7) + COS(4*pi/7) + COS(6*pi/7)", "-1/2"),
+    ("COS(pi/9)*COS(2*pi/9)*COS(4*pi/9)", "1/8"),
+    ("COS(pi/7)*COS(2*pi/7)*COS(3*pi/7)", "1/8"),
+    ("SIN(pi/7)*SIN(2*pi/7)*SIN(3*pi/7)", "SQRT(7)/8"),
+    ("TAN(pi/7)*TAN(2*pi/7)*TAN(3*pi/7)", "SQRT(7)"),
+    ("TAN(pi/9)*TAN(2*pi/9)*TAN(4*pi/9)", "SQRT(3)"),
+    ("COS(pi/11) + COS(3*pi/11) + COS(5*pi/11) + COS(7*pi/11) + COS(9*pi/11)", "1/2"),
+    # Beside a variable, in a sum or a product.
+    ("x + COS(pi/9)*COS(2*pi/9)*COS(4*pi/9)", "x + 1/8"),
+    ("x*COS(pi/9)*COS(2*pi/9)*COS(4*pi/9)", "x/8"),
+    # A value of higher degree is no simpler number, and stands.
+    ("SIN(pi/7) + SIN(2*pi/7)", "SIN(2*pi/7) + SIN(pi/7)"),
+    ("2*COS(pi/7)", "2*COS(pi/7)"),
+    ("SIN(1)*COS(2)", "SIN(1)*COS(2)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), TRIGONOMETRIC_CONSTANTS, ids=str)
+def test_a_trigonometric_constant_is_written_as_the_number_it_is(text, expected):
+    assert simp(text) == expected
+
+
+#: An arcsine or arccosine of a real number past one in size is complex, and is
+#: written in rectangular form, as `ACOSH(1/2)` and `ATANH(2)` are.
+ARCS_OFF_THE_LINE = [
+    ("ASIN(2)", "pi/2 - #i*LN(SQRT(3) + 2)"),
+    ("ASIN(-2)", "-pi/2 + #i*LN(SQRT(3) + 2)"),
+    ("ACOS(2)", "#i*LN(SQRT(3) + 2)"),
+    ("ACOS(-2)", "pi - #i*LN(SQRT(3) + 2)"),
+    ("ASEC(1/2)", "#i*LN(SQRT(3) + 2)"),
+    ("ACSC(-1/3)", "-pi/2 + #i*LN(2*SQRT(2) + 3)"),
+    ("ASIN(SQRT(2))", "pi/2 - #i*LN(SQRT(2) + 1)"),
+    ("ACOSH(1/2)", "#i*pi/3"),
+    ("ATANH(2)", "LN(3)/2 - #i*pi/2"),
+    ("ASIN(1/3)", "ASIN(1/3)"),
+    ("ASIN(1)", "pi/2"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), ARCS_OFF_THE_LINE, ids=str)
+def test_an_arc_off_the_real_line_is_written_in_rectangular_form(text, expected):
+    assert simp(text) == expected
+
+
 # -- logarithms and exponentials ----------------------------------------------
 
 LOGARITHMS = [
@@ -732,6 +902,25 @@ LOGARITHMS = [
     # the original does not write.
     ("x^n/x", "x^(n - 1)", None),
     ("DIF(x^n, x)", "n*x^(n - 1)", None),
+    # A power to a logarithm is the exponential of the product of two, whichever
+    # base is written, and is written over the smaller.
+    ("2^LN(3) - 3^LN(2)", "0", None),
+    ("2^LN(5) - 5^LN(2)", "0", None),
+    ("3^LN(2)", "2^LN(3)", None),
+    ("#e^(LN(2)*LN(3))", "2^LN(3)", None),
+    ("5^LN(2)/2^LN(5)", "1", None),
+    ("x^LN(2)", "x^LN(2)", None),
+    # An even power of a real argument is that power of its absolute value. Expand
+    # takes the logarithm apart over it; Auto keeps the shorter `LN(x^2)`, as the
+    # rule of 6.2 does not reach it, and so does a complex argument.
+    ("LN(x^2)", "2*LN(ABS(x))", Context(logarithm=Direction.EXPAND)),
+    ("LN(4*x^2)", "2*LN(ABS(x)) + 2*LN(2)", Context(logarithm=Direction.EXPAND)),
+    ("LN(x^3)", "LN(x^3)", Context(logarithm=Direction.EXPAND)),
+    (
+        "LN(z^2)",
+        "LN(z^2)",
+        declared("z :epsilon Complex", logarithm=Direction.EXPAND),
+    ),
 ]
 
 
@@ -805,6 +994,79 @@ RECTANGULAR = [
 @pytest.mark.parametrize(("text", "expected"), RECTANGULAR, ids=str)
 def test_a_numeric_power_that_is_complex_is_written_in_rectangular_form(text, expected):
     assert simp(text) == expected
+
+
+#: A power to a complex exponent is its principal value, `#e^(z*LN(b))`, and an
+#: exponential turning through a rational multiple of pi is written in rectangular
+#: form where the cosine and the sine are plainly written, as a root of -1 is above.
+COMPLEX_CONSTANTS = [
+    ("#i^#i", "#e^(-pi/2)"),
+    ("(-1)^#i", "#e^(-pi)"),
+    ("#i^(2*#i)", "#e^(-pi)"),
+    ("#i^(1 + #i)", "#i*#e^(-pi/2)"),
+    # Built again around its value, the logarithm of it is its exponent.
+    ("LN(#i^#i)", "-pi/2"),
+    ("#i^#i^#i", "#i^#e^(-pi/2)"),
+    ("(2*#i)^#i", "#e^(-pi/2 + #i*LN(2))"),
+    ("(1 + #i)^#i", "#e^(-pi/4 + #i*LN(2)/2)"),
+    # A positive base keeps its power, the shorter spelling of the same exponential.
+    ("2^#i", "2^#i"),
+    ("pi^#i", "pi^#i"),
+    ("#e^(#i*pi/3)", "1/2 + SQRT(3)*#i/2"),
+    ("#e^(#i*pi/4)", "SQRT(2)/2 + SQRT(2)*#i/2"),
+    ("#e^(2*pi*#i/3)", "-1/2 + SQRT(3)*#i/2"),
+    ("#e^(-#i*pi/4)", "SQRT(2)/2 - SQRT(2)*#i/2"),
+    ("#e^(1 + #i*pi/3)", "#e*(1 + SQRT(3)*#i)/2"),
+    ("#e^(pi*#i/3 + LN(2))", "1 + SQRT(3)*#i"),
+    ("#e^(#i*pi/3)*x", "(1 + SQRT(3)*#i)*x/2"),
+    # The fifth and seventh parts of a turn are no rectangle plainly written, and a
+    # turn through one radian is no rational part of one.
+    ("#e^(#i*pi/5)", "#e^(#i*pi/5)"),
+    ("#e^(#i*pi/7)", "#e^(#i*pi/7)"),
+    ("#e^#i", "#e^#i"),
+    # A cosine or a sine of a complex number is taken apart over its real angle.
+    ("COS(pi + #i)", "-(#e^2 + 1)*#e^(-1)/2"),
+    (
+        "COS(pi/3 + #i)",
+        "#e/4 + #e^(-1)/4 - SQRT(3)*#i*(#e/2 - #e^(-1)/2)/2",
+    ),
+    ("COS(1 + #i)", "COS(1 + #i)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), COMPLEX_CONSTANTS, ids=str)
+def test_a_complex_constant_is_written_as_its_principal_value(text, expected):
+    assert simp(text) == expected
+
+
+#: A root of a polynomial that is a perfect power is taken, with the bars a real
+#: variable needs and no more: the intervals settle them, a positive base needs none,
+#: and a complex variable has no real absolute value to write.
+PERFECT_POWERS = [
+    ("SQRT(x^2 + 2*x + 1)", "ABS(x + 1)", None),
+    ("SQRT(x^2 - 2*x + 1)", "ABS(x - 1)", None),
+    ("SQRT(4*x^2 + 4*x + 1)", "ABS(2*x + 1)", None),
+    ("SQRT(x^2/4 + x + 1)", "ABS(x + 2)/2", None),
+    ("SQRT(2*x^2 + 4*x + 2)", "SQRT(2)*ABS(x + 1)", None),
+    ("SQRT(x^2 + 2*x*y + y^2)", "ABS(x + y)", None),
+    ("SQRT(x^4 + 2*x^2 + 1)", "x^2 + 1", None),
+    ("(x^2 + 2*x + 1)^(3/2)", "(x + 1)^2*ABS(x + 1)", None),
+    ("(x^4 + 4*x^3 + 6*x^2 + 4*x + 1)^(1/4)", "ABS(x + 1)", None),
+    ("SQRT(x^2 + 2*x + 1) + SQRT(x^2 - 2*x + 1)", "ABS(x - 1) + ABS(x + 1)", None),
+    ("SQRT(x^2 + 2*x + 1)", "x + 1", POSITIVE_X),
+    ("SQRT(x^2 + 2*x + 1)", "-x - 1", declared("x :epsilon Real (-inf, -1)")),
+    ("SQRT(x^2 + 2*x + 1)", "SQRT(x^2 + 2*x + 1)", COMPLEX_X),
+    # The principal cube root of a negative cube is no real number, and a negative
+    # radicand and one that is no power have no root to take.
+    ("(x^3 + 3*x^2 + 3*x + 1)^(1/3)", "(x^3 + 3*x^2 + 3*x + 1)^(1/3)", None),
+    ("SQRT(-x^2 - 2*x - 1)", "SQRT(-x^2 - 2*x - 1)", None),
+    ("SQRT(x^2 + 1)", "SQRT(x^2 + 1)", None),
+]
+
+
+@pytest.mark.parametrize(("text", "expected", "context"), PERFECT_POWERS, ids=str)
+def test_a_root_of_a_perfect_power_is_taken(text, expected, context):
+    assert simp(text, context) == expected
 
 
 # -- the calculus heads -------------------------------------------------------
@@ -2328,6 +2590,11 @@ COMPLEX_SIGNS = [
     ("SIGN(#i)", "#i"),
     ("SIGN(-3)", "-1"),
     ("SIGN(x + #i)", "SIGN(x + #i)"),
+    # An imaginary multiple of a real quantity points up or down the axis.
+    ("PHASE(#i*x)", "pi*SIGN(x)/2"),
+    ("PHASE(-3*#i*x)", "-pi*SIGN(x)/2"),
+    ("PHASE(#i*(x + 1))", "pi*SIGN(x + 1)/2"),
+    ("PHASE(x + #i)", "PHASE(x + #i)"),
 ]
 
 

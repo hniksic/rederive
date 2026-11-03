@@ -46,9 +46,12 @@ command total. Nothing sympy does can turn a valid entry into an error.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import reduce
+from itertools import combinations
 from math import gcd
 from typing import NamedTuple
 
+import mpmath
 import sympy as sp
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
@@ -545,6 +548,9 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     if held:
         expression = expression.xreplace(held)
     expression = _numeric(expression)
+    # A root of a perfect power is taken ahead of the intervals, which settle the
+    # absolute value it leaves: `SQRT(x^2 + 2*x + 1)` is `-x - 1` below -1.
+    expression = _forced(expression, _perfect_powers)
     # Before the rewrites rather than after, so that what the declared
     # intervals settle is settled for them too: `ABS(x) + ABS(x - 1)` over
     # `(0, 1)` is a sum that cancels, and only once both bars are off.
@@ -3833,6 +3839,67 @@ def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
     return candidate if _pays(candidate, expression) else expression
 
 
+def _unnested(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
+    """`rewrite`, if the result is simpler or has radicals nested less deep.
+
+    A root taken out of a root is a simplification on its own, even where the
+    terms it leaves are more: `SQRT(2 + SQRT(3))` is `SQRT(6)/2 + SQRT(2)/2` and
+    `(2 + SQRT(5))^(1/3)` is `SQRT(5)/2 + 1/2`. Not past twice the length, though,
+    which is no longer a spelling anyone would prefer.
+    """
+    candidate = _attempt(expression, rewrite)
+    if candidate is None:
+        return expression
+    if _pays(candidate, expression):
+        return candidate
+    try:
+        flatter = _nesting(candidate) < _nesting(expression)
+        short = sp.count_ops(candidate) <= 2 * sp.count_ops(expression)
+    except Exception:
+        return expression
+    return candidate if flatter and short else expression
+
+
+def _cancelled(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
+    """`rewrite`, if the result is simpler or has no call left in a denominator.
+
+    A quotient of calls that cancels to a polynomial in them is simplified whether
+    or not it is shorter, the way `(x^3 - 1)/(x - 1)` is: `SIN(3*x)/SIN(x)` is
+    `2*COS(2*x) + 1`, which is no fewer operations. Not past twice the length,
+    though, as with `_unnested`.
+    """
+    candidate = _attempt(expression, rewrite)
+    if candidate is None:
+        return expression
+    if _pays(candidate, expression):
+        return candidate
+    try:
+        cancelled = _called_denominator(expression) and not _called_denominator(
+            candidate
+        )
+        short = sp.count_ops(candidate) <= 2 * sp.count_ops(expression)
+    except Exception:
+        return expression
+    return candidate if cancelled and short else expression
+
+
+def _called_denominator(expression: sp.Basic) -> bool:
+    """Whether a trigonometric call stands in a denominator of `expression`."""
+    return any(
+        power.exp.is_negative and power.base.has(TrigonometricFunction)
+        for power in expression.atoms(sp.Pow)
+    )
+
+
+def _nesting(expression: sp.Basic) -> int:
+    """How deep the radicals of `expression` are nested in one another."""
+    if not isinstance(expression, sp.Basic) or not expression.args:
+        return 0
+    if isinstance(expression, sp.Pow) and not expression.exp.is_Integer:
+        return 1 + _nesting(expression.base)
+    return max(_nesting(argument) for argument in expression.args)
+
+
 def _forced(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
     """`rewrite`, whatever it costs: a direction asked for, a fact, or a spelling."""
     candidate = _attempt(expression, rewrite)
@@ -4071,7 +4138,7 @@ def _flat_root(power: sp.Pow) -> sp.Basic:
         return power
     for factor in sp.Mul.make_args(factored):
         candidate = _linear_root(factor)
-        if candidate is None or candidate.count_ops() >= power.count_ops():
+        if candidate is None or candidate.count_ops() > 2 * power.count_ops():
             continue
         if sp.expand(sp.radsimp(candidate**exponent.q - power.base)) != 0:
             continue
@@ -4272,6 +4339,99 @@ def _over_radicals(
     return True
 
 
+#: How large a field the values of the trigonometric constants are sought in: the
+#: degree of the cyclotomic field their angles lie in, times the orders of the roots
+#: beside them, a bound on how long the minimal polynomial takes. Sympy writes a
+#: cosine past a quarter turn as the sine of an angle with twice the denominator, so
+#: an eleventh of pi becomes a twenty-second, and the degree that covers it is 20.
+_TRIGONOMETRIC_DEGREE = 24
+_TRIGONOMETRIC_SIZE = 10**12
+
+
+def _trigonometric_constants(expression: sp.Basic) -> sp.Basic:
+    """Every sum or product of trigonometric values of rational multiples of pi
+    that is a rational number or a quadratic surd, written as one.
+
+    `COS(pi/7) - COS(2*pi/7) + COS(3*pi/7)` is 1/2 and
+    `SIN(pi/7)*SIN(2*pi/7)*SIN(3*pi/7)` is `SQRT(7)/8`, though no one of their
+    calls is anything simpler. Each such value is an algebraic number, the minimal
+    polynomial of the whole says exactly which, and a polynomial of degree one or
+    two is solved for its roots; of two roots, the one whose value this is, which
+    thirty digits tell apart, is kept, as `_flat_value` keeps its branch.
+
+    A call alone is not asked about: sympy writes the values it has a spelling for
+    as it builds the call, and the rest have none of degree two.
+    """
+    return expression.replace(
+        lambda part: isinstance(part, sp.Add | sp.Mul),
+        _trigonometric_part,
+        simultaneous=False,
+    )
+
+
+def _trigonometric_part(part: sp.Add | sp.Mul) -> sp.Basic:
+    """`part` with its trigonometric constant written as a number, gathered out of
+    a product the way `_flat_part` gathers its constant."""
+    if part.is_number:
+        return _trigonometric_value(part)
+    if not isinstance(part, sp.Mul):
+        return part
+    constants = [factor for factor in part.args if factor.is_number]
+    if len(constants) < 2:
+        return part
+    value = sp.Mul(*constants)
+    written = _trigonometric_value(value)
+    if written is value:
+        return part
+    return written * sp.Mul(*[factor for factor in part.args if not factor.is_number])
+
+
+def _trigonometric_value(part: sp.Basic) -> sp.Basic:
+    calls = part.atoms(TrigonometricFunction)
+    if not calls or (len(calls) == 1 and not part.has(sp.Pow)):
+        return part
+    degree = _cyclotomic_degree(part)
+    if degree is None or degree > _TRIGONOMETRIC_DEGREE:
+        return part
+    try:
+        minimal = sp.Poly(sp.minimal_polynomial(part, _ROOT), _ROOT)
+    except Exception:
+        return part
+    # Integer coefficients this small keep two roots far further apart than the
+    # thirty digits `_same_number` compares, and an answer this large is no simpler.
+    if minimal.degree() > 2 or max(map(abs, minimal.coeffs())) > _TRIGONOMETRIC_SIZE:
+        return part
+    for candidate in sp.roots(minimal, multiple=True):
+        if candidate.count_ops() < part.count_ops() and _same_number(candidate, part):
+            return candidate
+    return part
+
+
+def _cyclotomic_degree(constant: sp.Basic) -> int | None:
+    """A bound on the degree of the field `constant` lies in, or None where it is
+    not rational arithmetic over trigonometric values of rational multiples of pi
+    and roots of positive rationals."""
+    denominator, orders = 1, 1
+    for part in sp.preorder_traversal(constant):
+        if isinstance(part, TrigonometricFunction):
+            turn = part.args[0] / sp.pi
+            if not turn.is_Rational:
+                return None
+            denominator = sp.ilcm(denominator, turn.q)
+        elif isinstance(part, sp.Pow):
+            if not part.exp.is_Rational:
+                return None
+            if part.exp.q > 1:
+                if not (part.base.is_Rational and part.base.is_positive):
+                    return None
+                orders *= part.exp.q
+        elif isinstance(part, sp.Function) or (
+            part.is_Atom and not part.is_Rational and part is not sp.pi
+        ):
+            return None
+    return int(sp.totient(2 * denominator)) * orders
+
+
 # -- the trigonometric, logarithmic and power rules --------------------------
 
 
@@ -4340,12 +4500,22 @@ def _right_angle(expression: sp.Basic) -> sp.Basic | None:
     arcs: dict[tuple, int] = {}
     for index, term in enumerate(expression.args):
         arc, coefficient = _arc(term)
-        if arc is not None:
-            arcs[(type(arc), coefficient, arc.args[0])] = index
+        if arc is None:
+            continue
+        arcs[(type(arc), coefficient, arc.args[0])] = index
+        # `ATAN(1/u)` is `ACOT(u)` for every real `u` but zero, where the first is
+        # not defined, so it pairs with `ATAN(u)` the way `ACOT(u)` does.
+        if isinstance(arc, sp.atan) and not arc.args[0].is_number:
+            arcs.setdefault((sp.acot, coefficient, 1 / arc.args[0]), index)
     for (func, coefficient, argument), index in arcs.items():
         other = arcs.get((_COMPLEMENT[func], coefficient, argument))
         if other is None or other == index:
             continue
+        pair = {type(_arc(expression.args[i])[0]) for i in (index, other)}
+        if pair == {sp.atan}:
+            # The pair is `ATAN(u) + ATAN(1/u)`, whose turn either argument tells:
+            # the shorter is the one to write it about.
+            func, argument = sp.atan, min(argument, 1 / argument, key=sp.count_ops)
         angle = _quarter_turn(func, argument)
         if angle is None:
             continue
@@ -4385,7 +4555,7 @@ def _quarter_turn(func: type, argument: sp.Basic) -> sp.Basic | None:
     `-pi/2`. A pair nothing declares real stays as it was written.
     """
     if func in (sp.atan, sp.acot):
-        if not argument.is_real:
+        if not _real_where_defined(argument):
             return None
         if argument.is_nonnegative:
             return sp.pi / 2
@@ -4393,6 +4563,168 @@ def _quarter_turn(func: type, argument: sp.Basic) -> sp.Basic | None:
             return -sp.pi / 2
         return sp.pi * sp.sign(argument) / 2
     return sp.pi / 2
+
+
+#: How large a sum of arctangents of numbers is combined: the terms it may hold, the
+#: whole multiple each may carry, and how many bits the Gaussian integers multiplied
+#: for it may grow to.
+_ARCTANGENTS = 8
+_ARCTANGENT_MULTIPLE = 12
+_ARCTANGENT_BITS = 4096
+
+
+def _arc_tangent_sums(expression: sp.Basic) -> sp.Basic:
+    """Arctangents of rational numbers added up, wherever they add to something
+    simpler."""
+    return expression.replace(
+        lambda e: isinstance(e, sp.Add) and e.has(sp.atan),
+        _arc_tangent_sum,
+        simultaneous=False,
+    )
+
+
+def _arc_tangent_sum(expression: sp.Add) -> sp.Basic:
+    """This sum with its arctangents of rationals combined.
+
+    `ATAN(p/q)` with `q > 0` is the argument of the Gaussian integer `q + p*#i`, so a
+    whole combination of them is the argument of a product of such integers, each
+    raised to its multiple, up to a whole number of turns. The argument of a
+    Gaussian integer is a rational multiple of pi exactly when the integer lies on
+    an axis or a diagonal, and then the combination is that multiple: which is
+    Machin's `4*ATAN(1/5) - ATAN(1/239) = pi/4`, and `ATAN(2) + ATAN(3) = 3*pi/4`.
+    The whole turns are read off the value, from which every other candidate is at
+    least a turn away.
+
+    Where no part of the sum lies on such a line, its arctangents are combined into
+    one only where they are a plain sum and the one argument is no larger than
+    those it replaces: `ATAN(1/3) + ATAN(1/7)` is `ATAN(1/2)`, while
+    `ATAN(1/2) + ATAN(1/4)` stays rather than become `ATAN(6/7)`.
+
+    The terms are grouped by what multiplies their whole coefficient, so the rule
+    holds in degree measure too, where each arc comes multiplied by `180/pi`, and
+    for `y*ATAN(1/2) + y*ATAN(1/3)`.
+    """
+    groups: dict[sp.Basic, list[tuple[sp.Rational, sp.Rational]]] = {}
+    rest = []
+    for term in expression.args:
+        arc = _rational_arc(term)
+        if arc is None:
+            rest.append(term)
+            continue
+        scale, coefficient, argument = arc
+        groups.setdefault(scale, []).append((coefficient, argument))
+    if not any(len(arcs) > 1 for arcs in groups.values()):
+        return expression
+    terms = list(rest)
+    for scale, arcs in groups.items():
+        # The coefficients over their common measure, which leaves the whole
+        # multiples the Gaussian integers are raised to.
+        measure = reduce(sp.gcd, [coefficient for coefficient, _ in arcs])
+        multiples = [(int(coefficient / measure), r) for coefficient, r in arcs]
+        if any(abs(multiple) > _ARCTANGENT_MULTIPLE for multiple, _ in multiples):
+            terms.extend(coefficient * scale * sp.atan(r) for coefficient, r in arcs)
+            continue
+        terms.extend(measure * scale * term for term in _combined_arcs(multiples))
+    return sp.Add(*terms)
+
+
+def _rational_arc(
+    term: sp.Basic,
+) -> tuple[sp.Basic, sp.Rational, sp.Rational] | None:
+    """`(scale, c, r)` where `term` is `c*scale*ATAN(r)` for rationals `c` and `r`."""
+    arcs = [factor for factor in sp.Mul.make_args(term) if isinstance(factor, sp.atan)]
+    if len(arcs) != 1 or not arcs[0].args[0].is_Rational:
+        return None
+    coefficient, scale = (term / arcs[0]).as_coeff_Mul()
+    if not coefficient.is_Rational or scale.has(sp.atan):
+        return None
+    return scale, coefficient, arcs[0].args[0]
+
+
+def _combined_arcs(arcs: list[tuple[int, sp.Rational]]) -> list[sp.Basic]:
+    """The terms `k*ATAN(r)` add up to, each part on an axis or diagonal combined."""
+    bits = sum(
+        abs(multiple) * (max(abs(r.p), r.q).bit_length() + 1) for multiple, r in arcs
+    )
+    if len(arcs) > _ARCTANGENTS or bits > _ARCTANGENT_BITS:
+        return [multiple * sp.atan(r) for multiple, r in arcs]
+    terms = []
+    left = list(arcs)
+    for size in range(len(left), 1, -1):
+        found = True
+        while found and len(left) >= size:
+            found = False
+            for chosen in combinations(range(len(left)), size):
+                part = [left[index] for index in chosen]
+                angle = _straight_angle(part)
+                if angle is not None:
+                    terms.append(angle)
+                    left = [arc for index, arc in enumerate(left) if index not in chosen]
+                    found = True
+                    break
+    if len(left) > 1 and all(abs(multiple) == 1 for multiple, _ in left):
+        single = _single_arc(left)
+        if single is not None:
+            return [*terms, single]
+    return [*terms, *(multiple * sp.atan(r) for multiple, r in left)]
+
+
+def _gaussian(arcs: list[tuple[int, sp.Rational]]) -> tuple[int, int]:
+    """The Gaussian integer whose argument is `sum(k*ATAN(r))`, up to whole turns.
+
+    A negative multiple takes the conjugate, which has the opposite argument and is
+    the reciprocal over a positive real.
+    """
+    real, imaginary = 1, 0
+    for multiple, r in arcs:
+        a, b = r.q, r.p if multiple > 0 else -r.p
+        for _ in range(abs(multiple)):
+            real, imaginary = real * a - imaginary * b, real * b + imaginary * a
+    return real, imaginary
+
+
+def _value(arcs: list[tuple[int, sp.Rational]]) -> mpmath.mpf:
+    with mpmath.workdps(30):
+        return sum(multiple * mpmath.atan(mpmath.mpf(r.p) / r.q) for multiple, r in arcs)
+
+
+def _straight_angle(arcs: list[tuple[int, sp.Rational]]) -> sp.Basic | None:
+    """The rational multiple of pi these arcs add to, or None where it is none."""
+    real, imaginary = _gaussian(arcs)
+    if real != 0 and imaginary != 0 and abs(real) != abs(imaginary):
+        return None
+    # Which of the eight directions the integer points in, as a multiple of pi/4.
+    direction = round(mpmath.atan2(imaginary, real) / (mpmath.pi / 4))
+    turns = round((_value(arcs) - direction * mpmath.pi / 4) / (2 * mpmath.pi))
+    return sp.pi * sp.Rational(direction + 8 * turns, 4)
+
+
+def _single_arc(arcs: list[tuple[int, sp.Rational]]) -> sp.Basic | None:
+    """These arcs as one arctangent, if it is that and no larger than they are."""
+    real, imaginary = _gaussian(arcs)
+    argument = sp.Rational(imaginary, real)
+    if max(abs(argument.p), argument.q) > max(max(abs(r.p), r.q) for _, r in arcs):
+        return None
+    with mpmath.workdps(30):
+        if abs(_value(arcs) - mpmath.atan(mpmath.mpf(imaginary) / real)) > 1e-20:
+            return None
+    return sp.atan(argument)
+
+
+def _real_where_defined(argument: sp.Basic) -> bool:
+    """Whether `argument` is real wherever it is defined.
+
+    Sympy will not say so of `1/x` or `x/y`, which are infinite where a denominator
+    vanishes, but neither arc of such an argument is defined there either, so a
+    rational function of real variables over real numbers counts.
+    """
+    if argument.is_extended_real:
+        return True
+    return (
+        bool(argument.is_rational_function())
+        and all(symbol.is_real for symbol in argument.free_symbols)
+        and not argument.has(sp.I)
+    )
 
 
 def _simpler_arcs(expression: sp.Basic) -> sp.Basic:
@@ -4448,6 +4780,37 @@ def _vanishes(difference: sp.Basic) -> bool:
     rather than comparing two trees.
     """
     return bool(sp.expand(difference).is_zero)
+
+
+#: The arcs a sine or cosine of a multiple of one is written out about, and the
+#: largest multiple. `TAN` is written out about the arctangent alone, the one arc
+#: whose double tangent is a rational function.
+_ARCS = (sp.asin, sp.acos, sp.atan)
+_ARC_MULTIPLE = 4
+
+
+def _arc_multiples(expression: sp.Basic) -> sp.Basic:
+    """A sine, cosine or tangent of a small multiple of an arc, as the algebraic
+    function it is.
+
+    Sympy writes `SIN(ACOS(x))` as `SQRT(1 - x^2)` as it is built, and the
+    multiple-angle formulas carry that to `SIN(2*ACOS(x))`, which is
+    `2*x*SQRT(1 - x^2)`. Over the whole plane, as the single angle is: the
+    formulas are identities, and the calls of the arc are the principal values
+    they are on either side.
+    """
+    return expression.replace(_is_arc_multiple, sp.expand_trig, simultaneous=False)
+
+
+def _is_arc_multiple(expression: sp.Basic) -> bool:
+    if not isinstance(expression, (sp.sin, sp.cos, sp.tan)):
+        return False
+    multiple, arc = expression.args[0].as_coeff_Mul()
+    if not (multiple.is_Integer and 1 < multiple <= _ARC_MULTIPLE):
+        return False
+    if isinstance(expression, sp.tan):
+        return isinstance(arc, sp.atan)
+    return isinstance(arc, _ARCS)
 
 
 def _half_angles(expression: sp.Basic) -> sp.Basic:
@@ -4523,6 +4886,113 @@ def _phase_angle(expression: sp.Basic) -> sp.Basic | None:
     return sp.sqrt(a**2 + b**2) * sp.sin(angle + sp.atan2(b, a))
 
 
+#: How far `_multiple_angles` writes calls out over their single angle: the largest
+#: degree over it, a call's multiple times the power it is raised to, and how many
+#: operations the expression may hold. A sine of twelve times an angle is a
+#: polynomial of degree twelve, which is as far as any identity a worksheet states
+#: will go.
+_MULTIPLE_ANGLE = 12
+_MULTIPLE_OPERATIONS = 60
+_DEGREE = 4 * _MULTIPLE_ANGLE
+
+
+def _multiple_angles(expression: sp.Basic) -> sp.Basic:
+    """Sines and cosines of whole multiples of one angle reduced together.
+
+    `trigsimp` rewrites a sum from the bottom up, each term in its own way, and a
+    sum whose terms cancel only together is left half rewritten:
+    `SIN(x)^6 + COS(x)^6 + 3*SIN(x)^2*COS(x)^2` is 1, and `trigsimp` turns its last
+    term into `3/8 - 3*COS(4*x)/8` and stops there. Neither does it cancel
+    `SIN(3*x)/SIN(x)`, whose quotient is a polynomial only once both calls are
+    written over the one angle.
+
+    Written over the single angle and cancelled, a polynomial in its sine and
+    cosine has two spellings that are unique: the sum of sines and cosines of its
+    multiples, which is how `trigsimp` writes `SIN(x)^2*COS(x)^2`, and the
+    polynomial in one of the two functions alone, the other's square being one
+    less the first's. The shortest of these is what is offered, the sum of
+    multiples where they tie, so `SIN(3*x)/SIN(x)` is `2*COS(2*x) + 1`.
+    """
+    angle = _whole_angle(expression)
+    if angle is None:
+        return expression
+    single = sp.cancel(sp.expand_trig(expression))
+    sine, cosine = sp.sin(angle), sp.cos(angle)
+    candidates = []
+    # A quotient left over may cancel further once a square of one function is
+    # written over the other: `SIN(x)^3/(COS(x)^2 - 1)` is `-SIN(x)`.
+    for form in (
+        single,
+        sp.cancel(sp.expand(TR5(single, max=_DEGREE))),
+        sp.cancel(sp.expand(TR6(single, max=_DEGREE))),
+    ):
+        if not _trigonometric_polynomial(form, sine, cosine):
+            candidates.append(form)
+            continue
+        squares = sp.expand(form)
+        candidates += [
+            _sum_of_multiples(squares),
+            sp.expand(TR5(squares, max=_DEGREE)),
+            sp.expand(TR6(squares, max=_DEGREE)),
+        ]
+    return min(candidates, key=sp.count_ops)
+
+
+def _whole_angle(expression: sp.Basic) -> sp.Basic | None:
+    """The angle every sine and cosine in `expression` is a whole multiple of.
+
+    None unless at least two different multiples of it are there, which is what
+    makes writing them over one angle a step `trigsimp` does not take; and none
+    where another trigonometric call stands beside them, or the expression is too
+    large to expand.
+    """
+    calls = expression.atoms(TrigonometricFunction)
+    if not calls or any(not isinstance(call, (sp.sin, sp.cos)) for call in calls):
+        return None
+    angles, multiples = set(), set()
+    for call in calls:
+        multiple, angle = call.args[0].as_coeff_Mul()
+        if not multiple.is_Integer or abs(multiple) > _MULTIPLE_ANGLE:
+            return None
+        angles.add(angle)
+        multiples.add(abs(multiple))
+    # The degree over the single angle: a power of a call multiplies its multiple.
+    for power in expression.atoms(sp.Pow):
+        if isinstance(power.base, (sp.sin, sp.cos)):
+            multiple = power.base.args[0].as_coeff_Mul()[0]
+            if abs(power.exp * multiple) > _MULTIPLE_ANGLE:
+                return None
+    if len(angles) != 1 or len(multiples) < 2:
+        return None
+    if sp.count_ops(expression) > _MULTIPLE_OPERATIONS:
+        return None
+    return angles.pop()
+
+
+def _trigonometric_polynomial(
+    expression: sp.Basic, sine: sp.Basic, cosine: sp.Basic
+) -> bool:
+    """Whether `expression` is a polynomial in this sine and cosine."""
+    s, c = sp.Dummy(), sp.Dummy()
+    bare = expression.xreplace({sine: s, cosine: c})
+    return bool(bare.is_polynomial(s, c)) and not bare.has(TrigonometricFunction)
+
+
+def _sum_of_multiples(polynomial: sp.Basic) -> sp.Basic:
+    """A polynomial in sines and cosines as a sum of the calls of multiple angles.
+
+    Each round of `TR8` writes the products it finds as sums, which may leave
+    squares of the calls it wrote, so the rounds go on until nothing changes; the
+    degree bounds how many there can be.
+    """
+    for _ in range(2 * _MULTIPLE_ANGLE):
+        written = sp.expand(TR8(polynomial))
+        if written == polynomial:
+            break
+        polynomial = written
+    return polynomial
+
+
 def _nonnegatively(rewrite: Rewrite) -> Rewrite:
     """`rewrite` run with every nonnegative variable standing up as a positive one.
 
@@ -4553,20 +5023,81 @@ def _nonnegatively(rewrite: Rewrite) -> Rewrite:
     return run
 
 
-def _extracted_powers(expression: sp.Basic) -> sp.Basic:
-    """`LN(z^k)` written as `k*LN(z)`, everywhere the rule holds."""
+def _logarithmic_powers(expression: sp.Basic) -> sp.Basic:
+    """`b^LN(a)` written as `a^LN(b)` for positive rationals `a < b`.
+
+    Both are `#e^(LN(a)*LN(b))`, so `2^LN(3) - 3^LN(2)` is 0, and nothing that
+    compares the two terms can see it until they are written over one base. The
+    smaller base is the one kept, which is how the exponential of a product of two
+    logarithms is written too: `#e^(LN(2)*LN(3))` is `2^LN(3)`.
+    """
     return expression.replace(
-        lambda e: _extracted_power(e) is not None,
-        lambda e: _extracted_power(e),
+        lambda e: _over_the_smaller_base(e) is not None,
+        lambda e: _over_the_smaller_base(e),
         simultaneous=False,
     )
 
 
-def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
+def _over_the_smaller_base(expression: sp.Basic) -> sp.Basic | None:
+    if isinstance(expression, sp.exp):
+        base, exponent = sp.E, expression.args[0]
+    elif isinstance(expression, sp.Pow):
+        base, exponent = expression.args
+    else:
+        return None
+    logarithms = [
+        factor
+        for factor in sp.Mul.make_args(exponent)
+        if isinstance(factor, sp.log) and _positive_rational(factor.args[0])
+    ]
+    if base is sp.E:
+        for factor in sp.Mul.make_args(exponent):
+            inner, power = factor.as_base_exp()
+            if isinstance(inner, sp.log) and _positive_rational(inner.args[0]):
+                if power.is_Integer and power > 1:
+                    logarithms.extend([inner, inner])
+        if len(logarithms) < 2:
+            return None
+        logarithms = sorted(logarithms, key=lambda log: log.args[0])[:2]
+        smaller, larger = logarithms[0].args[0], logarithms[1].args[0]
+        rest = exponent / (logarithms[0] * logarithms[1])
+        return sp.Pow(smaller, rest * sp.log(larger))
+    if not (_positive_rational(base) and logarithms):
+        return None
+    argument = min(log.args[0] for log in logarithms)
+    if argument >= base:
+        return None
+    rest = exponent / sp.log(argument)
+    return sp.Pow(argument, rest * sp.log(base))
+
+
+def _positive_rational(number: sp.Basic) -> bool:
+    return bool(number.is_Rational and number.is_positive and number != 1)
+
+
+def _extracted_powers(expression: sp.Basic, even: bool = False) -> sp.Basic:
+    """`LN(z^k)` written as `k*LN(z)`, everywhere the rule holds."""
+    return expression.replace(
+        lambda e: _extracted_power(e, even) is not None,
+        lambda e: _extracted_power(e, even),
+        simultaneous=False,
+    )
+
+
+def _expanded_powers(expression: sp.Basic) -> sp.Basic:
+    """`LN(z^k)` written as `k*LN(z)`, and an even power of a real `z` as
+    `k*LN(ABS(z))`."""
+    return _extracted_powers(expression, even=True)
+
+
+def _extracted_power(expression: sp.Basic, even: bool = False) -> sp.Basic | None:
     """`k*LN(z)`, if `expression` is a logarithm of `z^k` that may be taken apart.
 
     6.2 gives the rule as `k*LN(x) <-> LN(x^k)` for a rational `k` where `x` is
-    nonnegative, and for any `x` where `-1 < k <= 1`.
+    nonnegative, and for any `x` where `-1 < k <= 1`. With `even`, an even power of
+    a real `x` is taken apart as well, being the same power of `ABS(x)`: `LN(x^2)`
+    is `2*LN(ABS(x))`. That is a direction Logarithm Expand asks for, and longer
+    than what it replaces, so Auto keeps `LN(x^2)`.
     """
     if not isinstance(expression, sp.log) or len(expression.args) != 1:
         return None
@@ -4579,9 +5110,11 @@ def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
     base, exponent = argument.args
     if not exponent.is_Rational:
         return None
-    if not (base.is_nonnegative or bool(-1 < exponent <= 1)):
-        return None
-    return exponent * sp.log(base)
+    if base.is_nonnegative or bool(-1 < exponent <= 1):
+        return exponent * sp.log(base)
+    if even and exponent.is_Integer and exponent.is_even and _real_where_defined(base):
+        return exponent * sp.log(sp.Abs(base))
+    return None
 
 
 def _perfect_power(number: sp.Rational) -> tuple[sp.Rational, sp.Integer] | None:
@@ -4616,6 +5149,60 @@ def _collected_powers(expression: sp.Basic) -> sp.Basic:
     rewrite in rather than a normal form.
     """
     return sp.powsimp(expression, combine="exp")
+
+
+#: How large a radicand may be for its square-free factorization to be asked for: the
+#: terms it has and its total degree. Squares a worksheet writes are a few terms of
+#: low degree, and the factorization of anything larger is the cost of a question
+#: nobody asked.
+_PERFECT_TERMS = 24
+_PERFECT_DEGREE = 12
+
+
+def _perfect_powers(expression: sp.Basic) -> sp.Basic:
+    """A root of a polynomial that is a perfect power taken.
+
+    `SQRT(x^2 + 2*x + 1)` is `ABS(x + 1)` for a real `x`, the way `SQRT((x + 1)^2)`
+    is, and `(x^2 + 2*x + 1)^(3/2)` is `(x + 1)^2*ABS(x + 1)`. The radicand is a
+    positive rational times a power of a polynomial, and the root of that power is
+    sympy's, which knows what the variables are declared to be: there are no bars
+    where the base is provably nonnegative, `SQRT(x^4 + 2*x^2 + 1)` being `x^2 + 1`, and a
+    complex variable keeps its root, there being no real absolute value to write.
+    """
+    return expression.replace(_is_polynomial_root, _perfect_root, simultaneous=False)
+
+
+def _is_polynomial_root(expression: sp.Basic) -> bool:
+    return (
+        isinstance(expression, sp.Pow)
+        and bool(expression.exp.is_Rational)
+        and not expression.exp.is_Integer
+        and isinstance(expression.base, sp.Add)
+        and len(expression.base.args) <= _PERFECT_TERMS
+        and bool(expression.base.free_symbols)
+    )
+
+
+def _perfect_root(power: sp.Pow) -> sp.Basic:
+    base, exponent = power.args
+    try:
+        polynomial = sp.Poly(base, *sorted(base.free_symbols, key=sp.default_sort_key))
+    except sp.PolynomialError:
+        return power
+    if not polynomial.domain.is_QQ and not polynomial.domain.is_ZZ:
+        return power
+    if polynomial.total_degree() > _PERFECT_DEGREE:
+        return power
+    content, factors = sp.sqf_list(base)
+    multiple = reduce(gcd, (int(times) for _, times in factors), 0)
+    if multiple < 2 or not content.is_positive:
+        return power
+    root = sp.Mul(*(factor ** (times // multiple) for factor, times in factors))
+    whole = root**multiple
+    taken = content**exponent * whole**exponent
+    if any(found.base == whole for found in taken.atoms(sp.Pow)):
+        return power
+    return taken
 
 
 def _real_roots(expression: sp.Basic) -> sp.Basic:
@@ -4685,6 +5272,141 @@ def _plainly_written(value: sp.Basic) -> bool:
     )
 
 
+def _imaginary_phases(expression: sp.Basic) -> sp.Basic:
+    """`PHASE(#i*u)` as `pi*SIGN(u)/2`, for a real `u`.
+
+    An imaginary number points up or down the imaginary axis as its coefficient is
+    signed. At zero, where `PHASE` has no value, the answer is 0.
+    """
+    return expression.replace(
+        lambda e: _imaginary_phase(e) is not None,
+        lambda e: _imaginary_phase(e),
+        simultaneous=False,
+    )
+
+
+def _imaginary_phase(expression: sp.Basic) -> sp.Basic | None:
+    if not isinstance(expression, sp.arg):
+        return None
+    coefficient, rest = expression.args[0].as_coeff_Mul()
+    imaginary = [factor for factor in sp.Mul.make_args(rest) if factor is sp.I]
+    if len(imaginary) != 1:
+        return None
+    real = coefficient * rest / sp.I
+    if not _real_where_defined(real):
+        return None
+    return sp.pi * sp.sign(real) / 2
+
+
+def _arcs_off_the_line(expression: sp.Basic) -> sp.Basic:
+    """An arcsine or arccosine of a real number past 1 in size, in rectangular form.
+
+    Their values there are complex, and a complex constant is written as real part
+    plus imaginary, the way `ACOSH(1/2)` is `#i*pi/3` and `ATANH(2)` is
+    `LN(3)/2 - #i*pi/2`: `ASIN(2)` is `pi/2 - #i*LN(SQRT(3) + 2)`. The principal
+    values are those of `-#i*LN(#i*z + SQRT(1 - z^2))` and `pi/2 - ASIN(z)`.
+    """
+    return expression.replace(_is_arc_off_the_line, _arc_rectangle, simultaneous=False)
+
+
+def _is_arc_off_the_line(expression: sp.Basic) -> bool:
+    if not isinstance(expression, (sp.asin, sp.acos)):
+        return False
+    argument = expression.args[0]
+    return bool(
+        argument.is_number
+        and argument.is_extended_real
+        and (sp.Abs(argument) - 1).is_positive
+    )
+
+
+def _arc_rectangle(expression: sp.asin | sp.acos) -> sp.Basic:
+    argument = expression.args[0]
+    size = sp.Abs(argument)
+    logarithm = sp.log(size + sp.sqrt(size**2 - 1))
+    if isinstance(expression, sp.asin):
+        return sp.sign(argument) * (sp.pi / 2 - sp.I * logarithm)
+    if argument.is_positive:
+        return sp.I * logarithm
+    return sp.pi - sp.I * logarithm
+
+
+def _complex_constants(expression: sp.Basic) -> sp.Basic:
+    """Every numeric power with a complex exponent written over its principal value.
+
+    `b^z` is `#e^(z*LN(b))` with the principal logarithm, so `#i^#i` is `#e^(-pi/2)`,
+    `(-1)^#i` is `#e^(-pi)` and `(2*#i)^#i` is `#e^(#i*LN(2) - pi/2)`. A positive base
+    keeps its power, which is the shorter way to write the same exponential: `2^#i`
+    stands. An exponential whose imaginary part is a rational multiple of pi is then
+    real part plus imaginary where the cosine and the sine are plainly written, as
+    `_rectangular` has it for roots of -1: `#e^(#i*pi/3)` is `1/2 + SQRT(3)*#i/2`, and
+    `#e^(#i*pi/5)` stands. A cosine or a sine of a complex number is taken apart the
+    same way, `COS(pi/3 + #i)` being `COS(pi/3)*COSH(1) - #i*SIN(pi/3)*SINH(1)`.
+
+    Bottom up, so that what holds such a constant is built again around its value:
+    `LN(#i^#i)` is `-pi/2`.
+    """
+    return expression.replace(_is_complex_constant, _principal_value, simultaneous=False)
+
+
+def _is_complex_constant(expression: sp.Basic) -> bool:
+    if isinstance(expression, sp.Pow):
+        return bool(
+            expression.base.is_number
+            and expression.exp.is_number
+            and expression.exp.is_real is False
+        )
+    if isinstance(expression, (sp.exp, sp.sin, sp.cos)):
+        argument = expression.args[0]
+        return bool(argument.is_number and argument.is_real is False)
+    return False
+
+
+def _principal_value(expression: sp.Basic) -> sp.Basic:
+    if isinstance(expression, sp.Pow):
+        base, exponent = expression.args
+        if base.is_positive:
+            return expression
+        real, imaginary = sp.log(base).as_real_imag()
+        logarithm = real + sp.I * imaginary
+        return _rectangular_exponential(sp.exp(sp.expand(exponent * logarithm)))
+    if isinstance(expression, sp.exp):
+        return _rectangular_exponential(expression)
+    real, imaginary = expression.args[0].as_real_imag()
+    if real == 0:
+        return expression
+    angle = _plain_angle(real)
+    if angle is None:
+        return expression
+    cosine, sine = angle
+    if isinstance(expression, sp.cos):
+        return cosine * sp.cosh(imaginary) - sp.I * sine * sp.sinh(imaginary)
+    return sine * sp.cosh(imaginary) + sp.I * cosine * sp.sinh(imaginary)
+
+
+def _rectangular_exponential(power: sp.Basic) -> sp.Basic:
+    """`#e^(a + b*#i)` as `#e^a*(COS(b) + #i*SIN(b))`, where those are plainly written."""
+    if not isinstance(power, sp.exp):
+        return power
+    real, imaginary = power.args[0].as_real_imag()
+    angle = _plain_angle(imaginary)
+    if angle is None:
+        return power
+    cosine, sine = angle
+    return sp.exp(real) * (cosine + sp.I * sine)
+
+
+def _plain_angle(angle: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
+    """The cosine and the sine of a rational multiple of pi, where both are plainly
+    written, and None otherwise."""
+    if not (angle / sp.pi).is_Rational:
+        return None
+    cosine, sine = sp.cos(angle), sp.sin(angle)
+    if not _plainly_written(cosine + sine):
+        return None
+    return cosine, sine
+
+
 # -- the kernel layer --------------------------------------------------------
 #
 # Every rewrite above is a rule about kernels - the trigonometric, logarithmic,
@@ -4722,6 +5444,9 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     """
     if expression.has(sp.MatrixExpr):
         return _forced(expression, _distributed)
+    # Ahead of the definitions, which write the hyperbolic parts it leaves over
+    # exponentials.
+    expression = _forced(expression, _complex_constants)
     expression = _by_definition(expression)
     expression = _applied(expression, _IDENTITIES, context)
     for setting, directions in _DIRECTED.items():
@@ -4782,6 +5507,10 @@ def _on_powers(rewrite: Rewrite) -> Rewrite:
 #: `_pays` says the answer is simpler; forced ones are facts about the kernels they
 #: relate, where gating would keep the longer side for being no longer.
 _IDENTITIES = (
+    _Rule("arcs off the line", _arcs_off_the_line, _forced,
+          "ASIN(2) is pi/2 - #i*LN(SQRT(3) + 2): a complex value in rectangular form"),
+    _Rule("imaginary phases", _imaginary_phases, _forced,
+          "PHASE(#i*x) is pi*SIGN(x)/2 for a real x"),
     _Rule("signs", _folded_signs, _forced,
           "ABS(u)*SIGN(u) is u and u/ABS(u) is SIGN(u), for a real u"),
     _Rule("combinatorial", _combinatorial, _gated,
@@ -4792,13 +5521,21 @@ _IDENTITIES = (
     _Rule("simpler arcs", _simpler_arcs, _gated,
           "ASIN(u/SQRT(u^2 + 1)) is ATAN(u): an arc about the shorter argument"),
     _Rule("complementary arcs", _complementary_arcs, _forced,
-          "ASIN(u) + ACOS(u) is pi/2 and ATAN(u) + ACOT(u) is pi*SIGN(u)/2"),
+          "ASIN(u) + ACOS(u) is pi/2 and ATAN(u) + ATAN(1/u) is pi*SIGN(u)/2"),
+    _Rule("arctangent sums", _arc_tangent_sums, _forced,
+          "ATAN(2) + ATAN(3) is 3*pi/4: arctangents of numbers added up"),
+    _Rule("arc multiples", _arc_multiples, _forced,
+          "SIN(2*ACOS(x)) is 2*x*SQRT(1 - x^2): a call of a multiple of an arc"),
+    _Rule("logarithmic powers", _logarithmic_powers, _forced,
+          "3^LN(2) is 2^LN(3): a power to a logarithm written over the smaller base"),
     _Rule("half angles", _half_angles, _gated,
           "calls of fractional multiples of one angle cancel written about it"),
-    _Rule("denested", _denested, _gated,
+    _Rule("denested", _denested, _unnested,
           "SQRT(5 + SQRT(24)) is SQRT(2) + SQRT(3): each radical denested"),
     _Rule("flattened", _flattened, _gated,
           "a constant over nested radicals reduced in the field its surds span"),
+    _Rule("trigonometric constants", _trigonometric_constants, _gated,
+          "COS(pi/9)*COS(2*pi/9)*COS(4*pi/9) is 1/8: values of rational angles"),
     _Rule("one denominator", sp.radsimp, _gated,
           "a denominator under a denominator is cleared, #e^(-z) put over #e^z"),
 )
@@ -4829,6 +5566,8 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
         Direction.AUTO: (
             _Rule("trigsimp", sp.trigsimp, _gated,
                   "trigonometric identities, where they cancel something"),
+            _Rule("multiple angles", _multiple_angles, _cancelled,
+                  "SIN(3*x)/SIN(x) is 2*COS(2*x) + 1: multiples of one angle reduced"),
         ),
         Direction.COLLECT: (
             _Rule("phase angles", _phase_angles, _forced,
@@ -4868,6 +5607,8 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
         Direction.EXPAND: (
             _Rule("expand_log", _nonnegatively(sp.expand_log), _forced,
                   "a logarithm of a product taken apart"),
+            _Rule("expanded powers", _expanded_powers, _forced,
+                  "LN(x^2) is 2*LN(ABS(x)): a logarithm of a power taken apart"),
         ),
     },
     "exponential": {

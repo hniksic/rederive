@@ -160,6 +160,8 @@ class _Writer:
             denested = _attempt(term, sp.sqrtdenest)
             terms.append(term if denested is None else denested)
         value = sp.Add(*terms)
+        if _power_evaluated(number, value):
+            return value
         try:
             shorter = sp.count_ops(value) < sp.count_ops(number)
         except Exception:
@@ -913,6 +915,46 @@ def _power_terms(power: sp.Pow) -> int:
         if count > _EXPANSION:
             return _CEILING
     return round(count)
+
+
+#: How many digits the integers of an evaluated power may come to in all before the
+#: power is kept as it was written. `(1 + SQRT(2))^100` is two numbers of forty
+#: digits each, `(1 + SQRT(2))^1000` two of nearly four hundred, which is no answer
+#: anyone reads in place of the power.
+_POWER_DIGITS = 100
+
+
+def _power_evaluated(number: sp.Expr, value: sp.Expr) -> bool:
+    """Whether `value` is `number` with its powers of sums of surds worked out.
+
+    A whole power of a sum of rationals, `#i` and roots of rationals is a number of the
+    field the roots span, and its value there is what Simplify answers, shorter or
+    not: `(1 + SQRT(2))^5` is `29*SQRT(2) + 41` and `(2 + #i)^3` is `2 + 11*#i`. Only
+    a number that is algebraic throughout, so that `pi*(1 + SQRT(2))^2` keeps its
+    power, and only where no such power is left and the digits stay readable.
+    """
+    if not (_algebraic(number) and _algebraic(value)):
+        return False
+    if not any(_power_of_surds(power) for power in number.atoms(sp.Pow)):
+        return False
+    if any(_power_of_surds(power) for power in value.atoms(sp.Pow)):
+        return False
+    digits = sum(
+        len(str(abs(atom.p))) + len(str(atom.q)) - 1 for atom in value.atoms(sp.Rational)
+    )
+    return digits <= _POWER_DIGITS
+
+
+def _power_of_surds(power: sp.Pow) -> bool:
+    return power.exp.is_Integer and abs(power.exp) > 1 and power.base.is_Add
+
+
+def _algebraic(number: sp.Expr) -> bool:
+    """Whether `number` is arithmetic on rationals, `#i` and roots of rationals."""
+    return not number.atoms(sp.Function, sp.NumberSymbol) and all(
+        power.exp.is_Rational and (power.exp.is_Integer or power.base.is_Rational)
+        for power in number.atoms(sp.Pow)
+    )
 
 
 def _arithmetic(number: sp.Expr) -> sp.Expr | None:
