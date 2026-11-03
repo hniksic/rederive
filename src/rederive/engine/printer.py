@@ -348,6 +348,70 @@ def _kernel_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
 _A_NUMBER, _A_CONSTANT, _A_VARIABLE, _A_POWER, _A_CALL = range(5)
 
 
+def _is_integer_root(factor: sp.Basic) -> bool:
+    """Whether `factor` is a positive integer raised to a fraction, like `3^(1/100)`."""
+    return (
+        isinstance(factor, sp.Pow)
+        and factor.base.is_Integer
+        and factor.base > 1
+        and factor.exp.is_Rational
+        and not factor.exp.is_Integer
+    )
+
+
+def _merged_roots(factors: Sequence[sp.Basic]) -> list[sp.Basic]:
+    """The factors of a product, with its roots of integers written as one root.
+
+    Sympy takes `12^(1/100)` apart into `2^(1/50)*3^(1/100)` as soon as it
+    evaluates it, and the original puts such a product back together: it
+    simplifies `2^(1/50)*3^(1/100)` to `12^(1/100)` and `SQRT(2)*3^(1/4)` to
+    `12^(1/4)`. The roots are merged over the least common denominator of their
+    exponents, the roots in the numerator and those in the denominator
+    separately. The merged power is built unevaluated, since evaluating it would
+    take it apart again, and it stands where the first of the roots it replaces
+    stood.
+
+    Two kinds of merge the original makes are not made here, as both read worse
+    than the product. One is a merge into a root of higher order than any of the
+    roots it replaces: `2^(2/3)*SQRT(3)` stays as it is rather than becoming
+    `432^(1/6)`. The other is a merge longer than the roots it replaces, such as
+    `2^(49/50)*3^(99/100)`, a 78-digit integer under a hundredth root.
+    """
+    merged = list(factors)
+    for positive in (True, False):
+        roots = [
+            factor
+            for factor in merged
+            if _is_integer_root(factor) and bool(factor.exp.is_positive) == positive
+        ]
+        if len(roots) < 2:
+            continue
+        denominator = sp.ilcm(*(root.exp.q for root in roots))
+        if denominator != max(root.exp.q for root in roots):
+            continue
+        powers = [abs(root.exp.p) * denominator // root.exp.q for root in roots]
+        common = sp.igcd(*powers)
+        radicand = sp.Integer(1)
+        for root, power in zip(roots, powers):
+            radicand *= root.base ** (power // common)
+        exponent = sp.Rational(common, denominator) * (1 if positive else -1)
+        root = sp.Pow(radicand, exponent, evaluate=False)
+        if len(sp.sstr(root)) >= len(sp.sstr(sp.Mul(*roots, evaluate=False))):
+            continue
+        first = merged.index(roots[0])
+        merged[first] = root
+        merged = [factor for factor in merged if factor not in roots[1:]]
+    return merged
+
+
+def _raised(base: sp.Basic, power: sp.Basic) -> sp.Basic:
+    """`base^power`, left unevaluated where evaluating would take apart a root of an
+    integer that `_merged_roots` put together."""
+    if base.is_Integer and power.is_Rational and not power.is_Integer:
+        return sp.Pow(base, power, evaluate=False)
+    return base**power
+
+
 def _factor_order(factors: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
     """The factors of a product, in the original's order.
 
@@ -1041,7 +1105,9 @@ class AuthorPrinter(sp.StrPrinter):
         if expr.could_extract_minus_sign():
             expr, sign = -expr, "-"
         above, below = [], []
-        factors = _factor_order(expr.as_ordered_factors(), self.context.order)
+        factors = _factor_order(
+            _merged_roots(expr.as_ordered_factors()), self.context.order
+        )
         for index, factor in enumerate(factors):
             if _all_negated(factor):
                 factors[index] = -factor
@@ -1055,7 +1121,7 @@ class AuthorPrinter(sp.StrPrinter):
                     below.append(sp.Integer(factor.q))
             elif isinstance(factor, sp.Pow) and _under_the_bar(factor.exp):
                 power = -factor.exp
-                below.append(factor.base if power == 1 else factor.base**power)
+                below.append(factor.base if power == 1 else _raised(factor.base, power))
             else:
                 above.append(factor)
         if below:
@@ -1099,10 +1165,11 @@ class AuthorPrinter(sp.StrPrinter):
         `_print_Mul` reads one. Sign extraction is still sympy's.
         """
         above, below = [], []
-        for factor in _factor_order(rest.as_ordered_factors(), self.context.order):
+        factors = _merged_roots(rest.as_ordered_factors())
+        for factor in _factor_order(factors, self.context.order):
             base, power = factor.as_base_exp()
             if power.is_Rational and power.is_negative:
-                below.append(base if power == -1 else base**-power)
+                below.append(base if power == -1 else _raised(base, -power))
             else:
                 above.append(factor)
         level = PRECEDENCE["Mul"]

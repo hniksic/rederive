@@ -233,6 +233,33 @@ def test_the_variable_of_a_term_outranks_its_head():
     assert written(sp.cos(u) + sp.sin(t)) == "SIN(t) + COS(u)"
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        # Sympy takes these apart on evaluation; the original writes them whole.
+        (sp.Integer(12) ** sp.Rational(1, 100), "12^(1/100)"),
+        (sp.Integer(12) ** sp.Rational(1, 4), "12^(1/4)"),
+        (sp.Integer(72) ** sp.Rational(1, 4), "72^(1/4)"),
+        (x * sp.Integer(12) ** sp.Rational(1, 4) / 7, "12^(1/4)*x/7"),
+        # Sympy rationalizes the denominator, as the original does.
+        (1 / sp.Integer(12) ** sp.Rational(1, 4), "108^(1/4)/6"),
+        # A root of higher order than either factor's is not made.
+        (sp.Integer(2) ** sp.Rational(2, 3) * sp.sqrt(3), "2^(2/3)*SQRT(3)"),
+        # Nor is one longer than the factors it would replace.
+        (
+            5 / sp.Integer(12) ** sp.Rational(1, 100),
+            "5*2^(49/50)*3^(99/100)/6",
+        ),
+        # A whole number in front is not a root and stays apart.
+        (sp.sqrt(12), "2*SQRT(3)"),
+    ],
+    ids=str,
+)
+def test_roots_of_integers_in_a_product_are_written_as_one(expression, expected):
+    assert written(expression) == expected
+    assert sp.simplify(reread(expression) - expression) == 0
+
+
 def test_two_bounds_on_one_variable_are_written_as_a_chain():
     """A conjunction that is a range has a shorter spelling, and it is the one
     the original writes: `-2 < x < 2`. Either bound may be written the other

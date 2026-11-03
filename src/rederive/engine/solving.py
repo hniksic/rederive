@@ -32,7 +32,7 @@ deliberately so in two places. A periodic equation gets a finite sample of
 representatives near the origin, one per solution family, where Derive emits
 redundant ones - `SIN(x) = 1/2` is `pi/6` and `5*pi/6` here and `pi/6`,
 `5*pi/6`, `-7*pi/6` there. And multiple solutions come out in a stable order,
-reals ascending and then the complex ones, where the original's order is
+reals ascending and then the complex ones by their angle, where the original's order is
 whatever its solver happened to produce.
 
 Domains do not filter solutions (manual 5.4): a declaration says what a
@@ -43,6 +43,7 @@ variable was declared.
 
 from __future__ import annotations
 
+import cmath
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
 
@@ -260,7 +261,7 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     if polynomial is not None:
         if polynomial.degree() < 1:
             return sp.S.EmptySet if not polynomial.is_zero else sp.S.Complexes
-        found = sp.roots(polynomial, trig=True)
+        found = _binomial_roots(polynomial) or sp.roots(polynomial, trig=True)
         if not found or sum(found.values()) != polynomial.degree():
             return None
         return sp.FiniteSet(*found)
@@ -271,6 +272,31 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     if isinstance(found, sp.ConditionSet):
         return _inverted(residual, variable)
     return found
+
+
+def _binomial_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
+    """The roots of `a*x^n + b` for a real `-b/a`, as one real root times each root
+    of unity, or None for any other polynomial.
+
+    `roots` multiplies the real root into every term of the root of unity, so
+    `x^100 = 12` is answered with the hundredth root of 12 written three times
+    over in every solution. Written once, a solution reads as the point on a
+    circle it is: `12^(1/100)*(COS(pi/50) + #i*SIN(pi/50))`.
+    """
+    degree = polynomial.degree()
+    terms = polynomial.terms()
+    if degree < 2 or len(terms) != 2 or terms[1][0] != (0,):
+        return None
+    value = -terms[1][1] / terms[0][1]
+    if not (value.is_number and value.is_extended_real and value.is_nonzero):
+        return None
+    unit = sp.Dummy("unit")
+    sign = 1 if value.is_positive else -1
+    unity = sp.roots(sp.Poly(unit**degree - sign, unit), trig=True)
+    if sum(unity.values()) != degree:
+        return None
+    modulus = sp.Abs(value) ** sp.Rational(1, degree)
+    return {modulus * root: 1 for root in unity}
 
 
 def _inverted(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
@@ -914,9 +940,12 @@ def _rank(value: sp.Basic) -> tuple[int, float, float, object]:
         return (2, 0.0, 0.0, sp.default_sort_key(value))
     if not number.imag:
         return (0, number.real, 0.0, ())
-    # The conjugate with the positive part first, which is how the original
-    # prints a pair: `x = #i` and then `x = -#i`.
-    return (1, number.real, -number.imag, ())
+    # Round the circle from the positive real axis, the conjugate with the
+    # positive part first, which is how the original prints a pair: `x = #i`
+    # and then `x = -#i`. The angle is rounded so that a pair whose angles
+    # differ in the last bit of their evaluation still sorts as a pair.
+    angle = round(abs(cmath.phase(number)), 9)
+    return (1, angle, 0.0 if number.imag > 0 else 1.0, (abs(number),))
 
 
 def _complex(value: sp.Basic) -> complex | None:

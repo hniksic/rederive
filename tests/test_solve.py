@@ -139,6 +139,30 @@ def test_the_order_of_several_solutions_is_ours_and_not_the_originals():
     assert sol("x^2 - 4") == ["x = -2", "x = 2"]
 
 
+def test_complex_solutions_go_round_the_circle():
+    """The complex ones by their angle from the positive real axis, each conjugate
+    pair together with its positive imaginary part first."""
+    assert sol("x^4 = -4") == ["x = 1 + #i", "x = 1 - #i", "x = -1 + #i", "x = -1 - #i"]
+    assert sol("x^4 = 16") == ["x = -2", "x = 2", "x = 2*#i", "x = -2*#i"]
+
+
+def test_a_binomial_is_solved_as_one_real_root_times_the_roots_of_unity():
+    """The real root is written once per solution, not once per term of it."""
+    answers = sol("x^100 = 12")
+    assert len(answers) == 100
+    assert answers[:4] == [
+        "x = -12^(1/100)",
+        "x = 12^(1/100)",
+        "x = 12^(1/100)*(COS(pi/50) + #i*SIN(pi/50))",
+        "x = 12^(1/100)*(COS(pi/50) - #i*SIN(pi/50))",
+    ]
+    assert sol("2*x^3 + 5 = 0") == [
+        "x = -20^(1/3)/2",
+        "x = 20^(1/3)*(1/2 + SQRT(3)*#i/2)/2",
+        "x = 20^(1/3)*(1/2 - SQRT(3)*#i/2)/2",
+    ]
+
+
 # -- periodic equations -------------------------------------------------------
 #
 # Derive has no way of writing `x = 2*pi*n` and neither has this engine, so a
