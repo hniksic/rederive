@@ -58,6 +58,14 @@ packages = ["src/rederive"]
 [tool.hatch.version]
 path = "src/rederive/__init__.py"
 
+# uv's own interpreter, never the one the machine has installed, so a local run tests
+# what the release builds ship - they sync with `--managed-python`, which is this. A
+# distribution's Python can differ in ways the suite feels: Ubuntu's 3.13.3 maps and
+# unmaps a frame-stack chunk millions of times over the engine's deeper recursions,
+# which costs the suite over a minute of system time across its workers.
+[tool.uv]
+python-preference = "only-managed"
+
 [dependency-groups]
 # The environment anyone working on this program gets, extras and all. The
 # suite draws plot windows, reads a resident set and hands text to a clipboard,
