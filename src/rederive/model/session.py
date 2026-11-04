@@ -1371,8 +1371,11 @@ class Session:
 
         The removed entries become the unremove buffer, replacing whatever was
         in it. Their labels are not reused and the entries that stay keep
-        theirs, so removing renumbers nothing. What the removed lines defined is
-        left standing, since a value outlives the line that gave it.
+        theirs, so removing renumbers nothing. The exception is a removal that
+        empties the history: the next entry is labelled 1 again, as in the
+        original, and a restored entry whose label has been taken since gets a
+        fresh one. What the removed lines defined is left standing, since a value
+        outlives the line that gave it.
 
         The selection lands on the entry that takes the block's place, or on the
         last entry when the block was at the end.
@@ -1385,6 +1388,8 @@ class Session:
             start, stop = stop, start
         self.removed = self.entries[start : stop + 1]
         del self.entries[start : stop + 1]
+        if not self.entries:
+            self._next_number = 1
         self.selected = min(start, len(self.entries) - 1) if self.entries else None
         self.route = ()
         return len(self.removed)
@@ -1398,7 +1403,8 @@ class Session:
         The buffer is not emptied, so the same block can be put back more than
         once. A restored entry keeps its own label where the history has left it
         free and takes a fresh one where it has not, which is what keeps two
-        entries from answering to the same number.
+        entries from answering to the same number. The next authored entry comes
+        after every label the history then holds.
 
         The selection lands on the entry the block went in front of, or on the
         last of the restored ones when they went at the end.
@@ -1406,8 +1412,10 @@ class Session:
         Raises `KeyError` when `before` names no entry.
         """
         at = len(self.entries) if before is None else self._index_of(before)
-        restored = [self._relabelled(entry) for entry in self.removed]
+        taken = {entry.number for entry in self.entries}
+        restored = [self._relabelled(entry, taken) for entry in self.removed]
         self.entries[at:at] = restored
+        self._next_number = max(self._next_number, max(taken, default=0) + 1)
         following = at + len(restored)
         self.selected = following if before is not None else following - 1
         self.route = ()
@@ -1420,12 +1428,19 @@ class Session:
                 return index
         raise KeyError(number)
 
-    def _relabelled(self, entry: Entry) -> Entry:
-        """`entry` under its own label, or under a fresh one when that is taken."""
-        if self.numbered(entry.number) is None:
-            return entry
-        entry = replace(entry, number=self._next_number)
-        self._next_number += 1
+    def _relabelled(self, entry: Entry, taken: set[int]) -> Entry:
+        """`entry` under its own label, or under a fresh one when that is taken.
+
+        `taken` holds the labels in use, the ones restored so far included, and
+        gains the one handed out. A fresh label can itself be taken once an
+        emptied history has started again from 1, so it is skipped past.
+        """
+        if entry.number in taken:
+            while self._next_number in taken:
+                self._next_number += 1
+            entry = replace(entry, number=self._next_number)
+            self._next_number += 1
+        taken.add(entry.number)
         return entry
 
     # -- moving ------------------------------------------------------------

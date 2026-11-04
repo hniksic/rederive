@@ -58,6 +58,29 @@ def test_a_removed_label_is_not_handed_out_again(session):
     assert labels(session) == ["#3: z", "#4: q"]
 
 
+def test_emptying_the_history_starts_the_labels_again_from_one(session):
+    authored(session, "x", "y", "z")
+    session.remove(1, 3)
+    session.author("q")
+    assert labels(session) == ["#1: q"]
+
+
+def test_entries_restored_after_a_restart_take_the_labels_left_free(session):
+    authored(session, "x", "y", "z")
+    session.remove(1, 3)
+    session.author("q")
+    session.unremove()
+    assert labels(session) == ["#1: q", "#2: x", "#3: y", "#4: z"]
+
+
+def test_the_next_label_follows_entries_restored_into_an_emptied_history(session):
+    authored(session, "x", "y")
+    session.remove(1, 2)
+    session.unremove()
+    session.author("q")
+    assert labels(session) == ["#1: x", "#2: y", "#3: q"]
+
+
 def test_the_block_is_physically_contiguous_and_not_numerically(session):
     authored(session, "a", "b", "c", "d", "e")
     session.remove(2, 3)
