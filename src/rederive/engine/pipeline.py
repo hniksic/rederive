@@ -45,6 +45,7 @@ command total. Nothing sympy does can turn a valid entry into an error.
 
 from __future__ import annotations
 
+import zlib
 from collections.abc import Callable
 from functools import reduce
 from itertools import combinations
@@ -53,6 +54,7 @@ from typing import NamedTuple
 
 import mpmath
 import sympy as sp
+import sympy.core.random as sympy_random
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
 from sympy.functions.elementary.trigonometric import TrigonometricFunction
@@ -2750,9 +2752,29 @@ def _refuted(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
     if difference.free_symbols == {variable}:
         return any(_off(difference, variable, point) for point in _SAMPLES)
     try:
-        return difference.equals(0) is False
+        return _equals_zero(difference) is False
     except Exception:
         return False
+
+
+def _equals_zero(difference: sp.Basic) -> bool | None:
+    """`difference.equals(0)`, asked at the same points every time it is asked.
+
+    Where simplification does not settle it, `equals` evaluates the difference at
+    random points, drawn from sympy's shared generator. What that generator has
+    drawn before depends on everything else the process has computed, so the
+    points, and with them the time and possibly the answer, would vary from run to
+    run. Seeding it from the difference itself makes the points a function of the
+    question alone. The generator's state is put back after, so nothing else that
+    draws from it sees a difference.
+    """
+    generator = sympy_random.rng
+    state = generator.getstate()
+    generator.seed(zlib.crc32(sp.sstr(difference).encode()))
+    try:
+        return difference.equals(0)
+    finally:
+        generator.setstate(state)
 
 
 def _on_the_principal_sheet(
@@ -2786,7 +2808,7 @@ def _on_the_principal_sheet(
         stripped, lambda v: sp.expand_func(sp.diff(v, variable) - integrand)
     )
     try:
-        confirmed = difference is not None and difference.equals(0) is True
+        confirmed = difference is not None and _equals_zero(difference) is True
     except Exception:
         confirmed = False
     return stripped if confirmed else value
