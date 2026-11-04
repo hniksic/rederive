@@ -111,11 +111,16 @@ answers `Memory Full`.
 
 ## Intentional differences
 
-**Approximation.** Rederive rounds only the final answer, so all displayed digits are
-correct. Derive rounds intermediate values, and the errors can show up in the result:
+**Approximation.** When asked to approximate, Derive works in fixed precision: every
+intermediate value is rounded to the precision asked for, and the rounding errors
+propagate, most visibly where nearly equal values cancel. Rederive works in adaptive
+precision: an approximation is computed from the exact value with as many working digits
+as the answer needs, and only the result is cut to the digits asked for, so the digits
+shown are the value's own:
 
 ```
-SQRT(10001) - 100      0.00499987      Derive: 0.00499722
+SQRT(10001) - 100              0.00499987          Derive: 0.00499722
+SQRT(10^200 + 1) - 10^100      5.00000*10^-101     Derive: 0
 ```
 
 **Integrals through a pole.** A definite integral through a pole inside the interval is
