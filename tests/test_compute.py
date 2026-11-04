@@ -88,9 +88,9 @@ class Blocking:
         await self._held()
         return computing.expand(node, context, amount, variables, state)
 
-    async def expression_variables(self, node, context=None):
+    async def expression_variables(self, node, context=None, written=False):
         await self._held()
-        return computing.expression_variables(node, context)
+        return computing.expression_variables(node, context, written)
 
 
 @pytest.fixture

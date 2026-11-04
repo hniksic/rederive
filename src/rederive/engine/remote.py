@@ -210,9 +210,9 @@ class RemoteEngine:
         return await self._await("solve", arguments)
 
     async def expression_variables(
-        self, node: Node, context: Context | None = None
+        self, node: Node, context: Context | None = None, written: bool = False
     ) -> tuple[str, ...]:
-        return await self._await("expression_variables", (node, context))
+        return await self._await("expression_variables", (node, context, written))
 
     async def _await(self, method: str, args: tuple[Any, ...]) -> Any:
         """One request, waited for on a thread of the loop's own pool."""

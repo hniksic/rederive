@@ -203,7 +203,7 @@ class Runner(Protocol):
     ) -> tuple[engine.Result, ...]: ...
 
     async def expression_variables(
-        self, node: Node, context: engine.Context | None = ...
+        self, node: Node, context: engine.Context | None = ..., written: bool = ...
     ) -> tuple[str, ...]: ...
 
 
@@ -266,9 +266,9 @@ class _Here:
         return self._engine.solve(node, context, variables, bounds, state)
 
     async def expression_variables(
-        self, node: Node, context: engine.Context | None = None
+        self, node: Node, context: engine.Context | None = None, written: bool = False
     ) -> tuple[str, ...]:
-        return self._engine.expression_variables(node, context)
+        return self._engine.expression_variables(node, context, written)
 
 
 def _computing_here() -> Runner:
@@ -848,12 +848,15 @@ class Session:
 
         `variables` is not enough on its own: soLve names the whole entry where
         the other commands name a highlighted part of it, so the list has to be
-        read off the same expression the command will act on.
+        read off the same expression the command will act on. And where that
+        expression simplifies to one with no variable left, as `x/x = 1` does,
+        the list is the variables it was written in, there being still a
+        question to answer about each of them.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
         _, target = self._requested(request)
-        return await self.runner.expression_variables(target, self.context)
+        return await self.runner.expression_variables(target, self.context, written=True)
 
     def equations(self, request: str) -> int:
         """How many equations what `request` names is a system of, or zero.

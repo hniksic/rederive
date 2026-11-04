@@ -547,6 +547,23 @@ async def test_the_variables_on_offer_are_the_whole_entrys(session):
     assert await session.solve_variables("#1") == ("x", "z")
 
 
+async def test_a_variable_simplified_away_is_still_offered(session):
+    session.author("x/x = 1")
+    session.author("0*y + x - x = 0")
+    assert await session.solve_variables("#1") == ("x",)
+    assert await session.solve_variables("#2") == ("x", "y")
+
+
+async def test_a_bound_variable_is_not_offered_when_none_is_left(session):
+    session.author("SUM(k, k, 1, 3) = 6")
+    assert await session.solve_variables("#1") == ()
+
+
+async def test_factor_offers_only_what_is_left_after_simplifying(session):
+    session.author("x/x + y/y")
+    assert await session.variables("#1") == ()
+
+
 def test_a_system_is_counted_before_anything_is_computed(session):
     session.author("[x + y = 3, x - y = 1]")
     session.author("x^2 - 4 = 0")
