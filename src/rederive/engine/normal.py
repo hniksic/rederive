@@ -209,6 +209,10 @@ class _Writer:
         """
         if not total.is_Add:
             return total
+        unified = _unified_kernels(total)
+        if unified is not total:
+            # Kernels made one can cancel, and what they leave need be no sum.
+            return self._step(unified)
         generator = self._main(total)
         if generator is None:
             return total
@@ -823,6 +827,56 @@ def _kernels(expression: sp.Basic) -> set[sp.Basic]:
     if not expression.free_symbols or isinstance(expression, sp.Dummy):
         return set()
     return {expression}
+
+
+def _unified_kernels(total: sp.Add) -> sp.Basic:
+    """`total` with kernels that differ only in how their arguments are written made one.
+
+    A product is never multiplied out, so two arguments in normal form can be one
+    polynomial written two ways: `2*x*(y + 1) + y` and `x*(2*y + 2) + y`. The calls
+    of them are then one kernel that the sum cannot see is one, and
+    `#e^(2*x*(y + 1) + y) - #e^(2*x*y + 2*x + y)` would not cancel. Each such group
+    is written as its shortest member. `total` itself comes back where there is
+    nothing to unify.
+    """
+    groups: dict[tuple, list[sp.Basic]] = {}
+    for kernel in _calls(total):
+        if not all(_expanded_terms(a) <= _EXPANSION for a in kernel.args):
+            continue
+        try:
+            key = (kernel.func, tuple(_expanded(a) for a in kernel.args))
+        except Exception:
+            continue
+        group = groups.setdefault(key, [])
+        if kernel not in group:
+            group.append(kernel)
+    replacements = {}
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        chosen = min(group, key=lambda k: (sp.count_ops(k), sp.default_sort_key(k)))
+        replacements.update({k: chosen for k in group if k != chosen})
+    if not replacements:
+        return total
+    return total.xreplace(replacements)
+
+
+def _calls(expression: sp.Basic) -> list[sp.Basic]:
+    """The function calls and symbolic powers in `expression` with a variable inside.
+
+    Not looked inside a head that binds a variable, any more than the walk is.
+    """
+    found = []
+    if isinstance(expression, _BOUND) or expression.is_Atom:
+        return found
+    if isinstance(expression, (sp.Function, sp.exp)) or (
+        isinstance(expression, sp.Pow) and not expression.exp.is_Number
+    ):
+        if expression.free_symbols and isinstance(expression, sp.Expr):
+            found.append(expression)
+    for argument in expression.args:
+        found.extend(_calls(argument))
+    return found
 
 
 def _is_compound(term: sp.Basic) -> bool:

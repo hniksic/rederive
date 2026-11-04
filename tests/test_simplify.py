@@ -270,6 +270,10 @@ NORMAL_FORM = [
     ("(x + 1)*(x + 2)", "(x + 1)*(x + 2)"),
     ("(x + y)^2", "(x + y)^2"),
     ("(x + 1)^2/y", "(x + 1)^2/y"),
+    # Calls whose arguments are one polynomial written two ways are one kernel,
+    # and cancel as one.
+    ("#e^(2*x*(y + 1) + y) - #e^(2*x*y + 2*x + y)", "0"),
+    ("SIN(2*x*(y + 1)) - SIN(2*x*y + 2*x)", "0"),
     # Wherever the sum stands: inside a product, under a power, under a
     # function, in a denominator, in an exponent, one element of a vector.
     ("z*((x + 1)^2 + y)", "z*(x^2 + 2*x + y + 1)"),
@@ -733,6 +737,16 @@ SIGNED = [
     ("ABS(z)/SIGN(z)", "ABS(z)/SIGN(z)", declared("z :epsilon Complex")),
     ("SIGN(z)^2", "SIGN(z)^2", declared("z :epsilon Complex")),
     ("z/ABS(z)", "z/ABS(z)", declared("z :epsilon Complex")),
+    # An odd increasing function keeps the sign of a real argument, and an even
+    # function does not see its absolute value. Neither holds off the real line.
+    ("SIGN(ATAN(x))", "SIGN(x)", None),
+    ("SIGN(SINH(x))", "SIGN(x)", None),
+    ("SIGN(x^3)", "SIGN(x)", None),
+    ("SIGN(ATAN(x)^3)", "SIGN(x)", None),
+    ("SIGN(x^2)", "SIGN(x^2)", None),
+    ("COS(ABS(x))", "COS(x)", None),
+    ("SIGN(ATAN(z))", "SIGN(ATAN(z))", declared("z :epsilon Complex")),
+    ("COS(ABS(z))", "COS(ABS(z))", declared("z :epsilon Complex")),
 ]
 
 

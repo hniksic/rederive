@@ -4114,6 +4114,53 @@ def _signs_of_reciprocals(expression: sp.Basic) -> sp.Basic:
     )
 
 
+#: Functions that are odd and increasing over the whole real line, so that for a real
+#: `u` the sign of `f(u)` is the sign of `u`.
+_SIGN_KEEPING = (sp.atan, sp.asinh, sp.sinh, sp.tanh, sp.erf)
+
+#: Functions that are even, so that for a real `u` they are the same of `ABS(u)` as
+#: of `u`.
+_EVEN = (sp.cos, sp.sec, sp.cosh, sp.sech)
+
+
+def _symmetries(expression: sp.Basic) -> sp.Basic:
+    """Every `SIGN` of an odd function and every even function of an `ABS`, undone.
+
+    For a real `u`, `SIGN(ATAN(u))` is `SIGN(u)` and so is `SIGN(u^3)`, and
+    `COS(ABS(u))` is `COS(u)`. Ahead of the definitions, which write the hyperbolic
+    functions over exponentials where neither symmetry can be seen any more. Off the
+    real line neither holds, so an argument nothing declares real is left alone.
+    """
+
+    def signed(head: sp.sign) -> sp.Basic:
+        inner = head.args[0]
+        if isinstance(inner, _SIGN_KEEPING) and inner.args[0].is_extended_real:
+            return sp.sign(inner.args[0])
+        # A negative exponent is `_signs_of_reciprocals`' business, which knows that
+        # `SIGN(1/ABS(u))` is 1.
+        if isinstance(inner, sp.Pow) and inner.exp.is_positive:
+            base, exponent = inner.args
+            if base.is_extended_real and exponent.is_integer and exponent.is_odd:
+                return sp.sign(base)
+        return head
+
+    def even(call: sp.Basic) -> sp.Basic:
+        inner = call.args[0]
+        if isinstance(inner, sp.Abs) and inner.args[0].is_extended_real:
+            return call.func(inner.args[0])
+        return call
+
+    # Until nothing changes, since what one unwrapping exposes can be another:
+    # `SIGN(ATAN(x)^3)` is `SIGN(ATAN(x))` before it is `SIGN(x)`.
+    for _ in range(8):
+        rewritten = expression.replace(lambda e: isinstance(e, sp.sign), signed)
+        rewritten = rewritten.replace(lambda e: isinstance(e, _EVEN), even)
+        if rewritten == expression:
+            break
+        expression = rewritten
+    return expression
+
+
 def _conjugate_pairs(expression: sp.Basic) -> sp.Basic:
     """Every product of a complex quantity and its conjugate, as its squared modulus.
 
@@ -5637,6 +5684,7 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     # Ahead of the definitions, which write the hyperbolic parts it leaves over
     # exponentials.
     expression = _forced(expression, _complex_constants)
+    expression = _forced(expression, _symmetries)
     expression = _by_definition(expression)
     expression = _applied(expression, _IDENTITIES, context)
     for setting, directions in _DIRECTED.items():
