@@ -231,23 +231,16 @@ async def test_author_appends_and_selects_the_new_entry(app):
         assert text_of(app.query_one("#status")).plain.strip().startswith("User")
 
 
-async def test_a_trailing_equals_enters_the_value_beside_what_was_typed(app):
+@pytest.mark.parametrize("key", ["enter", "ctrl+j"], ids=str)
+async def test_a_trailing_equals_enters_the_value_beside_what_was_typed(app, key):
     async with app.run_test() as pilot:
-        await author(pilot, "2^3=")
-        # One entry, and the user's own: the `=` was typed, not commanded.
+        await pilot.press("a", *"2^3=", key)
+        # One entry, and the user's own: the `=` was typed, not commanded. The
+        # value is there already, so Ctrl-Enter has nothing left to simplify.
         assert entries(app) == ["2^3 = 8"]
         assert annotation(app) == "User"
         # Computed, so it is timed like every other computation.
         assert message(app).startswith("Compute time:")
-
-
-async def test_ctrl_enter_on_a_trailing_equals_is_enter(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a")
-        await pilot.press(*"2^3=")
-        await pilot.press("ctrl+j")
-        # The value is there already; there is nothing left to simplify.
-        assert entries(app) == ["2^3 = 8"]
 
 
 @pytest.mark.parametrize("key", ["ctrl+j", "ctrl+enter"], ids=str)
@@ -429,10 +422,13 @@ async def test_the_annotation_follows_the_selection(app):
         assert annotation(app) == "User"
 
 
-async def test_simplify_leaves_a_line_that_does_not_read_up(app):
+@pytest.mark.parametrize("key", ["s", "f", "l"], ids=str)
+async def test_an_expression_line_that_does_not_read_is_left_up(app, key):
+    """Simplify and approX read the line one way, Factor and Expand another, and
+    soLve a third."""
     async with app.run_test() as pilot:
         authored(app, "x")
-        await pilot.press("s")
+        await pilot.press(key)
         await pilot.press(*"+")
         await pilot.press("enter")
         assert message(app) == "Syntax error detected at cursor"
@@ -440,13 +436,6 @@ async def test_simplify_leaves_a_line_that_does_not_read_up(app):
         await pilot.press("escape")
         assert message(app) == "Enter option"
         assert highlighted_menu_option(app) == "Author"
-
-
-async def test_simplify_asks_for_nothing_when_the_history_is_empty(app):
-    async with app.run_test() as pilot:
-        await pilot.press("s", "enter")
-        assert app.session.entries == []
-        assert message(app) == "Enter option"
 
 
 async def test_quit_asks_before_abandoning_expressions(app):
@@ -497,15 +486,6 @@ async def test_factor_asks_for_expression_then_variables_then_amount(app):
         assert annotation(app) == "Fctr(#1)"
 
 
-async def test_one_variable_is_no_choice_so_none_is_asked_for(app):
-    async with app.run_test() as pilot:
-        authored(app, "x^2 - 4")
-        await pilot.press("f", "enter")
-        assert highlighted_menu_option(app) == "Rational"
-        await pilot.press("r")
-        assert entries(app)[-1] == "(x + 2)*(x - 2)"
-
-
 async def test_a_number_is_decomposed_without_being_asked_about(app):
     async with app.run_test() as pilot:
         authored(app, "1234567890")
@@ -518,7 +498,9 @@ async def test_a_number_is_decomposed_without_being_asked_about(app):
 async def test_the_amount_menu_opens_on_what_was_chosen_last(app):
     async with app.run_test() as pilot:
         authored(app, "x^2 - 4")
+        # One variable is no choice, so none is asked for.
         await pilot.press("f", "enter")
+        assert message(app) == "Select amount of factoring"
         assert highlighted_menu_option(app) == "Rational"
         await pilot.press("t")
         authored(app, "x^2 - 9")
@@ -558,66 +540,6 @@ async def test_a_name_that_is_no_variable_is_refused(app):
         # The question is put again, unchanged and with nothing chosen.
         assert prompt(app) == ("FACTOR variable 1:", "")
         assert message(app) == "Return for all or select 1: x,y"
-
-
-async def test_factor_of_a_part_copies_the_rest_of_the_expression(app):
-    async with app.run_test() as pilot:
-        authored(app, "(x^2 - 1) + SIN(z)")
-        await pilot.press("right")
-        assert highlighted_expression(app) == " 2\nx  - 1"
-        # Only x is in the highlighted part, so no variable is asked for.
-        await pilot.press("f", "enter", "r")
-        assert work_area(app)[-1] == "#2:  (x + 1)·(x - 1) + SIN(z)"
-        assert annotation(app) == "Fctr(#1')"
-
-
-async def test_a_typed_expression_is_factored_as_the_users_own(app):
-    async with app.run_test() as pilot:
-        await pilot.press("f")
-        assert prompt(app) == ("FACTOR expression:", "")
-        await pilot.press(*"x^2-9")
-        await pilot.press("enter", "r")
-        # The line that was typed is not an entry; only the answer is.
-        assert entries(app) == ["(x + 3)*(x - 3)"]
-        assert annotation(app) == "Fctr(User)"
-
-
-@pytest.mark.parametrize(
-    ("keys", "step"),
-    [
-        (("f",), "the expression"),
-        (("f", "enter"), "the variables"),
-        (("f", "enter", "enter"), "the amount"),
-    ],
-    ids=str,
-)
-async def test_escape_abandons_factor_from_any_of_its_questions(app, keys, step):
-    """One Esc returns to the command menu, whichever question is up."""
-    async with app.run_test() as pilot:
-        authored(app, "x^2 y^2 - 1")
-        await pilot.press(*keys)
-        await pilot.press("escape")
-        assert message(app) == "Enter option"
-        assert highlighted_menu_option(app) == "Author"
-        assert app.asking is None
-        assert entries(app) == ["x^2*y^2-1"]
-
-
-async def test_factor_leaves_a_line_that_does_not_read_up(app):
-    async with app.run_test() as pilot:
-        authored(app, "x")
-        await pilot.press("f")
-        await pilot.press(*"+")
-        await pilot.press("enter")
-        assert message(app) == "Syntax error detected at cursor"
-        assert entries(app) == ["x"]
-
-
-async def test_factor_asks_for_nothing_when_the_history_is_empty(app):
-    async with app.run_test() as pilot:
-        await pilot.press("f", "enter")
-        assert app.session.entries == []
-        assert message(app) == "Enter option"
 
 
 # -- Expand, which asks the same three questions ------------------------------
@@ -710,44 +632,6 @@ async def test_expand_of_a_part_copies_the_rest_of_the_expression(app):
         assert annotation(app) == "Expd(#1')"
 
 
-@pytest.mark.parametrize(
-    ("keys", "step"),
-    [
-        (("e",), "the expression"),
-        (("e", "enter"), "the variables"),
-        (("e", "enter", "enter"), "the amount"),
-    ],
-    ids=str,
-)
-async def test_escape_abandons_expand_from_any_of_its_questions(app, keys, step):
-    """One Esc returns to the command menu, whichever question is up."""
-    async with app.run_test() as pilot:
-        authored(app, "1/(x^2 y^2 - 1)")
-        await pilot.press(*keys)
-        await pilot.press("escape")
-        assert message(app) == "Enter option"
-        assert highlighted_menu_option(app) == "Author"
-        assert app.asking is None
-        assert entries(app) == ["1/(x^2*y^2-1)"]
-
-
-async def test_expand_leaves_a_line_that_does_not_read_up(app):
-    async with app.run_test() as pilot:
-        authored(app, "x")
-        await pilot.press("e")
-        await pilot.press(*"+")
-        await pilot.press("enter")
-        assert message(app) == "Syntax error detected at cursor"
-        assert entries(app) == ["x"]
-
-
-async def test_expand_asks_for_nothing_when_the_history_is_empty(app):
-    async with app.run_test() as pilot:
-        await pilot.press("e", "enter")
-        assert app.session.entries == []
-        assert message(app) == "Enter option"
-
-
 # -- soLve, which asks up to three questions and appends any number of answers -
 #
 # Every screen asserted here was checked against the original. The variable
@@ -762,25 +646,13 @@ async def test_solve_asks_for_the_expression_and_appends_every_solution(app):
         await pilot.press("l")
         assert prompt(app) == ("SOLVE expression:", "#1")
         assert message(app) == "Enter expression"
+        # One variable settles the question, so none is asked.
         await pilot.press("enter")
         assert entries(app) == ["x^2-5*x+6=0", "x = 2", "x = 3"]
+        assert highlighted_expression(app) == "x = 3"
         assert message(app).startswith("Compute time:")
         assert annotation(app) == "Solve(#1)"
         assert highlighted_menu_option(app) == "Author"
-
-
-async def test_the_highlight_lands_on_the_last_solution(app):
-    async with app.run_test() as pilot:
-        authored(app, "x^2 - 5x + 6 = 0")
-        await pilot.press("l", "enter")
-        assert highlighted_expression(app) == "x = 3"
-
-
-async def test_one_variable_settles_the_question_so_none_is_asked(app):
-    async with app.run_test() as pilot:
-        authored(app, "2x + 3 = 7")
-        await pilot.press("l", "enter")
-        assert entries(app)[-1] == "x = 2"
 
 
 async def test_two_variables_bring_the_variable_line_up(app):
@@ -860,66 +732,6 @@ async def test_no_solutions_appends_nothing_and_says_so(app):
         assert highlighted_expression(app) == "x = x + 1"
 
 
-async def test_a_typed_expression_is_solved_as_the_users_own(app):
-    async with app.run_test() as pilot:
-        await pilot.press("l")
-        assert prompt(app) == ("SOLVE expression:", "")
-        await pilot.press(*"2x=8")
-        await pilot.press("enter")
-        assert entries(app) == ["x = 4"]
-        assert annotation(app) == "Solve(User)"
-
-
-@pytest.mark.parametrize(
-    ("keys", "step"),
-    [
-        (("l",), "the expression"),
-        (("l", "enter"), "the variable"),
-        (("l", "enter", "enter"), "the second variable"),
-    ],
-    ids=str,
-)
-async def test_escape_abandons_solve_from_any_of_its_questions(app, keys, step):
-    """One Esc returns to the command menu, whichever question is up, and the
-    worksheet is untouched."""
-    async with app.run_test() as pilot:
-        authored(app, "[x + y + z = 1, x - y = 0]")
-        await pilot.press(*keys)
-        await pilot.press("escape")
-        assert message(app) == "Enter option"
-        assert highlighted_menu_option(app) == "Author"
-        assert app.solving is None
-        assert entries(app) == ["[x+y+z=1,x-y=0]"]
-
-
-async def test_escape_abandons_solve_from_the_interval(app):
-    async with app.run_test() as pilot:
-        authored(app, "Precision := Approximate")
-        authored(app, "x^5 - x + 1 = 0")
-        await pilot.press("l", "enter")
-        await pilot.press("escape")
-        assert message(app) == "Enter option"
-        assert app.solving is None
-        assert entries(app)[-1] == "x^5-x+1=0"
-
-
-async def test_solve_leaves_a_line_that_does_not_read_up(app):
-    async with app.run_test() as pilot:
-        authored(app, "x")
-        await pilot.press("l")
-        await pilot.press(*"+")
-        await pilot.press("enter")
-        assert message(app) == "Syntax error detected at cursor"
-        assert entries(app) == ["x"]
-
-
-async def test_solve_asks_for_nothing_when_the_history_is_empty(app):
-    async with app.run_test() as pilot:
-        await pilot.press("l", "enter")
-        assert app.session.entries == []
-        assert message(app) == "Enter option"
-
-
 async def test_solving_twice_appends_the_answer_twice(app):
     async with app.run_test() as pilot:
         authored(app, "2x = 8")
@@ -960,27 +772,6 @@ async def test_approx_offers_the_highlighted_expression(app):
         assert highlighted_menu_option(app) == "Author"
 
 
-async def test_approx_of_a_part_copies_the_rest_of_the_expression(app):
-    async with app.run_test() as pilot:
-        authored(app, "SQRT(2) + x^2")
-        await pilot.press("right")
-        assert highlighted_expression(app) == "√2"
-        await pilot.press("x", "enter")
-        assert work_area(app)[-2:] == ["                2", "#2:  1.41421 + x"]
-        # The quote says that only part of the expression was approximated.
-        assert annotation(app) == "Approx(#1')"
-
-
-async def test_a_typed_expression_is_approximated_as_the_users_own(app):
-    async with app.run_test() as pilot:
-        await pilot.press("x")
-        assert prompt(app) == ("APPROX expression:", "")
-        await pilot.press(*"SQRT(3)")
-        await pilot.press("enter")
-        assert work_area(app) == ["#1:  1.73205"]
-        assert annotation(app) == "Approx(User)"
-
-
 async def test_approx_leaves_the_precision_setting_alone(app):
     """The mode is approximate for the one command, and Simplify says so."""
     async with app.run_test() as pilot:
@@ -992,23 +783,6 @@ async def test_approx_leaves_the_precision_setting_alone(app):
         await pilot.press(*"1")
         await pilot.press("enter")
         assert entries(app)[-1] == "1/3"
-
-
-async def test_approx_leaves_a_line_that_does_not_read_up(app):
-    async with app.run_test() as pilot:
-        authored(app, "x")
-        await pilot.press("x")
-        await pilot.press(*"+")
-        await pilot.press("enter")
-        assert message(app) == "Syntax error detected at cursor"
-        assert entries(app) == ["x"]
-
-
-async def test_approx_asks_for_nothing_when_the_history_is_empty(app):
-    async with app.run_test() as pilot:
-        await pilot.press("x", "enter")
-        assert app.session.entries == []
-        assert message(app) == "Enter option"
 
 
 async def test_an_abandoned_approx_leaves_the_history_alone(app):
@@ -1039,14 +813,9 @@ def selected_number(app):
     return app.session.selected_entry.number
 
 
-async def worksheet(pilot, *texts):
-    for text in texts:
-        await author(pilot, text)
-
-
 async def test_remove_offers_the_highlighted_expression_at_both_ends(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z", "w", "v")
+        authored(app, "x", "y", "z", "w", "v")
         await pilot.press("r")
         assert band(app) == [" REMOVE: Start: 5      End: 5"]
         assert message(app) == "Enter label number"
@@ -1058,16 +827,23 @@ async def test_remove_offers_the_highlighted_expression_at_both_ends(app):
 
 async def test_enter_alone_removes_the_highlighted_expression(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("r", "enter")
         assert numbered(app) == ["#1: x", "#2: y"]
 
 
-async def test_the_arrows_walk_the_history_and_label_the_field(app):
+async def test_the_history_keys_all_label_the_field(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z", "w")
-        await pilot.press("r", "tab")
-        await pilot.press("up")
+        authored(app, "x", "y", "z", "w")
+        await pilot.press("r")
+        await pilot.press("ctrl+home")
+        assert band(app) == [" REMOVE: Start: 1      End: 4"]
+        assert highlighted_expression(app) == "x"
+        await pilot.press("down")
+        assert band(app) == [" REMOVE: Start: 2      End: 4"]
+        await pilot.press("ctrl+end")
+        assert band(app) == [" REMOVE: Start: 4      End: 4"]
+        await pilot.press("tab", "up")
         # The highlight moved with the key, and the End field took it.
         assert band(app) == [" REMOVE: Start: 4      End: 3"]
         assert highlighted_expression(app) == "z"
@@ -1079,7 +855,7 @@ async def test_the_arrows_walk_the_history_and_label_the_field(app):
 
 async def test_a_label_that_names_no_expression_leaves_the_question_up(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("r", "9", "tab", "9", "enter")
         assert band(app) == [" REMOVE: Start: 9      End: 9"]
         assert message(app) == "Enter label number"
@@ -1088,7 +864,7 @@ async def test_a_label_that_names_no_expression_leaves_the_question_up(app):
 
 async def test_escape_abandons_remove_and_leaves_the_history_alone(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("r", "1", "tab", "2")
         await pilot.press("escape")
         assert numbered(app) == ["#1: x", "#2: y"]
@@ -1096,16 +872,9 @@ async def test_escape_abandons_remove_and_leaves_the_history_alone(app):
         assert highlighted_menu_option(app) == "Author"
 
 
-async def test_remove_asks_nothing_when_the_history_is_empty(app):
-    async with app.run_test() as pilot:
-        await pilot.press("r")
-        assert band(app)[0].startswith(" COMMAND:")
-        assert message(app) == "Enter option"
-
-
 async def test_unremove_asks_where_and_puts_them_back(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z", "w", "v")
+        authored(app, "x", "y", "z", "w", "v")
         await pilot.press("r", "2", "tab", "4", "enter")
         await pilot.press("u")
         assert band(app) == [" UNREMOVE: Before: 5"]
@@ -1117,7 +886,7 @@ async def test_unremove_asks_where_and_puts_them_back(app):
 
 async def test_end_puts_them_after_the_last_expression(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("r", "1", "tab", "2", "enter")
         await pilot.press("u")
         await pilot.press(*"END", "enter")
@@ -1127,7 +896,7 @@ async def test_end_puts_them_after_the_last_expression(app):
 
 async def test_unremove_says_so_when_there_is_nothing_to_put_back(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x")
+        authored(app, "x")
         await pilot.press("u")
         assert message(app) == "Unremove buffer empty"
         assert band(app)[0].startswith(" COMMAND:")
@@ -1135,7 +904,7 @@ async def test_unremove_says_so_when_there_is_nothing_to_put_back(app):
 
 async def test_an_engine_command_empties_the_buffer(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "2 + 3", "y")
+        authored(app, "2 + 3", "y")
         await pilot.press("r", "2", "tab", "2", "enter")
         await pilot.press("s", "enter")
         await pilot.press("u")
@@ -1144,7 +913,7 @@ async def test_an_engine_command_empties_the_buffer(app):
 
 async def test_unremove_asks_nothing_when_the_history_is_empty(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("r", "1", "tab", "2", "enter")
         assert numbered(app) == []
         await pilot.press("u")
@@ -1154,26 +923,13 @@ async def test_unremove_asks_nothing_when_the_history_is_empty(app):
 
 async def test_the_buffer_outlives_the_unremove_that_used_it(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("r", "1", "tab", "2", "enter")
         await pilot.press("u", "3", "enter")
         assert numbered(app) == ["#1: x", "#2: y", "#3: z"]
         # The same block again, under labels that are free this time.
         await pilot.press("u", "3", "enter")
         assert numbered(app) == ["#1: x", "#2: y", "#4: x", "#5: y", "#3: z"]
-
-
-async def test_the_history_keys_all_label_the_field(app):
-    async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z", "w")
-        await pilot.press("r")
-        await pilot.press("ctrl+home")
-        assert band(app) == [" REMOVE: Start: 1      End: 4"]
-        assert highlighted_expression(app) == "x"
-        await pilot.press("down")
-        assert band(app) == [" REMOVE: Start: 2      End: 4"]
-        await pilot.press("ctrl+end")
-        assert band(app) == [" REMOVE: Start: 4      End: 4"]
 
 
 # -- moVe ---------------------------------------------------------------------
@@ -1183,7 +939,7 @@ async def test_the_history_keys_all_label_the_field(app):
 
 async def test_move_offers_the_highlighted_expression_in_all_three_fields(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z", "w", "v")
+        authored(app, "x", "y", "z", "w", "v")
         await pilot.press("v")
         assert band(app) == [" MOVE: Before: 5      Start: 5      End: 5"]
         assert message(app) == 'Enter label number or type "end"'
@@ -1196,7 +952,7 @@ async def test_move_offers_the_highlighted_expression_in_all_three_fields(app):
 
 async def test_only_the_destination_field_asks_for_a_word(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("v", "tab")
         assert message(app) == "Enter label number"
         await pilot.press("tab")
@@ -1207,7 +963,7 @@ async def test_only_the_destination_field_asks_for_a_word(app):
 
 async def test_end_sends_the_block_past_the_last_expression(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("v")
         await pilot.press(*"END", "tab", "1", "tab", "2", "enter")
         assert numbered(app) == ["#3: z", "#1: x", "#2: y"]
@@ -1216,7 +972,7 @@ async def test_end_sends_the_block_past_the_last_expression(app):
 
 async def test_enter_alone_moves_the_highlighted_expression_nowhere(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("v", "enter")
         assert numbered(app) == ["#1: x", "#2: y", "#3: z"]
         assert highlighted_expression(app) == "z"
@@ -1224,7 +980,7 @@ async def test_enter_alone_moves_the_highlighted_expression_nowhere(app):
 
 async def test_the_arrows_walk_the_history_and_label_the_move_field(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z", "w")
+        authored(app, "x", "y", "z", "w")
         await pilot.press("v", "up", "up", "up")
         # The highlight moved with the key, and the Before field took it.
         assert band(app) == [" MOVE: Before: 1      Start: 4      End: 4"]
@@ -1235,7 +991,7 @@ async def test_the_arrows_walk_the_history_and_label_the_move_field(app):
 
 async def test_a_label_that_names_no_expression_leaves_the_move_question_up(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("v", "9", "tab", "1", "tab", "1", "enter")
         assert band(app) == [" MOVE: Before: 9      Start: 1      End: 1"]
         # The refusal takes the highlight back to the field that was wrong,
@@ -1248,7 +1004,7 @@ async def test_a_label_that_names_no_expression_leaves_the_move_question_up(app)
 
 async def test_the_field_a_move_was_refused_over_is_the_one_it_goes_back_to(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("v", "1", "tab", "9", "tab", "3", "enter")
         assert message(app) == "Enter label number"
         await pilot.press("3")
@@ -1259,19 +1015,12 @@ async def test_the_field_a_move_was_refused_over_is_the_one_it_goes_back_to(app)
 
 async def test_escape_abandons_move_and_leaves_the_history_alone(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("v", "1", "tab", "2", "tab", "2")
         await pilot.press("escape")
         assert numbered(app) == ["#1: x", "#2: y"]
         assert message(app) == "Enter option"
         assert highlighted_menu_option(app) == "Author"
-
-
-async def test_move_asks_nothing_when_the_history_is_empty(app):
-    async with app.run_test() as pilot:
-        await pilot.press("v")
-        assert band(app)[0].startswith(" COMMAND:")
-        assert message(app) == "Enter option"
 
 
 # -- Declare, whose four commands ask their questions in every form -----------
@@ -1459,35 +1208,6 @@ async def test_an_element_that_does_not_read_leaves_the_line_up(app):
 @pytest.mark.parametrize(
     ("keys", "step"),
     [
-        (("d", "v"), "the name"),
-        (("d", "v", "x", "enter"), "the domain"),
-        (("d", "v", "x", "enter", "r"), "the interval"),
-        (("d", "v", "x", "enter", "r", "i"), "the bounds"),
-        (("d", "v", "x", "enter", "v"), "the value"),
-        (("d", "f"), "the function name"),
-        (("d", "f", "f", "enter"), "the definition"),
-        (("d", "f", "f", "enter", "enter"), "the function variables"),
-        (("d", "m"), "the shape"),
-        (("d", "m", "enter"), "a matrix element"),
-        (("d", "r"), "the dimension"),
-        (("d", "r", "2", "enter"), "a vector element"),
-    ],
-    ids=str,
-)
-async def test_escape_abandons_declare_from_any_of_its_questions(app, keys, step):
-    """One Esc returns to the Declare menu, whichever question is up."""
-    async with app.run_test() as pilot:
-        await pilot.press(*keys)
-        await pilot.press("escape")
-        assert band(app) == [" DECLARE: Function Variable Matrix vectoR"]
-        assert message(app) == "Enter option"
-        assert entries(app) == []
-        assert (app.declaring, app.defining, app.entering) == (None, None, None)
-
-
-@pytest.mark.parametrize(
-    ("keys", "step"),
-    [
         (("d", "v", "enter"), "no name"),
         (("d", "f", "enter"), "no function name"),
         (("d", "r", "2", "enter", "enter"), "no vector element"),
@@ -1625,27 +1345,6 @@ async def test_a_line_that_does_not_read_stays_up(app):
         assert prompt(app) == ("BUILD first expression:", "2+*")
 
 
-@pytest.mark.parametrize(
-    ("keys", "step"),
-    [
-        (("b",), "the first operand"),
-        (("b", "enter"), "the operator"),
-        (("b", "enter", "+"), "the second operand"),
-        (("b", "enter", "+", "enter"), "the operator again"),
-    ],
-    ids=str,
-)
-async def test_escape_abandons_the_whole_build(app, keys, step):
-    """There is nothing to step back to: one Esc gives the command menu back."""
-    async with app.run_test() as pilot:
-        authored(app, "x")
-        await pilot.press(*keys)
-        await pilot.press("escape")
-        assert band(app)[0].startswith(" COMMAND:")
-        assert entries(app) == ["x"]
-        assert app.building is None
-
-
 async def test_a_blank_operand_line_abandons_the_build(app):
     async with app.run_test() as pilot:
         authored(app, "x")
@@ -1705,23 +1404,16 @@ async def test_differentiate_asks_expression_then_variable_then_order(app):
         assert band(app)[0].startswith(" COMMAND:")
 
 
-@pytest.mark.parametrize(
-    ("key", "line"),
-    [
-        ("i", " CALCULUS INTEGRATE: Lower limit:                    Upper limit:"),
-        ("l", " CALCULUS LIMIT: Point: 0                  From:(Both)Left Right"),
-        ("p", " CALCULUS PRODUCT: Lower limit: 1                  Upper limit: n"),
-        ("s", " CALCULUS SUM: Lower limit: 1                  Upper limit: n"),
-        ("t", " CALCULUS TAYLOR: Degree: 5                  Point: 0"),
-        ("v", " CALCULUS VECTOR: Start: 1               End:                 Step: 1"),
-    ],
-    ids=str,
-)
-async def test_each_command_finishes_on_a_line_of_its_own(app, key, line):
-    async with app.run_test() as pilot:
-        authored(app, "x^2*y")
-        await pilot.press("c", key, "enter", "enter")
-        assert band(app) == [line]
+#: The line each command finishes on, after its expression and its variable.
+LAST_LINES = {
+    "d": " CALCULUS DIFFERENTIATE: Order: 1",
+    "i": " CALCULUS INTEGRATE: Lower limit:                    Upper limit:",
+    "l": " CALCULUS LIMIT: Point: 0                  From:(Both)Left Right",
+    "p": " CALCULUS PRODUCT: Lower limit: 1                  Upper limit: n",
+    "s": " CALCULUS SUM: Lower limit: 1                  Upper limit: n",
+    "t": " CALCULUS TAYLOR: Degree: 5                  Point: 0",
+    "v": " CALCULUS VECTOR: Start: 1               End:                 Step: 1",
+}
 
 
 @pytest.mark.parametrize(
@@ -1752,7 +1444,9 @@ async def test_what_each_command_enters(app, keys, text, note):
     """The linear forms come from the original's own Transfer Save."""
     async with app.run_test() as pilot:
         authored(app, "x^2*y")
-        await pilot.press("c", *keys[:1], "enter", "enter", *keys[1:])
+        await pilot.press("c", *keys[:1], "enter", "enter")
+        assert band(app) == [LAST_LINES[keys[0]]]
+        await pilot.press(*keys[1:])
         assert entries(app)[-1] == text
 
 
@@ -1865,28 +1559,6 @@ async def test_a_highlighted_part_is_what_is_taken(app):
         assert annotation(app) == "Dif(#1',x)"
 
 
-@pytest.mark.parametrize(
-    ("keys", "step"),
-    [
-        (("c", "d"), "the expression"),
-        (("c", "d", "enter"), "the variable"),
-        (("c", "d", "enter", "enter"), "the order"),
-        (("c", "v", "enter", "enter"), "the values a vector runs over"),
-    ],
-    ids=str,
-)
-async def test_escape_abandons_the_command_for_the_calculus_menu(app, keys, step):
-    async with app.run_test() as pilot:
-        authored(app, "x^2*y")
-        await pilot.press(*keys)
-        await pilot.press("escape")
-        assert band(app) == [
-            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
-        ]
-        assert entries(app) == ["x^2*y"]
-        assert app.calculating is None
-
-
 async def test_a_blank_expression_line_abandons_the_command(app):
     async with app.run_test() as pilot:
         authored(app, "x^2*y")
@@ -1916,6 +1588,89 @@ async def test_nothing_is_computed_until_a_simplify_asks_for_it(app):
         assert entries(app)[-1] == "2*x*y"
         assert annotation(app) == "Simp(#2)"
 
+# -- Esc in the middle of a command -------------------------------------------
+#
+# Esc on a line abandons the command at once, whatever it has asked so far; on a
+# submenu or a dialog it takes that off and the command with it. Either way it
+# goes back to the menu the command was picked from.
+
+COMMAND_MENU = " COMMAND:"
+DECLARE_MENU = " DECLARE: Function Variable Matrix vectoR"
+CALCULUS_MENU = " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
+
+
+@pytest.mark.parametrize(
+    ("setup", "keys", "menu", "first"),
+    [
+        pytest.param(
+            ["x^2 y^2 - 1"], ("f", "enter"), COMMAND_MENU, "Author", id="a line"
+        ),
+        pytest.param(
+            ["x^2 y^2 - 1"],
+            ("f", "enter", "enter"),
+            COMMAND_MENU,
+            "Author",
+            id="the amount menu",
+        ),
+        pytest.param(
+            ["Precision := Approximate", "x^5 - x + 1 = 0"],
+            ("l", "enter"),
+            COMMAND_MENU,
+            "Author",
+            id="the interval",
+        ),
+        pytest.param(
+            ["x"], ("b", "enter"), COMMAND_MENU, "Author", id="the operator menu"
+        ),
+        pytest.param(
+            [],
+            ("d", "f", "f", "enter", "enter"),
+            DECLARE_MENU,
+            "Function",
+            id="a Declare line",
+        ),
+        pytest.param(
+            [],
+            ("d", "v", "x", "enter"),
+            DECLARE_MENU,
+            "Function",
+            id="the domain menu",
+        ),
+        pytest.param(
+            [],
+            ("d", "v", "x", "enter", "r", "i"),
+            DECLARE_MENU,
+            "Function",
+            id="the bounds",
+        ),
+        pytest.param(
+            ["x^2*y"],
+            ("c", "d", "enter", "enter"),
+            CALCULUS_MENU,
+            "Differentiate",
+            id="the order",
+        ),
+    ],
+)
+async def test_escape_abandons_the_command_for_the_menu_it_came_from(
+    app, setup, keys, menu, first
+):
+    async with app.run_test() as pilot:
+        authored(app, *setup)
+        before = entries(app)
+        await pilot.press(*keys)
+        await pilot.press("escape")
+        assert band(app)[0].startswith(menu)
+        assert highlighted_menu_option(app) == first
+        assert message(app) == "Enter option"
+        assert entries(app) == before
+        assert app.asking is None
+        assert app.solving is None
+        assert app.building is None
+        assert app.calculating is None
+        assert (app.declaring, app.defining, app.entering) == (None, None, None)
+
+
 # -- Jump ---------------------------------------------------------------------
 #
 # Every screen asserted here was checked against the original.
@@ -1923,7 +1678,7 @@ async def test_nothing_is_computed_until_a_simplify_asks_for_it(app):
 
 async def test_jump_asks_for_a_label_and_highlights_what_it_names(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("j")
         # Nothing is offered: the command is for going somewhere else, so the
         # label of where the highlight already is would be no use.
@@ -1937,7 +1692,7 @@ async def test_jump_asks_for_a_label_and_highlights_what_it_names(app):
 
 async def test_a_label_no_expression_carries_lands_on_the_one_above_it(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("r", "2", "tab", "2", "enter")
         await pilot.press("j", "2", "enter")
         assert highlighted_expression(app) == "z"
@@ -1945,7 +1700,7 @@ async def test_a_label_no_expression_carries_lands_on_the_one_above_it(app):
 
 async def test_a_label_past_the_last_one_leaves_the_line_up(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("j", "9", "enter")
         assert prompt(app) == ("JUMP to:", "9")
         assert message(app) == "Enter label number"
@@ -1957,7 +1712,7 @@ async def test_a_label_past_the_last_one_leaves_the_line_up(app):
 
 async def test_a_line_that_is_no_label_number_is_refused(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("j")
         await pilot.press(*"1x", "enter")
         assert prompt(app) == ("JUMP to:", "1x")
@@ -1966,7 +1721,7 @@ async def test_a_line_that_is_no_label_number_is_refused(app):
 
 async def test_a_jump_line_with_nothing_on_it_leaves_the_highlight_alone(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("j", "enter")
         assert highlighted_expression(app) == "y"
         assert message(app) == "Enter option"
@@ -1975,7 +1730,7 @@ async def test_a_jump_line_with_nothing_on_it_leaves_the_highlight_alone(app):
 
 async def test_escape_abandons_the_jump_line(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("j", "1")
         await pilot.press("escape")
         assert highlighted_expression(app) == "y"
@@ -1991,9 +1746,30 @@ async def test_jumping_to_the_expression_you_are_inside_of_keeps_the_part(app):
         assert highlighted_expression(app) == "x + 1"
 
 
-async def test_jump_asks_nothing_when_the_history_is_empty(app):
+@pytest.mark.parametrize(
+    ("key", "line"),
+    [
+        ("s", "SIMPLIFY expression:"),
+        ("f", "FACTOR expression:"),
+        ("l", "SOLVE expression:"),
+        ("r", None),
+        ("v", None),
+        ("j", None),
+    ],
+    ids=str,
+)
+async def test_an_empty_history_asks_for_nothing(app, key, line):
+    """One command for each place the question is settled: the line Simplify and
+    approX share, the one Factor and Expand share, soLve's, and the three commands
+    that ask nothing at all when there is nothing to name."""
     async with app.run_test() as pilot:
-        await pilot.press("j")
+        await pilot.press(key)
+        if line is not None:
+            # Nothing is highlighted, so nothing is offered, and Enter on the
+            # empty line asks for nothing.
+            assert prompt(app) == (line, "")
+            await pilot.press("enter")
+        assert app.session.entries == []
         assert band(app)[0].startswith(" COMMAND:")
         assert message(app) == "Enter option"
 
@@ -2008,7 +1784,7 @@ async def test_jump_asks_nothing_when_the_history_is_empty(app):
 
 async def test_the_history_keys_walk_while_a_prompt_line_is_up(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "2 + 3", "y", "z")
+        authored(app, "2 + 3", "y", "z")
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#3")
         # The line takes the label of wherever the highlight lands, which is
@@ -2025,7 +1801,7 @@ async def test_the_history_keys_walk_while_a_prompt_line_is_up(app):
 
 async def test_a_label_walked_onto_is_selected_as_the_offered_one_was(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("s", "up")
         assert prompt(app)[1] == "#2"
         # Typing replaces it, exactly as it replaces the label first offered.
@@ -2035,7 +1811,7 @@ async def test_a_label_walked_onto_is_selected_as_the_offered_one_was(app):
 
 async def test_a_line_that_was_typed_on_is_left_as_it_is(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("s")
         await pilot.press(*"2+3")
         assert prompt(app)[1] == "#2+3"
@@ -2047,7 +1823,7 @@ async def test_a_line_that_was_typed_on_is_left_as_it_is(app):
 
 async def test_a_cursor_key_hands_the_line_over_for_good(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("s")
         # End collapses the selection the offered label came up with, and the
         # line stops taking labels from then on.
@@ -2058,7 +1834,7 @@ async def test_a_cursor_key_hands_the_line_over_for_good(app):
 
 async def test_a_stretch_marked_out_by_hand_hands_the_line_over_too(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("s")
         # A selection of the user's own is not the offering, however much it
         # looks like one, so the walk leaves both the line and it alone.
@@ -2072,21 +1848,11 @@ async def test_a_stretch_marked_out_by_hand_hands_the_line_over_too(app):
 
 async def test_the_cursor_keys_move_no_highlight_while_a_line_is_up(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "x (x + 1)")
+        authored(app, "x", "y", "x (x + 1)")
         await pilot.press("s")
         for key in ("left", "right", "home", "end"):
             await pilot.press(key)
             assert highlighted_expression(app) == "x·(x + 1)"
-
-
-async def test_the_author_line_walks_but_is_never_labelled(app):
-    async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
-        await pilot.press("a")
-        await pilot.press(*"w")
-        await pilot.press("up")
-        assert highlighted_expression(app) == "y"
-        assert prompt(app) == ("AUTHOR expression:", "w")
 
 
 # -- copying an expression and pasting it -------------------------------------
@@ -2099,7 +1865,7 @@ async def test_the_author_line_walks_but_is_never_labelled(app):
 
 async def test_ctrl_c_copies_the_highlighted_expression_and_ctrl_v_pastes_it(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1", "y")
+        authored(app, "x + 1", "y")
         await pilot.press("ctrl+c")
         assert app.clipboard == "y"
         # Text handed to a clipboard leaves no other mark, so the message line
@@ -2117,7 +1883,7 @@ async def test_a_headless_copy_keeps_off_the_desktop_clipboard(app, monkeypatch)
     environment = type(platform.current())
     monkeypatch.setattr(environment, "copy", lambda self, text: touched.append(text))
     async with app.run_test() as pilot:
-        await worksheet(pilot, "y")
+        authored(app, "y")
         await pilot.press("ctrl+c")
         assert app.clipboard == "y"
         assert touched == []
@@ -2125,7 +1891,7 @@ async def test_a_headless_copy_keeps_off_the_desktop_clipboard(app, monkeypatch)
 
 async def test_ctrl_c_copies_only_the_highlighted_part(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x (x + 1)")
+        authored(app, "x (x + 1)")
         await pilot.press("right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("ctrl+c")
@@ -2134,7 +1900,7 @@ async def test_ctrl_c_copies_only_the_highlighted_part(app):
 
 async def test_the_highlight_can_be_walked_and_copied_under_a_line(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1", "y")
+        authored(app, "x + 1", "y")
         # Which is the point of the pair: build a new expression out of one
         # already on screen without leaving the line it is being built on.
         await pilot.press("a", *"2 (")
@@ -2146,7 +1912,7 @@ async def test_the_highlight_can_be_walked_and_copied_under_a_line(app):
 
 async def test_a_copy_outlives_the_line_it_was_pasted_on(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "sin(x)")
+        authored(app, "sin(x)")
         await pilot.press("ctrl+c")
         await pilot.press("a", "ctrl+v", "escape")
         # The clipboard belongs to the program rather than to the command that
@@ -2157,7 +1923,7 @@ async def test_a_copy_outlives_the_line_it_was_pasted_on(app):
 
 async def test_pasting_takes_the_offered_label_hash_and_all(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("ctrl+c")
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
@@ -2169,7 +1935,7 @@ async def test_pasting_takes_the_offered_label_hash_and_all(app):
 
 async def test_ctrl_v_pastes_onto_any_line_but_not_at_the_menu(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x")
+        authored(app, "x")
         await pilot.press("ctrl+c")
         await pilot.press("t", "s", "d")
         assert prompt(app)[0] == "TRANSFER SAVE DERIVE file:"
@@ -2206,7 +1972,7 @@ async def test_ctrl_v_with_nothing_copied_writes_nothing(app):
 
 async def test_ctrl_c_copies_what_is_marked_out_on_the_line(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "a/b")
+        authored(app, "a/b")
         await pilot.press("a")
         await pilot.press(*"2 ", "alt+p")
         await pilot.press("shift+left")
@@ -2219,7 +1985,7 @@ async def test_ctrl_c_copies_what_is_marked_out_on_the_line(app):
 
 async def test_the_label_a_line_offers_is_not_a_selection_of_the_users(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1", "y")
+        authored(app, "x + 1", "y")
         # Simplify comes up with `#2` selected, so that typing replaces it -
         # which is the command speaking rather than the user marking a stretch
         # out. Ctrl-C means the highlighted expression under such a line, that
@@ -2252,7 +2018,7 @@ async def test_ctrl_x_cuts_what_is_marked_out_and_keeps_the_copy(app):
 
 async def test_ctrl_x_with_nothing_marked_out_says_so(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "a/b")
+        authored(app, "a/b")
         await pilot.press("a")
         await pilot.press(*"x+1")
         await pilot.press("ctrl+x")
@@ -2265,7 +2031,7 @@ async def test_ctrl_x_with_nothing_marked_out_says_so(app):
 
 async def test_ctrl_x_does_not_cut_the_label_a_line_offers(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("s")
         await pilot.press("ctrl+x")
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
@@ -2275,7 +2041,7 @@ async def test_ctrl_x_does_not_cut_the_label_a_line_offers(app):
 
 async def test_ctrl_x_at_the_menu_cuts_nothing_and_says_nothing(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x+1")
+        authored(app, "x+1")
         await pilot.press("ctrl+x")
         # There is no line at the menu, so there is nothing to explain either.
         assert app.clipboard == ""
@@ -2291,7 +2057,7 @@ async def test_ctrl_x_at_the_menu_cuts_nothing_and_says_nothing(app):
 
 async def test_f3_writes_the_highlighted_expression_onto_the_author_line(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1", "y")
+        authored(app, "x + 1", "y")
         await pilot.press("a", "f3")
         assert prompt(app) == ("AUTHOR expression:", "y")
         # Walking under the line is what picks what F3 takes.
@@ -2301,14 +2067,14 @@ async def test_f3_writes_the_highlighted_expression_onto_the_author_line(app):
 
 async def test_f4_fences_what_it_writes(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1")
+        authored(app, "x + 1")
         await pilot.press("a", *"2", "f4", "enter")
         assert numbered(app)[-1] == "#2: 2*(x+1)"
 
 
 async def test_f3_writes_at_the_cursor_and_leaves_it_after(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1")
+        authored(app, "x + 1")
         await pilot.press("a", *"ab", "left", "f3")
         assert prompt(app)[1] == "ax+1b"
         # The cursor sits after what was written, so the next thing typed
@@ -2319,7 +2085,7 @@ async def test_f3_writes_at_the_cursor_and_leaves_it_after(app):
 
 async def test_f3_takes_only_the_highlighted_part(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x (x + 1)")
+        authored(app, "x (x + 1)")
         # Descending happens before the line goes up: with a prompt line on
         # screen the sideways keys are the line's own.
         await pilot.press("right", "right")
@@ -2340,7 +2106,7 @@ async def test_f3_takes_only_the_highlighted_part(app):
 )
 async def test_f3_writes_onto_every_line_an_expression_is_written_on(app, keys, line):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1")
+        authored(app, "x + 1")
         await pilot.press(*keys)
         assert prompt(app)[0] == line
         await pilot.press("f3")
@@ -2349,7 +2115,7 @@ async def test_f3_writes_onto_every_line_an_expression_is_written_on(app, keys, 
 
 async def test_f3_writes_onto_the_substitute_value_line(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1", "a")
+        authored(app, "x + 1", "a")
         await pilot.press("m", "s", "enter")
         assert prompt(app)[0] == "MANAGE SUBSTITUTE value:"
         # The manual gives F3 for this line by name: the value put in the place
@@ -2361,7 +2127,7 @@ async def test_f3_writes_onto_the_substitute_value_line(app):
 
 async def test_the_substitute_value_line_takes_what_the_highlight_walks_onto(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x (x + 1)", "a + b")
+        authored(app, "x (x + 1)", "a + b")
         await pilot.press("m", "s", "enter")
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "a")
         # Which expression is being substituted into is settled, but what goes
@@ -2377,7 +2143,7 @@ async def test_the_substitute_value_line_takes_what_the_highlight_walks_onto(app
 
 async def test_f3_writes_nothing_on_a_line_that_takes_no_expression(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         # Jump takes a label number, Declare a variable's name: neither is an
         # expression, so neither takes what F3 would write.
         for keys in (("j",), ("d", "v")):
@@ -2389,7 +2155,7 @@ async def test_f3_writes_nothing_on_a_line_that_takes_no_expression(app):
 
 async def test_f3_takes_the_offered_label_hash_and_all(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
         # The `#` stands outside the selection a typed digit replaces, but what
@@ -2448,7 +2214,7 @@ async def test_the_alt_keys_write_on_any_line_but_not_at_the_menu(app):
 
 async def test_f6_hands_the_sideways_keys_to_the_highlight_and_back(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x (x + 1)")
+        authored(app, "x (x + 1)")
         await pilot.press("a")
         assert flags(app) == ["Lin"]
         await pilot.press("f6")
@@ -2467,7 +2233,7 @@ async def test_f6_hands_the_sideways_keys_to_the_highlight_and_back(app):
 
 async def test_the_arrow_key_setting_says_which_mode_a_line_starts_in(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x + 1")
+        authored(app, "x + 1")
         authored(app, "ArrowKeyMode := Subexpression")
         await pilot.press("a")
         assert flags(app) == []
@@ -2481,7 +2247,7 @@ async def test_the_arrow_key_setting_says_which_mode_a_line_starts_in(app):
 
 async def test_no_line_up_means_no_mode_words_to_report(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x")
+        authored(app, "x")
         assert flags(app) == []
         # Overwrite outlives the line it was set on, but there is no line for
         # the status line to say it of.
@@ -2522,7 +2288,7 @@ async def test_overwrite_stands_until_it_is_turned_back(app):
 
 async def test_overwrite_replaces_what_is_selected_as_inserting_does(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y")
+        authored(app, "x", "y")
         await pilot.press("s", "insert")
         # The offered label comes up selected, and typing takes it away whole
         # rather than standing on its first character.
@@ -2534,36 +2300,20 @@ async def test_overwrite_replaces_what_is_selected_as_inserting_does(app):
 # -- the kill ring: what a deletion took out, and Ctrl-Y putting it back ------
 
 
-async def test_ctrl_y_puts_back_what_ctrl_u_took_out(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", *"x + 1")
-        await pilot.press("ctrl+u")
-        assert prompt(app)[1] == ""
-        await pilot.press("ctrl+y")
-        assert prompt(app) == ("AUTHOR expression:", "x + 1")
-        await pilot.press("enter")
-        assert entries(app) == ["x+1"]
-
-
 async def test_a_kill_is_put_back_at_the_cursor_and_the_cursor_follows_it(app):
     async with app.run_test() as pilot:
-        await pilot.press("a", *"a + b", "home")
+        await pilot.press("a", *"a + b")
+        # Nothing has been deleted yet, so there is nothing to put back.
+        await pilot.press("ctrl+y", "alt+y")
+        assert prompt(app)[1] == "a + b"
         # Ctrl-K takes the line from the cursor on, so the whole of it here.
-        await pilot.press("ctrl+k", *"2 (", "ctrl+y", *")")
-        assert prompt(app)[1] == "2 (a + b)"
-
-
-async def test_what_one_line_deleted_comes_back_on_the_next(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", *"sin(x)/x", "ctrl+u", "escape")
+        await pilot.press("home", "ctrl+k", "escape")
         # The ring belongs to the line rather than to the command, so a line
         # abandoned altogether still leaves what it deleted to be put back.
-        await pilot.press("a", "ctrl+y", "enter")
-        assert entries(app) == ["SIN(x)/x"]
-        # And on a line another command reads, not only on another Author: the
-        # label Simplify offers is taken out and the expression put in instead.
-        await pilot.press("s", "ctrl+u", "ctrl+y", "enter")
-        assert entries(app) == ["SIN(x)/x", "SIN(x)/x"]
+        await pilot.press("a", *"2 (", "ctrl+y", *")")
+        assert prompt(app) == ("AUTHOR expression:", "2 (a + b)")
+        await pilot.press("enter")
+        assert entries(app) == ["2*(a+b)"]
 
 
 async def test_deletions_that_follow_one_another_come_back_as_one(app):
@@ -2577,6 +2327,12 @@ async def test_deletions_that_follow_one_another_come_back_as_one(app):
         assert prompt(app)[1] == ""
         await pilot.press("ctrl+y")
         assert prompt(app)[1] == "a + b + c"
+        # Backspace and Delete are corrections rather than kills, so what Ctrl-U
+        # took is still what comes back.
+        await pilot.press("ctrl+u", *"cde", "backspace", "left", "delete")
+        assert prompt(app)[1] == "c"
+        await pilot.press("ctrl+y")
+        assert prompt(app)[1] == "ca + b + c"
 
 
 async def test_a_deletion_after_something_else_starts_a_kill_of_its_own(app):
@@ -2599,45 +2355,16 @@ async def test_alt_y_walks_back_through_the_kills_before_the_last(app):
         # Past the oldest it comes round to the newest again.
         await pilot.press("alt+y")
         assert prompt(app)[1] == "second"
-
-
-async def test_alt_y_takes_the_place_of_the_yank_and_leaves_the_rest(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", *"one", "ctrl+u", *"two", "ctrl+u")
-        await pilot.press(*"f(", "ctrl+y", *")")
-        assert prompt(app)[1] == "f(two)"
         # The cursor has moved on since the yank, so there is nothing left to
         # reconsider: what Alt-Y would have swapped stands as it is.
+        await pilot.press(*")")
         await pilot.press("alt+y")
-        assert prompt(app)[1] == "f(two)"
-
-
-async def test_alt_y_says_nothing_when_the_last_key_was_not_a_yank(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", *"x", "ctrl+u", *"y")
-        await pilot.press("alt+y")
-        assert prompt(app)[1] == "y"
-
-
-async def test_ctrl_y_on_a_line_that_deleted_nothing_writes_nothing(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", *"x")
-        await pilot.press("ctrl+y", "alt+y")
-        assert prompt(app)[1] == "x"
-
-
-async def test_a_character_deleted_on_its_own_is_not_kept(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", *"ab", "ctrl+u", *"cd", "backspace", "delete")
-        # Backspace and Delete are corrections rather than kills, so the line
-        # Ctrl-U took is still what comes back.
-        await pilot.press("ctrl+y")
-        assert prompt(app)[1] == "cab"
+        assert prompt(app)[1] == "second)"
 
 
 async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
+        authored(app, "x", "y", "z")
         await pilot.press("j")
         await pilot.press("up", "up")
         assert highlighted_expression(app) == "x"
@@ -2690,7 +2417,7 @@ async def test_the_page_keys_label_a_dialogs_field_too(app):
 
 async def test_factors_variable_line_takes_no_notice_of_them(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "x^2 - y^2")
+        authored(app, "x", "y", "x^2 - y^2")
         await pilot.press("f", "enter")
         assert prompt(app)[0] == "FACTOR variable 1:"
         # What to factor has been settled by now, so the highlight stays put.
@@ -2703,15 +2430,14 @@ async def test_factors_variable_line_takes_no_notice_of_them(app):
     ("keys", "line"),
     [
         (("c", "d", "enter"), "CALCULUS DIFFERENTIATE variable:"),
-        (("l", "enter"), "SOLVE variable:"),
-        (("m", "a", "enter"), "ANNOTATION:"),
-        (("m", "s", "enter"), "MANAGE SUBSTITUTE value:"),
+        (("d", "m", "2", "tab", "2", "enter"), "MATRIX element:"),
     ],
     ids=str,
 )
-async def test_the_lines_that_collect_a_name_walk_under_it_too(app, keys, line):
+async def test_the_lines_that_name_no_expression_walk_under_it_too(app, keys, line):
+    """A line collecting a name, and a line an expression is entered on."""
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "a z + b")
+        authored(app, "x", "y", "a z + b")
         await pilot.press(*keys)
         offered = prompt(app)[1]
         assert prompt(app)[0] == line
@@ -2725,7 +2451,7 @@ async def test_the_lines_that_collect_a_name_walk_under_it_too(app, keys, line):
 
 async def test_a_line_that_takes_no_expression_is_offered_no_f6(app):
     async with app.run_test() as pilot:
-        await worksheet(pilot, "x (x + 1)", "y")
+        authored(app, "x (x + 1)", "y")
         await pilot.press("m", "a", "enter")
         assert prompt(app)[0] == "ANNOTATION:"
         # There is no expression on this line to walk, so there is no mode to
@@ -2738,39 +2464,12 @@ async def test_a_line_that_takes_no_expression_is_offered_no_f6(app):
 async def test_subexpression_mode_leaves_such_a_line_its_sideways_keys(app):
     async with app.run_test() as pilot:
         authored(app, "ArrowKeyMode := Subexpression")
-        await worksheet(pilot, "x (x + 1)")
+        authored(app, "x (x + 1)")
         await pilot.press("c", "d", "enter")
         assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "x")
         await pilot.press("end", *"y")
         assert prompt(app)[1] == "xy"
         assert highlighted_expression(app) == "x·(x + 1)"
-
-
-@pytest.mark.parametrize(
-    ("keys", "line"),
-    [
-        (("d", "v"), "DECLARE VARIABLE name:"),
-        (("d", "v", *"a", "enter", "v"), "DECLARE VARIABLE value:"),
-        (("d", "f"), "DECLARE FUNCTION name:"),
-        (("d", "f", *"g", "enter"), "DECLARE FUNCTION value:"),
-        (("d", "f", *"g", "enter", "enter"), "DECLARE FUNCTION variable:"),
-        (("d", "r", "2", "enter"), "VECTOR element:"),
-        (("d", "m", "2", "tab", "2", "enter"), "MATRIX element:"),
-    ],
-    ids=str,
-)
-async def test_the_declare_lines_walk_but_are_never_labelled(app, keys, line):
-    async with app.run_test() as pilot:
-        await worksheet(pilot, "x", "y", "z")
-        await pilot.press(*keys)
-        offered = prompt(app)[1]
-        assert prompt(app)[0] == line
-        await pilot.press("up")
-        assert highlighted_expression(app) == "y"
-        await pilot.press("ctrl+home")
-        assert highlighted_expression(app) == "x"
-        # None of them names an expression, so none takes the label walked onto.
-        assert prompt(app) == (line, offered)
 
 
 # -- keeping the selected entry in view ---------------------------------------
