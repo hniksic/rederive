@@ -3,13 +3,23 @@
 `test_simplify.py` already asks this of the inputs it lists in `EVERY_CASE`, under
 whatever context each one uses. This asks it of every `simp(text) == expected` the
 suite states with the default context, wherever it is stated - the parametrized lists
-and the inline asserts of `test_simplify.py` and `test_manual.py` alike - and asks it
-twice: the answer to an input simplifies to itself, and so does the expected text. The
-second is the stronger of the two, because an expected value is written by hand, and a
-form the engine would not keep is a form it could never have answered with.
+and the inline asserts of `test_simplify.py` and `test_manual.py` alike: the expected
+text simplifies to itself. An expected value is written by hand, and a form the engine
+would not keep is a form it could never have answered with.
+
+That the answer to an input simplifies to itself is the same question, where the case
+holds: its test says the answer is the expected text, and this one says the expected
+text stays put. So the answer is simplified again only for the cases their own files
+record as not held - the manual's spellings `test_manual.py` lists in `NEVER_TO_HOLD`
+and `NOT_YET_HELD`, and the ones `test_simplify.py` keeps under a strict xfail - whose
+answer may be something other than the expected text, and so a form of its own to ask
+about. Asking it of every case would simplify every input a second time, on top of
+the run its own test gives it, for an answer the two tests together already know.
 
 The pairs are read out of the two files' source rather than imported, so that a case
-added to either is covered here without being listed twice.
+added to either is covered here without being listed twice; what each file records as
+not held is imported from it, so that a case struck off there is asked here again as
+it should be.
 """
 
 from __future__ import annotations
@@ -22,8 +32,15 @@ import pytest
 from rederive.engine.computing import Context, simplify
 from rederive.syntax import FunctionDeclaration, ParseState, parse_expression
 
+import test_manual
+import test_simplify
+
 _HERE = Path(__file__).parent
 _SOURCES = ("test_simplify.py", "test_manual.py")
+
+#: A default-context case, as this module reads it: input, expected text, the
+#: functions the input is read with declared, and the id of the test that states it.
+Pair = tuple[str, str, tuple[str, ...], str]
 
 
 def _is_text(node: ast.AST) -> bool:
@@ -70,16 +87,18 @@ def _functions_read_with(
     return None
 
 
-def _pairs_in(path: Path) -> list[tuple[str, str, tuple[str, ...]]]:
-    """The default-context (input, expected, functions) cases one test file states.
+def _pairs_in(path: Path) -> list[Pair]:
+    """The default-context cases one test file states.
 
     A list counts where a parametrized test consumes it and calls `simp` with the text
     alone; an inline assert counts where it compares `simp` of one literal with another.
     The functions are those the input is read with declared, which an inline assert
-    names by a state `declaring` built in the same test.
+    names by a state `declaring` built in the same test. A case out of a list is
+    identified the way pytest identifies it, by the test's name and the `ids=str` of
+    its two texts; an inline assert by the test's name alone.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    consumed: set[str] = set()
+    consumed: dict[str, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef):
             continue
@@ -89,24 +108,26 @@ def _pairs_in(path: Path) -> list[tuple[str, str, tuple[str, ...]]]:
         for decorator in node.decorator_list:
             if isinstance(decorator, ast.Call):
                 consumed.update(
-                    argument.id
+                    (argument.id, node.name)
                     for argument in decorator.args
                     if isinstance(argument, ast.Name)
                 )
     pairs = []
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Assign)
-            and isinstance(node.value, ast.List)
-            and any(getattr(target, "id", None) in consumed for target in node.targets)
-        ):
-            pairs.extend(
-                (element.elts[0].value, element.elts[1].value, ())
-                for element in node.value.elts
-                if isinstance(element, ast.Tuple)
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.List)):
+            continue
+        names = (getattr(target, "id", None) for target in node.targets)
+        tests = [consumed[name] for name in names if name in consumed]
+        if not tests:
+            continue
+        for element in node.value.elts:
+            if (
+                isinstance(element, ast.Tuple)
                 and len(element.elts) == 2
                 and all(_is_text(part) for part in element.elts)
-            )
+            ):
+                text, expected = (part.value for part in element.elts)
+                pairs.append((text, expected, (), f"{tests[0]}[{text}-{expected}]"))
     for function in ast.walk(tree):
         if not isinstance(function, ast.FunctionDef):
             continue
@@ -126,19 +147,34 @@ def _pairs_in(path: Path) -> list[tuple[str, str, tuple[str, ...]]]:
             functions = _functions_read_with(left, declared)
             if functions is not None:
                 expected = node.test.comparators[0].value
-                pairs.append((left.args[0].value, expected, functions))
+                pairs.append((left.args[0].value, expected, functions, function.name))
     return pairs
 
 
-def _every_pair() -> list[tuple[str, str, tuple[str, ...]]]:
-    seen: dict[tuple[str, str, tuple[str, ...]], None] = {}
+def _every_pair() -> list[Pair]:
+    seen: dict[tuple[str, str, tuple[str, ...]], Pair] = {}
     for name in _SOURCES:
         for pair in _pairs_in(_HERE / name):
-            seen.setdefault(pair, None)
-    return list(seen)
+            seen.setdefault(pair[:3], pair)
+    return list(seen.values())
 
 
 EVERY_PAIR = _every_pair()
+
+
+def _unheld(pair: Pair) -> bool:
+    """Whether the test stating this case expects it to fail, so that the answer to
+    the input is not the expected text and is to be asked about on its own."""
+    text, _, _, test_id = pair
+    return (
+        test_id in test_manual.NEVER_TO_HOLD
+        or test_id in test_manual.NOT_YET_HELD
+        or text in test_simplify.INDICATOR_AND_NORMAL_NOT_HELD
+    )
+
+
+#: The cases whose answer is not the expected text, by their own tests' account.
+UNHELD_PAIRS = [pair for pair in EVERY_PAIR if _unheld(pair)]
 
 _TRUTH_TABLE = "TRUTH_TABLE(p, q, p AND q, p OR q, p XOR q, p IMP q)"
 
@@ -191,10 +227,14 @@ def simp(text: str, functions: tuple[str, ...] = ()) -> str:
     return simplify(parse_expression(text, state).node, Context(), state).text
 
 
-def _marked(inputs: dict[str, str], expectations: dict[str, str] | None = None) -> list:
+def _marked(
+    pairs: list[Pair],
+    inputs: dict[str, str],
+    expectations: dict[str, str] | None = None,
+) -> list:
     expectations = expectations or {}
     cases = []
-    for text, expected, functions in EVERY_PAIR:
+    for text, expected, functions, _ in pairs:
         reason = inputs.get(text) or expectations.get(expected)
         marks = pytest.mark.xfail(reason=reason, strict=True) if reason else ()
         cases.append(pytest.param(text, expected, functions, marks=marks))
@@ -202,21 +242,23 @@ def _marked(inputs: dict[str, str], expectations: dict[str, str] | None = None) 
 
 
 def test_the_pairs_are_found():
-    """The collection reads something: an empty list would pass every case below."""
+    """The collection reads something: an empty list would pass every case below,
+    and the record of what is not held is read against the ids it names."""
     assert len(EVERY_PAIR) > 500
+    assert len(UNHELD_PAIRS) > 5
 
 
 @pytest.mark.parametrize(
-    ("text", "expected", "functions"), _marked(SETTLES_LATER), ids=str
+    ("text", "expected", "functions"), _marked(UNHELD_PAIRS, SETTLES_LATER), ids=str
 )
-def test_simplifying_an_answer_again_changes_nothing(text, expected, functions):
+def test_simplifying_an_unheld_answer_again_changes_nothing(text, expected, functions):
     once = simp(text, functions)
     assert simp(once, functions) == once
 
 
 @pytest.mark.parametrize(
     ("text", "expected", "functions"),
-    _marked(SETTLES_LATER, MANUAL_SPELLINGS | CONFLICTING_SPELLINGS),
+    _marked(EVERY_PAIR, SETTLES_LATER, MANUAL_SPELLINGS | CONFLICTING_SPELLINGS),
     ids=str,
 )
 def test_an_expected_answer_simplifies_to_itself(text, expected, functions):

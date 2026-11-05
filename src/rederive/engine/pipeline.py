@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import zlib
 from collections.abc import Callable
-from functools import reduce
+from functools import lru_cache, reduce
 from itertools import combinations
 from math import gcd
 from typing import NamedTuple
@@ -57,6 +57,7 @@ import sympy as sp
 import sympy.core.random as sympy_random
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
+from sympy.integrals.risch import NonElementaryIntegral
 from sympy.functions.elementary.trigonometric import TrigonometricFunction
 from sympy.logic.boolalg import Boolean
 from sympy.simplify.fu import TR2, TR5, TR6, TR7, TR8, TR11
@@ -1268,6 +1269,7 @@ def _partial_products(head: sp.Product) -> sp.Basic | None:
 _BOUNDED = {"meijerg": False, "heurisch": False}
 
 
+@lru_cache(maxsize=256)
 def _integral(head: sp.Basic) -> sp.Basic:
     """An integral, by sympy, with what sympy gets wrong about definite ones put right.
 
@@ -1277,6 +1279,10 @@ def _integral(head: sp.Basic) -> sp.Basic:
     reads straight through, as an antiderivative taken across it would. What sympy
     then answers under a condition on a parameter, or with a parameter whose sign it
     did not know, is asked again on each side of that sign.
+
+    The answer is a function of the head alone, and is kept: an integral that stands
+    is asked again by the pass that simplifies the answer, and by the next command
+    over the line, and asking sympy costs seconds where a lookup costs nothing.
     """
     stepped = _between_the_steps(head)
     if stepped is not None:
@@ -1306,9 +1312,10 @@ def _integral_through(head: sp.Basic) -> sp.Basic:
     beyond = _beyond_convergence(head, value)
     if beyond is not None:
         return beyond
-    signed = _by_the_sign_of_a_parameter(head, value)
-    if signed is not None:
-        return signed
+    if value != head or verdict is _UNDECIDED:
+        signed = _by_the_sign_of_a_parameter(head, value)
+        if signed is not None:
+            return signed
     if _definite(head) and value.has(sp.zoo) and value is not sp.zoo:
         return head
     return _by_linearity(head) if value == head else value
@@ -1413,7 +1420,7 @@ def _by_sympy(head: sp.Basic) -> sp.Basic:
     measured rule for. Everything else comes back unevaluated, which is a
     documented answer where a minute of thrashing is not.
     """
-    bounded = _attempt(head, lambda h: h.doit(deep=False, **_BOUNDED))
+    bounded = _standing(head, _attempt(head, lambda h: h.doit(deep=False, **_BOUNDED)))
     if bounded is not None and not bounded.has(sp.Integral):
         if not (_definite(head) and _unresolved(head, bounded)):
             return _antiderivative(head, bounded)
@@ -1424,8 +1431,25 @@ def _by_sympy(head: sp.Basic) -> sp.Basic:
         if tabled is not None:
             return _antiderivative(head, tabled)
         return head if bounded is None else bounded
-    full = _attempt(head, lambda h: h.doit(deep=False))
+    full = _standing(head, _attempt(head, lambda h: h.doit(deep=False)))
     return head if full is None else _antiderivative(head, full)
+
+
+def _standing(head: sp.Basic, value: sp.Basic | None) -> sp.Basic | None:
+    """`value`, as the head itself where it is the same integral under another class.
+
+    Sympy hands back an integral its Risch algorithm proved nonelementary as a
+    `NonElementaryIntegral`, over the integrand as the algorithm rewrote it, which is
+    not equal to the `Integral` it was asked and so is taken for an answer: written
+    out, read back, asked on each side of a parameter's sign and asked all over
+    again as a head of its own. What it says is that the head stands, and that is
+    what it is called.
+    """
+    if isinstance(value, sp.Integral) and (
+        value.args == head.args or isinstance(value, NonElementaryIntegral)
+    ):
+        return head
+    return value
 
 
 def _by_meijer_g(head: sp.Basic) -> sp.Basic | None:
@@ -1442,7 +1466,9 @@ def _by_meijer_g(head: sp.Basic) -> sp.Basic | None:
     variables = {limit[0] for limit in head.limits}
     if len(head.function.free_symbols - variables) > 1:
         return None
-    tabled = _attempt(head, lambda h: h.doit(deep=False, heurisch=False))
+    tabled = _standing(
+        head, _attempt(head, lambda h: h.doit(deep=False, heurisch=False))
+    )
     if tabled is None or tabled == head:
         return None
     if not tabled.has(sp.Integral) and _unresolved(head, tabled):
@@ -2276,6 +2302,13 @@ def _by_the_sign_of_a_parameter(head: sp.Basic, value: sp.Basic) -> sp.Basic | N
     (`pi/(2*ABS(a))`, `pi*SIGN(a)/2`); otherwise the answer is a case split (`IF(a >
     0, 1/a, inf)`). A side that sympy cannot do, or does only with another
     condition, leaves the answer as it was.
+
+    An integral sympy left standing over the unsigned parameter is not asked again
+    this way: what it could not do knowing nothing of the sign it cannot do knowing
+    it, since a sign it was not told leaves it more to answer with, under a
+    condition, and not less. `_integral_through` asks only over an answer that turned
+    on the sign, or over a head sympy was not asked about because the integrand's
+    behaviour at an end was undecided.
     """
     if not _definite(head) or not _unresolved(head, value):
         return None
@@ -2497,7 +2530,7 @@ def _antiderivative(head: sp.Basic, value: sp.Basic) -> sp.Basic:
             return head
     elif _split_over(value, variable):
         value = _by_a_radical(integrand, variable) or value
-    if _refuted(value, integrand, variable):
+    if _unwritable(value, variable) or _refuted(value, integrand, variable):
         value = (
             _by_the_manual_rules(head, integrand, variable)
             or _over_any_variable(head, integrand, variable)
@@ -2726,6 +2759,31 @@ def _principal_part(expression: sp.Basic, divisor: sp.Basic) -> sp.Basic | None:
     return principal.subs(coordinate, divisor)
 
 
+def _unwritable(value: sp.Basic, variable: sp.Basic) -> bool:
+    """Whether an antiderivative holds, in the variable, a function the notation has
+    no word for.
+
+    Such an answer is declined whatever it checks as: `is_written` turns it down
+    before it reaches the worksheet, and nothing between here and there takes a
+    function of the variable out of it. So it is not put to `_refuted`, which would
+    run the whole of `sympy.simplify` over a hypergeometric series to find out - for
+    seconds, and for nothing - but is given up for the alternatives as a refuted
+    answer is. A constant the notation cannot say is not what decides, since
+    `_without_constants` may yet drop it, and a case split is left to `_single_case`
+    to narrow before anything is said about it.
+    """
+    if value.has(sp.Piecewise):
+        return False
+    spelled = _forced(value, _in_vocabulary)
+    try:
+        calls = spelled.atoms(sp.Function)
+    except Exception:
+        return False
+    return any(
+        variable in call.free_symbols and not is_written(call) for call in calls
+    )
+
+
 def _refuted(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
     """Whether this is provably not an antiderivative of the integrand.
 
@@ -2850,7 +2908,9 @@ def _over_any_variable(
     if again is None or again.has(sp.Integral):
         return None
     again = again.subs(plain, variable)
-    return None if _refuted(again, integrand, variable) else again
+    if _unwritable(again, variable) or _refuted(again, integrand, variable):
+        return None
+    return again
 
 
 def _by_the_manual_rules(
@@ -2865,7 +2925,7 @@ def _by_the_manual_rules(
     manual = _attempt(head, lambda h: h.doit(deep=False, manual=True))
     if manual is None or manual.has(sp.Integral):
         return None
-    if _refuted(manual, integrand, variable):
+    if _unwritable(manual, variable) or _refuted(manual, integrand, variable):
         return None
     return manual
 

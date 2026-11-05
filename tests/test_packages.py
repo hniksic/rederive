@@ -97,22 +97,6 @@ def test_a_package_imports_before_anything_else(package: str) -> None:
     subprocess.run([sys.executable, "-c", f"import {package}"], check=True)
 
 
-@pytest.mark.parametrize("module", CLIENT_SIDE)
-def test_the_app_side_imports_no_sympy(module: str) -> None:
-    """No client-half import may pull sympy in, however far down the chain it is.
-
-    The failure this catches is never a broken program, which is what makes it worth
-    a test: a client-half module that imports a worker-half one for a constant or a
-    type still works perfectly, and costs the app process a computer algebra system
-    it will never call.
-    """
-    program = f"import sys, {module}; print('sympy' in sys.modules)"
-    imported = subprocess.run(
-        [sys.executable, "-c", program], check=True, capture_output=True, text=True
-    )
-    assert imported.stdout.strip() == "False", f"{module} imports sympy"
-
-
 #: What plotting costs, and what the app process must not pay. The windows live
 #: in a child process for the same reason the mathematics does, so the app side
 #: may name the plot vocabulary and the availability check and nothing under
@@ -122,10 +106,19 @@ HEAVY = ("numpy", "PySide6", "pyqtgraph", "OpenGL")
 
 
 @pytest.mark.parametrize("module", CLIENT_SIDE)
-def test_the_app_side_imports_no_toolkit(module: str) -> None:
+def test_the_app_side_imports_no_sympy_and_no_toolkit(module: str) -> None:
+    """No client-half import may pull sympy or the plot toolkit in, however far down
+    the chain it is.
+
+    The failure this catches is never a broken program, which is what makes it worth
+    a test: a client-half module that imports a worker-half one for a constant or a
+    type still works perfectly, and costs the app process a computer algebra system
+    it will never call. One interpreter answers for both, since what it costs is the
+    interpreter and not the question.
+    """
     program = (
         f"import sys, {module}; "
-        f"print([name for name in {HEAVY!r} if name in sys.modules])"
+        f"print([name for name in ('sympy', *{HEAVY!r}) if name in sys.modules])"
     )
     imported = subprocess.run(
         [sys.executable, "-c", program], check=True, capture_output=True, text=True

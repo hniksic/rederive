@@ -4861,14 +4861,24 @@ EVERY_CASE = [
 ]
 
 
-@pytest.mark.parametrize(("text", "context"), EVERY_CASE, ids=str)
-def test_printing_a_result_is_a_fixed_point(text, context):
-    """Print, parse, print: the second text is the first.
+#: The one shape a second Simplify is allowed to change, and the test after the
+#: next says what it changes it to.
+HEADED = {text for text, _ in TRUTH_TABLES}
 
-    The invariant the worksheet rests on. A result is stored as text and read
-    back later, and an answer that changed on the way through would make the
-    entry the user is looking at a different expression from the one the label
-    refers to.
+
+@pytest.mark.parametrize(("text", "context"), EVERY_CASE, ids=str)
+def test_a_result_is_a_fixed_point_of_printing_and_of_simplify(text, context):
+    """Print, parse, print: the second text is the first. And simplify, simplify:
+    the second answer is the first.
+
+    The first is the invariant the worksheet rests on. A result is stored as text
+    and read back later, and an answer that changed on the way through would make
+    the entry the user is looking at a different expression from the one the label
+    refers to. The second is what "sufficiently simple" means: a second pass that
+    found more to do would mean the first stopped early.
+
+    The two are asked of one answer, since the answer is most of what either costs
+    to ask.
     """
     context = context or Context()
     state = declaring(*OPAQUE_FUNCTIONS)
@@ -4876,27 +4886,8 @@ def test_printing_a_result_is_a_fixed_point(text, context):
     twice = from_sympy(to_sympy(once.node, context), context)
     assert twice.text == once.text
     assert to_sexpr(twice.node) == to_sexpr(once.node)
-
-
-#: The one shape a second Simplify is allowed to change, and the test below
-#: this one says what it changes it to.
-HEADED = {text for text, _ in TRUTH_TABLES}
-
-
-@pytest.mark.parametrize(
-    ("text", "context"),
-    [case for case in EVERY_CASE if case[0] not in HEADED],
-    ids=str,
-)
-def test_simplifying_a_result_again_changes_nothing(text, context):
-    """Simplify is idempotent, which is what "sufficiently simple" means.
-
-    A second pass that found more to do would mean the first stopped early.
-    """
-    context = context or Context()
-    state = declaring(*OPAQUE_FUNCTIONS)
-    once = simplify(parse(text, state), context, state)
-    assert simplify(once.node, context, state).text == once.text
+    if text not in HEADED:
+        assert simplify(once.node, context, state).text == once.text
 
 
 def test_a_heading_heads_its_column_only_while_it_is_a_heading():
