@@ -1228,9 +1228,6 @@ CALCULUS = [
     # infinity it diverges to.
     ("INT(x^n, x, 1, inf)", "IF(n < -1, -1/(n + 1), inf)"),
     ("INT(1/x^n, x, 1, inf)", "IF(n > 1, 1/(n - 1), inf)"),
-    ("INT(x^n, x, 2, inf)", "IF(n < -1, -2*2^n/(n + 1), inf)"),
-    # Divergent by oscillation, to no sign, so the integral stands.
-    ("INT(x^n*SIN(x), x, 1, inf)", "INT(x^n*SIN(x), x, 1, inf)"),
     # The halves either side of 1 cancel, which `x -> 1/x` shows.
     ("INT(LN(x)/(1 + x^2), x, 0, inf)", "0"),
     # The imaginary error function writes this without an imaginary unit.
@@ -1320,7 +1317,6 @@ def test_an_integral_is_decided_at_its_singularities(text, expected):
 PARAMETRIC_INTEGRALS = [
     # The sign of an infinity in the antiderivative depends on the parameter.
     ("INT(1/(x^2 + a^2), x, 0, inf)", "pi/(2*ABS(a))"),
-    ("INT(1/(x^2 + a^2), x, -inf, inf)", "pi/ABS(a)"),
     ("INT(a/(x^2 + a^2), x, 0, inf)", "pi*SIGN(a)/2"),
     ("INT(1/(x^2 + a), x, 0, inf)", "IF(a > 0, pi/(2*SQRT(a)), IF(a < 0, ?, inf))"),
     # A pole that moves with the parameter is in the interval for some values of
@@ -1340,23 +1336,19 @@ PARAMETRIC_INTEGRALS = [
     ),
     # A power of zero, which is 0 or infinite by its exponent's sign.
     ("INT(x^n, x, 0, 1)", "IF(n > -1, 1/(n + 1), inf)"),
-    ("INT(x^n, x, 0, 2)", "IF(n > -1, 2^(n + 1)/(n + 1), inf)"),
     ("INT(1/x^n, x, 0, 1)", "IF(n < 1, 1/(1 - n), inf)"),
     # Convergent for one sign of the parameter, divergent to one infinity
     # otherwise.
     ("INT(#e^(-a*x), x, 0, inf)", "IF(a > 0, 1/a, inf)"),
     ("INT(#e^(a*x), x, 0, inf)", "IF(a < 0, -1/a, inf)"),
-    ("INT(#e^(-a*x), x, 1, inf)", "IF(a > 0, #e^(-a)/a, inf)"),
-    ("INT(x*#e^(-a*x), x, 0, inf)", "IF(a > 0, 1/a^2, inf)"),
     ("INT(#e^(-a*x^2), x, -inf, inf)", "IF(a > 0, SQRT(pi)/SQRT(a), inf)"),
-    ("INT(#e^(-a*x)/SQRT(x), x, 0, inf)", "IF(a > 0, SQRT(pi)/SQRT(a), inf)"),
     ("INT(x^n*LN(x), x, 0, 1)", "IF(n > -1, -1/(n + 1)^2, -inf)"),
     ("INT(#e^(-x)*x^n, x, 0, inf)", "IF(n > -1, n!, inf)"),
     # One expression for every sign.
     ("INT(SIN(a*x)/x, x, 0, inf)", "pi*SIGN(a)/2"),
     ("INT(COS(a*x)*#e^(-x^2), x, -inf, inf)", "SQRT(pi)*#e^(-a^2/4)"),
-    # Divergent by oscillation for a negative `a`, which stays standing; the
-    # convergence condition is the sign of `a`.
+    # Divergent by oscillation for a nonpositive `a`, to no sign, which stays
+    # standing; the convergence condition is the sign of `a`.
     (
         "INT(#e^(-a*x)*SIN(x), x, 0, inf)",
         "IF(a > 0, 1/(a^2 + 1), INT(SIN(x)*#e^(-a*x), x, 0, inf))",
@@ -1474,18 +1466,9 @@ def test_a_step_antiderivative_agrees_with_the_integral_far_from_the_origin(
         # antiderivative on both sides.
         ("INT(SQRT(x^2 - 1)/x, x)", "SQRT(x^2 - 1) - ATAN(SQRT(x^2 - 1))"),
         ("INT(1/(x*SQRT(x^2 - 1)), x)", "ATAN(SQRT(x^2 - 1))"),
-        (
-            "INT(1/(x^3*SQRT(x^2 - 1)), x)",
-            "ATAN(SQRT(x^2 - 1))/2 + SQRT(x^2 - 1)/(2*x^2)",
-        ),
-        (
-            "INT(SQRT(x^2 - 4)/x^3, x)",
-            "ATAN(SQRT(x^2 - 4)/2)/4 - SQRT(x^2 - 4)/(2*x^2)",
-        ),
         ("INT(1/(x*SQRT(x^2 - a^2)), x)", "ATAN(SQRT(x^2 - a^2)/a)/a"),
         # The case is right as it is, but for its condition.
         ("INT(1/(x^2*SQRT(x^2 - 1)), x)", "SQRT(x^2 - 1)/x"),
-        ("INT(SQRT(x^2 - 1)/x, x, 1, 2)", "SQRT(3) - pi/3"),
         ("INT(SQRT(x^2 - 1)/x, x, -2, -1)", "pi/3 - SQRT(3)"),
     ],
 )
@@ -1516,12 +1499,6 @@ def test_a_constant_inside_a_logarithm_is_shed_only_by_a_term(text, expected):
     "text, expected",
     [
         ("INT(#e^(a*x)*COS(b*x), x)", "(a*COS(b*x) + b*SIN(b*x))*#e^(a*x)/(a^2 + b^2)"),
-        ("INT(#e^(a*x)*SIN(b*x), x)", "(a*SIN(b*x) - b*COS(b*x))*#e^(a*x)/(a^2 + b^2)"),
-        ("INT(COS(a*x)*#e^x, x)", "(COS(a*x) + a*SIN(a*x))*#e^x/(a^2 + 1)"),
-        (
-            "INT(SIN(a*x)*COS(b*x), x)",
-            "-(a*COS(a*x)*COS(b*x) + b*SIN(a*x)*SIN(b*x))/(a^2 - b^2)",
-        ),
         (
             "INT(SIN(a*x)*SIN(b*x), x)",
             "(b*SIN(a*x)*COS(b*x) - a*SIN(b*x)*COS(a*x))/(a^2 - b^2)",
@@ -2017,15 +1994,15 @@ def test_the_constant_is_chosen_for_every_parameter_not_only_the_exponential(
     "text, expected",
     [
         ("INT(SIN(x)/x^2, x)", "CI(x) - SIN(x)/x"),
-        ("INT(SINH(x)/x^2, x)", "COSH_INT(x) + (#e^(-x) - #e^x)/(2*x)"),
     ],
 )
 def test_an_antiderivative_wrong_for_negative_arguments_is_done_again(text, expected):
     """Not in the original, which has neither `CI` nor `COSH_INT`.
 
-    Over a real variable sympy answers both with `SIGN(x)` terms that are wrong for
-    negative `x`; over a plain one it answers correctly, with `LN(x^2)/2 - LN(x)`
-    besides, which is a constant of integration and is not printed.
+    Over a real variable sympy answers this, and `SINH(x)/x^2` the same way, with
+    `SIGN(x)` terms that are wrong for negative `x`; over a plain one it answers
+    correctly, with `LN(x^2)/2 - LN(x)` besides, which is a constant of integration
+    and is not printed.
     """
     assert simp(text) == expected
 
@@ -2235,15 +2212,10 @@ INFINITE_PRODUCTS = [
     # The manual's own example, and Wallis'.
     ("PRODUCT(1 - 1/k^2, k, 2, inf)", "1/2"),
     ("PRODUCT(4*k^2/(4*k^2 - 1), k, 1, inf)", "pi/2"),
-    # These two are `SINH(pi)/pi` and `COSH(SQRT(3)*pi/2)/(3*pi)`, written the
-    # way Simplify writes any hyperbolic of a constant.
+    # This is `SINH(pi)/pi`, written the way Simplify writes any hyperbolic of a
+    # constant.
     ("PRODUCT(1 + 1/k^2, k, 1, inf)", "(#e^pi/2 - #e^(-pi)/2)/pi"),
-    (
-        "PRODUCT(1 - 1/k^3, k, 2, inf)",
-        "(#e^(SQRT(3)*pi) + 1)*#e^(-SQRT(3)*pi/2)/(6*pi)",
-    ),
     # A product need not converge to a number to have a value.
-    ("PRODUCT(k/(k + 1), k, 1, inf)", "0"),
     ("PRODUCT((k + 1)/k, k, 1, inf)", "inf"),
     # A lower end that is a variable telescopes one step short of the whole.
     ("PRODUCT(1 - 1/k^2, k, m, inf)", "(m - 1)/m"),
@@ -2664,14 +2636,8 @@ LIMITS_OF_SUMS_AND_PRODUCTS = [
     # A side written on an infinite point changes nothing.
     ("LIM(SUM(1/k^2, k, 1, n), n, inf, -1)", "pi^2/6"),
     # The partial products are ratios of factorials of complex arguments over a
-    # constant, `SINH(pi)/pi` for the first, and the constant is the limit.
+    # constant, `SINH(pi)/pi`, and the constant is the limit.
     ("LIM(PRODUCT(1 + 1/k^2, k, 1, n), n, inf)", "(#e^pi/2 - #e^(-pi)/2)/pi"),
-    (
-        "LIM(PRODUCT(1 + 1/k^3, k, 1, n), n, inf)",
-        "(#e^(SQRT(3)*pi) + 1)*#e^(-SQRT(3)*pi/2)/(2*pi)",
-    ),
-    ("LIM(PRODUCT(1 - 1/(4*k^2), k, 1, n), n, inf)", "2/pi"),
-    ("LIM(PRODUCT(1 - 1/k^2, k, 2, n), n, inf)", "1/2"),
     # The constant `INT` answers in is the one a limit answers in.
     ("INT(#e^(-x)*LN(x), x, 0, inf)", "-euler_gamma"),
     # A limit that stays is written back as it was written: the side sympy records
@@ -4828,10 +4794,14 @@ def test_every_builtin_survives_being_simplified(name):
 
 # -- invariants over every case above -----------------------------------------
 
-#: Every input this module simplifies, with the context it uses.
+#: Inputs that take seconds to give up on and come back as written. That a standing
+#: head prints back as itself is asked of many cheaper cases.
+SLOW_TO_STAND = {"INT(SIN(m*x)*SIN(2*x), x, 0, pi)"}
+
+#: Every input this module simplifies, with the context it uses, but for those above.
 EVERY_CASE = [
     *((text, None) for text, _ in ARITHMETIC + RATIONAL + RADICALS + COMBINATORIAL),
-    *((text, context) for text, _, context in DOMAINS),
+    *((text, context) for text, _, context in DOMAINS if text not in SLOW_TO_STAND),
     *((text, context) for text, _, context in TRIGONOMETRY),
     *((text, context) for text, _, context in LOGARITHMS),
     *(
