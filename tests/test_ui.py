@@ -43,12 +43,17 @@ def authored(app, *texts):
 
     The Author line does no more than hand what was typed to `Session.author`,
     so this leaves the same worksheet behind, with the last entry selected
-    whole. It is for setting a test up when the keys under test are the ones
-    pressed afterwards. A line with a trailing `=` is the one the line does
-    more with, and belongs on the line itself.
+    whole and the panes painted for it. It is for setting a test up when the
+    keys under test are the ones pressed afterwards, and it is most of what a
+    test costs saved: each key typed through the pilot waits for the app to go
+    idle, and a line of six keys is seventy milliseconds where this is one. A
+    line with a trailing `=` is the one the line does more with, and belongs on
+    the line itself; so does a test of the line, or of what the first key after
+    one finds laid out.
     """
     for text in texts:
         app.session.author(text)
+    app.place_windows()
 
 
 # -- the opening notice --------------------------------------------------------
@@ -82,7 +87,7 @@ async def test_the_opening_notice_stands_across_the_empty_pane(app):
 
 async def test_the_opening_notice_gives_the_pane_up_for_the_first_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         assert work_area(app) == ["#1:  x"]
         # A worksheet emptied later is an empty worksheet, not a program that
         # has just started, so the notice does not come back.
@@ -143,7 +148,7 @@ async def test_a_menu_comes_back_up_on_its_first_word(app):
 
 async def test_a_command_that_ran_leaves_the_highlight_where_it_starts(app):
     async with app.run_test() as pilot:
-        await author(pilot, "1+1")
+        authored(app, "1+1")
         await pilot.press(*["shift+tab"] * 6)
         assert highlighted_menu_option(app) == "Simplify"
         await pilot.press("enter", "enter")
@@ -258,7 +263,7 @@ async def test_ctrl_enter_authors_and_simplifies_in_one(app, key):
 
 async def test_ctrl_enter_is_enter_on_a_line_that_simplifies_already(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2+3")
+        authored(app, "2+3")
         await pilot.press("s")
         await pilot.press("ctrl+j")
         assert entries(app) == ["2+3", "5"]
@@ -266,7 +271,7 @@ async def test_ctrl_enter_is_enter_on_a_line_that_simplifies_already(app):
 
 async def test_ctrl_enter_enters_nothing_of_its_own_to_simplify(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2+3")
+        authored(app, "2+3")
         await pilot.press("j")
         await pilot.press("1", "ctrl+j")
         assert entries(app) == ["2+3"]
@@ -301,7 +306,7 @@ async def test_a_syntax_error_leaves_the_author_line_up(app):
 
 async def test_a_built_up_render_is_painted_and_labelled(app):
     async with app.run_test() as pilot:
-        await author(pilot, "(x+1)/(x^2+2x+3)")
+        authored(app, "(x+1)/(x^2+2x+3)")
         # The label sits on the vertically centred row, biased downward, and
         # the render's own rows are indented to the same column.
         assert work_area(app) == [
@@ -314,7 +319,7 @@ async def test_a_built_up_render_is_painted_and_labelled(app):
 
 async def test_the_selection_is_a_rectangle_over_the_render(app):
     async with app.run_test() as pilot:
-        await author(pilot, "(x+1)/(x^2+2x+3)")
+        authored(app, "(x+1)/(x^2+2x+3)")
         assert highlighted_rows(app) == [
             "     x + 1",
             "──────────────",
@@ -338,9 +343,9 @@ async def test_escape_abandons_the_author_line(app):
 
 async def test_arrow_keys_walk_the_expression_structure(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x (x + 1)")
-        await author(pilot, "x y")
-        await author(pilot, "x x x")
+        authored(app, "x (x + 1)")
+        authored(app, "x y")
+        authored(app, "x x x")
         assert highlighted_expression(app) == "x·x·x"
         await pilot.press("up", "up")
         assert highlighted_expression(app) == "x·(x + 1)"
@@ -358,7 +363,7 @@ async def test_arrow_keys_walk_the_expression_structure(app):
 
 async def test_simplify_offers_the_highlighted_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2 (8 + 7) / 3^2")
+        authored(app, "2 (8 + 7) / 3^2")
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#1")
         assert message(app) == "Enter expression"
@@ -380,7 +385,7 @@ async def test_simplify_offers_the_highlighted_expression(app):
 
 async def test_simplify_of_a_part_copies_the_rest_of_the_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2 (8 + 7) / 3^2")
+        authored(app, "2 (8 + 7) / 3^2")
         await pilot.press("right", "right")
         assert highlighted_rows(app) == [" 2", "3"]
         await pilot.press("s", "enter")
@@ -403,8 +408,8 @@ async def test_a_typed_expression_is_simplified_as_the_users_own(app):
 
 async def test_a_typed_label_replaces_the_one_offered(app):
     async with app.run_test() as pilot:
-        await author(pilot, "3 + 4")
-        await author(pilot, "5 + 6")
+        authored(app, "3 + 4")
+        authored(app, "5 + 6")
         # The number comes up selected, so typing one replaces it.
         await pilot.press("s")
         await pilot.press("1")
@@ -416,7 +421,7 @@ async def test_a_typed_label_replaces_the_one_offered(app):
 
 async def test_the_annotation_follows_the_selection(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2^3")
+        authored(app, "2^3")
         await pilot.press("s", "enter")
         assert annotation(app) == "Simp(#1)"
         await pilot.press("up")
@@ -426,7 +431,7 @@ async def test_the_annotation_follows_the_selection(app):
 
 async def test_simplify_leaves_a_line_that_does_not_read_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("s")
         await pilot.press(*"+")
         await pilot.press("enter")
@@ -446,7 +451,7 @@ async def test_simplify_asks_for_nothing_when_the_history_is_empty(app):
 
 async def test_quit_asks_before_abandoning_expressions(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("q")
         assert message(app) == "Abandon expressions (Y/N)?"
         # The original takes the highlight off the menu while it asks.
@@ -469,7 +474,7 @@ async def test_quit_asks_before_abandoning_expressions(app):
 
 async def test_factor_asks_for_expression_then_variables_then_amount(app):
     async with app.run_test() as pilot:
-        await author(pilot, "6x^2 + 10x^3/y")
+        authored(app, "6x^2 + 10x^3/y")
         await pilot.press("f")
         assert prompt(app) == ("FACTOR expression:", "#1")
         assert message(app) == "Enter expression"
@@ -494,7 +499,7 @@ async def test_factor_asks_for_expression_then_variables_then_amount(app):
 
 async def test_one_variable_is_no_choice_so_none_is_asked_for(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 - 4")
+        authored(app, "x^2 - 4")
         await pilot.press("f", "enter")
         assert highlighted_menu_option(app) == "Rational"
         await pilot.press("r")
@@ -503,7 +508,7 @@ async def test_one_variable_is_no_choice_so_none_is_asked_for(app):
 
 async def test_a_number_is_decomposed_without_being_asked_about(app):
     async with app.run_test() as pilot:
-        await author(pilot, "1234567890")
+        authored(app, "1234567890")
         await pilot.press("f", "enter")
         assert entries(app)[-1] == "2*3^2*5*3607*3803"
         assert message(app).startswith("Compute time:")
@@ -512,18 +517,18 @@ async def test_a_number_is_decomposed_without_being_asked_about(app):
 
 async def test_the_amount_menu_opens_on_what_was_chosen_last(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 - 4")
+        authored(app, "x^2 - 4")
         await pilot.press("f", "enter")
         assert highlighted_menu_option(app) == "Rational"
         await pilot.press("t")
-        await author(pilot, "x^2 - 9")
+        authored(app, "x^2 - 9")
         await pilot.press("f", "enter")
         assert highlighted_menu_option(app) == "Trivial"
 
 
 async def test_the_variables_are_collected_one_at_a_time(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 y^2 - x^2 - y^4 + y^2")
+        authored(app, "x^2 y^2 - x^2 - y^4 + y^2")
         await pilot.press("f", "enter")
         assert message(app) == "Return for all or select 1: x,y"
         await pilot.press("x", "enter")
@@ -536,7 +541,7 @@ async def test_the_variables_are_collected_one_at_a_time(app):
 
 async def test_choosing_the_last_variable_ends_the_list(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 y^2 - x^2 - y^4 + y^2")
+        authored(app, "x^2 y^2 - x^2 - y^4 + y^2")
         await pilot.press("f", "enter")
         await pilot.press("x", "enter")
         await pilot.press("y", "enter")
@@ -547,7 +552,7 @@ async def test_choosing_the_last_variable_ends_the_list(app):
 
 async def test_a_name_that_is_no_variable_is_refused(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 - y^2")
+        authored(app, "x^2 - y^2")
         await pilot.press("f", "enter")
         await pilot.press("q", "enter")
         # The question is put again, unchanged and with nothing chosen.
@@ -557,7 +562,7 @@ async def test_a_name_that_is_no_variable_is_refused(app):
 
 async def test_factor_of_a_part_copies_the_rest_of_the_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "(x^2 - 1) + SIN(z)")
+        authored(app, "(x^2 - 1) + SIN(z)")
         await pilot.press("right")
         assert highlighted_expression(app) == " 2\nx  - 1"
         # Only x is in the highlighted part, so no variable is asked for.
@@ -589,7 +594,7 @@ async def test_a_typed_expression_is_factored_as_the_users_own(app):
 async def test_escape_abandons_factor_from_any_of_its_questions(app, keys, step):
     """One Esc returns to the command menu, whichever question is up."""
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 y^2 - 1")
+        authored(app, "x^2 y^2 - 1")
         await pilot.press(*keys)
         await pilot.press("escape")
         assert message(app) == "Enter option"
@@ -600,7 +605,7 @@ async def test_escape_abandons_factor_from_any_of_its_questions(app, keys, step)
 
 async def test_factor_leaves_a_line_that_does_not_read_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("f")
         await pilot.press(*"+")
         await pilot.press("enter")
@@ -625,7 +630,7 @@ async def test_factor_asks_for_nothing_when_the_history_is_empty(app):
 
 async def test_expand_asks_for_the_expression_and_answers(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2x(x - 3)^2")
+        authored(app, "2x(x - 3)^2")
         await pilot.press("e")
         assert prompt(app) == ("EXPAND expression:", "#1")
         assert message(app) == "Enter expression"
@@ -638,7 +643,7 @@ async def test_expand_asks_for_the_expression_and_answers(app):
 
 async def test_expand_asks_for_the_variables_when_there_are_two(app):
     async with app.run_test() as pilot:
-        await author(pilot, "(x + 2y + 1)^3")
+        authored(app, "(x + 2y + 1)^3")
         await pilot.press("e", "enter")
         assert prompt(app) == ("EXPAND variable 1:", "")
         assert message(app) == "Return for all or select 1: x,y"
@@ -654,7 +659,7 @@ async def test_expand_asks_for_the_variables_when_there_are_two(app):
 
 async def test_a_ratio_is_asked_about_and_a_polynomial_is_not(app):
     async with app.run_test() as pilot:
-        await author(pilot, "1/(x^2 - 1)")
+        authored(app, "1/(x^2 - 1)")
         await pilot.press("e", "enter")
         assert band(app) == [
             " EXPAND: Amount: Trivial Squarefree Rational raDical"
@@ -669,20 +674,20 @@ async def test_the_two_amount_menus_remember_separately(app):
     """The original keeps a choice made on one off the other: Factor left on
     Trivial still opens Expand on Rational."""
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 - 4")
+        authored(app, "x^2 - 4")
         await pilot.press("f", "enter", "t")
-        await author(pilot, "1/(x^2 - 4)")
+        authored(app, "1/(x^2 - 4)")
         await pilot.press("e", "enter")
         assert highlighted_menu_option(app) == "Rational"
         await pilot.press("escape")
-        await author(pilot, "x^2 - 9")
+        authored(app, "x^2 - 9")
         await pilot.press("f", "enter")
         assert highlighted_menu_option(app) == "Trivial"
 
 
 async def test_the_variables_come_before_the_amount(app):
     async with app.run_test() as pilot:
-        await author(pilot, "(x + 1)^2/(a^2 - 1)")
+        authored(app, "(x + 1)^2/(a^2 - 1)")
         await pilot.press("e", "enter")
         assert prompt(app) == ("EXPAND variable 1:", "")
         assert message(app) == "Return for all or select 1: x,a"
@@ -697,7 +702,7 @@ async def test_the_variables_come_before_the_amount(app):
 async def test_expand_of_a_part_copies_the_rest_of_the_expression(app):
     """The manual's own example of highlighting a subexpression."""
     async with app.run_test() as pilot:
-        await author(pilot, "2x(x - 3)^2")
+        authored(app, "2x(x - 3)^2")
         await pilot.press("right", "end")
         assert highlighted_expression(app) == "       2\n(x - 3)"
         await pilot.press("e", "enter")
@@ -717,7 +722,7 @@ async def test_expand_of_a_part_copies_the_rest_of_the_expression(app):
 async def test_escape_abandons_expand_from_any_of_its_questions(app, keys, step):
     """One Esc returns to the command menu, whichever question is up."""
     async with app.run_test() as pilot:
-        await author(pilot, "1/(x^2 y^2 - 1)")
+        authored(app, "1/(x^2 y^2 - 1)")
         await pilot.press(*keys)
         await pilot.press("escape")
         assert message(app) == "Enter option"
@@ -728,7 +733,7 @@ async def test_escape_abandons_expand_from_any_of_its_questions(app, keys, step)
 
 async def test_expand_leaves_a_line_that_does_not_read_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("e")
         await pilot.press(*"+")
         await pilot.press("enter")
@@ -753,7 +758,7 @@ async def test_expand_asks_for_nothing_when_the_history_is_empty(app):
 
 async def test_solve_asks_for_the_expression_and_appends_every_solution(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 - 5x + 6 = 0")
+        authored(app, "x^2 - 5x + 6 = 0")
         await pilot.press("l")
         assert prompt(app) == ("SOLVE expression:", "#1")
         assert message(app) == "Enter expression"
@@ -766,21 +771,21 @@ async def test_solve_asks_for_the_expression_and_appends_every_solution(app):
 
 async def test_the_highlight_lands_on_the_last_solution(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 - 5x + 6 = 0")
+        authored(app, "x^2 - 5x + 6 = 0")
         await pilot.press("l", "enter")
         assert highlighted_expression(app) == "x = 3"
 
 
 async def test_one_variable_settles_the_question_so_none_is_asked(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2x + 3 = 7")
+        authored(app, "2x + 3 = 7")
         await pilot.press("l", "enter")
         assert entries(app)[-1] == "x = 2"
 
 
 async def test_two_variables_bring_the_variable_line_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "a x + b = 0")
+        authored(app, "a x + b = 0")
         await pilot.press("l", "enter")
         # The most main variable is offered, and typing replaces it.
         assert prompt(app) == ("SOLVE variable:", "x")
@@ -791,7 +796,7 @@ async def test_two_variables_bring_the_variable_line_up(app):
 
 async def test_the_offered_variable_can_be_typed_over(app):
     async with app.run_test() as pilot:
-        await author(pilot, "a x + b = 0")
+        authored(app, "a x + b = 0")
         await pilot.press("l", "enter")
         await pilot.press("a", "enter")
         assert entries(app)[-1] == "a = -b/x"
@@ -799,7 +804,7 @@ async def test_the_offered_variable_can_be_typed_over(app):
 
 async def test_an_underdetermined_system_is_asked_about_once_per_equation(app):
     async with app.run_test() as pilot:
-        await author(pilot, "[x + y + z = 1, x - y = 0]")
+        authored(app, "[x + y + z = 1, x - y = 0]")
         await pilot.press("l", "enter")
         assert prompt(app) == ("SOLVE variable:", "x")
         await pilot.press("enter")
@@ -811,14 +816,14 @@ async def test_an_underdetermined_system_is_asked_about_once_per_equation(app):
 
 async def test_a_square_system_is_asked_nothing(app):
     async with app.run_test() as pilot:
-        await author(pilot, "[x + y = 3, x - y = 1]")
+        authored(app, "[x + y = 3, x - y = 1]")
         await pilot.press("l", "enter")
         assert entries(app)[-1] == "[x = 2, y = 1]"
 
 
 async def test_a_name_that_is_no_variable_leaves_the_line_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "a x + b = 0")
+        authored(app, "a x + b = 0")
         await pilot.press("l", "enter")
         await pilot.press("backspace", *"2", "enter")
         assert prompt(app) == ("SOLVE variable:", "2")
@@ -827,8 +832,8 @@ async def test_a_name_that_is_no_variable_leaves_the_line_up(app):
 
 async def test_approximate_precision_asks_for_the_interval(app):
     async with app.run_test() as pilot:
-        await author(pilot, "Precision := Approximate")
-        await author(pilot, "x^5 - x + 1 = 0")
+        authored(app, "Precision := Approximate")
+        authored(app, "x^5 - x + 1 = 0")
         await pilot.press("l", "enter")
         assert band(app) == [" SOLVE: Lower: -10                Upper: 10"]
         assert message(app) == "Enter bound on solution"
@@ -838,16 +843,16 @@ async def test_approximate_precision_asks_for_the_interval(app):
 
 async def test_the_other_two_precisions_never_ask_for_an_interval(app):
     async with app.run_test() as pilot:
-        await author(pilot, "Precision := Mixed")
-        await author(pilot, "3^x = x^2")
+        authored(app, "Precision := Mixed")
+        authored(app, "3^x = x^2")
         await pilot.press("l", "enter")
         assert entries(app)[-1] == "x = -0.686026"
 
 
 async def test_no_solutions_appends_nothing_and_says_so(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2 - 4")
-        await author(pilot, "x = x + 1")
+        authored(app, "x^2 - 4")
+        authored(app, "x = x + 1")
         await pilot.press("l", "enter")
         assert message(app) == "No solutions found"
         assert entries(app) == ["x^2-4", "x=x+1"]
@@ -878,7 +883,7 @@ async def test_escape_abandons_solve_from_any_of_its_questions(app, keys, step):
     """One Esc returns to the command menu, whichever question is up, and the
     worksheet is untouched."""
     async with app.run_test() as pilot:
-        await author(pilot, "[x + y + z = 1, x - y = 0]")
+        authored(app, "[x + y + z = 1, x - y = 0]")
         await pilot.press(*keys)
         await pilot.press("escape")
         assert message(app) == "Enter option"
@@ -889,8 +894,8 @@ async def test_escape_abandons_solve_from_any_of_its_questions(app, keys, step):
 
 async def test_escape_abandons_solve_from_the_interval(app):
     async with app.run_test() as pilot:
-        await author(pilot, "Precision := Approximate")
-        await author(pilot, "x^5 - x + 1 = 0")
+        authored(app, "Precision := Approximate")
+        authored(app, "x^5 - x + 1 = 0")
         await pilot.press("l", "enter")
         await pilot.press("escape")
         assert message(app) == "Enter option"
@@ -900,7 +905,7 @@ async def test_escape_abandons_solve_from_the_interval(app):
 
 async def test_solve_leaves_a_line_that_does_not_read_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("l")
         await pilot.press(*"+")
         await pilot.press("enter")
@@ -917,7 +922,7 @@ async def test_solve_asks_for_nothing_when_the_history_is_empty(app):
 
 async def test_solving_twice_appends_the_answer_twice(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2x = 8")
+        authored(app, "2x = 8")
         await pilot.press("l", "enter")
         await pilot.press("ctrl+home")
         await pilot.press("l", "enter")
@@ -926,10 +931,10 @@ async def test_solving_twice_appends_the_answer_twice(app):
 
 async def test_the_arbitrary_counter_runs_across_the_session(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x = x")
+        authored(app, "x = x")
         await pilot.press("l", "enter")
         assert entries(app)[-1] == "x = @1"
-        await author(pilot, "2y = y + y")
+        authored(app, "2y = y + y")
         await pilot.press("l", "enter")
         assert entries(app)[-1] == "y = @2"
 
@@ -943,7 +948,7 @@ async def test_the_arbitrary_counter_runs_across_the_session(app):
 
 async def test_approx_offers_the_highlighted_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "pi")
+        authored(app, "pi")
         await pilot.press("x")
         assert prompt(app) == ("APPROX expression:", "#1")
         assert message(app) == "Enter expression"
@@ -957,7 +962,7 @@ async def test_approx_offers_the_highlighted_expression(app):
 
 async def test_approx_of_a_part_copies_the_rest_of_the_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "SQRT(2) + x^2")
+        authored(app, "SQRT(2) + x^2")
         await pilot.press("right")
         assert highlighted_expression(app) == "√2"
         await pilot.press("x", "enter")
@@ -979,7 +984,7 @@ async def test_a_typed_expression_is_approximated_as_the_users_own(app):
 async def test_approx_leaves_the_precision_setting_alone(app):
     """The mode is approximate for the one command, and Simplify says so."""
     async with app.run_test() as pilot:
-        await author(pilot, "1/3")
+        authored(app, "1/3")
         await pilot.press("x", "enter")
         assert entries(app)[-1] == "0.333333"
         await pilot.press("s")
@@ -991,7 +996,7 @@ async def test_approx_leaves_the_precision_setting_alone(app):
 
 async def test_approx_leaves_a_line_that_does_not_read_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("x")
         await pilot.press(*"+")
         await pilot.press("enter")
@@ -1008,7 +1013,7 @@ async def test_approx_asks_for_nothing_when_the_history_is_empty(app):
 
 async def test_an_abandoned_approx_leaves_the_history_alone(app):
     async with app.run_test() as pilot:
-        await author(pilot, "pi")
+        authored(app, "pi")
         await pilot.press("x", "escape")
         assert entries(app) == ["pi"]
         assert message(app) == "Enter option"
@@ -1504,7 +1509,7 @@ async def test_a_blank_answer_that_names_nothing_abandons_the_command(app, keys,
 
 async def test_build_asks_for_an_operand_then_an_operator_then_another(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("b")
         assert prompt(app) == ("BUILD first expression:", "#1")
         assert message(app) == "Enter expression"
@@ -1526,7 +1531,7 @@ async def test_build_asks_for_an_operand_then_an_operator_then_another(app):
 
 async def test_a_unary_operator_asks_for_nothing_more(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("b", "enter")
         await pilot.press("s")
         assert band(app)[0].startswith(" BUILD: Operator:")
@@ -1538,9 +1543,9 @@ async def test_a_unary_operator_asks_for_nothing_more(app):
 
 async def test_the_operators_chain_until_done(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2")
-        await author(pilot, "3")
-        await author(pilot, "4")
+        authored(app, "2")
+        authored(app, "3")
+        authored(app, "4")
         await pilot.press("b", "up", "up", "enter")
         await pilot.press("+", "down", "enter")
         await pilot.press("*", "down", "enter")
@@ -1553,7 +1558,7 @@ async def test_the_operators_chain_until_done(app):
 
 async def test_unary_operators_nest(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("b", "enter", "s", "c", "d")
         assert entries(app)[-1] == "COS(SIN(x))"
         assert annotation(app) == "COS(SIN(#1))"
@@ -1561,7 +1566,7 @@ async def test_unary_operators_nest(app):
 
 async def test_the_symbols_are_their_own_mnemonics(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("b", "enter", "!")
         assert highlighted(app) == "Done"
         await pilot.press("d")
@@ -1570,7 +1575,7 @@ async def test_the_symbols_are_their_own_mnemonics(app):
 
 async def test_space_steps_the_operator_menu(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("b", "enter")
         await pilot.press("space", "space")
         assert highlighted(app) == "*"
@@ -1578,8 +1583,8 @@ async def test_space_steps_the_operator_menu(app):
 
 async def test_the_arrow_keys_pick_the_operand_off_the_screen(app):
     async with app.run_test() as pilot:
-        await author(pilot, "2")
-        await author(pilot, "3")
+        authored(app, "2")
+        authored(app, "3")
         await pilot.press("b")
         assert prompt(app) == ("BUILD first expression:", "#2")
         await pilot.press("up")
@@ -1588,7 +1593,7 @@ async def test_the_arrow_keys_pick_the_operand_off_the_screen(app):
 
 async def test_a_highlighted_part_is_what_is_built_from(app):
     async with app.run_test() as pilot:
-        await author(pilot, "SIN(a*x^2) + 5")
+        authored(app, "SIN(a*x^2) + 5")
         await pilot.press("f6", "right", "down")
         assert highlighted_expression(app) == "   2\na·x"
         await pilot.press("b")
@@ -1601,7 +1606,7 @@ async def test_a_highlighted_part_is_what_is_built_from(app):
 
 async def test_build_takes_a_typed_expression_too(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("b")
         await pilot.press("backspace", "backspace")
         await pilot.press(*"2+3", "enter")
@@ -1612,7 +1617,7 @@ async def test_build_takes_a_typed_expression_too(app):
 
 async def test_a_line_that_does_not_read_stays_up(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("b")
         await pilot.press("backspace", "backspace")
         await pilot.press(*"2+*", "enter")
@@ -1633,7 +1638,7 @@ async def test_a_line_that_does_not_read_stays_up(app):
 async def test_escape_abandons_the_whole_build(app, keys, step):
     """There is nothing to step back to: one Esc gives the command menu back."""
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press(*keys)
         await pilot.press("escape")
         assert band(app)[0].startswith(" COMMAND:")
@@ -1643,7 +1648,7 @@ async def test_escape_abandons_the_whole_build(app, keys, step):
 
 async def test_a_blank_operand_line_abandons_the_build(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x")
+        authored(app, "x")
         await pilot.press("b")
         await pilot.press("backspace", "backspace", "enter")
         assert band(app)[0].startswith(" COMMAND:")
@@ -1659,7 +1664,7 @@ async def test_build_asks_the_same_question_of_an_empty_history(app):
 
 async def test_ctrl_enter_on_done_enters_one_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("b", "enter", "+", "enter")
         await pilot.press("ctrl+j")
         # One entry, not two: what was built never reaches the history, and
@@ -1683,7 +1688,7 @@ async def test_the_calculus_menu_lists_seven_commands(app):
 
 async def test_differentiate_asks_expression_then_variable_then_order(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "d")
         assert prompt(app) == ("CALCULUS DIFFERENTIATE expression:", "#1")
         assert message(app) == "Enter expression"
@@ -1714,7 +1719,7 @@ async def test_differentiate_asks_expression_then_variable_then_order(app):
 )
 async def test_each_command_finishes_on_a_line_of_its_own(app, key, line):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", key, "enter", "enter")
         assert band(app) == [line]
 
@@ -1746,14 +1751,14 @@ async def test_each_command_finishes_on_a_line_of_its_own(app, key, line):
 async def test_what_each_command_enters(app, keys, text, note):
     """The linear forms come from the original's own Transfer Save."""
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", *keys[:1], "enter", "enter", *keys[1:])
         assert entries(app)[-1] == text
 
 
 async def test_the_limit_direction_is_chosen_off_the_line(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "l", "enter", "enter")
         assert message(app) == "Enter limit point"
         await pilot.press("tab")
@@ -1774,7 +1779,7 @@ async def test_the_limit_direction_is_chosen_off_the_line(app):
 
 async def test_the_taylor_line_says_which_field_it_is_asking_about(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "t", "enter", "enter")
         assert message(app) == "Enter maximum degree"
         await pilot.press("tab")
@@ -1783,7 +1788,7 @@ async def test_the_taylor_line_says_which_field_it_is_asking_about(app):
 
 async def test_the_vector_line_opens_on_the_field_it_cannot_do_without(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "v", "enter", "enter")
         await pilot.press("7")
         assert band(app) == [
@@ -1802,7 +1807,7 @@ async def test_the_vector_line_opens_on_the_field_it_cannot_do_without(app):
 )
 async def test_a_field_that_has_to_be_answered_refuses_to_commit(app, keys, step):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", *keys[:1], "enter", "enter", *keys[1:])
         assert entries(app) == ["x^2*y"]
         assert band(app)[0].startswith(" CALCULUS ")
@@ -1810,7 +1815,7 @@ async def test_a_field_that_has_to_be_answered_refuses_to_commit(app, keys, step
 
 async def test_one_limit_of_a_pair_sends_the_line_to_the_other(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "i", "enter", "enter")
         await pilot.press("0", "enter")
         # Neither taken nor refused outright: the empty half is what is asked
@@ -1825,21 +1830,21 @@ async def test_one_limit_of_a_pair_sends_the_line_to_the_other(app):
 
 async def test_the_variable_offered_is_the_primary_one(app):
     async with app.run_test() as pilot:
-        await author(pilot, "SIN(a*x^2)")
+        authored(app, "SIN(a*x^2)")
         await pilot.press("c", "d", "enter")
         assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "x")
 
 
 async def test_a_bound_variable_leaves_the_line_empty(app):
     async with app.run_test() as pilot:
-        await author(pilot, "INT(x^2, x, 0, 1)")
+        authored(app, "INT(x^2, x, 0, 1)")
         await pilot.press("c", "d", "enter")
         assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "")
 
 
 async def test_a_line_that_names_no_variable_is_refused_without_a_word(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "d", "enter")
         await pilot.press("backspace")
         await pilot.press(*"2+3", "enter")
@@ -1850,7 +1855,7 @@ async def test_a_line_that_names_no_variable_is_refused_without_a_word(app):
 
 async def test_a_highlighted_part_is_what_is_taken(app):
     async with app.run_test() as pilot:
-        await author(pilot, "SIN(a*x^2) + 5")
+        authored(app, "SIN(a*x^2) + 5")
         await pilot.press("f6", "right", "down")
         assert highlighted_expression(app) == "   2\na·x"
         await pilot.press("c", "d", "enter", "enter", "enter")
@@ -1872,7 +1877,7 @@ async def test_a_highlighted_part_is_what_is_taken(app):
 )
 async def test_escape_abandons_the_command_for_the_calculus_menu(app, keys, step):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press(*keys)
         await pilot.press("escape")
         assert band(app) == [
@@ -1884,7 +1889,7 @@ async def test_escape_abandons_the_command_for_the_calculus_menu(app, keys, step
 
 async def test_a_blank_expression_line_abandons_the_command(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "d")
         await pilot.press("backspace", "backspace", "enter")
         assert band(app) == [
@@ -1895,7 +1900,7 @@ async def test_a_blank_expression_line_abandons_the_command(app):
 
 async def test_ctrl_enter_on_the_last_field_enters_one_expression(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "d", "enter", "enter")
         await pilot.press("ctrl+j")
         assert entries(app) == ["x^2*y", "2*x*y"]
@@ -1904,7 +1909,7 @@ async def test_ctrl_enter_on_the_last_field_enters_one_expression(app):
 
 async def test_nothing_is_computed_until_a_simplify_asks_for_it(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "d", "enter", "enter", "enter")
         assert entries(app)[-1] == "DIF(x^2*y,x)"
         await pilot.press("s", "enter")
@@ -1979,7 +1984,7 @@ async def test_escape_abandons_the_jump_line(app):
 
 async def test_jumping_to_the_expression_you_are_inside_of_keeps_the_part(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x (x + 1)")
+        authored(app, "x (x + 1)")
         await pilot.press("right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("j", "1", "enter")
@@ -2463,7 +2468,7 @@ async def test_f6_hands_the_sideways_keys_to_the_highlight_and_back(app):
 async def test_the_arrow_key_setting_says_which_mode_a_line_starts_in(app):
     async with app.run_test() as pilot:
         await worksheet(pilot, "x + 1")
-        await author(pilot, "ArrowKeyMode := Subexpression")
+        authored(app, "ArrowKeyMode := Subexpression")
         await pilot.press("a")
         assert flags(app) == []
         # F6 is for the line in hand only: the next one starts where the
@@ -2732,7 +2737,7 @@ async def test_a_line_that_takes_no_expression_is_offered_no_f6(app):
 
 async def test_subexpression_mode_leaves_such_a_line_its_sideways_keys(app):
     async with app.run_test() as pilot:
-        await author(pilot, "ArrowKeyMode := Subexpression")
+        authored(app, "ArrowKeyMode := Subexpression")
         await worksheet(pilot, "x (x + 1)")
         await pilot.press("c", "d", "enter")
         assert prompt(app) == ("CALCULUS DIFFERENTIATE variable:", "x")
@@ -2784,7 +2789,7 @@ async def test_a_new_entry_is_scrolled_to_even_when_the_scroll_beats_the_layout(
     )
     async with app.run_test(size=(80, 24)) as pilot:
         for number in range(15):
-            await author(pilot, f"x+{number}")
+            authored(app, f"x+{number}")
         await pilot.pause()
         pane = app.work_area
         assert pane.max_scroll_y > 0
@@ -2793,7 +2798,7 @@ async def test_a_new_entry_is_scrolled_to_even_when_the_scroll_beats_the_layout(
 
 async def test_solutions_that_first_overflow_the_pane_are_scrolled_to(app):
     async with app.run_test(size=(100, 40)) as pilot:
-        await author(pilot, "x^12=12")
+        authored(app, "x^12=12")
         await pilot.press("l", "enter")
         for _ in range(20):
             await pilot.pause()
@@ -2974,7 +2979,7 @@ async def test_an_angle_bracket_typed_on_a_line_is_text(app):
 
 async def test_an_angle_bracket_typed_into_a_field_is_text(app):
     async with app.run_test() as pilot:
-        await author(pilot, "x^2*y")
+        authored(app, "x^2*y")
         await pilot.press("c", "l", "enter", "enter")
         await pilot.press("<")
         assert band(app) == [
