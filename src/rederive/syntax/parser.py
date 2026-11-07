@@ -574,6 +574,8 @@ class Parser:
         operator = self.peek()
         if not _is_op(operator, ":=", ":=="):
             raise self.error(operator.start, "':='")
+        if name.value in names.UNDEFINABLE_FUNCTIONS:
+            raise self.error(operator.start, "a function that can be defined")
         self.advance()
         params_node = Node(
             Kind.PARAMS,

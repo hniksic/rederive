@@ -255,6 +255,21 @@ def test_a_setting_value_stands_where_its_function_could_not():
         parse("SIN")
 
 
+@pytest.mark.parametrize("text", ["APPROX(x):=x+1", "sin(x):=x+1", "SUBS(u):="], ids=str)
+def test_a_builtin_function_cannot_be_defined(text):
+    # Derive refuses these at the `:=`, so a builtin always means itself.
+    with pytest.raises(DeriveSyntaxError) as raised:
+        parse(text)
+    assert raised.value.offset == text.index(":=")
+
+
+@pytest.mark.parametrize("text", ["ZETA(s,m):=s+m", "FLOOR(x):=x", "EI(x):=x"], ids=str)
+def test_a_builtin_an_older_utility_file_defines_can_be_defined(text):
+    # Derive 1.62's SPECIAL.MTH defines ZETA, 2.01's MISC.MTH defines FLOOR, and
+    # EXP_INT.MTH defines EI, a function rederive adds.
+    assert sexpr(text).startswith("(fundef ")
+
+
 def test_the_parameters_of_a_definition_do_not_outlive_it():
     # `mx` has to be one name for the body of `FIT3(mx,mf):=mx+mf` to be lexed
     # at all, and is `m*x` again once the definition is read: a parameter is a
@@ -271,7 +286,7 @@ def test_a_parameter_hands_back_the_variable_it_shadowed():
     parse("tera:=10^12", state)
     state.declare(VariableDeclaration("tera", has_value=True))
     state.declare(DomainDeclaration("tera", "Real"))
-    parse("FIT(tera):=tera^2", state)
+    parse("FIT3(tera):=tera^2", state)
     assert state.variables == {"tera": VariableInfo("tera", True, "Real")}
     assert sexpr("terab", state) == "(juxt tera b)"
 

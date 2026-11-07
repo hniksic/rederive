@@ -47,6 +47,16 @@ BUILTIN_FUNCTIONS: frozenset[str] = (
     DERIVE_FUNCTIONS | EXTENDED_FUNCTIONS | NOTATION_FUNCTIONS
 )
 
+# The builtin functions an author cannot define, as Derive refuses `SIN(x):=x+1` and
+# `APPROX(x):=x+1` with a syntax error at the `:=`. Derive's own functions are among
+# them except those an older Derive's utility files define for themselves: 2.01's
+# MISC.MTH and VECTOR.MTH and 1.62's SPECIAL.MTH, which predate those functions being
+# built in, and which still load. The functions rederive adds stay definable, since
+# EXP_INT.MTH, PROBABIL.MTH and ZETA.MTH define most of them.
+UNDEFINABLE_FUNCTIONS: frozenset[str] = (
+    DERIVE_FUNCTIONS - frozenset("DELETE_ELEMENT FLOOR MOD REVERSE_VECTOR ZETA".split())
+) | NOTATION_FUNCTIONS
+
 # The functions whose second argument names a variable of their own: the index
 # of a sum, the variable a derivative is taken with respect to, the one a
 # generated vector steps through. Inside the first argument that name stands for
