@@ -5,9 +5,10 @@ decimal notation that writes an approximation to its digits. Each case is the au
 text in and the worksheet's text out, written inline as in `test_simplify.py` so that a
 failure names the mathematics. `pi` is `3.14159` in Approximate mode, the same answer
 approX gives from an exact line, because approX is Simplify at another precision;
-`APPROX(pi)` in an exact line is `355/113`, the rational the digits stand for; a whole
-number needs no digits anywhere; and an approximation shows only the digits that are
-the value's, however many more the arithmetic carried.
+`1 + APPROX(pi)` in an exact line is `468/113`, the rational the digits stand for, while
+a line that is nothing but `APPROX(pi)` is approX of `pi`; a whole number needs no
+digits anywhere; and an approximation shows only the digits that are the value's,
+however many more the arithmetic carried.
 """
 
 from __future__ import annotations
@@ -77,13 +78,15 @@ def test_approx_takes_the_digits_it_is_given():
 
 
 APPROXIMATED = [
-    # The function, not the command: it approximates what it holds and leaves
-    # the line around it alone, and it does so in Exact mode like any other.
-    # What it leaves is a rational, since that is what an approximate number
-    # is, so a rational notation writes the ratio the digits stand for.
-    ("APPROX(pi)", "355/113"),
-    ("APPROX([1/3, pi])", "[1/3, 355/113]"),
+    # The function inside a line, not the command: it approximates what it holds
+    # and leaves the line around it alone, and it does so in Exact mode like any
+    # other. What it leaves is a rational, since that is what an approximate
+    # number is, so a rational notation writes the ratio the digits stand for.
+    ("1 + APPROX(pi)", "468/113"),
+    ("[APPROX(1/3), APPROX(pi)]", "[1/3, 355/113]"),
     ("1/2 + APPROX(1/3)", "5/6"),
+    ("APPROX(1/2) + x", "x + 1/2"),
+    ("2*APPROX(1/2)", "1"),
     # A whole number needs no digits, here as everywhere else.
     ("APPROX(2 + 3)", "5"),
     # Nothing to approximate is nothing done.
@@ -99,8 +102,8 @@ def test_the_approx_function_approximates_where_it_stands(text, expected):
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("APPROX(pi)", "3.14159"),
-        ("APPROX([1/3, pi])", "[0.333333, 3.14159]"),
+        ("1 + APPROX(pi)", "4.14159"),
+        ("[APPROX(1/3), APPROX(pi)]", "[0.333333, 3.14159]"),
         ("1/2 + APPROX(1/3)", "0.833333"),
     ],
     ids=str,
@@ -165,9 +168,36 @@ def test_decimal_notation_in_mixed_mode_writes_only_the_approximations_shortened
     assert simp("10^20/3", context) == "33333333333333333333.3"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("APPROX(1/2)", "0.5"),
+        ("APPROX(pi)", "3.14159"),
+        ("APPROX([1/3, pi])", "[0.333333, 3.14159]"),
+        ("APPROX(x/3)", "0.333333*x"),
+        ("APPROX(1/3, 3)", "0.333"),
+        ("APPROX(pi, 12)", "3.14159265358"),
+        # Nothing to approximate is still nothing done.
+        ("APPROX(2 + 3)", "5"),
+        ("APPROX(x + 1)", "x + 1"),
+    ],
+    ids=str,
+)
+def test_a_line_that_is_an_approx_call_is_approx_of_its_operand(text, expected):
+    # Simplifying it is the approX command at the call's digit count, so the
+    # answer is written as approximate even in an exact line.
+    assert simp(text) == expected
+
+
+def test_a_whole_line_approx_follows_a_reference():
+    # `#1` stands for the line it names, so this line is an APPROX call too.
+    context = Context(labels={1: parse("1/2")})
+    assert simp("APPROX(#1)", context) == "0.5"
+
+
 def test_the_approx_function_takes_the_digits_it_is_given():
     # Twelve digits of pi, which is a nearer rational than six digits' 355/113.
-    assert simp("APPROX(pi, 12)") == "5419351/1725033"
+    assert simp("x + APPROX(pi, 12)") == "x + 5419351/1725033"
 
 
 def test_a_digit_count_is_the_digits_of_it_that_are_whole():
@@ -191,14 +221,14 @@ def test_a_digit_count_is_the_digits_of_it_that_are_whole():
     ("text", "expected"),
     [
         # Special functions sympy does not prove finite, which are finite.
-        ("APPROX(EI(LN(2)), 15)", "1.04516"),
-        ("APPROX(SI(2), 15)", "1.60541"),
-        ("APPROX(EI(2), 15)", "4.95423"),
-        ("APPROX(COSH_INT(2), 15)", "2.45266"),
+        ("APPROX(EI(LN(2)), 15)", "1.04516378011749"),
+        ("APPROX(SI(2), 15)", "1.60541297680269"),
+        ("APPROX(EI(2), 15)", "4.95423435600189"),
+        ("APPROX(COSH_INT(2), 15)", "2.45266692264691"),
         # What has no exact answer still has digits, which is the original's
         # own division of labour between Simplify and approX.
-        ("APPROX(INT(SIN(x)/x, x, 1, 2), 15)", "0.659329"),
-        ("APPROX(SUM(1/(k^3 + 1), k, 1, inf), 15)", "0.686503"),
+        ("APPROX(INT(SIN(x)/x, x, 1, 2), 15)", "0.659329906435511"),
+        ("APPROX(SUM(1/(k^3 + 1), k, 1, inf), 15)", "0.686503342338623"),
         # An infinity is refused, being the one thing that has no digits.
         ("APPROX(LN(0), 15)", "-inf"),
         ("APPROX(1/0, 15)", "±inf"),
@@ -220,11 +250,12 @@ def test_a_value_sympy_leaves_open_is_approximated_rather_than_refused(text, exp
 
 
 def test_an_approximation_holds_the_digits_it_was_asked_for():
-    # The value behind the six shown above: asking for more digits gives a
-    # nearer rational, which is what makes the approximation the one requested
-    # rather than the one the notation happens to print.
-    assert simp("APPROX(EI(LN(2)), 6)") == "2615/2502"
-    assert simp("APPROX(EI(LN(2)), 15)") == "80302381/76832342"
+    # The value behind the digits shown above, inside a line so that it stays
+    # the rational it is: asking for more digits gives a nearer rational, which is
+    # what makes the approximation the one requested rather than the one the
+    # notation happens to print.
+    assert simp("y + APPROX(EI(LN(2)), 6)") == "y + 2615/2502"
+    assert simp("y + APPROX(EI(LN(2)), 15)") == "y + 80302381/76832342"
 
 
 def test_approx_waits_for_the_value_it_is_asked_to_approximate():
@@ -235,7 +266,7 @@ def test_approx_waits_for_the_value_it_is_asked_to_approximate():
     a logarithm here, so that an answer standing at the exact value would be
     visibly a different one.
     """
-    assert simp("APPROX(INT(1/x, x, 1, 2))") == "2731/3940"
+    assert simp("y + APPROX(INT(1/x, x, 1, 2))") == "y + 2731/3940"
     assert simp("INT(1/x, x, 1, 2)") == "LN(2)"
 
 

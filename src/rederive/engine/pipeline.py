@@ -99,7 +99,7 @@ from rederive.engine.to_sympy import (
     digit_count,
 )
 from rederive.engine.vocabulary import INVERSE_HYPERBOLIC, in_vocabulary
-from rederive.model.expr import Node
+from rederive.model.expr import Kind, Node
 from rederive.syntax.state import ParseState
 
 __all__ = ["approx", "approximated", "simplified", "simplify"]
@@ -144,6 +144,10 @@ def simplify(
     """
     context = context or Context()
     node = named_as_declared(node, state)
+    whole = _whole_approximation(node, context)
+    if whole is not None:
+        value, digits = whole
+        return approx(value, context, digits, state)
     return from_sympy(
         simplified(node, context),
         context,
@@ -167,6 +171,37 @@ def approx(
     context = context or Context()
     approximate = context.with_precision(Precision.APPROXIMATE, digits)
     return simplify(node, approximate, state)
+
+
+def _whole_approximation(
+    node: Node, context: Context
+) -> tuple[Node, int | None] | None:
+    """The operand and digit count of an expression that is an `APPROX` call.
+
+    Simplifying such an expression is approX of the operand at the call's digit
+    count, its answer written as approximate: the original simplifies
+    `APPROX(1/2)` to 0.5 and `APPROX(1/3, 3)` to 0.333. Anywhere further in, the
+    call is worth the rational it rounds to and nothing marks it approximate:
+    `APPROX(1/2) + 1/3` is 5/6 there.
+
+    A reference to an entry is followed, since the original reads `#1` as the
+    expression it names. None where the expression is not such a call, or where
+    its count is no workable number, which is ordinary Simplify's to handle.
+    """
+    while node.kind is Kind.LABEL and str(node.value).isdigit():
+        labelled = context.labels.get(int(node.value))
+        if labelled is None:
+            return None
+        node = labelled
+    if node.kind is not Kind.CALL or "APPROX" in context.functions:
+        return None
+    name, *arguments = node.children
+    if name.value != "APPROX" or len(arguments) not in (1, 2):
+        return None
+    if len(arguments) == 1:
+        return arguments[0], None
+    count = digit_count(simplified(arguments[1], context))
+    return None if count is None else (arguments[0], count)
 
 
 def simplified(

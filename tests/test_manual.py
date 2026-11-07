@@ -199,21 +199,12 @@ NOT_YET_HELD = {
     # answers the first, and no one tolerance answers both, since 81379/55
     # needs at least 4.25e-8 of the value and 553211/374 needs under 7.5e-9.
     # So the original is not seeking the simplest rational within a tolerance
-    # either, and the two below are what that unknown comes to.
-    # The one of the two the original does not answer either. It reads
-    # 1.73205 back in and re-approximates it to 1.73205, as this engine does,
-    # and re-approximating its own SQRT(3) gives the 1.732050841 that
-    # 5042/2911 comes to. The page's 1.732050657 is neither.
+    # either, and the case below is what that unknown comes to, one the
+    # original does not answer either. It reads 1.73205 back in and
+    # re-approximates it to 1.73205, as this engine does, and re-approximating
+    # its own SQRT(3) gives the 1.732050841 that 5042/2911 comes to. The page's
+    # 1.732050657 is neither.
     "test_reapproximating_an_approximation_keeps_its_error",
-    # The one of the two that is not the tolerance's business at all. The
-    # original prints an approximation to the digits it was made to whatever
-    # the notation asks for: with NotationDigits at six, APPROX(SQRT(3), 10)
-    # still comes out 1.732050807. The engine's value is already that -
-    # 262087/151316 is 1.732050807 to ten digits - and only the printing is
-    # short. Holding it means an approximation carrying the count it was made
-    # with as far as the printer, which is a change to how one is written and
-    # not to which rational it is.
-    "test_approx_takes_the_digits_it_is_given",
     # The determinant is multiplied out where the original leaves it factored,
     # and then written about the most main variable it holds: with none of `a`,
     # `b`, `w` on the order list that is `a`, so `(2 - w)*(b - w) - 3*a` comes
