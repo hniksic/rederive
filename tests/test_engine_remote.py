@@ -178,15 +178,11 @@ def mortal():
         engine.shutdown()
 
 
-# -- the six answers ---------------------------------------------------------
+# -- the five answers --------------------------------------------------------
 
 
 async def test_simplify_comes_back_from_the_child(remote):
     assert (await remote.simplify(tree("2 + 3"), Context())).text == "5"
-
-
-async def test_approx_comes_back_from_the_child(remote):
-    assert (await remote.approx(tree("1/3"), Context(), None, None)).text == "0.333333"
 
 
 async def test_factor_comes_back_from_the_child(remote):

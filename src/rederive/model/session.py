@@ -5,7 +5,7 @@ into calls on `Session` and paints the result. This is the session layer, and
 it is where the math engine is reached from: the UI never calls a command
 itself, it asks the session for one.
 
-Which engine answers is the one thing a session takes from outside. The six
+Which engine answers is the one thing a session takes from outside. The five
 calls that can cost anything go through `runner`, and they are awaited: the
 program has to be able to go on drawing while one is in flight, and the caller
 that can wait for it is not the same everywhere - a thread on the desktop, an
@@ -145,15 +145,15 @@ Command = Callable[[Node, "engine.Context", ParseState], Awaitable["engine.Resul
 
 
 class Runner(Protocol):
-    """The six engine calls that can cost anything, as the session makes them.
+    """The five engine calls that can cost anything, as the session makes them.
 
     Everything else the session asks the engine for - whether a tree is a
     quotient, what its main variable is, how to write it - is a walk over a
-    tree and costs nothing, so it stays a direct call on the module. These six
+    tree and costs nothing, so it stays a direct call on the module. These five
     convert to sympy, and converting alone can hang: `10^10^10` never finishes
     being built.
 
-    They are awaited because the six are the only calls that can take long
+    They are awaited because the five are the only calls that can take long
     enough to have to be waited for, and because where the waiting happens is
     not the session's business. `remote.RemoteEngine` hands each one to a thread
     that blocks on a pipe to a child process, which is how the app makes Esc
@@ -165,14 +165,6 @@ class Runner(Protocol):
 
     async def simplify(
         self, node: Node, context: engine.Context, state: ParseState | None = ...
-    ) -> engine.Result: ...
-
-    async def approx(
-        self,
-        node: Node,
-        context: engine.Context,
-        digits: int | None = ...,
-        state: ParseState | None = ...,
     ) -> engine.Result: ...
 
     async def factor(
@@ -208,7 +200,7 @@ class Runner(Protocol):
 
 
 class _Here:
-    """The engine computing in this process, wearing the six awaitable calls.
+    """The engine computing in this process, wearing the five awaitable calls.
 
     An answer worked out here is in hand the moment it is asked for, so nothing
     below ever waits: these coroutines suspend at no point, and awaiting one
@@ -225,15 +217,6 @@ class _Here:
         self, node: Node, context: engine.Context, state: ParseState | None = None
     ) -> engine.Result:
         return self._engine.simplify(node, context, state)
-
-    async def approx(
-        self,
-        node: Node,
-        context: engine.Context,
-        digits: int | None = None,
-        state: ParseState | None = None,
-    ) -> engine.Result:
-        return self._engine.approx(node, context, digits, state)
 
     async def factor(
         self,
@@ -390,7 +373,7 @@ class Session:
         self, settings: Settings | None = None, runner: Runner | None = None
     ) -> None:
         self.settings = settings if settings is not None else Settings()
-        #: Who answers the six engine calls that can cost something. The
+        #: Who answers the five engine calls that can cost something. The
         #: module by default, which computes here and cannot be interrupted;
         #: the app hands in a proxy to a child process instead, so that a
         #: computation can be aborted and its appetite capped.
@@ -742,14 +725,16 @@ class Session:
     async def approx(self, request: str) -> Entry:
         """Append the approximated form of the expression `request` names.
 
-        Simplify with the precision temporarily approximate, at whatever
+        Simplify of `APPROX` called on it, which approximates at whatever
         `PrecisionDigits` says; the rest is Simplify's story exactly.
         """
 
         def run(
             node: Node, context: engine.Context, state: ParseState
         ) -> Awaitable[engine.Result]:
-            return self.runner.approx(node, context, None, state)
+            name = Node(Kind.NAME, node.start, node.start, (), "APPROX")
+            call = Node(Kind.CALL, node.start, node.end, (name, node))
+            return self.runner.simplify(call, context, state)
 
         return await self._command(request, "Approx", run)
 

@@ -1,4 +1,4 @@
-"""The app side of the engine in a browser: six calls, one Web Worker, no threads.
+"""The app side of the engine in a browser: five calls, one Web Worker, no threads.
 
 `WebEngine` is the third implementation of the session's `Runner`, beside the
 one that computes in this process and the one that talks to a child process
@@ -34,12 +34,12 @@ serialisation, since both ends are the same Python running the same package;
 more.
 
 There is a second family of requests on the same worker, and it is the plot
-sampling. It goes out through `ask` rather than through the six calls, and the
+sampling. It goes out through `ask` rather than through the five calls, and the
 difference is where its answer goes: a sampling answers in arrays, and arrays
 belong on the page where they are drawn rather than in the interpreter that
 routes them. So `ask` numbers a request, posts it, and expects nothing back -
 the page hears the answer, draws it, and says so to the plot session. That is
-also why `ask` takes no lock. The lock guards the one pending slot the six calls
+also why `ask` takes no lock. The lock guards the one pending slot the five calls
 share, and a request with no answer to this side needs no slot; what actually
 orders a sampling against a Simplify is the worker, which is one thread of one
 interpreter and takes its messages as they come.
@@ -100,7 +100,7 @@ CONSOLE = "the browser console"
 
 
 class WebEngine:
-    """The six engine calls, answered by a Web Worker that can be terminated.
+    """The five engine calls, answered by a Web Worker that can be terminated.
 
     One request is in flight at a time, which is what the lock is for: the
     session is single-threaded, the worker holds nothing between requests, and
@@ -155,15 +155,6 @@ class WebEngine:
         self, node: Node, context: Context, state: ParseState | None = None
     ) -> Result:
         return await self._await("simplify", (node, context, state))
-
-    async def approx(
-        self,
-        node: Node,
-        context: Context,
-        digits: int | None = None,
-        state: ParseState | None = None,
-    ) -> Result:
-        return await self._await("approx", (node, context, digits, state))
 
     async def factor(
         self,
@@ -284,7 +275,7 @@ class WebEngine:
 
         What four typed bounds are worth is four floats, and floats belong to
         the side that asked rather than to the side that draws - so this one
-        takes the pending slot and the lock the six calls take, and answers the
+        takes the pending slot and the lock the five calls take, and answers the
         way they answer. It is on the second family's road only because the
         worker's method is a plot method.
         """
@@ -295,7 +286,7 @@ class WebEngine:
 
         The plot sampling, and nothing else. No lock, because there is nothing
         here for a second request to collide with: what the lock protects is the
-        pending slot the six calls share, and this request has no answer to put
+        pending slot the five calls share, and this request has no answer to put
         in one. What it does share is the worker, and the worker orders the two
         families itself by taking its messages in the order they arrive.
         """

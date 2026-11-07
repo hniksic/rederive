@@ -1,10 +1,10 @@
-"""The app side of the engine worker: six calls, one pipe, one child process.
+"""The app side of the engine worker: five calls, one pipe, one child process.
 
-`RemoteEngine` answers the six calls `Session` makes the engine by, so a session
+`RemoteEngine` answers the five calls `Session` makes the engine by, so a session
 handed one computes in a child process without knowing it. Each call ships the
 tree, the context and the parse state down a pipe and blocks on the answer, on a
 thread `asyncio.to_thread` lends it: the event loop stays free to repaint, to tick
-the elapsed time, and to hear Esc. Everything under those six calls is written in
+the elapsed time, and to hear Esc. Everything under those five calls is written in
 the blocking style that thread is for - a pull-based receive loop with deadlines,
 a resident set polled between reads, a handshake waited out.
 
@@ -100,7 +100,7 @@ def default_cap() -> int:
 
 
 class RemoteEngine:
-    """The six engine calls, answered by a child process that can be killed.
+    """The five engine calls, answered by a child process that can be killed.
 
     The calls are awaitable and everything under them blocks, `asyncio.to_thread`
     being what joins the two. That is the desktop reading of the session's async
@@ -157,7 +157,7 @@ class RemoteEngine:
 
     # -- the engine interface ----------------------------------------------
     #
-    # Six awaitable calls over a blocking machine. Each hands `_ask` to a thread
+    # Five awaitable calls over a blocking machine. Each hands `_ask` to a thread
     # and waits for that thread rather than for the pipe, which is what leaves the
     # loop free while the answer is being computed: the thread is where the wait
     # happens, and it is the thread the kill lands under.
@@ -166,15 +166,6 @@ class RemoteEngine:
         self, node: Node, context: Context, state: ParseState | None = None
     ) -> Result:
         return await self._await("simplify", (node, context, state))
-
-    async def approx(
-        self,
-        node: Node,
-        context: Context,
-        digits: int | None = None,
-        state: ParseState | None = None,
-    ) -> Result:
-        return await self._await("approx", (node, context, digits, state))
 
     async def factor(
         self,

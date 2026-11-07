@@ -2357,9 +2357,10 @@ def _approximation(conv: Converter, args: list) -> sp.Basic:
     pipeline. The digit count is filled in here because this is the last place
     that knows what the caller was working at.
 
-    The number that comes back carries the digits it was asked for, but the
-    printer writes every float at the session's precision, so a count above
-    that one is computed and not shown.
+    The number that comes back carries the digits it was asked for, but inside a
+    larger expression the printer writes it at the session's precision, so a count
+    above that one is computed and not shown. A call that is the whole expression is
+    `pipeline.approx` at its count instead, and shows them.
 
     A count that is a number has to be a workable one, and anything else is
     carried as it stands: NUMBER.MTH asks `PARTS(i_)` for a count written in

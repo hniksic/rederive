@@ -162,11 +162,12 @@ def approx(
     digits: int | None = None,
     state: ParseState | None = None,
 ) -> Result:
-    """Derive's approX: Simplify with the precision mode set to Approximate.
+    """Simplify with the precision mode set to Approximate.
 
-    Not a second evaluator. The only difference from `simplify` is the
-    precision the same pipeline runs at, which is what the manual says approX
-    is.
+    Not a second evaluator. The only difference from `simplify` is the precision
+    the same pipeline runs at, which is what the manual says approX is. It is what
+    an expression that is an `APPROX` call simplifies to, and so what the approX
+    command, which simplifies `APPROX` of what it is given, comes to.
     """
     context = context or Context()
     approximate = context.with_precision(Precision.APPROXIMATE, digits)
@@ -193,7 +194,7 @@ def _whole_approximation(
         if labelled is None:
             return None
         node = labelled
-    if node.kind is not Kind.CALL or "APPROX" in context.functions:
+    if node.kind is not Kind.CALL:
         return None
     name, *arguments = node.children
     if name.value != "APPROX" or len(arguments) not in (1, 2):

@@ -76,10 +76,6 @@ class Blocking:
         await self._held()
         return computing.simplify(node, context, state)
 
-    async def approx(self, node, context, digits=None, state=None):
-        await self._held()
-        return computing.approx(node, context, digits, state)
-
     async def factor(self, node, context, amount=None, variables=(), state=None):
         await self._held()
         return computing.factor(node, context, amount, variables, state)

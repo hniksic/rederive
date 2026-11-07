@@ -20,7 +20,7 @@ to be read - is opened by the first write rather than at startup. Nearly every
 worker is signalled to death having said nothing, so a log opened eagerly would
 be an empty file per worker and per test, forever.
 
-Two private methods sit in the table beside the six public ones, so that the
+Two private methods sit in the table beside the five public ones, so that the
 parent's abort and memory tests do not have to find a real computation slow
 enough or hungry enough to test with.
 
@@ -298,7 +298,6 @@ def methods() -> dict[str, Callable[..., Any]]:
 
     return {
         "simplify": computing.simplify,
-        "approx": computing.approx,
         "factor": computing.factor,
         "expand": computing.expand,
         "solve": computing.solve,
