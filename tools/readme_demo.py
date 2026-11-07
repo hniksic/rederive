@@ -35,7 +35,12 @@ from xml.sax.saxutils import escape
 from PIL import Image
 from textual.widgets import Input
 
+from rederive.ui import app as ui
 from rederive.ui.app import MODE_COMPUTE, RederiveApp
+
+# The opening notice without its version line, so the animations don't go stale with
+# every release. `plot_demo.py` imports this module and records with the same notice.
+ui.GREETING = ui.GREETING[:2]
 
 #: How long a frame stands, by what it shows: a character typed, a menu or
 #: prompt answered, an expression put up to be read, and a result to be taken
