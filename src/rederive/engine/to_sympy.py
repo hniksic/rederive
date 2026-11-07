@@ -1482,8 +1482,10 @@ def _halved_angle(func: Callable[..., sp.Basic], argument: sp.Basic) -> sp.Basic
     where neither writes one.
 
     Which of the two roots the formula gives is the one the sign of the value
-    picks, and the value is a number here, so the sign is read off it. It is
-    never zero: a vanishing sine or cosine needs a denominator of 1 or 2.
+    picks, and the sign is read off where the angle falls in the period: a sine is
+    positive for an angle a whole number of turns past one between 0 and pi, and a
+    cosine is the sine of the angle a quarter turn on. It is never zero: a
+    vanishing sine or cosine needs a denominator of 1 or 2.
     """
     if func not in (sp.sin, sp.cos):
         return None
@@ -1498,7 +1500,8 @@ def _halved_angle(func: Callable[..., sp.Basic], argument: sp.Basic) -> sp.Basic
         cosine = sp.cos(doubled)
     whole = (1 - cosine) if func is sp.sin else (1 + cosine)
     root = sp.sqrt(whole / 2)
-    return -root if sp.N(func(argument)) < 0 else root
+    place = (turns if func is sp.sin else turns + sp.Rational(1, 2)) % 2
+    return -root if place > 1 else root
 
 
 def _arctrig(func: Callable[..., sp.Basic]) -> Handler:

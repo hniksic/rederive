@@ -353,10 +353,7 @@ def _range(expression: sp.Basic, ranges: dict[sp.Symbol, _Range]) -> _Range | No
     if expression.is_number:
         if expression in (sp.oo, -sp.oo):
             return _Range(expression, expression)
-        # Real by its value: the assumptions can take seconds to say that a number
-        # like `LN(ASIN(pi))` is not.
-        value = expression.evalf(15)
-        if not (value.is_Float or value.is_Rational):
+        if expression.is_extended_real is not True or expression.is_finite is not True:
             return None
         return _Range(expression, expression, False, False)
     if isinstance(expression, sp.Symbol):

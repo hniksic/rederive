@@ -41,7 +41,11 @@ from rederive.engine.context import (
     Precision,
     TrigPower,
 )
-from rederive.engine.pipeline import _in_vocabulary
+from rederive.engine.pipeline import (
+    _by_a_positive_substitution,
+    _in_vocabulary,
+    _unbroken,
+)
 from rederive.model.expr import Kind
 from rederive.syntax import (
     FunctionDeclaration,
@@ -1232,24 +1236,34 @@ CALCULUS = [
     ("INT(LN(x)/(1 + x^2), x, 0, inf)", "0"),
     # The imaginary error function writes this without an imaginary unit.
     ("INT(#e^(x^2), x, 0, 1)", "SQRT(pi)*ERFI(1)/2"),
-    # A real integrand over a real interval: sympy's value carries an imaginary part
-    # that is not there, and is put right where it is a constant, left standing where
-    # it is not.
-    ("INT(LN(x)/(x + 1), x, 0, 1)", "-pi^2/12"),
+    # A real integrand over a real interval: sympy's values, `-pi^2/12 +
+    # 2*#i*pi*LN(2)` and `LN(t + 1) + #i*pi`, carry an imaginary part that is not
+    # there, and with no other value proved the integrals stand.
+    ("INT(LN(x)/(x + 1), x, 0, 1)", "INT(LN(x)/(x + 1), x, 0, 1)"),
     ("INT(LN(x)/(x + 1), x, 1, 2)", "INT(LN(x)/(x + 1), x, 1, 2)"),
+    ("INT((x^t - 1)/LN(x), x, 0, 1)", "INT((x^t - 1)/LN(x), x, 0, 1)"),
+    # Sympy's value is `-EI(EXP_POLAR(#i*pi))`, which is `-EI(-1) - pi*#i`. Simplify's
+    # own antiderivative, `EI(-x)`, is continuous on the interval, and its difference
+    # at the ends is the integral.
+    ("INT(#e^(-x)/x, x, 1, inf)", "-EI(-1)"),
     # Not real left of zero, so the imaginary part is the integral's own.
     ("INT(LN(x), x, -1, 1)", "-2 + #i*pi"),
-    # Sympy has no antiderivative for these, and the difference of Simplify's own at
-    # the ends is borne out by quadrature at values of the parameter of either sign.
+    # Sympy has no antiderivative for this, and Simplify's own is continuous on the
+    # interval for every `q`: the argument of its logarithm times its conjugate is -1,
+    # so it is never zero. The integral is the difference at the ends.
     (
         "INT(SIN(x)/SQRT(1 + q^2*COS(x)^2), x, 0, pi)",
         "(LN(SQRT(q^2 + 1) + q) - LN(SQRT(q^2 + 1) - q))/q",
     ),
+    # For `q` past 1 the root in the antiderivative is imaginary on part of the
+    # interval, and its arctangent is not proved continuous: the integral stands.
     (
         "INT(COS(x)/SQRT(1 - q^2*SIN(x)^2), x, -1, 2)",
-        "(ASIN(SIN(1)*q) + ASIN(SIN(2)*q))/q",
+        "INT(COS(x)/SQRT(1 - q^2*SIN(x)^2), x, -1, 2)",
     ),
-    # An integrand that turns its sign when reflected about the middle of the interval.
+    # An integrand that turns its sign when reflected about the middle of the interval,
+    # which its sum with the reflection having zero derivative, being continuous and
+    # zero at the middle proves.
     ("INT(LN(SIN(x)) - LN(COS(x)), x, 0, pi/2)", "0"),
     ("SUM(1/k^2, k, 1, 5)", "5269/3600"),
     ("SUM(k^2, k, 1, m)", "m*(m + 1)*(2*m + 1)/6"),
@@ -2405,7 +2419,6 @@ def test_a_symbolic_power_with_no_elementary_antiderivative_stands(text, expecte
         ("INT((x^t - x^s)/LN(x), x, 0, 1)", "-INT((x^s - x^t)/LN(x), x, 0, 1)"),
         # What the methods do find is still found.
         ("INT(LN(1 + x)/x, x, 0, 1)", "pi^2/12"),
-        ("INT(LN(x)/(x + 1), x, 0, 1)", "-pi^2/12"),
         ("INT(LN(x)/(x^2 + 1), x, 0, inf)", "0"),
     ],
 )
@@ -2767,6 +2780,13 @@ def test_a_rising_factorial_is_a_ratio_of_factorials(text, expected):
     assert simp(text, declared("a :epsilon Real [0, inf)")) == expected
 
 
+def test_a_real_integral_over_a_positive_parameter_is_real():
+    """Over a `t` declared positive sympy's antiderivative stays off its branch cut
+    and the value is real; undeclared it is `#i*pi` off, and the integral stands."""
+    text = "INT((x^t - 1)/LN(x), x, 0, 1)"
+    assert simp(text, declared("t :epsilon Real (0, inf)")) == "LN(t + 1)"
+
+
 def test_an_answer_written_over_the_error_functions_differentiates_back():
     """The Fresnel integral written over `ERF` is the same antiderivative.
 
@@ -2825,6 +2845,60 @@ def test_a_spelling_that_holds_only_for_a_positive_argument_waits_for_one(head, 
     assert abs(sp.N(head.subs(point) - spelled.subs(point))) > 1
 
 
+_T, _A = sp.symbols("t a", real=True)
+
+
+@pytest.mark.parametrize(
+    ("expression", "low", "high", "proved"),
+    [
+        (sp.log(_T**2 + _A**2 + 1), 0, 1, True),
+        (sp.log(_T - _A), 0, 1, False),
+        (1 / (_T - _A), 0, 1, False),
+        (sp.atan(_T / _A), -1, 1, True),
+        (sp.atan(1 / _T), -1, 1, False),
+        (sp.atan(1 / _T), 0, 1, True),
+        (sp.sqrt(_T**2 - 1), 0, 2, True),
+        (1 / sp.sqrt(_T**2 - 1), 0, 2, False),
+        (sp.log(_T + sp.sqrt(_T**2 - 1)), 1, 2, True),
+        (sp.log(_A * sp.cos(_T) + sp.sqrt(_A**2 * sp.cos(_T) ** 2 + 1)), 0, sp.pi, True),
+        (sp.log(sp.tan(_T)) + sp.log(sp.cot(_T)), 0, sp.pi / 2, True),
+        (sp.log(sp.tan(_T)), 0, sp.pi, False),
+        (sp.log(sp.cos(_T)), 0, 1, True),
+        (sp.log(sp.cos(_T)), 0, 2, False),
+        (sp.log(_T), -sp.oo, 0, True),
+        (sp.log(_T), -1, 1, False),
+        (sp.asin(_T / 2), 0, 1, True),
+        (sp.asin(_A * sp.sin(_T)), 0, sp.pi / 2, False),
+        (sp.log(_T) * sp.log(_T + 1) + sp.polylog(2, -_T), 0, 1, True),
+        (sp.I * sp.pi * sp.log(_T + 1) - sp.polylog(2, _T + 1), 0, 1, False),
+        (sp.Ei((_A + 1) * sp.log(_T)) - sp.Ei(sp.log(_T)), 0, 1, False),
+        (sp.exp(_T) * sp.sin(_A * _T), -sp.oo, sp.oo, True),
+    ],
+    ids=str,
+)
+def test_an_antiderivative_is_proved_continuous_on_an_interval(
+    expression, low, high, proved
+):
+    """A logarithm whose argument may be zero, a pole, an arctangent of something that
+    blows up and a polylogarithm on its cut are not proved continuous; an argument
+    whose sign is settled for every value of the parameter is."""
+    assert _unbroken(expression, _T, sp.S(low), sp.S(high)) is proved
+
+
+def test_an_even_integrand_over_a_positive_variable_is_kept_where_proved_odd():
+    """An antiderivative of an even integrand found for a positive variable holds for
+    a negative one where it is odd. `3*x^(5/3)/5` for `(x^2)^(1/3)` is not: it is
+    not even real left of zero, where the integrand is. Nor is one kept that is not
+    proved to differentiate back for the positive variable, as the hypergeometric
+    series sympy writes for `1/SQRT(1 - x^4)` is not."""
+    x = sp.Symbol("x", real=True)
+    found = _by_a_positive_substitution(x**2 / sp.sqrt(x**2 + 1), x)
+    assert found is not None
+    assert sp.simplify(found + found.subs(x, -x)) == 0
+    assert _by_a_positive_substitution((x**2) ** sp.Rational(1, 3), x) is None
+    assert _by_a_positive_substitution(1 / sp.sqrt(1 - x**4), x) is None
+
+
 def test_a_polar_number_inside_a_branch_cut_keeps_its_sheet():
     # `Ei(x*exp_polar(I*pi))` is `EI(-x) + pi*#i`; writing it as `EI(-x)` would drop
     # the `pi*#i`, so the mark stays and the answer holding it is one that stands.
@@ -2841,9 +2915,6 @@ def test_a_polar_number_inside_a_branch_cut_keeps_its_sheet():
         "INT(x^a*#e^(-x), x)",
         # The harmonic number.
         "SUM(1/k, k, 1, n)",
-        # `-EI(EXP_POLAR(#i*pi))`, a polar number inside a function with a branch
-        # cut, which is `-EI(-1) - pi*#i` and so no value of this integral at all.
-        "INT(#e^(-x)/x, x, 1, inf)",
     ],
     ids=str,
 )

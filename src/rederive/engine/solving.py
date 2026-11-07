@@ -411,20 +411,56 @@ def _inverted(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
 
 
 def _satisfies(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
-    """Whether `value` makes `residual` vanish, exactly or else to working precision.
-
-    The numeric check is for values like `LAMBERTW(-#e^(-2), -1)`, where `simplify`
-    cannot see that the logarithm of the branch undoes it.
-    """
+    """Whether `value` is proved to make `residual` vanish, by simplifying what it
+    leaves, with the identities of the Lambert W function written out first where
+    simplifying does not see them, as it does not that the logarithm of
+    `-LAMBERTW(-#e^(-2), -1)` undoes it."""
     try:
         left = residual.subs(variable, value)
-        if sp.simplify(left).is_zero:
+        if sp.simplify(left).is_zero is True:
             return True
-        if left.free_symbols:
+        if left.free_symbols or not left.has(sp.LambertW):
             return False
-        return abs(complex(left.evalf(30))) < 1e-20
+        return sp.simplify(_unwound(left)).is_zero is True
     except Exception:
         return False
+
+
+def _unwound(expression: sp.Basic) -> sp.Basic:
+    """The expression with its powers written as exponentials, `#e^(k*W)` written
+    `(z/W)^k` for an integer `k`, and `LN(c*W)` written `LN(c*z) - W`, for `W` a branch
+    of `LAMBERTW(z)`, `c` 1 or -1 and `c*W` real and positive, or `c` 1 and `W` real:
+    `W*#e^W` is `z` on every branch, and for a real `W` the principal logarithms of
+    the two sides agree. Two rounds, the exponential of a logarithm being reached once
+    the logarithm is written out."""
+
+    def exponential(call: sp.exp) -> sp.Basic | None:
+        multiple, branch = sp.expand(call.args[0]).as_coeff_Mul()
+        if not (isinstance(branch, sp.LambertW) and multiple.is_Integer):
+            return None
+        return (branch.args[0] / branch) ** multiple
+
+    def logarithm(call: sp.log) -> sp.Basic | None:
+        argument = call.args[0]
+        for sign in (1, -1):
+            branch = sign * argument
+            if not isinstance(branch, sp.LambertW):
+                continue
+            real = branch.is_extended_real is True
+            if (sign == 1 and real) or (real and (sign * branch).is_positive is True):
+                return sp.log(sign * branch.args[0]) - branch
+        return None
+
+    expression = expression.rewrite(sp.exp)
+    for _ in range(2):
+        expression = expression.replace(
+            lambda e: isinstance(e, sp.exp) and exponential(e) is not None, exponential
+        )
+        expression = expression.replace(
+            lambda e: isinstance(e, sp.log) and logarithm(e) is not None, logarithm
+        )
+        expression = sp.expand_log(sp.powsimp(sp.expand_power_exp(expression)))
+    return expression
 
 
 def _fails(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
@@ -433,27 +469,18 @@ def _fails(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
     A solver that combines logarithms solves `LN(x) + LN(x - 1) = LN(6)` as
     `x*(x - 1) = 6`, and so offers -2 as well as 3. But `LN(-2) + LN(-3)` is
     `LN(6) + 2*pi*#i`, the principal logarithms of the two negative numbers each
-    carrying `pi*#i`, and -2 is no solution. Each candidate is therefore put back
-    and evaluated, the principal branch being the one every function is evaluated
-    on. Only a definite answer drops one: a value with a parameter left in it is
-    kept, and so is one whose evaluation fails or is not a finite number. Nonzero
-    means nonzero beyond any rounding, measured against the size of the terms.
+    carrying `pi*#i`, and -2 is no solution. Each candidate is therefore put back,
+    the principal branch being the one every function is taken on, and the result
+    simplified. Only a decided answer drops one: a value with a parameter left in it
+    is kept, and so is one whose result is not proved nonzero.
     """
     try:
         left = residual.xreplace({variable: value})
         if left.free_symbols:
             return False
-        found = complex(left.evalf(30))
-        sizes = [
-            abs(complex(term.xreplace({variable: value}).evalf(15)))
-            for term in sp.Add.make_args(residual)
-        ]
-        scale = max([1.0, *sizes])
+        return sp.simplify(left).is_zero is False
     except Exception:
         return False
-    if not (cmath.isfinite(found) and cmath.isfinite(scale)):
-        return False
-    return abs(found) > 1e-12 * scale
 
 
 def _divides_by_zero(
