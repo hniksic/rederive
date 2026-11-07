@@ -1,13 +1,15 @@
 """Both invariants, over the whole corpus.
 
-`test_simplify.py` is where the mathematics is: inline cases, each one naming
-what it is about. This is the net underneath it - `corpus/`, which is Derive's
-shipped utility files, its demo scripts and the parser's own cases, some three
-thousand lines saying some sixteen hundred distinct things - each simplified,
-printed, read back and simplified again. What it catches is a change that
-breaks something no inline case covers. What it reports is the line it broke
-on, which is a starting point and not a diagnosis: the fix is usually a new
-inline case in `test_simplify.py` and then the code to pass it.
+`test_simplify.py` and its siblings, `test_calculus.py`, `test_matrices.py`,
+`test_logic.py`, `test_approximate.py` and `test_functions.py`, are where the
+mathematics is: inline cases, each one naming what it is about. This is the
+net underneath them - `corpus/`, which is Derive's shipped utility files, its
+demo scripts and the parser's own cases, some three thousand lines saying some
+sixteen hundred distinct things - each simplified, printed, read back and
+simplified again. What it catches is a change that breaks something no inline
+case covers. What it reports is the line it broke on, which is a starting
+point and not a diagnosis: the fix is usually a new inline case in the file
+the mathematics belongs to and then the code to pass it.
 
 Twenty seconds across every core, against the twenty-five the rest of the suite
 takes, and it runs with the rest: what a marker holding it back would buy is a

@@ -5,6 +5,10 @@ integrals, the worked examples of the integration methods, the numbered table of
 indefinite integrals and the table of definite integrals. Each case is the integral as
 transcribed there and the text the worksheet shows for it.
 
+This is the net under `test_integrate.py`, whose inline cases each name the rule of
+integration they are about: the tables in full, for what a change breaks that no case
+there covers.
+
 Every expected value here was checked before it was recorded, not read off the engine:
 an antiderivative by differentiating it numerically and comparing with the integrand
 at points where the integrand is real, a definite integral against the book's value or

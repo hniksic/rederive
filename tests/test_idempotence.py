@@ -3,23 +3,25 @@
 `test_simplify.py` already asks this of the inputs it lists in `EVERY_CASE`, under
 whatever context each one uses. This asks it of every `simp(text) == expected` the
 suite states with the default context, wherever it is stated - the parametrized lists
-and the inline asserts of `test_simplify.py` and `test_manual.py` alike: the expected
-text simplifies to itself. An expected value is written by hand, and a form the engine
-would not keep is a form it could never have answered with.
+and the inline asserts of `test_simplify.py`, `test_calculus.py`, `test_matrices.py`,
+`test_logic.py`, `test_approximate.py`, `test_functions.py`, `test_integrate.py` and
+`test_manual.py` alike: the expected text simplifies to itself. An expected value is
+written by hand, and a form the engine would not keep is a form it could never have
+answered with.
 
 That the answer to an input simplifies to itself is the same question, where the case
 holds: its test says the answer is the expected text, and this one says the expected
 text stays put. So the answer is simplified again only for the cases their own files
 record as not held - the manual's spellings `test_manual.py` lists in `NEVER_TO_HOLD`
-and `NOT_YET_HELD`, and the ones `test_simplify.py` keeps under a strict xfail - whose
+and `NOT_YET_HELD`, and the ones `test_functions.py` keeps under a strict xfail - whose
 answer may be something other than the expected text, and so a form of its own to ask
 about. Asking it of every case would simplify every input a second time, on top of
 the run its own test gives it, for an answer the two tests together already know.
 
-The pairs are read out of the two files' source rather than imported, so that a case
-added to either is covered here without being listed twice; what each file records as
-not held is imported from it, so that a case struck off there is asked here again as
-it should be.
+The pairs are read out of the files' source rather than imported, so that a case
+added to any of them is covered here without being listed twice; what each file
+records as not held is imported from it, so that a case struck off there is asked here
+again as it should be.
 """
 
 from __future__ import annotations
@@ -32,11 +34,20 @@ import pytest
 from rederive.engine.computing import Context, simplify
 from rederive.syntax import FunctionDeclaration, ParseState, parse_expression
 
+import test_functions
 import test_manual
-import test_simplify
 
 _HERE = Path(__file__).parent
-_SOURCES = ("test_simplify.py", "test_manual.py")
+_SOURCES = (
+    "test_simplify.py",
+    "test_calculus.py",
+    "test_matrices.py",
+    "test_logic.py",
+    "test_approximate.py",
+    "test_functions.py",
+    "test_integrate.py",
+    "test_manual.py",
+)
 
 #: A default-context case, as this module reads it: input, expected text, the
 #: functions the input is read with declared, and the id of the test that states it.
@@ -169,7 +180,7 @@ def _unheld(pair: Pair) -> bool:
     return (
         test_id in test_manual.NEVER_TO_HOLD
         or test_id in test_manual.NOT_YET_HELD
-        or text in test_simplify.INDICATOR_AND_NORMAL_NOT_HELD
+        or text in test_functions.INDICATOR_AND_NORMAL_NOT_HELD
     )
 
 
@@ -211,7 +222,7 @@ MANUAL_SPELLINGS = {
 
 #: Expected texts that do not simplify to themselves because the spelling Derive is
 #: observed to print contradicts a rule it follows elsewhere, expected text to reason.
-#: `test_simplify.py` records the same cases as not held.
+#: `test_functions.py` records the same cases as not held.
 CONFLICTING_SPELLINGS = {
     "1/2 - ERF(SQRT(2)*m/(2*s) - SQRT(2)*z/(2*s))/2": (
         "Derive's (ERF(...) + 1)/2 contradicts its semi-fraction rule elsewhere, "
