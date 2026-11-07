@@ -41,11 +41,9 @@ from rederive.engine.context import (
     Precision,
     TrigPower,
 )
-from rederive.engine.pipeline import (
-    _by_a_positive_substitution,
-    _in_vocabulary,
-    _unbroken,
-)
+from rederive.engine.integration.indefinite import by_a_positive_substitution
+from rederive.engine.integration.proof import unbroken
+from rederive.engine.vocabulary import in_vocabulary
 from rederive.model.expr import Kind
 from rederive.syntax import (
     FunctionDeclaration,
@@ -2823,7 +2821,7 @@ Z = sp.Symbol("z")
 def test_a_sympy_head_without_a_name_is_spelled_by_its_definition(head, written):
     """Each spelling is the function it replaces, checked at a point as well as
     by its form."""
-    assert _in_vocabulary(head) == written
+    assert in_vocabulary(head) == written
     point = {X: sp.Rational(7, 3), Y: sp.Rational(5, 4)}
     assert abs(sp.N(head.subs(point) - written.subs(point))) < 1e-12
 
@@ -2840,7 +2838,7 @@ def test_a_spelling_that_holds_only_for_a_positive_argument_waits_for_one(head, 
     """`expint(1, z)` is `-EI(-z)` and `loggamma(z)` is `LN(GAMMA(z))` only for a
     positive `z`: at `-1/2` the first is off by `pi*#i` and the second by `2*pi*#i`.
     Where the sign of `z` is not known the head stays as it is."""
-    assert _in_vocabulary(head) == head
+    assert in_vocabulary(head) == head
     point = {Z: -sp.Rational(1, 2)}
     assert abs(sp.N(head.subs(point) - spelled.subs(point))) > 1
 
@@ -2882,7 +2880,7 @@ def test_an_antiderivative_is_proved_continuous_on_an_interval(
     """A logarithm whose argument may be zero, a pole, an arctangent of something that
     blows up and a polylogarithm on its cut are not proved continuous; an argument
     whose sign is settled for every value of the parameter is."""
-    assert _unbroken(expression, _T, sp.S(low), sp.S(high)) is proved
+    assert unbroken(expression, _T, sp.S(low), sp.S(high)) is proved
 
 
 def test_an_even_integrand_over_a_positive_variable_is_kept_where_proved_odd():
@@ -2892,18 +2890,18 @@ def test_an_even_integrand_over_a_positive_variable_is_kept_where_proved_odd():
     proved to differentiate back for the positive variable, as the hypergeometric
     series sympy writes for `1/SQRT(1 - x^4)` is not."""
     x = sp.Symbol("x", real=True)
-    found = _by_a_positive_substitution(x**2 / sp.sqrt(x**2 + 1), x)
+    found = by_a_positive_substitution(x**2 / sp.sqrt(x**2 + 1), x)
     assert found is not None
     assert sp.simplify(found + found.subs(x, -x)) == 0
-    assert _by_a_positive_substitution((x**2) ** sp.Rational(1, 3), x) is None
-    assert _by_a_positive_substitution(1 / sp.sqrt(1 - x**4), x) is None
+    assert by_a_positive_substitution((x**2) ** sp.Rational(1, 3), x) is None
+    assert by_a_positive_substitution(1 / sp.sqrt(1 - x**4), x) is None
 
 
 def test_a_polar_number_inside_a_branch_cut_keeps_its_sheet():
     # `Ei(x*exp_polar(I*pi))` is `EI(-x) + pi*#i`; writing it as `EI(-x)` would drop
     # the `pi*#i`, so the mark stays and the answer holding it is one that stands.
     head = sp.Ei(X * sp.exp_polar(sp.I * sp.pi))
-    assert _in_vocabulary(head) == head
+    assert in_vocabulary(head) == head
 
 
 @pytest.mark.parametrize(

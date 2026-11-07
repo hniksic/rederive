@@ -2048,12 +2048,12 @@ CASES = [
     (
         "356",
         "INT(SIN(a*x)^n*COS(a*x), x)",
-        "IF(a /= 0, IF(n /= -1, SIN(a*x)^(n + 1)/(n + 1), LN(SIN(a*x)))/a, x*0^n)",
+        "(SIN(a*x)^(n + 1) - 1)/(a*(n + 1))",
     ),
     (
         "357",
         "INT(SIN(a*x)*COS(a*x)^n, x)",
-        "IF(a /= 0, -IF(n /= -1, COS(a*x)^(n + 1)/(n + 1), LN(COS(a*x)))/a, 0)",
+        "(1 - COS(a*x)^(n + 1))/(a*(n + 1))",
     ),
     (
         "358a@n=3,m=2",
@@ -2130,7 +2130,7 @@ CASES = [
     (
         "372",
         "INT(SIN(a*x)/COS(a*x)^n, x)",
-        "IF(a /= 0, -IF(n /= 1, COS(a*x)^(1 - n)/(1 - n), LN(COS(a*x)))/a, 0)",
+        "(COS(a*x)^(1 - n) - 1)/(a*(n - 1))",
     ),
     (
         "373",
@@ -2163,7 +2163,7 @@ CASES = [
     (
         "383",
         "INT(COS(a*x)/SIN(a*x)^n, x)",
-        "IF(a /= 0, IF(n /= 1, SIN(a*x)^(1 - n)/(1 - n), LN(SIN(a*x)))/a, x*(±inf)^n)",
+        "(SIN(a*x)^(1 - n) - 1)/(a*(1 - n))",
     ),
     (
         "384",
@@ -2604,17 +2604,17 @@ CASES = [
         "x^3*ACOS(x/a)/3 - a*x^2*SQRT(1 - x^2/a^2)/9 - 2*a^3*SQRT(1 - x^2/a^2)/9",
     ),
     ("497", "INT(ACOS(x/a)/x^2, x)", "-LN((SQRT(1 - x^2/a^2) - 1)/x)/a - ACOS(x/a)/x"),
-    ("498", "INT(ATAN(x/a), x)", "x*ATAN(x/a) - a*LN(x^2/a^2 + 1)/2"),
+    ("498", "INT(ATAN(x/a), x)", "x*ATAN(x/a) - a*LN(x^2 + a^2)/2"),
     (
         "499",
         "INT(x*ATAN(x/a), x)",
-        "a^3*ATAN(x/ABS(a))/(2*ABS(a)) + x^2*ATAN(x/a)/2 - a*x/2",
+        "x^2*ATAN(x/a)/2 + a^2*ATAN(x/a)/2 - a*x/2",
     ),
     ("500", "INT(x^2*ATAN(x/a), x)", "x^3*ATAN(x/a)/3 + a^3*LN(x^2 + a^2)/6 - a*x^2/6"),
     (
         "501@n=3",
         "INT(x^3*ATAN(x/a), x)",
-        "-a^5*ATAN(x/ABS(a))/(4*ABS(a)) + x^4*ATAN(x/a)/4 - a*x^3/12 + a^3*x/4",
+        "x^4*ATAN(x/a)/4 - a^4*ATAN(x/a)/4 - a*x^3/12 + a^3*x/4",
     ),
     ("503", "INT(ATAN(x/a)/x^2, x)", "-ATAN(x/a)/x - LN(a^2/x^2 + 1)/(2*a)"),
     (
@@ -2622,17 +2622,17 @@ CASES = [
         "INT(ATAN(x/a)/x^3, x)",
         "-ATAN(x/a)/(2*x^2) - (ATAN(x/ABS(a))/ABS(a) + 1/x)/(2*a)",
     ),
-    ("505", "INT(ACOT(x/a), x)", "a*LN(x^2/a^2 + 1)/2 + x*ACOT(x/a)"),
+    ("505", "INT(ACOT(x/a), x)", "a*LN(x^2 + a^2)/2 + x*ACOT(x/a)"),
     (
         "506",
         "INT(x*ACOT(x/a), x)",
-        "-a^3*ATAN(x/ABS(a))/(2*ABS(a)) + x^2*ACOT(x/a)/2 + a*x/2",
+        "-a^2*ATAN(x/a)/2 + x^2*ACOT(x/a)/2 + a*x/2",
     ),
     ("507", "INT(x^2*ACOT(x/a), x)", "-a^3*LN(x^2 + a^2)/6 + x^3*ACOT(x/a)/3 + a*x^2/6"),
     (
         "508@n=3",
         "INT(x^3*ACOT(x/a), x)",
-        "a^5*ATAN(x/ABS(a))/(4*ABS(a)) + x^4*ACOT(x/a)/4 + a*x^3/12 - a^3*x/4",
+        "a^4*ATAN(x/a)/4 + x^4*ACOT(x/a)/4 + a*x^3/12 - a^3*x/4",
     ),
     ("510", "INT(ACOT(x/a)/x^2, x)", "LN(a^2/x^2 + 1)/(2*a) - ACOT(x/a)/x"),
     (

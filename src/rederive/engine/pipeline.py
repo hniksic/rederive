@@ -46,8 +46,7 @@ command total. Nothing sympy does can turn a valid entry into an error.
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextvars import ContextVar
-from functools import lru_cache, reduce
+from functools import reduce
 from itertools import combinations
 from math import gcd
 from typing import NamedTuple
@@ -55,8 +54,6 @@ from typing import NamedTuple
 import sympy as sp
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
-from sympy.integrals.manualintegrate import manualintegrate
-from sympy.integrals.risch import NonElementaryIntegral, risch_integrate
 from sympy.functions.elementary.trigonometric import TrigonometricFunction
 from sympy.logic.boolalg import Boolean
 from sympy.simplify.fu import TR2, TR5, TR6, TR7, TR8, TR11
@@ -80,11 +77,12 @@ from rederive.engine.evaluate import (
 from rederive.engine.expanding import EXPAND_AMOUNTS, expanded_expression
 from rederive.engine.factoring import amount_named, factored_expression
 from rederive.engine.from_sympy import from_sympy
+from rederive.engine.integration import agrees, integral, proved_zero
 from rederive.engine.intervals import covering, decided, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.printer import is_written
-from rederive.engine.radical import radical_antiderivative
-from rederive.engine.rational import over_a_parametric_quadratic, rational_antiderivative
+from rederive.engine.rewriting import Rewrite, attempt, forced, pays
+from rederive.engine.signs import folded_signs
 from rederive.engine.solving import oriented, solutions
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
@@ -100,13 +98,12 @@ from rederive.engine.to_sympy import (
     authored_conditionals,
     digit_count,
 )
-from rederive.engine.trigonometric import trigonometric_antiderivative
+from rederive.engine.vocabulary import INVERSE_HYPERBOLIC, in_vocabulary
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 
 __all__ = ["approx", "approximated", "simplified", "simplify"]
 
-Rewrite = Callable[[sp.Basic], sp.Basic]
 
 #: What `combsimp` is for. It is offered only where one of these appears,
 #: because on an ordinary polynomial it factors - `x^2 + 2*x` becomes
@@ -391,7 +388,7 @@ def _one_value(relation: Relational, context: Context) -> bool | None:
     """
     if relation.lhs == relation.rhs:
         return True
-    difference = _attempt(relation, lambda r: _rewritten(r.lhs - r.rhs, context))
+    difference = attempt(relation, lambda r: _rewritten(r.lhs - r.rhs, context))
     if difference is None or not difference.is_number:
         return None
     if difference.is_zero:
@@ -552,10 +549,10 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     if held:
         expression = expression.xreplace(held)
     expression = _numeric(expression)
-    expression = _forced(expression, _spliced_cases)
+    expression = forced(expression, _spliced_cases)
     # A root of a perfect power is taken ahead of the intervals, which settle the
     # absolute value it leaves: `SQRT(x^2 + 2*x + 1)` is `-x - 1` below -1.
-    expression = _forced(expression, _perfect_powers)
+    expression = forced(expression, _perfect_powers)
     # Before the rewrites rather than after, so that what the declared
     # intervals settle is settled for them too: `ABS(x) + ABS(x - 1)` over
     # `(0, 1)` is a sum that cancels, and only once both bars are off.
@@ -629,7 +626,7 @@ def _divergent(expression: sp.Basic, context: Context) -> sp.Basic:
             return series
         ends = set()
         for value in values:
-            limit = _attempt(
+            limit = attempt(
                 term, lambda t: sp.limit(t.subs(parameter, value), index, sp.oo)
             )
             if limit is None:
@@ -641,7 +638,7 @@ def _divergent(expression: sp.Basic, context: Context) -> sp.Basic:
 
     if not expression.has(sp.Sum):
         return expression
-    return _forced(
+    return forced(
         expression, lambda e: e.replace(lambda h: isinstance(h, sp.Sum), diverged)
     )
 
@@ -713,10 +710,10 @@ def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
     """Every reading of `test` worth asking, easiest first."""
     if not isinstance(test, Relational):
         return [test]
-    readings = [test, _attempt(test, lambda t: t.func(t.lhs, t.rhs))]
-    difference = _attempt(test, lambda t: _rewritten(t.lhs - t.rhs, context))
+    readings = [test, attempt(test, lambda t: t.func(t.lhs, t.rhs))]
+    difference = attempt(test, lambda t: _rewritten(t.lhs - t.rhs, context))
     if difference is not None:
-        readings.append(_attempt(test, lambda t: t.func(difference, 0)))
+        readings.append(attempt(test, lambda t: t.func(difference, 0)))
     return [reading for reading in readings if reading is not None]
 
 
@@ -743,7 +740,7 @@ def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
     value = _answer_in_words(head, context)
     if value is not None:
         return value
-    spelled = _attempt(head, _by_definition)
+    spelled = attempt(head, _by_definition)
     if spelled is None or spelled == head:
         return head
     again = _answer_in_words(spelled, context)
@@ -758,13 +755,13 @@ def _answer_in_words(head: sp.Basic, context: Context) -> sp.Basic | None:
     an integral Derive cannot do, and the integral is what is shown: the same
     head left standing as for an integral sympy itself declines, which the next
     command can still work on. A sympy head that is a spelling of functions the
-    notation has is written in them first, by `_in_vocabulary`, and only what is
+    notation has is written in them first, by `in_vocabulary`, and only what is
     left after that decides.
     """
     value = _worked_out(head, context)
     if value == head:
         return None
-    value = _forced(value, _in_vocabulary)
+    value = forced(value, in_vocabulary)
     return value if is_written(value) else None
 
 
@@ -775,7 +772,7 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
     if isinstance(head, Approx):
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
-        return _integral(head)
+        return integral(head)
     if isinstance(head, (sp.Sum, sp.Product)):
         closed = _closed_by_rule(head, context)
         if closed is not None:
@@ -824,7 +821,7 @@ def _flat_between_jumps(derivative: sp.Basic) -> sp.Basic:
 
     if not derivative.has(sp.DiracDelta, sp.Derivative):
         return derivative
-    flattened = _attempt(derivative, lambda d: d.replace(is_flat, lambda _: sp.S.Zero))
+    flattened = attempt(derivative, lambda d: d.replace(is_flat, lambda _: sp.S.Zero))
     return derivative if flattened is None else flattened
 
 
@@ -893,7 +890,7 @@ def _summation(head: sp.Sum) -> sp.Basic:
     `3*y^3/2 - y^2 + y` in the manual (9.1, p.230), not that polynomial's
     factorization.
     """
-    value = _attempt(head, lambda s: s.doit(deep=False))
+    value = attempt(head, lambda s: s.doit(deep=False))
     if value is None:
         return _undecided(head)
     if _counted(head):
@@ -903,7 +900,7 @@ def _summation(head: sp.Sum) -> sp.Basic:
         # A sum of vectors is summed element by element, and each element is a
         # closed form of its own: `SUM([k, k^2], k, 0, n)` is a vector of the
         # two formulas and not of Faulhaber's two polynomials.
-        entries = _attempt(value, lambda m: m.applyfunc(_factored))
+        entries = attempt(value, lambda m: m.applyfunc(_factored))
         return value if entries is None else entries
     return _factored(value)
 
@@ -968,7 +965,7 @@ def _over_the_counts(head: sp.Sum, value: sp.Basic) -> sp.Basic:
         candidate = value
     if _holds_at_the_counts(candidate, head, bound):
         return candidate
-    hypergeometric = _attempt(
+    hypergeometric = attempt(
         head.function,
         lambda f: sp.concrete.summations.eval_sum_hyper(f, (index, low, high)),
     )
@@ -984,7 +981,7 @@ def _holds_at_the_counts(candidate: sp.Basic, head: sp.Sum, bound: sp.Symbol) ->
     """Whether `candidate` is the sum `head` for the first `_COUNTS_CHECKED` values
     of `bound` that give its range at least one term, whatever the other variables."""
     index, low, high = head.limits[0]
-    reduced = _attempt(candidate, sp.gammasimp)
+    reduced = attempt(candidate, sp.gammasimp)
     if reduced is None:
         return False
     checked = 0
@@ -993,15 +990,15 @@ def _holds_at_the_counts(candidate: sp.Basic, head: sp.Sum, bound: sp.Symbol) ->
         if not top.is_Integer or top < low:
             continue
         terms = head.function.subs(bound, count)
-        added = _attempt(terms, lambda t: sp.Sum(t, (index, low, top)).doit())
-        closed = _attempt(reduced, lambda c: c.subs(bound, count))
+        added = attempt(terms, lambda t: sp.Sum(t, (index, low, top)).doit())
+        closed = attempt(reduced, lambda c: c.subs(bound, count))
         if added is None or closed is None or closed.has(sp.nan, sp.zoo, sp.oo):
             return False
-        difference = _attempt(closed - added, sp.expand)
+        difference = attempt(closed - added, sp.expand)
         if difference is None:
             return False
         if difference != 0:
-            difference = _attempt(difference, sp.simplify)
+            difference = attempt(difference, sp.simplify)
             if difference != 0:
                 return False
         checked += 1
@@ -1058,7 +1055,7 @@ def _sum_of_waves(head: sp.Sum, context: Context) -> sp.Basic | None:
     index, low, high = head.limits[0]
     if low.has(sp.oo, -sp.oo) or high.has(sp.oo, -sp.oo):
         return None
-    expanded = _attempt(head.function, sp.expand)
+    expanded = attempt(head.function, sp.expand)
     if expanded is None:
         return None
     waves: dict[tuple[type, sp.Basic, sp.Basic], sp.Basic] = {}
@@ -1152,7 +1149,7 @@ def _sum_of_logarithms(head: sp.Sum, context: Context) -> sp.Basic | None:
         return None
     argument = head.function.args[0]
     step = sp.Dummy("j", integer=True, nonnegative=True)
-    reached = _attempt(argument, lambda a: a.subs(index, low + step))
+    reached = attempt(argument, lambda a: a.subs(index, low + step))
     if reached is None or reached.is_positive is not True:
         return None
     product = _worked_out(sp.Product(argument, head.limits[0]), context)
@@ -1168,7 +1165,7 @@ def _factored(value: sp.Basic) -> sp.Basic:
     """
     if value.has(sp.Sum) or not _polynomial(value):
         return value
-    factored = _attempt(value, sp.factor)
+    factored = attempt(value, sp.factor)
     if factored is None:
         return value
     return factored
@@ -1199,7 +1196,7 @@ def _product(head: sp.Product) -> sp.Basic:
     that it can do. So a product over an endless range that sympy leaves
     standing is asked again as `_partial_products`.
     """
-    value = _attempt(head, lambda p: p.doit(deep=False))
+    value = attempt(head, lambda p: p.doit(deep=False))
     if value is None:
         return head
     if not isinstance(value, sp.Product):
@@ -1250,3422 +1247,17 @@ def _partial_products(head: sp.Product) -> sp.Basic | None:
     if high != sp.oo or not low.is_finite:
         return None
     count = sp.Dummy("n", integer=True, positive=True)
-    partial = _attempt(
+    partial = attempt(
         head.function,
         lambda body: sp.Product(body, (index, low, count)).doit(deep=False),
     )
     if partial is None or partial.has(sp.Product):
         return None
-    value = _attempt(partial, lambda closed: sp.limit(closed, count, sp.oo))
+    value = attempt(partial, lambda closed: sp.limit(closed, count, sp.oo))
     if value is None or value.has(count, sp.Product, sp.Limit, sp.nan, sp.zoo):
         return None
-    reduced = _attempt(value, sp.simplify) if value.has(sp.gamma) else None
+    reduced = attempt(value, sp.simplify) if value.has(sp.gamma) else None
     return value if reduced is None else reduced
-
-
-#: Integration by the methods whose cost is bounded: sympy's tables, the
-#: trigonometric rules, Risch, and the manual rules. Not `meijerg`, which
-#: answers `INT(#e^x*COS(x), x)` with a page of Bessel functions when it is
-#: reached on its own, and not `heurisch`, whose cost is the problem below.
-_BOUNDED = {"meijerg": False, "heurisch": False}
-
-
-@lru_cache(maxsize=256)
-def _integral(head: sp.Basic) -> sp.Basic:
-    """An integral, by sympy, with what sympy gets wrong about definite ones put right.
-
-    A definite integral is split where a step function in it jumps, and looked at
-    where its integrand blows up, before sympy is asked: a step is something sympy
-    integrates over only in part, and a singularity inside the interval is one it
-    reads straight through, as an antiderivative taken across it would. What sympy
-    then answers under a condition on a parameter, or with a parameter whose sign it
-    did not know, is asked again on each side of that sign.
-
-    The answer is a function of the head alone, and is kept: an integral that stands
-    is asked again by the pass that simplifies the answer, and by the next command
-    over the line, and asking sympy costs seconds where a lookup costs nothing.
-    """
-    stepped = _between_the_steps(head)
-    if stepped is not None:
-        return stepped
-    across = _across_the_steps(head)
-    if across is not None:
-        return across
-    value = _integral_through(head)
-    moving = _with_moving_poles(head, value)
-    return _real_where_real(head, value if moving is None else moving)
-
-
-def _integral_through(head: sp.Basic) -> sp.Basic:
-    """An integral, by sympy, once its steps have been looked at: see `_integral`."""
-    verdict = _at_the_singularities(head)
-    if verdict is not None and verdict not in _VERDICTS:
-        return verdict
-    if verdict is _UNDECIDED:
-        value = head
-    elif verdict is _CONVERGENT and _odd_about_the_middle(head):
-        return sp.S.Zero
-    else:
-        value = _of_a_rational_function(head)
-        if value is None:
-            value = _of_a_trigonometric_function(head)
-        if value is None:
-            value = _of_a_radical(head)
-        if value is None:
-            value = _over_an_exponential(head)
-        if value is None:
-            value = head if _an_arc_over_its_variable(head) else _by_sympy(head)
-        if value == head:
-            value = (
-                _by_derivative_divides(head)
-                or _by_products_as_sums(head)
-                or _by_parts(head)
-                or head
-            )
-        if isinstance(value, sp.Integral) and _definite(head):
-            value = _by_the_antiderivative(head) or value
-        infinite = value.has(sp.nan, sp.zoo) or value.is_finite is False
-        if verdict is not None and infinite:
-            value = head
-    past = _past_a_singular_end(head, value)
-    if past is not None:
-        return past
-    beyond = _beyond_convergence(head, value)
-    if beyond is not None:
-        return beyond
-    if value != head or verdict is _UNDECIDED:
-        signed = _by_the_sign_of_a_parameter(head, value)
-        if signed is not None:
-            return signed
-    if _definite(head) and value.has(sp.zoo) and value is not sp.zoo:
-        return head
-    return _by_linearity(head) if value == head else value
-
-
-def _real_where_real(head: sp.Basic, value: sp.Basic) -> sp.Basic:
-    """A definite integral's value, refused where the integral is real and the value
-    is not proved to be.
-
-    Sympy answers `INT(LN(x)/(x + 1), x, 0, 1)` with `-pi^2/12 + 2*#i*pi*LN(2)` and
-    `INT((x^t - 1)/LN(x), x, 0, 1)` with `LN(t + 1) + #i*pi`: its antiderivatives are
-    taken at an end on the other side of a branch cut. A real integrand over a real
-    interval has a real integral, so where the integrand is proved real on the open
-    interval for every real value of the parameters, as `_Stretch` proves it, a value
-    with `#i` in it is kept only where its imaginary part is proved zero. Otherwise it
-    is replaced by the difference of Simplify's own antiderivative at the ends where
-    that is proved the integral, as `_by_the_antiderivative` proves it, and the
-    integral stands where it is not.
-
-    An integrand not proved real on the interval, as `x^(1/3)` is not left of zero,
-    has a value that need not be real either, and is not looked at. Where it is real,
-    a value with an imaginary part that is infinite or still an integral is no answer
-    either: `INT(LN(x)*LN(1 - x), x, 0, 1)` comes back as `2 - #i*inf` plus an
-    integral over a split, which would take minutes to evaluate.
-    """
-    if not _definite(head) or value == head or not value.has(sp.I):
-        return value
-    variable, low, high = head.limits[0]
-    orientation = _orientation(low, high)
-    if orientation is None or not (low.is_extended_real and high.is_extended_real):
-        return value
-    bounds = (low, high) if orientation > 0 else (high, low)
-    if not _Stretch(variable, *bounds).real(head.function):
-        return value
-    if value.has(sp.Integral, sp.oo, -sp.oo, sp.zoo, sp.nan):
-        return head
-    imaginary = _attempt(value, lambda v: sp.im(sp.expand_complex(v)))
-    if imaginary is not None and _proved_zero(imaginary):
-        return value
-    return _by_the_antiderivative(head) or head
-
-
-def _odd_about_the_middle(head: sp.Basic) -> bool:
-    """Whether a definite integral that converges is zero by symmetry: over a finite
-    interval, with an integrand free of parameters that turns its sign when reflected
-    about the middle of it.
-
-    `INT(LN(TAN(x)), x, 0, pi/2)` has no antiderivative sympy finds, and `LN(TAN(pi/2
-    - x))` is `-LN(TAN(x))` on the interval. The integral is the integral of the
-    reflected integrand, so twice it is the integral of the sum of the two, and that
-    sum is proved zero on the interval: its derivative simplifies to zero, it is
-    continuous there as `_unbroken` proves, and it is zero at the middle, where it is
-    twice the integrand.
-    """
-    variable, low, high = head.limits[0]
-    integrand = head.function
-    if integrand.free_symbols != {variable} or not (low.is_finite and high.is_finite):
-        return False
-    orientation = _orientation(low, high)
-    if orientation is None:
-        return False
-    balance = integrand + integrand.subs(variable, low + high - variable)
-    at_middle = _attempt(integrand.subs(variable, (low + high) / 2), sp.simplify)
-    if at_middle != 0:
-        return False
-    slope = _attempt(balance, lambda b: sp.simplify(sp.diff(b, variable)))
-    if slope != 0:
-        return False
-    bounds = (low, high) if orientation > 0 else (high, low)
-    return _unbroken(balance, variable, *bounds)
-
-
-def _by_the_antiderivative(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral sympy left standing, as the difference of the limits at the
-    ends of the antiderivative Simplify finds, where that is proved the integral, or
-    None.
-
-    Sympy values a definite integral by an antiderivative of its own, and has none for
-    `INT(SIN(x)/SQRT(1 + q^2*COS(x)^2), x, 0, pi)`, which `u = COS(x)` makes
-    elementary. The antiderivative found here is the one an indefinite integral is
-    answered with. Its difference at the ends is the integral where it is continuous on
-    the open interval and differentiates to the integrand there, which `_unbroken`
-    proves for every value of the parameters: an antiderivative over a logarithm whose
-    argument crosses zero inside the interval, or a polylogarithm on its cut, has a
-    difference that is not the integral. An integrand that both the Risch algorithm
-    and the manual rules give up on, as `_within_reach` finds, is not looked at, its
-    antiderivative being out of reach.
-
-    That proof says nothing where the parameters make the antiderivative undefined,
-    as `1/(m^2 - 4)` in the antiderivative of `SIN(m*x)*SIN(2*x)` does at `m = 2`,
-    where the integral is `pi/2`. A value that has a value there itself, as the `0`
-    the integral over `0` to `pi` comes to for an integer `m` does, claims one the
-    proof does not cover, and is refused; one that is undefined there as well is the
-    generic answer it is.
-    """
-    if head.function.has(sp.Piecewise) or _within_reach(head):
-        return None
-    variable, low, high = head.limits[0]
-    orientation = _orientation(low, high)
-    if orientation is None:
-        return None
-    antiderivative = _integral(sp.Integral(head.function, variable))
-    if antiderivative.has(sp.Integral, sp.Piecewise):
-        return None
-    bounds = (low, high) if orientation > 0 else (high, low)
-    if not _unbroken(antiderivative, variable, *bounds):
-        return None
-    ends = _ends(antiderivative, variable, low, high)
-    if ends is None:
-        return None
-    value = ends[0] - ends[1]
-    if value.has(sp.Limit, sp.nan, sp.zoo, sp.oo, -sp.oo):
-        return None
-    if _defined_past(value, antiderivative, variable):
-        return None
-    return value
-
-
-def _defined_past(value: sp.Basic, antiderivative: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the value is defined at some value of the parameters where the
-    antiderivative divides by zero, or that is not known: see `_by_the_antiderivative`.
-    """
-    for divisor in _parametric_divisors(antiderivative, variable):
-        for parameter in sorted(divisor.free_symbols, key=sp.default_sort_key):
-            try:
-                roots = sp.solve(divisor, parameter)
-            except Exception:
-                return True
-            for root in roots:
-                there = _attempt(value, lambda v: v.subs(parameter, root))
-                if there is None or not there.has(sp.nan, sp.zoo):
-                    return True
-    return False
-
-
-def _unbroken(
-    expression: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
-) -> bool:
-    """Whether the expression is proved continuous in the variable on the open interval
-    from `low` to `high`, with every function in it off its branch cuts there, for every
-    real value of the parameters it is defined at.
-
-    That is what makes the difference of an antiderivative's limits at the ends the
-    integral. An antiderivative that jumps inside the interval, as a logarithm does
-    where its argument crosses zero, has a difference that misses the jump; and on a
-    branch cut the derivative of a function need not be what its formula says, sympy's
-    value there being taken from one side: `POLYLOG(2, z)` past 1 differentiates to
-    `-LN(1 - z)/z` with the other sign of `#i*pi` in the logarithm. A logarithm or a
-    power of a real argument that is negative throughout is on its cut too, but on the
-    same side of it throughout, `LN(A)` being `LN(-A) + #i*pi`, so it is continuous and
-    differentiates as its formula does.
-
-    The proof goes by the structure of the expression, as `_Stretch` lays out, and asks
-    only what sympy decides symbolically. A subexpression free of the variable is a
-    constant, and a parameter that makes it undefined makes the expression undefined
-    at every point, which is outside what it says anything about.
-    """
-    span = _attempt(high, lambda h: h - low)
-    if span is None or span.is_extended_positive is not True:
-        return False
-    return _Stretch(variable, low, high).continuous(expression)
-
-
-class _Stretch:
-    """An open interval of a real variable, and what is proved about expressions in the
-    variable over it.
-
-    An expression is continuous where it is a constant, the variable, or a sum,
-    product or function of continuous expressions such that:
-
-    - a power with an exponent free of the variable has a base that is not zero, or an
-      integer exponent at least zero, or a positive exponent and a real base, the
-      principal power of a real base being continuous through zero;
-    - a power with the variable in its exponent has a positive base or a nonzero
-      constant one;
-    - the entire functions (exponential, sine and cosine, their hyperbolic forms, the
-      error functions, `SI`, `SHI` and the Fresnel integrals) take any argument; the
-      arctangent, the inverse hyperbolic sine and the hyperbolic tangent a real one;
-      the tangent, cotangent, secant and cosecant a real one at which their
-      denominator is not zero;
-    - the logarithm, the exponential integral, the sign and the arccotangent take a
-      real argument that is not zero; the cosine integrals and the logarithmic integral
-      a positive one, the latter also not 1;
-    - the arcsine and arccosine take an argument between -1 and 1, the inverse
-      hyperbolic cosine one at least 1, the inverse hyperbolic tangent and cotangent one
-      inside and outside -1 to 1, and `POLYLOG(s, z)` a real `z` less than 1;
-    - the absolute value takes any argument.
-
-    Anything else is not proved continuous. An expression is real where it is built of
-    real constants, the variable, and the functions above at real arguments, a root or
-    a logarithm of an argument that is not negative and positive respectively.
-
-    A sign condition on an argument is decided by sympy's assumptions, over the
-    variable written as an end plus or minus a positive offset, or as the point that
-    far along the interval the offset over one plus the offset is. An argument free of
-    parameters is otherwise decided by solving for where it is zero or negative on the
-    interval, which `solveset` does exactly or not at all, and taking its sign at the
-    middle.
-    """
-
-    #: The functions continuous for any continuous argument.
-    ENTIRE = (
-        sp.exp, sp.sin, sp.cos, sp.sinh, sp.cosh, sp.erf, sp.erfc, sp.erfi, sp.Si,
-        sp.Shi, sp.fresnels, sp.fresnelc,
-    )
-    #: The functions continuous and real for a continuous real argument.
-    REAL = (sp.atan, sp.asinh, sp.tanh)
-    #: The quotients and the function whose zeros they are poles at.
-    QUOTIENTS = {sp.tan: sp.cos, sp.sec: sp.cos, sp.cot: sp.sin, sp.csc: sp.sin}
-    #: The functions continuous for a continuous real argument that is not zero.
-    NONZERO = (sp.log, sp.Ei, sp.sign, sp.acot, sp.coth)
-
-    def __init__(self, variable: sp.Basic, low: sp.Basic, high: sp.Basic):
-        self.variable, self.low, self.high = variable, low, high
-        offset = sp.Dummy("p", positive=True)
-        self.covers = []
-        if low.is_finite and high.is_finite:
-            self.covers.append(low + (high - low) * offset / (1 + offset))
-        if low.is_finite:
-            self.covers.append(low + offset)
-        if high.is_finite:
-            self.covers.append(high - offset)
-        if not self.covers:
-            self.covers.append(sp.Dummy("r", real=True))
-        if low.is_finite and high.is_finite:
-            self.middle = (low + high) / 2
-        elif low.is_finite:
-            self.middle = low + 1
-        elif high.is_finite:
-            self.middle = high - 1
-        else:
-            self.middle = sp.S.Zero
-        self.known: dict[tuple[str, sp.Basic], bool] = {}
-
-    def _remembered(self, kind: str, expression: sp.Basic, decide) -> bool:
-        key = (kind, expression)
-        if key not in self.known:
-            self.known[key] = False
-            self.known[key] = bool(decide(expression))
-        return self.known[key]
-
-    def continuous(self, expression: sp.Basic) -> bool:
-        return self._remembered("continuous", expression, self._continuous)
-
-    def real(self, expression: sp.Basic) -> bool:
-        return self._remembered("real", expression, self._real)
-
-    def positive(self, expression: sp.Basic) -> bool:
-        return self._remembered("positive", expression, self._positive)
-
-    def nonnegative(self, expression: sp.Basic) -> bool:
-        return self._remembered("nonnegative", expression, self._nonnegative)
-
-    def nonzero(self, expression: sp.Basic) -> bool:
-        return self._remembered("nonzero", expression, self._nonzero)
-
-    def _continuous(self, expression: sp.Basic) -> bool:
-        if not expression.has(self.variable) or expression == self.variable:
-            return True
-        if isinstance(expression, (sp.Add, sp.Mul)):
-            return all(self.continuous(term) for term in expression.args)
-        if isinstance(expression, sp.Pow):
-            base, exponent = expression.args
-            if not self.continuous(base):
-                return False
-            if exponent.has(self.variable):
-                if not self.continuous(exponent):
-                    return False
-                if base.has(self.variable):
-                    return self.positive(base)
-                return base.is_zero is False
-            if exponent.is_integer and exponent.is_nonnegative:
-                return True
-            if exponent.is_integer:
-                return self.nonzero(base)
-            if not (self.real(base) and self.real(exponent)):
-                return False
-            return exponent.is_positive is True or self.nonzero(base)
-        if not isinstance(expression, sp.Function):
-            return False
-        arguments = expression.args
-        if isinstance(expression, sp.polylog):
-            order, argument = arguments
-            return (
-                not order.has(self.variable)
-                and self.continuous(argument)
-                and self.real(argument)
-                and self.positive(1 - argument)
-            )
-        if len(arguments) != 1:
-            return False
-        (argument,) = arguments
-        if not self.continuous(argument):
-            return False
-        if isinstance(expression, self.ENTIRE + (sp.Abs,)):
-            return True
-        if not self.real(argument):
-            return False
-        if isinstance(expression, self.REAL):
-            return True
-        for quotient, denominator in self.QUOTIENTS.items():
-            if isinstance(expression, quotient):
-                return self.nonzero(denominator(argument))
-        if isinstance(expression, self.NONZERO):
-            return self.nonzero(argument)
-        return self._real_kernel(expression, argument)
-
-    def _real_kernel(self, expression: sp.Basic, argument: sp.Basic) -> bool:
-        """Whether a function with a real argument is continuous and real: the kernels
-        that are real on part of the real line only."""
-        if isinstance(expression, (sp.asin, sp.acos)):
-            return self.nonnegative(1 - argument**2)
-        if isinstance(expression, sp.acosh):
-            return self.nonnegative(argument - 1)
-        if isinstance(expression, sp.atanh):
-            return self.positive(1 - argument**2)
-        if isinstance(expression, sp.acoth):
-            return self.positive(argument**2 - 1)
-        if isinstance(expression, (sp.Ci, sp.Chi)):
-            return self.positive(argument)
-        if isinstance(expression, sp.li):
-            return self.positive(argument) and self.nonzero(argument - 1)
-        return False
-
-    def _real(self, expression: sp.Basic) -> bool:
-        if expression == self.variable:
-            return True
-        if not isinstance(expression, (sp.Add, sp.Mul, sp.Pow, sp.Function)):
-            return expression.is_extended_real is True
-        if isinstance(expression, (sp.Add, sp.Mul)):
-            return all(self.real(term) for term in expression.args)
-        if isinstance(expression, sp.Pow):
-            base, exponent = expression.args
-            if not (self.real(base) and self.real(exponent)):
-                return False
-            return exponent.is_integer is True or self.nonnegative(base)
-        if isinstance(expression, sp.polylog):
-            order, argument = expression.args
-            return self.real(order) and self.real(argument) and self.positive(
-                1 - argument
-            )
-        if len(expression.args) != 1 or not self.real(expression.args[0]):
-            return False
-        argument = expression.args[0]
-        if isinstance(expression, sp.log):
-            return self.positive(argument)
-        if isinstance(
-            expression,
-            self.ENTIRE + self.REAL + tuple(self.QUOTIENTS) + (sp.Abs, sp.sign),
-        ) or isinstance(expression, (sp.Ei, sp.acot, sp.coth)):
-            return True
-        return self._real_kernel(expression, argument)
-
-    def _assumed(self, expression: sp.Basic, ask: Callable[[sp.Basic], bool]) -> bool:
-        """Whether sympy's assumptions decide the question over one of the covers of
-        the interval."""
-        if not expression.has(self.variable):
-            return bool(_attempt(expression, lambda e: sp.S(ask(e) is True)))
-        for cover in self.covers:
-            written = _attempt(expression, lambda e: e.subs(self.variable, cover))
-            if written is None:
-                continue
-            for form in (written, _attempt(written, sp.together)):
-                if form is not None and _attempt(form, lambda e: sp.S(ask(e) is True)):
-                    return True
-        return False
-
-    def _nowhere(self, relation: sp.Basic) -> bool:
-        """Whether a relation in the variable alone holds at no point of the interval,
-        as `solveset` finds."""
-        if relation.free_symbols != {self.variable}:
-            return False
-        inside = sp.Interval.open(self.low, self.high)
-        found = _attempt(relation, lambda r: sp.solveset(r, self.variable, inside))
-        return found is not None and found.is_empty is True
-
-    def _plain(self, expression: sp.Basic) -> bool:
-        """Whether the expression is a continuous real function of the variable alone."""
-        return (
-            expression.free_symbols == {self.variable}
-            and self.continuous(expression)
-            and self.real(expression)
-        )
-
-    def _positive(self, expression: sp.Basic) -> bool:
-        if self._assumed(expression, lambda e: e.is_positive):
-            return True
-        if not self._plain(expression) or not self._nowhere(sp.Eq(expression, 0)):
-            return False
-        at_middle = _attempt(expression, lambda e: e.subs(self.variable, self.middle))
-        return at_middle is not None and at_middle.is_positive is True
-
-    def _nonnegative(self, expression: sp.Basic) -> bool:
-        if self._assumed(expression, lambda e: e.is_nonnegative):
-            return True
-        return self._plain(expression) and self._nowhere(sp.Lt(expression, 0))
-
-    def _nonzero(self, expression: sp.Basic) -> bool:
-        if self._assumed(expression, lambda e: e.is_zero is False):
-            return True
-        if isinstance(expression, sp.Mul):
-            return all(self.nonzero(factor) for factor in expression.args)
-        if isinstance(expression, sp.Pow) and not expression.exp.has(self.variable):
-            return self.nonzero(expression.base)
-        if isinstance(expression, sp.exp):
-            return True
-        conjugate = self._conjugate(expression)
-        if conjugate is not None and self.continuous(expression):
-            product = _attempt(expression * conjugate, sp.expand)
-            if product is not None and self.nonzero(product):
-                return True
-        return self._plain(expression) and self._nowhere(sp.Eq(expression, 0))
-
-    def _conjugate(self, expression: sp.Basic) -> sp.Basic | None:
-        """The sum with the sign of its one term over a square root turned, or None:
-        `p + c*SQRT(R)` times `p - c*SQRT(R)` is `p^2 - c^2*R`, so the sum is not zero
-        where that is not and the conjugate is finite, as it is where the sum is
-        continuous."""
-        if not isinstance(expression, sp.Add):
-            return None
-        rooted = [
-            term
-            for term in expression.args
-            if any(
-                power.exp == sp.S.Half and power.base.has(self.variable)
-                for power in term.atoms(sp.Pow)
-            )
-        ]
-        if len(rooted) != 1:
-            return None
-        return expression - 2 * rooted[0]
-
-
-def _definite(head: sp.Basic) -> bool:
-    """Whether this is an integral over one variable between two limits."""
-    return len(head.limits) == 1 and len(head.limits[0]) == 3
-
-
-def _of_a_rational_function(head: sp.Basic) -> sp.Basic | None:
-    """An integral of a rational function of its variable, done here, or None.
-
-    Sympy's rational integrator loses terms, as `engine.rational` explains, so a
-    rational integrand is not offered to it: the antiderivative is that module's,
-    and goes through the same choices as any other. A definite integral of one is
-    the difference of that antiderivative's limits at the ends, approached from
-    inside, which is Derive's way with every definite integral (7.4, p.199) and the
-    same difference sympy would take with an antiderivative that was whole. A pole
-    between the ends or at one of them, where the limits are numbers, has been
-    looked at by `_at_the_singularities` before this is asked; where the ends come
-    to nothing, or the antiderivative was not had, sympy is asked after all.
-
-    Only an integrand rational as a whole is taken: a rational term in a sum with a
-    transcendental one goes to sympy with the rest, and what sympy makes of it has to
-    be proved like any other answer of sympy's. The antiderivative made here is right
-    by construction and is not put to that proof.
-    """
-    if len(head.limits) != 1 or len(head.limits[0]) not in (1, 3):
-        return None
-    variable, integrand = head.limits[0][0], head.function
-    if integrand.is_rational_function(variable) is not True:
-        return None
-    if len(head.limits[0]) == 1:
-        antiderivative = rational_antiderivative(integrand, variable)
-        if antiderivative is None:
-            return None
-        return _antiderivative(head, antiderivative, constructed=True)
-    antiderivative = _integral(sp.Integral(integrand, variable))
-    if antiderivative.has(sp.Integral):
-        return None
-    _, low, high = head.limits[0]
-    ends = _ends(antiderivative, variable, low, high)
-    if ends is None:
-        return None
-    value = ends[0] - ends[1]
-    return None if value is sp.nan or value.has(sp.nan) else value
-
-
-def _of_a_trigonometric_function(head: sp.Basic) -> sp.Basic | None:
-    """An antiderivative of a rational function of the sine and cosine of one linear
-    argument, done here by `engine.trigonometric`, or None.
-
-    Sympy's own ways with these spend up to minutes over parametric coefficients,
-    `INT(1/(b + c*SIN(a*x))^2, x)` among them, and answer with a split over the values
-    of the parameters for which the generic formula fails. The substitution the
-    integral tables use makes a rational function of these, and the rational
-    integrator writes its parametric quadratics without roots or cases.
-    """
-    if len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return None
-    variable = head.limits[0][0]
-    antiderivative = trigonometric_antiderivative(head.function, variable)
-    if antiderivative is None:
-        return None
-    return _antiderivative(head, antiderivative, tabled=True)
-
-
-def _of_a_radical(head: sp.Basic) -> sp.Basic | None:
-    """An antiderivative of a rational function of the variable and roots of linear
-    or quadratic polynomials in it, done here by `engine.radical`, or None.
-
-    Sympy's own ways with these spend minutes over parametric coefficients, as on
-    `(a*x^2 + b*x + c)^(7/2)` or `1/(SQRT(a*x + b)*(f*x + g)^3)`, and answer with a
-    split over the values of the parameters, or not at all. An integral left in the
-    answer is integrated as a head of its own; where one of them stands, or is the
-    head itself, this is None, and the head goes the general way.
-    """
-    if len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return None
-    variable = head.limits[0][0]
-    antiderivative = radical_antiderivative(head.function, variable)
-    if antiderivative is None:
-        return None
-    for left in antiderivative.atoms(sp.Integral):
-        if sp.cancel(left.function - head.function) == 0:
-            return None
-        done = _integral(left)
-        if done.has(sp.Integral):
-            return None
-        antiderivative = antiderivative.xreplace({left: done})
-    return _antiderivative(head, antiderivative, tabled=True)
-
-
-def _over_an_exponential(head: sp.Basic) -> sp.Basic | None:
-    """An antiderivative of a rational function of exponentials of multiples of one
-    linear argument, by the substitution `u = #e^(g*x)`, or None.
-
-    The Risch algorithm writes the logarithmic part of such an integral over the roots
-    of a polynomial whose coefficients carry the parameters, and where it cannot tell
-    real roots from complex ones leaves the sum over them standing: `INT(1/(b*#e^(a*x)
-    + c*#e^(-a*x)), x)` comes back as `ROOT_SUM(4*b*c*z^2 + 1, z, z*LN(#e^(a*x) +
-    2*c*z))/a`. Under `u = #e^(a*x)` that is the integral of `1/(a*(b*u^2 + c))`, which
-    the rational integrator writes as the table does, `ATAN(SQRT(b)*u/SQRT(c))/(a*
-    SQRT(b)*SQRT(c))`. Nor is what the Risch algorithm makes of these always the same
-    from one run to the next: it takes `#e^(a*x)` or `#e^(-a*x)` for its generator by
-    the order of a set, and `INT(COTH(a*x)^2, x)` comes back as `x - 2/(a*#e^(2*a*x) -
-    a)` or as `x + 2/(a*#e^(-2*a*x) - a)` by the seed of the process's string hashes.
-    The substitution here is chosen by the exponents alone.
-
-    Each exponent is `k*x + m` with the ratios of the `k` rational numbers; `g` is the
-    largest of them that each `k` is a whole multiple of, and `#e^(k*x + m)` is
-    `#e^m*u^(k/g)`. None where something else in the integrand depends on the variable,
-    or the denominator of the rational function of `u` has an irreducible factor of
-    degree above 2: the logarithmic part over the roots of a cubic is a page of nested
-    radicals that the steps after this take minutes over.
-    """
-    if len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return None
-    variable, integrand = head.limits[0][0], head.function
-    exponentials = [e for e in integrand.atoms(sp.exp) if e.has(variable)]
-    if not exponentials:
-        return None
-    linear = []
-    for exponential in exponentials:
-        exponent = sp.expand(exponential.args[0])
-        slope = exponent.coeff(variable)
-        offset = sp.expand(exponent - slope * variable)
-        if slope == 0 or slope.has(variable) or offset.has(variable):
-            return None
-        linear.append((exponential, slope, offset))
-    _, first, _ = min(linear, key=lambda entry: sp.default_sort_key(entry[1]))
-    ratios = [sp.cancel(slope / first) for _, slope, _ in linear]
-    if not all(ratio.is_Rational for ratio in ratios):
-        return None
-    unit = sp.gcd([sp.Rational(ratio) for ratio in ratios])
-    numeric, _ = first.as_coeff_Mul()
-    if numeric < 0:
-        unit = -unit
-    rate = first * unit
-    u = sp.Dummy("u", positive=True)
-    written = integrand.xreplace(
-        {
-            exponential: sp.exp(offset) * u ** (ratio / unit)
-            for (exponential, _, offset), ratio in zip(linear, ratios)
-        }
-    )
-    if written.has(variable):
-        return None
-    rational = sp.cancel(written / (rate * u))
-    try:
-        _, factors = sp.factor_list(sp.denom(rational), u)
-    except Exception:
-        return None
-    if any(sp.degree(factor, u) > 2 for factor, _ in factors):
-        return None
-    found = rational_antiderivative(rational, u, binomials=True, formal=True)
-    if found is None or found.has(sp.RootSum, sp.I):
-        return None
-    found = found.xreplace({u: sp.exp(rate * variable)})
-    return _antiderivative(head, found, tabled=True)
-
-
-def _by_derivative_divides(head: sp.Basic) -> sp.Basic | None:
-    """An antiderivative over `u = g(x)`, where the integrand is `h(g(x))*g'(x)` and
-    holds a power whose exponent is a symbol, or None.
-
-    Sympy finds `u = SIN(a*x)` in `SIN(a*x)^n*COS(a*x)`, but not `u = x^n` in
-    `1/(x*SQRT(x^n + a^2))`, nor `u = TAN(a*x)` in `TAN(a*x)^n/COS(a*x)^2`, as it
-    writes the derivative `a*(TAN(a*x)^2 + 1)`. The candidates for `g` are each such
-    power with a number added to its exponent or multiplying it taken off, `x^n` for
-    `x^(n - 1)` or `x^(2*n)`, and its base where that is a function, the derivative
-    of a tangent or cotangent also written over the square of the cosine or sine. Where
-    the integrand over `g'` is free of `x` once `g` is `u`, `INT(h(u), u)` is
-    integrated as a head of its own, and its answer `H(u)` gives `H(g(x))`.
-
-    That answer keeps the form the integral in `u` has, but for a split over a
-    parameter, `IF(n /= -1, u^(n + 1)/(n + 1), LN(u))`, which is made continuous as
-    `_continuous` makes it. A pole not split over is left: the `1/n` the derivative
-    of `x^n` puts into `2*ATAN(SQRT(x^n - a^2)/a)/(a*n)` is the table's, and its
-    principal part, `2*ATAN(SQRT(1 - a^2)/a)/(a*n)`, is imaginary for `a` past one.
-    One substitution deep only: the integral in `u` is not taken apart again.
-
-    The answer is an antiderivative by construction, the integral in `u` having been
-    answered under the same rules as any other head, and is not checked again.
-    """
-    if _substituting.get() or len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return None
-    variable, integrand = head.limits[0][0], head.function
-    powers = [
-        power
-        for power in integrand.atoms(sp.Pow)
-        if power.base.has(variable)
-        and not power.exp.has(variable)
-        and power.exp.free_symbols
-    ]
-    candidates = []
-    for power in powers:
-        base = power.base
-        if isinstance(base, sp.Function) and len(base.args) == 1:
-            candidates.extend((base, slope) for slope in _derivatives(base, variable))
-        _, exponent = sp.Add(*power.exp.as_coeff_add()[1]).as_coeff_Mul()
-        core = base**exponent
-        candidates.append((core, exponent * core * sp.diff(base, variable) / base))
-    candidates.extend(_sine_and_cosine(integrand, variable))
-    candidates = list(dict.fromkeys(candidates))
-    u = sp.Dummy("u", real=True)
-    token = _substituting.set(True)
-    try:
-        for inner, slope in candidates:
-            substituted = _attempt(
-                integrand / slope,
-                lambda q: _squares_as_complements(
-                    sp.cancel(q).subs(inner, u), inner, u
-                ),
-            )
-            if substituted is None or substituted.has(variable):
-                continue
-            if isinstance(inner, (sp.sin, sp.cos)) and substituted.atoms(sp.Function):
-                continue
-            done = _integral(sp.Integral(substituted, u))
-            if done.has(sp.Integral):
-                continue
-            answer = done.subs(u, inner)
-            if answer.has(sp.Piecewise):
-                answer = _continuous(answer, variable)
-            return answer
-    finally:
-        _substituting.reset(token)
-    return None
-
-
-def _sine_and_cosine(integrand: sp.Basic, variable: sp.Basic) -> list[tuple]:
-    """The candidates for `u` in `_by_derivative_divides` that a sine or cosine of a
-    linear argument gives, over a radical in it: `u = COS(x)` for `SIN(x)/SQRT(1 -
-    q^2*SIN(x)^2)`, the even powers of the sine being written in the cosine. A
-    rational function of the two is `engine.trigonometric`'s, and is not looked at."""
-    calls = integrand.atoms(sp.sin, sp.cos)
-    if not calls or not any(
-        power.exp.is_Rational and not power.exp.is_integer and power.base.has(*calls)
-        for power in integrand.atoms(sp.Pow)
-    ):
-        return []
-    candidates = []
-    for call in calls:
-        (argument,) = call.args
-        slope = sp.diff(argument, variable)
-        if slope == 0 or slope.has(variable):
-            continue
-        sine, cosine = sp.sin(argument), sp.cos(argument)
-        candidates += [(cosine, -slope * sine), (sine, slope * cosine)]
-    return candidates
-
-
-def _squares_as_complements(
-    expression: sp.Basic, inner: sp.Basic, u: sp.Basic
-) -> sp.Basic:
-    """An expression with the even powers of the sine written in `u` where `u` stands
-    for the cosine of the same argument, and the other way round."""
-    if not isinstance(inner, (sp.sin, sp.cos)):
-        return expression
-    other = (sp.cos if isinstance(inner, sp.sin) else sp.sin)(*inner.args)
-    return expression.replace(
-        lambda e: e.is_Pow and e.base == other and e.exp.is_even,
-        lambda e: (1 - u**2) ** (e.exp / 2),
-    )
-
-
-#: Whether `_by_derivative_divides` is integrating over its substitution already.
-_substituting: ContextVar[bool] = ContextVar("_substituting", default=False)
-
-
-def _by_products_as_sums(head: sp.Basic) -> sp.Basic | None:
-    """An antiderivative of the integrand with its products of sines and cosines
-    written as sums, or None.
-
-    Sympy leaves `INT(SIN(a*x)*COS(a*x)/x, x)` standing, and answers `INT(SIN(2*a*x)/x,
-    x)`, the same integral with the product written as a sine of the double angle,
-    with `SI(2*a*x)`. The integral with the products written as sums is integrated as
-    a head of its own, once: the sums are not taken apart again. The two integrands
-    are the same function, so its answer is this one's.
-    """
-    if _summing.get() or len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return None
-    variable, integrand = head.limits[0][0], head.function
-    products = [
-        product
-        for product in integrand.atoms(sp.Mul, sp.Pow)
-        if len(
-            [
-                factor
-                for factor in sp.Mul.make_args(product)
-                for _ in range(_multiplicity(factor))
-                if isinstance(factor.as_base_exp()[0], (sp.sin, sp.cos))
-                and factor.as_base_exp()[0].has(variable)
-            ]
-        )
-        > 1
-    ]
-    if not products:
-        return None
-    written = _attempt(integrand, lambda f: sp.expand(TR8(f)))
-    if written is None or written == integrand:
-        return None
-    token = _summing.set(True)
-    try:
-        done = _integral(sp.Integral(written, variable))
-    finally:
-        _summing.reset(token)
-    return None if done.has(sp.Integral) else done
-
-
-def _multiplicity(factor: sp.Basic) -> int:
-    """How many calls a factor of a product is, two for `SIN(x)^2`."""
-    exponent = factor.as_base_exp()[1]
-    return int(exponent) if exponent.is_Integer and exponent > 0 else 1
-
-
-#: Whether `_by_products_as_sums` is integrating the sums already.
-_summing: ContextVar[bool] = ContextVar("_summing", default=False)
-
-
-#: The functions an integrand is integrated by parts over: their derivatives are
-#: algebraic, and so is what is left to integrate once they are differentiated.
-_PARTED = (sp.asin, sp.acos, sp.atan, sp.acot, sp.log)
-
-
-def _by_parts(head: sp.Basic) -> sp.Basic | None:
-    """An antiderivative of `P(x)*f(x) + Q(x)` by parts, where `f` is an arc or a
-    logarithm, `P` and `Q` are rational and `P` has a rational antiderivative `V`, or
-    None.
-
-    The answer is `V*f - INT(V*f') + INT(Q)`, `f'` being algebraic: sympy leaves
-    `INT(ASIN(x/a)/x^2, x)` standing, and does not get past the two roots of the
-    derivative of `ACOSH(x/a)` written as the logarithm of 6.6, where the integral of
-    `x/(a*SQRT(x/a - 1)*SQRT(x/a + 1))` is the product of the roots again. Where `V`
-    has a logarithm in it, `V*f'` is not algebraic and the head stands. So does it
-    where an integral left over stands. One step deep only.
-    """
-    if _parting.get() or len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return None
-    variable, integrand = head.limits[0][0], head.function
-    kernels = {call for call in integrand.atoms(*_PARTED) if call.has(variable)}
-    if len(kernels) != 1:
-        return None
-    (kernel,) = kernels
-    marker = sp.Dummy("f")
-    written = _attempt(integrand, lambda f: sp.expand(f.xreplace({kernel: marker})))
-    if written is None or written.has(kernel):
-        return None
-    factor, rest = sp.diff(written, marker), written.subs(marker, 0)
-    if (
-        factor == 0
-        or factor.has(marker)
-        or factor.is_rational_function(variable) is not True
-        or rest.is_rational_function(variable) is not True
-    ):
-        return None
-    primitive = rational_antiderivative(factor, variable)
-    if primitive is None or primitive.is_rational_function(variable) is not True:
-        return None
-    slope = _attempt(kernel, lambda f: sp.cancel(sp.together(sp.diff(f, variable))))
-    if slope is None or any(call.has(variable) for call in slope.atoms(sp.Function)):
-        return None
-    token = _parting.set(True)
-    try:
-        left = [sp.Integral(_forced(primitive * slope, sp.cancel), variable)]
-        if rest != 0:
-            left.append(sp.Integral(rest, variable))
-        done = [_integral(integral) for integral in left]
-    finally:
-        _parting.reset(token)
-    if any(value.has(sp.Integral) for value in done):
-        return None
-    answer = primitive * kernel - done[0] + sum(done[1:], sp.S.Zero)
-    return _antiderivative(head, answer, tabled=True)
-
-
-#: Whether `_by_parts` is integrating what it left over already.
-_parting: ContextVar[bool] = ContextVar("_parting", default=False)
-
-
-#: The arcs that have no elementary antiderivative over their variable: see
-#: `_an_arc_over_its_variable`.
-_ARCS_OVER_THE_VARIABLE = (sp.asin, sp.acos, sp.atan, sp.acot)
-
-
-def _an_arc_over_its_variable(head: sp.Basic) -> bool:
-    """Whether the head is an indefinite integral of `c*f(b*x)/x`, `f` an arc.
-
-    Its antiderivative is a dilogarithm or a Clausen function, which is not
-    elementary, and sympy spends twenty seconds on `INT(ATAN(x/a)/x, x)` before it
-    says so.
-    """
-    if len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return False
-    variable, integrand = head.limits[0][0], head.function
-    arcs = [
-        factor
-        for factor in sp.Mul.make_args(integrand)
-        if isinstance(factor, _ARCS_OVER_THE_VARIABLE) and factor.has(variable)
-    ]
-    if len(arcs) != 1:
-        return False
-    (arc,) = arcs
-    scale = sp.cancel(arc.args[0] / variable)
-    return (
-        not scale.has(variable)
-        and scale.is_zero is not True
-        and not (integrand * variable / arc).has(variable)
-    )
-
-
-def _derivatives(function: sp.Basic, variable: sp.Basic) -> list[sp.Basic]:
-    """The derivative of a function of the variable, written as sympy writes it and,
-    for a tangent or cotangent and their hyperbolic kin, over a square as the tables
-    write it: `a/COS(a*x)^2` beside `a*(TAN(a*x)^2 + 1)`."""
-    (argument,) = function.args
-    inner = sp.diff(argument, variable)
-    squares = {
-        sp.tan: inner / sp.cos(argument) ** 2,
-        sp.cot: -inner / sp.sin(argument) ** 2,
-        sp.tanh: inner / sp.cosh(argument) ** 2,
-        sp.coth: -inner / sp.sinh(argument) ** 2,
-    }
-    written = [squares[function.func]] if function.func in squares else []
-    return [*written, sp.diff(function, variable)]
-
-
-def _ends(
-    antiderivative: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
-) -> list[sp.Basic] | None:
-    """The antiderivative's limits at the upper end and then the lower, each
-    approached from inside the interval, or None where either is not had.
-
-    Sympy leaves the limit of `ATAN((COS(a) + x)/ABS(SIN(a)))` at infinity standing,
-    not knowing that `ABS(SIN(a))` is not zero. Where it is zero the antiderivative is
-    not defined at any `x`, as it divides by it, so the limit is taken for the
-    absolute value positive, and kept where it divides by that value too.
-    """
-    ends = []
-    for point, side in ((high, "-"), (low, "+")):
-        end = _attempt(antiderivative, lambda a: sp.limit(a, variable, point, side))
-        if end is not None and end.has(sp.Limit):
-            end = _positively(antiderivative, variable, point, side) or end
-        if end is None:
-            return None
-        ends.append(end)
-    return ends
-
-
-def _positively(
-    antiderivative: sp.Basic, variable: sp.Basic, point: sp.Basic, side: str
-) -> sp.Basic | None:
-    """The limit of an antiderivative with its absolute values and square roots of
-    parameters taken for positive, where it is undefined with each of them zero and so
-    is the limit, or None: see `_ends`. A square root is taken only where its radicand
-    is never negative."""
-    kernels = {
-        sp.sqrt(call.base) if isinstance(call, sp.Pow) else call
-        for call in antiderivative.atoms(sp.Abs, sp.Pow)
-        if not call.has(variable) and call.free_symbols
-        if isinstance(call, sp.Abs) or call.exp.is_Rational and call.exp.q == 2
-    }
-    stand_ins = {
-        kernel: sp.Dummy(positive=True) for kernel in kernels if _never_negative(kernel)
-    }
-    if not stand_ins:
-        return None
-    written = _attempt(antiderivative, lambda a: a.subs(stand_ins))
-    if written is None or not written.has(variable):
-        return None
-    end = _attempt(written, lambda a: sp.limit(a, variable, point, side))
-    if end is None or end.has(sp.Limit):
-        return None
-    for stand_in in stand_ins.values():
-        if not written.has(stand_in):
-            continue
-        for expression in (written, end):
-            vanished = _attempt(expression, lambda e: e.subs(stand_in, 0))
-            if vanished is None or not vanished.has(sp.zoo, sp.nan):
-                return None
-    return end.xreplace({stand_in: call for call, stand_in in stand_ins.items()})
-
-
-def _by_linearity(head: sp.Basic) -> sp.Basic:
-    """An integral sympy left standing, as a sum of integrals where its integrand is a
-    sum in disguise.
-
-    Sympy integrates a sum term by term, keeping as an integral only the terms it
-    cannot do - but only a sum it is handed. `(x*G(x) + F(x))/G(x)` is a quotient to
-    it, and the whole integral is given up for the one term that will not integrate.
-    Derive divides the numerator into its terms and answers `INT(F(x)/G(x), x) +
-    x^2/2`. So a quotient whose numerator is a sum is written as one integral per
-    term, and those are new heads: each is integrated, or left standing, on its own,
-    and none is the integral already tried whole.
-
-    A quotient whose denominator is a polynomial in one sine or cosine of a linear
-    argument is split into partial fractions over that function, so that one
-    nonelementary piece does not take the rest down with it: of `INT(x/((SIN(a*x) +
-    1)*SIN(a*x)), x)`, `INT(x/(SIN(a*x) + 1), x)` is integrated and only
-    `INT(x/SIN(a*x), x)` is left standing. Only for an antiderivative, as the pieces of a definite integral that
-    converges need not converge.
-
-    For the same reason a definite integral's numerator is split only where some of
-    the pieces have a value and none of those is infinite: neither `INT(x^t/LN(x), x,
-    0, 1)` nor `INT(x^s/LN(x), x, 0, 1)` converges, while `INT((x^t - x^s)/LN(x), x,
-    0, 1)` does. Where one piece has a finite value, the rest converge if the whole
-    does.
-
-    An integrand that was a sum to begin with has had its terms tried by sympy
-    already, and is not offered again.
-    """
-    integrand = head.function
-    if isinstance(integrand, sp.Add):
-        return head
-    numerator, denominator = integrand.as_numer_denom()
-    if isinstance(numerator, sp.Add):
-        terms = [term / denominator for term in numerator.args]
-    else:
-        terms = _partial_fractions(head, denominator)
-    if len(terms) < 2:
-        return head
-    pieces = [head.func(term, *head.limits) for term in terms]
-    if _definite(head):
-        values = [_integral(piece) for piece in pieces]
-        if all(value.has(sp.Integral) for value in values) or any(
-            value.has(sp.oo, -sp.oo, sp.zoo, sp.nan)
-            for value in values
-            if not value.has(sp.Integral)
-        ):
-            return head
-    return sp.Add(*pieces)
-
-
-def _partial_fractions(head: sp.Basic, denominator: sp.Basic) -> list[sp.Basic]:
-    """The integrand of an antiderivative as its partial fractions over the one
-    periodic function its denominator is a polynomial in, or [] where it is not."""
-    if any(len(limit) != 1 for limit in head.limits):
-        return []
-    variables = [limit[0] for limit in head.limits]
-    generator = _in_one_periodic(denominator, variables)
-    if generator is None:
-        return []
-    stand_in = sp.Dummy()
-    written = head.function.subs(generator, stand_in)
-    split = _attempt(written, lambda w: sp.apart(w, stand_in))
-    if split is None:
-        return []
-    return [term.subs(stand_in, generator) for term in sp.Add.make_args(split)]
-
-
-def _by_sympy(head: sp.Basic) -> sp.Basic:
-    """An integral, by the bounded methods first.
-
-    The heuristic Risch algorithm is what finds the integrals nothing else
-    does, and its cost grows with the generators of the integrand: it builds an
-    ansatz over every one it can see and solves for the coefficients. With
-    nothing symbolic to carry it is quick. `INT(t^(a-1)*(#e^(z*t)*(1-t)^(b-a-1)
-    - 1), t, 0, 1/2)` - a real line out of the Kummer function in Derive's own
-    utility library - carries three parameters over four generators, and sympy
-    spends most of a minute and gigabytes of memory before answering, correctly,
-    that it does not know. Simplify must not do that: a minute is not an answer,
-    and the same integral comes back unevaluated either way.
-
-    So over a parametrised integrand the expensive method is asked only where
-    the ansatz is small enough to be affordable, which `_affordable` is the
-    measured rule for. Everything else comes back unevaluated, which is a
-    documented answer where a minute of thrashing is not.
-    """
-    hints = _within_reach(head)
-    bounded = _standing(
-        head, _attempt(head, lambda h: h.doit(deep=False, **_BOUNDED, **hints))
-    )
-    if bounded is not None and not bounded.has(sp.Integral):
-        if not (_definite(head) and _unresolved(head, bounded)):
-            return _antiderivative(head, bounded)
-        tabled = _by_meijer_g(head)
-        return _antiderivative(head, bounded if tabled is None else tabled)
-    if _parametrised(head) and not _affordable(head):
-        tabled = _by_meijer_g(head) if _definite(head) else None
-        if tabled is not None:
-            return _antiderivative(head, tabled)
-        return head if bounded is None else bounded
-    full = _standing(head, _attempt(head, lambda h: h.doit(deep=False, **hints)))
-    return head if full is None else _antiderivative(head, full)
-
-
-@lru_cache(maxsize=256)
-def _within_reach(head: sp.Basic) -> dict[str, bool]:
-    """The hints for sympy on a definite integral: the Risch algorithm and the manual
-    rules switched off where they cannot find an antiderivative, and none otherwise.
-
-    Sympy values a definite integral over an interval right of zero by an
-    antiderivative over a positive variable, and its manual rules, which the Risch
-    algorithm hands what it proves nonelementary, search on over such a variable for
-    minutes: `INT(LN(1 + x)/(x^2 + 1), x, 1, 2)` does not come back. Over a variable
-    nothing is assumed of, the same two methods give up on it at once. An integrand
-    that both give up on there has no antiderivative they would find over a positive
-    variable either, the function being the same, and the definite integral is left
-    to the methods that do without one: the tables, and the Meijer G route for an
-    infinite end. The Risch algorithm is switched off along with the manual rules, as
-    sympy hands its nonelementary part to them with every other hint dropped.
-    """
-    if not _definite(head):
-        return {}
-    plain = sp.Dummy("x")
-    integrand = head.function.subs(head.limits[0][0], plain)
-    try:
-        elementary, nonelementary = risch_integrate(
-            integrand, plain, separate_integral=True
-        )
-    except Exception:
-        return {}
-    if elementary != 0 or nonelementary == 0:
-        return {}
-    manual = _attempt(integrand, lambda f: manualintegrate(f, plain))
-    if manual is None or manual.has(sp.Integral):
-        return {"risch": False, "manual": False}
-    return {}
-
-
-def _standing(head: sp.Basic, value: sp.Basic | None) -> sp.Basic | None:
-    """`value`, as the head itself where it is the same integral under another class.
-
-    Sympy hands back an integral its Risch algorithm proved nonelementary as a
-    `NonElementaryIntegral`, over the integrand as the algorithm rewrote it, which is
-    not equal to the `Integral` it was asked and so is taken for an answer: written
-    out, read back, asked on each side of a parameter's sign and asked all over
-    again as a head of its own. What it says is that the head stands, and that is
-    what it is called. So does the same integral over an integrand sympy only
-    factored, as it gives back `INT(t/((t^2 + z^2)*(#e^(2*pi*t) - 1)), t, 0, inf)` with
-    the exponential split into two factors.
-    """
-    if not isinstance(value, sp.Integral):
-        return value
-    if value.args == head.args or isinstance(value, NonElementaryIntegral):
-        return head
-    if value.limits == head.limits:
-        if value.function == _forced(head.function, sp.factor):
-            return head
-    return value
-
-
-def _by_meijer_g(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral over at most one parameter by Meijer G functions, or None.
-
-    The bounded methods answer `INT(x^n*#e^(-x), x, 0, inf)` with `uppergamma(n + 1,
-    0)`, which is `GAMMA(n + 1)` where `n > -1` and nothing elsewhere, and leave
-    `INT(COS(a*x)*#e^(-x^2), x, -inf, inf)` standing. Sympy's Meijer G route knows
-    the tables of definite integrals these come out of, writes the condition it
-    needs, and over a single parameter answers quickly; over more of them it is
-    not asked, its search growing with each. An answer that is no better - that
-    still turns on a sign it does not know, or is the integral itself - is None.
-    """
-    variables = {limit[0] for limit in head.limits}
-    if len(head.function.free_symbols - variables) > 1:
-        return None
-    hints = {"heurisch": False, **_within_reach(head)}
-    tabled = _standing(head, _attempt(head, lambda h: h.doit(deep=False, **hints)))
-    if tabled is None or tabled == head:
-        return None
-    if not tabled.has(sp.Integral) and _unresolved(head, tabled):
-        return None
-    return tabled
-
-
-def _past_a_singular_end(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral from a singular end to a symbolic one, valued by how it
-    diverges there, or None.
-
-    The antiderivative's limit at the singular end is taken from inside the interval,
-    which is the side the other end is on, and that side is not known: `INT(1/x^2, x,
-    0, alpha)` comes back as `inf - 1/alpha`, the integral for a positive `alpha`
-    only, as for a negative one it is `-inf`. Where the integrand blows up there no
-    slower than the reciprocal of the distance, the integral diverges whatever the
-    other end, which is a regular point of the integrand for all but isolated values,
-    adds to it. So where the answer has an infinity in it, the singular end is the
-    only real singularity of the integrand, and the integrand is real on both sides of
-    it, the integral is the infinity
-    `_end_verdict` finds on each side: `INT(COS(a*x)/x, x, 0, alpha)` is `inf` for
-    either sign of `alpha`. Where the two sides diverge to different infinities, or
-    to one not known, the integral stands.
-    """
-    if not _definite(head) or value in (sp.oo, -sp.oo):
-        return None
-    if not value.has(sp.oo, -sp.oo) or value.has(sp.Integral):
-        return None
-    variable, low, high = head.limits[0]
-    numbers = [end for end in (low, high) if not end.free_symbols]
-    if len(numbers) != 1 or not (numbers[0].is_extended_real and numbers[0].is_finite):
-        return None
-    (point,) = numbers
-    integrand = head.function
-    poles = _attempt(integrand, lambda f: sp.singularities(f, variable, sp.Reals))
-    if poles != sp.FiniteSet(point):
-        return None
-    distance = sp.Dummy("d", positive=True)
-    for side in (1, -1):
-        near = _attempt(integrand, lambda f: f.subs(variable, point + side * distance))
-        if near is None or near.is_extended_real is not True:
-            return None
-    above = _end_verdict(integrand, variable, point, 1)
-    below = _end_verdict(integrand, variable, point, -1)
-    if above not in (sp.oo, -sp.oo) or below not in (sp.oo, -sp.oo):
-        return None
-    # Up from the singular end on the side above it, or down to it from there.
-    beyond, before = (above, -below) if point == low else (-above, below)
-    return beyond if beyond == before else head
-
-
-def _beyond_convergence(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral's divergent case valued, where it diverges to a sign.
-
-    Sympy answers an improper integral with a parameter in it over the condition
-    its convergence test proves: `INT(x^n, x, 1, inf)` is `-1/(n + 1)` where `n <
-    -1`, and elsewhere the integral itself, unevaluated. That is where the integral
-    diverges, and Derive says so: it works the antiderivative to its limit at each
-    end and prints the infinity it finds, so the second case is `inf` to it. Sympy
-    will find the same infinity where it knows the sign of the exponent, which the
-    parameter it was handed does not say and a dummy of known sign does.
-
-    So the complement of the condition is written as substitutions: `n < -1` fails
-    where `n` is `-1 - s` for a positive `s`, and where `n` is `-1` exactly. The
-    integral is asked again under each, and where every answer is one infinity,
-    that is the case's value. A finite answer, an unevaluated one, or two that
-    disagree keeps the integral standing: a convergence test proves convergence
-    and not divergence, and an oscillating integrand diverges to no sign at all.
-    """
-    if len(head.limits) != 1 or len(head.limits[0]) != 3:
-        return None
-    folded = _attempt(value, sp.piecewise_fold)
-    if not isinstance(folded, sp.Piecewise) or len(folded.args) != 2:
-        return None
-    (converged, condition), (standing, otherwise) = folded.args
-    if otherwise is not sp.true or standing != head:
-        return None
-    outcomes = set()
-    for parameter, point in _complement(condition):
-        found = _attempt(head, lambda h: _by_sympy(h.subs(parameter, point)))
-        if found is None or not found.is_infinite or found.is_extended_real is not True:
-            return None
-        outcomes.add(found)
-    if len(outcomes) != 1:
-        return None
-    return sp.Piecewise((converged, condition), (outcomes.pop(), sp.true))
-
-
-#: The inequalities a convergence condition is written in, and the only ones
-#: whose complement is a sign the parameter can be given.
-_INEQUALITIES = (sp.StrictLessThan, sp.StrictGreaterThan, sp.LessThan, sp.GreaterThan)
-
-
-def _complement(condition: sp.Basic) -> list[tuple[sp.Basic, sp.Basic]]:
-    """Where a one-parameter inequality fails, as values of its parameter.
-
-    Each is the parameter written in terms of a dummy whose sign sympy knows: the
-    complement of `g > 0` is `g = -s` for a positive `s`, and where the inequality
-    was strict, `g = 0` as well. A condition that is no such inequality - on more
-    than one parameter, or on the real part of one, or that does not determine its
-    parameter - has no complement here, and the empty list leaves nothing valued.
-    """
-    if not isinstance(condition, _INEQUALITIES) or len(condition.free_symbols) != 1:
-        return []
-    (parameter,) = condition.free_symbols
-    if isinstance(condition, (sp.StrictGreaterThan, sp.GreaterThan)):
-        excess = condition.lhs - condition.rhs
-    else:
-        excess = condition.rhs - condition.lhs
-    if excess.is_polynomial(parameter) is not True:
-        return []
-    shortfall = sp.Dummy("s", positive=True)
-    targets = [-shortfall]
-    if isinstance(condition, (sp.StrictLessThan, sp.StrictGreaterThan)):
-        targets.append(sp.S.Zero)
-    points = []
-    for target in targets:
-        try:
-            solutions = sp.solve(sp.Eq(excess, target), parameter)
-        except Exception:
-            return []
-        if len(solutions) != 1:
-            return []
-        points.append((parameter, solutions[0]))
-    return points
-
-
-#: What `_at_the_singularities` says of an integral it finds no infinity in: that
-#: every end it looked at converges, or that some end could not be decided.
-_CONVERGENT = sp.Symbol("convergent")
-_UNSETTLED = sp.Symbol("unsettled")
-_UNDECIDED = sp.Symbol("undecided")
-_VERDICTS = (_CONVERGENT, _UNSETTLED, _UNDECIDED)
-
-#: How many singularities an interval is looked at across.
-_POLES = 40
-
-
-def _at_the_singularities(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral decided by how its integrand behaves where it blows up.
-
-    The integral over an interval with a singularity in it is the sum of the
-    integrals up to the singularity and on from it, each an improper integral of
-    its own, and it exists only where each of those does. Taken straight through by
-    an antiderivative it comes out as a number anyway: `INT(1/x^2, x, -1, 1)` is -2
-    that way, for an integrand positive throughout, and `INT(1/x, x, -1, 1)` is the
-    principal value 0, or `-#i*pi` with the logarithm's branch in it. Neither is the
-    integral, which is `inf` for the first and has no value at all for the second.
-
-    So the interval is cut at each singularity sympy can place in it, and the
-    integrand is looked at on each side of each cut, and at an infinite end, by
-    `_end_verdict`. An end where it blows up at least as fast as the reciprocal of
-    the distance makes that part of the integral diverge to the infinity of the
-    integrand's sign there. One such infinity, with every other end converging, is
-    the integral; two of opposite signs leave nothing to add up, and the answer is
-    `?`, which is what the sum of the parts - `inf - inf` - would be. An integrable
-    singularity, such as `1/SQRT(ABS(x))` or `LN(x)` at zero, is the integral sympy
-    finds, and `_CONVERGENT` says to ask it. Where the singularity is inside the
-    interval the integral is still the sum of the parts: an antiderivative taken
-    across it can jump there, as `SQRT(pi)*ERF(1/x)/2` does for `#e^(-1/x^2)/x^2`,
-    so each part is integrated on its own.
-
-    `_UNDECIDED` says an end diverges to an infinity whose sign is not known -
-    `a/x^2` at zero, with the sign of `a` unknown - and then sympy's answer, which
-    is the antiderivative's across it, is not had at all: the integral stands, or
-    is worked out on each side of the parameter's sign. `_UNSETTLED` says an end
-    could not be told either way, as `1/(x*LN(x))` at zero or the oscillating tail
-    of `SIN(x)/x` cannot, and sympy's answer is printed unless it is infinite.
-
-    None where there is nothing to look at: no singularity in the interval, an end
-    that is not a number, or a singularity that moves with a parameter.
-    """
-    if not _definite(head):
-        return None
-    variable, low, high = head.limits[0]
-    integrand = head.function
-    if low.free_symbols or high.free_symbols:
-        return None
-    unsigned = {
-        symbol
-        for symbol in integrand.free_symbols - {variable}
-        if symbol.is_positive is None and symbol.is_negative is None
-    }
-    orientation = _orientation(low, high)
-    if orientation is None:
-        return None
-    if orientation < 0:
-        low, high = high, low
-    interval = _attempt(low, lambda bound: sp.Interval(bound, high))
-    if not isinstance(interval, sp.Interval):
-        return None
-    poles = _attempt(integrand, lambda f: sp.singularities(f, variable, interval))
-    if not isinstance(poles, sp.FiniteSet) or not poles or len(poles) > _POLES:
-        return None
-    if not all(
-        pole.is_extended_real and pole.is_finite and not pole.has(*unsigned)
-        for pole in poles
-    ):
-        return None
-    ends = _ordered({low, high, *poles})
-    if ends is None:
-        return None
-    verdicts = []
-    for left, right in zip(ends, ends[1:]):
-        for end, side in ((left, 1), (right, -1)):
-            if end in poles or end.is_infinite:
-                verdicts.append(_end_verdict(integrand, variable, end, side))
-    infinities = {verdict for verdict in verdicts if verdict.is_infinite}
-    if len(infinities) > 1:
-        return sp.nan
-    for verdict in (_UNDECIDED, _UNSETTLED):
-        if verdict in verdicts:
-            return verdict
-    if infinities:
-        return orientation * infinities.pop()
-    if len(ends) == 2:
-        return _CONVERGENT
-    total = sp.S.Zero
-    for left, right in zip(ends, ends[1:]):
-        part = _integral(sp.Integral(integrand, (variable, left, right)))
-        if part.has(sp.Integral) or part.is_finite is not True:
-            return _CONVERGENT
-        total += part
-    return orientation * total
-
-
-def _with_moving_poles(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral of a rational function whose poles move with a parameter,
-    split on where the poles are, or None where none can be in the interval.
-
-    `INT(1/(x - a)^2, x, 0, 2)` taken through its antiderivative is `-2/(a*(2 - a))`,
-    which is the integral only where `a` is outside `[0, 2]`: inside it the pole is
-    in the interval, and a pole of a rational function is never integrable. So the
-    values of the parameter that put a real pole between the ends, or on one, are
-    found. They are cut where what decides the integral can change: where a pole
-    reaches an end, where two poles meet, where one cancels against the numerator
-    or goes off to infinity. Between two such values every pole stays where it is
-    relative to the ends and keeps its order and the sign it blows up with, so the
-    integral is had by asking at one value inside, as at any number, and at each
-    cut by asking there. The answer already had is the integral for the other
-    values, and for these too where it agrees with every answer asked for - as one
-    split on the parameter's sign by `_by_the_sign_of_a_parameter` can. An answer at
-    a value inside a stretch that is not an infinity, or `?`, means something was
-    missed, and the integral is left standing.
-
-    Poles that are real only for isolated values of the parameter, as `#i*a` is
-    real only at `a = 0`, are left to the formula, which blows up there as well.
-    """
-    if not _definite(head):
-        return None
-    variable, low, high = head.limits[0]
-    integrand = head.function
-    if low.free_symbols or high.free_symbols:
-        return None
-    parameters = integrand.free_symbols - {variable}
-    if len(parameters) != 1:
-        return None
-    (parameter,) = parameters
-    if parameter.is_extended_real is not True or parameter.is_positive is not None:
-        return None
-    if parameter.is_negative is not None or parameter.is_zero is not None:
-        return None
-    if integrand.is_rational_function(variable) is not True:
-        return None
-    orientation = _orientation(low, high)
-    if orientation is None:
-        return None
-    if orientation < 0:
-        low, high = high, low
-    together = _attempt(integrand, lambda f: sp.cancel(sp.together(f)))
-    if together is None:
-        return None
-    numerator, denominator = sp.fraction(together)
-    try:
-        polynomial = sp.Poly(denominator, variable)
-        poles = sp.roots(polynomial, multiple=False)
-    except Exception:
-        return None
-    if not poles or sum(poles.values()) != polynomial.degree():
-        return None
-    region = sp.S.EmptySet
-    critical = []
-    for pole in poles:
-        if not pole.has(parameter):
-            continue
-        found = _real_pole(pole, parameter)
-        if found is None:
-            return head
-        if isinstance(found, sp.FiniteSet):
-            continue
-        for end, relation, at in ((low, sp.Ge, pole), (high, sp.Le, pole)):
-            if not end.is_finite:
-                continue
-            part = _attempt(
-                at, lambda p: sp.solveset(relation(p, end), parameter, sp.S.Reals)
-            )
-            if part is None or part.has(sp.ConditionSet):
-                return head
-            found = sp.Intersection(found, part)
-            critical.append(pole - end)
-        region = sp.Union(region, found)
-    if region is sp.S.EmptySet or isinstance(region, sp.FiniteSet):
-        return None
-    try:
-        critical += [
-            sp.resultant(numerator, denominator, variable),
-            sp.discriminant(polynomial),
-            polynomial.LC(),
-        ]
-    except Exception:
-        return head
-    cuts = set()
-    for equation in critical:
-        if equation == 0:
-            continue
-        found = _attempt(equation, lambda e: sp.solveset(e, parameter, sp.S.Reals))
-        if found is None or not isinstance(found, sp.FiniteSet):
-            if found is not None and found.is_empty:
-                continue
-            return head
-        cuts |= {cut for cut in found if region.contains(cut) is sp.true}
-    stretches = _attempt(region, lambda r: r - sp.FiniteSet(*cuts))
-    if stretches is None or len(cuts) > _POLES:
-        return head
-    pieces = stretches.args if isinstance(stretches, sp.Union) else (stretches,)
-    if not all(isinstance(piece, sp.Interval) for piece in pieces):
-        return head
-    if value.has(sp.Integral, sp.Limit):
-        return None
-    answers: dict[sp.Basic, sp.Basic] = {}
-    agrees = True
-    for where, sample in [
-        *((sp.FiniteSet(cut), cut) for cut in cuts),
-        *((piece, _inside(piece)) for piece in pieces),
-    ]:
-        found = _attempt(head, lambda h: _integral(h.subs(parameter, sample)))
-        divergent = found is sp.nan or found in (sp.oo, -sp.oo)
-        if found is None or found.has(sp.Integral) or not divergent and where.is_open:
-            return head
-        answers[found] = sp.Union(answers.get(found, sp.S.EmptySet), where)
-        there = _attempt(value, lambda v: v.subs(parameter, sample))
-        agrees = (
-            agrees
-            and there is not None
-            and (there == found if divergent else _agrees(there, found))
-        )
-    if agrees:
-        return None
-    cases = []
-    for answer, where in answers.items():
-        condition = _attempt(where, lambda w: w.as_relational(parameter))
-        if condition is None:
-            return head
-        cases.append((answer, condition))
-    if region != sp.S.Reals:
-        cases.append((value, sp.true))
-    else:
-        cases[-1] = (cases[-1][0], sp.true)
-    return sp.Piecewise(*cases)
-
-
-def _real_pole(pole: sp.Basic, parameter: sp.Basic) -> sp.Basic | None:
-    """The values of the parameter for which a pole is real, or None where they are not
-    had.
-
-    A pole written without the imaginary unit is real where every radicand in it is at
-    least zero; one written with it, where its square is. Sympy takes the square of a
-    pole such as `SQRT(COS(a)^2 - 1) - COS(a)` for a number at least zero for every
-    `a`, which is why the radicands are asked first. A periodic function of the
-    parameter is solved over one period only, so the values are had there only where
-    they are isolated points, which repeat as isolated points.
-    """
-    if pole.has(sp.I):
-        conditions = [sp.Ge(pole**2, 0)]
-    else:
-        conditions = [
-            sp.Ge(power.base, 0)
-            for power in pole.atoms(sp.Pow)
-            if power.exp.is_Rational and not power.exp.is_integer
-        ]
-    found = sp.S.Reals
-    for condition in conditions:
-        part = _attempt(condition, lambda c: sp.solveset(c, parameter, sp.S.Reals))
-        if part is None or part.has(sp.ConditionSet):
-            return None
-        found = sp.Intersection(found, part)
-    periodic = any(call.has(parameter) for call in pole.atoms(TrigonometricFunction))
-    if periodic and not isinstance(found, sp.FiniteSet):
-        return None
-    return found
-
-
-def _never_negative(call: sp.Basic) -> bool:
-    """Whether an absolute value, or a square root whose radicand is a function of one
-    real parameter that is at least zero for every value of it."""
-    if isinstance(call, sp.Abs):
-        return True
-    if not isinstance(call, sp.Pow) or call.exp != sp.S.Half:
-        return False
-    if len(call.free_symbols) != 1:
-        return False
-    (parameter,) = call.free_symbols
-    if parameter.is_extended_real is not True:
-        return False
-    below = _attempt(
-        call.base, lambda r: sp.solveset(sp.Lt(r, 0), parameter, sp.S.Reals)
-    )
-    return below is not None and below.is_empty is True
-
-
-def _inside(stretch: sp.Interval) -> sp.Basic:
-    """A number inside an interval."""
-    start, end = stretch.start, stretch.end
-    if start.is_finite and end.is_finite:
-        return (start + end) / 2
-    if start.is_finite:
-        return start + 1
-    if end.is_finite:
-        return end - 1
-    return sp.S.Zero
-
-
-def _orientation(low: sp.Basic, high: sp.Basic) -> int | None:
-    """1 for limits in increasing order, -1 for decreasing, None where not known."""
-    span = _attempt(high, lambda h: h - low)
-    if span is None or high == low:
-        return None
-    if span.is_extended_positive:
-        return 1
-    if span.is_extended_negative:
-        return -1
-    return None
-
-
-def _ordered(points: set) -> list[sp.Basic] | None:
-    """Real numbers in increasing order, or None where they cannot be placed.
-
-    A point may carry a parameter of known sign, as `p` and `2*p` do for a positive
-    `p`, so the points are placed by deciding their differences rather than by
-    their values.
-    """
-    ordered: list[sp.Basic] = []
-    for point in points:
-        place = 0
-        for other in ordered:
-            difference = _attempt(point, lambda p: p - other)
-            if difference is None or point == other:
-                return None
-            if difference.is_extended_positive:
-                place += 1
-            elif difference.is_extended_negative is not True:
-                return None
-        ordered.insert(place, point)
-    return ordered
-
-
-#: The powers of the distance an end is weighted with to show that it converges:
-#: an integrand bounded by such a power of the reciprocal distance to a point, or by
-#: such a power of the reciprocal of the variable towards an infinite end, is
-#: integrable there.
-_NEAR = (sp.Rational(1, 2), sp.Rational(9, 10))
-_FAR = (sp.Integer(2), sp.Rational(11, 10))
-
-
-def _end_verdict(
-    integrand: sp.Basic, variable: sp.Basic, end: sp.Basic, side: int
-) -> sp.Basic:
-    """How the integral fares at one end of a part of the interval.
-
-    The end is approached from the side `side` points to, `1` being from above,
-    and `distance` is the positive distance to it, or the size of the variable
-    where the end is infinite. If the integrand times that distance tends to a
-    real number other than zero, or to an infinity, the integrand is of one sign
-    there and no smaller than a multiple of the reciprocal distance, whose
-    integral diverges; the part diverges to the infinity of that sign, or to one
-    `_UNDECIDED` where the sign is not known. If it times a power of the distance
-    short of 1 (beyond 1 at an infinite end) stays bounded, the part converges by
-    comparison. Anything else is `_UNSETTLED`.
-    """
-    if end.is_infinite:
-        distance = variable if end is sp.oo else -variable
-        powers = _FAR
-        direction = "-" if end is sp.oo else "+"
-    else:
-        distance = side * (variable - end)
-        powers = _NEAR
-        direction = "+" if side > 0 else "-"
-
-    def approached(weight: sp.Basic) -> sp.Basic | None:
-        found = _attempt(
-            integrand, lambda f: sp.limit(f * weight, variable, end, direction)
-        )
-        if found is None or found.has(sp.AccumBounds, sp.nan, sp.zoo, sp.Limit):
-            return None
-        return found
-
-    leading = approached(distance)
-    if leading is not None and leading != 0:
-        if leading.is_extended_positive:
-            return sp.oo
-        if leading.is_extended_negative:
-            return -sp.oo
-        return _UNDECIDED
-    for power in powers:
-        bounded = approached(distance**power)
-        if bounded is not None and bounded.is_finite:
-            return _CONVERGENT
-    return _UNSETTLED
-
-
-#: The functions an integrand is split at the jumps of: each is constant, or a
-#: polynomial times a constant sign, between the points where its argument crosses
-#: a jump.
-_STEPS = (sp.floor, sp.ceiling, sp.frac, sp.sign, sp.Abs, sp.Heaviside)
-_ROUNDING = (sp.floor, sp.ceiling, sp.frac)
-
-#: How many parts an interval is split into at the jumps of its steps.
-_STEP_PIECES = 64
-
-
-def _between_the_steps(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral of a step function, as the sum over the steps.
-
-    `INT(FLOOR(x), x, 0, 3)` is `0 + 1 + 2`: between consecutive integers the floor
-    is a constant, and the integral is the sum of the integrals over each stretch.
-    Sympy has no antiderivative for it, and so leaves the integral standing. Over
-    limits that are numbers the jumps are finitely many, and the integrand is
-    integrated stretch by stretch with each step replaced by the value it holds
-    there - a constant for `FLOOR`, a sign times its argument for `ABS`.
-
-    Only an integrand sympy cannot do whole is split: one with a rounding function
-    in it, or a sign or absolute value of something other than a polynomial, whose
-    antiderivative sympy makes up of pieces that hold only near the origin -
-    `INT(ABS(SIN(x)), x, 0, 10*pi)` is 20, ten arches of 2, where the
-    antiderivative taken across it gives 4. Each step's argument has to be free of
-    parameters, so that the jumps are numbers: a polynomial of degree at most two
-    for the rounding functions, whose crossings of each integer are then radicals,
-    and for the signs one sympy can solve for its zeros between the limits.
-    """
-    if not _definite(head):
-        return None
-    variable, low, high = head.limits[0]
-    if low.free_symbols or high.free_symbols or not (low.is_finite and high.is_finite):
-        return None
-    steps = [step for step in head.function.atoms(*_STEPS) if step.has(variable)]
-    if not any(
-        isinstance(step, _ROUNDING) or not step.args[0].is_polynomial(variable)
-        for step in steps
-    ):
-        return None
-    orientation = _orientation(low, high)
-    if orientation is None:
-        return None
-    if orientation < 0:
-        low, high = high, low
-    jumps: set = set()
-    for step in steps:
-        try:
-            found = _jumps(step, variable, low, high)
-        except (TypeError, ValueError, NotImplementedError):
-            return None
-        if found is None:
-            return None
-        jumps |= found
-        if len(jumps) >= _STEP_PIECES:
-            return None
-    ends = _ordered(jumps | {low, high})
-    if ends is None:
-        return None
-    total = sp.S.Zero
-    for left, right in zip(ends, ends[1:]):
-        middle = (left + right) / 2
-        held = {step: _held(step, variable, middle) for step in steps}
-        if any(value is None for value in held.values()):
-            return None
-        piece = _attempt(head.function, lambda f: f.xreplace(held))
-        if piece is None:
-            return None
-        value = _integral(sp.Integral(piece, (variable, left, right)))
-        if value.has(sp.Integral):
-            return None
-        total += value
-    return orientation * total
-
-
-def _jumps(
-    step: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
-) -> set | None:
-    """The points strictly between the limits where a step function jumps, or None
-    where they cannot be had as exact numbers."""
-    argument = step.args[0]
-    if argument.free_symbols - {variable}:
-        return None
-    if isinstance(step, _ROUNDING):
-        try:
-            polynomial = sp.Poly(argument, variable)
-        except sp.PolynomialError:
-            return None
-        coefficients = polynomial.all_coeffs()
-        if polynomial.degree() > 2 or not all(c.is_Rational for c in coefficients):
-            return None
-        turns = [
-            point
-            for point in sp.solve(polynomial.diff(variable).as_expr(), variable)
-            if low < point < high
-        ]
-        values = [argument.subs(variable, point) for point in (low, high, *turns)]
-        levels = range(int(sp.floor(min(values))), int(sp.ceiling(max(values))) + 1)
-        if len(levels) > _STEP_PIECES:
-            return None
-        crossings = set()
-        for level in levels:
-            roots = sp.solve(argument - level, variable)
-            crossings |= {root for root in roots if root.is_real and low < root < high}
-        return crossings
-    zeros = _attempt(
-        argument, lambda a: sp.solveset(a, variable, sp.Interval.open(low, high))
-    )
-    if not isinstance(zeros, sp.FiniteSet) or len(zeros) > _STEP_PIECES:
-        return None
-    return set(zeros)
-
-
-#: How many jumps of a step a period of its argument may hold.
-_PERIOD_JUMPS = 16
-
-
-class _Lattice(NamedTuple):
-    """The jumps of a step function at `start + k*spacing` for every integer `k`:
-    `values(k)` is what the step holds between the `k`-th jump and the next, `count`
-    is `k` as a function of the variable there, and `alternating` says the step is a
-    sign that changes at each jump rather than a floor that counts them."""
-
-    start: sp.Basic
-    spacing: sp.Basic
-    values: Callable[[sp.Basic], sp.Basic]
-    count: sp.Basic
-    alternating: bool
-
-
-def _across_the_steps(head: sp.Basic) -> sp.Basic | None:
-    """An indefinite integral of a step function, valid across all of its jumps.
-
-    Sympy integrates `ABS(SIN(x))` over the pieces it finds near the origin and
-    writes the last one out to infinity: `IF(x <= 0, COS(x), IF(x <= pi, 2 - COS(x),
-    COS(x) + 4))` is an antiderivative between `-pi` and `2*pi` and nowhere else.
-    A step whose argument crosses its jumps infinitely often - a sign of a periodic
-    function, or a rounding function at all - has no such answer, and whatever is
-    returned here is either an antiderivative on the whole line or the integral
-    left standing.
-
-    The jumps are where the step's argument crosses zero (or an integer, for a
-    rounding function), at `start + k*spacing` for every integer `k`, and between
-    two of them the step is a constant: a sign that alternates, or the integer `k`
-    counted from the start. With that constant written as `w`, the integrand is a
-    function `G` of `x` and `w` to integrate as any other, and on the `k`-th stretch
-    `G(x, w_k) + C(k)` is an antiderivative for any constant `C(k)`. It is one
-    continuous across every jump where `C(k + 1) - C(k)` is what `G` drops there,
-    and that sum is had in closed form for a polynomial in `k` or one times `(-1)^k`.
-    Writing `k` as the `FLOOR` it is and `(-1)^k` as the sign it is gives the answer:
-    `2*FLOOR(x/pi) - COS(x)*SIGN(SIN(x))` for `ABS(SIN(x))`, and `x*FLOOR(x) -
-    FLOOR(x)*(FLOOR(x) + 1)/2` for `FLOOR(x)`. The answer is continuous wherever the
-    integrand is integrable, apart from the jumps themselves, where a sign is zero.
-
-    None where there is no step, or none whose jumps go on forever: a sign or
-    absolute value of a polynomial has finitely many, and sympy's split is right.
-    """
-    if len(head.limits) != 1 or len(head.limits[0]) != 1:
-        return None
-    variable = head.limits[0][0]
-    if variable.is_real is not True or not _endless_steps(head.function, variable):
-        return None
-    total = sp.S.Zero
-    for term in sp.Add.make_args(head.function):
-        if not _endless_steps(term, variable):
-            part = _integral(sp.Integral(term, variable))
-        else:
-            part = _over_the_lattice(term, variable)
-        if part is None or part.has(sp.Integral):
-            return head
-        total += part
-    constant, _ = sp.expand(total).as_independent(variable, as_Add=True)
-    return _folded_signs(sp.expand(total - constant))
-
-
-def _endless_steps(integrand: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether a step in the integrand may jump infinitely often: a rounding
-    function, or a sign or absolute value of something other than a polynomial."""
-    return any(
-        step.has(variable)
-        and (isinstance(step, _ROUNDING) or not step.args[0].is_polynomial(variable))
-        for step in integrand.atoms(*_STEPS)
-    )
-
-
-def _over_the_lattice(term: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
-    """One term of `_across_the_steps`, with one step in it, or None."""
-    level = sp.Dummy("w", real=True)
-    index = sp.Dummy("k", integer=True)
-    written = _attempt(term, _in_signs_and_floors)
-    if written is None:
-        return None
-    steps = {step for step in written.atoms(sp.sign, sp.floor) if step.has(variable)}
-    if len(steps) != 1:
-        return None
-    (step,) = steps
-    lattice = _lattice(step, variable)
-    if lattice is None:
-        return None
-    smooth = written.xreplace({step: level})
-    if any(inner.has(variable) for inner in smooth.atoms(*_STEPS)):
-        return None
-    antiderivative = _integral(sp.Integral(smooth, variable))
-    if antiderivative.has(sp.Integral, sp.Piecewise, sp.nan, sp.zoo):
-        return None
-    jump = lattice.start + (index + 1) * lattice.spacing
-    drop = _attempt(
-        antiderivative,
-        lambda g: sp.expand(
-            g.subs({variable: jump, level: lattice.values(index)})
-            - g.subs({variable: jump, level: lattice.values(index + 1)})
-        ),
-    )
-    if drop is None or drop.has(sp.nan, sp.zoo):
-        return None
-    cumulative = _cumulative(drop, index, lattice.alternating)
-    if cumulative is None:
-        return None
-    plain, alternate = cumulative
-    value = antiderivative.subs(level, step) + plain.subs(index, lattice.count)
-    if lattice.alternating:
-        # Between two jumps `(-1)^k` is the sign times the sign it starts with.
-        value += lattice.values(0) * step * alternate.subs(index, lattice.count)
-    return value
-
-
-def _in_signs_and_floors(term: sp.Basic) -> sp.Basic:
-    """The term with every step written as a sign or a floor, as it is between its
-    jumps: `ABS(u)` is `u*SIGN(u)`, `STEP(u)` is `(1 + SIGN(u))/2`, `CEILING(u)` is
-    `FLOOR(u) + 1`, and the fractional part is `u - FLOOR(u)`."""
-    return (
-        term.replace(sp.Abs, lambda u: u * sp.sign(u))
-        .replace(sp.Heaviside, lambda u, *_: (1 + sp.sign(u)) / 2)
-        .replace(sp.ceiling, lambda u: sp.floor(u) + 1)
-        .replace(sp.frac, lambda u: u - sp.floor(u))
-    )
-
-
-def _lattice(step: sp.Basic, variable: sp.Basic) -> _Lattice | None:
-    """Where a sign or floor of a function of the variable alone jumps, as a
-    lattice, or None where its jumps are not equally spaced.
-
-    A floor jumps where a linear argument crosses an integer. A sign jumps where a
-    continuous periodic argument crosses zero, and is taken where those crossings
-    are equally spaced and the sign alternates across each, as it does for a sine
-    or cosine of a linear argument.
-    """
-    argument = step.args[0]
-    if argument.free_symbols != {variable}:
-        return None
-    if isinstance(step, sp.floor):
-        try:
-            polynomial = sp.Poly(argument, variable)
-        except sp.PolynomialError:
-            return None
-        if polynomial.degree() != 1:
-            return None
-        slope, offset = polynomial.all_coeffs()
-        if slope.is_extended_positive:
-            return _Lattice(-offset / slope, 1 / slope, lambda k: k, step, False)
-        if slope.is_extended_negative:
-            return _Lattice(
-                -offset / slope, -1 / slope, lambda k: -k - 1, -step - 1, False
-            )
-        return None
-    period = _attempt(argument, lambda a: sp.periodicity(a, variable))
-    if period is None or not period.is_extended_positive or period.free_symbols:
-        return None
-    window = sp.Interval.Ropen(0, period)
-    poles = _attempt(argument, lambda a: sp.singularities(a, variable, window))
-    if poles is not sp.S.EmptySet:
-        return None
-    zeros = _attempt(argument, lambda a: sp.solveset(a, variable, window))
-    if not isinstance(zeros, sp.FiniteSet) or not 0 < len(zeros) <= _PERIOD_JUMPS:
-        return None
-    ordered = _ordered(set(zeros))
-    if ordered is None or len(ordered) % 2:
-        return None
-    spacing = period / len(ordered)
-    if any(
-        sp.simplify(right - left - spacing) != 0
-        for left, right in zip(ordered, [*ordered[1:], ordered[0] + period])
-    ):
-        return None
-    start = ordered[0] if ordered[0] == 0 else ordered[0] - spacing
-    middles = [start + (2 * i + 1) * spacing / 2 for i in range(len(ordered))]
-    signs = [
-        _attempt(argument, lambda a: sp.sign(a.subs(variable, middle)))
-        for middle in middles
-    ]
-    first = signs[0]
-    if first not in (1, -1) or any(s != first * (-1) ** i for i, s in enumerate(signs)):
-        return None
-    count = sp.floor(sp.expand((variable - start) / spacing))
-    return _Lattice(start, spacing, lambda k: first * (-1) ** k, count, True)
-
-
-def _cumulative(
-    difference: sp.Basic, index: sp.Basic, alternating: bool
-) -> tuple[sp.Basic, sp.Basic] | None:
-    """`C(k)` with `C(0) = 0` and `C(k + 1) - C(k)` the difference, for every
-    integer `k`, as polynomials `P` and `Q` in `k` with `C(k) = P(k) + (-1)^k*Q(k)`,
-    or None where the difference is not a polynomial in `k` or one times `(-1)^k`.
-
-    Each is had by undetermined coefficients: `P(k + 1) - P(k)` is the plain part
-    of the difference, and `-Q(k + 1) - Q(k)` its alternating part. The result is
-    checked against the difference it was solved for.
-    """
-    parity = sp.Dummy("s")
-    signed = difference.replace(
-        lambda e: isinstance(e, sp.Pow) and e.base == -1 and e.exp.has(index),
-        lambda e: _parity(e.exp, index, parity),
-    )
-    if signed.has(sp.Pow) and any(
-        power.base == -1 and power.exp.has(index) for power in signed.atoms(sp.Pow)
-    ):
-        return None
-    reduced = _attempt(signed, lambda d: sp.rem(sp.expand(d), parity**2 - 1, parity))
-    if reduced is None:
-        return None
-    plain_part = reduced.coeff(parity, 0)
-    signed_part = reduced.coeff(parity, 1)
-    if signed_part != 0 and not alternating:
-        return None
-    parts = []
-    for part, shift in ((plain_part, 1), (signed_part, -1)):
-        if part.is_polynomial(index) is not True:
-            return None
-        degree = sp.degree(part, index) if part != 0 else 0
-        degree = max(degree, 0) + (1 if shift == 1 else 0)
-        coefficients = sp.symbols(f"c0:{degree + 1}", cls=sp.Dummy)
-        ansatz = sum(c * index**i for i, c in enumerate(coefficients))
-        equation = sp.expand(shift * ansatz.subs(index, index + 1) - ansatz - part)
-        try:
-            solved = sp.solve(
-                sp.Poly(equation, index).all_coeffs(), coefficients, dict=True
-            )
-        except Exception:
-            return None
-        if not solved:
-            return None
-        found = ansatz.subs(solved[0]).subs({c: 0 for c in coefficients})
-        parts.append(found)
-    plain, alternate = parts
-    total = (
-        plain
-        - plain.subs(index, 0)
-        + (-1) ** index * alternate
-        - alternate.subs(index, 0)
-    )
-    check = _attempt(
-        total,
-        lambda t: sp.simplify(t.subs(index, index + 1) - t - difference),
-    )
-    if check != 0:
-        return None
-    return plain - plain.subs(index, 0) - alternate.subs(index, 0), alternate
-
-
-def _parity(exponent: sp.Basic, index: sp.Basic, parity: sp.Basic) -> sp.Basic:
-    """`(-1)^exponent` for an exponent linear in the index, over `parity` standing
-    for `(-1)^index`; unchanged where the exponent is anything else."""
-    try:
-        polynomial = sp.Poly(exponent, index)
-    except sp.PolynomialError:
-        return sp.Pow(-1, exponent)
-    if polynomial.degree() != 1:
-        return sp.Pow(-1, exponent)
-    slope, offset = polynomial.all_coeffs()
-    if not slope.is_Integer:
-        return sp.Pow(-1, exponent)
-    return parity**slope * sp.Pow(-1, offset)
-
-
-def _held(step: sp.Basic, variable: sp.Basic, point: sp.Basic) -> sp.Basic | None:
-    """What a step function is between two of its jumps, from its value at a point
-    between them, or None where that value is not decided."""
-    argument = step.args[0]
-    if isinstance(step, sp.Abs):
-        sign = _attempt(argument, lambda a: sp.sign(a.subs(variable, point)))
-        return sign * argument if sign in (1, -1) else None
-    if isinstance(step, sp.frac):
-        level = _attempt(argument, lambda a: sp.floor(a.subs(variable, point)))
-        return argument - level if level is not None and level.is_Integer else None
-    value = _attempt(step, lambda s: s.subs(variable, point))
-    return value if value is not None and value.is_Number else None
-
-
-#: How many signs of a parameter an integral is asked again over.
-_THRESHOLDS = 3
-
-
-def _by_the_sign_of_a_parameter(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral over a parameter, worked out on each side of its sign.
-
-    What sympy makes of `INT(#e^(-a*x), x, 0, inf)` depends on what it knows of
-    `a`. Told nothing it answers `1/a` where the argument of `a` is less than a
-    right angle and leaves the integral standing elsewhere; through the
-    antiderivative it takes `INT(1/(x^2 + a^2), x, 0, inf)` to `ATAN(x/a)/a` at an
-    infinite `x`, and that is `ATAN(±inf/a)`, with the sign of the infinity
-    undecided; at the lower end of `INT(x^n, x, 0, 1)` it is left holding `0^(n +
-    1)`, which is 0 or infinite by the sign of `n + 1`. Told the sign, it answers:
-    `1/a` and `inf`, `pi/(2*a)` for a positive `a`, `1/(n + 1)` and `inf`.
-
-    So such an answer is asked again with the parameter on each side of a
-    threshold - above, below, and at it - and the three answers are put together.
-    The thresholds are the quantities the answer turned on: the exponent of a
-    power of zero, a condition sympy wrote, the exponent of a power of the
-    variable plus one (which decides whether it is integrable at zero), and the
-    parameter itself. Where one expression is all three answers - itself, of the
-    absolute value of the threshold, or that times its sign - it is the answer
-    (`pi/(2*ABS(a))`, `pi*SIGN(a)/2`); otherwise the answer is a case split (`IF(a >
-    0, 1/a, inf)`). A side that sympy cannot do, or does only with another
-    condition, leaves the answer as it was.
-
-    An integral sympy left standing over the unsigned parameter is not asked again
-    this way: what it could not do knowing nothing of the sign it cannot do knowing
-    it, since a sign it was not told leaves it more to answer with, under a
-    condition, and not less. `_integral_through` asks only over an answer that turned
-    on the sign, or over a head sympy was not asked about because the integrand's
-    behaviour at an end was undecided.
-    """
-    if not _definite(head) or not _unresolved(head, value):
-        return None
-    variable = head.limits[0][0]
-    parameters = head.free_symbols
-    if len(parameters) != 1:
-        return None
-    (parameter,) = parameters
-    if not (parameter.is_extended_real and parameter.is_positive is None):
-        return None
-    if parameter.is_negative is not None or parameter.is_zero is not None:
-        return None
-    for threshold in _thresholds(head, value, parameter, variable)[:_THRESHOLDS]:
-        found = _on_each_side(head, parameter, threshold)
-        if found is not None:
-            return found
-    signed = _attempt(value, lambda v: _with_signed_conditions(v, parameter))
-    return None if signed is None or signed == value else signed
-
-
-def _with_signed_conditions(value: sp.Basic, parameter: sp.Basic) -> sp.Basic:
-    """A case split over a real parameter with each condition written as its sign.
-
-    Sympy writes the convergence of `INT(#e^(-a*x)*SIN(x), x, 0, inf)` as `ABS(PHASE(a))
-    < pi/2`, which over a real `a` is `a > 0`. A condition in the parameter alone
-    that is decided on each side of zero and at it is written as the comparison with
-    zero that holds on the same sides; any other is kept. One undecided at zero
-    alone, as a phase is, is taken not to hold there where every case after it is
-    the integral left standing, which is no wrong answer for any value.
-    """
-    size = sp.Dummy("p", positive=True)
-
-    def signed(condition: sp.Basic, standing: bool) -> sp.Basic:
-        if condition.free_symbols != {parameter}:
-            return condition
-        truths = [
-            _attempt(condition, lambda c: c.subs(parameter, point))
-            for point in (size, -size, sp.S.Zero)
-        ]
-        if truths[2] not in (sp.true, sp.false) and standing:
-            truths[2] = sp.false
-        if not all(truth in (sp.true, sp.false) for truth in truths):
-            return condition
-        return _SIGNED[tuple(bool(truth) for truth in truths)](parameter)
-
-    def cases(piecewise: sp.Piecewise) -> sp.Piecewise:
-        args = piecewise.args
-        rewritten = []
-        for i, (case, condition) in enumerate(args):
-            standing = all(later.has(sp.Integral) for later, _ in args[i + 1 :])
-            rewritten.append((case, signed(condition, standing)))
-        return sp.Piecewise(*rewritten)
-
-    return value.replace(lambda e: isinstance(e, sp.Piecewise), cases)
-
-
-#: The comparison with zero that holds where a parameter is positive, negative,
-#: and zero, as given.
-_SIGNED = {
-    (True, False, False): lambda a: sp.StrictGreaterThan(a, 0),
-    (False, True, False): lambda a: sp.StrictLessThan(a, 0),
-    (True, True, False): lambda a: sp.Ne(a, 0),
-    (True, False, True): lambda a: sp.GreaterThan(a, 0),
-    (False, True, True): lambda a: sp.LessThan(a, 0),
-    (False, False, True): lambda a: sp.Eq(a, 0),
-    (True, True, True): lambda a: sp.true,
-    (False, False, False): lambda a: sp.false,
-}
-
-
-def _unresolved(head: sp.Basic, value: sp.Basic) -> bool:
-    """Whether an integral's answer is one that turns on a sign it does not know."""
-    if value == head or value.has(sp.Integral, sp.Limit, sp.zoo, sp.nan):
-        return True
-    return any(_zero_power(power) for power in value.atoms(sp.Pow)) or any(
-        gamma.args[1] == 0 for gamma in value.atoms(sp.uppergamma)
-    )
-
-
-def _zero_power(power: sp.Pow) -> bool:
-    """Whether this is a power of zero, which is 0 or infinite by its exponent's sign."""
-    return power.base == 0 and bool(power.exp.free_symbols)
-
-
-def _thresholds(
-    head: sp.Basic, value: sp.Basic, parameter: sp.Basic, variable: sp.Basic
-) -> list[sp.Basic]:
-    """The quantities an integral's answer may turn on, each the parameter plus a
-    number, most telling first."""
-    candidates = [power.exp for power in value.atoms(sp.Pow) if _zero_power(power)]
-    candidates += [gamma.args[0] for gamma in value.atoms(sp.uppergamma)]
-    candidates += [
-        relation.lhs - relation.rhs
-        for relation in value.atoms(Relational)
-        if relation.free_symbols == {parameter}
-    ]
-    candidates += [
-        power.exp + 1
-        for power in head.function.atoms(sp.Pow)
-        if power.base == variable and power.exp.has(parameter)
-    ]
-    candidates.append(parameter)
-    thresholds: list[sp.Basic] = []
-    for candidate in candidates:
-        try:
-            polynomial = sp.Poly(candidate, parameter)
-        except sp.PolynomialError:
-            continue
-        if polynomial.degree() != 1 or not all(
-            c.is_Rational for c in polynomial.all_coeffs()
-        ):
-            continue
-        threshold = sp.expand(candidate / polynomial.LC())
-        if threshold not in thresholds:
-            thresholds.append(threshold)
-    return thresholds
-
-
-def _on_each_side(
-    head: sp.Basic, parameter: sp.Basic, threshold: sp.Basic
-) -> sp.Basic | None:
-    """The integral as one answer for every value of the parameter, from its answers
-    where `threshold`, the parameter plus a number, is positive, negative and zero."""
-    shift = threshold - parameter
-    size = sp.Dummy("p", positive=True)
-    answers = []
-    for point in (size - shift, -size - shift, -shift):
-        answer = _attempt(head, lambda h: _integral(h.subs(parameter, point)))
-        if answer is None or not _clean(answer):
-            return None
-        answers.append(answer)
-    above, below, at = answers
-    candidates = [
-        above.subs(size, threshold),
-        above.subs(size, sp.Abs(threshold)),
-        sp.sign(threshold) * above.subs(size, sp.Abs(threshold)),
-    ]
-    for candidate in candidates:
-        if _agrees(candidate.subs(parameter, -size - shift), below) and _agrees_at(
-            candidate, parameter, -shift, at
-        ):
-            return candidate
-    upper = above.subs(size, threshold)
-    lower = below.subs(size, -threshold)
-    over = sp.StrictGreaterThan(parameter, -shift)
-    under = sp.StrictLessThan(parameter, -shift)
-    if upper == lower:
-        return sp.Piecewise((upper, sp.Ne(parameter, -shift)), (at, True))
-    if lower == at:
-        return sp.Piecewise((upper, over), (at, True))
-    if upper == at:
-        return sp.Piecewise((lower, under), (at, True))
-    return sp.Piecewise((upper, over), (lower, under), (at, True))
-
-
-def _clean(answer: sp.Basic) -> bool:
-    """Whether an answer is a value: worked out, and an infinity, or no value at all,
-    only on its own."""
-    if answer is sp.nan:
-        return True
-    if answer.has(sp.Integral, sp.Piecewise, sp.zoo, sp.nan, sp.uppergamma):
-        return False
-    if any(_zero_power(power) for power in answer.atoms(sp.Pow)):
-        return False
-    return answer in (sp.oo, -sp.oo) or not answer.has(sp.oo, -sp.oo)
-
-
-def _agrees(candidate: sp.Basic, answer: sp.Basic) -> bool:
-    """Whether a candidate is the answer, decided rather than merely not refuted."""
-    if candidate.has(sp.nan, sp.zoo):
-        return False
-    if answer is sp.nan or answer.is_infinite or candidate.is_infinite:
-        return candidate == answer
-    difference = _attempt(candidate, lambda c: sp.simplify(c - answer))
-    return difference == 0
-
-
-def _agrees_at(
-    candidate: sp.Basic, parameter: sp.Basic, point: sp.Basic, answer: sp.Basic
-) -> bool:
-    """Whether a candidate is the answer at a point, or tends to it there from both
-    sides where the answer is infinite and the candidate has a pole there."""
-    value = _attempt(candidate, lambda c: c.subs(parameter, point))
-    if value is not None and _agrees(value, answer):
-        return True
-    if answer is sp.nan or not answer.is_infinite:
-        return False
-    return all(
-        _attempt(candidate, lambda c: sp.limit(c, parameter, point, side)) == answer
-        for side in ("+", "-")
-    )
-
-
-def _antiderivative(
-    head: sp.Basic, value: sp.Basic, tabled: bool = False, constructed: bool = False
-) -> sp.Basic:
-    """An indefinite integral's answer in the form Derive writes it in.
-
-    An indefinite integral is one antiderivative out of many: any two of them
-    differ by a constant, and which one is printed is a choice rather than a
-    result. Derive prints the one with no constant added and never a case split
-    where a single antiderivative serves everywhere. Sympy's tables make the
-    other choice both times, so the choice is made here.
-
-    Nothing is taken out of a definite integral, where a constant does not
-    cancel but is part of the answer, nor out of an integral that was not done:
-    neither has an antiderivative in hand to choose among. A definite integral's
-    split over a parameter is still dropped where it distinguishes nothing.
-
-    An answer of sympy's is taken only where its derivative is proved to be the
-    integrand, each case of a split where it applies as `_differentiates_back` proves
-    it, or else once the split has been narrowed to the case `_single_case` proves
-    and keeps. One that is not is integrated again by other means, and with nothing
-    else to put in its place the integral stands: unevaluated is an answer, an
-    antiderivative nobody proved is not. So does an answer in a function of the
-    variable the notation has no word for, which would be declined in the end anyway,
-    and is not worked over first: making `INT(1/(x*(a*x + b)^n), x)` continuous in
-    `n` takes minutes over the Lerch function sympy writes it in.
-
-    A `constructed` answer is made by one of Simplify's own methods, the rational
-    integrator, the tables and the exact substitutions, and is right by construction:
-    it is not put to the proof, which on the derivative of `ATAN(SQRT(b^2 +
-    c^2)*TAN(a*x)/ABS(b))` takes longer than the integral did. A `tabled` one is
-    constructed and written the way the integral tables write it already, and the
-    manual rules are not asked for a shorter one.
-    """
-    if len(head.limits) != 1 or value.has(sp.Integral):
-        return value
-    if len(head.limits[0]) != 1:
-        return _continuous(value, None)
-    variable, integrand = head.limits[0][0], head.function
-    value = _on_the_principal_sheet(value, integrand, variable)
-    if _somewhere_only(value):
-        value = _anywhere(value, integrand, variable) or _by_a_radical(
-            integrand, variable
-        )
-        if value is None:
-            return head
-    elif _split_over(value, variable):
-        value = _by_a_radical(integrand, variable) or value
-    constructed = constructed or tabled
-    proved = constructed or _differentiates_back(value, integrand, variable)
-    if not proved:
-        # The case `_single_case` narrows a split to is one it proved.
-        narrowed = _single_case(value, integrand, variable)
-        value, proved = narrowed, narrowed != value
-    unwritable = _unwritable(value, variable)
-    if unwritable or not proved:
-        value = (
-            _by_a_positive_substitution(integrand, variable)
-            or _by_the_manual_rules(head, integrand, variable)
-            or _over_any_variable(head, integrand, variable)
-        )
-        if value is None:
-            return head
-    elif (
-        not tabled
-        and _parametrised(head)
-        and value.has(sp.log)
-        and not over_a_parametric_quadratic(integrand, variable)
-        and not _plainly_rational(value, integrand, variable)
-    ):
-        value = _shorter_by_the_manual_rules(head, value, integrand, variable)
-    value = _without_constants(_single_case(value, integrand, variable), variable)
-    return _with_matching_logarithms(_continuous(value, variable), variable)
-
-
-#: The integrals of 6.11 with a logarithmic singularity at zero, and the logarithm of
-#: the same argument that takes it off: `CI(z) - LN(z)` and `COSH_INT(z) - LN(z)` are
-#: entire, the two sharing a branch cut, and `EI(z) - LN(z^2)/2` is continuous and
-#: real along the real line, where `EI` is real on both sides of zero.
-_WITH_A_LOGARITHM: dict[type, Callable[[sp.Basic], sp.Basic]] = {
-    sp.Ci: sp.log,
-    sp.Chi: sp.log,
-    sp.Ei: lambda z: sp.log(z**2) / 2,
-}
-
-
-def _with_matching_logarithms(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """An antiderivative with the logarithms that cancel the singularities of integrals
-    of 6.11 written over those integrals' arguments.
-
-    `INT(SIN(a*x)^2/x, x)` is `LN(x)/2 - CI(2*a*x)/2`, whose derivative is the
-    integrand on each side of zero; but for a negative `a` the logarithm and the
-    cosine integral take their imaginary parts on opposite sides, and the answer jumps
-    by `#i*pi/2` at zero, where the integrand is regular. So does `CI(a*x) - CI(b*x)`
-    where `a` and `b` differ in sign. Where terms `c_j*LN(L_j)` and `d_k*CI(u_k)`, every
-    `L_j` and `u_k` a multiple of one polynomial of degree 1 in the variable, have
-    coefficients that add up to zero, the logarithms are written as the sum of
-    `-d_k*LN(u_k)`. That differs from them by a constant on each side of zero and
-    makes the whole continuous through it. Logarithms that do not cancel the
-    singularities are left as they are: the integrand is singular there itself.
-    """
-    if not isinstance(value, sp.Basic) or not value.has(*_WITH_A_LOGARITHM):
-        return value
-    integrals = [
-        integral
-        for integral in sorted(value.atoms(*_WITH_A_LOGARITHM), key=sp.default_sort_key)
-        if integral.args[0].is_polynomial(variable) is True
-        and sp.degree(integral.args[0], variable) == 1
-    ]
-    logarithms = sorted(value.atoms(sp.log), key=sp.default_sort_key)
-    while integrals:
-        reference = integrals[0].args[0]
-
-        def proportional(call: sp.Basic) -> bool:
-            ratio = sp.cancel(call.args[0] / reference)
-            return not ratio.has(variable) and ratio.is_zero is not True
-
-        matching = [integral for integral in integrals if proportional(integral)]
-        integrals = [integral for integral in integrals if integral not in matching]
-        logs = [logarithm for logarithm in logarithms if proportional(logarithm)]
-        calls = [*logs, *matching]
-        stand_ins = [sp.Dummy() for _ in calls]
-        written = value.xreplace(dict(zip(calls, stand_ins)))
-        if written.has(*calls):
-            continue
-        coefficients = [sp.diff(written, stand_in) for stand_in in stand_ins]
-        if any(c.has(variable, *stand_ins) for c in coefficients):
-            continue
-        if sp.cancel(sum(coefficients)) != 0:
-            continue
-        matched = [
-            -d * _WITH_A_LOGARITHM[type(integral)](integral.args[0])
-            for d, integral in zip(coefficients[len(logs) :], matching)
-        ]
-        value = value.xreplace({logarithm: sp.S.Zero for logarithm in logs})
-        value = sp.Add(value, *matched)
-    return value
-
-
-def _somewhere_only(value: sp.Basic) -> bool:
-    """Whether the answer is a split that leaves some values of the variable without
-    a case, and so says nothing there.
-
-    Sympy's rule for a trigonometric substitution writes the condition it was made
-    under into its answer: `INT(SQRT(x^2 - 1)/x, x)` comes back as `SQRT(x^2 - 1) -
-    ACOS(1/x)` where `-1 < x < 1`, and no case otherwise. That is the interval where
-    the integrand is not real, and the answer is undefined on the whole of the real
-    line where the integral is something. An antiderivative has to be one wherever
-    the integrand is defined, so an answer like this is no answer.
-    """
-    return any(
-        split.args[-1].cond is not sp.true for split in value.atoms(sp.Piecewise)
-    )
-
-
-def _split_over(value: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the answer is split over values of the variable."""
-    return any(
-        cond.has(variable)
-        for split in value.atoms(sp.Piecewise)
-        for _, cond in split.args
-    )
-
-
-def _anywhere(
-    value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
-) -> sp.Basic | None:
-    """The one case of an answer `_somewhere_only` refuses, where it differentiates
-    back to the integrand for every value of the variable, or None.
-
-    `INT(1/(x^2*SQRT(x^2 - 1)), x)` comes back as `SQRT(x^2 - 1)/x` under the same
-    condition, and the condition is all that is wrong with it.
-    """
-    folded = _attempt(value, sp.piecewise_fold)
-    if not isinstance(folded, sp.Piecewise) or len(folded.args) != 1:
-        return None
-    case = folded.args[0].expr
-    return case if _holds(case, integrand, variable) else None
-
-
-def _by_a_radical(integrand: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
-    """The integral by the substitution of a square root in it, or None.
-
-    `INT(SQRT(x^2 - 1)/x, x)` is `INT(u^2/(u^2 + 1), u)` over `u = SQRT(x^2 - 1)`,
-    which is `u - ATAN(u)`; written back, `SQRT(x^2 - 1) - ATAN(SQRT(x^2 - 1))` is
-    an antiderivative for `x` on either side of the interval where the root is not
-    real. Sympy makes the substitution only where the integrand is a function of
-    the root and of the root's derivative, and the result is put to the proof
-    `_holds` makes, so it is taken only where it differentiates back for every `x`.
-    """
-    roots = {
-        sp.sqrt(power.base)
-        for power in integrand.atoms(sp.Pow)
-        if power.exp.is_Rational
-        and power.exp.q == 2
-        and power.base.has(variable)
-        and power.base.is_polynomial(variable)
-    }
-    for root in sorted(roots, key=sp.default_sort_key):
-        substitute = sp.Dummy("u", positive=True)
-        transformed = _attempt(
-            sp.Integral(integrand, variable), lambda h: h.transform(root, substitute)
-        )
-        if transformed is None:
-            continue
-        found = _attempt(transformed, lambda h: h.doit(deep=False, **_BOUNDED))
-        if found is None or found.has(sp.Integral, sp.Piecewise):
-            continue
-        value = found.subs(substitute, root)
-        if _holds(value, integrand, variable):
-            return value
-    return None
-
-
-def _by_a_positive_substitution(
-    integrand: sp.Basic, variable: sp.Basic
-) -> sp.Basic | None:
-    """The integral over a new variable that is positive wherever the integrand is
-    real, or None.
-
-    Sympy takes a real variable out of a square root as if it were positive:
-    `INT(1/(x*SQRT(x^2 + a^2)), x)` comes back as `-ASINH(ABS(a)/x)/ABS(a)`, and
-    `INT(1/(x^2*SQRT(a*x + b)), x)` over `SQRT(b/(a*x) + 1)/SQRT(x)`. Both
-    differentiate back for positive `x` only. A variable that is positive by
-    construction gives sympy nothing to get wrong:
-
-    - where every root in the integrand is of one linear `a*x + b`, it is the root
-      `t = (a*x + b)^(1/q)` itself, over which the integrand is rational where it
-      was rational in `x` and the root;
-    - where the integrand is odd, it is `u = x^2`, and the antiderivative, a function
-      of `x^2`, is even as it must be; a root of a linear function of `u` is then
-      taken out as above, which for `SQRT(x^2 + a^2)` is the substitution of the
-      root itself;
-    - where it is even, it is `x` itself taken positive, and the antiderivative is
-      kept where it is proved odd, `F(x) + F(-x)` simplifying to a constant: its
-      derivative is then even, as the integrand is, and it holds for negative `x` as
-      well.
-
-    Each of these is an antiderivative by construction, sympy's answer over the
-    positive variable once it is proved to differentiate back there. Where it is split
-    over the parameters, the last case is taken alone where it is proved to
-    differentiate back to the integrand.
-    """
-    value = _positive_antiderivative(integrand, variable)
-    if value is None or value.has(sp.Integral):
-        return None
-    folded = _attempt(value, sp.piecewise_fold)
-    if isinstance(folded, sp.Piecewise) and folded.args[-1].cond is sp.true:
-        if _holds(folded.args[-1].expr, integrand, variable):
-            return folded.args[-1].expr
-    return value
-
-
-def _positive_antiderivative(
-    integrand: sp.Basic, variable: sp.Basic
-) -> sp.Basic | None:
-    """An antiderivative by the substitutions `_by_a_positive_substitution` lists, not
-    yet checked, or None where none applies."""
-    radicands = {
-        power.base
-        for power in integrand.atoms(sp.Pow)
-        if power.base.has(variable)
-        and power.exp.is_Rational
-        and not power.exp.is_Integer
-    }
-    if not radicands:
-        return None
-    substitute = sp.Dummy("u", positive=True)
-    if len(radicands) == 1:
-        (radicand,) = radicands
-        polynomial = _attempt(radicand, lambda r: sp.Poly(r, variable))
-        if polynomial is not None and polynomial.degree() == 1:
-            return _by_a_linear_root(integrand, variable, radicand, polynomial)
-    mirrored = integrand.subs(variable, -variable)
-    if _attempt(mirrored + integrand, sp.cancel) == 0:
-        halved = (integrand / variable).subs(variable, sp.sqrt(substitute)) / 2
-        halved = _forced(halved, sp.powsimp)
-        if halved.has(variable):
-            return None
-        found = _positive_antiderivative(halved, substitute)
-        return None if found is None else found.subs(substitute, variable**2)
-    if _attempt(mirrored - integrand, sp.cancel) == 0:
-        positive = sp.Integral(integrand.subs(variable, substitute), substitute)
-        if _parametrised(positive) and not _affordable(positive):
-            return None
-        found = _attempt(positive, lambda h: h.doit(deep=False))
-        if found is None or not _odd(found, substitute):
-            return None
-        if not _differentiates_back(found, positive.function, substitute):
-            return None
-        return found.subs(substitute, variable)
-    return None
-
-
-def _odd(expression: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the expression plus its value at the negated variable simplifies to
-    something free of the variable."""
-    balance = _attempt(
-        expression, lambda e: sp.simplify(e + e.subs(variable, -variable))
-    )
-    return balance is not None and not balance.has(variable)
-
-
-def _by_a_linear_root(
-    integrand: sp.Basic, variable: sp.Basic, radicand: sp.Basic, polynomial: sp.Poly
-) -> sp.Basic | None:
-    """The integral over `t = radicand^(1/q)`, the radicand linear in the variable and
-    `q` the common denominator of the powers it is raised to, or None."""
-    order = sp.ilcm(
-        1,
-        *(
-            power.exp.q
-            for power in integrand.atoms(sp.Pow)
-            if power.base == radicand and power.exp.is_Rational
-        ),
-    )
-    root = sp.Dummy("t", positive=True)
-    slope, offset = polynomial.all_coeffs()
-    # radicand^(k/order) is root^k for the principal root, for every radicand.
-    rooted = _attempt(
-        integrand,
-        lambda f: f.replace(
-            lambda e: e.is_Pow and e.base == radicand and e.exp.is_Rational,
-            lambda e: root ** (e.exp * order),
-        ),
-    )
-    transformed = _attempt(
-        rooted,
-        lambda f: f.subs(variable, (root**order - offset) / slope)
-        * order
-        * root ** (order - 1)
-        / slope,
-    )
-    if transformed is None or transformed.has(variable):
-        return None
-    found = rational_antiderivative(transformed, root)
-    if found is None:
-        return None
-    return found.subs(root, radicand ** sp.Rational(1, order))
-
-
-def _shorter_by_the_manual_rules(
-    head: sp.Basic, value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
-) -> sp.Basic:
-    """The answer the manual rules give, where it pays over sympy's and holds.
-
-    Over a parameter whose sign it does not know, sympy's rational integrator can
-    tell the real roots of a denominator from the complex ones no better than the
-    reader can, and writes the logarithms it would otherwise have paired into
-    arctangents: `INT(1/(x^2 + a), x)` is `SQRT(-1/a)*LN(x + a*SQRT(-1/a))/2 -
-    SQRT(-1/a)*LN(x - a*SQRT(-1/a))/2` to it. That is an antiderivative, and the
-    manual rules have a shorter one - `ATAN(x/SQRT(a))/SQRT(a)`, under the condition
-    that `a` is positive, which `_single_case` finds says nothing - and the shorter
-    one is what Derive prints for every `a`. So where a parametrised answer carries a
-    logarithm, the manual rules are asked as well, and theirs is printed where it is
-    shorter and differentiates back unconditionally.
-
-    Not over a quadratic with parametric coefficients, which `engine.rational`
-    already writes the table's way, as one logarithm and one arctangent of it: the
-    manual rules spend most of a minute on `INT(1/(x*(a*x^2 + b*x + c)^3), x)` to find
-    nothing shorter.
-    """
-    manual = _by_the_manual_rules(head, integrand, variable)
-    if manual is None:
-        return value
-    manual = _single_case(manual, integrand, variable)
-    if manual.has(sp.Piecewise) or not _pays(manual, value):
-        return value
-    return manual if _holds(manual, integrand, variable) else value
-
-
-def _plainly_rational(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the integrand is a rational function of the variable over a quadratic
-    with parametric coefficients and no linear term, and the answer's logarithms are
-    all of polynomials in it with polynomial coefficients, free of roots, `#i` and
-    fractions.
-
-    The manual rules improve on the logarithms of a pair of roots the rational
-    integrator could not tell were complex, as those of `x^2 + a`; where the quadratic
-    came out real, as `x^2 + a^2` does, they find nothing shorter, and spend ten
-    seconds on `INT(1/(x*(a^2 + x^2)^3), x)`, whose answer is in `LN(x)` and `LN(x^2 +
-    a^2)`, to find it.
-    """
-    if not over_a_parametric_quadratic(integrand, variable, binomials=True):
-        return False
-    for call in value.atoms(sp.log):
-        argument = call.args[0]
-        if argument.has(sp.I) or argument.is_polynomial(variable) is not True:
-            return False
-        for coefficient in sp.Poly(argument, variable).all_coeffs():
-            if not coefficient.is_polynomial() or any(
-                not power.exp.is_Integer or power.exp < 0
-                for power in coefficient.atoms(sp.Pow)
-            ):
-                return False
-    return True
-
-
-def _continuous(value: sp.Basic, variable: sp.Basic | None) -> sp.Basic:
-    """An antiderivative made continuous in its parameters, where a constant does it.
-
-    `INT(x^n, x)` is `x^(n + 1)/(n + 1)` for every `n` but `-1`, and `LN(x)` there,
-    and sympy answers with that case split. But the integrand is analytic in `n` at
-    `-1`, so the integral from any fixed point is too, and the pole in the formula
-    is nowhere but in its constant of integration: `(x^(n + 1) - 1)/(n + 1)` is an
-    antiderivative for every `n`, with `LN(x)` as its limit. That is the one Derive
-    prints, and the split was never about the integral.
-
-    So every pole a parameter puts into the answer is looked at. Its principal part
-    - the terms of the Laurent expansion that blow up - is a constant of
-    integration wherever it is free of the variable, and is taken out. Where it
-    depends on the variable the integrand itself is singular there, the split is
-    doing real work, and it stays; so does one whose expansion is no Laurent series
-    at all, a fractional power or a logarithm of the parameter being a branch point
-    rather than a pole.
-
-    Derive does this where its tables happen to, which is for powers and
-    exponentials: `INT(SIN(a*x), x)` is `-COS(a*x)/a` to it, undefined at `a = 0`
-    for no reason the integral knows of. Here it is done for every parameter, and
-    the answers Derive subtracts from come out identical.
-
-    With no variable to be free of, as in a definite integral, nothing may be
-    subtracted; a split still goes where the generic case has no pole to begin
-    with, `INT(x^n, x, 1, 2)` being `(2^(n + 1) - 1)/(n + 1)` with `LN(2)` as its
-    limit.
-
-    A parameter's pole can be spread over denominators that also carry the
-    variable - `a^2*TAN(a*x/2) + a^2` - where it is no divisor of its own. Where
-    none is found as written, the common factors are taken out and it is looked
-    for again.
-    """
-    folded = _attempt(value, sp.piecewise_fold)
-    if not isinstance(folded, sp.Piecewise):
-        regular, _, _ = _regularized(value, variable)
-        return regular
-    if len(folded.args) != 2 or folded.args[1][1] is not sp.true:
-        return value
-    generic, condition = folded.args[0]
-    if not isinstance(condition, sp.Ne):
-        return value
-    regular, found, kept = _regularized(generic, variable)
-    if not found:
-        exposed = _attempt(generic, sp.factor_terms)
-        if exposed is not None:
-            regular, found, kept = _regularized(exposed, variable)
-            regular = generic - (exposed - regular)
-    return value if kept or not found else regular
-
-
-def _regularized(
-    expression: sp.Basic, variable: sp.Basic | None
-) -> tuple[sp.Basic, bool, bool]:
-    """The expression less the constant principal parts of its parameter poles.
-
-    Returns the result, whether any pole was examined, and whether any was left in
-    place. The expansion is taken in the divisor itself rather than in the
-    parameter: `INT(a^x, x)` has its pole where `LN(a)` vanishes, and expanding in
-    `LN(a)` subtracts `1/LN(a)`, which is Derive's constant, where expanding in
-    `a - 1` would subtract `1/(a - 1)`, an uglier constant for the same answer.
-    """
-    found = kept = False
-    for divisor in _parametric_divisors(expression, variable):
-        principal = _principal_part(expression, divisor)
-        if principal is None:
-            continue
-        found = True
-        if principal == 0:
-            continue
-        if variable is None or principal.has(variable):
-            kept = True
-            continue
-        expression = expression - principal
-    return expression, found, kept
-
-
-def _parametric_divisors(expression: sp.Basic, variable: sp.Basic | None) -> list:
-    """The bases divided by in the expression that are free of the variable but not
-    of symbols: each is somewhere a parameter puts a pole into the answer."""
-    divisors = {
-        power.base
-        for power in expression.atoms(sp.Pow)
-        if power.exp.is_negative
-        and power.base.free_symbols
-        and not (variable is not None and power.base.has(variable))
-    }
-    return sorted(divisors, key=sp.default_sort_key)
-
-
-def _principal_part(expression: sp.Basic, divisor: sp.Basic) -> sp.Basic | None:
-    """The terms of the expression's Laurent expansion in the divisor that blow up
-    where it vanishes, or None where there is no such expansion to speak of.
-
-    A divisor in more than one parameter, or one that does not determine its
-    parameter, is passed over. A power of one that does - `n^2 + 2*n + 1`, which is
-    `(n + 1)^2` - is expanded in what it is a power of.
-    """
-    if len(divisor.free_symbols) != 1:
-        return None
-    _, factored = (_attempt(divisor, sp.factor) or divisor).as_coeff_Mul()
-    if isinstance(factored, sp.Pow) and factored.exp.is_Integer and factored.exp > 1:
-        divisor = factored.base
-    (parameter,) = divisor.free_symbols
-    coordinate = sp.Dummy("u")
-    try:
-        inverted = sp.solve(sp.Eq(divisor, coordinate), parameter)
-    except Exception:
-        return None
-    if len(inverted) != 1:
-        return None
-    shifted = expression.subs(parameter, inverted[0])
-    if _logarithmic_branch_point(shifted, coordinate):
-        return None
-    expansion = _attempt(
-        shifted, lambda s: sp.expand(sp.series(s, coordinate, 0, 1).removeO())
-    )
-    if expansion is None:
-        return None
-    principal = sp.S.Zero
-    for term in sp.Add.make_args(expansion):
-        coefficient, exponent = term.as_coeff_exponent(coordinate)
-        if not exponent.is_integer or coefficient.has(coordinate):
-            return None
-        if exponent < 0:
-            principal += term
-    return principal.subs(coordinate, divisor)
-
-
-#: Functions with a logarithmic branch point where their argument is plus or minus
-#: this.
-_BRANCH_POINTS = {sp.log: 0, sp.atan: sp.I, sp.acot: sp.I, sp.atanh: 1, sp.acoth: 1}
-
-
-def _logarithmic_branch_point(expression: sp.Basic, coordinate: sp.Basic) -> bool:
-    """Whether the expression holds a logarithm or an inverse tangent whose argument
-    is at a branch point where the coordinate is zero, so that it has no Laurent
-    expansion there.
-
-    Sympy's `series` takes many seconds to find that out about an arctangent: in
-    the coefficient `a`, `INT(x^2/(a*x^2 + b*x + c), x)` is over `ATAN((2*a*x +
-    b)/SQRT(4*a*c - b^2))`, which is `ATAN(-#i*b/ABS(b))` where `a` is zero.
-
-    An arctangent whose argument goes to complex infinity is taken as no expansion
-    either: it tends to plus or minus `pi/2` by the side and the sign of what is
-    divided, and sympy spends most of a minute on `ATAN((c - 2*a^2*x)/(2*a*SQRT(b +
-    c*x - a^2*x^2)))` in `a` to find that out.
-    """
-    for call in expression.atoms(*_BRANCH_POINTS):
-        if not call.has(coordinate):
-            continue
-        at_zero = _attempt(call.args[0], lambda a: a.subs(coordinate, 0))
-        if at_zero is None:
-            continue
-        if at_zero.has(sp.zoo, sp.oo, sp.nan):
-            if call.func in (sp.atan, sp.acot) and at_zero.has(sp.zoo):
-                return True
-            continue
-        point = _BRANCH_POINTS[call.func]
-        if _attempt(at_zero, lambda a: sp.cancel(sp.expand(a**2 - point**2))) == 0:
-            return True
-    return False
-
-
-def _unwritable(value: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether an antiderivative holds, in the variable, a function the notation has
-    no word for.
-
-    Such an answer is declined whatever it proves to be: `is_written` turns it down
-    before it reaches the worksheet, and nothing between here and there takes a
-    function of the variable out of it. So it is not put to `_differentiates_back`,
-    which would run `sympy.simplify` over a hypergeometric series to find out - for
-    seconds, and for nothing - but is given up for the alternatives as an unproved
-    answer is. A constant the notation cannot say is not what decides, since
-    `_without_constants` may yet drop it, and a case split is left to `_single_case`
-    to narrow before anything is said about it.
-    """
-    if value.has(sp.Piecewise):
-        return False
-    spelled = _forced(value, _in_vocabulary)
-    try:
-        calls = spelled.atoms(sp.Function)
-    except Exception:
-        return False
-    return any(
-        variable in call.free_symbols and not is_written(call) for call in calls
-    )
-
-
-def _differentiates_back(
-    value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
-) -> bool:
-    """Whether the answer is proved an antiderivative of the integrand, each of its
-    cases where it applies.
-
-    Sympy's Risch implementation answers `INT(1/(x^2 + a), x)` with zero over a real
-    `a`, and `INT(x^2/(x^2 + a), x)` with `x`; its Meijer G route answers `INT(SIN(x)/
-    x^2, x)` over a real `x` with `SIGN(x)` terms whose derivative is `2/x` off for
-    negative `x`. So nothing of sympy's is trusted: an answer is kept where its
-    derivative is proved to be the integrand.
-
-    A case applies where its condition holds and those of the cases before it do not.
-    Where that pins a parameter to a value, `a = 0` where an earlier case was for `a
-    /= 0`, the case is proved with the parameter at that value; where it pins the
-    variable to isolated points, it says nothing about an antiderivative, which is a
-    function on intervals, and nothing has to be proved of it; nor where the
-    integrand has no value once the parameters are pinned, as `COT(a*x)` has none for
-    `a = 0`. Every other case has to hold whatever its condition says.
-    """
-    if not integrand.has(variable) and value == integrand * variable:
-        # An integrand free of the variable, which may be an interval that sympy's
-        # derivative does not take back to itself.
-        return True
-    folded = _attempt(value, sp.piecewise_fold)
-    if folded is None:
-        return False
-    if not isinstance(folded, sp.Piecewise):
-        return _holds(folded, integrand, variable)
-    earlier: list[sp.Basic] = []
-    for case, condition in folded.args:
-        where = _attempt(
-            sp.And(condition, *(sp.Not(before) for before in earlier)), sp.to_dnf
-        )
-        earlier.append(condition)
-        if where is None:
-            return False
-        for region in sp.Or.make_args(where) if where is not sp.false else ():
-            if not _holds_in(region, case, integrand, variable):
-                return False
-    return True
-
-
-def _holds_in(
-    region: sp.Basic, case: sp.Basic, integrand: sp.Basic, variable: sp.Basic
-) -> bool:
-    """Whether a case is proved an antiderivative where a conjunction of conditions
-    holds, the parameters its equations pin being put in: see `_differentiates_back`.
-
-    An equation pins a parameter where it is in that parameter alone, `LN(a) = 0`
-    pinning `a` to 1, or where it is the parameter equated to something free of it.
-    One that has more than one solution is proved at each of them. An equation that
-    pins nothing is passed over, and the case proved without it."""
-    conditions = sp.And.make_args(region)
-    if any(isinstance(c, sp.Eq) and c.has(variable) for c in conditions):
-        return True
-    choices: list[dict[sp.Basic, sp.Basic]] = [{}]
-    for condition in conditions:
-        if not isinstance(condition, sp.Eq):
-            continue
-        widened = []
-        for pinned in choices:
-            values = _pins(_attempt(condition, lambda c: c.subs(pinned)), variable)
-            if values is None:
-                widened.append(pinned)
-                continue
-            widened.extend({**pinned, **value} for value in values)
-        choices = widened
-    for pinned in choices:
-        if not pinned:
-            if not _holds(case, integrand, variable):
-                return False
-            continue
-        if any(
-            _attempt(condition, lambda c: c.subs(pinned)) is sp.false
-            for condition in conditions
-        ):
-            continue
-        there = _attempt(integrand, lambda f: f.subs(pinned))
-        written = _attempt(case, lambda c: c.subs(pinned))
-        if there is None or written is None:
-            return False
-        if there.has(sp.zoo, sp.nan, sp.oo, -sp.oo):
-            continue
-        if not _holds(written, there, variable):
-            return False
-    return True
-
-
-def _pins(
-    equation: sp.Basic | None, variable: sp.Basic
-) -> list[dict[sp.Basic, sp.Basic]] | None:
-    """The values an equation in the parameters pins one of them to, every value that
-    satisfies it, or None where it pins none: see `_holds_in`."""
-    if equation is sp.true or not isinstance(equation, sp.Eq):
-        return [] if equation is sp.false else None
-    left, right = equation.args
-    for symbol, other in ((left, right), (right, left)):
-        if isinstance(symbol, sp.Symbol) and not other.has(symbol):
-            return [{symbol: other}]
-    symbols = equation.free_symbols - {variable}
-    if len(symbols) != 1:
-        return None
-    (symbol,) = symbols
-    try:
-        found = sp.solve(left - right, symbol, dict=True)
-    except Exception:
-        return None
-    return found or None
-
-
-def _on_the_principal_sheet(
-    value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
-) -> sp.Basic:
-    """An antiderivative with its full turns about the origin taken out, where that
-    leaves one.
-
-    Sympy's Meijer G route answers `INT(LN(1 - x)/x, x)` with
-    `-POLYLOG(2, x*EXP_POLAR(2*pi*#i))`: the polylogarithm on the sheet a full turn
-    away, which differs from the principal one past the cut at 1 and so is a mark
-    `unpolarify` keeps. A full turn is still the number 1, though, and dropping it
-    gives `-POLYLOG(2, x)`, which is an antiderivative in its own right; any
-    antiderivative is a right answer to an indefinite integral. So the turns are
-    dropped and the result kept where it differentiates back to the integrand, which
-    is decided rather than merely not refuted. A mark of any other angle, such as the
-    half turn in `EI(x*EXP_POLAR(pi*#i))`, moves the argument and is not touched.
-    """
-    if not value.has(sp.exp_polar):
-        return value
-    stripped = _attempt(
-        value,
-        lambda v: sp.unpolarify(v).replace(
-            lambda e: isinstance(e, sp.exp_polar) and _full_turns(e.exp),
-            lambda e: sp.S.One,
-        ),
-    )
-    if stripped is None or stripped.has(*_POLAR):
-        return value
-    difference = _attempt(
-        stripped, lambda v: sp.expand_func(sp.diff(v, variable) - integrand)
-    )
-    return stripped if difference is not None and _proved_zero(difference) else value
-
-
-def _full_turns(angle: sp.Basic) -> bool:
-    """Whether a polar angle is a whole number of turns, and so leaves 1 where it is."""
-    turns = _attempt(angle, lambda a: a / (2 * sp.pi * sp.I))
-    return bool(turns is not None and turns.is_integer)
-
-
-def _over_any_variable(
-    head: sp.Basic, integrand: sp.Basic, variable: sp.Basic
-) -> sp.Basic | None:
-    """The integral again over a variable nothing is assumed of, or None.
-
-    What sympy's Meijer G route makes of a real variable is not always what it makes
-    of an unassumed one: over a real `x` it writes `ABS(x)/x` into the answer to
-    `INT(SIN(x)/x^2, x)` and gets the negative half wrong, while over a plain symbol
-    it answers `CI(x) - SIN(x)/x` plus logarithms that cancel. That answer is put to
-    the same proof as any other.
-    """
-    plain = sp.Dummy("x")
-    again = _attempt(
-        sp.Integral(integrand.subs(variable, plain), plain),
-        lambda h: h.doit(deep=False),
-    )
-    if again is None or again.has(sp.Integral):
-        return None
-    again = again.subs(plain, variable)
-    if _unwritable(again, variable):
-        return None
-    return again if _differentiates_back(again, integrand, variable) else None
-
-
-def _by_the_manual_rules(
-    head: sp.Basic, integrand: sp.Basic, variable: sp.Basic
-) -> sp.Basic | None:
-    """The integral again by the rules a calculus course teaches, or None.
-
-    They are the one method that does not reach the algorithm the wrong answers
-    come out of, and their answer is put to the same proof: what is not proved to
-    differentiate back is no improvement on what was already in hand.
-    """
-    manual = _attempt(head, lambda h: h.doit(deep=False, manual=True))
-    if manual is None or manual.has(sp.Integral):
-        return None
-    if _unwritable(manual, variable):
-        return None
-    return manual if _differentiates_back(manual, integrand, variable) else None
-
-
-def _single_case(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """A split over antiderivatives narrowed to the one worth printing.
-
-    Sympy splits where its table has more than one form to offer: the integral
-    of `(SQRT(b^2 - 4*a*c) - b)/(2*a)` comes back an `ASINH` where `a*c` is
-    negative and a logarithm elsewhere, and the two are the same function up to
-    a constant, so the split distinguishes nothing. What settles that is the
-    unconditional case, the one sympy writes last: where it differentiates back
-    to the integrand with no condition attached it is an antiderivative wherever
-    it is defined, and so are the cases that agree with it.
-
-    That case has to be the one that holds, but it need not be the one printed.
-    A conditional case is worth the whole domain where it differentiates back
-    just as unconditionally and says it shorter - `INT(1/(x^2 + a), x)` splits
-    into an `ATAN` where `a` is positive and a pair of logarithms elsewhere, and
-    the `ATAN` is the answer Derive gives for every `a`.
-
-    Where the unconditional case does not hold the split is left alone here:
-    `INT(x^2*COS(a*x^3 + b), x)` splits on whether `a` is zero, and
-    `SIN(a*x^3 + b)/(3*a)` is the answer for every `a` it is defined for - which
-    is every `a` but the one the other case is there for. Whether that pole is
-    the integral's or only its constant's is `_continuous`'s question.
-    """
-    folded = _attempt(value, sp.piecewise_fold)
-    if not isinstance(folded, sp.Piecewise):
-        return value
-    best, condition = folded.args[-1]
-    if condition is not sp.true or not _holds(best, integrand, variable):
-        return value
-    for case, _ in folded.args[:-1]:
-        if case.has(*_INVERSE_HYPERBOLIC) and not best.has(*_INVERSE_HYPERBOLIC):
-            continue
-        if _pays(case, best) and _holds(case, integrand, variable):
-            best = case
-    return best
-
-
-#: Not what an antiderivative is printed over. Derive writes every one of these
-#: as the logarithm it is - `ASINH(x)` authored on its own comes back
-#: `LN(SQRT(x^2 + 1) + x)` - so `INT(SQRT(x^2 + a^2), x)`, whose cases are an
-#: `ASINH` where `a` is nonzero and that same logarithm elsewhere, is printed
-#: over the logarithm however much shorter the arc is.
-_INVERSE_HYPERBOLIC = (sp.asinh, sp.acosh, sp.atanh, sp.acoth, sp.asech, sp.acsch)
-
-
-def _holds(case: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether this case is an antiderivative with no condition attached.
-
-    Proof, not evidence: the difference of its derivative and the integrand has to be
-    proved zero, as `_proved_zero` proves it.
-    """
-    if case.has(sp.Piecewise):
-        return False
-    difference = _attempt(case, lambda c: sp.diff(c, variable) - integrand)
-    return difference is not None and _proved_zero(difference)
-
-
-#: The largest difference, in operations, that `sympy.simplify` is asked to prove
-#: zero once the cheap steps have not.
-_SIMPLIFIED_OPERATIONS = 400
-
-#: The exact steps a difference is put through before `sympy.simplify` is asked: over
-#: a common denominator, and the same after special functions are written out, after
-#: trigonometric and hyperbolic functions are written as exponentials, and after the
-#: roots are taken out of the denominators.
-_ZERO_STEPS: tuple[Rewrite, ...] = (
-    lambda d: sp.cancel(sp.together(d)),
-    lambda d: sp.cancel(sp.together(sp.expand_func(d))),
-    lambda d: sp.cancel(sp.together(d.rewrite(sp.exp))),
-    lambda d: sp.cancel(sp.together(sp.radsimp(sp.together(d)))),
-)
-
-
-def _proved_zero(difference: sp.Basic) -> bool:
-    """Whether the difference is proved to be zero, by exact rewriting alone.
-
-    The cheap steps of `_ZERO_STEPS` are tried first, and settle most derivatives.
-    `sympy.simplify` is the last resort, and is asked only of a difference small
-    enough for it, its cost growing much faster than the size of what it is given;
-    what it gives back is put through the cheap steps once more. A difference not
-    proved zero is not taken for one, whatever it is: no value at a point is asked.
-    """
-    if difference == 0:
-        return True
-    if any(_attempt(difference, step) == 0 for step in _ZERO_STEPS):
-        return True
-    try:
-        if sp.count_ops(difference) > _SIMPLIFIED_OPERATIONS:
-            return False
-    except Exception:
-        return False
-    simplified = _attempt(difference, sp.simplify)
-    if simplified is None:
-        return False
-    return simplified == 0 or any(
-        _attempt(simplified, step) == 0 for step in _ZERO_STEPS
-    )
-
-
-def _without_constants(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """The antiderivative with every constant of integration taken out of it.
-
-    A term free of the variable is such a constant, and so is a factor free of
-    the variable inside a logarithm, `LN(k*u)` being `LN(u)` plus a constant.
-    Sympy leaves both: the integral above comes back over `LN(2*b + 2*SQRT(b^2 -
-    4*a*c))`, where Derive's answer is over `LN(b + SQRT(b^2 - 4*a*c))`.
-
-    A constant deeper in than that is no constant of integration - it is part of
-    whatever holds it - so only the terms of the answer itself are looked at,
-    through a factor common to all of them where there is one. That goes for the
-    logarithms too: only one that is a term, times a factor free of the variable,
-    sheds a constant. In `x*LN(a*x) - x` the `LN(a)` it holds is `x*LN(a)`, and
-    that is no constant.
-    """
-    coefficient, terms = _split(value, variable)
-    bare = [_bare_term(term, variable) for term in sp.Add.make_args(terms)]
-    if not isinstance(terms, sp.Add):
-        return coefficient * bare[0]
-    kept = [term for term in bare if term.has(variable)]
-    return _carried(coefficient, _without_flat_logarithms(kept, variable))
-
-
-def _bare_term(term: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """A term of an antiderivative with the constant factor taken out of its
-    logarithm, where it is a logarithm times a factor free of the variable.
-
-    A logarithm of something never positive for a real variable is written over its
-    negation, which is `pi*#i` less, a constant as well: sympy answers `INT(SEC(x),
-    x)` over `LN(SIN(x) - 1)`, which is complex for every real `x`, and `LN(1 -
-    SIN(x))` is real wherever the integral is.
-    """
-    factor, rest = _split(term, variable)
-    if not isinstance(rest, sp.log) or len(rest.args) != 1:
-        return term
-    bare = _attempt(rest, lambda call: _bare_logarithm(call, variable))
-    if bare is None:
-        return term
-    if isinstance(bare, sp.log) and _never_positive(bare.args[0], variable):
-        bare = sp.log(-bare.args[0])
-    return factor * bare
-
-
-def _never_positive(argument: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether a function of a real variable alone is at most zero for every value of
-    it, by the bounds of its value over the whole line."""
-    if variable.is_real is not True or argument.free_symbols != {variable}:
-        return False
-    bounds = _attempt(
-        argument, lambda a: a.subs(variable, sp.AccumBounds(-sp.oo, sp.oo))
-    )
-    return bool(
-        isinstance(bounds, sp.AccumBounds) and bounds.max.is_nonpositive is True
-    )
-
-
-def _without_flat_logarithms(terms: list[sp.Basic], variable: sp.Basic) -> list:
-    """The terms less their logarithms, where those add up to a constant.
-
-    `LN(x^2)/2 - LN(x)` mentions the variable and is still a constant of
-    integration: its derivative is zero, and the sum is zero for positive `x` and
-    `-pi*#i` for negative. Sympy leaves such a pair in `INT(SIN(x)/x^2, x)`, and
-    `a` times it in `INT(SIN(a*x)/x^2, x)`.
-    """
-    logarithms = [term for term in terms if _is_logarithm_term(term, variable)]
-    if len(logarithms) < 2:
-        return terms
-    derivative = _attempt(
-        sp.Add(*logarithms), lambda s: sp.simplify(sp.diff(s, variable))
-    )
-    if derivative != 0:
-        return terms
-    return [term for term in terms if not _is_logarithm_term(term, variable)]
-
-
-def _is_logarithm_term(term: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the term is a logarithm times a factor free of the variable."""
-    _, rest = _split(term, variable)
-    return isinstance(rest, sp.log)
-
-
-def _carried(coefficient: sp.Basic, terms: list[sp.Basic]) -> sp.Basic:
-    """A coefficient with a denominator times the terms of an antiderivative, kept in
-    front of the terms it still divides.
-
-    Sympy integrates `(SQRT(b^2 - 4*a*c) - b)/(2*a)` over `b` with the `1/(2*a)` in
-    front of everything, one of the terms being `-2*a*c*LN(SQRT(b^2 - 4*a*c) + b)`.
-    Left that way, the `a` inside makes the whole a quotient over `a`, and the normal
-    form writes it as one. Derive's answer is `b*(SQRT(b^2 - 4*a*c) - b)/(4*a) -
-    c*LN(SQRT(b^2 - 4*a*c) + b)`: the term the coefficient cancels into is a term of
-    its own, and the coefficient stays a single factor in front of the rest.
-
-    A coefficient with nothing symbolic underneath divides nothing and is left in
-    front of the whole sum, for the normal form to write as it would any product.
-    """
-    if not sp.fraction(coefficient)[1].free_symbols:
-        return coefficient * sp.Add(*terms)
-    carried, absorbed = [], []
-    for term in terms:
-        product = coefficient * term
-        (absorbed if not sp.fraction(product)[1].free_symbols else carried).append(term)
-    return coefficient * sp.Add(*carried) + sp.Add(*(coefficient * t for t in absorbed))
-
-
-def _bare_logarithm(call: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """`LN(k*u)` as `LN(u)`, where `k` is free of the variable.
-
-    The factor has to be looked for: sympy writes the argument out, so what is
-    there to find is `2*b + 2*SQRT(b^2 - 4*a*c)` rather than the product it
-    collects to.
-    """
-    argument = _attempt(call.args[0], sp.factor_terms)
-    if argument is None:
-        return call
-    coefficient, rest = _split(argument, variable)
-    if coefficient == 1 or not rest.has(variable):
-        return call
-    return sp.log(rest)
-
-
-def _split(expression: sp.Basic, variable: sp.Basic) -> tuple[sp.Basic, sp.Basic]:
-    """`expression` as a factor free of the variable times the rest of it.
-
-    `as_independent` asked for a product takes the terms of a sum for factors -
-    `1 - x` comes back as `1` times `-x` - so only a product is put to it.
-    """
-    if not isinstance(expression, sp.Mul):
-        return sp.S.One, expression
-    return expression.as_independent(variable, as_Mul=True)
-
-
-def _parametrised(head: sp.Basic) -> bool:
-    """Whether the integrand mentions more than the variables integrated over.
-
-    The limits do not count: they are substituted into an antiderivative that
-    has already been found, so they are no part of the search that costs.
-    """
-    variables = {limit[0] for limit in head.limits}
-    return bool(head.function.free_symbols - variables)
-
-
-#: How many bases may carry a symbolic exponent before the ansatz is too big.
-#: Two is `INT(x^(a-1)*(1-x)^(b-1), x)`, which sympy answers in under a second;
-#: `INT(x^(a-1)*(1-x)^(c-a-1)*(1-x*z)^(-b), x)` is the same shape with a third,
-#: and does not finish. Measured over every parametrised integral in Derive's
-#: utility library: under this rule each one either answers within a second or
-#: is refused, and no refusal loses an answer the rule would have found.
-_ANSATZ = 2
-
-
-def _affordable(head: sp.Basic) -> bool:
-    """Whether the heuristic method can be asked about a parametrised integrand.
-
-    Cheap where the integrand is algebraic - a product of powers of polynomials
-    in the variable - because each base is one generator and nothing composes
-    to make more. `#e^(z*COS(t))*COS(n*t)` is where that stops being true: the
-    exponential of a cosine is a generator built on another, and sympy does not
-    finish. Neither does a product of three powers with symbolic exponents, so
-    the count is bounded as well.
-
-    A symbolic exponent is taken only over a base of at most two terms in the
-    variable, `a*x + b` or `a^2 + x^2`. Over a full quadratic the search comes back
-    empty-handed, and slowly: `INT(1/(a*x^2 + b*x + c)^n, x)` takes over a minute to
-    stand, and even `INT(1/(x^2 + x + 1)^n, x)` takes seconds.
-
-    An exponential, sine or cosine of a linear argument is one generator more, with
-    nothing built on it, and so is a logarithm of a power of the variable: `INT(#e^(a*x)
-    *COS(b*x), x)` and `INT(x^n*LN(x), x)` are answered in a fraction of a second. They
-    count against the same bound as the symbolic exponents, a third of either kind
-    being where the ansatz grows past a few seconds, and a logarithm is taken only
-    beside powers, a logarithm times a cosine being past that as well. A polynomial
-    in one sine or cosine of a linear argument, `SIN(a*x) + 1`, is that same generator
-    under a rational function, and counts as it does: `INT(x/(SIN(a*x) + 1), x)` is
-    answered in a fraction of a second. Only for an
-    antiderivative: between limits, the cases sympy splits these into for the
-    values of the parameters where the generic formula fails are no constants of
-    integration, and each has to be had and printed.
-    """
-    variables = [limit[0] for limit in head.limits]
-    indefinite = all(len(limit) == 1 for limit in head.limits)
-    symbolic = logarithms = 0
-    for factor in sp.Mul.make_args(head.function):
-        base, exponent = factor.as_base_exp()
-        if indefinite and (
-            _linear_generator(factor, variables)
-            or (_linear_generator(base, variables) and exponent.is_Integer)
-            or (_in_one_periodic(base, variables) is not None and exponent.is_Integer)
-        ):
-            symbolic += 1
-            logarithms += isinstance(base, sp.log)
-            continue
-        if exponent.has(*variables) or base.is_polynomial(*variables) is not True:
-            return False
-        if exponent.free_symbols:
-            if len(sp.Poly(base, *variables).terms()) > 2:
-                return False
-            symbolic += 1
-    transcendental = [
-        factor
-        for factor in sp.Mul.make_args(head.function)
-        if factor.has(sp.exp, *_PERIODIC)
-    ]
-    if logarithms and transcendental:
-        return False
-    return symbolic <= _ANSATZ
-
-
-#: The functions of a linear argument the heuristic method affords a generator for.
-_PERIODIC = (sp.sin, sp.cos, sp.sinh, sp.cosh)
-
-
-def _linear_generator(factor: sp.Basic, variables: list) -> bool:
-    """Whether the factor is an exponential, sine or cosine of an argument linear in
-    the variable, or a logarithm of a power of it."""
-    if isinstance(factor, sp.log):
-        argument = factor.args[0]
-        _, rest = argument.as_independent(*variables, as_Add=False)
-        return len(variables) == 1 and rest.as_base_exp()[0] == variables[0]
-    if not isinstance(factor, (sp.exp, *_PERIODIC)):
-        return False
-    argument = factor.args[0]
-    try:
-        return sp.Poly(argument, *variables).total_degree() == 1
-    except sp.PolynomialError:
-        return False
-
-
-def _in_one_periodic(base: sp.Basic, variables: list) -> sp.Basic | None:
-    """The one sine, cosine or hyperbolic one of an argument linear in the variable
-    that `base` is a polynomial in, with the variable appearing nowhere else, or None."""
-    generators = {
-        atom for atom in base.atoms(*_PERIODIC) if _linear_generator(atom, variables)
-    }
-    if len(generators) != 1:
-        return None
-    (generator,) = generators
-    stand_in = sp.Dummy()
-    written = base.subs(generator, stand_in)
-    if written.has(*variables) or written.is_polynomial(stand_in) is not True:
-        return None
-    return generator
 
 
 #: The heads a closed form is searched for through: sympy recognises a
@@ -4725,7 +1317,7 @@ def _trigonometric_terms(function: sp.Basic, index: sp.Basic) -> bool:
     are not trigonometric to this rule: sympy sums them as the exponentials they
     are, and comes back.
     """
-    expanded = _attempt(function, sp.expand)
+    expanded = attempt(function, sp.expand)
     if expanded is None:
         return False
     waves = [
@@ -4809,8 +1401,8 @@ def _limit(head: sp.Limit) -> sp.Basic:
         return head
     value = _bounds_settled(constant * value)
     if value.has(sp.gamma) and value.is_number:
-        value = _forced(value, sp.simplify)
-    split = _attempt(value, lambda v: _split_on_a_sign(v, head))
+        value = forced(value, sp.simplify)
+    split = attempt(value, lambda v: _split_on_a_sign(v, head))
     return value if split is None else split
 
 
@@ -4876,14 +1468,14 @@ def _limit_by_the_sign_of_a_parameter(asked: sp.Limit) -> sp.Basic | None:
     size = sp.Dummy("p", positive=True)
     answers = []
     for value in (size, -size):
-        answer = _attempt(asked, lambda a: a.subs(parameter, value).doit(deep=False))
+        answer = attempt(asked, lambda a: a.subs(parameter, value).doit(deep=False))
         if answer is None or answer.has(sp.Limit, sp.zoo, sp.nan):
             return None
         answers.append(answer)
     above, below = answers
     magnitude = above.subs(size, sp.Abs(parameter))
     for candidate in (magnitude, sp.sign(parameter) * magnitude):
-        if _agrees(candidate.subs(parameter, -size), below):
+        if agrees(candidate.subs(parameter, -size), below):
             return candidate
     return None
 
@@ -4919,12 +1511,12 @@ def _closed_forms(expression: sp.Basic) -> sp.Basic:
     def closed(head: sp.Basic) -> sp.Basic:
         if not _searchable(head):
             return head
-        value = _attempt(head, lambda h: h.doit(deep=False))
+        value = attempt(head, lambda h: h.doit(deep=False))
         return head if value is None else value
 
     if not expression.has(sp.Sum, sp.Product):
         return expression
-    return _forced(
+    return forced(
         expression,
         lambda e: e.replace(lambda h: isinstance(h, (sp.Sum, sp.Product)), closed),
     )
@@ -4962,7 +1554,7 @@ def _bounds_settled(expression: sp.Basic) -> sp.Basic:
     if not expression.has(sp.AccumBounds):
         return expression
     for head, rule in ((sp.sign, sign), (sp.Abs, size)):
-        expression = _forced(
+        expression = forced(
             expression,
             lambda e, h=head, r=rule: e.replace(
                 lambda c: isinstance(c, h) and numeric(c.args[0]),
@@ -5308,147 +1900,6 @@ def _as_arc_coth(argument: sp.Basic) -> sp.Basic:
     return sp.log((argument + 1) / (argument - 1)) / 2
 
 
-def _as_exponential_integral(order: sp.Basic, argument: sp.Basic) -> sp.Basic:
-    """`expint(n, z)` over `EI`, where its order lets it be.
-
-    Sympy's expansion takes an integer or half-integer order down to `expint(1, z)`
-    and elementary functions; that one is `-EI(-z)` where `z` is positive, and only
-    there: for a negative `z` the two differ by `pi*#i`. So it is written over `EI`
-    only where sympy proves `z` positive, which is where the integrals that produce
-    it converge. Anywhere else, and at any other order, it stays as it is, and an
-    answer holding it is one the notation cannot write.
-    """
-    expanded = sp.expand_func(sp.expint(order, argument))
-    return expanded.replace(
-        lambda e: isinstance(e, sp.expint) and e.args[0] == 1 and e.args[1].is_positive,
-        lambda e: -sp.Ei(-e.args[1]),
-    )
-
-
-def _as_log_gamma(argument: sp.Basic) -> sp.Basic:
-    """`loggamma(x)` as `LN(GAMMA(x))`, where `x` is positive.
-
-    Sympy's `loggamma` is the branch of the logarithm that is analytic off the
-    negative real axis, which is the principal logarithm of the gamma function only
-    for a positive argument: at `-1/2` the one is `LN(2*SQRT(pi)) - pi*#i` and the
-    other has `+ pi*#i`. Where sympy cannot prove the argument positive the head
-    stays, and an answer holding it is one the notation cannot write.
-    """
-    if argument.is_positive:
-        return sp.log(sp.gamma(argument))
-    return sp.loggamma(argument)
-
-
-def _as_gamma_ratio(base: sp.Basic, count: sp.Basic) -> sp.Basic:
-    """The rising factorial `RisingFactorial(x, k)` as the gammas it is made of,
-    `GAMMA(x + k)/GAMMA(x)`, whatever the sign of `x`.
-
-    The two agree everywhere but at the poles of the gamma function, where the
-    quotient is undefined and its limit is the rising factorial's value: at `x = -2`
-    the quotient `GAMMA(x + 1)/GAMMA(x)` is `x` wherever it is defined, and `-2` in
-    the limit, which is what `RisingFactorial(-2, 1)` is. That is the removable point
-    of `sinc` again, and the quotient is the spelling Derive gives it: the original
-    answers `PRODUCT(k + a, k, 1, n)` as `(a + n)!/a!` with nothing declared about
-    `a`. Sympy's own rewrite is a different expression for a negative `x`, and a
-    `Piecewise` of the two where the sign is open, which is why it is not used.
-    """
-    return sp.gamma(base + count) / sp.gamma(base)
-
-
-#: The sympy heads the notation has no name for that are spellings of functions it
-#: does have, each written in those. Sympy answers in them freely: `INT(1/LN(x), x)`
-#: is its logarithmic integral `li(x)`, which is `EI(LN(x))`. The offset logarithmic
-#: integral `Li` is written over `li` and goes on to `EI` from there, which is why it
-#: comes first. `ceiling` is the floor of the negation, `beta` and the rising
-#: factorial are the ratios of gammas they abbreviate, and `loggamma` is the logarithm
-#: of the gamma function. Each is written so only where it is exactly that, and the
-#: exponential integral and `loggamma` are that only on part of their domain, so those
-#: are written by functions that ask sympy whether the argument lies in it. `sinc` is
-#: the quotient it abbreviates, `SIN(x)/x`, which is the spelling Derive would give it:
-#: the two differ only at the removable point 0, where the quotient is undefined as any
-#: quotient is at a zero denominator. The ratio of gammas differs from the rising
-#: factorial only at removable points in the same way, the poles of the gamma
-#: function, and is written everywhere by `_as_gamma_ratio`. The Fresnel integrals are
-#: written by `_as_error_functions`. `POLYLOG(1, z)` is `-LN(1 - z)` everywhere, cut
-#: along the same ray from 1, and is the one elementary polylogarithm sympy does not
-#: write out itself.
-_SPELLED_OVER: dict[type, Callable[..., sp.Basic]] = {
-    sp.Li: lambda x: sp.Ei(sp.log(x)) - sp.Ei(sp.log(2)),
-    sp.li: lambda x: sp.Ei(sp.log(x)),
-    sp.expint: _as_exponential_integral,
-    sp.ceiling: lambda x: -sp.floor(-x),
-    sp.beta: lambda *args: sp.beta(*args).rewrite(sp.gamma),
-    sp.RisingFactorial: _as_gamma_ratio,
-    sp.loggamma: _as_log_gamma,
-    sp.sinc: lambda x: sp.sin(x) / x,
-    sp.polylog: lambda s, z: -sp.log(1 - z) if s == 1 else sp.polylog(s, z),
-}
-
-#: The Fresnel integrals, which are `ERF`s of complex arguments.
-_FRESNEL = (sp.fresnels, sp.fresnelc)
-
-
-def _as_error_functions(expression: sp.Basic) -> sp.Basic:
-    """Every Fresnel integral in `expression` as the error functions it is made of.
-
-    Sympy answers `INT(COSH(x^2), x)` as a cosine integral of `x*#e^(#i*pi/4)`, so
-    the error functions its rewrite reaches are of `x*(1 - #i)*#e^(#i*pi/4)`, which
-    is plain `x` once the exponential is written as the complex number it is. So
-    every exponential of an imaginary number in the expression is written that way,
-    and the arguments multiplied out. An `ERF` of an imaginary argument is then the
-    `ERFI` of a real one, by `ERF(#i*u) = #i*ERFI(u)`: `INT(COSH(x^2), x)` is
-    `SQRT(pi)*(ERF(x) + ERFI(x))/4`.
-    """
-    for head in _FRESNEL:
-        expression = expression.replace(head, lambda z, h=head: h(z).rewrite(sp.erf))
-    expression = expression.replace(
-        lambda e: isinstance(e, sp.exp) and e.args[0].is_number,
-        sp.expand_complex,
-    )
-    return expression.replace(sp.erf, _erf_expanded)
-
-
-def _erf_expanded(argument: sp.Basic) -> sp.Basic:
-    """`ERF(u)` with `u` multiplied out where that leaves it real, and as
-    `#i*ERFI(u/#i)` where `u/#i` is real. A complex argument is left as it is, which
-    keeps a factor such as `1 + #i` whole."""
-    expanded = sp.expand(argument)
-    turned = sp.expand(argument / sp.I)
-    if turned.is_extended_real and not turned.is_zero:
-        return sp.I * sp.erfi(turned)
-    return sp.erf(expanded if expanded.is_extended_real else argument)
-
-
-#: The marks sympy's G-function integration leaves on a number that says which sheet
-#: of a logarithm it lies on.
-_POLAR = (
-    sp.exp_polar,
-    sp.polar_lift,
-    sp.periodic_argument,
-    sp.principal_branch,
-)
-
-
-def _in_vocabulary(expression: sp.Basic) -> sp.Basic:
-    """`expression` with the sympy heads that spell the notation's functions written
-    in them.
-
-    A polar number is taken off its sheet by `unpolarify`, which does it wherever
-    the value does not depend on the sheet - `exp_polar(I*pi)` is -1 and
-    `polar_lift(x)` is `x` - and leaves the mark where it does: `Ei(x*exp_polar(I*pi))`
-    is `EI(-x) + pi*#i`, and writing it as `EI(-x)` would lose the `pi*#i`. Such a
-    mark is left for `is_written` to decline.
-    """
-    if expression.has(*_POLAR):
-        expression = sp.unpolarify(expression)
-    if expression.has(*_FRESNEL):
-        expression = _as_error_functions(expression)
-    for head, written in _SPELLED_OVER.items():
-        if expression.has(head):
-            expression = expression.replace(head, written)
-    return expression
-
-
 #: The heads written out here rather than left to sympy's own `rewrite`, which
 #: reaches the right value in a form the manual does not print.
 _WRITTEN_AS: dict[type, Callable[..., sp.Basic]] = {
@@ -5473,7 +1924,7 @@ _DEFINED_OVER: dict[type, type] = {
     sp.Min: sp.Abs,
     sp.Max: sp.Abs,
     **{head: sp.exp for head in _HYPERBOLIC},
-    **{head: sp.log for head in _INVERSE_HYPERBOLIC},
+    **{head: sp.log for head in INVERSE_HYPERBOLIC},
 }
 
 
@@ -5493,19 +1944,19 @@ def _by_definition(expression: sp.Basic) -> sp.Basic:
     after, so that one it can shorten is shortened.
 
     The sympy heads the notation has no name for are spelled first, by
-    `_in_vocabulary`, so that what they are written in is spelled with the rest.
+    `in_vocabulary`, so that what they are written in is spelled with the rest.
     """
-    expression = _forced(expression, _in_vocabulary)
+    expression = forced(expression, in_vocabulary)
     for head, written in _WRITTEN_AS.items():
         if not expression.has(head):
             continue
-        expression = _forced(expression, lambda e, h=head, w=written: e.replace(h, w))
+        expression = forced(expression, lambda e, h=head, w=written: e.replace(h, w))
     if expression.has(*_AS_FACTORIALS):
-        expression = _forced(expression, _ratios)
+        expression = forced(expression, _ratios)
     for head, over in _DEFINED_OVER.items():
         if not expression.has(head):
             continue
-        expression = _forced(expression, lambda e, h=head, o=over: _defined(e, h, o))
+        expression = forced(expression, lambda e, h=head, o=over: _defined(e, h, o))
     return expression
 
 
@@ -5521,10 +1972,10 @@ def _defined(expression: sp.Basic, head: type, over: type) -> sp.Basic:
 
 def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
     """`rewrite`, if the result is simpler than what went in."""
-    candidate = _attempt(expression, rewrite)
+    candidate = attempt(expression, rewrite)
     if candidate is None:
         return expression
-    return candidate if _pays(candidate, expression) else expression
+    return candidate if pays(candidate, expression) else expression
 
 
 def _unnested(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
@@ -5535,10 +1986,10 @@ def _unnested(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
     `(2 + SQRT(5))^(1/3)` is `SQRT(5)/2 + 1/2`. Not past twice the length, though,
     which is no longer a spelling anyone would prefer.
     """
-    candidate = _attempt(expression, rewrite)
+    candidate = attempt(expression, rewrite)
     if candidate is None:
         return expression
-    if _pays(candidate, expression):
+    if pays(candidate, expression):
         return candidate
     try:
         flatter = _nesting(candidate) < _nesting(expression)
@@ -5556,10 +2007,10 @@ def _cancelled(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
     `2*COS(2*x) + 1`, which is no fewer operations. Not past twice the length,
     though, as with `_unnested`.
     """
-    candidate = _attempt(expression, rewrite)
+    candidate = attempt(expression, rewrite)
     if candidate is None:
         return expression
-    if _pays(candidate, expression):
+    if pays(candidate, expression):
         return candidate
     try:
         cancelled = _called_denominator(expression) and not _called_denominator(
@@ -5586,68 +2037,6 @@ def _nesting(expression: sp.Basic) -> int:
     if isinstance(expression, sp.Pow) and not expression.exp.is_Integer:
         return 1 + _nesting(expression.base)
     return max(_nesting(argument) for argument in expression.args)
-
-
-def _forced(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
-    """`rewrite`, whatever it costs: a direction asked for, a fact, or a spelling."""
-    candidate = _attempt(expression, rewrite)
-    return expression if candidate is None else candidate
-
-
-def _attempt(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic | None:
-    try:
-        candidate = rewrite(expression)
-    except Exception:
-        return None
-    return candidate if isinstance(candidate, sp.Basic) else None
-
-
-def _pays(candidate: sp.Basic, previous: sp.Basic) -> bool:
-    """Whether a rewrite earned its keep.
-
-    One variable fewer always counts, however long the answer: a superfluous
-    variable is the first thing the manual says a simplified expression does
-    not have. One denominator fewer under another counts the same way, being
-    the other thing a simplified expression does not have. Failing both, the
-    rewrite has to be shorter.
-    """
-    try:
-        if candidate == previous:
-            return False
-        if len(candidate.free_symbols) < len(previous.free_symbols):
-            return True
-        if _compound(candidate) != _compound(previous):
-            return _compound(previous)
-        return sp.count_ops(candidate) < sp.count_ops(previous)
-    except Exception:
-        return False
-
-
-def _compound(expression: sp.Basic) -> bool:
-    """Whether a denominator in `expression` has a denominator of its own.
-
-    Which is the one thing Derive never leaves standing whatever it costs:
-    `DIF(ATAN(x/a), x)` is `1/(a + x^2/a)` to sympy and `a/(a^2 + x^2)` to the
-    original, and the two are the same length, so nothing that counts
-    operations can tell them apart.
-
-    A number underneath is not a denominator of this kind. `x + 1/2` is a sum
-    of a variable and a number wherever it stands, and putting it over two is
-    the longer way to write it.
-    """
-    for power in expression.atoms(sp.Pow):
-        if not power.exp.is_negative:
-            continue
-        for inner in power.base.atoms(sp.Pow):
-            if inner.exp.is_negative and not inner.base.is_number:
-                return True
-    return False
-
-
-#: Where the three ways of writing one real quantity sit in a product. Each is
-#: a power of the other two - `ABS(u) = u*SIGN(u)` and `SIGN(u)^2 = 1` - so a
-#: group is no more than the exponent every one of them carries.
-_ABSOLUTE, _SIGNUM, _BARE = 0, 1, 2
 
 
 def _signs_of_reciprocals(expression: sp.Basic) -> sp.Basic:
@@ -5761,121 +2150,6 @@ def _conjugate_pairs(expression: sp.Basic) -> sp.Basic:
     return expression.replace(lambda e: isinstance(e, sp.Mul), paired)
 
 
-def _folded_signs(expression: sp.Basic) -> sp.Basic:
-    """Every product of a real argument with its absolute value and its sign."""
-    return expression.replace(
-        lambda e: _folded_product(e) is not None,
-        lambda e: _folded_product(e),
-        simultaneous=False,
-    )
-
-
-def _folded_product(expression: sp.Basic) -> sp.Basic | None:
-    """This product with `ABS(u)`, `SIGN(u)` and `u` collected into one another.
-
-    For a real `u` the three are one quantity written three ways, so a product
-    holding more than one of them says the same thing twice: `ABS(u)*SIGN(u)`
-    and `ABS(u)/SIGN(u)` are both `u`, `u/ABS(u)` is `SIGN(u)`, `u*SIGN(u)` is
-    `ABS(u)` and `SIGN(u)^2` is `1`.
-
-    Zero is where the identities are a licence rather than a fact: `SIGN(0)` is
-    zero, so `ABS(u)/SIGN(u)` is undefined there and `u` is not. Derive removes
-    the singularity and so does this, on the same terms that make `u/u` come
-    back `1`. Off the real line there is nothing to remove and nothing to fold:
-    `SIGN(z)` is `z/|z|`, whose square is not one, so an argument nothing
-    declares real is left as it was written.
-    """
-    groups, rest = _signed_powers(expression)
-    if not any(_worth_folding(*exponents) for exponents in groups.values()):
-        return None
-    folded = [
-        _shortest_spelling(argument, *exponents)
-        if _worth_folding(*exponents)
-        else _written(argument, *exponents)
-        for argument, exponents in groups.items()
-    ]
-    candidate = sp.Mul(*rest, *folded)
-    return None if candidate == expression else candidate
-
-
-def _worth_folding(absolute: int, signum: int, bare: int) -> bool:
-    """Whether this group says the same thing twice.
-
-    One `ABS` or one `SIGN` by itself is what it is, and a bare power with
-    neither is no business of this rule. What is left over is a group that
-    holds two of the three, or a sign the argument carries more than once, or
-    a sign under a division: all three collapse.
-    """
-    if not (absolute or signum):
-        return False
-    present = sum(1 for exponent in (absolute, signum, bare) if exponent)
-    return present > 1 or abs(absolute) > 1 or signum not in (0, 1)
-
-
-def _signed_powers(
-    expression: sp.Basic,
-) -> tuple[dict[sp.Basic, list[int]], list[sp.Basic]]:
-    """This product read as groups of one real argument, and the factors that are not.
-
-    A factor joins the group of the argument it is about - `ABS(u)^2` and
-    `1/SIGN(u)` and `u` are all the group of `u` - and anything else, an
-    argument sympy cannot call real or a power the exponents cannot be added
-    up over, stays a factor of its own.
-
-    A range is not one of these arguments. `SIGN(INTERVAL(-1, 1))` is the
-    three-point set the interval's sign can be and not a number the identities
-    hold for, so a bound stays the factor it was written as.
-    """
-    groups: dict[sp.Basic, list[int]] = {}
-    rest: list[sp.Basic] = []
-    for factor in sp.Mul.make_args(expression):
-        base, exponent = factor.as_base_exp()
-        if isinstance(base, sp.Abs):
-            slot, argument = _ABSOLUTE, base.args[0]
-        elif isinstance(base, sp.sign):
-            slot, argument = _SIGNUM, base.args[0]
-        else:
-            slot, argument = _BARE, base
-        if (
-            exponent.is_Integer
-            and argument.is_extended_real
-            and not argument.has(sp.AccumBounds)
-        ):
-            groups.setdefault(argument, [0, 0, 0])[slot] += int(exponent)
-        else:
-            rest.append(factor)
-    return groups, rest
-
-
-def _written(argument: sp.Basic, absolute: int, signum: int, bare: int) -> sp.Basic:
-    """This group as the author wrote it."""
-    return sp.Abs(argument) ** absolute * sp.sign(argument) ** signum * argument**bare
-
-
-def _shortest_spelling(
-    argument: sp.Basic, absolute: int, signum: int, bare: int
-) -> sp.Basic:
-    """The shortest of the ways this group can be written.
-
-    Trading one absolute value for the argument leaves a sign behind, and two
-    signs are one, so the total power and the parity of the sign are all the
-    group is: every `k` of `ABS(u)^k * u^(total - k) * SIGN(u)^(parity - k)`
-    says it, with the last exponent taken to zero or one. The rule is therefore
-    no direction to write `ABS` or to write `SIGN` but a choice of whichever
-    `k` comes out shorter, and ties - the spelling the author wrote among them
-    - go to what was already there.
-    """
-    total = absolute + bare
-    parity = (absolute + signum) % 2
-    spellings = [_written(argument, absolute, signum, bare)] + [
-        sp.Abs(argument) ** count
-        * argument ** (total - count)
-        * sp.sign(argument) ** ((parity - count) % 2)
-        for count in sorted({0, 1, absolute, total})
-    ]
-    return min(spellings, key=sp.count_ops)
-
-
 def _denested(expression: sp.Basic) -> sp.Basic:
     """Every radical denested on its own.
 
@@ -5922,7 +2196,7 @@ def _flat_root(power: sp.Pow) -> sp.Basic:
     field offers four of them, one per branch, and only one is the value of the
     principal root the radicand was written with. So a candidate is kept only
     once raising it back is the radicand again and it is proved the radical itself,
-    as `_proved_zero` proves the difference zero.
+    as `proved_zero` proves the difference zero.
     """
     exponent = power.exp
     if exponent.p != 1 or not power.base.is_number or power.base.is_Rational:
@@ -5941,7 +2215,7 @@ def _flat_root(power: sp.Pow) -> sp.Basic:
             continue
         if sp.expand(sp.radsimp(candidate**exponent.q - power.base)) != 0:
             continue
-        if _proved_zero(candidate - power):
+        if proved_zero(candidate - power):
             return candidate
     return power
 
@@ -6052,7 +2326,7 @@ def _flat_value(constant: sp.Basic) -> sp.Basic:
     The same three steps as `_flat_root`: the minimal polynomial says what the
     value is a root of, factoring that over the field the surds generate offers
     a linear factor per branch, and only the branch proved to be this very number,
-    as `_proved_zero` proves their difference zero, is kept, since a shorter
+    as `proved_zero` proves their difference zero, is kept, since a shorter
     spelling that is a different number is the one mistake this can make.
     """
     field, degree = _radical_field(constant)
@@ -6067,7 +2341,7 @@ def _flat_value(constant: sp.Basic) -> sp.Basic:
         candidate = _linear_root(factor)
         if candidate is None or candidate.count_ops() >= constant.count_ops():
             continue
-        if _proved_zero(candidate - constant):
+        if proved_zero(candidate - constant):
             return candidate
     return constant
 
@@ -7382,7 +3656,7 @@ def _plain_angle(angle: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
 class _Rule(NamedTuple):
     """One rewrite of the kernel layer, with what it is called and why it is there.
 
-    `kept` is how an answer is taken: `_gated` keeps one that pays, `_forced` keeps
+    `kept` is how an answer is taken: `_gated` keeps one that pays, `forced` keeps
     any. `yields_to` names a mode setting the rule is the Auto behavior of: a spelling
     the user has asked away from is not one to impose, so `TAN(x)^2 + 1` is written
     for `1/COS(x)^2` only while Trigpower is Auto, Cosines asking for the cosine.
@@ -7402,11 +3676,11 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     what writes the sums the rules leave behind.
     """
     if expression.has(sp.MatrixExpr):
-        return _forced(expression, _distributed)
+        return forced(expression, _distributed)
     # Ahead of the definitions, which write the hyperbolic parts it leaves over
     # exponentials.
-    expression = _forced(expression, _complex_constants)
-    expression = _forced(expression, _symmetries)
+    expression = forced(expression, _complex_constants)
+    expression = forced(expression, _symmetries)
     expression = _by_definition(expression)
     expression = _applied(expression, _IDENTITIES, context)
     for setting, directions in _DIRECTED.items():
@@ -7488,18 +3762,18 @@ def _on_powers(rewrite: Rewrite) -> Rewrite:
 
 
 #: The identities, offered in every mode. Gated ones are economies, kept where
-#: `_pays` says the answer is simpler; forced ones are facts about the kernels they
+#: `pays` says the answer is simpler; forced ones are facts about the kernels they
 #: relate, where gating would keep the longer side for being no longer.
 _IDENTITIES = (
-    _Rule("arcs off the line", _arcs_off_the_line, _forced,
+    _Rule("arcs off the line", _arcs_off_the_line, forced,
           "ASIN(2) is pi/2 - #i*LN(SQRT(3) + 2): a complex value in rectangular form"),
-    _Rule("imaginary phases", _imaginary_phases, _forced,
+    _Rule("imaginary phases", _imaginary_phases, forced,
           "PHASE(#i*x) is pi*SIGN(x)/2 for a real x"),
-    _Rule("signs", _folded_signs, _forced,
+    _Rule("signs", folded_signs, forced,
           "ABS(u)*SIGN(u) is u and u/ABS(u) is SIGN(u), for a real u"),
-    _Rule("signs of reciprocals", _signs_of_reciprocals, _forced,
+    _Rule("signs of reciprocals", _signs_of_reciprocals, forced,
           "SIGN(1/u) is SIGN(u), and SIGN(1/ABS(u)) is 1 wherever it is defined"),
-    _Rule("conjugate pairs", _conjugate_pairs, _forced,
+    _Rule("conjugate pairs", _conjugate_pairs, forced,
           "CONJ(z)*z is ABS(z)^2"),
     _Rule("combinatorial", _combinatorial, _gated,
           "a ratio of factorials is a binomial or a polynomial when it is shorter"),
@@ -7508,13 +3782,13 @@ _IDENTITIES = (
     # no rule that spans two angles at once.
     _Rule("simpler arcs", _simpler_arcs, _gated,
           "ASIN(u/SQRT(u^2 + 1)) is ATAN(u): an arc about the shorter argument"),
-    _Rule("complementary arcs", _complementary_arcs, _forced,
+    _Rule("complementary arcs", _complementary_arcs, forced,
           "ASIN(u) + ACOS(u) is pi/2 and ATAN(u) + ATAN(1/u) is pi*SIGN(u)/2"),
-    _Rule("arctangent sums", _arc_tangent_sums, _forced,
+    _Rule("arctangent sums", _arc_tangent_sums, forced,
           "ATAN(2) + ATAN(3) is 3*pi/4: arctangents of numbers added up"),
-    _Rule("arc multiples", _arc_multiples, _forced,
+    _Rule("arc multiples", _arc_multiples, forced,
           "SIN(2*ACOS(x)) is 2*x*SQRT(1 - x^2): a call of a multiple of an arc"),
-    _Rule("logarithmic powers", _logarithmic_powers, _forced,
+    _Rule("logarithmic powers", _logarithmic_powers, forced,
           "3^LN(2) is 2^LN(3): a power to a logarithm written over the smaller base"),
     _Rule("half angles", _half_angles, _gated,
           "calls of fractional multiples of one angle cancel written about it"),
@@ -7540,13 +3814,13 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
     # lifts the domain proof off the power rules, so `SQRT(x^2)` is `x`.
     "branch": {
         Branch.REAL: (
-            _Rule("real roots", _real_roots, _forced,
+            _Rule("real roots", _real_roots, forced,
                   "an odd root of a negative number is its real root"),
         ),
         Branch.ANY: (
-            _Rule("any powdenest", lambda e: sp.powdenest(e, force=True), _forced,
+            _Rule("any powdenest", lambda e: sp.powdenest(e, force=True), forced,
                   "a power of a power is one power, whatever the base"),
-            _Rule("any powsimp", lambda e: sp.powsimp(e, force=True), _forced,
+            _Rule("any powsimp", lambda e: sp.powsimp(e, force=True), forced,
                   "powers over one exponent are one power, whatever the bases"),
         ),
     },
@@ -7558,13 +3832,13 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
                   "SIN(3*x)/SIN(x) is 2*COS(2*x) + 1: multiples of one angle reduced"),
         ),
         Direction.COLLECT: (
-            _Rule("phase angles", _phase_angles, _forced,
+            _Rule("phase angles", _phase_angles, forced,
                   "a*SIN(z) + b*COS(z) is one sine, which fu's TR10i has only for a = b"),
-            _Rule("TR8", TR8, _forced, "products of calls written as sums"),
-            _Rule("TR7", TR7, _forced, "powers of cosines reduced to multiple angles"),
+            _Rule("TR8", TR8, forced, "products of calls written as sums"),
+            _Rule("TR7", TR7, forced, "powers of cosines reduced to multiple angles"),
         ),
         Direction.EXPAND: (
-            _Rule("expand_trig", sp.expand_trig, _forced,
+            _Rule("expand_trig", sp.expand_trig, forced,
                   "calls of sums and multiples written over single angles"),
             _Rule("special angles", lambda e: e.rewrite(sp.sqrt), _gated,
                   "the algebraic values of the special angles that come with it"),
@@ -7572,10 +3846,10 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
     },
     "trigpower": {
         TrigPower.SINES: (
-            _Rule("TR6", TR6, _forced, "even powers of cosines written over sines"),
+            _Rule("TR6", TR6, forced, "even powers of cosines written over sines"),
         ),
         TrigPower.COSINES: (
-            _Rule("TR5", TR5, _forced, "even powers of sines written over cosines"),
+            _Rule("TR5", TR5, forced, "even powers of sines written over cosines"),
         ),
     },
     # Auto is the mixed direction 6.2 describes: the sum rule rightward here, so
@@ -7589,13 +3863,13 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
                   "logarithms added into one, where it is shorter"),
         ),
         Direction.COLLECT: (
-            _Rule("logcombine", _nonnegatively(sp.logcombine), _forced,
+            _Rule("logcombine", _nonnegatively(sp.logcombine), forced,
                   "logarithms added into one"),
         ),
         Direction.EXPAND: (
-            _Rule("expand_log", _nonnegatively(sp.expand_log), _forced,
+            _Rule("expand_log", _nonnegatively(sp.expand_log), forced,
                   "a logarithm of a product taken apart"),
-            _Rule("expanded powers", _expanded_powers, _forced,
+            _Rule("expanded powers", _expanded_powers, forced,
                   "LN(x^2) is 2*LN(ABS(x)): a logarithm of a power taken apart"),
         ),
     },
@@ -7609,12 +3883,12 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
                   "a power of a product split, where it is shorter"),
         ),
         Direction.COLLECT: (
-            _Rule("powsimp", _on_powers(sp.powsimp), _forced, "powers collected"),
+            _Rule("powsimp", _on_powers(sp.powsimp), forced, "powers collected"),
         ),
         Direction.EXPAND: (
-            _Rule("expand_power_exp", _on_powers(sp.expand_power_exp), _forced,
+            _Rule("expand_power_exp", _on_powers(sp.expand_power_exp), forced,
                   "a power of a sum split"),
-            _Rule("expand_power_base", _on_powers(sp.expand_power_base), _forced,
+            _Rule("expand_power_base", _on_powers(sp.expand_power_base), forced,
                   "a power of a product split"),
         ),
     },
@@ -7626,13 +3900,13 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
 _SPELLINGS = (
     # After the branch, which is what settles how many values a root has: with Real
     # asked for, `(-8)^(1/3)` is `-2` and there is no rectangle to write.
-    _Rule("rectangular", _rectangular, _forced,
+    _Rule("rectangular", _rectangular, forced,
           "a numeric complex power is real part plus imaginary part"),
-    _Rule("tangent squares", _tangent_squares, _forced,
+    _Rule("tangent squares", _tangent_squares, forced,
           "1/COS(u)^(2*k) is (TAN(u)^2 + 1)^k", yields_to="trigpower"),
-    _Rule("extracted powers", _extracted_powers, _forced,
+    _Rule("extracted powers", _extracted_powers, forced,
           "LN(b^k) is k*LN(b) where 6.2 allows it", yields_to="logarithm"),
-    _Rule("collected powers", _collected_powers, _forced,
+    _Rule("collected powers", _collected_powers, forced,
           "powers of one base are one power: n*x^n/x is n*x^(n - 1)",
           yields_to="exponential"),
 )

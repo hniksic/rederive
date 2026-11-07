@@ -28,9 +28,9 @@ The right way, once the sympy depended on carries upstream commit
 ratint", merged in pull request 28189 on 2025-07-09, after the 1.14.0 release and
 in no release at the time of writing): that commit rewrites `log_to_real` to do
 what `_real_form` below does, and `ratint` then answers every case here the same
-way. This module then goes, `_of_a_rational_function` in `pipeline` goes with it,
-and sympy's own `doit` is what a rational integrand gets, as any other integrand
-does. One difference is worth keeping or offering upstream first: `_real_form`
+way. This module then goes, `_of_a_rational_function` in `integration.indefinite`
+goes with it, and sympy's own `doit` is what a rational integrand gets, as any other
+integrand does. One difference is worth keeping or offering upstream first: `_real_form`
 gives up on a root that has no conjugate among the others and is not known to be
 real, where the upstream rewrite takes it for real and writes `#i` into the answer
 to `1/(x^4 + x + 1)`. Dropping this module without that check prints that `#i`.
