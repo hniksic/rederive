@@ -1232,6 +1232,25 @@ CALCULUS = [
     ("INT(LN(x)/(1 + x^2), x, 0, inf)", "0"),
     # The imaginary error function writes this without an imaginary unit.
     ("INT(#e^(x^2), x, 0, 1)", "SQRT(pi)*ERFI(1)/2"),
+    # A real integrand over a real interval: sympy's value carries an imaginary part
+    # that is not there, and is put right where it is a constant, left standing where
+    # it is not.
+    ("INT(LN(x)/(x + 1), x, 0, 1)", "-pi^2/12"),
+    ("INT(LN(x)/(x + 1), x, 1, 2)", "INT(LN(x)/(x + 1), x, 1, 2)"),
+    # Not real left of zero, so the imaginary part is the integral's own.
+    ("INT(LN(x), x, -1, 1)", "-2 + #i*pi"),
+    # Sympy has no antiderivative for these, and the difference of Simplify's own at
+    # the ends is borne out by quadrature at values of the parameter of either sign.
+    (
+        "INT(SIN(x)/SQRT(1 + q^2*COS(x)^2), x, 0, pi)",
+        "(LN(SQRT(q^2 + 1) + q) - LN(SQRT(q^2 + 1) - q))/q",
+    ),
+    (
+        "INT(COS(x)/SQRT(1 - q^2*SIN(x)^2), x, -1, 2)",
+        "(ASIN(SIN(1)*q) + ASIN(SIN(2)*q))/q",
+    ),
+    # An integrand that turns its sign when reflected about the middle of the interval.
+    ("INT(LN(SIN(x)) - LN(COS(x)), x, 0, pi/2)", "0"),
     ("SUM(1/k^2, k, 1, 5)", "5269/3600"),
     ("SUM(k^2, k, 1, m)", "m*(m + 1)*(2*m + 1)/6"),
     ("PRODUCT(n^2, n, 1, m)", "m!^2"),
@@ -1325,6 +1344,8 @@ PARAMETRIC_INTEGRALS = [
     ("INT(1/(x - a)^2, x, 0, 2)", "IF(0 <= a <= 2, inf, -2/(a*(2 - a)))"),
     ("INT(1/(x + a)^2, x, 0, inf)", "IF(a <= 0, inf, 1/a)"),
     ("INT(1/(x^2 - a^2), x, 0, inf)", "IF(a = 0, inf, ?)"),
+    # Poles real only where `SIN(a)` is zero, where the answer is not defined either.
+    ("INT(1/(x^2 + 2*x*COS(a) + 1), x, -inf, inf)", "pi/ABS(SIN(a))"),
     (
         "INT(1/(x - a), x, 0, 1)",
         "IF(a = 0, inf, IF(a = 1, -inf, IF(0 < a < 1, ?, LN(1 - a) - LN(-a))))",
@@ -1334,6 +1355,11 @@ PARAMETRIC_INTEGRALS = [
         "INT(x/(x - a), x, 0, 1)",
         "IF(a = 0, 1, IF(a = 1, -inf, IF(0 < a < 1, ?, -a*LN(-a) + a*LN(1 - a) + 1)))",
     ),
+    # Diverging at the singular end to the same infinity whichever side of it the
+    # other end is on, or to opposite ones, where the integral stands.
+    ("INT(COS(a*x)/x, x, 0, alpha)", "inf"),
+    ("INT(1/x^3, x, alpha, 0)", "-inf"),
+    ("INT(1/x^2, x, 0, alpha)", "INT(1/x^2, x, 0, alpha)"),
     # A power of zero, which is 0 or infinite by its exponent's sign.
     ("INT(x^n, x, 0, 1)", "IF(n > -1, 1/(n + 1), inf)"),
     ("INT(1/x^n, x, 0, 1)", "IF(n < 1, 1/(1 - n), inf)"),
@@ -1519,6 +1545,115 @@ def test_a_parametric_antiderivative_is_the_generic_case(text, expected):
     generic case is the antiderivative printed, continuous where a constant makes
     it so."""
     assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "INT(1/((SIN(a*x) + 1)*SIN(a*x)), x)",
+            "(LN(TAN(a*x/2)) + COS(a*x)/(SIN(a*x) + 1))/a",
+        ),
+        # No case for `a = 0`: the pole at `a^2` is only in the constant.
+        (
+            "INT(x/(SIN(a*x) + 1), x)",
+            "-(LN(1/(COS(a*x) + 1)) - 2*LN(TAN(a*x/2) + 1) + a*x/TAN(a*x/2 + pi/4)"
+            " + LN(2))/a^2",
+        ),
+    ],
+)
+def test_a_rational_function_of_a_parametric_sine_is_integrated(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Odd in the sine: t = COS(x).
+        ("INT(SIN(x)/(2 + COS(x))^2, x)", "1/(COS(x) + 2)"),
+        # Odd in the cosine: t = SIN(u), and the logarithms real where |SIN(u)| < 1.
+        (
+            "INT(1/(COS(a*x)*(1 + SIN(a*x))), x)",
+            "-((SIN(a*x) + 1)*LN(1 - SIN(a*x)) - (SIN(a*x) + 1)*LN(SIN(a*x) + 1) - "
+            "2*SIN(a*x))/(4*a*(SIN(a*x) + 1))",
+        ),
+        # Even in both: t = TAN(u), a quadratic with no cases on the parameters.
+        (
+            "INT(1/(b^2 + c^2*SIN(a*x)^2), x)",
+            "(ATAN(SQRT(b^2 + c^2)*TAN(a*x)/ABS(b)) + pi*FLOOR(a*x/pi + "
+            "1/2))/(a*SQRT(b^2 + c^2)*ABS(b))",
+        ),
+        # The half angle, with the logarithms of its forms in the whole angle.
+        (
+            "INT(1/(3 + 5*COS(x)), x)",
+            "LN(3*COS(x) + 4*SIN(x) + 5)/8 - LN(3*COS(x) - 4*SIN(x) + 5)/8",
+        ),
+        ("INT(TAN(x)/(1 + TAN(x)), x)", "x/2 - LN(COS(x) + SIN(x))/2"),
+        # A logarithm negative at zero is written over its negation.
+        ("INT(TAN(x)/(TAN(x) - 1), x)", "LN(COS(x) - SIN(x))/2 + x/2"),
+        ("INT(1/(1 + COS(a*x) - SIN(a*x)), x)", "-LN(1 - TAN(a*x/2))/a"),
+        # Over a linear form in both: one logarithm, real where the integrand is finite.
+        (
+            "INT(3/(2*SIN(x) - 5*COS(x)), x)",
+            "-3*SQRT(29)*LN((2*COS(x) + 5*SIN(x) + SQRT(29))/(5*COS(x) - 2*SIN(x)))/29",
+        ),
+        # Two logarithms of parametric forms as the one of their quotient.
+        (
+            "INT(1/(b^2*COS(a*x)^2 - c^2*SIN(a*x)^2), x)",
+            "LN((b*COS(a*x) + c*SIN(a*x))/(b*COS(a*x) - c*SIN(a*x)))/(2*a*b*c)",
+        ),
+        # Multiples of one angle are written in its functions.
+        (
+            "INT(1/(SIN(2*x) + COS(x)), x)",
+            "-LN(1 - SIN(x))/6 - LN(SIN(x) + 1)/2 + 2*LN(2*SIN(x) + 1)/3",
+        ),
+        # A rational part in the whole angle, defined where TAN(a*x/2) is not.
+        (
+            "INT(1/(b + c*SIN(a*x))^2, x)",
+            "(2*b^2*(c*SIN(a*x) + b)*ATAN((b*TAN(a*x/2) + c)/SQRT(b^2 - c^2)) + "
+            "b*c*SQRT(b^2 - c^2)*COS(a*x) + (c*SIN(a*x) + b)*(2*pi*b^2*SIGN(b*(b^2 - "
+            "c^2))*FLOOR(a*x/(2*pi) + 1/2) - 2*b^2*ATAN(c/SQRT(b^2 - c^2)) - "
+            "c*SQRT(b^2 - c^2)))/(a*b*(b^2 - c^2)^(3/2)*(c*SIN(a*x) + b))",
+        ),
+    ],
+)
+def test_a_rational_function_of_a_sine_and_cosine_by_the_tables_substitution(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, values",
+    [
+        ("INT(1/(2 + SIN(x)), x)", {}),
+        ("INT(1/(b + c*COS(x)), x)", {"b": 2, "c": 1}),
+        ("INT(1/(b + c*COS(x)), x)", {"b": -2, "c": 1}),
+        ("INT(1/(b + c*SIN(x))^2, x)", {"b": -3, "c": 2}),
+        ("INT(1/(b^2 - c^2*COS(x)^2), x)", {"b": 2, "c": 1}),
+        ("INT(1/(SIN(x)^4 + COS(x)^4), x)", {}),
+    ],
+)
+def test_a_trigonometric_antiderivative_is_continuous_where_the_tangent_jumps(
+    text, values
+):
+    # TAN(x/2) jumps at pi and TAN(x) at pi/2, where these integrands are regular.
+    answer = to_sympy(parse_expression(simp(text), ParseState()).node)
+    symbols = {symbol.name: symbol for symbol in answer.free_symbols}
+    answer = answer.subs({symbols[name]: value for name, value in values.items()})
+    x = symbols["x"]
+    for point in (sp.pi / 2, sp.pi, 3 * sp.pi):
+        below = complex(answer.subs(x, point - sp.Rational(1, 10**6)).evalf(30))
+        above = complex(answer.subs(x, point + sp.Rational(1, 10**6)).evalf(30))
+        assert abs(above - below) < 1e-4
+
+
+def test_partial_fractions_over_a_sine_leave_only_the_nonelementary_part_standing():
+    # The standing integral is a term of its own, not taken under the denominator.
+    assert simp("INT(x/((SIN(a*x) + 1)*SIN(a*x)), x)") == (
+        "INT(x/SIN(a*x), x) + (LN(1/(COS(a*x) + 1)) - 2*LN(TAN(a*x/2) + 1)"
+        " + a*x/TAN(a*x/2 + pi/4) + LN(2))/a^2"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2010,6 +2145,38 @@ def test_an_antiderivative_wrong_for_negative_arguments_is_done_again(text, expe
 @pytest.mark.parametrize(
     "text, expected",
     [
+        ("INT(SIN(a*x)^2/x, x)", "LN(2*a*x)/2 - CI(2*a*x)/2"),
+        ("INT((COS(a*x) - COS(b*x))/x, x)", "-LN(a*x) + LN(b*x) + CI(a*x) - CI(b*x)"),
+        ("INT((#e^(a*x) - 1)/x, x)", "EI(a*x) - LN(a^2*x^2)/2"),
+    ],
+)
+def test_an_antiderivative_is_continuous_where_the_integrand_is_regular(text, expected):
+    """The logarithm beside a `CI` takes its imaginary part on the other side of zero
+    from it where `a` is negative, and `LN(x)/2 - CI(2*a*x)/2` jumps there; over the
+    argument of the `CI` the two take it on the same side."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "INT(1/(b*#e^(a*x) + c*#e^(-a*x)), x)",
+            "(ATAN(SQRT(b)*#e^(a*x)/SQRT(c)) - ATAN(SQRT(b)/SQRT(c)))/"
+            "(a*SQRT(b)*SQRT(c))",
+        ),
+        ("INT(COTH(a*x)^2, x)", "x - 2/(a*#e^(2*a*x) - a)"),
+    ],
+)
+def test_a_rational_function_of_exponentials_is_integrated_over_one(text, expected):
+    """Not as a sum over the roots of a quadratic with parametric coefficients, and the
+    same way whatever the order of a set of exponentials in the process."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
         # The integrand itself is singular at `a = 0`.
         ("INT(1/(a*x), x)", "LN(x)/a"),
         # A branch point rather than a pole; nothing is a Laurent series in it.
@@ -2208,6 +2375,47 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
     assert simp("INT(1/SQRT(1 - x^4), x)") == "INT(1/SQRT(1 - x^4), x)"
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(1/(x*(a*x + b)^n), x)", "INT((a*x + b)^(-n)/x, x)"),
+        ("INT(1/(x^2*(a*x + b)^(n/2)), x)", "INT((a*x + b)^(-n/2)/x^2, x)"),
+        ("INT(1/(a*x^2 + b*x + c)^n, x)", "INT((a*x^2 + b*x + c)^(-n), x)"),
+        (
+            "INT(1/(x^m*(a*x^2 + b*x + c)^n), x)",
+            "INT(x^(-m)*(a*x^2 + b*x + c)^(-n), x)",
+        ),
+    ],
+)
+def test_a_symbolic_power_with_no_elementary_antiderivative_stands(text, expected):
+    """These are reduction formulas in the tables, with another integral on the right,
+    and no elementary antiderivative for a symbolic exponent. Sympy answers the first
+    two in a Lerch function the notation has no name for, and searches on the last two
+    for over a minute without finding anything. Each stands within a few seconds."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(LN(1 + x)/(x^2 + 1), x, 0, 1)", "INT(LN(x + 1)/(x^2 + 1), x, 0, 1)"),
+        ("INT(LN(1 + x)/(x^2 + 1), x, 1, 2)", "INT(LN(x + 1)/(x^2 + 1), x, 1, 2)"),
+        ("INT(LN(x)*LN(1 - x), x, 0, 1)", "INT(LN(x)*LN(1 - x), x, 0, 1)"),
+        # The pieces of a sum need not converge where the sum does.
+        ("INT((x^t - x^s)/LN(x), x, 0, 1)", "-INT((x^s - x^t)/LN(x), x, 0, 1)"),
+        # What the methods do find is still found.
+        ("INT(LN(1 + x)/x, x, 0, 1)", "pi^2/12"),
+        ("INT(LN(x)/(x + 1), x, 0, 1)", "-pi^2/12"),
+        ("INT(LN(x)/(x^2 + 1), x, 0, inf)", "0"),
+    ],
+)
+def test_a_definite_integral_with_no_antiderivative_in_reach_stands(text, expected):
+    """Sympy values these by an antiderivative over a positive variable, and over one
+    its manual rules search for minutes for an antiderivative there is none of. Each
+    stands within a few seconds, whole."""
+    assert simp(text) == expected
+
+
 INFINITE_PRODUCTS = [
     # The manual's own example, and Wallis'.
     ("PRODUCT(1 - 1/k^2, k, 2, inf)", "1/2"),
@@ -2322,6 +2530,140 @@ def test_a_sum_over_the_roots_of_a_polynomial_is_an_expression_and_not_a_string(
     assert simp(answer.text) == answer.text
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # One arctangent over `4*a - 1`, whatever its sign, and none of the roots.
+        ("INT(1/(x^2 + x + a), x)", "2*ATAN((2*x + 1)/SQRT(4*a - 1))/SQRT(4*a - 1)"),
+        (
+            "INT(1/((x^2 + 1)*(x^2 + x + a)), x)",
+            "-(2*a - 3)*ATAN((2*x + 1)/SQRT(4*a - 1))/(SQRT(4*a - 1)*(a^2 - 2*a + 2)) "
+            "+ (a - 1)*ATAN(x)/(a^2 - 2*a + 2) + (LN(x^2 + x + a) - LN(x^2 + 1))/(2*a^2 "
+            "- 4*a + 4)",
+        ),
+        # The two logarithms with the same coefficient are one.
+        ("INT(x^2/(a^3 + x^3), x)", "LN(x^3 + a^3)/3"),
+        (
+            "INT(1/(x^2 + x + a), x, 0, 1)",
+            "IF(a = 0, inf, IF(a = -2, -inf, IF(-2 < a < 0, ?, (2*ATAN(3/SQRT(4*a - 1)) "
+            "- 2*ATAN(1/SQRT(4*a - 1)))/SQRT(4*a - 1))))",
+        ),
+    ],
+)
+def test_a_quadratic_with_parametric_coefficients_is_integrated_by_its_square(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Over the root of a linear function, the root itself is the variable.
+        ("INT(1/((x + 2)*SQRT(x + 1)), x)", "2*ATAN(SQRT(x + 1))"),
+        # Over the root of a quadratic, a multiple of the root and of `INT(1/root)`.
+        ("INT(SQRT(x^2 + 1)/x^2, x)", "LN(SQRT(x^2 + 1) + x) - SQRT(x^2 + 1)/x"),
+        (
+            "INT(x/SQRT(x^2 + x + 1), x)",
+            "SQRT(x^2 + x + 1) - LN(2*SQRT(x^2 + x + 1) + 2*x + 1)/2",
+        ),
+        # An arcsine where the leading coefficient is negative, and the arctangent it
+        # equals where the arcsine would need an absolute value.
+        ("INT(1/SQRT(1 + x - x^2), x)", "-ASIN(SQRT(5)*(1 - 2*x)/5)"),
+        ("INT(1/SQRT(c - a^2*x^2), x)", "ATAN(a*x/SQRT(c - a^2*x^2))/a"),
+        (
+            "INT(SQRT(1 - x^2)^3/x^4, x)",
+            "ASIN(x) + (2*x + 1)*(2*x - 1)*SQRT(1 - x^2)/(3*x^3)",
+        ),
+        # Over a linear factor, a logarithm, or an arctangent where the quadratic is
+        # negative at the factor's root.
+        (
+            "INT(1/((x - 1)*SQRT(x^2 + 1)), x)",
+            "SQRT(2)*LN((SQRT(2)*SQRT(x^2 + 1) - x - 1)/(x - 1))/2",
+        ),
+        (
+            "INT(1/((x + 2)*SQRT(1 - x^2)), x)",
+            "SQRT(3)*ATAN(SQRT(3)*(2*x + 1)/(3*SQRT(1 - x^2)))/3",
+        ),
+        ("INT(1/(x*SQRT(x^2 - 1)), x)", "ATAN(SQRT(x^2 - 1))"),
+        # Over a quadratic factor, the root of a quadratic with no linear term is
+        # substituted.
+        (
+            "INT(1/((x^2 + 1)*SQRT(x^2 + 4)), x)",
+            "SQRT(3)*ATAN(SQRT(3)*x/SQRT(x^2 + 4))/3",
+        ),
+        (
+            "INT(x/((x^2 + 2)*SQRT(x^2 - 1)), x)",
+            "SQRT(3)*ATAN(SQRT(3)*SQRT(x^2 - 1)/3)/3",
+        ),
+    ],
+)
+def test_a_root_of_a_linear_or_quadratic_function_is_integrated_by_the_tables(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # The root of a quotient of linear polynomials, and two roots of linear
+        # polynomials, are substituted, the root of the quotient staying one.
+        (
+            "INT(SQRT((x + 1)/(x - 1)), x)",
+            "-LN(SQRT((x + 1)/(x - 1)) - 1) + LN(SQRT((x + 1)/(x - 1)) + 1) + "
+            "x*SQRT((x + 1)/(x - 1)) - SQRT((x + 1)/(x - 1))",
+        ),
+        (
+            "INT(1/(SQRT(x + 1)*SQRT(x - 1)), x)",
+            "LN(SQRT(x - 1)/SQRT(x + 1) + 1) - LN(SQRT(x - 1)/SQRT(x + 1) - 1)",
+        ),
+        ("SQRT((x + 1)/(x - 1)) + x", "SQRT((x + 1)/(x - 1)) + x"),
+    ],
+)
+def test_roots_of_linear_quotients_are_integrated_by_substitution(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(x^(n - 1)/(1 + x^(2*n)), x)", "ATAN(x^n)/n"),
+        ("INT(x^(2*n - 1)*#e^(x^n), x)", "(x^n - 1)*#e^(x^n)/n"),
+        (
+            "INT(TANH(a*x)^n/COSH(a*x)^2, x)",
+            "(((#e^(a*x) - #e^(-a*x))/(#e^(a*x) + #e^(-a*x)))^(n + 1) - 1)/(a*(n + 1))",
+        ),
+    ],
+)
+def test_a_symbolic_power_is_integrated_where_its_derivative_divides(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(ASIN(2*x + 1)/x^2, x)", "(2*SQRT(-x^2 - x) - ASIN(2*x + 1))/x"),
+        (
+            "INT(LN(x + SQRT(x^2 + 1))/x^2, x)",
+            "LN((SQRT(x^2 + 1) - 1)/x) - LN(SQRT(x^2 + 1) + x)/x",
+        ),
+        (
+            "INT(ACOSH(x), x)",
+            "2*x*LN(SQRT(x - 1) + SQRT(x + 1)) - SQRT(x + 1)*SQRT(x - 1) - LN(2)*x",
+        ),
+        # An arc of a multiple of the variable over the variable has no elementary
+        # antiderivative, and the integral stands at once.
+        ("INT(ATAN(x/a)/x, x)", "INT(ATAN(x/a)/x, x)"),
+        ("INT(3*ACOS(2*x)/x, x)", "INT(3*ACOS(2*x)/x, x)"),
+    ],
+)
+def test_an_arc_or_logarithm_times_a_rational_function_is_integrated_by_parts(
+    text, expected
+):
+    assert simp(text) == expected
+
+
 def test_a_single_root_of_a_polynomial_approximates_to_that_root():
     """`ROOT_OF` is the same idea for one indexed root, and it is as live.
 
@@ -2363,6 +2705,8 @@ def test_an_integral_answered_by_a_special_function_reads_back_as_that_function(
         ("DIF(GAMMA(x), x)", "(x - 1)!*DIGAMMA(x)"),
         ("DIF(LAMBERTW(x), x)", "LAMBERTW(x)/(x*(LAMBERTW(x) + 1))"),
         ("INT(SIN(x)/x, x)", "SI(x)"),
+        # The product is written as the sum it is, the sine of the double angle.
+        ("INT(SIN(a*x)*COS(a*x)/x, x)", "SI(2*a*x)/2"),
         ("INT(EXP(x)/x, x)", "EI(x)"),
         # Sympy's answer is the polylogarithm a full turn round the origin away, and
         # the principal one is an antiderivative too.

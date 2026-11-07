@@ -384,6 +384,12 @@ def _rational_in(
     is what the terms free of the generator are added to. Raises where long division
     finds no ratio of polynomials in the generator at all, as in `SIN(x)/(x + 1)`.
     """
+    # A root of a quotient stands behind a symbol of its own while the algebra is
+    # done: its base is written on its own, and the root of `(x + 1)/(x - 1)` brought
+    # over one denominator and multiplied out would be the root of `2/(x - 1) + 1`.
+    hidden: dict[sp.Basic, sp.Basic] = {}
+    frozen = _roots_of_quotients_hidden(frozen, hidden)
+    shown = {symbol: root for root, symbol in hidden.items()}
     numerator, denominator = sp.fraction(sp.together(frozen))
     numerator = _expanded(numerator)
     cancelled = _cancelled([numerator], list(sp.Mul.make_args(denominator)))
@@ -397,12 +403,16 @@ def _rational_in(
         # divides into every term: `(x + y*z)/y` is `x/y + z` and only then is it a
         # polynomial in `x`.
         quotient, remainder = _expanded(numerator / denominator), sp.S.Zero
-    terms, constant = _collected(quotient, generator, thaw)
+    terms, constant = _collected(quotient.xreplace(shown), generator, thaw)
     if remainder != 0:
-        rest, rest_constant = _collected(_expanded(remainder), generator, thaw)
+        rest, rest_constant = _collected(
+            _expanded(remainder).xreplace(shown), generator, thaw
+        )
         # Cancelled once more in the open, where the frozen gcd saw only the generator.
         tops = [sp.Add(*rest, thaw(rest_constant))]
-        bottoms = [thaw(factor) for factor in sp.Mul.make_args(denominator)]
+        bottoms = [
+            thaw(factor.xreplace(shown)) for factor in sp.Mul.make_args(denominator)
+        ]
         cancelled = _cancelled(tops, bottoms)
         if cancelled is not None:
             tops, bottoms = ([thaw(factor) for factor in side] for side in cancelled)
@@ -914,6 +924,21 @@ def _expanded(expression: sp.Basic) -> sp.Basic:
     not `x^n*y^n`.
     """
     return sp.expand(expression, power_exp=False, power_base=False)
+
+
+def _roots_of_quotients_hidden(
+    expression: sp.Basic, hidden: dict[sp.Basic, sp.Basic]
+) -> sp.Basic:
+    """`expression` with each power whose exponent is not an integer, over a base with
+    a variable in its denominator, stood in for by a symbol, recorded in `hidden`."""
+    if not expression.free_symbols or expression.is_Atom:
+        return expression
+    if isinstance(expression, sp.Pow) and not expression.exp.is_Integer:
+        if sp.denom(sp.together(expression.base)).free_symbols:
+            return hidden.setdefault(expression, sp.Dummy())
+    return expression.func(
+        *(_roots_of_quotients_hidden(argument, hidden) for argument in expression.args)
+    )
 
 
 #: How many terms an expansion may come to before the normal form declines to build
