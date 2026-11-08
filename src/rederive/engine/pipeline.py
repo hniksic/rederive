@@ -228,7 +228,7 @@ def simplified(
     context = context or Context()
     environment = Environment(
         context,
-        decide=lambda test: _decide(test, context),
+        decide=lambda test: _decide_simplified(test, context),
         work_out=lambda head: _evaluate(head, context),
         command=lambda name, values, divisors: _commanded(
             name, values, divisors, context
@@ -740,6 +740,30 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
         if candidate is sp.false:
             return False
     return decided(test, context)
+
+
+def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
+    """Whether the test of an `IF` holds, by everything Simplify would make of it.
+
+    What `_decide` settles is asked first, being quicker. A test it leaves open is
+    simplified whole, as the same test standing on a line of its own would be, and
+    decides where that comes out `true` or `false`: `x < 1 AND x > 3` is a range
+    that is empty, and `(x^2 + x^2*y^2)/(x^2*y) = (1 + y^2)/y` an equation whose
+    sides cancel to one value. ODE1.MTH's `HOMOGENEOUS` asks whether a derivative
+    is zero, and the derivative is zero only once it is simplified.
+    """
+    verdict = _decide(test, context)
+    if verdict is not None:
+        return verdict
+    try:
+        simplified = _transform(as_condition(test), context, True)
+    except Exception:
+        return None
+    if simplified is sp.true:
+        return True
+    if simplified is sp.false:
+        return False
+    return None
 
 
 def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:

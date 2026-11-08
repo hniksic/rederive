@@ -293,6 +293,11 @@ CONDITIONALS = [
     ("IF(x > 0, 1, -1, 0)", "0", None),
     # Undecidable, with none: the whole expression comes back.
     ("IF(x > 0, 1, -1)", "IF(x > 0, 1, -1)", None),
+    # A test is decided as Simplify would simplify it: an empty range is false,
+    # and sides that cancel to one value are equal.
+    ("IF(x < 1 AND x > 3, a, b)", "b", None),
+    ("IF((x^2 + x^2*y^2)/(x^2*y) = (1 + y^2)/y, 1, 2, 3)", "1", None),
+    ("IF(DIF((x + x*y)/x, x), 1, 2, 3)", "1", None),
 ]
 
 

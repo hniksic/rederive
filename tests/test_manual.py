@@ -2026,6 +2026,15 @@ async def test_the_first_order_equation_the_manual_solves(loaded):
     assert (await session.simplify("0^2*1 + 1 - 1 = 0")).text == "0 = 0"
 
 
+async def test_a_homogeneous_equation_no_integrating_factor_solves(loaded):
+    # y' = (x^2 + x*y + y^2)/x^2 with y(1) = 0: no integrating factor of one
+    # variable exists, so DSOLVE1 reaches HOMOGENEOUS, whose test is a derivative
+    # that is zero only once simplified. With v = y/x it is x*v' = 1 + v^2.
+    session = loaded("ODE1.MTH")
+    answered = await session.simplify("DSOLVE1(x^2 + x*y + y^2, -x^2, x, y, 1, 0)")
+    assert answered.text == "ATAN(y/x) = LN(x)"
+
+
 async def test_the_clairaut_equation_the_manual_solves(loaded):
     # 9.6 p.251: a general solution in c, and an equation to find v from.
     session = loaded("ODE1.MTH")
