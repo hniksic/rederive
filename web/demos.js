@@ -38,6 +38,7 @@
 
 import { said } from './files.js';
 import { settle } from './keys.js';
+import { dropdown } from './menu.js';
 
 // Python says things about a demonstration too - which command runs it again,
 // why one was refused - and it says them through this module, that being the
@@ -66,37 +67,24 @@ const LARGEST_IMAGE = 4 * 1024 * 1024;
 let terminal = null;
 let handlers = null;
 let menu = null;
-let button = null;
+let dropped = null;
 let warmed = false;
 
 // Called as the page builds itself, before Python knows any of this exists.
 // What the button opens does not exist yet either: the menu is built when the
-// list for it arrives.
+// list for it arrives, and until then the button says so rather than opening
+// an empty one.
 export function wire(term) {
   terminal = term;
-  button = document.getElementById('demo');
   menu = document.getElementById('gallery');
-  button.addEventListener('click', (event) => {
-    event.stopPropagation();
+  dropped = dropdown(term, document.getElementById('demo'), menu, () => {
     if (handlers === null) {
       said('Rederive is still starting; the demonstrations arrive with it');
-      return;
+      return false;
     }
-    if (menu.hidden) warm();
-    show(menu.hidden);
+    warm();
+    return true;
   });
-  // A menu closes on anything that is not a choice: the next click anywhere, or
-  // Esc. The terminal is behind all of this and gets the keystroke either way,
-  // which is why Esc is not swallowed.
-  //
-  // Heard on the way down rather than on the way up, because the keyboard is
-  // the terminal's while the menu stands open and xterm stops a key it has
-  // handled from going any further. A listener on the bubble would never hear
-  // the Esc that closes this.
-  document.addEventListener('click', () => show(false));
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') show(false);
-  }, true);
 }
 
 // Python's side: the demonstrations on offer, where the whole diskette is,
@@ -119,11 +107,11 @@ function fill(where, demos) {
     }
     const item = document.createElement('button');
     item.type = 'button';
-    item.className = 'gallery-item';
+    item.className = 'menu-item';
     item.textContent = demo.title;
     item.title = `${demo.file}, from the original Derive`;
     item.addEventListener('click', () => {
-      show(false);
+      dropped.show(false);
       chose(demo);
     });
     where.appendChild(item);
@@ -145,17 +133,6 @@ function warm() {
     link.href = origin;
     document.head.appendChild(link);
   }
-}
-
-// A menu that is already where it is asked to be is left alone, which is what
-// makes the two listeners in `wire` safe: they hear every click and every
-// Escape in the page, and a closed menu must not take the keyboard back from a
-// plot pane somebody is working in.
-function show(open) {
-  if (menu === null || open === !menu.hidden) return;
-  menu.hidden = !open;
-  button.setAttribute('aria-expanded', String(open));
-  if (!open && terminal !== null) settle(terminal);
 }
 
 // A demonstration was asked for: fetch it if it is not here already, and hand

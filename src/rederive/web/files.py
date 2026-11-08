@@ -18,7 +18,9 @@ is a command:
 The settings are here too, for want of anywhere better: a tab has no shell to
 be started from and no home directory to keep a state file in, so it writes one
 into the store every time it is hidden and reads it back before the screen is
-built. That is what makes the web build remember how it was left.
+built. That is what makes the web build remember how it was left - and since it
+does so without being asked, the page's menu carries `reset`, which puts every
+setting back and makes the next visit start from the defaults too.
 
 Every DOM call is the page's, through the module `web/files.js`. What is here
 is which file goes where and what is said about it.
@@ -32,7 +34,9 @@ from pathlib import Path
 from typing import Any
 
 from rederive import platform
+from rederive.engine.client import ORDER_LIST
 from rederive.model.session import Session
+from rederive.model.settings import DEFAULTS
 from rederive.platform.web import WebStorage
 from rederive.ui.app import STATE_FILE
 
@@ -59,6 +63,18 @@ STATE = STATE_FILE
 #: without being cut in half is not a link anyone can use, and a worksheet that
 #: long has a Save waiting for it.
 LONGEST = 8000
+
+#: What the opening message says when the settings a tab kept are not the
+#: defaults. Nothing was asked for, and a mode switched on months ago comes
+#: back looking like a bug, so the message names where it came from and the
+#: menu item that undoes it. A tab that kept the defaults says nothing: there is
+#: nothing to be surprised by.
+RESTORED = "Settings restored from your last visit; File > Reset settings forgets them"
+
+#: What the page says when the settings have been reset. The next visit is
+#: named because that is the half a user cannot see happen: the screen already
+#: shows the defaults, and the stored copy now says the same.
+RESET = "Every setting is back at its default, and will be on the next visit"
 
 #: What the page says when a link has been made. The address bar is named
 #: because that is where the link is, whatever the clipboard did.
@@ -107,6 +123,8 @@ class Files:
         #: The proxies JS holds. A callback given to JS without one is
         #: collected while JS still points at it.
         self._proxies: list[Any] = []
+        #: Whether `settings` changed anything, which is what `opening` says.
+        self._restored = False
 
     # -- before the screen -------------------------------------------------
 
@@ -116,28 +134,36 @@ class Files:
         Quietly, and before the app exists: what a state file could not take is
         a count the desktop reports on the message line at the moment the user
         asked for it, and nobody asked for this one. A file the store does not
-        have is the first visit, which is nothing to report either.
+        have is the first visit, which is nothing to report either. What is
+        remembered is whether anything changed, for `opening` to say so.
         """
         state = Path(STATE)
         if not self._storage.exists(state):
             return
+        before = self._session.state_written()
         try:
             self._session.load_state(state)
         except OSError:
             return
+        self._restored = self._session.state_written() != before
 
     def opening(self) -> str:
         """What the message line says before the user has asked for anything.
 
-        A link's worksheet if the address carries one, and otherwise a word
-        about a tab that will not remember anything, since that is the one thing
-        about this environment that cannot be found out by looking at it. A
-        first visit to an ordinary tab has nothing to say and says nothing.
+        A link's worksheet if the address carries one, and a word about the
+        settings if the last visit left any that are not the defaults - both,
+        when both hold. Otherwise a word about a tab that will not remember
+        anything, since that is the one thing about this environment that cannot
+        be found out by looking at it. A first visit to an ordinary tab has
+        nothing to say and says nothing.
         """
-        said = self.shared()
-        if said or self._storage.remembers:
-            return said
-        return FORGETFUL
+        said = [self.shared()]
+        if self._restored:
+            said.append(RESTORED)
+        said = [part for part in said if part]
+        if said:
+            return "; ".join(said)
+        return "" if self._storage.remembers else FORGETFUL
 
     def shared(self) -> str:
         """Read the worksheet out of the address, and say what came of it.
@@ -173,7 +199,7 @@ class Files:
         import js
         from pyodide.ffi import create_proxy, to_js
 
-        table = {"arrived": self.arrived, "linked": self.linked}
+        table = {"arrived": self.arrived, "linked": self.linked, "reset": self.reset}
         proxies = {name: create_proxy(call) for name, call in table.items()}
         leaving = create_proxy(self.remember)
         self._proxies = [*proxies.values(), leaving]
@@ -206,6 +232,21 @@ class Files:
         self._page.address(fragment)
         self._page.said(LINKED)
         platform.current().copy(str(js.location.href), self._refused)
+
+    def reset(self) -> None:
+        """Put every setting back to its default, here and in the store.
+
+        What a state file carries, undone: the settings, and the variable order
+        list `Manage Ordering` keeps beside them. The store is written at once
+        rather than left to `remember`, so that a tab closed by force keeps the
+        defaults too. The history is left alone, as it is for any setting
+        change: the entries already drawn keep their render, and the next one is
+        drawn the default way.
+        """
+        self._session.settings.apply(DEFAULTS)
+        self._session.order = ORDER_LIST
+        self._storage.keep(Path(STATE), self._session.state_written())
+        self._page.said(RESET)
 
     def remember(self, _event: Any = None) -> None:
         """Write the settings into the store, the tab being on its way out.

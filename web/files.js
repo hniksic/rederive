@@ -1,9 +1,10 @@
 // What a tab has instead of a filesystem: a download, a picker, an address.
 //
 // A page cannot open a file and cannot write one. What it has is three
-// gestures, and this file is all three of them and nothing else - the store
-// that gives them names, and every decision about what goes where, is Python's
-// in `rederive.platform.web` and `rederive.web.files`.
+// gestures, and this file is the three of them and the page's menu they are
+// on, and nothing else - the store that gives them names, and every decision
+// about what goes where, is Python's in `rederive.platform.web` and
+// `rederive.web.files`.
 //
 // * **Save downloads.** A worksheet leaves the tab the only way anything
 //   leaves a tab, as a file the browser puts wherever the user keeps them.
@@ -15,10 +16,12 @@
 //   the half of a URL no server is ever sent, so a shared link carries the
 //   mathematics and tells nobody about it.
 //
-// The two controls sit in a corner rather than in a bar, because the terminal
-// is the page and a bar would take a row of it away from the program. They are
-// faded until pointed at, and the keyboard goes back to the terminal the
-// moment either of them has been used.
+// The controls are on one menu in a corner rather than in a bar, because the
+// terminal is the page and a bar would take a row of it away from the program.
+// It is faded until pointed at, and the keyboard goes back to the terminal the
+// moment anything on it has been used. Beside the gestures the menu carries
+// the one piece of housekeeping a tab that remembers its settings needs, which
+// is a way to make it forget them.
 
 const NOTICE_SECONDS = 8;
 
@@ -27,6 +30,7 @@ const NOTICE_SECONDS = 8;
 const REVOKE_MS = 60000;
 
 import { settle } from './keys.js';
+import { dropdown } from './menu.js';
 
 let terminal = null;
 let handlers = null;
@@ -41,6 +45,10 @@ let timer = null;
 export function wire(term) {
   terminal = term;
   notice = document.getElementById('notice');
+  const menu = dropdown(term, named('page'), named('gestures'));
+  // A choice closes the menu, whatever it was: the one that leaves the page
+  // included, since the tab it opens takes the pointer with it.
+  named('gestures').addEventListener('click', () => menu.show(false));
   const picker = document.getElementById('picker');
   named('pick').addEventListener('click', () => {
     // The value is cleared first so that picking the same file twice is two
@@ -56,6 +64,10 @@ export function wire(term) {
     if (ready()) handlers.linked();
     focus();
   });
+  named('reset').addEventListener('click', () => {
+    if (ready()) handlers.reset();
+    focus();
+  });
   document.addEventListener('dragover', (event) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
@@ -67,9 +79,9 @@ export function wire(term) {
   });
 }
 
-// Python's side of the two controls: what to do with a file that arrived, and
-// what to put in the address. Held rather than called, since neither happens
-// until the user asks.
+// Python's side of the controls: what to do with a file that arrived, what to
+// put in the address, and what a reset of the settings is. Held rather than
+// called, since none of it happens until the user asks.
 export function attend(given) {
   handlers = given;
 }

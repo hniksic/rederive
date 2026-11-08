@@ -505,7 +505,7 @@ function spawn(manifest) {
 // that would be the page's rather than the program's - a `q` that quits nothing
 // - so the press's default is cancelled, which leaves the focus in the terminal
 // and still delivers the click. One listener for the whole corner, since this
-// is true of every control in it and of the menu under one of them; what a
+// is true of every control in it and of the menus under them; what a
 // control does once it has been used stays its own module's business.
 //
 // **And most of them are the program's.** Which ones is marked in the markup;

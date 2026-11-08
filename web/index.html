@@ -34,10 +34,12 @@
      program has no scrollback and wants none of it. */
   .xterm-viewport { overflow: hidden !important; }
 
-  /* The two gestures a tab has that a terminal cannot ask for: opening a file,
-     which a browser only ever does on a click, and making a link out of the
-     address. They sit in a corner and stay faded until pointed at, since the
-     program owns the screen and these are the page around it. */
+  /* The page's own controls: two buttons in a corner, each with a menu under
+     it - the original's demonstrations under one, and under the other the
+     gestures a tab has that a terminal cannot ask for, opening a file and
+     making a link out of the address, with the page's housekeeping beside
+     them. They stay faded until pointed at, since the program owns the screen
+     and these are the page around it. */
   #chrome {
     position: fixed;
     top: 6px;
@@ -53,12 +55,12 @@
     font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
   }
   #chrome:hover, #chrome:focus-within { opacity: 1; }
-  /* Three of these controls are the program's and one is the page's own. The
+  /* Most of these controls are the program's and one is the page's own. The
      program's do nothing at all until it has drawn its screen, and nothing
      again once it has ended, so they stand only while it is running rather than
      inviting a click that can only be answered with an excuse. Which ones those
      are is said in the markup, once per control; the link to the source is good
-     whatever the tab is doing. */
+     whatever the tab is doing, which is why the menu it is on stands too. */
   #chrome:not(.running) [data-program] { display: none; }
   /* A control with something under it, and the box that something is positioned
      against: a menu hangs off the control it belongs to rather than off a corner
@@ -91,11 +93,12 @@
     #chrome { opacity: 1; }
     #chrome button, #chrome a { padding: 8px 14px; }
   }
-  /* The demonstrations on offer, under the button that offers them: the corner
-     of the button it hangs from, since it is a child of that button's control.
-     Inside `#chrome` so that a pointer on the menu is a pointer on the controls
-     and none of it fades while it is being read. */
-  #gallery {
+  /* A menu, under the button that opens it: the corner of the button it hangs
+     from, since it is a child of that button's control. Inside `#chrome` so that
+     a pointer on the menu is a pointer on the controls and none of it fades
+     while it is being read. The rightmost control's menu hangs from its right
+     corner instead, so that it stays on the screen. */
+  .menu {
     position: absolute;
     top: 100%;
     left: 0;
@@ -109,7 +112,8 @@
     border-radius: 6px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
   }
-  #gallery[hidden] { display: none; }
+  .menu[hidden] { display: none; }
+  .control:last-child .menu { left: auto; right: 0; }
   .gallery-heading {
     padding: 6px 8px 3px;
     color: #6f7684;
@@ -117,20 +121,26 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
-  #chrome .gallery-item {
+  #chrome .menu-item {
     padding: 4px 8px;
     background: none;
     border: 1px solid transparent;
     border-radius: 4px;
     text-align: left;
+    white-space: nowrap;
   }
-  #chrome .gallery-item:hover {
+  #chrome .menu-item:hover {
     background: rgba(101, 178, 241, 0.14);
     border-color: transparent;
     color: #dde3ec;
   }
+  /* A rule between the gestures and the housekeeping under them. */
+  .menu-rule {
+    margin: 4px 6px;
+    border-top: 1px solid #2b2b34;
+  }
   @media (hover: none) {
-    #chrome .gallery-item { padding: 8px; }
+    #chrome .menu-item { padding: 8px; }
   }
   /* What the page says for itself, about the things that happen beside the
      program rather than inside it. The message line belongs to Rederive. */
@@ -414,12 +424,12 @@
 <div id="screen"></div>
 <div id="panes"></div>
 <div id="chrome">
-  <!-- The button and the menu it opens are one control, which is what keeps the
+  <!-- A button and the menu it opens are one control, which is what keeps the
        menu under the button: where it hangs is a fact about the pair rather
        than a corner of the row measured by hand.
 
-       `data-program` is on the three controls that ask the program for
-       something, and they stand only while there is a program to ask. -->
+       `data-program` is on the controls that ask the program for something,
+       and they stand only while there is a program to ask. -->
   <div class="control" data-program>
     <button id="demo" type="button" aria-haspopup="true" aria-expanded="false"
             title="Run one of the original Derive's own demonstrations">
@@ -427,23 +437,40 @@
     </button>
     <!-- Filled from the list in `demos.js`, which is the only place the
          demonstrations are named. -->
-    <div id="gallery" hidden></div>
+    <div id="gallery" class="menu" hidden></div>
   </div>
-  <button id="pick" type="button" data-program
-          title="Bring a worksheet into this page">
-    Open file
-  </button>
-  <button id="link" type="button" data-program
-          title="Put this worksheet in the address">
-    Link
-  </button>
-  <!-- The one control that leaves the page, which is why it opens a tab of its
-       own rather than taking this one away from a running program - and the one
-       that is worth a click whatever the tab is doing. -->
-  <a id="source" href="https://github.com/hniksic/rederive" target="_blank"
-     rel="noopener" title="Rederive's source on GitHub">
-    GitHub
-  </a>
+  <!-- The page's own menu: what a tab has instead of a filesystem, and the
+       housekeeping of a tab that remembers its settings. The menu stands
+       whatever the program is doing, since the link to the source on it does;
+       the items that ask the program for something come and go with it. -->
+  <div class="control">
+    <button id="page" type="button" aria-haspopup="true" aria-expanded="false"
+            title="Files in and out of this page, and the page's own settings">
+      File
+    </button>
+    <div id="gestures" class="menu" hidden>
+      <button id="pick" type="button" class="menu-item" data-program
+              title="Bring a file into this page, for Transfer Load to read">
+        Add file...
+      </button>
+      <button id="link" type="button" class="menu-item" data-program
+              title="Put this worksheet in the address, to share it">
+        Share as link
+      </button>
+      <button id="reset" type="button" class="menu-item" data-program
+              title="Put every Options and Manage setting back to its default, here and on the next visit">
+        Reset settings
+      </button>
+      <div class="menu-rule"></div>
+      <!-- The one control that leaves the page, which is why it opens a tab of
+           its own rather than taking this one away from a running program - and
+           the one that is worth a click whatever the tab is doing. -->
+      <a id="source" class="menu-item" href="https://github.com/hniksic/rederive"
+         target="_blank" rel="noopener" title="Rederive's source on GitHub">
+        GitHub
+      </a>
+    </div>
+  </div>
 </div>
 <!-- A file picker opens on a click and on nothing a program can do, which is
      why the input is here rather than made when it is wanted. `.mth` and its

@@ -290,15 +290,76 @@ def test_the_settings_are_written_when_the_tab_goes_and_read_when_it_comes_back(
 
 def test_a_first_visit_has_no_settings_to_read_and_says_nothing_about_it(page, storage):
     session = Session()
-    Files(page, session, storage).settings()
+    files = Files(page, session, storage)
+    files.settings()
     assert page.notices == []
+    assert files.opening() == ""
     assert session.settings["Notation"] == "Rational"
+
+
+def test_a_visit_that_restores_changed_settings_says_so_as_it_opens(page, storage):
+    """A mode switched on in an earlier visit would otherwise look like a bug.
+
+    The sentence names where the settings came from and what undoes them. A
+    tab whose stored settings are the defaults has nothing to warn about and
+    opens as quietly as a first visit.
+    """
+    session = Session()
+    Files(page, session, storage).remember()
+    files = Files(page, Session(), again(page))
+    files.settings()
+    assert files.opening() == ""
+
+    session = Session()
+    session.settings.assign("Angle", "Degree")
+    Files(page, session, storage).remember()
+    files = Files(page, Session(), again(page))
+    files.settings()
+    assert files.opening() == gestures.RESTORED
+    assert "Reset settings" in gestures.RESTORED
+
+
+def test_a_link_and_restored_settings_are_both_said(page, storage):
+    session = Session()
+    session.settings.assign("Angle", "Degree")
+    Files(page, session, storage).remember()
+    text = "x^2\n"
+    fragment = gestures.FIELD + gestures._encoded(text)
+    files = Files(page, Session(), again(page, hash=fragment))
+    files.settings()
+    opening = files.opening()
+    assert opening.startswith("1 expression from the link")
+    assert opening.endswith(gestures.RESTORED)
 
 
 def test_the_settings_are_kept_and_not_downloaded(page, storage):
     """A tab hidden and shown again would otherwise rain files on the user."""
     Files(page, Session(), storage).remember()
     assert page.downloads == []
+
+
+def test_a_reset_puts_the_settings_back_for_this_visit_and_the_next(page, storage):
+    """The one piece of housekeeping a tab that remembers its settings needs.
+
+    A mode switched on in some earlier visit comes back silently in every later
+    one, and the reset is how that ends: the screen shows the defaults at once,
+    and so does the next visit, without waiting for the tab to go.
+    """
+    session = Session()
+    session.settings.assign("Angle", "Degree")
+    session.order = ("z", "y")
+    files = Files(page, session, storage)
+    files.remember()
+    files.reset()
+    assert session.settings["Angle"] == "Radian"
+    assert session.order == ("x", "y", "z")
+    assert "default" in page.notices[-1]
+    assert page.downloads == []
+
+    returning = Session()
+    Files(page, returning, again(page)).settings()
+    assert returning.settings["Angle"] == "Radian"
+    assert returning.order == ("x", "y", "z")
 
 
 # -- what a file arriving is told to itself -----------------------------------
