@@ -42,6 +42,7 @@ from rederive.engine.context import (
     Precision,
     domain_of_node,
 )
+from rederive.engine.integration import integral
 from rederive.engine.ordering import main_order
 from rederive.model.expr import Kind, Node
 from rederive.syntax.names import PRIME_MARK
@@ -2334,38 +2335,106 @@ def _dif(conv: Converter, args: list) -> sp.Basic:
     `DIF(u, x, -2)` is the second antiderivative, which is `INT(INT(u, x), x)`.
     Sympy has no head for a derivative of negative order, and the integral is
     the same computation waiting in the same place.
+
+    A vector or matrix is differentiated element by element, and so keeps its shape
+    whatever the elements come to: `DIF([1, 1], x)` is `[0, 0]`, where sympy would
+    answer the derivative of a matrix that does not mention `x` with the scalar 0.
     """
+    _variable(args[1])
+    if isinstance(args[0], sp.MatrixBase):
+        return args[0].applyfunc(lambda element: _dif(conv, [element, *args[1:]]))
     if len(args) == 2:
         return sp.Derivative(args[0], args[1], evaluate=False)
     expression, variable, order = args
     if order.is_Integer and order.is_negative:
+        if isinstance(expression, Relational):
+            raise TypeError("no antiderivative of an equation")
         return sp.Integral(expression, *[variable] * int(-order))
     return sp.Derivative(expression, (variable, order), evaluate=False)
 
 
 def _integral(conv: Converter, args: list) -> sp.Basic:
-    """`INT(u, x)` and `INT(u, x, a, b)`, both unevaluated."""
+    """`INT(u, x)` and `INT(u, x, a, b)`, both unevaluated.
+
+    A vector or matrix is integrated element by element, keeping its shape. A vector
+    as one of the limits is one integral per element of it: `INT(x^2, x, 0, [1, 2])`
+    is `[1/3, 8/3]`. Two vectors of limits pair up nothing in particular, and the
+    call stands.
+
+    A definite integral of an equation is the equation of the integrals of its
+    sides. An antiderivative of one is not: each side's antiderivative is fixed only
+    up to its own constant, so `INT(y = x, x)` has no equation that follows from
+    `y = x`, and the call stands.
+    """
+    _variable(args[1])
+    if isinstance(args[0], sp.MatrixBase):
+        return args[0].applyfunc(lambda element: _integral(conv, [element, *args[1:]]))
     if len(args) == 2:
+        if isinstance(args[0], Relational):
+            raise TypeError("no antiderivative of an equation")
         return sp.Integral(args[0], args[1])
+    distributed = _over_vector_limits(conv, _integral, args)
+    if distributed is not None:
+        return distributed
     expression, variable, low, high = args
+    if isinstance(expression, sp.Equality):
+        return sp.Eq(
+            sp.Integral(expression.lhs, (variable, low, high)),
+            sp.Integral(expression.rhs, (variable, low, high)),
+            evaluate=False,
+        )
+    if isinstance(expression, Relational):
+        raise TypeError("not an equation")
     return sp.Integral(expression, (variable, low, high))
+
+
+def _variable(variable: sp.Basic) -> None:
+    """Refuse a vector where a calculus function takes the variable it works in."""
+    if isinstance(variable, (sp.MatrixBase, InertVector)):
+        raise TypeError("not a variable")
+
+
+def _over_vector_limits(
+    conv: Converter, build: Callable[[Converter, list], sp.Basic], args: list
+) -> sp.Basic | None:
+    """`build` over each element of the one limit in `args` that is a vector.
+
+    `args` is `u, k, a, b`, and the answer is the vector of the calls with each
+    element of that vector in its place, or None where neither limit is a vector.
+    Two vectors of limits pair up nothing in particular, and are refused.
+    """
+    expression, variable, low, high = args
+    if isinstance(low, sp.MatrixBase) and isinstance(high, sp.MatrixBase):
+        raise TypeError("two vectors of limits")
+    if isinstance(low, sp.MatrixBase):
+        return low.applyfunc(lambda end: build(conv, [expression, variable, end, high]))
+    if isinstance(high, sp.MatrixBase):
+        return high.applyfunc(lambda end: build(conv, [expression, variable, low, end]))
+    return None
 
 
 def _summation(conv: Converter, args: list) -> sp.Basic:
     """`SUM(u, k, a, b)`, and `SUM(v)` over the elements of a vector.
 
     A third argument that is a vector is the values `k` takes, rather than the
-    ends of a range it runs through.
+    ends of a range it runs through. One that is not is the top of a range from
+    1: `SUM(u, k, m)` is `SUM(u, k, 1, m)`. A vector as one of the two ends is one
+    sum per element of it, as it is for `INT`: `SUM(k, k, [1, 2], 3)` is `[6, 5]`.
 
     An indefinite `SUM(u, k)` is the antidifference of `u`, which is a
     computation and so waits for the evaluation the way the calculus heads do.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Add(*args[0])
+    _variable(args[1])
     if len(args) == 2:
         return Antidifference(*args)
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Add(*_over_values(conv, args))
+    args = _from_one(args)
+    distributed = _over_vector_limits(conv, _summation, args)
+    if distributed is not None:
+        return distributed
     expression, index, low, high = args
     return sp.Sum(expression, (index, low, high))
 
@@ -2373,17 +2442,32 @@ def _summation(conv: Converter, args: list) -> sp.Basic:
 def _product(conv: Converter, args: list) -> sp.Basic:
     """`PRODUCT(u, k, a, b)`, and `PRODUCT(v)` over a vector's elements.
 
-    A third argument that is a vector names the values, as it does for `SUM`,
-    and an indefinite `PRODUCT(u, k)` is the antiquotient of `u`.
+    A third argument that is a vector names the values, and one that is not ends a
+    range from 1, as they do for `SUM`; a vector as one end of the range is one
+    product per element of it, and an indefinite `PRODUCT(u, k)` is the antiquotient
+    of `u`.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Mul(*args[0])
+    _variable(args[1])
     if len(args) == 2:
         return Antiquotient(*args)
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
         return sp.Mul(*_over_values(conv, args))
+    args = _from_one(args)
+    distributed = _over_vector_limits(conv, _product, args)
+    if distributed is not None:
+        return distributed
     expression, index, low, high = args
     return sp.Product(expression, (index, low, high))
+
+
+def _from_one(args: list) -> list:
+    """The arguments of a sum or a product with the low end of a range from 1
+    filled in where only the high end is written."""
+    if len(args) == 3:
+        return [*args[:2], sp.Integer(1), args[2]]
+    return args
 
 
 def _over_values(conv: Converter, args: list) -> list[sp.Basic]:
@@ -3700,6 +3784,9 @@ def _potential(conv: Converter, args: list) -> sp.Basic:
         arrived = zip(variables[index + 1 :], start[index + 1 :])
         along = (scales[index] * element).subs(list(arrived), simultaneous=True)
         walked += _leg(along, variables[index], start[index])
+    if walked is sp.nan:
+        # Legs that diverge opposite ways, which have no sum.
+        raise ValueError("no value")
     return walked
 
 
@@ -3781,11 +3868,19 @@ def _leg(integrand: sp.Basic, variable: sp.Basic, low: sp.Basic) -> sp.Basic:
     coordinate itself, and an integral sympy cannot do would leave that dummy in
     the answer under a name no worksheet can read - so it is no answer, and the
     call it came from comes back the way it was written.
+
+    The integral is the one `INT` would answer, singularities and all: a leg that
+    starts where the field is infinite is `inf` or `-inf` as a whole, as
+    `INT(1/t, t, 0, x)` is, and not an antiderivative with an infinity added to it.
     """
     dummy = sp.Dummy()
-    walked = sp.integrate(integrand.subs(variable, dummy), (dummy, low, variable))
+    walked = integral(
+        sp.Integral(integrand.subs(variable, dummy), (dummy, low, variable))
+    )
     if walked.has(dummy):
         raise ValueError("no antiderivative")
+    if walked.has(sp.oo, sp.zoo, sp.nan) and walked not in (sp.oo, -sp.oo):
+        raise ValueError("no value")
     return walked
 
 

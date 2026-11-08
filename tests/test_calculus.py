@@ -73,6 +73,38 @@ CALCULUS = [
     # instead of the ends of a range, for both heads.
     ("SUM(k^2, k, [2, 3, 5, 7, 11])", "208"),
     ("PRODUCT(k^2, k, [2, 3, 5, 7, 11])", "5336100"),
+    # One that is not is the high end of a range from 1. VECTOR.MTH's
+    # EXACT_EIGENVECTOR sums over `n_` up to `DIMENSION(a)` this way.
+    ("SUM(k, k, 3)", "6"),
+    ("SUM(k, k, 3.5)", "6"),
+    ("PRODUCT(k, k, 4)", "24"),
+    ("SUM([a, b, c] SUB k, k, DIMENSION([a, b, c]))", "a + b + c"),
+    ("SUM(k^2, k, m)", "m*(m + 1)*(2*m + 1)/6"),
+    ("PRODUCT(n^2, n, m)", "m!^2"),
+    # A vector as one end of a range is one answer per element of it, the way a
+    # vector of points is for LIM. Two vectors as the ends pair up nothing.
+    ("INT(x^2, x, 0, [1, 2])", "[1/3, 8/3]"),
+    ("INT(x, x, [0, 1], 3)", "[9/2, 4]"),
+    ("SUM(k, k, [1, 2], 3)", "[6, 5]"),
+    ("PRODUCT(k, k, 1, [2, 3])", "[2, 6]"),
+    ("SUM(k, k, [1, 2], [3, 4])", "SUM(k, k, [1, 2], [3, 4])"),
+    # A vector is no variable to work in.
+    ("INT(x, [x, y])", "INT(x, [x, y])"),
+    ("DIF(x, [x, y])", "DIF(x, [x, y])"),
+    ("SUM(k, [k, j], 1, 2)", "SUM(k, [k, j], 1, 2)"),
+    # A vector or a matrix is differentiated and integrated element by element, and
+    # keeps its shape when every element comes to zero.
+    ("DIF([1, 1], x)", "[0, 0]"),
+    ("INT([0, 0], x)", "[0, 0]"),
+    ("INT([[0, 0], [0, 0]], x, 0, 1)", "[[0, 0], [0, 0]]"),
+    ("INT([x, x^2], x)", "[x^2/2, x^3/3]"),
+    ("DIF([x^2, x], x, 2)", "[2, 0]"),
+    # A definite integral of an equation is the equation of the integrals of its
+    # sides. Their antiderivatives are each fixed only up to a constant of its own,
+    # so no equation of them follows from the one given, and that call stands.
+    ("INT(y = x, x, 0, 1)", "y = 1/2"),
+    ("INT(y = x, x)", "INT(y = x, x)"),
+    ("DIF(y = x, x, -1)", "DIF(y = x, x, -1)"),
     ("LIM(SIN(x)/x, x, 0)", "1"),
     ("LIM(SIGN(x), x, 0, 1)", "1"),
     ("LIM(SIGN(x), x, 0, -1)", "-1"),

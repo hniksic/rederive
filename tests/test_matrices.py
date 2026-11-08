@@ -359,9 +359,11 @@ VECTOR_CALCULUS = [
     ("POTENTIAL([2*x, 2*y, 2*z], [1, 1, 1])", "x^2 + y^2 + z^2 - 3"),
     # The manual's warning about a bad starting point, exactly: this field is
     # infinite at the origin, so the potential from the origin is infinite too,
-    # and 1 is the alternative the manual recommends for a logarithm.
+    # and 1 is the alternative the manual recommends for a logarithm. Legs that
+    # diverge opposite ways have no sum.
     ("POTENTIAL([1/x, 1/y, 1/z], [1, 1, 1])", "LN(x) + LN(y) + LN(z)"),
-    ("POTENTIAL([1/x, 1/y, 1/z])", "LN(x) + LN(y) + LN(z) + inf"),
+    ("POTENTIAL([1/x, 1/y, 1/z])", "inf"),
+    ("POTENTIAL([-1/x, 1/y, 0])", "POTENTIAL([-1/x, 1/y, 0])"),
     # A field of fewer elements than the system has coordinates is no field on
     # it, and the default system has three. Two elements are a planar curl only
     # when a planar system is given to work in.
@@ -535,6 +537,37 @@ def test_an_element_access_that_could_not_be_taken_is_taken_once_generated():
     # worth making again - which is how the demo's outer product comes out.
     assert simp("VECTOR([[a, b, c] SUB i], i, 3)") == "[[a], [b], [c]]"
     assert simp("VECTOR([a, b, c] SUB i + 1, i, 2)") == "[a + 1, b + 1]"
+
+
+#: A calculus head over the variable a counted call ranges over. The head is worked
+#: out with the variable standing for itself, and only then is each value written in,
+#: which is Derive's order.
+COUNTED_CALCULUS = [
+    ("VECTOR(DIF(x^2, x), x, 1, 3)", "[2, 4, 6]"),
+    ("VECTOR(INT(x, x), x, 1, 3)", "[1/2, 2, 9/2]"),
+    ("SUM(DIF(x^2, x), x, 1, 3)", "12"),
+    ("PRODUCT(DIF(x^2, x), x, 1, 3)", "48"),
+    # Newton's method for SQRT(3), which is SOLVE.MTH's `NEWTON` written out.
+    ("ITERATES(x - (x^2 - 3)/DIF(x^2 - 3, x), x, 2, 3)", "[2, 7/4, 97/56, 18817/10864]"),
+    # A head over another variable is untouched by the counting.
+    ("VECTOR(DIF(x^2*y, x), y, 1, 2)", "[2*x, 4*x]"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), COUNTED_CALCULUS, ids=str)
+def test_a_calculus_head_in_a_counted_call_is_worked_out_before_counting(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+def test_a_parameter_a_counted_call_differentiates_is_taken_as_supplied():
+    # SOLVE.MTH's `NEWTON(u, x, x0, n)`: the iteration writes each value in for `x`,
+    # and the `DIF(u, x)` inside differentiates the `u` the call supplied, in `x`.
+    newton = (("u", "x", "a", "n"), parse("ITERATES(x - u/DIF(u, x), x, a, n)"))
+    context = Context(functions={"NEWTON": newton})
+    assert simp("NEWTON(x^2 - 3, x, 2, 3)", context) == "[2, 7/4, 97/56, 18817/10864]"
+    assert simp("NEWTON(t^2 - 3, t, 2, 3)", context) == "[2, 7/4, 97/56, 18817/10864]"
 
 
 # -- statistics ---------------------------------------------------------------

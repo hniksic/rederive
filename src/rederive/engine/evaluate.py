@@ -226,7 +226,7 @@ class _Evaluator(Converter):
         env = self.env
         value = env.bindings.get(name)
         if value is not None:
-            return value
+            return _over(value, env.written)
         if name not in env.bound and name not in env.expanding:
             assigned = env.context.assignments.get(name)
             if assigned is not None:
@@ -500,12 +500,13 @@ class _Evaluator(Converter):
         evaluator = self.within(inner)
         outer = evaluator if name in BINDING_THROUGHOUT else self
         limits = [_value_of(outer.convert(argument)) for argument in rest]
+        taken = _taken(self.env.written, names)
         if name in _COUNTED and not self.env.writing:
             counted = self._counted(name, body, index, inner, limits)
             if counted is not None:
-                return counted
+                return _over(counted, taken)
         values = [_value_of(evaluator.convert(body)), index, *limits]
-        return self._worked(self.call(name, values), values)
+        return _over(self._worked(self.call(name, values), values), taken)
 
     def _counted(
         self,
@@ -730,11 +731,12 @@ def _at(env: Environment, written: Mapping[sp.Basic, sp.Basic]) -> Environment:
     Wherever the variables are met, and in what the parameters were bound to as
     well, since a definition is textual substitution: `PRODUCT(p, x, x0, x -
     1)` called with `m` for both `p` and `x` multiplies `m` at every value `m`
-    takes.
+    takes. A parameter's value has them written in where it is met (see
+    `_Evaluator._name`) rather than here, so that a binding call inside, which
+    takes the variable back, finds the parameter as it was supplied.
     """
     return replace(
         env,
-        bindings={name: _over(value, written) for name, value in env.bindings.items()},
         written={
             **{symbol: _over(value, written) for symbol, value in env.written.items()},
             **written,
@@ -767,16 +769,16 @@ def _total(
 ) -> sp.Basic | None:
     """A counted `SUM` or `PRODUCT`: its terms at each value, added or multiplied.
 
-    The values are a vector of them, or a range. None where they are neither,
-    or where a term is no expression to add, which leaves the sum to sympy. A
-    range that runs backwards is the negated sum, or the reciprocal product, of
-    the values it steps back over.
+    The values are a vector of them, or a range, which a single end runs up to
+    from 1. None where they are neither, or where a term is no expression to
+    add, which leaves the sum to sympy. A range that runs backwards is the
+    negated sum, or the reciprocal product, of the values it steps back over.
     """
     backwards = False
     if len(limits) == 1 and isinstance(limits[0], sp.MatrixBase):
         values = steps(limits)
-    elif len(limits) == 2:
-        run = _run_of(*limits)
+    elif len(limits) in (1, 2):
+        run = _run_of(*limits) if len(limits) == 2 else _run_of(sp.Integer(1), *limits)
         if run is None:
             return None
         values, backwards = run
@@ -963,6 +965,24 @@ def _variables_of(index: Node) -> tuple[str, ...] | None:
     if any(child.kind is not Kind.NAME for child in index.children):
         return None
     return tuple(str(child.value) for child in index.children)
+
+
+def _taken(
+    written: Mapping[sp.Basic, sp.Basic], names: frozenset[str]
+) -> Mapping[sp.Basic, sp.Basic]:
+    """What is written in for the variables a binding takes over.
+
+    The binding works over its variable standing for itself, and what it answers
+    has these values written in afterwards, which is Derive's order: a body is
+    simplified and only then is the counted value put in. `VECTOR(DIF(x^2, x), x,
+    1, 3)` differentiates in `x` and then takes `2*x` at each value, and SOLVE.MTH's
+    `NEWTON` is an `ITERATES` over a `DIF` in the variable it iterates.
+    """
+    return {
+        symbol: value
+        for symbol, value in written.items()
+        if getattr(symbol, "name", None) in names
+    }
 
 
 def _unwritten(
