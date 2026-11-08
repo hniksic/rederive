@@ -4861,8 +4861,9 @@ class RederiveApp(App[None]):
         """
         target, label = self.session.named_target(request)
         variables = await self.session.variables(request)
+        relation = await self.session.relation(request)
         text = write_expression(target, spaced=True)
-        plotted = classify(target, variables, text)
+        plotted = classify(target, variables, text, relation)
         kind = plotted.kind
         options = plotted.options
         if kind in (plots.PlotKind.FAMILY, plots.PlotKind.SURFACES):

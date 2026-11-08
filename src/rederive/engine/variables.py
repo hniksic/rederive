@@ -1,20 +1,29 @@
-"""Which variables an expression holds.
+"""Which variables an expression holds, and whether it is a relation.
 
-The order they come out in is `ordering`'s, most main first, which is the order
-Factor and Expand offer their variables in - `x^2 - a^2` lists `x,a`, not `a,x`
-- and what makes the first one chosen the primary variable.
+The order the variables come out in is `ordering`'s, most main first, which is the
+order Factor and Expand offer their variables in - `x^2 - a^2` lists `x,a`, not
+`a,x` - and what makes the first one chosen the primary variable.
+
+Both questions are asked of the evaluation rather than of the tree, because the
+tree can be written around what it means: `#3` is a label, and `IM(u = v)` is a
+function applied to an equation, which the engine answers with an equation.
 """
 
 from __future__ import annotations
 
 import sympy as sp
+from sympy.core.relational import Relational
 
 from rederive.engine.context import Context
 from rederive.engine.ordering import main_order
 from rederive.engine.evaluate import evaluated
 from rederive.model.expr import Node
 
-__all__ = ["expression_variables"]
+__all__ = ["expression_variables", "relation_of"]
+
+#: How a relation's operator is written, keyed by sympy's spelling of it. The
+#: orderings are spelled alike on both sides and are not listed.
+_RELATIONS = {"==": "=", "!=": "/="}
 
 
 def expression_variables(
@@ -44,6 +53,23 @@ def expression_variables(
     except Exception:
         return ()
     return main_order(_variables(symbols), context.order)
+
+
+def relation_of(node: Node, context: Context | None = None) -> str | None:
+    """The operator `node` evaluates to a relation under, or None where it does not.
+
+    Written as the notation writes it: `=`, `/=`, `<`, `<=`, `>`, `>=`. What the Plot
+    command asks before it decides what a line is a plot of, since a function
+    applied to an equation, `IM(2^(x + #i*y) = (x + #i*y)^6)`, is a call on the tree
+    and an equation once evaluated, and it is the equation that is drawn.
+    """
+    try:
+        value = evaluated(node, context or Context())
+    except Exception:
+        return None
+    if not isinstance(value, Relational):
+        return None
+    return _RELATIONS.get(value.rel_op, value.rel_op)
 
 
 def _variables(symbols: set[sp.Basic]) -> list[str]:

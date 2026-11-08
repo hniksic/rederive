@@ -55,7 +55,7 @@ from rederive.engine.pipeline import approx, simplify
 from rederive.engine.printer import author_text
 from rederive.engine.solve import solve, solved
 from rederive.engine.to_sympy import authored_conditionals, to_sympy
-from rederive.engine.variables import expression_variables
+from rederive.engine.variables import expression_variables, relation_of
 
 __all__ = [
     "ORDER_LIST",
@@ -90,6 +90,7 @@ __all__ = [
     "from_sympy",
     "main_order",
     "parse_state_for",
+    "relation_of",
     "replace",
     "simplify",
     "solve",

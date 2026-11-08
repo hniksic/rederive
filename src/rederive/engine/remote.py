@@ -205,6 +205,11 @@ class RemoteEngine:
     ) -> tuple[str, ...]:
         return await self._await("expression_variables", (node, context, written))
 
+    async def relation_of(
+        self, node: Node, context: Context | None = None
+    ) -> str | None:
+        return await self._await("relation_of", (node, context))
+
     async def _await(self, method: str, args: tuple[Any, ...]) -> Any:
         """One request, waited for on a thread of the loop's own pool."""
         return await asyncio.to_thread(self._ask, method, args)

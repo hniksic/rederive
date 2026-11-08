@@ -302,6 +302,7 @@ def methods() -> dict[str, Callable[..., Any]]:
         "expand": computing.expand,
         "solve": computing.solve,
         "expression_variables": computing.expression_variables,
+        "relation_of": computing.relation_of,
         "hang": _hang,
         "allocate": _allocate,
     }

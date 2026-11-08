@@ -81,18 +81,39 @@ class Plotted:
         return Options(variables=self.variables, vertical=self.vertical)
 
 
-def classify(node: Node, variables: Sequence[str], text: str = "") -> Plotted:
+def classify(
+    node: Node, variables: Sequence[str], text: str = "", relation: str | None = None
+) -> Plotted:
     """What `node` is a plot of, given the variables the engine found in it.
+
+    `relation` is the operator the expression evaluates to a relation under, from
+    `session.relation`, for a tree that is not written as one: `IM(u = v)` is a
+    call on the tree and an equation once evaluated, and is plotted as the
+    equation. A tree written as a relation is read as the relation it is written
+    as, whatever it evaluates to.
 
     Raises `Unplottable` where no reading fits, with the message the command
     puts on the message line.
     """
     names = tuple(variables)
+    if node.kind is not Kind.REL and relation is not None:
+        node = _as_relation(node, relation)
     for reading in (_solved, _equation, _region, _vector, _scalar):
         plotted = reading(node, names)
         if plotted is not None:
             return plotted
     raise Unplottable(_refusal(names, text))
+
+
+def _as_relation(node: Node, relation: str) -> Node:
+    """`node` stood in for by the relation it evaluates to.
+
+    The two sides are the tree itself and nothing, since no reading of a relation
+    in up to two variables looks at them; the one that does, `_solved`, wants three
+    variables and a bare name on one side, and a call wrapped around an equation is
+    not that.
+    """
+    return Node(Kind.REL, node.start, node.end, (node, node), relation)
 
 
 def _refusal(names: tuple[str, ...], text: str) -> str:

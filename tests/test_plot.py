@@ -134,6 +134,30 @@ def test_a_shape_that_is_not_a_plot_says_so_without_naming_variables():
     assert "not an expression this can plot" in str(refusal.value)
 
 
+async def test_a_function_applied_to_an_equation_is_plotted_as_the_equation():
+    # `IM(u = v)` is a call on the tree and an equation once evaluated, and it is
+    # the equation that is drawn: an implicit curve in a 2D window, not a surface
+    # of the equality's truth value.
+    session = Session()
+    session.author("IM(2^(x + #i*y) = (x + #i*y)^6)")
+    target = session.target("#1")
+    assert await session.relation("#1") == "="
+    plotted = classify(target, await session.variables("#1"), "#1", "=")
+    assert plotted.kind is PlotKind.IMPLICIT
+    assert plotted.variables == ("x", "y")
+
+
+async def test_an_expression_that_evaluates_to_no_relation_reports_none():
+    session = Session()
+    session.author("SIN(x)")
+    assert await session.relation("#1") is None
+
+
+def test_a_tree_written_as_a_relation_keeps_its_own_operator():
+    assert kind_of("x < 3", ("x",)).kind is PlotKind.REGION
+    assert classify(parsed("x = 1"), ("x",), "x = 1", None).kind is PlotKind.IMPLICIT
+
+
 async def test_classification_reads_what_a_label_means_and_not_what_it_says():
     # The command resolves `#1` before classifying, so what is classified is
     # the expression, whatever it was written as.

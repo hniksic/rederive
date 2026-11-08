@@ -208,6 +208,11 @@ async def test_the_variables_come_back_from_the_child(remote):
     assert await remote.expression_variables(tree("x^2 - a^2"), Context()) == ("x", "a")
 
 
+async def test_the_relation_comes_back_from_the_child(remote):
+    assert await remote.relation_of(tree("IM(x = y)"), Context()) == "="
+    assert await remote.relation_of(tree("x^2"), Context()) is None
+
+
 async def test_a_session_given_one_computes_through_it(remote):
     session = Session(runner=remote)
     session.author("(x + 1)*(x - 1)")

@@ -194,6 +194,11 @@ class WebEngine:
     ) -> tuple[str, ...]:
         return await self._await("expression_variables", (node, context, written))
 
+    async def relation_of(
+        self, node: Node, context: Context | None = None
+    ) -> str | None:
+        return await self._await("relation_of", (node, context))
+
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:

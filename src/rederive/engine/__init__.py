@@ -119,7 +119,9 @@ answer is written out unsimplified. It is not the evaluation every other
 command starts with, which writes in what a name already stands for.
 
 `expression_variables(node, context)` is what a command offers before it can
-ask anything: the variables the expression holds, most main first.
+ask anything: the variables the expression holds, most main first. `relation_of(node,
+context)` is what Plot asks alongside it: the operator the expression evaluates to a
+relation under, if it does, so that `IM(u = v)` is plotted as the equation it is.
 
 Every command works on any subtree, not only on a whole authored line, so the
 session can act on what the user has highlighted and put the answer back.

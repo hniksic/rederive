@@ -198,6 +198,10 @@ class Runner(Protocol):
         self, node: Node, context: engine.Context | None = ..., written: bool = ...
     ) -> tuple[str, ...]: ...
 
+    async def relation_of(
+        self, node: Node, context: engine.Context | None = ...
+    ) -> str | None: ...
+
 
 class _Here:
     """The engine computing in this process, wearing the five awaitable calls.
@@ -252,6 +256,11 @@ class _Here:
         self, node: Node, context: engine.Context | None = None, written: bool = False
     ) -> tuple[str, ...]:
         return self._engine.expression_variables(node, context, written)
+
+    async def relation_of(
+        self, node: Node, context: engine.Context | None = None
+    ) -> str | None:
+        return self._engine.relation_of(node, context)
 
 
 def _computing_here() -> Runner:
@@ -1033,6 +1042,17 @@ class Session:
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
         return await self.runner.expression_variables(self.target(request), self.context)
+
+    async def relation(self, request: str) -> str | None:
+        """The operator what `request` names evaluates to a relation under, or None.
+
+        What Plot asks next to `variables`, for the same reason: `IM(u = v)` is a
+        call as written and an equation once evaluated, and the equation is what
+        is drawn.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        return await self.runner.relation_of(self.target(request), self.context)
 
     def decomposes(self, request: str) -> bool:
         """Whether what `request` names is a number, which Factor just decomposes.

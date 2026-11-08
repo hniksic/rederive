@@ -88,6 +88,10 @@ class Blocking:
         await self._held()
         return computing.expression_variables(node, context, written)
 
+    async def relation_of(self, node, context=None):
+        await self._held()
+        return computing.relation_of(node, context)
+
 
 @pytest.fixture
 def runner():
