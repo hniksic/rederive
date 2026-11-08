@@ -86,8 +86,8 @@ from sympy.core.relational import Relational
 from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES, precedence
 
 from rederive.engine import notation
-from rederive.engine.approximation import is_approximation
-from rederive.engine.context import Context, Notation
+from rederive.engine.approximation import is_approximation, reapproximated
+from rederive.engine.context import Angle, Context, Notation, Precision
 from rederive.engine.ordering import main_order
 from rederive.syntax.names import BUILTIN_FUNCTIONS, GREEK_GLYPHS, PRIME_MARK
 
@@ -722,7 +722,105 @@ def author_text(
     fills it with the conditionals an author wrote, whose arms are the one part
     of an answer that is shown as written and not as computed.
     """
+    if context is not None and context.angle is Angle.DEGREE:
+        expression = in_degrees(expression, context)
+        authored = {
+            in_degrees(key, context): text for key, text in (authored or {}).items()
+        }
     return AuthorPrinter(context, authored).doprint(named(expression))
+
+
+#: The heads that take an angle, and the heads that give one, each by the name it is
+#: written under. `PHASE` is among the second: it is `ATAN(y, x)` of the parts.
+_TAKING_ANGLE = {
+    sp.sin: "SIN",
+    sp.cos: "COS",
+    sp.tan: "TAN",
+    sp.cot: "COT",
+    sp.sec: "SEC",
+    sp.csc: "CSC",
+}
+_GIVING_ANGLE = {
+    sp.asin: "ASIN",
+    sp.acos: "ACOS",
+    sp.atan: "ATAN",
+    sp.acot: "ACOT",
+    sp.asec: "ASEC",
+    sp.acsc: "ACSC",
+    sp.atan2: "ATAN",
+    sp.arg: "PHASE",
+}
+
+
+def in_degrees(expression: sp.Basic, context: Context) -> sp.Basic:
+    """`expression`, which measures its angles in radians, written to measure them in
+    degrees.
+
+    Under `Angle := Degree` an argument the author gives a trigonometric head is read
+    in degrees, and an inverse head's value is given in them, so an answer must be
+    written the same way to read back as itself: the sine of `pi*x/180` radians is
+    `SIN(x)`, and the arcsine in radians is `pi*ASIN(x)/180`. Each head is swapped for
+    an inert one under its name, which no conversion applies to, and the factors of
+    `pi/180` cancel where they meet: `180*asin(x)/pi` is written `ASIN(x)`.
+
+    An approximate answer holds an approximate degree, which the exact `pi/180` meets
+    without cancelling, so a coefficient the swap leaves `pi` in is approximated
+    again, as a number made of approximate ones: `SIN(0.0174532*x)` is `SIN(x)`, and
+    an approximate `180/pi` times `ASIN(y)` is `ASIN(y)`.
+    """
+    if not expression.has(*_TAKING_ANGLE, *_GIVING_ANGLE):
+        return expression
+    for head, name in _TAKING_ANGLE.items():
+        inert = sp.Function(name)
+        expression = expression.replace(
+            head, lambda angle, inert=inert: inert(angle * 180 / sp.pi)
+        )
+    for head, name in _GIVING_ANGLE.items():
+        inert = sp.Function(name)
+        expression = expression.replace(
+            head, lambda *args, inert=inert: inert(*args) * sp.pi / 180
+        )
+    expression = expression.replace(lambda e: e.is_Mul, _cancelling_pi)
+    if context.precision is Precision.EXACT:
+        return expression
+    return expression.replace(
+        lambda e: e.is_Mul, lambda product: _approximate_pi(product, context)
+    )
+
+
+def _approximate_pi(product: sp.Basic, context: Context) -> sp.Basic:
+    """`product` with its numeric coefficient approximated, if it holds `pi`."""
+    number, rest = product.as_independent(*product.free_symbols, as_Add=False)
+    if not number.has(sp.pi) or number == product:
+        return product
+    return reapproximated(number, context) * rest
+
+
+def _pi_power(term: sp.Basic) -> sp.Basic:
+    return term.as_powers_dict().get(sp.pi, sp.Integer(0))
+
+
+def _cancelling_pi(product: sp.Basic) -> sp.Basic:
+    """`product` with a `pi` in each term of a sum cancelled against one dividing it.
+
+    A sum carries a `pi` into every term where an angle in radians was measured in
+    degrees with the inverse heads in it: `x = (180*pi - 180*asin(a))/pi`, which is
+    `180 - ASIN(a)` in degrees, comes out of the swap as `(180*pi - pi*ASIN(a))/pi`.
+    """
+    below = -_pi_power(product)
+    if not below.is_Integer or below <= 0:
+        return product
+    factors = list(product.args)
+    for place, factor in enumerate(factors):
+        if not factor.is_Add:
+            continue
+        powers = [_pi_power(term) for term in factor.args]
+        if not all(power.is_Integer and power > 0 for power in powers):
+            continue
+        cancelled = min(below, *powers)
+        factors[place] = sp.Add(*(term / sp.pi**cancelled for term in factor.args))
+        return sp.Mul(*factors) * sp.pi**cancelled
+    return product
 
 
 def named(expression: sp.Basic) -> sp.Basic:

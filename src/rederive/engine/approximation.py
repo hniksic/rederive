@@ -94,6 +94,7 @@ __all__ = [
     "approximated",
     "is_approximation",
     "noting_approximations",
+    "reapproximated",
     "simplest",
     "simplest_rational",
 ]
@@ -111,7 +112,7 @@ MAX_DIGITS = 1000
 _TEN = Fraction(10)
 
 
-def simplest(value: Fraction, digits: int) -> Fraction:
+def simplest(value: Fraction, digits: int, cut: bool = True) -> Fraction:
     """The simplest rational standing in for `value` at `digits` of precision.
 
     Only a rational that shows the value's own digits will do, the digits shown
@@ -121,6 +122,9 @@ def simplest(value: Fraction, digits: int) -> Fraction:
     the next digit, and `APPROX(0.12399, 3)` would show `0.124`. So the interval
     searched is the tolerance narrowed to the numbers that cut to the value's
     digits, which always holds the value itself.
+
+    A value worked out from approximate numbers is not held to its digits, which are
+    not its own, and `cut` false searches the whole tolerance: see `reapproximated`.
     """
     if not value:
         return Fraction(0)
@@ -129,10 +133,11 @@ def simplest(value: Fraction, digits: int) -> Fraction:
     tolerance = value * Fraction(1, 10 ** (digits + 1))
     unit = _TEN ** (exponent(value) - digits + 1)
     shown = value // unit * unit
-    low = max(value - tolerance, shown)
-    high = min(value + tolerance, shown + unit)
+    low, high = value - tolerance, value + tolerance
+    if cut:
+        low, high = max(low, shown), min(high, shown + unit)
     # The next digit up is the one end that is not the value's own.
-    open_high = high == shown + unit
+    open_high = cut and high == shown + unit
     simplest_here = _simplest_between(low, high, high_open=open_high)
     # Simplest fixes the denominator, not the whole answer: where the interval
     # holds several rationals over that denominator, they are equally simple
@@ -212,6 +217,26 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
                 noted.update(_fraction(n) for n in approximate if n.is_Rational)
             return result
     return expression
+
+
+def reapproximated(number: sp.Basic, context: Context) -> sp.Basic:
+    """`number`, worked out from approximate numbers, as an approximate number itself.
+
+    The digits of such a number are those of the approximations it is made of, so
+    it stands for what they stood for only to the tolerance, and is not held to
+    the digits it happens to show: an approximate `180/pi` is 57.2957 cut short,
+    and times `pi/180` it is 0.9999999, where what it stands for is 1. So the whole
+    tolerance is searched, as `simplest` does when its digits are not to be cut.
+    """
+    digits = context.precision_digits
+    value = _evaluated(number, digits + GUARD)
+    if value is None or value[1]:
+        return approximated(number, context)
+    result = simplest_rational(value[0], digits, cut=False)
+    noted = _noted.get()
+    if noted is not None:
+        noted.add(_fraction(result))
+    return result
 
 
 P = ParamSpec("P")
@@ -301,7 +326,7 @@ def _rounded(
         return expression
 
 
-def simplest_rational(number: sp.Basic, digits: int) -> sp.Rational:
+def simplest_rational(number: sp.Basic, digits: int, cut: bool = True) -> sp.Rational:
     """`simplest` for a sympy number: a rational, or a float evaluation produced.
 
     A float is read as the decimal digits it shows, not as the binary fraction
@@ -317,7 +342,7 @@ def simplest_rational(number: sp.Basic, digits: int) -> sp.Rational:
     else:
         rational = sp.Rational(number)
         value = _shortened(rational.p, rational.q, digits)
-    return sp.Rational(simplest(value, digits))
+    return sp.Rational(simplest(value, digits, cut))
 
 
 #: Digits past the tolerance a long rational is kept to before it is approximated.

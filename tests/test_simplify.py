@@ -763,8 +763,28 @@ TRIGONOMETRY = [
     ("1/(1 + TAN(a)*TAN(a/2))", "COS(a)", None),
     ("SIN(45)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
     ("ASIN(1/2)", "30", Context(angle=Angle.DEGREE)),
-    # `deg` is the constant pi/180, so degrees work in radian mode too.
+    # An answer in degree mode measures its angles in degrees as the input does, so
+    # that it reads back as itself: the derivative's `pi/180` is the chain rule's
+    # factor, and the cosine's argument is still the `x` degrees it was given.
+    ("SIN(2*x)", "SIN(2*x)", Context(angle=Angle.DEGREE)),
+    ("SIN(x + y)", "SIN(x + y)", Context(angle=Angle.DEGREE)),
+    ("ASIN(x)", "ASIN(x)", Context(angle=Angle.DEGREE)),
+    ("ATAN(y, x)", "ATAN(y, x)", Context(angle=Angle.DEGREE)),
+    ("DIF(SIN(x), x)", "pi*COS(x)/180", Context(angle=Angle.DEGREE)),
+    ("pi*COS(x)/180", "pi*COS(x)/180", Context(angle=Angle.DEGREE)),
+    ("INT(SIN(x), x)", "-180*COS(x)/pi", Context(angle=Angle.DEGREE)),
+    ("INT(1/(1 + x^2), x)", "pi*ATAN(x)/180", Context(angle=Angle.DEGREE)),
+    ("ASIN(SIN(x))", "ASIN(SIN(x))", Context(angle=Angle.DEGREE)),
+    ("APPROX(SIN(x) + ASIN(y))", "SIN(x) + ASIN(y)", Context(angle=Angle.DEGREE)),
+    ("APPROX(2*ASIN(y))", "2*ASIN(y)", Context(angle=Angle.DEGREE)),
+    # A phase is an angle, measured in the unit the inverse heads give theirs in.
+    ("PHASE(#i)", "90", Context(angle=Angle.DEGREE)),
+    ("PHASE(-1 - #i)", "-135", Context(angle=Angle.DEGREE)),
+    # `deg` is the constant pi/180, so degrees work in radian mode too. In degree
+    # mode it is one degree measured in degrees, which is 1.
     ("SIN(45 deg)", "SQRT(2)/2", None),
+    ("SIN(45 deg)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
+    ("45 deg", "45", Context(angle=Angle.DEGREE)),
     ("SIN(2*x)", "2*SIN(x)*COS(x)", Context(trigonometry=Direction.EXPAND)),
     ("SIN(x)*COS(x)", "SIN(2*x)/2", Context(trigonometry=Direction.COLLECT)),
     ("COS(x)^2", "1 - SIN(x)^2", Context(trigpower=TrigPower.SINES)),

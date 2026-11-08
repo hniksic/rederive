@@ -292,6 +292,7 @@ def test_a_periodic_equation_is_sampled_once_per_family():
 
 def test_a_solution_is_measured_in_whatever_the_angle_setting_says():
     assert sol("SIN(x) = 1/2", context=DEGREES) == ["x = 30", "x = 150"]
+    assert sol("SIN(x) = a", context=DEGREES) == ["x = 180 - ASIN(a)", "x = ASIN(a)"]
 
 
 # -- identities ---------------------------------------------------------------

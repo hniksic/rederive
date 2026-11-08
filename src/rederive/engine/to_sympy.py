@@ -677,6 +677,9 @@ class Converter:
 
     def _name(self, node: Node) -> sp.Basic:
         name = str(node.value)
+        if name == "deg":
+            # One degree, measured like any angle in the unit the user works in.
+            return self.angle_out(CONSTANTS[name])
         constant = CONSTANTS.get(name)
         if constant is not None:
             return constant
@@ -1591,7 +1594,6 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
     "RE": sp.re,
     "IM": sp.im,
     "CONJ": sp.conjugate,
-    "PHASE": sp.arg,
     "ERFC": sp.erfc,
     "ZETA": sp.zeta,
     "SINH": sp.sinh,
@@ -1859,6 +1861,11 @@ def _acot(conv: Converter, args: list) -> sp.Basic:
     if len(args) == 2:
         return conv.angle_out(sp.atan2(args[1], args[0]))
     return conv.angle_out(sp.acot(_one(args)))
+
+
+def _phase(conv: Converter, args: list) -> sp.Basic:
+    """`PHASE(z)`, which is an angle and is given in the unit the user works in."""
+    return conv.angle_out(_direct(sp.arg)(conv, args))
 
 
 def _erf(conv: Converter, args: list) -> sp.Basic:
@@ -3818,6 +3825,7 @@ FUNCTIONS: dict[str, Handler] = {
     **{name: _direct(func) for name, func in _DIRECT.items()},
     "ATAN": _atan,
     "ACOT": _acot,
+    "PHASE": _phase,
     "ERF": _erf,
     "ABS": _absolute,
     "SIGN": _sign,
