@@ -586,6 +586,114 @@ def test_an_antiderivative_is_written_in_radicals_where_the_roots_are_known():
     )
 
 
+def test_an_antiderivative_pairs_roots_whose_radicals_are_written_apart():
+    """The roots of `16777216*t^8 + 1` come back each in a radical form of its own,
+    and no root's conjugate is written as the conjugate of its expression: the pairs
+    are found by value, and each is written over the shorter root of the two. Left a
+    `ROOT_SUM`, the integral between limits had no antiderivative to be taken at the
+    ends, and fell to sympy, which loses the roots and answers 0 between 0 and 1.
+    """
+    assert simp("INT(1/(x^8 + 1), x)") == (
+        "-SQRT(2 - SQRT(2))*ATAN(-2*x/SQRT(2 - SQRT(2)) + SQRT(2) + 1)/8 "
+        "+ SQRT(2 - SQRT(2))*ATAN(2*x/SQRT(2 - SQRT(2)) + SQRT(2) + 1)/8 "
+        "+ SQRT(SQRT(2) + 2)*ATAN(2*x/SQRT(SQRT(2) + 2) + SQRT(2) - 1)/8 "
+        "+ SQRT(SQRT(2) + 2)*ATAN(2*x/SQRT(SQRT(2) + 2) - SQRT(2) + 1)/8 "
+        "- SQRT(2 - SQRT(2))*LN(x^2 - SQRT(2 - SQRT(2))*x + 1)/16 "
+        "+ SQRT(2 - SQRT(2))*LN(x^2 + SQRT(2 - SQRT(2))*x + 1)/16 "
+        "- SQRT(SQRT(2) + 2)*LN(x^2 - SQRT(SQRT(2) + 2)*x + 1)/16 "
+        "+ SQRT(SQRT(2) + 2)*LN(x^2 + SQRT(SQRT(2) + 2)*x + 1)/16"
+    )
+    between = to_sympy(parse_expression(simp("INT(1/(x^8 + 1), x, 0, 1)"), ParseState()).node)
+    assert abs(float(between.evalf(30)) - 0.924651705775538) < 1e-12
+    # Over the tenth roots of unity, of which sympy kept only the pair on the
+    # imaginary axis, and answered `pi/10`.
+    assert simp("INT(1/(x^10 + 1), x, 0, inf)") == "SQRT(5)*pi/10 + pi/10"
+
+
+@pytest.mark.parametrize(
+    "n, expected",
+    [
+        (7, "4*pi*(2*COS(pi/14) + 3*SIN(pi/7) + COS(3*pi/14))/49"),
+        (9, "2*pi*(3*SQRT(3) + 4*COS(pi/18) + 8*SIN(pi/9) + 2*SIN(2*pi/9))/81"),
+    ],
+)
+def test_an_integral_of_a_rational_function_converging_at_infinity_is_finite(
+    n, expected
+):
+    """The logarithms in the antiderivative of `1/(x^n + 1)` grow as `LN(x)` with
+    coefficients that add up to nothing only by identities of the cosines of multiples
+    of `pi/n`, and the antiderivative's limit at `inf`, taken as it stands, is `inf`.
+    The integral is `pi/(n*SIN(pi/n))`."""
+    answer = simp(f"INT(1/(x^{n} + 1), x, 0, inf)")
+    assert answer == expected
+    value = to_sympy(parse_expression(answer, ParseState()).node)
+    assert abs(float(value.evalf(30)) - math.pi / (n * math.sin(math.pi / n))) < 1e-12
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(1/x, x, 1, x)", "LN(x)"),
+        ("INT(1/(y^2 + 1), y, 0, y/x)", "ATAN(y/x)"),
+        ("INT(1/t, t, 1, x)", "LN(x)"),
+    ],
+)
+def test_an_integral_of_a_rational_function_up_to_its_own_variable_is_valued(
+    text, expected
+):
+    """An end written in the variable of integration is the antiderivative taken
+    there: the variable integrated over is another than the one the end is in."""
+    assert simp(text) == expected
+
+
+def _summed_over_numeric_roots(answer: str) -> complex:
+    """The answer's value, each `ROOT_SUM` in it summed over its polynomial's roots
+    found numerically. Sympy's own `RootSum.doit` writes the roots of a quartic by
+    the formula and takes the logarithms of them on the wrong branch."""
+    value = to_sympy(parse_expression(answer, ParseState()).node)
+    value = value.replace(
+        lambda e: isinstance(e, sp.RootSum),
+        lambda e: sp.Add(*(e.fun(root) for root in e.poly.nroots(n=30))),
+    )
+    return complex(value.evalf(30))
+
+
+@pytest.mark.parametrize(
+    "text, expected, value",
+    [
+        (
+            "INT(1/(x^5 + x + 1), x, 0, 1)",
+            "-ROOT_SUM(161*t^3 - 23*t^2 - 12*t - 1, t, t*LN(-216384*t^4 + 54096*t^3 "
+            "- 3284*t^2 + 5941*t + 256) - 4*LN(5)*t) + 5*SQRT(3)*pi/126 "
+            "+ ROOT_SUM(161*t^3 - 23*t^2 - 12*t - 1, t, t*LN(-216384*t^4 + 54096*t^3 "
+            "- 3284*t^2 + 5941*t + 881) - 4*LN(5)*t) - LN(3)/14",
+            0.653892007815572,
+        ),
+        (
+            "INT(1/(x^4 + x + 1), x, 0, inf)",
+            "-ROOT_SUM(229*t^4 + 18*t^2 + 8*t + 1, t, "
+            "t*LN(2061*t^3/64 - 687*t^2/64 + 391*t/64 + 27/64))",
+            0.835877591843161,
+        ),
+        # At `-inf` each logarithm of the sum tends to one of `LN(-1)`, on one side of
+        # the cut or the other, and the integral stands.
+        ("INT(1/(x^4 + x + 1), x, -inf, inf)", "INT(1/(x^4 + x + 1), x, -inf, inf)", None),
+    ],
+)
+def test_an_integral_of_a_rational_function_over_a_root_sum_is_taken_at_its_ends(
+    text, expected, value
+):
+    """The antiderivative over roots that are not all had is a `ROOT_SUM`, of which
+    sympy takes no limit. At a finite end it is continuous and is taken at its value,
+    and at `inf` each of its logarithms, of the variable less a root, tends to
+    `LN(1)`. Sympy is not asked instead: it searched for minutes for the real roots of
+    the resolvent of `1/(x^5 + x + 1)`."""
+    answer = simp(text)
+    assert answer == expected
+    if value is not None:
+        assert abs(_summed_over_numeric_roots(answer) - value) < 1e-12
+
+
 def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum():
     """The logarithmic part of these is a sum over the roots of a polynomial.
 
@@ -603,6 +711,22 @@ def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum
         "LN(x) + ROOT_SUM(229*t^4 + 229*t^3 + 96*t^2 + 16*t + 1, t, "
         "t*LN(x + 129614*t^4/1713 - 1145*t^3/1713 - 76423*t^2/1713 "
         "- 45760*t/1713 - 6286/1713))"
+    )
+
+
+def test_an_antiderivative_over_cardano_roots_keeps_its_sum_and_comes_back_at_once():
+    """A cubic with one real root has its roots written by Cardano's formula, in cube
+    roots of irrational numbers, and an antiderivative written over them took minutes
+    of sympy's arithmetic in such numbers, for an answer pages long. The sum over the
+    cubic's roots stands, and where the polynomial summed over factors, as it does for
+    `1/(x^5 + x + 1)`, the quadratic factor's pair is written out all the same."""
+    assert simp("INT(1/(x^3 - x^2 + 1), x)") == (
+        "ROOT_SUM(23*t^3 + t - 1, t, t*LN(x + 46*t^2/25 + 69*t/25 - 7/25))"
+    )
+    assert simp("INT(1/(x^5 + x + 1), x)") == (
+        "5*SQRT(3)*ATAN(2*SQRT(3)*x/3 + SQRT(3)/3)/21 - LN(x^2 + x + 1)/14 "
+        "+ ROOT_SUM(161*t^3 - 23*t^2 - 12*t - 1, t, t*LN(x - 216384*t^4/625 "
+        "+ 54096*t^3/625 - 3284*t^2/625 + 5941*t/625 + 256/625))"
     )
 
 

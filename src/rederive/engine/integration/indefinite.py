@@ -278,7 +278,11 @@ def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
     same difference sympy would take with an antiderivative that was whole. A pole
     between the ends or at one of them, where the limits are numbers, has been
     looked at by `at_the_singularities` before this is asked; where the ends come
-    to nothing, or the antiderivative was not had, sympy is asked after all.
+    to nothing, or the antiderivative was not had, sympy is asked after all - but
+    not of an integral with no parameter in it, its integrand or its ends, whose
+    antiderivative is had always: sympy would answer from the same `ratint` that loses the roots, and
+    answers `INT(1/(x^8 + 1), x, 0, 1)` with 0, or search for minutes for the real
+    roots of a resolvent, as it does over `1/(x^5 + x + 1)`. That integral stands.
 
     Only an integrand rational as a whole is taken: a rational term in a sum with a
     transcendental one goes to sympy with the rest, and what sympy makes of it has to
@@ -295,15 +299,100 @@ def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
         if primitive is None:
             return None
         return Candidate(primitive, trusted=True)
+    _, low, high = head.limits[0]
+    if low.has(variable) or high.has(variable):
+        # `INT(1/x, x, 1, x)` is the antiderivative from 1 to `x`: the variable of
+        # integration is another than the one the end is written in.
+        bound = sp.Dummy(variable.name, **variable.assumptions0)
+        return _of_a_rational_function(
+            sp.Integral(integrand.xreplace({variable: bound}), (bound, low, high))
+        )
     primitive = integral(sp.Integral(integrand, variable))
     if primitive.has(sp.Integral):
         return None
-    _, low, high = head.limits[0]
-    at_ends = ends(primitive, variable, low, high)
-    if at_ends is None:
-        return None
-    value = at_ends[0] - at_ends[1]
-    return None if value is sp.nan or value.has(sp.nan) else Candidate(value, formed=True)
+    at_ends = ends(
+        primitive,
+        variable,
+        low,
+        high,
+        lambda point: _toward_an_end(primitive, integrand, variable, point),
+    )
+    value = None if at_ends is None else at_ends[0] - at_ends[1]
+    if value is None or value.has(sp.nan):
+        if head.free_symbols or integrand.free_symbols - {variable}:
+            return None
+        return Candidate(head, formed=True)
+    return Candidate(value, formed=True)
+
+
+def _toward_an_end(
+    primitive: sp.Basic, integrand: sp.Basic, variable: sp.Basic, end: sp.Basic
+) -> sp.Basic:
+    """The antiderivative of a rational function, written for its limit at an end.
+
+    A `RootSum` is a sum of `a*LN(h(a, x))` over the roots `a` of a polynomial, and
+    sympy takes the limit of no expression with one in it. Where each `h` is linear
+    in `x` with a leading coefficient of 1, each logarithm is of `x` less a root of
+    the integrand's denominator, which is either not real or is a pole, and so the
+    sum is continuous: at a finite end it is put in at its value there. At `inf`, see
+    below, each logarithm tends to `LN(1)`, and the sum to nothing. At `-inf` each
+    tends to `LN(-1)`, which is `#i*pi` or `-#i*pi` as the root's imaginary part has
+    one sign or the other, and the sum is left to stand, as it is at any end where
+    an `h` is of another form.
+
+    At an infinite end where the integrand falls off as the square of the reciprocal
+    of the variable or faster, so that the integral converges there, each `LN(p)` of a
+    polynomial of degree `d` is written as `LN(p/x^d)`, which tends to a number. The
+    two differ by `d*LN(x)`, `LN(ABS(x))` at `-inf`, and those add up to nothing:
+    the antiderivative has a limit there, and nothing else in it grows. The limit
+    of the sum as it stands is not always had: the coefficients of `LN(x)` in the
+    logarithms of `INT(1/(x^7 + 1), x)` cancel only by identities of the cosines of
+    multiples of `pi/7`, which sympy does not see, and it takes the limit at `inf`
+    for `inf`.
+
+    Anywhere else, and where a logarithm in it is of no polynomial, the
+    antiderivative is as it stands.
+    """
+    sums = [rs for rs in primitive.atoms(sp.RootSum) if rs.has(variable)]
+    if not all(_of_monic_linear_logarithms(rs, variable) for rs in sums):
+        return primitive
+    if not end.is_infinite:
+        return primitive.xreplace({rs: rs.subs(variable, end) for rs in sums})
+    numerator, denominator = sp.fraction(sp.cancel(integrand))
+    if sp.degree(denominator, variable) - sp.degree(numerator, variable) < 2:
+        return primitive
+    if sums and end is not sp.oo:
+        return primitive
+    # The logarithms outside the sums: those inside are over the sums' own variables.
+    outside = primitive.xreplace({rs: sp.S.Zero for rs in sums})
+    logarithms = [log for log in outside.atoms(sp.log) if log.has(variable)]
+    if not all(log.args[0].is_polynomial(variable) for log in logarithms):
+        return primitive
+    toward = variable if end is sp.oo else -variable
+    return primitive.xreplace(
+        {
+            **{rs: sp.S.Zero for rs in sums},
+            **{
+                log: sp.log(
+                    sp.expand(log.args[0] / toward ** sp.degree(log.args[0], variable))
+                )
+                for log in logarithms
+            },
+        }
+    )
+
+
+def _of_monic_linear_logarithms(rs: sp.RootSum, variable: sp.Basic) -> bool:
+    """Whether the `RootSum` is of `a*LN(h(a, x))`, each `h` linear in the variable
+    with a leading coefficient of 1."""
+    (t,), body = rs.fun.args
+    coefficient, logarithm = body.as_independent(variable, as_Add=False)
+    if coefficient != t or not isinstance(logarithm, sp.log):
+        return False
+    if not logarithm.args[0].is_polynomial(variable):
+        return False
+    argument = sp.Poly(logarithm.args[0], variable)
+    return argument.degree() == 1 and argument.LC() == 1
 
 
 def _of_a_trigonometric_function(head: sp.Basic) -> Candidate | None:
@@ -1054,8 +1143,14 @@ def within_reach(head: sp.Basic) -> dict[str, bool]:
     to the methods that do without one: the tables, and the Meijer G route for an
     infinite end. The Risch algorithm is switched off along with the manual rules, as
     sympy hands its nonelementary part to them with every other hint dropped.
+
+    A rational function has an elementary antiderivative always, and is not asked:
+    the Risch algorithm would integrate it by sympy's `ratint`, which searches for
+    minutes for the real roots of the resolvent of `1/(x^5 + x + 1)`.
     """
     if not definite(head):
+        return {}
+    if head.function.is_rational_function(head.limits[0][0]) is True:
         return {}
     plain = sp.Dummy("x")
     integrand = head.function.subs(head.limits[0][0], plain)

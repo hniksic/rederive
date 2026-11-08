@@ -140,9 +140,38 @@ def _logarithmic(numerator: sp.Poly, denominator: sp.Poly, x: sp.Basic) -> sp.Ba
         _, h = h.primitive()
         real = _real_form(h, q, x, t)
         if real is None:
-            real = sp.RootSum(q, sp.Lambda(t, t * sp.log(h.as_expr())), quadratic=True)
+            factors = _factors(q)
+            if len(factors) > 1:
+                real = sum(_over_a_factor(h, factor, x, t) for factor in factors)
+            else:
+                real = sp.RootSum(q, sp.Lambda(t, t * sp.log(h.as_expr())), quadratic=True)
         result += real
     return result
+
+
+def _factors(q: sp.Poly) -> list[sp.Poly]:
+    """The irreducible factors of `q`, or `q` alone where they are not had."""
+    try:
+        _, factors = q.factor_list()
+    except Exception:
+        return [q]
+    return [factor for factor, _ in factors] or [q]
+
+
+def _over_a_factor(h: sp.Poly, factor: sp.Poly, x: sp.Basic, t: sp.Basic) -> sp.Basic:
+    """The sum of `a*LN(h(a, x))` over the roots `a` of one factor of `q`, written real
+    by `_real_form` where it can be, and a `RootSum` where it cannot.
+
+    The sum over the roots of `q` is the sum of the sums over the roots of each of its
+    factors, and the roots of one factor may be had where those of another are not:
+    the logarithmic part of `1/(x^5 + x + 1)` is over the roots of a quadratic and of
+    a cubic, and the quadratic's pair is the logarithm and arctangent in `x^2 + x + 1`
+    whatever the cubic's roots are. A `RootSum` is over the factor's roots alone.
+    """
+    real = _real_form(h, factor, x, t)
+    if real is not None:
+        return real
+    return sp.RootSum(factor, sp.Lambda(t, t * sp.log(h.as_expr())), quadratic=True)
 
 
 def _over_parametric_quadratics(
@@ -289,23 +318,71 @@ def _roots_real_complex(q: sp.Poly) -> tuple[dict, dict] | None:
     writes the roots of `x^4 + x + 1` through the cube root of a complex number,
     each root's conjugate is some other expression, and a sum over them one by one
     would carry complex coefficients into a real answer.
+
+    A root's conjugate is looked for as the expression `conjugate` writes and, where
+    `q` has numbers for coefficients, also by value: `roots` writes the roots of
+    `16777216*t^8 + 1` each in a form of its own, and none is the conjugate of another
+    as it is written. Where `q` is real, the conjugate of a root is a root, so a pair
+    found by value is one, and is written by the real and imaginary parts of the
+    shorter of its two roots, which are taken only where they are known to be real.
+
+    None, too, where a root is written with a cube or higher root of an irrational
+    number, as Cardano's formula writes the roots of every cubic with one real root:
+    the logarithmic part of `INT(1/(x^3 - x^2 + 1), x)` is a polynomial of such a
+    root, and over it every step after this one, `log_to_atan` first, tests its
+    coefficients for zero by minimal polynomials that take minutes to build, for an
+    answer pages long. A root of a rational number, as in `1/(x^6 + 16)`, and square
+    roots, nested or not, are what the answers Derive writes are made of.
     """
     found = roots(q)
     if sum(found.values()) != q.degree():
         return None
+    if any(_past_square_roots(r) for r in found):
+        return None
+    numeric = all(c.is_number and c.is_extended_real for c in q.all_coeffs())
     reals: dict = {}
     complexes: dict = {}
     remaining = list(found)
     while remaining:
         r = remaining.pop()
         conjugate = r.conjugate()
-        if r != conjugate and conjugate in found:
+        if r != conjugate and conjugate in remaining:
             remaining.remove(conjugate)
             r_re, r_im = r.as_real_imag()
-            _, r_im = ordered([r_im, -r_im])
-            complexes[(r_re, r_im)] = found[r]
         elif r.is_extended_real:
             reals[r] = found[r]
-        else:
+            continue
+        elif not numeric or (conjugate := _conjugate_by_value(r, remaining)) is None:
             return None
+        else:
+            remaining.remove(conjugate)
+            r = min(r, conjugate, key=sp.count_ops)
+            r_re, r_im = r.as_real_imag()
+            if not (r_re.is_extended_real and r_im.is_extended_real):
+                return None
+        _, r_im = ordered([r_im, -r_im])
+        complexes[(r_re, r_im)] = found[r]
     return reals, complexes
+
+
+def _conjugate_by_value(r: sp.Basic, others: list) -> sp.Basic | None:
+    """The one of `others` whose value is the conjugate of the value of `r`, where `r`
+    is a number that is not real, or None."""
+    value = sp.N(r, 30)
+    if abs(sp.im(value)) <= sp.Float("1e-20", 30) * (1 + abs(value)):
+        return None
+    close = [
+        other
+        for other in others
+        if abs(sp.N(other, 30) - sp.conjugate(value)) <= sp.Float("1e-20", 30) * abs(value)
+    ]
+    return close[0] if len(close) == 1 else None
+
+
+def _past_square_roots(root: sp.Basic) -> bool:
+    """Whether the root is written with a cube or higher root of an irrational number:
+    see `_roots_real_complex`."""
+    return any(
+        power.exp.is_Rational and power.exp.q > 2 and not power.base.is_Rational
+        for power in root.atoms(sp.Pow)
+    )

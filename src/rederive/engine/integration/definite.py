@@ -188,7 +188,11 @@ def definite(head: sp.Basic) -> bool:
 
 
 def ends(
-    antiderivative: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
+    antiderivative: sp.Basic,
+    variable: sp.Basic,
+    low: sp.Basic,
+    high: sp.Basic,
+    near: Callable[[sp.Basic], sp.Basic] | None = None,
 ) -> list[sp.Basic] | None:
     """The antiderivative's limits at the upper end and then the lower, each
     approached from inside the interval, or None where either is not had.
@@ -197,12 +201,16 @@ def ends(
     not knowing that `ABS(SIN(a))` is not zero. Where it is zero the antiderivative is
     not defined at any `x`, as it divides by it, so the limit is taken for the
     absolute value positive, and kept where it divides by that value too.
+
+    With `near`, the limit at each end is taken of what `near` makes of that end, the
+    antiderivative written for the limit there.
     """
     ends = []
     for point, side in ((high, "-"), (low, "+")):
-        end = attempt(antiderivative, lambda a: sp.limit(a, variable, point, side))
+        written = antiderivative if near is None else near(point)
+        end = attempt(written, lambda a: sp.limit(a, variable, point, side))
         if end is not None and end.has(sp.Limit):
-            end = _positively(antiderivative, variable, point, side) or end
+            end = _positively(written, variable, point, side) or end
         if end is None:
             return None
         ends.append(end)
