@@ -73,6 +73,22 @@ def test_approx_is_simplify_at_another_precision(text, expected):
     assert approx(parse(text), Context()).text == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    # A simpler rational is within the tolerance just below the first three and
+    # just above the last, and either would show a digit that is not the value's.
+    [
+        ("3.14159", "3.14159"),
+        ("1.73205", "1.73205"),
+        ("0.333333", "0.333333"),
+        ("APPROX(0.12399, 3)", "0.123"),
+    ],
+    ids=str,
+)
+def test_a_typed_decimal_keeps_its_digits(text, expected):
+    assert simp(text, APPROXIMATE) == expected
+
+
 def test_approx_takes_the_digits_it_is_given():
     assert approx(parse("pi"), Context(), 12).text == "3.14159265358"
 

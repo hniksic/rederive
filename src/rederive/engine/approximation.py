@@ -86,6 +86,7 @@ from typing import ParamSpec, TypeVar
 import sympy as sp
 
 from rederive.engine.context import Context, Precision
+from rederive.engine.notation import exponent
 
 __all__ = [
     "GUARD",
@@ -106,16 +107,32 @@ GUARD = 5
 #: milliseconds.
 MAX_DIGITS = 1000
 
+_TEN = Fraction(10)
+
 
 def simplest(value: Fraction, digits: int) -> Fraction:
-    """The simplest rational standing in for `value` at `digits` of precision."""
+    """The simplest rational standing in for `value` at `digits` of precision.
+
+    Only a rational that shows the value's own digits will do, the digits shown
+    being cut rather than rounded. The tolerance alone would admit a simpler one
+    just below a value whose digits end where the precision does, and `3.14159`
+    typed would show `3.14158`; or one just above a value that falls short of
+    the next digit, and `APPROX(0.12399, 3)` would show `0.124`. So the interval
+    searched is the tolerance narrowed to the numbers that cut to the value's
+    digits, which always holds the value itself.
+    """
     if not value:
         return Fraction(0)
     sign = -1 if value < 0 else 1
     value = abs(value)
     tolerance = value * Fraction(1, 10 ** (digits + 1))
-    low, high = value - tolerance, value + tolerance
-    simplest_here = _simplest_between(low, high)
+    unit = _TEN ** (exponent(value) - digits + 1)
+    shown = value // unit * unit
+    low = max(value - tolerance, shown)
+    high = min(value + tolerance, shown + unit)
+    # The next digit up is the one end that is not the value's own.
+    open_high = high == shown + unit
+    simplest_here = _simplest_between(low, high, high_open=open_high)
     # Simplest fixes the denominator, not the whole answer: where the interval
     # holds several rationals over that denominator, they are equally simple
     # and the one nearest the value is the one it stands for. `10^7*pi` turns
@@ -123,25 +140,37 @@ def simplest(value: Fraction, digits: int) -> Fraction:
     # the value's own.
     denominator = simplest_here.denominator
     nearest = Fraction(round(value * denominator), denominator)
-    return sign * (nearest if low <= nearest <= high else simplest_here)
+    inside = low <= nearest and (nearest < high if open_high else nearest <= high)
+    return sign * (nearest if inside else simplest_here)
 
 
-def _simplest_between(low: Fraction, high: Fraction) -> Fraction:
-    """The simplest rational in `[low, high]`, which must be positive.
+def _simplest_between(
+    low: Fraction, high: Fraction, low_open: bool = False, high_open: bool = False
+) -> Fraction:
+    """The simplest rational between `low` and `high`, which must be positive.
 
-    The whole parts of the two ends agree until the interval is wide enough to
-    hold an integer, and everything they agree on is forced: any rational
-    between them starts the same way. So each shared whole part is written
-    down and the walk moves on to the reciprocals of what is left, where the
-    ends trade places. The first integer to fall between them ends it, and the
-    smallest such integer is the simplest thing the interval can hold.
+    Each end is in the interval unless it is open. The whole parts of the two
+    ends agree until the interval is wide enough to hold an integer, and
+    everything they agree on is forced: any rational between them starts the
+    same way. So each shared whole part is written down and the walk moves on
+    to the reciprocals of what is left, where the ends trade places. The first
+    integer to fall between them ends it, and the smallest such integer is the
+    simplest thing the interval can hold.
     """
     whole = low.numerator // low.denominator
-    if low.denominator == 1:
+    if low.denominator == 1 and not low_open:
         return low
-    if whole + 1 <= high:
+    if whole + 1 < high or (whole + 1 == high and not high_open):
         return Fraction(whole + 1)
-    return whole + 1 / _simplest_between(1 / (high - whole), 1 / (low - whole))
+    if low == whole:
+        # What is left reaches down to nothing, and its reciprocal up without
+        # bound, so the smallest whole number that reciprocal admits ends it.
+        bound = 1 / (high - whole)
+        floor = bound.numerator // bound.denominator
+        return whole + Fraction(1, floor + 1 if high_open or floor < bound else floor)
+    return whole + 1 / _simplest_between(
+        1 / (high - whole), 1 / (low - whole), high_open, low_open
+    )
 
 
 def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
