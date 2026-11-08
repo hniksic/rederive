@@ -231,6 +231,19 @@ class Power(sp.Function):
         return sp.Float(value, precision=prec)
 
 
+class Truth(sp.Function):
+    """A logical value or relation as an operand of arithmetic, such as `false` in
+    `x*PRIME(4)`.
+
+    Sympy's arithmetic takes only expressions, and a boolean among its operands either is
+    refused or builds a sum or product that no later rewrite can take apart. The truth
+    value is no number, so the arithmetic on it stands: wrapped, it is an operand like an
+    unknown one, `true + true` being `2*true`, and it prints as the value it holds.
+    """
+
+    nargs = 1
+
+
 class InertVector(sp.Function):
     """A vector sympy will not hold as a matrix, a ragged one above all."""
 
@@ -808,6 +821,15 @@ class Converter:
         ]
         return self._related(sp.Eq, build(sides[0]), build(sides[1]))
 
+    def _operands(self, node: Node) -> list[sp.Basic]:
+        """The operands of an arithmetic operator, each logical one held in `Truth`."""
+        return [
+            Truth(operand)
+            if _truth_value(operand)
+            else operand
+            for operand in self._children(node)
+        ]
+
     def _sum(self, node: Node) -> sp.Basic:
         """A run of terms, with one operator per gap."""
         operators = str(node.value)
@@ -823,7 +845,7 @@ class Converter:
             except sp.ShapeError:
                 return _unconformable_sum(signed)
 
-        terms = self._children(node)
+        terms = self._operands(node)
         mapped = self.over_equations(added, terms)
         return added(terms) if mapped is None else mapped
 
@@ -838,7 +860,7 @@ class Converter:
         section 8.4 says `a*b` is the matrix product where `a` and `b` are
         matrices, and `_dot` is where that product is built.
         """
-        factors = self._children(node)
+        factors = self._operands(node)
         mapped = self.over_equations(self._multiplied, factors)
         return self._multiplied(factors) if mapped is None else mapped
 
@@ -862,7 +884,7 @@ class Converter:
             return self._dot(left, right)
 
     def _binop(self, node: Node) -> sp.Basic:
-        operands = self._children(node)
+        operands = self._operands(node)
         operator = str(node.value)
 
         def applied(sides: list[sp.Basic]) -> sp.Basic:
@@ -945,7 +967,7 @@ class Converter:
         def applied(sides: list[sp.Basic]) -> sp.Basic:
             return self._prefixed(operator, sides[0])
 
-        operands = [self.convert(node.children[0])]
+        operands = self._operands(node)
         mapped = self.over_equations(applied, operands)
         return applied(operands) if mapped is None else mapped
 
@@ -1296,6 +1318,18 @@ def _matrix_power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
         return base**exponent
     except Exception:
         return sp.MatPow(base, exponent)
+
+
+def _truth_value(operand: sp.Basic) -> bool:
+    """Whether `operand` is a logical value or relation and no expression.
+
+    A symbol is both, to sympy, and it is an expression here. An equation is neither:
+    arithmetic on one is arithmetic on its sides, which `over_equations` is for.
+    """
+    return (
+        isinstance(operand, Boolean)
+        and not isinstance(operand, (sp.Expr, sp.Equality))
+    )
 
 
 def _unconformable_sum(terms: list[sp.Basic]) -> sp.Basic:
@@ -1651,8 +1685,16 @@ def _sign(conv: Converter, args: list) -> sp.Basic:
 
 
 def _step(conv: Converter, args: list) -> sp.Basic:
-    """`STEP(x)` is `SIGN(x)/2 + 1/2`, so `STEP(0)` is a half."""
-    return sp.Heaviside(_one(args), sp.Rational(1, 2))
+    """`STEP(x)` is `SIGN(x)/2 + 1/2`.
+
+    The 6.1 help says so where the sign of `x` cannot be determined, and the sign of zero
+    is indeterminate: `STEP(0)` is `SIGN(0)/2 + 1/2`, undecided on the jump in the way
+    `CHI` is on the edge of its interval.
+    """
+    value = _one(args)
+    if value.is_zero:
+        return (_sign(conv, [value]) + 1) / 2
+    return sp.Heaviside(value, sp.Rational(1, 2))
 
 
 def _chi(conv: Converter, args: list) -> sp.Basic:
@@ -2796,15 +2838,22 @@ def _element_of(conv: Converter, args: list) -> sp.Basic:
 
 
 def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
-    """One element of a vector however the vector is held."""
+    """One element of a vector however the vector is held.
+
+    None where `index` is no index of `value`, and where `value` is no vector to take an
+    element of: an index vector can reach through `[a, b, c]` to the scalar `c` and
+    still have an index left over.
+    """
     if isinstance(index, sp.MatrixBase):
         for step in _elements_of(index):
             value = _at(value, step)
             if value is None:
                 return None
         return value
+    if isinstance(value, sp.MatrixBase):
+        return _element(value, index)
     if not isinstance(value, InertVector):
-        return _element(_matrix(value), index)
+        return None
     if not isinstance(index, sp.Integer):
         return None
     number = int(index)

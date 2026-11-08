@@ -83,7 +83,12 @@ from fractions import Fraction
 import sympy as sp
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
-from sympy.printing.precedence import PRECEDENCE, PRECEDENCE_VALUES, precedence
+from sympy.printing.precedence import (
+    PRECEDENCE,
+    PRECEDENCE_FUNCTIONS,
+    PRECEDENCE_VALUES,
+    precedence,
+)
 
 from rederive.engine import notation
 from rederive.engine.approximation import is_approximation, reapproximated
@@ -115,6 +120,8 @@ PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 PRECEDENCE_VALUES.setdefault("Power", PRECEDENCE["Pow"])
 PRECEDENCE_VALUES.setdefault("Added", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Quotient", PRECEDENCE["Mul"])
+# A truth value held as an operand of arithmetic binds as tightly as what it holds.
+PRECEDENCE_FUNCTIONS.setdefault("Truth", lambda expr: precedence(expr.args[0]))
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -1859,6 +1866,9 @@ class AuthorPrinter(sp.StrPrinter):
         level = PRECEDENCE["Mul"]
         left, right = expr.args
         return f"{self.parenthesize(left, level)} . {self.parenthesize(right, level)}"
+
+    def _print_Truth(self, expr):
+        return self._print(expr.args[0])
 
     def _print_InertVector(self, expr):
         return self._vector(expr.args)

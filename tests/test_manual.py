@@ -652,6 +652,11 @@ PIECEWISE = [
     # 6.7 p.111: the sign of zero is indeterminate, and ±1 is a value.
     ("SIGN(0)", "±1"),
     ("STEP(x)", "SIGN(x)/2 + 1/2"),
+    # The 6.1 help: STEP is `(SIGN(x) + 1)/2` where the sign is not known, which
+    # at zero it is not, so the step is as undecided on its jump as CHI is on the
+    # edge of its interval.
+    ("STEP(0)", "(±1)/2 + 1/2"),
+    ("CHI(0, 0, 1)", "(±1)/2 + 1/2"),
     ("FLOOR(5.73)", "5"),
     ("MOD(m, 0)", "m"),
     ("MODS(m, 0)", "m"),

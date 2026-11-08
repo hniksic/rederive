@@ -83,6 +83,10 @@ VECTORS = [
         "ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 4)",
     ),
     ("VECTOR([[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB i SUB 1 SUB 2, i, 2)", "[2, 6]"),
+    # More indices than dimensions reach a scalar with an index left over, and
+    # keep the access whole, however the indices are written.
+    ("[a, b, c, d] SUB [4, 2]", "ELEMENT([a, b, c, d], [4, 2])"),
+    ("ELEMENT([a, b, c], 3, 1)", "ELEMENT([a, b, c], 3, 1)"),
     # Two indices on an ordinary matrix reach what they always did, and an
     # index past the end is no index and keeps the head.
     ("ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 3)", "4"),

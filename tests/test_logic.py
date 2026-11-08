@@ -228,6 +228,15 @@ LOGIC = [
     ("12 AND 10", "8"),
     ("3 XOR 5", "6"),
     ("3 AND p", "3 AND p"),
+    # A truth value is no number, and arithmetic on one stands, the value an
+    # operand like an unknown one.
+    ("x*PRIME(4)", "false*x"),
+    ("PRIME(5) + 1", "true + 1"),
+    ("true + true", "2*true"),
+    ("-true", "-true"),
+    ("true/2", "true/2"),
+    ("x + (p AND q)", "(p AND q) + x"),
+    ("x*(a < b)", "x*(a < b)"),
 ]
 
 
