@@ -7,7 +7,7 @@ symbolically and numerically, through an interactive menu-driven interface. What
 apart from SymPy in a Jupyter notebook is how it treats the user: Rederive reads `ax+b` or
 `sinx` the way a mathematician would, and displays every result nicely typeset right in
 the terminal. The UI, inherited from Derive, is tiny and opinionated, but discoverable and
-built for humans.
+user-friendly.
 
 <h3 align="center"><a href="https://hniksic.github.io/rederive/">Try it live in your browser</a></h3>
 <p align="center"><sub>(Takes a moment to load on the first visit.)</sub></p>
@@ -77,6 +77,10 @@ and pressing <kbd>s</kbd> simplifies it to:
  c·d
 ```
 
+An expression stays unevaluated until you simplify it. Simplify works it out as needed,
+which includes doing the arithmetic, canceling superfluous terms, evaluating integrals,
+and so on.
+
 Calculus goes through a small menu. Author `#e^(-x^2)`, press <kbd>c</kbd> for Calculus
 and <kbd>i</kbd> for Integrate, and enter the limits `0` and `inf`:
 
@@ -116,34 +120,35 @@ Rederive works out what an expression is a plot of and draws it accordingly:
 
 ## For the math nerds
 
-Mathematically, Rederive covers exact rational and arbitrary-precision arithmetic, and
-algebra over polynomials, rational functions, and elementary transcendental expressions.
-Equations can be solved exactly or approximately. The calculus menu offers limits,
-derivatives, Taylor polynomials, symbolic integration, and closed forms for sums and
-products (`Σ 1/k^2` from 1 to ∞ is `π²/6`). Vectors and matrices are supported too,
-including symbolic linear algebra, eigenvalues, and vector calculus. In the original
-Derive, loadable utility files extended the core with ordinary differential equations,
-recurrence equations, special functions (Bessel, elliptic, hypergeometric, zeta, and
-others), number theory, and unit conversion. These utilities, [still
-found](https://archive.org/details/derive314cas) in Internet archives, work in Rederive. A
-small functional programming language based on conditionals, iteration, and recursion lets
-users define their own functions.
+Mathematically, Rederive covers exact rational arithmetic, and algebra over polynomials,
+rational functions, and elementary transcendental expressions. Equations can be solved
+algebraically or numerically. The calculus menu offers limits, derivatives, symbolic
+integration, Taylor polynomials, and closed forms for sums and products (`Σ 1/k^2` from 1
+to ∞ is `π²/6`). Vectors and matrices are supported too, including symbolic linear
+algebra, eigenvalues, and vector calculus. In the original Derive, loadable utility files
+extended the core with ordinary differential equations, recurrence equations, special
+functions (Bessel, elliptic, hypergeometric, zeta, and others), number theory, and unit
+conversion. These utilities, [still found](https://archive.org/details/derive314cas) in
+Internet archives, work in Rederive. A small functional programming language based on
+conditionals, iteration, and recursion lets users define their own functions.
 
 Its chief strength is the care behind its simplifier. The goal is a "sufficiently simple"
 result, one with no superfluous variables, roots, or reducible degrees, while transforming
 the input as little as necessary: `x^2 - (x + (y+1)^50)·(x - (y+1)^50)` simplifies to
 `(y + 1)^100`, not to a degree-100 polynomial, because expressions are not needlessly
-expanded or forced over common denominators. It is also mathematically conservative, using
-an identity only where it provably holds. Variables are real by default, so `√(x^2)` is
-`|x|`, but `ln(x^2 - x) - ln(x)` is only rewritten to `ln(x - 1)` after the user declares
-x positive. Users control behavior through declarations of variable domains, branch
-selection for multivalued functions, and switchable exact, approximate, and mixed
-precision modes.
+expanded or forced over common denominators. It also never guesses: an identity is applied
+only where it holds for every value the variables are declared to take. Variables are real
+by default, so `√(x^2)` is `|x|`, but `ln(x^2 - x) - ln(x)` is only rewritten to `ln(x -
+1)` after you declare x positive. Users control behavior through declarations of variable
+domains, branch selection for multivalued functions, and switchable exact, approximate,
+and mixed precision modes.
 
-Rederive is exact all the way down - there is no floating point anywhere, even in
-approximation. Approximating to n digits replaces a value by the simplest rational that
-matches it to those digits (π to six digits is 355/113), and everything computed from it
-afterwards is again exact. The only inexactness is the one you request.
+Rederive is exact all the way down - it doesn't use floating point to calculate or
+represent numbers. Numeric literals are rational, and irrationals are kept symbolic,
+meaning that 0.1 is exactly 1/10, √2 and π stay as they are, and √2·√2 becomes 2.
+Approximating an irrational expression to n digits works out its value with sufficient
+precision and then replaces it by the simplest rational that matches those digits (π to
+six digits becomes 355/113). The only inexactness is the one you request.
 
 Compared with large systems such as Mathematica or Maple, Rederive's coverage is narrower.
 Exact polynomial solving works only for equations reducible to quartics, and numeric
