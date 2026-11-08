@@ -163,6 +163,34 @@ def test_the_sign_of_a_complex_number(text, expected):
     assert simp(text) == expected
 
 
+#: The real and imaginary parts of a power of a positive base, which is the
+#: exponential `#e^(z*LN(a))` and splits as one. A real exponent has no imaginary
+#: part to speak of, and the base `#e` was never in question.
+PARTS_OF_POWERS = [
+    ("IM(2^(#i*y))", "SIN(LN(2)*y)"),
+    ("RE(2^(#i*y))", "COS(LN(2)*y)"),
+    ("RE(2^(x + #i*y))", "2^x*COS(LN(2)*y)"),
+    ("IM(2^(x + #i*y))", "2^x*SIN(LN(2)*y)"),
+    ("IM(3^(2*#i*y))", "SIN(2*LN(3)*y)"),
+    ("RE(2^(1 + #i))", "2*COS(LN(2))"),
+    ("IM(2^x)", "0"),
+    ("RE(#e^(#i*y))", "COS(y)"),
+    (
+        "IM(2^(x + #i*y) = (x + #i*y)^6)",
+        "2^x*SIN(LN(2)*y) = 6*x^5*y - 20*x^3*y^3 + 6*x*y^5",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), PARTS_OF_POWERS, ids=str)
+def test_the_parts_of_a_power_of_a_positive_base(text, expected):
+    assert simp(text) == expected
+
+
+def test_the_parts_of_a_power_of_a_declared_positive_base():
+    assert simp("IM(a^(#i*y))", declared("a :epsilon Real (0, inf)")) == "SIN(y*LN(a))"
+
+
 # -- the indicator function and the normal distribution ------------------------
 
 #: Two of Section 6's functions that are a closed form rather than a rule:

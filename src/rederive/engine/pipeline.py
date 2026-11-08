@@ -3565,6 +3565,39 @@ def _plainly_written(value: sp.Basic) -> bool:
     )
 
 
+def _parts_of_powers(expression: sp.Basic) -> sp.Basic:
+    """`RE(a^z)` and `IM(a^z)` worked out, for a positive `a` and a `z` not known real.
+
+    Sympy splits an exponential into its parts, `IM(#e^(#i*y))` being `SIN(y)`, and
+    leaves a power standing, so that `IM(2^(x + #i*y))` is `2^x*IM(2^(#i*y))`. For a
+    positive base the power is the exponential `#e^(z*LN(a))`, and is written so
+    under `RE` and `IM`, which then split it: `2^x*SIN(y*LN(2))`. The exponential is
+    written back as a power by the spelling rules, where the part it ends in is
+    real.
+    """
+    return expression.replace(
+        lambda e: isinstance(e, (sp.re, sp.im)) and _has_complex_power(e.args[0]),
+        lambda e: type(e)(e.args[0].replace(_is_power_of_positive, _as_exponential)),
+        simultaneous=False,
+    )
+
+
+def _has_complex_power(expression: sp.Basic) -> bool:
+    return any(_is_power_of_positive(power) for power in expression.atoms(sp.Pow))
+
+
+def _is_power_of_positive(expression: sp.Basic) -> bool:
+    return (
+        isinstance(expression, sp.Pow)
+        and expression.base.is_positive is True
+        and expression.exp.is_extended_real is not True
+    )
+
+
+def _as_exponential(power: sp.Pow) -> sp.Basic:
+    return sp.exp(sp.expand(power.exp * sp.log(power.base)))
+
+
 def _imaginary_phases(expression: sp.Basic) -> sp.Basic:
     """`PHASE(#i*u)` as `pi*SIGN(u)/2`, for a real `u`.
 
@@ -3827,6 +3860,8 @@ def _on_powers(rewrite: Rewrite) -> Rewrite:
 _IDENTITIES = (
     _Rule("arcs off the line", _arcs_off_the_line, forced,
           "ASIN(2) is pi/2 - #i*LN(SQRT(3) + 2): a complex value in rectangular form"),
+    _Rule("parts of powers", _parts_of_powers, forced,
+          "IM(2^(x + #i*y)) is 2^x*SIN(y*LN(2)): a power of a positive base splits"),
     _Rule("imaginary phases", _imaginary_phases, forced,
           "PHASE(#i*x) is pi*SIGN(x)/2 for a real x"),
     _Rule("signs", folded_signs, forced,
