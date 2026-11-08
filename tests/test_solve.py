@@ -507,6 +507,10 @@ SYSTEMS = [
     # Variables nobody chose stay as themselves on the right.
     ("[x + y + z = 1, x - y = 0]", ("x", "y"), ["[x = (1 - z)/2, y = (1 - z)/2]"]),
     ("[x + y + z = 1, x - y = 0]", ("x", "z"), ["[x = y, z = 1 - 2*y]"]),
+    # An expression in a system is the equation `u = 0`, as a bare one is.
+    ("[a - 1, b - 2]", ("a", "b"), ["[a = 1, b = 2]"]),
+    ("[x - y, y = 2]", ("x", "y"), ["[x = 2, y = 2]"]),
+    ("[0, 0]", ("x", "y"), ["[x = @1, y = @2]"]),
 ]
 
 
@@ -577,6 +581,43 @@ def test_every_real_root_in_the_interval_comes_back_not_just_one():
     ]
 
 
+INFINITE_BOUNDS = [
+    ("COS(x) = x", ("-inf", "inf"), ["x = 0.739085"]),
+    ("COS(x) = x", ("0", "inf"), ["x = 0.739085"]),
+    ("#e^x = 3 - x", ("-inf", "inf"), ["x = 0.792059"]),
+    ("x^2 - 2 = 0", ("-inf", "inf"), ["x = -1.41421", "x = 1.41421"]),
+    # A search that finds nothing proves nothing past where it looked, so the
+    # equation stands rather than being said to have no root.
+    ("COS(x) = x", ("-inf", "-5"), ["COS(x) - x = 0"]),
+    ("#e^x = 0", ("-inf", "inf"), ["#e^x = 0"]),
+]
+
+
+@pytest.mark.parametrize(("text", "bounds", "expected"), INFINITE_BOUNDS, ids=str)
+def test_an_infinite_bound_is_searched_as_far_as_a_search_reaches(
+    text, bounds, expected
+):
+    """The 6.01 changelog allows infinite limits to NSOLVE; here they work for
+    every equation, a polynomial's roots being had at once and anything else's
+    sought in a window that widens as Mixed mode's search does."""
+    assert sol(text, context=APPROXIMATE, bounds=bounds) == expected
+
+
+def test_a_value_too_small_for_a_float_is_no_root():
+    """`#e^-2000` is 0.0 as a float, and still not zero."""
+    assert sol("#e^x = 0", context=APPROXIMATE, bounds=("-2000", "10")) == []
+
+
+def test_a_multiple_root_in_the_interval_comes_back_once():
+    """As the exact path collapses it: `(x - 1)^2` has the one solution 1."""
+    assert sol("(x - 1)^2 = 0", context=APPROXIMATE, bounds=("0", "3")) == ["x = 1"]
+    assert sol("(x - 1)^2*(x + 2) = 0", context=APPROXIMATE, bounds=("-3", "3")) == [
+        "x = -2",
+        "x = 1",
+    ]
+    assert simplify(parse("SOLVE((x - 1)^2 = 0, x, 0, 3)"), EXACT).text == "[x = 1]"
+
+
 def test_mixed_precision_searches_without_being_told_where():
     # Derive prints `-0.686026`, cutting the digit this engine rounds: the
     # root is -0.68602672..., which is `-0.686027` to six significant digits.
@@ -586,6 +627,21 @@ def test_mixed_precision_searches_without_being_told_where():
 
 def test_mixed_precision_solves_exactly_where_it_can():
     assert sol("x^2 - 5*x + 6 = 0", context=MIXED) == ["x = 2", "x = 3"]
+
+
+@pytest.mark.parametrize("context", [APPROXIMATE, MIXED], ids=lambda c: str(c.precision))
+def test_a_complex_solution_is_approximated_and_not_decided(context):
+    """The solve variable is real, and an equation of it to a complex number is no
+    statement to answer `false`: it is a solution, approximated as Exact gives it."""
+    assert sol("x^2 + 3 = 0", context=context) == ["x = 1.73205*#i", "x = -1.73205*#i"]
+    assert sol("x^3 - x + 5 = 0", context=context) == [
+        "x = -1.90416",
+        "x = 0.952080 + 1.31124*#i",
+        "x = 0.952080 - 1.31124*#i",
+    ]
+    assert simplify(parse("SOLVE(x^2 + 3 = 0, x)"), context).text == (
+        "[x = 1.73205*#i, x = -1.73205*#i]"
+    )
 
 
 # -- domains ------------------------------------------------------------------
@@ -667,6 +723,10 @@ HEADS = [
     # A system contributes one inner vector per solution, so that the outer
     # vector is always the list of entries the command would have appended.
     ("SOLVE([x + y = 3, x - y = 1], [x, y])", "[[x = 2, y = 1]]"),
+    # A vector of expressions is a system too, which is how VECTOR.MTH's
+    # EXACT_EIGENVECTOR states the one it solves.
+    ("SOLVE([a - 1, b - 2], [a, b])", "[[a = 1, b = 2]]"),
+    ("SOLVE([q - p, p - q], [p, q])", "[[p = @1, q = @1]]"),
 ]
 
 

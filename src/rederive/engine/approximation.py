@@ -84,6 +84,7 @@ from fractions import Fraction
 from typing import ParamSpec, TypeVar
 
 import sympy as sp
+from sympy.core.relational import Relational
 
 from rederive.engine.context import Context, Precision
 from rederive.engine.notation import exponent
@@ -388,6 +389,11 @@ def _approximated(
         args = tuple(map(walk, node.args))
         if args == node.args:
             return node
+        if isinstance(node, Relational):
+            # A relation comes back as a relation between the approximated sides,
+            # not decided by the assumptions on them: `x = 1.73205*#i` for a real
+            # `x` is a solution soLve found, and not the `false` sympy makes of it.
+            return node.func(*args, evaluate=False)
         return node.func(*args)
 
     try:

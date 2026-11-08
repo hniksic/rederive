@@ -177,11 +177,29 @@ def equations_in(node: Node) -> int:
     Which is the question the UI has to answer before it can ask anything: a
     system of E equations in more than E variables is asked about E times, and
     a scalar equation at most once. Syntactic, like `decomposes`: a system is a
-    vector of relations as it was written, and reading that off the tree costs
-    nothing.
+    vector of relations or expressions as it was written, and reading that off the
+    tree costs nothing.
     """
     if node.kind is not Kind.VECTOR or not node.children:
         return 0
-    if not all(child.kind is Kind.REL for child in node.children):
+    if any(child.kind in _NO_EQUATION for child in node.children):
         return 0
     return len(node.children)
+
+
+#: What a vector element can be that is no equation of a system, as `equations_of`
+#: reads one: any other element is a relation or the expression `u` of `u = 0`.
+_NO_EQUATION = frozenset(
+    {
+        Kind.VECTOR,
+        Kind.STRING,
+        Kind.NOT,
+        Kind.AND,
+        Kind.OR,
+        Kind.XOR,
+        Kind.IMP,
+        Kind.ASSIGN,
+        Kind.FUNDEF,
+        Kind.DOMAIN,
+    }
+)

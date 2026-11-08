@@ -46,6 +46,7 @@ complexes its solutions are curves no list of relations describes.
 from __future__ import annotations
 
 import cmath
+import math
 from collections.abc import Callable, Iterable, Sequence
 
 import sympy as sp
@@ -137,14 +138,29 @@ def solution_variables(
 def equations_of(expression: sp.Basic) -> tuple[Relational, ...] | None:
     """The equations of a system, or None where this is no system.
 
-    A system is a vector of relations, which is what the original solves and
-    what the UI counts to decide how many variables to ask about. A vector of
-    anything else is not one.
+    A system is a vector of relations or expressions, which is what the original
+    solves and what the UI counts to decide how many variables to ask about. An
+    expression in it is the equation `u = 0`, as a bare expression solved on its own
+    is: `[a - 1, b - 2]` is `[a = 1, b = 2]`, which is how `EXACT_EIGENVECTOR` in
+    VECTOR.MTH states its system. A vector holding vectors or truth values is no
+    system.
     """
     elements = _elements(expression)
-    if not elements or not all(isinstance(e, Relational) for e in elements):
+    if not elements or not all(_equatable(e) for e in elements):
         return None
-    return tuple(elements)
+    return tuple(
+        e if isinstance(e, Relational) else _relation(sp.Eq, e, sp.Integer(0))
+        for e in elements
+    )
+
+
+def _equatable(element: sp.Basic) -> bool:
+    """Whether a vector element can be one equation of a system."""
+    if isinstance(element, Relational):
+        return True
+    return isinstance(element, sp.Expr) and not isinstance(
+        element, sp.MatrixBase | InertVector
+    )
 
 
 def oriented(solved: sp.Basic) -> sp.Basic:
@@ -948,8 +964,13 @@ def _numeric(
     Better than the original where it costs nothing: Derive returns one root
     even when the interval holds several, and a polynomial's roots can all be
     had at once. Anything else is bracketed by a scan for a sign change and
-    then bisected, which finds one root and says so by finding only one.
+    then bisected, which finds one root and says so by finding only one; where the
+    interval is infinite that search is `_unbounded`'s, and where it finds nothing
+    the equation stands unsolved rather than claimed to have no root.
     """
+    if _polynomial(residual, variable) is None and not _finite(low, high):
+        found = _unbounded(residual, variable, low, high, context)
+        return found if found is not None else _unsolved(residual, context)
     return tuple(
         _equated(variable, root, context)
         for root in _real_roots(residual, variable, low, high, context)
@@ -965,8 +986,10 @@ def _real_roots(
 ) -> list[sp.Basic]:
     polynomial = _polynomial(residual, variable)
     if polynomial is not None:
+        # Each distinct root once, its multiplicity collapsed as the exact path
+        # collapses it: `(x - 1)^2` has the one solution 1.
         try:
-            found = polynomial.real_roots()
+            found = [root for root, _ in polynomial.real_roots(multiple=False)]
         except Exception:
             found = []
         return [
@@ -974,6 +997,46 @@ def _real_roots(
         ]
     root = _bracketed(residual, variable, low, high, context)
     return [] if root is None else [root]
+
+
+def _finite(low: sp.Basic, high: sp.Basic) -> bool:
+    """Whether neither end of a search interval is infinite."""
+    ends = (_number(low), _number(high))
+    return not any(end is not None and math.isinf(end) for end in ends)
+
+
+def _unbounded(
+    residual: sp.Basic,
+    variable: sp.Symbol,
+    low: sp.Basic,
+    high: sp.Basic,
+    context: Context,
+) -> tuple[sp.Basic, ...] | None:
+    """A root in an interval with an infinite end, or None where none turned up.
+
+    A scan cannot cover an infinite interval, so this searches a finite window of
+    it that doubles as Mixed mode's search does, from `_REACH` out to `_REACH_CAP`:
+    about the origin where both ends are infinite, and reaching away from the
+    finite end where one is. Finding nothing proves nothing about the rest of the
+    interval, which is why that answer is None and not the empty tuple.
+    """
+    first, last = _number(low), _number(high)
+    if first is None or last is None or not first < last:
+        return None
+    reach = _REACH
+    while reach <= _REACH_CAP:
+        if math.isinf(first) and math.isinf(last):
+            window = (-reach, reach)
+        elif math.isinf(last):
+            window = (first, first + reach)
+        else:
+            window = (max(first, last - reach), last)
+        start, end = (sp.Rational(bound) for bound in window)
+        found = _real_roots(residual, variable, start, end, context)
+        if found:
+            return tuple(_equated(variable, root, context) for root in found)
+        reach *= 2
+    return None
 
 
 def _approximate(root: sp.Basic, context: Context) -> sp.Basic:
@@ -1026,11 +1089,14 @@ def _bracketed(
     previous = None
     for index in range(_SCAN + 1):
         point = first + index * step
-        value = _number(residual.subs(variable, sp.Float(point)))
+        evaluated = residual.subs(variable, sp.Float(point))
+        value = _number(evaluated)
         if value is None:
             previous = None
             continue
-        if value == 0.0:
+        # A value too small for a float is 0.0 without being zero: `#e^x` far
+        # out to the left is no root.
+        if value == 0.0 and _vanishes(evaluated):
             return _approximate(sp.Float(point), context)
         if previous is not None and (previous < 0) != (value < 0):
             found = _bisect(residual, variable, point - step, point, context)
@@ -1038,6 +1104,13 @@ def _bracketed(
                 return found
         previous = value
     return None
+
+
+def _vanishes(value: sp.Basic) -> bool:
+    try:
+        return sp.sympify(value).evalf().is_zero is True
+    except Exception:
+        return False
 
 
 def _bisect(

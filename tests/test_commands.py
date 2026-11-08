@@ -567,8 +567,10 @@ async def test_factor_offers_only_what_is_left_after_simplifying(session):
 def test_a_system_is_counted_before_anything_is_computed(session):
     session.author("[x + y = 3, x - y = 1]")
     session.author("x^2 - 4 = 0")
-    session.author("[1, 2, 3]")
-    assert [session.equations(f"#{n}") for n in (1, 2, 3)] == [2, 0, 0]
+    session.author("[[1, 2], [3, 4]]")
+    # An expression in a vector is the equation `u = 0`, as soLve reads it.
+    session.author("[a - 1, b - 2, a*b = 2]")
+    assert [session.equations(f"#{n}") for n in (1, 2, 3, 4)] == [2, 0, 0, 3]
 
 
 # -- approX -------------------------------------------------------------------
