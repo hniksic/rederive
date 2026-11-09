@@ -20,12 +20,12 @@ user-friendly.
 
 Derive came out of Honolulu in 1988 and was the first computer algebra system that ran on
 machines mere mortals could afford. It fit on a floppy, worked on a 286 with half a
-megabyte of memory, and quietly took over math classrooms across Europe. (I was introduced
-to it in a Croatian school computer lab around 1992.) It was cheap, famously close to
-bug-free, and you could learn to use it in minutes. Its ease of use and responsiveness
-made math fun in a way not quite matched by modern and more advanced programs, nor by
-talking to an LLM. Derive was discontinued in 2007 after having been acquired by Texas
-Instruments.
+megabyte of memory, and you could learn to use it in minutes. Popular with both students
+and teachers, it took over school and university classrooms across Europe (I was
+introduced to it in a Croatian school computer lab around 1992). Its friendly and
+responsive UI made experimenting with math fun in a way not quite matched by modern and
+more advanced programs. Derive was discontinued in 2007 after having been acquired by
+Texas Instruments.
 
 Rederive aims to bring the experience back on modern foundations. The important pieces
 have long existed - Python as the lingua franca of math and science,
@@ -34,9 +34,9 @@ have long existed - Python as the lingua franca of math and science,
 a user-friendly CAS.
 
 Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
-but adopts certain 21st century idioms. The display assumes Unicode, the mouse and scroll
-wheel work, plots use OpenGL, it uses the system clipboard, file names tab-complete, and
-the line editor follows Emacs conventions.
+but adopts certain 21st century idioms. The display assumes a modern Unicode terminal, the
+mouse and scroll wheel work, plots use OpenGL, it uses the system clipboard, file names
+tab-complete, and the line editor follows Emacs conventions.
 
 ## Installing
 
@@ -120,16 +120,16 @@ Rederive works out what an expression is a plot of and draws it accordingly:
 
 ## For the math nerds
 
-Mathematically, Rederive covers exact rational arithmetic, and algebra over polynomials,
-rational functions, and elementary transcendental expressions. Equations can be solved
-algebraically or numerically. The calculus menu offers limits, derivatives, symbolic
-integration, Taylor polynomials, and closed forms for sums and products (`Σ 1/k^2` from 1
-to ∞ is `π²/6`). Vectors and matrices are supported too, including symbolic linear
-algebra, eigenvalues, and vector calculus. In the original Derive, loadable utility files
-extended the core with ordinary differential equations, recurrence equations, special
-functions (Bessel, elliptic, hypergeometric, zeta, and others), number theory, and unit
-conversion. These utilities, [still found](https://archive.org/details/derive314cas) in
-Internet archives, work in Rederive. A small functional programming language based on
+Mathematically, Rederive covers exact rational arithmetic, as well as algebra over
+polynomials, rational functions, and elementary transcendental expressions. Equations can
+be solved algebraically or numerically. The calculus menu offers limits, derivatives,
+symbolic integration, Taylor polynomials, and closed forms for sums and products (`Σ
+1/k^2` from 1 to ∞ is `π²/6`). Vectors and matrices are supported too, including symbolic
+linear algebra, eigenvalues, and vector calculus. In the original Derive, loadable utility
+files extended the core with ordinary differential equations, recurrence equations,
+special functions (Bessel, elliptic, hypergeometric, zeta, and others), number theory, and
+unit conversion. These utilities, [still found](https://archive.org/details/derive314cas)
+in Internet archives, work in Rederive. A small functional programming language based on
 conditionals, iteration, and recursion lets users define their own functions.
 
 Its chief strength is the care behind its simplifier. The goal is a "sufficiently simple"
@@ -144,11 +144,11 @@ domains, branch selection for multivalued functions, and switchable exact, appro
 and mixed precision modes.
 
 Rederive is exact all the way down - it doesn't use floating point to calculate or
-represent numbers. Numeric literals are rational, and irrationals are kept symbolic,
-meaning that 0.1 is exactly 1/10, √2 and π stay as they are, and √2·√2 becomes 2.
-Approximating an irrational expression to n digits works out its value with sufficient
-precision and then replaces it by the simplest rational that matches those digits (π to
-six digits becomes 355/113). The only inexactness is the one you request.
+represent numbers. Numeric literals are rational, and irrationals are symbolic, meaning
+that 0.1 is exactly 1/10, √2 and π stay as they are, and √2·√2 becomes 2. Approximating an
+irrational expression to n digits works out its value with sufficient precision and then
+replaces it by the simplest rational that matches those digits (π to six digits becomes
+355/113). The only inexactness is the one you request.
 
 Compared with large systems such as Mathematica or Maple, Rederive's coverage is narrower.
 Exact polynomial solving works only for equations reducible to quartics, and numeric
@@ -158,7 +158,7 @@ variables, explicit loops, or data structures beyond vectors and matrices, so li
 introducing advanced polynomial algebra or sophisticated definite integration are out of
 reach. If you need that, you should probably turn to SymPy (or Mathematica) directly.
 Within its chosen scope, however, Rederive strives to be small and dependable. That
-trade-off defined the original: keep the system simple, but powerful enough to be useful,
+trade-off defined the original: a system simple but powerful enough to be useful,
 especially in the classroom.
 
 ## How Rederive was built
