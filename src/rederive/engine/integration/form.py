@@ -54,6 +54,10 @@ def antiderivative(head: sp.Basic, value: sp.Basic, tabled: bool = False) -> sp.
     `tabled`, written the way the integral tables write it already or by the manual
     rules themselves.
 
+    The rational part of an antiderivative of a rational function is written over the
+    factors of its denominator, with the constant that makes it vanish at zero where
+    that is shorter, as `_with_a_factored_rational_part` explains.
+
     Whether the answer is one to take at all is not asked here: `indefinite` has
     proved it, or knows it right by construction, before it is handed over.
     """
@@ -71,7 +75,8 @@ def antiderivative(head: sp.Basic, value: sp.Basic, tabled: bool = False) -> sp.
     ):
         value = _shorter_by_the_manual_rules(head, value, integrand, variable)
     value = _without_constants(single_case(value, integrand, variable), variable)
-    return _with_matching_logarithms(continuous(value, variable), variable)
+    value = _with_matching_logarithms(continuous(value, variable), variable)
+    return forced(value, lambda v: _with_a_factored_rational_part(v, integrand, variable))
 
 
 #: The integrals of 6.11 with a logarithmic singularity at zero, and the logarithm of
@@ -136,6 +141,189 @@ def _with_matching_logarithms(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
         value = value.xreplace({logarithm: sp.S.Zero for logarithm in logs})
         value = sp.Add(value, *matched)
     return value
+
+
+def _with_a_factored_rational_part(
+    value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
+) -> sp.Basic:
+    """An antiderivative of a rational function with its rational part written over
+    the factors of its denominator, and with the constant that makes that part vanish
+    at zero where that writes it shorter.
+
+    The rational part is the sum of the terms that are rational functions of the
+    variable and not polynomials in it: what Hermite's reduction splits off, over
+    `gcd(q, q')` for the integrand's denominator `q`. That denominator is a product of
+    powers of the square-free factors of `q`, and multiplied out it hides them:
+    `INT(1/(1 + x)^3, x)` is `-1/(2*(x + 1)^2)`, which says where its pole is, and not
+    `-1/(2*x^2 + 4*x + 2)`. So the denominator is written as a factor free of the
+    variable times a power of each of the factors `_denominator_factors` finds, by
+    dividing them out: nothing is factored that the square-free decomposition or the
+    integrand as written did not already split, and `INT(x^2/(x^3 + 1)^2, x)` is over
+    `x^3 + 1`. Where the normal form would take a number in that denominator into the
+    numerator, as `_spread_by_the_normal_form` says, it is left multiplied out, and so
+    it is where the factored part would have the whole answer put over one
+    denominator, as `_merged_only_when_factored` says.
+
+    The rational part `R` and `R - R(0)` are antiderivatives alike, and the second is
+    taken where its numerator has fewer terms: `INT(x^4/(1 + x)^6, x)` is
+    `x^5/(5*(x + 1)^5)`, where `R` is a quartic over the same denominator. Only where
+    `q(0)` is known not to be zero for any value of the parameters: where it may be,
+    `R(0)` has a pole there that `R` does not, as at `a = 0` in `INT(x^4/(a + b*x)^6,
+    x)`, and `R - R(0)` would be undefined for a value of the parameters the integral
+    is defined for. The rest of the answer, its polynomial and its logarithms and
+    arctangents, is left as it is.
+    """
+    if integrand.is_rational_function(variable) is not True:
+        return value
+    coefficient, rest = _split(value, variable)
+    rational, others = [], []
+    for term in sp.Add.make_args(rest):
+        if term.is_rational_function(variable) and not term.is_polynomial(variable):
+            rational.append(term)
+        else:
+            others.append(term)
+    if not rational:
+        return value
+    q = sp.Poly(sp.denom(sp.cancel(integrand)), variable)
+    part = sp.cancel(coefficient * sp.Add(*rational))
+    shifted = None
+    if q.eval(0).is_zero is False:
+        shifted = _shorter_at_zero(part, variable)
+        if shifted is not None:
+            part = shifted
+    written = _over_the_factors(part, _denominator_factors(integrand, q, variable))
+    if written is None or _spread_by_the_normal_form(written):
+        if shifted is None:
+            return value
+        written = part
+    beside = coefficient * sp.Add(*others)
+    if others and _merged_only_when_factored(beside + written, beside + part):
+        return value if shifted is None else beside + part
+    return beside + written
+
+
+def _shorter_at_zero(part: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
+    """`R - R(0)` for the cancelled rational part `R`, where `R(0)` is other than zero
+    and the numerator of the difference has fewer terms than that of `R`, or None."""
+    numerator, denominator = sp.fraction(part)
+    below = sp.cancel(denominator.subs(variable, 0))
+    if below == 0:
+        return None
+    constant = sp.cancel(numerator.subs(variable, 0) / below)
+    if constant == 0 or constant.has(sp.zoo, sp.oo, sp.nan):
+        return None
+    shifted = sp.cancel(part - constant)
+    terms = len(sp.Add.make_args(sp.expand(sp.fraction(shifted)[0])))
+    if terms >= len(sp.Add.make_args(sp.expand(numerator))):
+        return None
+    return shifted
+
+
+def _denominator_factors(
+    integrand: sp.Basic, q: sp.Poly, variable: sp.Basic
+) -> list[sp.Poly]:
+    """The factors the rational part's denominator is written over: the square-free
+    factors of the integrand's cancelled denominator `q`, split where the denominator
+    was written with factors of its own, by gcds and never by a factorization.
+
+    `1/((x + 1)^2*(x + 2)^2)` has the one square-free factor `x^2 + 3*x + 2`, and the
+    rational part of its integral is over `(x + 1)*(x + 2)`, the factors it was written
+    with, as the normal form keeps the factors a denominator arrives with. Each is
+    taken square-free, and the whole is made pairwise coprime: a factor that shares a
+    divisor with another is replaced by the divisor and what is left of the two.
+    """
+    written = []
+    for factor in sp.Mul.make_args(sp.denom(integrand)):
+        base, _ = factor.as_base_exp()
+        if base.has(variable) and base.is_polynomial(variable):
+            _, parts = sp.Poly(base, variable).sqf_list()
+            written.extend(part for part, _ in parts)
+    _, parts = q.sqf_list()
+    basis: list[sp.Poly] = []
+    for candidate in [*written, *(part for part, _ in parts)]:
+        pending = [candidate]
+        while pending:
+            factor = pending.pop()
+            if factor.degree() <= 0:
+                continue
+            for index, known in enumerate(basis):
+                common = sp.gcd(factor, known)
+                if common.degree() <= 0:
+                    continue
+                if common.degree() == known.degree():
+                    common = known
+                else:
+                    del basis[index]
+                    pending.extend([common, sp.quo(known, common)])
+                pending.append(sp.quo(factor, common))
+                break
+            else:
+                basis.append(factor)
+    return basis
+
+
+def _over_the_factors(part: sp.Basic, bases: list[sp.Poly]) -> sp.Basic | None:
+    """The cancelled rational part over a factor free of the variable times a power of
+    each of `bases`, or None where its denominator is no such product.
+
+    The factor free of the variable is written square-free in the parameters,
+    `2*(4*a*c - b^2)^2` and not a polynomial of degree four in them.
+    """
+    if not bases:
+        return None
+    numerator, denominator = sp.fraction(part)
+    remaining = sp.Poly(denominator, bases[0].gens[0], field=True)
+    powers = []
+    for base in bases:
+        exponent = 0
+        while remaining.degree() >= base.degree():
+            quotient, remainder = remaining.div(base)
+            if not remainder.is_zero:
+                break
+            remaining, exponent = quotient, exponent + 1
+        if exponent:
+            powers.append(base.as_expr() ** exponent)
+    if remaining.degree() != 0 or not powers:
+        return None
+    content = sp.factor_terms(sp.sqf(remaining.as_expr()))
+    under = [factor**-1 for factor in sp.Mul.make_args(content)]
+    return sp.Mul(numerator, *under, *(power**-1 for power in powers))
+
+
+def _merged_only_when_factored(factored: sp.Basic, multiplied: sp.Basic) -> bool:
+    """Whether the simplifier would put the whole answer over one denominator with its
+    rational part factored, and not with it multiplied out.
+
+    Simplify keeps `radsimp`'s answer over one denominator wherever that counts fewer
+    operations, and a factored denominator is a common factor `radsimp` can merge
+    every other term over: `INT(1/(x^6 + 16)^2, x)`, its logarithms and arctangents
+    carrying `2^(2/3)`, would come back as one quotient twice the length of the sum.
+    Such an answer keeps its rational part multiplied out.
+    """
+    return pays(sp.radsimp(factored), factored) and not pays(
+        sp.radsimp(multiplied), multiplied
+    )
+
+
+def _spread_by_the_normal_form(written: sp.Basic) -> bool:
+    """Whether the normal form would write the quotient with fractions in its
+    numerator.
+
+    The normal form takes a number under the line into the one sum over it wherever
+    that leaves some term of the sum a whole coefficient, `(4*x + 3)/(2*(x + 1)^2)` as
+    `(2*x + 3/2)/(x + 1)^2`. A rational part it would write that way is kept over its
+    denominator multiplied out, where the number stays inside a sum.
+    """
+    coefficient, rest = written.as_coeff_Mul()
+    if not coefficient.is_Rational or coefficient.q == 1:
+        return False
+    sums = [factor for factor in sp.Mul.make_args(rest) if factor.is_Add]
+    if len(sums) != 1:
+        return False
+    return any(
+        (coefficient * term.as_coeff_Mul()[0]).is_Integer
+        for term in sp.Add.make_args(sp.expand(sums[0]))
+    )
 
 
 def somewhere_only(value: sp.Basic) -> bool:

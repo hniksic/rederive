@@ -381,6 +381,100 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
 # -- the form ----------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # The denominator of the rational part over the factors of the integrand's.
+        ("INT(1/(1 + x)^3, x)", "-1/(2*(x + 1)^2)"),
+        ("INT(1/(x^2 + 2*x + 1)^2, x)", "-1/(3*(x + 1)^3)"),
+        ("INT(x/(x^2 + 1)^2, x)", "-1/(2*(x^2 + 1))"),
+        ("INT(1/(x^2 + 1)^2, x)", "ATAN(x)/2 + x/(2*(x^2 + 1))"),
+        ("INT(1/(1 + x)^2, x)", "-1/(x + 1)"),
+        (
+            "INT(x^4/(a + b*x)^6, x)",
+            "-(5*b^4*x^4 + 10*a*b^3*x^3 + 10*a^2*b^2*x^2 + 5*a^3*b*x + a^4)/(5*b^10*x^5 "
+            "+ 25*a*b^9*x^4 + 50*a^2*b^8*x^3 + 50*a^3*b^7*x^2 + 25*a^4*b^6*x + 5*a^5*b^5)",
+        ),
+        # Square-free factors are not factored further, but the factors the
+        # denominator was written with are kept apart.
+        ("INT(x^2/(x^3 + 1)^2, x)", "-1/(3*(x^3 + 1))"),
+        (
+            "INT(1/((x + 1)^2*(x + 2)^2), x)",
+            "-2*LN(x + 1) + 2*LN(x + 2) - (2*x + 3)/((x + 1)*(x + 2))",
+        ),
+        (
+            "INT(1/(x^2 + 3*x + 2)^2, x)",
+            "-2*LN(x + 1) + 2*LN(x + 2) - (2*x + 3)/(x^2 + 3*x + 2)",
+        ),
+        # Where the normal form would take the number under the line into the sum
+        # over it, the denominator stays multiplied out.
+        ("INT(x^2/(1 + x)^3, x)", "LN(x + 1) + (4*x + 3)/(2*x^2 + 4*x + 2)"),
+        (
+            "INT(x^5/(1 + x)^6, x)",
+            "LN(x + 1) + (300*x^4 + 900*x^3 + 1100*x^2 + 625*x + 137)/(60*x^5 + 300*x^4 "
+            "+ 600*x^3 + 600*x^2 + 300*x + 60)",
+        ),
+        # The constant that makes the rational part vanish at zero, where that
+        # shortens its numerator.
+        ("INT(x^4/(1 + x)^6, x)", "x^5/(5*(x + 1)^5)"),
+        ("INT(x^2/(1 + x)^4, x)", "x^3/(3*(x + 1)^3)"),
+        ("INT(x/(1 + x)^3, x)", "x^2/(2*(x + 1)^2)"),
+        ("INT(x^3/(1 + x^2)^3, x)", "x^4/(4*(x^2 + 1)^2)"),
+        ("INT(x^5/(2 + 3*x^2)^4, x)", "x^6/(12*(3*x^2 + 2)^3)"),
+        ("INT(x^4/(2*x + 2)^6, x)", "x^5/(320*(x + 1)^5)"),
+        ("INT(x^3/(1 + x)^6, x)", "x^4*(x + 5)/(20*(x + 1)^5)"),
+        ("INT(x^4/(1 + b*x)^6, x)", "x^5/(5*(b*x + 1)^5)"),
+        ("INT(x^4/(a^2 + 1 + b*x)^6, x)", "x^5/(5*(a^2 + 1)*(b*x + a^2 + 1)^5)"),
+        # The function and not its spelling.
+        (
+            "INT(x^4/(x^6 + 6*x^5 + 15*x^4 + 20*x^3 + 15*x^2 + 6*x + 1), x)",
+            "x^5/(5*(x + 1)^5)",
+        ),
+        ("INT(3*x^4*(x + 2)/((x + 2)*(x + 1)^6), x)", "3*x^5/(5*(x + 1)^5)"),
+        # A constant of integration does not reach a definite integral.
+        ("INT(x^4/(1 + x)^6, x, 0, t)", "t^5/(5*(t + 1)^5)"),
+        ("INT(x^4/(1 + x)^6, x, 0, 1)", "1/160"),
+        ("INT(x^4/(1 + x)^6, x, 0, inf)", "1/5"),
+        ("INT(x^4/(1 + x)^6, x, -2, 1)", "inf"),
+        ("INT(x^4/(1 + x)^6, x, -1, 0)", "inf"),
+        ("INT(x^3/(1 + x^2)^3, x, 0, inf)", "1/4"),
+        ("INT(x^4/(1 + b*x)^6, x, 0, 1)", "IF(b <= -1, inf, 1/(5*(b + 1)^5))"),
+    ],
+)
+def test_the_rational_part_is_over_factors_and_vanishes_at_zero_where_shorter(
+    text, expected
+):
+    """The rational part of a rational antiderivative is written over powers of the
+    factors of the integrand's denominator, and with the constant that makes it zero
+    at zero where its numerator then has fewer terms. Not where the integrand's
+    denominator may vanish at zero for some value of a parameter, as `a + b*x` does at
+    `a = 0`: the constant has a pole there that the answer would take on."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, rational, longest",
+    [
+        ("INT(1/(x^6 + 16)^2, x)", " + x/(96*x^6 + 1536)", 270),
+        (
+            "INT(1/(x^6 + 16)^3, x)",
+            " + x*(11*x^6 + 272)/(18432*x^12 + 589824*x^6 + 4718592)",
+            322,
+        ),
+        ("INT(1/(x^6 + 2)^2, x)", " + x/(12*x^6 + 24)", 228),
+    ],
+)
+def test_a_factored_rational_part_does_not_put_the_answer_over_one_denominator(
+    text, rational, longest
+):
+    """With its rational part factored, each of these answers would be put over one
+    denominator by Simplify, its logarithms and arctangents multiplied by the factor,
+    at twice the length. Its rational part stays multiplied out, a term of its own."""
+    answer = simp(text)
+    assert answer.endswith(rational)
+    assert len(answer) <= longest
+
+
 def test_an_antiderivative_is_written_with_no_constant_added():
     """An indefinite integral is one antiderivative out of many.
 
