@@ -112,6 +112,15 @@ async def test_a_menu_and_a_dialog_leave_the_opening_notice_standing(app):
         assert "Press H for help" in "\n".join(work_area(app))
 
 
+async def test_escape_on_the_command_menu_returns_the_highlight_to_author(app):
+    async with app.run_test() as pilot:
+        await pilot.press("tab", "tab", "tab")
+        assert highlighted_menu_option(app) == "Declare"
+        await pilot.press("escape")
+        assert highlighted_menu_option(app) == "Author"
+        assert message(app) == "Enter option"
+
+
 async def test_menu_highlight_cycles_and_wraps(app):
     async with app.run_test() as pilot:
         assert highlighted_menu_option(app) == "Author"

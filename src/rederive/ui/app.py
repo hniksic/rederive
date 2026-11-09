@@ -2113,12 +2113,16 @@ class RederiveApp(App[None]):
         to the Declare menu as in Derive.
 
         In help, Esc is `Resume`: from a subject to the subject menu, and from there
-        out of help.
+        out of help. On the command menu, with nothing to pop, it moves the highlight
+        back to the first word.
         """
         if self.mode == MODE_HELP:
             self._help_back()
             return
-        if len(self.stack) > 1:
+        if len(self.stack) == 1:
+            self._restart_menu()
+            self.refresh_screen()
+        else:
             left = self.stack.pop()
             if isinstance(left, MenuCursor) and left.menu in AMOUNT_MENUS:
                 self.asking = None
