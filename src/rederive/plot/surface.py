@@ -1,34 +1,24 @@
-"""The geometry of a surface: the box it stands in, its mesh, its wire and its light.
+"""Surface geometry: the bounding box, mesh, wireframe and shading.
 
-Several hundred lines of arrays and no toolkit at all. What a 3D window draws
-is worked out here - where a data coordinate lands in the box, which faces
-survive a hole in the domain, where the mesh stops, how bright each vertex is -
-and what a window does with the answer is upload it. That is what lets a second
-backend draw the same solid: three.js is handed exactly these vertices, these
-triangles and these colors.
+This module computes, without any toolkit, everything a 3D window draws: where data
+coordinates land in the box, which faces survive holes in the domain, where the mesh
+ends, and how bright each vertex is. Windows just upload the result, so another backend
+(three.js) can draw exactly the same vertices, triangles and colors.
 
-**The picture is drawn in a box of the program's choosing, not the data's.** The
-box is a cube, and each of the three ranges is stretched onto it on its own: a
-domain of any rectangle onto the same square floor, and a z of any range onto
-the same height. So a surface whose z runs to a millionth reads as a shape and
-not as a lid, one whose z runs to a million reads as a shape and not as a wall,
-a plot of `f` and a plot of `100*f` are the same picture, and a camera that
-frames one surface frames every other one. The numbers along the box edges carry
-the truth; the geometry carries the form.
+**The box is a fixed cube, not shaped by the data.** Each of the three ranges is
+stretched onto it independently. So a surface with a tiny or huge z range still reads
+as a shape, `f` and `100*f` look the same, and a camera framing one surface frames
+any. The numbers along the box edges show the actual values.
 
-**The z extent is the data's, within reason.** It autoscales to the finite
-values of every surface in the window, and where a spike would crush everything
-else into a plane it is taken from the 1st to the 99th percentile instead, with
-the window saying so. Vertices outside the clip leave the mesh exactly as
-non-real ones do, so the spike is not drawn flattened against the lid - it is
-simply not there.
+**The z range follows the data, within reason.** It autoscales to the finite values of
+all surfaces in the window, but if a spike would flatten everything else, it is clipped
+to the 1st-99th percentile and the window says so. Vertices outside the clip are
+dropped like non-real ones, so the spike isn't drawn flattened against the lid.
 
-**Holes are holes, and the mesh stops where the surface does.**
-`SQRT(1-x^2-y^2)` is a dome over the unit disc and nothing at all outside it,
-so faces are kept only where the surface is real, and a cell the domain's edge
-crosses is filled up to the boundary the sampler refined - on the closure, to
-a fraction of a cell - rather than dropped, so the dome's rim is a circle and
-not a staircase.
+**Holes are holes, and the mesh ends where the surface does.** `SQRT(1-x^2-y^2)` is a
+dome over the unit disc and nothing outside it. Faces are kept only where the surface
+is real, and cells crossed by the domain's edge are filled up to the boundary refined
+by the sampler, so the dome's rim is a circle rather than a staircase.
 """
 
 from __future__ import annotations
@@ -45,48 +35,36 @@ from rederive.plot.view import PERCENTILES, Span, pooled
 
 __all__ = ["Box", "brightened", "extent", "mesh", "place", "spanned", "ticks", "wire"]
 
-#: The side of the cube every surface is drawn in, and half of it, which is
-#: where the box walls are. World units, and they mean nothing else: the axis
-#: numbers are the only quantities in a 3D window with units.
+#: The side of the cube surfaces are drawn in, and half of it, where the walls are. In
+#: world units, which have no meaning beyond this.
 WORLD = 10.0
 HALF = WORLD / 2
 
-#: How a vertex's brightness is arrived at. Height is half of it - the ramp
-#: runs from `DIM` at the floor of the box to 1 at the lid - and how the
-#: surface lies to a fixed light is the other half. Height alone reads a hill
-#: from a valley and nothing else, since two slopes at the same height are the
-#: same color; a light is what makes a fold in the middle of a surface show.
-#: The light is baked into the vertex colors rather than computed by a shader,
-#: which is what keeps the mesh free of normals and the frame rate free of
-#: anything. Where it shines from is `plot.appearance`', since the page's card
-#: shines a lamp of its own from the same direction.
+#: Vertex brightness parameters. Half the brightness comes from height (from `DIM` at
+#: the floor to 1 at the lid) and half from a fixed light, which makes folds visible
+#: where height alone would not. The light is baked into vertex colors rather than
+#: computed by a shader, so the mesh needs no normals. Its direction is in
+#: `plot.appearance`, shared with the page.
 DIM = 0.30
 AMBIENT = 0.20
 HEIGHT_SHARE = 0.5
 
-#: How many row and column lines the wire drawing aims for each way. The full
-#: grid at the default 64 x 64 is some eight thousand segments and reads as
-#: gray fuzz, so only every k-th row and column is drawn - the thinning is of
-#: the drawing, never of the sampling, and every drawn line keeps the full
-#: sample spacing. Raising the grid in the toolbar therefore sharpens the
-#: wire's lines instead of multiplying them.
+#: Target number of wireframe lines in each direction. Drawing every grid line would
+#: be gray fuzz, so only every k-th row and column is drawn, each at full sample
+#: resolution. A finer grid therefore makes lines smoother rather than more numerous.
 WIRE_LINES = 20
 
-#: How many tick marks an axis aims for.
+#: Target number of tick marks per axis.
 TICKS = 5
 
 
 @dataclass(frozen=True)
 class Box:
-    """The three ranges the picture stands for: the domain, and the z it holds.
+    """The x, y and z ranges mapped onto the cube.
 
-    Everything drawn is placed through this and nothing else, which is what
-    keeps one mapping between the numbers a reader sees and the geometry the
-    card draws. The cube it maps onto is always the same cube, whatever the
-    three ranges are: a picture that kept the proportion of z to the floor
-    would have to squash a surface of small range into a lid to do it, and one
-    that kept the proportion of y to x would be at the mercy of the domain the
-    reader happened to ask for. The axis numbers say what each range is.
+    Everything drawn is placed through this mapping, so the axis numbers and geometry
+    always agree. The cube is the same whatever the ranges, so neither a small z range
+    nor an elongated domain distorts the picture.
     """
 
     x: tuple[float, float]
@@ -112,7 +90,7 @@ class Box:
 
 
 def place(values: Any, span: tuple[float, float], length: float) -> np.ndarray:
-    """Data coordinates onto the box: the range of `span` onto `length` of world."""
+    """Map data coordinates in `span` onto `length` world units, centered at zero."""
     low, high = float(span[0]), float(span[1])
     width = high - low
     array = np.asarray(values, dtype=np.float64)
@@ -122,16 +100,12 @@ def place(values: Any, span: tuple[float, float], length: float) -> np.ndarray:
 
 
 def spanned(values: np.ndarray) -> Span | None:
-    """What one grid asks for in z: the whole of its finite values and the middle.
+    """The full and percentile z ranges of one grid's finite values.
 
-    The measuring half of a box, and the only half that needs the values. What
-    is done with the two ranges is `plot/view.py`'s `pooled`, over every surface
-    in the window at once - a single pole in a corner of the grid can be a
-    thousand times the rest of the surface, and whether that is worth cutting
-    away is a question about the picture rather than about this array.
+    `plot/view.py`'s `pooled` then combines them over all surfaces in the window and
+    decides whether to clip.
 
-    None where there is nothing finite at all, which is the message rather than
-    a picture.
+    Returns None if there are no finite values.
     """
     flat = np.asarray(values, dtype=np.float64).ravel()
     finite = flat[np.isfinite(flat)]
@@ -147,12 +121,11 @@ def spanned(values: np.ndarray) -> Span | None:
 
 
 def extent(arrays: Sequence[np.ndarray]) -> tuple[tuple[float, float], bool] | None:
-    """The z range a box of these arrays takes, and whether a spike was cut out.
+    """The box's z range for these arrays, and whether it was clipped.
 
-    Measure each, then pool: the two halves are separate because only the first
-    of them needs the arrays, and a browser has the arrays in one interpreter
-    and the box in another. A window with the values in hand asks for both at
-    once, which is what this is.
+    Combines `spanned` and `pooled`, for callers that have all the arrays. (The browser
+    keeps the arrays and the box in different interpreters, so it calls them
+    separately.)
     """
     spans = [span for span in (spanned(array) for array in arrays) if span is not None]
     return pooled(spans)
@@ -165,31 +138,24 @@ def mesh(
     box: Box,
     boundary: evaluate.Boundary | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """One surface as vertices in the box, the faces that reach it, and shading.
+    """A surface's vertices in the box, its faces, and per-vertex shading.
 
-    A face is kept whole where all four of its corners are real, finite and
-    inside the box. A cell that the edge of the surface's domain crosses is
-    filled up to the boundary instead of dropped: its defined corners plus the
-    refined crossing points `boundary` carries make a triangle, a quadrilateral
-    or a pentagon - the marching-squares cases - so the mesh ends where the
-    surface does rather than a grid step short. The clip planes come second,
-    array-only and evaluation-free because the box moves on the Qt thread: the
-    boundary there is a known z, so every partial cell's polygon is trimmed to
-    it by linear interpolation along its edges, which is also what saves a
-    boundary vertex whose limit is unbounded. Without `boundary` the cells the
-    domain's edge crosses are dropped as before; the clip trimming needs no
-    refinement data and happens regardless.
+    A cell is kept as a whole face if all four corners are real, finite and inside the
+    box. A cell crossed by the domain's edge is filled up to the boundary instead of
+    dropped: its defined corners plus the refined crossings in `boundary` form a
+    triangle, quadrilateral or pentagon (the marching-squares cases), so the mesh ends
+    where the surface does. Then partial cells are trimmed to the box's z range by
+    linear interpolation along their edges. This needs no evaluation, since the box
+    changes on the Qt thread, and it also handles boundary vertices whose limit is
+    unbounded. Without `boundary`, cells crossed by the domain's edge are dropped, but
+    clip trimming still happens.
 
-    The corners a face never references keep a vertex each - unreferenced, and
-    therefore not drawn - because renumbering the survivors would cost more
-    than the few kilobytes the holes are worth.
+    Unused grid corners keep their vertex (unreferenced, so not drawn), since
+    renumbering would cost more than it saves.
 
-    The shading comes back beside the mesh because it is read off the same
-    array: how high a vertex is and which way the surface faces there are both
-    questions about z, and answering them here is what leaves the drawing with
-    no normals to compute and no lighting to do. A vertex on the boundary is
-    not on the grid, so its light is interpolated along the edge it sits on
-    rather than read from a gradient that has no cell there.
+    Shading is computed here from the same array (height and slope), so the drawing
+    needs no normals or lighting. Boundary vertices are off the grid, so their light
+    is interpolated along their edge.
     """
     zs = np.asarray(values, dtype=np.float64)
     if zs.ndim != 2 or zs.shape[0] < 2 or zs.shape[1] < 2:
@@ -220,8 +186,8 @@ def mesh(
     gained, patches = _partial(
         xs, ys, zs, finite, whole, shading, lit, boundary, box, offset=zs.size
     )
-    # A vertex with no value has no shading either; it is unreferenced, and the
-    # colors it feeds must merely be numbers.
+    # Vertices without a value are unreferenced, but their shading must still be a
+    # number.
     flat = np.nan_to_num(shading, nan=DIM).reshape(-1)
     if gained:
         points = np.array(gained, dtype=np.float64)
@@ -240,9 +206,8 @@ def mesh(
     )
 
 
-#: The corners of a grid cell in perimeter order from its lower-left, so that
-#: edge k runs from corner k to corner k+1 and a walk over both visits the
-#: cell's rim exactly once.
+#: The corners of a grid cell in perimeter order from the lower left, so that edge k
+#: runs from corner k to corner k+1.
 CELL = ((0, 0), (1, 0), (1, 1), (0, 1))
 
 
@@ -258,18 +223,16 @@ def _partial(
     box: Box,
     offset: int,
 ) -> tuple[list[tuple[float, float, float, float]], list[tuple[int, int, int]]]:
-    """Fill the cells that stop short of being whole faces, up to where they stop.
+    """Fill the cells that aren't whole faces, as far as the surface extends.
 
-    Two kinds of cell arrive here: cells the domain's edge crosses, filled from
-    their defined corners and the refined crossings, and cells the clip planes
-    cut, whose corners are all real. Both go the same way - build the defined
-    polygon, then trim it to the box's z - which is the ordering that lets the
-    clip trim a boundary vertex like any other. Cells that are real all over
-    but stand entirely above or below the box trim to nothing and are skipped
-    without a look.
+    These are cells crossed by the domain's edge (filled from their defined corners
+    and the refined crossings) and cells cut by the clip planes. Both are handled by
+    building the defined polygon and then trimming it to the box's z, so boundary
+    vertices are trimmed like any other. Cells entirely above or below the box are
+    skipped.
 
-    Returns the vertices gained, as (x, y, z, shade) in data coordinates, and
-    the triangles over them, indexed from `offset` on.
+    Returns the new vertices as (x, y, z, shade) in data coordinates, and their
+    triangles, indexed from `offset`.
     """
     low, high = box.z
     quads = finite[:-1, :-1] & finite[1:, :-1] & finite[1:, 1:] & finite[:-1, 1:]
@@ -311,16 +274,14 @@ def _filled(
     boundary: evaluate.Boundary | None,
     zspan: tuple[float, float],
 ) -> list[list[tuple[float, float, float, float]]]:
-    """The marching-squares fill of one partial cell, as polygons in data space.
+    """The marching-squares fill of a partial cell, as polygons in data space.
 
-    The defined corners in perimeter order, with the refined boundary crossing
-    inserted on every edge that straddles the domain: one, two or three defined
-    corners give a triangle, a quadrilateral or a pentagon, and four give the
-    whole quad for the clip to trim. The ambiguous cell - two defined corners
-    on a diagonal - is resolved one fixed way, as two separate triangles each
-    holding one corner, because a consistent boundary matters more than a guess
-    at the local topology. A straddling edge the boundary has no crossing for
-    leaves the cell unfilled, which is the un-refined behavior.
+    The defined corners in perimeter order, with the refined crossing inserted on each
+    edge that straddles the domain boundary. One, two or three defined corners give a
+    triangle, quadrilateral or pentagon; four give the whole quad for clipping. The
+    ambiguous case (two diagonal corners) always becomes two separate triangles, since
+    consistency matters more than guessing the topology. If a straddling edge has no
+    crossing, the cell is left unfilled.
     """
     kept = [bool(finite[i + di, j + dj]) for di, dj in CELL]
     corner = [
@@ -365,10 +326,8 @@ def _crossing(
 ) -> tuple[float, float, float, float] | None:
     """The refined boundary point on edge `k` of cell `(i, j)`, with its shade.
 
-    The point is off the grid, so its brightness cannot be read from the
-    gradient: the height half of its shade is its own z's ramp, clipped to the
-    box like any other, and the light half is interpolated along the edge it
-    sits on, between the light values of the edge's two grid ends.
+    The point is off the grid, so the height part of its shade comes from its own z,
+    and the light part is interpolated between the edge's two grid ends.
     """
     if boundary is None:
         return None
@@ -402,13 +361,12 @@ def _trimmed(
     low: float,
     high: float,
 ) -> list[tuple[float, float, float, float]]:
-    """`polygon` cut to the box's z, crossings interpolated along its edges.
+    """`polygon` clipped to the box's z range.
 
-    The clip boundary is a known height, so the crossing is plain linear
-    interpolation over every component - position and shade alike - and needs
-    no evaluation at all, which is why it can run on the Qt thread every time
-    the box moves. The vertices all sit on the rim of a convex cell, so what
-    survives the cut is convex too and a fan can triangulate it.
+    Crossings are linearly interpolated in all components (position and shade), with
+    no evaluation, so this can run on the Qt thread whenever the box changes. The
+    result is convex, since the vertices lie on a convex cell's rim, so a fan can
+    triangulate it.
     """
     for bound, sign in ((low, 1.0), (high, -1.0)):
         kept: list[tuple[float, float, float, float]] = []
@@ -436,27 +394,21 @@ def wire(
     box: Box,
     boundary: evaluate.Boundary | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """One surface as the rectangular grid of its own samples, and its shading.
+    """A surface as a wireframe of its sample grid, with shading.
 
-    The row and column lines of the sample arrays, one segment per grid step,
-    for a `GLLinePlotItem` in `'lines'` mode: consecutive pairs of the points
-    returned are segments, placed in the box, with a shade per point computed
-    the way the solid's is. `drawEdges` would have been the wrong tool - the
-    faces are triangles, so it draws every diagonal and yields a triangulated
-    fabric rather than this grid.
+    Returns segments along the grid's rows and columns, one per grid step, for a
+    `GLLinePlotItem` in `'lines'` mode: consecutive point pairs are segments, with a
+    shade per point computed as for the solid. (`drawEdges` would draw the triangle
+    diagonals too.)
 
-    Only every k-th row and column is drawn, k chosen to leave about
-    `WIRE_LINES` lines each way, while every drawn line keeps the full sample
-    spacing - the thinning is of the drawing, not of the shape.
+    Only every k-th row and column is drawn, about `WIRE_LINES` each way, at full
+    sample resolution.
 
-    A segment lives by the predicate that decides face survival: both ends
-    real, finite and inside the box's z. So holes and clip edges appear in the
-    wire exactly where they appear in the solid. Where one end is not real,
-    the refined crossing `boundary` carries takes its place, ending the line
-    on the boundary rather than a grid step short of it; where an end leaves
-    the box's z, the segment is trimmed to the clip plane by the same
-    interpolation that trims the faces, which is also what saves a boundary
-    end whose limit is unbounded.
+    A segment is kept under the same rule as faces: both ends real, finite and inside
+    the box's z, so holes and clip edges match the solid. A non-real end is replaced by
+    the refined crossing from `boundary`. An end outside the box's z is trimmed to the
+    clip plane by the same interpolation used for faces, which also handles boundary
+    ends whose limit is unbounded.
     """
     zs = np.asarray(values, dtype=np.float64)
     if zs.ndim != 2 or zs.shape[0] < 2 or zs.shape[1] < 2:
@@ -487,10 +439,10 @@ def wire(
 
 
 def _drawn(count: int) -> list[int]:
-    """Which of `count` rows or columns the wire draws: every k-th, and the last.
+    """The indices of rows or columns drawn by the wireframe: every k-th, and the last.
 
-    The step leaves about `WIRE_LINES` lines, and the last sample is always
-    among them so the wire's rim is the grid's own rim on every side.
+    The step gives about `WIRE_LINES` lines. The last is always included so the
+    wireframe reaches the grid's edge on every side.
     """
     step = max(1, round((count - 1) / WIRE_LINES))
     picked = list(range(0, count, step))
@@ -513,15 +465,12 @@ def _strand(
     boundary: evaluate.Boundary | None,
     zspan: tuple[float, float],
 ) -> None:
-    """One grid step of a wire line: append what survives of it to `points`.
+    """Append the visible part of one wireframe segment to `points`.
 
-    The segment from sample `(i, j)` to the next sample along x (`across`) or
-    along y, in data coordinates with a shade per end. An end that is not real
-    is replaced by the refined crossing on the edge - read through `_crossing`,
-    against the cell the edge borders, so the wire's boundary points and their
-    shades are exactly the mesh's - and a segment with no crossing to end on is
-    dropped, which is the un-refined behavior. What remains is trimmed to the
-    box's z.
+    The segment runs from sample `(i, j)` to the next sample along x (`across`) or y,
+    in data coordinates with a shade per end. A non-real end is replaced by the refined
+    crossing from `_crossing`, so boundary points match the mesh exactly; if there is
+    no crossing, the segment is dropped. The rest is trimmed to the box's z.
     """
     if across:
         ends = (i, j), (i + 1, j)
@@ -554,11 +503,9 @@ def _trimmed_segment(
     low: float,
     high: float,
 ) -> tuple[tuple[float, float, float, float], ...] | None:
-    """The part of the segment `a`-`b` inside the box's z, or None for none.
+    """The part of segment `a`-`b` inside the box's z range, or None.
 
-    The segment's own case of what `_trimmed` does for a polygon: the clip
-    boundary is a known height, so the crossing is plain linear interpolation
-    over every component, position and shade alike, and needs no evaluation.
+    The segment counterpart of `_trimmed`, likewise using linear interpolation.
     """
     first, last = 0.0, 1.0
     for bound, sign in ((low, 1.0), (high, -1.0)):
@@ -584,14 +531,12 @@ def _no_faces() -> np.ndarray:
 
 
 def _lit(upright: np.ndarray) -> np.ndarray:
-    """How much light each vertex catches, from the slope of the grid there.
+    """The light each vertex receives, from the grid's slope there.
 
-    The normal of a height field is `(-dz/dx, -dz/dy, 1)` normalized, which is
-    two differences and a square root over the array and needs no mesh at all -
-    the reason this window computes its own lighting rather than asking for
-    face normals it would then have to keep in step with the holes. The light
-    is fixed in the world, so turning the picture moves the highlight across
-    it, which is what a solid does.
+    The normal of a height field is `(-dz/dx, -dz/dy, 1)` normalized, which can be
+    computed directly on the array without a mesh, avoiding face normals that would
+    have to account for holes. The light is fixed in the world, so rotating the picture
+    moves the highlight.
     """
     step_x = WORLD / max(upright.shape[0] - 1, 1)
     step_y = WORLD / max(upright.shape[1] - 1, 1)
@@ -606,7 +551,7 @@ def _lit(upright: np.ndarray) -> np.ndarray:
 
 
 def brightened(shading: np.ndarray, color: str) -> np.ndarray:
-    """A surface's own color per vertex, scaled by how bright the vertex is."""
+    """Per-vertex colors: the surface's color scaled by each vertex's brightness."""
     rgb = np.array(_channels(color), dtype=np.float32)
     scale = np.clip(np.asarray(shading, dtype=np.float32), 0.0, 1.0)[:, None]
     colors = np.ones((int(np.size(shading)), 4), dtype=np.float32)
@@ -615,11 +560,10 @@ def brightened(shading: np.ndarray, color: str) -> np.ndarray:
 
 
 def _channels(color: str) -> tuple[float, float, float]:
-    """The three channels of `#rrggbb`, each from zero to one.
+    """The channels of `#rrggbb` (or `#rgb`), each from zero to one.
 
-    Read here rather than asked of a toolkit, since a color is three numbers
-    and this file is the geometry: every color a plot is drawn in comes from
-    the palettes in `model`, which are written this way.
+    Parsed here rather than by a toolkit, since this module is toolkit-free. Plot
+    colors come from the palettes in `model`, which use this format.
     """
     text = color.lstrip("#")
     if len(text) == 3:
@@ -629,11 +573,9 @@ def _channels(color: str) -> tuple[float, float, float]:
 
 
 def ticks(low: float, high: float, count: int = TICKS) -> list[float]:
-    """The round numbers to mark an axis at, about `count` of them.
+    """About `count` round tick values for an axis.
 
-    One, two, two and a half or five times a power of ten, which is what every
-    ruler in the world is divided in and what a reader can add up in their head
-    while looking at a picture.
+    Steps are 1, 2, 2.5 or 5 times a power of ten, which are easy to read.
     """
     span = float(high) - float(low)
     if not np.isfinite(span) or span <= 0:

@@ -1,18 +1,14 @@
-"""What a plot window is opened on: the whole of what the session asks of a toolkit.
+"""The interface between the plot session and a windowing toolkit.
 
-The plot session below this knows how many windows there are, which of them the
-next plot lands in, what a `Describe` says and what a preference does to the
-next picture. What it does not know is what a window *is* - Qt widgets on the
-desktop, panes in a page in the browser - and this is the line between the two.
+The session tracks windows, which one receives the next plot, what `Describe` reports
+and how preferences apply. What a window actually is (Qt widgets, panes in a browser
+page) is up to the backend.
 
-Two protocols and no base classes. A backend opens windows and can be stopped;
-a window takes plots, gives them up, says what it holds and comes to the front
-when a plot lands in it. Everything else a window does - the framing, the
-gestures, the sampling it asks for, the menus - it does on its own, and reports
-back through the session it was opened with. The session is handed to `open`
-rather than kept by the backend because that report is the traffic that matters:
-a window says it was touched, that it was closed, that a curve would not
-evaluate, that a sticky control was moved.
+There are two protocols. A backend opens windows and can be stopped; a window adds and
+removes plots, describes itself and comes to the front when a plot lands in it.
+Everything else (framing, gestures, sampling, menus) the window handles itself, reporting
+back through the session passed to `open`: that it was touched or closed, that a curve
+failed to evaluate, that a sticky control changed.
 """
 
 from __future__ import annotations
@@ -28,12 +24,12 @@ __all__ = ["Backend", "WindowHandle"]
 class WindowHandle(Protocol):
     """One open plot window, as the session sees it."""
 
-    #: The number that names this window for the life of the session, and which
-    #: kind of picture it holds. The session routes by both.
+    #: The window's number for the life of the session, and the kind of picture it
+    #: holds. The session routes plots by both.
     number: int
     kind: WindowKind
-    #: What the window holds, in the order it was added. The session reads it to
-    #: find the elements of a family that a shorter family has left behind.
+    #: The window's plots in the order added. The session uses it to find leftover
+    #: members of a family that was replaced by a shorter one.
     plots: list[Any]
 
     def add(self, plot: Plot) -> Any:
@@ -46,22 +42,18 @@ class WindowHandle(Protocol):
         """The plot a worksheet and a label name, if this window has it."""
 
     def present(self, demonstrating: bool = False) -> None:
-        """Show this window and bring it to the front: a plot has landed in it.
+        """Show this window and bring it to the front because a plot landed in it.
 
-        `demonstrating` says the plot is a step of a demonstration, which the
-        program is now waiting over a key for. Where a window can be above
-        another one it then stays above until `release`, so that the program
-        waiting for that key - a terminal, and usually a large one - cannot
-        bury the picture it is waiting on.
+        `demonstrating` means the plot is a demonstration step and the program is
+        waiting for a key. The window then stays on top until `release`, so the
+        terminal waiting for the key doesn't cover it.
         """
 
     def release(self) -> None:
-        """No demonstration is waiting on this window any more.
+        """Undo the stay-on-top of a demonstrating `present`.
 
-        What `present` did for a demonstration is undone here, and only that:
-        the window keeps its place, its plots and its title. An environment
-        where windows have no order to be kept at the front of has nothing to
-        do about this.
+        The window keeps its position, plots and title. Environments without window
+        stacking can do nothing here.
         """
 
     def retitle(self, current: bool | None = None) -> None:
@@ -80,15 +72,14 @@ class Backend(Protocol):
     def open(
         self, session: Any, kind: WindowKind, number: int, preferences: Prefer
     ) -> WindowHandle:
-        """A new window of `kind`, numbered, built with the sticky preferences.
+        """Open a new window of `kind` with the given number and sticky preferences.
 
-        The preferences are read here rather than kept by the window, which is
-        what makes a changed preference show in the next window and leave the
-        open ones as they are.
+        Preferences are applied only at creation, so a changed preference affects the
+        next window but not the open ones.
         """
 
     def close(self, number: int) -> None:
-        """Forget a window that has closed itself: its own event said so."""
+        """Forget a window that has reported itself closed."""
 
     def stop(self) -> None:
-        """End every window and whatever runs them. The session is going away."""
+        """Close every window and shut down the backend as the session ends."""

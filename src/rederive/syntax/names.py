@@ -1,7 +1,7 @@
 """Static name inventories.
 
-Pure data, no logic. These sets are what make the name-resolution procedure of
-`lexer.py` work: an incomplete list produces silently wrong parses, not errors.
+Pure data used by name resolution in `lexer.py`. An incomplete list causes silently
+wrong parses, not errors.
 """
 
 from __future__ import annotations
@@ -22,47 +22,41 @@ DERIVE_FUNCTIONS: frozenset[str] = frozenset(
     """.split()
 )
 
-# The special functions rederive adds to Derive's own. Each arises from rederive's own
-# operations on elementary input - `INT(EXP(x^2), x)` is `SQRT(pi)*ERFI(x)/2`,
-# `DIF(GAMMA(x), x)` is `GAMMA(x)*DIGAMMA(x)`, `INT(SIN(x)/x, x)` is `SI(x)` - and each
-# is standard across computer algebra systems, so an answer that holds one is written in
-# a name the author can type back, in either case. The lexer reads them exactly as it
-# reads Derive's own, inside a longer run of letters as well: Derive finds every function
-# it knows that way, its own or one the author defines, so with `CI` known `velocity` is
-# `v*e*l*o*CI(t)*y`.
+# Special functions rederive adds to Derive's. They arise from operations on elementary
+# input (`INT(EXP(x^2), x)` is `SQRT(pi)*ERFI(x)/2`, `DIF(GAMMA(x), x)` is
+# `GAMMA(x)*DIGAMMA(x)`, `INT(SIN(x)/x, x)` is `SI(x)`), and use names standard across
+# computer algebra systems, so the user can type answers back in either case. The lexer
+# treats them like Derive's own functions, including inside a longer run of letters: with
+# `CI` known, `velocity` is `v*e*l*o*CI(t)*y`.
 EXTENDED_FUNCTIONS: frozenset[str] = frozenset(
     """
     CI COSH_INT DIGAMMA EI ERFI LAMBERTW POLYGAMMA POLYLOG SI SINH_INT
     """.split()
 )
 
-# The notation rederive adds for what a derivative leaves behind: `SUBS(u, [x], [a])` is
-# `u` with `x` set to `a` after `u` is worked out, which is how a derivative of a function
-# of several arguments, without a body, is written at a point other than its variable:
-# `DIF(G(x^2, y), x)` is `2*x*SUBS(DIF(G(x_, y), x_), [x_], [x^2])`. An answer can hold
-# one, so it is a name the author can type back, in either case, like the others.
+# Notation rederive adds for derivatives: `SUBS(u, [x], [a])` is `u`, evaluated, with `x`
+# set to `a`. It expresses the derivative of an undefined multi-argument function at a
+# point: `DIF(G(x^2, y), x)` is `2*x*SUBS(DIF(G(x_, y), x_), [x_], [x^2])`. Answers can
+# contain it, so the user can type it back.
 NOTATION_FUNCTIONS: frozenset[str] = frozenset("SUBS".split())
 
 BUILTIN_FUNCTIONS: frozenset[str] = (
     DERIVE_FUNCTIONS | EXTENDED_FUNCTIONS | NOTATION_FUNCTIONS
 )
 
-# The builtin functions an author cannot define, as Derive refuses `SIN(x):=x+1` and
-# `APPROX(x):=x+1` with a syntax error at the `:=`. Derive's own functions are among
-# them except those an older Derive's utility files define for themselves: 2.01's
-# MISC.MTH and VECTOR.MTH and 1.62's SPECIAL.MTH, which predate those functions being
-# built in, and which still load. The functions rederive adds stay definable, since
-# EXP_INT.MTH, PROBABIL.MTH and ZETA.MTH define most of them.
+# Builtin functions the user can't redefine; Derive rejects `SIN(x):=x+1` with a syntax
+# error at the `:=`. The exceptions are functions defined by older utility files (2.01's
+# MISC.MTH and VECTOR.MTH, 1.62's SPECIAL.MTH) from before they were built in, so those
+# files still load. Rederive's extended functions stay definable, since EXP_INT.MTH,
+# PROBABIL.MTH and ZETA.MTH define most of them.
 UNDEFINABLE_FUNCTIONS: frozenset[str] = (
     DERIVE_FUNCTIONS - frozenset("DELETE_ELEMENT FLOOR MOD REVERSE_VECTOR ZETA".split())
 ) | NOTATION_FUNCTIONS
 
-# The functions whose second argument names a variable of their own: the index
-# of a sum, the variable a derivative is taken with respect to, the one a
-# generated vector steps through. Inside the first argument that name stands for
-# itself, whatever else it may have been assigned - and everything after it is
-# read outside the binding, which is what lets `ITERATES(TAN(x), x, x, -1)` mean
-# the outer `x` in its third argument and the bound one in its first.
+# Functions whose second argument names a bound variable, such as a sum's index or a
+# derivative's variable. Within the first argument that name stands for itself, even if
+# it has a value. Later arguments are outside the binding, so `ITERATES(TAN(x), x, x, -1)`
+# uses the bound `x` in its first argument and the outer `x` in its third.
 BINDING_FUNCTIONS: frozenset[str] = frozenset(
     """
     DIF INT ITERATE ITERATES LIM PRODUCT ROOT_OF ROOT_SUM SELECT SUM TAYLOR
@@ -70,37 +64,31 @@ BINDING_FUNCTIONS: frozenset[str] = frozenset(
     """.split()
 )
 
-# The binding functions whose name covers every argument rather than the first
-# alone. A sum's limits are outer expressions and a root's index is a number, but
-# the polynomial a root sum runs over is written in the very variable its summand
-# names: `ROOT_SUM(p, t, u)` means the same `t` in `p` as in `u`, and an assigned
-# `t` may reach neither.
+# Binding functions whose variable is bound in every argument, not just the first:
+# `ROOT_SUM(p, t, u)` uses the same bound `t` in the polynomial `p` and the summand `u`.
 BINDING_THROUGHOUT: frozenset[str] = frozenset("ROOT_SUM".split())
 
-# `e` and `i` are not here: they are ordinary free variables. `?` is the
-# unknown value and has its own token.
+# `e` and `i` aren't here because they are ordinary variables. `?`, the unknown value,
+# has its own token.
 CONSTANTS: frozenset[str] = frozenset(
     "pi inf deg #e #i true false euler_gamma unit_circle".split()
 )
 
-# Pre-defined variable names, so they lex as one token in Character mode.
-# `gamma`, `zeta` and `chi` are absent on purpose: those are the functions
-# GAMMA, ZETA and CHI. `pi` is a constant, not a variable.
+# Predefined variable names, so they lex as one token in Character mode. `gamma`, `zeta`
+# and `chi` are deliberately absent because they are functions, and `pi` is a constant.
 GREEK_VARIABLES: frozenset[str] = frozenset(
     "alpha beta delta epsilon theta mu phi sigma tau omega".split()
 )
 
 KEYWORD_OPERATORS: frozenset[str] = frozenset("SUB AND OR XOR IMP NOT".split())
 
-# The derivative mark, written on a function name and applied: `BB'(r)` is the
-# derivative of `BB`, taken at `r`, and one mark is one order. It is part of the
-# name rather than an operator of its own, which is why it is here and not in
-# `OPERATORS`. Transposition is the backtick, so the apostrophe is free for
-# this and means nothing anywhere else.
+# The derivative mark: `BB'(r)` is the derivative of `BB` at `r`, one mark per order. It
+# is part of the name, not an operator, so it's not in `OPERATORS`. (Transposition uses
+# the backtick.)
 PRIME_MARK = "'"
 
-# Settings the parser must accept as ordinary assignments. The first three
-# change how later expressions lex; the rest are passed through untouched.
+# Settings the parser accepts as ordinary assignments. These three change how later
+# expressions lex; the other `SETTINGS` pass through untouched.
 PARSING_SETTINGS: frozenset[str] = frozenset("InputMode CaseMode InputBase".split())
 
 SETTINGS: frozenset[str] = PARSING_SETTINGS | frozenset(
@@ -111,8 +99,8 @@ SETTINGS: frozenset[str] = PARSING_SETTINGS | frozenset(
     """.split()
 )
 
-# The keyword values settings take. They must be reserved because they appear
-# on the left of `:=` and as bare keyword arguments: `FACTOR(w, Rational, y2)`.
+# Keyword values of settings. They are reserved because they appear on the left of `:=`
+# and as bare keyword arguments, as in `FACTOR(w, Rational, y2)`.
 SETTING_VALUES: frozenset[str] = frozenset(
     """
     Character Word Insensitive Sensitive LineEdit Subexpression Binary Octal
@@ -125,9 +113,8 @@ SETTING_VALUES: frozenset[str] = frozenset(
 
 DOMAINS: frozenset[str] = frozenset("Integer Real Complex Nonscalar".split())
 
-# Glyph spellings of function names. Resolved in the lexer, so they introduce
-# no grammar of their own: `√x^2` obeys the bare-application rule exactly as
-# `SQRT x^2` does.
+# Glyph spellings of function names. They are resolved in the lexer and have no grammar
+# of their own: `√x^2` parses exactly like `SQRT x^2`.
 FUNCTION_GLYPHS: dict[str, str] = {
     "√": "SQRT",  # square root sign
     "Γ": "GAMMA",  # capital gamma
@@ -144,8 +131,8 @@ CONSTANT_GLYPHS: dict[str, str] = {
     "î": "#i",  # i with circumflex
 }
 
-# The spelling each pre-defined Greek variable prints as: the letter itself,
-# lower case, as Derive's manual sets it.
+# How each predefined Greek variable prints: as the lowercase letter, as in Derive's
+# manual.
 GREEK_CANONICAL: dict[str, str] = {
     "alpha": "α",
     "beta": "β",
@@ -159,11 +146,10 @@ GREEK_CANONICAL: dict[str, str] = {
     "omega": "ω",
 }
 
-# Every spelling that resolves to one of those names. Derive held Greek letters
-# in the IBM PC character set, whose Greek run decodes to `ß` for beta, `Θ` for
-# theta, `Φ` for phi, `Ω` for omega and the micro sign for mu - Derive's own
-# GRAPHICS.MTH writes `Θn` for a theta-subscripted parameter. Text that came
-# through that decoding has to name the same variables as the Greek letters do.
+# Every glyph that resolves to one of those names. Derive stored Greek letters in the IBM
+# PC character set, whose Greek characters decode to `ß` for beta, `Θ` for theta, `Φ` for
+# phi, `Ω` for omega and the micro sign for mu (GRAPHICS.MTH writes `Θn`, for example).
+# Text decoded that way must name the same variables.
 GREEK_GLYPHS: dict[str, str] = {glyph: name for name, glyph in GREEK_CANONICAL.items()} | {
     "ß": "beta",  # sharp s, U+00DF
     "Θ": "theta",  # capital theta
@@ -172,9 +158,8 @@ GREEK_GLYPHS: dict[str, str] = {glyph: name for name, glyph in GREEK_CANONICAL.i
     "Ω": "omega",  # capital omega
 }
 
-# Operator glyphs and their canonical ASCII spelling. `·` U+00B7 is
-# multiplication and `∙` U+2219 is the dot product: different characters with
-# different meanings.
+# Operator glyphs and their canonical ASCII spelling. Note that `·` U+00B7 is
+# multiplication and `∙` U+2219 is the dot product.
 OPERATOR_GLYPHS: dict[str, str] = {
     "≤": "<=",
     "≥": ">=",
@@ -186,12 +171,11 @@ OPERATOR_GLYPHS: dict[str, str] = {
     ":∈": ":epsilon",
 }
 
-# The domain operator, in every spelling. `ε` on its own is the name
-# `epsilon`, not an operator: `q ε Real` is `q*epsilon*Real`.
+# All spellings of the domain operator. A lone `ε` is the name `epsilon`, not an
+# operator: `q ε Real` is `q*epsilon*Real`.
 DOMAIN_OPERATORS: tuple[str, ...] = (":epsilon", ":ε", ":∈")
 
-# Longest match wins, so this list is ordered longest first within each
-# leading character.
+# Longest match wins, so within each leading character this lists longer operators first.
 OPERATORS: tuple[str, ...] = (
     ":==",
     ":=",

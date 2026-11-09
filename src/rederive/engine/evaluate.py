@@ -1,46 +1,42 @@
-"""Evaluate: the tree worked out innermost first, in an environment.
+"""Evaluate: work out the tree innermost first, in an environment.
 
-What Derive does before anything is rewritten. A name is replaced by what it
-stands for, a call to a function the session defined is the body worked out over
-the arguments, and the test of an `IF` is decided before either branch is looked
-at, so that only the branch it chooses is ever worked out. The answer is a sympy
-expression, which the rest of Simplify then writes in its sufficiently simple form.
+This is what Derive does before any rewriting. Names are replaced by their values,
+calls to session-defined functions evaluate the body over the arguments, and an `IF`
+test is decided before either branch is evaluated, so only the chosen branch is. The
+result is a sympy expression that the rest of Simplify then simplifies.
 
-The walk is the converter's: `to_sympy` is the arithmetic of every node kind, and
-the evaluator is that conversion with an `Environment` threaded through it, taking
-over the kinds where what a node means depends on where it stands. Those are
-these, and `_Evaluator.convert` is where each is dispatched:
+The evaluator is the `to_sympy` conversion with an `Environment` threaded through,
+overriding the node kinds whose meaning depends on context. `_Evaluator.convert`
+dispatches them:
 
-* A name: a parameter's argument, a bound variable standing for itself, or an
-  assigned value, followed at most once along a branch so that `pn := pn + 1`
-  simplifies to `pn + 1` rather than spinning.
+* A name: a parameter's argument, a bound variable (itself), or an assigned value,
+  followed at most once per branch so `pn := pn + 1` simplifies to `pn + 1` rather
+  than looping.
 * A label, followed the same way.
-* `IF(test, a, b, c)`: the test decided, and only the branch it picks evaluated.
-  An undecidable test takes the fourth argument where there is one and is
-  otherwise suspended - `Suspended` is what that is.
-* A call of a defined function: the arguments evaluated, the leading parameters
-  bound to them (partial application leaves the rest standing as names), and the
-  body evaluated. A recursion is this, call inside call, until the test that ends
-  it decides; `_NESTING` is how deep it may go before the call that has not
-  arrived is left standing as the answer.
-* `F'(a)` of a defined `F`: the body differentiated in its first parameter and
-  only then taken at `a`.
-* A function that binds a variable - `SUM`, `INT`, `VECTOR` and the rest of
-  `BINDING_FUNCTIONS` - with its variable standing for itself in what it binds.
-  Over a range of known values the variable takes each of them in turn instead:
-  a counted `SUM` or `PRODUCT`, a `VECTOR`, a `SELECT` and an `ITERATE` are
-  their body evaluated once for every value, which is what decides a test in
-  the index and enters a recursion on it.
-* A calculus head, and `APPROX`: worked out where it is made, its operands
-  being values already, by what `Environment.work_out` supplies.
-* `FACTOR`, `EXPAND`, `SOLVE` and `RATE`: run on their evaluated operands by
-  `Environment.command`, so that a call over one is an ordinary call.
-* `SUBS(u, [x], [a])`: the substitution made, unless what it binds is a
-  derivative, which is held as sympy's `Subs`.
-* An assignment, which keeps its target, and a definition, whose parameters
-  stand for themselves in its body.
+* `IF(test, a, b, c)`: the test is decided and only the chosen branch evaluated. An
+  undecidable test takes the fourth argument if present, otherwise it is suspended
+  (see `Suspended`).
+* A call of a defined function: arguments are evaluated, bound to the leading
+  parameters (partial application leaves the rest as names), and the body evaluated.
+  Recursion nests calls until the terminating test decides; past `_NESTING` levels
+  the pending call is left in the answer.
+* `F'(a)` of a defined `F`: the body is differentiated in its first parameter, then
+  evaluated at `a`.
+* A variable-binding function (`SUM`, `INT`, `VECTOR` and the rest of
+  `BINDING_FUNCTIONS`), with its variable standing for itself. Over a range of known
+  values, a counted `SUM` or `PRODUCT`, `VECTOR`, `SELECT` and `ITERATE` instead
+  evaluate the body once per value, which decides tests on the index and enters
+  recursions on it.
+* Calculus heads and `APPROX`: computed on the spot via `Environment.work_out`, since
+  their operands are already values.
+* `FACTOR`, `EXPAND`, `SOLVE` and `RATE`: run on their evaluated operands via
+  `Environment.command`, so they behave like ordinary calls.
+* `SUBS(u, [x], [a])`: the substitution is made, unless it binds into a derivative,
+  which is kept as sympy's `Subs`.
+* An assignment keeps its target unevaluated, and a definition's parameters stand for
+  themselves in its body.
 
-Everything else is the converter's own.
+Everything else is handled by the converter.
 """
 
 from __future__ import annotations
@@ -92,33 +88,29 @@ Command = Callable[[str, list, list], sp.Basic]
 
 @dataclass(frozen=True)
 class Environment:
-    """What a name means at one point of the evaluation, and how a test is decided.
+    """What names mean at a point of the evaluation, and how tests are decided.
 
-    `bindings` are the values a call's parameters stand for, and the values an
-    assignment in a test gave its name for the branches after it. `bound` are the
-    names that stand for themselves: a definition's own parameters, and the
-    variable a sum, an integral or a generated vector ranges over. `expanding` and
-    `labels` are the assigned names and the labels being followed along this
-    branch, which is what stops one that reaches itself. `depth` is how many calls
-    of defined functions deep the evaluation stands.
+    `bindings` maps call parameters to their arguments, and names assigned in a test
+    to their values for later branches. `bound` holds names that stand for themselves:
+    a definition's parameters, and the variable of a sum, integral or generated
+    vector. `expanding` and `labels` are the assigned names and labels being followed
+    on this branch, to stop self-reference. `depth` is the nesting depth of defined
+    function calls.
 
-    `written` is what a suspended conditional was resumed with: the values its
-    variables have taken since it was set aside, written in wherever one of those
-    variables is met.
+    `written` holds the values a suspended conditional was resumed with, substituted
+    wherever those variables occur.
 
-    `decide` answers the test of an `IF`: True, False, or None where nothing
-    settles it. Simplify supplies its own, which reads a test with the rewrites
-    and the declared domains; anything else gets `_plainly_decided`.
+    `decide` answers an `IF` test with True, False, or None if undecided. Simplify
+    supplies one that uses rewrites and declared domains; otherwise
+    `_plainly_decided` is used.
 
-    `work_out` is what a calculus head is worth, and `command` runs a `FACTOR`,
-    `EXPAND`, `SOLVE` or `RATE` over its evaluated arguments, and over the divisors
-    of a `SOLVE`'s equation as written (see `divisors`). Simplify supplies both.
-    Without them those heads stand as they were made, which is what a caller that
-    only wants the variables of an expression needs.
+    `work_out` computes calculus heads, and `command` runs `FACTOR`, `EXPAND`, `SOLVE`
+    or `RATE` on evaluated arguments (and, for `SOLVE`, the divisors of the equation
+    as written; see `divisors`). Simplify supplies both. Without them these heads are
+    left as is, which suits callers that only want an expression's variables.
 
-    `writing` is the evaluation that only writes names in, which is what an
-    undecidable conditional is shown as: no call is entered and no test decided,
-    so the branches stay as they were written.
+    `writing` means only substitute names, used to display an undecidable
+    conditional: no call is entered and no test decided, so branches stay as written.
     """
 
     context: Context
@@ -135,7 +127,7 @@ class Environment:
     suspended: dict[sp.Basic, type] = field(default_factory=dict, compare=False)
 
     def decides(self, test: sp.Basic) -> bool | None:
-        """Whether `test` holds. A test that raises is a test nothing settles."""
+        """Whether `test` holds, or None if undecided (including if deciding raises)."""
         try:
             if self.decide is not None:
                 return self.decide(test)
@@ -145,22 +137,21 @@ class Environment:
 
 
 def evaluate(node: Node, env: Environment) -> sp.Basic:
-    """`node` worked out in `env`. Undecidable conditionals in it stay suspended."""
+    """`node` evaluated in `env`, leaving undecidable conditionals suspended."""
     with _deep():
         return _Evaluator(env).convert(node)
 
 
 def evaluated(node: Node, context: Context, decide: Decider | None = None) -> sp.Basic:
-    """`node` worked out with nothing bound, every conditional shown as it stands.
+    """`node` evaluated with nothing bound, with conditionals released for display.
 
-    What a caller that wants a value and no more uses: the variables an expression
-    holds, and what a plot draws.
+    For callers that just want a value, e.g. to list variables or to plot.
     """
     return released(evaluate(node, Environment(context, decide)))
 
 
 def _plainly_decided(test: sp.Basic, context: Context) -> bool | None:
-    """A test read as sympy reads it, and then put to the declared intervals."""
+    """Decide a test with sympy, then with the declared intervals."""
     condition = as_condition(test)
     if condition is sp.true:
         return True
@@ -169,19 +160,15 @@ def _plainly_decided(test: sp.Basic, context: Context) -> bool | None:
     return decided(condition, context)
 
 
-#: How many calls of defined functions deep an evaluation may stand. A recursion
-#: Derive's way counts down one at a time and arrives long before this - the
-#: manual's own `RAISE(b, 256)` stands two hundred and fifty-seven deep at the
-#: bottom - and one that does not arrive, `F(n) := DIF(F(n + 1), x)` or `FACT(-1)`,
-#: answers with what it has built when it gets here: the call that is left over,
-#: inside everything worked out on the way down. That is a true rewriting of what
-#: was asked, and one that shows why it will not finish. Derive itself exhausts
-#: memory there and answers nothing at all.
+#: Maximum nesting depth of defined function calls. Typical Derive recursions
+#: terminate long before this (the manual's `RAISE(b, 256)` reaches 257). One that
+#: doesn't, like `F(n) := DIF(F(n + 1), x)` or `FACT(-1)`, returns what it built so
+#: far with the pending call inside: a correct rewriting that shows why it won't
+#: finish. Derive itself runs out of memory there.
 _NESTING = 300
 
-#: The Python recursion limit while evaluating. Each level of a recursion is a
-#: few dozen frames of walk, conversion and sympy construction, and the default
-#: thousand would end a recursion well before `_NESTING` does.
+#: The Python recursion limit while evaluating. Each recursion level takes a few dozen
+#: frames, so the default thousand would stop well before `_NESTING`.
 _STACK = 50_000
 
 
@@ -197,13 +184,13 @@ def _deep() -> Iterator[None]:
 
 
 class _Evaluator(Converter):
-    """The converter with an environment: the walk is `convert`, kind by kind."""
+    """The converter with an environment; `convert` dispatches by node kind."""
 
     def __init__(self, env: Environment, performed: dict[str, sp.Basic] | None = None):
         super().__init__(env.context)
         self.env = env
-        #: The names a test being evaluated has assigned, and their values. None
-        #: outside a test, where an assignment is a definition and not an act.
+        #: Names assigned by the test being evaluated, with their values. None outside
+        #: a test, where an assignment is a definition rather than an action.
         self.performed = performed
 
     def within(self, env: Environment) -> _Evaluator:
@@ -214,8 +201,7 @@ class _Evaluator(Converter):
             case Kind.CALL | Kind.APPLY:
                 return self._call(node)
             case Kind.DOMAIN:
-                # A declaration describes a variable, and its bounds are read
-                # where it was written, not in whatever scope it stands in.
+                # A declaration's bounds are read without the current scope.
                 return Converter(self.context).convert(node)
         return super().convert(node)
 
@@ -244,7 +230,7 @@ class _Evaluator(Converter):
         return _value_of(value)
 
     def _label(self, node: Node) -> sp.Basic:
-        """`#3`, or itself where nobody knows it or it reaches itself."""
+        """The value of label `#3`, or the label itself if unknown or self-referential."""
         try:
             number = int(str(node.value))
         except ValueError:
@@ -256,12 +242,10 @@ class _Evaluator(Converter):
         return self.within(deeper).convert(target)
 
     def _vector(self, node: Node) -> sp.Basic:
-        """A vector, whose elements may be vectors that a name stands for.
+        """A vector, whose elements may be names whose values are vectors.
 
-        `[w]` is a matrix of one row where `w` is a vector, exactly as `[[2, 3,
-        4]]` is: a name is replaced by its value, and a value that is a vector is
-        a row like one written out. VECTOR.MTH's `OUTER(v, w) := VECTOR([v SUB
-        n_], n_, DIMENSION(v)) . [w]` multiplies by that row.
+        `[w]` for vector `w` is a one-row matrix, just like `[[2, 3, 4]]`. VECTOR.MTH's
+        `OUTER(v, w) := VECTOR([v SUB n_], n_, DIMENSION(v)) . [w]` relies on this.
         """
         if not node.children:
             return sp.Matrix(0, 0, [])
@@ -277,15 +261,13 @@ class _Evaluator(Converter):
     # -- definitions --------------------------------------------------------
 
     def _assign(self, node: Node) -> sp.Basic:
-        """An assignment: its value is evaluated, its target is not.
+        """An assignment: the value is evaluated, the target isn't.
 
-        Inside the test of a conditional it is also carried out, which is
-        Derive's way of computing something once and reading it back where the
-        answer belongs. ODE1.MTH's `DSOLVE1` is built out of them: `IF(
-        "inapplicable" = a_ := SEP(...), ..., a_, a_)` tries a method, asks
-        whether it declined, and answers with what it found. The value stands
-        where the assignment did, and `_conditional` binds the name to it in the
-        branches.
+        Inside a conditional's test it is also performed, Derive's idiom for
+        computing something once and using it in the branches. ODE1.MTH's `DSOLVE1`
+        relies on it: `IF("inapplicable" = a_ := SEP(...), ..., a_, a_)` tries a
+        method, checks whether it declined, and returns its result. The assignment
+        evaluates to the value, and `_conditional` binds the name in the branches.
         """
         target, *values = node.children
         written = [self.convert(child) for child in values]
@@ -296,7 +278,7 @@ class _Evaluator(Converter):
         return Assign(plain.convert(target), sp.Symbol(str(node.value)), *written)
 
     def _fundef(self, node: Node) -> sp.Basic:
-        """A definition: the body is evaluated, its parameters stand for themselves."""
+        """A definition: the body is evaluated, its parameters standing for themselves."""
         parameters, *body = node.children
         names = frozenset(str(child.value) for child in parameters.children)
         inner = replace(
@@ -342,7 +324,7 @@ class _Evaluator(Converter):
         return self._worked(made, values)
 
     def _divisors(self, name: str, arguments: Sequence[Node]) -> list[sp.Basic]:
-        """What the equation of a `SOLVE` divides by as written, evaluated here."""
+        """The divisors of a `SOLVE` equation as written, evaluated here."""
         if name != "SOLVE" or not arguments:
             return []
         found = []
@@ -354,14 +336,12 @@ class _Evaluator(Converter):
         return found
 
     def _worked(self, made: sp.Basic, values: Sequence[sp.Basic]) -> sp.Basic:
-        """`made` with every calculus head the call made in it worked out.
+        """`made` with every calculus head this call created worked out.
 
-        The heads standing in the arguments were offered when those were made
-        and stood, so they are not offered again: an integral nothing can do is
-        tried once, wherever it ends up. What a head is worked out to may hold
-        heads of its own - sympy answers an integral it cannot do whole with a
-        sum of integrals - and each of those is worked out where it stands, by
-        the same rule, and once.
+        Heads already in the arguments were tried when those were made, so they are
+        skipped: an unsolvable integral is attempted only once. A result may contain
+        new heads (sympy may answer an integral with a sum of integrals), and each is
+        worked out once by the same rule.
         """
         work_out = self.env.work_out
         if work_out is None or self.env.writing:
@@ -380,10 +360,10 @@ class _Evaluator(Converter):
     def _entered(
         self, name: str, definition: tuple[tuple[str, ...], Node], values: list
     ) -> sp.Basic:
-        """A call of a defined function: its body over its arguments.
+        """A call of a defined function: its body evaluated over its arguments.
 
-        Partial application binds the leading parameters only: `ACCELERATION(f,
-        m) := f/m` applied to 6 alone is `6/m`.
+        Partial application binds only the leading parameters: `ACCELERATION(f, m) :=
+        f/m` applied to 6 alone is `6/m`.
         """
         if self.env.depth >= _NESTING:
             return self.opaque(name, values)
@@ -397,19 +377,16 @@ class _Evaluator(Converter):
         return _Evaluator(inner).convert(body)
 
     def _derived(self, name: str, values: list) -> sp.Basic | None:
-        """`F'(a)` where `F` is a definition: its body, derived and taken at `a`.
+        """`F'(a)` for a defined `F`: its body differentiated and evaluated at `a`.
 
-        A prime is a derivative of the function and not of the call, so the body
-        is differentiated in its own first parameter and only then is the
-        argument written in - `F(r) := r^2` makes `F'(r^2)` twice `r^2` and not
-        twice `r`. The point may mention the very name being differentiated over,
-        so it arrives as the point of a limit, which is the original's own
-        reading: what it prints for a derivative it cannot take as a whole is
-        `lim d/d@ F(@)` at the point.
+        A prime differentiates the function, not the call, so the body is
+        differentiated in its first parameter before substituting: with `F(r) :=
+        r^2`, `F'(r^2)` is `2*r^2`, not `2*r`. The point may mention the variable of
+        differentiation, so it is taken as a limit, as Derive does: it prints
+        `lim d/d@ F(@)` at the point for a derivative it can't take.
 
-        None where there are no marks, or nothing defined under them. A function
-        nobody defined has no body to differentiate and stays the call it is, for
-        the converter to read as a derivative of a function of itself.
+        None if there are no primes or `F` isn't defined; an undefined function stays
+        a call for the converter to treat as a derivative.
         """
         base = name.rstrip(PRIME_MARK)
         order = len(name) - len(base)
@@ -433,14 +410,12 @@ class _Evaluator(Converter):
         return self._worked(self.call("LIM", at), at)
 
     def _substitution(self, values: list) -> sp.Basic:
-        """`SUBS(u, [x, ...], [a, ...])`: the substitution, made where it can be.
+        """`SUBS(u, [x, ...], [a, ...])`, performed where possible.
 
-        A `Subs` binding nothing but an ordinary expression is a substitution
-        waiting rather than a value: `SUBS(BB(u), [u], [r^2])` says `BB` at `r^2`
-        and comes to `BB(r^2)`. Only one holding a derivative over what it binds
-        stands, since that derivative is unevaluated on purpose - the slope of
-        `F` at `y` is not the slope of a constant, which is what it would look
-        like once the variable it is taken over had been bound.
+        A `Subs` of an ordinary expression is performed: `SUBS(BB(u), [u], [r^2])`
+        is `BB(r^2)`. Only one containing a derivative is kept, since that derivative
+        is deliberately unevaluated: the slope of `F` at `y` would otherwise become
+        the slope of a constant once its variable is substituted.
         """
         held = self.call("SUBS", values)
         if not isinstance(held, sp.Subs) or held.expr.has(sp.Derivative):
@@ -453,38 +428,31 @@ class _Evaluator(Converter):
     # -- the variable a function binds --------------------------------------
 
     def _binding(self, name: str, arguments: list[Node]) -> sp.Basic:
-        """`SUM(u, k, m, n)`: `k` stands for itself in `u`, and nowhere else.
+        """`SUM(u, k, m, n)` and similar: `k` stands for itself in `u` only.
 
-        An assigned name is left as written - substituting `x := 5` into the
-        index would leave the call with no variable to range over - and the
-        arguments after it are read in the enclosing scope, because a limit is
-        not part of what it bounds.
+        An assigned index isn't substituted (`x := 5` would leave nothing to range
+        over), and the arguments after the index are evaluated in the enclosing
+        scope, since limits aren't part of what they bound.
 
-        A parameter is the other case, and there the name a call supplies is the
-        variable summed over: `LIN1_DIFFERENCE(p, q, x, x0, y0)` sums over `x`
-        and is called with `m` for it, so what it sums over is `m`. The body is
-        evaluated with that parameter still bound, which lets the index catch
-        what another parameter wrote in - `PRODUCT(p, x, x0, x - 1)` called with
-        `m` for both `p` and `x` is the product of `m` over `m`, and `(m - 1)!`
-        is what Derive answers. A definition is textual substitution, and
-        capture is part of it.
+        A parameter index, however, is substituted with the name the caller supplied:
+        `LIN1_DIFFERENCE(p, q, x, x0, y0)` sums over `x`, so called with `m` it sums
+        over `m`. The body keeps that parameter bound, so the index can capture what
+        another parameter supplied: `PRODUCT(p, x, x0, x - 1)` called with `m` for
+        both `p` and `x` is the product of `m` over `m`, `(m - 1)!` as in Derive.
+        Definitions are textual substitution, capture included.
 
-        A vector of names binds every one of them, which is what an iterated
-        limit and a system's iteration are written with: `LIM(u, [x, y], [a,
-        b])` and `ITERATE([k, j + k], [j, k], [0, 1], n)`. A parameter supplied
-        with such a vector is one of these too, and SOLVE.MTH turns on its being
-        read as one - `NEWTON_AUX`'s `LIM(a, x, xk)` is called with `[x, y]` for
-        `x`, and a parameter left standing there is a limit in a variable the
-        caller never named.
+        A vector of names binds all of them, as in iterated limits and system
+        iterations: `LIM(u, [x, y], [a, b])` and `ITERATE([k, j + k], [j, k], [0, 1],
+        n)`. A parameter supplied with such a vector works the same way, which
+        SOLVE.MTH depends on: `NEWTON_AUX`'s `LIM(a, x, xk)` is called with `[x, y]`
+        for `x`.
 
-        A second argument that is no name and no vector of names binds nothing.
-        `SUM(v)` over a vector's elements has none either, and both are
-        evaluated like any other call.
+        A second argument that isn't a name or vector of names binds nothing, nor
+        does `SUM(v)` over a vector; both are evaluated like ordinary calls.
 
-        `BINDING_THROUGHOUT` is the exception to where the binding stops. A root
-        sum runs its summand over the roots of a polynomial written in the same
-        variable, so the arguments after the name are inside the binding rather
-        than outside it, and an assigned `t` reaches none of `ROOT_SUM(p, t, u)`.
+        For `BINDING_THROUGHOUT` heads the binding covers the later arguments too: a
+        root sum ranges over the roots of a polynomial in the same variable, so an
+        assigned `t` reaches no part of `ROOT_SUM(p, t, u)`.
         """
         if len(arguments) < 2 or _variables_of(arguments[1]) is None:
             values = [_value_of(self.convert(argument)) for argument in arguments]
@@ -516,19 +484,19 @@ class _Evaluator(Converter):
         inner: Environment,
         limits: list[sp.Basic],
     ) -> sp.Basic | None:
-        """A binding call over values all known, as its body at each of them.
+        """A binding call over known values, evaluating the body at each.
 
-        The body is evaluated once a value, with the variable written in, and not
-        converted once and substituted into: a test in the index decides then, a
-        recursion on it is entered then, and an element of a vector it indexes
-        is there to take. NUMBER.MTH's `DISTINCT_PARTS` sums a `PARTS` guarded by
-        a test on the index, and VECTOR.MTH's `NONZERO_ROWS` sums a test over
-        `m SUB n_`, which is a row to test only once `n_` is a number.
+        The body is evaluated per value with the variable substituted, rather than
+        converted once and substituted into, so tests on the index decide,
+        recursions on it are entered, and vector elements it indexes are available.
+        NUMBER.MTH's `DISTINCT_PARTS` sums a `PARTS` guarded by a test on the index,
+        and VECTOR.MTH's `NONZERO_ROWS` sums a test over `m SUB n_`, which is a row
+        only once `n_` is a number.
 
-        None where the values are not all known - a symbolic end, or more of
-        them than `_WRITTEN_OUT` - and the call is then made over the body as
-        it stands, for sympy to sum or for the call to wait. None too where a
-        `SELECT` meets a test nothing decides, or an iteration cannot go on.
+        None if the values aren't all known (a symbolic end, or more than
+        `_WRITTEN_OUT`); the call is then made over the body as is, for sympy to
+        handle. Also None if a `SELECT` test is undecidable or an iteration can't
+        continue.
         """
 
         def at(*values: sp.Basic) -> sp.Basic:
@@ -561,14 +529,11 @@ class _Evaluator(Converter):
 
     def _index(self, index: Node) -> tuple[sp.Basic, frozenset[str], frozenset[str]]:
         """The variable a binding call ranges over, the names it binds, and the
-        parameters it hides.
+        parameters it shadows.
 
-        A parameter in this position is written in, because the name a call
-        supplies is the name the body ranges over. What it is written in with has
-        to name variables itself, and where it does not - a parameter supplied
-        with a number, or with an expression - the parameter is left standing
-        and shadows the argument in the body, there being no other name to range
-        over.
+        A parameter here is replaced by the caller's argument, if that names
+        variables. Otherwise (a number or expression), the parameter itself is the
+        index and shadows its argument in the body.
         """
         if index.kind is Kind.NAME:
             name = str(index.value)
@@ -588,18 +553,15 @@ class _Evaluator(Converter):
     # -- IF -----------------------------------------------------------------
 
     def _conditional(self, node: Node, arguments: list[Node]) -> sp.Basic:
-        """`IF(test, a, b, c)`: the branch the test decides, and only that branch.
+        """`IF(test, a, b, c)`: evaluate only the branch the test picks.
 
-        A true test leaves the then clause, a false one the else clause - `?`
-        when there is none - and an undecidable test takes the unknown clause if
-        the author wrote one. A test and nothing else is that test as a number,
-        one or zero, which is what makes `SUM(IF(PRIME(n)), n, 1, 100)` count the
-        primes.
+        True picks the then clause, false the else clause (`?` if absent), and
+        undecidable the unknown clause if present. A bare test is 1 or 0, so
+        `SUM(IF(PRIME(n)), n, 1, 100)` counts primes.
 
-        With no unknown clause an undecidable `IF` is suspended, branches and
-        all, which is Derive's behavior and a deliberate one: working out a
-        branch that may never be taken can turn a guarded division by zero into
-        an error, and a recursion's guard is exactly such a test.
+        Without an unknown clause an undecidable `IF` is suspended whole, as in
+        Derive: evaluating a branch that may never be taken could turn a guarded
+        division by zero into an error, and recursion guards are such tests.
         """
         test_node, *branches = arguments
         performed: dict[str, sp.Basic] = {}
@@ -627,7 +589,7 @@ class _Evaluator(Converter):
         return self._suspended(node)
 
     def _suspended(self, node: Node) -> sp.Basic:
-        """An undecidable conditional, set aside as a function of its variables."""
+        """An undecidable conditional, suspended as a function of its variables."""
         display = _Evaluator(replace(self.env, writing=True)).convert(node)
         if not is_conditional(display):
             return display
@@ -652,30 +614,26 @@ class _Evaluator(Converter):
 
 
 class Suspended(AppliedUndef):
-    """A conditional whose test nothing could decide yet, as a function of its variables.
+    """A conditional with an undecided test, as a function of its variables.
 
-    An undecidable `IF` is Derive's to show as it was written, branches and all,
-    so nothing that comes after the evaluation may look inside it - and nothing
-    may mistake it for a constant either. A function of exactly the variables it
-    mentions is both: `SUM(IF(k > 0, k, 0), k, 1, n)` stays a sum, where a bare
-    name would let sympy answer `n*IF(k > 0, k, 0)`, and `DIF(IF(x > 0, x^2, 0),
-    x)` stays a derivative.
+    Derive shows an undecidable `IF` as written, so later processing must not look
+    inside it, nor treat it as a constant. A function of exactly its variables does
+    both: `SUM(IF(k > 0, k, 0), k, 1, n)` stays a sum, where a bare name would let
+    sympy answer `n*IF(k > 0, k, 0)`, and `DIF(IF(x > 0, x^2, 0), x)` stays a
+    derivative.
 
-    It is a function in earnest. Writing values in for its variables - a sum
-    written out term by term, an iteration taking a step - resumes the
-    evaluation the test was suspended in, with those values in place, and a test
-    that decides now chooses its branch then. NUMBER.MTH's `DISTINCT_PARTS` is a
-    sum whose terms each guard a `PARTS` behind a test in the index, and no test
-    decides until the sum has written the index in.
+    Substituting values for its variables (a sum written out term by term, an
+    iteration step) resumes the suspended evaluation with those values, so the test
+    may now decide. NUMBER.MTH's `DISTINCT_PARTS` sums terms that each guard a
+    `PARTS` with a test on the index, decidable only once the index is substituted.
 
-    Unknown to sympy, as a function nobody defined is: a limit of one is not
-    taken by writing the point in, since nothing says it is continuous there.
+    Like any undefined function, sympy doesn't assume continuity, so a limit isn't
+    taken by substituting the point.
 
-    Each one is a class of its own, made by `_Evaluator._suspended`, which
-    carries the node, the environment it was met in, the `display` it is shown
-    as - the conditional with names written in and nothing evaluated - and the
-    `variables` it is applied to. `released` shows what is left of them at the
-    end.
+    Each is its own class, made by `_Evaluator._suspended`, carrying the node, its
+    environment, its `display` (the conditional with names substituted and nothing
+    evaluated), and the `variables` it is applied to. `released` replaces whatever
+    remains at the end with its display.
     """
 
     node: Node
@@ -701,39 +659,37 @@ class Suspended(AppliedUndef):
 
 
 def _resumes(value: sp.Basic) -> bool:
-    """Whether a value written in for a variable is one to resume the evaluation at.
+    """Whether substituting `value` for a variable should resume evaluation.
 
-    A finite number or a truth value: what a sum writing out its terms, an
-    iteration taking its steps or a truth table filling its rows writes in. Sympy
-    also writes things in for its own purposes - a limit puts in an infinity or the
-    reciprocal of a variable of its own to look at the far end - and a test asked
-    there is a question nobody put. Those leave the conditional standing, with
-    the value written into its display.
+    Yes for finite numbers and truth values, as substituted by sums, iterations and
+    truth tables. Sympy also substitutes for its own purposes (a limit may use an
+    infinity or the reciprocal of its own variable), and testing there would answer a
+    question nobody asked; those leave the conditional suspended, with the value
+    substituted into its display.
     """
     if isinstance(value, sp.logic.boolalg.BooleanAtom):
         return True
     return bool(getattr(value, "is_number", False)) and value.is_finite is not False
 
 
-#: What tells one suspended conditional's class from another's.
+#: Counter for naming suspended conditional classes uniquely.
 _SUSPENSIONS = itertools.count()
 
 
 def _resumed(cls: type[Suspended], written: dict[sp.Basic, sp.Basic]) -> sp.Basic:
-    """The suspended conditional evaluated again, its variables taking these values."""
+    """The suspended conditional re-evaluated with its variables given these values."""
     with _deep():
         return _Evaluator(_at(cls.environment, written)).convert(cls.node)
 
 
 def _at(env: Environment, written: Mapping[sp.Basic, sp.Basic]) -> Environment:
-    """`env` with these values written in for these variables.
+    """`env` with these values substituted for these variables.
 
-    Wherever the variables are met, and in what the parameters were bound to as
-    well, since a definition is textual substitution: `PRODUCT(p, x, x0, x -
-    1)` called with `m` for both `p` and `x` multiplies `m` at every value `m`
-    takes. A parameter's value has them written in where it is met (see
-    `_Evaluator._name`) rather than here, so that a binding call inside, which
-    takes the variable back, finds the parameter as it was supplied.
+    This also applies to parameter values, since definitions are textual
+    substitution: `PRODUCT(p, x, x0, x - 1)` called with `m` for both `p` and `x`
+    multiplies `m` at every value of `m`. Parameter values are substituted when used
+    (see `_Evaluator._name`) rather than here, so a nested binding call that rebinds
+    the variable sees the parameter as supplied.
     """
     return replace(
         env,
@@ -745,7 +701,7 @@ def _at(env: Environment, written: Mapping[sp.Basic, sp.Basic]) -> Environment:
 
 
 def _over(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> sp.Basic:
-    """`value` with what was written in, wherever it can be."""
+    """`value` with `written` substituted, where possible."""
     try:
         if not any(symbol in value.free_symbols for symbol in written):
             return value
@@ -754,25 +710,23 @@ def _over(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> sp.Basic:
         return value
 
 
-#: The binding calls whose body is evaluated once for each value of a range,
-#: where the range is known.
+#: Binding calls whose body is evaluated once per value when the range is known.
 _COUNTED = frozenset({"SUM", "PRODUCT", "VECTOR", "SELECT", "ITERATE", "ITERATES"})
 
-#: How many terms a range is written out as. A range longer than this is one
-#: whose terms nobody wants to read, and sympy sums it as it was written.
-#: Derive's own utility files reach four.
+#: Maximum number of terms to write out a range as. Longer ranges are left to sympy.
+#: Derive's own utility files use at most four.
 _WRITTEN_OUT = 1000
 
 
 def _total(
     name: str, limits: list[sp.Basic], at: Callable[[sp.Basic], sp.Basic]
 ) -> sp.Basic | None:
-    """A counted `SUM` or `PRODUCT`: its terms at each value, added or multiplied.
+    """A counted `SUM` or `PRODUCT`: the terms at each value, added or multiplied.
 
-    The values are a vector of them, or a range, which a single end runs up to
-    from 1. None where they are neither, or where a term is no expression to
-    add, which leaves the sum to sympy. A range that runs backwards is the
-    negated sum, or the reciprocal product, of the values it steps back over.
+    The values are a vector, or a range (from 1 if only one end is given). None if
+    neither, or if a term isn't an expression, leaving the sum to sympy. A backwards
+    range gives the negated sum or reciprocal product over the values stepped back
+    over.
     """
     backwards = False
     if len(limits) == 1 and isinstance(limits[0], sp.MatrixBase):
@@ -795,23 +749,19 @@ def _total(
 
 
 def _run_of(low: sp.Basic, high: sp.Basic) -> tuple[list[sp.Basic], bool] | None:
-    """The values an index runs through from `low` to `high`, and whether backwards.
+    """The values an index takes from `low` to `high`, and whether backwards.
 
-    The index starts at the low end and steps by one for as long as it does not
-    pass the high one, which is Derive's reading of a range and is what makes an
-    end between two terms mean anything. `PARTS` bounds Rademacher's series by
-    `SQRT(n)/LOG(n, 11)`, which for `n` of 4 is 3.459: the index runs 1, 2 and 3,
-    where sympy would read the bound as the `n` of a closed form and put it into
-    Faulhaber's polynomial.
+    As in Derive, the index starts at `low` and steps by one while not past `high`,
+    so a non-integer end is meaningful. `PARTS` bounds Rademacher's series by
+    `SQRT(n)/LOG(n, 11)`, which for `n` of 4 is 3.459: the index runs 1, 2, 3, where
+    sympy would plug the bound into Faulhaber's polynomial.
 
-    A high end below the low one counts as many steps back from the value before
-    the low end, the convention that keeps `SUM(u, k, a, b) + SUM(u, k, b + 1, c)`
-    the sum from `a` to `c` whatever order the three come in: `SUM(k, k, 5, 3.5)`
-    is -4, the 4 stepped back over negated, and `SUM(k, k, 5.5, 3)` is -8, from 4.5
-    and 3.5.
+    If `high` is below `low`, it counts that many steps back from `low - 1`, which
+    keeps `SUM(u, k, a, b) + SUM(u, k, b + 1, c)` equal to the sum from `a` to `c` in
+    any order: `SUM(k, k, 5, 3.5)` is -4, and `SUM(k, k, 5.5, 3)` is -8 (from 4.5 and
+    3.5).
 
-    Both ends have to be numbers - a symbolic one is a range of unknown length -
-    and there have to be few enough values to be worth writing down.
+    Both ends must be numbers and the count at most `_WRITTEN_OUT`.
     """
     if not low.is_number:
         return None
@@ -824,11 +774,10 @@ def _run_of(low: sp.Basic, high: sp.Basic) -> tuple[list[sp.Basic], bool] | None
 
 
 def _worked_out(made: sp.Basic, standing: set[sp.Basic], work_out: WorkOut) -> sp.Basic:
-    """Every calculus head in `made` but those `standing` worked out, innermost first.
+    """Every calculus head in `made` except those in `standing`, worked out.
 
-    A head comes up once however often it stands, and what it is worked out to
-    is searched for heads of its own the same way; a head an answer hands back
-    that is the one being worked out stands where it is.
+    Each distinct head is worked out once, and its result is searched for new heads
+    the same way. If a result contains the head being worked out, it is left as is.
     """
     answers: dict[sp.Basic, sp.Basic] = {}
 
@@ -854,15 +803,14 @@ def _worked_out(made: sp.Basic, standing: set[sp.Basic], work_out: WorkOut) -> s
 
 
 class Commanded(sp.Function):
-    """What a `FACTOR`, `EXPAND` or `SOLVE` head answered, in the form the command chose.
+    """The answer of a `FACTOR`, `EXPAND` or `SOLVE` head, in the command's form.
 
-    A factorization is a form and not only a value: `FACTOR(12)` is `2^2*3`, and
-    the normal form Simplify writes a value in would multiply it straight back
-    out. A solution is written the way soLve writes it, `x >= (3*y - 7)/2`, and
-    not the way Simplify would. So the answer is carried in this wrapper through
-    everything that comes after the evaluation, and only shown as itself at the
-    very end. A call that takes the answer as an argument takes the value and
-    not the wrapper: `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is `[2, 3]`.
+    A factorization is a form, not just a value: `FACTOR(12)` is `2^2*3`, which
+    Simplify's normal form would multiply back out. A solution is written as soLve
+    writes it, `x >= (3*y - 7)/2`, not as Simplify would. So the answer is wrapped
+    through the rest of the pipeline and unwrapped only at the end. A call taking it
+    as an argument gets the unwrapped value: `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is
+    `[2, 3]`.
     """
 
     nargs = 1
@@ -872,24 +820,22 @@ def _is_call_of(value: sp.Basic, name: str) -> bool:
     return isinstance(value, AppliedUndef) and type(value).__name__ == name
 
 
-#: The node kinds `divisors` looks inside: arithmetic, relations and calls. A
-#: definition, an assignment or a vector says nothing about where one equation is
-#: undefined.
+#: Node kinds `divisors` looks inside: arithmetic, relations and calls. Definitions,
+#: assignments and vectors say nothing about where an equation is undefined.
 _ARITHMETIC = frozenset(
     {Kind.SUM, Kind.PRODUCT, Kind.BINOP, Kind.UNOP, Kind.ABS, Kind.CALL, Kind.REL}
 )
 
 
 def divisors(node: Node) -> list[Node]:
-    """The subtrees `node` divides by as it was written, innermost ones included.
+    """The subtrees `node` divides by as written, including nested ones.
 
-    An equation is undefined where one of them is zero, and it says so only as
-    written: `x^2/x = 0` and `(x^2 - 1)/(x - 1) = 2` cancel to `x = 0` and `x + 1 = 2`
-    before anything solves them, and the one candidate each has is where the
-    equation as written has no value. So soLve is told what it divides by. A
-    denominator counts, and so does the base of a power to a negative number. What a
-    `SUM`, an `INT` or another binding function holds is skipped, its divisions being
-    in a variable of its own.
+    An equation is undefined where one is zero, which only the written form shows:
+    `x^2/x = 0` and `(x^2 - 1)/(x - 1) = 2` simplify to `x = 0` and `x + 1 = 2`, whose
+    only solutions are where the original is undefined. So soLve is given the
+    divisors: denominators, and bases raised to negative numbers. The contents of
+    `SUM`, `INT` and other binding functions are skipped, as their divisions are in
+    their own variable.
     """
     found: list[Node] = []
 
@@ -911,7 +857,7 @@ def divisors(node: Node) -> list[Node]:
 
 
 def _negative(exponent: Node) -> bool:
-    """Whether an exponent is a negated number, as `x^(-2)` is written."""
+    """Whether an exponent is a negated number, as in `x^(-2)`."""
     return (
         exponent.kind is Kind.UNOP
         and exponent.value == "-"
@@ -920,17 +866,16 @@ def _negative(exponent: Node) -> bool:
 
 
 def _value_of(value: sp.Basic) -> sp.Basic:
-    """`value`, out of the `Commanded` holding it if one does."""
+    """`value`, unwrapped from `Commanded` if wrapped."""
     return value.args[0] if isinstance(value, Commanded) else value
 
 
 def released(value: sp.Basic) -> sp.Basic:
-    """`value` with every suspended conditional shown as the conditional it is.
+    """`value` with every suspended conditional and `Commanded` unwrapped for display.
 
-    What is shown is the conditional as it was met, with what its variables have
-    become since written in, so that an untouched one is exactly what the author
-    typed and the printer can write it that way. A command's answer is shown as
-    the command wrote it.
+    A suspended conditional is shown as originally written, with its variables'
+    current values substituted, so an untouched one prints as the author typed it. A
+    command's answer is shown in the command's form.
     """
     try:
         if not value.atoms(Suspended, Commanded):
@@ -953,11 +898,7 @@ def _shown(found: Suspended | Commanded) -> sp.Basic:
 
 
 def _variables_of(index: Node) -> tuple[str, ...] | None:
-    """The variables `index` names, or None where it names none.
-
-    One name, or a vector of them. An empty vector and a vector holding anything
-    but names are no binding position at all.
-    """
+    """The variables `index` names (one name or a vector of names), or None."""
     if index.kind is Kind.NAME:
         return (str(index.value),)
     if index.kind is not Kind.VECTOR or not index.children:
@@ -970,12 +911,11 @@ def _variables_of(index: Node) -> tuple[str, ...] | None:
 def _taken(
     written: Mapping[sp.Basic, sp.Basic], names: frozenset[str]
 ) -> Mapping[sp.Basic, sp.Basic]:
-    """What is written in for the variables a binding takes over.
+    """The substitutions for the variables a binding rebinds.
 
-    The binding works over its variable standing for itself, and what it answers
-    has these values written in afterwards, which is Derive's order: a body is
-    simplified and only then is the counted value put in. `VECTOR(DIF(x^2, x), x,
-    1, 3)` differentiates in `x` and then takes `2*x` at each value, and SOLVE.MTH's
+    The binding works with its variable symbolic, and these values are substituted
+    into its result afterwards, in Derive's order: `VECTOR(DIF(x^2, x), x, 1, 3)`
+    differentiates in `x` and then evaluates `2*x` at each value. SOLVE.MTH's
     `NEWTON` is an `ITERATES` over a `DIF` in the variable it iterates.
     """
     return {
@@ -988,10 +928,9 @@ def _taken(
 def _unwritten(
     written: Mapping[sp.Basic, sp.Basic], names: frozenset[str]
 ) -> Mapping[sp.Basic, sp.Basic]:
-    """What is written in, less the variables a binding takes over.
+    """The substitutions, minus the variables a binding rebinds.
 
-    A sum over `k` inside a conditional that was resumed at `k = 2` ranges over a
-    `k` of its own, and the value is no business of what it binds.
+    A sum over `k` inside a conditional resumed at `k = 2` has its own `k`.
     """
     if not any(getattr(symbol, "name", None) in names for symbol in written):
         return written
@@ -1003,7 +942,7 @@ def _unwritten(
 
 
 def _names_in(value: sp.Basic) -> frozenset[str] | None:
-    """The variables a supplied argument names, or None where it names none."""
+    """The variables a supplied argument names, or None if it isn't names."""
     if type(value) is sp.Symbol:
         return frozenset({value.name})
     elements: list = []
@@ -1020,17 +959,14 @@ def _names_in(value: sp.Basic) -> frozenset[str] | None:
 
 
 def named_as_declared(node: Node, state: ParseState | None) -> Node:
-    """`node` with every name spelled the way the symbol table records it.
+    """`node` with every name spelled as the symbol table records it.
 
-    Case-insensitively - which is the default - `x` and `X` are one variable,
-    and which of the two a line carries depends on what had been declared when
-    it was read. `X := ELEMENT(x, 1)` declares `X` and mentions `x` before that
-    declaration exists, so the line comes back holding both spellings; the
-    engine has to see one name for one variable, or the answer holds two and
-    reading it back turns them into one.
+    In the default case-insensitive mode `x` and `X` are one variable, and the
+    spelling depends on what was declared when the line was read. `X := ELEMENT(x,
+    1)` declares `X` but mentions `x` before that, so the line contains both; the
+    engine needs one spelling per variable.
 
-    Without a symbol table nothing can be resolved and the tree stands as it
-    is, which is what a caller with no session of its own gets.
+    Without a symbol table the tree is returned unchanged.
     """
     if state is None:
         return node
@@ -1038,12 +974,11 @@ def named_as_declared(node: Node, state: ParseState | None) -> Node:
 
 
 def _named(node: Node, state: ParseState) -> Node:
-    """The walk. A call's head is a name of another kind and is left alone.
+    """The walk for `named_as_declared`. Call heads are left alone.
 
-    What the table records for a variable is the spelling to write it under,
-    and for anything else it is the spelling of something else entirely: the
-    setting value `Exact` for `EXACT(...)`, the letter `δ` for `DELTA(...)`.
-    Neither reads back as the call it was written as.
+    The table's spelling is only meaningful for variables; for other names it may be
+    something else entirely (the setting `Exact` for `EXACT(...)`, the letter `δ`
+    for `DELTA(...)`), which wouldn't read back as the same call.
     """
     head = node.children[0] if node.kind in (Kind.CALL, Kind.APPLY) else None
     children = tuple(

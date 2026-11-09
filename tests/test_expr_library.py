@@ -1,8 +1,8 @@
 """Every expression Derive shipped in its utility files must parse.
 
-Breadth, where `test_expr_corpus.py` is depth: these are thousands of real
-expressions, checked only for being accepted and for the declarations they make
-carrying over to the expressions after them.
+Unlike the in-depth `test_expr_corpus.py`, this covers thousands of real expressions,
+checking only that they're accepted and that their declarations carry over to later
+expressions.
 """
 
 from __future__ import annotations
@@ -37,19 +37,17 @@ GROUPS = load()
 
 _USERS = "derive-3.14-dos/USERS/"
 
-#: The utility files a demo loads before its first line, demo to files, where they are
-#: not just the demo's namesake. A demo calls the functions those files define, and
-#: Derive reads a call to a function it does not know as a product, as it reads
-#: `foo(x)`, so without them a demo's one-argument calls would be products here too.
+#: Utility files each demo loads first, where they differ from the demo's namesake.
+#: Without them, calls to the functions they define would parse as products, the way
+#: Derive reads `foo(x)` for an unknown `foo`.
 LOADS: dict[str, tuple[str, ...]] = {
     f"{_USERS}FIT_.DMO": (f"{_USERS}FIT_.MTH", "derive-3.14-dos/APPROX.MTH"),
     f"{_USERS}TENSOR1.DMO": (f"{_USERS}TENSOR.MTH",),
     f"{_USERS}TENSOR2.DMO": (f"{_USERS}TENSOR.MTH",),
 }
 
-#: The functions a file written for a later Derive calls as built in, file to names.
-#: The original has none of them, so they are declared the way the session the file
-#: was written in knew them.
+#: Functions that files written for a later Derive call as built-ins. The original
+#: lacks them, so they're declared up front.
 LATER_BUILTINS: dict[str, tuple[str, ...]] = {
     "hawaii-coursework/add-head.mth": ("LOAD",),
     "hawaii-coursework/add-util.mth": (
@@ -69,8 +67,8 @@ def _replay(state: ParseState, expressions: list[str]) -> None:
 
 
 def starting_state(group: str) -> ParseState:
-    """The symbol table a group's first line is read with: the files it loads, read
-    first, and the functions of a later Derive it calls."""
+    """Return the symbol table for parsing a group: its loaded files and any later-Derive
+    built-ins it calls."""
     state = ParseState()
     for name in LATER_BUILTINS.get(group, ()):
         state.declare(FunctionDeclaration(name, has_body=True))

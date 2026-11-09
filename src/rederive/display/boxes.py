@@ -1,20 +1,17 @@
 """The box model and the painter.
 
-Two phases. Layout turns a `Node` into a `Box`: sizes and relative placements
-only, no characters. Paint allocates a grid of spaces, blits the boxes into
-it, and turns the boxes that are selectable into the region tree.
+Rendering has two phases. Layout turns a `Node` into a `Box` of sizes and relative
+placements, with no characters. Paint blits the boxes into a grid of spaces and builds
+the region tree from the selectable boxes. Painting into a grid rather than
+concatenating strings keeps fences, integral signs and matrix rules simple: each is a
+box drawn at a known offset.
 
-Painting into a grid rather than concatenating strings is what makes fences,
-integral signs and matrix rules simple: each is a box drawn at a known offset.
+Key invariant: a subexpression occupies one rectangle, and its region is that rectangle
+including its padding. The UI highlights by inverting those cells.
 
-The invariant that matters: a subexpression occupies one rectangle, and its
-region is that rectangle including its own padding. The UI highlights by
-inverting those cells.
-
-What is selectable is layout's decision, not painting's: a box names its
-selectable operands, in the order the selection cursor visits them, and
-painting only supplies the rectangles. A box with no node of its own passes
-its operands up, which is how a fence hands over the operand it encloses.
+Layout decides what is selectable: each box lists its selectable operands in cursor
+order, and painting only supplies the rectangles. A box with no node passes its operands
+up, which is how a fence exposes the operand it encloses.
 """
 
 from __future__ import annotations
@@ -29,14 +26,12 @@ from rederive.model.expr import Node
 class Box:
     """A rectangle of output, positioned relative to its own baseline.
 
-    `above` and `below` count rows either side of the baseline row, which is
-    the row `text` is drawn on. `parts` are the child boxes, each offset from
-    this box's left edge and baseline; `operands` are the boxes that are
-    selectable inside this one, in the order the cursor visits them.
+    `above` and `below` count rows on either side of the baseline row, where `text` is
+    drawn. `parts` are the child boxes, offset from this box's left edge and baseline;
+    `operands` are the selectable boxes inside this one, in cursor order.
 
-    `parts` and `operands` answer different questions and need not agree. A
-    call draws its head and its argument list but only the arguments are
-    operands; a chain of sums draws two halves but offers three terms.
+    `parts` and `operands` need not agree. A call draws its head and arguments but only
+    the arguments are operands; a chain of sums draws two halves but offers three terms.
     """
 
     width: int
@@ -65,10 +60,9 @@ class Placed:
 class Region:
     """A selectable subexpression: what it is, and where it was drawn.
 
-    `children` are the operands the user can step into, in the order the
-    original steps them. A node that cannot be selected - the name of a call,
-    the halves of a flattened chain - has no region at all, so the cursor
-    moves over what is on the screen rather than over the parse.
+    `children` are the operands the user can step into, in Derive's order. Unselectable
+    nodes (a call's name, the halves of a flattened chain) have no region, so the cursor
+    moves over what is on screen rather than over the parse.
     """
 
     node: Node
@@ -83,7 +77,7 @@ class Region:
         return (self.top, self.left, self.height, self.width)
 
     def holds(self, row: int, column: int) -> bool:
-        """Whether the cell at `row`, `column` is one this region covers."""
+        """Whether this region covers the cell at `row`, `column`."""
         return (
             self.top <= row < self.top + self.height
             and self.left <= column < self.left + self.width
@@ -113,11 +107,10 @@ class Layout:
     def at(self, route: tuple[int, ...]) -> Region | None:
         """The region a route names, or None if the route leads nowhere.
 
-        A route is a tuple of indices into `Region.children`, empty for the
-        whole expression. It is what a caller stores as "what is selected",
-        and it survives a re-render: the selection tree comes from the
-        expression alone, so changing the times operator or the height budget
-        moves rectangles without renumbering routes.
+        A route is a tuple of indices into `Region.children`, empty for the whole
+        expression. Callers store it as the selection, and it survives re-rendering: the
+        selection tree depends only on the expression, so changing the times operator or
+        height budget moves rectangles without renumbering routes.
         """
         region = self.root
         for index in route:
@@ -129,15 +122,10 @@ class Layout:
     def route_at(self, row: int, column: int) -> tuple[int, ...] | None:
         """The route to the smallest region drawn over a cell of `lines`.
 
-        Which is what the mouse points at: the pointer names a cell, and the
-        subexpression it is inside of is the innermost one whose rectangle
-        covers it. None where the cell is outside the render altogether - the
-        label field, or the blanks past the end of a short line - there being
-        no subexpression there to name.
-
-        Sibling regions never overlap, since each is the rectangle one operand
-        was drawn in, so descending into the first that covers the cell always
-        finds the same route the eye does.
+        This finds what the mouse points at. Returns None for cells outside the render,
+        such as the label field or blanks past the end of a short line. Sibling regions
+        never overlap, so descending into the first child that covers the cell is
+        unambiguous.
         """
         if not self.root.holds(row, column):
             return None
@@ -194,16 +182,14 @@ def fenced(
     threshold: int = 2,
     node: Node | None = None,
 ) -> Box:
-    """`box` between a pair of delimiters, one column each side and no rows.
+    """`box` between a pair of delimiters, one column on each side and no extra rows.
 
-    Up to `threshold` rows tall the delimiters are single characters on the
-    baseline row; taller than that they become rails, cornered top and bottom.
-    `pad` is blank columns inside the fence, which only matrices ask for.
+    Up to `threshold` rows tall the delimiters are single characters on the baseline;
+    taller boxes get rails with corners at top and bottom. `pad` adds blank columns
+    inside the fence (used only by matrices).
 
-    A fence holds exactly what it was given, so what it encloses is its
-    operand: fencing an expression for its precedence leaves the selection
-    tree alone, and a bracket that belongs to a vector hands over its
-    elements.
+    The enclosed box is the fence's operand, so parenthesizing for precedence doesn't
+    change the selection tree, and a vector's brackets expose its elements.
     """
     if box.height <= threshold:
         left = text(fence.short[0])
@@ -246,7 +232,7 @@ def _blit(
     left: int,
     places: dict[int, tuple[int, int]],
 ) -> None:
-    """Draw `box` with its top-left corner at `(top, left)`, and note where."""
+    """Draw `box` with its top-left corner at `(top, left)` and record where."""
     places[id(box)] = (top, left)
     if box.text:
         cells = grid[top + box.above]
@@ -266,8 +252,8 @@ def _blit(
 def _regions(box: Box, places: dict[int, tuple[int, int]]) -> list[Region]:
     """The regions `box` contributes: itself, or its operands if it has no node.
 
-    A box with no node is glue - a fence, a rail, an operator's spelling - and
-    stands for whatever it was given to hold.
+    A box with no node is glue (a fence, a rail, an operator) and stands for what it
+    contains.
     """
     inside = [region for operand in box.operands for region in _regions(operand, places)]
     if box.node is None:

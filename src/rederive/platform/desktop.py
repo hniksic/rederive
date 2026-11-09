@@ -1,15 +1,12 @@
-"""The environment an ordinary machine provides: a clipboard, files, psutil, Qt.
+"""The desktop environment: system clipboard, `pathlib` files, psutil, and Qt.
 
-Three of the four answers here are given by a wheel that an install need not
-have. psutil and pyperclip are the `desktop` extra, pyqtgraph and Qt the
-`plot` one, and all of them are opt-in - so each is imported in a try, and an
-install without one gets the answer that says so rather than an ImportError
-from a module that has nothing to do with what was asked.
+psutil and pyperclip (the `desktop` extra) and pyqtgraph and Qt (the `plot` extra) are
+optional, so each is imported in a try, and a missing one yields an empty answer rather
+than an ImportError.
 
-The failures a wheel that *is* installed can produce are caught here too, and
-for the same reason: a clipboard tool that is not on the machine and a
-resident set the kernel will not report are ordinary on a desktop, and neither
-is worth an error to a status line or a copy.
+Runtime failures of installed packages, such as a missing clipboard tool or an
+unreadable resident set, are also caught, since they are routine on a desktop and not
+worth an error.
 """
 
 from __future__ import annotations
@@ -33,7 +30,7 @@ __all__ = ["Desktop", "DesktopStorage"]
 
 
 class DesktopStorage:
-    """Files through `pathlib`, which is what a machine with a filesystem has."""
+    """File storage through `pathlib`."""
 
     def read(self, path: Path) -> bytes:
         return path.read_bytes()
@@ -42,10 +39,10 @@ class DesktopStorage:
         path.write_text(text, encoding="utf-8")
 
     def names(self, directory: Path) -> Sequence[str]:
-        """What is in a directory, or nothing where it will not be read.
+        """List a directory's entries, or nothing if it can't be read.
 
-        A prompt completes from this, and a directory that is not there or not
-        readable is one that completes to nothing rather than one that refuses.
+        Used for prompt completion, where a missing or unreadable directory simply
+        completes to nothing.
         """
         try:
             return sorted(entry.name for entry in directory.iterdir())
@@ -60,7 +57,7 @@ class DesktopStorage:
 
 
 class Desktop:
-    """The four answers, as a machine with a desktop on it gives them."""
+    """The `Platform` implementation for a desktop machine."""
 
     def __init__(self) -> None:
         self._storage = DesktopStorage()
@@ -68,17 +65,12 @@ class Desktop:
     # -- the clipboard -----------------------------------------------------
 
     def copy(self, text: str, refused: Callable[[str], None] | None = None) -> None:
-        """Hand text to the desktop's own clipboard, through whatever tool is there.
+        """Copy text to the system clipboard through whatever tool is available.
 
-        pyperclip finds wl-copy, xclip or xsel and uses it, and is quiet where
-        it finds none. An install without pyperclip is quiet in the same way:
-        the copy still took the terminal's road, which is the only road there
-        is across ssh anyway.
-
-        Nothing is ever said through `refused`, and that is the reason: a
-        machine with no clipboard tool is a machine the copy left by the other
-        road, and a message about it would be a message about a key that
-        worked.
+        pyperclip uses wl-copy, xclip or xsel, and silently does nothing if none is
+        found or pyperclip itself is missing. `refused` is never called, because the
+        copy has also gone out through the terminal (the only way across ssh anyway),
+        so the key still worked.
         """
         if pyperclip is None:
             return
@@ -88,10 +80,10 @@ class Desktop:
             pass
 
     def paste(self) -> str | None:
-        """The text on the desktop's own clipboard, through the same tool as `copy`.
+        """Return the system clipboard's text, using the same tool as `copy`.
 
-        None where there is no tool to read it with, which across ssh is the
-        usual answer: the terminal's own paste key is the road there.
+        None if there is no tool, which is usual across ssh, where the terminal's own
+        paste key is the way to paste.
         """
         if pyperclip is None:
             return None
@@ -108,11 +100,10 @@ class Desktop:
     # -- memory ------------------------------------------------------------
 
     def process_bytes(self, pid: int | None = None) -> int | None:
-        """One process's resident set, or None where it will not be read.
+        """Return a process's resident set size, or None if it can't be read.
 
-        None covers a machine without psutil, a platform that does not report
-        a resident set, and a process that is no longer there. They are the
-        same thing to a caller: no figure to show.
+        None covers a missing psutil, a platform that doesn't report it, and a process
+        that is gone.
         """
         if psutil is None:
             return None
@@ -122,17 +113,15 @@ class Desktop:
             return None
 
     def measures_processes(self) -> bool:
-        """Whether psutil is here to read a resident set with, which is the whole of it.
+        """Whether psutil is available.
 
-        A machine that has it may still refuse a particular process - one that
-        has gone, one another user owns - and that is `process_bytes` answering
-        None rather than this answering False. What this decides is whether it
-        is worth asking at all.
+        Even with psutil, a particular process may be unreadable (gone, or owned by
+        another user); that is `process_bytes` returning None, not this returning False.
         """
         return psutil is not None
 
     def total_bytes(self) -> int | None:
-        """How much physical memory the machine has, or None where that is unknown."""
+        """Return the machine's physical memory, or None if unknown."""
         if psutil is None:
             return None
         try:
@@ -143,11 +132,10 @@ class Desktop:
     # -- what this is ------------------------------------------------------
 
     def provenance(self) -> str:
-        """The toolkit a plot would be drawn with, and the machine underneath.
+        """Return the plotting toolkit and the machine.
 
-        Which Qt a build carries is the first question a plot that misbehaves
-        raises, and a bundle carries its own, so nothing outside it can answer.
-        The names are the Qt backend's to know, so the answer is asked of it.
+        The bundled Qt version is the first thing to check when a plot misbehaves. The
+        Qt backend reports it.
         """
         from rederive.plot.qt import toolkit
 

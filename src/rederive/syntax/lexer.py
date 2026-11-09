@@ -1,13 +1,11 @@
 """The pull lexer.
 
-The only module that consults `ParseState` for name resolution. Lexing a name
-is not a self-contained lexical rule: it needs the live symbol table, and in
-Character mode it needs lookahead as well, because `tera:=10^12` must take
-`tera` whole where a bare `tera` would split into four letters.
+This is the only module that consults `ParseState` to resolve names. Lexing a name
+depends on the live symbol table, and in Character mode also on lookahead:
+`tera:=10^12` defines `tera`, while a bare `tera` splits into four letters.
 
-Every entry point is a pure function of a position and the state, so the parser
-can look ahead simply by lexing at another offset and can back up by forgetting
-one.
+Every entry point is a pure function of position and state, so the parser can look
+ahead or back up just by lexing at a different offset.
 """
 
 from __future__ import annotations
@@ -40,11 +38,11 @@ def _is_continuation(char: str) -> bool:
 
 
 def is_name(text: str) -> bool:
-    """Whether `text` is one name and nothing else.
+    """Whether `text` is a single name, as accepted by the Declare command.
 
-    What a Declare command may declare. The question is lexical rather than
-    grammatical: a declared name may be multi-character even in Character
-    input mode, where `area` on its own would otherwise read as `a*r*e*a`.
+    This is a lexical check, independent of input mode: a declared name may have
+    several characters even in Character mode, where `area` would otherwise read as
+    `a*r*e*a`.
     """
     normalized = unicodedata.normalize("NFC", text)
     return bool(
@@ -69,10 +67,10 @@ def _digit_value(char: str) -> int | None:
 
 
 class Lexer:
-    """Turns positions in a `Source` into tokens.
+    """Produces tokens at given positions in a `Source`.
 
-    `limit` bounds the token stream, so that a file can be lexed one expression
-    at a time while offsets stay indices into the whole `Source.text`.
+    `limit` ends the token stream, so a file can be lexed one expression at a time
+    with offsets still indexing the whole `Source.text`.
     """
 
     def __init__(
@@ -150,11 +148,11 @@ class Lexer:
     # -- numerals -----------------------------------------------------------
 
     def _number(self, pos: int) -> Token:
-        """A numeral, in the current input base.
+        """A numeral in the current input base.
 
-        Digits are those valid in the base, plus `A`..`Z` above base 10, and a
-        numeral must begin with a digit: `0ff` is 255 while `ff` is `f*f`.
-        There is no exponent notation and no digit separators.
+        Above base 10, `A`..`Z` are digits, but a numeral must start with `0`-`9`:
+        `0ff` is 255 while `ff` is `f*f`. There is no exponent notation and no digit
+        separator.
         """
         base = self.state.input_base
         end = pos
@@ -176,7 +174,7 @@ class Lexer:
                 end += 1
             fraction = self.text[start:end]
         if not integer and not fraction:
-            # A digit that is not a digit in this base, such as `2` in base 2.
+            # A digit invalid in this base, such as `2` in base 2.
             raise self.error(pos, "a numeral")
         if end < self.limit and self.text[end] == ".":
             raise self.error(end, "a numeral")
@@ -189,8 +187,8 @@ class Lexer:
     def _string(self, pos: int) -> Token:
         """A string literal, or a quoted name where a name is expected.
 
-        There is no escape mechanism, so `"a""b"` is two adjacent strings. An
-        unterminated string is not an error: Derive closes it at end of input.
+        There are no escapes, so `"a""b"` is two adjacent strings. An unterminated string
+        is not an error; Derive closes it at end of input.
         """
         end = self.text.find('"', pos + 1)
         if end < 0 or end >= self.limit:
@@ -221,9 +219,9 @@ class Lexer:
         raise self.error(end, "digits")
 
     def _glyph_name(self, pos: int) -> Token:
-        """`√`, `∞`, `°` and the like: alternative spellings of ordinary names.
+        """A glyph such as `√`, `∞` or `°` that is an alternative spelling of a name.
 
-        None of these is an identifier character, so `a√b` is `a*SQRT(b)`.
+        Glyphs aren't identifier characters, so `a√b` is `a*SQRT(b)`.
         """
         glyph = self.text[pos]
         canonical = names.FUNCTION_GLYPHS.get(glyph)
@@ -266,9 +264,9 @@ class Lexer:
         return None
 
     def count_arguments(self, pos: int) -> int | None:
-        """How many comma-separated groups the parenthesised group at `pos` has.
+        """The number of comma-separated arguments in the parenthesized group at `pos`.
 
-        A character scan, not a parse: the parser needs the count before it can
+        This scans characters rather than parsing, because the parser needs the count to
         decide whether `f(x)` is a product and `f(x,y)` an error.
         """
         close = self.scan_balanced(pos)
@@ -294,10 +292,10 @@ class Lexer:
         return commas + 1
 
     def name_run_at(self, pos: int) -> Token:
-        """The whole run at `pos` as one name, whatever the input mode.
+        """The whole run at `pos` as one name, regardless of input mode.
 
-        Used for the formal parameters of a definition head, which are taken
-        whole and registered before the body is lexed.
+        Used for the parameters of a definition head, which are registered before the
+        body is lexed.
         """
         pos = self.skip_space(pos)
         if pos >= self.limit or not is_letter(self.text[pos]):
@@ -310,9 +308,9 @@ class Lexer:
         run = self.text[pos:end]
         after = self.skip_space(end)
 
-        # Step 1: definition-head lookahead. Without it a Character-mode
-        # `tera:=10^12` would lex as `t*e*r*a`, which is not a legal left side,
-        # and `c1_:epsilonReal` would stop at `c`.
+        # Step 1: definition-head lookahead. Without it, Character mode would lex
+        # `tera:=10^12` as `t*e*r*a`, an illegal left side, and `c1_:epsilonReal` would
+        # stop at `c`.
         if self._lvalue_operator_at(after):
             return Token(TokenKind.NAME, pos, end, self.new_variable(run), run)
         close = self.scan_balanced(after)
@@ -328,26 +326,21 @@ class Lexer:
                 is_defhead=True,
             )
 
-        # `BB'(r)`: the primes belong to the name, so what follows is a call
-        # like any other and only the engine has to know what one means.
+        # In `BB'(r)` the primes are part of the name, so it parses as an ordinary call.
         primed = self._primed_name(pos, run, end)
         if primed is not None:
             return primed
 
-        # Step 2: longest match against known names. Only the whole run is a
-        # candidate in Word mode, where a run is one name and a known name
-        # inside it is a name inside it and nothing more: `xk` is `xk` however
-        # long `x` has been declared, which is what SOLVE.MTH's iteration
-        # variable needs. In Character mode a shorter prefix is what makes
-        # `tera*x` readable as `terax`.
+        # Step 2: longest match against known names. In Word mode only the whole run is
+        # tried, so `xk` is `xk` even if `x` is declared (SOLVE.MTH's iteration variable
+        # relies on this). In Character mode shorter prefixes are tried too, so `terax`
+        # reads as `tera*x`.
         longest = len(run)
         shortest = 1 if self.state.input_mode == InputMode.CHARACTER else longest
         for length in range(longest, shortest - 1, -1):
             if length < len(run) and run[length] == "_":
-                # An underscore run belongs to the name in front of it, so a
-                # declared `x` does not match the first letter of `x_`: they
-                # are different names, which is what the `_` convention in
-                # Derive's own utility files is for.
+                # Underscores belong to the preceding name, so a declared `x` doesn't
+                # match the start of `x_`. Derive's utility files rely on this.
                 continue
             info = self.state.resolve(run[:length])
             if info is None:
@@ -382,20 +375,17 @@ class Lexer:
         return any(self.at(pos, op) for op in _ASSIGN_OPS)
 
     def _lvalue_operator_at(self, pos: int) -> bool:
-        """Whether what follows makes the run before it a left-hand side."""
+        """Whether the operator at `pos` makes the preceding run a left-hand side."""
         return self._assignment_at(pos) or any(
             self.at(pos, op) for op in names.DOMAIN_OPERATORS
         )
 
     def _primed_name(self, pos: int, run: str, end: int) -> Token | None:
-        """`BB'`, `BB''`: a function name carrying the marks that derive it.
+        """A derivative name such as `BB'` or `BB''`.
 
-        Three things make one. The primes have to touch the name, since an
-        apostrophe with a space in front of it is nobody's derivative; there
-        has to be an argument list after them, because a derivative is a
-        function and `BB'` alone applies to nothing; and the name has to be a
-        known function, the only kind that could be applied at all. Everything
-        else leaves the apostrophe the error it has always been.
+        The primes must immediately follow the name, an argument list must follow the
+        primes, and the name must be a known function. Otherwise the apostrophe remains
+        a syntax error.
         """
         stop = end
         while stop < self.limit and self.text[stop] == names.PRIME_MARK:
@@ -420,11 +410,10 @@ class Lexer:
         )
 
     def new_variable(self, run: str) -> str:
-        """The canonical spelling of a name this expression is declaring.
+        """The canonical spelling of a name being declared.
 
-        A pre-defined name keeps its inventory spelling; anything else keeps
-        the spelling it is written with here, which is what the symbol table
-        will record.
+        A predefined name keeps its built-in spelling; any other name keeps the spelling
+        used here, which the symbol table will record.
         """
         known = self.state.lookup(run)
         if known is not None:
@@ -438,7 +427,7 @@ class Lexer:
             if not self.at(pos, op):
                 continue
             if op == "~":
-                # Preprocessing removed the legal ones.
+                # Preprocessing already removed the legal (line continuation) ones.
                 raise self.error(pos, "an operator")
             canonical = names.OPERATOR_GLYPHS.get(op, op)
             surface = op if canonical != op else None
@@ -449,11 +438,9 @@ class Lexer:
 def _number_value(integer: str, fraction: str, base: int) -> str:
     """The numeral's decimal value, as text.
 
-    A radix point is spelling rather than value, so `1.0`, `1.` and `1.000`
-    are all the number Derive shows as `1`. Base 10 therefore drops the zeros
-    that say nothing on either side - `007` is `7` and `1.50` is `1.5` - and
-    the point goes with the last of the trailing ones. Other bases are
-    converted.
+    A radix point doesn't change the value, so `1.0`, `1.` and `1.000` are all `1`.
+    In base 10 redundant zeros are dropped (`007` is `7`, `1.50` is `1.5`), along with
+    a trailing point. Other bases are converted.
     """
     if base == 10:
         return _decimal(integer, fraction)
@@ -464,19 +451,17 @@ def _number_value(integer: str, fraction: str, base: int) -> str:
 
 
 def _decimal(integer: str, fraction: str) -> str:
-    """A base-ten numeral written with none of its redundant zeros."""
+    """A base-ten numeral without redundant zeros."""
     integer = integer.lstrip("0")
     fraction = fraction.rstrip("0")
     return (integer or "0") + ("." + fraction if fraction else "")
 
 
 def _exact(value: Fraction) -> str:
-    """`value` in full: a numeral, or a ratio when no numeral holds it.
+    """`value` exactly, as a decimal numeral or, if it doesn't terminate, a ratio.
 
-    A fraction terminates in base ten exactly when its denominator divides a
-    power of ten, so `0.1` in hexadecimal is the numeral `0.0625` while `0.1`
-    in base three is one third, which no numeral spells. Neither is rounded:
-    the digits a converted numeral is worth are all of them.
+    `0.1` in hexadecimal is `0.0625`, while `0.1` in base three is `1/3`. Nothing is
+    rounded.
     """
     denominator, twos, fives = value.denominator, 0, 0
     while denominator % 2 == 0:

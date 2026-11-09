@@ -1,43 +1,38 @@
 """Derive's normal form: every sum and quotient written partially factored, recursively.
 
-Derive writes a sum, wherever it stands, as a rational function of one generator:
-the most main one the sum holds. The terms that hold it go over one denominator, the
-gcd is cancelled, long division takes out whatever part of it is a polynomial, and
-that polynomial is collected by the powers of the generator. Everything free of the
-generator is an opaque coefficient while that happens, and each coefficient is then a
-sum of its own, written the same way about its own generator. Terms free of the
-generator are not touched by any of it - they are what the constant term is added to,
-and that sum is written about whichever generator is next.
+Derive writes every sum as a rational function of its most main generator. The terms
+containing it go over one denominator, the gcd is cancelled, long division extracts
+the polynomial part, and that polynomial is collected by powers of the generator.
+Meanwhile everything free of the generator is an opaque coefficient, and each
+coefficient is then normalized the same way about its own generator. Terms free of
+the generator are untouched; they join the constant term, and that sum is written
+about the next generator.
 
-So `(x + 1)^9 + y` is a ninth-degree polynomial in `x` plus `y`, while
-`(y + 1)^9 + x` is `x + (y + 1)^9`: the ninth power is free of `x` and is left
-exactly as it was written. That is the manual's section 4.3 demonstration, and it is
-why `Manage Ordering` changes what Simplify answers. And it is what leaves
-`3*x*(2*y + 1)^2` written in powers of `2*y + 1` instead of multiplied out into `y`.
+So `(x + 1)^9 + y` is a ninth-degree polynomial in `x` plus `y`, while `(y + 1)^9 + x`
+is `x + (y + 1)^9`, the power being free of `x`. This is the manual's section 4.3
+demonstration, and why `Manage Ordering` changes Simplify's answers. It also keeps
+`3*x*(2*y + 1)^2` in powers of `2*y + 1` rather than multiplied out in `y`.
 
-A product is never distributed. Its numerator is cancelled against its denominator,
-factor by factor, and that is all: `2*x*(x - 3)^2`, `(x + 1)*(y + 1)` and
-`(x + 1)^2/y` come back as they were written, and `(x^2 + 2*x*y + y^2)/(x^2 - y^2)`
-comes back `(x + y)/(x - y)` and not long-divided into `1 + 2*y/(x - y)`. Which is
-what makes this a normal form rather than a wholesale expansion.
+Products are never distributed, only cancelled factor by factor: `2*x*(x - 3)^2`, `(x
++ 1)*(y + 1)` and `(x + 1)^2/y` are unchanged, and `(x^2 + 2*x*y + y^2)/(x^2 - y^2)`
+becomes `(x + y)/(x - y)`, not `1 + 2*y/(x - y)`. This is what makes it a normal form
+rather than a full expansion.
 
-Two things decide what a sum looks like once it is written. A factor every term of
-it carries is taken outside where some term carries a sum as a factor, which is how
-`2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` comes back
-`(x^2 - y^2)^5*(3 - 2*y^2)`; a sum of monomials keeps its terms. And a denominator
-two or more terms carry that does not hold the generator - a coefficient's
-denominator - puts the whole sum over it: `(x + 1)^2/y + z` is
-`(x^2 + 2*x + y*z + 1)/y`, while `x/y + z` stays as it is.
+Two further rules shape a sum. If some term has a sum as a factor, a factor common to
+all terms is taken outside: `2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` becomes
+`(x^2 - y^2)^5*(3 - 2*y^2)`, while a sum of monomials keeps its terms. And a
+denominator free of the generator (a coefficient's denominator) shared by two or more
+terms puts the whole sum over it: `(x + 1)^2/y + z` is `(x^2 + 2*x + y*z + 1)/y`,
+while `x/y + z` stays.
 
-The generator is a kernel and not only a variable: a maximal subexpression that is not
-a sum, a product or a power with a numeric exponent, ranked by the most main variable
-it holds, with plain variables first. `LN(x)*(y + 1)^2 + LN(x)*z` is collected on
-`LN(x)`, reaching `(y^2 + 2*y + z + 1)*LN(x)`, because `LN(x)` is the most main thing
-the sum is a polynomial in.
+The generator is a kernel, not just a variable: a maximal subexpression that isn't a
+sum, product, or power with numeric exponent, ranked by its most main variable, plain
+variables first. `LN(x)*(y + 1)^2 + LN(x)*z` is collected on `LN(x)` into `(y^2 + 2*y
++ z + 1)*LN(x)`, since `LN(x)` is the most main thing the sum is a polynomial in.
 
-One walk, bottom up. Every argument is in normal form before the node above it is
-written, and writing a node only ever builds sums out of parts already written, which
-is what makes the answer a fixed point of the walk without repeating it.
+The walk is a single bottom-up pass. Every argument is normalized before its parent,
+and writing a node only builds sums from already written parts, so the result is a
+fixed point without repeating the walk.
 """
 
 from __future__ import annotations
@@ -60,28 +55,25 @@ def normal_form(
 ) -> sp.Basic:
     """`expression` with every sum and quotient in it written in Derive's normal form.
 
-    `order` is the session's variable order list, which is what decides which
-    generator a sum is written about.
+    `order` is the session's variable order list, which decides each sum's generator.
 
-    `over_numbers` says whether a *number* several terms carry underneath is one the
-    sum is written over. A quotient a computation made survives to the display in the
-    original, and dividing by a coefficient is what solving does - `x = (1 - z)/2` and
-    not `x = 1/2 - z/2`. A sum that was only ever added up keeps its terms apart,
-    however many denominators they have in common: `x^2/6 + x/2` authored comes back
-    as it stands, and so does `1/2 + SIN(x)/2`. So the pipeline asks for `False` and
-    solving takes the default. A denominator holding a variable is combined either
-    way, that being the rational function the normal form is about.
+    `over_numbers` says whether a sum is put over a *numeric* denominator shared by
+    several terms. Derive keeps a quotient produced by a computation, as when solving
+    divides by a coefficient: `x = (1 - z)/2`, not `x = 1/2 - z/2`. But an authored sum
+    keeps its terms apart: `x^2/6 + x/2` and `1/2 + SIN(x)/2` stay as written. So the
+    pipeline passes `False` and solving uses the default. Denominators containing a
+    variable are combined either way.
 
-    Total, like every other rewrite in the pipeline: what fails is not taken.
+    Never raises; a failed rewrite is skipped.
     """
     return _Writer(tuple(order), over_numbers).written(expression)
 
 
 class _Writer:
-    """One walk of the normal form, with what it has written so far.
+    """One walk of the normal form, with a memo of what it has written.
 
-    The memo is a cache and nothing more: writing a sum is a function of the sum, and
-    a coefficient that turns up in several places is written once.
+    The memo is purely a cache, so a coefficient appearing in several places is
+    written once.
     """
 
     def __init__(self, order: tuple[str, ...], over_numbers: bool) -> None:
@@ -108,8 +100,8 @@ class _Writer:
         if not isinstance(expression, sp.Basic) or expression.is_Atom:
             return expression
         if not expression.args or isinstance(expression, _BOUND):
-            # A head that binds a variable of its own is not reached into: its
-            # arguments are not all operands, and what is inside it is its business.
+            # Don't reach into heads that bind their own variable: not all their
+            # arguments are operands.
             return expression
         algebraic = isinstance(expression, sp.Expr) and bool(expression.is_commutative)
         if algebraic and not expression.free_symbols and not expression.has(*_BOUND):
@@ -124,10 +116,10 @@ class _Writer:
         return expression if rebuilt is None else rebuilt
 
     def _step(self, built: sp.Basic) -> sp.Basic:
-        """A sum or a product of written parts, written itself.
+        """A sum or product of written parts, written in turn.
 
-        Asked by what came out of building it, which need not be what went in: a
-        product of a number and a sum is a sum by the time sympy has built it.
+        Dispatches on the built result, which may differ from the input: sympy turns a
+        number times a sum into a sum.
         """
         if not (isinstance(built, sp.Expr) and built.is_commutative):
             return built
@@ -141,16 +133,14 @@ class _Writer:
         return built if answer is None else answer
 
     def _number(self, number: sp.Expr) -> sp.Basic:
-        """A number, which is the coefficient field and gets plain arithmetic.
+        """A number, simplified by plain arithmetic.
 
-        Multiplied out, rationalized and denested term by term, so that
-        `(1 + 2*#i)*(3 + #i)` is `1 + 7*#i` and `(2 + #i)/(#i + 1)` is
-        `3/2 - #i/2`: what is structure in a polynomial is only arithmetic here.
+        Multiplied out, rationalized and denested term by term, so `(1 + 2*#i)*(3 +
+        #i)` is `1 + 7*#i` and `(2 + #i)/(#i + 1)` is `3/2 - #i/2`.
 
-        Kept only where it is shorter. A number has no generator to be written
-        about, and the arithmetic that leaves it longer is no simplification:
-        `SQRT(5)*(2 + #i)/5` multiplied out is two terms each carrying the root, and
-        `(#e^pi/2 - #e^(-pi)/2)/pi` is `SINH(pi)/pi` the way Simplify writes it.
+        The result is kept only if shorter: `SQRT(5)*(2 + #i)/5` multiplied out is two
+        terms each with the root, and `(#e^pi/2 - #e^(-pi)/2)/pi` is better left as
+        Simplify writes `SINH(pi)/pi`.
         """
         value = _attempt(number, _arithmetic)
         if value is None:
@@ -171,47 +161,45 @@ class _Writer:
     # -- products -----------------------------------------------------------
 
     def _product(self, product: sp.Basic) -> sp.Basic:
-        """A product, cancelled and spelled, and never multiplied out.
+        """A product, cancelled but never multiplied out.
 
-        Whatever the numerator and the denominator have in common is cancelled,
-        which is what `(x^2 + 2*x*y + y^2)/(x^2 - y^2)` needs to be `(x + y)/(x - y)`.
-        The denominator keeps the factors it arrived with less what was cancelled:
-        `1/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y + 18))` is not a quartic.
+        Common factors of numerator and denominator are cancelled, so `(x^2 + 2*x*y +
+        y^2)/(x^2 - y^2)` becomes `(x + y)/(x - y)`. The denominator keeps its original
+        factors minus what cancelled: `1/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y +
+        18))` is not expanded into a quartic.
         """
         if not product.is_Mul:
             return product
-        # An undecidable four-argument `IF` carries a truth value, and sympy builds a
-        # product out of that too; nothing that is not an expression has a numerator.
+        # An undecidable four-argument `IF` can put a truth value in a product; only
+        # expressions have numerators.
         if not all(isinstance(factor, sp.Expr) for factor in product.args):
             return product
         tops, bottoms = _fraction(product)
         if any(bottom.free_symbols for bottom in bottoms):
             cancelled = _cancelled(tops, bottoms)
             if cancelled is not None:
-                # What is left of a factor a gcd went into is a polynomial nobody has
-                # written yet.
+                # Factors left after cancelling a gcd are new and must be written.
                 tops = [self.written(factor) for factor in cancelled[0]]
                 bottoms = [self.written(factor) for factor in cancelled[1]]
         answer = _quotient(tops, bottoms)
-        # Cancelling everything underneath can leave a number and a sum, which sympy
-        # multiplies out as it builds them, and a sum is written as one.
+        # Cancelling the whole denominator can leave a number times a sum, which sympy
+        # turns into a sum, so write it as one.
         return self._step(answer) if answer.is_Add else _folded(answer)
 
     # -- sums ---------------------------------------------------------------
 
     def _sum(self, total: sp.Basic) -> sp.Basic:
-        """One sum about its generator, and its free part about the next.
+        """One sum written about its generator, and its free part about the next.
 
-        The common factor of a sum of compound terms is asked for twice: of the sum as
-        it arrives, and of the sum as it is written, since collecting can build one
-        that was not there - `phi*x*y - y*(phi + omega)` - and an answer the rule
-        would take apart is not a normal form.
+        A common factor is sought twice, before and after writing, since collecting
+        can create one (`phi*x*y - y*(phi + omega)`), and the result must be stable
+        under the rule.
         """
         if not total.is_Add:
             return total
         unified = _unified_kernels(total)
         if unified is not total:
-            # Kernels made one can cancel, and what they leave need be no sum.
+            # Unified kernels may cancel, leaving something other than a sum.
             return self._step(unified)
         generator = self._main(total)
         if generator is None:
@@ -227,13 +215,12 @@ class _Writer:
         return answer if common is None else common
 
     def _about(self, total: sp.Add, generator: sp.Basic) -> sp.Basic:
-        """`total` as a rational function of `generator`, and the rest about the next."""
+        """`total` as a rational function of `generator`, the rest about the next."""
         holding = [term for term in total.args if _holds(term, generator)]
         free = [term for term in total.args if not _holds(term, generator)]
         holder = _Holder()
-        # A compound generator stands behind a symbol of its own while the algebra is
-        # done, so that nothing reaches inside it: multiplying out reaches into an
-        # integral and splits it in two.
+        # Replace a compound generator by a symbol during the algebra so nothing
+        # reaches inside it; multiplying out would e.g. split an integral in two.
         symbol = holder.standing_for(generator)
         frozen = sp.Add(*(_frozen(term, generator, symbol, holder) for term in holding))
 
@@ -247,37 +234,31 @@ class _Writer:
             except Exception:
                 written = None
         if written is None:
-            # No rational function of the generator to write (`1/SQRT(x) + 1/x`,
-            # `(x + 1)^n + y`), or one too large to multiply out: the terms holding
-            # the generator stand as they are.
+            # Not a rational function of the generator (`1/SQRT(x) + 1/x`, `(x + 1)^n
+            # + y`), or too large to multiply out: keep the terms holding it as is.
             terms = list(holding)
             rest = self.written(sp.Add(*free))
             return _over_one_denominator(self._shared(sp.Add(*terms, rest)))
         terms, constant = written
-        # The polynomial's constant term is free of the generator, and so belongs with
-        # the terms that were free of it all along: they are one sum, and it is
-        # written about whichever generator is most main in it.
+        # The constant term joins the terms free of the generator, and that sum is
+        # written about its own most main generator.
         terms.append(self.written(constant.xreplace(holder.held) + sp.Add(*free)))
         return self._shared(sp.Add(*terms))
 
     def _common_factor(self, total: sp.Add, generator: sp.Basic) -> sp.Basic | None:
         """A sum of compound products with a factor in common, written with it outside.
 
-        `2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` is the fifth power times what is
-        left of it, `(x^2 - y^2)^5*(3 - 2*y^2)`, which is what Derive answers and what
-        multiplying the powers out about `x` would bury in a polynomial of degree
-        twelve. A factor is in common where every term carries it, a power of it
-        sharing the lower power.
+        `2*(x^2 - y^2)^6 - (x^2 - y^2)^5*(2*x^2 - 3)` becomes `(x^2 - y^2)^5*(3 -
+        2*y^2)`, as in Derive, rather than a degree-twelve polynomial in `x`. A factor
+        is common if every term has it, with the lowest power shared.
 
-        Only where some term carries a sum as a factor. A sum of monomials is a
-        polynomial already, and taking its common factor out is factoring, which is
-        the Factor command's business: `x^2 + 2*x`, `2*x + 2*y` and
-        `y*x^2 + 2*y*x + 2*y` are all left as they stand.
+        Only if some term has a sum as a factor. Extracting a common factor from a sum
+        of monomials is factoring, Factor's job: `x^2 + 2*x`, `2*x + 2*y` and `y*x^2 +
+        2*y*x + 2*y` are left alone.
 
-        And never a power of the generator itself, which is what the sum is a
-        polynomial in rather than a factor of it: `x^2 + 2*x*(a + 1)^10` is that
-        polynomial, collected, and taking the `x` out would answer the sum's own normal
-        form with a different one.
+        Never a power of the generator itself, since the sum is a polynomial in it: `x^2
+        + 2*x*(a + 1)^10` is already in normal form, and taking `x` out would give a
+        different one.
         """
         if not any(_is_compound(term) for term in total.args):
             return None
@@ -296,17 +277,13 @@ class _Writer:
     def _shared(self, total: sp.Basic) -> sp.Basic:
         """A sum whose terms share a coefficient's denominator, written over it.
 
-        Which is what makes `(x + 1)^2/y + z` come out `(x^2 + 2*x + y*z + 1)/y`
-        while `x/y + z` stays as it is: the first has three terms over `y` and the
-        second has one, and a denominator only one term carries is that term's own
-        business. Two are enough - `(u - v)/h*(x - a) + w` is
-        `(x*(u - v) - a*(u - v) + h*w)/h`, where only two of the three terms arrived
-        with an `h` under them.
+        So `(x + 1)^2/y + z` becomes `(x^2 + 2*x + y*z + 1)/y` (three terms over `y`),
+        while `x/y + z` stays (only one). Two terms suffice: `(u - v)/h*(x - a) + w`
+        becomes `(x*(u - v) - a*(u - v) + h*w)/h`.
 
-        A denominator holding the generator is never what is shared: that was the
-        rational step's business, and what it left over such a denominator is proper.
-        Without `over_numbers` a denominator that is a number is no denominator at all
-        for this purpose - it is each term's own rational coefficient.
+        Denominators containing the generator are excluded, having been handled by
+        the rational step. Without `over_numbers`, numeric denominators are excluded
+        too, being just rational coefficients.
         """
         if not total.is_Add:
             return total
@@ -327,8 +304,7 @@ class _Writer:
         if not any(count > 1 for count in seen.values()):
             return total
         holder = _Holder()
-        # The numerators frozen and the denominators in the open: they are what the
-        # sum is combined over.
+        # Freeze the numerators but not the denominators, which are combined over.
         parts = []
         symbol = None if generator is None else holder.standing_for(generator)
         for numerator, denominator in map(_carried, total.args):
@@ -340,8 +316,7 @@ class _Writer:
             return total
         numerator = self.written(numerator.xreplace(holder.held))
         if not denominator.free_symbols and isinstance(numerator, sp.Add):
-            # Written as a product with the number outside, which sympy would
-            # otherwise multiply back over the sum as it builds the quotient.
+            # Keep the number outside, or sympy would multiply it into the sum.
             return _keep_coeff(1 / denominator, numerator)
         return _quotient(
             list(sp.Mul.make_args(numerator)), list(sp.Mul.make_args(denominator))
@@ -350,8 +325,8 @@ class _Writer:
     def _main(self, total: sp.Basic) -> sp.Basic | None:
         """The most main generator of `total`, by the order list.
 
-        A kernel ranks by the most main variable it holds, and a plain variable before
-        a compound kernel holding the same one: `x` leads `LN(x)`, which leads `y`.
+        A kernel ranks by its most main variable, plain variables before compound
+        kernels with the same one: `x` before `LN(x)` before `y`.
         """
         best = None
         for kernel in _kernels(total):
@@ -374,19 +349,17 @@ def _rational_in(
 ) -> tuple[list[sp.Basic], sp.Basic]:
     """The terms holding the generator, as a polynomial in it plus a proper part.
 
-    Everything free of the generator stands in for itself, so that a denominator not
-    holding the generator is invisible here: it belongs to a coefficient, and a
-    coefficient is the business of the sum that coefficient turns out to be. That is
-    what leaves `x/y + z` alone while `1/(x + 1) + 1/(x + 2) + y` reaches
-    `(2*x + 3)/((x + 1)*(x + 2)) + y`.
+    Everything free of the generator is frozen, so denominators free of it belong to
+    coefficients and are handled when those are written. That leaves `x/y + z`
+    alone while `1/(x + 1) + 1/(x + 2) + y` becomes `(2*x + 3)/((x + 1)*(x + 2)) + y`.
 
-    The answer is the written terms and the constant term, still frozen; the constant
-    is what the terms free of the generator are added to. Raises where long division
-    finds no ratio of polynomials in the generator at all, as in `SIN(x)/(x + 1)`.
+    Returns the written terms and the constant term, still frozen, to which the terms
+    free of the generator are added. Raises if there is no ratio of polynomials in
+    the generator, as in `SIN(x)/(x + 1)`.
     """
-    # A root of a quotient stands behind a symbol of its own while the algebra is
-    # done: its base is written on its own, and the root of `(x + 1)/(x - 1)` brought
-    # over one denominator and multiplied out would be the root of `2/(x - 1) + 1`.
+    # Hide roots of quotients behind symbols during the algebra, since their bases
+    # are written separately: the root of `(x + 1)/(x - 1)` would otherwise become
+    # the root of `2/(x - 1) + 1`.
     hidden: dict[sp.Basic, sp.Basic] = {}
     frozen = _roots_of_quotients_hidden(frozen, hidden)
     shown = {symbol: root for root, symbol in hidden.items()}
@@ -399,16 +372,15 @@ def _rational_in(
     if denominator.has(generator):
         quotient, remainder = sp.div(numerator, denominator, generator)
     else:
-        # A denominator free of the generator is a coefficient like any other, and
-        # divides into every term: `(x + y*z)/y` is `x/y + z` and only then is it a
-        # polynomial in `x`.
+        # A denominator free of the generator is a coefficient and divides each term:
+        # `(x + y*z)/y` is `x/y + z`, a polynomial in `x`.
         quotient, remainder = _expanded(numerator / denominator), sp.S.Zero
     terms, constant = _collected(quotient.xreplace(shown), generator, thaw)
     if remainder != 0:
         rest, rest_constant = _collected(
             _expanded(remainder).xreplace(shown), generator, thaw
         )
-        # Cancelled once more in the open, where the frozen gcd saw only the generator.
+        # Cancel again unfrozen, since the frozen gcd saw only the generator.
         tops = [sp.Add(*rest, thaw(rest_constant))]
         bottoms = [
             thaw(factor.xreplace(shown)) for factor in sp.Mul.make_args(denominator)
@@ -423,16 +395,14 @@ def _rational_in(
 def _collected(
     polynomial: sp.Basic, generator: sp.Basic, thaw: Callable[[sp.Basic], sp.Basic]
 ) -> tuple[list[sp.Basic], sp.Basic]:
-    """A multiplied-out polynomial gathered back up by what each term holds of the
-    generator.
+    """A multiplied-out polynomial collected by each term's generator-dependent part.
 
-    Mostly that is a power of it, and each power's coefficient is thawed and written
-    keeping its numeric content inside, so that `6*x*y^2*z + 2*x*z^3` is
-    `x*(6*y^2*z + 2*z^3)` - which is what the manual's own LAPLACIAN answers. A term
-    can also hold the generator inside a kernel of it, `(1 + i)^n` or `LN(x)`, and the
-    terms holding the same one are collected the same way: the annuity equation's
-    `v*(1 + i)^n + p*t*(1 + i)^n - (p*t + v)*(1 + i)^n` is that kernel times nothing.
-    The terms free of the generator come back apart, as the constant term.
+    Usually that is a power of the generator, and each coefficient is thawed and
+    written with numeric content inside: `6*x*y^2*z + 2*x*z^3` is `x*(6*y^2*z +
+    2*z^3)`, as the manual's LAPLACIAN answers. The generator may also appear inside
+    a kernel like `(1 + i)^n` or `LN(x)`, collected likewise: the annuity equation's
+    `v*(1 + i)^n + p*t*(1 + i)^n - (p*t + v)*(1 + i)^n` collects to zero. Terms free
+    of the generator are returned separately as the constant term.
     """
     groups: dict[sp.Basic, list[sp.Basic]] = {}
     constant = []
@@ -451,12 +421,10 @@ def _collected(
 
 
 def _fraction(product: sp.Expr) -> tuple[list[sp.Expr], list[sp.Expr]]:
-    """A product's factors over the line and under it.
+    """A product's numerator and denominator factors, as lists.
 
-    Kept apart rather than multiplied up into a numerator and a denominator, because
-    sympy multiplies a number over a sum as it builds a product of the two: the
-    numerator of `2*(a + b)/(n + 1)` built on its own is `2*a + 2*b`, and the quotient
-    rebuilt from that is no longer the one that was written.
+    Kept as lists because sympy distributes a number over a sum when multiplying: the
+    numerator of `2*(a + b)/(n + 1)` built alone would be `2*a + 2*b`.
     """
     tops, bottoms = [], []
     for factor in sp.Mul.make_args(product):
@@ -471,17 +439,14 @@ def _fraction(product: sp.Expr) -> tuple[list[sp.Expr], list[sp.Expr]]:
 def _cancelled(
     tops: list[sp.Expr], bottoms: list[sp.Expr]
 ) -> tuple[list[sp.Expr], list[sp.Expr]] | None:
-    """What the factors over and under the line have in common, cancelled.
+    """The numerator and denominator factors with common factors cancelled, or None.
 
-    Factor by factor, so that what is not cancelled keeps the shape it had: the
-    denominator stays the product of the factors it arrived with, and
-    `(x + 1)^3*(x + 2)/(x + 1)` is `(x + 1)^2*(x + 2)` rather than a cubic. A factor
-    only part of which cancels is replaced by the part that is left. None where
-    nothing cancels.
+    Cancelling factor by factor keeps the rest in shape: `(x + 1)^3*(x + 2)/(x + 1)` is
+    `(x + 1)^2*(x + 2)`, not a cubic. A partly cancelled factor is replaced by what
+    remains. None if nothing cancels.
 
-    A factor too large to multiply out is not asked: a gcd works on the expanded
-    polynomial, and `(v + w + x + y + z)^60/q` is six hundred thousand terms to learn
-    that nothing cancels.
+    Factors too large to expand are skipped, since gcd works on the expanded
+    polynomial: `(v + w + x + y + z)^60/q` would be six hundred thousand terms.
     """
     highs = [list(factor.as_base_exp()) for factor in tops]
     lows = [list(factor.as_base_exp()) for factor in bottoms]
@@ -523,25 +488,23 @@ def _powers(factors: list[list[sp.Basic]]) -> list[sp.Expr]:
 
 
 def _quotient(tops: list[sp.Expr], bottoms: list[sp.Expr]) -> sp.Expr:
-    """Factors over factors, spelled the way Derive spells a quotient.
+    """Numerator factors over denominator factors, written as Derive writes a quotient.
 
-    A sum over the line has its common factor outside, which is the form a gcd leaves
-    behind: `(n^2 + n)/(x + 1)` is `n*(n + 1)/(x + 1)`. Only a common factor and not a
-    factorization - `(x^2 - 1)/(y + 1)` is printed as it stands.
+    A sum in the numerator has its common factor taken out, as a gcd leaves it:
+    `(n^2 + n)/(x + 1)` is `n*(n + 1)/(x + 1)`. This is not full factoring: `(x^2 -
+    1)/(y + 1)` stays.
 
-    A number that is all a sum has beside it over the line is multiplied into it.
-    That is how the quotient reads back: `2*(x + 1)/y` is read as `2*(x + 1)` over `y`,
-    and sympy multiplies a number over a sum as it builds the product of the two, so
-    the form that survives being printed is `(2*x + 2)/y`.
+    A number alone beside a sum in the numerator is multiplied in, since that is how
+    it reads back: `2*(x + 1)/y` parses as `2*(x + 1)` over `y`, which sympy turns into
+    `(2*x + 2)/y`.
     """
     tops, bottoms = _cleared(tops, bottoms)
     if any(bottom.free_symbols for bottom in bottoms):
         tops = [part for top in tops for part in sp.Mul.make_args(_content(top))]
     if bottoms and len(tops) == 2 and sum(top.is_Number for top in tops) == 1:
         tops = [sp.Add(*map(_folded, sp.Add.make_args(sp.Mul(*tops))))]
-    # A bracket whose every term carries a minus sign is written with the sign
-    # outside, `-z*(b + 2)` and not `z*(-b - 2)`, and that is the product the text
-    # reads back as.
+    # Pull the sign out of an all-negative sum, `-z*(b + 2)` not `z*(-b - 2)`, which
+    # is also how the text reads back.
     negated = [_all_negated(top) for top in tops]
     if any(negated):
         tops = [-top if flip else top for top, flip in zip(tops, negated)]
@@ -551,12 +514,11 @@ def _quotient(tops: list[sp.Expr], bottoms: list[sp.Expr]) -> sp.Expr:
 
 
 def _folded(product: sp.Expr) -> sp.Expr:
-    """A whole coefficient that is a power of a power's base, folded into the power.
+    """An integer coefficient that is a power of a power's base, folded into the power.
 
-    Sympy folds `2*2^n` into `2^(n + 1)` as it builds it and leaves `-2*2^n` alone,
-    and a term written `- 2*2^n*u` is read back as the first of those. So the
-    coefficient goes into the power whatever its sign: `-2^(n + 1)*u` is what the
-    product reads back as, and `-4*2^n` would be `-2^(n + 2)` to the next Simplify.
+    Sympy folds `2*2^n` into `2^(n + 1)` but leaves `-2*2^n`, yet `- 2*2^n*u` reads
+    back as the former. So the coefficient is folded regardless of sign: `-4*2^n`
+    becomes `-2^(n + 2)`, as the next Simplify would read it.
     """
     if not product.is_Mul:
         return product
@@ -578,13 +540,11 @@ def _folded(product: sp.Expr) -> sp.Expr:
 def _cleared(
     tops: list[sp.Expr], bottoms: list[sp.Expr]
 ) -> tuple[list[sp.Expr], list[sp.Expr]]:
-    """Factors over factors, with no sum underneath carrying fractions of its own.
+    """The factors with fractional coefficients cleared from sums in the denominator.
 
-    A denominator never has a denominator of its own, and a number is no exception
-    there: `2/(u/2 + w/2)` is `4/(u + w)`, which is the same quotient and the only
-    spelling of it, where the first is one of as many as there are ways to scale the
-    sum underneath. Left alone, the two stand side by side as exponents that cancel
-    and do not look as though they do.
+    A denominator has no denominators of its own, even numeric: `2/(u/2 + w/2)` is
+    `4/(u + w)`, the one canonical form among all scalings. Otherwise the two could
+    appear side by side as terms that cancel without looking like it.
     """
     cleared, scale = [], sp.S.One
     for bottom in bottoms:
@@ -620,19 +580,16 @@ def _content(top: sp.Expr) -> sp.Expr:
 
 
 def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
-    """A product holding one sum, with its fraction inside the sum or in front of it.
+    """A product containing one sum, with its rational coefficient inside or in front.
 
-    Inside where that gives some term a whole coefficient, the way a polynomial's
-    coefficients are rational term by term: Derive's answer to the manual's difference
-    equation is `(m^2/2 + m/2 + 1)*(m - 1)!`. In front where the fraction would land
-    under every term - `x*(x - 1)/2` is that one, a denominator the whole sum shares.
-    In front as well wherever the product has a denominator that is not a number: the
-    number then stands under the line beside it, and the sum over the line keeps whole
-    coefficients, `(4*x + 3)/(2*(x + 1)^2)` and not `(2*x + 3/2)/(x + 1)^2`.
+    Inside if that gives some term an integer coefficient, as in Derive's answer to
+    the manual's difference equation, `(m^2/2 + m/2 + 1)*(m - 1)!`. In front if the
+    fraction would go under every term: `x*(x - 1)/2`. Also in front if the product
+    has a non-numeric denominator, so the sum keeps integer coefficients:
+    `(4*x + 3)/(2*(x + 1)^2)`, not `(2*x + 3/2)/(x + 1)^2`.
 
-    Decided from the product and not from how it was written: what the sum's terms
-    have under them in common is taken out first, so `x*(x/2 - 1/2)` is `x*(x - 1)/2`
-    as well, and the product has one spelling whichever way it arrives.
+    The terms' common denominator is taken out first, so `x*(x/2 - 1/2)` also becomes
+    `x*(x - 1)/2`, and the product has one form regardless of input.
     """
     if not product.is_Mul:
         return product
@@ -642,8 +599,7 @@ def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
     if not coefficient.is_Rational or len(factors) < 2 or len(sums) != 1:
         return product
     others = [factor for factor in factors if not factor.is_Add]
-    # The sign stays in front: written into the sum it would turn every term round,
-    # and a bracket whose every term carries a minus is written with it outside.
+    # The sign stays in front rather than negating every term of the sum.
     sign = -1 if coefficient < 0 else 1
     coefficient = abs(coefficient)
     terms = list(sums[0].args)
@@ -656,10 +612,10 @@ def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
         coefficient = coefficient / shared
     under = any(map(_under_the_line, others))
     if under:
-        # A number the sum's terms have in common with the number under the line is
-        # cancelled from both: `(4*x + 6)/(4*y)` is `(2*x + 3)/(2*y)`. A term's number
-        # is the whole of what it carries, the one in a bracket or a denominator of its
-        # own included: `(2*b - 2*c)*u` carries a 2, and `4/(2*v + 2)` is `2/(v + 1)`.
+        # Cancel a number common to the sum's terms and the denominator: `(4*x +
+        # 6)/(4*y)` is `(2*x + 3)/(2*y)`. A term's number includes content inside
+        # brackets or denominators: `(2*b - 2*c)*u` has a 2, `4/(2*v + 2)` is `2/(v +
+        # 1)`.
         contents = [term.as_content_primitive() for term in terms]
         if all(content.is_Integer for content, _ in contents):
             common = reduce(sp.igcd, (content for content, _ in contents), coefficient.q)
@@ -669,8 +625,8 @@ def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
     rewritten = terms != list(sums[0].args)
     if coefficient.q == 1:
         if all(sp.fraction(other)[0] == 1 for other in others):
-            # A whole number with nothing but a denominator beside it goes into the
-            # sum, which is how `_quotient` writes it and how it reads back.
+            # An integer beside only denominators goes into the sum, matching
+            # `_quotient` and how it reads back.
             if not rewritten and coefficient == 1:
                 return product
             spread = sp.Add(*(_folded(coefficient * term) for term in terms))
@@ -685,18 +641,17 @@ def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
 
 
 def _under_the_line(factor: sp.Expr) -> bool:
-    """Whether the factor is written under the line, a power with a negative number for
-    its exponent: `y^(-n)` and `#e^(-x)` are written over it."""
+    """Whether the factor is a power with a negative numeric exponent, written in the
+    denominator. `y^(-n)` and `#e^(-x)` don't qualify."""
     exponent = factor.as_base_exp()[1]
     return bool(exponent.is_Number and exponent.is_negative)
 
 
 def _carried(term: sp.Expr) -> tuple[sp.Expr, sp.Expr]:
-    """A term's numerator and the denominator it carries, a coefficient's included.
+    """A term's numerator and denominator, including denominators inside coefficients.
 
-    `b*(1 - 1/n)` carries an `n` as surely as `a/n` does, the one inside the
-    coefficient it was collected with: beside `a/n` the two are one sum over `n`,
-    `(a + b*(n - 1))/n`.
+    `b*(1 - 1/n)` has denominator `n` just like `a/n`, so together they become `(a +
+    b*(n - 1))/n`.
     """
     numerator, denominator = sp.fraction(term)
     inner = [
@@ -712,22 +667,18 @@ def _carried(term: sp.Expr) -> tuple[sp.Expr, sp.Expr]:
 
 
 def _over_one_denominator(total: sp.Basic) -> sp.Basic:
-    """A sum whose every term is over powers of one thing, written over it.
+    """A sum whose terms are all over powers of the same base, combined over it.
 
-    Where the sum is no rational function of its generator there is nothing to divide
-    out, and a denominator standing twice is still worth combining: the lower power
-    divides the higher, so what comes out is one ratio. `x^2/(1 - x^2)^(3/2) +
-    1/SQRT(1 - x^2)` is `1/(1 - x^2)^(3/2)`, which is what Derive answers
-    `DIF(x/SQRT(1 - x^2), x)` with - and authored as it stands, that same sum comes
-    back as it stands. Two fixed points for the one expression; this takes the answer
-    it gives to the question that was asked.
+    For a sum that isn't a rational function of its generator, a repeated denominator
+    is still worth combining, since the lower power divides the higher: `x^2/(1 -
+    x^2)^(3/2) + 1/SQRT(1 - x^2)` is `1/(1 - x^2)^(3/2)`, Derive's answer to
+    `DIF(x/SQRT(1 - x^2), x)`. (Derive leaves that sum alone when authored; of the two
+    fixed points, this picks the one it gives to the derivative.)
 
-    Every term has to carry the denominator, and combining has to shorten the sum. A
-    term with nothing underneath would have the denominator multiplied into it, which
-    is what `b*SQRT(b^2 - 4*a*c)/(4*a) - c*LN(b + SQRT(b^2 - 4*a*c)) - b^2/(4*a)` -
-    Derive's own answer to an integral - is here to rule out; and `1/SQRT(x) + 1/x`
-    over `x^(3/2)` is longer than it was, which is why the original leaves that one
-    alone as well.
+    Every term must have the denominator, and combining must shorten the sum. The
+    first rules out `b*SQRT(b^2 - 4*a*c)/(4*a) - c*LN(b + SQRT(b^2 - 4*a*c)) -
+    b^2/(4*a)`, Derive's answer to an integral. The second rules out `1/SQRT(x) + 1/x`
+    over `x^(3/2)`, which Derive also leaves alone.
     """
     if not total.is_Add:
         return total
@@ -751,11 +702,11 @@ def _over_one_denominator(total: sp.Basic) -> sp.Basic:
 
 
 class _Holder:
-    """The placeholders one sum's coefficients stand behind, and the way back.
+    """Placeholders for one sum's coefficients, and the map back.
 
-    One placeholder per distinct coefficient, so that the same quantity in two terms
-    is the same symbol to the gcd and to the collecting: `x*(a + b) + (a + b)` is a
-    polynomial in `x` with one coefficient and not two that happen to be equal.
+    Each distinct coefficient gets one placeholder, so the same quantity in two terms
+    is the same symbol to gcd and collecting: `x*(a + b) + (a + b)` has one
+    coefficient, not two that happen to be equal.
     """
 
     def __init__(self) -> None:
@@ -763,7 +714,7 @@ class _Holder:
         self.placeholders: dict[sp.Basic, sp.Dummy] = {}
 
     def hold(self, expression: sp.Basic) -> sp.Basic:
-        # A number is not stood in for: `(2 + 3)^2` is 25 whatever is asked for.
+        # Numbers aren't held, so `(2 + 3)^2` still evaluates to 25.
         if expression.is_number:
             return expression
         placeholder = self.placeholders.get(expression)
@@ -773,7 +724,7 @@ class _Holder:
         return placeholder
 
     def standing_for(self, generator: sp.Basic) -> sp.Symbol:
-        """The symbol the algebra is done in: the generator, or one standing for it."""
+        """The symbol to do the algebra in: the generator itself, or a stand-in."""
         if isinstance(generator, sp.Symbol):
             return generator
         symbol = sp.Dummy()
@@ -784,14 +735,14 @@ class _Holder:
 def _frozen(
     expression: sp.Basic, generator: sp.Basic, symbol: sp.Symbol, holder: _Holder
 ) -> sp.Basic:
-    """`expression` with every maximal part free of the generator stood in for.
+    """`expression` with every maximal part free of the generator replaced by a
+    placeholder.
 
-    A sum and a product take all their parts that are free of the generator together,
-    as one placeholder: that is what leaves `x + 2*y + 1` as `x + d`, and so leaves
-    `(x + 2*y + 1)^3` about `x` written in powers of `2*y + 1`. A product's numeric
-    factor stays outside, being the coefficient the collecting is meant to find, and
-    so does a power's numeric exponent. A head that binds a variable of its own is
-    stood in for whole, generator and all - see `expanding._BOUND`.
+    In a sum or product, all parts free of the generator share one placeholder, so `x
+    + 2*y + 1` becomes `x + d` and `(x + 2*y + 1)^3` about `x` is in powers of `2*y +
+    1`. A product's numeric factor stays outside, being the coefficient collecting
+    looks for, as does a power's numeric exponent. Heads binding their own variable
+    are replaced whole, generator and all; see `expanding._BOUND`.
     """
     if expression == generator:
         return symbol
@@ -825,13 +776,11 @@ def _frozen(
 
 
 def _thaws_back(frozen: sp.Basic, holder: _Holder, terms: list[sp.Basic]) -> bool:
-    """Whether putting the placeholders back gives the terms that were frozen.
+    """Whether restoring the placeholders gives back the frozen terms.
 
-    Checked rather than trusted: `_frozen` rebuilds a head it does not know from
-    arguments it has rewritten, and a head that will not survive that loses whatever it
-    was carrying - a `RootSum` rebuilt this way came back without its sum at all. Where
-    it fails the terms are left standing, which is always the safe reading of a sum
-    nobody can take apart.
+    `_frozen` rebuilds unknown heads from rewritten arguments, and a head that doesn't
+    survive that loses content (a `RootSum` once lost its sum entirely). If the check
+    fails, the terms are left as is.
     """
     try:
         return frozen.xreplace(holder.held) == sp.Add(*terms)
@@ -848,10 +797,9 @@ def _holds(expression: sp.Basic, generator: sp.Basic) -> bool:
 def _kernels(expression: sp.Basic) -> set[sp.Basic]:
     """The maximal parts of `expression` that are not sums, products or powers.
 
-    A power with a numeric exponent is looked through, fractional or not: the kernel
-    of `(x + 1)^(3/2)` is `x`, the same as that of `SQRT(x + 1)` beside it, which is
-    what lets the two be written over one denominator. A power whose exponent is not
-    a number is a kernel of its own - `(1 + i)^n` is no polynomial in anything.
+    Powers with rational exponents are looked through, so `(x + 1)^(3/2)` and `SQRT(x
+    + 1)` both have kernel `x` and can share a denominator. A power with a non-numeric
+    exponent, like `(1 + i)^n`, is a kernel itself.
     """
     if isinstance(expression, (sp.Add, sp.Mul)):
         return {kernel for argument in expression.args for kernel in _kernels(argument)}
@@ -863,14 +811,13 @@ def _kernels(expression: sp.Basic) -> set[sp.Basic]:
 
 
 def _unified_kernels(total: sp.Add) -> sp.Basic:
-    """`total` with kernels that differ only in how their arguments are written made one.
+    """`total` with kernels differing only in how their arguments are written unified.
 
-    A product is never multiplied out, so two arguments in normal form can be one
-    polynomial written two ways: `2*x*(y + 1) + y` and `x*(2*y + 2) + y`. The calls
-    of them are then one kernel that the sum cannot see is one, and
-    `#e^(2*x*(y + 1) + y) - #e^(2*x*y + 2*x + y)` would not cancel. Each such group
-    is written as its shortest member. `total` itself comes back where there is
-    nothing to unify.
+    Products aren't multiplied out, so two normal-form arguments can be the same
+    polynomial written differently: `2*x*(y + 1) + y` and `x*(2*y + 2) + y`. Their
+    calls then look distinct, and `#e^(2*x*(y + 1) + y) - #e^(2*x*y + 2*x + y)` would
+    not cancel. Each such group is replaced by its shortest member. Returns `total`
+    itself if nothing is unified.
     """
     groups: dict[tuple, list[sp.Basic]] = {}
     for kernel in _calls(total):
@@ -895,9 +842,9 @@ def _unified_kernels(total: sp.Add) -> sp.Basic:
 
 
 def _calls(expression: sp.Basic) -> list[sp.Basic]:
-    """The function calls and symbolic powers in `expression` with a variable inside.
+    """The function calls and symbolic powers in `expression` containing a variable.
 
-    Not looked inside a head that binds a variable, any more than the walk is.
+    Like the walk, this doesn't look inside heads that bind a variable.
     """
     found = []
     if isinstance(expression, _BOUND) or expression.is_Atom:
@@ -913,7 +860,7 @@ def _calls(expression: sp.Basic) -> list[sp.Basic]:
 
 
 def _is_compound(term: sp.Basic) -> bool:
-    """Whether a term carries a sum, or a whole power of one, as a factor."""
+    """Whether a term has a sum, or a positive integer power of one, as a factor."""
     for factor in sp.Mul.make_args(term):
         base, exponent = factor.as_base_exp()
         if base.is_Add and exponent.is_Integer and exponent > 0:
@@ -922,13 +869,13 @@ def _is_compound(term: sp.Basic) -> bool:
 
 
 def _positive_powers(term: sp.Basic) -> dict[sp.Basic, sp.Basic]:
-    """A term's factors with a variable in them, base to exponent, over the line only."""
+    """A term's numerator factors containing a variable, as a base-to-exponent map."""
     powers: dict[sp.Basic, sp.Basic] = {}
     for factor in sp.Mul.make_args(term):
         base, exponent = factor.as_base_exp()
         if not exponent.is_Number:
-            # A power whose exponent is no number is a factor of its own, to be
-            # shared whole: `(1 + i)^n` and not some power of `1 + i`.
+            # A power with a non-numeric exponent is shared whole: `(1 + i)^n`, not
+            # some power of `1 + i`.
             base, exponent = factor, sp.S.One
         if not base.free_symbols:
             continue
@@ -941,10 +888,9 @@ def _positive_powers(term: sp.Basic) -> dict[sp.Basic, sp.Basic]:
 
 
 def _expanded(expression: sp.Basic) -> sp.Basic:
-    """Multiplied out, without the two rewrites that take a power apart.
+    """Multiplied out, without splitting powers.
 
-    Neither is anything Derive does: `x^(a + b)` is not `x^a*x^b`, and `(x*y)^n` is
-    not `x^n*y^n`.
+    Derive keeps `x^(a + b)` and `(x*y)^n` as they are.
     """
     return sp.expand(expression, power_exp=False, power_base=False)
 
@@ -952,8 +898,8 @@ def _expanded(expression: sp.Basic) -> sp.Basic:
 def _roots_of_quotients_hidden(
     expression: sp.Basic, hidden: dict[sp.Basic, sp.Basic]
 ) -> sp.Basic:
-    """`expression` with each power whose exponent is not an integer, over a base with
-    a variable in its denominator, stood in for by a symbol, recorded in `hidden`."""
+    """`expression` with each non-integer power of a base with a variable in its
+    denominator replaced by a symbol, recorded in `hidden`."""
     if not expression.free_symbols or expression.is_Atom:
         return expression
     if isinstance(expression, sp.Pow) and not expression.exp.is_Integer:
@@ -964,24 +910,21 @@ def _roots_of_quotients_hidden(
     )
 
 
-#: How many terms an expansion may come to before the normal form declines to build
-#: it. Derive returns `(v + w + x + y + z)^60 + 1` written about `x` and returns it at
-#: once, which is sixty-one powers of `x`; frozen about `x` that is what it costs
-#: here too. What this guards is the expansion freezing does not make small - a
-#: dozen squared binomials in the generator come to half a million terms - and the
-#: gcd of a numerator nobody asked to multiply out. Measured over every expression in
-#: the corpus: the largest expansion any of them asks for is a hundred and twenty
-#: terms, so this stands two orders of magnitude above anything a worksheet asks for.
+#: Maximum number of terms in an expansion the normal form will build. Derive writes
+#: `(v + w + x + y + z)^60 + 1` about `x` instantly, as sixty-one powers of `x`, and
+#: freezing makes it equally cheap here. This guards against expansions freezing
+#: doesn't shrink (a dozen squared binomials in the generator give half a million
+#: terms) and gcds of numerators nobody asked to expand. The largest expansion in the
+#: corpus is 120 terms, two orders of magnitude below this.
 _EXPANSION = 20_000
 
 
 def _expanded_terms(expression: sp.Basic) -> int:
-    """How many terms multiplying `expression` out would come to, at most.
+    """An upper bound on the number of terms in `expression` multiplied out.
 
-    A bound and not a count: terms that would collect are counted apart, and over a
-    limit whose purpose is to decline the expansions nobody asked for that is the safe
-    direction to be wrong in. Counted no higher than the limit it is measured against,
-    so that a power of a power cannot make the estimate the expensive thing.
+    Terms that would collect are counted separately, which errs on the safe side. The
+    count is capped at `_CEILING` so that nested powers can't make estimating
+    expensive.
     """
     if isinstance(expression, sp.Add):
         return min(sum(_expanded_terms(term) for term in expression.args), _CEILING)
@@ -995,17 +938,15 @@ def _expanded_terms(expression: sp.Basic) -> int:
     return 1
 
 
-#: What `_expanded_terms` counts up to, one term past what it is asked about.
+#: The cap on `_expanded_terms`, one past `_EXPANSION`.
 _CEILING = _EXPANSION + 1
 
 
 def _power_terms(power: sp.Pow) -> int:
-    """The terms a power of a sum comes to, one where it is not one.
+    """The number of terms in a power of a sum, or one if it isn't one.
 
-    `(u_1 + ... + u_k)^n` has `C(n + k - 1, k - 1)` terms in it, built here as the
-    product it is rather than as a binomial, so that a count already past the ceiling
-    can stop where it gets there: the number itself is not wanted, only which side of
-    the limit it falls.
+    `(u_1 + ... + u_k)^n` has `C(n + k - 1, k - 1)` terms, computed as a running
+    product so it can stop as soon as it passes the limit.
     """
     terms = _expanded_terms(power.base)
     if terms <= 1 or not power.exp.is_Integer or power.exp <= 0:
@@ -1019,21 +960,20 @@ def _power_terms(power: sp.Pow) -> int:
     return round(count)
 
 
-#: How many digits the integers of an evaluated power may come to in all before the
-#: power is kept as it was written. `(1 + SQRT(2))^100` is two numbers of forty
-#: digits each, `(1 + SQRT(2))^1000` two of nearly four hundred, which is no answer
-#: anyone reads in place of the power.
+#: Maximum total digits in an evaluated power's integers before the power is kept as
+#: written. `(1 + SQRT(2))^100` has two forty-digit numbers, `(1 + SQRT(2))^1000` two of
+#: nearly four hundred, which is unreadable compared to the power.
 _POWER_DIGITS = 100
 
 
 def _power_evaluated(number: sp.Expr, value: sp.Expr) -> bool:
-    """Whether `value` is `number` with its powers of sums of surds worked out.
+    """Whether `value` is `number` with its powers of sums of surds evaluated.
 
-    A whole power of a sum of rationals, `#i` and roots of rationals is a number of the
-    field the roots span, and its value there is what Simplify answers, shorter or
-    not: `(1 + SQRT(2))^5` is `29*SQRT(2) + 41` and `(2 + #i)^3` is `2 + 11*#i`. Only
-    a number that is algebraic throughout, so that `pi*(1 + SQRT(2))^2` keeps its
-    power, and only where no such power is left and the digits stay readable.
+    An integer power of a sum of rationals, `#i` and roots of rationals lies in the
+    field the roots span, and Simplify answers with its value there, shorter or not:
+    `(1 + SQRT(2))^5` is `29*SQRT(2) + 41` and `(2 + #i)^3` is `2 + 11*#i`. Only for
+    fully algebraic numbers (so `pi*(1 + SQRT(2))^2` keeps its power), when no such
+    power remains and the digits stay readable.
     """
     if not (_algebraic(number) and _algebraic(value)):
         return False
@@ -1060,11 +1000,11 @@ def _algebraic(number: sp.Expr) -> bool:
 
 
 def _arithmetic(number: sp.Expr) -> sp.Expr | None:
-    """A number multiplied out and rationalized, or None where that is too large.
+    """A number multiplied out and rationalized, or None if that gets too large.
 
-    Rationalizing a denominator multiplies the numerator by its conjugate, and over a
-    least-squares fit's coefficients - quotients of sums of `SIN(4)` and `ATAN(4)` -
-    what that comes to multiplied out is more terms than anyone will read.
+    Rationalizing multiplies the numerator by the conjugate, which for a least-squares
+    fit's coefficients (quotients of sums of `SIN(4)` and `ATAN(4)`) yields far too
+    many terms.
     """
     if _expanded_terms(number) > _EXPANSION:
         return None
@@ -1075,11 +1015,11 @@ def _arithmetic(number: sp.Expr) -> sp.Expr | None:
 
 
 def _rebuilt(expression: sp.Basic) -> sp.Basic:
-    """Every sum and product in `expression` built again, as sympy would build it.
+    """Every sum and product in `expression` rebuilt with evaluation.
 
-    A rewrite can hand back a product built with evaluation switched off -
-    `(SQRT(2) + SQRT(2)*#i)/2`, a number in front of a sum - which is a form the
-    notation cannot hold: reading it back gives the distributed sum.
+    A rewrite may return an unevaluated product such as `(SQRT(2) + SQRT(2)*#i)/2`, a
+    number in front of a sum, which the notation can't represent: it reads back
+    distributed.
     """
     if not expression.args or isinstance(expression, _BOUND):
         return expression

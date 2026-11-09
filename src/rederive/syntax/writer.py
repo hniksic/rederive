@@ -1,45 +1,34 @@
-"""Expression trees back to author notation - the parser run backwards.
+"""Writing expression trees back in author notation, the inverse of the parser.
 
-What comes out is canonical, not what was typed: juxtaposition is written `*`,
-a name is written the way the symbol table spells it, and a bare application
-becomes a call. `x (x + 1)` writes as `x*(x+1)` and `SIN x` as `SIN(x)`, which
-is what the original's Transfer Save does, and what makes a saved worksheet a
-statement of what the expressions *are* rather than of how they were reached.
-Every spelling and every parenthesis here was checked against the original.
+The output is canonical, not what was typed: juxtaposition becomes `*`, names use the
+symbol table's spelling, and a bare application becomes a call. `x (x + 1)` is written
+`x*(x+1)` and `SIN x` is `SIN(x)`, matching the original's Transfer Save. All spellings
+and parentheses were checked against the original.
 
-The contract is that `parse_expression(write_expression(node))` builds `node`
-again, so a file always reads back as the worksheet that wrote it. The
-normalizations above are the exceptions in kind but not in meaning: an `APPLY`
-comes back a `CALL`, and an `ABS` written `|u|` comes back the same `ABS`.
-Writing is therefore idempotent, which is what the round trip over the corpus
-checks.
+`parse_expression(write_expression(node))` rebuilds `node`, so a saved file reads back
+as the worksheet that wrote it, except for normalizations that preserve meaning: an
+`APPLY` comes back as a `CALL`, and `|u|` as the same `ABS`. Writing is therefore
+idempotent, which the corpus round-trip test checks.
 
-Parentheses come from one rule - an operand looser than its position gets them
-- with the position's demand set one step high in three places where the
-original writes a pair the grammar would not require: around a signed operand
-inside a run, `a*(-b)*c`; around a power inside a power, `a^(b^c)`; and around
-a run of the same word operator on the right of one, `a AND (b AND c)`. The
-grammar would read all three the same way without them; the original writes
-them, and they are the pairs a reader would want.
+An operand gets parentheses when it binds more loosely than its position requires. In
+three places the original adds parentheses the grammar doesn't need, so we do too: a
+signed operand inside a run, `a*(-b)*c`; a power inside a power, `a^(b^c)`; and a
+nested word operator on the right, `a AND (b AND c)`.
 
-Only numerals are written as they were typed rather than canonically. A numeral
-carries both its value and its digits, and the digits are what the file must
-hold: `0FF` under `InputBase := 16` is 255, and writing `255` would read back
-as a different number under the base the file itself sets.
+Numerals alone are written as typed, because their digits depend on the input base:
+`0FF` under `InputBase := 16` is 255, and writing `255` would read back differently
+under the base the file sets.
 
-`spaced` writes the same tree in the engine printer's spelling instead, which is
-the spelling of a result line rather than of a file. A blank stands on each side
-of a sum's sign and of a relation and after every comma, `NOT` is the prefix
-operator it is rather than a call, a Greek letter is written under its name, and
-a run of one word operator keeps only the fences the grammar needs: `IF(h<=40,
-10*h,400+15*(h-40))` is written `IF(h <= 40, 10*h, 400 + 15*(h - 40))` and
-`a OR (b OR c)` is written `a OR b OR c`. The tree is the same either way, and
-both spellings read back as it.
+With `spaced`, the tree is written as the engine's printer writes a result line: blanks
+around sum signs and relations and after commas, `NOT` as a prefix operator rather than
+a call, Greek letters by name, and only the parentheses the grammar needs around word
+operators. For example, `IF(h<=40,10*h,400+15*(h-40))` is written
+`IF(h <= 40, 10*h, 400 + 15*(h - 40))`, and `a OR (b OR c)` is written `a OR b OR c`.
+Both forms parse back to the same tree.
 
-The two spellings have to agree wherever both can write a subtree, because the
-engine writes an undecidable conditional this way - the one thing a result shows
-as authored rather than as computed - and a spelling the printer would not have
-chosen would make such an answer move on a second Simplify.
+The two forms must agree wherever both can write a subtree, because the engine writes
+undecidable conditionals this way, and a spelling the printer wouldn't choose would make
+such an answer change on a second Simplify.
 """
 
 from __future__ import annotations
@@ -47,16 +36,12 @@ from __future__ import annotations
 from rederive.model.expr import Kind, Node
 from rederive.syntax.names import GREEK_GLYPHS
 
-# The grammar's precedence ladder, loosest first. This is how tightly the
-# parser binds, which is not the ladder the display uses: that one describes
-# how tightly a *rendering* reads, where a sign already drawn stands to the
-# left of a product rather than around it.
+# The parser's precedence levels, loosest first. These differ from the display's levels,
+# which describe how a rendering reads.
 #
-# `NOT` is a step of the ladder only in the spaced spelling, where it is
-# written as the prefix operator it is: `NOT x = y` is a negated relation, so
-# it binds looser than one and tighter than the operators that join them. The
-# tight spelling writes it as the call `NOT(u)`, which closes itself off and
-# needs no step at all.
+# `NOT` has its own level only in the spaced form, where it's a prefix operator: `NOT x =
+# y` negates a relation, so it binds looser than relations and tighter than the logical
+# operators. The tight form writes it as the call `NOT(u)`, which needs no level.
 (
     ASSIGN,
     IMP,
@@ -76,35 +61,30 @@ from rederive.syntax.names import GREEK_GLYPHS
 
 _BINOP_PRECEDENCE = {"/": PRODUCT, ".": PRODUCT, "^": POW}
 
-#: The operators spelled as words, which need a blank on each side so that
-#: they do not fuse with the names beside them.
+#: Operators spelled as words, which need a blank on each side to stay separate from
+#: adjacent names.
 _WORD_OPERATORS = {Kind.AND: "AND", Kind.OR: "OR", Kind.XOR: "XOR", Kind.IMP: "IMP"}
 
-#: Plus-or-minus, written the way it is typed - quotes and all - rather than
-#: as the `±` glyph the screen shows it as, which is what the original writes
-#: and what keeps a file readable where the glyph is not. A bare `+-` would be
-#: a plus over a minus, which is a different expression.
+#: Plus-or-minus is written as typed, with quotes, rather than as the displayed `±`
+#: glyph, as the original does. A bare `+-` would be a plus followed by a minus.
 _SIGNS = {"+-": '"+-"'}
 
-#: What each logical run demands of its operands. `AND`, `OR` and `XOR` nest to
-#: the right, so a nest of the same operator on the *left* is a different tree
-#: and has to be fenced; the original fences the right one too.
+#: Precedence of each logical operator. `AND`, `OR` and `XOR` are right-associative, so
+#: the same operator nested on the left needs parentheses; the original also adds them
+#: on the right.
 _LOGICAL_PRECEDENCE = {Kind.AND: AND, Kind.OR: OR, Kind.XOR: XOR, Kind.IMP: IMP}
 
 
 def write_expression(node: Node, spaced: bool = False) -> str:
-    """`node` in author notation, as a file holds it.
+    """`node` in author notation, as stored in a file.
 
-    `spaced` writes the printer's spelling of the same tree instead, which is
-    the same text with a blank around each sum sign and relation and after each
-    comma, `NOT` as a prefix operator, a Greek letter under its name, and no
-    fence a run of one word operator does not need.
+    With `spaced`, write it as the printer does instead; see the module docstring.
     """
     return _operand(node, ASSIGN, " " if spaced else "")
 
 
 def _operand(node: Node, required: int, gap: str) -> str:
-    """`node` where an operand binding at least `required` is expected."""
+    """`node` as an operand that must bind at least as tightly as `required`."""
     text = _spell(node, gap)
     return f"({text})" if precedence(node, gap) < required else text
 
@@ -133,20 +113,19 @@ def precedence(node: Node, gap: str = "") -> int:
         case Kind.POSTOP:
             return POSTFIX
         case _:
-            # Leaves, and everything that closes itself off: a call, a vector,
-            # `ABS(u)`, and the `NOT(u)` of the tight spelling, which is written
-            # as a call as well.
+            # Leaves and self-delimiting forms: calls, vectors, `ABS(u)`, and the tight
+            # form's `NOT(u)`.
             return ATOM
 
 
 def _spell(node: Node, gap: str) -> str:
-    """`node` without the fences its position may call for."""
+    """`node` without any parentheses its position may require."""
     match node.kind:
         case Kind.NUMBER:
             return str(node.surface or node.value)
         case Kind.NAME | Kind.UNKNOWN:
-            # A Greek letter is typed and printed under its name and held as
-            # the glyph; the file holds the glyph, a result line the name.
+            # Greek letters are stored as glyphs. Files get the glyph, result lines the
+            # name.
             name = str(node.value)
             return GREEK_GLYPHS.get(name, name) if gap else name
         case Kind.STRING:
@@ -169,11 +148,11 @@ def _spell(node: Node, gap: str) -> str:
             return _operand(node.children[0], POSTFIX, gap) + str(node.value)
         case Kind.SUB:
             left = _operand(node.children[0], POSTFIX, gap)
-            # An index reaches one application, so anything written over one -
-            # a postfix operator above all - has to be fenced to stay inside it.
+            # An index is one application, so anything larger, notably a postfix
+            # operator, needs parentheses to stay inside it.
             return f"{left} SUB {_operand(node.children[1], ATOM, gap)}"
         case Kind.ABS:
-            # `|u|` writes as the call it means, as the original writes it.
+            # `|u|` is written as a call, as the original does.
             return f"ABS({_written(node.children[0], gap)})"
         case Kind.CALL | Kind.APPLY:
             return f"{node.children[0].value}({_arguments(node.children[1:], gap)})"
@@ -214,23 +193,20 @@ def _spell(node: Node, gap: str) -> str:
 
 
 def _written(node: Node, gap: str) -> str:
-    """`node` whole, in the spelling the writing already under way is using."""
+    """`node` without any precedence requirement, in the current form."""
     return _operand(node, ASSIGN, gap)
 
 
 def _factor(node: Node, first: bool, gap: str) -> str:
-    """One factor of a product run, fenced if the run would swallow it.
+    """One factor of a product run, parenthesized where needed.
 
-    Two factors bind as loosely as the run itself and have to be looked at:
+    Two cases need care:
 
-    * A product inside a product is not the same tree as one flat run - the
-      original offers `(a*b)*c` as two operands and `a*b*c` as three - so a
-      nested run always keeps its fences.
-    * `/` and the dot product are binary and *close* the run to their left,
-      taking it as their left operand. A factor that is one may therefore stand
-      bare only at the head of the run, where there is nothing to close: the
-      first factor of `a/b*c` needs no fences, and the last of `a*(b/c)` needs
-      them or the `a` would be read into the numerator.
+    * A nested product is a different tree from a flat run (`(a*b)*c` has two operands,
+      `a*b*c` three), so it always keeps its parentheses.
+    * `/` and the dot product take the run to their left as their left operand, so
+      such a factor can go unparenthesized only in first position: `a/b*c` needs none,
+      but `a*(b/c)` does, or `a` would end up in the numerator.
     """
     closes = node.kind is Kind.BINOP and node.value in ("/", ".")
     if node.kind is Kind.PRODUCT or (closes and not first):
@@ -241,10 +217,9 @@ def _factor(node: Node, first: bool, gap: str) -> str:
 def _sum(node: Node, gap: str) -> str:
     """A run of terms and the signs between them.
 
-    The leading term keeps a sign of its own - `-a-b` is a sum of two - and
-    every later one is fenced, so that the sign between the terms is the only
-    one a reader has to account for. A sum nested inside a sum is fenced by
-    either demand, for the reason a nested product is.
+    The first term may carry its own sign (`-a-b` is a sum of two terms), but later
+    signed terms are parenthesized, so the only sign between terms is the run's. A
+    nested sum is always parenthesized, as with nested products.
     """
     parts = [_operand(node.children[0], NEG, gap)]
     for index, child in enumerate(node.children[1:]):
@@ -256,17 +231,16 @@ def _sum(node: Node, gap: str) -> str:
 def _binop(node: Node, gap: str) -> str:
     """`/`, the dot product, and `^`.
 
-    All three are binary. `/` and `.` fold to the left, so `a/b/c` needs
-    nothing on the left and fences on the right. `^` folds to the right, where
-    the original fences anyway.
+    `/` and `.` are left-associative, so `a/b/c` needs no parentheses on the left but
+    `a/(b/c)` needs them on the right. `^` is right-associative, but the original
+    parenthesizes nested powers on both sides anyway.
     """
     operator = str(node.value)
     if operator == "^":
         left = _operand(node.children[0], POSTFIX, gap)
         return f"{left}^{_operand(node.children[1], POSTFIX, gap)}"
-    # The dot product is spaced, being the one operator whose tight form would
-    # fuse with its operands: `2 . 3` written `2.3` is the numeral two-point-
-    # three, and the dot would be gone.
+    # The dot product is always spaced, since `2 . 3` written as `2.3` would be a
+    # numeral.
     if operator == ".":
         operator = " . "
     left = _operand(node.children[0], PRODUCT, gap)
@@ -274,12 +248,12 @@ def _binop(node: Node, gap: str) -> str:
 
 
 def _logical(node: Node, gap: str) -> str:
-    """A run of one word operator, and what it demands of each side.
+    """A word operator and its operands.
 
-    The tight spelling fences a nest of the same operator on either side, as
-    the original does. The spaced spelling fences only what the grammar needs,
-    which is where a nest is on the side the operator does not fold to:
-    `a AND b AND c` and `(a IMP b) IMP c`, both read back as they stand.
+    The tight form parenthesizes the same operator nested on either side, as the
+    original does. The spaced form parenthesizes only what the grammar requires, on the
+    side the operator doesn't associate toward, so `a AND b AND c` and `(a IMP b) IMP c`
+    stay as written.
     """
     own = _LOGICAL_PRECEDENCE[node.kind]
     word = _WORD_OPERATORS[node.kind]
@@ -287,7 +261,7 @@ def _logical(node: Node, gap: str) -> str:
     if gap:
         left, right = own + 1, own + 1 if folds_left else own
     else:
-        # `IMP` is the one that folds to the left, so its left operand may nest.
+        # `IMP` is left-associative, so its left operand may nest unparenthesized.
         left, right = own if folds_left else own + 1, own + 1
     return (
         f"{_operand(node.children[0], left, gap)} {word} "
@@ -298,7 +272,7 @@ def _logical(node: Node, gap: str) -> str:
 def _assignment(
     head: str | Node, right: tuple[Node, ...], operator: str, gap: str
 ) -> str:
-    """`x:=u`, or `x:=` for an assignment with nothing on the right."""
+    """`x:=u`, or `x:=` with an empty right side."""
     if isinstance(head, Node):
         head = _written(head, gap)
     value = _written(right[0], gap) if right else ""
@@ -306,10 +280,9 @@ def _assignment(
 
 
 def _domain(node: Node, gap: str) -> str:
-    """`x:epsilonReal (0, inf)`, spelled as tight as the original spells it.
+    """`x:epsilonReal (0, inf)`, as tight as the original writes it.
 
-    The spaced spelling is the printer's `x :epsilon Real (0, inf)`, which is
-    also how it is typed.
+    The spaced form is `x :epsilon Real (0, inf)`, which is also how it's typed.
     """
     text = f"{_written(node.children[0], gap)}{gap}:epsilon{gap}{node.value}"
     if len(node.children) > 1:

@@ -1,8 +1,7 @@
-"""Parse state: the modes plus the live symbol table.
+"""Parse state: input modes and the live symbol table.
 
-Name lexing is not a self-contained lexical rule. In Character mode `xyz` is
-`x*y*z` but `tera` is one name once `tera` has been declared, so the lexer has
-to consult this table on every identifier.
+The lexer consults this table for every identifier: in Character mode `xyz` is `x*y*z`,
+but `tera` is one name once it has been declared.
 """
 
 from __future__ import annotations
@@ -21,8 +20,7 @@ _TO_UPPER = str.maketrans(string.ascii_lowercase, string.ascii_uppercase)
 def ascii_lower(text: str) -> str:
     """Case-fold ASCII letters only.
 
-    Derive folds `A`-`Z` and nothing else, so `Θ` is a name in its own right
-    rather than a spelling of `θ`.
+    Derive folds only `A`-`Z`, so `Θ` and `θ` are different names.
     """
     return text.translate(_TO_LOWER)
 
@@ -32,15 +30,15 @@ def ascii_upper(text: str) -> str:
 
 
 def fold(spelling: str) -> str:
-    """The key a spelling is matched under, case-insensitively."""
+    """The lookup key for a spelling, case-insensitive."""
     return ascii_lower(unicodedata.normalize("NFC", spelling))
 
 
 def normalize(spelling: str) -> str:
-    """The key a spelling is matched under, case-sensitively.
+    """The lookup key for a spelling, case-sensitive.
 
-    Normalising the lookup key rather than the source text matters: NFC can
-    change a string's length, which would invalidate every reported offset.
+    Only lookup keys are normalized, not the source text, because NFC can change a
+    string's length and invalidate reported offsets.
     """
     return unicodedata.normalize("NFC", spelling)
 
@@ -107,10 +105,9 @@ class VariableInfo:
 
 @dataclass(frozen=True)
 class NameBinding:
-    """What one name stood for at some moment, enough to put it back.
+    """A snapshot of what a name was bound to, for restoring it later.
 
-    A name is a variable, or a function, or neither, so all three states have
-    to be recorded for a scoped declaration to be undone exactly.
+    A name may be a variable, a function, or neither; all three cases are recorded.
     """
 
     name: str
@@ -127,14 +124,14 @@ class NameInfo:
     is_keyword_operator: bool = False
     is_constant: bool = False
     is_displaceable: bool = False
-    """Set on a name a definition may take over, such as a setting value."""
+    """Set on a name a definition may override, such as a setting value."""
 
 
 def _inventory(entries: list[tuple[str, NameInfo]]) -> tuple[dict[str, NameInfo], ...]:
     """Index an inventory both exactly and case-folded.
 
-    Listed lowest priority first, so that a function wins a collision against a
-    setting value: `NORMAL` and `Normal` fold to the same key.
+    Entries are listed lowest priority first, so later ones win collisions. For
+    example, a function beats a setting value when `NORMAL` and `Normal` fold together.
     """
     exact: dict[str, NameInfo] = {}
     folded: dict[str, NameInfo] = {}
@@ -144,8 +141,7 @@ def _inventory(entries: list[tuple[str, NameInfo]]) -> tuple[dict[str, NameInfo]
     return exact, folded
 
 
-# Names that cannot be redefined. A declaration of one of these does not
-# displace it.
+# Names that a declaration cannot displace.
 _RESERVED_EXACT, _RESERVED_FOLDED = _inventory(
     [(word, NameInfo(word, is_keyword_operator=True)) for word in names.KEYWORD_OPERATORS]
     + [(name, NameInfo(name, is_constant=True)) for name in names.CONSTANTS]
@@ -160,9 +156,9 @@ _RESERVED_EXACT, _RESERVED_FOLDED = _inventory(
     ]
 )
 
-# Names that are known but that a declaration displaces. Derive's own utility
-# files define `EXACT(...)` and `BETA(z,w)` and use `DEGREE_KELVIN`, so a
-# setting value or a Greek letter cannot outrank a declared name.
+# Known names that a declaration displaces. Derive's utility files define `EXACT(...)`
+# and `BETA(z,w)` and use `DEGREE_KELVIN`, so setting values and Greek letters must not
+# outrank declared names.
 _PREDECLARED_EXACT, _PREDECLARED_FOLDED = _inventory(
     [(value, NameInfo(value, is_displaceable=True)) for value in names.SETTING_VALUES]
     + [(setting, NameInfo(setting, is_displaceable=True)) for setting in names.SETTINGS]
@@ -179,7 +175,7 @@ _PREDECLARED_EXACT, _PREDECLARED_FOLDED = _inventory(
 
 @dataclass
 class ParseState:
-    """Modes plus the live symbol table.
+    """Input modes and the live symbol table.
 
     Defaults are Character mode, case-insensitive, base 10.
     """
@@ -196,10 +192,9 @@ class ParseState:
 
     @property
     def stamp(self) -> tuple:
-        """Everything a lexed token can depend on.
+        """Everything a lexed token depends on.
 
-        The lexer caches by position, and a cached token is only good while
-        this is unchanged.
+        The lexer's per-position token cache is valid only while this is unchanged.
         """
         return (
             self.revision,
@@ -211,7 +206,7 @@ class ParseState:
         )
 
     def resolve(self, spelling: str) -> NameInfo | None:
-        """What `spelling` names here, or None if it names nothing yet."""
+        """What `spelling` refers to, or None if it's unknown."""
         self._reindex()
         if self.case_mode == CaseMode.SENSITIVE:
             exact = normalize(spelling)
@@ -222,8 +217,8 @@ class ParseState:
             )
             if found is not None:
                 return found
-            # Constants are matched case-insensitively even under
-            # `CaseMode := Sensitive`, but functions are not.
+            # Constants match case-insensitively even under `CaseMode := Sensitive`, but
+            # functions don't.
             loose = _RESERVED_FOLDED.get(fold(spelling))
             return loose if loose is not None and loose.is_constant else None
         folded = fold(spelling)
@@ -245,9 +240,8 @@ class ParseState:
     def canonical_variable(self, spelling: str) -> str:
         """How a variable spelling is recorded.
 
-        A name already known keeps the spelling it was first written with; a
-        new one is folded to lower case, which is the canonical spelling for
-        variables.
+        A known name keeps its original spelling; a new one is lowercased unless case
+        is significant.
         """
         known = self.lookup(spelling)
         if known is not None:
@@ -257,7 +251,7 @@ class ParseState:
         return ascii_lower(normalize(spelling))
 
     def canonical_function(self, spelling: str) -> str:
-        """How a function name is recorded: upper case, unless case matters."""
+        """How a function name is recorded: uppercase, unless case is significant."""
         known = self.lookup(spelling)
         if known is not None and self.is_function(known):
             return known
@@ -286,18 +280,16 @@ class ParseState:
         self.revision += 1
 
     def binding(self, name: str) -> NameBinding:
-        """What `name` stands for right now, for `rebind` to restore later."""
+        """The current binding of `name`, for `rebind` to restore later."""
         return NameBinding(name, self.variables.get(name), self.functions.get(name))
 
     def rebind(self, binding: NameBinding) -> None:
-        """Put a name back the way `binding` found it.
+        """Restore a name to the state recorded in `binding`.
 
-        For a declaration that is only good for part of a parse, such as the
-        formal parameter of a definition, which has to be a known name while
-        the body is lexed and must not outlive it. Taking a name away changes
-        as much as adding one did, so this bumps the revision as `declare`
-        does: a name that came and went again leaves the table the size it
-        found it, and the lexer caches tokens against both.
+        Used for temporary declarations, such as a function parameter that must be known
+        while the body is lexed. This bumps the revision like `declare` does, because
+        the table size alone doesn't change when a name comes and goes, and the lexer
+        cache depends on both.
         """
         if binding.variable is None:
             self.variables.pop(binding.name, None)

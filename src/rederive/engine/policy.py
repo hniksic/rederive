@@ -1,26 +1,19 @@
-"""What every engine client does when its worker dies, whatever the worker was.
+"""What every engine client does when its worker dies, regardless of transport.
 
-The transports have nothing in common. A desktop worker is a child process behind a
-pipe, killed with a signal; a browser worker is a Web Worker behind `postMessage`,
-killed with `terminate()`. What they share is the policy, and it is the policy rather
-than the machinery that the app's reporting is written against.
+A desktop worker is a child process behind a pipe, killed with a signal; a browser
+worker is a Web Worker behind `postMessage`, killed with `terminate()`. They share this
+policy, and the app's error reporting is written against it.
 
-Every death funnels into one path. The user pressing Esc, a memory cap met, the
-system taking the process away, a crash and a worker that simply stopped are one
-shape: the pending call fails with the exception that names the cause, and a
-replacement is started straight away. That is only ordinary because the worker is
-stateless - the replacement knows everything the dead one knew, which is nothing -
-and because a fresh worker is started every time the app starts, so the recovery path
-is exercised on every run and not only in emergencies.
+Every death is handled the same way, whether caused by Esc, the memory cap, the OS, a
+crash, or the worker just stopping: the pending call fails with an exception naming the
+cause, and a replacement starts immediately. This is safe because the worker is
+stateless, and well tested because every app start launches a fresh worker.
 
-The one thing that is not ordinary is a worker that cannot start at all, and `Deaths`
-is the rule for it. Three deaths before the handshake in a row stop the automatic
-respawn, since a broken install would otherwise spin: the client goes down, engine
-commands fail fast saying why, and the next command tries one more start - retry at
-the pace of a person pressing keys, with no backoff machinery to get wrong.
-Everything that does not need the engine goes on working while it is down, which is
-the property that matters: the mathematics may die, the worksheet must always be
-savable.
+The exception is a worker that can't start at all, handled by `Deaths`. Three deaths in
+a row before the handshake stop automatic respawning, so a broken install doesn't spin:
+the client goes down, engine commands fail fast with the reason, and each new command
+tries one more start. Retrying at the pace of keypresses avoids backoff machinery.
+Everything that doesn't need the engine keeps working, so the worksheet stays savable.
 """
 
 from __future__ import annotations
@@ -29,38 +22,34 @@ from rederive.engine.client import EngineError
 
 __all__ = ["STARTS_BEFORE_DOWN", "Deaths"]
 
-#: Deaths before the handshake, in a row, after which a client stops starting
-#: workers by itself and waits to be asked.
+#: Consecutive deaths before the handshake after which a client stops restarting workers
+#: on its own and waits for the next command.
 STARTS_BEFORE_DOWN = 3
 
 
 class Deaths:
-    """The run of workers that never answered, and what it decides.
+    """Tracks consecutive failed worker starts and decides when the client goes down.
 
-    One counter and one exception. The counter is of starts that died before the
-    handshake, in a row, and it goes back to nothing the moment a worker answers
-    one - a worker that ran and then died says nothing about whether the next one
-    will start. The exception is what put the client down, which is what a command
-    asked for while it is down is refused with.
+    The counter resets as soon as a worker answers its handshake, since a worker that
+    ran and then died says nothing about whether the next will start. `down` holds the
+    error that took the client down, which commands are refused with until a retry.
     """
 
     def __init__(self, limit: int = STARTS_BEFORE_DOWN) -> None:
         self.limit = limit
-        #: What put the client down, or None while it is up.
+        #: The error that put the client down, or None while it is up.
         self.down: EngineError | None = None
         self._failures = 0
 
     def ready(self) -> None:
-        """A worker has answered its handshake, so the run of failed starts is over."""
+        """Record that a worker answered its handshake, resetting the failure count."""
         self._failures = 0
 
     def died(self, error: EngineError, ready: bool) -> bool:
-        """Note one death, and say whether to put a replacement up straight away.
+        """Record a death and return whether to start a replacement immediately.
 
-        `ready` is whether the worker that died had finished starting. One that
-        had says nothing about the install, however it died; one that had not is
-        the start failing, and enough of those in a row are what puts the client
-        down.
+        `ready` is whether the worker had finished starting. Only deaths before that
+        count as failed starts; enough in a row put the client down.
         """
         self._failures = 0 if ready else self._failures + 1
         if self._failures < self.limit:
@@ -69,9 +58,9 @@ class Deaths:
         return False
 
     def retrying(self) -> None:
-        """A command has asked again, which is the whole of the retry policy.
+        """Bring the client back up because a command was issued.
 
-        The user pressing a command key is the clock: the client tries one more
-        start and nothing spins behind their back in between.
+        This is the whole retry policy: each command the user issues allows one more
+        start attempt, and nothing retries in the background.
         """
         self.down = None

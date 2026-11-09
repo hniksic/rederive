@@ -1,35 +1,23 @@
-"""The environment a browser tab provides: a page's clipboard, a store, a heap.
+"""The browser environment: the page's clipboard, a persistent store, the Wasm heap.
 
-Three of the four answers here are shorter than the desktop's because a tab is
-a smaller machine. The memory gauge reads the size of this instance's own
-WebAssembly heap, there being no resident set and nothing outside an instance
-that can measure it; there is no Qt, so what a plot would be drawn with is
-nothing; and the clipboard is the page's, asked for through
-`navigator.clipboard` and refused as often as it is granted - which is why it
-is the one answer here that reports a refusal in words.
+Memory is the size of this instance's WebAssembly heap, since a tab has no resident set.
+There is no Qt. The clipboard is `navigator.clipboard`, which is often refused, so
+this is the only implementation that reports a refused copy.
 
-Storage is the long one, because a tab has no filesystem and has three things
-instead, and a file goes to whichever of them fits what it is for:
+A tab has no real filesystem, so storage uses three things:
 
-* **the store**, a dictionary this class holds and localStorage keeps, keyed by
-  the path the user typed. It is what makes a name mean the same file twice,
-  and it is what survives a reload - MEMFS does not, and a worksheet written
-  there would be gone with the tab.
-* **a download**, which is where a save actually goes. It is the only way out
-  of a tab and the only copy the user can keep, open in another program or
-  send to anyone.
-* **MEMFS**, read-only as far as this is concerned, which is where the wheel is
-  unpacked. A path that names something on it is read by `pathlib` exactly as
-  it is on a desktop, which is why the store is asked first and the filesystem
-  behind it.
+* **The store**, a dict kept in localStorage and keyed by the path the user typed. It
+  makes a name refer to the same file again, and unlike MEMFS it survives a reload.
+* **A download**, where a save actually goes. It is the only way to get a file out of
+  the tab.
+* **MEMFS**, where the wheel is unpacked, read-only for our purposes. Reads try the
+  store first and then MEMFS through `pathlib`.
 
-A file the user hands over - picked or dropped on the page - arrives through
-`keep`, which is the store without the download: it came from a disk and
-sending it back there is not what was asked for. The settings arrive the same
-way, every time the tab is hidden.
+Files the user picks or drops on the page arrive through `keep`, which stores them
+without a download, since they already came from disk. The settings are stored the same
+way whenever the tab is hidden.
 
-Nothing selects this: `rederive.web.boot` calls `platform.use` before it builds
-anything, which is the whole of how the browser says what it is.
+`rederive.web.boot` installs this with `platform.use` before building anything.
 """
 
 from __future__ import annotations
@@ -41,50 +29,41 @@ from typing import Any
 
 __all__ = ["Web", "WebStorage", "heap"]
 
-#: What localStorage keeps the store under. One key holding the whole of it, as
-#: JSON: worksheets are a few kilobytes each, and a store written in one piece
-#: cannot half-survive a write that was refused part way through.
+#: localStorage key holding the whole store as JSON. Worksheets are small, and writing
+#: the store in one piece means a failed write can't leave it half-updated.
 KEPT = "rederive.files"
 
-#: What the page is told when the clipboard would not take the text. The first
-#: half is what happened and the second is what to do instead, since the
-#: terminal's own copy still went out and a browser's own copy key still works.
+#: Message shown when the clipboard refuses the text, suggesting the browser's own copy.
 CLIPBOARD_REFUSED = "The browser did not allow the clipboard; select and copy instead"
 
-#: What the page is told when the store will not hold any more. The save itself
-#: went out as a download before this, so what is lost is the tab's memory of
-#: the name and not the file.
+#: Message shown when the store is full. The save already went out as a download, so
+#: only the stored copy under that name is lost.
 NO_ROOM = "{name} was downloaded, but this page has no room left to remember it by name"
 
 
 class WebStorage:
-    """Files, as a tab has them: a store, a download, and the wheel's own MEMFS.
+    """File storage in a browser tab: the store, downloads, and MEMFS.
 
-    The store is read once, when the page is built, and written whole on every
-    change. Both are cheap - it is a few kilobytes of text - and neither has a
-    failure worth a retry: a browser that will not keep it says so at once.
+    The store is read once at startup and written whole on every change. Both are
+    cheap, and failures aren't worth retrying.
     """
 
     def __init__(self, page: Any = None) -> None:
-        #: The page's file module, which owns everything with a DOM in it: the
-        #: download, the picker, the drop target and the notice. None where
-        #: there is no page, which is every reading of this module outside a
-        #: browser.
+        #: The page's file module, which handles the DOM side: downloads, the file
+        #: picker, the drop target and notices. None outside a browser.
         self._page = page
         self._files: dict[str, str] = {}
-        #: Whether localStorage answered at all. A tab in private mode, or one
-        #: whose user has turned site data off, keeps nothing across a reload,
-        #: and the difference is worth a sentence at the top of the screen.
+        #: Whether localStorage is available. In private mode or with site data
+        #: disabled it isn't, and nothing survives a reload, which the screen mentions.
         self.remembers = self._read_store()
 
     # -- what the program asks for -----------------------------------------
 
     def read(self, path: Path) -> bytes:
-        """A file's bytes: the store's copy, or the one the wheel carries.
+        """Return a file's bytes from the store, or else from MEMFS.
 
-        The store first, so that a worksheet of the user's own wins over one of
-        the program's under the same name - which is the rule the desktop gets
-        for nothing by looking in the working directory before the library.
+        The store comes first so a user's file shadows a bundled one of the same name,
+        as the working directory does on the desktop.
         """
         kept = self._files.get(_key(path))
         if kept is not None:
@@ -92,16 +71,11 @@ class WebStorage:
         return path.read_bytes()
 
     def write(self, path: Path, text: str) -> None:
-        """Send a file out of the tab, and remember it by name.
+        """Download the file and keep it in the store.
 
-        The download goes first and the store second, because the download is
-        the save: it is the copy the user keeps, and a store that has run out of
-        room must not stop a worksheet from being written. A store that refuses
-        therefore costs the name and not the file, and says so.
-
-        A download the browser refuses outright is the other way round: nothing
-        left the tab, so it is an OSError like any other unwritable file and the
-        command reports it where a command reports such things.
+        The download is the real save, so it goes first, and a full store only
+        produces a notice. A refused download raises OSError, like any unwritable
+        file.
         """
         if self._page is not None:
             try:
@@ -113,11 +87,10 @@ class WebStorage:
             self._page.said(NO_ROOM.format(name=path.name))
 
     def names(self, directory: Path) -> Sequence[str]:
-        """What is in a directory: the store's own names and MEMFS's behind them.
+        """List a directory's entries from both the store and MEMFS.
 
-        A prompt completes from this, so what it offers is what a name would
-        find. A tab's working directory holds nothing the user did not put
-        there, so the store is nearly always the whole of the answer.
+        Used for prompt completion. The working directory normally only has what the
+        user put there, so in practice this is mostly the store.
         """
         found = {Path(name).name for name in self._files if _in(name, directory)}
         try:
@@ -130,38 +103,34 @@ class WebStorage:
         return _key(path) in self._files or path.exists()
 
     def is_directory(self, path: Path) -> bool:
-        """The store holds no directories, so this is MEMFS's answer alone."""
+        """Check MEMFS only, since the store holds no directories."""
         return path.is_dir()
 
     # -- what the page asks for --------------------------------------------
 
     def keep(self, path: Path, text: str) -> None:
-        """Remember a file by name without sending it anywhere.
+        """Store a file without downloading it.
 
-        For the files that came from somewhere else: one the user picked or
-        dropped on the page, which is already on their disk; the worksheet a
-        link arrived carrying; and the settings, which the page writes every
-        time it is hidden and which nobody asked to have a copy of.
+        Used for files that came from elsewhere: picked or dropped by the user, carried
+        by a link, or the settings, which the page writes whenever it is hidden.
 
-        A store that will not take it is not reported, unlike a save's. Nothing
-        was asked for here, the file is in this page's memory either way, and
-        what is lost is only the next visit's memory of it.
+        Unlike in `write`, a full store isn't reported: the file is still in memory, and
+        only the next visit loses it.
         """
         self._files[_key(path)] = text
         self._write_store()
 
     def kept(self) -> list[str]:
-        """Every name the store holds, which is what the page shows of itself."""
+        """Return every name in the store, for the page to display."""
         return sorted(self._files)
 
     # -- the store ---------------------------------------------------------
 
     def _read_store(self) -> bool:
-        """Take the store out of localStorage, and say whether there is one.
+        """Load the store from localStorage, returning whether localStorage exists.
 
-        Anything unreadable there is treated as nothing rather than as an
-        error: a store written by some older shape of this is not worth
-        refusing to start over.
+        Unreadable contents (e.g. from an older format) are ignored rather than treated
+        as an error.
         """
         storage = _local()
         if storage is None:
@@ -179,11 +148,10 @@ class WebStorage:
         return True
 
     def _write_store(self) -> bool:
-        """Put the store back, and say whether it went.
+        """Save the store to localStorage, returning whether it succeeded.
 
-        False is a browser that would not take it, which is nearly always the
-        quota: five megabytes is the usual ceiling and a worksheet is small, so
-        a tab reaches it only by saving a great many of them.
+        Failure nearly always means the quota (usually 5 MB) is exceeded, which takes a
+        great many worksheets.
         """
         storage = _local()
         if storage is None:
@@ -196,24 +164,23 @@ class WebStorage:
 
 
 def _key(path: Path) -> str:
-    """What a file is filed under: the path, as the user typed it.
+    """Return the store key for `path`, which is the path as typed.
 
-    `worksheet.path_of` has already supplied the extension and expanded a
-    leading `~`, so two spellings of one name arrive here as one string.
+    `worksheet.path_of` has already added the extension and expanded `~`, so
+    equivalent spellings arrive as the same string.
     """
     return str(path)
 
 
 def _in(name: str, directory: Path) -> bool:
-    """Whether a stored name lies directly in `directory`, as a listing asks."""
+    """Whether a stored name lies directly in `directory`."""
     return Path(name).parent == directory
 
 
 def _local() -> Any:
-    """The tab's localStorage, or nothing where there is none to be had.
+    """Return the tab's localStorage, or None if unavailable.
 
-    Reading it can raise as well as be missing: a browser told to keep no site
-    data refuses the property itself rather than answering an empty store.
+    Accessing it can raise, e.g. when the browser is set to keep no site data.
     """
     try:
         import js
@@ -226,7 +193,7 @@ def _local() -> Any:
 
 
 class Web:
-    """The four answers, as a browser tab gives them."""
+    """The `Platform` implementation for a browser tab."""
 
     def __init__(self, page: Any = None) -> None:
         self._storage = WebStorage(page)
@@ -234,15 +201,13 @@ class Web:
     # -- the clipboard -----------------------------------------------------
 
     def copy(self, text: str, refused: Callable[[str], None] | None = None) -> None:
-        """Hand text to the page's clipboard, and say so where it will not take it.
+        """Copy text to the page's clipboard, reporting through `refused` if refused.
 
-        `navigator.clipboard` is absent outside a secure context and its write
-        is a promise that may be refused - a tab that has not been clicked in
-        is not allowed to write a clipboard, and Firefox asks the user about a
-        page it has not seen do this before. A desktop can be quiet about all
-        of that because the copy took the terminal's road as well; here there
-        is no such road, xterm.js answering the escape sequence with nothing,
-        so a refusal means the copy did not happen and the key did nothing.
+        `navigator.clipboard` is absent outside a secure context, and its write returns
+        a promise that may be rejected: an unfocused tab may not write, and Firefox asks
+        the user the first time. Unlike on the desktop, the terminal copy doesn't help
+        here (xterm.js ignores the escape sequence), so a refusal means nothing was
+        copied.
         """
         import js
 
@@ -255,19 +220,17 @@ class Web:
         except Exception:
             _say(refused, CLIPBOARD_REFUSED)
             return
-        # Nothing waits on a copy, so the promise is not awaited; what it is
-        # given is somewhere to put a rejection, which is both what keeps the
-        # user informed and what keeps an uncaught rejection out of the
-        # console.
+        # The promise isn't awaited, but a rejection handler informs the user and keeps
+        # an uncaught rejection out of the console.
         catch = getattr(promise, "catch", None)
         if catch is not None:
             catch(lambda _error: _say(refused, CLIPBOARD_REFUSED))
 
     def paste(self) -> str | None:
-        """Nothing: the page hands Ctrl-V to the browser, which pastes by itself.
+        """Return None: the page lets the browser handle Ctrl-V itself.
 
-        Reading `navigator.clipboard` from here would be a permission to ask
-        for, where the browser's own paste needs none.
+        Reading `navigator.clipboard` would require a permission prompt, while the
+        browser's own paste needs none.
         """
         return None
 
@@ -279,77 +242,61 @@ class Web:
     # -- memory ------------------------------------------------------------
 
     def process_bytes(self, pid: int | None = None) -> int | None:
-        """This interpreter's heap: the WebAssembly memory it has taken.
+        """Return this interpreter's WebAssembly heap size.
 
-        Not a resident set, a tab having none, but the nearest reading there
-        is - and nearer in spirit to what this gauge replaced than a resident
-        set ever was, the original having shown how much of its own workspace
-        muLISP was holding.
+        A tab has no resident set, but the heap size is the closest equivalent, and
+        closer in spirit to the original's muLISP workspace gauge anyway.
 
-        `pid` is ignored. There are no processes here to tell apart: an
-        instance can read its own heap and nobody else's, so the question this
-        answers is always about the interpreter asking it.
+        `pid` is ignored, since an instance can only read its own heap.
         """
         return heap()
 
     def measures_processes(self) -> bool:
-        """No: a heap is a gauge and the watchdog wants something else.
+        """Return False, which disables the engine's memory watchdog.
 
-        What this turns off is the desktop engine's cap, which reads a worker's
-        resident set from outside and kills it at a ceiling. Neither half of
-        that is here. Nothing outside a Web Worker can read its memory - the
-        figure the gauge shows is one the worker sends - and the figure itself
-        is a high-water mark that never comes down, so a cap read off it would
-        go on holding a program to a size it let go of long ago.
+        The desktop watchdog reads the worker's resident set from outside and kills it
+        at a limit. Neither works here: a Web Worker's memory can't be read from
+        outside (the gauge shows what the worker reports), and the heap size is a
+        high-water mark that never shrinks.
 
-        Nor is there a better reading to be had. `performance.memory` is
-        Chromium's alone, is quantised to the point of meaninglessness and does
-        not count WebAssembly memory; `measureUserAgentSpecificMemory` is
-        Chromium's too, wants the page cross-origin isolated, and resolves at
-        the next collection rather than when it is asked. So the engine runs
-        uncapped here and an allocation that goes too far is the browser
-        killing the worker, which arrives as a death like any other.
+        There's no better alternative. `performance.memory` is Chromium-only, heavily
+        quantized, and excludes WebAssembly memory; `measureUserAgentSpecificMemory` is
+        Chromium-only, requires cross-origin isolation, and resolves only at the next
+        GC. So the engine runs uncapped, and if it allocates too much the browser kills
+        the worker, which is handled like any other worker death.
         """
         return False
 
     def total_bytes(self) -> int | None:
-        """Nothing: how much memory the machine has is not a tab's to know."""
+        """Return None, since a tab can't know the machine's memory."""
         return None
 
     # -- what this is ------------------------------------------------------
 
     def provenance(self) -> str:
-        """What the page carries: the runtime under it and no toolkit at all.
+        """Return the (absent) toolkit, the Pyodide runtime, and the browser.
 
-        The first line is the shape the desktop's takes - what a plot would be
-        drawn with, which here is nothing - so that `--version` reads the same
-        way wherever it is asked.
+        The first line mirrors the desktop's toolkit line, so `--version` output has
+        the same shape everywhere.
         """
         toolkit = "Qt unusable (no toolkit in the browser)"
         return f"{toolkit}\n{_runtime()}\nplatform {_agent()}"
 
 
 def heap() -> int | None:
-    """How many bytes of WebAssembly memory this instance has, or None outside one.
+    """Return the size of this instance's WebAssembly memory, or None outside one.
 
-    `_module` is Pyodide's own handle on the Emscripten instance and its heap
-    views are the linear memory itself, so the length of one is the size of the
-    heap. Two things to know about the figure. It is what the runtime has taken
-    rather than what Python is using, since the allocator hands out of it and
-    gives back into it; and WebAssembly memory grows and never shrinks, so it
-    is a high-water mark - a program that has let go of a large expression goes
-    on reporting what holding it cost.
+    `_module` is Pyodide's handle on the Emscripten instance, and its heap views span
+    the linear memory, so a view's length is the heap size. This is memory the runtime
+    has reserved, not what Python is using, and since WebAssembly memory never shrinks
+    it is a high-water mark. That makes it fine for the gauge but useless for a
+    watchdog.
 
-    Both are why this is the gauge and not the watchdog: it says what the tab
-    is carrying, which is what somebody watching the status line wants to know,
-    and it cannot say that a computation has just released anything.
+    `_module` is private to Pyodide, so every step is guarded; if it changes, the
+    memory field just goes blank.
 
-    The handle is private to Pyodide, hence the guard around every step: a
-    release that moves it costs the field its figure and nothing else.
-
-    Called by the engine worker as well as by the page, each about itself,
-    which is why it is a function here rather than a method on `Web` - the
-    worker sets no platform up, having nothing else to ask one for.
+    This is a function rather than a `Web` method because the engine worker calls it
+    too, and the worker sets up no platform.
     """
     try:
         import pyodide_js
@@ -362,13 +309,13 @@ def heap() -> int | None:
 
 
 def _say(refused: Callable[[str], None] | None, sentence: str) -> None:
-    """Report a refusal wherever the caller left somewhere to report it."""
+    """Call `refused` with `sentence`, if given."""
     if refused is not None:
         refused(sentence)
 
 
 def _runtime() -> str:
-    """Which Pyodide is running this, or that the question has no answer here."""
+    """Return the Pyodide version line, or "Pyodide absent"."""
     try:
         import pyodide
     except ImportError:  # read outside a browser, which the tests do
@@ -377,7 +324,7 @@ def _runtime() -> str:
 
 
 def _agent() -> str:
-    """The browser, as it names itself. The nearest thing a tab has to a machine."""
+    """Return the browser's user agent, the nearest thing a tab has to a machine."""
     try:
         import js
     except ImportError:

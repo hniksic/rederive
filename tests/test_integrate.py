@@ -1,25 +1,16 @@
-"""What Simplify makes of an integral.
+"""Tests of integration.
 
-This is where the integration mathematics is tested, in the order the package works
-in: the methods that answer an integral, the gate an answer has to pass before it is
-taken, the form the antiderivative taken is printed in, and what is peculiar to an
-integral between limits. A failure names the step it is about.
-`INT(1/(x^2 + x + a), x)` is one arctangent over `4*a - 1`, whatever its sign, because
-the method completes the square rather than summing over the roots.
-`INT(SIN(x)/x^2, x)` is `CI(x) - SIN(x)/x` because sympy's first answer is wrong for a
-negative `x`, and the gate sends the integral back to be done again. `INT(x^n, x)` has
-no case at `n = -1` because the form chooses the constant that makes `LN(x)` its limit
-there. And `INT(1/x^2, x, -1, 1)` is `inf`, not the `-2` the antiderivative's
-difference gives, because the singularity inside the interval is found before the ends
-are put in.
+Sections follow the structure of the integration package: the methods, the check an
+answer must pass to be accepted, the printed form of the antiderivative, and handling
+specific to definite integrals. For example, `INT(SIN(x)/x^2, x)` is
+`CI(x) - SIN(x)/x` because sympy's first answer is wrong for negative `x` and fails the
+check, and `INT(1/x^2, x, -1, 1)` is `inf`, not `-2`, because the singularity inside the
+interval is found before the limits are substituted.
 
-As in `test_simplify.py`, a case is the author's text in and the worksheet's text out,
-written inline so that a failure names the mathematics. The cases are the integrals
-that show a rule: a case split that is no split, a logarithm that would be complex
-where the integrand is real, a pole the integrand owns. `test_integrate_bronstein.py` is the net
-underneath them, the integral tables of Bronstein & Semendyayev pinned in full, entry
-by entry, so an entry of the tables is repeated here only where it is what shows the
-rule.
+As in `test_simplify.py`, cases are written inline as input and expected output, so a
+failure shows the mathematics. Each case illustrates a rule. The full Bronstein &
+Semendyayev integral tables are covered by `test_integrate_bronstein.py`, so table
+entries appear here only when they illustrate a rule.
 """
 
 from __future__ import annotations
@@ -44,7 +35,8 @@ from rederive.syntax import ParseState, parse_expression
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # One arctangent over `4*a - 1`, whatever its sign, and none of the roots.
+        # Completing the square gives one arctangent over `4*a - 1`, whatever its sign,
+        # instead of a sum over the roots.
         ("INT(1/(x^2 + x + a), x)", "2*ATAN((2*x + 1)/SQRT(4*a - 1))/SQRT(4*a - 1)"),
         (
             "INT(1/((x^2 + 1)*(x^2 + x + a)), x)",
@@ -52,7 +44,7 @@ from rederive.syntax import ParseState, parse_expression
             "+ (a - 1)*ATAN(x)/(a^2 - 2*a + 2) + (LN(x^2 + x + a) - LN(x^2 + 1))/(2*a^2 "
             "- 4*a + 4)",
         ),
-        # The two logarithms with the same coefficient are one.
+        # Two logarithms with the same coefficient are combined.
         ("INT(x^2/(a^3 + x^3), x)", "LN(x^3 + a^3)/3"),
         (
             "INT(1/(x^2 + x + a), x, 0, 1)",
@@ -91,7 +83,7 @@ def test_a_rational_function_of_a_parametric_sine_is_integrated(text, expected):
     [
         # Odd in the sine: t = COS(x).
         ("INT(SIN(x)/(2 + COS(x))^2, x)", "1/(COS(x) + 2)"),
-        # The half angle, with the logarithms of its forms in the whole angle.
+        # The half-angle substitution, with the logarithms rewritten in the whole angle.
         (
             "INT(1/(3 + 5*COS(x)), x)",
             "LN(3*COS(x) + 4*SIN(x) + 5)/8 - LN(3*COS(x) - 4*SIN(x) + 5)/8",
@@ -99,7 +91,8 @@ def test_a_rational_function_of_a_parametric_sine_is_integrated(text, expected):
         ("INT(TAN(x)/(1 + TAN(x)), x)", "x/2 - LN(COS(x) + SIN(x))/2"),
         # A logarithm negative at zero is written over its negation.
         ("INT(TAN(x)/(TAN(x) - 1), x)", "LN(COS(x) - SIN(x))/2 + x/2"),
-        # Over a linear form in both: one logarithm, real where the integrand is finite.
+        # Over a linear form in both: one logarithm, real wherever the integrand is
+        # finite.
         (
             "INT(3/(2*SIN(x) - 5*COS(x)), x)",
             "-3*SQRT(29)*LN((2*COS(x) + 5*SIN(x) + SQRT(29))/(5*COS(x) - 2*SIN(x)))/29",
@@ -120,23 +113,23 @@ def test_a_rational_function_of_a_sine_and_cosine_by_the_tables_substitution(
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # Over the root of a linear function, the root itself is the variable.
+        # Over the root of a linear function, the root is substituted.
         ("INT(1/((x + 2)*SQRT(x + 1)), x)", "2*ATAN(SQRT(x + 1))"),
-        # Over the root of a quadratic, a multiple of the root and of `INT(1/root)`.
+        # Over the root of a quadratic: a multiple of the root plus one of `INT(1/root)`.
         ("INT(SQRT(x^2 + 1)/x^2, x)", "LN(SQRT(x^2 + 1) + x) - SQRT(x^2 + 1)/x"),
         (
             "INT(x/SQRT(x^2 + x + 1), x)",
             "SQRT(x^2 + x + 1) - LN(2*SQRT(x^2 + x + 1) + 2*x + 1)/2",
         ),
-        # An arcsine where the leading coefficient is negative, and the arctangent it
-        # equals where the arcsine would need an absolute value.
+        # An arcsine when the leading coefficient is negative, or the equivalent
+        # arctangent when the arcsine would need an absolute value.
         ("INT(1/SQRT(1 + x - x^2), x)", "-ASIN(SQRT(5)*(1 - 2*x)/5)"),
         ("INT(1/SQRT(c - a^2*x^2), x)", "ATAN(a*x/SQRT(c - a^2*x^2))/a"),
         (
             "INT(SQRT(1 - x^2)^3/x^4, x)",
             "ASIN(x) + (2*x + 1)*(2*x - 1)*SQRT(1 - x^2)/(3*x^3)",
         ),
-        # Over a linear factor, a logarithm, or an arctangent where the quadratic is
+        # Over a linear factor: a logarithm, or an arctangent when the quadratic is
         # negative at the factor's root.
         (
             "INT(1/((x - 1)*SQRT(x^2 + 1)), x)",
@@ -168,8 +161,8 @@ def test_a_root_of_a_linear_or_quadratic_function_is_integrated_by_the_tables(
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # The root of a quotient of linear polynomials, and two roots of linear
-        # polynomials, are substituted, the root of the quotient staying one.
+        # The root of a quotient of linear polynomials, or two roots of linear
+        # polynomials, are substituted. The root of a quotient isn't split apart.
         (
             "INT(SQRT((x + 1)/(x - 1)), x)",
             "-LN(SQRT((x + 1)/(x - 1)) - 1) + LN(SQRT((x + 1)/(x - 1)) + 1) + "
@@ -198,8 +191,8 @@ def test_roots_of_linear_quotients_are_integrated_by_substitution(text, expected
     ],
 )
 def test_a_rational_function_of_exponentials_is_integrated_over_one(text, expected):
-    """Not as a sum over the roots of a quadratic with parametric coefficients, and the
-    same way whatever the order of a set of exponentials in the process."""
+    """The result is not a sum over the roots of a quadratic with parametric
+    coefficients, and doesn't depend on the order in which exponentials are processed."""
     assert simp(text) == expected
 
 
@@ -230,8 +223,8 @@ def test_a_symbolic_power_is_integrated_where_its_derivative_divides(text, expec
             "INT(ACOSH(x), x)",
             "2*x*LN(SQRT(x - 1) + SQRT(x + 1)) - SQRT(x + 1)*SQRT(x - 1) - LN(2)*x",
         ),
-        # An arc of a multiple of the variable over the variable has no elementary
-        # antiderivative, and the integral stands at once.
+        # An arc function of a multiple of `x`, divided by `x`, has no elementary
+        # antiderivative, and the integral is returned immediately.
         ("INT(ATAN(x/a)/x, x)", "INT(ATAN(x/a)/x, x)"),
         ("INT(3*ACOS(2*x)/x, x)", "INT(3*ACOS(2*x)/x, x)"),
     ],
@@ -243,11 +236,13 @@ def test_an_arc_or_logarithm_times_a_rational_function_is_integrated_by_parts(
 
 
 def test_an_even_integrand_over_a_positive_variable_is_kept_where_proved_odd():
-    """An antiderivative of an even integrand found for a positive variable holds for
-    a negative one where it is odd. `3*x^(5/3)/5` for `(x^2)^(1/3)` is not: it is
-    not even real left of zero, where the integrand is. Nor is one kept that is not
-    proved to differentiate back for the positive variable, as the hypergeometric
-    series sympy writes for `1/SQRT(1 - x^4)` is not."""
+    """An antiderivative of an even integrand found for positive `x` also holds for
+    negative `x` if it's odd.
+
+    `3*x^(5/3)/5` for `(x^2)^(1/3)` isn't odd: it isn't even real left of zero, where
+    the integrand is. An antiderivative is also rejected if it isn't proved to
+    differentiate back for positive `x`, like sympy's hypergeometric series for
+    `1/SQRT(1 - x^4)`."""
     x = sp.Symbol("x", real=True)
     found = by_a_positive_substitution(x**2 / sp.sqrt(x**2 + 1), x)
     assert found is not None
@@ -257,9 +252,8 @@ def test_an_even_integrand_over_a_positive_variable_is_kept_where_proved_odd():
 
 
 def test_an_integral_a_rewrite_leaves_behind_is_evaluated_too():
-    # Cancelling this integrand splits it in two, and the part that is an
-    # integral of `x` is evaluated as well: an answer still holding
-    # `INT(x, x)` would not be a simplified one.
+    # Cancelling splits the integrand in two, and the `INT(x, x)` part must be
+    # evaluated too.
     state = declaring("F", "G")
     assert simp("INT((x*G(x) + F(x))/G(x), x)", state=state) == (
         "INT(F(x)/G(x), x) + x^2/2"
@@ -267,7 +261,7 @@ def test_an_integral_a_rewrite_leaves_behind_is_evaluated_too():
 
 
 def test_partial_fractions_over_a_sine_leave_only_the_nonelementary_part_standing():
-    # The standing integral is a term of its own, not taken under the denominator.
+    # The unevaluated integral is a separate term, not put over the common denominator.
     assert simp("INT(x/((SIN(a*x) + 1)*SIN(a*x)), x)") == (
         "INT(x/SIN(a*x), x) + (LN(1/(COS(a*x) + 1)) - 2*LN(TAN(a*x/2) + 1)"
         " + a*x/TAN(a*x/2 + pi/4) + LN(2))/a^2"
@@ -278,19 +272,16 @@ def test_partial_fractions_over_a_sine_leave_only_the_nonelementary_part_standin
 
 
 def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
-    """Sympy's Risch implementation answers some of these wrongly.
+    """Sympy's Risch implementation answers some integrals wrongly.
 
-    `INT(1/(x^2 + a), x)` comes back zero over a real `a` and
-    `INT(x^2/(x^2 + a), x)` comes back `x`, and neither is refused. An answer
-    that provably does not differentiate back to the integrand is no answer, so
-    the integral is asked again by the rules a calculus course teaches, which do
-    not reach that algorithm - and what those give does differentiate back, as
-    the two lines below are here to say.
+    For real `a`, it gives zero for `INT(1/(x^2 + a), x)` and `x` for
+    `INT(x^2/(x^2 + a), x)`. An answer proved not to differentiate back is rejected,
+    and the integral is retried with textbook rules, which avoid that algorithm. The
+    first two lines check that those answers differentiate back.
 
-    Only a proven no counts, which is what keeps the answers that cannot be
-    checked either way. Sympy's answer for `1/SQRT(1 - x^4)` is a hypergeometric
-    series, a function the notation has no name for, so that integral stands as
-    Derive leaves it.
+    Only answers proved wrong are rejected, so those that can't be checked either way
+    are kept. Sympy's answer for `1/SQRT(1 - x^4)` is a hypergeometric series the
+    notation can't express, so the integral stays, as in Derive.
     """
     assert simp("DIF(ATAN(x/SQRT(a))/SQRT(a), x)") == "1/(x^2 + a)"
     assert simp("DIF(x - SQRT(a)*ATAN(x/SQRT(a)), x)") == "1 - a/(x^2 + a)"
@@ -300,7 +291,7 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
 @pytest.mark.parametrize(
     "text",
     [
-        # A hypergeometric function to sympy.
+        # A hypergeometric function in sympy.
         "INT(1/SQRT(1 - x^4), x)",
         # Incomplete gamma functions.
         "INT(x^a*#e^(-x), x)",
@@ -310,8 +301,8 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
     ids=str,
 )
 def test_an_operation_sympy_answers_only_in_a_function_without_a_name_stands(text):
-    """What sympy can say only in a function the notation has no name for is not
-    worked out, as Derive leaves what it cannot do: the head stands, as written."""
+    """When sympy's answer uses a function the notation can't express, the call stays
+    as written, as Derive leaves what it can't do."""
     assert simp(text) == text
 
 
@@ -328,16 +319,16 @@ def test_an_operation_sympy_answers_only_in_a_function_without_a_name_stands(tex
     ],
 )
 def test_a_symbolic_power_with_no_elementary_antiderivative_stands(text, expected):
-    """These are reduction formulas in the tables, with another integral on the right,
-    and no elementary antiderivative for a symbolic exponent. Sympy answers the first
-    two in a Lerch function the notation has no name for, and searches on the last two
-    for over a minute without finding anything. Each stands within a few seconds."""
+    """The tables give reduction formulas for these, with no elementary antiderivative
+    for a symbolic exponent. Sympy answers the first two with a Lerch function the
+    notation can't express, and searches for over a minute on the last two without
+    result. Each must come back unevaluated within a few seconds."""
     assert simp(text) == expected
 
 
 def test_an_integral_that_will_not_evaluate_survives_as_itself():
-    # Derive leaves the INT node standing, and so must we: an error here would
-    # lose the entry the user authored.
+    # Derive leaves the INT unevaluated, and so must we: an error would lose the
+    # user's entry.
     assert simp("INT(SIN(x)/LN(x), x)") == "INT(SIN(x)/LN(x), x)"
 
 
@@ -348,12 +339,11 @@ def test_an_integral_that_will_not_evaluate_survives_as_itself():
     ],
 )
 def test_an_antiderivative_wrong_for_negative_arguments_is_done_again(text, expected):
-    """Not in the original, which has neither `CI` nor `COSH_INT`.
+    """Not in Derive, which has neither `CI` nor `COSH_INT`.
 
-    Over a real variable sympy answers this, and `SINH(x)/x^2` the same way, with
-    `SIGN(x)` terms that are wrong for negative `x`; over a plain one it answers
-    correctly, with `LN(x^2)/2 - LN(x)` besides, which is a constant of integration
-    and is not printed.
+    For a real variable, sympy's answer here (and for `SINH(x)/x^2`) has `SIGN(x)`
+    terms that are wrong for negative `x`. For an unrestricted variable the answer is
+    correct, plus `LN(x^2)/2 - LN(x)`, a constant of integration that isn't printed.
     """
     assert simp(text) == expected
 
@@ -361,20 +351,20 @@ def test_an_antiderivative_wrong_for_negative_arguments_is_done_again(text, expe
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # Sympy's substitution answers these only where `-1 < x < 1`, which is
-        # where the integrand is not real. The root substituted for gives an
-        # antiderivative on both sides.
+        # Sympy's substitution answers these only for `-1 < x < 1`, where the
+        # integrand isn't real. Substituting the root gives an antiderivative valid on
+        # both sides.
         ("INT(SQRT(x^2 - 1)/x, x)", "SQRT(x^2 - 1) - ATAN(SQRT(x^2 - 1))"),
         ("INT(1/(x*SQRT(x^2 - 1)), x)", "ATAN(SQRT(x^2 - 1))"),
         ("INT(1/(x*SQRT(x^2 - a^2)), x)", "ATAN(SQRT(x^2 - a^2)/a)/a"),
-        # The case is right as it is, but for its condition.
+        # Sympy's answer is right, apart from its condition.
         ("INT(1/(x^2*SQRT(x^2 - 1)), x)", "SQRT(x^2 - 1)/x"),
         ("INT(SQRT(x^2 - 1)/x, x, -2, -1)", "pi/3 - SQRT(3)"),
     ],
 )
 def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
-    """An antiderivative under a condition with no case for the other values of the
-    variable is undefined there, and no answer."""
+    """A conditional antiderivative with no case for other values of the variable is
+    undefined there, so it's not an answer."""
     assert simp(text) == expected
 
 
@@ -384,7 +374,7 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # The denominator of the rational part over the factors of the integrand's.
+        # The rational part's denominator is written over the integrand's factors.
         ("INT(1/(1 + x)^3, x)", "-1/(2*(x + 1)^2)"),
         ("INT(1/(x^2 + 2*x + 1)^2, x)", "-1/(3*(x + 1)^3)"),
         ("INT(x/(x^2 + 1)^2, x)", "-1/(2*(x^2 + 1))"),
@@ -395,8 +385,8 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
             "-(5*b^4*x^4 + 10*a*b^3*x^3 + 10*a^2*b^2*x^2 + 5*a^3*b*x + "
             "a^4)/(5*b^5*(b*x + a)^5)",
         ),
-        # The irreducible factors, the variable and binomials whole, however the
-        # denominator is written.
+        # Over the irreducible factors, keeping the variable and binomials whole,
+        # however the denominator is written.
         (
             "INT(1/((x + 1)^2*(x + 2)^2), x)",
             "-2*LN(x + 1) + 2*LN(x + 2) - (2*x + 3)/((x + 1)*(x + 2))",
@@ -430,20 +420,19 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
             "INT(1/(x^3 - x)^2, x)",
             "-3*LN(x - 1)/4 + 3*LN(x + 1)/4 + (2 - 3*x^2)/(2*x*(x^2 - 1))",
         ),
-        # The number under the line stays there beside the factors, and the sum over
-        # it keeps whole coefficients.
+        # A numeric denominator stays beside the factors, so the numerator keeps integer
+        # coefficients.
         ("INT(x^2/(1 + x)^3, x)", "LN(x + 1) + (4*x + 3)/(2*(x + 1)^2)"),
         (
             "INT(x^5/(1 + x)^6, x)",
             "LN(x + 1) + (300*x^4 + 900*x^3 + 1100*x^2 + 625*x + 137)/(60*(x + 1)^5)",
         ),
-        # A sum over a number times one factor is over the two multiplied out, which
-        # is how it reads back.
+        # A number times a single factor is multiplied out, which is how it reads back.
         (
             "INT((2*x^2 + 2*x + 13)/((x - 2)*(x^2 + 1)^2), x)",
             "-4*ATAN(x) + LN(x - 2) - LN(x^2 + 1)/2 + (3 - 4*x)/(2*x^2 + 2)",
         ),
-        # The constant that makes the rational part vanish at zero, where that
+        # The constant is chosen to make the rational part vanish at zero, when that
         # shortens its numerator.
         ("INT(x^4/(1 + x)^6, x)", "x^5/(5*(x + 1)^5)"),
         ("INT(x^2/(1 + x)^4, x)", "x^3/(3*(x + 1)^3)"),
@@ -454,13 +443,13 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
         ("INT(x^3/(1 + x)^6, x)", "x^4*(x + 5)/(20*(x + 1)^5)"),
         ("INT(x^4/(1 + b*x)^6, x)", "x^5/(5*(b*x + 1)^5)"),
         ("INT(x^4/(a^2 + 1 + b*x)^6, x)", "x^5/(5*(a^2 + 1)*(b*x + a^2 + 1)^5)"),
-        # The function and not its spelling.
+        # The result depends on the function, not on how it's written.
         (
             "INT(x^4/(x^6 + 6*x^5 + 15*x^4 + 20*x^3 + 15*x^2 + 6*x + 1), x)",
             "x^5/(5*(x + 1)^5)",
         ),
         ("INT(3*x^4*(x + 2)/((x + 2)*(x + 1)^6), x)", "3*x^5/(5*(x + 1)^5)"),
-        # A constant of integration does not reach a definite integral.
+        # The constant of integration doesn't affect definite integrals.
         ("INT(x^4/(1 + x)^6, x, 0, t)", "t^5/(5*(t + 1)^5)"),
         ("INT(x^4/(1 + x)^6, x, 0, 1)", "1/160"),
         ("INT(x^4/(1 + x)^6, x, 0, inf)", "1/5"),
@@ -474,10 +463,11 @@ def test_the_rational_part_is_over_factors_and_vanishes_at_zero_where_shorter(
     text, expected
 ):
     """The rational part of a rational antiderivative is written over powers of the
-    factors of the integrand's denominator, and with the constant that makes it zero
-    at zero where its numerator then has fewer terms. Not where the integrand's
-    denominator may vanish at zero for some value of a parameter, as `a + b*x` does at
-    `a = 0`: the constant has a pole there that the answer would take on."""
+    denominator's factors, with the constant that makes it zero at zero when that
+    shortens its numerator.
+
+    This isn't done when the denominator may vanish at zero for some parameter value,
+    as `a + b*x` does at `a = 0`, since the constant would add a pole there."""
     assert simp(text) == expected
 
 
@@ -496,53 +486,47 @@ def test_the_rational_part_is_over_factors_and_vanishes_at_zero_where_shorter(
 def test_a_factored_rational_part_does_not_put_the_answer_over_one_denominator(
     text, rational, longest
 ):
-    """With its rational part factored, each of these answers would be put over one
-    denominator by Simplify, its logarithms and arctangents multiplied by the factor,
-    at twice the length. Its rational part stays multiplied out, a term of its own."""
+    """If the rational part were factored, Simplify would put the whole answer over one
+    denominator, multiplying the logarithms and arctangents by it and doubling the
+    length. So the rational part stays expanded, as a separate term."""
     answer = simp(text)
     assert answer.endswith(rational)
     assert len(answer) <= longest
 
 
 def test_an_antiderivative_is_written_with_no_constant_added():
-    """An indefinite integral is one antiderivative out of many.
+    """Derive prints the antiderivative with no constant added.
 
-    Which one is printed is a choice, and the original's choice is the one with
-    nothing constant added. The original answers this line - the quadratic
-    formula's
-    root integrated over its own middle coefficient - with
+    For the root of the quadratic formula integrated over its middle coefficient,
+    Derive answers
 
         b*(SQRT(b^2 - 4*a*c) - b)/(4*a) - c*LN(SQRT(b^2 - 4*a*c) + b)
 
-    where sympy's antiderivative is over `LN(2*b + 2*SQRT(b^2 - 4*a*c))`. The
-    two differ by `c*LN(2)`, which is a constant of integration and no part of
-    the answer. The answer below is the original's, spelling and all.
+    while sympy's answer has `LN(2*b + 2*SQRT(b^2 - 4*a*c))`, differing by the
+    constant `c*LN(2)`. We match Derive exactly.
     """
     answer = simp("INT((SQRT(b^2 - 4*a*c) - b)/(2*a), b)")
     assert answer == "b*(SQRT(b^2 - 4*a*c) - b)/(4*a) - c*LN(SQRT(b^2 - 4*a*c) + b)"
 
 
 def test_a_case_split_over_one_antiderivative_is_no_split():
-    """Sympy splits where its table has two forms for one function.
+    """Sympy splits cases where its table has two forms of one function.
 
-    Both of these come back as an `ATAN` where the parameter is positive and a
-    pair of logarithms elsewhere, and the two cases are the same function up to
-    a constant - so the split says nothing, and the original prints the `ATAN`
-    for every parameter. Its answers: `ATAN(x/SQRT(a))/SQRT(a)` and
-    `x - SQRT(a)*ATAN(x/SQRT(a))`.
+    Both come back as an `ATAN` for positive parameter and a pair of logarithms
+    otherwise. The cases differ only by a constant, so the split is pointless, and
+    Derive prints the `ATAN` for every parameter.
     """
     assert simp("INT(1/(x^2 + a), x)") == "ATAN(x/SQRT(a))/SQRT(a)"
     assert simp("INT(x^2/(x^2 + a), x)") == "x - SQRT(a)*ATAN(x/SQRT(a))"
 
 
 def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
-    """Derive prints no inverse hyperbolic in an antiderivative.
+    """Derive prints no inverse hyperbolics in an antiderivative.
 
-    It writes each one as the logarithm it is, `ASINH(x)` authored on its own
-    coming back `LN(SQRT(x^2 + 1) + x)`. The cases of this integral are an
-    `ASINH` where `a` is nonzero and that same logarithm elsewhere, and the arc
-    is the shorter of the two; the original answers with the logarithm, and so
-    does this.
+    It writes them as logarithms, e.g. `ASINH(x)` simplifies to
+    `LN(SQRT(x^2 + 1) + x)`. Sympy's cases here are an `ASINH` for nonzero `a` and the
+    logarithm otherwise. The `ASINH` is shorter, but we answer with the logarithm, as
+    Derive does.
     """
     assert simp("INT(SQRT(x^2 + a^2), x)") == (
         "a^2*LN(SQRT(x^2 + a^2) + x)/2 + x*SQRT(x^2 + a^2)/2"
@@ -559,11 +543,10 @@ def test_an_inverse_hyperbolic_does_not_win_a_split_by_being_shorter():
 def test_an_antiderivative_is_continuous_in_its_parameters(text, expected):
     """Sympy splits `INT(x^n, x)` into `x^(n + 1)/(n + 1)` and `LN(x)` at `n = -1`.
 
-    The original prints `(x^(n + 1) - 1)/(n + 1)` with no split: the constant of
-    integration is chosen so that the formula has `LN(x)` as its limit, and then
-    it is an antiderivative for every `n`. The integrand is analytic in `n`, so the
-    integral from a fixed point is too, and the pole in sympy's formula was in its
-    constant all along. Every answer here is the original's, spelling and all.
+    Derive prints `(x^(n + 1) - 1)/(n + 1)`, choosing the constant so that the limit
+    at `n = -1` is `LN(x)`, which makes it valid for every `n`. The integrand is
+    analytic in `n`, so the integral from a fixed point is too; the pole in sympy's
+    formula was only in the constant. The answers match Derive exactly.
     """
     assert simp(text) == expected
 
@@ -577,14 +560,13 @@ def test_an_antiderivative_is_continuous_in_its_parameters(text, expected):
 def test_the_constant_is_chosen_for_every_parameter_not_only_the_exponential(
     text, expected
 ):
-    """The original chooses that constant where its tables happen to.
+    """Derive chooses such a constant only where its tables happen to.
 
-    Its `INT(SINH(a*x), x)` carries the `-1/a`, because it goes through
-    `#e^(a*x)`, and its `INT(SIN(a*x), x)` is `-COS(a*x)/a`, undefined at `a = 0`
-    for no reason the integral knows of. The same rule is applied to every
-    parameter here, so these differ from the original's answers by a constant,
-    and hold where the original's do not: `(1 - COS(a*x))/a` is `0` at `a = 0`,
-    which is the integral of `SIN(0)`.
+    Its `INT(SINH(a*x), x)` has the `-1/a` because it goes through `#e^(a*x)`, but
+    its `INT(SIN(a*x), x)` is `-COS(a*x)/a`, needlessly undefined at `a = 0`. We apply
+    the rule to every parameter, so our answers differ from Derive's by a constant and
+    also hold where Derive's don't: `(1 - COS(a*x))/a` is `0` at `a = 0`, the integral
+    of `SIN(0)`.
     """
     assert simp(text) == expected
 
@@ -592,21 +574,20 @@ def test_the_constant_is_chosen_for_every_parameter_not_only_the_exponential(
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # Continuous at `n = -1`, where the limit is `LN(x)^2/2`: the pole at
-        # `(n + 1)^2` is in the constant.
+        # Continuous at `n = -1`, where the limit is `LN(x)^2/2`; the pole at
+        # `(n + 1)^2` is only in the constant.
         (
             "INT(x^n*LN(x), x)",
             "(x^(n + 1)*(n + 1)*LN(x) - x^(n + 1) + 1)/(n^2 + 2*n + 1)",
         ),
-        # An incomplete gamma function, which the notation has no name for.
+        # An incomplete gamma function, which the notation can't express.
         ("INT(x^n*#e^x, x)", "INT(x^n*#e^x, x)"),
     ],
 )
 def test_a_parametric_antiderivative_is_the_generic_case(text, expected):
-    """Sympy splits these on parameters that make the generic formula fail: `a^2 +
-    b^2 = 0`, `a = b`, `n = -1`. Such values are a choice of measure zero, and the
-    generic case is the antiderivative printed, continuous where a constant makes
-    it so."""
+    """Sympy splits these on parameter values where the generic formula fails, such
+    as `a^2 + b^2 = 0`, `a = b`, or `n = -1`. Those are measure-zero cases, so we
+    print the generic case, made continuous by the choice of constant where possible."""
     assert simp(text) == expected
 
 
@@ -615,17 +596,16 @@ def test_a_parametric_antiderivative_is_the_generic_case(text, expected):
     [
         # The integrand itself is singular at `a = 0`.
         ("INT(1/(a*x), x)", "LN(x)/a"),
-        # A branch point rather than a pole; nothing is a Laurent series in it.
+        # A branch point rather than a pole, with no Laurent series.
         ("INT(1/(x^2 + a^2), x)", "ATAN(x/a)/a"),
         ("INT(x/(a^2 + b^2*x^4), x)", "ATAN(b*x^2/a)/(2*a*b)"),
     ],
 )
 def test_a_pole_the_integrand_owns_is_left_in_the_antiderivative(text, expected):
-    """Only a constant of integration may be taken out.
+    """Only a constant of integration may be removed.
 
-    The principal part of `LN(x)/a` at `a = 0` is `LN(x)/a` itself, which is no
-    constant, and `ATAN(x/a)` has no Laurent expansion at all; the answer is what
-    it was in both cases.
+    The principal part of `LN(x)/a` at `a = 0` is `LN(x)/a` itself, which isn't a
+    constant, and `ATAN(x/a)` has no Laurent expansion, so both answers are unchanged.
     """
     assert simp(text) == expected
 
@@ -639,9 +619,9 @@ def test_a_pole_the_integrand_owns_is_left_in_the_antiderivative(text, expected)
     ],
 )
 def test_an_antiderivative_is_continuous_where_the_integrand_is_regular(text, expected):
-    """The logarithm beside a `CI` takes its imaginary part on the other side of zero
-    from it where `a` is negative, and `LN(x)/2 - CI(2*a*x)/2` jumps there; over the
-    argument of the `CI` the two take it on the same side."""
+    """For negative `a`, `LN(x)` and `CI(2*a*x)` pick up their imaginary parts on
+    opposite sides of zero, so `LN(x)/2 - CI(2*a*x)/2` jumps there. Taking the
+    logarithm of the `CI`'s argument keeps them on the same side."""
     assert simp(text) == expected
 
 
@@ -671,17 +651,15 @@ def test_a_trigonometric_antiderivative_is_continuous_where_the_tangent_jumps(
 
 
 def test_an_antiderivative_is_written_in_radicals_where_the_roots_are_known():
-    """The sum over the roots is written out wherever the roots can be.
+    """The sum over the roots is written out whenever the roots can be found.
 
-    Each conjugate pair of them is a logarithm and an arctangent, and a real one
-    a logarithm, which is how Derive writes all three of these. Sympy 1.14 loses
-    its way on the first: the two pairs whose coordinates carry a cube root fall
-    out of its real-form conversion without a word, and `1/(x^6 + 16)` comes back
-    as the one arctangent in `2^(1/3)*x/2` alone - a third of the answer.
-    `engine.rational` is what makes the answer whole, and what finds the roots of
-    the quintic, which sympy's own conversion could not and so left as a
-    `ROOT_SUM`. The seventh roots of unity are cosines and sines of `pi/7`,
-    and those are what the answer to the last is written in.
+    Each conjugate pair gives a logarithm and an arctangent, and each real root a
+    logarithm, as Derive writes all three. Sympy 1.14 silently drops the two pairs
+    with cube roots in their coordinates from its real-form conversion, returning
+    only the arctangent in `2^(1/3)*x/2`, a third of the answer, for `1/(x^6 + 16)`.
+    `engine.rational` produces the full answer, and also finds the quintic's roots,
+    which sympy left as a `ROOT_SUM`. The last answer is written in cosines and sines
+    of `pi/7`, the seventh roots of unity.
     """
     assert simp("INT(1/(x^6 + 16), x)") == (
         "2^(2/3)*ATAN(2^(1/3)*x/2)/48 + 2^(2/3)*ATAN(2^(1/3)*x - SQRT(3))/96 "
@@ -710,11 +688,11 @@ def test_an_antiderivative_is_written_in_radicals_where_the_roots_are_known():
 
 
 def test_an_antiderivative_pairs_roots_whose_radicals_are_written_apart():
-    """The roots of `16777216*t^8 + 1` come back each in a radical form of its own,
-    and no root's conjugate is written as the conjugate of its expression: the pairs
-    are found by value, and each is written over the shorter root of the two. Left a
-    `ROOT_SUM`, the integral between limits had no antiderivative to be taken at the
-    ends, and fell to sympy, which loses the roots and answers 0 between 0 and 1.
+    """The roots of `16777216*t^8 + 1` each come back in a different radical form, so
+    no root's conjugate is written as the conjugate of its expression. Pairs are found
+    by numeric value, and each is written using the shorter of its two roots. Left as
+    a `ROOT_SUM`, the definite integral would fall to sympy, which loses roots and
+    answers 0 from 0 to 1.
     """
     assert simp("INT(1/(x^8 + 1), x)") == (
         "-SQRT(2 - SQRT(2))*ATAN(-2*x/SQRT(2 - SQRT(2)) + SQRT(2) + 1)/8 "
@@ -728,8 +706,8 @@ def test_an_antiderivative_pairs_roots_whose_radicals_are_written_apart():
     )
     between = to_sympy(parse_expression(simp("INT(1/(x^8 + 1), x, 0, 1)"), ParseState()).node)
     assert abs(float(between.evalf(30)) - 0.924651705775538) < 1e-12
-    # Over the tenth roots of unity, of which sympy kept only the pair on the
-    # imaginary axis, and answered `pi/10`.
+    # Over the tenth roots of unity, sympy kept only the pair on the imaginary axis and
+    # answered `pi/10`.
     assert simp("INT(1/(x^10 + 1), x, 0, inf)") == "SQRT(5)*pi/10 + pi/10"
 
 
@@ -744,9 +722,8 @@ def test_an_integral_of_a_rational_function_converging_at_infinity_is_finite(
     n, expected
 ):
     """The logarithms in the antiderivative of `1/(x^n + 1)` grow as `LN(x)` with
-    coefficients that add up to nothing only by identities of the cosines of multiples
-    of `pi/n`, and the antiderivative's limit at `inf`, taken as it stands, is `inf`.
-    The integral is `pi/(n*SIN(pi/n))`."""
+    coefficients that sum to zero only via identities of cosines of multiples of
+    `pi/n`, so the naive limit at `inf` is `inf`. The integral is `pi/(n*SIN(pi/n))`."""
     answer = simp(f"INT(1/(x^{n} + 1), x, 0, inf)")
     assert answer == expected
     value = to_sympy(parse_expression(answer, ParseState()).node)
@@ -764,15 +741,16 @@ def test_an_integral_of_a_rational_function_converging_at_infinity_is_finite(
 def test_an_integral_of_a_rational_function_up_to_its_own_variable_is_valued(
     text, expected
 ):
-    """An end written in the variable of integration is the antiderivative taken
-    there: the variable integrated over is another than the one the end is in."""
+    """A limit containing the integration variable evaluates the antiderivative there;
+    the bound variable is distinct from the one in the limit."""
     assert simp(text) == expected
 
 
 def _summed_over_numeric_roots(answer: str) -> complex:
-    """The answer's value, each `ROOT_SUM` in it summed over its polynomial's roots
-    found numerically. Sympy's own `RootSum.doit` writes the roots of a quartic by
-    the formula and takes the logarithms of them on the wrong branch."""
+    """Evaluate the answer, summing each `ROOT_SUM` over numerically found roots.
+
+    Sympy's `RootSum.doit` uses the quartic formula and takes the logarithms on the
+    wrong branch."""
     value = to_sympy(parse_expression(answer, ParseState()).node)
     value = value.replace(
         lambda e: isinstance(e, sp.RootSum),
@@ -798,19 +776,19 @@ def _summed_over_numeric_roots(answer: str) -> complex:
             "t*LN(2061*t^3/64 - 687*t^2/64 + 391*t/64 + 27/64))",
             0.835877591843161,
         ),
-        # At `-inf` each logarithm of the sum tends to one of `LN(-1)`, on one side of
-        # the cut or the other, and the integral stands.
+        # At `-inf` each logarithm tends to `LN(-1)` from one side of the cut or the
+        # other, so the integral stays.
         ("INT(1/(x^4 + x + 1), x, -inf, inf)", "INT(1/(x^4 + x + 1), x, -inf, inf)", None),
     ],
 )
 def test_an_integral_of_a_rational_function_over_a_root_sum_is_taken_at_its_ends(
     text, expected, value
 ):
-    """The antiderivative over roots that are not all had is a `ROOT_SUM`, of which
-    sympy takes no limit. At a finite end it is continuous and is taken at its value,
-    and at `inf` each of its logarithms, of the variable less a root, tends to
-    `LN(1)`. Sympy is not asked instead: it searched for minutes for the real roots of
-    the resolvent of `1/(x^5 + x + 1)`."""
+    """When not all roots are found, the antiderivative is a `ROOT_SUM`, which sympy
+    can't take limits of. It's continuous, so at a finite limit it's simply evaluated,
+    and at `inf` each logarithm (of the variable minus a root) tends to `LN(1)`. Sympy
+    isn't used instead because it searched for minutes for the real roots of the
+    resolvent of `1/(x^5 + x + 1)`."""
     answer = simp(text)
     assert answer == expected
     if value is not None:
@@ -818,17 +796,15 @@ def test_an_integral_of_a_rational_function_over_a_root_sum_is_taken_at_its_ends
 
 
 def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum():
-    """The logarithmic part of these is a sum over the roots of a polynomial.
+    """The logarithmic part is a sum over the roots of a polynomial, `ROOT_SUM(p, t, u)`.
 
-    `ROOT_SUM(p, t, u)` is what the notation calls that, and the answer is the
-    rational part plus one. What it must never be is the rational part alone:
-    `1/(x*(x^4 + x + 1))` does not integrate to `LN(x)`, and an answer that
-    quietly loses most of itself is worse than one that cannot be read.
+    The answer must never drop it and keep only the rest: `1/(x*(x^4 + x + 1))`
+    doesn't integrate to `LN(x)`, and a silently incomplete answer is worse than an
+    unreadable one.
 
-    The polynomial summed over is the resolvent sympy builds and not the
-    denominator it came from, which is why the coefficients are not the
-    denominator's: the roots of one are the roots of the other transformed,
-    and the summand is transformed to match.
+    The polynomial is sympy's resolvent rather than the denominator, so its
+    coefficients differ; its roots are transformed roots of the denominator, and the
+    summand is transformed to match.
     """
     assert simp("INT(1/(x*(x^4 + x + 1)), x)") == (
         "LN(x) + ROOT_SUM(229*t^4 + 229*t^3 + 96*t^2 + 16*t + 1, t, "
@@ -838,11 +814,11 @@ def test_an_antiderivative_over_a_denominator_that_does_not_factor_keeps_its_sum
 
 
 def test_an_antiderivative_over_cardano_roots_keeps_its_sum_and_comes_back_at_once():
-    """A cubic with one real root has its roots written by Cardano's formula, in cube
-    roots of irrational numbers, and an antiderivative written over them took minutes
-    of sympy's arithmetic in such numbers, for an answer pages long. The sum over the
-    cubic's roots stands, and where the polynomial summed over factors, as it does for
-    `1/(x^5 + x + 1)`, the quadratic factor's pair is written out all the same."""
+    """The roots of a cubic with one real root are written by Cardano's formula, in
+    cube roots of irrational numbers. Writing the antiderivative over them took
+    minutes of sympy arithmetic and gave a pages-long answer, so the sum over the
+    cubic's roots stays. When the polynomial factors, as for `1/(x^5 + x + 1)`, the
+    quadratic factor's pair is still written out."""
     assert simp("INT(1/(x^3 - x^2 + 1), x)") == (
         "ROOT_SUM(23*t^3 + t - 1, t, t*LN(x + 46*t^2/25 + 69*t/25 - 7/25))"
     )
@@ -854,13 +830,11 @@ def test_an_antiderivative_over_cardano_roots_keeps_its_sum_and_comes_back_at_on
 
 
 def test_a_sum_over_the_roots_of_a_polynomial_is_an_expression_and_not_a_string():
-    """The head is live: it differentiates, and it settles.
+    """`ROOT_SUM` is a real expression that can be differentiated and simplified.
 
-    A quartic that does not factor has an antiderivative that is nothing but
-    such a sum, so this is the head on its own rather than beside a rational
-    part. Differentiating it back to the integrand is what says it is an
-    expression and not a decorative one - a `Kind.STRING` would print the same
-    and do none of it.
+    A quartic that doesn't factor has an antiderivative that is just such a sum.
+    Differentiating it back to the integrand shows it's a genuine expression; a
+    `Kind.STRING` would print the same but couldn't be computed with.
     """
     answer = simplify(parse("INT(1/(x^4 + x + 1), x)"), Context())
     assert answer.node.kind is not Kind.STRING
@@ -869,15 +843,15 @@ def test_a_sum_over_the_roots_of_a_polynomial_is_an_expression_and_not_a_string(
         "t*LN(x + 2061*t^3/64 - 687*t^2/64 + 391*t/64 + 27/64))"
     )
     assert simp(f"DIF({answer.text}, x)") == "1/(x^4 + x + 1)"
-    # And it is a fixed point: read back, it is the answer it was written from.
+    # It's also a fixed point of simplification.
     assert simp(answer.text) == answer.text
 
 
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # `LN(SIN(x) - 1)` is complex for every real `x`; `LN(1 - SIN(x))` is the
-        # same up to a constant, and real wherever the integral is.
+        # `LN(SIN(x) - 1)` is complex for every real `x`; `LN(1 - SIN(x))` differs by a
+        # constant and is real wherever the integral is.
         ("INT(SEC(x), x)", "LN(SIN(x) + 1)/2 - LN(1 - SIN(x))/2"),
         ("INT(CSC(x), x)", "LN(1 - COS(x))/2 - LN(COS(x) + 1)/2"),
         (
@@ -896,36 +870,34 @@ def test_an_antiderivative_takes_no_logarithm_of_a_negative_quantity(text, expec
     [
         ("INT(EXP(x^2), x)", "SQRT(pi)*ERFI(x)/2"),
         ("DIF(erfi(x), x)", "2*#e^(x^2)/SQRT(pi)"),
-        # `GAMMA(x)` is written as the factorial it is, `(x - 1)!`.
+        # `GAMMA(x)` is written as the factorial `(x - 1)!`.
         ("DIF(GAMMA(x), x)", "(x - 1)!*DIGAMMA(x)"),
         ("DIF(LAMBERTW(x), x)", "LAMBERTW(x)/(x*(LAMBERTW(x) + 1))"),
         ("INT(SIN(x)/x, x)", "SI(x)"),
-        # The product is written as the sum it is, the sine of the double angle.
+        # The product is rewritten as the sine of the double angle.
         ("INT(SIN(a*x)*COS(a*x)/x, x)", "SI(2*a*x)/2"),
         ("INT(EXP(x)/x, x)", "EI(x)"),
-        # Sympy's answer is the polylogarithm a full turn round the origin away, and
-        # the principal one is an antiderivative too.
+        # Sympy's answer is on another branch, a full turn around the origin; the
+        # principal polylogarithm is also an antiderivative.
         ("INT(LN(1 - x)/x, x)", "-POLYLOG(2, x)"),
         ("DIF(-POLYLOG(2, x), x)", "LN(1 - x)/x"),
     ],
     ids=str,
 )
 def test_a_special_function_an_elementary_operation_produces_reads_back(text, expected):
-    """The special functions rederive names beyond Derive's own are the ones its own
-    operations reach from elementary input, and each answer is a fixed point."""
+    """The special functions we support beyond Derive's are those our operations
+    produce from elementary input, and each answer is a fixed point."""
     assert simp(text) == expected
     assert simp(expected) == expected
 
 
 def test_an_integral_answered_by_a_special_function_reads_back_as_that_function():
-    """An answer is only as good as the name it is written under.
+    """An answer must be printed under a name that reads back as the same function.
 
-    A name something else answers to reads back as a different function from the
-    one computed, with nothing to say so - which is what simplifying the answer
-    again is here to catch. `CHI` is Derive's chi-square distribution long before
-    it is anybody's cosh-integral, and the logarithmic integral sympy answers
-    `1/LN(x)` with has no name of its own: it is the exponential integral of the
-    logarithm, and is written as that.
+    A name that means something else would silently read back as a different
+    function, which simplifying the answer again catches. `CHI` is Derive's
+    chi-square distribution, not the cosh-integral, and sympy's logarithmic integral
+    for `1/LN(x)` has no name of its own, so it's written as `EI(LN(x))`.
     """
     for text, answer in (
         ("INT(1/LN(x), x)", "EI(LN(x))"),
@@ -957,16 +929,16 @@ def test_an_integral_answered_by_a_special_function_reads_back_as_that_function(
 def test_a_sympy_head_without_a_name_is_written_in_functions_that_have_one(
     text, expected
 ):
-    """Sympy's Fresnel integrals are error functions of complex arguments, so an
-    answer in them is written in those."""
+    """Sympy's Fresnel integrals are written as error functions of complex
+    arguments."""
     assert simp(text) == expected
 
 
 def test_an_answer_written_over_the_error_functions_differentiates_back():
-    """The Fresnel integral written over `ERF` is the same antiderivative.
+    """The Fresnel integral written with `ERF` is still an antiderivative.
 
-    Simplify does not take the derivative's complex exponentials back to a sine, so
-    the derivative is compared with the integrand at a point.
+    Simplify doesn't turn the derivative's complex exponentials back into a sine, so
+    the derivative is compared with the integrand numerically at a point.
     """
     derivative = to_sympy(parse(simp(f"DIF({simp('INT(SIN(x^2), x)')}, x)")))
     x = next(iter(derivative.free_symbols))
@@ -982,7 +954,7 @@ def test_an_answer_written_over_the_error_functions_differentiates_back():
         ("INT(LN(x/a), x)", "x*LN(x/a) - x"),
         ("INT(x*LN(a*x), x)", "x^2*LN(a*x)/2 - x^2/4"),
         ("INT(LN(2*x), x)", "x*LN(x) + (LN(2) - 1)*x"),
-        # A logarithm that is a term of its own still sheds its constant factor.
+        # A standalone logarithm term still drops its constant factor.
         ("INT(1/(2*x + 2), x)", "LN(x + 1)/2"),
     ],
 )
@@ -993,9 +965,9 @@ def test_a_constant_inside_a_logarithm_is_shed_only_by_a_term(text, expected):
 # -- definite integrals ------------------------------------------------------------------
 
 SINGULAR_INTEGRALS = [
-    # An integrand of one sign blowing up at least as fast as the reciprocal of the
-    # distance makes the integral diverge to that sign's infinity, wherever the
-    # singularity is. The antiderivative taken across it gives a finite number.
+    # An integrand of one sign that blows up at least as fast as 1/distance diverges to
+    # that sign's infinity, wherever the singularity is. Naively evaluating the
+    # antiderivative across it would give a finite number.
     ("INT(1/x^2, x, -1, 1)", "inf"),
     ("INT(1/x^4, x, -1, 1)", "inf"),
     ("INT(1/ABS(x), x, -1, 1)", "inf"),
@@ -1005,11 +977,11 @@ SINGULAR_INTEGRALS = [
     ("INT(#e^(1/x), x, -1, 1)", "inf"),
     ("INT(1/x^2, x, -inf, inf)", "inf"),
     ("INT(1/x^2, x, 1, -1)", "-inf"),
-    # At an end, too, and without the logarithm's imaginary part.
+    # Likewise at an endpoint, without the logarithm's imaginary part.
     ("INT(1/x, x, -1, 0)", "-inf"),
     ("INT(LN(x)/x, x, 0, 1)", "-inf"),
-    # Diverging to both infinities, the integral has no value: the sum of its
-    # parts is `inf - inf`. Not the principal value.
+    # Diverging to both infinities gives `inf - inf`, which has no value. The principal
+    # value isn't used.
     ("INT(1/x, x, -1, 1)", "?"),
     ("INT(1/x, x, -1, 2)", "?"),
     ("INT(1/x^3, x, -1, 2)", "?"),
@@ -1024,12 +996,13 @@ SINGULAR_INTEGRALS = [
     ("INT(1/(x - 1)^(2/3), x, 0, 2)", "3/2 - 3*SQRT(3)*#i/2"),
     ("INT(LN(x), x, 0, 1)", "-1"),
     ("INT(SIN(x)/x, x, -1, 1)", "2*SI(1)"),
-    # Integrated on each side of the singularity, where the antiderivative jumps.
+    # Integrated separately on each side of the singularity, where the antiderivative
+    # jumps.
     ("INT(#e^(-1/x^2)/x^2, x, -1, 1)", "SQRT(pi) - SQRT(pi)*ERF(1)"),
-    # A divergence of unknown sign is worked out on each side of the parameter's.
+    # A divergence of unknown sign is split on the parameter's sign.
     ("INT(a/x^2, x, -1, 1)", "IF(a > 0, inf, IF(a < 0, -inf, 0))"),
     ("INT(a/x, x, -1, 1)", "IF(a /= 0, ?, 0)"),
-    # Undecided at zero, where the antiderivative's limit is not the integral's.
+    # Undecided at zero, where the antiderivative's limit isn't the integral's.
     ("INT(1/(x*LN(x)), x, 0, 1/2)", "INT(1/(x*LN(x)), x, 0, 1/2)"),
 ]
 
@@ -1044,13 +1017,12 @@ PARAMETRIC_INTEGRALS = [
     ("INT(1/(x^2 + a^2), x, 0, inf)", "pi/(2*ABS(a))"),
     ("INT(a/(x^2 + a^2), x, 0, inf)", "pi*SIGN(a)/2"),
     ("INT(1/(x^2 + a), x, 0, inf)", "IF(a > 0, pi/(2*SQRT(a)), IF(a < 0, ?, inf))"),
-    # A pole that moves with the parameter is in the interval for some values of
-    # it, and there the integral diverges; the antiderivative's difference holds
-    # only for the others.
+    # A pole that moves with the parameter lies in the interval for some values, where
+    # the integral diverges; the antiderivative's difference holds only elsewhere.
     ("INT(1/(x - a)^2, x, 0, 2)", "IF(0 <= a <= 2, inf, -2/(a*(2 - a)))"),
     ("INT(1/(x + a)^2, x, 0, inf)", "IF(a <= 0, inf, 1/a)"),
     ("INT(1/(x^2 - a^2), x, 0, inf)", "IF(a = 0, inf, ?)"),
-    # Poles real only where `SIN(a)` is zero, where the answer is not defined either.
+    # The poles are real only where `SIN(a)` is zero, where the answer is undefined too.
     ("INT(1/(x^2 + 2*x*COS(a) + 1), x, -inf, inf)", "pi/ABS(SIN(a))"),
     (
         "INT(1/(x - a), x, 0, 1)",
@@ -1061,26 +1033,24 @@ PARAMETRIC_INTEGRALS = [
         "INT(x/(x - a), x, 0, 1)",
         "IF(a = 0, 1, IF(a = 1, -inf, IF(0 < a < 1, ?, -a*LN(-a) + a*LN(1 - a) + 1)))",
     ),
-    # Diverging at the singular end to the same infinity whichever side of it the
-    # other end is on, or to opposite ones, where the integral stands.
+    # Diverging at the singular end to the same infinity whichever side the other end
+    # is on gives that infinity; opposite infinities leave the integral unevaluated.
     ("INT(COS(a*x)/x, x, 0, alpha)", "inf"),
     ("INT(1/x^3, x, alpha, 0)", "-inf"),
     ("INT(1/x^2, x, 0, alpha)", "INT(1/x^2, x, 0, alpha)"),
-    # A power of zero, which is 0 or infinite by its exponent's sign.
+    # A power of zero, which is 0 or infinite depending on the exponent's sign.
     ("INT(x^n, x, 0, 1)", "IF(n > -1, 1/(n + 1), inf)"),
     ("INT(1/x^n, x, 0, 1)", "IF(n < 1, 1/(1 - n), inf)"),
-    # Convergent for one sign of the parameter, divergent to one infinity
-    # otherwise.
+    # Convergent for one sign of the parameter, divergent to one infinity otherwise.
     ("INT(#e^(-a*x), x, 0, inf)", "IF(a > 0, 1/a, inf)"),
     ("INT(#e^(a*x), x, 0, inf)", "IF(a < 0, -1/a, inf)"),
     ("INT(#e^(-a*x^2), x, -inf, inf)", "IF(a > 0, SQRT(pi)/SQRT(a), inf)"),
     ("INT(x^n*LN(x), x, 0, 1)", "IF(n > -1, -1/(n + 1)^2, -inf)"),
     ("INT(#e^(-x)*x^n, x, 0, inf)", "IF(n > -1, n!, inf)"),
-    # One expression for every sign.
+    # One expression covering every sign.
     ("INT(SIN(a*x)/x, x, 0, inf)", "pi*SIGN(a)/2"),
     ("INT(COS(a*x)*#e^(-x^2), x, -inf, inf)", "SQRT(pi)*#e^(-a^2/4)"),
-    # Divergent by oscillation for a nonpositive `a`, to no sign, which stays
-    # standing; the convergence condition is the sign of `a`.
+    # For nonpositive `a` it diverges by oscillation and stays unevaluated.
     (
         "INT(#e^(-a*x)*SIN(x), x, 0, inf)",
         "IF(a > 0, 1/(a^2 + 1), INT(SIN(x)*#e^(-a*x), x, 0, inf))",
@@ -1099,17 +1069,17 @@ def test_a_parametric_integral_is_worked_out_on_each_side_of_a_sign(text, expect
         ("INT(LN(1 + x)/(x^2 + 1), x, 0, 1)", "INT(LN(x + 1)/(x^2 + 1), x, 0, 1)"),
         ("INT(LN(1 + x)/(x^2 + 1), x, 1, 2)", "INT(LN(x + 1)/(x^2 + 1), x, 1, 2)"),
         ("INT(LN(x)*LN(1 - x), x, 0, 1)", "INT(LN(x)*LN(1 - x), x, 0, 1)"),
-        # The pieces of a sum need not converge where the sum does.
+        # The terms of a sum needn't converge where the sum does.
         ("INT((x^t - x^s)/LN(x), x, 0, 1)", "-INT((x^s - x^t)/LN(x), x, 0, 1)"),
-        # What the methods do find is still found.
+        # Integrals the methods can do are still found.
         ("INT(LN(1 + x)/x, x, 0, 1)", "pi^2/12"),
         ("INT(LN(x)/(x^2 + 1), x, 0, inf)", "0"),
     ],
 )
 def test_a_definite_integral_with_no_antiderivative_in_reach_stands(text, expected):
-    """Sympy values these by an antiderivative over a positive variable, and over one
-    its manual rules search for minutes for an antiderivative there is none of. Each
-    stands within a few seconds, whole."""
+    """Sympy evaluates these via an antiderivative in a positive variable, for which
+    its manual rules search for minutes without finding one. Each must come back
+    unevaluated within a few seconds."""
     assert simp(text) == expected
 
 
@@ -1148,14 +1118,13 @@ def test_an_antiderivative_is_proved_continuous_on_an_interval(
     expression, low, high, proved
 ):
     """A logarithm whose argument may be zero, a pole, an arctangent of something that
-    blows up and a polylogarithm on its cut are not proved continuous; an argument
-    whose sign is settled for every value of the parameter is."""
+    blows up, and a polylogarithm on its cut are not proved continuous. An argument
+    whose sign is fixed for every parameter value is."""
     assert unbroken(expression, _T, sp.S(low), sp.S(high)) is proved
 
 
 STEP_INTEGRALS = [
-    # Split where the step jumps, and each stretch integrated with the step
-    # constant.
+    # Split at the jumps, integrating each piece with the step held constant.
     ("INT(FLOOR(x), x, 0, 3)", "3"),
     ("INT(FLOOR(x)^2, x, 0, 3)", "5"),
     ("INT(x*FLOOR(x), x, 0, 2)", "3/2"),
@@ -1168,14 +1137,13 @@ STEP_INTEGRALS = [
     ("INT(FLOOR(x)*SIGN(x - 3/2), x, 0, 3)", "2"),
     ("INT(FLOOR(x)/x, x, 1, 3)", "LN(9/2)"),
     ("INT(a*FLOOR(x), x, 0, 3)", "3*a"),
-    # A sign of something other than a polynomial, whose antiderivative holds
-    # only near the origin.
+    # A sign of a non-polynomial, whose antiderivative holds only near the origin.
     ("INT(ABS(SIN(x)), x, 0, 10*pi)", "20"),
     ("INT(ABS(SIN(x)), x, -10, 10)", "2*COS(10) + 14"),
     ("INT(SIGN(SIN(x)), x, 0, 3*pi)", "pi"),
     ("INT(SIGN(COS(x)), x, 0, 5)", "5 - 2*pi"),
     ("INT(ABS(LN(x)), x, 1/2, 2)", "3*LN(2)/2 - 1/2"),
-    # Jumps at no number to split at.
+    # The jumps can't be located numerically.
     ("INT(FLOOR(x), x, 0, a)", "INT(FLOOR(x), x, 0, a)"),
 ]
 
@@ -1186,8 +1154,8 @@ def test_a_step_function_is_integrated_between_its_jumps(text, expected):
 
 
 STEP_ANTIDERIVATIVES = [
-    # A sign of a periodic function jumps forever, and the antiderivative counts the
-    # jumps with a floor: each arch of `ABS(SIN(x))` adds 2.
+    # A sign of a periodic function jumps forever, so the antiderivative counts jumps
+    # with a floor: each arch of `ABS(SIN(x))` adds 2.
     ("INT(ABS(SIN(x)), x)", "2*FLOOR(x/pi) - SIGN(SIN(x))*COS(x)"),
     ("INT(ABS(COS(x)), x)", "SIGN(COS(x))*SIN(x) + 2*FLOOR(x/pi + 1/2)"),
     ("INT(SIGN(SIN(x)), x)", "(-pi*FLOOR(x/pi) + x - pi/2)*SIGN(SIN(x))"),
@@ -1200,12 +1168,12 @@ STEP_ANTIDERIVATIVES = [
         "INT(ABS(SIN(x))^3, x)",
         "SIGN(SIN(x))*COS(x)^3/3 - SIGN(SIN(x))*COS(x) + 4*FLOOR(x/pi)/3",
     ),
-    # What each arch adds grows with it, by a polynomial in the arch's number.
+    # Each arch's contribution grows polynomially with the arch's number.
     (
         "INT(x*ABS(SIN(x)), x)",
         "pi*FLOOR(x/pi)^2 + ABS(SIN(x)) - x*SIGN(SIN(x))*COS(x) + pi*FLOOR(x/pi)",
     ),
-    # A floor is a constant between integers, and the constants add up.
+    # A floor is constant between integers, and the constants add up.
     ("INT(FLOOR(x), x)", "-FLOOR(x)^2/2 + x*FLOOR(x) - FLOOR(x)/2"),
     ("INT(MOD(x, 1), x)", "FLOOR(x)^2/2 - x*FLOOR(x) + FLOOR(x)/2 + x^2/2"),
     ("INT(FLOOR(-x), x)", "FLOOR(-x)^2/2 + x*FLOOR(-x) + FLOOR(-x)/2"),
@@ -1213,9 +1181,8 @@ STEP_ANTIDERIVATIVES = [
         "INT(x*FLOOR(x), x)",
         "-FLOOR(x)^3/6 - FLOOR(x)^2/4 + x^2*FLOOR(x)/2 - FLOOR(x)/12",
     ),
-    # Jumps not equally spaced, jumps not periodic, and an arch that grows
-    # geometrically have no such answer here; a split near the origin would be
-    # wrong away from it.
+    # Unequally spaced jumps, non-periodic jumps, and geometrically growing arches get
+    # no answer, since a split near the origin would be wrong away from it.
     ("INT(ABS(SIN(x) - 1/2), x)", "INT(ABS(SIN(x) - 1/2), x)"),
     ("INT(ABS(SIN(x^2)), x)", "INT(ABS(SIN(x^2)), x)"),
     ("INT(#e^x*ABS(SIN(x)), x)", "INT(ABS(SIN(x))*#e^x, x)"),
@@ -1242,8 +1209,8 @@ def test_a_step_function_is_integrated_across_all_its_jumps(text, expected):
 def test_a_step_antiderivative_agrees_with_the_integral_far_from_the_origin(
     integrand, low, high
 ):
-    """The antiderivative's difference is the definite integral, which is worked out
-    stretch by stretch between the jumps."""
+    """The antiderivative's difference equals the definite integral, which is computed
+    piece by piece between the jumps."""
     antiderivative = simp(f"INT({integrand}, x)")
     at = {end: re.sub(r"\bx\b", f"({end})", antiderivative) for end in (low, high)}
     integral = f"INT({integrand}, x, {low}, {high})"
@@ -1251,7 +1218,7 @@ def test_a_step_antiderivative_agrees_with_the_integral_far_from_the_origin(
 
 
 def test_a_real_integral_over_a_positive_parameter_is_real():
-    """Over a `t` declared positive sympy's antiderivative stays off its branch cut
-    and the value is real; undeclared it is `#i*pi` off, and the integral stands."""
+    """With `t` declared positive, sympy's antiderivative stays off its branch cut and
+    the value is real. Undeclared, it's off by `#i*pi` and the integral stays."""
     text = "INT((x^t - 1)/LN(x), x, 0, 1)"
     assert simp(text, declared("t :epsilon Real (0, inf)")) == "LN(t + 1)"

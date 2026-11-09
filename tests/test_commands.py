@@ -1,9 +1,8 @@
-"""The session's engine commands: what Simplify does to the history.
+"""Session engine commands and how they update the history.
 
-The engine's own answers are tested in `test_simplify`. What matters here is
-the wiring: that a line's definitions reach the next command, that the answer
-is appended as an entry like any other, and that simplifying part of an entry
-brings the rest of it along.
+The engine's answers are tested in `test_simplify`. These tests cover the wiring: a
+line's definitions reach the next command, the answer is appended as a normal entry, and
+simplifying part of an entry copies the rest of it along.
 """
 
 import pytest
@@ -50,7 +49,7 @@ async def test_a_typed_expression_is_the_users_own(session):
 async def test_a_label_stands_for_the_entry_it_names(session):
     session.author("2^3")
     assert (await session.simplify("#1 + 1")).text == "9"
-    # Written into an expression rather than named alone, so it is the user's.
+    # Used inside an expression rather than named alone, so the line is the user's.
     assert session.entries[-1].annotation == "Simp(User)"
 
 
@@ -62,8 +61,8 @@ async def test_a_line_that_does_not_parse_appends_nothing(session):
 
 
 async def test_a_special_function_typed_in_lower_case_is_a_call(session):
-    # Character mode reads a run nothing names letter by letter, which would make
-    # this `ERF(i)*1`.
+    # Character mode reads an unknown run of letters one by one, which would make this
+    # `ERF(i)*1`.
     session.author("erfi(1)")
     assert texts(session) == ["ERFI(1)"]
     assert (await session.approx("#1")).text == "1.65042"
@@ -81,8 +80,8 @@ async def test_an_answer_can_be_simplified_again(session):
 
 async def test_a_trailing_equals_equates_the_line_to_its_value(session):
     entry = await session.show_value("2 (8 + 7) / 3^2=")
-    # One entry holding both sides, and the user's own line rather than a step
-    # taken on an earlier entry.
+    # One entry holding both sides, annotated as the user's line rather than a step on
+    # an earlier entry.
     assert texts(session) == ["2*(8 + 7)/3^2 = 10/3"]
     assert entry.annotation == "User"
 
@@ -131,12 +130,11 @@ async def test_a_spliced_answer_is_fenced_where_the_line_needs_it(session):
 
 
 async def test_a_spliced_line_reads_back_as_the_text_it_shows(session):
-    """The new entry's spans index its own text, as an authored line's do."""
+    """The new entry's spans index its own text, like an authored line's."""
     session.author("(8 + 7) (x + 1)")
     part(session, "right")
     answer = await session.simplify("#1")
-    # The fences the line was written with stay, and are drawn as precedence
-    # asks rather than as they were typed.
+    # The typed fences stay in the text but are drawn as precedence requires.
     assert answer.text == "(15)*(x+1)"
     assert answer.layout.lines == ("15·(x + 1)",)
     session.move_right()
@@ -155,7 +153,7 @@ async def test_another_entry_is_simplified_whole(session):
     session.author("x + x")
     session.select_entry(0)
     part(session, "right", "right")
-    # The highlight is in #1, so naming #2 asks for the whole of #2.
+    # The highlight is in #1, so naming #2 means all of #2.
     answer = await session.simplify("#2")
     assert answer.text == "2*x"
     assert answer.annotation == "Simp(#2)"
@@ -184,12 +182,11 @@ async def test_a_function_definition_reaches_the_next_command(session):
 
 
 async def test_a_parameter_is_not_a_variable_the_session_gains(session):
-    """A parameter belongs to the definition and not to the session.
+    """A parameter belongs to its definition, not to the session.
 
-    A name is a function or a variable and not both, so a parameter left behind
-    would change how a later line reads: the scale factor `A(t)` of a metric
-    would silently become `a*t` because some later definition happened to name a
-    parameter `a`.
+    A name is either a function or a variable, so a leftover parameter would change how
+    later lines parse: a metric's scale factor `A(t)` would silently become `a*t` because
+    some later definition had a parameter `a`.
     """
     session.author("A(t) :=")
     session.author("FF(a) := a^2")
@@ -199,7 +196,7 @@ async def test_a_parameter_is_not_a_variable_the_session_gains(session):
 
 
 async def test_an_answer_in_a_function_without_a_body_reads_back(session):
-    """The function the answer is written in is the author's, and is read as theirs."""
+    """An answer containing an author-declared function parses back to itself."""
     session.author("F(x) :=")
     answer = (await session.simplify("DIF(F(x)^2, x)")).text
     assert answer == "2*F(x)*F'(x)"
@@ -220,10 +217,10 @@ async def test_a_parameter_leaves_a_shadowed_domain_in_force(session):
 
 
 async def test_no_parameter_of_a_definition_is_left_behind(session):
-    """Several at once, and one whose body defines a function of its own.
+    """Several parameters at once, and a body that defines a function of its own.
 
-    The Christoffel symbols of general relativity are written `CHR(a, b, c)`,
-    which is where three parameters at once and a later `A(t)` meet.
+    This is the general relativity case: Christoffel symbols `CHR(a, b, c)` alongside a
+    later `A(t)`.
     """
     session.author("CHR(a, b, c) := a + b + c")
     session.author("OUTER(uu) := INNER(vv) := vv + uu")
@@ -234,13 +231,11 @@ async def test_no_parameter_of_a_definition_is_left_behind(session):
 
 
 async def test_a_parameter_names_the_variable_a_sum_ranges_over(session):
-    """A definition is written in as text, index and all.
+    """Arguments are substituted textually, including into a sum's index.
 
-    `PRODUCT(p, x, x0, x - 1)` called with `m` for both `p` and `x` is the
-    product of `m` over `m` from 1 to `m - 1`, which is `(m - 1)!`: the body the
-    first parameter wrote in is caught by the index the third one named, and the
-    limit is read outside the index it names. Derive's own RECUREQN.MTH is
-    written this way and its answers depend on it.
+    `PRODUCT(p, x, x0, x - 1)` with `m` for both `p` and `x` is the product of `m` over
+    `m` from 1 to `m - 1`, i.e. `(m - 1)!`: the substituted body is captured by the
+    index, while the limit is read outside it. Derive's RECUREQN.MTH relies on this.
     """
     session.author("f(p, x, x0) := PRODUCT(p, x, x0, x - 1)")
     session.author("f(m, m, 1)")
@@ -254,11 +249,11 @@ async def test_every_definition_on_a_line_is_recorded(session):
 
 
 async def test_an_assignment_in_a_body_is_made_when_the_function_is_called(session):
-    """A body is a recipe and not a line, which is what ODE1.MTH's `DSOLVE1`
-    needs: it assigns a scratch parameter in its own test and reads the answer
-    back out of it in its branches. Taking the assignment where the definition
-    was written would leave that name standing for the body's own call with the
-    parameters unwritten, and every later use of the function would read it.
+    """Assignments in a function body run at call time, not at definition time.
+
+    ODE1.MTH's `DSOLVE1` needs this: it assigns a scratch parameter in its test and reads
+    it back in its branches. Assigning at definition time would bind the name to the
+    unsubstituted body, and every later call would see that.
     """
     session.author("F(u, a_) := IF(0 = a_ := u^2 - 1, 1, a_, a_)")
     assert session.assignments == {}
@@ -291,9 +286,9 @@ async def test_the_precision_setting_reaches_the_command(session):
 
 # -- Factor ------------------------------------------------------------------
 #
-# The engine's own answers are tested in `test_factor`. What matters here is
-# that Factor reaches the history the way Simplify does, and that the two
-# questions it asks first are answered from the expression it would act on.
+# The engine's answers are tested in `test_factor`. These check that Factor updates the
+# history like Simplify, and that its two preliminary questions are answered from the
+# expression it would act on.
 
 
 async def test_a_factored_answer_is_appended_and_annotated(session):
@@ -312,9 +307,9 @@ async def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("(x^2 - 1) + SIN(z)")
     part(session, "right")
     answer = await session.factor("#1")
-    # The part came out from between fences the line still has, so the answer
-    # goes back between them rather than bringing a second pair. What is drawn
-    # comes from the tree either way, where a fence is a matter of precedence.
+    # The part sat inside fences the line still has, so the answer goes back inside them
+    # without adding a second pair. The drawing comes from the tree, where fences follow
+    # precedence.
     assert answer.text == "((x + 1)*(x - 1))+SIN(z)"
     assert answer.layout.lines == ("(x + 1)·(x - 1) + SIN(z)",)
     assert answer.annotation == "Fctr(#1')"
@@ -355,7 +350,7 @@ async def test_the_variables_on_offer_are_most_main_first(session):
     assert await session.variables("#1") == ("x", "y")
     session.author("b a - c^2")
     assert await session.variables("#2") == ("a", "b", "c")
-    # The order list is x, y, z, and a variable on it outranks one that is not.
+    # x, y, z come first, in that order, ahead of any other variable.
     session.author("z^2 - a^2")
     assert await session.variables("#3") == ("z", "a")
 
@@ -384,8 +379,8 @@ def test_a_number_is_recognised_before_anything_is_asked(session):
         True,
         True,
         True,
-        # A factorial has a number for a value but is not written as one, and
-        # the original asks for an amount for it.
+        # A factorial has a numeric value but isn't written as a number, so the
+        # original asks for an amount.
         False,
         False,
     ]
@@ -402,8 +397,7 @@ async def test_the_answer_is_appended_as_an_expansion(session):
 
 
 async def test_expanding_part_of_an_entry_copies_the_rest_of_it(session):
-    """The manual's own example: expanding only the square inside the product
-    leaves the product standing around it."""
+    """The manual's example: expanding only the square keeps the product around it."""
     session.author("2 x (x - 3)^2")
     part(session, "right", "last_sibling")
     answer = await session.expand("#1")
@@ -439,17 +433,16 @@ def test_a_ratio_is_recognised_before_an_amount_is_asked_for(session):
         True,
         # A power, not a quotient, however it is drawn.
         False,
-        # Its value has a denominator; the expression as written has none, and
-        # the original goes by how it is written.
+        # Its value has a denominator but the written form doesn't, and the original
+        # goes by the written form.
         False,
     ]
 
 
 # -- soLve --------------------------------------------------------------------
 #
-# The engine's own answers are tested in `test_solve`. What matters here is the
-# one thing soLve does that no other command does: it appends any number of
-# entries, none of them included.
+# The engine's answers are tested in `test_solve`. Unlike other commands, soLve appends
+# any number of entries, possibly none.
 
 
 async def test_every_solution_is_an_entry_and_the_last_is_selected(session):
@@ -490,8 +483,8 @@ async def test_a_system_appends_one_entry(session):
 
 
 async def test_solve_names_the_whole_entry_even_where_a_part_is_highlighted(session):
-    """Solving a subexpression gives nothing there is any way to splice back
-    around the rest, so the highlight says nothing about what soLve acts on."""
+    """Solutions of a subexpression can't be spliced back, so soLve ignores the
+    highlight."""
     session.author("(x^2 - 4) = 0")
     part(session, "right")
     answer = await session.solve("#1")
@@ -508,8 +501,8 @@ async def test_the_arbitrary_counter_survives_across_commands(session):
 
 
 async def test_an_authored_arbitrary_value_moves_the_counter_past_itself(session):
-    """A `SOLVE` on the author line mints them too, and reaches the history
-    through a plain Simplify; the counter watches every entry for that."""
+    """A `SOLVE` simplified from the author line also mints arbitrary values, so the
+    counter watches every entry."""
     session.author("SOLVE(z = z, z)")
     assert (await session.simplify("#1")).text == "[z = @1]"
     session.author("x = x")
@@ -540,8 +533,8 @@ async def test_a_line_that_does_not_parse_solves_nothing(session):
 
 
 async def test_the_variables_on_offer_are_the_whole_entrys(session):
-    """Unlike Factor's, which come from the highlighted part: soLve acts on the
-    entry whatever is highlighted, so it has to offer the entry's own."""
+    """Unlike Factor, soLve acts on the whole entry regardless of the highlight, so it
+    offers the whole entry's variables."""
     session.author("(x^2 - 1) + SIN(z)")
     part(session, "right")
     assert await session.solve_variables("#1") == ("x", "z")
@@ -568,15 +561,15 @@ def test_a_system_is_counted_before_anything_is_computed(session):
     session.author("[x + y = 3, x - y = 1]")
     session.author("x^2 - 4 = 0")
     session.author("[[1, 2], [3, 4]]")
-    # An expression in a vector is the equation `u = 0`, as soLve reads it.
+    # soLve reads a bare expression `u` in a vector as `u = 0`.
     session.author("[a - 1, b - 2, a*b = 2]")
     assert [session.equations(f"#{n}") for n in (1, 2, 3, 4)] == [2, 0, 0, 3]
 
 
 # -- approX -------------------------------------------------------------------
 #
-# Simplify with the precision temporarily approximate, and nothing else: the
-# command asks for an expression and no more.
+# Simplify with the precision temporarily set to approximate. The command asks only for
+# an expression.
 
 
 async def test_an_approximated_answer_is_appended_and_annotated(session):
@@ -610,8 +603,8 @@ async def test_the_settings_are_left_where_they_were(session):
 async def test_the_precision_digits_setting_reaches_the_command(session):
     session.author("pi")
     session.settings.assign("PrecisionDigits", 12)
-    # Twelve digits of pi, cut rather than rounded, which is what the
-    # original answers here: `3.14159265358`, not `...359`.
+    # Twelve digits, truncated rather than rounded, as the original does: `3.14159265358`,
+    # not `...359`.
     assert (await session.approx("#1")).text == "3.14159265358"
 
 
@@ -695,8 +688,8 @@ async def test_a_highlighted_part_is_the_operand_and_carries_a_quote(session):
     session.author("SIN(a*x^2) + 5")
     part(session, "right", "down")
     answer = await built(session, "Sin", "#1")
-    # Extraction, not substitution: what is built is the part alone, and the
-    # rest of the entry it came out of is left where it was.
+    # Extraction, not substitution: only the part is built, without the rest of the
+    # entry.
     assert answer.text == "SIN(a*x^2)"
     assert answer.annotation == "SIN(#1')"
 
@@ -761,7 +754,7 @@ async def test_each_head_is_written_as_the_original_writes_it(
 
 
 async def test_nothing_is_computed(session):
-    """The point of the command: a Simplify after it is what takes the answer."""
+    """The command only writes the expression; a later Simplify computes it."""
     session.author("x^2*y")
     await session.calculus("DIF", "Dif", "#1", ("x",))
     assert texts(session) == ["x^2*y", "DIF(x^2*y,x)"]
@@ -770,8 +763,7 @@ async def test_nothing_is_computed(session):
 
 async def test_the_annotation_names_the_expression_and_the_variable(session):
     session.author("x^2*y")
-    # The order is not in it: `DIF(u, x, 3)` is annotated as the first
-    # derivative is.
+    # The order is omitted: `DIF(u, x, 3)` is annotated like the first derivative.
     entry = await session.calculus("DIF", "Dif", "#1", ("x", "3"))
     assert entry.annotation == "Dif(#1,x)"
 
@@ -832,8 +824,8 @@ def test_a_name_is_a_variable(session, text):
     assert session.is_variable(text)
 
 
-# `abc` is three names under the Character input mode the session starts in,
-# which is a product and so no answer to a question that wants one variable.
+# In the default Character input mode, `abc` is a product of three names, not one
+# variable.
 @pytest.mark.parametrize(
     "text", ["", "2 + 3", "2", "SIN", "#e", "x +", "abc"], ids=str
 )

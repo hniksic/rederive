@@ -1,50 +1,40 @@
-"""Sessions the Derive 3.14 manual describes, tested as the manual states them.
+"""Sessions from the Derive 3.14 manual, tested as the manual states them.
 
-Every case here comes from a session the manual walks a reader through: type
-this, get that. The expected value is what the printed manual says appears,
-translated from its typeset form into author text - `·` written `*`, `√`
-written `SQRT`, raised exponents written `^` - and nothing else. Where the
-manual states an outcome only in prose ("simplifies to 6 and 60,
-respectively") the prose is the expectation; where it states no outcome at
-all, the case is not here.
+Each case comes from a session the manual walks through. The expected value is what
+the printed manual shows, translated from typeset form into author text (`·` as `*`,
+`√` as `SQRT`, raised exponents as `^`) and nothing else. Where the manual states an
+outcome only in prose ("simplifies to 6 and 60, respectively"), the prose is the
+expectation; where it states none, the case is omitted.
 
-The manual's own printed form is what these assert, so a failure means one of
-two things: the engine does not do what the manual promises, or it does the
-same mathematics in a different spelling. Both are worth seeing, and neither
-is worth papering over here - `test_simplify` is where the engine's own
-spelling is recorded.
+A failure means either the engine doesn't do what the manual promises, or it gets the
+same result in a different spelling. Both are worth seeing; the engine's own spelling is
+recorded in `test_simplify`.
 
-Where the manual is wrong, a case asserts what the program was seen to do
-instead, and says so in a comment beside it. Five such places are known: the
-initial Exponential setting (6.1 contradicts 6.2, and the original's DERIVE.INI
-says Auto; the research is at `model/settings.py`), the COVARIANT_METRIC_TENSOR
-entry on p.238 (the program prints `v^2 + w^2`), ACOSH's radicals in 6.6
-(`SQRT(z - 1)` leads), SIGN(3 + 4*#i) in 6.8 (the fraction sits under the #i),
-and TAYLOR_INVERSE's example in 9.1, which passes four arguments to the
-five-parameter function the same section declares - the manual's own answer,
-written in y, proves the call it meant was the five-argument one.
+Where the manual is wrong, the case asserts what the program actually does, with a
+comment. Five such places are known: the initial Exponential setting (6.1 contradicts
+6.2, and the original's DERIVE.INI says Auto; see `model/settings.py`), the
+COVARIANT_METRIC_TENSOR entry on p.238 (the program prints `v^2 + w^2`), ACOSH's
+radicals in 6.6 (`SQRT(z - 1)` leads), SIGN(3 + 4*#i) in 6.8 (the fraction is under the
+#i), and TAYLOR_INVERSE's example in 9.1, which passes four arguments to a
+five-parameter function; the manual's answer, in y, shows the five-argument call was
+meant.
 
-Some expectations follow rules that a typeset page cannot state and only the
-program itself can. The ones these tests lean on, taken from the original:
-Simplify orders a sum in descending kernel order - function terms first
-whatever their variable, compared variable-first among themselves along the
-chain #e^x, ABS, ASIN, ATAN, LN, COS, TAN, SIN - and a product the other way
-up: number, bare variables, powers of sums, then function terms with that
-chain reversed. Factors of a factorization ascend by main variable, degree of
-the base, multiplicity, then coefficients from the leading one down by
-magnitude, the positive sign winning ties. A two-term sum whose canonical
-head is negative is shown turned round (`2*x - x^2`, `(x + 2)*(2 - x)`);
-longer sums keep their leading minus. A quotient the program's own arithmetic
-produced survives to the display, where an identically shaped authored sum
-stays apart. Two divergences between the program's DOS releases are known -
-dot-product nesting, and LN(COS(x))'s second derivative, `- TAN(x)^2 - 1` on
-the earlier only, which is what this engine follows. One divergence from the
-program is deliberate and recorded here: a recursion that exceeds the size
-guard returns what was worked out so far, where Derive exhausts memory and
-returns nothing.
+Some expectations follow ordering rules that only the program reveals. From the
+original: Simplify orders a sum by descending kernel order, function terms first
+regardless of variable, compared variable-first along the chain #e^x, ABS, ASIN, ATAN,
+LN, COS, TAN, SIN; a product goes the other way: number, bare variables, powers of
+sums, then function terms in reverse chain order. Factors of a factorization ascend by
+main variable, degree of the base, multiplicity, then coefficients from the leading one
+down by magnitude, positive winning ties. A two-term sum with a negative canonical head
+is shown reversed (`2*x - x^2`, `(x + 2)*(2 - x)`); longer sums keep their leading
+minus. A quotient produced by the program's own arithmetic survives to the display,
+while an identically shaped authored sum stays split. Two differences between the
+program's DOS releases are known: dot-product nesting, and LN(COS(x))'s second
+derivative (`- TAN(x)^2 - 1` only on the earlier release, which this engine follows).
+One deliberate difference from the program: a recursion exceeding the size guard
+returns the partial result, where Derive runs out of memory and returns nothing.
 
-Plotting is out of scope for this project, so Chapter 5 and every plot
-exercise elsewhere is left out.
+Plotting is out of scope, so Chapter 5 and all plot exercises are omitted.
 """
 
 from __future__ import annotations
@@ -75,17 +65,17 @@ def parse(text, state=None):
 
 
 def simp(text, context=None, state=None):
-    """`text` simplified, as the worksheet would show it."""
+    """Simplify `text` and return it as the worksheet would show it."""
     return simplify(parse(text, state), context or Context(), state).text
 
 
 def apx(text, context=None, state=None):
-    """`text` approximated: what the approX command would show."""
+    """Approximate `text` as the approX command would."""
     return approx(parse(text, state), context or Context(), state).text
 
 
 def declared(*declarations, **settings):
-    """A context whose domains are what these declarations say."""
+    """Return a context with the domains given by these declarations."""
     domains = {}
     for declaration in declarations:
         name, domain = domain_of_node(parse(declaration))
@@ -94,17 +84,17 @@ def declared(*declarations, **settings):
 
 
 def expanded(text, *variables, amount=Amount.RATIONAL, context=None):
-    """What Expand would put on the worksheet."""
+    """Return what Expand would put on the worksheet."""
     return expand(parse(text), context or Context(), amount, variables).text
 
 
 def factored(text, amount=Amount.RATIONAL, *variables, context=None):
-    """What Factor would put on the worksheet, at the amount chosen."""
+    """Return what Factor would put on the worksheet at the given amount."""
     return factor(parse(text), context or Context(), amount, variables).text
 
 
 def solutions(text, *variables, context=None):
-    """The lines soLve would append, in order."""
+    """Return the lines soLve would append, in order."""
     return [result.text for result in solve(parse(text), context or Context(), variables)]
 
 
@@ -120,15 +110,13 @@ async def answer(session, *lines):
     return (await session.simplify(lines[-1])).text
 
 
-#: The manual's promises this engine has decided not to keep, test id to
-#: reason. These are decisions, not gaps: an unexpected pass here means the
-#: engine drifted off a recorded decision, and the drift is what to look at.
+#: Manual behavior this engine deliberately doesn't follow, mapped from test id to
+#: reason. These are decisions, not gaps, so an unexpected pass means the engine drifted
+#: from a recorded decision.
 NEVER_TO_HOLD = {
-    # The bars read in and the screen draws them; what will not carry them is
-    # `.text`, which is the author spelling and has one name for the function
-    # whichever way it was typed. `|u|` is a `Kind.ABS` and the `ABS(u)` a
-    # simplified answer holds is a call, so the two are not one tree either.
-    # MAX and MIN want the single bar of `(x + y)/2` besides.
+    # Bars parse and are drawn on screen, but `.text` is author notation, which always
+    # spells the function `ABS`. `|u|` is a `Kind.ABS` while a simplified `ABS(u)` is a
+    # call, so the trees differ too. MAX and MIN also expect `(x + y)/2` over one bar.
     "test_the_number_theory_functions[LCM(m, n)-|m*n|/GCD(n, m)]":
         "the writer spells every absolute value ABS; the screen draws the bars",
     "test_the_piecewise_functions[MAX(x, y)-|x - y|/2 + (x + y)/2]":
@@ -144,124 +132,98 @@ NEVER_TO_HOLD = {
 }
 
 
-#: The manual's promises this engine does not keep yet, named by test id.
+#: Manual behavior the engine doesn't match yet, by test id.
 #:
-#: These run and are expected to fail rather than being skipped, so that one
-#: which starts holding is reported as an unexpected pass and can be struck
-#: off. Nothing here says the manual is wrong: where the manual is wrong, the
-#: case asserts the program's answer and passes.
+#: These run as expected failures rather than being skipped, so one that starts passing
+#: is reported and can be removed. None of these mean the manual is wrong; where it is,
+#: the case asserts the program's answer and passes.
 NOT_YET_HELD = {
-    # A quotient must survive from computation to display. Derive keeps the
-    # quotient its own arithmetic produced - BERNOULLI_POLY's /66, NORMAL's /2,
-    # EULER_POLY's common factor - and never builds one out of an authored sum.
-    # Sympy distributes a number over a sum at construction, so by the time the
-    # pipeline runs there is no quotient left to preserve; holding these needs
-    # a preserved-quotient representation threaded through conversion, the
-    # pipeline and the canonical rebuild.
+    # Derive keeps a quotient produced by its own arithmetic (BERNOULLI_POLY's /66,
+    # NORMAL's /2, EULER_POLY's common factor) through to display, but never builds one
+    # from an authored sum. Sympy distributes a number over a sum on construction, so
+    # no quotient is left to preserve; fixing this needs a preserved-quotient
+    # representation through conversion, the pipeline and the canonical rebuild.
     "test_the_error_and_zeta_functions[NORMAL(z, m, "
     "s)-(ERF(SQRT(2)*z/(2*s) - SQRT(2)*m/(2*s)) + 1)/2]",
     "test_the_worked_examples_of_the_number_theory_file[BERNOULLI_POLY("
     "10, x)-(66*x^10 - 330*x^9 + 495*x^8 - 462*x^6 + 330*x^4 - 99*x^2 + 5)/66]",
     "test_the_worked_examples_of_the_number_theory_file[EULER_POLY(10, "
     "x)-x*(x^9 - 5*x^8 + 30*x^6 - 126*x^4 + 255*x^2 - 155)]",
-    # Each half is written over its own bar, as the original writes it, and the
-    # arguments are what is left: sympy signs an even or odd function's argument
-    # by its own alphabetical order, giving `COS(w - z)` where the original
-    # writes `COS(z - w)`, and turning the sine's terms round with it. The order
-    # list makes `z` the main name, which is what says which way round it goes.
+    # Each half is over its own bar, as in the original; what differs are the arguments.
+    # Sympy orders an even or odd function's argument alphabetically, giving
+    # `COS(w - z)` where the original writes `COS(z - w)` (and the sine's terms reversed
+    # with it). The order list makes `z` the main variable, which should decide this.
     "test_a_product_of_sines_collects_into_the_manuals_identity[COS(z)*"
     "COS(w)-COS(z - w)/2 + COS(z + w)/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
     "COS(w)-SIN(z - w)/2 + SIN(z + w)/2]",
     "test_a_product_of_sines_collects_into_the_manuals_identity[SIN(z)*"
     "SIN(w)-COS(z - w)/2 - COS(z + w)/2]",
-    # An approximate number is a rational in the original as well, and the
-    # program will say which one: under Rational notation with NotationDigits
-    # at 32 an approximation prints as the ratio it is. At six digits the
-    # original answers pi with 355/113, SQRT(3) with 5042/2911, SQRT(10001)
-    # with 180109/1801 and SQRT(2) with 4756/3363; at three digits SQRT(2) is
-    # 379/268. The last three say that no rule can be read off the value,
-    # because the original's answer is not a function of it: 20001/200 is
-    # simpler than 180109/1801 and two hundred times nearer SQRT(10001),
-    # 239/169 is simpler than 379/268 and three times nearer SQRT(2), and
-    # 4756/3363 is not a best approximation of SQRT(2) at all but the mediant
-    # of two of them. What those digits record is the error of the original's
-    # own square root, which works a digit or two past the precision asked for
-    # and hands the rounding a value already wrong in the place that decides.
-    # Where the original's value is accurate the tolerance this engine uses is
-    # confirmed: its pi walks 333/106, 355/113, 103993/33102, 208341/66317
-    # over three to nine digits, which is exactly the first convergent inside
-    # 10^-(digits + 1).
+    # In the original an approximate number is also a rational, visible under Rational
+    # notation with NotationDigits at 32. At six digits it gives pi as 355/113, SQRT(3)
+    # as 5042/2911, SQRT(10001) as 180109/1801 and SQRT(2) as 4756/3363; at three
+    # digits SQRT(2) is 379/268. The last three show that the answer isn't a function
+    # of the value: 20001/200 is simpler than 180109/1801 and 200 times closer to
+    # SQRT(10001), 239/169 is simpler than 379/268 and three times closer to SQRT(2),
+    # and 4756/3363 isn't a best approximation of SQRT(2) at all, but the mediant of
+    # two. These digits reflect errors in the original's square root, which computes a
+    # digit or two past the requested precision and rounds an already-wrong value.
+    # Where the original's value is accurate, this engine's tolerance is confirmed: its
+    # pi goes 333/106, 355/113, 103993/33102, 208341/66317 over three to nine digits,
+    # exactly the first convergent within 10^-(digits + 1).
     #
-    # Rounding an exact rational, where there is nothing to compute and no
-    # error to inherit, settles it a second time. The two fractions of 3.8
-    # p.46 come back 81379/55 and 553211/374 at six digits; `simplest` already
-    # answers the first, and no one tolerance answers both, since 81379/55
-    # needs at least 4.25e-8 of the value and 553211/374 needs under 7.5e-9.
-    # So the original is not seeking the simplest rational within a tolerance
-    # either, and the case below is what that unknown comes to, one the
-    # original does not answer either. It reads 1.73205 back in and
-    # re-approximates it to 1.73205, as this engine does, and re-approximating
-    # its own SQRT(3) gives the 1.732050841 that 5042/2911 comes to. The page's
-    # 1.732050657 is neither.
+    # Rounding an exact rational, with no computation error, confirms this. The two
+    # fractions of 3.8 p.46 give 81379/55 and 553211/374 at six digits; `simplest`
+    # already gives the first, but no single tolerance gives both (81379/55 needs at
+    # least 4.25e-8 relative, 553211/374 under 7.5e-9). So the original isn't seeking
+    # the simplest rational within a tolerance either. The case below depends on that
+    # unknown rule, and the original doesn't match the page either: it reapproximates
+    # 1.73205 to 1.73205, as this engine does, and reapproximating its own SQRT(3)
+    # gives 1.732050841 (from 5042/2911). The page's 1.732050657 is neither.
     "test_reapproximating_an_approximation_keeps_its_error",
-    # The determinant is multiplied out where the original leaves it factored,
-    # and then written about the most main variable it holds: with none of `a`,
-    # `b`, `w` on the order list that is `a`, so `(2 - w)*(b - w) - 3*a` comes
-    # back as `-3*a + b*(2 - w) + w^2 - 2*w`. The list cannot simply grow a `w`:
-    # COVARIANT_METRIC_TENSOR's `v^2 + w^2` on p.238 has `v` more main than `w`,
-    # which is what unlisted names being alphabetical gives.
+    # The determinant is multiplied out where the original leaves it factored, then
+    # written in terms of the main variable, `a` (none of `a`, `b`, `w` is on the order
+    # list), so `(2 - w)*(b - w) - 3*a` becomes `-3*a + b*(2 - w) + w^2 - 2*w`. Adding
+    # `w` to the order list won't do: COVARIANT_METRIC_TENSOR's `v^2 + w^2` on p.238
+    # needs `v` before `w`, as alphabetical order for unlisted names gives.
     "test_the_characteristic_variable_defaults_to_w",
-    # The equation is solved: `DSOLVE1` answers the manual's `x^2*y + y - 1 = 0`.
-    # What is left is the line after it, where the initial condition is written
-    # into that solution and the manual says to "see that it simplifies to 0=0".
-    # The engine answers `true`, and section 10.3 says why the manual expects
-    # otherwise: "when a relation is simplified, its two sides are simplified
-    # independently and DERIVE makes no attempt to determine the truth or
-    # falsehood of the relation", only the test of an `IF` being decided. The
-    # original decides a bare relation all the same, which is what
-    # `test_simplify`'s `test_a_relation_that_decides_is_decided_and_one_that_
-    # does_not_stands` records and what the engine follows. The page and the
-    # program disagree and no one rule gives both.
+    # `DSOLVE1` gives the manual's `x^2*y + y - 1 = 0`. What fails is the next line,
+    # substituting the initial condition, which the manual says "simplifies to 0=0".
+    # The engine answers `true`. Section 10.3 explains the manual's expectation: "when
+    # a relation is simplified, its two sides are simplified independently and DERIVE
+    # makes no attempt to determine the truth or falsehood of the relation", except in
+    # an `IF` test. But the original does decide a bare relation, as `test_simplify`'s
+    # `test_a_relation_that_decides_is_decided_and_one_that_does_not_stands` records
+    # and the engine follows. The page and the program disagree.
     "test_the_first_order_equation_the_manual_solves",
-    # Both conditions are the manual's, the second up to one common factor:
-    # `2*v*x^2 - 2*x*y - 2*v = 0` where the page writes `2*(v*x^2 - x*y - v) =
-    # 0`. That is the same decision `test_the_manuals_mutual_recursion_written_
-    # with_accumulators` above meets, seen once more from the manual's side, and
-    # `test_simplify`'s `test_a_numeric_factor_stays_among_the_terms_it_divides`
-    # says why a number in particular cannot come out: sympy multiplies one back
-    # over a sum as it builds one, so `2*(v*x^2 - x*y - v)` is a form no answer
-    # can be written in - printing it and reading the print back gives the terms
-    # again, and an entry whose text and tree disagree is what
-    # `test_simplify_corpus` fails on. A difference in spelling only.
+    # Both conditions match the manual, the second up to a common factor:
+    # `2*v*x^2 - 2*x*y - 2*v = 0` where the page has `2*(v*x^2 - x*y - v) = 0`. This is
+    # the decision `test_the_manuals_mutual_recursion_written_with_accumulators` also
+    # meets; `test_simplify`'s `test_a_numeric_factor_stays_among_the_terms_it_divides`
+    # explains it. Sympy distributes a number over a sum on construction, so the
+    # factored form can't round-trip through printing and parsing, and an entry whose
+    # text and tree disagree fails `test_simplify_corpus`. A spelling difference only.
     "test_the_clairaut_equation_the_manual_solves",
-    # The brackets are read as the vector they are, the scalar goes into the one
-    # element, and `[3*x + 3*y]` comes back. What differs is how that element is
-    # written, and the vector has nothing to do with it: `3*(x + y)` is already
-    # the two terms by the time it is a tree at all, sympy multiplying a number
-    # back over a sum as it builds one, so `[3*(x + y)]` is a form no answer can
-    # be written in - printing it and reading the print back gives the terms
-    # again, and an entry whose text and tree disagree is what
-    # `test_simplify_corpus` fails on. `test_simplify`'s `test_a_numeric_factor_
-    # stays_among_the_terms_it_divides` records that decision, and `normal.py`
-    # records why the three is not gathered back out afterwards either. The same
-    # collision `test_the_clairaut_equation_the_manual_solves` meets, seen here
-    # with a vector around it. A difference in spelling only.
+    # The brackets are read as a vector, the scalar goes inside, and `[3*x + 3*y]` comes
+    # back. Only the element's spelling differs, for the same reason as
+    # `test_the_clairaut_equation_the_manual_solves`: sympy distributes `3` over the sum
+    # on construction, so `[3*(x + y)]` can't round-trip, and an entry whose text and
+    # tree disagree fails `test_simplify_corpus`. See `test_simplify`'s
+    # `test_a_numeric_factor_stays_among_the_terms_it_divides`, and `normal.py` for why
+    # the 3 isn't factored back out afterwards. A spelling difference only.
     "test_square_brackets_make_a_vector_rather_than_a_group",
-    # The terms are the manual's own; the order they are printed in is not.
-    # Expand's answer is ordered by the rule every sum is, where a term with a
-    # sum under the bar closes the sum it belongs to - which is the original's
-    # rule too, `(x^3 + 1)/(x + 2) + y` being `x^2 - 2*x + y - 7/(x + 2) + 4`.
-    # Here the manual puts the partial fractions first instead, `(x - 3)^-1`
-    # ahead of `(x + 2)^-2` ahead of `(x + 2)^-1`, which is no order in the
-    # degree of x. One rule cannot give both.
+    # The terms match the manual, but not their order. Expand orders sums by the usual
+    # rule, in which a term with a sum in its denominator comes last, as in the original
+    # (`(x^3 + 1)/(x + 2) + y` gives `x^2 - 2*x + y - 7/(x + 2) + 4`). Here the manual
+    # puts the partial fractions first, `(x - 3)^-1`, `(x + 2)^-2`, `(x + 2)^-1`, in no
+    # order of degree in x. One rule can't give both.
     "test_the_partial_fraction_expansion_of_the_manual",
 }
 
 
 @pytest.fixture(autouse=True)
 def what_is_not_held(request):
-    """Expect the failure of every case the two manifests name."""
+    """Mark every case listed in the two manifests as an expected failure."""
     test_id = request.node.nodeid.split("::", 1)[1]
     if test_id in NEVER_TO_HOLD:
         request.node.add_marker(pytest.mark.xfail(reason=NEVER_TO_HOLD[test_id]))
@@ -280,8 +242,8 @@ DEGREES = Context(angle=Angle.DEGREE)
 
 # -- 3.1 entering expressions: what the operators mean ------------------------
 
-#: The manual states the precedence and associativity rules but prints no
-#: values for them; the value each rule picks out is what a test can see.
+#: The manual states precedence and associativity rules without printing values; these
+#: cases check the value each rule implies.
 PRECEDENCE = [
     # `*` and `/` bind tighter than `+` and `-` (3.1, p.24).
     ("3 + 4 * 5", "23"),
@@ -289,8 +251,7 @@ PRECEDENCE = [
     ("1 / 2 * 3", "3/2"),
     # A space or a parenthesis between two expressions multiplies (3.1, p.25).
     ("2 (3 + 5)", "16"),
-    # `3½ - 2¼` is written with plus signs, or the juxtaposition would
-    # multiply (3.1, p.25).
+    # `3½ - 2¼` needs plus signs, or juxtaposition would multiply (3.1, p.25).
     ("(3+1/2) - (2+1/4)", "5/4"),
     # `^` binds tighter than the four, so `9^1/3` is not a cube root.
     ("9^1/3", "3"),
@@ -298,8 +259,8 @@ PRECEDENCE = [
     ("4^3^2", "262144"),
     # Percent is one hundredth, and binds tighter than any of them (3.1, p.26).
     ("22% + 36%", "29/50"),  # the manual's "equal to 0.58", written exactly
-    # A function of one integer argument needs no parentheses, and a power
-    # written on the name applies to the result (3.4, p.32).
+    # A function of one integer argument needs no parentheses, and a power on the name
+    # applies to the result (3.4, p.32).
     ("SQRT 25", "5"),
     ("SQRT^3 25", "125"),
 ]
@@ -324,10 +285,8 @@ async def test_the_manuals_first_arithmetic_is_not_simplified_until_asked(sessio
 
 async def test_an_expression_typed_with_a_trailing_equals_shows_both_sides(session):
     # 3.2 p.29: `2^3=` displays the unsimplified form equated to the answer.
-    # Through `show_value` rather than `author` because the answer is computed:
-    # `author` parses and appends, and every computation the session makes is
-    # awaited through the runner. The page's line is what is asserted either
-    # way.
+    # Uses `show_value` rather than `author`, since computing the answer must be
+    # awaited through the runner, while `author` only parses and appends.
     assert (await session.show_value("2^3=")).text == "2^3 = 8"
 
 
@@ -375,9 +334,8 @@ def test_an_exact_power_of_a_fraction_is_the_whole_ratio():
     assert simp("(7/8)^99") == f"{7**99}/{8**99}"
 
 
-# Taking the precision carries the notation with it, the way Options Precision
-# does in the program and the way section 3.9 says it does: approximate
-# arithmetic is read in the style that suits it.
+# Setting the precision also sets the matching notation, as Options Precision does in
+# the program and as section 3.9 describes.
 APPROXIMATE_6 = Context().with_precision(Precision.APPROXIMATE)
 APPROXIMATE_10 = Context().with_precision(Precision.APPROXIMATE, 10)
 APPROXIMATE_100 = Context().with_precision(Precision.APPROXIMATE, 100)
@@ -472,11 +430,9 @@ def test_exponentials_and_logarithms(text, expected):
 
 
 def test_the_exponential_direction_starts_out_automatic():
-    # 6.1 says "The initial direction is Collect", and is the one place here
-    # where the manual is taken to be wrong rather than unmet: Collect was the
-    # 1.x default and 6.1 is a leftover of it, where the original's own
-    # DERIVE.INI says `*EXP-EXPD* |Auto|` and so does its screen.
-    # `model.settings` carries the evidence.
+    # 6.1 says "The initial direction is Collect", but the manual is wrong here: Collect
+    # was the 1.x default, and the original's DERIVE.INI and screen both say Auto
+    # (`*EXP-EXPD* |Auto|`). The evidence is in `model.settings`.
     assert Context().exponential is Direction.AUTO
 
 
@@ -494,9 +450,8 @@ def test_a_collected_product_of_exponentials_is_one_exponential():
 
 
 def test_an_expanded_exponential_of_a_sum_is_a_product():
-    # 6.1 p.99 states the rule as `#e^z*#e^w <-> #e^(z + w)`; what comes back
-    # puts the off-list `w` first, a product ordering a name the list does not
-    # know ahead of one it does.
+    # 6.1 p.99 states the rule as `#e^z*#e^w <-> #e^(z + w)`; the answer puts `w` first,
+    # since a product orders names off the order list before those on it.
     expand = Context(exponential=Direction.EXPAND)
     assert simp("#e^(z + w)", expand) == "#e^w*#e^z"
 
@@ -510,8 +465,7 @@ def test_logarithms_collect_and_expand_where_the_domain_allows_it():
 
 
 def test_a_logarithm_is_not_collected_where_the_domain_does_not_allow_it():
-    # 6.0 p.98: LN(x²)/2 -> LN(x) is invalid for negative x, and Derive does
-    # not make a transformation it cannot justify.
+    # 6.0 p.98: LN(x²)/2 -> LN(x) is invalid for negative x, so it isn't applied.
     assert simp("LN(x^2)/2") != "LN(x)"
 
 
@@ -525,15 +479,13 @@ TRIGONOMETRY = [
     # 6.3 p.107.
     ("SIN(pi/4)", "SQRT(2)/2"),
     ("ASIN(1/2)", "pi/6"),
-    # 6.4 p.108. A table of equivalences rather than a rewrite system: the
-    # `ACOS` line applied to the `ASEC` line's answer leaves `pi/2 -
-    # ASIN(1/z)`, which is neither form the section prints. The engine keeps
-    # `ASIN`, `ACOS` and `ATAN` and writes the reciprocal arcs over them, so
-    # the two lines about reciprocals hold and the `ACOS` line does not.
+    # 6.4 p.108 is a table of equivalences, not rewrites: applying the `ACOS` line to
+    # the `ASEC` line's answer gives `pi/2 - ASIN(1/z)`, which the section doesn't
+    # print. The engine keeps `ASIN`, `ACOS` and `ATAN` and writes reciprocal arcs in
+    # terms of them, so the reciprocal lines hold and the `ACOS` line doesn't.
     #
-    # The `ACOT` line is about a branch this engine does not use: its `ACOT` is
-    # the odd one, where `ACOT(-1)` is `-pi/4`, and `pi/2 - ATAN(z)` is the
-    # other one - the two agree above zero and are a half turn apart below it.
+    # The `ACOT` line assumes a branch this engine doesn't use: its `ACOT` is odd
+    # (`ACOT(-1)` is `-pi/4`), while `pi/2 - ATAN(z)` agrees with it only above zero.
     ("ACOT(z)", "pi/2 - ATAN(z)"),
     ("ACOT(x, y)", "ATAN(y, x)"),
     ("ACOS(z)", "pi/2 - ASIN(z)"),
@@ -564,11 +516,9 @@ def test_the_angle_unit_starts_out_radian():
     assert Context().angle is Angle.RADIAN
 
 
-#: 6.3 p.104 states these as the transformations the Expand direction applies,
-#: written the way an identity is written rather than the way an answer comes
-#: back. What the original prints puts the off-list `w` first, which is where a
-#: product puts a name the order list does not know, and is the order of the
-#: `z!/(w!*(z - w)!)` that COMB(z, w) prints on its own page.
+#: 6.3 p.104 states these Expand transformations as identities, not as printed answers.
+#: The original puts `w` first, since a product orders names off the order list first,
+#: as in the `z!/(w!*(z - w)!)` COMB(z, w) prints on its page.
 EXPANDED_TRIGONOMETRY = [
     ("SIN(z + w)", "SIN(w)*COS(z) + COS(w)*SIN(z)"),
     ("COS(z + w)", "COS(w)*COS(z) - SIN(w)*SIN(z)"),
@@ -580,9 +530,8 @@ def test_an_angle_sum_expands_into_the_manuals_identity(text, expected):
     assert simp(text, Context(trigonometry=Direction.EXPAND)) == expected
 
 
-#: The converse transformations of 6.3 p.104, again as the page states them
-#: rather than as they come back: the original writes each half over its own
-#: bar, and its arguments run `z - w`.
+#: The converse transformations of 6.3 p.104, as the page states them: each half over
+#: its own bar, with arguments `z - w`.
 COLLECTED_TRIGONOMETRY = [
     ("SIN(z)*SIN(w)", "COS(z - w)/2 - COS(z + w)/2"),
     ("COS(z)*COS(w)", "COS(z - w)/2 + COS(z + w)/2"),
@@ -628,9 +577,8 @@ def test_the_hyperbolic_functions_become_exponentials(text, expected):
 
 INVERSE_HYPERBOLIC = [
     ("ASINH(z)", "LN(SQRT(z^2 + 1) + z)"),
-    # 6.6 p.111 prints the radicals as SQRT(z + 1) + SQRT(z - 1), but the
-    # original answers with SQRT(z - 1) first, as its radical order elsewhere
-    # demands.
+    # 6.6 p.111 prints SQRT(z + 1) + SQRT(z - 1), but the original puts SQRT(z - 1)
+    # first, consistent with its radical order elsewhere.
     ("ACOSH(z)", "2*LN(SQRT(z - 1) + SQRT(z + 1)) - LN(2)"),
     ("ATANH(z)", "LN(z + 1)/2 - LN(1 - z)/2"),
     ("ACOTH(z)", "LN((z + 1)/(z - 1))/2"),
@@ -652,9 +600,8 @@ PIECEWISE = [
     # 6.7 p.111: the sign of zero is indeterminate, and ±1 is a value.
     ("SIGN(0)", "±1"),
     ("STEP(x)", "SIGN(x)/2 + 1/2"),
-    # The 6.1 help: STEP is `(SIGN(x) + 1)/2` where the sign is not known, which
-    # at zero it is not, so the step is as undecided on its jump as CHI is on the
-    # edge of its interval.
+    # The 6.1 help: STEP is `(SIGN(x) + 1)/2`, so at zero, where the sign is
+    # undetermined, the step is undecided, as CHI is at the edge of its interval.
     ("STEP(0)", "(±1)/2 + 1/2"),
     ("CHI(0, 0, 1)", "(±1)/2 + 1/2"),
     ("FLOOR(5.73)", "5"),
@@ -679,10 +626,9 @@ def test_the_piecewise_functions(text, expected):
 
 
 def test_a_reversed_characteristic_interval_changes_sign():
-    # 6.7 p.111: CHI(a, x, b) with a > b is -CHI(b, x, a). The page states that
-    # as an equivalence and no CHI survives to be printed: a characteristic
-    # function comes back as the difference of signs it stands for, and the two
-    # reversed intervals cancelling is what says the sign changed.
+    # 6.7 p.111: CHI(a, x, b) with a > b is -CHI(b, x, a). CHI simplifies to a
+    # difference of signs, so the sign change is shown by the two reversed intervals
+    # cancelling.
     assert simp("CHI(3, x, 1)") == "SIGN(x - 3)/2 - SIGN(x - 1)/2"
     assert simp("CHI(3, x, 1) + CHI(1, x, 3)") == "0"
 
@@ -703,8 +649,7 @@ def test_the_complex_functions_on_a_rectangular_argument(text, expected):
 
 
 def test_the_sign_of_a_complex_number_is_its_point_on_the_unit_circle():
-    # 6.8 p.113, which prints 4/5 as a coefficient; Derive puts the #i in the
-    # numerator, 3/5 + 4*#i/5.
+    # 6.8 p.113 prints 4/5 as a coefficient of #i; Derive puts #i in the numerator.
     assert simp("SIGN(3 + 4*#i)") == "3/5 + 4*#i/5"
 
 
@@ -751,9 +696,8 @@ def test_the_least_squares_fit_of_the_manuals_plane():
 
 
 def test_the_least_squares_fit_that_is_not_linear_in_its_data_variable():
-    # 6.10 p.120. The coefficients come out as the manual has them; only the
-    # order of the two terms differs, Derive sorting function terms by an
-    # internal ordinal that puts ATAN before SIN where this sorts by name.
+    # 6.10 p.120. The coefficients match the manual. The term order differs from the
+    # page, but matches the program's ordering, which puts ATAN before SIN.
     fit = apx("FIT([t, q*ATAN(t) + r*SIN(t)], [[-4, -1], [-1, -1.9], [2, 2.25]])")
     assert fit == "1.29723*ATAN(t) + 0.961378*SIN(t)"
 
@@ -861,7 +805,7 @@ DERIVATIVES = [
     ("DIF(SIN(a*x^2), x)", "2*a*x*COS(a*x^2)"),
     ("DIF(LN(COS(x)), x, 2)", "-TAN(x)^2 - 1"),
     ("DIF(DIF((a*x + b*y)^3, x), y)", "6*a*b*(a*x + b*y)"),
-    # 7.2 p.173: nothing of the variable in it, so nothing of it left.
+    # 7.2 p.173: the expression doesn't contain the variable.
     ("DIF(a, x)", "0"),
 ]
 
@@ -910,9 +854,9 @@ INTEGRALS = [
     # 7.4 p.178: an iterated integral whose inner limits carry the outer
     # variable.
     ("INT(INT(x*LN(y), y, x, 2*x), x, 0, 2)", "8*LN(2) - 32/9"),
-    # 7.4 pp.180-181: the improper integrals. For the two through a pole the
-    # manual documents a principal value and a number it calls wrong; here they
-    # are the integrals they are, one without a value and one infinite.
+    # 7.4 pp.180-181: improper integrals. For the two through a pole the manual shows a
+    # principal value and a result it calls wrong; here they are correctly undefined
+    # and infinite.
     ("INT(1/x^2, x, 1, inf)", "1"),
     ("INT(1/SQRT(x), x, 0, 1)", "2"),
     ("INT(1/x^3, x, -1, 2)", "?"),
@@ -1061,7 +1005,7 @@ def test_the_matrix_operations_of_the_manual(text, expected):
 
 
 def test_a_matrix_inverted_twice_is_the_matrix_it_started_as():
-    # 8.5 p.207: and with no roundoff, the exercise's point.
+    # 8.5 p.207: with no roundoff, which is the exercise's point.
     assert simp("([[2, 3], [a, b]]^-1)^-1") == "[[2, 3], [a, b]]"
 
 
@@ -1079,9 +1023,9 @@ def test_the_manuals_three_by_three_system_solved_by_inversion():
 
 
 def test_the_characteristic_variable_defaults_to_w():
-    # 8.7 p.210: "The default value of the variable used by CHARPOLY is w." The
-    # page prints the polynomial only for the call that names its variable, and
-    # what the default call answers is the determinant left factored.
+    # 8.7 p.210: "The default value of the variable used by CHARPOLY is w." The page
+    # prints the polynomial only for an explicit variable; the default call leaves the
+    # determinant factored.
     assert simp("CHARPOLY([[2, 3], [a, b]])") == "(2 - w)*(b - w) - 3*a"
     assert simp("EIGENVALUES([[2, 3], [0, b]])") == "[w = 2, w = b]"
 
@@ -1114,7 +1058,7 @@ VECTOR_CALCULUS = [
     ("DIV([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "x*(6*y^2*z + 2*z^3)"),
     ("LAPLACIAN(x*y^2*z^3)", "x*(6*y^2*z + 2*z^3)"),
     ("CURL([y^2, 2*x*z, 0])", "[-2*x, 0, 2*z - 2*y]"),
-    # 8.9 p.216: a planar field's curl is answered as the scalar it amounts to.
+    # 8.9 p.216: a planar field's curl is a scalar.
     ("CURL([v^2, u], [[u, v], [1, 1]])", "1 - 2*v"),
     ("POTENTIAL([y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2])", "x*y^2*z^3"),
     ("VECTOR_POTENTIAL([x, 0, y - z])", "[-y^2/2, -x*z, 0]"),
@@ -1135,8 +1079,8 @@ async def test_the_gradient_of_an_arbitrary_function_is_its_partial_derivatives(
 
 
 def test_a_potential_is_checked_by_taking_its_gradient_back():
-    # 8.10 p.217: a potential is unique only to a constant, so the manual's
-    # own check is the one worth making.
+    # 8.10 p.217: a potential is unique only up to a constant, so check it the manual's
+    # way.
     field = "[y^2*z^3, 2*x*y*z^3, 3*x*y^2*z^2]"
     assert simp(f"GRAD(POTENTIAL({field}))") == simp(field)
 
@@ -1149,11 +1093,10 @@ def test_a_vector_potential_is_checked_by_taking_its_curl_back():
 # == Chapter 10: Programming ==================================================
 
 async def test_the_iterates_of_the_manuals_fixed_point(session):
-    # 10.1 p.253: iteration stops when a value repeats, and x0 heads the
-    # vector. The manual is explicit that this one has to be approximated:
-    # iterated exactly it never repeats, so it never stops. Repeating is at the
-    # digits shown, which is why the vector ends in three copies of the value it
-    # converges to: the first two of them differ where nothing is printed.
+    # 10.1 p.253: iteration stops when a value repeats, and x0 comes first. As the
+    # manual says, this must be approximated, since exact iteration never repeats. The
+    # vector ends with three equal-looking values because the first two differ beyond
+    # the printed digits.
     assert (await session.approx("ITERATES(#e^(-x/20), x, 1)")).text == (
         "[1, 0.951229, 0.953551, 0.953441, 0.953446, 0.953446, 0.953446]"
     )
@@ -1167,7 +1110,7 @@ async def test_an_iteration_count_bounds_the_iterates(session):
 
 
 def test_a_negative_count_iterates_the_inverse():
-    # 10.1 p.254: which is how MISC.MTH's INVERSE is built.
+    # 10.1 p.254: MISC.MTH's INVERSE is built on this.
     assert simp("ITERATES(TAN(x), x, x, -1)") == "[x, ATAN(x)]"
 
 
@@ -1194,8 +1137,7 @@ async def test_a_value_assigned_decides_the_manuals_pay_schedule(session):
 
 
 async def test_a_declared_domain_decides_the_manuals_pay_schedule(session):
-    # 10.3 p.261: h under thirty, so the first branch is the answer even
-    # without a value.
+    # 10.3 p.261: h is below thirty, so the first branch is taken without a value.
     session.declare_domain("h", "Real", None)
     session.author("h :epsilon Real (-inf, 30)")
     assert (await session.simplify("IF(h <= 40, 10h, 400 + 15*(h - 40))")).text == "10*h"
@@ -1208,8 +1150,8 @@ def test_an_undecidable_condition_keeps_the_whole_conditional():
 
 
 def test_a_one_armed_conditional_counts_what_it_tests():
-    # 10.3 p.263: IF with only a test answers 1 or 0, so the sum counts the
-    # primes below a hundred.
+    # 10.3 p.263: IF with only a test gives 1 or 0, so the sum counts the primes below
+    # a hundred.
     assert simp("SUM(IF(PRIME(n)), n, 1, 100)") == "25"
 
 
@@ -1270,15 +1212,15 @@ async def test_the_manuals_recursive_factorial(session):
 
 
 async def test_the_manuals_accumulating_fibonacci(session):
-    # 10.6 p.277: the helper carries what would otherwise be recomputed.
+    # 10.6 p.277: the helper carries values that would otherwise be recomputed.
     session.author("FIB_AUX(n, f1, f0) := IF(n=0, f0, FIB_AUX(n - 1, f1 + f0, f1))")
     session.author("FIB_FAST(n) := FIB_AUX(n, 1, 0)")
     assert (await session.simplify("FIB_FAST(100)")).text == "354224848179261915075"
 
 
 async def test_an_empty_definition_makes_a_name_a_function_and_not_a_variable(session):
-    # 10.7 p.279: `G(n) :=` first, or the G inside F's definition is read as a
-    # variable and the mutual recursion never closes.
+    # 10.7 p.279: `G(n) :=` must come first, or the G in F's definition is read as a
+    # variable and the mutual recursion breaks.
     session.author("m := -3*mu*sigma")
     session.author("s := epsilon - 2*sigma^2")
     session.author("e := -sigma*(mu + 2*epsilon)")
@@ -1324,8 +1266,8 @@ ALGEBRA = [
     ("(x^2 + 2*x*y + y^2)/(x^2 - y^2)", "(x + y)/(x - y)"),
     ("(x + 1)^2 - x^2", "2*x + 1"),
     ("2*x/(x^2 - 1) - 1/(x - 1)", "1/(x + 1)"),
-    # 4.2 p.60: the difference of squares, seen without multiplying out the
-    # fiftieth power that would bury it.
+    # 4.2 p.60: a difference of squares, found without multiplying out the fiftieth
+    # power.
     ("x^2 - (x + (y+1)^50)*(x - (y+1)^50)", "(y + 1)^100"),
 ]
 
@@ -1336,11 +1278,10 @@ def test_the_algebra_the_manual_simplifies(text, expected):
 
 
 async def test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone(session):
-    # 4.2 p.61: with the parenthesized sum highlighted, the answer is a copy of
-    # the whole line in which only that part is simplified, and the annotation
-    # says so with a prime. The command is asked for `#1` and not for `#1'`:
-    # 3.3 p.51 states that a subexpression cannot be named by label at all, so
-    # the prime is what the derivation is written with rather than a request.
+    # 4.2 p.61: with the parenthesized sum highlighted, the answer is the whole line
+    # with only that part simplified, and the annotation has a prime. The command is
+    # given `#1`, not `#1'`: per 3.3 p.51 a subexpression can't be named by label, so
+    # the prime only appears in the annotation.
     session.author("(5*x - 3*x + 1)^7 - x")
     session.select_entry(0)
     session.move_right()
@@ -1360,7 +1301,7 @@ ORDERING = [
     ("z^3*b^2*a*2*x^5*c", "2*a*b^2*c*x^5*z^3"),
     # Terms in the main variable lead, highest degree first.
     ("5*y^3 + 2*x^2 - 3*a*x", "2*x^2 - 3*a*x + 5*y^3"),
-    # A leading minus sign is written away where the sum allows it.
+    # A leading minus is avoided where the sum allows it.
     ("-x + y", "y - x"),
 ]
 
@@ -1450,8 +1391,8 @@ def test_factoring_the_manuals_number():
 
 
 FACTORINGS = [
-    # 4.6 pp.76-78: the same expression at rising amounts, and the manual's
-    # other worked amounts.
+    # 4.6 pp.76-78: the same expression at increasing amounts, and the manual's other
+    # examples.
     (("3 - 1/(x + 2)", Amount.TRIVIAL), "(3*x + 5)/(x + 2)"),
     (("2*x^3 - 12*x^2 + 18*x", Amount.TRIVIAL), "2*x*(x^2 - 6*x + 9)"),
     (("2*x^3 - 12*x^2 + 18*x", Amount.SQUAREFREE), "2*x*(x - 3)^2"),
@@ -1514,8 +1455,7 @@ def test_the_quadratic_formula_as_a_radical_factoring():
 # -- 4.7 partial fractions ----------------------------------------------------
 
 def test_the_partial_fraction_expansion_of_the_manual():
-    # 4.7 p.81: each term super-proper in x, and the numerator that has no x
-    # in it is left whole.
+    # 4.7 p.81: each term is proper in x, and the numerator without x is left whole.
     text = "(25*x^4 + 81*a*x^2 + 324*a*x + 324*a)/(x^3 + x^2 - 8*x - 12)"
     assert expanded(text, "x") == (
         "81*(a + 1)/(x - 3) - 80/(x + 2)^2 + 144/(x + 2) + 25*x - 25"
@@ -1525,20 +1465,17 @@ def test_the_partial_fraction_expansion_of_the_manual():
 # -- 4.8 substituting values --------------------------------------------------
 
 def test_substitutions_for_variables_are_made_all_at_once(session):
-    # 4.8 p.85: which is what lets a pair of variables trade places. What the
-    # page states is the simultaneity - `x + 2*y` interchanged is `y + 2*x` and
-    # not the `x + 2*x` that writing one in and then the other would give. The
-    # tree is what says so: a substituted line is held in the author spelling,
-    # the manual prints its own typeset one, and the two are one expression.
+    # 4.8 p.85: simultaneous substitution lets two variables swap: `x + 2*y` becomes
+    # `y + 2*x`, not the `x + 2*x` that sequential substitution would give. The trees
+    # are compared, since the manual prints a typeset form of the same expression.
     session.author("x + 2*y")
     substituted = session.substitute("#1", {"x": "y", "y": "x"})
     assert to_sexpr(substituted.node) == to_sexpr(parse("y + 2*x"))
 
 
 def test_substituting_a_subexpression_takes_only_what_matches_it(session):
-    # 4.8 p.86: k for the subexpression t³ in t⁶ + t³ is `t⁶ + k`, and not the
-    # `k² + k` that the same replacement made of t would reach, because a
-    # subexpression goes in only where it stands written.
+    # 4.8 p.86: substituting k for the subexpression t³ in t⁶ + t³ gives `t⁶ + k`, not
+    # `k² + k`, because a subexpression is replaced only where it literally appears.
     session.author("t^6 + t^3")
     session.select_entry(0)
     session.move_right()
@@ -1552,18 +1489,17 @@ def test_substituting_a_subexpression_takes_only_what_matches_it(session):
 def test_substituting_a_root_for_a_variable_reaches_what_a_subexpression_cannot(
     session,
 ):
-    # 4.8 p.86: `k² + k` is what the page says to reach by writing k^(1/3) in
-    # for t and simplifying. It prints no intermediate line, and there is no
-    # spelling of one to print: `^` folds right, so the `k^(1/3)^6` a flat
-    # writing would give reads back as `k^((1/3)^6)`.
+    # 4.8 p.86: substituting k^(1/3) for t and simplifying gives `k² + k`. The page
+    # prints no intermediate line, and none could be printed flat: `^` associates to
+    # the right, so `k^(1/3)^6` would read back as `k^((1/3)^6)`.
     session.author("t^6 + t^3")
     substituted = session.substitute("#1", {"t": "k^(1/3)"})
     assert simp(substituted.text) == "k^2 + k"
 
 
 def test_substituting_before_simplifying_can_lose_the_answer_simplifying_keeps():
-    # 4.8 p.88: the ratio has a removable singularity at -1. Substituted into
-    # the unsimplified form it is 0/0; simplified first, it is 0.
+    # 4.8 p.88: the ratio has a removable singularity at -1. Substituting into the
+    # unsimplified form gives 0/0; simplifying first gives 0.
     assert simp("((-1)^2 + 2*(-1) + 1)/((-1)^2 - 1)") == "?"
     assert simp("(x^2 + 2*x + 1)/(x^2 - 1)") == "(x + 1)/(x - 1)"
     assert simp("(-1 + 1)/(-1 - 1)") == "0"
@@ -1594,7 +1530,7 @@ def test_a_root_squared_is_what_it_was_whatever_it_was():
 
 
 def test_a_square_rooted_is_an_absolute_value_where_the_variable_is_real():
-    # 4.10 p.91: real is what an undeclared variable is.
+    # 4.10 p.91: an undeclared variable is real.
     assert simp("SQRT(x^2)") == "|x|"
 
 
@@ -1612,7 +1548,7 @@ QUOTIENTS_OF_ONE = [
 
 @pytest.mark.parametrize(("text", "expected"), QUOTIENTS_OF_ONE, ids=str)
 def test_the_quotients_the_manual_answers_one_for(text, expected):
-    # 4.10 p.94: all three, whatever the domain of x takes in.
+    # 4.10 p.94: all three, whatever the domain of x.
     assert simp(text) == expected
 
 
@@ -1640,7 +1576,7 @@ async def test_an_assignment_is_followed_as_far_as_it_goes(session):
 # -- 4.12 defining functions --------------------------------------------------
 
 async def test_a_function_definition_takes_the_arguments_it_is_given(session):
-    # 4.12 p.104: and leaves the parameters it is not given standing.
+    # 4.12 p.104: parameters not given stay symbolic.
     session.author("ACCELERATION(f, m) := f/m")
     assert (await session.simplify("ACCELERATION(6, 2)")).text == "3"
     assert (await session.simplify("ACCELERATION(6)")).text == "6/m"
@@ -1654,8 +1590,8 @@ def test_an_equation_is_simplified_a_side_at_a_time():
 
 
 EQUATION_ARITHMETIC = [
-    # 4.13 pp.108-110: the manual completes a square by doing the same thing
-    # to both sides of the equation, a line at a time.
+    # 4.13 pp.108-110: completing the square by applying the same operation to both
+    # sides, one line at a time.
     ("(x^2 + 5*x + 6 = 0) - 6", "x^2 + 5*x = -6"),
     ("4*(x^2 + 5*x + 6 = 0)", "4*x^2 + 20*x + 24 = 0"),
     # 4.13 p.111: a function applied to an equation is applied to both sides.
@@ -1676,7 +1612,7 @@ def test_an_equation_factors_as_a_whole():
 # -- 4.14 solving -------------------------------------------------------------
 
 def test_the_solve_function_answers_a_vector_of_solutions():
-    # 4.14 p.113: the function's answer is bracketed where the command's is not.
+    # 4.14 p.113: the function's answer is bracketed, unlike the command's.
     assert simp("SOLVE(-2*x + 3*y <= 7, x)") == "[x >= (3*y - 7)/2]"
 
 
@@ -1686,14 +1622,13 @@ def test_the_manuals_quadratic_is_solved_as_two_equations():
 
 
 def test_an_equation_that_cannot_be_solved_is_answered_as_an_implicit_one():
-    # 4.14 p.115: the variable is inextricable, so what comes back says so. The
-    # manual's own example is `3^x = x^2`, which Lambert W solves, so the case is
-    # one nothing here inverts.
+    # 4.14 p.115: the variable can't be isolated, so the residual is returned. The
+    # manual's example `3^x = x^2` is solvable with Lambert W, so another is used.
     assert solutions("COS(x) = x", "x") == ["COS(x) - x = 0"]
 
 
 def test_the_manuals_inextricable_equation_is_solved_in_lambert_w():
-    # 4.14 p.115 again: Derive gives up on it, and the one real root is in reach.
+    # 4.14 p.115 again: Derive gives up, but the one real root can be found.
     assert solutions("3^x = x^2", "x") == ["x = -2*LAMBERTW(LN(3)/2)/LN(3)"]
 
 
@@ -1703,14 +1638,14 @@ def test_an_impossible_equation_has_no_solutions_to_answer_with():
 
 
 def test_a_degenerate_equation_is_solved_by_an_arbitrary_value():
-    # 4.14 p.117: every x solves it, and @1 is how that is written.
+    # 4.14 p.117: every x solves it, written as @1.
     assert solutions("2*x = x + x", "x") == ["x = @1"]
 
 
 # -- 4.15 systems -------------------------------------------------------------
 
 def test_the_manuals_linear_system():
-    # 4.15 p.119: linear in x and y, whatever a does.
+    # 4.15 p.119: linear in x and y, whatever a is.
     assert solutions("[2*a^2*x + 3*y = 7, x - 5*y = 0]", "x", "y") == [
         "[x = 35/(10*a^2 + 3), y = 7/(10*a^2 + 3)]"
     ]
@@ -1745,18 +1680,16 @@ BOOLEAN = [
     ("true XOR false", "true"),
     ("true IMP false", "false"),
     ("false IMP true", "true"),
-    # 4.16 p.128: the forms the unknown cases take. The page fences the XOR
-    # form for the reader; the program prints it unfenced, relying on AND
-    # binding tighter than OR, and that is what is asserted here.
+    # 4.16 p.128: the forms for symbolic operands. The page parenthesizes the XOR form;
+    # the program doesn't, since AND binds tighter than OR, and that is asserted.
     ("p XOR q", "NOT p AND q OR p AND NOT q"),
     ("p IMP q", "NOT p OR q"),
     ("NOT NOT p", "p"),
     ("p AND (p AND q OR r)", "p AND (q OR r)"),
     ("p OR NOT p", "true"),
-    # 4.16 p.130: relations joined by them are simplified where they can be.
+    # 4.16 p.130: relations joined by them are simplified where possible.
     ("6 >= -2*x AND 3*x /= -9", "x > -3"),
-    # 4.16 p.132: integers make them bitwise, on a half-infinite two's
-    # complement.
+    # 4.16 p.132: on integers they are bitwise, in infinite two's complement.
     ("3 OR 5", "7"),
     ("NOT 5", "-6"),
 ]
@@ -1768,7 +1701,7 @@ def test_the_boolean_operators(text, expected):
 
 
 def test_not_binds_tighter_than_and_and_and_tighter_than_or(session):
-    # 4.16 p.129: NOT, AND, OR, XOR, IMP, in falling order.
+    # 4.16 p.129: NOT, AND, OR, XOR, IMP, in decreasing precedence.
     assert session.author("NOT p OR q AND r").text == session.author(
         "(NOT p) OR (q AND r)"
     ).text
@@ -1788,8 +1721,8 @@ def test_the_manuals_truth_table():
 # == The appendices ===========================================================
 
 def test_the_bare_letters_are_variables_and_not_the_constants():
-    # Q&A pp.286-287: `e` and `i` are the user's to spend; the constants are
-    # written `#e` and `#i`.
+    # Q&A pp.286-287: `e` and `i` are ordinary variables; the constants are `#e` and
+    # `#i`.
     assert simp("LN(e)") == "LN(e)"
     assert simp("i^2") == "i^2"
     assert simp("LN(#e)") == "1"
@@ -1797,8 +1730,7 @@ def test_the_bare_letters_are_variables_and_not_the_constants():
 
 
 def test_a_logarithm_difference_waits_for_a_domain_that_justifies_it():
-    # Q&A p.287: not simplified while x may be negative, simplified once it
-    # may not be.
+    # Q&A p.287: simplified only once x is declared nonnegative.
     text = "LN(x^2 - x) - LN(x)"
     assert simp(text) != "LN(x - 1)"
     assert simp(text, declared("x :epsilon Real [0, inf)")) == "LN(x - 1)"
@@ -1816,9 +1748,9 @@ def test_integrating_a_derivative_need_not_give_back_what_was_differentiated():
 
 # == Chapter 9: Utility Files =================================================
 
-# The chapter is one long walk through the MTH files Derive shipped with, so
-# these load the definitions it asks about and put the manual's own questions
-# to them. Only what these cases reach is here, plus whatever it calls in turn.
+# The chapter walks through the MTH files shipped with Derive, so these tests load the
+# definitions and ask the manual's questions. Only the definitions these cases use, and
+# what they call, are included.
 
 UTILITY_SOURCE = {
     "INT_APPS.MTH": """\
@@ -1910,7 +1842,7 @@ GEOMETRY_MATRIX(alpha,g):=[alpha,VECTOR(SQRT(g SUB m_ SUB m_),m_,DIMENSION(g))]
 
 
 def written(tmp_path, name):
-    """A utility file on disk, so `load_utility` is given what it expects."""
+    """Write a utility file to disk for `load_utility`."""
     path = tmp_path / name
     path.write_text(UTILITY_SOURCE[name], encoding="utf-8")
     return path
@@ -1918,8 +1850,8 @@ def written(tmp_path, name):
 
 @pytest.fixture
 def loaded(tmp_path):
-    """A session with the named utility files loaded, as Transfer Load Utility
-    would leave it."""
+    """Return a factory for sessions with the named utility files loaded, as by Transfer
+    Load Utility."""
 
     def load(*names, word_input=False):
         session = Session()
@@ -1944,13 +1876,11 @@ async def test_the_series_solution_of_an_equation_that_has_no_closed_one(loaded)
 
 
 async def test_the_series_inverse_of_a_function_that_has_no_closed_one(loaded):
-    # 9.1 p.230, where the printed call is one argument short: it passes four
-    # to the `TAYLOR_INVERSE(u, x, y, x0, n)` the same page declares. Read as
-    # written it binds `y := 0` and `x0 := 3` and leaves `n` free, and the
-    # original answers it with a sum over that free `n` about the point 3 -
-    # which is what this engine answers it with too. The line the manual prints
-    # is what the five-argument call gives, and the answer being written in `y`
-    # is what says so.
+    # 9.1 p.230, where the printed call is one argument short of the
+    # `TAYLOR_INVERSE(u, x, y, x0, n)` declared on that page. As written it binds
+    # `y := 0` and `x0 := 3` and leaves `n` free; the original then answers with a sum
+    # over `n` about 3, as this engine does. The printed answer, in `y`, is what the
+    # five-argument call gives.
     session = loaded("SOLVE.MTH")
     assert (await session.simplify("TAYLOR_INVERSE(x*#e^x, x, y, 0, 3)")).text == (
         "3*y^3/2 - y^2 + y"
@@ -1958,7 +1888,7 @@ async def test_the_series_inverse_of_a_function_that_has_no_closed_one(loaded):
 
 
 async def test_newtons_finds_the_manuals_nonlinear_solution(loaded):
-    # 9.1 p.228: seven rows, and the last of them is the solution.
+    # 9.1 p.228: seven rows, the last being the solution.
     session = loaded("SOLVE.MTH")
     rows = (await session.approx(
         "NEWTONS([#e^(x*y) - x - 2*y, ATAN(x*y) - 2*x - y], [x, y], [-1, -1], 6)"
@@ -2023,7 +1953,7 @@ async def test_the_laplace_transform_of_the_manuals_square(loaded):
 # -- 9.6 ODE1.MTH -------------------------------------------------------------
 
 async def test_the_first_order_equation_the_manual_solves(loaded):
-    # 9.6 p.247: and the check that the answer meets the initial condition.
+    # 9.6 p.247, and the check that the answer meets the initial condition.
     session = loaded("ODE1.MTH")
     assert (await session.simplify("DSOLVE1(2*x*y, 1 + x^2, x, y, 0, 1)")).text == (
         "x^2*y + y - 1 = 0"
@@ -2032,16 +1962,16 @@ async def test_the_first_order_equation_the_manual_solves(loaded):
 
 
 async def test_a_homogeneous_equation_no_integrating_factor_solves(loaded):
-    # y' = (x^2 + x*y + y^2)/x^2 with y(1) = 0: no integrating factor of one
-    # variable exists, so DSOLVE1 reaches HOMOGENEOUS, whose test is a derivative
-    # that is zero only once simplified. With v = y/x it is x*v' = 1 + v^2.
+    # y' = (x^2 + x*y + y^2)/x^2 with y(1) = 0: there is no single-variable
+    # integrating factor, so DSOLVE1 reaches HOMOGENEOUS, whose test is a derivative
+    # that is zero only after simplification. With v = y/x it is x*v' = 1 + v^2.
     session = loaded("ODE1.MTH")
     answered = await session.simplify("DSOLVE1(x^2 + x*y + y^2, -x^2, x, y, 1, 0)")
     assert answered.text == "ATAN(y/x) = LN(x)"
 
 
 async def test_the_clairaut_equation_the_manual_solves(loaded):
-    # 9.6 p.251: a general solution in c, and an equation to find v from.
+    # 9.6 p.251: a general solution in c, and an equation for v.
     session = loaded("ODE1.MTH")
     assert (await session.simplify("CLAIRAUT((x*v - y)^2, v^2 + 1)")).text == (
         "[c^2*x^2 - 2*c*x*y + y^2 - c^2 - 1 = 0, 2*(v*x^2 - x*y - v) = 0]"
@@ -2059,7 +1989,7 @@ async def test_the_series_solution_of_the_manuals_first_order_equation(loaded):
 
 
 async def test_the_picard_iterate_of_the_manuals_equation(loaded):
-    # 9.8 p.256: expanded about x, which is the form the manual prints.
+    # 9.8 p.256: expanded about x, the form the manual prints.
     session = loaded("ODE_APPR.MTH")
     entry = session.author("PICARD(y^2 + SQRT(x), x + 1, x, y, 0, 1)")
     assert (await session.expand(f"#{entry.number}", variables=("x",))).text == (
@@ -2076,7 +2006,7 @@ async def test_the_series_solution_of_the_manuals_second_order_equation(loaded):
 
 
 async def test_the_euler_steps_the_manual_takes(loaded):
-    # 9.8 p.260: five coordinate pairs, the first of them the initial point.
+    # 9.8 p.260: five coordinate pairs, starting with the initial point.
     session = loaded("ODE_APPR.MTH")
     answered = await session.approx("EULER(26/(3 + (x + y)^2), x, y, 1, -2, 1/4, 4)")
     assert answered.text == (
@@ -2141,8 +2071,7 @@ async def test_the_continued_fraction_of_e(loaded):
 # -- 9.21 MISC.MTH ------------------------------------------------------------
 
 async def test_the_integral_the_manual_does_by_substitution(loaded):
-    # 9.21 p.285: the substitution is `t^2`, so what is written in is the
-    # inverse of it.
+    # 9.21 p.285: the substitution is `t^2`, so its inverse is substituted.
     session = loaded("MISC.MTH")
     assert (await session.simplify("INT_SUBST(t*SIN(t^2), t, t^2)")).text == (
         "-COS(t^2)/2"

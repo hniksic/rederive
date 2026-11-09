@@ -1,7 +1,6 @@
-"""Textual preprocessing, and the map back to what the caller handed over.
+"""Preprocessing of source text, with offsets mapping back to the original.
 
-The parser takes `str`: decoding is the caller's business, and no encoding
-appears in this API.
+The parser takes `str`; decoding is up to the caller.
 """
 
 from __future__ import annotations
@@ -13,10 +12,9 @@ from dataclasses import dataclass, field
 class Source:
     """A piece of Derive text, prepared for lexing.
 
-    `text` is what the lexer and parser index; `original` is what the caller
-    handed over. The preprocessing transforms only ever delete characters, so
-    offsets into `text` no longer index `original`, and `locate` is what puts
-    the cursor in the right place.
+    `text` is what the lexer and parser index; `original` is the caller's input.
+    Preprocessing deletes characters, so offsets into `text` don't match `original`;
+    `locate` translates them.
     """
 
     text: str
@@ -46,12 +44,10 @@ class Source:
 
     @classmethod
     def from_file(cls, text: str, origin: str | None = None) -> Source:
-        """A .MTH/.DMO source: comments and `~` splices apply.
+        """A .MTH/.DMO source, with comments stripped and `~` continuations joined.
 
-        The transforms run in this order, and comments are stripped before
-        splicing, not after: a first line of `; a comment ~` followed by `1+2`
-        loads both, because the `~` inside the comment is gone before splicing
-        ever looks for one.
+        Comments are stripped before splicing, so a `~` inside a comment doesn't join
+        lines: `; a comment ~` followed by `1+2` loads `1+2` on its own.
         """
         body, offsets = _identity(text)
         body, offsets = _cut_at_end_marker(body, offsets)
@@ -61,8 +57,8 @@ class Source:
         return cls(text=body, original=text, origin=origin, offsets=tuple(offsets))
 
 
-#: What ends a DOS text file. Every file the original wrote carries one, and
-#: nothing after it is text.
+#: End-of-file marker of a DOS text file. Every file the original wrote has one, and
+#: anything after it is ignored.
 END_MARKER = "\x1a"
 
 
@@ -79,7 +75,7 @@ def _cut_at_end_marker(text: str, offsets: list[int]) -> tuple[str, list[int]]:
 
 
 def _normalize_line_endings(text: str, offsets: list[int]) -> tuple[str, list[int]]:
-    """Accept CRLF, LF and CR; normalise to LF."""
+    """Accept CRLF, LF and CR; normalize to LF."""
     out: list[str] = []
     kept: list[int] = []
     index = 0
@@ -122,9 +118,8 @@ def _strip_comments(text: str, offsets: list[int]) -> tuple[str, list[int]]:
 def _splice_continuations(text: str, offsets: list[int]) -> tuple[str, list[int]]:
     """Join a line ending in `~` to the next one.
 
-    A raw character operation on the whole text, deliberately: the splice
-    happens before lexing and may cut an identifier, a string literal or an
-    operand from its operator in half.
+    This deliberately operates on raw characters before lexing, so a splice may join
+    the halves of an identifier, string literal, or operator expression.
     """
     out: list[str] = []
     kept: list[int] = []

@@ -1,11 +1,10 @@
-"""The seam between the program and the environment it happens to be running in.
+"""The platform layer between the program and its environment.
 
-Most of what the platform answers is checked where it is used - the memory gauge in
+Most platform services are tested where they are used: the memory gauge in
 `test_memory.py`, the clipboard in `test_ui.py`, `--version` in `test_command_line.py`.
-What is left here is the seam itself: that the desktop answers everything the protocol
-asks, that saying which environment this is works, and storage, which is written down
-ahead of the commands that will go through it and would otherwise have nothing holding
-it to a filesystem that exists.
+This file tests the layer itself: that implementations cover the protocols, that the
+current environment can be switched, and storage, which no command uses yet and would
+otherwise go untested against a real filesystem.
 """
 
 import os
@@ -18,7 +17,7 @@ from rederive.platform.web import Web, WebStorage
 
 
 def _asked_of(protocol):
-    """Every call a protocol makes, which is what an implementation owes it."""
+    """The public methods a protocol declares, which an implementation must provide."""
     return {
         name
         for name in vars(protocol)
@@ -37,12 +36,11 @@ def _asked_of(protocol):
     ids=lambda given: given.__name__,
 )
 def test_every_environment_answers_everything_the_protocol_asks(protocol, implementation):
-    """Nothing type-checks this suite, so each implementation is asked by name.
+    """Nothing type-checks this suite, so check method names directly.
 
-    The browser's is asked here rather than where it is exercised because this is
-    the question that has nothing to do with a browser: whether the two
-    environments still answer the same calls, which is the whole claim the seam
-    makes.
+    The web implementation is checked here rather than in the browser tests because
+    this needs no browser: it only asks whether both environments provide the same
+    calls.
     """
     assert _asked_of(protocol) <= _asked_of(implementation)
 
@@ -52,7 +50,7 @@ def test_the_environment_is_the_desktop_unless_something_says_otherwise():
 
 
 def test_an_environment_that_says_what_it_is_gets_asked_instead():
-    """What a port does at boot, and the whole of how it takes over."""
+    """A port installs its platform at boot, and that is all it takes."""
 
     class Elsewhere:
         def copy(self, text):
@@ -68,12 +66,11 @@ def test_an_environment_that_says_what_it_is_gets_asked_instead():
 
 
 def test_a_file_reads_back_as_the_bytes_it_was_written_as(tmp_path):
-    """Written as text and read back as bytes, which is the asymmetry the callers have.
+    """Files are written as text but read back as bytes.
 
-    A file Rederive writes is UTF-8; a file it reads may be the code page 437 the
-    original wrote, and only the caller knows enough to try both. The line endings are
-    the ones the system writes text with, which on Windows is what a Derive file has
-    always carried.
+    Rederive writes UTF-8, but a file it reads may be in the original's code page 437,
+    and only the caller knows enough to try both. Line endings are the system's, which
+    on Windows matches what Derive files have always used.
     """
     storage = DesktopStorage()
     path = tmp_path / "sheet.mth"
@@ -85,7 +82,7 @@ def test_a_file_reads_back_as_the_bytes_it_was_written_as(tmp_path):
 
 
 def test_a_directory_is_listed_in_order_and_one_that_is_not_there_is_empty(tmp_path):
-    """A prompt completes off this, so a directory that will not be read offers nothing."""
+    """File prompts complete from this, so an unreadable directory offers nothing."""
     storage = DesktopStorage()
     (tmp_path / "second.mth").write_text("")
     (tmp_path / "first.mth").write_text("")

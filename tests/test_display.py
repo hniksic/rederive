@@ -1,16 +1,14 @@
 """The display conformance corpus.
 
-Every block below is the original's own output and therefore the
-specification, never something to edit until an implementation passes. The
-render blocks are its reference renders; the fencing, sign and selection
-sections were checked against the original, as were the renders.
+Every block below is the original's output and is therefore the specification: never
+edit a block to make an implementation pass. All sections were checked against the
+original.
 
-Two blocks carry a correction, marked where each occurs. The transcription
-they reached us in disagrees with the program itself, and in both cases with
-the rest of the corpus as well.
+Two blocks carry a marked correction, where the transcription we received disagrees with
+the program itself and with the rest of the corpus.
 
-Tests may look inside `rederive.display`; the rule that nothing outside the
-package imports from inside it is about the application, not about its tests.
+Tests may import from inside `rederive.display`; the rule against that applies to the
+application, not its tests.
 """
 
 from __future__ import annotations
@@ -39,10 +37,10 @@ def block(text: str) -> list[str]:
 
 
 def check(text: str, expected: str, options: DisplayOptions = DEFAULTS) -> None:
-    """Compare a render against its block, rstripped, and report readably.
+    """Compare a render against its block, rstripped.
 
-    A line-by-line diff of two multi-row renders is unreadable, so failures
-    print the two blocks one above the other instead.
+    A line diff of multi-row renders is unreadable, so failures print the two blocks one
+    above the other.
     """
     actual = rendered(text, options)
     wanted = block(expected)
@@ -90,9 +88,9 @@ FRACTIONS = [
         """,
     ),
     (
-        # Corrected against the program: the reference block puts `x` one
-        # column left of centre, where every other block - a one-wide
-        # numerator over bars of 3, 5 and 9 - centres exactly.
+        # Corrected against the program: the reference block puts `x` one column left
+        # of center, while every other one-wide numerator (over bars of 3, 5 and 9) is
+        # centered exactly.
         "x/(a+b)",
         """
            x
@@ -409,9 +407,8 @@ CALCULUS = [
         """,
     ),
     (
-        # Corrected against the program: the reference block drops the `x` of
-        # the denominator, which shares its row with `x→0` because `lim` sits
-        # on the bar row.
+        # Corrected against the program: the reference block drops the denominator's
+        # `x`, which shares a row with the limit point because `lim` is on the bar row.
         "LIM((SIN x)/x,x,0)",
         """
              SIN(x)
@@ -427,9 +424,9 @@ CALCULUS = [
         └dx┘
         """,
     ),
-    # `d/dx` reaches less far to the right than the other forms that end in a
-    # body: it fences a product and a sign where `Σ`, `lim` and `∫` leave both
-    # bare. A quotient is nobody's exception to fence: the bar delimits it.
+    # `d/dx` binds less far right than other forms that end in a body: it fences a
+    # product and a sign, which `Σ`, `lim` and `∫` leave bare. No form fences a quotient,
+    # since the bar delimits it.
     (
         "DIF(x*y,x)",
         """
@@ -500,9 +497,8 @@ CALCULUS = [
         ╯ -x dx
         """,
     ),
-    # The antidifference and the antiquotient, which `Calculus Sum` and
-    # `Calculus Product` build when both limits are left blank: the index
-    # stands under the sign alone, with nothing over it.
+    # Antidifference and antiquotient, built by `Calculus Sum` and `Calculus Product`
+    # when both limits are blank: only the index, under the sign.
     (
         "SUM(k^2,k)",
         """
@@ -519,8 +515,8 @@ CALCULUS = [
         k
         """,
     ),
-    # The direction `Calculus Limit` writes: a sign against the point, and
-    # nothing at all for the two-sided limit it writes as a zero.
+    # `Calculus Limit` directions: a sign after the point, or nothing for the two-sided
+    # limit (written as a zero).
     (
         "LIM((SIN x)/x,x,0,0)",
         """
@@ -568,8 +564,8 @@ SINGLE_ROW = [
     ('"hello"', '"hello"'),
     ("5%+x", "5% + x"),
     ("x:epsilon Real [0,inf)", "x :ε Real [0, ∞)"),
-    # An interval's bounds are written in author notation rather than built
-    # up, so a bound that is a fraction or a power stays on the row.
+    # Interval bounds are written in linear author notation, so fractions and powers
+    # stay on the row.
     ("x:epsilon Real (1/2, 5)", "x :ε Real (1/2, 5)"),
     ("y:epsilon Real (2^10, 1/3)", "y :ε Real (2^10, 1/3)"),
     ("p:epsilon Real [-2/3, 5)", "p :ε Real [- 2/3, 5)"),
@@ -667,7 +663,7 @@ def test_output_radix(text: str, base: int, expected: str) -> None:
 
 
 def test_a_numeral_with_a_radix_point_is_shown_as_written() -> None:
-    # Converting the fraction would be arithmetic, which this layer does none of.
+    # Converting the fraction would be arithmetic, which this layer doesn't do.
     assert rendered("1.5", DisplayOptions(output_base=16)) == ["1.5"]
 
 
@@ -676,8 +672,8 @@ def test_a_numeral_with_a_radix_point_is_shown_as_written() -> None:
     [("1/3", 10, "1/3"), ("1/3", 3, "1/10"), ("10/3", 16, "0A/3")],
 )
 def test_output_radix_of_a_ratio(value: str, base: int, expected: str) -> None:
-    # What a numeral carries when no finite decimal is worth it: `0.1` read in
-    # base three. Both halves are whole, so both convert.
+    # A ratio is used when no finite expansion exists, e.g. `1/3` is `1/10` in base
+    # three. Both halves are integers, so both convert.
     assert glyphs.numeral(value, base, 6) == expected
 
 
@@ -691,15 +687,15 @@ def test_output_radix_of_a_ratio(value: str, base: int, expected: str) -> None:
         ("12345.67891", "12345.6"),
         ("1234567.891", "1234567.8"),
         ("0.000123456789", "0.000123456"),
-        # Cut, not rounded: the digit after the last one shown never carries.
+        # Truncated, not rounded.
         ("0.9999999", "0.999999"),
         ("1.9999999", "1.99999"),
-        # Zeros the cut leaves behind are shown: they stand for the digits
-        # that follow. A tenth, whose digits run out, is shown as `0.1`.
+        # Trailing zeros left by truncation are shown, since they stand for the digits
+        # that follow. An exact tenth is shown as `0.1`.
         ("0.10000000000000001", "0.100000"),
         ("1.0000001", "1.00000"),
         ("0.1", "0.1"),
-        # A whole number is exact, and is shown in full.
+        # Integers are exact and shown in full.
         ("123456789", "123456789"),
     ],
 )
@@ -708,8 +704,7 @@ def test_notation_digits(text: str, expected: str) -> None:
 
 
 def test_a_ratio_is_shown_in_full() -> None:
-    # Rational notation says what it is worth however long that is; there is
-    # nothing to cut, the two halves being whole.
+    # A ratio of integers is exact, so nothing is truncated.
     assert glyphs.numeral("1/3", 10, 6) == "1/3"
 
 
@@ -724,26 +719,25 @@ def test_notation_digits_is_the_setting(digits: int, expected: str) -> None:
 
 # -- the selection tree -----------------------------------------------------
 
-# A route is a tuple of indices into `Region.children`, empty for the whole
-# expression. The rectangles are the ones the render section fixes; only the
-# addresses are the selection tree's business.
+# A route is a tuple of indices into `Region.children`, empty for the whole expression.
+# The rectangles follow from the renders above; these tests are about the addresses.
 
 
 @pytest.mark.parametrize(
     ("text", "route", "rect"),
     [
-        # The three terms of `a + b/c + d` hang directly off the root, and
-        # `a + b/c` is not addressable at all.
+        # The three terms of `a + b/c + d` are children of the root, and `a + b/c` is
+        # not addressable.
         ("a+b/c+d", (), (0, 0, 3, 11)),
         ("a+b/c+d", (0,), (1, 0, 1, 1)),
         ("a+b/c+d", (1,), (0, 4, 3, 3)),
         ("a+b/c+d", (1, 0), (0, 5, 1, 1)),
         ("a+b/c+d", (1, 1), (2, 5, 1, 1)),
         ("a+b/c+d", (2,), (1, 10, 1, 1)),
-        # A fraction has two operands, drawn built up or not.
+        # A fraction has two operands, whether built up or linear.
         ("(x+1)/(x^2+2x+3)", (0,), (0, 5, 1, 5)),
         ("(x+1)/(x^2+2x+3)", (1,), (2, 1, 2, 12)),
-        # The head is dropped, so the argument moves to `(0,)`.
+        # The head isn't an operand, so the argument is `(0,)`.
         ("SIN(x+1)", (0,), (0, 4, 1, 5)),
         ("a^b^c", (1,), (0, 1, 2, 2)),
     ],
@@ -760,7 +754,7 @@ def test_a_route_that_leads_nowhere_is_none() -> None:
 
 
 def test_a_route_names_the_subexpression_it_covers() -> None:
-    """`Region.node` is how an operation gets back to what is selected."""
+    """`Region.node` gives operations the selected subexpression."""
     layout = layout_of("a+b/c+d")
     assert to_sexpr(layout.at(()).node) == "(+ a (/ b c) d)"
     assert to_sexpr(layout.at((1,)).node) == "(/ b c)"
@@ -768,7 +762,7 @@ def test_a_route_names_the_subexpression_it_covers() -> None:
 
 
 def test_a_region_is_the_rectangle_a_subexpression_covers() -> None:
-    # `b/c` in `a + b/c + d`: the blanks beside `b` and `c` are inside it.
+    # `b/c` in `a + b/c + d`, including the blanks beside `b` and `c`.
     layout = layout_of("a+b/c+d")
     region = layout.at((1,))
     assert region is not None
@@ -808,11 +802,11 @@ def covers(text: str, route: tuple[int, ...]) -> list[str]:
         ("a+b-c", ["a", "b", "c"]),
         ("a b c", ["a", "b", "c"]),
         ("a*b*c", ["a", "b", "c"]),
-        # `/` and the dot product are binary and drawn as groups of their own.
+        # `/` and the dot product are binary, so they form their own groups.
         ("a*b/c", ["(* a b)", "c"]),
         ("a*b/c*d", ["(/ (* a b) c)", "d"]),
         ("[1,2].[3,4]", ["(vec 1 2)", "(vec 3 4)"]),
-        # Parentheses are a run of their own, whichever operator they group.
+        # Parentheses start a separate run, whatever operator they group.
         ("a-(b-c)", ["a", "(- b c)"]),
         ("a+(b+c)", ["a", "(+ b c)"]),
         ("a*(b*c)", ["a", "(* b c)"]),
@@ -823,10 +817,10 @@ def test_a_run_offers_its_terms(text: str, expected: list[str]) -> None:
 
 
 def test_a_parenthesised_run_keeps_its_fences() -> None:
-    """`a + (b + c)` is two terms in the original, and says so on the screen.
+    """`a + (b + c)` has two terms in the original, so the parentheses are drawn.
 
-    Only the parentheses tell it from `a + b + c`, which is three, so they
-    are drawn even though `+` would be read the same way without them.
+    They are what distinguishes it from the three-term `a + b + c`, even though `+` is
+    associative.
     """
     check("a+(b+c)", "a + (b + c)")
     check("a*(b*c)", "a·(b·c)")
@@ -851,12 +845,12 @@ def test_a_head_is_not_an_operand() -> None:
     ("text", "expected"),
     [
         ("INT(x^2,x)", ["(^ x 2)", "x"]),
-        # Argument order, though the bounds are drawn first.
+        # Operands follow argument order, though the bounds are drawn first.
         ("INT(x^2,x,0,1)", ["(^ x 2)", "x", "0", "1"]),
         ("SUM(k^2,k,1,n)", ["(^ k 2)", "k", "1", "n"]),
         ("PRODUCT(k,k,1,n)", ["k", "k", "1", "n"]),
         ("LIM((SIN x)/x,x,0)", ["(/ (apply SIN x) x)", "x", "0"]),
-        # The direction is drawn as a sign, so it is no operand of its own.
+        # The direction is drawn as a sign, so it isn't an operand.
         ("LIM((SIN x)/x,x,0,1)", ["(/ (apply SIN x) x)", "x", "0"]),
         ("SUM(k^2,k)", ["(^ k 2)", "k"]),
         ("PRODUCT(k^2,k)", ["(^ k 2)", "k"]),
@@ -872,11 +866,10 @@ def test_a_special_form_names_its_own_operands(text: str, expected: list[str]) -
 
 
 def test_a_limit_whose_direction_is_no_direction_prints_as_a_call() -> None:
-    """`LIM(u, x, a, d)` draws its fourth argument as a sign or not at all.
+    """A limit whose fourth argument isn't a valid direction prints as a plain call.
 
-    A fourth argument that is neither is nothing the drawn form can show, so
-    the head is written out as the call it is rather than drawn as a limit
-    that has lost part of what it says.
+    The drawn form can only show the direction as a sign or omit it, so anything else
+    would be lost.
     """
     assert rendered("LIM(x,x,0,z)") == ["LIM(x, x, 0, z)"]
     assert rendered("LIM(x,x,0,0)") == ["lim x", "x→0"]
@@ -907,8 +900,8 @@ def test_a_matrix_offers_rows_and_then_cells() -> None:
 
 # -- confirmed against the original -----------------------------------------
 
-# Checked against the original: with the expression authored, these are the
-# cells that go to inverse video under Right.
+# Checked against the original: the cells highlighted by Right after authoring the
+# expression.
 
 
 def test_a_subscript_chain_nests_rather_than_flattening() -> None:
@@ -936,8 +929,8 @@ def test_the_operand_of_a_unary_sign_is_selectable() -> None:
 
 
 def test_a_relation_chain_selects_as_nested_pairs() -> None:
-    # `(a = b) < c`: two operands at the root, and the left one steps into
-    # its own pair. The original does the same.
+    # `(a = b) < c`: two operands at the root, and the left one has its own pair, as in
+    # the original.
     assert operands("a=b<c") == ["(rel a = b)", "c"]
     assert covers("a=b<c", (0,)) == ["a = b"]
     assert operands("a=b<c", (0,)) == ["a", "b"]
@@ -957,7 +950,7 @@ def test_a_domain_and_its_interval_select_together() -> None:
         DisplayOptions(),
         DisplayOptions(compressed=True),
         DisplayOptions(times="Implicit"),
-        # Low enough to force the fraction into its linear form.
+        # Forces the fraction into linear form.
         DisplayOptions(height=1),
     ],
 )
@@ -975,7 +968,7 @@ def test_a_route_names_the_same_node_however_it_is_drawn(
 
 
 def test_a_degraded_fraction_keeps_its_operands() -> None:
-    # The bar becomes a slash, and numerator and denominator stay put.
+    # The bar becomes a slash, and the operands keep their routes.
     assert rendered("a+b/c+d", DisplayOptions(height=1)) == ["a + b/c + d"]
     node = parse_expression("a+b/c+d", ParseState()).node
     layout = render(node, DisplayOptions(height=1))
@@ -1007,16 +1000,15 @@ def test_a_continued_fraction_is_fully_built_up_when_it_may_be(
 def test_degrading_stops_as_soon_as_the_render_fits(depth: int) -> None:
     lines = rendered(continued_fraction(depth), DisplayOptions(height=19))
     assert len(lines) == 19
-    # Outermost first: one linear division per level of overflow, and none
-    # deeper than that.
+    # Outermost first: one linear division per level of overflow, and no more.
     assert lines[1].count("1/") == depth - 9
 
 
 def test_the_budget_degrades_a_chain_of_divisions() -> None:
     check(
         "1/(2/(3/(4/(5/(6/(7/(8/(9/(a/b)))))))))",
-        # The built-up fraction operand of the linear `/` takes no fences: the
-        # bar already delimits it.
+        # The built-up fraction under the linear `/` needs no fences: the bar
+        # delimits it.
         """
                    2
         1/───────────────────
@@ -1055,8 +1047,7 @@ def test_a_matrix_that_busts_the_budget_falls_back_to_the_flat_form() -> None:
 def test_the_outermost_division_degrades_first() -> None:
     check(
         continued_fraction(10),
-        # The multi-row operand takes fences because it is a sum, not a
-        # fraction.
+        # The multi-row operand is fenced because it is a sum, not a fraction.
         """
               ┌                             1                         ┐
         1 + 1/│1 + ───────────────────────────────────────────────────│
@@ -1114,16 +1105,15 @@ def test_two_levels_degrade_when_one_is_not_enough() -> None:
 
 # Every block in this section was checked against the original.
 #
-# A form that ends in its body is fenced by what would be read into that body:
-# an operator drawn to its right that binds at least as tightly. `Σ k + 1` is a
-# sum of `k + 1`, so a `+` after one needs fences and a `=` does not; the body
-# of `d/dx` stops at a product, so `d/dx x + 1` needs none where `d/dx x · 2`
-# does. Nothing about this is a precedence: a sum is fenced left of a `·` and
-# bare right of one. A comma, a closing bracket and an integral's `dx` are
-# terminators rather than operators, and fence nothing.
+# A form that ends in its body is fenced when an operator to its right binds tightly
+# enough to be read into the body.
+# `Σ k + 1` reads as a sum of `k + 1`, so a following `+` needs fences and `=` doesn't.
+# `d/dx` stops at a product, so `d/dx x + 1` needs none but `d/dx x · 2` does. This is
+# not ordinary precedence: a sum is fenced to the left of `·` but not to its right.
+# Commas, closing brackets and an integral's `dx` are terminators and fence nothing.
 
 FORM_FENCES = [
-    # An integral is closed off by its own `dx`, so it is never fenced.
+    # An integral is closed by its `dx`, so it is never fenced.
     (
         "INT(x^2,x)+1",
         """
@@ -1189,7 +1179,7 @@ FORM_FENCES = [
         """,
     ),
     (
-        # A relation is looser than the body, so it is read correctly as it is.
+        # A relation binds more loosely than the body, so no fences are needed.
         "SUM(k,k,1,n)=1",
         """
          n
@@ -1232,7 +1222,7 @@ FORM_FENCES = [
         """,
     ),
     (
-        # The bar closes the numerator off, as it does for every operand.
+        # The bar delimits the numerator, as it does any operand.
         "SUM(k,k,1,n)/2",
         """
           n
@@ -1243,7 +1233,7 @@ FORM_FENCES = [
         """,
     ),
     (
-        # A comma terminates the body rather than being read into it.
+        # A comma terminates the body.
         "[SUM(k,k,1,n),2]",
         """
         ┌ n      ┐
@@ -1252,7 +1242,7 @@ FORM_FENCES = [
         """,
     ),
     (
-        # So does the call's own closing parenthesis.
+        # So does the call's closing parenthesis.
         "SIN(SUM(k,k,1,n))",
         """
            ┌ n   ┐
@@ -1261,7 +1251,7 @@ FORM_FENCES = [
         """,
     ),
     (
-        # The radical takes an operand as tight as a power's, so it fences one.
+        # The radical binds as tightly as a power, so it fences the form.
         "SQRT(SUM(k,k,1,n))",
         """
          ┌ n   ┐
@@ -1298,8 +1288,8 @@ FORM_FENCES = [
           x→0
         """,
     ),
-    # `d/dx` reads only as far as a product, and its fences are there to carry
-    # the order: the two-argument form goes without them entirely.
+    # `d/dx` extends only over a product. Its fences carry the order, so the
+    # two-argument form has none.
     (
         "DIF(x,x)",
         """
@@ -1364,8 +1354,8 @@ def test_a_form_is_fenced_by_what_would_be_read_into_its_body(
 
 # -- the unary sign ---------------------------------------------------------
 
-# Also from the original: the sign abuts a leaf and stands off anything
-# else, whether or not the operand is more than a row tall.
+# Also from the original: the sign abuts a leaf and is spaced from anything else,
+# regardless of the operand's height.
 
 SIGNED = [
     ("-x-(-y)", "-x - -y"),
@@ -1408,12 +1398,10 @@ def test_a_sign_stands_off_a_raised_or_lowered_operand() -> None:
 
 
 def test_a_sign_over_a_quotient_stands_beside_the_bar() -> None:
-    """Where the sign is drawn follows the tree, and nothing compensates.
+    """The sign's position follows the tree.
 
-    `-x/y` is `-(x/y)`, whose operand is a quotient rather than a leaf, so the
-    ordinary rule that a sign stands off anything but a leaf puts it beside
-    the bar. `(-x)/y` really does put `-x` over the bar. The original draws
-    both this way.
+    `-x/y` is `-(x/y)`, whose operand is a quotient, not a leaf, so the sign goes beside
+    the bar. `(-x)/y` puts `-x` over the bar. The original draws both this way.
     """
     check(
         "-x/y",
@@ -1445,8 +1433,8 @@ def test_centering_ties_go_right(field: int, width: int, offset: int) -> None:
 
 
 def test_a_tie_puts_a_numerator_right_of_centre() -> None:
-    # A one-wide numerator over a two-wide denominator: the bar is four wide,
-    # so the numerator has three columns of slack and takes two of them.
+    # A one-wide numerator over a two-wide denominator: the bar is four wide, leaving
+    # three columns of slack, and the tie puts the numerator two columns in.
     check(
         "x/(-a)",
         """
@@ -1470,7 +1458,7 @@ def test_a_three_row_operand_takes_built_up_fences() -> None:
 
 
 def _owned(box: boxes.Box) -> boxes.Box:
-    """The painter records regions, so the outermost box needs a node."""
+    """Wrap `box` in a box with a node, which the painter needs to record regions."""
     node = parse_expression("x", ParseState()).node
     inside = (boxes.Placed(box, 0, 0),)
     return boxes.Box(box.width, box.above, box.below, node, "", inside)
@@ -1500,8 +1488,8 @@ def test_a_subscript_lowers_at_the_first_script_level() -> None:
 
 
 def test_the_flat_form_of_a_subscript_writes_an_arrow() -> None:
-    # `↓` where a superscript too deep to raise writes `^`. The original holds
-    # this glyph at 0x19 of its own font.
+    # `↓` is the subscript counterpart of `^` in a too-deep script. The original has
+    # this glyph at 0x19 of its font.
     check(
         "x^(y^(a SUB b))",
         """
@@ -1517,7 +1505,7 @@ def test_a_matrix_is_flat_inside_a_script() -> None:
 
 
 def test_every_name_the_lexer_knows_has_an_output_spelling() -> None:
-    """The two inventories are separate tables, so guard the overlap."""
+    """The lexer's and the printer's name tables are separate, so check they agree."""
     for name in names.GREEK_VARIABLES:
         assert name in glyphs.NAMES, name
     for name in names.CONSTANTS:

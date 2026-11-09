@@ -1,10 +1,8 @@
-"""What proves an answer to an integral.
+"""Proofs that an answer to an integral is correct.
 
-Nothing sympy answers is taken on its word. An antiderivative is kept where its
-derivative is proved to be the integrand, a difference is zero only where exact
-rewriting proves it so, and the difference of an antiderivative at the ends of an
-interval is the integral only where the antiderivative is proved unbroken between
-them. `agrees` and `agrees_at` are the same question asked of two values.
+No sympy answer is trusted. An antiderivative is kept only if its derivative is proved
+equal to the integrand, and its endpoint difference is taken as a definite integral
+only if it is proved continuous between the endpoints.
 """
 
 from __future__ import annotations
@@ -30,23 +28,17 @@ def unbroken(
     expression: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
 ) -> bool:
     """Whether the expression is proved continuous in the variable on the open interval
-    from `low` to `high`, with every function in it off its branch cuts there, for every
-    real value of the parameters it is defined at.
+    from `low` to `high`, off every branch cut, for every real parameter value at which
+    it is defined.
 
-    That is what makes the difference of an antiderivative's limits at the ends the
-    integral. An antiderivative that jumps inside the interval, as a logarithm does
-    where its argument crosses zero, has a difference that misses the jump; and on a
-    branch cut the derivative of a function need not be what its formula says, sympy's
-    value there being taken from one side: `POLYLOG(2, z)` past 1 differentiates to
-    `-LN(1 - z)/z` with the other sign of `#i*pi` in the logarithm. A logarithm or a
-    power of a real argument that is negative throughout is on its cut too, but on the
-    same side of it throughout, `LN(A)` being `LN(-A) + #i*pi`, so it is continuous and
-    differentiates as its formula does.
+    This is what makes an antiderivative's endpoint difference equal the integral. A
+    jump (a logarithm whose argument crosses zero) makes the difference miss it, and on
+    a branch cut sympy differentiates from one side: `POLYLOG(2, z)` past 1
+    differentiates to `-LN(1 - z)/z` with the wrong sign of `#i*pi`. A logarithm or
+    power of an argument negative throughout stays on one side of its cut, so it counts
+    as continuous.
 
-    The proof goes by the structure of the expression, as `Stretch` lays out, and asks
-    only what sympy decides symbolically. A subexpression free of the variable is a
-    constant, and a parameter that makes it undefined makes the expression undefined
-    at every point, which is outside what it says anything about.
+    The proof follows the expression's structure, as described in `Stretch`.
     """
     span = attempt(high, lambda h: h - low)
     if span is None or span.is_extended_positive is not True:
@@ -55,40 +47,31 @@ def unbroken(
 
 
 class Stretch:
-    """An open interval of a real variable, and what is proved about expressions in the
-    variable over it.
+    """An open interval of a real variable, and proofs about expressions over it.
 
-    An expression is continuous where it is a constant, the variable, or a sum,
-    product or function of continuous expressions such that:
+    An expression is continuous if it is a constant, the variable, or a sum, product or
+    function of continuous expressions such that:
 
-    - a power with an exponent free of the variable has a base that is not zero, or an
-      integer exponent at least zero, or a positive exponent and a real base, the
-      principal power of a real base being continuous through zero;
-    - a power with the variable in its exponent has a positive base or a nonzero
+    - a power with a constant exponent has a nonzero base, a nonnegative integer
+      exponent, or a positive exponent and a real base;
+    - a power with the variable in its exponent has a positive base, or a nonzero
       constant one;
-    - the entire functions (exponential, sine and cosine, their hyperbolic forms, the
-      error functions, `SI`, `SHI` and the Fresnel integrals) take any argument; the
-      arctangent, the inverse hyperbolic sine and the hyperbolic tangent a real one;
-      the tangent, cotangent, secant and cosecant a real one at which their
-      denominator is not zero;
-    - the logarithm, the exponential integral, the sign and the arccotangent take a
-      real argument that is not zero; the cosine integrals and the logarithmic integral
-      a positive one, the latter also not 1;
-    - the arcsine and arccosine take an argument between -1 and 1, the inverse
-      hyperbolic cosine one at least 1, the inverse hyperbolic tangent and cotangent one
-      inside and outside -1 to 1, and `POLYLOG(s, z)` a real `z` less than 1;
-    - the absolute value takes any argument.
+    - entire functions (`ENTIRE`, and the absolute value) take any argument; `REAL`
+      functions a real one; the quotients in `QUOTIENTS` a real one off the poles;
+    - `NONZERO` functions take a real nonzero argument; the cosine integrals and the
+      logarithmic integral a positive one (the latter not 1);
+    - the arcsine and arccosine take an argument in [-1, 1], the inverse hyperbolic
+      cosine one at least 1, the inverse hyperbolic tangent and cotangent one inside
+      and outside (-1, 1), and `POLYLOG(s, z)` a real `z` below 1.
 
-    Anything else is not proved continuous. An expression is real where it is built of
-    real constants, the variable, and the functions above at real arguments, a root or
-    a logarithm of an argument that is not negative and positive respectively.
+    An expression is real if built from real constants, the variable, and these
+    functions at real arguments, with roots of nonnegative and logarithms of positive
+    arguments.
 
-    A sign condition on an argument is decided by sympy's assumptions, over the
-    variable written as an end plus or minus a positive offset, or as the point that
-    far along the interval the offset over one plus the offset is. An argument free of
-    parameters is otherwise decided by solving for where it is zero or negative on the
-    interval, which `solveset` does exactly or not at all, and taking its sign at the
-    middle.
+    Signs are decided by sympy's assumptions, with the variable written as an endpoint
+    plus or minus a positive offset `p`, or as the point `p/(1 + p)` of the way along.
+    Failing that, a parameter-free argument is decided by `solveset` on the interval
+    and its sign at the middle.
     """
 
     #: The functions continuous for any continuous argument.
@@ -98,7 +81,7 @@ class Stretch:
     )
     #: The functions continuous and real for a continuous real argument.
     REAL = (sp.atan, sp.asinh, sp.tanh)
-    #: The quotients and the function whose zeros they are poles at.
+    #: The quotients, each mapped to the function whose zeros are its poles.
     QUOTIENTS = {sp.tan: sp.cos, sp.sec: sp.cos, sp.cot: sp.sin, sp.csc: sp.sin}
     #: The functions continuous for a continuous real argument that is not zero.
     NONZERO = (sp.log, sp.Ei, sp.sign, sp.acot, sp.coth)
@@ -199,8 +182,9 @@ class Stretch:
         return self._real_kernel(expression, argument)
 
     def _real_kernel(self, expression: sp.Basic, argument: sp.Basic) -> bool:
-        """Whether a function with a real argument is continuous and real: the kernels
-        that are real on part of the real line only."""
+        """Whether a function that is real on only part of the real line is continuous and
+        real at this argument.
+        """
         if isinstance(expression, (sp.asin, sp.acos)):
             return self.nonnegative(1 - argument**2)
         if isinstance(expression, sp.acosh):
@@ -245,8 +229,7 @@ class Stretch:
         return self._real_kernel(expression, argument)
 
     def _assumed(self, expression: sp.Basic, ask: Callable[[sp.Basic], bool]) -> bool:
-        """Whether sympy's assumptions decide the question over one of the covers of
-        the interval."""
+        """Whether sympy's assumptions answer yes over one of the interval's covers."""
         if not expression.has(self.variable):
             return bool(attempt(expression, lambda e: sp.S(ask(e) is True)))
         for cover in self.covers:
@@ -259,8 +242,8 @@ class Stretch:
         return False
 
     def _nowhere(self, relation: sp.Basic) -> bool:
-        """Whether a relation in the variable alone holds at no point of the interval,
-        as `solveset` finds."""
+        """Whether `solveset` finds that a relation in the variable alone holds nowhere
+        on the interval."""
         if relation.free_symbols != {self.variable}:
             return False
         inside = sp.Interval.open(self.low, self.high)
@@ -305,10 +288,11 @@ class Stretch:
         return self._plain(expression) and self._nowhere(sp.Eq(expression, 0))
 
     def _conjugate(self, expression: sp.Basic) -> sp.Basic | None:
-        """The sum with the sign of its one term over a square root turned, or None:
-        `p + c*SQRT(R)` times `p - c*SQRT(R)` is `p^2 - c^2*R`, so the sum is not zero
-        where that is not and the conjugate is finite, as it is where the sum is
-        continuous."""
+        """The sum with the sign of its single square-root term flipped, or None.
+
+        Since `(p + c*SQRT(R))*(p - c*SQRT(R)) = p^2 - c^2*R`, the sum is nonzero
+        wherever that product is and the sum is continuous.
+        """
         if not isinstance(expression, sp.Add):
             return None
         rooted = [
@@ -353,26 +337,21 @@ def agrees_at(
 def differentiates_back(
     value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> bool:
-    """Whether the answer is proved an antiderivative of the integrand, each of its
-    cases where it applies.
+    """Whether the answer is proved an antiderivative of the integrand, checking each
+    piecewise case where it applies.
 
-    Sympy's Risch implementation answers `INT(1/(x^2 + a), x)` with zero over a real
-    `a`, and `INT(x^2/(x^2 + a), x)` with `x`; its Meijer G route answers `INT(SIN(x)/
-    x^2, x)` over a real `x` with `SIGN(x)` terms whose derivative is `2/x` off for
-    negative `x`. So nothing of sympy's is trusted: an answer is kept where its
-    derivative is proved to be the integrand.
+    Sympy's Risch answers `INT(1/(x^2 + a), x)` with zero for real `a`, and its Meijer
+    G route gets `INT(SIN(x)/x^2, x)` wrong for negative `x`, so nothing is trusted.
 
-    A case applies where its condition holds and those of the cases before it do not.
-    Where that pins a parameter to a value, `a = 0` where an earlier case was for `a
-    /= 0`, the case is proved with the parameter at that value; where it pins the
-    variable to isolated points, it says nothing about an antiderivative, which is a
-    function on intervals, and nothing has to be proved of it; nor where the
-    integrand has no value once the parameters are pinned, as `COT(a*x)` has none for
-    `a = 0`. Every other case has to hold whatever its condition says.
+    A case applies where its condition holds and earlier ones don't. If that pins a
+    parameter (`a = 0` after a case for `a /= 0`), the case is proved at that value. If
+    it pins the variable to isolated points, or the integrand is undefined at the
+    pinned values (`COT(a*x)` at `a = 0`), nothing needs proving. Every other case must
+    hold unconditionally.
     """
     if not integrand.has(variable) and value == integrand * variable:
-        # An integrand free of the variable, which may be an interval that sympy's
-        # derivative does not take back to itself.
+        # A constant integrand, which may be an interval that sympy's derivative
+        # doesn't map back to itself.
         return True
     folded = attempt(value, sp.piecewise_fold)
     if folded is None:
@@ -396,13 +375,13 @@ def differentiates_back(
 def _holds_in(
     region: sp.Basic, case: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> bool:
-    """Whether a case is proved an antiderivative where a conjunction of conditions
-    holds, the parameters its equations pin being put in: see `differentiates_back`.
+    """Whether a case is proved an antiderivative where a conjunction of conditions holds;
+    see `differentiates_back`.
 
-    An equation pins a parameter where it is in that parameter alone, `LN(a) = 0`
-    pinning `a` to 1, or where it is the parameter equated to something free of it.
-    One that has more than one solution is proved at each of them. An equation that
-    pins nothing is passed over, and the case proved without it."""
+    An equation pins a parameter if it involves only that parameter (`LN(a) = 0` pins
+    `a` to 1) or equates it to something free of it. With several solutions, each is
+    proved. Equations that pin nothing are ignored.
+    """
     conditions = sp.And.make_args(region)
     if any(isinstance(c, sp.Eq) and c.has(variable) for c in conditions):
         return True
@@ -442,8 +421,8 @@ def _holds_in(
 def _pins(
     equation: sp.Basic | None, variable: sp.Basic
 ) -> list[dict[sp.Basic, sp.Basic]] | None:
-    """The values an equation in the parameters pins one of them to, every value that
-    satisfies it, or None where it pins none: see `_holds_in`."""
+    """All values an equation pins one of the parameters to, or None if it pins none;
+    see `_holds_in`."""
     if equation is sp.true or not isinstance(equation, sp.Eq):
         return [] if equation is sp.false else None
     left, right = equation.args
@@ -462,25 +441,20 @@ def _pins(
 
 
 def holds(case: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether this case is an antiderivative with no condition attached.
-
-    Proof, not evidence: the difference of its derivative and the integrand has to be
-    proved zero, as `proved_zero` proves it.
-    """
+    """Whether this unconditional case's derivative is proved equal to the integrand."""
     if case.has(sp.Piecewise):
         return False
     difference = attempt(case, lambda c: sp.diff(c, variable) - integrand)
     return difference is not None and proved_zero(difference)
 
 
-#: The largest difference, in operations, that `sympy.simplify` is asked to prove
-#: zero once the cheap steps have not.
+#: Size limit, in operations, for a difference passed to `sympy.simplify` after the
+#: cheap steps fail.
 _SIMPLIFIED_OPERATIONS = 400
 
-#: The exact steps a difference is put through before `sympy.simplify` is asked: over
-#: a common denominator, and the same after special functions are written out, after
-#: trigonometric and hyperbolic functions are written as exponentials, and after the
-#: roots are taken out of the denominators.
+#: Cheap exact steps tried before `sympy.simplify`: put over a common denominator,
+#: plain and after expanding special functions, rewriting trigonometric and hyperbolic
+#: functions as exponentials, or rationalizing denominators.
 _ZERO_STEPS: tuple[Rewrite, ...] = (
     lambda d: sp.cancel(sp.together(d)),
     lambda d: sp.cancel(sp.together(sp.expand_func(d))),
@@ -490,13 +464,11 @@ _ZERO_STEPS: tuple[Rewrite, ...] = (
 
 
 def proved_zero(difference: sp.Basic) -> bool:
-    """Whether the difference is proved to be zero, by exact rewriting alone.
+    """Whether the difference is proved zero by exact rewriting alone.
 
-    The cheap steps of `_ZERO_STEPS` are tried first, and settle most derivatives.
-    `sympy.simplify` is the last resort, and is asked only of a difference small
-    enough for it, its cost growing much faster than the size of what it is given;
-    what it gives back is put through the cheap steps once more. A difference not
-    proved zero is not taken for one, whatever it is: no value at a point is asked.
+    The cheap `_ZERO_STEPS` settle most cases. `sympy.simplify` is the last resort,
+    used only on small differences because its cost grows fast. Numeric evaluation is
+    never used as evidence.
     """
     if difference == 0:
         return True

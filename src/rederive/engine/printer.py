@@ -1,76 +1,26 @@
 """sympy -> author notation.
 
-The engine's results leave sympy as text, and this is where that text is
-written: `^` for powers, `SQRT(u)` for square roots, `#e` and `#i` for the
-constants, upper-case function names, `?` for the unknown value. Every result
-of every command goes through here, so nothing in it may assume which command
-produced the expression.
+Converts every engine result to text: `^` for powers, `SQRT(u)`, `#e` and `#i`,
+upper-case function names, `?` for the unknown value. The output must reparse to the
+same expression, and must use the session's notation (input base and the `Options
+Notation` style, handled by `engine.notation`). Decimal styles bend the first rule, as
+in the original; the exact value is kept separately in `Result.value`.
 
-Two rules govern the output. It must reparse to the same expression - the
-printer never leans on juxtaposition and parenthesises wherever the grammar
-needs it - and it must be written in the notation the session is using, which
-is why numerals come out in the context's input base and in the style
-`Options Notation` selects. `engine.notation` holds that second part.
+`AuthorPrinter` subclasses sympy's `StrPrinter` and overrides each construct spelled
+differently. For sums and products it overrides only operand order and minus-sign
+placement, leaving sign extraction and denominators to sympy, so sympy's conventions
+show through (`x*k^-2` prints as `x/k^2`) without changing meaning. A range is printed
+as a chain `-2 < x < 2`, and a matrix product nested to the right as the original does:
+`a . (b . (c . d))`.
 
-A decimal style bends the first rule, and the original bends it the same way:
-one third written `0.333333` reads back as a different number. Derive shows
-that text on the screen and writes it to an MTH file alike, so what the
-notation cuts is cut from the worksheet too - but not from the value. The
-exact writing is kept beside the shown one, which is `Result.value`, and it is
-what the next command is given; `3·#n` is 1 whatever `#n` is shown as.
+Operand order follows the context's order list. A sum puts calls first, then terms by
+variable and descending degree, with constants last: `2*x^2 - 3*a*x + 5*y^3`. A product
+puts the number first, then constants, variables, powers of sums and calls: `(x + 2)*(x
+- 2)*(x + 1)^2`. A two-term sum is swapped to avoid a leading minus (`y - x`), a longer
+one isn't.
 
-`AuthorPrinter` subclasses sympy's `StrPrinter` and overrides one method per
-construct spelled differently: powers, roots, the constants, function names,
-vectors, the unevaluated calculus heads, the inert heads, and numerals. Of the
-sum and product spine it overrides only the order the operands come in and
-where a bracket's minus sign goes; sign extraction, collecting negative powers
-into a denominator, and a product sympy was told not to evaluate are all still
-sympy's, because reimplementing them would mean carrying a few hundred lines of
-subtle logic for no gain in what the output means. The cost is that sympy's own
-conventions show through: `x*k^-2` comes out as `x/k^2` because that is how a
-denominator is split. That is a form difference, never a meaning difference,
-and both forms reparse to the same tree. `_print_Pow` follows the same
-convention for a power standing alone, so that one expression does not print
-two ways.
-
-One construct is written shorter than sympy holds it. A conjunction of two
-relations that bound one variable is a range, and a range is written as the
-chain `-2 < x < 2` - which is how the original writes one, how the author line
-reads one back, and how the layout draws one. Everything else keeps its `AND`.
-
-One is written longer. Sympy holds a matrix product flat and the original
-nests it to the right, parentheses and all: `((a . b) . c) . d` comes back
-`a . (b . (c . d))`, which is where the original's own canonical form puts
-them, so `_print_MatMul` writes the nesting rather than the chain. An inverse
-goes with it - there is no `1/u` for a matrix, and `u^-1` is the whole of the
-notation for one.
-
-The order a sum and a product are written in is ours, and it is the order
-list's - the same list the rest of the engine takes its variables in. A sum
-runs by descending kernel: a call leads whatever variable it holds,
-`SIN(y) + x`, then everything built on a variable, by that variable and then
-by descending degree, so `5*y^3 + 2*x^2 - 3*a*x` is written
-`2*x^2 - 3*a*x + 5*y^3` and `SQRT(x + 1) + x` stands as it is. A term holding
-no variable goes last, `x^2 + c + 1`.
-
-A product is not that order backwards. The number leads, then the constants,
-then the plain variables, then the powers of a sum, then the calls, so that
-`y*SIN(x)` and `x*SQRT(x + 1)` are written as they stand and a factorization
-comes out `(x + 2)*(x - 2)*(x + 1)^2`. The variable is compared the same way
-round in both while the kinds of factor run the other way, which is why there
-are two comparisons here and not one.
-
-A sum of *two* is turned round rather than begun with a minus sign - `y - x`,
-`SQRT(3) - 1`, `2*x - x^2` - and a sum of three or more is not: `-x^2 + 2*x - 1`
-keeps the minus, as the original does.
-
-Where the list says nothing the operands keep whatever order sympy already had
-them in, which is at least the same order every time. The operands of `AND` and
-`OR` are ours by the same list: `c OR b AND a` is written `a AND b OR c`.
-
-The inert heads of `to_sympy` are printed by name rather than by import: a
-sympy printer dispatches on the class name, so `_print_PlusMinus` finds
-`PlusMinus` without this module depending on the module that defines it.
+Inert heads are printed by class name (`_print_PlusMinus`), so this module needn't
+import them.
 """
 
 from __future__ import annotations
@@ -96,22 +46,14 @@ from rederive.engine.context import Angle, Context, Notation, Precision
 from rederive.engine.ordering import main_order
 from rederive.syntax.names import BUILTIN_FUNCTIONS, GREEK_GLYPHS, PRIME_MARK
 
-# How tightly the inert heads bind. Sympy's `parenthesize` reads these by class
-# name, and without an entry it takes any `Function` for a call as tight as
-# `SIN(x)` - which would write `#e^(±inf*z)` as `#e^±inf*z`, a different
-# expression. Each is registered as the operator it is written as.
+# Binding strength of the inert heads, at the precedence of the operator each prints
+# as. Without an entry sympy treats a `Function` as tight as `SIN(x)`, printing
+# `#e^(±inf*z)` as `#e^±inf*z`.
 #
-# `Dot` sits below `Add` rather than at `Mul`, where it belongs: `.` and `*` are
-# one precedence level in the grammar and associate to the left, so `x*(a . b)`
-# needs its parentheses to keep from reading as `(x*a) . b` - and sympy prices a
-# negated product at the `Add` level, so an entry at `Mul` would lose them again
-# in `-x*(a . b)`. Complex infinity is written with the plus-or-minus operator
-# and binds as loosely as one.
-#
-# `MatMul` is the same operator over the matrices sympy does know how to
-# multiply, and sits at `Add` rather than below it: a matrix product is written
-# without parentheses inside a sum - `a . b + a . c` - and with them inside a
-# power or a transpose.
+# `Dot` sits below `Add` rather than at `Mul`: `x*(a . b)` needs its parentheses, and
+# sympy rates a negated product at the `Add` level, so `Mul` would lose them in
+# `-x*(a . b)`. `MatMul` sits at `Add`, needing parentheses inside a power or
+# transpose but not a sum.
 PRECEDENCE_VALUES.setdefault("PlusMinus", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("ComplexInfinity", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Dot", PRECEDENCE["Add"] - 1)
@@ -120,27 +62,26 @@ PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 PRECEDENCE_VALUES.setdefault("Power", PRECEDENCE["Pow"])
 PRECEDENCE_VALUES.setdefault("Added", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Quotient", PRECEDENCE["Mul"])
-# A truth value held as an operand of arithmetic binds as tightly as what it holds.
+# A truth value used as an arithmetic operand binds as tightly as its content.
 PRECEDENCE_FUNCTIONS.setdefault("Truth", lambda expr: precedence(expr.args[0]))
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-#: What joins the parts of a subscripted symbol's name.
+#: The separator between the parts of a subscripted symbol's name.
 _SUBSCRIPT = " SUB "
 
-#: The plus-or-minus operator, as the glyph rather than its other input
-#: spelling `"+-"`. A bare `+-u` is neither: it is a plus over a minus, and
-#: reads back as `-u`.
+#: The plus-or-minus operator, as the glyph rather than its alternative input spelling
+#: `"+-"`, since a bare `+-u` would read back as a plus over a minus, i.e. `-u`.
 _PLUS_MINUS = "±"
 
-#: How each relation is written. Everything not here is written as it is.
+#: Relations spelled differently from sympy; others are written as is.
 _RELATIONS = {"==": "=", "!=": "/="}
 
-#: The two operators that put a bound below their subject, and how each is
-#: written once the chain has turned it round: `x > -2` is `-2 < x`.
+#: Operators with the bound below the subject, mapped to their flipped form for a
+#: chain: `x > -2` becomes `-2 < x`.
 _FROM_BELOW = {">": "<", ">=": "<="}
 
-#: The operators a chain can be built out of at all.
+#: The operators a chain can be built from.
 _ORDERINGS = ("<", "<=", ">", ">=")
 
 #: sympy heads whose author-notation name is not just their name upper-cased.
@@ -156,17 +97,16 @@ _FUNCTION_NAMES = {
     "binomial": "COMB",
     "FallingFactorial": "PERM",
     "Heaviside": "STEP",
-    # Upper-casing would write the hyperbolic cosine integral as `CHI`, which
-    # is Derive's chi-square distribution and reads back as one; its partner is
-    # named alongside it so that the pair is written the same way.
+    # Upper-casing would give `CHI`, Derive's chi-square distribution; `Shi` is
+    # renamed to match.
     "Chi": "COSH_INT",
     "Shi": "SINH_INT",
     "Determinant": "DET",
     "Trace": "TRACE",
 }
 
-#: The logical operators, tightest first, so that an operand knows when it
-#: needs parentheses. A relation and anything below it never does.
+#: Logical operator precedence, tightest first, to decide when an operand needs
+#: parentheses. Relations and anything tighter never do.
 _LOGICAL_PRECEDENCE = {"NOT": 5, "AND": 4, "OR": 3, "XOR": 2, "IMP": 1}
 
 _LOGICAL_HEADS = {
@@ -179,24 +119,19 @@ _LOGICAL_HEADS = {
 
 
 def _logical_order(operands, order: Sequence[str]) -> list[sp.Basic]:
-    """The operands of a conjunction or a disjunction, in the original's order.
+    """The operands of a conjunction or disjunction, in order-list order.
 
-    A commutative operator has no order of its own, so one is chosen, and the
-    one chosen is the order list's: `r OR q OR p` is written `p OR q OR r`,
-    and `c OR b AND a` is written `a AND b OR c`. A term sorts by the variable
-    it leads with rather than by any later one, which is why the conjuncts are
-    put in order first and the disjuncts after. `NOT` does not move a term -
-    `q OR NOT p` is `NOT p OR q` - but it does decide a tie, a negated literal
-    coming before the same variable unnegated.
+    `c OR b AND a` is written `a AND b OR c`. `NOT` doesn't move a term, but a negated
+    literal comes before the same variable unnegated.
     """
     return sorted(operands, key=lambda operand: _logical_key(operand, order))
 
 
 def _logical_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
-    """Where one operand sorts: its literals, in order, each with its sign.
+    """The sort key of one operand: its literals, in order, each with its sign.
 
-    Always a tuple of literal keys, whether the operand is one literal or a
-    whole subexpression, so that any two operands compare.
+    Always a tuple of literal keys, even for a single literal, so any two operands
+    compare.
     """
     if isinstance(operand, (sp.And, sp.Or, sp.Xor)):
         return tuple(
@@ -212,12 +147,8 @@ def _logical_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
 
 
 def _variable_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
-    """The most main variable of one literal, as something sortable.
-
-    A variable on the order list is more main than one after it and than one
-    off the list altogether; the rest go alphabetically. A literal that names
-    no variable at all - a truth value, a numeral - sorts by how it is
-    written, which is arbitrary but the same every time.
+    """A sort key for the main variable of one literal: by order-list position, then
+    alphabetically for variables off the list, then by string for literals with none.
     """
     names = main_order((symbol.name for symbol in operand.free_symbols), order)
     if not names:
@@ -228,60 +159,34 @@ def _variable_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
     return (1, name)
 
 
-#: The places a kernel of a term can sort in, nearest the front of the sum
-#: first. A function call leads whatever variable it holds - `SIN(y) + x` -
-#: then everything built on a variable; then a sum under the bar, which does
-#: not lend the term the variable it holds and so closes the sum whatever that
-#: variable is - `y - 1/(x + 1) + 1`, `x^2 + y + 1/(x + 1)`. Then a kernel
-#: holding no variable at all, such as `SQRT(3)`, so that a sum is written
-#: `SQRT(3) - 1`.
-#:
-#: The last two are no kernels. `_NOTHING` closes every term, so that a term
-#: made of nothing but a number sorts behind every term that is not; and `#i`
-#: sorts behind even that, so that the real part of a complex number is written
-#: first - `1 + 7*#i`, `4/3 + #i/2`.
+#: Sort positions for a term's kernels, front of the sum first: calls, anything built
+#: on a variable, sums in a denominator (`x^2 + y + 1/(x + 1)`), and constant kernels
+#: (`SQRT(3) - 1`). `_NOTHING` ends every key, so purely numeric terms come after all
+#: others, and `#i` after even those, so a complex number's real part comes first.
 _CALLED, _BUILT, _UNDER, _CONSTANT, _NOTHING, _IMAGINARY = range(6)
 
-#: Which of the two `_BUILT` kernels of one variable leads: a power of a
-#: compound base beats the bare variable, `SQRT(x + 1) + x`.
+#: Order of the two `_BUILT` kernels of one variable: a power of a compound base comes
+#: before the bare variable, `SQRT(x + 1) + x`.
 _OVER_A_SUM, _OVER_THE_VARIABLE = range(2)
 
-#: What stands at the end of every term's key.
+#: The suffix of every term's key.
 _AFTER_EVERY_KERNEL = (_NOTHING,)
 
 
 def _term_order(terms: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
-    """The terms of a sum, in the original's order.
-
-    A stable sort over the order sympy already put them in, so that terms the
-    order list says nothing about keep an arrangement that is at least the same
-    every time - which is what makes printing a fixed point.
+    """The terms of a sum, in the original's order. The sort is stable, so terms the order
+    list doesn't distinguish keep sympy's order, which makes printing a fixed point.
     """
     return sorted(terms, key=lambda term: _term_key(term, order))
 
 
 def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
-    """Where one term of a sum sorts: the kernels it is made of, most main
-    first.
+    """The sort key of one term of a sum: its kernels, most main first.
 
-    A term sorts by the kernel it leads with rather than by any later one, so
-    `2*x^2 - 3*a*x + 5*y^3` runs the two x terms first however high the power of
-    `y` beside them is, and among terms of one variable the higher power leads.
-    Both fall out of comparing the kernels in order: the leading kernel decides
-    unless the two terms lead with the same one at the same power, and then the
-    kernel after it does.
-
-    A term with a sum under the bar leads with that sum whatever else it holds,
-    so that the proper part of a rational function closes the sum it belongs
-    to: `y + (2*x + 3)/((x + 1)*(x + 2))`, where the numerator is an x and the
-    term still goes behind the plain `y`.
-
-    An imaginary term leads with the `#i` in the same way, whatever it is
-    multiplied by, so that the real part of a complex number is written first
-    however that part is spelled: `1 + SQRT(3)*#i` and not `SQRT(3)*#i + 1`.
-
-    A term made of nothing but constants has no variable to compare, and then
-    its own value decides: `_constant_key` says which way.
+    Comparing kernels in order makes `2*x^2 - 3*a*x + 5*y^3` put the x terms first and
+    higher powers before lower. A sum in a denominator sorts first among a term's
+    kernels, so the proper part of a rational function goes last; `#i` likewise, so a
+    complex number's real part comes first. All-constant terms sort by `_constant_key`.
     """
     kernels = sorted(
         (
@@ -297,21 +202,11 @@ def _term_key(term: sp.Basic, order: Sequence[str]) -> tuple:
 
 
 def _constant_key(term: sp.Basic) -> tuple:
-    """Where a term holding no variable sorts among the others that hold none:
-    by its own value, the largest first.
+    """The sort key of a term with no variable: by value, largest first.
 
-    There being no variable to be more or less main, size is what is left to
-    order by, and the original orders by it descending: 3.8 p.42 writes the
-    denesting of `SQRT(5 + 2*SQRT(6))` as `SQRT(3) + SQRT(2)`, 3.8 p.47 writes
-    a cube root's as `3*SQRT(5) - 2*SQRT(3)`, and 6.3 p.104 writes `SIN(pi/24)`
-    over `-SQRT(2)/8 - SQRT(6)/8 + 1/2`. The last is the one that says the
-    coefficient counts rather than the radicand alone: the two surds run 2 then
-    6 there and 3 then 2 on p.42, and only the value of the whole term - a
-    minus sign included - puts both the manual's way round.
-
-    A term whose value is no real number, which is what a complex constant
-    outside the `#i` the imaginary place already catches comes to, sorts behind
-    every term that has one and among those by its spelling.
+    This matches the manual, where the whole term's value, coefficient and sign
+    included, decides: `SQRT(3) + SQRT(2)` (3.8 p.42) but `-SQRT(2)/8 - SQRT(6)/8 +
+    1/2` (6.3 p.104). Non-real terms go last, by string.
     """
     try:
         return (_CONSTANT, 0, -float(term), "")
@@ -320,20 +215,12 @@ def _constant_key(term: sp.Basic) -> tuple:
 
 
 def _kernel_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
-    """Where one kernel of a term sorts: its kind, its variable, then what
-    tells two kernels of that kind and that variable apart.
+    """The sort key of one kernel of a term: its kind, its variable, then a tiebreaker.
 
-    A call leads whatever variable it holds, so `SIN(y) + x` is written as it
-    stands and `COS(u) + SIN(t)` is written `SIN(t) + COS(u)`. Everything else
-    compares by its variable first - `SQRT(y + 1) + x` is written
-    `x + SQRT(y + 1)` - and only then does a power of a sum beat the bare
-    variable, `SQRT(x + 1) + x`. Powers of the bare variable run by descending
-    degree, `x^2 + SQRT(x)`.
-
-    A sum or a product raised to a power is one kernel and not the variables
-    inside it: `(x + 1)^3` is one bracket, and it lends the term the variable
-    it is a polynomial in. A sum under the bar lends it nothing: the proper
-    part of a rational function closes the sum it belongs to.
+    A call comes first regardless of its variable (`SIN(y) + x`); other kernels compare
+    by variable, then a power of a sum precedes the bare variable (`SQRT(x + 1) + x`),
+    and powers run by descending degree. A sum in a denominator contributes no
+    variable.
     """
     if factor is sp.I:
         return (_IMAGINARY,)
@@ -351,11 +238,9 @@ def _kernel_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
     return (_BUILT, (place, within), _OVER_THE_VARIABLE, _degree(exponent))
 
 
-#: The places a factor of a product can sort in, leftmost first. The numeric
-#: coefficient leads, then what stands beside it as a constant - `2*pi*r^2`,
-#: `SQRT(2)*z/2`, `x - #i*y` - then the plain variables, then the powers of a
-#: sum, then the calls: `2*x*y`, `x*SQRT(x + 1)`, `y*SIN(x)`. A plain variable
-#: beats a kernel even of an earlier variable, and a kernel beats a call.
+#: Sort positions for a product's factors, leftmost first: the numeric coefficient,
+#: other constants, plain variables, powers of sums, and calls, as in `2*pi*r^2` and
+#: `x*SQRT(x + 1)`. The kind decides before the variable does.
 _A_NUMBER, _A_CONSTANT, _A_VARIABLE, _A_POWER, _A_CALL = range(5)
 
 
@@ -371,22 +256,12 @@ def _is_integer_root(factor: sp.Basic) -> bool:
 
 
 def _merged_roots(factors: Sequence[sp.Basic]) -> list[sp.Basic]:
-    """The factors of a product, with its roots of integers written as one root.
+    """The factors of a product, with roots of integers merged into one root.
 
-    Sympy takes `12^(1/100)` apart into `2^(1/50)*3^(1/100)` as soon as it
-    evaluates it, and the original puts such a product back together: it
-    simplifies `2^(1/50)*3^(1/100)` to `12^(1/100)` and `SQRT(2)*3^(1/4)` to
-    `12^(1/4)`. The roots are merged over the least common denominator of their
-    exponents, the roots in the numerator and those in the denominator
-    separately. The merged power is built unevaluated, since evaluating it would
-    take it apart again, and it stands where the first of the roots it replaces
-    stood.
-
-    Two kinds of merge the original makes are not made here, as both read worse
-    than the product. One is a merge into a root of higher order than any of the
-    roots it replaces: `2^(2/3)*SQRT(3)` stays as it is rather than becoming
-    `432^(1/6)`. The other is a merge longer than the roots it replaces, such as
-    `2^(49/50)*3^(99/100)`, a 78-digit integer under a hundredth root.
+    Sympy splits `12^(1/100)` into `2^(1/50)*3^(1/100)`, and the original recombines
+    them. The merged power is built unevaluated so it stays merged. Unlike the
+    original, roots aren't merged into a higher order (`2^(2/3)*SQRT(3)` stays) or when
+    the result is longer.
     """
     merged = list(factors)
     for positive in (True, False):
@@ -416,8 +291,8 @@ def _merged_roots(factors: Sequence[sp.Basic]) -> list[sp.Basic]:
 
 
 def _raised(base: sp.Basic, power: sp.Basic) -> sp.Basic:
-    """`base^power`, left unevaluated where evaluating would take apart a root of an
-    integer that `_merged_roots` put together."""
+    """`base^power`, unevaluated where evaluation would split an integer root that
+    `_merged_roots` combined."""
     if base.is_Integer and power.is_Rational and not power.is_Integer:
         return sp.Pow(base, power, evaluate=False)
     return base**power
@@ -426,26 +301,17 @@ def _raised(base: sp.Basic, power: sp.Basic) -> sp.Basic:
 def _factor_order(factors: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
     """The factors of a product, in the original's order.
 
-    A product is not a sum written backwards. The variable is compared the same
-    way round in both - `x*y` beside `x + y` - while the kinds of factor run
-    the other way, a call last in a product where it leads a sum, and the calls
-    of one variable run backwards among themselves: `SIN(x)*COS(x)` where the
-    sum is `COS(x) + SIN(x)`. So the two need two comparisons and not one.
+    Variables compare as in a sum, but kinds of factor run the other way (calls last),
+    and calls of one variable are reversed: `SIN(x)*COS(x)` versus `COS(x) + SIN(x)`.
     """
     return sorted(factors, key=lambda factor: _factor_key(factor, order))
 
 
 def _factor_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
-    """Where one factor of a product sorts: its kind, its variable, then what
-    tells two factors of that kind and that variable apart.
+    """The sort key of one factor of a product: its kind, its variable, then a tiebreaker.
 
-    The exponents of plain variables have no say - `z^2*x^3*y^5` is written
-    `x^3*y^5*z^2` - while the powers of a sum sort by the degree of the base,
-    then by the power it is raised to, then by its coefficients from the
-    leading one down: `(x + 2)*(x - 2)*(x + 1)^2`.
-
-    Two constants keep whatever order sympy had them in, there being no
-    variable in either to compare.
+    Exponents of plain variables are ignored (`x^3*y^5*z^2`), while powers of sums sort
+    by `_shape_key`. Constants keep sympy's order.
     """
     if factor.is_Number:
         return (_A_NUMBER, str(factor))
@@ -461,36 +327,25 @@ def _factor_key(factor: sp.Basic, order: Sequence[str]) -> tuple:
 
 
 def _factor_variable_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
-    """The most main variable of one factor, as a product sorts by it.
-
-    A product is the one place the order list runs the other way at the top.
-    The manual's own example is `z^3*b^2*a*2*x^5*c`, which is written
-    `2*a*b^2*c*x^5*z^3`: the names the list does not know go alphabetically
-    ahead of the names it does, and the names it does keep the list's order.
+    """A sort key for a factor's main variable: in a product, variables off the order list
+    come first, alphabetically, as in the manual's `2*a*b^2*c*x^5*z^3`.
     """
     place, within = _variable_key(operand, order)
     return ((1, within), (0, within), (2, within))[place]
 
 
-#: The order the calls of one variable run in in a sum, and the reverse of the
-#: order they run in in a product. Checked against the original a pair at a
-#: time, each pair tried both ways round and a fixed point one way only: `#e^x`
-#: leads, and `LN` before `COS` and `TAN` before `SIN` are not alphabetical, so
-#: this is an order of the original's own rather than a spelling of one.
-#:
-#: These eight are the whole of what has been read. Every other head sorts
-#: behind them and among those alphabetically, which is a place to put them and
-#: not a reading of where the original puts them.
+#: The order of calls of one variable in a sum (reversed in a product), determined
+#: pairwise from the original; it isn't alphabetical. Only these eight are verified;
+#: other heads sort after them alphabetically as a placeholder.
 _HEAD_ORDER = ("#e^", "ABS", "ASIN", "ATAN", "LN", "COS", "TAN", "SIN")
 
-#: What `_kernel_parts` calls the exponential, which sympy holds as a power of
-#: `#e` and the original holds as a call like any other.
+#: The name `_kernel_parts` gives the exponential, which sympy holds as a power of
+#: `#e` but the original treats as an ordinary call.
 _EXPONENTIAL = "#e^"
 
 
-#: The four kinds of kernel a factor can be, which is what decides where both
-#: a sum and a product put it. The two put the kinds in a different order, so
-#: what a kind is called says nothing about where it sorts.
+#: The four kinds of kernel. Sums and products order them differently, so the names
+#: imply no sort position.
 (
     _A_CONSTANT_KERNEL,
     _A_NAMED_KERNEL,
@@ -500,14 +355,10 @@ _EXPONENTIAL = "#e^"
 
 
 def _kernel_parts(factor: sp.Basic) -> tuple[str, sp.Basic, sp.Basic, str]:
-    """`factor` as its kind, what it is a power of, the power, and the name of
-    the head it is written with.
+    """`factor` as its kind, base, exponent, and head name.
 
-    The exponential is a call and not a power of `#e`: `#e^x` is a kernel of
-    `x`, and it leads a sum of calls of `x` the way the original leads one.
-    A power of a number - `SQRT(3)`, `2^(-m)` - is a kernel of whatever its
-    exponent holds, so that `2^x + y` is not written as though `2^x` were a
-    constant.
+    The exponential counts as a call, not a power of `#e`, and a power of a number like
+    `2^x` is a kernel of its exponent's variable, not a constant.
     """
     base, exponent = (
         (factor, sp.S.One) if isinstance(factor, sp.exp) else factor.as_base_exp()
@@ -526,12 +377,8 @@ def _kernel_parts(factor: sp.Basic) -> tuple[str, sp.Basic, sp.Basic, str]:
 
 
 def _head_name(base: sp.Basic) -> str:
-    """What a kernel that is neither a name nor a bracket is written with.
-
-    A call is written with its own head; anything else sympy holds as a class
-    of its own - a derivative, a sum, an integral - is written with the name of
-    that class, which is a place to put it and not a reading of where the
-    original puts it.
+    """The head name of a kernel that is neither a name nor a bracket: a call's own head,
+    or else the sympy class name as a placeholder.
     """
     if isinstance(base, sp.Function):
         return function_name(base)
@@ -539,18 +386,15 @@ def _head_name(base: sp.Basic) -> str:
 
 
 def _head_key(name: str) -> tuple:
-    """Where one function head sorts among the heads of its variable."""
+    """The sort key of a function head among the heads of its variable."""
     if name in _HEAD_ORDER:
         return (0, _HEAD_ORDER.index(name), "")
     return (1, 0, name)
 
 
 class _Reversed:
-    """A key that sorts the other way round.
-
-    The kernels of one variable compare by the mirror in a sum of what they
-    compare by in a product - `SQRT(x + 2) + SQRT(x + 1)` beside
-    `(x + 1)*(x + 2)` - so the one key serves both.
+    """A key that sorts in reverse, since kernels of one variable sort in a sum in the
+    reverse of their order in a product.
     """
 
     __slots__ = ("key",)
@@ -569,30 +413,17 @@ class _Reversed:
 
 
 def _shape_key(base: sp.Basic, exponent: sp.Basic, order: Sequence[str]) -> tuple:
-    """Where a power of a sum sorts among the powers of sums of its variable.
-
-    Ascending is the order a product's factors are written in, which is the
-    order the original writes a factorization in: the degree of the base
-    first, `(x - 2)*(x^2 + 1)`; then the multiplicity, so that a repeated
-    factor closes a run of same-degree ones, `(x + 3)*(x + 1)^2`; then the
-    coefficients from the leading one down, `(x + 3)*(2*x + 1)` and
-    `(x + 2)*(x - 2)`.
-
-    A sum's kernels are written in the mirror of it: `SQRT(x + 2) +
-    SQRT(x + 1)` where the product is `(x + 1)*(x + 2)`, and `SQRT(x - 2) +
-    SQRT(x + 2)` where the product is `(x + 2)*(x - 2)`.
+    """The sort key of a power of a sum, ascending as in the original's factorizations: by
+    degree of the base, then multiplicity, then coefficients from the leading one down,
+    as in `(x + 3)*(x + 1)^2` and `(x + 2)*(x - 2)`.
     """
     degree, coefficients = _polynomial_key(base, order)
     return (degree, _size(exponent), coefficients)
 
 
 def _polynomial_key(base: sp.Basic, order: Sequence[str]) -> tuple:
-    """A compound base as its degree in its own main variable, and then its
-    coefficients from the leading one down.
-
-    Anything sympy cannot read as a polynomial - a sum holding a call, a
-    product of two brackets - is one place, ahead of every polynomial and in
-    whatever order it was already in.
+    """A compound base as its degree in its main variable, then its coefficients. Anything
+    that isn't a polynomial shares one position, ahead of every polynomial.
     """
     names = main_order((symbol.name for symbol in base.free_symbols), order)
     variable = next(
@@ -607,11 +438,8 @@ def _polynomial_key(base: sp.Basic, order: Sequence[str]) -> tuple:
 
 
 def _coefficient_key(value: sp.Basic) -> tuple:
-    """Where one coefficient sorts: by size, and a positive one ahead of the
-    negative of the same size.
-
-    `(x + 2)*(x - 2)` and `(x + y)*(x - y)`, and `x` counting as `x + 0`, zero
-    being the smallest size there is: `x*(x + 2)`.
+    """The sort key of one coefficient: by magnitude, positive before negative, so `(x +
+    2)*(x - 2)` and `x*(x + 2)`.
     """
     try:
         number, rest = value.as_coeff_Mul()
@@ -621,7 +449,7 @@ def _coefficient_key(value: sp.Basic) -> tuple:
 
 
 def _magnitude(number: sp.Basic) -> Fraction | float:
-    """How big a numeric coefficient is, whatever kind of number it is."""
+    """The magnitude of a numeric coefficient of any kind."""
     if number.is_Rational:
         return abs(Fraction(int(number.p), int(number.q)))
     try:
@@ -631,14 +459,12 @@ def _magnitude(number: sp.Basic) -> Fraction | float:
 
 
 def spelling(expression: sp.Basic) -> str | None:
-    """What a function head is called in author notation, or None if it has no name.
+    """The author-notation name of a function head, or None if it has none.
 
-    An inert head keeps the name it was authored with, and a head of rederive's own
-    is written under its class name upper-cased. A sympy head is written under the
-    name the table gives it or else under its class name upper-cased, but only where
-    that is a built-in function: the notation's names are the ones an author can type
-    back, and a sympy class is not one of them for being exported by sympy. A head
-    with no name is one the printer quotes, by `_unspelled`.
+    Inert heads keep their authored name, and rederive heads use their upper-cased
+    class name. Sympy heads use `_FUNCTION_NAMES`, or their upper-cased class name only
+    if it is a built-in function, since the notation only has names an author can type
+    back.
     """
     name = type(expression).__name__
     if _is_digamma(expression):
@@ -653,20 +479,15 @@ def spelling(expression: sp.Basic) -> str | None:
 
 
 def function_name(expression: sp.Basic) -> str:
-    """The name a function head sorts under: its spelling, or its class name
-    upper-cased where the notation has none, as for a head written by a method of
-    its own such as `n!`."""
+    """The name a function head sorts under: its spelling, or else its upper-cased class
+    name, as for a head with its own print method such as `n!`."""
     return spelling(expression) or type(expression).__name__.upper()
 
 
 def is_written(expression: sp.Basic) -> bool:
-    """Whether every function head in `expression` is one the notation has a word for.
-
-    The one test of the vocabulary, made of what the printer itself does: a head is
-    written if it has a spelling or a print method of its own in `AuthorPrinter`,
-    which is how `Piecewise` comes out as `IF` and `factorial` as `n!`. A head that is
-    neither would reach the worksheet as a quoted string, so a calculus head whose
-    answer holds one is left standing instead, as Derive leaves what it cannot do.
+    """Whether the notation can express every function head in `expression`, i.e. each has
+    a spelling or its own print method in `AuthorPrinter`. Calculus heads whose answer
+    fails this are left unevaluated, as in Derive.
     """
     try:
         calls = expression.atoms(sp.Function)
@@ -682,8 +503,8 @@ def _has_word(call: sp.Basic) -> bool:
 
 
 def _own(call: sp.Basic) -> list[type]:
-    """The classes of `call` up to the generic function head, whose print method is
-    the one that asks for a spelling."""
+    """The classes of `call` up to (excluding) the generic function head, whose print
+    method is the one that looks up a spelling."""
     kinds = []
     for kind in type(call).__mro__:
         if kind in (sp.Function, AppliedUndef):
@@ -693,18 +514,14 @@ def _own(call: sp.Basic) -> list[type]:
 
 
 def _is_digamma(expression: sp.Basic) -> bool:
-    """Whether a call is the digamma function, which sympy holds as the polygamma
-    function of order zero and the notation names on its own."""
+    """Whether a call is the digamma function, which sympy represents as polygamma of
+    order zero but the notation names separately."""
     return isinstance(expression, sp.polygamma) and expression.args[0] == 0
 
 
 def _degree(exponent: sp.Basic) -> tuple:
-    """A power as something sortable, descending.
-
-    A symbolic exponent has no size to compare with a numeric one, and none to
-    compare with another symbolic one either, so all of those are one place -
-    behind every numeric power, and among themselves in whatever order they
-    were already in.
+    """A sort key for a power, descending. Symbolic exponents share one position after
+    every numeric one.
     """
     if exponent.is_Rational:
         return (0, -Fraction(int(exponent.p), int(exponent.q)))
@@ -712,7 +529,7 @@ def _degree(exponent: sp.Basic) -> tuple:
 
 
 def _size(exponent: sp.Basic) -> tuple:
-    """The same power sortable ascending, which is how a product takes one."""
+    """The same key as `_degree`, but ascending, as a product sorts."""
     place, degree = _degree(exponent)
     return (place, -degree)
 
@@ -724,10 +541,8 @@ def author_text(
 ) -> str:
     """Write `expression` the way the author line would.
 
-    `authored` names subexpressions that are to be written as the text beside
-    them rather than as the form they were converted to. `pipeline.simplify`
-    fills it with the conditionals an author wrote, whose arms are the one part
-    of an answer that is shown as written and not as computed.
+    `authored` maps subexpressions to text to print instead; `pipeline.simplify` fills
+    it with author-written conditionals, whose arms are shown as written.
     """
     if context is not None and context.angle is Angle.DEGREE:
         expression = in_degrees(expression, context)
@@ -737,8 +552,8 @@ def author_text(
     return AuthorPrinter(context, authored).doprint(named(expression))
 
 
-#: The heads that take an angle, and the heads that give one, each by the name it is
-#: written under. `PHASE` is among the second: it is `ATAN(y, x)` of the parts.
+#: Heads that take an angle and heads that return one, mapped to their printed names.
+#: `PHASE` returns one, being `ATAN(y, x)` of the parts.
 _TAKING_ANGLE = {
     sp.sin: "SIN",
     sp.cos: "COS",
@@ -760,20 +575,12 @@ _GIVING_ANGLE = {
 
 
 def in_degrees(expression: sp.Basic, context: Context) -> sp.Basic:
-    """`expression`, which measures its angles in radians, written to measure them in
-    degrees.
+    """`expression`, with angles in radians, rewritten to use degrees.
 
-    Under `Angle := Degree` an argument the author gives a trigonometric head is read
-    in degrees, and an inverse head's value is given in them, so an answer must be
-    written the same way to read back as itself: the sine of `pi*x/180` radians is
-    `SIN(x)`, and the arcsine in radians is `pi*ASIN(x)/180`. Each head is swapped for
-    an inert one under its name, which no conversion applies to, and the factors of
-    `pi/180` cancel where they meet: `180*asin(x)/pi` is written `ASIN(x)`.
-
-    An approximate answer holds an approximate degree, which the exact `pi/180` meets
-    without cancelling, so a coefficient the swap leaves `pi` in is approximated
-    again, as a number made of approximate ones: `SIN(0.0174532*x)` is `SIN(x)`, and
-    an approximate `180/pi` times `ASIN(y)` is `ASIN(y)`.
+    Under `Angle := Degree` the sine of `pi*x/180` radians prints as `SIN(x)`. Each
+    head is replaced by an inert one of the same name, and `pi/180` factors cancel. In
+    an approximate answer the leftover `pi` coefficient is re-approximated so that
+    `SIN(0.0174532*x)` prints as `SIN(x)`.
     """
     if not expression.has(*_TAKING_ANGLE, *_GIVING_ANGLE):
         return expression
@@ -796,7 +603,7 @@ def in_degrees(expression: sp.Basic, context: Context) -> sp.Basic:
 
 
 def _approximate_pi(product: sp.Basic, context: Context) -> sp.Basic:
-    """`product` with its numeric coefficient approximated, if it holds `pi`."""
+    """`product` with its numeric coefficient approximated, if it contains `pi`."""
     number, rest = product.as_independent(*product.free_symbols, as_Add=False)
     if not number.has(sp.pi) or number == product:
         return product
@@ -808,11 +615,8 @@ def _pi_power(term: sp.Basic) -> sp.Basic:
 
 
 def _cancelling_pi(product: sp.Basic) -> sp.Basic:
-    """`product` with a `pi` in each term of a sum cancelled against one dividing it.
-
-    A sum carries a `pi` into every term where an angle in radians was measured in
-    degrees with the inverse heads in it: `x = (180*pi - 180*asin(a))/pi`, which is
-    `180 - ASIN(a)` in degrees, comes out of the swap as `(180*pi - pi*ASIN(a))/pi`.
+    """`product` with a `pi` common to every term of a sum cancelled against a `pi`
+    divisor, as in `(180*pi - pi*ASIN(a))/pi` from converting an inverse function.
     """
     below = -_pi_power(product)
     if not below.is_Integer or below <= 0:
@@ -831,23 +635,13 @@ def _cancelling_pi(product: sp.Basic) -> sp.Basic:
 
 
 def named(expression: sp.Basic) -> sp.Basic:
-    """The same expression with sympy's invented variables named as ours.
+    """The expression with sympy's `Dummy` variables renamed to ordinary symbols.
 
-    A `Dummy` is an ordinary variable by the time it reaches the worksheet -
-    the bound variable the Leibniz rule introduces is written `k` and read
-    back as the variable `k`. Two of them can carry one name, though, which
-    sympy tells apart by an identity no text can hold, so they are renamed
-    apart from each other and from every name already in use before anything
-    is written. Without that, `SUM(SUM(f(k), k, 0, n), k, 0, n)` is written
-    from an expression with two variables and read back as one with one.
-
-    Order needs it too: a `Dummy` sorts by its identity where a symbol sorts by
-    its name, so a sum holding one is written in one order and reads back in
-    another - the answer would settle only on a second pass.
-
-    A matrix's dimensions are the exception. They are never written, so they
-    need no name, and giving one to a declared nonscalar's shape would put a
-    variable on the worksheet that the user could then substitute for.
+    Two dummies can share a name, and a `Dummy` sorts by identity rather than name, so
+    both must be renamed apart from all names in use for the text to read back the
+    same: otherwise `SUM(SUM(f(k), k, 0, n), k, 0, n)` would read back with one
+    variable. Matrix dimensions are excluded, since naming them would put a
+    substitutable variable on the worksheet.
     """
     shapes = _shapes(expression)
     dummies = sorted(expression.atoms(sp.Dummy) - shapes, key=sp.default_sort_key)
@@ -874,18 +668,11 @@ def named(expression: sp.Basic) -> sp.Basic:
 
 
 class Substitution(sp.Function):
-    """Sympy's `Subs` on its way to the worksheet, equal only to itself as written.
+    """A stand-in for sympy's `Subs`, equal only to itself as written.
 
-    A `Subs` equals itself with its bound variable renamed - the name is not part of
-    what it compares by - so when `named` rebuilds `2*x*SUBS(...)` over the renamed
-    one, sympy's constructor cache hands back the product it already built over the
-    old one, dummy and all, and `G'(x, x)` would be written with a variable that
-    reads back as a product. A head whose equality is its arguments' is rebuilt
-    afresh, and the printer writes it exactly as it writes a `Subs`.
-
-    Its bound variables are no more free than a `Subs`'s are: the product is
-    ordered by the variables of what is substituted into, `r` in `BB''(SIN(r))`,
-    and not by the name the bound one happens to carry.
+    A `Subs` equals itself with its bound variable renamed, so sympy's constructor
+    cache would hand `named` back the old product, dummy and all. Its bound variables
+    aren't free, so products order by what is substituted in.
     """
 
     @property
@@ -895,11 +682,7 @@ class Substitution(sp.Function):
 
 
 def _shapes(expression: sp.Basic) -> set[sp.Dummy]:
-    """The invented variables that only give a matrix its dimensions.
-
-    A matrix written out has its dimensions as plain counts; only a symbolic
-    one - a declared nonscalar - carries a variable there.
-    """
+    """The dummy variables used only for a symbolic matrix's dimensions."""
     if not expression.has(sp.MatrixSymbol):
         return set()
     return {
@@ -911,18 +694,13 @@ def _shapes(expression: sp.Basic) -> set[sp.Dummy]:
     }
 
 
-#: One reading of a relation: the variable it is about, which way it goes, and
-#: what it bounds that variable by.
+#: One reading of a relation as a bound: the variable, the operator, and the bound.
 _Bound = tuple[sp.Basic, str, sp.Basic]
 
 
 def _bounds(relation: sp.Basic) -> list[_Bound]:
-    """Every way of reading a relation as a bound on one of its variables.
-
-    `-3 < x` and `x > -3` are the same bound written two ways, so both come
-    back as the second; `x < y` is a bound on either of them, and which one it
-    is about is not decided until it is put beside the relation it is chained
-    with.
+    """Every reading of a relation as a bound on one of its variables. `-3 < x` reads as
+    `x > -3`; `x < y` bounds either, decided when paired with another relation.
     """
     if not isinstance(relation, Relational) or relation.rel_op not in _ORDERINGS:
         return []
@@ -938,12 +716,7 @@ def _bounds(relation: sp.Basic) -> list[_Bound]:
 def _bracket(
     first: list[_Bound], second: list[_Bound]
 ) -> tuple[sp.Basic, tuple[str, sp.Basic], tuple[str, sp.Basic]] | None:
-    """The variable two relations bracket, with its bound from each side.
-
-    None where they bracket nothing: two variables bounded apart, or one
-    bounded twice from the same side. Where more than one reading brackets
-    something the first is taken, the readings being the same statement.
-    """
+    """The variable two relations bound from both sides, with each bound, or None."""
     for subject, one, value in first:
         for other, two, bound in second:
             if other != subject or (one in _FROM_BELOW) == (two in _FROM_BELOW):
@@ -955,25 +728,18 @@ def _bracket(
 
 
 def _plain(name: str) -> str:
-    """A dummy's name as a letter, which reads back as one name in any mode.
+    """A dummy's name reduced to one letter, which reads back as one name in any mode.
 
-    Character mode reads a run of letters and digits as a product of them unless the
-    run is declared, and nothing declares a name for text read back from a file:
-    sympy's `xi` would come back `x*i`, so the bound variable of `G'(x, x)`'s
-    `SUBS(DIF(G(xi, x), xi), [xi], [x])` would turn into a product and the
-    substitution into a different one. A letter followed by underscores, which
-    `named` appends to keep names apart, is one name to the lexer in either mode.
+    Character mode reads an undeclared `xi` as `x*i`, so a bound variable would turn
+    into a product. A letter plus the underscores `named` adds is a single name.
     """
     letter = next((char for char in name if "a" <= char.lower() <= "z"), "v")
     return letter.lower()
 
 
 def numeral(number: int, base: int = 10) -> str:
-    """`number` written in `base`.
-
-    Above base ten the digits run A to Z, and a numeral that would begin with
-    a letter takes a leading zero so that it cannot be read as a variable
-    name: fourteen is `0E` in hexadecimal, not `E`.
+    """`number` written in `base`. Above base ten the digits run A to Z, and a numeral
+    starting with a letter gets a leading zero: fourteen is `0E` in hexadecimal.
     """
     text = _digits_of(abs(number), base)
     if text[0].isalpha():
@@ -981,17 +747,13 @@ def numeral(number: int, base: int = 10) -> str:
     return ("-" if number < 0 else "") + text
 
 
-#: How many digits `_digits_of` writes one at a time before it splits a number.
+#: The number of digits above which `_digits_of` splits a number in two.
 _DIGIT_CHUNK = 64
 
 
 def _digits_of(magnitude: int, base: int, width: int = 0) -> str:
-    """The digits of a nonnegative `magnitude` in `base`, padded with zeros to `width`.
-
-    A long number is split in two at a power of the base near the middle of it and
-    each half written on its own, which keeps a numeral of hundreds of thousands of
-    digits a matter of a second rather than of minutes: dividing it down one digit
-    at a time takes time in the square of its length.
+    """The digits of a nonnegative `magnitude` in `base`, zero-padded to `width`. Long
+    numbers are split in half recursively, since digit-by-digit division is quadratic.
     """
     if magnitude < base**_DIGIT_CHUNK:
         text = ""
@@ -1005,21 +767,15 @@ def _digits_of(magnitude: int, base: int, width: int = 0) -> str:
 
 
 def _under_the_bar(power: sp.Basic) -> bool:
-    """Whether a factor raised to `power` is a denominator in the notation.
-
-    A numeric exponent is: `k^(-2)` is written `1/k^2`. A symbolic one is not,
-    `2^(-m)` being how the notation writes that.
+    """Whether a factor raised to `power` is printed as a denominator: true for a negative
+    numeric exponent (`1/k^2`), not for a symbolic one (`2^(-m)`).
     """
     return bool(power.is_Number and power.is_negative)
 
 
 def _all_negated(factor: sp.Basic) -> bool:
-    """Whether every term of a bracket carries a minus sign.
-
-    Such a bracket cannot be written without a leading one, so the sign goes
-    out to the product instead: `z*(-b - 2)` is written `- z*(b + 2)`. A
-    bracket with one positive term in it can be turned round rather than
-    negated, and is left alone - `x*(2 - w)`.
+    """Whether every term of a bracket has a minus sign, so the sign moves out to the
+    product: `z*(-b - 2)` is written `- z*(b + 2)`.
     """
     return isinstance(factor, sp.Add) and all(
         term.could_extract_minus_sign() for term in factor.args
@@ -1027,12 +783,8 @@ def _all_negated(factor: sp.Basic) -> bool:
 
 
 def _unevaluated(expr: sp.Basic) -> bool:
-    """Whether `expr` is a product sympy was told not to evaluate.
-
-    Such a product is written by sympy's own spine, which is the only one that
-    keeps every factor and every identity exactly where it was put. The test is
-    sympy's: a leading one, or a number or a whole power of one anywhere but at
-    the front, is something an evaluated product would have folded away.
+    """Whether `expr` is a product sympy was told not to evaluate, by sympy's own test: a
+    leading one, or a number or integer power of one after the front.
     """
     arguments = expr.args
     return bool(arguments) and (
@@ -1053,32 +805,20 @@ class AuthorPrinter(sp.StrPrinter):
         context: Context | None = None,
         authored: dict[sp.Basic, str] | None = None,
     ) -> None:
-        # `grlex` is descending total degree, which is the order the original
-        # writes a polynomial in: `x^2 + c`, not `c + x^2`.
+        # `grlex` is descending total degree, the original's polynomial order:
+        # `x^2 + c`, not `c + x^2`.
         super().__init__({"full_prec": False, "order": "grlex"})
         self.context = context or Context()
         self.authored = authored or {}
         self._unspelling = False
 
     def _print(self, expr, **kwargs):
-        """One subexpression, as the author wrote it where that is on record.
+        """Print one subexpression, using the author's text if it is recorded.
 
-        The text stands in for the whole subtree and nothing under it is
-        printed, which is the point: the arms of a conditional whose test could
-        not be decided are shown as they were written, arithmetic and operand
-        order and all. Only the expression is replaced, never its position, so
-        what surrounds it is spaced and parenthesized exactly as it would have
-        been - the caller has already priced this subtree by its precedence,
-        and the text is written at the same one.
-
-        A conditional is the only thing recorded, and looking one up here costs
-        a dictionary miss per printed node while the record is empty, which is
-        every command but Simplify.
-
-        A set is the one head caught on the way past rather than by a
-        `_print_*` method of its own: sympy has a dozen classes for them and
-        the notation has a word for none of them, so the family is answered
-        once, by `_unspelled`.
+        The text replaces the whole subtree at the precedence the caller already
+        applied, so undecided conditionals show exactly as written. Sets are
+        intercepted here and sent to `_unspelled`, since the notation has no name for
+        any of sympy's set classes.
         """
         if self.authored and isinstance(expr, (sp.Piecewise, AppliedUndef)):
             written = self.authored.get(expr)
@@ -1091,18 +831,11 @@ class AuthorPrinter(sp.StrPrinter):
     # -- sums ---------------------------------------------------------------
 
     def _as_ordered_terms(self, expr, order=None):
-        """The terms of a sum, in the order list's order, and a sum of two
-        turned round rather than begun with a minus sign.
+        """The terms of a sum in order-list order, with a two-term sum swapped to avoid a
+        leading minus.
 
-        `SQRT(3) - 1` and `SIN(x) - x*COS(x)`, not `-1 + SQRT(3)` and
-        `-x*COS(x) + SIN(x)`: the original rearranges a sum to spare it a
-        leading minus. It does that to a *pair* only. `-x^2 + 2*x` is written
-        `2*x - x^2`, while `-x^2 + 2*x - 1` is written as it stands and keeps
-        the minus - three terms are left in the order they were put in, and a
-        pair of negated terms has nowhere to turn to.
-
-        A complex number in rectangular form is the pair that does not turn:
-        `-2 + 2*#i` keeps its minus, the real part leading whatever its sign.
+        `SQRT(3) - 1`, not `-1 + SQRT(3)`, but `-x^2 + 2*x - 1` keeps its order, as in
+        the original. A complex number like `-2 + 2*#i` isn't swapped.
         """
         terms = _term_order(super()._as_ordered_terms(expr, order), self.context.order)
         if len(terms) == 2 and self._minus_first(terms[0]):
@@ -1111,12 +844,9 @@ class AuthorPrinter(sp.StrPrinter):
         return terms
 
     def _minus_first(self, term: sp.Basic) -> bool:
-        """Whether `term` is written with a leading minus sign.
-
-        Sympy's own sign extraction answers for all but one kind of term: a
-        quotient hands its numerator's sign out in front of the bar, which is a
-        rule of the writing rather than of the expression. The two meet only in
-        the text, so a quotient is asked by writing it.
+        """Whether `term` is printed with a leading minus. Quotients are checked by
+        printing them, since the printer moves the numerator's sign in front of the
+        bar.
         """
         if term.could_extract_minus_sign():
             return True
@@ -1131,25 +861,16 @@ class AuthorPrinter(sp.StrPrinter):
     # -- names --------------------------------------------------------------
 
     def _print_Symbol(self, expr):
-        """A variable, written in ASCII.
-
-        A Greek variable is held under its letter and printed as its name,
-        `alpha` for `α`: drawing the letter is the display layer's business,
-        and the text has to be something the author line could have been
-        typed with.
+        """A variable, written in ASCII, with Greek letters spelled out (`alpha`) so the
+        text can be typed on the author line.
         """
         return _SUBSCRIPT.join(
             GREEK_GLYPHS.get(part, part) for part in expr.name.split(_SUBSCRIPT)
         )
 
     def _print_Dummy(self, expr):
-        """A sympy-invented variable, written like any other name.
-
-        Sympy marks a `Dummy` apart by writing it with a leading underscore,
-        and the author line has no such name: `_k1` does not lex, so a result
-        carrying one would come back unreadable. `named` has normally renamed
-        these away before printing starts; one printed on its own is written
-        the same way.
+        """A sympy `Dummy`, written like any other name, since `_k1` doesn't lex. `named`
+        normally renames these first.
         """
         return _plain(self._print_Symbol(expr))
 
@@ -1166,13 +887,10 @@ class AuthorPrinter(sp.StrPrinter):
         return self._number(Fraction(expr.p, expr.q))
 
     def _print_Float(self, expr):
-        """A float at the context's precision, written as the notation says.
+        """A float at the context's precision, in the selected notation.
 
-        Rational notation leaves it as plain digits: an approximation is a
-        float here where the original holds a ratio, so there is no ratio to
-        write it as. There is no exponent notation to reparse either, so a
-        very large or very small float is written out in full, and a whole one
-        keeps its point so that it does not read back as an integer.
+        Rational notation prints plain digits. The grammar has no exponent notation, so
+        large or small floats are written in full, and a whole float keeps its point.
         """
         text = super()._print_Float(sp.Float(expr, self.context.precision_digits))
         if "e" in text or "E" in text:
@@ -1182,18 +900,11 @@ class AuthorPrinter(sp.StrPrinter):
         return text if "." in text else text + "."
 
     def _print_Mul(self, expr):
-        """A product, in the order list's order.
+        """A product, in order-list order.
 
-        A ratio the notation does not write as a ratio leads the product it is
-        the coefficient of: sympy prices `x/3` as an x over a 3 and prints the
-        denominator, which is right while a ratio is written as one, but under
-        a decimal style the coefficient is a number like any other and goes in
-        front - `x/3` is `0.333333·x`.
-
-        A product sympy was told not to evaluate is written by sympy, which
-        keeps every factor exactly where it was put: that is the whole of what
-        `Factor` over an integer builds, and `2*3^2*5*3607*3803` is a
-        decomposition and not a product to be reordered.
+        In a decimal style, a rational coefficient goes in front as a number (`x/3` is
+        `0.333333·x`). An unevaluated product, like `Factor`'s `2*3^2*5*3607*3803`, is
+        printed by sympy as is.
         """
         if _unevaluated(expr):
             return super()._print_Mul(expr)
@@ -1205,26 +916,15 @@ class AuthorPrinter(sp.StrPrinter):
         return self._divided(expr)
 
     def _divided(self, expr) -> str:
-        """A product whose denominator is read the way `_print_Pow` reads one.
+        """A product with its denominator determined as `_print_Pow` determines one.
 
-        Sympy's product spine sends every negatively signed exponent below the
-        bar, so `2^(-m)` inside a product comes out `1/2^m`. Alone it does not:
-        `_print_Pow` makes a denominator only of a numeric exponent, which is
-        the notation's own habit - `1/k^2`, but `2^(-m)`. This is the same
-        reading over a whole product, so that one power is written the same way
-        wherever it stands.
+        Sympy's product printer puts every negatively signed exponent below the bar,
+        but `_print_Pow` does so only for numeric exponents (`1/k^2`, but `2^(-m)`), so
+        this makes a power print the same everywhere. `#e^(-z)` is left alone.
 
-        A power of `#e` is left alone. Sympy holds `#e^(-z)` as an exponential
-        rather than a power, and `#e^(-z)/2` is what the notation writes it as.
-
-        Sign extraction is sympy's, with two additions. A bracket that is
-        nothing but negated terms hands its sign to the product, so that a
-        coefficient of `-b - 2` is written `- z*(b + 2)` and not
-        `z*(-b - 2)`. And a numerator that would lead with a minus hands its
-        sign to the whole quotient, `-(x^2 - y^2 - 2)/2` rather than
-        `(-x^2 + y^2 + 2)/2`: a rational function carries its numerator's sign
-        out in front of the bar, where a sum standing on its own keeps it.
-        The order of the factors is the order list's, here and in `_beside`.
+        Two additions to sympy's sign extraction: a bracket of only negated terms gives
+        its sign to the product (`- z*(b + 2)`), and a numerator that would lead with a
+        minus gives its sign to the quotient (`-(x^2 - y^2 - 2)/2`).
         """
         sign = ""
         level = precedence(expr)
@@ -1264,31 +964,21 @@ class AuthorPrinter(sp.StrPrinter):
         if len(below) == 1:
             text += "/" + written(below)[0]
         elif below:
-            # One denominator, as sympy writes it: `a/(x*y)` and not `a/x/y`,
-            # which is the same number drawn as a fraction inside a fraction.
+            # One denominator, as sympy writes it: `a/(x*y)`, not `a/x/y`, which
+            # would display as a nested fraction.
             text += "/(" + "*".join(written(below)) + ")"
         return sign + text
 
     def _leads_negative(self, factor: sp.Basic) -> bool:
-        """Whether a bracket would be written with a leading minus sign.
-
-        The terms in the order they will be written in, which is where the
-        rule that turns a pair round comes in: `2 - x` leads with a plus and
-        `-x^2 + y^2 + 2` does not.
-        """
+        """Whether a bracket would print with a leading minus, after pair swapping."""
         if not isinstance(factor, sp.Add):
             return False
         terms = self._as_ordered_terms(factor)
         return bool(terms) and terms[0].could_extract_minus_sign()
 
     def _beside(self, written: str, rest) -> str:
-        """A coefficient already written, times the rest of its product.
-
-        The rest keeps whatever denominator it had, so the coefficient of
-        `1/(x - 1)` goes over that rather than beside it. Which factors those
-        are is the one thing this takes over from sympy's product spine: a
-        factor raised to a negative power is a denominator, exactly as
-        `_print_Mul` reads one. Sign extraction is still sympy's.
+        """An already printed coefficient times the rest of its product, which keeps its
+        denominator, so `1/(x - 1)` gets the coefficient above the bar.
         """
         above, below = [], []
         factors = _merged_roots(rest.as_ordered_factors())
@@ -1303,8 +993,7 @@ class AuthorPrinter(sp.StrPrinter):
         for factor in above:
             text += "*" + self.parenthesize(factor, level, strict=False)
         if below:
-            # One denominator, as sympy writes it: `a/(x*y)` and not `a/x/y`,
-            # which is the same number drawn as a fraction inside a fraction.
+            # One denominator, as sympy writes it: `a/(x*y)`, not `a/x/y`.
             under = [self.parenthesize(factor, level, strict=False) for factor in below]
             text += "/" + (under[0] if len(under) == 1 else "(" + "*".join(under) + ")")
         return text
@@ -1312,17 +1001,9 @@ class AuthorPrinter(sp.StrPrinter):
     def _number(self, value: Fraction) -> str:
         """`value` in the notation `Options Notation` selects.
 
-        Rational notation, and Mixed over a number simple enough for it, write
-        the ratio; the numerals of a ratio are written in the session's base,
-        as every whole number is. The decimal styles are base ten, the base
-        being the one thing a decimal point numeral cannot carry.
-
-        Decimal notation writes an exact number out in full, but an approximate one
-        only to its precision: it is written as scientific notation writes it, which
-        is a plain numeral for a moderate magnitude and a power of ten outside it.
-        `APPROX(100!)` is `9.33262*10^157` rather than 158 digits of which six are
-        the number's own, and `APPROX(EXP(-100))` is `3.72007*10^-44` rather than
-        43 zeros ahead of its digits.
+        Ratios use the session's base; decimal styles are always base ten. Decimal
+        notation writes an exact number in full but an approximate one in scientific
+        style, so `APPROX(100!)` is `9.33262*10^157` rather than 158 digits.
         """
         style, digits = self.context.notation, self.context.notation_digits
         if style is Notation.RATIONAL or (
@@ -1337,12 +1018,8 @@ class AuthorPrinter(sp.StrPrinter):
         return notation.scientific(value, digits)
 
     def parenthesize(self, item, level, strict=False):
-        """Fence a number the notation wrote as a power of ten.
-
-        `1.23456*10^8` is a product where sympy prices a number as an atom, so
-        nothing else would fence it: `x^123456789` has to come out with the
-        exponent in parentheses to read back as itself. A product does not
-        need them, `1.23456*10^8*x` associating the way it is meant to.
+        """Parenthesize a number printed with a power of ten where it binds tighter than a
+        product, as in an exponent: sympy treats numbers as atoms.
         """
         text = super().parenthesize(item, level, strict)
         if (
@@ -1372,7 +1049,7 @@ class AuthorPrinter(sp.StrPrinter):
         return "-inf"
 
     def _print_ComplexInfinity(self, expr):
-        """Unsigned infinity, which is what `1/0` and `TAN(pi/2)` are worth."""
+        """Unsigned infinity, the value of `1/0` and `TAN(pi/2)`."""
         return f"{_PLUS_MINUS}inf"
 
     def _print_NaN(self, expr):
@@ -1396,8 +1073,8 @@ class AuthorPrinter(sp.StrPrinter):
             if expr.exp is sp.S.NegativeOne:
                 return f"1/{self.parenthesize(expr.base, level)}"
             if expr.exp.is_Number and expr.exp.is_negative:
-                # A denominator, the way the inherited `_print_Mul` writes one
-                # inside a product: `1/k^2` rather than `k^(-2)`.
+                # A denominator, as the inherited `_print_Mul` writes one in a
+                # product: `1/k^2` rather than `k^(-2)`.
                 return f"1/{self._print(sp.Pow(expr.base, -expr.exp))}"
         base = self.parenthesize(expr.base, level)
         exponent = self.parenthesize(expr.exp, level)
@@ -1406,14 +1083,8 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_MatPow(self, expr):
         """A power of a matrix, written like any other power.
 
-        `SQRT` of a matrix is one of these, and sympy's own spelling for it is
-        `m**(1/2)` - which the grammar reads as a product with an empty factor
-        in it, so the answer would come back as a different expression.
-
-        A negative exponent stays on the line. There is no `1/u` for a matrix,
-        `u^-1` being the notation's whole spelling for an inverse, and it is
-        written without parentheses round the exponent: `a^-1`, as the original
-        writes one.
+        This avoids sympy's `m**(1/2)`. A negative exponent stays unparenthesized in
+        the exponent, `a^-1`, as in the original, since there is no `1/u` for a matrix.
         """
         if expr.exp.is_Number and expr.exp.is_negative:
             base = self.parenthesize(expr.base, PRECEDENCE["Pow"])
@@ -1421,23 +1092,15 @@ class AuthorPrinter(sp.StrPrinter):
         return self._print_Pow(expr)
 
     def _print_Inverse(self, expr):
-        """`a^-1`, which is the same power sympy keeps under its own head."""
+        """`a^-1`, the same power sympy keeps under a separate head."""
         return self._print_MatPow(expr)
 
     def _print_MatMul(self, expr):
-        """A matrix product, as the dot operator section 8.4 writes one with.
+        """A matrix product, using the dot operator of section 8.4.
 
-        Derive nests a run of them to the right and prints the parentheses:
-        `((a . b) . c) . d` comes back `a . (b . (c . d))`, and `a . (b . c)`
-        is a fixed point. So a flat product is written that way rather than as
-        the chain `a . b . c` that the left-associating grammar would read
-        differently.
-
-        A scalar coefficient multiplies the whole run, `-2*(a . b)`, and stands
-        in front of it the way it does in any other product. A negated product
-        needs no parentheses: a scalar commutes with everything, so `-a . b`
-        and `-(a . b)` are the one expression, and the shorter spelling is what
-        lets a sum be written `a . b - b . a`.
+        Derive nests a chain to the right with parentheses, `a . (b . (c . d))`, since
+        the grammar is left-associative. A scalar coefficient goes in front, and a
+        negated product needs no parentheses, so a sum reads `a . b - b . a`.
         """
         coefficient, matrices = expr.as_coeff_matrices()
         if not matrices:
@@ -1452,7 +1115,7 @@ class AuthorPrinter(sp.StrPrinter):
         return f"{self.parenthesize(coefficient, PRECEDENCE['Mul'])}*{product}"
 
     def _nested(self, matrices) -> str:
-        """A run of matrices as the right-nested chain the original writes."""
+        """A sequence of matrices as the original's right-nested chain."""
         level = PRECEDENCE["Mul"]
         text = self.parenthesize(matrices[-1], level)
         for index in range(len(matrices) - 2, -1, -1):
@@ -1462,11 +1125,11 @@ class AuthorPrinter(sp.StrPrinter):
         return text
 
     def _print_Transpose(self, expr):
-        """``u` ``, the same operator the inert head is written with."""
+        """``u` ``, the same operator the inert head uses."""
         return f"{self.parenthesize(expr.arg, PRECEDENCE['Func'])}`"
 
     def _print_exp(self, expr):
-        """`#e^u`, never `EXP(u)`: the constant is how the notation spells it."""
+        """`#e^u`, never `EXP(u)`, as the notation spells it."""
         return f"#e^{self.parenthesize(expr.args[0], PRECEDENCE['Pow'])}"
 
     def _print_factorial(self, expr):
@@ -1482,10 +1145,8 @@ class AuthorPrinter(sp.StrPrinter):
     # -- functions ----------------------------------------------------------
 
     def _print_Function(self, expr):
-        """`NAME(u, ...)`, or the call quoted where the notation has no name for it.
-
-        Inside the quotes the head is written under its sympy name, which is the
-        legible text the quotes are there to hold.
+        """`NAME(u, ...)`, or the call quoted under its sympy name if the notation has no
+        name for it.
         """
         name = spelling(expr)
         if name is None:
@@ -1495,18 +1156,15 @@ class AuthorPrinter(sp.StrPrinter):
         return f"{name}({self.stringify(expr.args, ', ')})"
 
     def _print_polygamma(self, expr):
-        """`DIGAMMA(x)` for the order-zero polygamma function, which is how it is
-        written and read: sympy has no digamma call of its own to hold."""
+        """`DIGAMMA(x)` for the order-zero polygamma function, since sympy has no
+        separate digamma function."""
         if _is_digamma(expr):
             return f"DIGAMMA({self._print(expr.args[1])})"
         return self._print_Function(expr)
 
     def _print_Gcd(self, expr):
-        """`GCD(n, m)`, its arguments in the reverse of a sum's order.
-
-        Derive writes the divisor's arguments from the least main up: `GCD(m, n)`
-        is `GCD(n, m)`, `GCD(m^2, m)` is `GCD(m, m^2)` and `GCD(m, 2)` is
-        `GCD(2, m)`.
+        """`GCD(n, m)`, with arguments from least main up, as Derive writes them: `GCD(m,
+        2)` is `GCD(2, m)`.
         """
         order = self.context.order
         operands = sorted(
@@ -1521,20 +1179,11 @@ class AuthorPrinter(sp.StrPrinter):
         return f"MAX({self.stringify(expr.args, ', ')})"
 
     def _print_floor(self, expr):
-        """`FLOOR(m, n)` where the argument is a quotient, `FLOOR(u)` where not.
+        """`FLOOR(m, n)` if the argument is a quotient, otherwise `FLOOR(u)`.
 
-        The notation's floor takes the numerator and the denominator apart, and
-        that is the spelling section 6.7 prints: `MOD(m, n)` is
-        `m - n*FLOOR(m, n)`. So a quotient is written back as the pair it was
-        authored as, which is what makes `FLOOR(m, n)` a fixed point of
-        printing rather than a form the reader is never shown again.
-
-        A number underneath is no such pair. `FLOOR(x/2)` divides by two the
-        way any other expression does, and `FLOOR(x, 2)` would be the longer
-        way to say it - so the pair is written only where the denominator holds
-        a variable, and a numeric factor of that denominator goes back into the
-        numerator, `FLOOR(m/n + 1/2)` being `FLOOR(m + n/2, n)` and not
-        `FLOOR(2*m + n, 2*n)`.
+        The notation's two-argument floor (section 6.7: `MOD(m, n)` is `m - n*FLOOR(m,
+        n)`) is used only if the denominator contains a variable, with a numeric factor
+        moved to the numerator: `FLOOR(m/n + 1/2)` is `FLOOR(m + n/2, n)`.
         """
         numerator, denominator = sp.fraction(sp.together(expr.args[0]))
         if denominator.is_number:
@@ -1544,14 +1193,12 @@ class AuthorPrinter(sp.StrPrinter):
         return f"FLOOR({self._print(numerator / coefficient)}, {over})"
 
     def _print_Heaviside(self, expr):
-        """`STEP(u)`. The value at zero is ours, not the author's."""
+        """`STEP(u)`, omitting the value at zero, which is ours, not the author's."""
         return f"STEP({self._print(expr.args[0])})"
 
     def _print_Determinant(self, expr):
-        """`DET(u)` over a matrix sympy holds rather than works out.
-
-        A head of its own rather than a `Function`, so the name it is written
-        under is this and not `spelling`'s.
+        """`DET(u)` for a matrix sympy keeps unevaluated. It isn't a `Function`, so
+        `spelling` doesn't cover it.
         """
         return f"DET({self._print(expr.arg)})"
 
@@ -1559,12 +1206,9 @@ class AuthorPrinter(sp.StrPrinter):
         return f"TRACE({self._print(expr.arg)})"
 
     def _print_Piecewise(self, expr):
-        """A case split, as the nested `IF` the notation has for one.
-
-        Sympy answers a conditional integral or a conditional limit with a
-        `Piecewise`, and `IF(test, then, else)` is what Derive calls that. A
-        final `true` condition is the else clause; without one the last case
-        has none, which is right - outside every condition the value is `?`.
+        """A case split, as nested `IF(test, then, else)`. Without a final `true`
+        condition the last case has no else, which is correct, since the value is then
+        `?`.
         """
         pairs = list(expr.args)
         text = None
@@ -1593,19 +1237,12 @@ class AuthorPrinter(sp.StrPrinter):
         return text
 
     def _primed(self, expr, point) -> str | None:
-        """`BB'(r)`: `expr` written as the derivative of the function itself.
+        """`BB'(r)`: `expr` written with prime notation, or None.
 
-        What the original writes for the one shape it has a prime for - a
-        function nobody defined, of one argument, differentiated with respect
-        to that argument - and `2*BB'(r)*BB(r)` for the derivative of `BB(r)^2`
-        is why it is worth having: a matrix of Ricci components written in
-        `DIF` is unreadable and the same matrix in primes is not.
-
-        `point` is where the derivative is taken, which is the argument itself
-        for a plain `Derivative` and the substituted point for the `Subs` the
-        chain rule leaves - `2*r*BB'(r^2)`. A function of two arguments has no
-        prime here, because the original prints none: `DIF(CC(u, v), u)` says
-        which argument it is about and `CC'(u, v)` would not.
+        The original uses primes only for an undefined function of one argument
+        differentiated by it, and they make results like Ricci components readable.
+        `point` is the argument, or the substituted point of a chain-rule `Subs`
+        (`2*r*BB'(r^2)`).
         """
         if len(expr.variable_count) != 1:
             return None
@@ -1636,11 +1273,9 @@ class AuthorPrinter(sp.StrPrinter):
         return text
 
     def _print_Limit(self, expr):
-        """`LIM(u, x, a)`, with a fourth argument for a limit from one side.
-
-        An infinite point is approached from the only side it has, and sympy records
-        that side on every limit there; written out it would read as a one-sided
-        limit the author never asked for, so it is left off.
+        """`LIM(u, x, a)`, with a fourth argument for a one-sided limit. The direction
+        sympy records at infinity is omitted, since the author didn't ask for a
+        one-sided limit.
         """
         expression, variable, point, direction = expr.args
         parts = [self._print(expression), self._print(variable), self._print(point)]
@@ -1649,46 +1284,30 @@ class AuthorPrinter(sp.StrPrinter):
             parts.append(side)
         return f"LIM({', '.join(parts)})"
 
-    # -- a limit that stayed bounded without settling ------------------------
+    # -- bounded limits that don't converge ------------------------------------
 
     def _print_AccumulationBounds(self, expr):
         """`INTERVAL(a, b)`: a value known only to lie between `a` and `b`.
 
-        What a bounded limit that does not settle comes to - `LIM(SIN(x), x,
-        inf)` is every value in `INTERVAL(-1, 1)` and no one of them. Sympy
-        calls it the accumulation bounds; `INTERVAL` is what Mathematica and
-        Maple call the same thing, and it was free here because the notation
-        writes a solution set as a chained relation rather than as a range.
-
-        A whole answer is the smaller half of what this is for. The value turns
-        up inside larger expressions as readily as on its own, `LIM(SIN(x), x,
-        inf) + 1` being `INTERVAL(0, 2)`, and a call is an atom, so the
-        precedence rules bracket it exactly as they do any other head.
+        This is the result of a bounded limit that doesn't converge: `LIM(SIN(x), x,
+        inf)` is `INTERVAL(-1, 1)`. The name is Mathematica's and Maple's, and it is an
+        atom, so it works inside larger expressions.
         """
         return f"INTERVAL({self.stringify(expr.args, ', ')})"
 
-    # -- the roots of a polynomial that will not factor ----------------------
+    # -- roots of polynomials that don't factor --------------------------------
 
     def _print_RootSum(self, expr):
-        """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`.
-
-        Sympy answers a rational integral this way where the denominator has no
-        factors to take it apart into, and the summand it carries is a `Lambda`,
-        which the notation has no spelling for. What it does have is the binding
-        heads' own shape, the bound variable second - so the summand is written
-        in the polynomial's generator and the `Lambda` disappears.
+        """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`. The summand, a
+        `Lambda` in sympy, is written in the polynomial's generator.
         """
         variable = expr.poly.gen
         parts = (expr.poly.as_expr(), variable, expr.fun(variable))
         return f"ROOT_SUM({self.stringify(parts, ', ')})"
 
     def _print_ComplexRootOf(self, expr):
-        """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counted from zero.
-
-        A single root of the kind a `ROOT_SUM` sums over. The generator is not
-        among the arguments sympy holds - those are the polynomial and the index
-        alone - so it is read off the polynomial, which is where the class
-        itself keeps it.
+        """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counted from zero. The
+        generator is taken from the polynomial.
         """
         parts = (expr.poly.as_expr(), expr.poly.gen, sp.Integer(expr.index))
         return f"ROOT_OF({self.stringify(parts, ', ')})"
@@ -1696,23 +1315,14 @@ class AuthorPrinter(sp.StrPrinter):
     # -- vectors and matrices ------------------------------------------------
 
     def _print_Tuple(self, expr):
-        """A tuple, as the vector the notation has for one.
-
-        Sympy heads such as `Subs` carry tuples of arguments, and `(1, m + 1)`
-        is not something the grammar reads: a parenthesised list is not an
-        expression. A vector is, so that is what it is written as.
+        """A tuple, written as a vector, since the grammar can't read a parenthesized
+        list.
         """
         return self._vector(expr.args)
 
     def _print_Subs(self, expr):
-        """`SUBS(u, [x], [a])`, upper-cased like any other head.
-
-        Sympy prints this one itself, in mixed case, and a name that changed
-        case on the way out would not be a fixed point.
-
-        The chain rule is what puts most of these here, and the one it leaves
-        over an undefined function is a prime rather than a substitution:
-        `DIF(BB(r^2), r)` is `2*r*BB'(r^2)`.
+        """`SUBS(u, [x], [a])`, upper-cased to be a fixed point, or a prime over an
+        undefined function: `DIF(BB(r^2), r)` is `2*r*BB'(r^2)`.
         """
         inner, variables, points = expr.args
         if isinstance(inner, sp.Derivative) and len(variables) == len(points) == 1:
@@ -1724,7 +1334,7 @@ class AuthorPrinter(sp.StrPrinter):
     _print_Substitution = _print_Subs
 
     def _print_MatrixBase(self, expr):
-        """A row is written flat; anything taller is a vector of its rows."""
+        """A single row is written flat; taller matrices as a vector of rows."""
         if expr.rows == 1:
             return self._vector(expr)
         return self._vector([expr[row, :] for row in range(expr.rows)])
@@ -1739,12 +1349,8 @@ class AuthorPrinter(sp.StrPrinter):
         return chained if chained is not None else self._infix("AND", expr.args)
 
     def _chain(self, expr) -> str | None:
-        """Two bounds on one variable, written as the chain `-2 < x < 2`.
-
-        Which is how the original writes a range, and how a range is written on
-        the author line: `AND` is for statements that are not one range, and a
-        conjunction that is one has a shorter spelling the grammar reads back.
-        The two strictnesses are independent, so `-2 < x <= 2` is a chain too.
+        """Two bounds on one variable as the chain `-2 < x < 2`, as the original writes a
+        range. The two sides' strictness is independent.
         """
         if len(expr.args) != 2:
             return None
@@ -1770,8 +1376,7 @@ class AuthorPrinter(sp.StrPrinter):
         return self._infix("XOR", expr.args)
 
     def _print_Implies(self, expr):
-        # `IMP` is the one that is not commutative: which operand implies which
-        # is the whole statement, so this one keeps the order it is held in.
+        # `IMP` isn't commutative, so its operands keep their order.
         return self._infix("IMP", expr.args, order=False)
 
     def _print_Not(self, expr):
@@ -1785,7 +1390,7 @@ class AuthorPrinter(sp.StrPrinter):
         )
 
     def _logical_operand(self, operand: sp.Basic, word: str) -> str:
-        """Parenthesised when the operand binds more loosely than `word` does."""
+        """The operand, parenthesized if it binds more loosely than `word`."""
         inner = _LOGICAL_HEADS.get(type(operand).__name__)
         if isinstance(operand, sp.Function) and type(operand).__name__ == "Logical":
             inner = str(operand.args[0])
@@ -1806,21 +1411,12 @@ class AuthorPrinter(sp.StrPrinter):
         return f'"{expr.name}"'
 
     def _unspelled(self, expr):
-        """A head the notation has no word for, written as the string it is.
+        """A head the notation can't express, written as a quoted string.
 
-        Sympy's sets reach here as `Interval(0, 1)` or as the bare word
-        `Reals`, and author notation says neither. A bare word is a product of
-        its letters to a Character-mode reader, so `EmptySet` comes back as
-        `e*m*p*t*y*s*e*t`; `Interval(0, 1)` reads as the built-in `INTERVAL`,
-        which is the range a limit keeps to and not a set of reals. Both look
-        computed and neither is, which is worse than an answer that says
-        plainly it could not be written - and a quoted string is what the
-        notation has for text it cannot read. A sympy function the notation has
-        no name for, `hyper` say, is written the same way.
-
-        Between the quotes is the text the answer would have shown without
-        them, author notation wherever a part of it has one. Nothing inside is
-        quoted again: the whole head is the one thing that could not be said.
+        Printed bare, sympy's `EmptySet` would read back as `e*m*p*t*y*s*e*t` and
+        `Interval(0, 1)` as the built-in `INTERVAL`, both looking like computed
+        answers. The quoted text is what would otherwise print; nothing inside is
+        quoted again.
         """
         self._unspelling = True
         try:
@@ -1831,8 +1427,8 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Power(self, expr):
         base, exponent = expr.args
         level = PRECEDENCE["Pow"]
-        # The exponent is not parenthesized at its own level, `^` associating
-        # to the right: `10^10^10` reads back as the same tower it prints.
+        # The exponent isn't parenthesized at its own level, since `^` is
+        # right-associative: `10^10^10` reads back as the same tower.
         written = self.parenthesize(base, level, strict=True)
         return f"{written}^{self.parenthesize(exponent, level)}"
 
@@ -1874,11 +1470,8 @@ class AuthorPrinter(sp.StrPrinter):
         return self._vector(expr.args)
 
     def _print_Logical(self, expr):
-        """The operator sympy declined, with its operands as they were written.
-
-        Nothing here has been simplified - that is what the head is for - so
-        nothing here is in a normal form either, and the order the operands
-        were written in is the only one they have: `3 AND p` is not `p AND 3`.
+        """A logical operator sympy rejected, with operands unsimplified in their written
+        order: `3 AND p` is not `p AND 3`.
         """
         word = str(expr.args[0])
         operands = expr.args[1:]

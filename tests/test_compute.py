@@ -1,10 +1,8 @@
 """The screen while a command computes: modal, ticking, and abortable.
 
-The engine under these is one that waits to be let go rather than one that
-works, because everything here is about timing and real sympy is the wrong
-clock to read it by. What it answers with, once it is let go, is what the real
-engine answers, so what lands on the worksheet is what a real command would
-have put there.
+These tests are about timing, so the engine blocks until the test releases it instead of
+depending on how long sympy takes. Once released it returns the real engine's answer, so
+the worksheet ends up as it would after a real command.
 """
 
 import asyncio
@@ -29,20 +27,17 @@ from rederive.ui.app import (
     _whole,
 )
 
-#: How long anything here waits for a thread to get where it is going. Long
-#: enough for a loaded machine to hand off between a thread and the event loop,
-#: short enough that a deadlock is reported rather than sat on.
+#: How long to wait for a thread to reach a given point. Long enough for a loaded machine,
+#: short enough that a deadlock fails quickly.
 PATIENCE = 2.0
 
 
 class Blocking:
-    """An engine that answers only once the test says so.
+    """An engine that answers only when the test releases it.
 
-    It satisfies the five calls a session makes and the `abort` the app looks
-    for, which is all that decides whether the app puts the screen into compute
-    mode. The waiting is done the way `RemoteEngine` does it - a thread of the
-    loop's own pool blocking on an event - so an awaited call here leaves the
-    loop as free as a real one does.
+    It implements the five calls a session makes plus the `abort` the app checks for to
+    decide on compute mode. Like `RemoteEngine`, it waits in a thread from the loop's
+    pool, so the event loop stays free while a call is pending.
     """
 
     def __init__(self) -> None:
@@ -52,11 +47,11 @@ class Blocking:
         self._aborted = False
 
     def release(self) -> None:
-        """Let the call in hand answer."""
+        """Let the pending call answer."""
         self._go.set()
 
     def abort(self) -> None:
-        """What Esc reaches: the call in hand fails as an aborted one does."""
+        """Abort the pending call, as Esc does."""
         self._aborted = True
         self._go.set()
 
@@ -110,7 +105,7 @@ def app(runner):
         (0.04, "0.0s"),
         (3.14, "3.1s"),
         (9.94, "9.9s"),
-        # Rounded to ten, so it is written the way ten seconds is written.
+        # Rounds to ten, so it is written in the whole-seconds format.
         (9.96, "10s"),
         (42.4, "42s"),
         (60, "1m 0s"),
@@ -142,12 +137,12 @@ def test_a_running_clock_counts_whole_seconds(seconds, written):
 
 
 def _refused(said):
-    """Whether the message line has stopped asking or computing and said no."""
+    """Whether the message line shows a refusal rather than the prompt or the clock."""
     return said != ENTER_TO_DERIVE and not said.startswith(SIMPLIFYING)
 
 
 async def settle(pilot, condition, patience=PATIENCE):
-    """Wait for something a thread is doing, and say whether it happened."""
+    """Wait until `condition` holds or time runs out, and return whether it held."""
     deadline = time.monotonic() + patience
     while time.monotonic() < deadline:
         if condition():
@@ -163,10 +158,10 @@ async def author(pilot, text):
 
 
 async def simplify(pilot, runner):
-    """Ask for a Simplify of the entry offered, and wait until it is running.
+    """Simplify the highlighted entry and wait until the computation is running.
 
-    One press per call: the second key would otherwise be delivered before the
-    prompt the first one puts up has taken the focus.
+    The keys are pressed in separate calls; otherwise the second would arrive before the
+    prompt opened by the first has focus.
     """
     await pilot.press("s")
     await pilot.press("enter")
@@ -176,32 +171,26 @@ async def simplify(pilot, runner):
 async def test_a_computation_holds_the_screen_and_says_how_long_it_has(
     app, runner, monkeypatch
 ):
-    """The clock is read off `app.started`, which is moved rather than waited out.
+    """The clock is driven by moving `app.started` back rather than by waiting.
 
-    Both figures the app is asked about here are seconds long, and waiting them
-    out would be waiting on the machine's clock rather than on the app. Moving
-    the start of the computation back instead tests more, not less: it names
-    the second the line is left alone for, and then reads a figure off the line
-    that nothing but a running clock could have put there.
+    Waiting out the real delays would make the test slow and dependent on the machine.
+    Moving the start back also proves the displayed figure comes from the running clock.
     """
     monkeypatch.setattr(app_module, "TICK", 0.01)
     async with app.run_test() as pilot:
         await author(pilot, "1+1")
         await simplify(pilot, runner)
         assert app.mode == MODE_COMPUTE
-        # Nothing is said for the first second, ticks or no ticks: the message
-        # line still asks what the prompt asked, so a command that answers at
-        # once passes without a clock flashing on the way.
+        # No clock for the first second, so a command that answers at once doesn't flash
+        # one; the message line still shows the prompt's text.
         await pilot.pause(0.05)
         assert message(app) == ENTER_TO_DERIVE
-        # A second of running is what it takes for the clock to appear.
+        # The clock appears after a second.
         app.started -= CLOCK_AFTER
         assert await settle(pilot, lambda: message(app).startswith(SIMPLIFYING))
         assert "ESC aborts" in message(app)
-        # And once it is up the clock moves, which is the whole point of the
-        # event loop being free. A minute back rather than a second, so that
-        # what the line then says is a reading no amount of the test's own
-        # running could have produced: it is the clock and not the wait.
+        # Once shown, the clock keeps updating because the event loop is free. Moving back
+        # a full minute yields a reading the test's own running time couldn't produce.
         assert "1m" not in message(app)
         app.started -= 60.0
         assert await settle(pilot, lambda: "1m" in message(app))
@@ -214,10 +203,10 @@ async def test_a_computation_holds_the_screen_and_says_how_long_it_has(
 async def test_a_command_that_answers_at_once_leaves_the_message_line_alone(
     app, runner
 ):
-    """Almost every command does, and the clock would only flicker.
+    """Most commands answer at once, and a clock would only flicker.
 
-    The line the prompt left up stands until there is a wait worth reporting,
-    and the compute time replaces it when the answer lands.
+    The prompt's message stays until the wait is worth reporting, and is replaced by the
+    compute time when the answer arrives.
     """
     async with app.run_test() as pilot:
         await author(pilot, "1+1")
@@ -264,10 +253,10 @@ async def test_a_command_after_an_abort_works(app, runner):
 
 
 async def test_a_line_that_will_not_read_stays_up_to_be_corrected(app, runner):
-    """The line is read by the command, so the refusal comes back off the thread.
+    """The command parses the line, so the refusal comes back from the thread.
 
-    Nothing reaches the engine - the runner is never called - and the prompt
-    has to come out of compute mode as its own again, cursor and all.
+    The engine is never called, and the prompt must leave compute mode intact, with its
+    text and focus.
     """
     async with app.run_test() as pilot:
         await pilot.press("s")
@@ -275,7 +264,6 @@ async def test_a_line_that_will_not_read_stays_up_to_be_corrected(app, runner):
         await pilot.press("enter")
         assert await settle(pilot, lambda: _refused(message(app)))
         assert not runner.running.is_set()
-        # The prompt is still there, still the user's, and still focused.
         assert prompt(app)[1] == "1+"
         assert app.focused is app.query_one("#prompt-input")
         assert entries(app) == []
@@ -296,11 +284,7 @@ async def test_control_enter_simplifies_what_it_entered_on_the_thread(app, runne
 
 @pytest.fixture
 def demo(tmp_path, monkeypatch):
-    """A demonstration file, with the shell sitting in the directory it is in.
-
-    So the prompt can be answered with the name alone, which it takes as the
-    file it names.
-    """
+    """A demo file in the current directory, so the prompt accepts its bare name."""
     path = tmp_path / "show.dmo"
     path.write_text("; adds two numbers\n2 + 3\n\n; and a symbolic one\n(x+1)^2\n")
     monkeypatch.chdir(tmp_path)
@@ -308,10 +292,9 @@ def demo(tmp_path, monkeypatch):
 
 
 async def test_a_demonstration_waits_on_the_step_it_dispatched(app, runner, demo):
-    """Each step is authored here and simplified on the thread.
+    """Each step is simplified on the thread, so it can be aborted like any command.
 
-    So the step is as abortable as any other command, and the comment does not
-    go up until its answer is in.
+    The next comment is not shown until the step's answer is in.
     """
     async with app.run_test() as pilot:
         await pilot.press("t", "d", "o")
@@ -336,7 +319,7 @@ async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
         assert message(app).startswith("Aborted after")
         assert entries(app) == ["2+3"]
-        # Suspended rather than lost: naming the file again picks it up.
+        # The demo is suspended, not lost: naming the file again resumes it.
         await pilot.press("t", "d", "o")
         await pilot.press(*demo.name)
         await pilot.press("enter")

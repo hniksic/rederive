@@ -1,50 +1,47 @@
-"""The antiderivative of a rational function of the sine and cosine of one linear
-argument, by the substitution the integral tables use.
+"""Antiderivatives of rational functions of the sine and cosine of one linear argument,
+by the substitutions of integral tables.
 
-`R(SIN(u), COS(u))`, with `u = a*x + b`, is a rational function of `t` under one of
-four substitutions, tried in this order:
+`R(SIN(u), COS(u))`, with `u = a*x + b`, becomes rational in `t` under one of four
+substitutions, tried in order:
 
 - `t = COS(u)` where `R` is odd in the sine, as in `SIN(u)/(b + c*COS(u))^2`;
 - `t = SIN(u)` where `R` is odd in the cosine, as in `1/(COS(u)*(1 + SIN(u)))`;
 - `t = TAN(u)` where `R` is unchanged by negating both, as in `1/(b^2 + c^2*SIN(u)^2)`,
-  which is a quadratic in `t` where the half angle makes it a quartic;
+  giving a quadratic in `t` where the half angle would give a quartic;
 - `t = TAN(u/2)` otherwise.
 
-The rational function is integrated by `engine.rational`, which writes a quadratic
-with parametric coefficients as one logarithm and one arctangent of it, and does not
-split the integral over the values of the parameters. That is where the cost of the
-general route goes: sympy integrates `1/(b + c*SIN(a*x))^2` in a minute and over a
-page of cases, and this in a fraction of a second.
+The rational function is integrated by `engine.rational`, which writes a parametric
+quadratic as one logarithm and one arctangent without splitting into cases on the
+parameters. That is where the speed comes from: sympy integrates `1/(b + c*SIN(a*x))^2`
+in a minute with a page of cases, this in a fraction of a second.
 
 `t = TAN(w)` jumps from `+inf` to `-inf` where `w` crosses an odd multiple of `pi/2`,
-and so does an antiderivative written in `t`, where the integrand need not be
-singular at all. Two things put that right:
+and so does an antiderivative in `t`, even where the integrand is regular. Two fixes:
 
-- A logarithm of a polynomial of degree `n` in `t` is written as the logarithm of
-  the homogeneous polynomial in `SIN(w)` and `COS(w)` it is `COS(w)^n` times, less
-  `n*LN(COS(w))`. The integral converges through `t = inf` wherever the integrand is
-  regular there, and then those `LN(COS(w))` terms cancel. Over the half angle a
-  form of degree 2 is written in the whole angle: `LN(b*TAN(u/2)^2 + 2*c*TAN(u/2) +
-  b)` is `LN(b + c*SIN(u))`, and one of degree 1 is half the logarithm of its square.
-  Each differs from the logarithm it replaces by a constant between the zeros of
-  its argument, which are poles of the integrand.
-- An arctangent of a polynomial of odd degree in `t` jumps by `pi` there, and has a
-  multiple of `pi*FLOOR(w/pi + 1/2)` added to it that jumps back, as sympy does with
-  the arctangents it writes.
+- The logarithm of a degree-`n` polynomial in `t` is written as the logarithm of the
+  homogeneous polynomial in `SIN(w)` and `COS(w)` equal to it times `COS(w)^n`, minus
+  `n*LN(COS(w))`. Where the integrand is regular at `t = inf` the integral converges
+  there and the `LN(COS(w))` terms cancel. Over the half angle, a degree-2 form is
+  written in the whole angle (`LN(b*TAN(u/2)^2 + 2*c*TAN(u/2) + b)` is `LN(b +
+  c*SIN(u))`), and a degree-1 form as half the logarithm of its square. Each differs
+  from the original by a constant between the zeros of its argument, which are poles
+  of the integrand.
+- An arctangent of an odd-degree polynomial in `t` jumps by `pi` there, so a multiple
+  of `pi*FLOOR(w/pi + 1/2)` is added to jump back, as sympy does.
 
-Where the integrand has a pole at those points itself, the logarithms show it by not
-cancelling, and are left in `TAN(w)`. The rational part is written in the sine and
-cosine of `u` where it is finite at `t = inf`, `-COS(u)/(1 + SIN(u))` for `-2/(1 +
-TAN(u/2))`, which is defined at `u = pi` where the tangent is not.
+If the integrand itself has a pole at those points, the logarithms don't cancel and
+are left in `TAN(w)`. The rational part, if finite at `t = inf`, is written in the
+sine and cosine of `u`: `-COS(u)/(1 + SIN(u))` for `-2/(1 + TAN(u/2))`, which is
+defined at `u = pi` where the tangent isn't.
 
-Only a denominator that is a sum is taken: one that is a product of powers of the
-sine and cosine, `1/(SIN(u)*COS(u)^2)`, is integrated as well by other means.
+Only denominators that are sums are handled; products of powers of sine and cosine,
+like `1/(SIN(u)*COS(u)^2)`, are integrated equally well elsewhere.
 
-The functions of small multiples of the argument are first written in those of the
-argument, `SIN(2*u)` as `2*SIN(u)*COS(u)`. A logarithm negative at zero is written
-over its negation, and two of opposite coefficients over parametric arguments as the
-one of their quotient, so that the integral from zero, which is what the answer is
-regularized towards, has no constant to subtract where none is needed.
+Functions of small multiples of the argument are first expanded, `SIN(2*u)` as
+`2*SIN(u)*COS(u)`. A logarithm negative at zero is written over its negation, and two
+with opposite coefficients and parametric arguments as the logarithm of their quotient,
+so the integral from zero (towards which the answer is regularized) needs no constant
+subtracted unnecessarily.
 """
 
 from __future__ import annotations
@@ -59,7 +56,7 @@ __all__ = ["trigonometric_antiderivative"]
 
 _TRIGONOMETRIC = (sp.sin, sp.cos, sp.tan, sp.cot, sp.sec, sp.csc)
 
-# The largest multiple of the one argument written in the functions of that argument.
+# The largest multiple of the argument that is expanded into functions of the argument.
 _MULTIPLES = 4
 
 
@@ -67,8 +64,8 @@ def trigonometric_antiderivative(
     integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic | None:
     """An antiderivative of a rational function of the sine and cosine of one argument
-    linear in the variable, or None where the integrand is not one or the rational
-    function in `t` is not had in closed form."""
+    linear in the variable, or None if the integrand isn't one or the rational
+    function in `t` has no closed form."""
     try:
         return _antiderivative(integrand, variable)
     except Exception:
@@ -146,10 +143,10 @@ def _antiderivative(integrand: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
 
 
 def _positive_at_zero(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """The value with its logarithms `_paired`, and each one of a function of the
-    variable alone that is negative at zero written over its negation, a constant
-    `#i*pi` away: `LN(COS(x) - SIN(x))` for `LN(SIN(x) - COS(x))`, real near zero,
-    where the integral from zero is taken."""
+    """The value with its logarithms `_paired`, and each logarithm of a function of the
+    variable negative at zero negated inside (a constant `#i*pi` away):
+    `LN(COS(x) - SIN(x))` for `LN(SIN(x) - COS(x))`, real near zero, where the
+    integral from zero is taken."""
     value = _paired(value, variable)
 
     def positive(argument: sp.Basic) -> sp.Basic:
@@ -164,15 +161,15 @@ def _positive_at_zero(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
 def _over_a_linear_form(
     written: sp.Basic, s: sp.Basic, c: sp.Basic, u: sp.Basic
 ) -> sp.Basic | None:
-    """The antiderivative in `u` of `k/(b*SIN(u) + c*COS(u))`, or None where the
-    rational function is not one.
+    """The antiderivative in `u` of `k/(b*SIN(u) + c*COS(u))`, or None if the rational
+    function isn't of that form.
 
     With `r = SQRT(b^2 + c^2)` the denominator is `r*SIN(u + p)`, where `COS(p) = b/r`
     and `SIN(p) = c/r`, and the integral is `LN(TAN((u + p)/2))/r`, which is
     `LN((1 - COS(u + p))/SIN(u + p))/r`, or `LN((r - b*COS(u) + c*SIN(u))/(b*SIN(u) +
-    c*COS(u)))/r`. The half angle writes an arctangent of an imaginary argument here,
-    the discriminant of its quadratic being `-4*r^2`, with a jump of an imaginary
-    multiple of `pi` where the tangent jumps.
+    c*COS(u)))/r`. The half angle would give an arctangent of an imaginary argument
+    (its quadratic's discriminant is `-4*r^2`), jumping by an imaginary multiple of
+    `pi` where the tangent jumps.
     """
     numerator, denominator = sp.fraction(written)
     if numerator.has(s, c):
@@ -188,15 +185,14 @@ def _over_a_linear_form(
 
 
 def _paired(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """The sum of logarithms with each two of opposite coefficients whose arguments are
-    parametric at zero written as one of their quotient, `k*LN(u) - k*LN(v)` as
-    `k*LN(u/v)`: the two differ by a multiple of `2*pi*#i` that is constant wherever
-    `u` and `v` are finite and nonzero.
+    """The sum with each pair of logarithms that have opposite coefficients and
+    arguments parametric at zero merged: `k*LN(u) - k*LN(v)` becomes `k*LN(u/v)`. They
+    differ by a multiple of `2*pi*#i`, constant wherever `u` and `v` are finite and
+    nonzero.
 
-    `LN(b*COS(x) + c*SIN(x)) - LN(b*COS(x) - c*SIN(x))` is the logarithm of 1 at zero
-    where each of the two is that of `b`, which the integral from zero would subtract.
-    A sum with more than logarithms in the variable is left as it is, the quotient
-    being no shorter than the two beside a rational part."""
+    `LN(b*COS(x) + c*SIN(x)) - LN(b*COS(x) - c*SIN(x))` is then `LN(1)` at zero rather
+    than two `LN(b)` terms for the integral from zero to subtract. A sum with other
+    terms in the variable is left alone, since there the quotient is no shorter."""
     terms = list(sp.Add.make_args(sp.expand_mul(value, deep=False)))
     logarithms = []
     for i, term in enumerate(terms):
@@ -218,9 +214,9 @@ def _paired(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
 
 
 def _positive_on_the_circle(argument: sp.Basic, t: sp.Basic) -> sp.Basic:
-    """The argument of a logarithm in `t = SIN(u)` or `COS(u)`, negated where it is
-    negative wherever `t` is between -1 and 1, as `t - 1` is: `LN(1 - SIN(u))` is real
-    where `LN(SIN(u) - 1)` is `#i*pi` off it."""
+    """The argument of a logarithm in `t = SIN(u)` or `COS(u)`, negated if it is
+    negative for all `t` between -1 and 1, like `t - 1`: `LN(1 - SIN(u))` is real
+    where `LN(SIN(u) - 1)` is `#i*pi` off."""
     if argument.free_symbols != {t} or argument.is_polynomial(t) is not True:
         return argument
     poly = sp.Poly(argument, t)
@@ -231,8 +227,8 @@ def _positive_on_the_circle(argument: sp.Basic, t: sp.Basic) -> sp.Basic:
 
 
 def _gathered(value: sp.Basic) -> sp.Basic:
-    """The value with each product of the factors of a radicand in it written as that
-    radicand, `(b - c)*(b + c)/SQRT(b^2 - c^2)` as `SQRT(b^2 - c^2)`."""
+    """The value with each product of a radicand's factors written as the radicand:
+    `(b - c)*(b + c)/SQRT(b^2 - c^2)` as `SQRT(b^2 - c^2)`."""
     radicands = {
         power.base
         for power in value.atoms(sp.Pow)
@@ -260,8 +256,8 @@ def _gathered(value: sp.Basic) -> sp.Basic:
 
 
 def _without_squares(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
-    """The power of the radicand factored where that brings out a square, `4*b^2*(b^2 +
-    c^2)`, and otherwise with only its content taken out, `2*SQRT(b^2 - c^2)` for
+    """The power of the radicand, factored if that exposes a square (`4*b^2*(b^2 +
+    c^2)`), otherwise with only its content taken out: `2*SQRT(b^2 - c^2)` for
     `SQRT(4*b^2 - 4*c^2)`."""
     _, factors = sp.factor_list(base)
     if any(multiplicity > 1 for _, multiplicity in factors):
@@ -271,18 +267,18 @@ def _without_squares(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
 
 
 def _summed(denominator: sp.Basic, s: sp.Basic, c: sp.Basic) -> bool:
-    """Whether the denominator is more than a product of powers of the sine and the
-    cosine, which are integrated by other means and as well."""
+    """Whether the denominator is more than a product of powers of the sine and cosine,
+    which other methods integrate equally well."""
     return len(sp.Poly(denominator, s, c).terms()) > 1
 
 
 def _argument(
     integrand: sp.Basic, variable: sp.Basic
 ) -> tuple[sp.Basic, sp.Basic, sp.Basic] | None:
-    """The one argument linear in the variable that every trigonometric function in
-    the integrand has a small integer multiple of, its slope, and the integrand
-    written in the functions of that one argument: `SIN(2*a*x)/(1 + COS(a*x))` is
-    `2*SIN(a*x)*COS(a*x)/(1 + COS(a*x))`. None where there is no such argument."""
+    """The argument linear in the variable of which every trigonometric function's
+    argument is a small integer multiple, its slope, and the integrand rewritten in
+    functions of that argument: `SIN(2*a*x)/(1 + COS(a*x))` becomes
+    `2*SIN(a*x)*COS(a*x)/(1 + COS(a*x))`. None if there is no such argument."""
     arguments = sorted(
         {atom.args[0] for atom in integrand.atoms(*_TRIGONOMETRIC)},
         key=sp.default_sort_key,
@@ -314,7 +310,7 @@ def _in_the_square(
     expression: sp.Basic, symbol: sp.Basic, square: sp.Basic
 ) -> sp.Basic | None:
     """The rational function, even in `symbol`, with `symbol^2` replaced by `square`,
-    or None where it is not even."""
+    or None if it isn't even."""
     numerator, denominator = sp.fraction(sp.cancel(expression))
     numerator = sp.Poly(numerator, symbol)
     denominator = sp.Poly(denominator, symbol)
@@ -339,8 +335,8 @@ def _in_the_square(
 def _through_the_poles(
     antiderivative: sp.Basic, t: sp.Basic, w: sp.Basic, u: sp.Basic, half: bool
 ) -> sp.Basic:
-    """The antiderivative in `t = TAN(w)` written in `w`, continuous where `w` crosses
-    an odd multiple of `pi/2` unless the integrand has a pole there."""
+    """The antiderivative in `t = TAN(w)` written in `w`, continuous across odd
+    multiples of `pi/2` unless the integrand has a pole there."""
     cosine = sp.Dummy("cosine")
     steps = sp.floor(w / sp.pi + sp.Rational(1, 2))
     angle = _Angle(t, w, u, half)
@@ -351,7 +347,7 @@ def _through_the_poles(
         poly = sp.Poly(argument, t)
         n = poly.degree()
         if len(poly.terms()) == 1:
-            # A pole of the integrand at t = 0, where LN(TAN(w)) is as good as any.
+            # The integrand has a pole at t = 0, so LN(TAN(w)) is fine.
             return sp.log(argument.xreplace({t: sp.tan(w)}))
         form = angle.form(poly, n)
         if half and n % 2:
@@ -384,8 +380,8 @@ def _through_the_poles(
     if weight == 0:
         written = written.xreplace({cosine: 0})
     else:
-        # The integrand has a pole where the tangent jumps, and the logarithms and
-        # arctangents are left in it.
+        # The integrand has a pole where the tangent jumps, so the logarithms and
+        # arctangents are left in terms of it.
         written = antiderivative.replace(
             sp.atan, lambda argument: w if argument == t else sp.atan(argument)
         )
@@ -402,8 +398,8 @@ def _through_the_poles(
 
 
 class _Angle:
-    """Polynomials in `t = TAN(w)` written as forms in the sine and cosine of `w`,
-    and, over the half angle `w = u/2`, in those of `u`."""
+    """Polynomials in `t = TAN(w)` written as forms in the sine and cosine of `w`, or,
+    for the half angle `w = u/2`, of `u`."""
 
     def __init__(self, t: sp.Basic, w: sp.Basic, u: sp.Basic, half: bool):
         self.t, self.w, self.u, self.half = t, w, u, half
@@ -422,12 +418,12 @@ class _Angle:
         return form.xreplace({self.s: sp.sin(self.w), self.c: sp.cos(self.w)})
 
     def whole(self, form: sp.Basic) -> sp.Basic:
-        """The logarithm of a form of even degree, written in the whole angle."""
+        """The logarithm of an even-degree form, written in the whole angle."""
         return _logarithm(self.in_the_whole_angle(form))
 
     def in_the_whole_angle(self, form: sp.Basic) -> sp.Basic:
-        """A form of even degree in the sine and cosine of `u/2` as a polynomial in
-        those of `u`: `SIN(u/2)^2 = (1 - COS(u))/2`, `COS(u/2)^2 = (1 + COS(u))/2` and
+        """An even-degree form in the sine and cosine of `u/2` as a polynomial in those
+        of `u`: `SIN(u/2)^2 = (1 - COS(u))/2`, `COS(u/2)^2 = (1 + COS(u))/2` and
         `SIN(u/2)*COS(u/2) = SIN(u)/2`."""
         sine, cosine = sp.sin(self.u), sp.cos(self.u)
         result = sp.S.Zero
@@ -441,10 +437,10 @@ class _Angle:
         return sp.expand(result)
 
     def fraction(self, rational: sp.Basic) -> sp.Basic:
-        """A rational function of `t` that is finite at `t = inf`, as one of the sine
-        and cosine of `w`, or over the half angle of `u`, which unlike the tangent is
-        defined where `w` is an odd multiple of `pi/2`. Anything else is written in
-        `TAN(w)`, and so is a function of `1/t` alone, `1/TAN(w)` being 0 there."""
+        """A rational function of `t` finite at `t = inf`, written in the sine and
+        cosine of `w` (or of `u` for the half angle), which unlike the tangent are
+        defined at odd multiples of `pi/2`. Anything else, including a function of `1/t`
+        alone (`1/TAN(w)` is 0 there), is written in `TAN(w)`."""
         if rational == 0:
             return rational
         tangent = rational.xreplace({self.t: sp.tan(self.w)})
@@ -478,24 +474,24 @@ class _Angle:
 
 
 def _logarithm(argument: sp.Basic) -> sp.Basic:
-    """The logarithm of the argument less that of its rational content, a constant."""
+    """The logarithm of the argument minus that of its rational content, a constant."""
     _, primitive = sp.factor_terms(argument).as_content_primitive()
     return sp.log(primitive)
 
 
 def _on_the_circle(form: sp.Basic, w: sp.Basic) -> sp.Basic:
-    """The form in the sine and cosine of `w`, with the even powers of the cosine
-    written in the sine where that is shorter: `SIN(w)^2 + COS(w)^2` is 1."""
+    """The form in the sine and cosine of `w`, with even powers of the cosine written
+    in the sine where that is shorter, using `SIN(w)^2 + COS(w)^2 = 1`."""
     sine, cosine = sp.sin(w), sp.cos(w)
     reduced = sp.factor(sp.rem(sp.expand(form), sine**2 + cosine**2 - 1, cosine))
     return reduced if sp.count_ops(reduced) < sp.count_ops(form) else form
 
 
 def _less_a_constant(top: sp.Basic, bottom: sp.Basic, u: sp.Basic) -> sp.Basic:
-    """The numerator of `top/bottom`, less the multiple of `bottom` and with the
-    powers of the cosine past the first written in the sine, that leaves it shortest:
-    the fractions differ by a constant, `(b*COS(u) + b + c*SIN(u))/(b + c*SIN(u))`
-    being `b*COS(u)/(b + c*SIN(u))` plus one."""
+    """The shortest numerator for `top/bottom` obtained by subtracting a multiple of
+    `bottom` and optionally reducing cosine powers above one to sines. The fractions
+    differ by a constant: `(b*COS(u) + b + c*SIN(u))/(b + c*SIN(u))` is `b*COS(u)/(b +
+    c*SIN(u))` plus one."""
     sine, cosine = sp.sin(u), sp.cos(u)
     circle = sine**2 + cosine**2 - 1
     shortest, length = top, sp.count_ops(top)
@@ -515,13 +511,12 @@ def _less_a_constant(top: sp.Basic, bottom: sp.Basic, u: sp.Basic) -> sp.Basic:
 
 
 def _direction(k: sp.Basic) -> sp.Basic | None:
-    """The sign of `ATAN(k*t)` as `t` goes to `+inf`, or None where it is not known.
+    """The sign of `ATAN(k*t)` as `t` goes to `+inf`, or None if unknown.
 
-    For a real `k` that is its sign. A parametric one can be imaginary: `k = 2*A/SQRT(d)`
-    for a quadratic whose discriminant `d` is negative. Of one square root of a real
-    `q` times a real factor `r`, `r*SQRT(q)` has the sign of `r` and `r/SQRT(q)` that of
-    `r*q`, which for `q < 0` is the sign of its imaginary part, the side the arctangent
-    approaches.
+    For real `k` this is its sign. A parametric `k` can be imaginary: `k = 2*A/SQRT(d)`
+    for a quadratic with negative discriminant `d`. For real `q` and `r`, `r*SQRT(q)`
+    has the sign of `r` and `r/SQRT(q)` that of `r*q`, which for `q < 0` is the sign
+    of its imaginary part, the side the arctangent approaches.
     """
     odd = []
     roots = 0

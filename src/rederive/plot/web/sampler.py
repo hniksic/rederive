@@ -1,34 +1,27 @@
-"""The far end of a browser plot: closures, samples and readings, in the worker.
+"""Browser plot sampling in the engine worker: closures, samples and readings.
 
-This runs beside sympy, in the one interpreter of the pair that is allowed to
-know any mathematics, and it is the only part of browser plotting that touches
-numpy. What it answers with are arrays, and they go from here to the page's
-JavaScript without ever becoming Python objects on the main thread.
+This runs beside sympy in the worker and is the only part of browser plotting that uses
+numpy. Its answers are arrays sent straight to the page's JavaScript, never becoming
+Python objects on the main thread.
 
-The closures are the one thing kept between requests, and keeping them is
-licensed rather than smuggled: the worker's statelessness contract carves out
-"a content-keyed cache the protocol treats as maybe-empty", and a lambdified
-expression is exactly that. It is keyed by what the expression *is* - the tree,
-the context it is read under, the names it is a function of - so a re-sample of
-a dragged view finds it, a second window plotting the same expression finds it,
-and a worker that has just been terminated by Esc finds nothing and rebuilds it.
-Nothing else is kept. There is no record here of which pane holds what, because
-that is the truth about a session and it lives on the main thread.
+The only state kept between requests is a cache of lambdified closures, which the
+worker's statelessness contract allows ("a content-keyed cache the protocol treats as
+maybe-empty"). It is keyed by the tree, its context and its variables, so resampling a
+dragged view or plotting the same expression in another window reuses a closure, while
+a freshly restarted worker simply rebuilds it. Which pane holds what is session state
+and lives on the main thread.
 
-The jobs themselves are `plot/resample.py`'s, unaltered: the record built here
-carries the same fields the desktop's window carries, so the two backends ask
-for the same sampling and differ only in where the answer is drawn.
+The sampling jobs come unchanged from `plot/resample.py`. The record built here has the
+same fields as the desktop window's, so both backends sample identically and differ
+only in where the result is drawn.
 
-A surface goes the same way and further. What crosses for a solid is not the
-grid it was evaluated on but the geometry built from it - the triangles, the
-wire grid of the samples and a color a vertex, all of them `plot/surface.py`'s -
-because that file is the whole of what a 3D picture is, and the page's job is
-to put its answer on a card and turn it.
+For surfaces, the answer is the geometry from `plot/surface.py` (triangles, wireframe
+and per-vertex colors) rather than the sampled grid; the page only displays and rotates
+it.
 
-Two things are written here that the desktop gets from its toolkit. The zero
-contour of an implicit grid is marching squares, which pyqtgraph provides on the
-desktop and nothing provides here; and a region's shading crosses as the truth
-grid itself, one byte per cell, for the page to turn into an image.
+Two things the desktop gets from pyqtgraph are implemented here: marching squares for
+the zero contour of an implicit plot, and region shading sent as the boolean grid
+itself, one byte per cell, for the page to render as an image.
 """
 
 from __future__ import annotations
@@ -60,15 +53,12 @@ from rederive.plot.web.protocol import Features, Grid, Numbers, Sample, Trace
 
 __all__ = ["Closures", "methods"]
 
-#: How many lambdified expressions the cache holds before the oldest goes. A
-#: window of eight curves re-sampled on every drag needs eight, and a session
-#: that has plotted a dozen things into three windows needs a few more; past
-#: that, rebuilding one costs a conversion and nothing is lost.
+#: Number of lambdified expressions cached before the oldest is evicted. Enough for
+#: several windows of curves; beyond that, rebuilding one only costs a conversion.
 CACHED = 32
 
-#: What a sampling answer is shaped like, which is how the page reads its
-#: fields. A stroke is two arrays of points, whatever kind drew them; a region
-#: is a grid of truth values the page shades a rectangle with.
+#: Shapes of a sampling answer, which tell the page how to read its fields. A stroke is
+#: two arrays of points; a region is a boolean grid the page shades.
 STROKE = "stroke"
 REGION = "region"
 
@@ -76,8 +66,8 @@ REGION = "region"
 class Closures:
     """The lambdified expressions this worker has built, keyed by content.
 
-    Insertion-ordered and capped, which is the whole of the eviction policy: a
-    cache the protocol treats as maybe-empty owes nobody an accurate one.
+    Eviction is simply oldest-inserted first; since the protocol tolerates an empty
+    cache, nothing smarter is needed.
     """
 
     def __init__(self, held: int = CACHED) -> None:
@@ -85,12 +75,11 @@ class Closures:
         self._made: dict[bytes, Any] = {}
 
     def keyed(self, plot: Plot, names: tuple[str, ...], reading: str) -> bytes:
-        """What this expression *is*, as the bytes the cache is keyed by.
+        """Return the cache key for an expression.
 
-        The tree, the context it is read under, the names it is a function of
-        and which reading of it is wanted - `u - v` for an implicit curve and
-        the truth of `u > v` for a region are two closures over one tree. The
-        pickle is the content, since a pickle is what the request arrived as.
+        The key covers the tree, its context, its variables and the reading wanted,
+        since one tree can yield different closures (`u - v` for an implicit curve,
+        the truth of `u > v` for a region). It hashes the pickle of these.
         """
         return hashlib.blake2b(
             pickle.dumps((plot.node, plot.context, names, reading)), digest_size=16
@@ -107,12 +96,10 @@ class Closures:
 
 
 class Riding(Plot):
-    """A plot as the sampling holds it: the closures, and nothing drawn.
+    """A plot with its closures, the worker's counterpart of the desktop's `Drawn`.
 
-    The worker's answer to the desktop's `Drawn`. What is added is what a
-    sampling reads and writes - the closure, the pair a parametrized curve is
-    ridden on - so that `plot/resample.py` can be handed one of these and not
-    know which side of the program it is running on.
+    It adds the fields sampling reads and writes (the closure, and the pair for a
+    parametrized curve), so `plot/resample.py` works on it as on a desktop record.
     """
 
     closure: Any = None
@@ -121,25 +108,20 @@ class Riding(Plot):
 
 
 class Gridded(Surface):
-    """A surface as the sampling holds it: its closure, and nothing drawn.
+    """A surface with its closure, the 3D counterpart of `Riding`.
 
-    `Riding`'s counterpart for a solid, and it carries one field for the same
-    reason: `plot/resample.py`'s grid job reads a closure off the plot it is
-    given and puts the one it built back, and neither end of that wants to know
-    which side of the program it is on.
+    `plot/resample.py`'s grid job reads and stores the closure on it.
     """
 
     closure: Any = None
 
 
 def methods(post: Callable[[dict[str, Any]], None]) -> dict[str, Callable[..., Any]]:
-    """The plot requests, over one cache of closures.
+    """Return the plot request handlers, sharing one closure cache.
 
-    `post` is how a partial answer reaches the page: the uniform pass of a
-    sampling is drawn while the refinement is still running, and it arrives as
-    a message of its own rather than as the answer, which comes later. A
-    surface makes none - a grid is evaluated in one pass and has no coarse
-    reading to show while a finer one runs.
+    `post` sends a partial answer to the page: a sampling's uniform pass is drawn while
+    refinement continues, and the final answer follows. Surfaces send no partial
+    answers, since their grid is evaluated in one pass.
     """
     held = Closures()
     return {
@@ -151,17 +133,14 @@ def methods(post: Callable[[dict[str, Any]], None]) -> dict[str, Callable[..., A
     }
 
 
-# -- what a typed bound is worth -----------------------------------------------
+# -- typed bounds --------------------------------------------------------------
 
 
 def _numbers(request: Numbers) -> tuple[float, ...]:
-    """Evaluate the trees a form collected, which is why `-π` is an answer.
+    """Evaluate the bound expressions a form collected, such as `-π`.
 
-    The shortest thing this worker does, and the reason it is asked at all: the
-    text was parsed where it was typed, and turning a tree into a float wants
-    the closures and so wants sympy. A tree worth nothing finite comes back as a
-    NaN rather than as a failure, since a field of nonsense is a sentence for
-    the form to say and not a request that went wrong.
+    The text was parsed on the main thread, but evaluating it needs sympy. A tree with
+    no finite value comes back as NaN rather than an error, and the form reports it.
     """
     return tuple(
         evaluate.number(node, request.context, float("nan")) for node in request.nodes
@@ -174,7 +153,7 @@ def _numbers(request: Numbers) -> tuple[float, ...]:
 def _sampled(
     held: Closures, request: Sample, post: Callable[[dict[str, Any]], None]
 ) -> dict[str, Any]:
-    """One plot over one view, as the arrays the page draws it from."""
+    """Sample one plot over one view into the arrays the page draws."""
     plot = _riding(held, request.model, request.degrees)
     answer = _about(request)
     try:
@@ -182,7 +161,7 @@ def _sampled(
             plot, request.xrange, request.yrange, request.size, request.degrees
         )
         return answer | _drawn(held, plot, work, request, post)
-    except Exception as error:  # the curve's problem, and it says so itself
+    except Exception as error:  # reported as the curve's trouble
         return answer | {"shape": STROKE, "trouble": _said(error)}
 
 
@@ -193,7 +172,7 @@ def _drawn(
     request: Sample,
     post: Callable[[dict[str, Any]], None],
 ) -> dict[str, Any]:
-    """Run one job and read its answer the way the kind that asked for it does."""
+    """Run a sampling job and unpack its answer according to the plot kind."""
     kind = plot.kind
     if kind in FIELDS:
         return _field(held, plot, work(_nothing))
@@ -212,14 +191,11 @@ def _drawn(
 def _path(
     held: Closures, plot: Riding, answer: Any, request: Sample
 ) -> dict[str, Any]:
-    """A parametric or polar curve, and the note that it gave up refining.
+    """Answer for a parametric or polar curve, noting where refinement gave up.
 
-    The parameter each sample came from crosses with the samples, which no other
-    kind sends and which one gesture needs: a click on a curve that doubles back
-    names a point in the plane, and a point in the plane is not a parameter. The
-    page snaps such a click to the sample nearest it and rides on from the
-    parameter that sample came from, which is what the desktop's window does with
-    the same array.
+    The parameter of each sample is also sent. A click on a self-crossing curve gives
+    only a point in the plane, so the page snaps to the nearest sample and traces from
+    its parameter, as the desktop window does.
     """
     pair, inner, sampled, trange = answer
     _remember(held, plot, inner, pair)
@@ -241,21 +217,19 @@ def _path(
 
 
 def _field(held: Closures, plot: Riding, answer: Any) -> dict[str, Any]:
-    """An implicit contour or a region, over the grid just evaluated.
+    """Answer for an implicit contour or a region over the evaluated grid.
 
-    A contour is line segments with a gap between the pieces, drawn by whatever
-    draws every other stroke. A region is the truth grid itself, one byte a
-    cell, laid out the way an image is read - rows from the top - so that the
-    page can shade a rectangle with it and nothing has to be transposed twice.
+    A contour is line segments separated by gaps, drawn like any other stroke. A
+    region is the boolean grid, one byte per cell, in image order (rows from the top)
+    so the page can shade it directly.
     """
     made, xs, ys, values = answer
     _remember(held, plot, made)
     extent = [float(xs[0]), float(xs[-1]), float(ys[0]), float(ys[-1])]
     if plot.kind is PlotKind.IMPLICIT:
         cx, cy = contour(xs, ys, values)
-        # An implicit curve gets a sentence of its own where it draws nothing:
-        # its grid did evaluate, and what is missing is a solution in the
-        # rectangle rather than a real value anywhere.
+        # An empty implicit curve gets its own message: the grid evaluated, but there
+        # is no solution in view.
         said = "" if cx.size else f"{plot.label}: no solutions in view"
         return _stroke(cx, cy) | {
             "extent": extent,
@@ -273,7 +247,7 @@ def _field(held: Closures, plot: Riding, answer: Any) -> dict[str, Any]:
 
 
 def _about(request: Sample) -> dict[str, Any]:
-    """The header every answer wears: who it is about, and which view of it."""
+    """Return the common fields of a sampling answer: pane, plot and generation."""
     return {
         "pane": request.pane,
         "plot": request.plot,
@@ -287,13 +261,10 @@ def _about(request: Sample) -> dict[str, Any]:
 
 
 def _stroke(xs: Any, ys: Any) -> dict[str, Any]:
-    """Two arrays as the page takes them: 1-D, contiguous, single precision.
+    """Convert two arrays to the page's format: 1-D, contiguous, float32.
 
-    Single precision because a stroke is drawn on a canvas a thousand pixels
-    across and there is nothing in a double that a screen can show; 1-D and
-    contiguous because that is the shape that crosses as one typed array with
-    one copy, a shape with any more dimensions in it becoming a nested list of
-    JavaScript numbers instead.
+    Single precision is plenty for a screen. A contiguous 1-D array crosses as one
+    typed array with a single copy, while more dimensions would become nested JS lists.
     """
     return {
         "xs": np.ascontiguousarray(xs, dtype=np.float32).ravel(),
@@ -303,12 +274,11 @@ def _stroke(xs: Any, ys: Any) -> dict[str, Any]:
 
 
 def _bounds(xs: Any, ys: Any) -> list[float]:
-    """The rectangle these samples want, or nothing where none of them is real.
+    """Return the bounding rectangle of the finite samples, or [] if there are none.
 
-    `plot/view.py` frames a window on rectangles like this one, and the
-    rectangle is worked out here because this is where the samples are: what
-    the page unions to autoscale is four numbers a curve, and never an array
-    it would have to scan itself.
+    Computed here, where the samples are, so the page autoscales by combining four
+    numbers per curve instead of scanning arrays. `plot/view.py` frames windows on
+    such rectangles.
     """
     xs = np.asarray(xs, dtype=np.float64)
     ys = np.asarray(ys, dtype=np.float64)
@@ -320,11 +290,10 @@ def _bounds(xs: Any, ys: Any) -> list[float]:
 
 
 def _empty(plot: Riding, xs: Any, ys: Any, request: Sample) -> dict[str, Any]:
-    """The sentence a plot with nothing to draw in view leaves behind.
+    """Explain a plot with nothing to draw in view.
 
-    An empty picture with no explanation is the named anti-goal, and the
-    sentence names the range it was empty over, since the answer is nearly
-    always to look somewhere else.
+    An unexplained empty picture must be avoided. The message names the empty range,
+    since the fix is nearly always to look elsewhere.
     """
     if np.isfinite(np.asarray(ys, dtype=np.float64)).any():
         return {}
@@ -337,16 +306,14 @@ def _empty(plot: Riding, xs: Any, ys: Any, request: Sample) -> dict[str, Any]:
     }
 
 
-# -- one surface --------------------------------------------------------------
+# -- surfaces ------------------------------------------------------------------
 
 
 def _gridded(held: Closures, request: Grid) -> dict[str, Any]:
-    """One surface over one domain, as the geometry the page uploads.
+    """Build the geometry of one surface over one domain for the page.
 
-    The whole of a 3D drawing crosses here: the triangles, the wire grid of the
-    samples and a color a vertex, all of them `plot/surface.py`'s and all of
-    them the same arrays the desktop's window hands to pyqtgraph. What is left
-    for the page is to put them on a card and turn them.
+    The triangles, wireframe and per-vertex colors come from `plot/surface.py`, the
+    same arrays the desktop gives pyqtgraph. The page only displays and rotates them.
     """
     surface = _standing(held, request.model)
     answer = _about_solid(request)
@@ -357,7 +324,7 @@ def _gridded(held: Closures, request: Grid) -> dict[str, Any]:
         made, xs, ys, values, boundary = work(_nothing)
         _remember(held, surface, made)
         return answer | _built(surface, xs, ys, values, boundary, request)
-    except Exception as error:  # the surface's problem, and it says so itself
+    except Exception as error:  # reported as the surface's trouble
         return answer | {"trouble": _said(error)}
 
 
@@ -369,14 +336,12 @@ def _built(
     boundary: Any,
     request: Grid,
 ) -> dict[str, Any]:
-    """The mesh, the wire and the shading of one grid, placed in one box.
+    """Build the mesh, wireframe and shading of one grid, placed in one box.
 
-    Three z's travel back and they are three different questions. The box is
-    what the vertices were placed in, which is the pane's where the pane has
-    one; `wanted` is the box this surface would stand in alone; and `span` is
-    what its values measure, which is the summary the pane pools with every
-    other surface's to arrive at the box in the first place. A pane with one
-    surface gets the same answer three ways and evaluates once for it.
+    Three z ranges are returned. The box is where the vertices were placed (the pane's,
+    if it has one); `wanted` is the box this surface would use alone; and `span`
+    summarizes its values, which the pane pools across surfaces to choose the box. For
+    a single surface all three agree.
     """
     span = geometry.spanned(values)
     if span is None:
@@ -408,7 +373,7 @@ def _built(
 
 
 def _about_solid(request: Grid) -> dict[str, Any]:
-    """The header a surface's answer wears: who it is about, and which grid."""
+    """Return the common fields of a surface answer: pane, plot and generation."""
     return {
         "pane": request.pane,
         "plot": request.plot,
@@ -421,18 +386,14 @@ def _about_solid(request: Grid) -> dict[str, Any]:
 
 
 def _box(box: geometry.Box) -> dict[str, Any]:
-    """The box the vertices stand in, as the numbers behind the picture.
+    """Describe the box the vertices are placed in.
 
-    World units for the drawing - the cube the three ranges are stretched onto,
-    the same cube every time - and data units for the reading, which are what
-    the desktop's inspector shows and what the axis numbers say.
+    World units are for drawing (the fixed cube the three ranges are stretched onto);
+    data units are for display, as in the desktop's inspector and axis labels.
 
-    The reading is spelled here rather than by the page, in the function the
-    desktop's fields and tick labels are spelled by, so that the two programs
-    say the same number the same way and neither has to be trusted with the
-    other's arithmetic. The tick marks go the same way and for the same reason,
-    and they carry a world coordinate each so that the page has only to project
-    a point it was handed.
+    Display values and tick labels are formatted here with the same function the
+    desktop uses, so both show numbers identically. Each tick carries its world
+    coordinate, so the page only has to project it.
     """
     return {
         "world": float(geometry.WORLD),
@@ -455,13 +416,10 @@ def _box(box: geometry.Box) -> dict[str, Any]:
 def _marks(
     span: tuple[float, float], place: Callable[..., Any]
 ) -> list[dict[str, Any]]:
-    """The round numbers of one axis: where each stands in the box, and its words.
+    """Return the ticks of one axis, each with its world coordinate and label.
 
-    Chosen and spelled where the numbers are. `plot/surface.py` says what a
-    ruler is divided in, for both backends, and `written` is the one function
-    either of them spells a number with; what crosses is a coordinate in the
-    box's own world units and a string, so the page projects a point and writes
-    nothing.
+    Tick positions come from `plot/surface.py` and labels from `written`, as for the
+    desktop, so the page formats nothing.
     """
     return [
         {"at": float(place(value)), "text": written(value)}
@@ -470,10 +428,10 @@ def _marks(
 
 
 def _undrawn() -> dict[str, Any]:
-    """Nothing to draw, as the arrays that say so: a mesh of no vertices.
+    """Return an empty mesh.
 
-    Sent rather than left out, because the page has the last mesh on the card
-    and a domain the surface is nowhere real over has to take it off again.
+    Sent explicitly so the page removes the previous mesh when the surface has no real
+    values over the new domain.
     """
     return {
         "vertices": np.empty(0, dtype=np.float32),
@@ -488,35 +446,30 @@ def _undrawn() -> dict[str, Any]:
 
 
 def _placed(points: np.ndarray) -> np.ndarray:
-    """Vertices as the page takes them: one flat run of single precision.
+    """Flatten vertices to float32, three per point, as a `BufferAttribute` reads them.
 
-    Three floats a point, in the order a `BufferAttribute` reads them. The same
-    reason a stroke crosses flat: a second dimension would cross as a nested
-    list of JavaScript numbers, and a surface has sixty-four times as many
-    numbers in it as a curve.
+    As with strokes, a 2-D array would cross as nested JS lists, which matters even
+    more for surfaces with many more numbers.
     """
     return np.ascontiguousarray(points, dtype=np.float32).ravel()
 
 
 def _tinted(shading: np.ndarray, color: str) -> np.ndarray:
-    """One color a vertex, the surface's own scaled by how bright it is.
+    """Return per-vertex RGB colors: the surface color scaled by brightness.
 
-    The alpha `brightened` fills in is dropped: every vertex of a surface is
-    opaque, and three floats a vertex is what a color attribute is read as.
+    The alpha from `brightened` is dropped, since surfaces are opaque.
     """
     colors = geometry.brightened(shading, color)[:, :3]
     return np.ascontiguousarray(colors, dtype=np.float32).ravel()
 
 
-# -- a reading and a scan -----------------------------------------------------
+# -- tracing and features ------------------------------------------------------
 
 
 def _traced(held: Closures, request: Trace) -> dict[str, Any]:
-    """What the curve is worth where the marker is, and the sentence for it.
+    """Evaluate the curve at the trace marker and describe the result.
 
-    Every number here is formatted where it is computed. The page shows what it
-    is handed and writes none of it itself, which is the same rule that keeps
-    one spelling of an expression in the program.
+    All numbers are formatted here; the page displays them as given.
     """
     plot = _ensured(held, request.model, request.degrees)
     answer = {
@@ -536,7 +489,7 @@ def _traced(held: Closures, request: Trace) -> dict[str, Any]:
 
 
 def _read(plot: Riding, request: Trace) -> dict[str, Any]:
-    """One point of one curve, by the reading its kind is ridden in."""
+    """Evaluate one point of a curve according to its kind."""
     at = float(request.at)
     if plot.kind in PARAMETRIZED:
         assert plot.pair is not None
@@ -572,22 +525,20 @@ def _at(x: float, y: float, said: str) -> dict[str, Any]:
 
 
 def _lost(plot: Riding, name: str, at: float) -> str:
-    """The marker over a place the curve has no point at.
+    """Describe a trace position where the curve has no real, finite value.
 
-    Riding a curve into such a place is how a removable singularity is found,
-    so the message is the answer rather than an error.
+    Tracing is how removable singularities are found, so this is a result, not an
+    error.
     """
     return f"Tracing {plot.named}: not real and finite at {name} = {reading(at)}"
 
 
 def _found(held: Closures, request: Features) -> dict[str, Any]:
-    """Every notable point of one curve, for the samples it is drawn from.
+    """Find all notable points of one curve within its view.
 
-    The whole list rather than the next one, because the page steps through it
-    with a key and a round trip per keystroke would make Tab feel like a
-    question rather than a movement. The samples are taken again here: they are
-    what says where to look, the closures they come from are cached, and a
-    worker that kept them would be a worker keeping the truth about a picture.
+    The whole list is returned so the page can step through it with Tab without a
+    round trip per keystroke. The curve is resampled here, which is cheap with cached
+    closures, rather than having the worker keep samples.
     """
     plot = _riding(held, request.model, False)
     answer = {
@@ -613,7 +564,7 @@ def _found(held: Closures, request: Features) -> dict[str, Any]:
 
 
 def _feature(found: Any, crossed: list[str]) -> dict[str, Any]:
-    """One notable point, named the way the status line names it."""
+    """Describe one notable point as the status line shows it."""
     where = f"at x = {reading(found.x)}"
     if found.kind is not evaluate.CROSSING:
         said = f"{found.kind} {where}"
@@ -624,15 +575,14 @@ def _feature(found: Any, crossed: list[str]) -> dict[str, Any]:
     return {"x": float(found.x), "y": float(found.y), "words": said}
 
 
-# -- the record a job is run over ---------------------------------------------
+# -- plot records --------------------------------------------------------------
 
 
 def _riding(held: Closures, model: Plot, degrees: bool) -> Riding:
-    """The plot as the sampling holds it, with whatever closures are cached.
+    """Build a `Riding` record with any cached closures.
 
-    The closures are looked up rather than built: a job builds the one it wants
-    when it finds none, and `_remember` puts it back. That is what makes the
-    cache maybe-empty rather than a thing anything here depends on.
+    Closures are only looked up here. A job builds what it's missing, and `_remember`
+    caches it, so nothing depends on the cache being populated.
     """
     plot = Riding(
         **{name: getattr(model, name) for name in model.__dataclass_fields__}
@@ -643,21 +593,18 @@ def _riding(held: Closures, model: Plot, degrees: bool) -> Riding:
         return plot
     plot.closure = made
     if plot.kind is PlotKind.POLAR and made is not None:
-        # A polar curve's r(θ) is cached under the same reading a function
-        # curve of the same tree is, which is what makes flipping the view's
-        # polar toggle cost no conversion at all; composing the pair from it is
-        # two multiplications and is not worth keeping.
+        # A polar curve's r(θ) is cached under the same key as a function curve of the
+        # same tree, so toggling polar mode needs no conversion. Composing the pair is
+        # cheap and not cached.
         plot.pair = evaluate.polar_pair(made, degrees)
     return plot
 
 
 def _standing(held: Closures, model: Surface) -> Gridded:
-    """The surface as the sampling holds it, with whatever closure is cached.
+    """Build a `Gridded` record with any cached closure.
 
-    A surface's reading of its tree is a function of two names, which is the
-    same reading a function curve of one name is and slots into the same cache:
-    a domain typed twice, a grid raised and lowered, a pane closed and the
-    expression plotted again all find the closure already built.
+    A surface uses the same kind of closure as a function curve, just of two
+    variables, so changing the domain or grid, or replotting the expression, reuses it.
     """
     surface = Gridded(
         **{name: getattr(model, name) for name in model.__dataclass_fields__}
@@ -669,12 +616,10 @@ def _standing(held: Closures, model: Surface) -> Gridded:
 
 
 def _ensured(held: Closures, model: Plot, degrees: bool) -> Riding:
-    """The plot with its closures actually built, whatever the cache had.
+    """Build a `Riding` record, building any closures missing from the cache.
 
-    A sampling builds its own where it finds none, which is what `job` is; a
-    reading and a scan do not, and this is where they get theirs. That is the
-    maybe-empty contract in one function: a worker that has just replaced one
-    terminated by Esc knows nothing, and is asked for a reading anyway.
+    Sampling jobs build their own closures, but tracing and feature scans don't, so
+    they use this. It covers, for example, a worker freshly restarted after Esc.
     """
     plot = _riding(held, model, degrees)
     if plot.kind is PlotKind.PARAMETRIC:
@@ -692,7 +637,7 @@ def _ensured(held: Closures, model: Plot, degrees: bool) -> Riding:
 
 
 def _maker(plot: Plot) -> Callable[..., Any]:
-    """Which of the three readings of a tree this plot wants a closure of."""
+    """Return the closure builder for this plot's reading of its tree."""
     if plot.kind is PlotKind.IMPLICIT:
         return evaluate.difference
     if plot.kind is PlotKind.REGION:
@@ -701,11 +646,10 @@ def _maker(plot: Plot) -> Callable[..., Any]:
 
 
 def _remember(held: Closures, plot: Riding, made: Any, pair: Any = None) -> None:
-    """Keep what a job built, under what the expression is.
+    """Cache what a job built.
 
-    A parametric pair is the pair; everything else, a polar curve included, is
-    the single closure - `r(θ)` is what a polar reading is composed from and
-    what its readout is taken from, and the composition is not worth a slot.
+    For a parametric curve that's the pair; for everything else, including polar
+    curves, it's the single closure (the polar pair is cheaply composed from `r(θ)`).
     """
     kept = pair if plot.kind is PlotKind.PARAMETRIC else made
     if kept is not None:
@@ -713,7 +657,7 @@ def _remember(held: Closures, plot: Riding, made: Any, pair: Any = None) -> None
 
 
 def _names(plot: Plot) -> tuple[str, ...]:
-    """The variables a plot's closure is a function of, in the axes' order."""
+    """Return the variables of a plot's closure, in axis order."""
     if plot.kind in FIELDS or plot.kind in SOLIDS:
         return plot.axes
     if plot.kind in PARAMETRIZED:
@@ -724,11 +668,10 @@ def _names(plot: Plot) -> tuple[str, ...]:
 
 
 def _reading_of(plot: Plot) -> str:
-    """Which reading of the tree the cached closure is.
+    """Return the name of this plot's reading of its tree, part of the cache key.
 
-    One expression has more than one numeric reading - `u = v` is a difference
-    where it is a contour and a truth value where it is a region - so the
-    reading is part of what the cache is keyed by.
+    One expression can be read several ways: `u = v` is a difference as a contour and a
+    truth value as a region.
     """
     if plot.kind is PlotKind.REGION:
         return "mask"
@@ -740,7 +683,7 @@ def _reading_of(plot: Plot) -> str:
 
 
 def _one(f: Callable[..., np.ndarray], at: float) -> float:
-    """A closure at one point, as a float, NaN where it has no value there."""
+    """Evaluate a closure at one point, returning NaN where it has no value."""
     try:
         return float(np.asarray(f(np.array([at], dtype=np.float64)))[0])
     except Exception:
@@ -748,27 +691,25 @@ def _one(f: Callable[..., np.ndarray], at: float) -> float:
 
 
 def _nothing(*_arguments: Any) -> None:
-    """A report nobody is listening to, for the jobs that make none."""
+    """No-op progress callback, for jobs that report none."""
 
 
 def _said(error: Exception) -> str:
-    """One line naming an exception, for a message line to carry."""
+    """Describe an exception in one line for the message line."""
     text = str(error).strip().splitlines()
     return text[0] if text else type(error).__name__
 
 
-# -- the zero contour of a grid -----------------------------------------------
+# -- zero contour --------------------------------------------------------------
 
-#: The four edges of a cell, as the index of the corner each starts at and
-#: which way it runs. Marching squares crosses at most two of them, and which
-#: two is what the corner signs say.
+#: The four edges of a cell. Marching squares crosses at most two, chosen by the signs
+#: of the corners.
 _BOTTOM, _RIGHT, _TOP, _LEFT = 0, 1, 2, 3
 
-#: Which pair of edges the contour crosses, for each of the sixteen ways the
-#: four corners of a cell can be signed. The two ambiguous cases - opposite
-#: corners positive - are resolved the same way every time rather than by the
-#: centre value: a saddle drawn one way round is a saddle, and a rule that
-#: changed with the grid would make a contour flicker under a drag.
+#: Edge pairs the contour crosses for each of the sixteen corner sign combinations. The
+#: two ambiguous saddle cases (opposite corners positive) are always resolved the same
+#: way rather than by the center value, so contours don't flicker as the grid changes
+#: during a drag.
 _CASES: dict[int, tuple[tuple[int, int], ...]] = {
     1: ((_LEFT, _BOTTOM),),
     2: ((_BOTTOM, _RIGHT),),
@@ -790,16 +731,13 @@ _CASES: dict[int, tuple[tuple[int, int], ...]] = {
 def contour(
     xs: np.ndarray, ys: np.ndarray, values: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The zero contour of a grid, as one stroke with gaps between its pieces.
+    """Compute the zero contour of a grid as one stroke with gaps between segments.
 
-    Marching squares over the whole grid at once, answering with loose segments
-    rather than joined paths: a stroke drawn with a gap after every segment is
-    one polyline to the canvas either way, and joining them would buy nothing
-    that is visible.
+    Uses vectorized marching squares and returns unjoined segments, since joining them
+    into paths would make no visible difference.
 
-    Cells with a hole beside them are left out. `SQRT(x) = y` is a curve that
-    begins at the origin, not a curve with a wall down the y axis, and the wall
-    is what a comparison against a NaN would invent.
+    Cells with any non-finite corner are skipped. Otherwise `SQRT(x) = y` would get a
+    spurious wall along the y axis from comparisons against NaN.
     """
     values = np.asarray(values, dtype=np.float64)
     if values.shape[0] < 2 or values.shape[1] < 2:
@@ -827,8 +765,8 @@ def contour(
         i, j = np.nonzero(here)
         gap = np.full(i.size, np.nan)
         for first, second in pairs:
-            # Three columns per segment: the two ends, and the gap that keeps
-            # the next segment from being joined to this one.
+            # Three entries per segment: the two ends and a NaN gap that keeps the next
+            # segment from being joined to it.
             for along, into in ((0, drawn_x), (1, drawn_y)):
                 ends = (edges[first][along][i, j], edges[second][along][i, j], gap)
                 into.append(np.stack(ends, axis=1).ravel())
@@ -840,11 +778,10 @@ def contour(
 def _crossings(
     corners: tuple[np.ndarray, ...], x0: float, y0: float, across: float, up: float
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Where the contour meets each of a cell's four edges, linearly.
+    """Linearly interpolate where the contour meets each of a cell's four edges.
 
-    Every cell gets all four, whether or not its own case uses them: computing
-    the two that matter per case would be sixteen branches over the same
-    arithmetic, and the grid is at most a quarter of a million cells.
+    All four are computed for every cell, which is simpler than computing only the
+    ones each case needs, and cheap for grids of at most a quarter million cells.
     """
     shape = corners[0].shape
     i = np.arange(shape[0], dtype=np.float64)[:, None] + np.zeros(shape[1])

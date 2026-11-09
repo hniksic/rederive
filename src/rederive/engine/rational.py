@@ -1,41 +1,31 @@
 """The antiderivative of a rational function, in the real form Derive writes.
 
-Sympy integrates a rational function by `ratint`: the Horowitz-Ostrogradsky split
-into a rational part and a logarithmic part, then the Lazard-Rioboo-Trager method,
-which writes the logarithmic part as sums of `a*LN(h(a, x))` over the roots `a` of
-a polynomial `q`. Each conjugate pair of roots is then written as a real logarithm
-and an arctangent, which is the form Derive prints. In sympy 1.14 that last step
-loses roots: it finds the pairs through a resultant and a count of real roots, and
-where the roots' coordinates carry a cube root, as for `1/(x^6 + 16)`, the count
-raises a `DomainError` that is taken for "no roots here". The two pairs that live
-there are dropped without a word, and `INT(1/(x^6 + 16), x)` comes back as the one
-arctangent in `2^(1/3)*x/2`, a third of the answer, with nothing to say it is wrong.
-Over a quintic such as `1/(x^5 + 16)` the same step cannot find the roots at all,
-and leaves a `ROOT_SUM` where there is an answer in radicals.
+Sympy's `ratint` splits a rational function into rational and logarithmic parts
+(Horowitz-Ostrogradsky), writes the logarithmic part as sums of `a*LN(h(a, x))` over
+the roots `a` of a polynomial `q` (Lazard-Rioboo-Trager), and turns each conjugate pair
+into a real logarithm and arctangent, as Derive prints it. In sympy 1.14 that last step
+loses roots: where the roots' coordinates involve a cube root, as for `1/(x^6 + 16)`,
+counting real roots raises a `DomainError` that is taken to mean "no roots". Two pairs
+are silently dropped, and `INT(1/(x^6 + 16), x)` returns a third of the answer. For a
+quintic such as `1/(x^5 + 16)` it can't find the roots at all and leaves a `ROOT_SUM`
+despite an answer in radicals.
 
-So a rational integrand is not handed to sympy's `integrate` at all. It is split
-with the same two public functions `ratint` uses, `ratint_ratpart` and
-`ratint_logpart`, and the logarithmic part is written in real form here, from the
-roots of `q` themselves: each root is paired with its conjugate, each pair gives a
-logarithm and an arctangent through `log_to_atan`, and each root known to be real
-gives a logarithm. Where the roots cannot all be found, or one is of a realness
-nothing can decide, the sum stays a `RootSum`, which is what `ratint` leaves in that
-case as well. Everything here is built on what sympy documents; nothing in sympy is
-altered.
+So rational integrands bypass sympy's `integrate`. They are split with `ratint`'s
+public helpers `ratint_ratpart` and `ratint_logpart`, and the logarithmic part is made
+real here from the roots of `q`: each conjugate pair gives a logarithm and an
+arctangent via `log_to_atan`, and each known-real root a logarithm. If not all roots
+are found, or a root's realness is undecidable, the sum stays a `RootSum`, as with
+`ratint`. Only documented sympy API is used.
 
-The right way, once the sympy depended on carries upstream commit
-9bef76b40d39842c063599e98b919c0b3e09fee7 ("fix(integrals): don't lose roots in
-ratint", merged in pull request 28189 on 2025-07-09, after the 1.14.0 release and
-in no release at the time of writing): that commit rewrites `log_to_real` to do
-what `_real_form` below does, and `ratint` then answers every case here the same
-way. This module then goes, `_of_a_rational_function` in `integration.indefinite`
-goes with it, and sympy's own `doit` is what a rational integrand gets, as any other
-integrand does. One difference is worth keeping or offering upstream first: `_real_form`
-gives up on a root that has no conjugate among the others and is not known to be
-real, where the upstream rewrite takes it for real and writes `#i` into the answer
-to `1/(x^4 + x + 1)`. Dropping this module without that check prints that `#i`.
-Nor does `ratint` write a quadratic with parametric coefficients without its roots,
-which `_over_parametric_quadratics` does.
+Upstream commit 9bef76b40d39842c063599e98b919c0b3e09fee7 ("fix(integrals): don't lose
+roots in ratint", PR 28189, merged 2025-07-09, after 1.14.0 and unreleased at the time
+of writing) makes `log_to_real` do what `_real_form` does. Once sympy includes it, this
+module and `_of_a_rational_function` in `integration.indefinite` can go, and rational
+integrands can use sympy's `doit`. Two differences need keeping or upstreaming first:
+`_real_form` gives up on a root with no conjugate that isn't known real, whereas
+upstream assumes it real and puts `#i` into the answer for `1/(x^4 + x + 1)`; and
+`ratint` doesn't avoid the roots of parametric quadratics, as
+`_over_parametric_quadratics` does.
 """
 
 from __future__ import annotations
@@ -56,18 +46,17 @@ def rational_antiderivative(
 ) -> sp.Basic | None:
     """An antiderivative of a rational function of the variable, or None.
 
-    The steps are `ratint`'s own, over its public halves; only the writing of the
-    logarithmic part in real form is this module's. None where the integrand is no
-    rational function of the variable, or where sympy's polynomial arithmetic
-    refuses it.
+    Follows `ratint`'s steps via its public helpers; only the real form of the
+    logarithmic part is done here. None if the integrand isn't a rational function of
+    the variable or sympy's polynomial arithmetic fails on it.
 
-    With `binomials`, a parametric quadratic with no linear term, `b^2*x^2 + c^2`, is
-    written as one with a linear term is, rather than over its roots.
+    With `binomials`, a parametric quadratic without a linear term, `b^2*x^2 + c^2`,
+    is handled like one with a linear term rather than over its roots.
 
-    With `formal`, the square root of `4*a*c - b^2` in the arctangent of such a
-    quadratic is taken with each squared factor's base brought out as it stands, sign
-    and all, `a*b` for `a^2*b^2`: the formula differentiates back for any square root,
-    and this one prints without `ABS`.
+    With `formal`, the square root of `4*a*c - b^2` in such a quadratic's arctangent
+    takes each squared factor's base out unchanged, sign and all (`a*b` for
+    `a^2*b^2`). The formula differentiates back for any square root, and this one
+    prints without `ABS`.
     """
     if integrand.is_rational_function(variable) is not True:
         return None
@@ -81,12 +70,11 @@ def over_a_parametric_quadratic(
     integrand: sp.Basic, variable: sp.Basic, binomials: bool = False
 ) -> bool:
     """Whether the integrand is a rational function of the variable whose denominator
-    has a `_parametric_quadratic` factor, one with no linear term among them where
-    `binomials` is given.
+    has a `_parametric_quadratic` factor (with `binomials`, including ones without a
+    linear term).
 
-    The antiderivative of one is written here the way the integral tables write it,
-    with a logarithm and an arctangent of the quadratic, and nothing shorter is to
-    be had for it from elsewhere.
+    Its antiderivative is written here as in integral tables, with a logarithm and an
+    arctangent of the quadratic, and nothing elsewhere gives a shorter one.
     """
     if integrand.is_rational_function(variable) is not True:
         return False
@@ -132,8 +120,8 @@ def _antiderivative(
 
 
 def _logarithmic(numerator: sp.Poly, denominator: sp.Poly, x: sp.Basic) -> sp.Basic:
-    """The integral of a proper fraction over a squarefree denominator, by
-    `ratint_logpart` and written real by `_real_form` where it can be."""
+    """The integral of a proper fraction over a squarefree denominator, via
+    `ratint_logpart`, made real by `_real_form` where possible."""
     t = sp.Dummy("t")
     result = sp.S.Zero
     for h, q in ratint_logpart(numerator, denominator, x, t):
@@ -150,7 +138,7 @@ def _logarithmic(numerator: sp.Poly, denominator: sp.Poly, x: sp.Basic) -> sp.Ba
 
 
 def _factors(q: sp.Poly) -> list[sp.Poly]:
-    """The irreducible factors of `q`, or `q` alone where they are not had."""
+    """The irreducible factors of `q`, or just `q` if factoring fails."""
     try:
         _, factors = q.factor_list()
     except Exception:
@@ -159,14 +147,12 @@ def _factors(q: sp.Poly) -> list[sp.Poly]:
 
 
 def _over_a_factor(h: sp.Poly, factor: sp.Poly, x: sp.Basic, t: sp.Basic) -> sp.Basic:
-    """The sum of `a*LN(h(a, x))` over the roots `a` of one factor of `q`, written real
-    by `_real_form` where it can be, and a `RootSum` where it cannot.
+    """The sum of `a*LN(h(a, x))` over the roots `a` of one factor of `q`, made real by
+    `_real_form` where possible, else a `RootSum`.
 
-    The sum over the roots of `q` is the sum of the sums over the roots of each of its
-    factors, and the roots of one factor may be had where those of another are not:
-    the logarithmic part of `1/(x^5 + x + 1)` is over the roots of a quadratic and of
-    a cubic, and the quadratic's pair is the logarithm and arctangent in `x^2 + x + 1`
-    whatever the cubic's roots are. A `RootSum` is over the factor's roots alone.
+    Summing per factor lets one factor's roots be used when another's can't be found:
+    the logarithmic part of `1/(x^5 + x + 1)` is over the roots of a quadratic and a
+    cubic, and the quadratic still gives a logarithm and arctangent in `x^2 + x + 1`.
     """
     real = _real_form(h, factor, x, t)
     if real is not None:
@@ -177,15 +163,14 @@ def _over_a_factor(h: sp.Poly, factor: sp.Poly, x: sp.Basic, t: sp.Basic) -> sp.
 def _over_parametric_quadratics(
     numerator: sp.Poly, denominator: sp.Poly, x: sp.Basic, binomials: bool = False
 ) -> list[tuple[sp.Poly, sp.Poly]] | None:
-    """The proper fraction over a squarefree denominator as partial fractions over its
-    irreducible factors, each a numerator and its factor, or None where no factor is a
+    """The proper fraction split into partial fractions over the irreducible factors of
+    its squarefree denominator, as (numerator, factor) pairs, or None if no factor is a
     `_parametric_quadratic`.
 
-    The roots of `a*x^2 + b*x + c` are radicals in its coefficients, and a
-    logarithmic part written over them is a page of nested square roots that
-    everything after this takes many seconds to work through. Over the irreducible
-    factors of the denominator, which the integral tables use, the fraction needs
-    no roots of a quadratic at all.
+    The roots of `a*x^2 + b*x + c` are radicals in its coefficients, and a logarithmic
+    part over them is a page of nested square roots that takes later steps many
+    seconds to process. Partial fractions over the irreducible factors, as in integral
+    tables, need no quadratic roots.
     """
     _, factors = sp.factor_list(denominator.as_expr(), x)
     factors = [sp.Poly(factor, x, field=True) for factor, _ in factors]
@@ -194,7 +179,7 @@ def _over_parametric_quadratics(
     numerator = sp.Poly(numerator.as_expr(), x, field=True)
     denominator = sp.Poly(denominator.as_expr(), x, field=True)
     product = sp.Poly(sp.Mul(*(f.as_expr() for f in factors)), x, field=True)
-    # The denominator is the product of its factors times a constant.
+    # The denominator is the product of the factors times this constant.
     scale = sp.cancel(denominator.LC() / product.LC())
     pieces = []
     for factor in factors:
@@ -207,8 +192,8 @@ def _over_parametric_quadratics(
 
 
 def _parametric_quadratic(factor: sp.Poly, binomials: bool = False) -> bool:
-    """Whether the factor is a quadratic with a linear term, or any quadratic with
-    `binomials`, and a coefficient that is not a number."""
+    """Whether the factor is a quadratic with a non-numeric coefficient and a linear
+    term (or any such quadratic with `binomials`)."""
     if factor.degree() != 2:
         return False
     coefficients = factor.all_coeffs()
@@ -217,13 +202,12 @@ def _parametric_quadratic(factor: sp.Poly, binomials: bool = False) -> bool:
 
 
 def _merged(value: sp.Basic, x: sp.Basic) -> sp.Basic:
-    """The sum with its logarithms of polynomials that have the same coefficient
-    taken together, `k*LN(u) + k*LN(v)` as `k*LN(u*v)`.
+    """The sum with logarithms of polynomials sharing a coefficient merged:
+    `k*LN(u) + k*LN(v)` becomes `k*LN(u*v)`.
 
-    The two differ by a multiple of `2*pi*#i` that is constant wherever `u` and `v`
-    are nonzero, so either is an antiderivative where the other is. The fractions
-    `_over_parametric_quadratics` makes keep apart factors that the logarithmic part
-    of their common fraction would have taken together, as in `-LN(x^3 + a^3)/3`.
+    The two differ by a multiple of `2*pi*#i`, constant wherever `u` and `v` are
+    nonzero, so both are antiderivatives. This rejoins factors that
+    `_over_parametric_quadratics` split apart, as in `-LN(x^3 + a^3)/3`.
     """
     groups: dict[sp.Basic, list[sp.Basic]] = {}
     others = []
@@ -249,10 +233,9 @@ def _of_a_factor(
 
     Over a quadratic `a*x^2 + b*x + c`, with `d = 4*a*c - b^2`, the integral of `(m*x
     + n)/(a*x^2 + b*x + c)` is `m/(2*a)*LN(a*x^2 + b*x + c) + (2*a*n - b*m)/a*ATAN((2*a*x
-    + b)/SQRT(d))/SQRT(d)`. Where `d` is negative that is the `ATANH` form, through the
-    arctangent of an imaginary argument, and an antiderivative on each interval
-    between the two real roots of the factor just as well; where `a` or `d` is zero
-    it is undefined rather than wrong.
+    + b)/SQRT(d))/SQRT(d)`. For negative `d` this is the `ATANH` form, via the
+    arctangent of an imaginary argument, and still an antiderivative between the
+    factor's real roots. Where `a` or `d` is zero it is undefined rather than wrong.
     """
     if factor.degree() == 1:
         return numerator.LC() / factor.LC() * sp.log(factor.as_expr())
@@ -273,9 +256,8 @@ def _of_a_factor(
 
 
 def formal_root(value: sp.Basic) -> sp.Basic:
-    """A square root of the value, with each squared factor's base taken out as it
-    stands, sign and all: `a` for `a^2`. Any square root serves where only its square
-    matters."""
+    """A square root of the value, with each squared factor's base taken out as is,
+    sign and all: `a` for `a^2`. Useful where only the square matters."""
     outside, inside = sp.S.One, sp.S.One
     for factor in sp.Mul.make_args(sp.factor(value)):
         base, exponent = factor.as_base_exp()
@@ -287,7 +269,7 @@ def formal_root(value: sp.Basic) -> sp.Basic:
 
 
 def _real_form(h: sp.Poly, q: sp.Poly, x: sp.Basic, t: sp.Basic) -> sp.Basic | None:
-    """The sum of `a*LN(h(a, x))` over the roots `a` of `q`, written real, or None.
+    """The sum of `a*LN(h(a, x))` over the roots `a` of `q`, in real form, or None.
 
     For a conjugate pair `u +- i*v`, with `h(u + i*v, x)` split into `A + i*B`, the
     pair's two terms sum to `u*LN(A^2 + B^2)` plus `v` times the arctangent
@@ -311,28 +293,25 @@ def _real_form(h: sp.Poly, q: sp.Poly, x: sp.Basic, t: sp.Basic) -> sp.Basic | N
 
 
 def _roots_real_complex(q: sp.Poly) -> tuple[dict, dict] | None:
-    """The roots of `q` as the real ones and one of each conjugate pair, or None.
+    """The real roots of `q` and one root of each conjugate pair, or None.
 
-    None where `roots` finds fewer than the degree, and where a root has no
-    conjugate among the others and is not known to be real: the quartic formula
-    writes the roots of `x^4 + x + 1` through the cube root of a complex number,
-    each root's conjugate is some other expression, and a sum over them one by one
-    would carry complex coefficients into a real answer.
+    None if `roots` finds fewer roots than the degree, or a root has no conjugate and
+    isn't known real: the quartic formula writes the roots of `x^4 + x + 1` via the
+    cube root of a complex number, their conjugates are other expressions, and summing
+    them individually would put complex coefficients into a real answer.
 
-    A root's conjugate is looked for as the expression `conjugate` writes and, where
-    `q` has numbers for coefficients, also by value: `roots` writes the roots of
-    `16777216*t^8 + 1` each in a form of its own, and none is the conjugate of another
-    as it is written. Where `q` is real, the conjugate of a root is a root, so a pair
-    found by value is one, and is written by the real and imaginary parts of the
-    shorter of its two roots, which are taken only where they are known to be real.
+    Conjugates are matched symbolically via `conjugate`, and for numeric real `q` also
+    by value: `roots` writes each root of `16777216*t^8 + 1` differently, so none is
+    the symbolic conjugate of another. For real `q` a value match is a true pair; it
+    is written via the real and imaginary parts of the shorter root, which must be
+    known real.
 
-    None, too, where a root is written with a cube or higher root of an irrational
-    number, as Cardano's formula writes the roots of every cubic with one real root:
-    the logarithmic part of `INT(1/(x^3 - x^2 + 1), x)` is a polynomial of such a
-    root, and over it every step after this one, `log_to_atan` first, tests its
-    coefficients for zero by minimal polynomials that take minutes to build, for an
-    answer pages long. A root of a rational number, as in `1/(x^6 + 16)`, and square
-    roots, nested or not, are what the answers Derive writes are made of.
+    Also None if a root contains a cube or higher root of an irrational number, as
+    Cardano's formula gives for every cubic with one real root. For `INT(1/(x^3 - x^2
+    + 1), x)`, later steps (`log_to_atan` first) test coefficients for zero using
+    minimal polynomials that take minutes to build, for a pages-long answer. Roots of
+    rationals, as in `1/(x^6 + 16)`, and square roots, nested or not, are what Derive's
+    answers use.
     """
     found = roots(q)
     if sum(found.values()) != q.degree():
@@ -366,8 +345,8 @@ def _roots_real_complex(q: sp.Poly) -> tuple[dict, dict] | None:
 
 
 def _conjugate_by_value(r: sp.Basic, others: list) -> sp.Basic | None:
-    """The one of `others` whose value is the conjugate of the value of `r`, where `r`
-    is a number that is not real, or None."""
+    """The unique element of `others` numerically equal to the conjugate of `r`, or None
+    (also if `r` is real)."""
     value = sp.N(r, 30)
     if abs(sp.im(value)) <= sp.Float("1e-20", 30) * (1 + abs(value)):
         return None
@@ -380,8 +359,8 @@ def _conjugate_by_value(r: sp.Basic, others: list) -> sp.Basic | None:
 
 
 def _past_square_roots(root: sp.Basic) -> bool:
-    """Whether the root is written with a cube or higher root of an irrational number:
-    see `_roots_real_complex`."""
+    """Whether the root contains a cube or higher root of an irrational number (see
+    `_roots_real_complex`)."""
     return any(
         power.exp.is_Rational and power.exp.q > 2 and not power.base.is_Rational
         for power in root.atoms(sp.Pow)

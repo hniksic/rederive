@@ -1,33 +1,24 @@
 """Plotting in a browser: panes in a page, sampled in the engine worker.
 
-Three pieces and a line drawn twice through them.
+`backend.py` is the `Backend` the plot session opens windows on. It runs on the main
+thread beside the app and owns the parts without numbers: the plot list, colors, which
+pane a plot lands in, and what `Describe` answers. It imports no numpy, since the main
+thread's instance only draws the screen.
 
-`backend.py` is the `Backend` the plot session opens windows on, and it runs on
-the main thread beside the app. It owns what the desktop's windows own that has
-no numbers in it: the plot list, the colors, which pane a plot lands in, what
-`Describe` answers. It imports no numpy, because the instance it runs in paints
-the screen and knows no mathematics.
+`protocol.py` defines the requests sent to the engine worker: a curve over a view, a
+reading, a scan, and a surface over a domain. Like `plot/protocol.py`, they are picklable
+and free of numpy. The answers are arrays and don't come back through this path.
 
-`protocol.py` is what it asks the engine worker for and what comes back. The
-requests are picklable and free of numpy, exactly as `plot/protocol.py` is; the
-answers are arrays, and they never come back this way at all. Four requests: a
-curve over a view, a reading, a scan, and a surface over a domain.
+`sampler.py` runs in the worker beside sympy. It caches the lambdified closures (the one
+content-keyed cache the worker's statelessness contract allows), runs `plot/resample.py`
+over them, and sends arrays straight to the page's JavaScript, bypassing the main
+thread's Python so it stays free of numpy.
 
-`sampler.py` is the far end, and it runs in the worker beside sympy. It holds
-the lambdified closures - the one content-keyed cache the worker's statelessness
-contract licenses - runs `plot/resample.py` over them, and answers in arrays
-that go straight to the page's JavaScript. They never stop over in the main
-thread's Python, which is what keeps numpy out of the instance that draws the
-terminal.
+JavaScript handles the view, gestures and drawing: `web/plot2d.js` for 2D plots and
+`web/plot3d.js` for 3D. Neither renders expressions, and all numbers they show are
+formatted in Python.
 
-What is left for JavaScript is the picture: the view, the gestures and the
-drawing, in `web/plot2d.js` for a flat one and `web/plot3d.js` for a solid.
-Neither renders an expression of its own, and no number either shows was
-formatted anywhere but Python.
-
-A solid divides differently in one place only. What crosses for it is not the
-grid it was sampled on but the geometry `plot/surface.py` builds out of that
-grid - the triangles, the wire drawing and a color a vertex - because a picture
-of a surface is the geometry, and three.js is handed exactly what pyqtgraph is
-handed on a desktop.
+For a 3D surface, what crosses to the page is not the sampled grid but the geometry
+`plot/surface.py` builds from it (triangles, wireframe and per-vertex colors), so
+three.js gets exactly what pyqtgraph gets on the desktop.
 """

@@ -1,13 +1,12 @@
-"""What Simplify makes of relations, logic and conditionals.
+"""Simplify on relations, logic and conditionals.
 
-A relation is decided where the arithmetic or the declared domains settle it and stands
-where they do not: `x^2 >= 0` is `true`, `x < x + 1` stands of a complex `x`, since
-only the reals are ordered, and two matrices are related element by element, so
-`[x, y] = [1, 2]` is `[x = 1, y = 2]`. Logic has an algebra, `p AND (q OR p)` being
-`p`, and a truth table its columns. A conditional takes the branch its test decides and
-comes back as written where nothing does, `IF(x > 0, 1, -1)` being `1` only once `x` is
-declared positive. Each case is the author's text in and the worksheet's text out,
-written inline as in `test_simplify.py` so that a failure names the mathematics.
+A relation is decided when arithmetic or declared domains settle it, and left alone
+otherwise: `x^2 >= 0` is `true`, but `x < x + 1` stays for complex `x` since only reals
+are ordered. Matrices are related element by element, so `[x, y] = [1, 2]` is
+`[x = 1, y = 2]`. Logic is simplified algebraically (`p AND (q OR p)` is `p`). A
+conditional takes the branch its test decides and is returned as written otherwise, so
+`IF(x > 0, 1, -1)` is `1` only when `x` is declared positive. Cases are written inline,
+as in `test_simplify.py`, so a failure shows the mathematics.
 """
 
 from __future__ import annotations
@@ -22,14 +21,12 @@ from rederive.engine.computing import Context
 
 
 def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
-    """A relation is a statement, and a statement that says something definite
-    is simplified by saying it. Every row here was checked against the
-    original, which answers all six `true` or `false`.
+    """A definite relation simplifies to `true` or `false`, as the original answers all
+    six of these.
 
-    The judgement is three-valued: `3*x = x^2 + c` settles nothing and so comes
-    back as it was authored, sides simplified and the relation standing. That
-    is what leaves a conditional's test alone, and what leaves soLve something
-    to solve."""
+    The result is three-valued: `3*x = x^2 + c` is undecided, so it stays a relation
+    with its sides simplified. That keeps conditional tests intact and leaves soLve
+    something to solve."""
     assert simp("2 < 3") == "true"
     assert simp("2 = 2") == "true"
     assert simp("1 = 2") == "false"
@@ -40,8 +37,8 @@ def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
 
 
 def test_a_relation_that_holds_for_every_value_is_decided():
-    """Each holds for every value the variables can take, the last two by the
-    intervals declared for them."""
+    """Each holds for all values of its variables, the last two by their declared
+    intervals."""
     assert simp("x^2 >= 0") == "true"
     positive = declared("p :epsilon Real (0, inf)", "q :epsilon Real (0, inf)")
     assert simp("p + q > 0", positive) == "true"
@@ -49,16 +46,13 @@ def test_a_relation_that_holds_for_every_value_is_decided():
 
 
 def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
-    """Two matrices of one shape are related element by element rather than
-    compared whole, and each of the relations that come out is judged on its own.
-    That is what section 8.5 reads a solved system off: `[[x], [y], [z]] = A^-1 .
-    b` is the three equations it stands for. The answer keeps the shape it was
-    made from, except that a single row is written flat as any one-row matrix is.
+    """Same-shape matrices are related element by element, each relation judged
+    separately. Section 8.5 reads a solved system this way: `[[x], [y], [z]] = A^-1 . b`
+    is three equations. The result keeps the matrix shape, except that a single row is
+    written flat like any one-row matrix.
 
-    Sides the pairing does not fit are a statement about the two things
-    themselves, and there the two written values are all there is to compare:
-    the original answers `[1, 2] = [1, 2, 3]` false, and leaves `[x, y] = [1,
-    2, 3]` standing as the statement about `x` and `y` that it is."""
+    Differently shaped sides are compared as whole values: the original answers
+    `[1, 2] = [1, 2, 3]` false and leaves `[x, y] = [1, 2, 3]` standing."""
     assert simp("[x, y] = [1, 2]") == "[x = 1, y = 2]"
     assert simp("[[x], [y]] = [[1], [2]]") == "[[x = 1], [y = 2]]"
     assert simp("[x, y] < [1, 2]") == "[x < 1, y < 2]"
@@ -71,20 +65,19 @@ def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        # Two matrices are equal when every pair of elements is, and different when
-        # any pair is: an equation of two of them is one statement, and where the
-        # elements settle it the answer is one truth value.
+        # Matrices are equal when every element pair is, and unequal when any pair
+        # differs; when the elements settle it, the answer is a single truth value.
         ("[1, 2] = [1, 2]", "true"),
         ("[1, 2] = [1, 3]", "false"),
         ("[[1, 2], [3, 4]] = [[1, 2], [3, 4]]", "true"),
         ("[[1, 2], [3, 4]] = [[1, 2], [3, 5]]", "false"),
         ("[SIN(x)^2 + COS(x)^2, 2] = [1, 2]", "true"),
-        # One pair that differs is enough, whatever the others say.
+        # One differing pair is enough.
         ("[1, 2] = [x, 3]", "false"),
-        # Not yet settled, the equation is the system of its elements.
+        # If unsettled, the equation becomes the system of element equations.
         ("[1, 2] = [x, 2]", "[1 = x, true]"),
-        # An inequation says that some pair differs, which none of its elements
-        # says alone, so one not yet settled stands whole.
+        # An inequation says some pair differs, which no single element relation says,
+        # so an unsettled one stays whole.
         ("[1, 2] /= [1, 3]", "true"),
         ("[1, 2] /= [1, 2]", "false"),
         ("[1, 2] /= [x, 3]", "true"),
@@ -100,8 +93,8 @@ def test_an_equation_of_two_matrices_is_one_truth_value(text, expected):
 
 
 def test_the_system_of_section_eight_five_is_solved_by_inverting_its_matrix():
-    """The manual's own use for the rule above, in exact arithmetic: the three
-    quotients are what its 2.91059, 0.175496 and 1.58278 round to."""
+    """The manual's use of the rule above, in exact arithmetic; the quotients round to
+    its 2.91059, 0.175496 and 1.58278."""
     solved = simp(
         "[[x], [y], [z]] = [[5, 3, -7], [2, -8, 1], [-1, 9, 4]]^-1 . [[4], [6], [5]]"
     )
@@ -109,26 +102,22 @@ def test_the_system_of_section_eight_five_is_solved_by_inverting_its_matrix():
 
 
 def test_only_the_reals_are_ordered_so_a_complex_variable_decides_nothing():
-    """`x < x + 1` is a fact about the reals and says nothing about the complex
-    plane, where `<` has no meaning to be true of. Equality is a question every
-    domain answers, so it is decided there too."""
+    """`x < x + 1` holds for reals, but `<` is meaningless on complex numbers. Equality
+    is meaningful in every domain, so it is still decided."""
     assert simp("x < x + 1", COMPLEX_X) == "x < x + 1"
     assert simp("x = x", COMPLEX_X) == "true"
 
 
 def test_an_equation_is_answered_by_the_arithmetic_and_not_by_the_domains():
-    """The original does not put an equation to the declared domains. `x = #i`
-    is where a quadratic with a negative discriminant lands, and it stands as
-    written whether `x` was declared real, declared complex or declared nothing
-    at all - a name nobody declared being real is what makes `SQRT(x^2)` into
-    `ABS(x)`, and that is a different question. `ABS(x) + 1 = 0` is satisfied
-    by no real and stands too: an equation asks about a value rather than
-    claiming something to be refuted from what the value is known to be.
+    """The original never decides an equation from declared domains. `x = #i`, where a
+    quadratic with negative discriminant lands, stands whether `x` is declared real,
+    complex or not at all; undeclared names being real matters for `SQRT(x^2)` ->
+    `ABS(x)`, but not here. `ABS(x) + 1 = 0` has no real solution and stands too: an
+    equation asks about a value rather than making a claim to refute.
 
-    What answers one is the difference of the two sides coming out a number,
-    zero for one value and a nonzero real for two. A difference that is a
-    number and not real answers nothing, which is the answer the original
-    gives: `#i = 1` and `2*#i = #i` stand."""
+    An equation is decided only when the difference of its sides is a number: zero
+    means true, a nonzero real means false. A non-real difference decides nothing, as
+    in the original: `#i = 1` and `2*#i = #i` stand."""
     assert simp("x = #i") == "x = #i"
     assert simp("x = SQRT(-1)") == "x = #i"
     assert simp("x = #i", declared("x :epsilon Real")) == "x = #i"
@@ -141,20 +130,19 @@ def test_an_equation_is_answered_by_the_arithmetic_and_not_by_the_domains():
     assert simp("n = 1/2", declared("n :epsilon Integer")) == "n = 1/2"
     assert simp("p = -1", declared("p :epsilon Real (0, inf)")) == "p = -1"
     assert simp("y = 5", declared("y :epsilon Real (0, 1)")) == "y = 5"
-    # What the arithmetic answers is answered, and a value declaration is
-    # arithmetic: the name is the number it was declared to stand for.
+    # Arithmetic decides these; an assigned value counts as arithmetic.
     assert simp("x + 1 = x") == "false"
     assert simp("x /= x") == "false"
     assert simp("1 = 2") == "false"
     assert simp("SQRT(-4) = 2*#i") == "true"
     assert simp("2*x = x + x") == "true"
     assert simp("v = 5", Context(assignments={"v": parse("7")})) == "false"
-    # A number that is not real leaves the two sides where they were.
+    # A non-real difference leaves the equation alone.
     assert simp("#i = 1") == "#i = 1"
     assert simp("2*#i = #i") == "2*#i = #i"
     assert simp("x + #i = x") == "x + #i = x"
-    # Two sides written the same are one value whatever they are written out
-    # of, which is the whole of what answers the ones that have no difference.
+    # Identical sides are equal whatever they are; that alone decides cases where no
+    # difference can be taken.
     assert simp("INF = INF") == "true"
     assert simp("-INF = INF") == "false"
     assert simp("true = true") == "true"
@@ -163,10 +151,9 @@ def test_an_equation_is_answered_by_the_arithmetic_and_not_by_the_domains():
 
 
 def test_a_quadratic_whose_discriminant_turns_negative_is_answered_in_roots():
-    """The manual's quadratic with numbers substituted into it, which is where
-    an equation the domains falsify would take an answer away from a user: `10`
-    for `a`, `1.3333` for `b` and `30` for `c` puts the discriminant below zero,
-    and the root is what the original prints there."""
+    """The manual's quadratic with numbers substituted, where deciding equations from
+    domains would lose the user's answer: `a = 10`, `b = 1.3333`, `c = 30` make the
+    discriminant negative, and the root is what the original prints."""
     values = {name: parse(value) for name, value in (("a", "10"), ("b", "1.3333"))}
     context = Context(assignments=values)
     formula = "x = (SQRT(b^2 - 4*a*c) - b)/(2*a)"
@@ -185,27 +172,25 @@ def test_relations_joined_over_one_variable_are_solved():
 
 
 def test_a_range_is_written_as_the_chain_the_original_writes():
-    """Two bounds on one variable are a range, and a range has a spelling of
-    its own that the grammar reads back. The two strictnesses are independent,
-    so a half-open range is a chain too."""
+    """Two bounds on one variable are written as a chain, which the grammar can read
+    back. Each bound's strictness is independent, so half-open ranges chain too."""
     assert simp("x > -2 AND x < 2") == "-2 < x < 2"
     assert simp("x >= -2 AND x < 2") == "-2 <= x < 2"
 
 
 def test_a_conjunction_it_cannot_solve_keeps_its_shape():
     assert simp("x >= 1 OR x <= -1") == "x >= 1 OR x <= -1"
-    # Nothing is solved here - two variables are two unknowns - and the pair is
-    # still a range around `y`, which is written as the chain it is.
+    # With two unknowns nothing is solved, but the pair is still a range around `y`,
+    # written as a chain.
     assert simp("x < y AND y < 1") == "x < y < 1"
 
 
 LOGIC = [
     ("NOT NOT p", "p"),
     ("NOT p", "NOT p"),
-    # The algebra: absorption, the operators that are spellings for the other
-    # three, a variable and its negation, and a conjunct common to every
-    # disjunct. A product of sums is left folded, which is where the algebra
-    # stops - Derive does not multiply one out into a sum of products.
+    # The algebra: absorption, operators rewritten in terms of NOT/AND/OR, a variable
+    # with its negation, and factoring out a common conjunct. A product of sums stays
+    # folded, since Derive doesn't multiply it out into a sum of products.
     ("p AND (q OR p)", "p"),
     ("p OR NOT p", "true"),
     ("p AND NOT p", "false"),
@@ -214,13 +199,13 @@ LOGIC = [
     ("NOT (p AND q)", "NOT p OR NOT q"),
     ("p AND (q OR r)", "p AND (q OR r)"),
     ("p AND r OR p AND q", "p AND (q OR r)"),
-    # Operands are put in the order list's order, a term sorting by the
-    # variable it leads with, and a negated literal coming first on a tie.
+    # Operands are sorted by the order list, each term by its leading variable, with a
+    # negated literal first on a tie.
     ("s AND r OR q AND p", "p AND q OR r AND s"),
     ("c OR b AND a", "a AND b OR c"),
     ("p AND q OR NOT p AND r", "NOT p AND r OR p AND q"),
-    # Six variables is past where the algebra pays: both normal forms are read
-    # off a truth table, and this one comes back longer than it went in.
+    # With six variables the algebra isn't worth it: both normal forms come from a
+    # truth table, and here they are longer than the input.
     ("a XOR b XOR c XOR d XOR e XOR f", "a XOR b XOR c XOR d XOR e XOR f"),
     # Boolean on booleans, bitwise on integers.
     ("3 OR 5", "7"),
@@ -228,8 +213,8 @@ LOGIC = [
     ("12 AND 10", "8"),
     ("3 XOR 5", "6"),
     ("3 AND p", "3 AND p"),
-    # A truth value is no number, and arithmetic on one stands, the value an
-    # operand like an unknown one.
+    # A truth value is not a number, so arithmetic on it is left alone, treating it
+    # like an unknown.
     ("x*PRIME(4)", "false*x"),
     ("PRIME(5) + 1", "true + 1"),
     ("true + true", "2*true"),
@@ -246,20 +231,18 @@ def test_logic(text, expected):
 
 
 def test_a_bitwise_operator_is_read_again_once_its_operands_are_numbers():
-    """`12 AND k_` waits, and both readings are offered afresh when it stops.
+    """`12 AND k_` waits, and is reconsidered as bitwise once `k_` gets a value.
 
-    Which of the two an operator is depends on what stands under it, and what
-    stands there is a variable until something writes a value in.
-    `NUMBER.MTH`'s `LUCAS` tests a bit of its argument with `(n AND d_) = 0`,
-    where `d_` is the iteration's own variable and is a number only once an
-    iterate is taken.
+    Whether an operator is logical or bitwise depends on its operands, and a variable
+    has no value until one is substituted. `NUMBER.MTH`'s `LUCAS` tests a bit with
+    `(n AND d_) = 0`, where `d_` is the iteration variable.
     """
     assert simp("VECTOR(12 AND k_, k_, 1, 4)") == "[0, 0, 0, 4]"
     assert simp("ITERATES(IF((12 AND d_) = 0, 2*d_, d_/2), d_, 1, 3)") == "[1, 2, 4, 2]"
 
 
-#: A truth table: the columns as they were written, then one row per
-#: assignment, the last variable changing fastest and `true` before `false`.
+#: A truth table: a header row of the columns as written, then one row per assignment,
+#: the last variable changing fastest and `true` before `false`.
 TRUTH_TABLES = [
     (
         "TRUTH_TABLE(p, q, p AND q, p OR q, p XOR q, p IMP q)",
@@ -269,14 +252,14 @@ TRUTH_TABLES = [
         "[false, true, false, true, true, true], "
         "[false, false, false, false, false, true]]",
     ),
-    # Nothing but variables is the table of the assignments themselves.
+    # With only variables, the table is just the assignments.
     ("TRUTH_TABLE(p)", "[[p], [true], [false]]"),
     (
         "TRUTH_TABLE(p, q)",
         "[[p, q], [true, true], [true, false], [false, true], [false, false]]",
     ),
     ("TRUTH_TABLE(p, NOT p)", "[[p, NOT p], [true, false], [false, true]]"),
-    # A leading argument that is no variable leaves nothing to vary.
+    # A leading argument that isn't a variable leaves nothing to vary.
     ("TRUTH_TABLE(3, p)", "TRUTH_TABLE(3, p)"),
 ]
 
@@ -286,13 +269,13 @@ def test_truth_tables(text, expected):
     assert simp(text) == expected
 
 
-# -- IF, and the test it is asked whether it holds -----------------------------
+# -- IF and its test ----------------------------------------------------------
 
 CONDITIONALS = [
     ("IF(2 = 2, 1, 2)", "1", None),
     ("IF(2 = 3, 1, 2)", "2", None),
-    # A test that is a conjunction of relations is decided link by link, which
-    # is how `NUMBER.MTH` writes `FIBONACCI`'s guard on a whole number.
+    # A conjunction of relations is decided term by term, as in `NUMBER.MTH`'s
+    # whole-number guard in `FIBONACCI`.
     ("IF(2 >= 0 AND FLOOR(2) = 2, 1, 2)", "1", None),
     ("IF(2 >= 0 AND FLOOR(5/2) = 5/2, 1, 2)", "2", None),
     # No else clause and a false test: the value is unknown.
@@ -300,10 +283,10 @@ CONDITIONALS = [
     ("IF(x > 0, 1, -1)", "1", POSITIVE_X),
     # Undecidable, with an unknown clause to fall back on.
     ("IF(x > 0, 1, -1, 0)", "0", None),
-    # Undecidable, with none: the whole expression comes back.
+    # Undecidable, with no fallback: the whole expression comes back.
     ("IF(x > 0, 1, -1)", "IF(x > 0, 1, -1)", None),
-    # A test is decided as Simplify would simplify it: an empty range is false,
-    # and sides that cancel to one value are equal.
+    # A test is decided as Simplify would: an empty range is false, and sides that
+    # simplify to the same value are equal.
     ("IF(x < 1 AND x > 3, a, b)", "b", None),
     ("IF((x^2 + x^2*y^2)/(x^2*y) = (1 + y^2)/y, 1, 2, 3)", "1", None),
     ("IF(DIF((x + x*y)/x, x), 1, 2, 3)", "1", None),
@@ -316,24 +299,23 @@ def test_a_conditional_takes_the_branch_its_test_decides(text, expected, context
 
 
 def test_an_undecidable_conditional_keeps_its_branches_unsimplified():
-    # Derive's own behaviour, and the safe one: a branch that is never taken
-    # may be nonsense the guard exists to avoid.
+    # As in Derive, and safer: an untaken branch may be nonsense the guard exists to
+    # avoid.
     assert simp("IF(x > 0, (x + 1)^2 - x^2, -1)") == "IF(x > 0, (x + 1)^2 - x^2, -1)"
 
 
 UNTOUCHED_CONDITIONALS = [
-    # Not even the arithmetic: an arm is shown as it was written.
+    # Not even arithmetic: an arm is shown as written.
     ("IF(x > 0, 2 + 3, 4 + 5)", "IF(x > 0, 2 + 3, 4 + 5)"),
-    # Nor the order the operands were written in, nor a product a coefficient
-    # would be multiplied through.
+    # Nor is operand order changed or a coefficient distributed.
     ("IF(x > 0, b*a, 400 + 15*(x - 40))", "IF(x > 0, b*a, 400 + 15*(x - 40))"),
-    # Nor the side of the test each half was written on.
+    # Nor are the sides of the test swapped.
     ("IF(40 >= h, 1, 2)", "IF(40 >= h, 1, 2)"),
-    # An arm of the conditional that was decided is simplified as any other
-    # expression is; only the one left standing is shown as written.
+    # A decided conditional's chosen arm is simplified normally; only an undecided one
+    # is shown as written.
     ("IF(2 = 2, 2 + 3, 4 + 5)", "5"),
     ("IF(x > 0, 2 + 3, 4 + 5, 6 + 7)", "13"),
-    # A conditional inside a larger expression keeps its place in it.
+    # A conditional inside a larger expression stays in place.
     ("2*IF(x > 0, 2 + 3, 4 + 5)", "2*IF(x > 0, 2 + 3, 4 + 5)"),
     ("IF(x > 0, IF(y > 0, 1 + 1, 2), 3)", "IF(x > 0, IF(y > 0, 1 + 1, 2), 3)"),
 ]
@@ -341,23 +323,21 @@ UNTOUCHED_CONDITIONALS = [
 
 @pytest.mark.parametrize(("text", "expected"), UNTOUCHED_CONDITIONALS, ids=str)
 def test_an_undecidable_conditional_comes_back_as_it_was_written(text, expected):
-    """10.3: Derive answers an undecidable `IF` with the `IF` the author typed.
+    """10.3: Derive answers an undecidable `IF` with the `IF` exactly as typed.
 
-    Simplifying an arm is what the conditional exists to prevent, and doing the
-    arithmetic in one is simplifying it. What comes back is therefore the text
-    that went in - which is also what makes the answer stand still, a second
-    Simplify having nothing left to change.
+    The conditional exists to keep its arms from being simplified, even arithmetically.
+    So the input comes back unchanged, which also makes it stable under a second
+    Simplify.
     """
     assert simp(text) == expected
     assert simp(expected) == expected
 
 
 def test_an_undecidable_conditional_keeps_the_variables_it_depends_on():
-    """A held-back `IF` must not look constant to what surrounds it.
+    """A held-back `IF` must not look constant to its surroundings.
 
-    Standing it aside under a plain symbol would hide `k` from the sum, and
-    sympy would answer `n*IF(k > 0, k, 0)` - having been shown a summand that
-    no longer depends on what it is summed over.
+    Replacing it with a plain symbol would hide `k` from the sum, and sympy would
+    answer `n*IF(k > 0, k, 0)`, treating the summand as independent of `k`.
     """
     assert simp("SUM(IF(k > 0, k, 0), k, 1, n)") == "SUM(IF(k > 0, k, 0), k, 1, n)"
     assert simp("DIF(IF(x > 0, x^2, 0), x)") == "DIF(IF(x > 0, x^2, 0), x)"
@@ -369,23 +349,20 @@ def test_a_decided_conditional_simplifies_the_branch_it_took():
 
 
 def test_a_branch_a_written_out_sum_decides_is_worked_out_too():
-    """A test undecidable where it was written can be decided where it lands.
+    """A test undecidable as written can be decided after substitution.
 
-    The conditional is set aside whole while the sum is written out, and each
-    term brings it back with an index in it - which is a test that decides, and
-    a branch nothing has yet run over. So the heads in it are offered once
-    more, and the answer is a number rather than a head standing in a sum.
-    NUMBER.MTH's `DISTINCT_PARTS` reaches its answer exactly this way.
+    The conditional is held whole while the sum is expanded, and each term brings it
+    back with a numeric index, so the test decides and the chosen branch has not been
+    evaluated yet. Its heads are evaluated then, giving a number rather than an
+    unevaluated head. NUMBER.MTH's `DISTINCT_PARTS` relies on this.
     """
     assert simp("SUM(IF(k = 2, INT(x, x, 0, k), 0), k, 1, 2)") == "2"
     assert simp("SUM(IF(k = 2, SUM(j, j, 1, k), 0), k, 1, 2)") == "3"
 
 
 def test_a_conditional_answer_keeps_the_test_that_qualifies_it():
-    """A sum that has a closed form only where it converges answers with that
-    condition attached, and the condition is exactly the kind nothing can
-    decide: `ABS(x) < 1` is true for some `x` and false for others. So it
-    stands, and the answer goes on saying what it is worth.
+    """A sum with a closed form only where it converges answers with that condition
+    attached. `ABS(x) < 1` is true for some `x` and false for others, so it stays.
     """
     assert simp("SUM(k^2*x^k, k, 1, inf)") == (
         "IF(ABS(x) < 1, -x*(x + 1)/(x - 1)^3, SUM(k^2*x^k, k, 1, inf))"
@@ -395,10 +372,9 @@ def test_a_conditional_answer_keeps_the_test_that_qualifies_it():
 def test_a_test_holding_a_calculus_head_is_worked_out_before_it_is_asked():
     """`DIF(u, x)` is how ODE1.MTH asks whether `u` depends on `x`.
 
-    Read as the comparison with zero that a test with no relation in it is, an
-    unevaluated `Derivative` decides nothing, and a four-argument `IF` would go
-    straight to its unknown clause where Derive answers. So the heads in a test
-    are taken first: the answer is the derivative and not the `Derivative`.
+    A test without a relation is compared with zero, and an unevaluated `Derivative`
+    decides nothing, so a four-argument `IF` would take its unknown clause where Derive
+    answers. So heads in a test are evaluated first.
     """
     assert simp("IF(DIF(y, x), 1, 2, 3)") == "1"
     assert simp("IF(DIF(x, x), 1, 2, 3)") == "2"
@@ -408,10 +384,9 @@ def test_a_test_holding_a_calculus_head_is_worked_out_before_it_is_asked():
 def test_an_assignment_in_a_test_is_performed_and_read_back_in_the_branches():
     """`IF("no" = a := u, ..., a, a)` is how ODE1.MTH's `DSOLVE1` is written.
 
-    The assignment happens where the test is evaluated, and the name it assigns
-    stands for the value in the branches that come after it - which is what lets
-    one method be tried once and its answer read back out. A branch that assigns
-    the name again binds only within itself, since only one branch is ever taken.
+    The assignment happens when the test is evaluated, and the name holds the value in
+    the branches, so a method is tried once and its answer reused. A branch that
+    reassigns the name binds only within itself, since only one branch is taken.
     """
     assert simp('IF("no" = a_ := 2 + 3, 1, a_, a_)') == "5"
     assert simp('IF("no" = a_ := "no", a_, 2, 2)') == '"no"'

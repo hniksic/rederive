@@ -1,23 +1,16 @@
-"""Each package stands on its own, and the app side holds no mathematics.
+"""Import-structure rules: packages import independently, and the app side has no math.
 
-The layers import in one direction - `model.expr` under `syntax` under the
-engine, the display and the session - and a package `__init__` that reaches
-back up the stack breaks that silently: the import works or fails depending on
-which package the program happened to import first. A fresh interpreter per
-package is the only way to catch it.
+Layers import in one direction (`model.expr` under `syntax` under the engine, display
+and session). A package `__init__` that imports back up the stack works or fails
+depending on import order, so each package is imported in a fresh interpreter.
 
-The engine's own two halves are held apart the same way. Sympy belongs to the
-worker, and an import that quietly puts it in the app process instead is invisible
-from the inside - everything still works, a third of a second and some thirty
-megabytes later. So that one is tested from a fresh interpreter too, by asking what
-ended up in `sys.modules`.
+Sympy belongs to the worker. Importing it in the app process breaks nothing visibly but
+costs a third of a second and some thirty megabytes, so this is checked in a fresh
+interpreter by inspecting `sys.modules`.
 
-The third rule is about what the install has. The plot toolkit, psutil and pyperclip
-are opt-in extras, so `pip install rederive` is a machine where none of them exist,
-and the client half has to import there - a program that refuses to start because
-nobody asked for a plot window is not a slim install, it is a broken one. That is
-also what makes the package installable somewhere the wheels do not exist at all,
-which is what a browser is.
+The plot toolkit, psutil and pyperclip are opt-in extras, so the client half must
+import without them. That also lets the package run where those wheels don't exist at
+all, such as a browser.
 """
 
 from __future__ import annotations
@@ -37,29 +30,15 @@ PACKAGES = [
     "rederive.engine",
 ]
 
-#: What the app process imports, from the entry point down. None of it may reach
-#: sympy: the mathematics lives in the worker, which imports it in `worker.serve`,
-#: in the process where the computing happens. `rederive.engine` is on the list
-#: because a package `__init__` is run by every import of anything below it, so an
-#: engine that greeted its own submodules with sympy would defeat all the rest.
-#: `rederive.web` is on it in full, and every module of it is the app side by
-#: definition: the browser runs the UI in the page's own Pyodide and the
-#: mathematics in a worker's, so a sympy import there would cost a second
-#: interpreter's worth of it in the instance that draws the screen. The one
-#: exception is `rederive.web.worker`, which is that other interpreter's entry
-#: and is meant to import the whole engine. The plot session, its backend
-#: protocol, its model, its re-sampling policy, its view arithmetic and the
-#: whole of the browser backend are on the list for the same reason: in the
-#: browser the plot list and the routing live on the main thread while the
-#: arrays go from the worker to what draws them, so a numpy import in any of
-#: them would put a numerical library in the instance that paints the screen.
-#: `rederive.plot.web.sampler` is the exception and the mirror of
-#: `rederive.web.worker`: it is the half that computes, and it runs where sympy
-#: and numpy already are. The description of the controls, what a command does
-#: to a view and the fields a dialog is made of are on the list for the plainest
-#: reason of all: a page reads a menu, answers a key and opens an overlay on the
-#: thread that paints, and none of the three is allowed to cost it a numerical
-#: library on the way.
+#: Modules the app process imports, which must not pull in sympy; the worker imports it
+#: in `worker.serve`. `rederive.engine` is listed because its `__init__` runs on every
+#: import of a submodule. All of `rederive.web` is app side, since the browser runs the
+#: UI in the page's Pyodide and the math in a worker's, except `rederive.web.worker`,
+#: the worker's entry point. The plot session, backend protocol, model, resampling,
+#: view arithmetic and browser backend run on the browser's main thread, so they must
+#: not import numpy either; `rederive.plot.web.sampler` is the exception, running in
+#: the worker. The plot controls, actions and dialog forms are used by the page's
+#: painting thread to show menus, handle keys and open overlays.
 CLIENT_SIDE = [
     "rederive.engine",
     "rederive.engine.boundary",
@@ -97,24 +76,19 @@ def test_a_package_imports_before_anything_else(package: str) -> None:
     subprocess.run([sys.executable, "-c", f"import {package}"], check=True)
 
 
-#: What plotting costs, and what the app process must not pay. The windows live
-#: in a child process for the same reason the mathematics does, so the app side
-#: may name the plot vocabulary and the availability check and nothing under
-#: them: a Qt toolkit imported here is thirty megabytes for a picture drawn
-#: elsewhere, and one that a session which never plots pays for regardless.
+#: Heavy plotting modules the app process must not import. Plot windows run in a child
+#: process, so the app side may import only the plot vocabulary and availability check:
+#: a Qt toolkit here would cost thirty megabytes even in sessions that never plot.
 HEAVY = ("numpy", "PySide6", "pyqtgraph", "OpenGL")
 
 
 @pytest.mark.parametrize("module", CLIENT_SIDE)
 def test_the_app_side_imports_no_sympy_and_no_toolkit(module: str) -> None:
-    """No client-half import may pull sympy or the plot toolkit in, however far down
-    the chain it is.
+    """No client-half module may transitively import sympy or the plot toolkit.
 
-    The failure this catches is never a broken program, which is what makes it worth
-    a test: a client-half module that imports a worker-half one for a constant or a
-    type still works perfectly, and costs the app process a computer algebra system
-    it will never call. One interpreter answers for both, since what it costs is the
-    interpreter and not the question.
+    Such an import, say of a worker-half module for a constant or type, breaks nothing
+    visibly, which is why it needs a test. Both checks share one interpreter, since
+    starting it is the expensive part.
     """
     program = (
         f"import sys, {module}; "
@@ -126,16 +100,13 @@ def test_the_app_side_imports_no_sympy_and_no_toolkit(module: str) -> None:
     assert imported.stdout.strip() == "[]", f"{module} imports {imported.stdout}"
 
 
-#: The wheels an install need not have: the `plot` extra and the `desktop` one.
-#: No client-half module may import one of them at its top, however far down the
-#: chain it is - what reaches for a clipboard, a resident set or a toolkit has to
-#: do it where it is asked for, so that an install without them still starts.
+#: Packages from the optional `plot` and `desktop` extras. No client-half module may
+#: import them at module level, even transitively; code that needs the clipboard,
+#: memory usage or toolkit must import it when called, so a slim install still starts.
 OPTIONAL = ("PySide6", "pyqtgraph", "OpenGL", "psutil", "pyperclip")
 
-#: A machine where none of them exist, made out of one that has them all. A
-#: finder in front of every other refuses those names the way an import of a
-#: wheel that was never fetched is refused, and the check under it is what stops
-#: this from passing because the refusing quietly stopped working.
+#: Simulates an install without the extras: a meta-path finder makes importing them fail
+#: as if they were missing, and the loop checks that the blocking actually works.
 ABSENT = """
 import sys
 
@@ -160,44 +131,40 @@ for name in {names}:
 
 @pytest.mark.parametrize("module", CLIENT_SIDE)
 def test_the_app_side_imports_with_no_extras_installed(module: str) -> None:
-    """A bare `pip install rederive` is a program, and this is what says so.
+    """A bare `pip install rederive` must work.
 
-    The extras are opt-in, so this is the ordinary install rather than a corner of
-    one, and every way of breaking it is invisible on a development machine: an
-    import written at the top of a module instead of inside the one function that
-    needs it works perfectly here and fails on every install that took the package
-    at its word.
+    The extras are opt-in, so this is the ordinary install, and breaking it is invisible
+    on a development machine: a top-level import that belongs inside a function works
+    here but fails on every slim install.
     """
     program = ABSENT.format(names=set(OPTIONAL)) + f"\nimport {module}\n"
     subprocess.run([sys.executable, "-c", program], check=True)
 
 
-#: The toolkit a plot window is made of, by the top-level name each is imported
-#: under. `OpenGL` is PyOpenGL, which `pyqtgraph.opengl` rides.
+#: Top-level module names of the plot window toolkit. `OpenGL` is PyOpenGL, used by
+#: `pyqtgraph.opengl`.
 TOOLKIT = ("PySide6", "pyqtgraph", "OpenGL")
 
-#: The one package allowed to name it. Everything else in `plot/` - the plot
-#: session, the model, the sampling policy, the surface geometry, the view
-#: arithmetic - is what a second backend shares, and a toolkit import anywhere
-#: in it is a line the browser cannot cross.
+#: The only package allowed to import the toolkit. The rest of `plot/` (session, model,
+#: sampling, surface geometry, view arithmetic) is shared with the browser backend,
+#: which can't use the toolkit.
 TOOLKIT_PACKAGE = "rederive/plot/qt"
 
 
 def test_only_the_qt_backend_names_a_toolkit() -> None:
-    """The rule the whole plot layer is arranged around, read off the source.
+    """The plot layer's central rule, checked by reading the source.
 
-    Read rather than imported, because the imports that would break this are the
-    ones written inside a function: the window classes are imported where a
-    window is made, deliberately, and a module that did the same thing outside
-    `plot/qt` would pass an import test and still be a toolkit in the browser.
+    Importing wouldn't catch imports inside functions: the window classes are
+    deliberately imported where a window is made, and a module outside `plot/qt` doing
+    the same would pass an import test yet still need the toolkit in the browser.
     """
     root = Path(__file__).resolve().parent.parent / "src"
     offenders = []
     for path in sorted(root.rglob("*.py")):
         if TOOLKIT_PACKAGE in path.as_posix():
             continue
-        # Named, because the sources hold the display's glyphs and Windows would
-        # otherwise read them through whatever code page it is set to.
+        # The sources contain display glyphs, which Windows would otherwise decode
+        # with its current code page.
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 named = [alias.name for alias in node.names]
@@ -212,13 +179,12 @@ def test_only_the_qt_backend_names_a_toolkit() -> None:
 
 
 def test_the_entry_point_imports_no_screen() -> None:
-    """`rederive.__main__`'s body may name the command line and nothing more.
+    """`rederive.__main__` may import only what the command line needs.
 
-    The mirror of the rule above, and it costs the same to break. Spawning re-runs
-    the parent's `__main__` in the child, and the `rederive` script imports this
-    module at its top, so whatever the body names is loaded again in the worker -
-    which paints nothing. Textual there is thirty-odd megabytes and a tenth of a
-    second the computing half spends on a screen it does not have.
+    Spawning re-runs the parent's `__main__` in the child, and the `rederive` script
+    imports this module at the top, so its imports are loaded again in the worker.
+    Textual there would cost thirty-odd megabytes and a tenth of a second for a screen
+    the worker doesn't have.
     """
     program = "import sys, rederive.__main__; print('textual' in sys.modules)"
     imported = subprocess.run(
@@ -228,11 +194,10 @@ def test_the_entry_point_imports_no_screen() -> None:
 
 
 def test_the_computing_half_offers_everything_the_client_half_does() -> None:
-    """One import for whoever may compute, which is what makes the pair a pair.
+    """`computing` re-exports everything in `client`, so callers need one import.
 
-    A caller entitled to the mathematics is entitled to the vocabulary as well, and
-    having to import both halves to get a `Context` alongside a `simplify` would
-    teach exactly the habit the split is for.
+    Needing both halves to get a `Context` alongside `simplify` would encourage mixing
+    imports, the habit the split exists to prevent.
     """
     from rederive.engine import client, computing
 

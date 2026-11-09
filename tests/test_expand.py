@@ -1,13 +1,11 @@
 """What Expand must produce.
 
-Author text in, author text out, as the Factor and Simplify cases are, and for
-the same reason: the text the worksheet shows is the whole of what the command
-promises.
+Like the Factor and Simplify cases, these go from author text to author text, since the
+worksheet text is what the command promises.
 
-Almost every case here comes from the original rather than from the manual, so
-what is recorded is what the original actually prints. Where the engine's form
-differs from the original's - term order, an equivalent spelling - the engine's
-form is recorded and the case says so; nothing is weakened to make a test pass.
+Almost every case comes from running the original, not from the manual. Where the
+engine's form differs (term order, an equivalent spelling), the engine's form is
+recorded and the case says so; nothing is weakened to make a test pass.
 """
 
 from __future__ import annotations
@@ -40,7 +38,7 @@ def parse(text, state=None):
 
 
 def exp(text, amount=RATIONAL, variables=(), context=None):
-    """`text` expanded, as the worksheet would show it."""
+    """Expand `text` and return it as the worksheet would show it."""
     return expand(parse(text), context or Context(), amount, variables).text
 
 
@@ -52,14 +50,14 @@ POLYNOMIALS = [
     ("(x + 1)^3", "x^3 + 3*x^2 + 3*x + 1"),
     ("(a + b + c)^2", "a^2 + 2*a*b + 2*a*c + b^2 + 2*b*c + c^2"),
     ("SQRT(x)*(SQRT(x) + 1)", "x + SQRT(x)"),
-    # Not a polynomial in anything, and left alone rather than refused.
+    # Not polynomials; left alone rather than refused.
     ("SIN(x + y)", "SIN(x + y)"),
     ("#e^(x + y)", "#e^(x + y)"),
     ("(x + 1)^(1/2)", "SQRT(x + 1)"),
-    # An argument is expanded even where the call around it is not: Expand
-    # does not do trigonometric expansion, but `(x + 1)^2` is still a square.
+    # Arguments are expanded even when the call isn't: Expand does no trigonometric
+    # expansion, but `(x + 1)^2` is still a square.
     ("SIN((x + 1)^2)", "SIN(x^2 + 2*x + 1)"),
-    # An exponent is not a place Expand reaches.
+    # Expand doesn't reach into exponents.
     ("2^(x + 1)", "2^(x + 1)"),
 ]
 
@@ -75,8 +73,8 @@ def test_a_variable_the_expression_has_not_got_expands_nothing():
 
 # -- what the expansion variables change --------------------------------------
 #
-# The manual's own worked example, which is the clearest statement of the rule
-# that everything free of the expansion variables is one opaque quantity.
+# The manual's worked example, which shows clearly that anything free of the expansion
+# variables is treated as an opaque quantity.
 
 CUBE = "(x + 2*y + 1)^3"
 
@@ -91,23 +89,22 @@ def test_one_variable_leaves_the_others_as_they_stand():
 
 
 def test_every_variable_leaves_nothing_unexpanded():
-    """The same terms the original prints, and in the order it prints them."""
+    """The same terms the original prints, in the same order."""
     assert exp(CUBE) == (
         "x^3 + 6*x^2*y + 3*x^2 + 12*x*y^2 + 12*x*y + 3*x + 8*y^3 + 12*y^2 + 6*y + 1"
     )
 
 
 def test_terms_of_equal_degree_are_collected():
-    """The manual's example: `(b + 1)^2` is not multiplied out on the way,
-    because `b` is not one of the expansion variables."""
+    """The manual's example: `(b + 1)^2` is not multiplied out, because `b` is not an
+    expansion variable."""
     text = "3*a^2*x^2*y^3 + 7*(b + 1)^2*x^2*y^3"
     assert exp(text, variables=["x", "y"]) == "x^2*y^3*(3*a^2 + 7*(b + 1)^2)"
 
 
 def test_a_collected_coefficient_keeps_its_common_factor_outside():
-    # Simplify takes the `(x + 1)^2` both terms carry outside, so what is
-    # expanded is `(a + b)*(x + 1)^2`, and the expansion's own collecting keeps
-    # the `2` of the middle coefficient in front of the bracket.
+    # Simplify first factors out the common `(x + 1)^2`, so `(a + b)*(x + 1)^2` is
+    # expanded, and collecting keeps the middle coefficient's `2` outside the bracket.
     text = "a*(x + 1)^2 + b*(x + 1)^2"
     assert exp(text, variables=["x"]) == "x^2*(a + b) + 2*x*(a + b) + a + b"
 
@@ -122,23 +119,21 @@ def test_a_factor_free_of_the_variables_is_not_reached_into():
     [
         # Collecting these would be factoring, and Expand does not factor.
         ("2*SIN(x) + 2*COS(x)", "2*COS(x) + 2*SIN(x)"),
-        # And this one factors inside the logarithm, which is worse.
+        # And here it would factor inside the logarithm, which is worse.
         ("LN(x^2 - x) - LN(x)", "LN(x^2 - x) - LN(x)"),
     ],
     ids=str,
 )
 def test_nothing_is_collected_out_of_the_degree_zero_group(text, expected):
-    """What the expansion variables did not reach is the whole expression when
-    they reach nothing, and it is not a coefficient of anything."""
+    """When no term contains an expansion variable, the whole expression is the degree
+    zero group, and its terms aren't collected into a coefficient."""
     assert exp(text) == expected
 
 
 def test_a_head_that_binds_a_variable_comes_through_as_itself():
-    """Not every argument of one is an operand: a derivative carries the
-    variable it is taken over and how many times, a substitution the variables
-    it binds and the points they take. Rewriting those reads them as something
-    else, so what Expand has nothing to expand it hands back untouched - which
-    is exactly what Simplify already answers."""
+    """Not every argument of a binding head is an operand: a derivative carries its
+    variable and order, a substitution its bound variables and their values. Rewriting
+    those would change the meaning, so Expand returns such a head as Simplify does."""
     state = ParseState()
     state.declare(FunctionDeclaration("G", ("y", "z")))
     text = "DIF(LIM(G(y, z), y, 2*x - y), y)"
@@ -148,10 +143,9 @@ def test_a_head_that_binds_a_variable_comes_through_as_itself():
 
 
 def test_an_integrand_stays_inside_its_integral():
-    """The limits of an integral are not an operand, and standing in for them
-    lets the integrand out: `t` is bound by the integral and means nothing
-    outside it, so `t^(a - 1)*(...)*INT(1, t, 0, 1/2)` is not another way of
-    writing this - it is a different expression."""
+    """The integration variable `t` is bound by the integral and means nothing outside it,
+    so pulling factors of the integrand out, as in `t^(a - 1)*(...)*INT(1, t, 0, 1/2)`,
+    would give a different expression."""
     text = "INT(t^(a-1)*((1-t)^(b-a-1)*#e^(t*z) - 1), t, 0, 1/2)"
     assert exp(text, variables=["z"]) == (
         "INT(t^(a - 1)*((1 - t)^(-a + b - 1)*#e^(t*z) - 1), t, 0, 1/2)"
@@ -162,18 +156,17 @@ def test_an_integrand_stays_inside_its_integral():
 
 FRACTIONS = [
     ("1/(x^2 - 1)", RATIONAL, "1/(2*(x - 1)) - 1/(2*(x + 1))"),
-    # Trivial factors nothing out of the denominator, so there is nothing to
-    # split over and the ratio comes back as it went in.
+    # Trivial factors nothing out of the denominator, so the ratio is unchanged.
     ("1/(x^2 - 1)", TRIVIAL, "1/(x^2 - 1)"),
     ("1/(x^2 - 1)", SQUAREFREE, "1/(x^2 - 1)"),
-    # raDical reaches a denominator Rational cannot factor.
+    # raDical factors a denominator that Rational can't.
     ("1/(x^2 - 2)", RATIONAL, "1/(x^2 - 2)"),
     (
         "1/(x^2 - 2)",
         RADICAL,
         "SQRT(2)/(4*(x - SQRT(2))) - SQRT(2)/(4*(x + SQRT(2)))",
     ),
-    # A repeated factor gets one term per power up to its own.
+    # A repeated factor gets one term per power up to its multiplicity.
     ("1/(x*(x + 1)^2)", RATIONAL, "1/x - 1/(x + 1) - 1/(x + 1)^2"),
 ]
 
@@ -184,17 +177,17 @@ def test_the_amount_says_how_far_the_denominator_is_factored(text, amount, expec
 
 
 def test_an_improper_ratio_is_divided_out_first():
-    """The quotient is expanded and the proper part decomposed; the order the
-    two are printed in is the printer's."""
+    """The quotient is expanded and the proper part decomposed; the printer decides the
+    term order."""
     assert exp("(x^4 + 1)/(x^2 - 1)", variables=["x"]) == (
         "x^2 - 1/(x + 1) + 1/(x - 1) + 1"
     )
 
 
 def test_the_manual_s_worked_partial_fraction():
-    """Section 4.7's example, term for term. `81*(a + 1)` keeps its form: `a`
-    is not an expansion variable, so nothing about it is expanded, and the
-    term is not split because its numerator holds no expansion variable."""
+    """Section 4.7's example, term for term. `81*(a + 1)` is kept as is: `a` is not an
+    expansion variable, and the term isn't split because its numerator contains no
+    expansion variable."""
     text = "(25*x^4 + 81*a*x^2 + 324*a*x + 324*a)/(x^3 + x^2 - 8*x - 12)"
     assert exp(text, variables=["x"]) == (
         "25*x + 81*(a + 1)/(x - 3) + 144/(x + 2) - 80/(x + 2)^2 - 25"
@@ -209,8 +202,8 @@ def test_a_numerator_holding_an_expansion_variable_is_split():
 
 
 def test_the_primary_variable_is_the_first_one_the_denominator_holds():
-    """`x/(a^2 - 1)` about `x` alone has no denominator to split, so it is a
-    polynomial expansion; about both, `a` is what it splits over."""
+    """With only `x`, the denominator has no expansion variable, so this is a polynomial
+    expansion; with both variables, it splits over `a`."""
     assert exp("x/(a^2 - 1)", variables=["x"]) == "x/(a^2 - 1)"
     assert exp("x/(a^2 - 1)") == "x/(2*(a - 1)) - x/(2*(a + 1))"
 
@@ -223,8 +216,7 @@ def test_a_denominator_free_of_the_variables_is_distributed():
 
 
 def test_a_sum_of_a_ratio_and_a_polynomial_is_left_alone():
-    """It is not written as a ratio, so there is nothing to decompose, and the
-    polynomial expansion finds nothing to multiply out."""
+    """It isn't a ratio, so there is nothing to decompose, and nothing to multiply out."""
     assert exp("x + 1/(x + 1)") == "x + 1/(x + 1)"
 
 
@@ -236,8 +228,8 @@ def test_a_multivariate_denominator_splits_over_the_primary_variable():
 
 
 def test_expand_is_simplify_and_then_expanding():
-    """The manual says both commands reach a sufficiently simple form and that
-    Expand goes further, so an answer may be Simplify's work alone."""
+    """Per the manual, Expand does what Simplify does and more, so an answer may come from
+    Simplify alone."""
     assert exp("SIN(x)^2 + COS(x)^2") == "1"
     assert exp("2/x + 1/x") == "3/x"
     assert exp("(2 + 3)^2") == "25"
@@ -249,14 +241,12 @@ def test_an_expanded_number_is_the_number():
 
 
 def test_rounding_happens_after_expanding_not_before():
-    """A radical decomposition has to reach `SQRT(2)` before Approximate mode
-    has anything to round: rounding first would leave a float with nothing to
-    factor and so nothing to split over.
+    """The radical decomposition must find `SQRT(2)` before rounding; rounding first
+    would leave a float with nothing to factor.
 
-    The form is the engine's own. The original answers the same decomposition
-    in rational approximations of the radicals rather than in decimals, which
-    is not what it does for the same expression under Factor; the engine
-    rounds the one way its own Approximate mode rounds everything.
+    The form is the engine's own. The original writes rational approximations of the
+    radicals here (though not under Factor); the engine rounds to decimals as it does
+    everywhere in Approximate mode.
     """
     assert exp("1/(x^2 - 2)", RADICAL, context=APPROXIMATE) == (
         "0.353553/(x - 1.41421) - 0.353553/(x + 1.41421)"
@@ -275,8 +265,7 @@ def test_a_relation_is_expanded_side_by_side():
 
 
 def test_a_subtree_is_expanded_on_its_own():
-    """Expand works on any subtree, which is what lets the session expand what
-    the user has highlighted."""
+    """Expand works on any subtree, so the session can expand a highlighted part."""
     node = parse("(x + 1)^2 + SIN(z)")
     part = node.children[0]
     assert expand(part, Context(), RATIONAL).text == "x^2 + 2*x + 1"
@@ -291,7 +280,7 @@ RATIOS = [
     ("SIN(x)/2", True),
     # Written as a power, not a quotient.
     ("x^-1", False),
-    # A quotient inside, but the expression is not one.
+    # Contains a quotient, but isn't one.
     ("-1/x", False),
     ("2*(1/x)", False),
     ("2/x + 1/x", False),
@@ -306,8 +295,7 @@ def test_only_something_written_as_a_ratio_needs_an_amount(text, expected):
 
 # -- the promises -------------------------------------------------------------
 
-# Every kind of thing the parser produces, expanded. None of these may raise;
-# what they come back as is not the point.
+# Every kind of node the parser produces. None may raise; the result doesn't matter.
 TOTAL = [
     "x",
     "?",
@@ -350,9 +338,8 @@ def test_expanding_a_decomposition_again_changes_nothing(text, amount, expected)
 
 # -- EXPAND as an authored function -------------------------------------------
 
-# `EXPAND(u, amount, x, y, ...)` is the author-line spelling of the command,
-# so Simplify is what evaluates it. Every expected value below is the
-# original's own answer for that very line.
+# `EXPAND(u, amount, x, y, ...)` is the command written as a function, which Simplify
+# evaluates. Every expected value is the original's answer for the same line.
 HEADS = [
     ("EXPAND((x + 1)^3)", "x^3 + 3*x^2 + 3*x + 1"),
     (
@@ -365,8 +352,8 @@ HEADS = [
         "SQRT(2)/(4*(x - SQRT(2))) - SQRT(2)/(4*(x + SQRT(2)))",
     ),
     ("EXPAND([(x + 1)^2, (x + 2)^2])", "[x^2 + 2*x + 1, x^2 + 4*x + 4]"),
-    # Complex is Factor's amount and not Expand's, so it names no amount here
-    # and is read as a variable, which leaves the denominator unfactored.
+    # Complex is an amount for Factor, not Expand, so here it's read as a variable and
+    # the denominator stays unfactored.
     ("EXPAND(1/(x^2 + 1), Complex, x)", "1/(x^2 + 1)"),
 ]
 
@@ -383,21 +370,17 @@ def test_the_amount_argument_may_be_left_out():
 
 
 def test_an_expand_head_is_expanded_where_it_stands():
-    """It is an expression like any other, so it may be part of a larger one.
+    """An EXPAND head can be part of a larger expression.
 
-    The engine multiplies the two together where the original writes
-    `2*(x^2 + 2*x + 1)`, and that has nothing to do with Expand: authoring
-    `2*(x^2 - 1)` and simplifying it divides the two the same way. A numeric
-    coefficient distributes over a sum in the conversion layer, before any
-    command runs, because the pipeline leans on sympy's automatic evaluation
-    for Simplify's basic work - and because distributing is what makes an
-    answer read back as the expression it prints. The same trade is recorded
-    on the `INT(x^2, x, a, b)` case in `test_simplify`.
+    The original writes `2*(x^2 + 2*x + 1)`; the engine distributes the 2. That is not
+    Expand's doing: sympy's automatic evaluation distributes a numeric coefficient over
+    a sum during conversion, before any command runs (simplifying `2*(x^2 - 1)` does the
+    same), and the pipeline relies on that evaluation. The same trade-off is noted on
+    the `INT(x^2, x, a, b)` case in `test_simplify`.
 
-    Which makes it a form the engine cannot hold rather than one it declined
-    to: Derive keeps whichever of the two was written, leaving `2*x^2 + 4*x + 2`
-    split and `2*(x^2 + 2*x + 1)` grouped, so there is no normal form to reach
-    for. Both spellings are the same expression.
+    So the engine can't produce the grouped form at all. Derive keeps whichever form
+    was written, so there is no normal form to aim for, and both are the same
+    expression.
     """
     assert simplify(parse("2*EXPAND((x + 1)^2)"), Context()).text == (
         "2*x^2 + 4*x + 2"
@@ -409,8 +392,7 @@ def test_a_word_that_names_no_amount_is_not_an_amount():
 
 
 def test_only_expand_is_evaluated():
-    # A function of the author's whose name begins with EXPAND is a function of its
-    # own, and is read as one once it is defined.
+    # A user function whose name starts with EXPAND is its own function once declared.
     state = ParseState()
     state.declare(FunctionDeclaration("EXPANDS", ("u",)))
     assert simplify(parse("EXPANDS((x + 1)^2)", state), Context(), state).text == (
@@ -427,15 +409,13 @@ def test_either_head_may_be_written_inside_the_other():
 
 
 def test_holding_a_sum_about_a_variable_keeps_every_term():
-    """Nothing may be lost on the way into the frozen form.
+    """Freezing must not lose any term.
 
-    A head that is not stood in for whole is rebuilt from its arguments once
-    each has been rewritten, and a head whose arguments are not all operands
-    does not survive that: a `RootSum` carries the polynomial whose roots it
-    runs over and the dummy that polynomial shares with its summand, and
-    rebuilding it from the three of them separately gives nothing back at all.
-    A term lost here is a confidently wrong answer rather than an unreadable
-    one, so what the sum holds is pinned term for term.
+    A head not replaced whole is rebuilt from its rewritten arguments, which fails for
+    heads whose arguments aren't all operands: a `RootSum` holds a polynomial and a
+    dummy shared with its summand, and rebuilding it from the parts separately yields
+    nothing. A lost term gives a confidently wrong answer, so the sum is checked term
+    by term.
     """
     x, t = sp.Symbol("x", real=True), sp.Dummy("t")
     root_sum = sp.RootSum(sp.Poly(t**3 + t + 1, t), sp.Lambda(t, t * sp.log(x - t)))
@@ -444,14 +424,12 @@ def test_holding_a_sum_about_a_variable_keeps_every_term():
 
 
 def test_a_head_that_will_not_survive_freezing_is_held_whole(monkeypatch):
-    """The promise is checked, so the next such head costs nothing but tidiness.
+    """A head missing from `_BOUND` costs only tidiness, not correctness.
 
-    `_BOUND` names the heads known to need standing in for whole, and a head
-    missing from it used to lose what it carried. Now the freezing is put back
-    before it is handed on, and where that does not give the expression it
-    started from the whole of it is stood in for instead - the normal form then
-    has nothing it can take apart, which is worse writing and not a worse
-    answer. `RootSum` out of `_BOUND` is the case that was real.
+    `_BOUND` lists heads that must be replaced whole. Freezing is verified by undoing
+    it, and if that doesn't reproduce the original, the whole expression is replaced
+    instead. The normal form then can't take it apart, which gives worse output but not
+    a wrong answer. Removing `RootSum` from `_BOUND` reproduces a real case.
     """
     x, t = sp.Symbol("x", real=True), sp.Dummy("t")
     root_sum = sp.RootSum(sp.Poly(t**3 + t + 1, t), sp.Lambda(t, t * sp.log(x - t)))
@@ -461,5 +439,5 @@ def test_a_head_that_will_not_survive_freezing_is_held_whole(monkeypatch):
     )
     frozen, held = held_about(total, x)
     assert frozen.xreplace(held) == total
-    # Held whole, rather than written about `x` with a term missing.
+    # Replaced whole, rather than written about `x` with a term missing.
     assert frozen.is_Symbol

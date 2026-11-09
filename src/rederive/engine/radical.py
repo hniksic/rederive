@@ -1,46 +1,45 @@
-"""The antiderivative of a rational function of the variable and one root of a
-polynomial of degree one or two in it, or of a quotient of linear polynomials, or of
-square roots of two linear polynomials, by the methods of the integral tables.
+"""Antiderivatives of rational functions of the variable and a root, by the methods of
+integral tables.
 
-Under a root of a linear `a*x + b`, `t = (a*x + b)^(1/q)` makes the integrand a
-rational function of `t`, which `engine.rational` integrates, and so does `t =
-((f*x + g)/(a*x + b))^(1/q)` under a root of the quotient. `t` is positive by
-construction, so the answer holds for every `x` where the integrand is real. Under
-the square roots of `L1` and `L2`, both linear, `t = SQRT(L1)/SQRT(L2)` does it where
-each term holds an even number of them in all: `t^2 = L1/L2`, and `t` is positive
-where the integrand is real, `L1/L2` being positive there.
+The root may be of a linear or quadratic polynomial, of a quotient of linear
+polynomials, or the square roots of two linear polynomials.
 
-Under the square root `y` of a quadratic `Q = a*x^2 + b*x + c`, the integrand is a
-rational function of `x` and `y`, which is `R1(x) + R2(x)*y` once `y^2` is written
-`Q` and the denominator is made free of `y` by its conjugate. Only the second term,
-`R(x)/y` with `R = R2*Q`, is taken here. Its integral is
+For a root of a linear `a*x + b`, `t = (a*x + b)^(1/q)` makes the integrand rational
+in `t`, which `engine.rational` integrates; likewise `t = ((f*x + g)/(a*x + b))^(1/q)`
+for a root of the quotient. `t` is positive by construction, so the answer holds
+wherever the integrand is real. For square roots of linear `L1` and `L2`, `t =
+SQRT(L1)/SQRT(L2)` works when each term has an even total number of them: `t^2 =
+L1/L2`, and `t` is positive where the integrand is real, since `L1/L2` is positive
+there.
+
+For the square root `y` of a quadratic `Q = a*x^2 + b*x + c`, the integrand becomes
+`R1(x) + R2(x)*y` after writing `y^2` as `Q` and rationalizing the denominator. Only
+the second term, `R(x)/y` with `R = R2*Q`, is handled. Its integral is
 
     A(x)*y + sum of k_i*INT(1/((x - r_i)*y), x) + k*INT(1/y, x),
 
-with `A` rational: a factor of the denominator of `R` that divides `Q` appears in the
-denominator of `A` to the power it has in `R`, and any other factor to one less, the
-simple poles off the roots of `Q` being what the logarithmic integrals take. The
-unknown coefficients of `A`'s numerator and the `k`s are found by differentiating
-and comparing coefficients, a linear system. The identity is algebraic in `y`, so
-the answer holds on every interval where `Q` is positive. Sympy's own methods spend
-minutes over `(a*x^2 + b*x + c)^(7/2)` and answer it over a split on the values of
-the coefficients, where this takes a second.
+with `A` rational. A factor of `R`'s denominator that divides `Q` appears in `A`'s
+denominator to the same power, and any other factor to one less; the logarithmic
+integrals take the simple poles off the roots of `Q`. The unknown coefficients of
+`A`'s numerator and the `k`s come from a linear system obtained by differentiating
+and comparing coefficients. The identity is algebraic in `y`, so the answer holds on
+every interval where `Q` is positive. Sympy takes minutes over `(a*x^2 + b*x +
+c)^(7/2)` and splits the answer by cases on the coefficients; this takes a second.
 
-`INT(1/y, x)` is written here: an arcsine where `a` is a negative number, or the
-arctangent of `(2*a*x + b)/(2*SQRT(-a)*y)` it equals where the arcsine would need the
-absolute value of a parameter, `ATAN(x/SQRT(a^2 - x^2))` for `ASIN(x/ABS(a))`; that
-arctangent also where `a` is a negated square, as in `c - a^2*x^2`; and otherwise
-`LN(2*SQRT(a)*y + 2*a*x + b)/SQRT(a)`. The arctangent differentiates back for either
-sign of the root of `-a`, and the logarithm for any square root of `a`; where `a` is
-negative, the logarithm's argument runs along a circle in the upper half-plane,
-never crossing the cut. `INT(1/((x - r)*y), x)` is a logarithm or an arctangent the
-same way. A denominator with a factor the ansatz has no term for, a quadratic not
-dividing `Q`, is taken where `Q` has no linear term, by the substitutions `t = x/y`
-and `w = y`, which make it rational.
+`INT(1/y, x)` is an arcsine when `a` is a negative number. Where the arcsine would
+need the absolute value of a parameter (`ASIN(x/ABS(a))`), or `a` is a negated square
+as in `c - a^2*x^2`, it is the equal arctangent of `(2*a*x + b)/(2*SQRT(-a)*y)`, e.g.
+`ATAN(x/SQRT(a^2 - x^2))`. Otherwise it is `LN(2*SQRT(a)*y + 2*a*x + b)/SQRT(a)`. The
+arctangent differentiates back for either sign of the root of `-a`, and the logarithm
+for any square root of `a`; for negative `a` the logarithm's argument stays on a
+circle in the upper half-plane, never crossing the cut. `INT(1/((x - r)*y), x)` is a
+logarithm or arctangent likewise. A denominator factor the ansatz can't handle (a
+quadratic not dividing `Q`) is handled when `Q` has no linear term, by the
+substitutions `t = x/y` and `w = y`, which make it rational.
 
-A quadratic that is a square, `L^2/(4*a)` with `L` linear, has a root that is
-`L*k`, `k` constant on each side of the root of `L`: the integrand is then rational in
-`x`, and the answer is written in `y/L` for `k`.
+If the quadratic is a square, `L^2/(4*a)` with `L` linear, its root is `L*k` with `k`
+constant on each side of the root of `L`. The integrand is then rational in `x`, and
+the answer is written with `y/L` for `k`.
 """
 
 from __future__ import annotations
@@ -53,9 +52,8 @@ __all__ = ["radical_antiderivative"]
 
 
 def radical_antiderivative(integrand: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
-    """An antiderivative of a rational function of the variable and the roots the
-    module docstring lists, or None where the integrand is not one or the method does
-    not reach it."""
+    """An antiderivative of a rational function of the variable and the roots listed in
+    the module docstring, or None if the integrand isn't one or the method fails."""
     try:
         return _antiderivative(integrand, variable)
     except Exception:
@@ -90,11 +88,11 @@ def _over_a_square(
 ) -> sp.Basic | None:
     """The integral under the square root `y` of a quadratic that is `linear^2/(4*a)`.
 
-    `k = y/linear` is constant on each side of the root of `linear`, so the integrand
-    is a rational function of `x` with `k` a parameter, `y` being `k*linear`. Its
-    antiderivative, `G0(x) + k*G1(x)` once `k^2` is written `1/(4*a)`, holds on each
-    side, and `G1` is taken to vanish at the root where it is finite there, so that
-    the answer is continuous across it where the integrand is integrable."""
+    `k = y/linear` is constant on each side of the root of `linear`, so with `y =
+    k*linear` the integrand is rational in `x` with parameter `k`. Its antiderivative,
+    `G0(x) + k*G1(x)` after writing `k^2` as `1/(4*a)`, holds on each side. `G1` is
+    shifted to vanish at the root where it is finite there, so the answer is
+    continuous across it where the integrand is integrable."""
     k = sp.Dummy("k")
     a = sp.Poly(radicand, x).LC()
     written = integrand.replace(
@@ -121,9 +119,9 @@ def _over_a_square(
 def _by_a_fractional_root(
     integrand: sp.Basic, x: sp.Basic, radicand: sp.Basic, order: int
 ) -> sp.Basic | None:
-    """The integral over `t = radicand^(1/order)`, the radicand linear or a quotient
-    of linear polynomials, `(f*x + g)/(a*x + b)`, so that `x` is rational in `t`.
-    Each power `radicand^(k/order)` is `t^k`."""
+    """The integral via `t = radicand^(1/order)`, for a radicand that is linear or a
+    quotient of linear polynomials `(f*x + g)/(a*x + b)`, so `x` is rational in `t`.
+    Each power `radicand^(k/order)` becomes `t^k`."""
     numerator, denominator = sp.fraction(sp.cancel(sp.together(radicand)))
     if not all(
         part.is_polynomial(x) and sp.degree(part, x) <= 1
@@ -148,12 +146,11 @@ def _by_two_linear_roots(
     integrand: sp.Basic, x: sp.Basic, roots: set[sp.Basic]
 ) -> sp.Basic | None:
     """The integral of a rational function of `x` and the square roots `r1`, `r2` of
-    two linear polynomials `L1`, `L2`, over `t = r1/r2`, where it is rational in `x`,
-    `t` and `r2^2`.
+    linear `L1`, `L2`, via `t = r1/r2`, when it is rational in `x`, `t` and `r2^2`.
 
-    `t^2 = L1/L2`, so `x` is rational in `t`, and each power `r1^k` is `t^k*r2^k`. An
-    integrand real where the roots are, `L1/L2` positive, has `t` positive there: both
-    roots real, or both imaginary, `t = SQRT(-L1)/SQRT(-L2)`."""
+    `t^2 = L1/L2`, so `x` is rational in `t`, and `r1^k` is `t^k*r2^k`. Where the
+    integrand is real, `L1/L2` is positive and so is `t`: either both roots are real,
+    or both imaginary with `t = SQRT(-L1)/SQRT(-L2)`."""
     if any(power.exp.q != 2 for power in roots):
         return None
     first, second = sorted({power.base for power in roots}, key=sp.default_sort_key)
@@ -183,7 +180,7 @@ def _by_two_linear_roots(
 
 
 def _linear_coefficients(linear: sp.Basic, x: sp.Basic) -> tuple[sp.Basic, sp.Basic]:
-    """The coefficients of `x` and of 1 in a polynomial of degree at most one."""
+    """The coefficients of `x` and 1 in a polynomial of degree at most one."""
     poly = sp.Poly(linear, x)
     return poly.coeff_monomial(x), poly.coeff_monomial(1)
 
@@ -197,8 +194,8 @@ def _over_the_substitution(
     power: sp.Basic,
     root: sp.Basic,
 ) -> sp.Basic | None:
-    """The integral of `written`, rational in `x` and `t`, over the substitution
-    `x = in_t`, `t` being `root`, whose `order`-th power is `power`."""
+    """The integral of `written`, rational in `x` and `t`, via the substitution `x =
+    in_t`, where `t` stands for `root` and `t^order` for `power`."""
     transformed = sp.cancel(written.subs(x, in_t) * sp.diff(in_t, t))
     if transformed.has(x) or transformed.is_rational_function(t) is not True:
         return None
@@ -217,10 +214,10 @@ def _over_the_substitution(
 def _in_the_root(
     algebraic: sp.Basic, t: sp.Basic, power: sp.Basic, order: int, root: sp.Basic
 ) -> sp.Basic:
-    """The algebraic part of an antiderivative in `t`, the root, written back in `x`,
-    `power` being `t^order` in `x`: under a square root, as `E(power) + O(power)*t`
-    with each part factored, `2*(a*x + b)^(3/2)*(3*a*x - 2*b)/(15*a^2)` rather than a
-    sum of powers of the root."""
+    """The algebraic part of an antiderivative in `t` (the root), written back in `x`,
+    where `power` is `t^order` in `x`. For a square root it is written as `E(power) +
+    O(power)*t` with each part factored: `2*(a*x + b)^(3/2)*(3*a*x - 2*b)/(15*a^2)`
+    rather than a sum of powers of the root."""
     if order != 2:
         return sp.Add(
             *(sp.factor(term.subs(t, root)) for term in sp.Add.make_args(algebraic))
@@ -233,8 +230,8 @@ def _in_the_root(
 
 
 def _vanishing_at(value: sp.Basic, x: sp.Basic, point: sp.Basic) -> sp.Basic:
-    """The value less its limit at the point, where that is finite, with each
-    logarithm `LN(A)` that is finite there written `LN(A/A(point))`."""
+    """The value minus its limit at the point, if finite, with each logarithm `LN(A)`
+    finite there rewritten as `LN(A/A(point))`."""
     infinite = (sp.oo, -sp.oo, sp.zoo, sp.nan, sp.Limit)
     at_the_point = sp.limit(value, x, point)
     if at_the_point.is_finite is False or at_the_point.has(*infinite):
@@ -250,8 +247,8 @@ def _vanishing_at(value: sp.Basic, x: sp.Basic, point: sp.Basic) -> sp.Basic:
 def _by_reduction(
     integrand: sp.Basic, x: sp.Basic, radicand: sp.Basic
 ) -> sp.Basic | None:
-    """The integral of `R1(x) + R2(x)*y` with `y` the square root of the quadratic, by
-    the ansatz the module docstring describes, where `R1` is zero."""
+    """The integral of `R1(x) + R2(x)*y`, `y` being the square root of the quadratic,
+    by the ansatz in the module docstring, when `R1` is zero."""
     y = sp.Dummy("y")
     quadratic = sp.expand(radicand)
     written = integrand.replace(
@@ -284,7 +281,7 @@ def _halves(poly: sp.Poly) -> tuple[sp.Basic, sp.Basic]:
 def _reduced(
     rational: sp.Basic, x: sp.Basic, quadratic: sp.Basic, root: sp.Basic
 ) -> sp.Basic | None:
-    """`INT(rational/root, x)`, the root the square root of the quadratic, as
+    """`INT(rational/root, x)`, where root is the square root of the quadratic, as
     `A*root` plus multiples of the integrals over linear factors and of `1/root`."""
     numerator, denominator = sp.fraction(rational)
     numerator, denominator = sp.Poly(numerator, x), sp.Poly(denominator, x)
@@ -342,18 +339,18 @@ def _reduced(
 def _over_a_factor_and_the_root(
     factor: sp.Basic, x: sp.Basic, quadratic: sp.Basic, root: sp.Basic
 ) -> sp.Basic | None:
-    """`INT(1/(factor*root), x)`, the factor `l*(x - r)` linear and not dividing the
-    quadratic, the root its square root, or None where the quadratic is a square.
+    """`INT(1/(factor*root), x)` for a linear factor `l*(x - r)` not dividing the
+    quadratic, root being its square root, or None if the quadratic is a square.
 
     With `u = x - r`, the quadratic is `a*u^2 + p*u + s`, `s = Q(r)` nonzero and `p =
     Q'(r)`. The integral is `LN((2*w*root - 2*s - p*u)/u)/(l*w)` for any `w` with
     `w^2 = s`, or, where `s` is `-w^2`, the real `ATAN((2*s + p*u)/(2*w*root))/(l*w)`,
-    which is `ATAN(root/w)/(l*w)` plus a constant where `p` is zero. Each
-    differentiates back for either sign of `w`. On an interval where the quadratic is
-    positive, `u` keeps its sign, and the logarithm is continuous: for a real `w` its
-    argument is real and never zero, its product with `2*w*root + 2*s + p*u` being
-    `(4*a*s - p^2)*u^2`, and for an imaginary `w` the argument's imaginary part
-    `2*w*root/u` keeps its sign, so the cut is never crossed."""
+    which is `ATAN(root/w)/(l*w)` plus a constant when `p` is zero. Each differentiates
+    back for either sign of `w`. Where the quadratic is positive, `u` keeps its sign
+    and the logarithm is continuous: for real `w` its argument is real and nonzero
+    (its product with `2*w*root + 2*s + p*u` is `(4*a*s - p^2)*u^2`), and for imaginary
+    `w` the argument's imaginary part `2*w*root/u` keeps its sign, so the cut is never
+    crossed."""
     slope, offset = sp.Poly(factor, x).all_coeffs()
     r = -offset / slope
     q = sp.Poly(quadratic, x)
@@ -378,17 +375,16 @@ def _over_a_factor_and_the_root(
 def _by_substitution(
     rational: sp.Basic, x: sp.Basic, quadratic: sp.Basic, root: sp.Basic
 ) -> sp.Basic | None:
-    """`INT(rational/root, x)` over a quadratic with no linear term, `f*x^2 + g`, as
-    a rational integral, or None.
+    """`INT(rational/root, x)` for a quadratic without a linear term, `f*x^2 + g`, as
+    rational integrals, or None.
 
-    The rational function is split into its even part `E(x^2)` and odd part
-    `x*O(x^2)`. Over `t = x/root`, with `x^2 = g*t^2/(1 - f*t^2)` and `dx/root =
-    dt/(1 - f*t^2)`, the even part is rational in `t`; over `w = root`, with `x*dx/root
-    = dw/f`, so is the odd part in `w`. `t` is monotonic on every interval where the
-    quadratic is positive, its derivative being `g/root^3`, and `w` is positive there,
-    so what the rational integrals give holds on each such interval. This takes
-    the denominators the ansatz has no term for, `INT(1/((a*x^2 + b)*SQRT(f*x^2 +
-    g)), x)`.
+    The rational function is split into an even part `E(x^2)` and odd part
+    `x*O(x^2)`. With `t = x/root`, `x^2 = g*t^2/(1 - f*t^2)` and `dx/root = dt/(1 -
+    f*t^2)`, so the even part is rational in `t`; with `w = root`, `x*dx/root = dw/f`,
+    so the odd part is rational in `w`. Where the quadratic is positive, `t` is
+    monotonic (its derivative is `g/root^3`) and `w` positive, so the results hold on
+    each such interval. This handles denominators the ansatz can't, like
+    `INT(1/((a*x^2 + b)*SQRT(f*x^2 + g)), x)`.
     """
     f, middle, g = sp.Poly(quadratic, x).all_coeffs()
     if middle != 0:
@@ -421,8 +417,8 @@ def _by_substitution(
 def _times_the_root(
     rational: sp.Basic, x: sp.Basic, quadratic: sp.Basic, root: sp.Basic
 ) -> sp.Basic:
-    """`rational*root`, with each power of the quadratic in the denominator taken
-    into the root's exponent: `x/SQRT(x^2 - a^2)` rather than `x*SQRT(x^2 -
+    """`rational*root`, with powers of the quadratic in the numerator and denominator
+    folded into the root's exponent: `x/SQRT(x^2 - a^2)` rather than `x*SQRT(x^2 -
     a^2)/(x^2 - a^2)`."""
     numerator, denominator = sp.fraction(rational)
     q = sp.Poly(quadratic, x)
@@ -447,8 +443,8 @@ def _without_powers_of(poly: sp.Poly, q: sp.Poly) -> tuple[sp.Poly, int]:
 def _over_the_root(
     quadratic: sp.Basic, x: sp.Basic, root: sp.Basic
 ) -> sp.Basic | None:
-    """`INT(1/root, x)`, the root the square root of the quadratic, or None where the
-    quadratic is a square, and the root its absolute value."""
+    """`INT(1/root, x)`, root being the square root of the quadratic, or None if the
+    quadratic is a square (making the root an absolute value)."""
     a, b, c = sp.Poly(quadratic, x).all_coeffs()
     if sp.cancel(b**2 - 4 * a * c) == 0:
         return None

@@ -1,11 +1,10 @@
-"""How the Simplify tests read and simplify a line.
+"""Shared helpers for tests that check what Simplify makes of a line.
 
-The files that test what Simplify makes of a line - `test_simplify.py` and its
-siblings, `test_integrate.py`, `test_calculus.py`, `test_matrices.py`, `test_logic.py`,
-`test_approximate.py` and `test_functions.py` - all state their cases the same way: the
-author's text in, the worksheet's text out. `simp` is that round trip, `declaring` and
-`declared` are the parse state and the context a case is read in, and the contexts here
-are the ones more than one of those files asks a case under.
+`test_simplify.py` and its siblings, `test_integrate.py`, `test_calculus.py`,
+`test_matrices.py`, `test_logic.py`, `test_approximate.py` and `test_functions.py` all
+state cases as input text and the expected worksheet text. `simp` does that round trip;
+`declaring` and `declared` build the parse state and context; the contexts defined here
+are the ones several of those files use.
 """
 
 from __future__ import annotations
@@ -25,11 +24,10 @@ def parse(text, state=None):
 
 
 def declaring(*names):
-    """A parse state in which each of `names` is a function, as defining it makes it.
+    """Return a parse state in which each of `names` is declared a function.
 
-    A name nothing defines is no function - before a parenthesis it is a product, of
-    its letters in Character mode - so a case about a function, with a body or
-    without one as `F(x) :=` leaves it, reads its text with the function declared.
+    An undeclared name followed by a parenthesis parses as a product (of its letters, in
+    Character mode), so cases about functions must declare them first.
     """
     state = ParseState()
     for name in names:
@@ -38,10 +36,10 @@ def declaring(*names):
 
 
 def simp(text, context=None, state=None):
-    """`text` simplified, as the worksheet would show it.
+    """Simplify `text` and return it as the worksheet would show it.
 
-    Read, unless a state is given, with the functions the context defines declared,
-    which is how the session that defined them reads a line.
+    Unless `state` is given, the text is parsed with the context's functions declared,
+    as in the session that defined them.
     """
     context = context or Context()
     state = state or declaring(*context.functions)
@@ -49,7 +47,7 @@ def simp(text, context=None, state=None):
 
 
 def declared(*declarations, **settings):
-    """A context whose domains are what these declarations say."""
+    """Return a context with the domains given by these declarations."""
     domains = {}
     for declaration in declarations:
         name, domain = domain_of_node(parse(declaration))

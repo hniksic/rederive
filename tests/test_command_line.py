@@ -1,10 +1,8 @@
-"""Files named on the command line, and how each is decided to be read.
+"""Files named on the command line, and how the kind of each is decided.
 
-The original took them after the program name and said what each was with a
-slash and a letter behind it - `DERIVE NUMBER/U PLOT2D/M`. A slash cannot mean
-that here, so the letters are switches in front of the name; what they choose
-between, and what an extension chooses when nothing else does, is the
-original's.
+The original marked each file's kind with a slash suffix, as in `DERIVE NUMBER/U
+PLOT2D/M`. Here the letters are switches before the name instead, but their meanings,
+and the default kind implied by an extension, follow the original.
 """
 
 import pytest
@@ -23,7 +21,7 @@ def session():
 
 @pytest.fixture
 def files(tmp_path, monkeypatch):
-    """A directory of one file of each kind, and the shell sitting in it."""
+    """A directory with one file of each kind, made the current directory."""
     (tmp_path / "work.mth").write_text("x + 1\n2 x\n", encoding="utf-8")
     (tmp_path / "more.mth").write_text("y\n", encoding="utf-8")
     (tmp_path / "lib.mth").write_text("SQ(u) := u^2\n", encoding="utf-8")
@@ -35,7 +33,7 @@ def files(tmp_path, monkeypatch):
 
 
 def kinds(arguments):
-    """What each name on a command line is taken to be."""
+    """The kind and file each command-line name resolves to."""
     return [(kind, path.name) for kind, path in named(arguments)]
 
 
@@ -48,8 +46,7 @@ def test_an_extension_says_what_a_file_is(files):
 
 
 def test_a_name_without_one_is_looked_for_under_each(files):
-    # The manual's own example: `DERIVE ARITH` runs ARITH.DMO, there being no
-    # ARITH.MTH beside it.
+    # The manual's example: `DERIVE ARITH` runs ARITH.DMO, since there is no ARITH.MTH.
     assert kinds(["arith"]) == [("demo", "arith.dmo")]
     assert kinds(["work"]) == [("math", "work.mth")]
     assert kinds(["nums"]) == [("data", "nums.dat")]
@@ -60,8 +57,7 @@ def test_a_name_that_is_nowhere_is_reported_as_the_likeliest_file(files):
 
 
 def test_a_switch_says_what_the_extension_would_not(files):
-    # A utility file is a math file read a different way, so the switch is the
-    # only thing that can say it is one.
+    # A utility file is a math file read differently, so only the switch can mark it.
     assert kinds(["-u", "lib.mth"]) == [("utility", "lib.mth")]
     assert kinds(["-t", "work.mth"]) == [("data", "work.mth")]
 
@@ -98,7 +94,7 @@ def test_the_files_are_read_into_the_session(session, files):
 
 def test_a_second_math_file_adds_to_the_first(session, files):
     read(session, named(["work", "more"]))
-    # Merged rather than loaded, so naming two does not leave only the last.
+    # Merged rather than loaded, so the second doesn't replace the first.
     assert [entry.text for entry in session.entries] == ["x+1", "2*x", "y"]
 
 
@@ -116,8 +112,7 @@ def test_a_data_file_becomes_a_matrix(session, files):
 def test_a_demonstration_is_left_for_the_screen_to_run(session, files):
     demo, _ = read(session, named(["arith"]))
     assert demo is not None and demo.name == "arith.dmo"
-    # It is not read here: a demonstration is a session to be driven rather
-    # than a file to be taken in.
+    # Not read here: a demonstration drives the session rather than being loaded.
     assert session.entries == []
 
 
@@ -148,7 +143,7 @@ def test_one_such_line_is_counted_in_the_singular(session, files, tmp_path):
 
 
 def opened(arguments):
-    """The app as the command line leaves it, before it is run."""
+    """The app as set up by the command line, before it runs."""
     session = Session()
     demo, opening = read(session, named(arguments))
     return RederiveApp(session, demo=demo, opening=opening)
@@ -188,11 +183,11 @@ async def test_files_read_first_are_there_for_the_demonstration_to_use(files):
 
 
 def test_provenance_names_the_program_and_what_it_runs_on():
-    """One `name version` per line, which is the form the build workflow reads.
+    """One `name version` per line, the format the build workflow reads.
 
-    A release carries its own interpreter, its own sympy and its own Qt, so these
-    lines are the only account of what is inside a binary; the workflow checks the
-    middle four against `.python-version` and `uv.lock`.
+    A release bundles its own interpreter, sympy and Qt, so this is the only record of
+    what a binary contains; the workflow checks the middle four against
+    `.python-version` and `uv.lock`.
     """
     reported = dict(line.split(maxsplit=1) for line in provenance().splitlines())
     assert reported["rederive"] == __version__

@@ -1,24 +1,19 @@
-"""The plot windows a browser has: panes in the page, and no process behind them.
+"""Browser plot windows: panes in the page, with no host process behind them.
 
-The app talks to plotting through a handful of calls - `add`, `prefer`,
-`describe`, `release`, `shutdown` and the callback events arrive on - and on the
-desktop the object behind them is a proxy for a child process holding Qt. A
-browser has no such process and needs none: the windows are panes in the page
-this app is already drawing on, so what those calls reach is the plot session
-itself, in this interpreter, with nothing between them and it.
+The app plots through a few calls (`add`, `prefer`, `describe`, `release`, `shutdown`
+and the events callback). On the desktop these go to a proxy for a child process running
+Qt. In the browser the windows are panes in the same page, so the calls go directly to
+a `PlotSession` in this interpreter.
 
-That is the whole of the browser's answer to the plot host. `PlotSession` is the
-same class the desktop runs in its host process, holding the same window
-registry and the same keyed job queue; what differs is the backend it opens
-windows on and the executor it samples through. So a browser and a desktop route
-a plot, pick a receiver and apply a preference by running the same code, and the
-two implementations meet only at the two protocols stage 4 drew.
+`PlotSession` is the same class the desktop host process runs, with the same window
+registry and keyed job queue; only the backend and the sampling executor differ. So
+routing a plot, picking a receiver and applying preferences run the same code on both
+platforms.
 
-`add` is a coroutine because plotting is awaited. On the desktop the wait is a
-thread blocking on the host's acknowledgement; here the answer is known before
-the call returns, and the coroutine is what keeps one shape in the app for both
-worlds. A refusal is raised as `PlotError`, which is what a host that will not
-start already raises and what the app already prints behind `Plot: `.
+`add` is a coroutine because the app awaits plotting. On the desktop it waits for the
+host's acknowledgement; here the answer is ready immediately, but the coroutine keeps
+one interface for both. Refusals raise `PlotError`, as a host that fails to start does,
+and the app prints it after `Plot: `.
 """
 
 from __future__ import annotations
@@ -41,22 +36,20 @@ class WebPlots:
     def __init__(self, page: Any, solids: Any, engine: Any) -> None:
         executor = WorkerExecutor(engine)
         backend = WebBackend(page, solids, engine)
-        # The one thing either drawing module says that is about no pane in
-        # particular: a sampling has been drawn. It goes to the executor, which
-        # is what lets go of the request in flight and sends the next one. Both
-        # modules are told, because a request in flight may be a curve's or a
-        # surface's and the queue is one queue.
+        # Both drawing modules report "landed" when a sampling has been drawn. The
+        # executor then releases the request in flight and sends the next one. Both are
+        # wired because the single queue holds both curve and surface requests.
         page.attend(backend.handed({"landed": executor.landed}))
         solids.attend(backend.handed({"landed": executor.landed}))
-        # A terminated worker takes its sampling with it, and the executor is
-        # the side that would otherwise wait forever for the answer.
+        # A terminated worker loses its sampling; without this the executor would wait
+        # forever for the answer.
         engine.lost = executor.lost
         self.session = PlotSession(backend, executor)
 
     @property
     def events(self) -> Callable[[Event], None] | None:
-        """Where asynchronous events go - a pane closed, a curve that would not
-        evaluate, a point sent home. The app assigns it, as it does on a proxy."""
+        """Listener for asynchronous events, such as a pane closing, a curve failing to
+        evaluate, or a point being sent home. The app assigns it, as on a proxy."""
         return self.session.events
 
     @events.setter
@@ -64,11 +57,10 @@ class WebPlots:
         self.session.events = listener
 
     async def add(self, request: protocol.Add) -> protocol.Placed:
-        """Draw one expression, and say which pane took it.
+        """Draw one expression and report which pane took it.
 
-        The refusals are the session's own where it has one, and this call's
-        where a window could not be built at all. Both come out as the one
-        sentence the message line prints.
+        A refusal by the session or a failure to build a window both raise `PlotError`
+        with the sentence the message line prints.
         """
         try:
             reply = self.session.add(request)
@@ -83,11 +75,9 @@ class WebPlots:
         self.session.prefer(preferences)
 
     async def release(self, finished: bool = False) -> None:
-        """The demonstration is over, and its pane goes where it ran to its end.
+        """End the demonstration, leaving its pane where it finished.
 
-        A coroutine because the proxy's is one, and its is one because a host
-        is a process to wait for. Here the answer is known before the call
-        returns, exactly as `add`'s is.
+        A coroutine to match the proxy, which must wait for the host process.
         """
         self.session.release(finished)
 
@@ -96,5 +86,5 @@ class WebPlots:
         return self.session.describe().windows
 
     def shutdown(self) -> None:
-        """Take every pane off the page: the user is leaving the program."""
+        """Remove every pane from the page when the user quits."""
         self.session.shutdown()

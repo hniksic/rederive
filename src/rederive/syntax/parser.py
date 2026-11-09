@@ -1,24 +1,21 @@
 """Recursive descent with precedence climbing.
 
-Two of the productions are not ordinary precedence levels and are worth
-naming here:
+Some productions aren't ordinary precedence levels:
 
-`operand` is what a bare application consumes - a `SUB` chain over
-applications, optionally signed. It is looser than `!` and tighter than `^`, so
-`SIN x!` is `SIN(x)!` and `SIN x^2` is `SIN(x)^2`.
+`operand` is what a bare application consumes: an optionally signed `SUB` chain over
+applications. It binds looser than `!` and tighter than `^`, so `SIN x!` is `SIN(x)!`
+and `SIN x^2` is `SIN(x)^2`.
 
-`:=` is settled in `primary`: a name immediately followed by `:=` becomes an
-assignment before any surrounding operator is considered, which is what makes
-`"inapplicable"=a_:=F(...)` a relation whose right operand is an assignment.
+`:=` is handled in `primary`: a name followed by `:=` becomes an assignment before any
+surrounding operator is considered, so `"inapplicable"=a_:=F(...)` is a relation whose
+right operand is an assignment.
 
-`sum` and `product` build one node per run rather than a spine of pairs,
-because that is what the original builds: Transfer Save keeps the parentheses
-of `(a-b)+c` and `(a*b)*c`, which it would drop if they were the same tree as
-`a-b+c` and `a*b*c`, and the selection highlight gives each of those runs
-three operands. A run carries one operator per gap, so `a-b+c` holds `b` bare
-and its sign among the operators; the highlight covers `b`, not `- b`. `/` and
-the dot product are genuinely binary and close a run - `(a*b)/c` saves as
-`a*b/c` - which is why `a*b/c*d` is a product of `a·b/c` and `d`.
+`sum` and `product` build one node per run rather than nested pairs, as the original
+does. This lets Transfer Save keep the parentheses of `(a-b)+c` and `(a*b)*c`, and makes
+the selection highlight see three operands in `a-b+c`. A run stores one operator per
+gap, so in `a-b+c` the operand is `b` and `-` is among the operators; the highlight
+covers `b`, not `- b`. `/` and the dot product are binary and close a run (`(a*b)/c`
+saves as `a*b/c`), so `a*b/c*d` is a product of `a·b/c` and `d`.
 """
 
 from __future__ import annotations
@@ -50,9 +47,8 @@ _SIGNS = ("-", "+", "+-")
 _POSTFIX = ("!", "%", "`")
 _RELATIONS = ("=", "/=", "<", "<=", ">", ">=")
 _CLOSERS = (",", "]", ")")
-#: The values a setting takes, indexed by their folded spelling. `NORMAL` and
-#: `EXPAND` are built-in function names as well, so a name met with nothing to
-#: apply to is looked up here before it is read as an application.
+#: Setting values by folded spelling. `NORMAL` and `EXPAND` are also built-in functions,
+#: so a function name with nothing to apply to is looked up here first.
 _SETTING_VALUES = {fold(value): value for value in names.SETTING_VALUES}
 _LOGICAL_KINDS = {
     "OR": Kind.OR,
@@ -66,9 +62,8 @@ _LOGICAL_KINDS = {
 class _Parsed:
     """A node plus the extent of the text that produced it.
 
-    `node.start`/`node.end` is the highlight span, which excludes enclosing
-    parentheses; `lo`/`hi` include them, so an enclosing node's span reaches
-    over the parentheses of its operands.
+    `node.start`/`node.end` is the highlight span, which excludes enclosing parentheses;
+    `lo`/`hi` include them, so an enclosing node's span covers its operands' parentheses.
     """
 
     node: Node
@@ -81,7 +76,7 @@ class _Parsed:
 
 
 class Parser:
-    """One expression's worth of parsing."""
+    """Parser for a single expression."""
 
     def __init__(self, lexer: Lexer) -> None:
         self.lexer = lexer
@@ -120,8 +115,8 @@ class Parser:
         if token.kind is not TokenKind.OP:
             return False
         if token.value == "|":
-            # A `|` met where an operator could continue the expression closes
-            # the innermost open bar rather than opening a new one.
+            # Where an operator could continue the expression, `|` closes the innermost
+            # open bar rather than opening a new one.
             return self.bars == 0
         return token.value in ("(", "[", "?")
 
@@ -148,7 +143,7 @@ class Parser:
         return self.implication()
 
     def implication(self) -> _Parsed:
-        """`IMP` is the one logical operator that folds left."""
+        """`IMP`, the only left-associative logical operator."""
         left = self.exclusive_or()
         while _is_op(self.peek(), "IMP"):
             self.advance()
@@ -166,10 +161,9 @@ class Parser:
         return self._logical("AND", self.negation)
 
     def _logical(self, word: str, tighter) -> _Parsed:
-        """`AND`, `OR` and `XOR`, each nesting to the right.
+        """`AND`, `OR` and `XOR`, which are right-associative.
 
-        `a AND b AND c` is `a AND (b AND c)`, which is what the original
-        builds and what its own saved form spells out.
+        `a AND b AND c` is `a AND (b AND c)`, as in the original and its saved form.
         """
         left = tighter()
         if not _is_op(self.peek(), word):
@@ -190,10 +184,7 @@ class Parser:
         return self.relation()
 
     def relation(self) -> _Parsed:
-        """A relation is binary, and a chain of them nests to the left.
-
-        `a=b<c` is `(a=b)<c`: one operator per node, two operands each.
-        """
+        """Binary relations, left-associative: `a=b<c` is `(a=b)<c`."""
         left = self.sum()
         while True:
             token = self.peek()
@@ -207,7 +198,7 @@ class Parser:
         return left
 
     def sum(self) -> _Parsed:
-        """A run of `+` and `-` over signed terms, held as one node."""
+        """A run of `+` and `-` over signed terms, as one node."""
         terms = [self.signed()]
         gaps: list[tuple[str, str]] = []
         while _is_op(self.peek(), "+", "-"):
@@ -217,20 +208,19 @@ class Parser:
         return _run(Kind.SUM, terms, gaps)
 
     def signed(self) -> _Parsed:
-        """A sign over a whole product: `-x/y*z` is `-(x/y·z)`.
+        """A sign applying to a whole product: `-x/y*z` is `-(x/y·z)`.
 
-        The ladder is `^` over `*` `/` `.` and juxtaposition, over a unary
-        sign, over binary `+` and `-`.
+        From tightest: `^`, then `*` `/` `.` and juxtaposition, then unary sign, then
+        binary `+` and `-`.
         """
         return self._sign(self.signed) or self.product()
 
     def product(self) -> _Parsed:
-        """`*`, `/`, the dot product, and juxtaposition, all left to right.
+        """`*`, `/`, the dot product, and juxtaposition, all left-associative.
 
-        A run of `*` and juxtaposition is one node; `/` and the dot product
-        are binary and close the run, becoming its left operand. `a*b/c*d` is
-        therefore a product of `a·b/c` and `d`, which is how the original
-        offers it to the cursor.
+        A run of `*` and juxtaposition is one node; `/` and the dot product are binary
+        and take the run as their left operand. So `a*b/c*d` is a product of `a·b/c` and
+        `d`, matching how the original's cursor selects it.
         """
         factors = [self.power()]
         gaps: list[tuple[str, str]] = []
@@ -259,19 +249,14 @@ class Parser:
         return _run(Kind.PRODUCT, factors, gaps)
 
     def factor(self) -> _Parsed:
-        """A sign is still accepted where a factor is expected.
+        """A factor, optionally signed.
 
-        There it governs that factor alone and no more of the product, so
-        `a*-b*c` is `(a·(-b))·c`.
+        The sign applies only to the factor, so `a*-b*c` is `(a·(-b))·c`.
         """
         return self._sign(self.factor) or self.power()
 
     def _sign(self, inner) -> _Parsed | None:
-        """`-u`, `+u` or `±u`, with `inner` parsing the `u`.
-
-        `None` when no sign is there, leaving the caller to parse whatever
-        binds tighter.
-        """
+        """`-u`, `+u` or `±u`, with `inner` parsing the `u`; None if there's no sign."""
         token = self.peek()
         if not _is_op(token, *_SIGNS):
             return None
@@ -292,21 +277,17 @@ class Parser:
         token = self.peek()
         if _is_op(token, "^"):
             self.advance()
-            # Right-associative, and the exponent may carry its own sign,
-            # which reaches no further than the exponent: `a^-b*c` is
-            # `(a^(-b))·c`.
+            # Right-associative. The exponent may have its own sign, which applies only
+            # to the exponent: `a^-b*c` is `(a^(-b))·c`.
             return _combine(Kind.BINOP, base, self.factor(), "^", token.surface)
         return base
 
     def subscripted(self) -> _Parsed:
-        """`u SUB i`, whose index reaches no further than one application.
+        """`u SUB i`, where the index is a single application.
 
-        A postfix operator written after a subscript applies to the element and
-        not to the index: `ODE_APPR.MTH` writes a Taylor coefficient's
-        denominator `v_ SUB 1!`, meaning the factorial of the first element, and
-        the answer the manual prints for that file is the answer that reading
-        gives. So the index is one application and the postfix run belongs to
-        the whole subscript.
+        A postfix operator after a subscript applies to the element, not the index:
+        `ODE_APPR.MTH` writes `v_ SUB 1!` for the factorial of the first element, which
+        is the reading that reproduces the manual's answer.
         """
         left = self.postfix()
         while _is_op(self.peek(), "SUB"):
@@ -320,7 +301,7 @@ class Parser:
         return self.postfixed(self.application())
 
     def postfixed(self, left: _Parsed) -> _Parsed:
-        """`left` under the run of postfix operators written after it."""
+        """`left` with any following postfix operators applied."""
         while _is_op(self.peek(), *_POSTFIX):
             token = self.advance()
             left = _Parsed(
@@ -361,11 +342,10 @@ class Parser:
         return _Parsed(node, name.start, close.end)
 
     def arguments(self) -> list[_Parsed]:
-        """A comma-separated argument list, which may not be empty.
+        """A non-empty comma-separated argument list.
 
-        Arity is the engine's business: many built-ins are variadic, and
-        calling a user function with fewer arguments than it has parameters is
-        meaningful.
+        Arity is checked by the engine: many built-ins are variadic, and calling a user
+        function with fewer arguments than parameters is meaningful.
         """
         if _is_op(self.peek(), ")"):
             raise self.error(self.peek().start, "an argument")
@@ -378,10 +358,8 @@ class Parser:
     def argument_list_on_a_variable(self, name: Token, opening: Token) -> _Parsed | None:
         """`NAME(...)` where `NAME` is not a known function.
 
-        With exactly one argument this is a product, which the ordinary
-        juxtaposition rule already builds, so we decline it here and let the
-        product level have it. Anything else is a syntax error, reported once
-        the whole list has been consumed.
+        With one argument this is a product, so return None and let juxtaposition handle
+        it. Anything else is a syntax error, raised after consuming the whole list.
         """
         count = self.lexer.count_arguments(opening.start)
         if count is None or count == 1:
@@ -394,13 +372,12 @@ class Parser:
         raise self.error(self.pos, "a function name")
 
     def setting_keyword(self, token: Token, following: Token) -> _Parsed | None:
-        """A setting's value where the function of that name could not stand.
+        """A setting value spelled like a function, where the function can't stand.
 
-        `Normal` and `Expand` are values Options takes and built-in functions
-        as well. Given an argument list they are the function; given nothing to
-        apply to they are the value, which is an operand in its own right. The
-        original accepts `DisplayFormat := Normal` and a bare `Normal`, and
-        rejects a bare `SIN`, which is exactly this rule.
+        `Normal` and `Expand` are both setting values and built-in functions. With
+        something to apply to they are the function; otherwise they are the value. The
+        original likewise accepts `DisplayFormat := Normal` and a bare `Normal`, but
+        rejects a bare `SIN`.
         """
         if self.starts_operand(following):
             return None
@@ -413,7 +390,7 @@ class Parser:
         return _Parsed.of(Node(Kind.NAME, token.start, token.end, (), spelled, surface))
 
     def bare_application(self, name: Token) -> _Parsed:
-        """`SIN x`: exactly one operand, and `^` and `!` bind outside it."""
+        """`SIN x`: exactly one operand, with `^` and `!` binding outside it."""
         self.advance()
         token = self.peek()
         if not self.starts_operand(token):
@@ -425,10 +402,9 @@ class Parser:
         )
 
     def function_power(self, name: Token) -> _Parsed:
-        """`SQRT^3 25`: apply, then raise.
+        """`SQRT^3 25`: apply, then raise to the power.
 
-        The exponent attaches to the name, so `SIN^-1 x` is the reciprocal
-        `1/SIN(x)` and not `ASIN(x)`.
+        So `SIN^-1 x` is `1/SIN(x)`, not `ASIN(x)`.
         """
         self.advance()
         self.expect("^", "'^'")
@@ -503,7 +479,7 @@ class Parser:
         return _Parsed(inner.node, opening.start, closing.end)
 
     def vector(self, opening: Token) -> _Parsed:
-        """A vector literal. Brackets never group, so this is the only `[`."""
+        """A vector literal; brackets are never used for grouping."""
         self.advance()
         elements: list[_Parsed] = []
         if not _is_op(self.peek(), "]"):
@@ -552,12 +528,10 @@ class Parser:
     def function_definition(self, name: Token) -> _Parsed:
         """`F(x,y) := body`, or `F(x,y):=` for an arbitrary function.
 
-        The parameters are registered as known variables for the length of the
-        body and no longer. Registering them is unavoidable, since `F(mx,mf) :=
-        mx+mf` cannot be lexed otherwise: in Character mode `mx` is `m*x` until
-        something declares it. Keeping them afterwards is a leak - the session
-        would gain a variable the user never asked for, and after `FF(a):=a^2`
-        a later `A(t)` would read as the product `a*t` rather than as a call.
+        Parameters are registered as variables only while the body is parsed. They must
+        be registered, because in Character mode `F(mx,mf) := mx+mf` would otherwise lex
+        `mx` as `m*x`. They must not persist, or after `FF(a):=a^2` a later `A(t)` would
+        read as the product `a*t` instead of a call.
         """
         self.advance()
         self.expect("(", "'('")
@@ -599,13 +573,11 @@ class Parser:
         return _Parsed(node, name.start, end)
 
     def parameter(self, shadowed: list[NameBinding]) -> Node:
-        """One formal parameter, declared for as long as the body is read.
+        """One parameter, declared while the body is parsed.
 
-        Declared in the caller's state but not reported to it: a parameter is a
-        name the body uses, not one the user declared, so what `_release` takes
-        away again must not come back through the caller. `shadowed` collects
-        what each name stood for beforehand, which is what puts a genuine
-        session variable of the same name back.
+        It's declared in the caller's state but not added to `declarations`, since the
+        user didn't declare it. `shadowed` collects each name's previous binding, so
+        `_release` can restore a session variable of the same name.
         """
         token = self.lexer.name_run_at(self.pos)
         self.pos = token.end
@@ -617,10 +589,9 @@ class Parser:
     def _release(self, shadowed: list[NameBinding], defined: str) -> None:
         """Undo the parameter declarations, latest first.
 
-        Latest first because a name written twice was shadowed by its own first
-        declaration the second time. A parameter spelled like the function
-        being defined is left alone: the definition head has taken that name
-        over since, and it is the head's now.
+        The order matters for a repeated parameter, whose second binding shadows its
+        first. A parameter named like the function being defined is left alone, since the
+        name now belongs to the function.
         """
         for binding in reversed(shadowed):
             if binding.name != defined:
@@ -629,7 +600,7 @@ class Parser:
     def domain_declaration(self, name: Token) -> _Parsed:
         """`x :ε Real [0, inf)`.
 
-        An unrecognised domain is not an error; the domain becomes `?`.
+        An unrecognized domain is not an error; the domain becomes `?`.
         """
         self.advance()
         self.advance()
@@ -649,7 +620,7 @@ class Parser:
         return _Parsed(node, name.start, end)
 
     def interval(self) -> _Parsed:
-        """`[0, inf)`: standard notation, and it may close with either bracket."""
+        """An interval such as `[0, inf)`, closed by either kind of bracket."""
         opening = self.advance()
         low = self.implication()
         self.expect(",", "','")
@@ -680,12 +651,10 @@ class Parser:
         self.declarations.append(VariableDeclaration(name, has_value=right is not None))
 
     def _declare(self, declaration: Declaration) -> None:
-        """Register now, and report it too.
+        """Register `declaration` in the state immediately, and report it.
 
-        A definition head must be in the table before its own body is lexed,
-        which is why the parser touches the caller's state at all. The other
-        place it does, `parameter`, registers without reporting, because a
-        parameter is not a name the caller gains.
+        A function must be registered before its body is lexed. (`parameter` registers
+        without reporting, since the caller doesn't gain parameter names.)
         """
         self.lexer.state.declare(declaration)
         self.declarations.append(declaration)
@@ -707,9 +676,9 @@ def _combine(
 
 
 def _run(kind: Kind, parts: list[_Parsed], gaps: list[tuple[str, str]]) -> _Parsed:
-    """A `SUM` or a `PRODUCT` over `parts`, one `gap` between each pair.
+    """A `SUM` or `PRODUCT` over `parts`, with one `gap` between each pair.
 
-    A run of one is just its term: nothing was written to make it a run.
+    A single part is returned as is.
     """
     if not gaps:
         return parts[0]

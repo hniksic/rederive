@@ -1,14 +1,11 @@
 """The four numerical output styles, as the original writes them.
 
-Every expectation below was checked against the original, which is why some of
-them look arbitrary: the line Mixed draws between a number simple enough for a
-ratio and one that is not falls exactly between 144 and 145, and scientific
-notation takes over exactly outside a ten-thousandth and ten thousand, whatever
-the digit count.
+Every expectation was checked against the original, which is why some look arbitrary:
+Mixed stops writing ratios between 144 and 145, and scientific notation takes over
+outside the range from a ten-thousandth to ten thousand, regardless of digit count.
 
-`notation` decides how a number the engine works out is written. A numeral the
-user wrote is not that; it is shown as written, cut by `NotationDigits` alone,
-which is `test_display`'s business.
+`notation` covers numbers the engine computes. Numerals the user typed are shown as
+written, truncated only by `NotationDigits`; those are tested in `test_display`.
 """
 
 from __future__ import annotations
@@ -28,8 +25,7 @@ from rederive.syntax import ParseState, parse_expression
 
 getcontext().prec = 40
 
-#: Enough digits of the three irrationals the tests use that cutting them to
-#: any of the digit counts below cuts the value's own digits.
+#: The irrationals used by the tests, with more digits than any digit count below.
 PI = Decimal("3.141592653589793238462643383279502884197")
 SQRT2 = Decimal("1.414213562373095048801688724209698078570")
 SQRT3 = Decimal("1.732050807568877293527446341505872366943")
@@ -49,25 +45,25 @@ def written(expression, style, digits=6):
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        # Cut, never rounded: two thirds keeps its sixes.
+        # Truncated, never rounded: two thirds keeps its sixes.
         (Fraction(1, 3), "0.333333"),
         (Fraction(2, 3), "0.666666"),
         (Fraction(1, 6), "0.166666"),
         (Fraction(355, 113), "3.14159"),
-        # The whole part is never cut, and one fractional digit always stays.
+        # The integer part is never truncated, and one fractional digit always stays.
         (Fraction(123456789, 10000), "12345.6"),
         (Fraction(1234567891, 1000), "1234567.8"),
-        # Leading zeros hold a place rather than say a digit.
+        # Leading zeros don't count as digits.
         (Fraction(617, 500000000), "0.000001234"),
         (Fraction(1, 300000), "0.00000333333"),
-        # Neither padded nor stripped: the expansion ends, or it does not.
+        # Neither padded nor stripped of trailing zeros.
         (Fraction(1, 8), "0.125"),
         (Fraction(1, 2), "0.5"),
         (Fraction(1, 10), "0.1"),
         (Fraction(10**17 + 1, 10**18), "0.100000"),
         (Fraction(10000001, 10000000), "1.00000"),
         (Fraction(1, 2**100), "0." + "0" * 30 + "788860"),
-        # A whole number is whole, however long.
+        # An integer is written in full, however long.
         (Fraction(2**100), str(2**100)),
         (Fraction(0), "0"),
         (Fraction(-1, 3), "-0.333333"),
@@ -95,7 +91,7 @@ def test_the_whole_part_survives_any_digit_count(digits: int, expected: str) -> 
         (Fraction(1, 2**100), "7.88860*10^-31"),
         (Fraction(2**100), "1.26765*10^30"),
         (Fraction(123456789), "1.23456*10^8"),
-        # The mantissa is dropped when it is one.
+        # A mantissa of one is dropped.
         (Fraction(1, 10**6), "10^-6"),
         (Fraction(10000), "10^4"),
         (Fraction(20000), "2*10^4"),
@@ -112,36 +108,34 @@ def test_scientific(value: Fraction, expected: str) -> None:
 @pytest.mark.parametrize("digits", [3, 6, 10])
 @pytest.mark.parametrize("power", range(-8, 9))
 def test_where_scientific_takes_over(digits: int, power: int) -> None:
-    """A plain numeral covers a ten-thousandth up to ten thousand, and no more.
+    """Plain numerals cover a ten-thousandth up to ten thousand.
 
-    The window is the original's and does not move with the digit count: at
-    three digits `1234.5` is still written plainly, one whole digit past the
-    three it is allowed.
+    As in the original, the range doesn't depend on the digit count: at three digits
+    `1234.5` is still written plainly, with one more integer digit than allowed.
     """
     value = Fraction(123456789, 10**8) * Fraction(10) ** power
     plain = "*" not in scientific(value, digits)
     assert plain == (-4 <= power <= 3)
 
 
-# -- what an approximate number is -------------------------------------------
+# -- approximating with simple rationals -------------------------------------
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        # The original's own answers: approximate mode holds these rationals.
+        # The original's answers: approximate mode holds these rationals.
         (Fraction(PI), Fraction(355, 113)),
         (Fraction(3550000000, 113), Fraction(31415929)),
-        # A number needing no digits gets none.
+        # Numbers that are already simple are kept as they are.
         (Fraction(2, 3), Fraction(2, 3)),
         (Fraction(1, 3), Fraction(1, 3)),
         (Fraction(5), Fraction(5)),
         (Fraction(1, 10**7), Fraction(1, 10**7)),
         (Fraction(0), Fraction(0)),
         (Fraction(-2, 3), Fraction(-2, 3)),
-        # One needing more digits than there are is read as the simplest
-        # rational the precision allows, which is the original's answer here
-        # too: the original holds `12345.6789` as 308642/25.
+        # A number with more digits than the precision becomes the simplest rational
+        # within it; the original also holds `12345.6789` as 308642/25.
         (Fraction(123456789, 10000), Fraction(308642, 25)),
     ],
 )
@@ -156,20 +150,18 @@ def test_simplest(value: Fraction, expected: Fraction) -> None:
 def test_an_approximation_shows_what_it_approximates(
     value: Fraction, digits: int
 ) -> None:
-    """The digits do not move. `SQRT(3)` is `1.73205`, never `1.73204`.
+    """The approximation shows the same digits as the value.
 
-    A simpler rational a little below the value would show a last digit the
-    value does not have, so it is not the one taken.
+    `SQRT(3)` must show as `1.73205`, never `1.73204`, so a simpler rational just below
+    the value is not acceptable.
     """
     assert decimal(simplest(value, digits), digits) == decimal(value, digits)
 
 
 def test_one_digit_of_an_irrational_is_a_coarse_ratio() -> None:
-    """One digit still buys the guard digit, so it is not as coarse as 3.
+    """One digit still gets a guard digit, so the answer is not as coarse as 3.
 
-    The original answers 22/7 here, which is nearer still; both stand for pi
-    at one digit, and neither is the whole number that a tolerance of the
-    digit shown alone would settle for.
+    The original gives 22/7, which is closer; both show pi to one digit.
     """
     assert simplest(Fraction(PI), 1) == Fraction(19, 6)
 
@@ -211,11 +203,11 @@ CASES = [
         "1.23456*10^8",
         "1.23456*10^8",
     ),
-    # A ratio reaches a number wherever one sits, coefficients included.
+    # Numeric coefficients are written in the style too.
     (x / 3, "x/3", "0.333333*x", "x/3", "0.333333*x"),
     (sp.sin(x) / 7, "SIN(x)/7", "0.142857*SIN(x)", "SIN(x)/7", "0.142857*SIN(x)"),
     (x / 10**6, "x/1000000", "0.000001*x", "10^-6*x", "10^-6*x"),
-    # A quotient that is not a number is left alone.
+    # Non-numeric quotients are left alone.
     (3 / (x + 1), "3/(x + 1)", "3/(x + 1)", "3/(x + 1)", "3/(x + 1)"),
     (x / sp.Symbol("y", real=True), "x/y", "x/y", "x/y", "x/y"),
 ]
@@ -246,15 +238,14 @@ def test_the_printer_writes_each_style(
 def test_a_written_coefficient_keeps_the_rest_of_its_product(
     expression, expected: str
 ) -> None:
-    """The rest of a product keeps the denominator it had, all of it.
+    """The rest of the product keeps its whole denominator.
 
-    `SQRT(2)/(3·x·y)` is one fraction over `x·y`, not a fraction over x
-    multiplied by y, and not one with the `x·y` cleared into the numerator.
+    `SQRT(2)/(3·x·y)` is written over `x·y`, not as a fraction over x times y, nor with
+    `x·y` moved into the numerator.
     """
     written = author_text(expression, Context(notation=Notation.DECIMAL))
     assert written == expected
-    # And it means what it says: read back, it is the same expression with
-    # one third replaced by the six digits it was written to.
+    # Read back, it is the same expression with 1/3 replaced by its six digits.
     state = ParseState()
     read = to_sympy(parse_expression(written, state).node, Context())
     wanted = expression.subs(sp.Rational(1, 3), sp.Rational("0.333333")).subs(
@@ -264,9 +255,10 @@ def test_a_written_coefficient_keeps_the_rest_of_its_product(
 
 
 def test_a_power_of_ten_fences_itself_where_it_has_to() -> None:
-    """`x^123456789` is one expression; `x^1.23456*10^8` would be another."""
+    """A power-of-ten exponent is parenthesized, since `x^1.23456*10^8` means
+    something else."""
     assert written(x ** sp.Integer(123456789), "Scientific") == "x^(1.23456*10^8)"
-    # A product needs no fence, associating the way it is meant to.
+    # A product needs no parentheses.
     assert written(123456789 * x, "Scientific") == "1.23456*10^8*x"
 
 
@@ -297,8 +289,8 @@ async def test_the_setting_reaches_the_answer(
 
 
 async def test_scientific_notation_is_drawn_as_a_power_of_ten() -> None:
-    # The original draws the same three parts, and lets the arrow keys walk
-    # into them: the mantissa first, then the power.
+    # The original draws the same three parts, and the arrow keys visit them: the
+    # mantissa first, then the power.
     assert (await simplified("12345.6789", "Scientific")).layout.lines == (
         "          4",
         "1.23456·10 ",
@@ -311,10 +303,10 @@ async def test_the_digits_reach_the_answer() -> None:
 
 
 def test_a_numeral_the_user_wrote_is_not_the_notation_s_business() -> None:
-    """Every style shows an authored numeral as written, cut by the digits.
+    """Every style shows an authored numeral as written, truncated to the digit count.
 
-    Which is what the original does: `12345.6789` typed on the author line is
-    `12345.6` under Rational and under Scientific alike.
+    As in the original, `12345.6789` typed on the author line shows as `12345.6` under
+    any style.
     """
     for style in ("Rational", "Decimal", "Mixed", "Scientific"):
         session = Session()
@@ -337,11 +329,11 @@ def test_a_numeral_the_user_wrote_is_not_the_notation_s_business() -> None:
 async def test_approx_answers_in_scientific_whatever_the_style(
     style: str, text: str, expected: str
 ) -> None:
-    """approX approximates, and approximating carries the notation with it.
+    """approX answers in Scientific notation regardless of the style.
 
-    The original answers all five of these the same way under all four styles,
-    because taking the precision approximate takes the notation to Scientific
-    with it. What it does not do is leave the setting there.
+    The original answers these the same way under all four styles, because
+    approximating also switches notation to Scientific. The setting itself is left
+    unchanged.
     """
     session = Session()
     session.author(f"Notation := {style}")
@@ -351,10 +343,9 @@ async def test_approx_answers_in_scientific_whatever_the_style(
 
 
 async def test_the_value_behind_the_answer_is_the_exact_one() -> None:
-    """What a decimal style shows is a view: the value behind it is untouched.
+    """A decimal style affects display only; the stored value stays exact.
 
-    Read off the original, which answers all three of these the same way: the
-    third is still a third, however few of its digits are on the screen.
+    Matches the original: the third is still a third, whatever digits are shown.
     """
     session = Session()
     session.author("Notation := Decimal")
@@ -365,7 +356,7 @@ async def test_the_value_behind_the_answer_is_the_exact_one() -> None:
     assert (await session.simplify(f"#{answer.number + 1}")).text == "1"
     session.author(f"#{answer.number} - 1/3")
     assert (await session.simplify(f"#{answer.number + 3}")).text == "0"
-    # And asking for it in rational notation shows the ratio it always was.
+    # Under Rational notation it shows as the exact ratio.
     session.author("Notation := Rational")
     assert (await session.simplify(f"#{answer.number}")).text == "1/3"
 
@@ -381,7 +372,7 @@ async def test_an_answer_keeps_the_style_it_was_worked_out_in() -> None:
 
 
 async def test_approximate_arithmetic_still_answers_in_digits() -> None:
-    """Rational notation leaves a float alone: it has no ratio to be written as."""
+    """Rational notation leaves a float alone, since it has no ratio to show."""
     session = Session()
     session.settings.apply({"Precision": Precision.APPROXIMATE.value})
     entry = session.author("pi")

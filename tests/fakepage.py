@@ -1,25 +1,20 @@
-"""A browser with no browser in it, for the tests that are about the browser.
+"""Fakes of the browser environment, for testing the browser backend without a browser.
 
-The browser backend talks to two things a desktop has not got: a page, which it
-calls into to make a pane and draw in one, and a runtime bridge, which turns a
-Python value into something JavaScript can read. Both are narrow, and both are
-here as ordinary Python - so what a pane does when a plot lands in it, what it
-asks the worker for, and what it says when an answer comes back are questions
-that can be asked with no browser at all.
+The browser backend depends on two things a desktop lacks: a page, which it calls to
+create panes and draw in them, and a runtime bridge that converts Python values for
+JavaScript. Both interfaces are narrow, so they are faked here in plain Python, letting
+tests check what a pane does when a plot is added, what it asks the worker for, and how
+it handles the answer.
 
-The page is two modules, as it is in a browser: a flat picture and a solid one
-share no drawing, so they share no fake either.
+As in the browser, the page is two modules: 2D and 3D plots share no drawing code, so
+they get separate fakes.
 
-`pyodide` is faked rather than avoided. The two calls the backend makes of it -
-proxying a callback and converting a structure - are identity functions on a
-desktop, and the fake says so; what it is not is a pretend browser, and nothing
-here draws anything.
+`pyodide` is faked rather than avoided. The backend uses it only to proxy callbacks and
+convert structures, which are identity functions on a desktop. Nothing here draws.
 
-The tab itself is faked for the same reasons and to the same depth. `js` is a
-module with a store, a clipboard, an address and two things that take listeners,
-because that is the whole of what the storage and the file gestures touch - and
-a store with a ceiling on it is the one way to ask what a save does when the
-browser will not keep any more.
+The tab is faked to the same depth. `js` provides a store, a clipboard, an address and
+two objects that take listeners, which is all the storage and file actions touch. The
+store can be given a size limit to test what a save does when the browser is full.
 """
 
 import sys
@@ -27,19 +22,18 @@ import types
 
 
 class FakePane:
-    """One pane as the backend speaks to one, recording what it is told.
+    """A 2D pane that records the calls the backend makes on it.
 
-    The picture is the page's on this side of the seam too, so the methods a
-    command reaches - framing the view, flipping the grid, riding a curve - do
-    nothing here but say that they were called. What a test then asks is which
-    of them the name of a control arrived at, which is the whole of what the
-    dispatch has to get right.
+    Drawing belongs to the page, so methods that commands reach (framing the view,
+    toggling the grid, tracing a curve) only record that they were called. Tests check
+    which method a control's name was dispatched to, which is all the dispatch has to
+    get right.
     """
 
     def __init__(self, number, debounce, commands, strip, handlers):
         self.number = number
         self.debounce = debounce
-        #: What the pane was told it may offer, as `plot/controls.py` says it.
+        #: The commands the pane may offer, as described by `plot/controls.py`.
         self.commands = commands
         #: The parameter range strip, as `plot/forms.py` describes it.
         self.strip = strip
@@ -52,22 +46,22 @@ class FakePane:
         self.dismissed = 0
         self.message = ""
         self.polar = False
-        #: Which buttons of the tool row are lit, by the control each one is.
+        #: Which toolbar buttons are lit, keyed by control.
         self.buttons = {}
-        #: Every call a command reached the picture by, in order.
+        #: Every drawing call made by a command, in order.
         self.done = []
-        #: What the pane would be showing, which the backend reads back for a
-        #: `Describe` and for every sampling it asks for.
+        #: The view the pane is showing, which the backend reads back for a `Describe`
+        #: and for every sampling it requests.
         self.shown = [-5.0, 5.0, -4.0, 4.0, 800.0, 640.0]
-        #: Every `starting` the backend announced, as a plot and a generation.
+        #: Every `starting` the backend announced, as (plot, generation, fresh).
         self.started = []
-        #: Whether there is anything to frame, which is what `View all` reports
-        #: rather than says: the sentence about it is Python's.
+        #: Whether there is anything to frame. `View all` reports this as a flag; the
+        #: message about it comes from Python.
         self.framable = True
-        #: What the axes are named, and which plot the range fields are about.
+        #: The axis names, and which plot the parameter range fields refer to.
         self.axes = ("", "")
         self.parameters = (None, "", "", "")
-        #: The form now up over the pane, as the page was handed it.
+        #: The form currently shown over the pane, as passed to the page.
         self.form = None
         self.values = ()
 
@@ -153,14 +147,14 @@ class FakePane:
 
 
 class FakePage:
-    """The page's plotting module, as the backend calls into it."""
+    """The page's 2D plotting module."""
 
     def __init__(self):
         self.panes = {}
         self.handlers = None
         self.stopped = 0
-        #: What the panes were told a picture is drawn at, as
-        #: `plot/appearance.py` says it.
+        #: The appearance settings given to the panes, as described by
+        #: `plot/appearance.py`.
         self.look = None
 
     def dress(self, description):
@@ -179,11 +173,11 @@ class FakePage:
 
 
 class FakeSolid:
-    """One 3D pane as the backend speaks to one, recording what it is told."""
+    """A 3D pane that records the calls the backend makes on it."""
 
     def __init__(self, number, commands, strip, form, handlers):
         self.number = number
-        #: What the pane was told it may offer, as `plot/controls.py` says it.
+        #: The commands the pane may offer, as described by `plot/controls.py`.
         self.commands = commands
         #: The domain strip and the inspector, as `plot/forms.py` describes them.
         self.strip = strip
@@ -196,20 +190,20 @@ class FakeSolid:
         self.presented = 0
         self.dismissed = 0
         self.message = ""
-        #: Where the camera was last put, as elevation, azimuth and distance.
+        #: The last camera position, as (elevation, azimuth, distance).
         self.camera = None
         self.spinning = ""
-        #: Which buttons of the tool row are lit, by the control each one is.
+        #: Which toolbar buttons are lit, keyed by control.
         self.buttons = {}
-        #: Every call a command reached the picture by, in order.
+        #: Every drawing call made by a command, in order.
         self.done = []
-        #: What the six fields of the tool row are showing.
+        #: The contents of the six toolbar fields.
         self.fields = ()
-        #: What the three axes are called, and the box the inspector was last
-        #: opened on or filled with.
+        #: The three axis names, and the box the inspector was last opened with or
+        #: filled with.
         self.axes = ()
         self.inspected = None
-        #: Every `starting` the backend announced, as a surface and a generation.
+        #: Every `starting` the backend announced, as (surface, generation).
         self.started = []
 
     def look(self, elevation, azimuth, distance):
@@ -281,14 +275,14 @@ class FakeSolid:
 
 
 class FakeSolids:
-    """The page's solid-drawing module, as the backend calls into it."""
+    """The page's 3D plotting module."""
 
     def __init__(self):
         self.panes = {}
         self.handlers = None
         self.stopped = 0
-        #: What the panes were told a picture is drawn at, as
-        #: `plot/appearance.py` says it.
+        #: The appearance settings given to the panes, as described by
+        #: `plot/appearance.py`.
         self.look = None
 
     def dress(self, description):
@@ -307,18 +301,17 @@ class FakeSolids:
 
 
 class FakeEngine:
-    """The engine worker, as the executor posts to one.
+    """The engine worker, as the executor posts to it.
 
-    Every request is kept rather than sent, so that a test can read what the
-    worker would have been asked and answer for it.
+    Requests are recorded rather than sent, so a test can inspect them and supply the
+    answers.
     """
 
     def __init__(self):
         self.sent = []
         self.lost = None
-        #: What the next request whose answer is a value comes back with, in
-        #: the order they are asked for. Empty is a worker that answers with
-        #: nothing at all, which is a refusal like any other.
+        #: Answers returned by successive `value` requests, in order. When empty, the
+        #: worker answers with nothing, which counts as a refusal.
         self.answers = []
         self._number = 0
 
@@ -330,26 +323,24 @@ class FakeEngine:
         self.sent.append((number, method, args[0]))
 
     async def value(self, method, args):
-        """One request whose answer is Python's rather than the page's."""
+        """A request whose answer is returned to Python rather than to the page."""
         self.sent.append((self.numbered(), method, args[0]))
         return self.answers.pop(0) if self.answers else ()
 
 
-#: What a page reports when no road to the archive is open, the way a browser
-#: reports it: the name of the error, the sentence, and the stack under them.
+#: The error a page reports when the archive can't be reached, formatted the way a
+#: browser formats it: error name, message, and stack.
 SHUT = "Error: the server said 503\n    at got (demos.js:214:11)"
 
 
 class JsNull:
-    """The page's `null` as Pyodide hands one over: falsy, and not `None`.
+    """JavaScript `null` as Pyodide passes it: falsy, but not `None`.
 
-    Pyodide keeps a page's two words for having no answer apart. A field the
-    page does not have arrives as `None`; a field it has and has put `null` in
-    arrives as this, which is falsy - so a test of truth still passes - and is
-    not `None` - so a test of identity does not. A snapshot saying that a menu
-    was raised over no curve is built in JavaScript and says it this way, so
-    the fake page says it this way too and the seam is asked the question it is
-    actually asked.
+    Pyodide distinguishes `undefined` from `null`: a missing field arrives as `None`, a
+    field set to `null` as this object. It is falsy, so truth tests pass, but not
+    `None`, so identity tests fail. A menu snapshot with no curve under it is built in
+    JavaScript and uses `null`, so the fake page does too, testing the backend against
+    what it really receives.
     """
 
     def __bool__(self):
@@ -359,16 +350,16 @@ class JsNull:
         return "jsnull"
 
 
-#: The one of them, as `pyodide.ffi` holds the one of its own.
+#: The singleton, like the one in `pyodide.ffi`.
 jsnull = JsNull()
 
 
 class Proxy:
-    """A Python callable as JavaScript holds one: callable, and destroyable.
+    """A Python callable proxied for JavaScript: callable and destroyable.
 
-    Pyodide's is a handle with a lifetime, and the lifetime is the half worth
-    faking - a backend that stopped destroying its proxies would leak them in a
-    browser and pass every test that only ever called them.
+    Pyodide's proxies have a lifetime, and that's the part worth faking: a backend that
+    stopped destroying its proxies would leak them in a browser yet pass every test that
+    only calls them.
     """
 
     def __init__(self, call):
@@ -383,11 +374,10 @@ class Proxy:
 
 
 class Store:
-    """localStorage as a browser keeps one: strings, and a ceiling to hit.
+    """localStorage: a string store with an optional size limit.
 
-    `room` is how many characters it will take before it refuses, which is what
-    a browser does with its five megabytes and the only interesting thing about
-    the ceiling. None is a store with no ceiling at all.
+    `room` is the largest value, in characters, it accepts before raising, mimicking a
+    browser's quota. None means no limit.
     """
 
     def __init__(self, room=None):
@@ -404,7 +394,7 @@ class Store:
 
 
 class Promise:
-    """What a clipboard write answers with: something that may be refused."""
+    """The result of a clipboard write, which may be rejected."""
 
     def __init__(self, refuse=None):
         self.refuse = refuse
@@ -415,7 +405,7 @@ class Promise:
 
 
 class Clipboard:
-    """The page's clipboard, granted or refused, and what it was given."""
+    """The page's clipboard, which may allow or refuse writes, recording what it got."""
 
     def __init__(self, allow=True, raises=False):
         self.allow = allow
@@ -430,11 +420,10 @@ class Clipboard:
 
 
 class FakeTab:
-    """The page as `WebStorage`, `Files` and `Demos` call into it.
+    """The page as called by `WebStorage`, `Files` and `Demos`.
 
-    Two modules in a browser and one here, there being nothing to collide: the
-    files module and the demonstration menu share no call, and a test that has
-    to tell them apart reads which list was written to.
+    These are two modules in a browser but one here, since the files module and the demo
+    menu share no calls; a test tells them apart by which list was written to.
     """
 
     def __init__(self):
@@ -442,15 +431,14 @@ class FakeTab:
         self.notices = []
         self.fragment = None
         self.handlers = None
-        #: What a download through the page answers with, by the name that was
-        #: asked for: bytes, or the failure it is refused with. A name with
-        #: nothing behind it is every road to the archive being shut.
+        #: The result of downloading each file name through the page: bytes, or the
+        #: exception to raise. A missing name means the archive is unreachable.
         self.archive = {}
         #: Every file the page was asked to fetch, in order.
         self.fetched = []
 
     async def brought(self, file):
-        """The download `demos.js` does, as Python awaits one."""
+        """The download `demos.js` performs, as awaited from Python."""
         self.fetched.append(file)
         answer = self.archive.get(file)
         if isinstance(answer, BaseException):
@@ -473,11 +461,10 @@ class FakeTab:
 
 
 def bridge():
-    """Put a desktop-shaped `js` and `pyodide.ffi` where the backend looks.
+    """Install fake `js` and `pyodide.ffi` modules for the backend to import.
 
-    Idempotent, and it leaves the modules in place: they are two functions and
-    an object with one attribute, and there is nothing on a desktop for them to
-    collide with.
+    Idempotent. The modules are left in place, since on a desktop there is nothing for
+    them to collide with.
     """
     if "pyodide.ffi" in sys.modules:
         return
@@ -495,12 +482,9 @@ def bridge():
 
 
 def browser(store=None, clipboard=None, hash=""):
-    """A tab with nothing in it yet: an empty store, a clipboard, an address.
+    """Install and return a fresh tab: an empty store, a clipboard, and an address.
 
-    Returned as well as installed, since a test asks the tab what it was told
-    as often as it tells it anything. Everything is replaced on every call - a
-    store left over from another test is a store with somebody else's
-    worksheets in it.
+    Everything is replaced on each call, so no test sees another test's worksheets.
     """
     bridge()
     js = sys.modules["js"]

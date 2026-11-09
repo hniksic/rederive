@@ -1,23 +1,21 @@
 """The one place colors are chosen.
 
-The slot names below are Derive's own. `Options Color Work` sets a foreground
-and a background for the work area; `Options Color Menu` sets Frame, Option,
-Prompt, Status, Background, and Border. Everything on screen draws from those
-eight slots, so a color scheme is just a table of eight colors - which is
-literally what those eight settings are.
+The slot names are Derive's. `Options Color Work` sets the work area's foreground and
+background; `Options Color Menu` sets Frame, Option, Prompt, Status, Background, and
+Border. Everything on screen uses these eight slots, so a color scheme is just those
+eight settings.
 
-The scheme is therefore not a constant here: it lives in `Settings`, where
-`Options Color` can change it, and a `Palette` resolves it to the values Rich
-and the stylesheet need. The default scheme, and where it comes from, are
-documented next to the color dialogs in `rederive.model.settings`.
+The scheme lives in `Settings`, where `Options Color` can change it, and `Palette`
+resolves it to the values Rich and the stylesheet need. The default scheme and its
+origin are documented next to the color dialogs in `rederive.model.settings`.
 """
 
 from __future__ import annotations
 
 from rederive.model.settings import COLORS, Settings
 
-#: The 16 EGA text colors, indexed the way Derive's Options Color commands
-#: numbered them, which is the order of `COLORS`.
+#: The 16 EGA text colors, numbered as in Derive's Options Color commands (the order of
+#: `COLORS`).
 EGA = (
     "#000000",  # 0 black
     "#0000aa",  # 1 blue
@@ -43,7 +41,7 @@ NUMBER: dict[str, int] = {color: number for number, color in enumerate(COLORS)}
 SLOTS: dict[str, str] = {
     "work-foreground": "WorkColor",  # expressions in the work area
     "work-background": "WorkBackgroundColor",
-    "frame": "FrameColor",  # the window borders, and the rule that is one
+    "frame": "FrameColor",  # window borders, including the rule between panes
     "option": "OptionColor",  # the COMMAND: label and the menu words
     "prompt": "PromptColor",  # the message line
     "status": "StatusColor",  # the whole status line
@@ -56,10 +54,10 @@ COLOR_SETTINGS = frozenset(SLOTS.values())
 
 
 class Palette:
-    """The eight color slots, as the widgets and the stylesheet want them.
+    """The eight color slots, in the forms the widgets and stylesheet use.
 
-    Reads the slots on every call rather than caching them, so an
-    `Options Color` command reaches the screen with nothing to invalidate.
+    Slots are read on every call rather than cached, so `Options Color` changes need no
+    invalidation.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -77,10 +75,9 @@ class Palette:
     def dimmed(self, slot: str) -> str:
         """The color of `slot` as DOS text mode can render it in a background.
 
-        Only the eight low-intensity colors are available there, so an inverse
-        video block loses the intensity bit: yellow 14 comes out brown 6, white
-        15 comes out light gray 7. This is why the highlighted menu option reads
-        as an orange block rather than a yellow one.
+        Only the eight low-intensity colors are available as backgrounds, so inverse
+        video drops the intensity bit: yellow 14 becomes brown 6, white 15 becomes light
+        gray 7. That's why the highlighted menu option is orange rather than yellow.
         """
         return EGA[self.number(slot) & 7]
 
@@ -97,12 +94,9 @@ class Palette:
             "frame": self.color("frame"),
             "option": self.color("option"),
             "option-highlight": self.inverse("option", over="menu-background"),
-            # The word the pointer is resting on. An attribute rather than a
-            # color, so that it says "this can be clicked" without competing
-            # with the highlight beside it and without asking a color scheme
-            # for a ninth slot; a mark laid over a style rather than one that
-            # replaces it, so that the pointer can rest on the highlighted word
-            # and both are legible at once.
+            # The word under the mouse pointer. An attribute rather than a color, so it
+            # doesn't compete with the highlight or need a ninth slot, and it combines
+            # with the highlight when the pointer rests on the highlighted word.
             "option-pointed": "underline",
             "prompt": self.color("prompt"),
             "status": self.color("status"),

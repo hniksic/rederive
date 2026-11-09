@@ -1,7 +1,7 @@
-"""Products of a real argument with its absolute value and its sign, folded.
+"""Simplifying products of a real argument with its absolute value and sign.
 
-`ABS(u)`, `SIGN(u)` and `u` are one real quantity written three ways, and
-`folded_signs` writes a product holding more than one of them the shortest way.
+For real `u`, `ABS(u)`, `SIGN(u)` and `u` are related, and `folded_signs` writes a
+product containing more than one of them in the shortest way.
 """
 
 from __future__ import annotations
@@ -11,14 +11,13 @@ import sympy as sp
 __all__ = ["folded_signs"]
 
 
-#: Where the three ways of writing one real quantity sit in a product. Each is
-#: a power of the other two - `ABS(u) = u*SIGN(u)` and `SIGN(u)^2 = 1` - so a
-#: group is no more than the exponent every one of them carries.
+#: Indices of the `ABS(u)`, `SIGN(u)` and `u` exponents in a group. Since `ABS(u) =
+#: u*SIGN(u)` and `SIGN(u)^2 = 1`, a group is fully described by these three exponents.
 _ABSOLUTE, _SIGNUM, _BARE = 0, 1, 2
 
 
 def folded_signs(expression: sp.Basic) -> sp.Basic:
-    """Every product of a real argument with its absolute value and its sign."""
+    """`expression` with every product of a real `u`, `ABS(u)` and `SIGN(u)` folded."""
     return expression.replace(
         lambda e: _folded_product(e) is not None,
         lambda e: _folded_product(e),
@@ -27,19 +26,15 @@ def folded_signs(expression: sp.Basic) -> sp.Basic:
 
 
 def _folded_product(expression: sp.Basic) -> sp.Basic | None:
-    """This product with `ABS(u)`, `SIGN(u)` and `u` collected into one another.
+    """This product with `ABS(u)`, `SIGN(u)` and `u` folded together, or None.
 
-    For a real `u` the three are one quantity written three ways, so a product
-    holding more than one of them says the same thing twice: `ABS(u)*SIGN(u)`
-    and `ABS(u)/SIGN(u)` are both `u`, `u/ABS(u)` is `SIGN(u)`, `u*SIGN(u)` is
-    `ABS(u)` and `SIGN(u)^2` is `1`.
+    For real `u`, `ABS(u)*SIGN(u)` and `ABS(u)/SIGN(u)` are `u`, `u/ABS(u)` is
+    `SIGN(u)`, `u*SIGN(u)` is `ABS(u)` and `SIGN(u)^2` is `1`.
 
-    Zero is where the identities are a licence rather than a fact: `SIGN(0)` is
-    zero, so `ABS(u)/SIGN(u)` is undefined there and `u` is not. Derive removes
-    the singularity and so does this, on the same terms that make `u/u` come
-    back `1`. Off the real line there is nothing to remove and nothing to fold:
-    `SIGN(z)` is `z/|z|`, whose square is not one, so an argument nothing
-    declares real is left as it was written.
+    At zero these are not strictly true: `SIGN(0)` is zero, so `ABS(u)/SIGN(u)` is
+    undefined there but `u` is not. Derive removes the singularity, as with `u/u` ->
+    `1`, and so does this. For non-real `z`, `SIGN(z)` is `z/|z|`, whose square isn't
+    one, so arguments not known to be real are left alone.
     """
     groups, rest = _signed_powers(expression)
     if not any(_worth_folding(*exponents) for exponents in groups.values()):
@@ -55,12 +50,11 @@ def _folded_product(expression: sp.Basic) -> sp.Basic | None:
 
 
 def _worth_folding(absolute: int, signum: int, bare: int) -> bool:
-    """Whether this group says the same thing twice.
+    """Whether this group can be folded.
 
-    One `ABS` or one `SIGN` by itself is what it is, and a bare power with
-    neither is no business of this rule. What is left over is a group that
-    holds two of the three, or a sign the argument carries more than once, or
-    a sign under a division: all three collapse.
+    A lone `ABS` or `SIGN` can't, and a bare power without either is irrelevant. A
+    group with two of the three, a repeated `ABS` or `SIGN`, or a `SIGN` in the
+    denominator can.
     """
     if not (absolute or signum):
         return False
@@ -71,16 +65,13 @@ def _worth_folding(absolute: int, signum: int, bare: int) -> bool:
 def _signed_powers(
     expression: sp.Basic,
 ) -> tuple[dict[sp.Basic, list[int]], list[sp.Basic]]:
-    """This product read as groups of one real argument, and the factors that are not.
+    """This product's factors grouped by real argument, plus the remaining factors.
 
-    A factor joins the group of the argument it is about - `ABS(u)^2` and
-    `1/SIGN(u)` and `u` are all the group of `u` - and anything else, an
-    argument sympy cannot call real or a power the exponents cannot be added
-    up over, stays a factor of its own.
+    `ABS(u)^2`, `1/SIGN(u)` and `u` all join the group of `u`. Factors whose argument
+    sympy can't prove real, or whose exponent isn't an integer, are kept separately.
 
-    A range is not one of these arguments. `SIGN(INTERVAL(-1, 1))` is the
-    three-point set the interval's sign can be and not a number the identities
-    hold for, so a bound stays the factor it was written as.
+    So are intervals: `SIGN(INTERVAL(-1, 1))` is a three-point set, not a number the
+    identities hold for.
     """
     groups: dict[sp.Basic, list[int]] = {}
     rest: list[sp.Basic] = []
@@ -104,22 +95,19 @@ def _signed_powers(
 
 
 def _written(argument: sp.Basic, absolute: int, signum: int, bare: int) -> sp.Basic:
-    """This group as the author wrote it."""
+    """This group as originally written."""
     return sp.Abs(argument) ** absolute * sp.sign(argument) ** signum * argument**bare
 
 
 def _shortest_spelling(
     argument: sp.Basic, absolute: int, signum: int, bare: int
 ) -> sp.Basic:
-    """The shortest of the ways this group can be written.
+    """The shortest way to write this group.
 
-    Trading one absolute value for the argument leaves a sign behind, and two
-    signs are one, so the total power and the parity of the sign are all the
-    group is: every `k` of `ABS(u)^k * u^(total - k) * SIGN(u)^(parity - k)`
-    says it, with the last exponent taken to zero or one. The rule is therefore
-    no direction to write `ABS` or to write `SIGN` but a choice of whichever
-    `k` comes out shorter, and ties - the spelling the author wrote among them
-    - go to what was already there.
+    Replacing an `ABS(u)` with `u` leaves a `SIGN(u)`, and two signs cancel, so the
+    group is determined by its total power and sign parity. Every `k` in `ABS(u)^k *
+    u^(total - k) * SIGN(u)^(parity - k)` (last exponent reduced mod 2) is equivalent,
+    and the shortest is chosen. Ties go to the form as written.
     """
     total = absolute + bare
     parity = (absolute + signum) % 2

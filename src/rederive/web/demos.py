@@ -1,32 +1,21 @@
-"""The demonstration menu of the page: what is on it, and what a choice does.
+"""The page's demonstrations menu.
 
-The list itself is `rederive.model.demos`, which is nine names, nine titles and
-the addresses they can be downloaded from - Python rather than page furniture,
-because a desktop wanting the same menu wants the same nine files. What is here
-is the two halves of the seam: the catalogue is handed to the page to build a
-menu out of, and a file the page has downloaded comes back to be run.
+The catalogue lives in `rederive.model.demos` (nine names, titles and download URLs), in
+Python so a desktop menu could share it. This module hands the catalogue to the page to
+build a menu, and runs the files the page downloads.
 
-Only the file name comes back, and the bytes where there were any to bring: a
-demonstration the store already has is asked for by name alone, which is what
-`kept` is for and what makes a second viewing of one instant. Which kind of
-demonstration it is, and so what a step does with its expression, is read off
-the catalogue here rather than believed from the page: the page is given the
-list and hands one of them back, and a name that is not on it is not a
-demonstration.
+The page sends back a file name, plus the bytes if it had to download them. A demo
+already in storage is requested by name alone (see `kept`), which makes a second viewing
+instant. The demo's kind, which determines what a step does with its expression, is
+looked up in the catalogue rather than trusted from the page, and unknown names are
+rejected.
 
-What happens after that is the program's ordinary machinery. The file goes into
-the store under its own name, exactly as a picked file does, and then the app is
-told to demonstrate it. That it came off the network is not something the rest
-of the program has to know, and afterwards the file is in the page like any
-other - `Transfer Demo ALGEBRA` runs it again.
+The file is then stored under its own name, like a picked file, and the app is told to
+demonstrate it. Afterwards it's an ordinary file in the page, so `Transfer Demo ALGEBRA`
+runs it again.
 
-The seam is crossed the other way too, and for the same nine. `Transfer Demo`
-offers them in the menu band as well - a page is the program, and a command is
-not taken away because a button does the same thing - and a command running in
-a tab has nothing to download with: sockets are not a thing a tab has. So the
-app is handed `brought` as the way it fetches, and the command reaches the
-archive by the page's own road. What it does with what arrives is the app's
-own, and is the same either way.
+`Transfer Demo` offers the same nine demos from the menu band. A tab has no sockets, so
+the app is given `brought` as its fetcher, which downloads through the page.
 """
 
 from __future__ import annotations
@@ -41,29 +30,23 @@ from rederive.ui.app import RederiveApp
 
 __all__ = ["Demos"]
 
-#: What the page says once a script is running. It names the command that runs
-#: it again, since the file is in the page now and the menu is where a second
-#: viewing comes from.
+#: Shown when a demo script starts, naming the command that runs it again.
 RUNNING = "{name} is in this page now; Transfer Demo runs it again by that name"
 
-#: And once a gallery is. The command named is the other one: a gallery is a
-#: worksheet by extension and Demo would not find it.
+#: Shown when a gallery starts. A gallery has a worksheet extension, so Demo wouldn't
+#: find it and a different command is named.
 DRAWING = "{name} is in this page now; Transfer Load Derive reads it by that name"
 
-#: What it says when a demonstration is asked for before there is a screen to
-#: run it on. The window is a fraction of a second wide - the button is there
-#: from the first frame and the program is not - but a click that vanished into
-#: nothing would be the page's fault and read as the program's.
+#: Shown when a demo is chosen before the app is running. The window is brief, since the
+#: button appears before the program does, but a silently ignored click would look like
+#: a bug.
 TOO_SOON = "Rederive is still starting; try the demonstration again in a moment"
 
-#: And when a name arrives that is not on the list the page was given. Nothing
-#: a user can do reaches this; what it is for is saying so out loud rather than
-#: running a file nobody named.
+#: Shown when the page sends a name not in the catalogue. Users can't trigger this; it
+#: guards against running an unlisted file.
 UNKNOWN = "{name} is not one of the original's demonstrations"
 
-#: What a download that failed without saying why is reported as. The browser
-#: says why in every case there is, so this is the empty message rather than a
-#: message of its own.
+#: Fallback for a failed download with no error message. Browsers normally give one.
 NOT_FETCHED = "the browser refused the download"
 
 
@@ -74,17 +57,14 @@ class Demos:
         self._page = page
         self._app = app
         self._storage = storage
-        #: The proxies JS holds. A callback given to JS without one is
-        #: collected while JS still points at it.
+        #: Proxies held by JS; without them, callbacks would be collected while JS still
+        #: refers to them.
         self._proxies: list[Any] = []
 
     def attend(self) -> None:
-        """Hand the page the menu, the addresses, and what a choice on it does.
+        """Give the page the catalogue, the image URL and the choice handlers.
 
-        All at once, since none of them is any use alone: a menu with nothing
-        behind it offers what cannot be run, and a handler with no menu in
-        front of it is never reached. The proxy is kept for as long as the page
-        is, as every proxy handed to JS is.
+        The proxies are kept for the lifetime of the page.
         """
         import js
         from pyodide.ffi import create_proxy, to_js
@@ -96,22 +76,19 @@ class Demos:
         self._page.attend(to_js(given, dict_converter=js.Object.fromEntries))
 
     def kept(self, file: str) -> bool:
-        """Whether this demonstration is in the page already.
+        """Return whether this demonstration is already stored in the page.
 
-        What spares the second viewing its download. The store outlives the
-        tab, so a demonstration run last week is on the screen as fast as the
-        program can author it - and the file it runs from is the one that was
-        downloaded then, which is the same file it would download now.
+        This lets a repeat viewing skip the download. Storage outlives the tab, so a
+        demo downloaded last week is still available.
         """
         demo = catalogue.named(file)
         return demo is not None and self._storage.exists(Path(demo.file))
 
     def keep(self, file: str, data: Any) -> None:
-        """Put a demonstration in the page without running it.
+        """Store a demonstration without running it.
 
-        What the page does with the eight it did not ask for. Taking the whole
-        diskette is one download and nine files, and throwing eight of them
-        away would mean paying for them again one at a time.
+        Downloading the diskette yields all nine files at once, so the page keeps the
+        eight it didn't ask for rather than fetching them again later.
         """
         demo = catalogue.named(file)
         if demo is None:
@@ -119,14 +96,11 @@ class Demos:
         self._storage.keep(Path(demo.file), worksheet.decoded(_bytes(data)))
 
     def chose(self, file: str, data: Any = None) -> None:
-        """Run this demonstration, keeping the bytes the page brought with it.
+        """Run this demonstration, storing any bytes the page downloaded.
 
-        The file lands in the store before it is run, because that is what makes
-        it a file: the name on the status line is a name the Transfer commands
-        can be given afterwards, and a demonstration suspended with Esc is
-        picked up by naming it. Nothing arrives with a file the page did not
-        have to download, since keeping it again would only write what is
-        already there.
+        The file is stored before running so that its name works with the Transfer
+        commands, including resuming a demo suspended with Esc. No bytes arrive for
+        a file that was already stored.
         """
         demo = catalogue.named(file)
         if demo is None:
@@ -135,35 +109,24 @@ class Demos:
         if not self._app.is_running:
             self._page.said(TOO_SOON)
             return
-        # Whether the page brought anything, asked of the value and not of its
-        # identity: a page has two words for having nothing, and only one of
-        # them is `None`. An argument it left out arrives as `None`; a `null`
-        # it passed arrives as a JavaScript null, which is falsy and is not
-        # `None`, and which has no bytes in it to read.
+        # Test truthiness rather than `is None`: an omitted argument arrives as `None`,
+        # but an explicit `null` arrives as a JavaScript null, which is falsy but not
+        # `None`.
         if data:
             self._storage.keep(Path(demo.file), worksheet.decoded(_bytes(data)))
         said = DRAWING if demo.plotting else RUNNING
         self._page.said(said.format(name=demo.file))
-        # Onto the loop rather than from here. A click on the page arrives on
-        # a DOM callback, and a demonstration is a screen: the screen belongs
-        # to the loop, exactly as it does for an event off a plot pane. Called
-        # from here the demonstration would be set going and never drawn.
+        # Schedule on the loop: this runs in a DOM callback, and a demonstration started
+        # from here would never be drawn.
         self._app.call_next(self._app.demonstrate, demo.file, demo.plotting)
 
     async def brought(self, demo: catalogue.Demo) -> bytes:
-        """Download this demonstration through the page, and keep it by name.
+        """Download this demonstration through the page and store it by name.
 
-        What `Transfer Demo` fetches with here. The command offers the same
-        nine as the menu on the button, and there is nothing behind it in a tab
-        to fetch them with: the page has the only road out, so the command
-        borrows it and the answer comes back as bytes.
-
-        Kept rather than written, which is the difference between this and the
-        desktop's. A save is a download in a tab, and nobody asking for a
-        demonstration asked for a copy of the file on their disk; the store is
-        what makes the name mean something afterwards, and it is all that is
-        wanted. The eight a whole diskette brought with it are already in it,
-        the page having kept them itself on the way past.
+        This is `Transfer Demo`'s fetcher in a tab, which can only download through the
+        page. Unlike on the desktop, the file goes into page storage rather than being
+        saved, since saving in a tab means a download to the user's disk. The other
+        eight files from the diskette were already stored by the page.
         """
         try:
             raw = _bytes(await self._page.brought(demo.file))
@@ -174,11 +137,10 @@ class Demos:
 
 
 def _offered() -> list[dict[str, Any]]:
-    """The catalogue in the shape the page builds a menu out of.
+    """Return the catalogue as plain dictionaries for the page's menu.
 
-    Plain dictionaries, because what crosses this seam is data and the page has
-    no use for a class. The addresses travel with each entry: which host has the
-    file is not the page's decision, and the page is the only side that can ask.
+    Each entry includes its download URLs, since Python decides where files come from
+    but only the page can fetch them.
     """
     return [
         {
@@ -192,24 +154,20 @@ def _offered() -> list[dict[str, Any]]:
 
 
 def _sentence(trouble: Exception) -> str:
-    """What went wrong, in the one line a message line has room for.
+    """Reduce a browser rejection to one line for the message line.
 
-    A rejection arrives as an exception whose text is the browser's: the name
-    of the error, its message, and under them the stack where the browser kept
-    one. The stack is for a console, and `Error` is what a browser calls one
-    that is no particular kind - both go, and what is left is the sentence the
-    download failed with, as the desktop's own refusal would read.
+    The exception text is the error name, message and possibly a stack. Keep only the
+    first line and drop a generic `Error: ` prefix.
     """
     said = str(trouble).strip().splitlines()
     return said[0].removeprefix("Error: ") if said else NOT_FETCHED
 
 
 def _bytes(data: Any) -> bytes:
-    """The file, however the side that read it holds its bytes.
+    """Convert file data to bytes.
 
-    A browser hands over a `Uint8Array`, which is copied out of the page's
-    memory the way every other array of bytes crossing this seam is; everywhere
-    else - a test above all - bytes are bytes.
+    The browser passes a `Uint8Array`, which is copied out of JS memory; tests pass
+    bytes directly.
     """
     if isinstance(data, (bytes, bytearray, memoryview)):
         return bytes(data)

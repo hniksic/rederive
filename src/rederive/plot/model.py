@@ -1,19 +1,14 @@
-"""What a plot is, apart from whatever draws it: identity, look, and no numbers.
+"""The backend-independent description of a plot: identity and appearance.
 
-One entry of a window's plot list, as the side that routes plots around
-windows holds it. It is what to draw and what it is called, and deliberately
-nothing else: no drawing item, because that belongs to the backend that made
-it, and no samples, because those belong to the side that does the sampling.
-That split is what lets a plot list live somewhere with no numpy in it at all -
-the browser's main thread - while the arrays go straight from wherever they are
-computed to wherever they are drawn.
+A `Plot` is an entry in a window's plot list: what to draw and its name. It holds no
+drawing item (that belongs to the backend) and no samples (those belong to the sampler),
+so a plot list can live without numpy, e.g. on the browser's main thread, while arrays
+go directly from where they are computed to where they are drawn.
 
-The identity is `worksheet` and `label` together, which is what makes
-re-plotting `#3` replace its own curve while a `#3` from another algebra
-overlay is a second plot. Everything else here is either what the expression
-is (the tree, the context it is read in, the variables it holds) or how it is
-to look (the color, the points of a data plot, the wire of a surface) - the
-things a window is told rather than the things it works out.
+A plot is identified by `worksheet` and `label` together, so re-plotting `#3` replaces
+its curve, while `#3` from another algebra overlay is a separate plot. The remaining
+fields describe the expression (tree, context, variables) or its appearance (color,
+data point style, surface wireframe).
 """
 
 from __future__ import annotations
@@ -43,9 +38,8 @@ __all__ = [
     "written",
 ]
 
-#: The curve palette, cycled in this order. Bright on the dark canvas, and
-#: eight of them because a ninth curve in a window is rare enough that
-#: repeating a color there costs nothing.
+#: The curve palette, cycled in this order: bright colors for the dark canvas. Eight is
+#: enough since more curves in one window are rare.
 PALETTE = (
     "#ffffff",
     "#ffff55",
@@ -57,9 +51,8 @@ PALETTE = (
     "#77bbff",
 )
 
-#: The same palette for paper. Every image export swaps a white background in,
-#: and a white curve on white paper is an empty picture; each color here is its
-#: neighbour above, darkened to read on white.
+#: The palette for image exports, which use a white background: each color is the
+#: corresponding one above, darkened to read on white.
 PAPER_PALETTE = (
     "#000000",
     "#9a8000",
@@ -71,53 +64,44 @@ PAPER_PALETTE = (
     "#0040c0",
 )
 
-#: The surface colors, which are the curve colors turned by one. A shaded solid
-#: in white is a white shape with a white shape behind it - the palette's first
-#: color is the right one for a stroke on a dark canvas and the worst one for a
-#: lit surface - so the order starts at the second and comes round to it last.
+#: Surface colors: the curve palette rotated by one, because white, fine for curves,
+#: is the worst color for a shaded surface.
 SOLID_PALETTE = PALETTE[1:] + PALETTE[:1]
 SOLID_PAPER = PAPER_PALETTE[1:] + PAPER_PALETTE[:1]
 
-#: How much of an expression a legend entry, a menu item or a status line shows
-#: of it. A data matrix is one expression and a hundred pairs of numbers, and a
-#: legend entry three times the width of the window names nothing legibly, so a
-#: long one is cut and marked as cut. Nothing is lost: the whole expression is
-#: in the worksheet, under the label the entry begins with.
+#: Maximum length of a plot's name in the legend, menus and status line. Longer names
+#: (e.g. a data matrix) are truncated with an ellipsis; the full expression is in the
+#: worksheet under the label.
 NAME_WIDTH = 48
 ELLIPSIS = "…"
 
-#: How big a data point is drawn where nothing has an opinion about it.
+#: Default size of a data point.
 POINT_SIZE = 5.0
 
-#: The parameter range a parametric or polar plot takes when nothing says
-#: otherwise: one turn, written in whichever angle unit the worksheet is set
-#: to. One turn is what draws a closed curve of the ordinary ones, and the
-#: range fields are where a different piece of the parameter is asked for,
-#: while the picture is on the screen.
+#: Default half-range of a parametric or polar plot's parameter: one full turn, in the
+#: worksheet's angle unit, which closes most ordinary curves. The range fields can
+#: change it.
 DEFAULT_TURN = math.pi
 DEFAULT_TURN_DEGREES = 180.0
 
-#: The kinds parametrized by the abscissa, which are the ones a marker rides
-#: at an x and the ones features are sought on.
+#: Kinds parametrized by the abscissa: the trace marker follows x, and features are
+#: searched for on them.
 FUNCTIONS = frozenset({PlotKind.CURVE, PlotKind.FAMILY})
 
-#: The kinds evaluated over a grid rather than along a line. They are areas,
-#: recomputed for whatever the view now shows.
+#: Kinds evaluated over a grid rather than along a line, recomputed for the current
+#: view.
 FIELDS = frozenset({PlotKind.IMPLICIT, PlotKind.REGION})
 
-#: The kinds drawn as a height over a rectangle, which are the ones a 3D window
-#: holds. They are evaluated over a grid like a field and read like a function
-#: of two names, which is the pair of facts anything sampling one needs.
+#: Kinds drawn as a height over a rectangle, held by 3D windows. They are evaluated
+#: over a grid like fields, as functions of two variables.
 SOLIDS = frozenset({PlotKind.SURFACE, PlotKind.SURFACES})
 
 
 def naming(label: str, text: str) -> str:
-    """What a plot is called wherever a window has room for one line of it.
+    """A plot's one-line name: the label, then as much of the expression as fits.
 
-    The label first, because that is what identifies it in the worksheet, and
-    then as much of the expression as fits. Both window kinds name their plots
-    this way, and neither renders an expression itself: `text` is what the app
-    wrote, in the one spelling the whole program uses.
+    `text` is the expression as rendered by the app; windows never render expressions
+    themselves.
     """
     name = f"{label}  {text}" if label else text
     if len(name) <= NAME_WIDTH:
@@ -125,17 +109,15 @@ def naming(label: str, text: str) -> str:
     return name[: NAME_WIDTH - len(ELLIPSIS)].rstrip() + ELLIPSIS
 
 
-#: How a number a window reads out is written. Six decimals is what a reading
-#: is worth from a picture: enough to paste into the algebra window and see it
-#: agree, short enough to fit twice on one line.
+#: Format of numbers read off a plot: six decimals is precise enough to paste into the
+#: algebra window and short enough to fit twice on a line.
 FORMAT = "{:.6f}"
 
 
 def reading(value: float) -> str:
-    """A number as a status line writes it: six decimals, or a word.
+    """Format a number for the status line: six decimals, or "undefined".
 
-    Here rather than in a window because both backends read a curve out and a
-    point sent home from either has to be the same text.
+    Shared so that both backends produce the same text.
     """
     if not math.isfinite(value):
         return "undefined"
@@ -143,21 +125,18 @@ def reading(value: float) -> str:
 
 
 def roughly(value: float) -> str:
-    """A number as a sentence about the view writes it, with no trailing noise.
+    """Format a number for a message about the view, without trailing zeros.
 
-    A reading wants every digit it has; a range does not - `-5 ≤ x ≤ 5` is what
-    the window is showing, and six decimals of it would be six decimals of
-    nothing.
+    Unlike readings, ranges don't need six decimals: `-5 ≤ x ≤ 5` is enough.
     """
     return f"{value:g}"
 
 
 def written(value: float) -> str:
-    """A number as a field or a tick label writes it: short and exact.
+    """Format a number for a field or tick label, short and exact.
 
-    A whole number is written whole however large it is, because a domain of
-    `-5 … 5` typed as `-5` must come back as `-5` and not as `-5.00000`; a
-    field that rewrote what was typed into it would be a field nobody trusted.
+    Whole numbers are written as integers, so that `-5` typed into a field comes back
+    as `-5` rather than `-5.00000`.
     """
     number = float(value)
     if number == int(number) and abs(number) < 1e15:
@@ -166,22 +145,20 @@ def written(value: float) -> str:
 
 
 def pointed(x: float, y: float) -> str:
-    """The point under a trace marker, spelled for the worksheet: `[x, y]`.
+    """The point under a trace marker, written for the worksheet as `[x, y]`.
 
-    One spelling for every route home, so that what a clipboard carries, what
-    an event sends and what a browser pane hands back are the same text.
+    The clipboard, events and browser panes all use this same text.
     """
     return f"[{reading(x)}, {reading(y)}]"
 
 
 @dataclass
 class Plot:
-    """One entry of a 2D window's plot list: what to draw and what it is called.
+    """One entry of a 2D window's plot list.
 
-    The identity is `worksheet` and `label` together, which is what makes
-    re-plotting `#3` replace its own curve while a `#3` from another algebra
-    overlay is a second plot. `color` survives such a replacement, so that a
-    curve keeps its color across the zoom-and-plot-again habit.
+    Identified by `worksheet` and `label` together, so re-plotting `#3` replaces its
+    curve while `#3` from another algebra overlay is a separate plot. `color` is kept
+    across replacement, so a re-plotted curve keeps its color.
     """
 
     worksheet: int
@@ -193,54 +170,48 @@ class Plot:
     options: Options
     color: str = PALETTE[0]
     paper: str = PAPER_PALETTE[0]
-    #: What went wrong the last time this plot was sampled, if anything.
+    #: The error from the last sampling of this plot, if any.
     trouble: str = ""
-    #: The parse state the expression arrived under, which is what the range
-    #: fields read a typed bound with: the same grammar the worksheet reads.
+    #: The parse state of the expression, used to parse bounds typed in the range fields.
     state: ParseState = field(default_factory=ParseState)
-    #: The parameter range now drawn over, and the bounds typed in the range
-    #: fields that the sampling has yet to turn into one - trees, since what a
-    #: person types is `-π` and what it is worth is arithmetic.
+    #: The current parameter range, and bounds typed in the range fields that are yet
+    #: to be evaluated (as expressions, since the user may type `-π`).
     trange: tuple[float, float] = (-DEFAULT_TURN, DEFAULT_TURN)
     bounds: tuple[Node, Node] | None = None
-    #: How a data plot is drawn, resolved from the request and the sticky
-    #: preferences when the plot is added, and changed by its right-click menu.
+    #: Data plot style, set from the request and sticky preferences when the plot is
+    #: added, and changed from its right-click menu.
     connected: bool = False
     point_size: float = POINT_SIZE
 
     @property
     def named(self) -> str:
-        """How the legend and the status line name this plot."""
+        """The plot's name in the legend and the status line."""
         return naming(self.label, self.text)
 
     @property
     def variable(self) -> str:
-        """The name the plot is parametrized by, `x` where it named none.
+        """The variable the plot is parametrized by, defaulting to `x`.
 
-        The abscissa of a function, the parameter of a parametric pair, the
-        angle of a polar curve: what the status line calls the number the
-        marker is moved along.
+        This is the abscissa of a function, the parameter of a parametric pair, or the
+        angle of a polar curve.
         """
         return self.options.variables[0] if self.options.variables else "x"
 
     @property
     def parameter(self) -> str:
-        """What the status line calls the number the marker is moved along.
+        """The status line's name for the value the marker moves along.
 
-        A polar curve's is θ whatever letter the expression happened to spell
-        its variable with: the picture is drawn in an angle and a radius, and a
-        line reading `x = 0.50   x = 0.11` for the angle and the abscissa would
-        be two different numbers under one name.
+        Polar curves always use θ, whatever the expression's variable, to avoid showing
+        e.g. `x = 0.50   x = 0.11` for both the angle and the abscissa.
         """
         return "θ" if self.kind is PlotKind.POLAR else self.variable
 
     @property
     def abscissa(self) -> str:
-        """What this plot would have the horizontal axis called, if anything.
+        """The name this plot suggests for the horizontal axis, or "" for none.
 
-        A parametric curve has an opinion about neither axis - t is not drawn
-        anywhere - and a data plot has no variables at all, so both keep quiet
-        and let a function in the same window name the axis.
+        Parametric and data plots return "", letting a function in the same window name
+        the axis.
         """
         if self.kind in FUNCTIONS:
             return self.variable
@@ -252,12 +223,9 @@ class Plot:
     def axes(self) -> tuple[str, str]:
         """The two variables a field plot is evaluated over, horizontal first.
 
-        An equation or an inequality in one variable still needs two: `y = 3`
-        is a horizontal line and `x = 3` a vertical one, and which it is comes
-        from where the name sits in the worksheet's variable order. The lone
-        variable is paired with the neighbour that order names, and the two are
-        put in the order's own order, so the picture follows the convention the
-        reader has in mind.
+        An equation in one variable still needs two: `y = 3` is a horizontal line and
+        `x = 3` a vertical one. The lone variable is paired with another from the
+        worksheet's variable order, and the two are arranged in that order.
         """
         names = self.options.variables
         if len(names) >= 2:
@@ -272,20 +240,16 @@ class Plot:
 
 @dataclass
 class Surface(Plot):
-    """One entry of a 3D window's plot list: what to draw and what it is called.
+    """One entry of a 3D window's plot list.
 
-    A plot like any other, with the two things a solid has an opinion about
-    that a curve has not: whether it is drawn as the wire grid of its samples,
-    and whether it is being shown at all - a 2D window answers the second from
-    its drawing item, and a surface is its own answer.
+    Adds wireframe display and visibility. (A 2D plot's visibility is kept by its
+    drawing item instead.)
     """
 
     color: str = SOLID_PALETTE[0]
     paper: str = SOLID_PAPER[0]
-    #: Whether this surface draws as the wire grid of its samples rather than
-    #: as a shaded solid. A property of the surface, not the window: the
-    #: toolbar's `mesh` box flips every surface at once, and the legend's
-    #: right-click carries the per-surface exception.
+    #: Whether to draw this surface as a wireframe rather than shaded. The toolbar's
+    #: `mesh` box sets it for every surface, and the legend's right-click menu for one.
     wire: bool = False
     hidden: bool = False
 
@@ -295,7 +259,7 @@ class Surface(Plot):
 
     @property
     def axes(self) -> tuple[str, str]:
-        """The two variables of the floor, in the order the axes take them."""
+        """The two horizontal variables, in axis order."""
         names = self.options.variables
         if len(names) >= 2:
             return names[0], names[1]
@@ -303,9 +267,5 @@ class Surface(Plot):
 
     @property
     def vertical(self) -> str:
-        """What the upright axis is called: the expression's name for it, or z.
-
-        `z = x^2 + y^2` names it and an expression that is only `x^2 + y^2`
-        does not, so the second gets the letter every reader supplies anyway.
-        """
+        """The vertical axis name: from the expression, as in `z = x^2 + y^2`, or `z`."""
         return self.options.vertical or "z"

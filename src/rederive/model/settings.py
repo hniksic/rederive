@@ -1,26 +1,22 @@
 """Derive's system control settings, and the screens that change them.
 
-Most of those screens are Options commands; four of them are Manage commands,
-which change how expressions are simplified rather than how the system behaves.
-Both kinds are the same thing here, since a setting is a setting whichever menu
-reaches it.
+Most screens are Options commands; four are Manage commands, which control
+simplification. Both are treated the same here.
 
-Every screen described here follows the program itself rather than the manual,
-so the words, the defaults and the message-line prompts are the original's. Two
-of the nine Options commands are gone: `Display` chose between text and graphics
-modes on adapters that no longer exist, and `Execute` shelled out to DOS.
+The screens follow the program rather than the manual: wording, defaults and
+message-line prompts are the original's. Two Options commands are omitted:
+`Display` (obsolete graphics adapters) and `Execute` (shell to DOS).
 
-Three rules of the original that the descriptions below encode:
+Rules of the original encoded below:
 
-* A setting change is *recorded*: committing a dialog appends a `Name := Value`
-  expression to the history for every field that changed, which is also how the
-  same setting can be changed from the author line. `Options Color` and
-  `Options Mute` record nothing, which is why they carry `recorded=False`.
-* The record is written in the notation the settings themselves select, so
-  `Options Output` reaches the spacing of its own record and `Options Radix`
-  reaches its digits. `Settings.assignment` is where that happens.
-* A choice field can prompt for a number instead, which is how `Radix` accepts
-  a base of 2 through 36 that has no name. That is `ChoiceField.prompt`.
+* Committing a dialog records a `Name := Value` expression in the history for each
+  changed field; the same assignment can be authored directly. `Options Color` and
+  `Options Mute` record nothing (`recorded=False`).
+* The record is written in the notation the new settings select, so `Options
+  Output` affects its spacing and `Options Radix` its digits. See
+  `Settings.assignment`.
+* A choice field can prompt for a number instead, so `Radix` accepts any base from
+  2 to 36. See `ChoiceField.prompt`.
 """
 
 from __future__ import annotations
@@ -31,13 +27,10 @@ from dataclasses import dataclass
 from rederive.model import worksheet
 from rederive.model.expr import Kind, Node
 
-#: The colors a color slot can take, in the order Derive's Options Color
-#: commands numbered them: EGA text attributes 0 through 15. Derive asked for
-#: the number; these names are the remake's own. The intensified half is named
-#: for what it looks like rather than prefixed with "light", which keeps the
-#: menu narrow and gives every color a distinct mnemonic letter. Note that 7 is
-#: the lighter gray and 8 the darker one - that inversion is the EGA palette's,
-#: not a mistake here.
+#: Color choices, indexed as EGA text attributes 0-15 as Derive numbered them. Derive
+#: asked for the number; the names are ours. Bright colors get their own names rather
+#: than a "light" prefix, which keeps the menu narrow and gives each a distinct
+#: mnemonic letter. 7 being lighter than 8 is the EGA palette's quirk, not a bug.
 COLORS: tuple[str, ...] = (
     "Black",  # 0
     "Blue",  # 1
@@ -57,18 +50,16 @@ COLORS: tuple[str, ...] = (
     "White",  # 15
 )
 
-#: The named radix bases, and what they are worth.
+#: The named radix bases and their values.
 BASES: dict[str, int] = {"Binary": 2, "Octal": 8, "Decimal": 10, "Hexadecimal": 16}
 
-#: The choice that prompts for a number rather than standing for one.
+#: The choice that prompts for a number.
 OTHER = "Other"
 
-#: What each arithmetic mode sets the notation style to, and the digit count
-#: that follows the precision's. Options Precision carries Options Notation
-#: with it - the manual says so, and the original does it - so that
-#: approximate arithmetic is read in the style and the length that suit it.
-#: The move is silent: only the field the user changed is recorded.
-#: `engine.context.NOTATION_FOR` is the same rule for a temporary context.
+#: The notation style each arithmetic mode switches to. Changing Options Precision
+#: also sets Options Notation (style and digits), as the manual and the original do.
+#: Only the field the user changed is recorded. `engine.context.NOTATION_FOR` applies
+#: the same rule to a temporary context.
 NOTATION_FOR: dict[str, str] = {
     "Exact": "Rational",
     "Approximate": "Scientific",
@@ -86,20 +77,18 @@ class NumberField:
     message: str
     setting: str
     default: int | str
-    """What the field opens on; the empty string for one that opens blank.
+    """The initial value, or the empty string to open blank.
 
-    Only a dialog that stores nothing can open blank, since a setting always
-    has a value. `Declare vectoR` is the one that does: the original offers no
-    dimension until one has been entered.
+    Only a dialog that stores nothing can open blank, since a setting always has a
+    value. `Declare vectoR` does this: the original offers no default dimension.
     """
     minimum: int
     maximum: int | None = None
     recorded: bool = True
     word: str | None = None
-    """A word the field takes in place of a number, as `Unremove` takes `end`.
+    """A word accepted in place of a number, as `Unremove` takes `end`.
 
-    Such a field is typed into with letters as well as digits, and holds the
-    word itself once one is entered.
+    Such a field accepts letters as well as digits, and holds the word once entered.
     """
 
     def accepts(self, number: int) -> bool:
@@ -110,9 +99,8 @@ class NumberField:
 class TextField:
     """A data entry field holding text, such as an interval bound.
 
-    A number field takes digits and judges them for itself. This one takes
-    whatever is typed and judges nothing: what a bound may say is a question
-    about expressions, so the command that put the dialog up answers it.
+    Unlike a number field, it accepts anything typed; validation is left to the
+    command that opened the dialog, since it involves parsing expressions.
     """
 
     label: str
@@ -134,19 +122,18 @@ class ChoiceField:
     default: str
     recorded: bool = True
     inline: bool = True
-    """False when the choices are too many to print on the band, as colors are.
+    """False when there are too many choices to show on the band, as with colors.
 
-    Such a field shows only its current value, and offers the rest as a submenu.
+    Such a field shows only its current value and offers the choices as a submenu.
     """
     prompt: NumberField | None = None
-    """What the `Other` choice asks for instead of a word."""
+    """The number prompt shown when `Other` is chosen."""
 
 
 Field = ChoiceField | NumberField | TextField
 
-#: What a dialog line may hold: fields, and plain words printed between them.
-#: The bounds of a variable's domain are shown around the variable's own name,
-#: which is a word on the line and not a field of it.
+#: A dialog line item: a field or a plain word printed between fields, such as the
+#: variable name shown between its domain bounds.
 Item = Field | str
 
 
@@ -159,36 +146,34 @@ class Dialog:
     stored: bool = True
     """Whether committing writes the fields to the settings.
 
-    False for a dialog that asks about the command in hand rather than about
-    the system: the block of expressions `Transfer Save` writes is answered
-    once and forgotten. Such a dialog opens on its fields' defaults and hands
-    its values back to the command that put it up.
+    False for a dialog about the current command rather than the system, such as
+    which expressions `Transfer Save` writes. Such a dialog opens on its fields'
+    defaults and returns its values to the command that opened it.
     """
     keeps_menu: bool = False
-    """Whether committing goes back to the menu the dialog was opened from.
+    """Whether committing returns to the menu the dialog was opened from.
 
-    Most dialogs are the whole command, so committing returns to the command
-    menu. `Transfer Save Options` is not: you set the options and then issue
-    the save they apply to, so the original leaves its menu up.
+    Most dialogs complete the command and return to the command menu. `Transfer Save
+    Options` keeps its menu up, since the save itself comes next.
     """
     tracks_selection: bool = False
-    """Whether walking the history writes what it lands on into the active field.
+    """Whether moving through the history writes the selected expression's label
+    into the active field.
 
-    True for the dialogs whose fields name expressions: `Remove` and
-    `Unremove` let the arrow keys pick an expression instead of its label
-    number, which the manual recommends as the less error prone of the two.
+    True for `Remove` and `Unremove`, whose fields name expressions; the manual
+    recommends picking with arrow keys as less error prone than typing labels.
     """
     opens_on: str = ""
-    """The setting of the field the highlight starts on, when it is not the first.
+    """The setting of the field initially highlighted, if not the first.
 
-    `Calculus Vector` is the one that is not: its three fields are Start, End
-    and Step, and the original opens on End - the only one of them it offers
-    no default for, and so the only one that has to be answered.
+    `Calculus Vector` (Start, End, Step) opens on End, the only field without a
+    default.
     """
     enters: bool = False
-    """Whether committing enters an expression, and so whether Ctrl-Enter says
-    anything on it: the Calculus dialogs each finish a command that appends an
-    unevaluated expression, which is exactly what there is left to simplify.
+    """Whether committing enters an expression, which makes Ctrl-Enter meaningful.
+
+    True for the Calculus dialogs, which append an unevaluated expression that
+    Ctrl-Enter then simplifies.
     """
 
     @property
@@ -340,25 +325,21 @@ RADIX = Dialog(
 )
 
 
-#: How fine a grid a state file may ask a surface for, and how big a data
-#: point may be drawn. The grid cap is the one a 3D window draws at - it clamps
-#: whatever it is handed - so a loaded number the picture would silently reduce
-#: is refused instead; twenty pixels is a point big enough to be a blob.
+#: Upper limits for a surface's grid and a data point's size. The grid limit matches
+#: the 3D window's own clamp, so a state file value that would be silently reduced is
+#: refused instead; points larger than 20 pixels are just blobs.
 PLOT_GRID_MAXIMUM = 256
 PLOT_POINT_MAXIMUM = 20
 
-# The sticky plot preferences: what a new surface's grid and a new data plot's
-# points start out as, which is however the last one was left. No dialog holds
-# them - the controls are the 3D window's own grid fields and a data plot's
-# right-click menu, and the plot host hands what they change back to the app -
-# but they are settings all the same, so that a state file carries them and a
-# session opens plotting the way it was left. Nothing is recorded: a moved
-# toggle in a plot window must not write into the worksheet.
+# Sticky plot preferences: a new surface's grid and a new data plot's points start
+# out as the last ones were left. They have no dialog (they're set from the 3D
+# window's grid fields and a data plot's context menu, reported back by the plot
+# host), but are settings so that the state file preserves them. They are never
+# recorded, since toggling a plot window must not write to the worksheet.
 #
-# Equal scales is deliberately not among them. A new window always opens with
-# equal scales and the window's `1:1` toggle serves the exception; a one-off
-# framing choice that silently became the default would reshape the next
-# circle, so nothing persists.
+# Equal scales is intentionally not sticky: a new window always opens with equal
+# scales, and the `1:1` toggle handles exceptions. A one-off choice silently becoming
+# the default would distort the next circle.
 PLOT_FIELDS: tuple[Field, ...] = (
     NumberField(
         "Grid",
@@ -399,22 +380,19 @@ PLOT_FIELDS: tuple[Field, ...] = (
 
 # -- the Manage screens ------------------------------------------------------
 #
-# The four Manage commands that set something. They say which way the
-# simplifier applies a family of transformations it could apply either way, so
-# the answer is a direction rather than a yes or no.
+# The four Manage commands that set something. Each chooses the direction in which
+# the simplifier applies a family of reversible transformations.
 
-#: The three directions Exponential, Logarithm and Trigonometry each take.
-#: Collect applies the transformations rightward and Expand leftward; Auto
-#: mixes the two, one way for each transformation of the pair.
+#: Directions for Exponential, Logarithm and Trigonometry. Collect applies the
+#: transformations rightward and Expand leftward; Auto picks a direction per
+#: transformation.
 _DIRECTIONS = ("Auto", "Collect", "Expand")
 
 BRANCH = Dialog(
     "MANAGE BRANCH:",
     (
         (
-            # The one selection field in the program with no caption of its
-            # own: there is nothing to say about it that the title has not
-            # already said.
+            # The only selection field with no caption, as in the original.
             ChoiceField(
                 "",
                 "Select preferred branch for roots",
@@ -430,12 +408,9 @@ EXPONENTIAL = Dialog(
     "MANAGE EXPONENTIAL:",
     (
         (
-            # Section 6.1 of the manual says this field starts on Collect,
-            # where the identically worded section 6.2 says Auto of Logarithm.
-            # Collect was the 1.x default - the older DERIVE.INI carries
-            # `*EXP-EXPD* |Collect|` - and 6.1 is a leftover of it: the
-            # original's own DERIVE.INI says `*EXP-EXPD* |Auto|`, and so does
-            # its screen.
+            # The manual (section 6.1) says the default is Collect, but that is a
+            # leftover from 1.x (`*EXP-EXPD* |Collect|` in the older DERIVE.INI).
+            # The original's DERIVE.INI and screen both say Auto.
             ChoiceField(
                 "Direction",
                 "Exponential transformations",
@@ -462,8 +437,7 @@ LOGARITHM = Dialog(
     ),
 )
 
-# The band says MANAGE TRIGONOMETRY, though the manual's screen reproduction
-# abbreviates it to MANAGE TRIG. The program is right and the manual wrong.
+# The program says MANAGE TRIGONOMETRY; the manual's "MANAGE TRIG" is wrong.
 TRIGONOMETRY = Dialog(
     "MANAGE TRIGONOMETRY:",
     (
@@ -496,9 +470,8 @@ TRIGONOMETRY = Dialog(
 )
 
 
-# The one dialog here that sets nothing lasting. It says how the next
-# `Transfer Save` writes its file, which is why committing it leaves the
-# Transfer Save menu up rather than returning to the command menu.
+# Options for the next `Transfer Save`. Nothing is recorded, and committing leaves
+# the Transfer Save menu up.
 SAVE = Dialog(
     "TRANSFER SAVE OPTIONS:",
     (
@@ -511,9 +484,8 @@ SAVE = Dialog(
                 "All",
                 recorded=False,
             ),
-            # The original's message line for this field says only `Annotation`,
-            # which tells a first-time user nothing; every other field on the
-            # screen is phrased as an instruction, and so is this one.
+            # The original's message is just `Annotation`; we phrase it as an
+            # instruction like the other fields.
             ChoiceField(
                 "Annotation",
                 "Select annotation mode",
@@ -548,12 +520,9 @@ def _color_field(label: str, setting: str, default: str) -> ChoiceField:
     )
 
 
-# The color defaults are the factory settings of the last Derive version whose
-# defaults were colorful, taken from its own Options Color screens. Rederive
-# imitates the original in everything but color, and the original ships
-# monochrome - Gray frame and options, White prompt, Gray status - so a
-# colorless screenshot of it is not evidence that this scheme is wrong and must
-# not be "corrected" to match.
+# The color defaults come from the last Derive version with colorful defaults. The
+# version we otherwise imitate ships monochrome, so don't "correct" these to match
+# its screenshots.
 COLOR_MENU = Dialog(
     "OPTIONS COLOR MENU:",
     (
@@ -596,8 +565,7 @@ DIALOGS: tuple[Dialog, ...] = (
     COLOR_WORK,
 )
 
-#: Every field a setting lives behind: the dialogs' own, and the sticky plot
-#: preferences no dialog holds.
+#: All setting fields: those in dialogs plus the sticky plot preferences.
 _ALL_FIELDS: tuple[Field, ...] = (
     *(field for dialog in DIALOGS for field in dialog.fields),
     *PLOT_FIELDS,
@@ -607,8 +575,8 @@ DEFAULTS: dict[str, str | int] = {
     field.setting: field.default for field in _ALL_FIELDS
 }
 
-#: The sticky plot settings. What they are worth reaches a process rather than
-#: the screen, so the app watches for a change to any of them.
+#: The sticky plot settings. The app watches them for changes to pass on to the plot
+#: process.
 PLOT_PREFERENCES: frozenset[str] = frozenset(field.setting for field in PLOT_FIELDS)
 
 #: The field that owns each setting, for reading an authored `Name := Value`.
@@ -616,11 +584,10 @@ FIELDS: dict[str, Field] = {field.setting: field for field in _ALL_FIELDS}
 
 
 def _read(field: Field, value: str) -> str | int | None:
-    """What an authored `Name := Value` sets `field` to, or None if nothing.
+    """The value an authored `Name := Value` sets `field` to, or None if invalid.
 
-    A choice is matched however it was capitalised, and a number is read where
-    the field takes one: `Options Radix` accepts `InputBase := 7` for the same
-    reason its `Other` choice prompts for a base.
+    Choices match case-insensitively, and numbers are accepted where the field
+    prompts for one, so `InputBase := 7` works.
     """
     if isinstance(field, ChoiceField):
         for choice in field.choices:
@@ -637,11 +604,10 @@ def _read(field: Field, value: str) -> str | int | None:
 
 
 class Settings:
-    """Every system control setting, and whom to tell when one changes.
+    """All system control settings, with change notification.
 
-    Storing the new value is not the whole job: colors have to reach the screen
-    and the input modes have to reach the parser, so anything that depends on a
-    setting registers with `watch` and is told which settings changed.
+    Code that depends on a setting (the screen on colors, the parser on input
+    modes) registers with `watch` to be told which settings changed.
     """
 
     def __init__(self) -> None:
@@ -656,15 +622,15 @@ class Settings:
         self._watchers.append(callback)
 
     def unwatch(self, callback: Callable[[frozenset[str]], None]) -> None:
-        """Stop calling `callback`, which a closed window's session wants."""
+        """Stop calling `callback`, as when a window's session closes."""
         if callback in self._watchers:
             self._watchers.remove(callback)
 
     def apply(self, values: Mapping[str, str | int]) -> tuple[str, ...]:
         """Store `values`, and return the names of those that actually changed.
 
-        A precision setting brings its notation setting along, unless the same
-        call sets that one too. See `NOTATION_FOR`.
+        A precision setting also sets notation, unless the same call sets it too.
+        See `NOTATION_FOR`.
         """
         values = _with_notation(values)
         changed = tuple(
@@ -679,12 +645,10 @@ class Settings:
         return changed
 
     def assign(self, setting: str, value: str) -> bool:
-        """Apply an authored `Name := Value`, and say whether it took.
+        """Apply an authored `Name := Value`, and return whether it took effect.
 
-        Authoring `InputMode := Word` changes the mode exactly as the Options
-        Input dialog does, and the dialog then shows Word: the original keeps
-        one store, reached from either side. A setting no dialog owns, or a
-        value no field takes, changes nothing.
+        Authoring `InputMode := Word` is equivalent to setting it in the Options
+        Input dialog. Unknown settings and invalid values change nothing.
         """
         field = FIELDS.get(setting)
         if field is None:
@@ -700,24 +664,19 @@ class Settings:
     def assignment(self, setting: str) -> str:
         """The `Name := Value` expression Derive records for a settings change.
 
-        Written the way the current settings say to write it: `Options Output`
-        decides the spacing around `:=` and `Options Radix` the digits, so the
-        record of a change is already in the notation that change selected.
+        It uses the current settings: `Options Output` decides the spacing around
+        `:=` and `Options Radix` the digits.
         """
         space = "" if self._values["DisplayFormat"] == "Compressed" else " "
         return f"{setting}{space}:={space}{self.written(self._values[setting])}"
 
     def assignment_node(self, setting: str) -> Node:
-        """The same record as an expression, built rather than parsed.
+        """The same record as an expression, built directly rather than parsed.
 
-        Derive constructs the expression it records; it does not write the
-        record out and read it back. `InputBase := 7` is why that matters: its
-        text no longer lexes once the base it selects is in force, `7` not
-        being a digit in base seven.
+        Parsing wouldn't always work: `InputBase := 7` doesn't lex in base seven.
 
-        The spans index `assignment(setting)`, so the two agree character for
-        character. A number carries its decimal value and the digits it was
-        written in, exactly as the lexer would have reported them.
+        Spans index into `assignment(setting)`. A number carries its decimal value
+        and its written digits, as the lexer would report them.
         """
         value = self._values[setting]
         written = self.written(value)
@@ -738,13 +697,10 @@ class Settings:
     def numeral(self, number: int) -> str:
         """`number` in the output radix.
 
-        Above base ten the digits run A to Z, and a numeral that would begin
-        with a letter takes a leading zero so that it cannot be read as a
-        variable name: fourteen is `0E` in hexadecimal, not `E`.
+        Digits above 9 are A to Z, and a numeral starting with a letter gets a
+        leading zero so it isn't read as a name: fourteen is `0E` in hexadecimal.
 
-        The display package formats numerals for the screen by the same rule.
-        The two are kept apart so that the model does not depend on the display
-        layer.
+        The display package duplicates this rule so the model doesn't depend on it.
         """
         base = self.base("OutputBase")
         magnitude = abs(number)
@@ -759,7 +715,7 @@ class Settings:
         return ("-" if number < 0 else "") + text
 
     def base(self, setting: str) -> int:
-        """What a radix setting is worth, named or numbered."""
+        """The numeric value of a radix setting, named or numbered."""
         value = self._values[setting]
         return BASES[value] if isinstance(value, str) else value
 
@@ -767,16 +723,14 @@ class Settings:
 class DialogEditor:
     """One Options dialog while it is on screen.
 
-    Nothing here touches the live settings. `commit` hands the values back for
-    the caller to apply, which is what lets Esc walk away having changed
-    nothing.
+    The live settings are never touched; `commit` returns the values for the caller
+    to apply, so Esc leaves everything unchanged.
     """
 
     def __init__(self, dialog: Dialog, settings: Settings) -> None:
         self.dialog = dialog
-        # A dialog that stores nothing has no settings behind its fields, so it
-        # opens on their defaults - which is where a caller that computes them,
-        # as the save block does from the history, puts the answer it offers.
+        # A dialog that stores nothing opens on its fields' defaults, which a caller
+        # can compute (as the save range does from the history).
         self.values = {
             field.setting: settings[field.setting] if dialog.stored else field.default
             for field in dialog.fields
@@ -791,18 +745,17 @@ class DialogEditor:
         )
         self.prompt: NumberField | None = None
         self.text: str | None = None
-        """The digits of a number field being typed into, if that is the field."""
+        """The text being edited, if the active field is typed into."""
         self.cursor = 0
         self.numbers = {
             field.setting: _as_number(self.values[field.setting])
             for field in dialog.fields
             if isinstance(field, ChoiceField) and field.prompt is not None
         }
-        """What a promptable field was worth when the dialog opened.
+        """The numeric value of each promptable field when the dialog opened.
 
-        Stepping the highlight onto `Other` does not change it: the original
-        offers the radix that is in effect, not the one the highlight passed
-        over on its way.
+        The `Other` prompt offers this value, not whatever choice the highlight
+        passed over, as in the original.
         """
         self._enter_field()
 
@@ -850,18 +803,11 @@ class DialogEditor:
         return True
 
     def activate(self, index: int) -> bool:
-        """Put the highlight on field `index`, as a Tab onto it would.
+        """Move the highlight to field `index`, as a mouse click does.
 
-        Which is what a click on the field is: what was typed in the field being
-        left is stored, and a number that field will not have keeps the
-        highlight where it is - a mistyped digit is corrected in the field it
-        was typed in, whether Tab or the mouse tried to leave it. A field left
-        on `Other` puts its number prompt up instead of being left, again as Tab
-        does, and the click has gone as far as it goes.
-
-        Clicking the field the highlight is already on is not a move and does
-        nothing: there is nothing to store that is not already stored, and
-        nothing to refuse.
+        This behaves like Tab: the field being left is stored, and an invalid number
+        keeps the highlight in place for correction. A field left on `Other` opens
+        its number prompt instead of moving. Clicking the active field does nothing.
         """
         if not 0 <= index < len(self.fields):
             return False
@@ -876,10 +822,10 @@ class DialogEditor:
         return True
 
     def focus(self, setting: str) -> None:
-        """Put the highlight on the field holding `setting`, ready to be retyped.
+        """Move the highlight to the field holding `setting`, ready for editing.
 
-        Which is where the original leaves it when Enter is refused: on the
-        first field the answer was wrong in, with what was typed still in it.
+        Used when Enter is refused, to put the highlight on the first invalid field
+        with its typed text intact, as the original does.
         """
         for index, field in enumerate(self.fields):
             if field.setting == setting:
@@ -888,10 +834,10 @@ class DialogEditor:
                 return
 
     def open_prompt(self) -> bool:
-        """Ask for a number, if the active field has been left on `Other`.
+        """Prompt for a number if the active field is on `Other`.
 
-        The original does not prompt the moment `Other` is stepped onto; it
-        prompts when the field is done with, which is Tab or Enter.
+        As in the original, the prompt appears on Tab or Enter, not as soon as
+        `Other` is selected.
         """
         field = self.field
         if (
@@ -901,8 +847,8 @@ class DialogEditor:
             or self.value(field) != OTHER
         ):
             return False
-        # The prompt replaces the choice, so from here on the field holds a
-        # number and `Other` is gone: Esc abandons the dialog anyway.
+        # The field now holds a number instead of `Other`; Esc abandons the whole
+        # dialog anyway.
         self.prompt = field.prompt
         self.values[field.setting] = self.numbers[field.setting]
         self.active = 0
@@ -918,12 +864,10 @@ class DialogEditor:
         self.cursor = 0
 
     def _leave_field(self) -> bool:
-        """Store what was typed, if the field takes it.
+        """Store what was typed, if valid, and return whether it was.
 
-        A number the field will not have leaves the field as it is rather than
-        putting the old value back, so that a mistyped digit can be corrected
-        instead of retyped. A text field takes whatever is in it; only the
-        command that put the dialog up knows what it can use.
+        An invalid number is left as typed, so it can be corrected rather than
+        retyped. A text field accepts anything; the calling command validates it.
         """
         field = self.field
         if self.text is None:
@@ -946,9 +890,9 @@ class DialogEditor:
     # -- changing a value --------------------------------------------------
 
     def choose(self, value: str) -> bool:
-        """Select `value` in the active field, and move on to the next one.
+        """Select `value` in the active field and move to the next field.
 
-        False means the active field has no such choice.
+        Return False if the active field has no such choice.
         """
         field = self.field
         if not isinstance(field, ChoiceField) or value not in field.choices:
@@ -969,8 +913,8 @@ class DialogEditor:
         if current in field.choices:
             index = (field.choices.index(current) + step) % len(field.choices)
         else:
-            # A field holding a number typed into its prompt is on no choice
-            # at all, so a step onto the list enters it from the near end.
+            # The field holds a prompted number, so enter the list from the end
+            # nearest the step direction.
             index = 0 if step > 0 else len(field.choices) - 1
         self.values[field.setting] = field.choices[index]
         return True
@@ -983,9 +927,8 @@ class DialogEditor:
     def type_character(self, character: str) -> bool:
         """Type into the active data entry field, overwriting at the cursor.
 
-        Digits only, unless the field takes a word as well - then the letters
-        that spell it are typed the same way, and what they spell is judged
-        when the field is left. A text field takes any character at all.
+        Number fields accept digits, plus letters if they take a word (validated
+        when the field is left). Text fields accept any character.
         """
         field = self.field
         takes_letters = isinstance(field, TextField) or (
@@ -998,7 +941,7 @@ class DialogEditor:
         return True
 
     def retype(self, text: str) -> None:
-        """Put `text` in the active field, as walking the history onto one does."""
+        """Replace the active field's text, as moving through the history does."""
         self.text = text
         self.cursor = 0
 
@@ -1018,7 +961,7 @@ class DialogEditor:
         return True
 
     def move_cursor(self, where: str | None) -> bool:
-        """Walk the cursor along a number field, as the arrows and Home/End do."""
+        """Move the cursor within the field, as the arrows and Home/End do."""
         if self.text is None:
             return False
         place = {
@@ -1036,18 +979,17 @@ class DialogEditor:
 
     @property
     def settles_on_choice(self) -> bool:
-        """Whether choosing a value finishes the dialog outright.
+        """Whether choosing a value finishes the dialog.
 
-        It does when there is only one field to fill in, which is how
-        `Options Mute` answers in a single keystroke.
+        True for single-field dialogs, so `Options Mute` takes a single keystroke.
         """
         return len(self.fields) == 1
 
     def commit(self) -> dict[str, str | int] | None:
-        """The values to apply, or None if the dialog is not finished with.
+        """The values to apply, or None if the dialog isn't finished.
 
-        A field left on `Other` is not finished with: `open_prompt` puts up its
-        number prompt, and the next Enter commits.
+        A field left on `Other` opens its number prompt instead, and the next Enter
+        commits.
         """
         if self.open_prompt() or not self._leave_field():
             return None
@@ -1063,7 +1005,7 @@ class DialogEditor:
 
 
 def _with_notation(values: Mapping[str, str | int]) -> dict[str, str | int]:
-    """`values` plus the notation settings a precision setting carries along."""
+    """`values` plus the notation settings implied by precision settings."""
     carried = dict(values)
     style = NOTATION_FOR.get(str(values.get("Precision", "")))
     if style is not None and "Notation" not in carried:

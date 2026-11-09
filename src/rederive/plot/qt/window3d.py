@@ -1,39 +1,28 @@
-"""The 3D plot window: several surfaces in one solid, and a camera that costs nothing.
+"""The 3D plot window: several surfaces in one box, with cheap camera movement.
 
-A surface is read by turning it over, so the whole of this window is arranged
-around making that free. The mesh is built once per domain and grid and never
-again: every orbit, every wheel click, every preset is a camera move over
-vertices that are already on the card, and nothing the mouse can do starts an
-evaluation. Only the two toolbar fields - the domain and the grid - do that,
-because they are the two things that change what was computed rather than where
-it is looked at from.
+Surfaces are understood by rotating them, so the window makes that free. The mesh is
+built once per domain and grid; orbiting, zooming and presets only move the camera, and
+nothing the mouse does triggers evaluation. Only the toolbar's domain and grid fields
+do, since they change what is computed.
 
-**The shape of the picture is `plot.surface`'s and not this file's.** The box a
-surface stands in, its triangles, its wire grid and its shading are arrays and
-belong to nobody's toolkit; what is here is a `GLMeshItem` fed with them, and
-the numbers along the box edges. The one thing worth repeating from there:
-`GLSurfacePlotItem` could not have drawn any of it - it generates the full grid
-of faces from the array's shape, and what it does with a NaN vertex is not a
-contract anyone has written down - so the triangles are built there and drawn
-by a plain `GLMeshItem` here. A dome with a skirt of garbage triangles around
-it is the picture that gets drawn when you trust it.
+**The geometry comes from `plot.surface`.** The box, triangles, wireframe and shading
+are computed there as toolkit-independent arrays; this module feeds them to a
+`GLMeshItem` and draws the tick labels. `GLSurfacePlotItem` isn't used because it
+generates faces for the full grid and handles NaN vertices unpredictably, leaving
+garbage triangles around a dome.
 
-Because there is only ever one box, near enough, to look at, `Home` is a fixed
-camera rather than a computation.
+Since there is essentially one box to look at, `Home` is a fixed camera position.
 
-**A wire surface hides what is behind it.** Derive's plotter drew a grid with
-its hidden lines removed, and a see-through grid is a shape a reader has to
-solve rather than see - the far side of a dome comes forward, and two surfaces
-in one window are one fabric. So the wire is drawn over its own solid, painted
-in the color of the canvas and shoved a hair back by the polygon offset: an
-invisible body for the depth buffer to hide the lines behind, this surface's
-lines and every other item's alike.
+**Wireframes hide what is behind them**, as Derive's hidden-line plots did. A
+see-through grid is hard to read: the far side of a dome shows through, and two
+surfaces blend together. So the wireframe is drawn over its own solid, painted in the
+canvas color and pushed back slightly by the polygon offset, which hides the lines
+behind it.
 
-**A window that cannot get an OpenGL context says so.** The context is asked for
-when the window is first shown, which is inside the Qt event loop, and an
-exception there would leave the process dead and every 2D window with it. It is
-caught and put on the status bar instead: no picture, but a plot list, a title
-and a message naming what happened.
+**A window that can't get an OpenGL context says so.** The context is created when the
+window is first shown, inside the Qt event loop, where an exception would kill the
+process and every 2D window with it. It is caught and reported on the status bar
+instead.
 """
 
 from __future__ import annotations
@@ -90,108 +79,89 @@ from rederive.syntax import ParseState
 
 __all__ = ["Drawn", "Window3D"]
 
-#: What the numbers along the box edges are written in, which is the 2D
-#: window's own ink. The ground, the box and the tick marks are
-#: `plot.appearance`', which the page's panes draw from as well, so that a
-#: window and a pane side by side are two pictures of one program.
+#: Tick label color, matching the 2D window. The background, box and tick mark colors
+#: are in `plot.appearance`, shared with the page.
 TEXT_COLOR = "#d0d0d0"
 
-#: The same three, for the white background every image export is taken on.
+#: Box, tick and label colors for image exports, which use a white background.
 PAPER_BOX = (40, 40, 40, 230)
 PAPER_TICK = (60, 60, 60, 255)
 PAPER_TEXT = "#000000"
 
-#: The GL state the wire's shove is asked for in - the stock opaque state,
-#: which is what every other item here draws under, and the polygon offset
-#: over it.
+#: GL state of the wireframe's occluding solid: the stock opaque state used by all
+#: other items, plus the polygon offset.
 WIRE_OCCLUDER = {
     **GLOptions["opaque"],
     GL.GL_POLYGON_OFFSET_FILL: True,
     "glPolygonOffset": WIRE_OFFSET,
 }
 
-#: The most tick marks an axis may draw - the pool of text items is made once
-#: and never grown, since items cannot be added to the view while it is
-#: painting.
+#: Maximum tick marks per axis. The pool of text items is created once and never
+#: grown, since items can't be added to the view while it is painting.
 MAX_TICKS = 9
 
-#: What a window with no usable OpenGL says instead of drawing. The reason is
-#: the toolkit's own words, which are the only ones that name a missing driver.
+#: Message shown when OpenGL is unusable, with the toolkit's error as the reason.
 NO_OPENGL = "3D drawing is not available: {reason}"
 
 
 @dataclass
 class Drawn(Surface):
-    """A surface as this window holds it: the items that draw it and its grid.
+    """A surface as held by this window, with its drawing items and sampled grid.
 
-    The identity, the look and the expression are the surface's own and come
-    from the session; everything added here belongs to the side that evaluates
-    and draws.
+    The fields inherited from `Surface` come from the session; the ones added here
+    belong to evaluation and drawing.
 
-    `values` is the grid the closure last answered with, kept because the mesh
-    is rebuilt whenever the z extent moves - another surface arriving in the
-    same window changes what the cube holds without changing what this surface
-    is worth.
+    `values` is kept because the mesh is rebuilt whenever the z range changes, e.g.
+    when another surface is added.
     """
 
     item: Any = None
-    #: The line item the wire look draws with, made beside `item` and shown
-    #: over it while `wire` is on - `item` stays, as the shape the lines are
-    #: hidden behind.
+    #: The wireframe line item, shown over `item` while `wire` is on; `item` remains as
+    #: the occluder hiding lines behind it.
     wires: Any = None
     #: The lambdified closure, once the sampling thread has built one.
     closure: Callable[..., np.ndarray] | None = None
     xs: np.ndarray = field(default_factory=lambda: np.empty(0))
     ys: np.ndarray = field(default_factory=lambda: np.empty(0))
     values: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
-    #: Where the surface stops being real, refined along the grid's edges on
-    #: the sampling thread and cached beside the arrays it was found on: the
-    #: mesh reads it to end at the boundary rather than a grid step short.
+    #: Where the surface stops being real, computed on the sampling thread and cached
+    #: with the arrays, so the mesh ends exactly at the boundary.
     boundary: evaluate.Boundary | None = None
-    #: Which evaluation these values came from. A job whose generation has
-    #: moved on is a job about a domain that is gone.
+    #: The evaluation these values came from; results of outdated jobs are dropped.
     generation: int = 0
 
     @classmethod
     def of(cls, surface: Surface) -> Drawn:
-        """This window's record of a surface the session has just handed it."""
+        """Create this window's record of a surface from the session."""
         return cls(
             **{field.name: getattr(surface, field.name) for field in fields(Surface)}
         )
 
 
 class View(gl.GLViewWidget):
-    """The GL view, saying when the camera has moved and surviving no GL at all.
+    """The GL view, extended with a camera signal, a right-click menu and a GL guard.
 
-    Three departures from stock, all of them about what happens around the
-    drawing rather than to it. The camera signal is what the tick labels
-    re-anchor on: every stock gesture goes through `orbit`, `pan`,
-    `setCameraPosition` or the wheel, so overriding those four is a complete
-    account of the camera moving, and it is emitted after the move rather than
-    during it.
+    `moved` is emitted after every camera move, so tick labels can re-anchor. All stock
+    gestures go through `orbit`, `pan`, `setCameraPosition` or the wheel, so overriding
+    these four covers every move.
 
-    The second is the right button, which the stock view has no use for at all:
-    it orbits on the left and pans on the middle, and a press of the right one
-    is recorded and forgotten. So the button is free, and a press let go where
-    it was pressed asks for the window's menu - the same click the 2D canvas
-    answers, measured by the same slop, so that one hand opens either window's
-    menu the same way.
+    The stock view doesn't use the right button, so a right click (released within the
+    same slop as in the 2D canvas) opens the window's menu.
 
-    The third is the guard. `initializeGL` is where a machine with no usable
-    OpenGL says so, and it runs inside the Qt event loop, where an exception
-    ends the process and takes every other plot window with it. It is remembered
-    instead, and the window reports it on its status bar.
+    A failure in `initializeGL` (no usable OpenGL) would raise inside the Qt event loop
+    and kill the process with all plot windows. It is recorded in `broken` instead and
+    reported on the status bar.
     """
 
     moved = QtCore.Signal()
 
-    #: A right click that stayed put, at the point on the screen it landed on.
+    #: A right click without movement, with its global screen position.
     asked = QtCore.Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
         self.broken = ""
-        #: Where the right button went down, while it is down.
+        #: Where the right button was pressed, while it is down.
         self._pressed: Any = None
 
     def initializeGL(self) -> None:
@@ -205,7 +175,7 @@ class View(gl.GLViewWidget):
             return
         try:
             super().paintGL(*arguments, **keywords)
-        except Exception as error:  # a card that gave out mid-frame
+        except Exception as error:  # GL failure mid-frame
             self.broken = str(error).strip().splitlines()[0]
 
     def orbit(self, *arguments: Any, **keywords: Any) -> None:
@@ -225,17 +195,16 @@ class View(gl.GLViewWidget):
         self.moved.emit()
 
     def mousePressEvent(self, ev: Any) -> None:
-        """Stock, plus the beginning of a click that may be asking for the menu."""
+        """Stock behavior, plus recording a right press that may open the menu."""
         super().mousePressEvent(ev)
         if ev.button() == QtCore.Qt.MouseButton.RightButton:
             self._pressed = ev.position()
 
     def mouseReleaseEvent(self, ev: Any) -> None:
-        """A right button let go where it went down is the menu being asked for.
+        """Open the menu if the right button is released where it was pressed.
 
-        Let go anywhere else it is nothing, which is what a right drag is here
-        already: the stock view moves the camera on the other two buttons, so
-        nothing is being taken away from the mouse to pay for the menu.
+        A right drag does nothing, as in the stock view, which moves the camera with
+        the other two buttons.
         """
         super().mouseReleaseEvent(ev)
         if ev.button() != QtCore.Qt.MouseButton.RightButton or self._pressed is None:
@@ -246,12 +215,10 @@ class View(gl.GLViewWidget):
             self.asked.emit(ev.globalPosition().toPoint())
 
     def mouseMoveEvent(self, ev: Any) -> None:
-        """Stock, plus Shift-drag as a second way to say pan.
+        """Stock behavior, plus Shift-drag to pan.
 
-        The stock view pans on Ctrl-drag and on the middle button; Shift is the
-        modifier the rest of this program uses for "the other axis", and a hand
-        already holding Shift for a 2D window should not have to learn a second
-        key for the same gesture in a 3D one.
+        The stock view pans with Ctrl-drag and the middle button; Shift-drag is added
+        for consistency with the 2D window.
         """
         modifiers = ev.modifiers()
         shift = modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier
@@ -266,7 +233,7 @@ class View(gl.GLViewWidget):
 
 
 class Window3D(QtWidgets.QMainWindow):
-    """One top-level 3D plot window and everything that happens inside it."""
+    """A top-level 3D plot window."""
 
     def __init__(
         self, number: int, session: Any, *, grid: int = DEFAULT_GRID, wire: bool = True
@@ -279,46 +246,37 @@ class Window3D(QtWidgets.QMainWindow):
         self.current = False
         self.xdomain = DEFAULT_DOMAIN
         self.ydomain = DEFAULT_DOMAIN
-        # The grid the window opens with is the sticky one the session holds -
-        # the grid the last surface was given - clamped as a typed one is: a
-        # window never samples finer than it can draw, whoever asked.
+        # Start with the sticky grid preference, clamped like a typed one.
         counted = forms.counts((str(grid), str(grid)))
         self.grid = counted if counted is not None else (DEFAULT_GRID, DEFAULT_GRID)
-        #: How a surface arriving here is drawn - the sticky look the last
-        #: surface anywhere was left in, and thereafter whatever this window's
-        #: own `mesh` box says.
+        #: Whether new surfaces are drawn as wireframes: initially the sticky
+        #: preference, then this window's `mesh` box.
         self.wired = bool(wire)
-        #: The z range now drawn, and the one the inspector nailed down where
-        #: somebody typed it - a typed extent is an answer and is not autoscaled
-        #: away by the next surface.
+        #: The current z range, and the one typed in the inspector, if any. A typed
+        #: range is not autoscaled away when a surface is added.
         self.zrange = DEFAULT_ZRANGE
-        #: What the three axes are called, which is the first surface's reading
-        #: of the expression until there is one.
+        #: The axis names, taken from the first surface.
         self.axis_names = ("x", "y", "z")
         self._fixed: tuple[float, float] | None = None
-        #: The parse state and context the domain fields read typed bounds
-        #: under: the last added surface's, since the domain belongs to the
-        #: window and the worksheet that last plotted into it is its reader.
+        #: The parse state and context for bounds typed in the domain fields: those
+        #: of the last added surface.
         self._state = ParseState()
         self._context = Context()
-        #: Which domain edit is the latest, so the numbers a superseded edit
-        #: evaluated to cannot land on top of a newer one's.
+        #: Counter of domain edits, so results of a superseded edit are discarded.
         self._edit = 0
         self._counter = 0
         self._message = ""
-        #: Which of the three furnishings are shown: the box and its ticks, the
-        #: numbers and axis names, the legend. All on for a fresh window.
+        #: Visibility of the box and ticks, the tick labels and axis names, and the
+        #: legend.
         self._boxed = True
         self._named = True
         self._legend = True
         self._papered = False
         self._inspector: Inspector | None = None
-        #: The surface a right click on a legend row was about, which is what
-        #: that row's own menu is then read for.
+        #: The surface whose legend row was right-clicked, for that row's menu.
         self._pointed: Drawn | None = None
-        #: Whether a demonstration's step is waiting in this window: it is kept
-        #: above the others while one is, and every key in it belongs to the
-        #: program that is running the demonstration rather than to this window.
+        #: Whether a demonstration step is showing in this window. While it is, the
+        #: window stays on top and forwards unused keys to the program.
         self._demonstrating = False
         self._build()
         self.retitle()
@@ -329,8 +287,8 @@ class Window3D(QtWidgets.QMainWindow):
     def _build(self) -> None:
         self.view = View()
         self.view.setBackgroundColor(BACKGROUND)
-        # The keys belong to the window: the stock view has arrow bindings of
-        # its own with a repeat timer, and ours orbit by a fixed step.
+        # The window handles the keys: the stock view's arrow bindings use a repeat
+        # timer, while ours orbit by a fixed step.
         self.view.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.view.moved.connect(self._anchor)
         self.view.asked.connect(self._menu_at)
@@ -346,14 +304,10 @@ class Window3D(QtWidgets.QMainWindow):
         self.resize(760, 620)
 
     def _laid_out(self) -> QtWidgets.QWidget:
-        """The view between a toolbar and a status line.
+        """The view between the toolbar and the status line.
 
-        The toolbar holds the two things that change what was computed - the
-        rectangle and how finely it is sampled - the `mesh` box that draws
-        every surface as the wire grid of its samples, the door to the numbers
-        behind the picture, and the clear that starts the picture over.
-        Everything else about a 3D window is the camera, and the camera is
-        the mouse.
+        The toolbar has the domain and grid fields, the `mesh` toggle, the inspector
+        button and Clear. Everything else is the camera, controlled with the mouse.
         """
         holder = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(holder)
@@ -376,11 +330,10 @@ class Window3D(QtWidgets.QMainWindow):
         return holder
 
     def _toolbar(self) -> QtWidgets.QWidget:
-        """The domain, the grid, and the controls the picture itself answers to.
+        """The toolbar: domain and grid fields, followed by the buttons.
 
-        The fields stand in three groups with a hairline between them, since a
-        domain in x, a domain in y and a grid are three answers rather than six
-        numbers in a row.
+        The fields are in three groups separated by dividers: x domain, y domain and
+        grid.
         """
         bar = QtWidgets.QToolBar()
         bar.setMovable(False)
@@ -402,18 +355,17 @@ class Window3D(QtWidgets.QMainWindow):
         return bar
 
     def _button(self, bar: Any, name: str, handler: Callable[..., None]) -> Any:
-        """One control of this window as the button the toolbar draws it with."""
+        """Add a toolbar button for one of this window's controls."""
         action = buttoned(self, controls.control(name, controls.SOLID), handler)
         bar.addAction(action)
         return action
 
     def _field(self, one: forms.Field) -> QtWidgets.QLineEdit:
-        """One toolbar number, which the keyboard only reaches when clicked in.
+        """A toolbar field that only takes focus when clicked.
 
-        The keys of this window are the camera's - `1` faces the xy plane - and
-        a field that took the focus when the window opened would swallow them.
-        So the fields are click-only, and finishing an edit hands the keyboard
-        straight back.
+        The window's keys control the camera (e.g. `1` faces the xy plane), and a
+        field focused on open would swallow them. Finishing an edit returns focus to
+        the window.
         """
         edit = theme.field(one.width)
         edit.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
@@ -422,12 +374,11 @@ class Window3D(QtWidgets.QMainWindow):
         return edit
 
     def _furnish(self) -> None:
-        """The box, the axis rays, the tick marks and the pool of text items.
+        """Create the box, axis rays, tick marks and pool of text items.
 
-        Made once and never added to, because re-anchoring happens while the
-        view is live and a view's item list must not be edited from under it. A
-        label with nothing to say is set to the empty string instead of being
-        taken away.
+        These are created once and never added to, since re-anchoring happens while
+        the view is live and its item list must not change. Unused labels are set to
+        the empty string rather than removed.
         """
         self.box = gl.GLBoxItem(
             size=QtGui.QVector3D(WORLD, WORLD, WORLD), color=BOX_COLOR
@@ -444,46 +395,35 @@ class Window3D(QtWidgets.QMainWindow):
         self.names = [gl.GLTextItem(text="") for _ in range(3)]
         for item in self.labels + self.names:
             item.setData(font=QtGui.QFont("Helvetica", 10))
-            # A number is drawn with a painter and not with the depth buffer, so
-            # it is only readable if it is drawn last: the view draws in order
-            # of depth value, and a surface added later would otherwise be
-            # painted over the numbers naming the edge behind it.
+            # Text is drawn with a painter, ignoring the depth buffer, so it must be
+            # drawn last or later surfaces would paint over it. The view draws items
+            # in order of depth value.
             item.setDepthValue(10)
             self.view.addItem(item)
 
     def _make_menu(self) -> None:
-        """The window's own context menu: what it does, and the keys that do it.
+        """Build the window's context menu and its key bindings.
 
-        The GL view has no menu of its own to inherit or to prune, so this one
-        is the whole of what a right click on the picture offers. It is the
-        camera's list, because a 3D window is a camera: where to look from, and
-        the three presets that put an axis edge-on. What is on the toolbar is
-        not repeated here - the `mesh` box says its own state where it stands,
-        and a menu entry that had to be opened to be read would say it worse.
+        The GL view has no menu of its own, so this is the whole right-click menu. It is
+        mostly about the camera; toolbar controls aren't repeated in it.
 
-        The surfaces are listed under `Remove` when the menu opens rather than
-        when it is built, since what the window holds changes and the menu does
-        not; the submenu of an empty window is offered greyed rather than left
-        off, because what it would list is what the window is empty of.
+        The surfaces are listed under `Remove` when the menu opens, since they change.
+        In an empty window the submenu is shown disabled rather than omitted.
         """
-        #: Every key the menu advertises, by the stroke that presses it. The
-        #: table `keyPressEvent` dispatches from, beside the one for the keys
-        #: no entry names, which is matched on the key alone.
+        #: Actions for the menu's keys, by key and modifiers, used by `keyPressEvent`,
+        #: and actions for keys without menu entries, by key alone.
         self._keyed: dict[tuple[int, int], Any] = {}
         self._loose: dict[int, Any] = {}
-        #: The action each entry of the menu is drawn by, by the name of the
-        #: control it stands for.
+        #: The menu's actions, by control name.
         self._offered: dict[str, Any] = {}
         self.menu = QtWidgets.QMenu(self)
         self.menu.aboutToShow.connect(self._read_menu)
         self._make_controls()
 
     def _make_controls(self) -> None:
-        """Walk the control table: an action each, and the menu in its order.
+        """Create an action for each control, and add menu entries in table order.
 
-        The words, the keys, the order and where the rules fall are
-        `plot.controls`', so a menu regrouped there is regrouped in both
-        backends at once. What happens here is only that they become Qt.
+        Labels, keys, order and grouping all come from `plot.controls`.
         """
         handlers = self._handlers()
         group: int | None = None
@@ -507,7 +447,7 @@ class Window3D(QtWidgets.QMainWindow):
             self._offered[one.name] = action
 
     def _handlers(self) -> dict[str, Callable[..., None]]:
-        """What each control of this window does, by the control's own name."""
+        """The handler of each of this window's controls, by control name."""
         return {
             "camera.home": self.home,
             "camera.xy": self._facing("camera.xy"),
@@ -528,34 +468,28 @@ class Window3D(QtWidgets.QMainWindow):
         }
 
     def _facing(self, name: str) -> Callable[[], None]:
-        """Face the plane one of the three presets stands for.
+        """A handler facing the plane of the given camera preset.
 
-        Which plane that is belongs to the control, beside the words it is
-        offered under and the key that presses it: a preset with the plane
-        taken out of it would be three entries and three lambdas that had to be
-        kept in the same order.
+        The plane is taken from the control's `value`, so it is defined alongside the
+        preset's label and key.
         """
         plane = controls.control(name, controls.SOLID).value
         return lambda: self.face(plane)
 
     def _read_menu(self) -> None:
-        """Read the menu off the window as it opens, which is where it is decided.
+        """Update the menu from the window's state as it opens.
 
-        Nothing on it is the menu's own: the rotation is a timer and says for
-        itself whether it is running, and a tick remembering what the menu last
-        did would be wrong the first time the key was pressed instead. What the
-        entries should say is `plot.controls`' answer to a snapshot of this
-        window, and the surfaces under `Remove` are part of that answer, since
-        what a window holds changes and the menu does not.
+        The entries come from `plot.controls` applied to a snapshot of the window, so
+        ticks reflect the actual state (e.g. whether the rotation timer runs), even if
+        it was changed by a key. The `Remove` submenu is refilled too.
         """
         shown = rendered(self._offered, controls.menu(self.snapshot()))
         self._relist(shown["surface.remove"])
 
     def _relist(self, entry: controls.Entry) -> None:
-        """Fill the `Remove` submenu with the surfaces the window now holds.
+        """Fill the `Remove` submenu with the window's current surfaces.
 
-        An item names its surface by where it stands in the window's own list,
-        which is the one thing about a plot that survives being described.
+        Items refer to surfaces by their index in the window's plot list.
         """
         self._remove_menu.clear()
         for item in entry.items:
@@ -565,7 +499,7 @@ class Window3D(QtWidgets.QMainWindow):
             )
 
     def snapshot(self) -> controls.Solid:
-        """This window as the description of its controls has to read it."""
+        """A snapshot of this window's state for building its menu."""
         pointed = self._pointed
         return controls.Solid(
             spinning=self._spin.isActive(),
@@ -582,23 +516,21 @@ class Window3D(QtWidgets.QMainWindow):
         )
 
     def _menu_at(self, point: Any) -> None:
-        """A right click on the picture: the window's menu, where it was asked for."""
+        """Open the window's menu at the right-clicked point."""
         self.menu.popup(point)
 
     # -- the plot list -----------------------------------------------------
 
     def add(self, surface: Surface) -> Drawn:
-        """Put a surface in the window, replacing one with the same identity.
+        """Add a surface to the window, replacing one with the same identity.
 
-        What the session hands over is the surface; what this window keeps is
-        its own record of it, and that is what comes back for a caller that
-        wants to watch what became of the picture.
+        Returns the window's own record of the surface.
         """
         surface = Drawn.of(surface)
         existing = self.find(surface.worksheet, surface.label)
         if existing is not None:
-            # A replacement keeps the look of what it replaces - the color and
-            # the wire choice - so re-plotting does not reshuffle the picture.
+            # A replacement keeps the color and wireframe setting of what it
+            # replaces, so re-plotting doesn't change the picture's look.
             surface.color, surface.paper = existing.color, existing.paper
             surface.wire = existing.wire
             self.remove(existing)
@@ -610,16 +542,14 @@ class Window3D(QtWidgets.QMainWindow):
         surface.item = gl.GLMeshItem(
             smooth=True, computeNormals=False, shader=None, glOptions="opaque"
         )
-        # Hidden until there is a mesh in it: an item with no faces is asked to
-        # draw itself on the next frame, and the sampling has not answered yet.
+        # Hidden until sampling produces a mesh, since an empty item would still be
+        # drawn on the next frame.
         surface.item.setVisible(False)
         self.view.addItem(surface.item)
-        # The wire drawing of the same samples, shown over the solid while the
-        # surface's `wire` is on. Opaque rather than blended, so the depth
-        # buffer sorts the wire against the solids beside it - its own among
-        # them - the same way it sorts two solids. It draws at the curve's
-        # weight, best-effort: a core forward-compatible GL profile refuses
-        # line widths other than one, and pyqtgraph skips the width call there.
+        # The wireframe, shown over the solid while `wire` is on. Opaque rather than
+        # blended, so the depth buffer sorts it against all solids, including its
+        # own. The curve width is best-effort: a core forward-compatible GL profile
+        # only supports width one, and pyqtgraph skips setting it there.
         surface.wires = gl.GLLinePlotItem(
             pos=np.zeros((0, 3), dtype=np.float32),
             mode="lines",
@@ -640,14 +570,14 @@ class Window3D(QtWidgets.QMainWindow):
         return surface
 
     def find(self, worksheet: int, label: str) -> Drawn | None:
-        """The surface a worksheet and a label name, if this window has it."""
+        """The surface with this worksheet and label, if the window has it."""
         for surface in self.plots:
             if surface.worksheet == worksheet and surface.label == label:
                 return surface
         return None
 
     def remove(self, surface: Drawn) -> None:
-        """Take one surface out of the window, legend row and all."""
+        """Remove a surface from the window, along with its legend row."""
         if surface.item is not None:
             self.view.removeItem(surface.item)
             surface.item = None
@@ -662,16 +592,12 @@ class Window3D(QtWidgets.QMainWindow):
         self._frame()
 
     def clear(self) -> None:
-        """The toolbar's clear: start this picture over.
-
-        The window it acts on is the window the button is drawn in, so there
-        is nothing to infer and nothing to report.
-        """
+        """Remove all surfaces from the window."""
         for surface in list(self.plots):
             self.remove(surface)
 
     def _relabel(self) -> None:
-        """Build the legend again, which is how a removal leaves it right."""
+        """Rebuild the legend from the current surfaces."""
         self.legend.rebuild(
             [
                 (
@@ -683,19 +609,16 @@ class Window3D(QtWidgets.QMainWindow):
             ],
             paper=self._papered,
         )
-        # An empty legend is a rectangle over the corner of the picture saying
-        # nothing; the toggle is remembered rather than read off the widget, so
-        # a legend the user put away stays away when the next surface arrives.
+        # Hide an empty legend. The toggle state is kept separately from the widget,
+        # so a legend the user hid stays hidden when a surface is added.
         self.legend.setVisible(self._legend and bool(self.plots))
 
     def _name_axes(self) -> None:
-        """What the three axes are called, taken from the first surface there is.
+        """Set the axis names from the first surface.
 
-        The names are the expression's own - the two floor variables in the
-        engine's canonical order, and the vertical one where an equation named
-        it. A window holding two surfaces of the same two variables is the
-        ordinary case, and a window holding two of different ones has to pick:
-        the first surface named the axes and the others are drawn over them.
+        These are the expression's variables in the engine's canonical order, and the
+        vertical name if an equation gave one. If surfaces use different variables, the
+        first one names the axes.
         """
         surface = self.plots[0] if self.plots else None
         if surface is None:
@@ -707,11 +630,9 @@ class Window3D(QtWidgets.QMainWindow):
     # -- evaluation --------------------------------------------------------
 
     def _start(self, surface: Drawn) -> None:
-        """Ask the sampling thread for this surface over the domain and grid.
+        """Request sampling of this surface over the domain and grid.
 
-        The only thing that starts an evaluation. A camera move does not come
-        near here, which is the promise the window is built on: the mesh is
-        about the domain, and the domain is only ever changed by typing in it.
+        This is the only place evaluation starts; camera moves never get here.
         """
         surface.generation += 1
         generation = surface.generation
@@ -722,7 +643,7 @@ class Window3D(QtWidgets.QMainWindow):
         )
 
     def _sampled(self, surface: Drawn, generation: int, answer: Any) -> None:
-        """The grid is in: rebuild the box around it, and say what it holds."""
+        """Handle a sampled grid: reframe the box, and report problems."""
         if surface.generation != generation or surface not in self.plots:
             return
         if isinstance(answer, Exception):
@@ -737,29 +658,24 @@ class Window3D(QtWidgets.QMainWindow):
             surface.values,
             surface.boundary,
         ) = answer
-        # Whatever the window was saying was about the domain this answer has
-        # replaced; the two sentences below are what it has to say about the
-        # new one, and they are said in the order they were arrived at.
+        # Clear messages about the previous domain before reporting on the new one.
         self._quiet()
         self._frame()
         if evaluate.finite_fraction(surface.values) == 0.0:
             self.say(f"{surface.label}: no real values over this domain")
 
     def reevaluate(self) -> None:
-        """Every surface again, which is what a new domain or grid asks for."""
+        """Resample every surface, after a domain or grid change."""
         for surface in self.plots:
             self._start(surface)
 
     # -- the box -----------------------------------------------------------
 
     def _frame(self) -> None:
-        """Work out the z the box stands for, and build every mesh to it.
+        """Compute the box's z range, and rebuild every mesh for it.
 
-        One box for the window rather than one per surface: two surfaces in the
-        same picture are being compared, and comparing them through two
-        different vertical scales would be a picture that lies. So a surface
-        arriving rebuilds the others, which costs a mesh each and no evaluation
-        at all.
+        All surfaces share one box so they can be compared on the same vertical scale.
+        So adding a surface rebuilds the other meshes, without re-evaluation.
         """
         shown = [
             surface.values
@@ -781,17 +697,14 @@ class Window3D(QtWidgets.QMainWindow):
 
     @property
     def box_now(self) -> Box:
-        """The three ranges the picture stands for, as one thing to read them from."""
+        """The current x, y and z ranges as a `Box`."""
         return Box(self.xdomain, self.ydomain, self.zrange)
 
     def _reshape(self) -> None:
-        """Stand the axis rays up where the data's origin is in the box.
+        """Place the axis rays at the data's origin, clamped to the box.
 
-        The rays start there when the box holds it, which is the same
-        convention the 2D window draws its axes by: an axis belongs at zero,
-        and a picture framed away from zero shows it at the edge instead of not
-        at all. The box itself never changes shape - it is the cube the three
-        ranges are stretched onto - so only the rays are placed here.
+        As in the 2D window, axes are drawn at zero, or at the box's edge when zero is
+        outside it. The box itself is a fixed cube, so only the rays move.
         """
         box = self.box_now
         origin = (
@@ -804,21 +717,15 @@ class Window3D(QtWidgets.QMainWindow):
         self.rays.translate(*origin)
 
     def _draw(self, surface: Drawn) -> None:
-        """Build one surface's triangles - and its wire, where it wears one.
+        """Build a surface's mesh, and its wireframe if it has one.
 
-        A wire surface has its hidden lines removed, the way Derive's plotter
-        removed them: what is behind the shape is behind it, and the grid reads
-        as a body turned in the light rather than as two grids laid over each
-        other. Both items draw for it. The solid keeps the triangles it always
-        had - the same ones, stopping at the same rim - painted in the canvas's
-        own color, so it is nothing to look at and everything to hide behind;
-        the lines draw over it and the depth buffer does the removing, per
-        pixel, for the box frame and the other surfaces too.
+        Wireframes have hidden lines removed, as in Derive's plotter. The solid is still
+        drawn with the same triangles, but in the canvas color, so it is invisible but
+        hides the lines behind it, of this and other surfaces and the box, via the
+        depth buffer.
 
-        The polygon offset is what makes that a wire and not a stitch. The
-        lines lie on the very faces they are being tested against, so the
-        occluder is pushed a hair away from the camera and the lines win the
-        ties.
+        The lines lie exactly on the faces they are depth-tested against, so the
+        occluder is pushed slightly back by the polygon offset to let the lines win.
         """
         if surface.item is None:
             return
@@ -833,10 +740,8 @@ class Window3D(QtWidgets.QMainWindow):
             surface.wires.setData(pos=points, color=brightened(shades, color))
             surface.wires.setVisible(surface.visible and bool(points.size))
             surface.item.setGLOptions(WIRE_OCCLUDER)
-            # An occluder is a shape and not a picture, so it is given no vertex
-            # colors at all: those are what the card reads where a mesh has
-            # them, and the one flat color - the canvas behind it, whichever
-            # canvas is up - only reaches the fragments in their absence.
+            # The occluder gets no vertex colors, since those would override the flat
+            # canvas color it should be drawn in.
             surface.item.setColor(pg.mkColor("w" if self._papered else BACKGROUND))
             if faces.size:
                 surface.item.setMeshData(vertexes=vertexes, faces=faces)
@@ -853,19 +758,15 @@ class Window3D(QtWidgets.QMainWindow):
         surface.item.setVisible(surface.visible)
 
     def _anchor(self) -> None:
-        """Put the tick marks and the numbers on the box edges nearest the camera.
+        """Place the tick marks and labels on the box edges facing the camera.
 
-        Three edges carry them: the two bottom edges of the side the camera is
-        on, which is where a number sits in front of the picture rather than
-        behind it, and for the upright axis the far vertical edge, which is the
-        one the surface does not stand in front of. Which edges those are
-        changes as the view turns, so this runs on every camera move; it is a
-        few dozen positions and no geometry at all.
+        The x and y ticks go on the two bottom edges on the camera's side, in front of
+        the picture, and the z ticks on the far vertical edge, which the surface
+        doesn't cover. These change as the view rotates, so this runs on every camera
+        move; it only updates a few dozen positions.
 
-        An axis pointing at the camera is left unnumbered. Facing the xy plane
-        makes the whole z axis one point of the screen, and five numbers stacked
-        on that point are five numbers about nothing; the axis keeps its name,
-        which is all there is to say about it from there.
+        An axis pointing at the camera gets no tick labels, since they would all pile
+        up on one point, but keeps its name.
         """
         box = self.box_now
         floor = -HALF
@@ -939,12 +840,10 @@ class Window3D(QtWidgets.QMainWindow):
             )
 
     def _head_on(self) -> tuple[bool, bool, bool]:
-        """Which axes point so nearly at the camera that they have no length.
+        """Which axes point (nearly) straight at the camera.
 
-        The camera looks along the line from itself to the box's center, so an
-        axis is edge-on to the picture exactly when it is parallel to that line.
-        The three coordinate presets each put one axis in that position, which
-        is why the test is worth making rather than assuming a general view.
+        An axis is head-on when it is parallel to the line from the camera to the box's
+        center, as happens with each of the plane presets.
         """
         camera = self.view.cameraPosition()
         center = self.view.cameraParams()["center"]
@@ -962,22 +861,18 @@ class Window3D(QtWidgets.QMainWindow):
         return near[0], near[1], near[2]
 
     def _ticks(self, span: tuple[float, float], count: int = TICKS) -> list[float]:
-        """The round numbers of one axis, never more than the label pool holds."""
+        """Tick values of an axis, capped at the size of the label pool."""
         return ticks(span[0], span[1], count)[:MAX_TICKS]
 
     # -- the domain and the grid -------------------------------------------
 
     def _edited(self) -> None:
-        """A toolbar field was left: take what it says, or put back the old text.
+        """Apply an edited toolbar field, or restore the old text if invalid.
 
-        The one place in this window where typing changes what is computed. The
-        domain fields read expressions rather than floats - `-π` and `2π` are
-        answers - parsed here under the parse state the last surface arrived
-        with; what the trees are worth is arithmetic, so they go to the
-        sampling thread and the domain moves when the numbers come back. The
-        grid is a pair of counts and stays one. A field that does not read is
-        reverted rather than argued with, since the value it would take is on
-        the screen beside it.
+        The domain fields accept expressions such as `-π` and `2π`, parsed with the last
+        surface's parse state and evaluated on the sampling thread; the domain changes
+        when the numbers come back. The grid is a pair of integers. Invalid input is
+        reverted.
         """
         grid = forms.counts(
             (self.fields["nx"].text(), self.fields["ny"].text())
@@ -1014,11 +909,10 @@ class Window3D(QtWidgets.QMainWindow):
     def _reframe_typed(
         self, edit: int, grid: tuple[int, int], answer: Any
     ) -> None:
-        """The typed bounds are worth numbers: take them, or put back the old ones.
+        """Apply the evaluated domain bounds, or restore the old ones if invalid.
 
-        A bound that would not evaluate came back as the value it was replacing,
-        so a field of nonsense reverts by arithmetic rather than by a case; an
-        inverted domain is the one refusal left to make here.
+        A bound that failed to evaluate comes back as its previous value, so only an
+        inverted domain needs rejecting here.
         """
         if edit != self._edit or isinstance(answer, Exception):
             return
@@ -1029,10 +923,9 @@ class Window3D(QtWidgets.QMainWindow):
             return
         x0, x1, y0, y1 = answer
         if grid != self.grid:
-            # A typed grid is sticky: the next surface window opens on it. The
-            # sticky value is one count per axis, so a rectangular grid hands
-            # on its finer axis. The domain is not sticky - it is a framing,
-            # like a 2D view - so only the grid goes back.
+            # A typed grid is sticky, for the next 3D window. The preference is one
+            # count for both axes, so a rectangular grid passes on its finer one. The
+            # domain is a framing, like a 2D view, and isn't sticky.
             self.session.adjusted(grid=max(grid))
         changed = ((x0, x1), (y0, y1), grid) != (self.xdomain, self.ydomain, self.grid)
         self.xdomain, self.ydomain, self.grid = (x0, x1), (y0, y1), grid
@@ -1042,7 +935,7 @@ class Window3D(QtWidgets.QMainWindow):
             self.reevaluate()
 
     def _show_domain(self) -> None:
-        """Put the window's own numbers back in the fields, however they got there."""
+        """Show the window's current domain and grid in the fields."""
         for name, value in (
             ("x0", self.xdomain[0]),
             ("x1", self.xdomain[1]),
@@ -1059,14 +952,12 @@ class Window3D(QtWidgets.QMainWindow):
         ydomain: tuple[float, float],
         zrange: tuple[float, float],
     ) -> None:
-        """The inspector's answer: a box typed rather than arrived at.
+        """Apply a box typed in the inspector.
 
-        A typed z extent is an opinion and outranks the autoscale from then on -
-        somebody who asked for -1 to 1 wants to see the surface cut off at 1,
-        and a picture that reframed itself on the next plot would be answering a
-        question nobody asked. The extent that was already on the screen is not
-        such an opinion, though: applying a change of camera must not quietly
-        freeze the z the data chose, so an unedited field changes nothing.
+        A typed z range overrides autoscaling from then on: a user who asked for -1 to
+        1 wants the surface cut off at 1, even after the next plot. An unedited z field
+        changes nothing, so applying a camera change doesn't freeze the autoscaled
+        range.
         """
         moved = (xdomain, ydomain) != (self.xdomain, self.ydomain)
         self.xdomain, self.ydomain = xdomain, ydomain
@@ -1078,14 +969,14 @@ class Window3D(QtWidgets.QMainWindow):
         self._frame()
 
     def autoscale_z(self) -> None:
-        """Give the z extent back to the data, undoing a typed one."""
+        """Return to an autoscaled z range, undoing a typed one."""
         self._fixed = None
         self._frame()
 
     # -- the camera --------------------------------------------------------
 
     def home(self) -> None:
-        """The default camera: a three-quarter view with the whole cube in it."""
+        """Reset to the default camera: a three-quarter view showing the whole cube."""
         self.view.setCameraPosition(
             pos=pg.Vector(0.0, 0.0, 0.0),
             distance=actions.CAMERA.distance,
@@ -1102,7 +993,7 @@ class Window3D(QtWidgets.QMainWindow):
         self.say(actions.FACING.format(plane=plane))
 
     def spin(self) -> None:
-        """Turn the picture slowly, or stop turning it."""
+        """Toggle slow automatic rotation."""
         if self._spin.isActive():
             self._spin.stop()
             self._quiet()
@@ -1112,7 +1003,7 @@ class Window3D(QtWidgets.QMainWindow):
         self.say(actions.ROTATING.format(key=key))
 
     def inspector(self) -> None:
-        """The `view...` dialog: the box and the camera as editable numbers."""
+        """Open the `view...` dialog, which edits the box and camera numerically."""
         if self._inspector is None:
             self._inspector = Inspector(self)
         self._inspector.refresh()
@@ -1122,7 +1013,7 @@ class Window3D(QtWidgets.QMainWindow):
     # -- the legend --------------------------------------------------------
 
     def _legend_picked(self, row: int, button: Any) -> None:
-        """A click on a legend row: hide and show, or offer to remove."""
+        """Handle a legend row click: toggle visibility, or show the row's menu."""
         if not 0 <= row < len(self.plots):
             return
         surface = self.plots[row]
@@ -1136,18 +1027,16 @@ class Window3D(QtWidgets.QMainWindow):
             return
         surface.hidden = not surface.hidden
         self._relabel()
-        # The box is recomputed over what is visible now, and redrawing every
-        # surface to it is also what puts the items of the surface that was
-        # clicked away or back.
+        # Recompute the box over the visible surfaces; redrawing also hides or shows
+        # the clicked surface's items.
         self._frame()
 
     def _mesh_mode(self, checked: bool) -> None:
-        """The toolbar's `mesh` box: every surface as wire, or every one solid.
+        """The toolbar's `mesh` toggle: draw every surface as wireframe or solid.
 
-        The property belongs to the surfaces - the legend's right-click
-        carries the per-surface exception - so the box flips them all rather
-        than holding a state of its own. The look it leaves is the sticky one:
-        the next surface, here or in the next window, arrives drawn this way.
+        The setting belongs to each surface (the legend's menu can override it for one),
+        so this sets it on all of them. It is also stored as the sticky preference for
+        new surfaces, here or in new windows.
         """
         self.wired = bool(checked)
         for surface in self.plots:
@@ -1156,48 +1045,47 @@ class Window3D(QtWidgets.QMainWindow):
         self.session.adjusted(wire=self.wired)
 
     def toggle_wire(self, surface: Drawn) -> None:
-        """One surface between wire and solid: the legend's per-surface override.
+        """Toggle one surface between wireframe and solid, from the legend's menu.
 
-        An exception rather than a default, so it hands nothing back to the
-        sticky preferences and leaves the toolbar box - the every-surface
-        control - where it was.
+        This is a per-surface exception, so it changes neither the sticky preference
+        nor the toolbar's `mesh` toggle.
         """
         surface.wire = not surface.wire
         self._draw(surface)
 
     def _wire_pointed(self) -> None:
-        """The wire override, for the surface a legend row was right-clicked on."""
+        """Toggle the wireframe of the surface whose legend row was right-clicked."""
         if self._pointed is not None:
             self.toggle_wire(self._pointed)
 
     def _remove_pointed(self) -> None:
-        """Take out the surface a legend row was right-clicked on."""
+        """Remove the surface whose legend row was right-clicked."""
         if self._pointed is not None:
             self.remove(self._pointed)
             self._pointed = None
 
-    # -- the three furnishings ----------------------------------------------
+    # -- box, labels and legend toggles --------------------------------------
 
     def _toggle_box(self) -> None:
-        """The box, its axis rays and its tick marks, or the picture alone."""
+        """Toggle the box, its axis rays and its tick marks."""
         self._boxed = not self._boxed
         for item in (self.box, self.rays, self.marks):
             item.setVisible(self._boxed)
 
     def _toggle_names(self) -> None:
-        """The numbers along the box edges and the names of the axes, or neither."""
+        """Toggle the tick labels and axis names."""
         self._named = not self._named
         self._anchor()
 
     def _toggle_legend(self) -> None:
-        """The plot list card, or the bare picture."""
+        """Toggle the legend."""
         self._legend = not self._legend
         self.legend.setVisible(self._legend and bool(self.plots))
 
     # -- export ------------------------------------------------------------
 
     def copy_image(self) -> None:
-        """Ctrl-C: the picture on the clipboard, on paper colors."""
+        """Ctrl-C: copy the picture to the clipboard, in paper colors."""
         image = self._photograph()
         if image is None:
             return
@@ -1205,13 +1093,10 @@ class Window3D(QtWidgets.QMainWindow):
         self.say("Copied the plot to the clipboard")
 
     def export(self) -> None:
-        """Ctrl-S: the picture in a file, on paper colors.
+        """Ctrl-S: save the picture to a PNG file, in paper colors.
 
-        pyqtgraph's exporters know nothing about a GL view, so this is the
-        frame buffer, a file dialog and a PNG - which is every image a 3D plot
-        has to give. The colors are the same paper colors the 2D window
-        exports on, for the same reason: a dark picture pasted into a document
-        is a black rectangle.
+        pyqtgraph's exporters don't support GL views, so this saves the frame buffer.
+        Like the 2D window, it uses paper colors, so the image works in documents.
         """
         name, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Save the plot", f"plot{self.number}.png", "PNG image (*.png)"
@@ -1225,13 +1110,10 @@ class Window3D(QtWidgets.QMainWindow):
         self.say(f"Saved {name}")
 
     def _photograph(self) -> Any:
-        """The view as an image, taken on a white background and put back after.
+        """The view as an image, rendered in paper colors on a white background.
 
-        `readQImage` is the frame buffer and nothing else: the legend is a Qt
-        widget floating over the view, not an item in it, so it would be missing
-        from a picture of two surfaces - which is a picture that does not say
-        which is which. It is written onto the image afterwards, in the same
-        paper colors the surfaces took.
+        `readQImage` captures only the frame buffer, which lacks the legend (a Qt
+        widget over the view), so the plot list is painted onto the image afterwards.
         """
         if self.view.broken:
             self.say(NO_OPENGL.format(reason=self.view.broken))
@@ -1242,12 +1124,12 @@ class Window3D(QtWidgets.QMainWindow):
         return image
 
     def _name_surfaces(self, image: Any) -> None:
-        """Write the plot list into the corner of an exported picture."""
+        """Paint the plot list into the corner of an exported image."""
         if not self._legend or not self.plots:
             return
         painter = QtGui.QPainter(image)
-        # The frame buffer is in device pixels and the widget in logical ones,
-        # so a picture on a doubled display is twice the size of the window.
+        # The frame buffer is in device pixels and the widget in logical ones, so
+        # scale for high-DPI displays.
         painter.scale(*([image.height() / max(self.view.height(), 1)] * 2))
         painter.setFont(QtGui.QFont("Helvetica", 9))
         painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
@@ -1259,22 +1141,17 @@ class Window3D(QtWidgets.QMainWindow):
     # -- keys --------------------------------------------------------------
 
     def keyPressEvent(self, ev: Any) -> None:
-        """The keys of this window, the menu's own among them.
+        """Handle the window's keys.
 
-        Every key a menu entry advertises is dispatched off the menu's own
-        table, so the key that works and the key the menu names are one key and
-        neither can fire twice; the keys of the controls no entry names - the
-        three furnishings and the `mesh` box the toolbar already shows the state
-        of - are the second table, matched on the key alone as they always have
-        been. What is left written out here are the arrows, which are the
-        camera's own gesture rather than a command, and Esc, which closes the
-        window - a picture is dismissed the way every other thing that stands
-        over a screen is.
+        Keys shown in the menu are dispatched through the menu's own table, so they
+        can't fire twice. Keys of controls without menu entries (the box, label and
+        legend toggles, and `mesh`) use a second table, matched on the key alone. The
+        arrows, which orbit the camera, and Esc, which closes the window, are handled
+        directly.
 
-        A key with no meaning here at all is the program's when a
-        demonstration's step is waiting in this window, since this is where the
-        desktop is likely to have put the keyboard: Space and Enter step the
-        demonstration, and the arrows go on turning the surface over.
+        During a demonstration step, other keys are forwarded to the program, since
+        the desktop may have given this window focus: Space and Enter advance the
+        demonstration, while the arrows still rotate the surface.
         """
         key = ev.key()
         keys = QtCore.Qt.Key
@@ -1301,20 +1178,16 @@ class Window3D(QtWidgets.QMainWindow):
     # -- the rest ----------------------------------------------------------
 
     def say(self, message: str) -> None:
-        """Put one line on the status bar, which is the window's whole voice."""
+        """Show a message on the status bar."""
         self._message = message
         self.status.setText(message)
 
     def _quiet(self) -> None:
-        """Nothing to say - unless there is no picture, which always wants saying."""
+        """Clear the status bar, unless OpenGL is broken, which is always reported."""
         self.say(NO_OPENGL.format(reason=self.view.broken) if self.view.broken else "")
 
     def describe(self) -> protocol.WindowInfo:
-        """This window as `Describe` reports it.
-
-        The ranges reported are the domain, since that is what a 3D window is
-        framed by.
-        """
+        """This window as `Describe` reports it, with the domain as the ranges."""
         return protocol.WindowInfo(
             number=self.number,
             kind=self.kind,
@@ -1335,17 +1208,13 @@ class Window3D(QtWidgets.QMainWindow):
         )
 
     def present(self, demonstrating: bool = False) -> None:
-        """A plot has landed here: show this window and put it in front.
+        """Show the window and bring it to the front, as a plot landed in it.
 
-        A demonstration's step stays in front, until `release` says the
-        demonstration is over: the program running it is a terminal that fills
-        the screen, and would bury the picture the moment it was clicked on.
+        A demonstration step stays on top until `release`, so the full-screen terminal
+        running the demonstration doesn't cover it.
 
-        Which of the two windows then has the keyboard is the desktop's to
-        decide and not worth arguing with - it hands a window that has just
-        appeared the focus whatever the window asks - so nothing here asks.
-        What answers the question instead is `keyPressEvent`: a key this window
-        has no use for goes back to the program while a step is waiting here.
+        Keyboard focus is left to the desktop, which tends to focus new windows
+        anyway; `keyPressEvent` forwards unused keys to the program during a step.
         """
         self._keep_in_front(demonstrating)
         self.show()
@@ -1353,19 +1222,13 @@ class Window3D(QtWidgets.QMainWindow):
         self.activateWindow()
 
     def release(self, finished: bool = False) -> None:
-        """The demonstration is over: an ordinary window among the others again.
+        """End the demonstration, making this an ordinary window again.
 
-        Shown again because dropping the flag hid it. Its keys are its own from
-        here, there being no demonstration left to hand any of them to.
+        The window is shown again because changing the flag hid it. If the
+        demonstration `finished`, the window closes instead; one that was stopped
+        leaves its picture, so Esc can be used to keep it.
 
-        `finished` is a demonstration that ran to its end, and then the window
-        goes with it: what stood here was the demonstration's screen. A
-        demonstration that was stopped leaves its picture, which is what makes
-        Esc the way to keep one.
-
-        A window no step was waiting in is left alone either way. It is
-        somebody's own plot, and a gallery that ended beside it is not a reason
-        to touch it.
+        Windows not showing a demonstration step are left alone.
         """
         if not self._demonstrating:
             return
@@ -1376,10 +1239,9 @@ class Window3D(QtWidgets.QMainWindow):
         self.show()
 
     def _keep_in_front(self, demonstrating: bool) -> None:
-        """Put the window above the others, or let it back among them.
+        """Set or clear stay-on-top.
 
-        Changing a window flag hides the window, which is why every caller
-        shows it again.
+        Changing a window flag hides the window, so callers show it again.
         """
         if demonstrating == self._demonstrating:
             return
@@ -1387,22 +1249,19 @@ class Window3D(QtWidgets.QMainWindow):
         self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, demonstrating)
 
     def _stepping(self, ev: Any) -> None:
-        """Hand a key this window has no use for back to the program.
+        """Forward a key the window doesn't use to the program.
 
-        Which is what makes `any key to continue` true of the window the
-        picture is in as well as of the one the message is on. Only the keys
-        that are nobody's here travel: what the window itself answers to it
-        goes on answering to, so a gallery can be traced, turned over and
-        zoomed on its way past.
+        This makes "any key to continue" work in the plot window too. Keys the window
+        uses keep working, so a gallery can still be rotated and zoomed.
         """
         self.session.stepped()
         ev.accept()
 
     def retitle(self, current: bool | None = None) -> None:
-        """Title the window by what it holds, and say whether the next plot lands here.
+        """Title the window by its contents, marking it if it is the receiver.
 
-        Called with no argument when the plot list changes, so the title tracks
-        the contents while the receiver mark stays as it was.
+        Called without an argument when the plot list changes, keeping the receiver
+        mark as it was.
         """
         if current is not None:
             self.current = current
@@ -1415,12 +1274,10 @@ class Window3D(QtWidgets.QMainWindow):
         )
 
     def changeEvent(self, ev: Any) -> None:
-        """Activation is the user touching this window, and the session's to know.
+        """Report activation to the session, which makes this window the receiver.
 
-        The receiver of the next plot follows the window the user last
-        touched, and the activation event is how a click, a raise or an
-        alt-tab says so - whatever the platform's focus policy, including one
-        that hands focus to whatever the pointer crosses.
+        Activation covers clicks, raises and alt-tab, under any focus policy, including
+        focus-follows-mouse.
         """
         if (
             ev.type() == QtCore.QEvent.Type.ActivationChange
@@ -1430,7 +1287,7 @@ class Window3D(QtWidgets.QMainWindow):
         super().changeEvent(ev)
 
     def closeEvent(self, ev: Any) -> None:
-        """The window manager's business, and the session's to hear about."""
+        """Stop rotation, close the inspector, and report the close to the session."""
         self._spin.stop()
         if self._inspector is not None:
             self._inspector.close()
@@ -1439,22 +1296,16 @@ class Window3D(QtWidgets.QMainWindow):
 
 
 class Inspector(Sheet):
-    """The numbers behind the picture: the box, and where it is looked at from.
+    """A dialog for editing the box and camera numerically.
 
-    Everything here is reachable with the mouse and the toolbar; what this adds
-    is exactness. Somebody who wants the box to run from -1 to 1 in z, or the
-    camera at an azimuth of 45 degrees precisely, has nowhere else to say so -
-    and a 3D picture is one of the few places where a number typed is worth
-    more than a gesture made.
+    Everything here is also reachable with the mouse and toolbar; the dialog adds
+    precision, e.g. a z range of exactly -1 to 1, or an azimuth of exactly 45 degrees.
 
-    What is asked for and how it is grouped is `plot.forms`' `VIEW`: the box
-    first, as three columns of an axis each, and where it is looked at from
-    second. The camera half is a readout as well as a field, following the
-    picture while the dialog is up, which is why the heading says so - and that
-    is the whole of what this adds to the form.
+    The fields and layout come from `plot.forms`' `VIEW`. The camera fields follow the
+    camera while the dialog is open, as its subtitle says.
     """
 
-    #: The nine numbers, in the three groups they are read and written in.
+    #: The field names, in three groups.
     CENTER = ("cx", "cy", "cz")
     LENGTHS = ("lx", "ly", "lz")
     CAMERA = ("azimuth", "elevation", "distance")
@@ -1464,7 +1315,7 @@ class Inspector(Sheet):
         window.view.moved.connect(self._camera_moved)
 
     def refresh(self) -> None:
-        """Fill the fields from the window as it now stands."""
+        """Fill the fields from the window's current state."""
         box = self._window.box_now
         camera = self._window.view.cameraParams()
         values = dict(zip(self.CENTER, box.center))
@@ -1475,7 +1326,7 @@ class Inspector(Sheet):
             self.fields[name].setText(written(value))
 
     def _camera_moved(self) -> None:
-        """Follow the camera while the dialog is up: it is a readout as well."""
+        """Update the camera fields when the camera moves, while the dialog is shown."""
         if not self.isVisible():
             return
         camera = self._window.view.cameraParams()
@@ -1483,7 +1334,7 @@ class Inspector(Sheet):
             self.fields[name].setText(written(float(camera.get(name, 0.0))))
 
     def answered(self, role: forms.Role) -> None:
-        """One of the three answers: give the z back, leave, or take what is typed."""
+        """Handle a button: autoscale z, close, or apply the typed values."""
         if role is forms.Role.CLOSE:
             self.close()
         elif role is forms.Role.RESET:
@@ -1493,7 +1344,7 @@ class Inspector(Sheet):
             self._take()
 
     def _take(self) -> None:
-        """Apply the typed box and camera, or say that they are not numbers."""
+        """Apply the typed box and camera, or report that they aren't numbers."""
         read = forms.numbers(self.said((*self.CENTER, *self.LENGTHS, *self.CAMERA)))
         if read is None:
             self._window.say(forms.NUMBERS)
@@ -1512,14 +1363,11 @@ class Inspector(Sheet):
 
 
 class _on_paper:
-    """The window in paper colors for as long as an export takes.
+    """Context manager switching the window to paper colors during an export.
 
-    The same bargain the 2D window makes: a picture pasted into a document is
-    read on white, so the background goes white, the surfaces take the darkened
-    half of the palette, and the box and its numbers go black. Both swaps
-    happen between two paints of the widget, and `grabFramebuffer` renders on
-    its own rather than through the screen, so the picture is taken on white
-    while the screen keeps the dark one.
+    As in the 2D window, the background becomes white, surfaces use the paper palette,
+    and the box and labels turn dark. Both switches happen between two paints, and
+    `grabFramebuffer` renders offscreen, so the screen keeps showing the dark picture.
     """
 
     def __init__(self, window: Window3D) -> None:

@@ -4,18 +4,15 @@
     python3 tools/release.py 1.2.1
     python3 tools/release.py 1.2.1 --push
 
-This is the mechanical half of RELEASING.md's procedure - the half that is the
-same every time and that a typo in makes a release nobody can undo. The version
-is written in one place, `src/rederive/__init__.py`, and the tag has to name it
-exactly, `build.yml` refusing one that does not; both come from the single
-argument here so they cannot disagree.
+This automates the mechanical, typo-prone part of RELEASING.md's procedure. The
+version lives in `src/rederive/__init__.py`, and `build.yml` rejects a tag that doesn't
+match it exactly; both come from the single argument here, so they can't disagree.
 
-The tag is annotated, for the tagger, date and message of its own that `git
-describe` and the release page both want.
+The tag is annotated, since `git describe` and the release page want its tagger, date
+and message.
 
-Everything else in the procedure - running the build by hand on master first,
-attaching the artifacts - is still by hand, and
-`--push` is what starts the workflow that does the rest, so it is opt-in.
+The rest of the procedure (running the build on master first, attaching artifacts) is
+manual. `--push` starts the release workflow, so it is opt-in.
 """
 
 from __future__ import annotations
@@ -31,10 +28,8 @@ INIT = ROOT / "src" / "rederive" / "__init__.py"
 
 VERSION_RE = re.compile(r'^__version__ = "([^"]*)"$', re.MULTILINE)
 
-# What a tag may be called, which is what the version may be. Deliberately no
-# wider than the releases that exist: a version the packaging cannot express is
-# better refused here than discovered by a workflow that has already been given
-# a tag.
+# Allowed versions, deliberately no broader than existing releases: a version the
+# packaging can't express is better refused here than after a tag has been pushed.
 ALLOWED_RE = re.compile(r"^\d+\.\d+(\.\d+)?([ab]|rc)?\d*$")
 
 
@@ -72,10 +67,7 @@ def check_master() -> None:
 
 
 def check_clean() -> None:
-    """Refuse a dirty tree, which the version commit would otherwise sweep up.
-
-    Untracked files are fine; the version commit only picks up tracked changes.
-    """
+    """Refuse to release from a tree with uncommitted changes to tracked files."""
     if git("status", "--porcelain", "--untracked-files=no"):
         die("working tree has changes; commit or stash them first")
 
@@ -118,20 +110,18 @@ def main() -> None:
         die(f"tag {tag} already exists")
 
     bump(version)
-    # The commit is scoped to the version file, so a tree that went dirty
-    # between the check above and here cannot ride along in the release commit.
+    # Commit only the version file, in case the tree changed since the check above.
     git("commit", "--only", str(INIT), "-m", f"Release {version}")
     git("tag", "-a", tag, "-m", f"Rederive {version}")
-    # Flushed, so that what this says stays in step with what the pushes below
-    # write straight to the terminal.
+    # Flush so this appears before the output of the pushes below.
     print(f"committed and tagged {tag}", flush=True)
 
     if not args.push:
         print(f"not pushed; run: git push {args.remote} master {tag}")
         return
 
-    # Branch before tag: a tag whose commit is not yet on master is a release
-    # built from a commit the branch does not have.
+    # Push the branch first, so the tagged commit is on master before the release
+    # is built.
     git("push", args.remote, "master", capture=False)
     git("push", args.remote, tag, capture=False)
     print(f"pushed master and {tag} to {args.remote}")

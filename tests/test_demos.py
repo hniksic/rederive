@@ -1,28 +1,18 @@
-"""The original's demonstrations: the catalogue, and the page that fetches one.
+"""The original's demonstrations: the catalog, and the page code that fetches them.
 
-The catalogue is nine names and where they can be had, and it is Python rather
-than page furniture because a desktop wanting the same menu wants the same nine
-files. What is asked of it here is what a reader of it is entitled to assume:
-that a gallery is a gallery, and that every entry can be fetched from every
-source.
+The catalog lists nine files and where to download them. It lives in Python because a
+desktop menu needs the same files. The tests check that galleries are flagged correctly
+and that every entry is available from every source.
 
-The page seam is the other half. What the browser does - a menu, a download, a
-relay when nothing answers - is `web/demos.js` and is not here. What is here is
-what happens to a file once it has arrived: it becomes a file of the page's
-store under the name the original gave it, and the app is told to run it as one
-of the two kinds of demonstration.
+The page side covers what happens once a file has arrived: it is stored in the page's
+storage under its original name, and the app is told to run it as a script or a
+gallery. The browser parts (menu, download, fallback relay) are `web/demos.js` and are
+not tested here. The app is faked only as deep as this code touches it; running a
+demonstration is tested with a real app in `test_transfer` and `test_plot`.
 
-The app is faked to the depth this code touches it, which is one question and
-one call. What a demonstration then *does* is the app's own, and is tested with
-a real app in `test_transfer` and `test_plot`.
-
-The seam is crossed the other way too, and the section after that is what
-happens then: `Transfer Demo` offers the same nine in the menu band of a page,
-and a command in a tab has no download of its own to make.
-
-The desktop's half of the same seam is the last section: the roads a machine
-with sockets takes to the same nine files, over a `urlopen` that answers out of
-a table. The menu those come in by is `test_transfer` too.
+Further sections cover `Transfer Demo` in a page, which has to download through the
+page because a tab has no sockets, and the desktop's download paths, with `urlopen`
+answered from a table.
 """
 
 import re
@@ -51,7 +41,7 @@ GALLERY = b'"A spike:"\r\n\r\n2*SIN(LN(ABS(x)))\r\n\x1a'
 
 
 def test_every_demonstration_is_named_by_the_file_it_is():
-    """The name is the file's own, since it is downloaded and kept under it."""
+    """A demonstration is named by its file name, since that is what it is saved as."""
     assert catalogue.named("ALGEBRA.DMO").title == "Algebra"
     assert catalogue.named("algebra.dmo") is None
     assert catalogue.named("NOTHING.DMO") is None
@@ -60,8 +50,8 @@ def test_every_demonstration_is_named_by_the_file_it_is():
 def test_the_galleries_are_the_files_whose_steps_are_drawn():
     drawn = [demo.file for demo in catalogue.DEMOS if demo.plotting]
     assert drawn == ["PLOT2D.MTH", "PLOTPARA.MTH", "PLOT3D.MTH"]
-    # The extension says the same thing the flag does, and a step of a gallery
-    # is read as a worksheet line rather than as a script's.
+    # The extension agrees with the flag: a gallery's steps are read as worksheet
+    # lines, not as a script's.
     for demo in catalogue.DEMOS:
         expected = worksheet.SUFFIX if demo.plotting else worksheet.DEMO_SUFFIX
         assert demo.file.lower().endswith(expected)
@@ -79,19 +69,18 @@ def test_every_demonstration_can_be_had_from_every_source():
 
 
 def test_the_page_module_exports_everything_python_calls_on_it():
-    """The fake page below answers to anything; the real one has to be checked.
+    """The fake page accepts any call, so the real module's exports must be checked.
 
-    Python is handed the `demos.js` module object and calls into it by name, so
-    a call this side makes and that side does not export is a hole no test with
-    a fake page in it can see - and in a browser it is an exception with the
-    demonstration half started.
+    Python calls into the `demos.js` module by name. A missing export would go unnoticed
+    by tests using the fake page, and in a browser would raise with the demonstration
+    half started.
     """
     source = (Path(__file__).resolve().parents[1] / "web" / "demos.js").read_text()
     pattern = r"^export (?:async\s+)?(?:function\s+(\w+)|\{([^}]*)\})"
     exported = set()
     for name, group in re.findall(pattern, source, re.M):
         exported.update([name] if name else (word.strip() for word in group.split(",")))
-    # `wire` is the page's own; the other three are what this module reaches for.
+    # `wire` is used by the page itself; the other three are called from Python.
     assert {"wire", "attend", "said", "brought"} <= exported
 
 
@@ -104,13 +93,12 @@ def page():
 
 
 class FakeApp:
-    """The program as the menu speaks to it: is it up, and here is a file.
+    """The app as the menu sees it: whether it is running, and a way to hand it a file.
 
-    `call_next` is what the app is entered by, since a click arrives on a DOM
-    callback and the screen belongs to the loop. It runs what it is handed at
-    once, which is what the loop does a moment later and what leaves every test
-    below reading in one line. `deferring` holds it instead, for the one test
-    that is about the handing over itself.
+    The menu enters the app through `call_next`, since a click arrives on a DOM callback
+    and the screen belongs to the event loop. Here it runs the call immediately, which
+    keeps the tests simple; with `deferring` it queues the call instead, for the test
+    about the handoff itself.
     """
 
     def __init__(self, running=True, deferring=False):
@@ -127,7 +115,7 @@ class FakeApp:
         waiting()
 
     def pump(self):
-        """Run what the loop would have run."""
+        """Run the queued calls, as the loop would."""
         waiting, self.waiting = self.waiting, []
         for call in waiting:
             call()
@@ -157,7 +145,7 @@ def demos(page, app):
 
 
 def chose(page, name, data=None):
-    """The menu's own road in: what JS calls, by the name JS calls it."""
+    """Choose a demonstration in the menu, calling the handler JS calls."""
     page.handlers["chose"](name, data)
 
 
@@ -174,10 +162,10 @@ def test_the_page_is_handed_the_menu_it_is_to_build(demos, page):
     assert [entry["title"] for entry in offered] == [
         demo.title for demo in catalogue.DEMOS
     ]
-    # Every entry carries its own addresses: which host has the file is not the
-    # page's decision, and the page is the only side that can ask.
+    # Each entry carries its URLs: Python decides where the file is, but only the page
+    # can fetch it.
     assert offered[0]["urls"] == list(catalogue.DEMOS[0].urls)
-    # And the headings a menu groups them under, in the order they are offered.
+    # Entries also carry the menu group headings, in order.
     assert [entry["group"] for entry in offered[:1] + offered[-1:]] == [
         catalogue.SCRIPTS,
         catalogue.GALLERIES,
@@ -185,10 +173,10 @@ def test_the_page_is_handed_the_menu_it_is_to_build(demos, page):
 
 
 def test_the_app_is_entered_through_its_loop_and_not_from_the_click(page):
-    """A click lands on a DOM callback, and the screen belongs to the loop.
+    """A click arrives on a DOM callback, but the screen belongs to the event loop.
 
-    Reached from the callback, a demonstration is set going and never drawn -
-    which is what an event off a plot pane crosses to the loop to avoid.
+    Started directly from the callback, a demonstration would run but never be drawn;
+    plot pane events cross to the loop for the same reason.
     """
     clicked = FakeApp(deferring=True)
     Demos(page, clicked, platform.current().storage()).attend()
@@ -201,15 +189,14 @@ def test_the_app_is_entered_through_its_loop_and_not_from_the_click(page):
 def test_a_script_lands_in_the_page_and_runs(demos, page, app):
     chose(page, "ALGEBRA.DMO", SCRIPT)
     assert app.demonstrated == [("ALGEBRA.DMO", False)]
-    # A file like any other afterwards: it is in the store under its own name,
-    # which is the name Transfer Demo would be given to run it again.
+    # It is then stored under its own name, which Transfer Demo can use to run it again.
     assert worksheet.demonstration(Path("ALGEBRA.DMO")) == (
         ("adds two numbers", "2 + 3"),
     )
 
 
 def test_a_gallery_runs_as_the_kind_that_is_drawn(demos, page, app):
-    """The kind is read off the catalogue, never believed from the page."""
+    """The kind comes from the catalog, never from the page."""
     chose(page, "PLOT2D.MTH", GALLERY)
     assert app.demonstrated == [("PLOT2D.MTH", True)]
     assert worksheet.demonstration(Path("PLOT2D.MTH")) == (
@@ -218,16 +205,16 @@ def test_a_gallery_runs_as_the_kind_that_is_drawn(demos, page, app):
 
 
 def test_the_page_is_told_where_the_whole_diskette_is(demos, page):
-    """The road that does not go through the archive's extractor."""
+    """The page gets the diskette image URL, which bypasses the archive's extractor."""
     assert page.handlers["image"] == catalogue.IMAGE
 
 
 def test_a_demonstration_can_be_kept_without_being_run(demos, page, app):
-    """The eight the page did not ask for, out of a diskette it paid for once."""
+    """The other eight files from a downloaded diskette are kept without running them."""
     keep(page, "PLOT2D.MTH", GALLERY)
     assert app.demonstrated == []
     assert kept(page, "PLOT2D.MTH")
-    # And it is a file like any other: the next choice of it runs off the store.
+    # Choosing it later runs it from storage.
     chose(page, "PLOT2D.MTH")
     assert app.demonstrated == [("PLOT2D.MTH", True)]
 
@@ -238,11 +225,10 @@ def test_nothing_is_kept_under_a_name_that_is_on_no_list(demos, page):
 
 
 def test_a_demonstration_the_page_has_is_run_without_a_download(demos, page, app):
-    """The second viewing of one: the store outlives the tab, so nothing waits.
+    """Storage outlives the tab, so a second viewing needs no download.
 
-    Nothing is brought along, and the page says so the way a page says it: with
-    its own `null`, which is falsy and is not `None`. Asked for by identity it
-    reads as bytes, and the bytes it has none of are then read out of it.
+    The page then passes JS `null`, which is falsy but is not `None`; a check by identity
+    would treat it as bytes and try to read from it.
     """
     assert not kept(page, "ALGEBRA.DMO")
     chose(page, "ALGEBRA.DMO", SCRIPT)
@@ -268,8 +254,8 @@ def test_a_name_that_is_on_no_list_runs_nothing(demos, page, app):
 def test_the_notice_names_the_command_that_runs_it_again(demos, page):
     chose(page, "ALGEBRA.DMO", SCRIPT)
     chose(page, "PLOT2D.MTH", GALLERY)
-    # Demo reads a script and Load reads a worksheet, and a gallery is a
-    # worksheet by extension: naming the wrong one would send nobody anywhere.
+    # Demo reads a script and Load reads a worksheet, and a gallery is a worksheet, so
+    # each notice must name the right command.
     assert page.notices == [
         "ALGEBRA.DMO is in this page now; Transfer Demo runs it again by that name",
         "PLOT2D.MTH is in this page now; Transfer Load Derive reads it by that name",
@@ -277,13 +263,13 @@ def test_the_notice_names_the_command_that_runs_it_again(demos, page):
 
 
 def test_a_file_the_original_wrote_is_read_in_its_own_encoding(demos, page):
-    """Code page 437, which is what a Greek name in one of these files is."""
+    """The original's files are in code page 437, including their Greek letters."""
     chose(page, "ARITH.DMO", "; the angle α\r\nSIN(x)\r\n\x1a".encode("cp437"))
     assert worksheet.demonstration(Path("ARITH.DMO")) == (("the angle α", "SIN(x)"),)
 
 
 def test_a_demonstration_asked_for_too_early_is_refused_in_words(page):
-    """The button is there from the first frame and the program is not."""
+    """The button appears on the first frame, before the program is running."""
     starting = FakeApp(running=False)
     Demos(page, starting, platform.current().storage()).attend()
     chose(page, "ALGEBRA.DMO", SCRIPT)
@@ -291,39 +277,34 @@ def test_a_demonstration_asked_for_too_early_is_refused_in_words(page):
     assert page.notices == [
         "Rederive is still starting; try the demonstration again in a moment"
     ]
-    # And nothing was kept: the file is downloaded again next time, which is
-    # the next thing the user will do.
+    # Nothing is kept; the file is downloaded again when the user retries.
     assert not platform.current().storage().exists(Path("ALGEBRA.DMO"))
 
 
 # -- the command that offers the same nine ------------------------------------
 #
-# `Transfer Demo` is in the menu band of a page as it is on a desktop, and a
-# command running in a tab has nothing to download with: sockets are not a thing
-# a tab has. So it fetches with the page, and what arrives is kept the way a tab
-# keeps a file rather than written the way a desktop writes one.
+# `Transfer Demo` is available in a page too, but a tab has no sockets, so the command
+# fetches through the page and keeps the file in page storage.
 
 
 async def test_the_command_downloads_through_the_page(demos, page, arith):
     page.archive["ARITH.DMO"] = SCRIPT
     assert await demos.brought(arith) == SCRIPT
     assert page.fetched == ["ARITH.DMO"]
-    # In the page afterwards, under the name the original gave it, so nothing
-    # is downloaded twice and the Transfer commands find it.
+    # It is stored under its original name, so it isn't downloaded twice and the
+    # Transfer commands can find it.
     assert kept(page, "ARITH.DMO")
     assert worksheet.demonstration(Path("ARITH.DMO")) == (
         ("adds two numbers", "2 + 3"),
     )
-    # And nothing left the tab. A save is a download here, and nobody asking to
-    # be shown a demonstration asked for a copy of the file on their disk.
+    # Nothing is downloaded to the user's disk, as a save in a page would be.
     assert page.downloads == []
 
 
 async def test_a_download_the_page_refuses_says_so_in_one_sentence(demos, arith):
-    """The browser's stack is for a console; a message line has room for a line.
+    """The message line shows a one-sentence error, not the browser's stack trace.
 
-    Nothing is on offer from the fake page, which is every road to the archive
-    being shut - the state the second of them was written for.
+    The fake page offers nothing, as when every route to the archive is down.
     """
     with pytest.raises(OSError, match="^the server said 503$"):
         await demos.brought(arith)
@@ -331,7 +312,7 @@ async def test_a_download_the_page_refuses_says_so_in_one_sentence(demos, arith)
 
 
 def test_the_pages_opening_notice_points_at_the_button_and_not_the_keystrokes():
-    """The demonstrations are a click away there, which is nearer than T D."""
+    """In a page, demonstrations are a click away, so the greeting doesn't suggest T D."""
     assert "T D" in RederiveApp.GREETING_LINE
     assert "T D" not in PageApp.GREETING_LINE
     assert "help" in PageApp.GREETING_LINE
@@ -339,15 +320,13 @@ def test_the_pages_opening_notice_points_at_the_button_and_not_the_keystrokes():
 
 # -- the desktop's own download -----------------------------------------------
 #
-# The other half of the seam `web/demos.js` is: what a machine with sockets does
-# when one of the nine is asked for and is not on the disk. Nothing here opens
-# one - `urlopen` is answered by a table of what each address holds - so what is
-# tested is the roads and the guards, which is all of this module that is not
-# the standard library.
+# The desktop counterpart of `web/demos.js`: downloading a demonstration that is not on
+# disk. `urlopen` is answered from a table, so these tests cover the fallback paths and
+# validity checks without opening sockets.
 
 
 class Answer:
-    """What `urlopen` hands back, as much of it as this reads."""
+    """The part of a `urlopen` response that `fetch` uses."""
 
     def __init__(self, raw: bytes) -> None:
         self.raw = raw
@@ -363,10 +342,9 @@ class Answer:
 
 
 def serving(held, slow=()):
-    """An answering `urlopen`: `held` by address, an OSError where there is none.
+    """A fake `urlopen` serving `held` by URL and raising OSError for other URLs.
 
-    An address in `slow` answers after a moment, which is how a race is put the
-    way round a test wants it.
+    URLs in `slow` answer after a short delay, so a test can control who wins a race.
     """
 
     def opened(url, timeout=None):
@@ -380,7 +358,7 @@ def serving(held, slow=()):
 
 
 def diskette(files):
-    """A zip of the shape the archive holds, its names inside a directory."""
+    """A zip laid out like the archive's, with the files inside a directory."""
     raw = BytesIO()
     with zipfile.ZipFile(raw, "w") as image:
         for name, data in files.items():
@@ -396,7 +374,7 @@ def arith():
 def test_the_first_source_to_answer_is_the_one_the_file_comes_off(
     monkeypatch, arith
 ):
-    """Both are asked at once, so the slow one costs nothing while the other is up."""
+    """Both sources are asked at once, so a slow one costs nothing if the other is up."""
     first, second = arith.urls
     monkeypatch.setattr(fetch, "urlopen", serving({second: SCRIPT}, slow=[first]))
     assert fetch.fetched(arith) == SCRIPT
@@ -417,7 +395,7 @@ def test_a_source_that_refuses_is_passed_over_for_one_that_does_not(
 def test_what_comes_back_has_to_be_a_file_of_the_originals(
     monkeypatch, arith, answered
 ):
-    """A relay answers its own error page with a 200, so the status says little."""
+    """A relay may serve its own error page with status 200, so the content is checked."""
     held = dict.fromkeys(arith.urls, answered)
     monkeypatch.setattr(fetch, "urlopen", serving(held))
     with pytest.raises(OSError, match="not a file of the original"):
@@ -427,14 +405,14 @@ def test_what_comes_back_has_to_be_a_file_of_the_originals(
 def test_the_whole_diskette_is_the_road_left_when_neither_source_opens_one(
     monkeypatch, arith
 ):
-    """One piece of machinery opens both images, so both shut at once."""
+    """Both sources rely on the same extractor, so they tend to fail together."""
     image = diskette({demo.file: SCRIPT for demo in catalogue.DEMOS})
     monkeypatch.setattr(fetch, "urlopen", serving({catalogue.IMAGE: image}))
     assert fetch.fetched(arith) == SCRIPT
 
 
 def test_the_diskette_hands_over_the_eight_nobody_asked_for(monkeypatch, arith):
-    """They have been paid for, so none of them is ever downloaded again."""
+    """The other files in the image are kept, so they never need downloading again."""
     image = diskette({demo.file: SCRIPT for demo in catalogue.DEMOS})
     monkeypatch.setattr(fetch, "urlopen", serving({catalogue.IMAGE: image}))
     kept = {}
@@ -447,7 +425,7 @@ def test_the_diskette_hands_over_the_eight_nobody_asked_for(monkeypatch, arith):
 def test_the_archives_refusal_is_the_one_reported_when_no_road_is_open(
     monkeypatch, arith
 ):
-    """The first road is the one that was meant to work, so it is the one read."""
+    """The error from the first route, the one expected to work, is the one reported."""
     monkeypatch.setattr(fetch, "urlopen", serving({}))
     with pytest.raises(OSError, match="the server said 503"):
         fetch.fetched(arith)

@@ -1,22 +1,18 @@
-"""Node in, Box out.
+"""Layout: turning a `Node` into a `Box`.
 
-One pass, purely functional, driven by two pieces of context: the script level
-and what is left of the caller's height budget.
+A single functional pass, driven by the script level and the remaining height budget.
 
-The script level is how deep inside a superscript or a subscript we are.
-Fractions and matrices are built up at level 0 and linear below it, and `^`
-itself stops raising at level 2, so an exponent tower flattens to `y^z^w`
-rather than climbing off the top of the pane.
+The script level is the nesting depth inside superscripts and subscripts. Fractions and
+matrices are built up at level 0 and linear below it, and `^` stops raising at level 2,
+so an exponent tower flattens to `y^z^w` instead of climbing off the top of the pane.
 
-The height budget degrades outermost-first. Every node's unconstrained box is
-memoised, so asking "how tall would this be built up?" costs one layout per
-node however often the question is put.
+When the height budget is exceeded, the outermost constructs are degraded first. Each
+node's unconstrained box is memoized, so checking how tall a built-up form would be
+costs one layout per node.
 
-Each box also names its selectable operands, because what the cursor can
-reach is decided by how a node is drawn: a chain of sums offers its terms
-rather than its left-nested pairs, a call offers its arguments and never its
-name, and a special form names its own. The original's rule is that you
-select what you see.
+Each box lists its selectable operands, following Derive's rule that you select what you
+see: a chain of sums offers its terms rather than nested pairs, a call offers its
+arguments but not its name, and special forms choose their own.
 """
 
 from __future__ import annotations
@@ -35,10 +31,9 @@ from rederive.display.boxes import (
 from rederive.display.options import DisplayOptions
 from rederive.model.expr import Kind, Node
 
-#: Word operators keep their spaces in both formats: they would not lex
-#: otherwise, `xANDy` being one name. `NOT` is the other one and prints as a
-#: prefix; `SUB` never prints as a word at all, since a subscript too deep to
-#: lower writes the arrow `a↓b` rather than being spelled out.
+#: Word operators keep their spaces in both formats, since `xANDy` would lex as one
+#: name. `NOT` is handled separately as a prefix, and `SUB` never prints as a word (a
+#: subscript too deep to lower is written `a↓b`).
 _WORD_OPERATORS = {
     Kind.AND: "AND",
     Kind.OR: "OR",
@@ -49,25 +44,24 @@ _WORD_OPERATORS = {
 #: Beyond this level a script is written flat, `^` as `a^b` and `SUB` as `a↓b`.
 _LINEAR_SCRIPTS = 2
 
-#: `after` for an operand with nothing drawn to its right. Below every
-#: precedence on the ladder, so it can absorb nothing.
+#: `after` for an operand with nothing drawn to its right. Lower than every precedence on
+#: the ladder.
 ALONE = -1
 
-#: The default options, held as one value so that the common call builds none.
+#: Default options, shared so the common call doesn't construct new ones.
 _DEFAULTS = DisplayOptions()
 
 
 def render(node: Node, options: DisplayOptions = _DEFAULTS) -> Layout:
-    """Typeset `node`. The result is as wide as it is; the pane clips it."""
+    """Typeset `node`. The width is unlimited; the pane clips it."""
     engine = Engine(options)
     return paint(engine.box(node, 0, options.height))
 
 
 class Engine:
-    """One render's worth of layout.
+    """Layout state for one render.
 
-    Public to `forms.py`, which is handed an instance rather than importing
-    back into here.
+    Passed to the functions in `forms.py`, so they don't need to import this module.
     """
 
     def __init__(self, options: DisplayOptions) -> None:
@@ -84,7 +78,7 @@ class Engine:
         return self._build(node, level, budget)
 
     def free(self, node: Node, level: int) -> Box:
-        """`node` laid out with no height limit, measured once and kept."""
+        """`node` laid out with no height limit, memoized."""
         key = (id(node), level)
         box = self._free.get(key)
         if box is None:
@@ -102,13 +96,11 @@ class Engine:
     ) -> Box:
         """`node` in a position that needs at least `required` precedence.
 
-        `after` is how tightly the operator drawn to the right of this operand
-        binds, in the box the caller is building; `ALONE` when nothing is
-        drawn there. It decides a form that ends in its body, which no
-        precedence of its own can: `Σ k` is fenced before a `+ 1` and bare
-        after a `2·`, sitting beside the same operator either way. A comma, a
-        closing bracket and the `dx` of an integral are terminators rather
-        than operators, so they leave an operand `ALONE`.
+        `after` is the precedence of the operator drawn to the right of the operand, or
+        `ALONE` if there is none. It matters for forms ending in a body, which a single
+        precedence can't describe: `Σ k` is fenced before `+ 1` but not after `2·`.
+        Commas, closing brackets and an integral's `dx` are terminators, so an operand
+        before them is `ALONE`.
         """
         box = self.box(node, level, budget)
         if self._needs_fences(node, required, after):
@@ -120,10 +112,9 @@ class Engine:
         body = forms.body_precedence(node)
         if body is None:
             return forms.precedence(node) < required
-        # A form that ends in its body is fenced by what would be read into
-        # that body: an operator to its right that binds at least as tightly,
-        # or a prefix as tight as `√`, which takes a power's operand. A looser
-        # prefix - a unary minus, a `2·` - reads correctly without them.
+        # A form ending in a body needs fences if something would be read into the
+        # body: an operator to the right binding at least as tightly, or a prefix as
+        # tight as `√`. Looser prefixes, such as unary minus or `2·`, are fine.
         return after >= body or required >= forms.POW
 
     def fence(self, box: Box) -> Box:
@@ -142,10 +133,10 @@ class Engine:
         node: Node | None = None,
         operands: tuple[Box, ...] = (),
     ) -> Box:
-        """`script` immediately right of `base`, one row clear of its baseline.
+        """`script` immediately right of `base`, raised one row above its baseline.
 
-        The script's columns stay blank on the baseline row, which is why
-        `x^2 + 2x` renders `x  + 2·x` with two spaces.
+        The script's columns stay blank on the baseline row, so `x^2 + 2x` renders as
+        `x  + 2·x` with two spaces.
         """
         return Box(
             base.width + script.width,
@@ -158,7 +149,7 @@ class Engine:
         )
 
     def built_up(self, node: Node, level: int, budget: int | None) -> bool:
-        """Whether a division or a matrix takes its built-up form here."""
+        """Whether a division or matrix is drawn built-up here."""
         if level > 0:
             return False
         return budget is None or self.free(node, level).height <= budget
@@ -199,10 +190,9 @@ class Engine:
             case Kind.CALL | Kind.APPLY:
                 return self._application(node, node, level, budget)
             case Kind.FUNCPOW:
-                # The application and the exponent are two operands, as they
-                # are in the original, which holds a power of an application
-                # where this tree holds one node. Both regions name that node,
-                # there being no other to name.
+                # The application and the exponent are two operands, as in Derive, which
+                # represents this as a power of an application. Here it's a single node,
+                # so both regions refer to it.
                 inner = self._application(node, node, level, budget)
                 exponent = self.box(node.children[1], level + 1, budget)
                 return self.raised(inner, exponent, node, (inner, exponent))
@@ -220,9 +210,8 @@ class Engine:
             case Kind.FUNDEF:
                 return self._definition(node, level, budget)
             case Kind.PARAMS:
-                # A definition draws its own parameter list, name and all, so
-                # this is the standalone case: the dispatch is total over the
-                # kinds rather than only over the ones reached from a root.
+                # Definitions draw their own parameter list, so this only handles a
+                # standalone `PARAMS`, keeping the dispatch total over all kinds.
                 return self._joined(node.children, level, budget, node)
             case Kind.DOMAIN:
                 return self._domain(node, level, budget)
@@ -244,7 +233,7 @@ class Engine:
     # -- operators ----------------------------------------------------------
 
     def _binop(self, node: Node, level: int, budget: int | None) -> Box:
-        """`/`, `^` and the dot product, the three that really are binary."""
+        """`/`, `^` and the dot product, the only true binary operators."""
         operator = str(node.value)
         if operator == "/":
             return self._division(node, level, budget)
@@ -256,10 +245,10 @@ class Engine:
         return row([first, text(glyphs.DOT_PRODUCT), second], node, (first, second))
 
     def _run(self, node: Node, level: int, budget: int | None) -> Box:
-        """A sum or a product: every term at once, and its own operands.
+        """A sum or product, drawn as a flat run of terms.
 
-        Each gap carries its own operator, so the terms are offered bare and
-        `a + b - c` offers three of them rather than `a + b` and `c`.
+        Each gap has its own operator, so `a + b - c` offers three operands rather than
+        `a + b` and `c`.
         """
         own = forms.precedence(node)
         gaps = [self._gap(node, index) for index in range(len(node.children) - 1)]
@@ -279,8 +268,8 @@ class Engine:
     def _gap(self, node: Node, index: int) -> str:
         """How the operator before term `index + 1` is drawn.
 
-        A product draws every gap the same way, juxtaposition included: the
-        original writes `a b` as `a·b`, keeping no trace of how it was typed.
+        All gaps in a product look the same, juxtaposition included: Derive writes `a b`
+        as `a·b`.
         """
         if node.kind is Kind.PRODUCT:
             return glyphs.TIMES[self.options.times]
@@ -288,15 +277,12 @@ class Engine:
 
     @staticmethod
     def _fenced_in_run(node: Node, child: Node) -> bool:
-        """Whether a term takes fences that its precedence alone will not ask for.
+        """Whether a term needs fences that its precedence alone wouldn't require.
 
-        A run nested in a run of its own kind is one. The original keeps the
-        parentheses of `a+(b+c)` and `a·(b·c)`, which is the only thing that
-        tells them from `a+b+c` and `a·b·c`, where it drops them.
-
-        A sign inside a product is the other, `a·(-b)`: a drawn sign reaches
-        over a whole product, so `a·-b` would read as `a·(-b·…)`. A sign in a
-        sum needs nothing, `a + -b` being unambiguous already.
+        A run nested in a run of the same kind keeps its parentheses, as in Derive, to
+        distinguish `a+(b+c)` from `a+b+c`. A sign inside a product is fenced, `a·(-b)`,
+        because a drawn sign extends over the rest of the product. In a sum, `a + -b` is
+        unambiguous.
         """
         if child.kind is node.kind:
             return True
@@ -307,9 +293,8 @@ class Engine:
     ) -> Box:
         """`-u`, `+u` or `±u`.
 
-        The sign abuts a leaf and stands off anything else: `-x`, `3 - -2`,
-        but `- SIN(x)`, `- √x`, `- [1, 2]` and `- a/b`. What it governs is
-        plain when the operand is one token and worth marking when it is not.
+        The sign touches a single-token operand and is separated by a space from anything
+        else: `-x` and `3 - -2`, but `- SIN(x)`, `- √x`, `- [1, 2]` and `- a/b`.
         """
         operand = self.operand(node.children[0], level, budget, forms.MUL)
         sign = glyphs.operator(str(node.value))
@@ -320,7 +305,7 @@ class Engine:
     def _division(self, node: Node, level: int, budget: int | None) -> Box:
         numerator, denominator = node.children
         if self.built_up(node, level, budget):
-            # Neither operand ever needs fences: the bar groups them.
+            # The bar groups the operands, so they never need fences.
             top = self.box(numerator, level, budget)
             bottom = self.box(denominator, level, budget)
             width = max(top.width, bottom.width) + 2
@@ -344,7 +329,7 @@ class Engine:
     def _quotient_operand(
         self, node: Node, level: int, budget: int | None, required: int, after: int
     ) -> Box:
-        """An operand of a linear `/`, where a built-up fraction needs no fences."""
+        """An operand of a linear `/`. A built-up fraction needs no fences here."""
         if _is_quotient(node) and self.built_up(node, level, budget):
             return self.box(node, level, budget)
         return self.operand(node, level, budget, required, after)
@@ -355,16 +340,14 @@ class Engine:
         if level >= _LINEAR_SCRIPTS:
             script = self.operand(exponent, level, budget, forms.NEG)
             return row([under, text("^"), script], node, (under, script))
-        # Raised, so the exponent needs no fences however loose it is.
+        # A raised exponent never needs fences.
         script = self.box(exponent, level + 1, budget)
         return self.raised(under, script, node, (under, script))
 
     def _subscript(self, node: Node, level: int, budget: int | None) -> Box:
         base, script = node.children
         if level >= _LINEAR_SCRIPTS:
-            # Flat: `a↓b`, the arrow standing in for the row there is no
-            # longer any room to lower into, exactly as `a^b` stands in for
-            # the row there is no room to raise into.
+            # Flat `a↓b`: the arrow replaces lowering, just as `a^b` replaces raising.
             flat = self.operand(base, level, budget, forms.POSTFIX, forms.POSTFIX)
             deeper = self.operand(script, level, budget, forms.SCRIPT)
             return row(
@@ -376,8 +359,7 @@ class Engine:
         parts = [Placed(under, 0, 0)]
         dx = under.width
         if base.kind is Kind.SUB:
-            # A subscript on a subscript merges: `v SUB 1 SUB 2` is `v` over
-            # `1,2` rather than a script hung off the first script's corner.
+            # Nested subscripts merge: `v SUB 1 SUB 2` draws `v` with subscript `1,2`.
             parts.append(Placed(text(","), dx, dy))
             dx += 1
         parts.append(Placed(lowered, dx, dy))
@@ -392,11 +374,10 @@ class Engine:
         )
 
     def _relation(self, node: Node, level: int, budget: int | None) -> Box:
-        """`a = b`, and a chain of them nests to the left and draws flat.
+        """`a = b`. Chains nest to the left and draw flat.
 
-        The left operand may be a relation itself, and is left unfenced so
-        that `a=b<c` renders `a = b < c`. The right may not, which is what
-        makes `a=(b<c)` keep its parentheses.
+        The left operand may itself be an unfenced relation, so `a=b<c` renders as
+        `a = b < c`; a relation on the right is fenced, as in `a=(b<c)`.
         """
         left, right = node.children
         first = self.operand(left, level, budget, forms.RELATION, forms.RELATION)
@@ -419,17 +400,14 @@ class Engine:
     ) -> Box:
         """A call, a bare application, or the application inside a `FUNCPOW`.
 
-        `owner` is the node the box belongs to, which is `None` for a
-        `FUNCPOW`: there the exponent goes on the outside and the box that
-        carries the node is the raised one.
+        `owner` is the node the box belongs to.
         """
         form = forms.special(node)
         name, arguments = forms.application(node)
         if form is not None:
             return form(self, owner, arguments, level, budget)
-        # Arguments never need fences; the call's own parentheses group them.
-        # The name is drawn as the head of the application rather than as
-        # something applied to, so it carries no node and is never selectable.
+        # Arguments never need fences inside the call's parentheses. The name has no
+        # node, so it is never selectable.
         listed = fenced(self._joined(arguments, level, budget), glyphs.PARENS)
         return row([text(str(name.value)), listed], owner, (listed,))
 
@@ -442,9 +420,8 @@ class Engine:
     ) -> Box:
         """A comma-separated list, spaced the same way in both formats.
 
-        An element needs no fences whatever it is: the brackets or the call's
-        own parentheses group the list, and a comma terminates a form's body
-        rather than being read into it.
+        Elements never need fences: the enclosing brackets or parentheses group the list,
+        and a comma terminates a form's body.
         """
         parts: list[Box] = []
         elements: list[Box] = []
@@ -460,8 +437,8 @@ class Engine:
     def _vector(self, node: Node, level: int, budget: int | None) -> Box:
         if _is_matrix(node) and self.built_up(node, level, budget):
             return self._matrix(node, level, budget)
-        # One row of elements, so the brackets need no padding, but they do
-        # have to be built up as soon as an element is more than a row tall.
+        # A single row needs no bracket padding, but the brackets are built up as soon as
+        # an element is taller than one row.
         return fenced(
             self._joined(node.children, level, budget),
             glyphs.BRACKETS,
@@ -497,8 +474,8 @@ class Engine:
                     tuple(line),
                 )
             )
-        # One blank row between rows, and the baseline in the middle of the
-        # block so that the fences sit symmetrically about it.
+        # One blank row between rows, with the baseline in the middle so the fences sit
+        # symmetrically.
         height = sum(line.height for line in lines) + len(lines) - 1
         baseline = height // 2
         parts = []
@@ -522,8 +499,8 @@ class Engine:
         return row([left, text(self._spaced(operator)), right], node, (left, right))
 
     def _definition(self, node: Node, level: int, budget: int | None) -> Box:
-        # `F(x)` selects as one operand, name included: the head is drawn as a
-        # unit, so the parameter list carries it and offers the parameters.
+        # The head `F(x)` is selectable as one operand, name included, and offers the
+        # parameters inside it.
         parameters = node.children[0]
         listed = fenced(self._joined(parameters.children, level, budget), glyphs.PARENS)
         head = row([text(str(node.value)), listed], parameters, (listed,))
@@ -538,8 +515,8 @@ class Engine:
         domain = text(str(node.value))
         if len(node.children) == 1:
             return row([name, text(glyphs.DOMAIN), domain], node, (name,))
-        # The domain and its interval select together, as one operand drawn in
-        # two pieces, so the interval's own box is widened to hold both.
+        # The domain and its interval are selected together, so the interval's box is
+        # widened to include the domain.
         interval = self.box(node.children[1], level, budget)
         span = row(
             [domain, text(" "), interval], node.children[1], interval.operands
@@ -547,13 +524,11 @@ class Engine:
         return row([name, text(glyphs.DOMAIN), span], node, (name, span))
 
     def _interval(self, node: Node, level: int, budget: int | None) -> Box:
-        """`[0, ∞)`, drawn flat however shallow it sits.
+        """`[0, ∞)`, always drawn flat.
 
-        The original writes an interval's bounds in author notation rather
-        than building them up: `x :ε Real (1/2, 5)` is one row, and so is
-        `y :ε Real (2^10, 1/3)`. Drawing them at the level scripts go flat at
-        is what says so, since that is already the level a fraction stops
-        taking a bar at.
+        Derive writes interval bounds linearly, in author notation: `x :ε Real (1/2, 5)`
+        and `y :ε Real (2^10, 1/3)` are each one row. The bounds are laid out at the level
+        where scripts go flat, which also makes fractions linear.
         """
         opening, closing = str(node.value)
         level = max(level, _LINEAR_SCRIPTS)

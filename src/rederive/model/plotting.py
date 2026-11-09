@@ -1,31 +1,23 @@
-"""What an expression is a plot of, decided before anything is sent anywhere.
+"""Classification of an expression into a plot kind, before anything is sent.
 
-Classification is done app-side because the app is the side that has to act on
-it: which kind of window the plot is going to land in is known from the shape
-of the tree and the list of free variables, and is not worth a round trip to
-find out.
+This is done app-side because the app needs the answer to pick the window, and
+the tree shape and free variables suffice, so no round trip is needed.
 
-The variables come from `session.variables`, which is a worker call that
-already exists and is the authority: it resolves labels, assigned variables and
-defined functions, so `#3` classifies as what `#3` means rather than as the
-label it is written with. Everything else is read off the pure-Python `Node`,
-which is why this module is testable without an engine.
+The variables come from `session.variables`, which resolves labels, assigned
+variables and defined functions, so `#3` classifies by what it refers to. The rest
+is read from the pure-Python `Node`, so this module is testable without an engine.
 
-The table is section 5's, first matching row wins, and two of its rows are
-precedence decisions worth naming. `[SIN(t), COS(t)]` is a parametric pair and
-not a two-curve family - plotting two univariate functions together is two
-consecutive Plot commands, which land in the same window anyway - and a
-2-vector in two variables, `[x+y, x-y]`, is a two-surface 3D family, because
-the parametric reading needs exactly one variable and this has two.
+The rules follow section 5's table, first match wins. Two precedence choices
+stand out: `[SIN(t), COS(t)]` is a parametric pair rather than a two-curve family
+(two curves are just two Plot commands into the same window), and `[x+y, x-y]` is
+a pair of surfaces, since parametric needs exactly one variable.
 
-Never silence: an expression that matches no row is refused with a message that
-says what stopped it. A refusal that only beeps is the anti-goal.
+An expression matching no rule is refused with a message explaining why, never
+just a beep.
 
-`preferences` and `learned` are the other pure translations plotting needs,
-and they are here for the same reason: the settings store keeps the sticky
-plot preferences as words and whole numbers, the host speaks them as booleans
-and a pixel count, and these two are where the spellings meet - one for each
-direction the values travel.
+`preferences` and `learned` translate the sticky plot preferences between the
+settings store (words and integers) and the plot host (booleans and a pixel
+size), one per direction.
 """
 
 from __future__ import annotations
@@ -39,36 +31,32 @@ from rederive.plot.protocol import Options, PlotKind, Prefer
 
 __all__ = ["Plotted", "Unplottable", "classify", "learned", "preferences"]
 
-#: What a refusal says when the expression holds more variables than any
-#: reading of it can use. The variables are named, since which ones they are is
-#: what the user has to act on.
+#: Refusal for an expression with too many variables, named so the user knows
+#: what to reduce.
 TOO_MANY = "{text} depends on {names} - reduce to one or two variables"
 
-#: And when the shape itself is not a plot of anything: a three-column matrix,
-#: a string, an assignment. There is nothing to reduce, so the message does not
-#: pretend there is.
+#: Refusal for an expression whose shape can't be plotted, such as a three-column
+#: matrix, a string or an assignment.
 NOT_A_PLOT = "{text} is not an expression this can plot"
 
-#: The relations that bound a region rather than draw a curve. `=` is the
-#: implicit curve and everything else is an inequality, `/=` included: the
-#: complement of a curve is an area.
+#: Relations that plot as a region rather than a curve. Only `=` is an implicit
+#: curve; even `/=` is a region (the complement of a curve).
 INEQUALITIES = frozenset({"<", "<=", ">", ">=", "/=", "≤", "≥", "≠"})
 
-#: The node kinds that join relations into a region: `x > 0 AND y > 0`.
+#: Node kinds that combine relations into a region, as in `x > 0 AND y > 0`.
 COMBINATIONS = frozenset({Kind.NOT, Kind.AND, Kind.OR, Kind.XOR, Kind.IMP})
 
 
 class Unplottable(Exception):
-    """The expression is not a plot of anything, and this is why in words."""
+    """The expression can't be plotted; the message says why."""
 
 
 @dataclass(frozen=True)
 class Plotted:
-    """What to send: the kind, and the options the kind needs.
+    """What to send: the plot kind and its options.
 
-    `variables` is in the order the axes take them - the abscissa or the
-    parameter first, and for a surface the two horizontal axes in the engine's
-    canonical variable order, which is the order they arrive in.
+    `variables` is in axis order: the abscissa or parameter first, and for a
+    surface the two horizontal axes in the engine's canonical (arrival) order.
     """
 
     kind: PlotKind
@@ -77,23 +65,20 @@ class Plotted:
 
     @property
     def options(self) -> Options:
-        """The classification as the protocol carries it."""
+        """The classification as protocol options."""
         return Options(variables=self.variables, vertical=self.vertical)
 
 
 def classify(
     node: Node, variables: Sequence[str], text: str = "", relation: str | None = None
 ) -> Plotted:
-    """What `node` is a plot of, given the variables the engine found in it.
+    """Classify `node` as a plot, given the variables the engine found in it.
 
-    `relation` is the operator the expression evaluates to a relation under, from
-    `session.relation`, for a tree that is not written as one: `IM(u = v)` is a
-    call on the tree and an equation once evaluated, and is plotted as the
-    equation. A tree written as a relation is read as the relation it is written
-    as, whatever it evaluates to.
+    `relation`, from `session.relation`, is the relational operator a non-relation
+    tree evaluates to: `IM(u = v)` is a call but plots as the equation. A tree
+    written as a relation is classified as written, regardless of evaluation.
 
-    Raises `Unplottable` where no reading fits, with the message the command
-    puts on the message line.
+    Raises `Unplottable` if nothing fits, with the message for the message line.
     """
     names = tuple(variables)
     if node.kind is not Kind.REL and relation is not None:
@@ -106,12 +91,10 @@ def classify(
 
 
 def _as_relation(node: Node, relation: str) -> Node:
-    """`node` stood in for by the relation it evaluates to.
+    """A placeholder relation with operator `relation` standing in for `node`.
 
-    The two sides are the tree itself and nothing, since no reading of a relation
-    in up to two variables looks at them; the one that does, `_solved`, wants three
-    variables and a bare name on one side, and a call wrapped around an equation is
-    not that.
+    The sides are just `node`; only `_solved` inspects sides, and it needs a bare
+    name on one side, which a wrapped call never is.
     """
     return Node(Kind.REL, node.start, node.end, (node, node), relation)
 
@@ -123,10 +106,10 @@ def _refusal(names: tuple[str, ...], text: str) -> str:
 
 
 def _solved(node: Node, names: tuple[str, ...]) -> Plotted | None:
-    """`z = f(x, y)`: an equation already solved for its vertical axis.
+    """`z = f(x, y)`: an equation solved for the vertical axis.
 
-    The lone variable names the vertical axis and leaves two for the floor,
-    which is the one row that reads three variables and refuses nothing.
+    The lone variable is the vertical axis and the other two the floor. This is
+    the only rule that accepts three variables.
     """
     if node.kind is not Kind.REL or node.value != "=" or len(node.children) != 2:
         return None
@@ -152,7 +135,7 @@ def _equation(node: Node, names: tuple[str, ...]) -> Plotted | None:
 
 
 def _region(node: Node, names: tuple[str, ...]) -> Plotted | None:
-    """An inequality, or a boolean combination of them: an area, not a line."""
+    """An inequality, or a boolean combination of relations: a region."""
     if len(names) > 2:
         return None
     if node.kind in COMBINATIONS or (
@@ -163,7 +146,7 @@ def _region(node: Node, names: tuple[str, ...]) -> Plotted | None:
 
 
 def _vector(node: Node, names: tuple[str, ...]) -> Plotted | None:
-    """The five readings of a bracketed list, in the order they are tried."""
+    """The five interpretations of a vector, in the order they are tried."""
     if node.kind is not Kind.VECTOR or not node.children:
         return None
     children = node.children
@@ -189,9 +172,7 @@ def _vector(node: Node, names: tuple[str, ...]) -> Plotted | None:
 def _scalar(node: Node, names: tuple[str, ...]) -> Plotted | None:
     """One expression: a curve in one variable, a surface in two.
 
-    Nothing that is a statement rather than a value gets this far - an
-    assignment, a definition, a string - since those are not expressions the
-    question is about.
+    Statements and non-values (assignments, definitions, strings) are rejected.
     """
     if node.kind in (Kind.ASSIGN, Kind.FUNDEF, Kind.STRING, Kind.DOMAIN, Kind.VECTOR):
         return None
@@ -203,11 +184,10 @@ def _scalar(node: Node, names: tuple[str, ...]) -> Plotted | None:
 
 
 def preferences(settings: Settings) -> Prefer:
-    """The sticky plot values as the request that carries them to a host.
+    """The sticky plot settings as a `Prefer` request for the host.
 
-    The settings store keeps words and whole numbers, because that is what a
-    state file writes; the host wants a boolean and a pixel count. Pure, so
-    that the translation is testable without a plot window.
+    Converts the store's words and integers (as written to the state file) to the
+    host's booleans and pixel size.
     """
     return Prefer(
         grid=int(settings["PlotGrid"]),
@@ -218,11 +198,9 @@ def preferences(settings: Settings) -> Prefer:
 
 
 def learned(preferences: Prefer) -> dict[str, str | int]:
-    """A host's report of its sticky values, as the settings store spells them.
+    """Convert a host's reported `Prefer` back to settings values.
 
-    The inverse of `preferences`: a control moved in a plot window comes back
-    as a `Prefer`, and what the app stores - and a state file then writes -
-    are the settings' own words and whole numbers.
+    The inverse of `preferences`, used when a plot window control changes.
     """
     return {
         "PlotGrid": int(preferences.grid),
@@ -233,11 +211,10 @@ def learned(preferences: Prefer) -> dict[str, str | int]:
 
 
 def _names_in(node: Node) -> set[str]:
-    """Every name written anywhere in `node`, function heads included.
+    """All names in `node`, including function heads.
 
-    Only ever asked whether one particular variable is among them, so a head
-    counted as a name is harmless: a variable that is also a function name is
-    not a variable of the expression either way.
+    Including heads is harmless: callers only test whether a given variable is
+    present.
     """
     found = {str(node.value)} if node.kind is Kind.NAME else set()
     for child in node.children:

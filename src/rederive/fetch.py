@@ -1,21 +1,14 @@
-"""The original's demonstrations, fetched the way a machine with sockets fetches.
+"""Download the original's demonstrations on the desktop.
 
-The other half of `web/demos.js`, and it does the same two things: ask every
-address a demonstration has at once and take whichever answers, and fall back
-on the whole diskette when the archive's extractor is the thing that is down.
-What it does *not* do is the half of that file which is the browser's own
-predicament - a relay in front of the diskette, and a zip reader written by
-hand. A page may not read that address at all, having no CORS headers to go on;
-a desktop reads it directly, and opens the zip with the one in the standard
-library.
+The counterpart of `web/demos.js`: query all of a demonstration's URLs at once and take
+the first answer, falling back to the whole diskette image when the archive's extractor
+is down. Unlike the browser, the desktop needs no CORS relay and no handwritten zip
+reader; it fetches the image directly and opens it with `zipfile`.
 
-Nothing here is reached unless one of the nine is asked for and is not on the
-disk already, so a program that is never shown off never opens a socket.
+This only runs when a demonstration is requested and not already on disk.
 
-The threads are daemons and the waits are bounded. A source that has stopped
-answering must not hold the demonstration up behind a source that is answering,
-which is why they are raced; and it must not hold *quitting* up either, once
-the race is over and nobody is listening to it any more.
+Requests are raced so a stalled source doesn't delay one that answers, and they run in
+daemon threads with timeouts so a stalled source can't block quitting either.
 """
 
 from __future__ import annotations
@@ -31,34 +24,30 @@ from rederive.model.demos import DEMOS, IMAGE, Demo
 
 __all__ = ["fetched"]
 
-#: How long one address is given to answer. Long enough for a server that is
-#: thinking, short enough that a road which is closed is found to be closed
-#: while the user is still expecting something.
+#: Timeout for one request: long enough for a slow server, short enough that a dead one
+#: is detected while the user is still waiting.
 TIMEOUT = 10.0
 
-#: What a demonstration may be before it is taken for one, and what the whole
-#: diskette may be. The largest of the nine is a few kilobytes and the diskette
-#: is three hundred; anything past these is something else wearing the name.
+#: Size limits for a single demonstration and for the diskette image. The largest
+#: demonstration is a few KB and the diskette about 300 KB, so anything larger is not
+#: what we asked for.
 LARGEST_FILE = 65536
 LARGEST_IMAGE = 4 * 1024 * 1024
 
-#: What an apology begins with. A host that answers an error page answers it
-#: with a 200, so the status alone would let one onto the worksheet.
+#: How an HTML error page starts. Some hosts serve error pages with status 200, so the
+#: status alone can't be trusted.
 HTML = b"<"
 
 NOT_A_FILE = "what came back was not a file of the original"
 
 
 def fetched(demo: Demo, keep: Callable[[str, bytes], None] | None = None) -> bytes:
-    """The bytes of `demo`, off whichever road is open. Raises OSError if none is.
+    """Return the contents of `demo`. Raises OSError if no source works.
 
-    The ordinary road is the file itself, a few kilobytes out of a diskette
-    image that the archive opens at its end. When that road is shut - and it is
-    one piece of machinery for both images, so it shuts for both at once - the
-    whole diskette comes over instead and is opened here. Every demonstration
-    in it is then paid for, which is what `keep` is for: the eight that were not
-    asked for are handed over to whoever is holding on to them, so that none of
-    them is ever fetched twice.
+    Normally the file is extracted server-side by the archive. When that fails (it
+    fails for all URLs at once, being the same service), the whole diskette is
+    downloaded and unpacked here. Since the other demonstrations then come for free,
+    they are passed to `keep` so they never need to be fetched again.
     """
     try:
         return _raced(demo.urls)
@@ -66,18 +55,15 @@ def fetched(demo: Demo, keep: Callable[[str, bytes], None] | None = None) -> byt
         try:
             return _unpacked(demo.file, keep)
         except OSError:
-            # The archive's own refusal rather than the diskette's: the first
-            # road is the one that was meant to work, and its failure is the one
-            # worth reading.
+            # Report the primary source's error, which is the more informative one.
             raise refused from None
 
 
 def _raced(urls: tuple[str, ...]) -> bytes:
-    """The first of `urls` to answer with a file, or the first refusal there was.
+    """Return the first successful response from `urls`, or raise the first error.
 
-    All at once rather than one after the other: the slow case is a server
-    thinking, and asking in turn would add the waits together. The threads that
-    lose the race are left to finish into a queue nobody reads.
+    The URLs are queried in parallel so that slow servers' waits don't add up. Threads
+    that lose the race finish into a queue nobody reads.
     """
     answers: queue.Queue[tuple[bytes | None, OSError | None]] = queue.Queue()
     for url in urls:
@@ -95,7 +81,7 @@ def _raced(urls: tuple[str, ...]) -> bytes:
 
 
 def _answering(url: str, answers: queue.Queue) -> None:
-    """One runner in the race, reporting whichever way it went."""
+    """Fetch `url` and put the result or the error into `answers`."""
     try:
         answers.put((_got(url, LARGEST_FILE), None))
     except OSError as trouble:
@@ -103,10 +89,10 @@ def _answering(url: str, answers: queue.Queue) -> None:
 
 
 def _got(url: str, largest: int) -> bytes:
-    """What is at `url`, if what is there can be a file of the original's.
+    """Return the contents of `url`, if they look like one of the original's files.
 
-    One byte more than the largest is read, so that something far too big is
-    refused for its size rather than pulled down in full and refused after.
+    Reads at most one byte past `largest`, so an oversized response is rejected
+    without downloading it in full.
     """
     with urlopen(url, timeout=TIMEOUT) as answer:
         raw: bytes = answer.read(largest + 1)
@@ -116,7 +102,7 @@ def _got(url: str, largest: int) -> bytes:
 
 
 def _unpacked(file: str, keep: Callable[[str, bytes], None] | None) -> bytes:
-    """`file` out of the whole diskette, the rest of it kept on the way past."""
+    """Extract `file` from the whole diskette, passing the other demos to `keep`."""
     raw = _got(IMAGE, LARGEST_IMAGE)
     try:
         image = zipfile.ZipFile(BytesIO(raw))
@@ -131,6 +117,5 @@ def _unpacked(file: str, keep: Callable[[str, bytes], None] | None) -> bytes:
                     keep(demo.file, image.read(inside))
         return image.read(wanted)
     except (zipfile.BadZipFile, EOFError, ValueError) as trouble:
-        # A zip that will not open is a download that went wrong, which is what
-        # every other failure on this road already reads as.
+        # A broken zip means a failed download, so report it as OSError like the rest.
         raise OSError(f"the diskette could not be opened: {trouble}") from None

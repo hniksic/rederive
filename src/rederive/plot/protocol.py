@@ -1,23 +1,15 @@
-"""The vocabulary the app and the plot host speak, and nothing else.
+"""Messages exchanged between the app and the plot host.
 
-It mirrors `engine/boundary.py` and lives under the same prohibition: no sympy,
-no numpy, no Qt. The app process holds a `Add` in its hands without loading a
-computer algebra system or a widget toolkit, and the host is the only side that
-knows what either word costs.
+Like `engine/boundary.py`, this module imports no sympy, numpy or Qt, so the app can
+build an `Add` without loading either.
 
-Everything here is data, and all of it is picklable, because it travels down a
-multiprocessing pipe. A request is answered synchronously with a cheap reply -
-an acknowledgement, a window number, or a refusal in words - and the heavy work
-it asks for happens in the host afterwards. What that work then has to say for
-itself comes back as an event rather than as a reply: a window the user closed
-and a curve that would not evaluate arrive long after the request that made
-them, so they are their own messages.
+All messages are picklable data sent over a multiprocessing pipe. A request gets a
+cheap synchronous reply (an acknowledgement, a window number, or a refusal message),
+and the heavy work happens in the host afterwards. Later outcomes, such as a window
+closed by the user or a curve that failed to evaluate, arrive as separate events.
 
-The vocabulary is complete for every plot kind the design names, including the
-ones no window can draw yet. A kind is a word both sides already know, so later
-work adds behaviour rather than protocol - and the app can classify an
-expression it cannot yet plot, which is what lets a refusal say what it is
-refusing.
+`PlotKind` covers every plot kind in the design, including any not yet drawable, so
+the app can classify an expression and name it in a refusal.
 """
 
 from __future__ import annotations
@@ -61,25 +53,22 @@ __all__ = [
     "titled",
 ]
 
-#: The two ids that carry no request number: the handshake a started host
-#: sends once, and the tag every asynchronous event wears. Negative, so no
-#: request can be mistaken for either.
+#: Message ids that are not request numbers: the host's one-time startup handshake,
+#: and the tag of asynchronous events. Negative so they can't clash with requests.
 READY = -1
 EVENT = -2
 
 
 class PlotKind(StrEnum):
-    """What a classified expression is to be drawn as.
+    """How a classified expression is drawn.
 
-    The word is the classification of section 5 and the drawing instruction
-    both, which is why the 3D family is a kind of its own rather than a surface
-    with several expressions: one `Add` carries one expression, and what the
-    kind says is how to read it.
+    The kind is both the classification (design section 5) and the drawing instruction.
+    That's why a 3D family is its own kind: one `Add` carries one expression, and the
+    kind says how to read it.
 
-    `POLAR` never comes out of classification, and no `Add` carries it: polar
-    is a property of the 2D window's view, whose toggle reads every univariate
-    curve in it as `r = f(θ)`. The kind is how such a window's plot list says
-    which of its plots are being read that way.
+    Classification never produces `POLAR`, and no `Add` carries it. Polar is a mode of
+    the 2D view that reads every univariate curve as `r = f(θ)`; the kind marks which
+    plots in the window's list are read that way.
     """
 
     CURVE = "curve"
@@ -94,14 +83,14 @@ class PlotKind(StrEnum):
 
 
 class WindowKind(StrEnum):
-    """Which of the two kinds of window a plot needs. Windows hold one kind."""
+    """The kind of window a plot needs. Each window holds plots of one kind."""
 
     TWO_D = "2D"
     THREE_D = "3D"
 
 
-#: Which window each kind belongs in. The only thing that decides whether a
-#: Plot command lands in a flat window or a solid one.
+#: The window kind for each plot kind, which decides whether a plot goes to a 2D or a
+#: 3D window.
 DIMENSION: dict[PlotKind, WindowKind] = {
     PlotKind.CURVE: WindowKind.TWO_D,
     PlotKind.FAMILY: WindowKind.TWO_D,
@@ -120,50 +109,43 @@ def dimension(kind: PlotKind) -> WindowKind:
     return DIMENSION[kind]
 
 
-#: The kinds a window can draw today, which is now all of them. Classification
-#: knows every kind, so an expression is always recognized for what it is; this
-#: is the one place that says which of them a window has been taught to draw,
-#: and it is what both sides refuse by. It is kept, empty of exclusions, because
-#: the next kind the vocabulary grows - a parametric surface, a slider - is
-#: recognized before it is drawn, and a refusal has to be able to name it.
+#: The kinds windows can draw, currently all of them. Both sides refuse plots of other
+#: kinds. It is kept so that future kinds (a parametric surface, a slider) can be
+#: recognized before they are drawable and named in the refusal.
 DRAWN = frozenset(PlotKind)
 
-#: The kinds drawn over a parameter, which are the ones the 2D window's range
-#: fields apply to. Drawn over one turn until those fields say otherwise.
+#: Kinds drawn over a parameter, to which the 2D window's range fields apply. They are
+#: drawn over one turn until the fields say otherwise.
 PARAMETRIZED = frozenset({PlotKind.PARAMETRIC, PlotKind.POLAR})
 
-#: What a request for one of the others is refused with. The word is the
-#: classification's own, so the refusal names what was recognized.
+#: Refusal for a kind not in `DRAWN`, naming the recognized kind.
 UNDRAWN = "{kind} plots are not implemented yet"
 
 
 class Where(StrEnum):
-    """Which window a request is about, where it is not about a numbered one.
+    """A request's target window, other than a numbered one.
 
-    `NEW` asks for a window that does not exist yet. A request that names no
-    window at all goes to the receiver: the window of its kind the user last
-    touched, which the host learns from the windows' own activation events.
+    `NEW` asks for a new window. A request naming no window goes to the receiver: the
+    window of its kind the user last activated.
     """
 
     NEW = "new"
 
 
-#: How a window names itself, and what says it is the one the next plot of its
-#: kind will land in. A window is titled by what it holds - the taskbar and the
-#: alt-tab list are where a title is read, and there the contents are what tell
-#: one plot from another. Windows holding the same expressions share a title,
-#: which is how content-named windows behave everywhere; the number stays a
-#: protocol key and no part of the name.
+#: Window titles, and the mark of the window that receives the next plot of its kind.
+#: Windows are titled by their contents, which is what tells them apart in the taskbar
+#: and alt-tab list. Windows with the same contents share a title; the window number
+#: is only a protocol key and doesn't appear in it.
 TITLE = {WindowKind.TWO_D: "Rederive plot", WindowKind.THREE_D: "Rederive 3D plot"}
 CURRENT_MARK = " (current)"
 
-#: How much of the contents a title carries before the rest becomes "...":
-#: enough to tell two windows apart, little enough to fit a taskbar button.
+#: Maximum length of a title's contents before truncation with "...", to fit a taskbar
+#: button.
 TITLE_WIDTH = 60
 
 
 def titled(kind: WindowKind, contents: Sequence[str] = (), current: bool = False) -> str:
-    """What the window manager shows over a plot window: the plots it holds.
+    """The window title of a plot window, listing its plots.
 
     An empty window is titled by its kind alone.
     """
@@ -176,26 +158,20 @@ def titled(kind: WindowKind, contents: Sequence[str] = (), current: bool = False
 
 @dataclass(frozen=True)
 class Options:
-    """The per-kind extras an `Add` carries, all of them optional.
+    """Optional per-kind extras of an `Add`.
 
-    `variables` is the classification's reading of the expression, in the order
-    the axes take them: the abscissa for a curve, the parameter for a
-    parametric pair or a polar curve, the two horizontal axes for a surface.
-    The host needs them because it lambdifies over them, and the window needs
-    them because their names label the axes.
+    `variables` are the expression's variables in axis order: the abscissa of a curve,
+    the parameter of a parametric or polar curve, or the two horizontal axes of a
+    surface. The host lambdifies over them, and the window labels axes with them.
 
-    `vertical` is the name the vertical axis carries where the expression gave
-    it one - the `z` of `z = x^2 + y^2`, which classification reads off the
-    lone side of the equation.
+    `vertical` is the vertical axis name if the expression gives one, like the `z` of
+    `z = x^2 + y^2`.
 
-    `texts` is the one-line rendering of each element of a family, written
-    app-side like `text` is: a family is one request that becomes several
-    curves, and the host renders no expression of its own to name them with.
+    `texts` are the one-line renderings of a family's elements, made app-side like
+    `text`, since the host never renders expressions.
 
-    The rest are how a data plot draws its points; None means "whatever the
-    preferences say" rather than a value, and the host fills it in from the
-    `Prefer` it was last sent. So a plot added without an opinion follows the
-    preferences and one that has an opinion keeps it.
+    The rest describe how a data plot draws its points. None means "use the
+    preferences", filled in by the host from the last `Prefer` it received.
     """
 
     variables: tuple[str, ...] = ()
@@ -210,36 +186,25 @@ class Options:
 
 @dataclass(frozen=True)
 class Add:
-    """Plot one expression, in the window `window` names.
+    """Plot one expression in the window `window` names.
 
-    A `window` of None is the ordinary case: the plot goes to the receiver of
-    its kind - the window the user last touched - and opens one where no window
-    of that kind exists.
+    With `window` None (the usual case), the plot goes to the receiver of its kind, the
+    window the user last activated, opening one if none exists.
 
-    `worksheet` is an opaque id of the algebra worksheet the label belongs to:
-    two overlays can each own a `#3`, and a plot is keyed by the pair, so
-    re-plotting `#3` from the same worksheet replaces its curve while a `#3`
-    from another one is a second plot.
+    `worksheet` is an opaque id of the algebra worksheet the label belongs to. Plots are
+    keyed by both, so re-plotting `#3` from the same worksheet replaces its curve, while
+    `#3` from another worksheet is a separate plot.
 
-    `text` is the expression written on one line, made app-side with the syntax
-    writer. The host never renders an expression itself - it has the tree only
-    to evaluate it - which is what keeps one spelling of an expression in the
-    program.
+    `text` is the expression on one line, rendered app-side by the syntax writer. The
+    host never renders expressions, it only evaluates the tree.
 
-    `state` is the parse state the expression was read under. The window's own
-    fields - the parameter range of a parametric or polar plot, a surface's
-    domain - take expressions rather than floats, and the syntax reader is
-    dependency-free, so the window parses what is typed in them under this
-    state and evaluates it under the plot's own context.
+    `state` is the expression's parse state. The window's fields (parameter range,
+    surface domain) accept expressions, which the window parses with this state and
+    evaluates in the plot's context.
 
-    `demonstrating` says this plot is a step of a demonstration rather than a
-    command, which changes two things about how it lands. The window is emptied
-    of everything else first, a gallery being a sequence of unrelated pictures
-    where one drawn over the last is a picture of neither; and the window is
-    shown without taking the keyboard, because the program is waiting for a key
-    to take the next step and the keyboard has to stay where the program is.
-    Nothing a user commands sets it: a plot anyone asked for is welcome to the
-    keyboard, and Plot adds where a demonstration replaces.
+    `demonstrating` marks a demonstration step rather than a user command. The window
+    is cleared of other plots first, and shown without taking keyboard focus, because
+    the program is waiting for a key to continue.
     """
 
     worksheet: int
@@ -256,42 +221,31 @@ class Add:
 
 @dataclass(frozen=True)
 class Describe:
-    """What windows are open and what is in them.
+    """Ask which windows are open and what they contain.
 
-    The app tracks no window state of its own: whatever it needs to know about
-    a window it reads from here when a command runs, and the tests observe the
-    host the same way.
+    The app keeps no window state of its own and queries it this way when needed, as do
+    the tests.
     """
 
 
 @dataclass(frozen=True)
 class Prefer:
-    """The sticky plot values: what the app last learned back from a host.
+    """The sticky plot preferences, as last reported by a host.
 
-    A request of its own rather than more fields on `Options`, because the two
-    are about different things: `Options` is what one expression is drawn with
-    and this is what the next surface and the next data plot start out as -
-    the grid and the wire look the last surface was given, and the way the
-    last data plot was left. Widening `Options` would have meant sending the
-    same values with
-    every plot and leaving the host to guess which of them it was being told
-    about.
+    These are separate from `Options`, which describe how one expression is drawn.
+    Preferences are the defaults for the next surface and data plot: the grid and
+    wireframe of the last surface, and the style the last data plot was left in.
 
-    The values move in both directions. The host reports every change of a
-    sticky control in a `Preferred` event, and the app hands the values back
-    in a request of this shape when a host starts - a fresh host knows only
-    the dataclass defaults - and again when a loaded state file changes them.
-    They travel in front of the next request rather than the moment they
-    change, since what they matter to is the next plot and nothing sooner.
+    The host reports changes to sticky controls in a `Preferred` event. The app sends
+    the values back in this request when a host starts (a fresh host knows only the
+    defaults) and when a loaded state file changes them. They are sent before the next
+    request rather than immediately, since they only affect the next plot.
 
-    Defaults and nothing more. A window already on screen keeps the grid it
-    was built with, and a plot already drawn keeps the point size its
-    right-click menu gave it.
+    They are only defaults: open windows keep their grid, and drawn plots keep their
+    point size.
 
-    Equal scales is deliberately absent: a new window always opens with equal
-    scales, the window's `1:1` toggle serves the exception, and nothing
-    persists - a one-off framing choice must not silently become the default
-    that reshapes the next circle.
+    Equal scales is deliberately not a preference. A new window always opens with equal
+    scales, and a one-off `1:1` toggle shouldn't change the default.
     """
 
     grid: int = 64
@@ -302,25 +256,17 @@ class Prefer:
 
 @dataclass(frozen=True)
 class Release:
-    """The demonstration is over: its windows are nobody's screen any more.
+    """The demonstration is over, so its windows no longer stay on top.
 
-    A step of a gallery arrives with `demonstrating` set and is left above the
-    other windows, the program that is waiting for the next key being a
-    terminal that would otherwise bury the picture the moment it was touched.
-    That has to end when the demonstration does, and only the app knows when
-    that is - a demonstration ends on a key, on Esc, on a step that refused, or
-    on the last step there was.
+    Demonstration steps arrive with `demonstrating` set and stay above other windows,
+    so the waiting terminal doesn't cover them. Only the app knows when the
+    demonstration ends: on a key, on Esc, on a refused step, or after the last step.
 
-    `finished` is the last of those four: a demonstration that ran to its end
-    takes its windows with it, the window having been the demonstration's own
-    screen rather than a window anyone opened. The other three leave the
-    picture standing, which is what makes Esc the way to keep one - a surface
-    worth turning over is a reason to stop a gallery, and stopping it must not
-    be what takes it away.
+    `finished` means it ran to the end, and its windows are closed. Otherwise the
+    picture stays, so Esc can be used to stop a gallery and keep the current picture.
 
-    Sent to a host that is running and to no other: a demonstration that opened
-    no window has nothing to release, and starting a host to tell it so would
-    open a toolkit to say nothing.
+    Sent only to a running host; there is no point starting one just to release
+    nothing.
     """
 
     finished: bool = False
@@ -328,7 +274,7 @@ class Release:
 
 @dataclass(frozen=True)
 class Shutdown:
-    """Close every window and end the host, which is what leaving the app is."""
+    """Close every window and end the host, when the app exits."""
 
 
 Request = Add | Describe | Prefer | Release | Shutdown
@@ -339,15 +285,14 @@ Request = Add | Describe | Prefer | Release | Shutdown
 
 @dataclass(frozen=True)
 class Done:
-    """The request was taken. Nothing more is known yet, by design."""
+    """The request was accepted. Its outcome isn't known yet."""
 
 
 @dataclass(frozen=True)
 class Refused:
-    """The request cannot be honored, and this is why in words.
+    """The request was refused, with a message saying why.
 
-    The app puts the message on the message line behind `Plot: `, so it reads
-    as one sentence: `Plot: no plot window`.
+    The app shows the message after `Plot: `, as in `Plot: no plot window`.
     """
 
     message: str
@@ -355,12 +300,10 @@ class Refused:
 
 @dataclass(frozen=True)
 class Placed:
-    """The number of the window that took the plot, and how it took it.
+    """The number of the window that received the plot.
 
-    `replaced` says the plot took the place of one already there - same
-    worksheet and label - rather than adding a curve, which is the word the
-    acknowledgement message turns on: `Replotting` is how replacement teaches
-    itself.
+    `replaced` means the plot replaced one with the same worksheet and label, so the
+    acknowledgement says `Replotting`.
     """
 
     window: int
@@ -406,19 +349,18 @@ Reply = Done | Refused | Placed | Windows
 
 @dataclass(frozen=True)
 class Closed:
-    """The user closed a window. The app is told so that it can say so."""
+    """The user closed a window. The app reports it on the message line."""
 
     window: int
 
 
 @dataclass(frozen=True)
 class Trouble:
-    """One plot could not be drawn, and this is what went wrong with it.
+    """A plot could not be drawn, and why.
 
-    An expression that classifies but will not evaluate - an operator sympy
-    has no numeric reading of, a lambdify that raises - reports itself rather
-    than drawing nothing, which is the whole of the never-silence rule as it
-    applies to the host.
+    An expression that classifies but won't evaluate (e.g. an operator sympy can't
+    evaluate numerically, or a failing lambdify) reports an error rather than silently
+    drawing nothing.
     """
 
     window: int
@@ -428,14 +370,12 @@ class Trouble:
 
 @dataclass(frozen=True)
 class Traced:
-    """A point the user sent home from a plot window, to be authored as an entry.
+    """A point sent from a plot window to be added as a worksheet entry.
 
-    While tracing, one key appends the point under the marker - or the root or
-    extremum just refined - to the worksheet as a new algebra entry, ready to
-    compute with. `worksheet` is the id the `Add` that made the plot carried,
-    and `text` is the point exactly as `Ctrl-C` puts it on the clipboard -
-    `[x, y]`, six decimals - so the clipboard route and this one enter the same
-    expression.
+    While tracing, a key appends the point under the marker (or a just-refined root or
+    extremum) to the worksheet as a new algebra entry. `worksheet` is the id from the
+    plot's `Add`, and `text` is the point exactly as `Ctrl-C` copies it: `[x, y]` with
+    six decimals.
     """
 
     worksheet: int
@@ -444,32 +384,26 @@ class Traced:
 
 @dataclass(frozen=True)
 class Stepped:
-    """A key with no meaning to a plot window was pressed in one, mid-demonstration.
+    """A key the plot window doesn't use was pressed in it during a demonstration.
 
-    The demonstration is the program's and so is the message line that asks for
-    a key, but the picture is in a window of the desktop's - and a desktop
-    hands a window that has just appeared the keyboard whether or not it asked
-    for it. GNOME does. So the key that the line asks for lands there as often
-    as it lands in the program, and the window sends it back.
+    The program prompts for a key to continue, but some desktops (GNOME) give keyboard
+    focus to a newly shown window anyway, so the key often lands in the plot window,
+    which forwards it.
 
-    Only the keys the window has no use for: Space, Enter and their like. What
-    the window itself answers to it goes on answering to, so a gallery can be
-    traced, turned over and zoomed on its way past, and Esc closes the picture
-    rather than the demonstration - which is what Esc does in the program.
+    Only keys the window doesn't use (Space, Enter and the like) are forwarded. The
+    window keeps handling its own keys, so a gallery can be traced, rotated and zoomed,
+    and Esc closes the picture rather than ending the demonstration.
     """
 
 
 @dataclass(frozen=True)
 class Preferred:
-    """A sticky control moved in a plot window, and these are the values now.
+    """A sticky control changed in a plot window; these are the new preferences.
 
-    The whole of `Prefer` rather than the one value that moved, so that the
-    app stores a complete answer and a new sticky value is one more field on
-    `Prefer` rather than a message of its own. The host cannot hold these for
-    the session - it starts on demand, and on a display-less machine never
-    starts at all - so the app is told, keeps them, and writes them into a
-    state file; this event is the one place a toggle writes back, and the
-    reversal is deliberate.
+    The whole `Prefer` is sent rather than the changed value, so adding a preference
+    only means adding a field. The host can't keep these for the session (it starts on
+    demand, or never on a machine without a display), so the app stores them and saves
+    them in the state file.
     """
 
     preferences: Prefer

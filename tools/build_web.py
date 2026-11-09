@@ -1,42 +1,34 @@
 #!/usr/bin/env python3
-"""Assemble the web build: a directory a static file server can serve as it is.
+"""Assemble the web build: a directory a static file server can serve as is.
 
     python3 tools/build_web.py                 # into build/web
     python3 tools/build_web.py --output DIR
     python3 tools/build_web.py --offline       # from what is already cached
 
-What it gathers, and where each part comes from:
+Contents and their sources:
 
 * the Pyodide runtime and the sympy, mpmath and numpy wheels, from the CDN's
   precompiled `pyc` channel;
-* xterm.js and its fit, unicode11, WebGL and canvas addons, uPlot and three.js,
-  from npm;
-* this package, built with `uv build`, and the pure-Python wheels it and
-  Textual stand on, at the versions the working environment holds - so what
-  the page runs is what the suite was run against;
-* `web/`, which is the page itself.
+* xterm.js with its fit, unicode11, WebGL and canvas addons, uPlot and three.js, from
+  npm;
+* this package, built with `uv build`, and the pure-Python wheels it and Textual
+  depend on, at the versions in the working environment, so the page runs what the
+  test suite ran against;
+* `web/`, the page itself.
 
-**Nothing is fetched at run time.** Every URL the page names is under the
-directory this writes, which is what lets the build work offline, behind a
-proxy, and on a static host that is not allowed to reach anywhere else.
+**Nothing is fetched at run time.** Every URL the page uses is inside the output
+directory, so the build works offline, behind a proxy, and on a restricted static host.
 
-Two things about that directory are worth knowing before it is served.
+The output is about 62 MB, or about 24 MB compressed, almost all of it the sympy wheel,
+numpy and the stdlib (three.js, the largest JavaScript piece, is 0.8 MB). `python -m
+http.server` doesn't compress, which is fine for local testing; GitHub Pages does.
 
-It is large and it compresses well: about 62 MB as it sits, about 24 MB over a
-connection whose server compresses, and nearly all of it is the precompiled
-sympy wheel, numpy and the stdlib. The JavaScript is a rounding error beside
-them - three.js, the biggest piece of it, is 0.8 MB and 0.2 MB compressed.
-`python -m http.server` does not compress at all, which is fine for a look and
-wrong for a page anyone else is going to load; GitHub Pages does.
+No special headers are needed. Without `SharedArrayBuffer` or `setInterruptBuffer`,
+there's no need for COOP or COEP; abort works by terminating the worker.
 
-And it needs no headers. There is no `SharedArrayBuffer` here and no
-`setInterruptBuffer`, so no COOP or COEP is called for: the abort is a
-terminated worker, which needs nothing of the host.
-
-The `pyc` channel is a decision rather than a knob, and stage 0 is where it was
-made: four times faster to a usable prompt and four times faster to recover
-from an Esc, for 4.7 MB more over the wire. `--channel full` is here for a
-Pyodide release that has no precompiled build, and costs what stage 0 measured.
+The `pyc` channel was chosen deliberately: it reaches a usable prompt four times faster
+and recovers from Esc four times faster, for 4.7 MB more download. `--channel full` is
+for a Pyodide release without a precompiled build.
 """
 
 from __future__ import annotations
@@ -52,18 +44,16 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
-#: Which Pyodide the page runs on. Pinned rather than tracked: anything older
-#: than 314 ships sympy 1.13.3, which is below this package's floor, and a
-#: release the build has not been tried on is not one to hand a user.
+#: Pinned Pyodide version. Releases before 314 ship sympy 1.13.3, below this package's
+#: minimum, and untested releases shouldn't reach users.
 PYODIDE = "314.0.3"
 
-#: Where a release's files live. The `pyc` channel is a directory beside the
-#: default one holding the same packages with their bytecode already compiled.
+#: CDN location of a release. The `pyc` channel holds the same packages with bytecode
+#: precompiled.
 CDN = "https://cdn.jsdelivr.net/pyodide/v{version}/{channel}/"
 
-#: The runtime, which is the same set of files on either channel. `pyodide.mjs`
-#: is the module entry, and the only one anything here names by hand: a worker
-#: cannot load Pyodide any other way, `importScripts` being refused outright.
+#: Runtime files, the same on either channel. `pyodide.mjs` is the module entry point;
+#: a worker can't load Pyodide via `importScripts`.
 RUNTIME = (
     "pyodide.mjs",
     "pyodide.asm.mjs",
@@ -72,21 +62,15 @@ RUNTIME = (
     "pyodide-lock.json",
 )
 
-#: What the engine worker loads out of the distribution, by the names the lock
-#: file knows them under. Numpy is here because every plot sample is one, and
-#: it is loaded by the worker alone: the main thread routes plots and draws a
-#: terminal, and loads no mathematics at all.
+#: Packages the engine worker loads from the distribution, by lock-file name. Numpy is
+#: for plot sampling and is loaded only by the worker; the main thread loads no math.
 DISTRIBUTED = ("sympy", "mpmath", "numpy")
 
-#: The terminal, the four addons the page loads it with, and the two libraries
-#: the plot panes draw with. unicode11 is insurance rather than necessity -
-#: stage 0 measured every character the display can emit as one cell either way
-#: - and canvas is the fallback for a machine that cannot have a WebGL context,
-#: the two being pixel-identical. uPlot is 21 kB and draws the axes, their
-#: numbers and the ruling; the curves are drawn on its canvas by `plot2d.js`.
-#: three.js is the largest thing here that is not Python - 190 kB over a
-#: compressing connection for the module, its core and one control - and it is
-#: what a solid is put on a card by.
+#: xterm.js with four addons, plus the plot libraries. unicode11 is insurance (every
+#: character the display emits measured as one cell either way), and canvas is a
+#: pixel-identical fallback when WebGL is unavailable. uPlot (21 kB) draws the axes,
+#: tick labels and grid, while `plot2d.js` draws the curves on its canvas. three.js
+#: (190 kB compressed) renders 3D surfaces.
 NPM = (
     "@xterm/xterm@^6.0.0",
     "@xterm/addon-fit@^0.11.0",
@@ -97,14 +81,10 @@ NPM = (
     "three@^0.185.0",
 )
 
-#: Which file of each package the page loads, and which directory of the built
-#: page it lands in. The UMD and IIFE builds, because they are what these
-#: packages ship for a plain `<script>` tag and what their own examples use.
-#: three.js is the exception and is taken as modules, which is the only form it
-#: ships in: the minified module, the core it imports beside it, and the one
-#: control out of the examples tree that the panes use. Nothing else of that
-#: tree is copied - it is a few megabytes of loaders and post-processing for a
-#: example that orbits a mesh.
+#: Files the page loads from each package: the UMD and IIFE builds meant for plain
+#: `<script>` tags. three.js ships only as modules, so it contributes the minified
+#: module, its core, and the one control the panes use from the examples tree; the rest
+#: of that tree is megabytes of unneeded loaders and effects.
 BUNDLED = {
     "@xterm/xterm": ("lib/xterm.js", "css/xterm.css"),
     "@xterm/addon-fit": ("lib/addon-fit.js",),
@@ -119,15 +99,13 @@ BUNDLED = {
     ),
 }
 
-#: Which directory each package's files are served from. One name per package,
-#: because a page that names `xterm/xterm.js` and `uplot/uPlot.min.css` says
-#: where each thing came from.
+#: Output directory per package (default `xterm`), so paths show where each file came
+#: from.
 SERVED = {"uplot": "uplot", "three": "three"}
 
-#: What the app instance needs beside this package: Textual and what Textual
-#: stands on, every one of them pure Python. Sympy is not here and must not be
-#: - the main thread draws the screen and knows no mathematics, and the worker
-#: gets its own copy out of the Pyodide distribution.
+#: Pure-Python dependencies of the main-thread app: Textual and its dependencies. Sympy
+#: must not be here; the main thread does no math, and the worker gets sympy from the
+#: Pyodide distribution.
 DEPENDENCIES = (
     "textual",
     "rich",
@@ -170,13 +148,11 @@ def main(arguments: list[str] | None = None) -> int:
                 "pyodide": "pyodide/",
                 "channel": parsed.channel,
                 "version": parsed.version,
-                # This package's own version, read off the wheel just built. The
-                # loading screen says it, and there is no Python running yet for
-                # the page to ask.
+                # This package's version, from the wheel just built, for the loading
+                # screen to show before Python is running.
                 "rederive": package[0].name.split("-")[1] if package else "",
-                # What each Pyodide loads. The page's own instance takes the
-                # app and no mathematics; the worker takes the engine and the
-                # sympy that answers with it.
+                # What each Pyodide instance loads: the page gets the app without math
+                # packages, and the worker gets the engine and sympy.
                 "page": [f"wheels/{name.name}" for name in wheels],
                 "worker": [f"wheels/{name.name}" for name in package],
                 "packages": list(DISTRIBUTED),
@@ -207,10 +183,10 @@ def _command_line(arguments: list[str] | None) -> argparse.Namespace:
 
 
 def _pyodide(cache: Path, version: str, channel: str, offline: bool) -> Path:
-    """The runtime and the packages the worker loads, downloaded once and kept.
+    """Download and cache the runtime and the worker's packages.
 
-    The lock file says what a package's wheel is called, so the two are fetched
-    in that order and nothing here has to know a wheel's version.
+    The runtime, including the lock file, is fetched first, since the lock file gives
+    the wheel names.
     """
     directory = cache / f"pyodide-{version}-{channel}"
     directory.mkdir(parents=True, exist_ok=True)
@@ -223,22 +199,21 @@ def _pyodide(cache: Path, version: str, channel: str, offline: bool) -> Path:
 
 
 def _distributed(directory: Path) -> list[str]:
-    """The wheel file names of the packages the worker takes from Pyodide."""
+    """Return the wheel file names of the packages the worker loads from Pyodide."""
     lock = json.loads((directory / "pyodide-lock.json").read_text())
     packages = lock["packages"]
     return [packages[name]["file_name"] for name in DISTRIBUTED]
 
 
 def _terminal(cache: Path, offline: bool) -> list[tuple[str, Path]]:
-    """The page's JavaScript, installed with npm and read out of the tree."""
+    """Install the page's JavaScript with npm and return the files to bundle."""
     directory = cache / "npm"
     directory.mkdir(parents=True, exist_ok=True)
     if not offline:
-        # `--legacy-peer-deps` because addon-canvas 0.7.0 still declares a peer
-        # of xterm ^5 while xterm is at 6.0.0, which npm refuses outright. It
-        # is a stale range and not an incompatibility: stage 0 loaded that
-        # addon on xterm 6 in both browsers and found it drew pixel for pixel
-        # what the WebGL renderer drew.
+        # `--legacy-peer-deps` because addon-canvas 0.7.0 declares a peer dependency on
+        # xterm ^5, which npm rejects with xterm 6.0.0. The range is just stale: the
+        # addon was tested on xterm 6 in both browsers and matches the WebGL renderer
+        # pixel for pixel.
         install = ["npm", "install", "--silent", "--no-package-lock"]
         _run([*install, "--legacy-peer-deps", *NPM], directory)
     found = []
@@ -252,16 +227,13 @@ def _terminal(cache: Path, offline: bool) -> list[tuple[str, Path]]:
 
 
 def _wheels(cache: Path, offline: bool) -> list[Path]:
-    """This package and what the app instance stands on, as wheels.
+    """Build this package's wheel and download the app's dependency wheels.
 
-    Built and downloaded at the versions this environment has, so that the
-    browser runs the Textual the suite ran against rather than whatever PyPI
-    resolves to on the day.
+    Dependencies are pinned to the versions in this environment, so the browser runs
+    the Textual the suite ran against rather than whatever PyPI resolves to today.
 
-    This package is built every time, `--offline` or not. It is the one thing
-    here that comes from the working tree rather than from a network, and a
-    build that served yesterday's wheel while the page beside it was today's
-    would be the worst kind of stale: everything looks rebuilt and half of it is.
+    This package is rebuilt every time, even with `--offline`, since it comes from the
+    working tree and a stale wheel next to a fresh page would be confusing.
     """
     directory = cache / "wheels"
     directory.mkdir(parents=True, exist_ok=True)
@@ -298,11 +270,10 @@ def _wheels(cache: Path, offline: bool) -> list[Path]:
 
 
 def _versions() -> dict[str, str]:
-    """What version of everything the project's own environment holds.
+    """Return the installed package versions in the project's environment.
 
-    Asked of `uv run` rather than of this interpreter, since this script may be
-    run by any Python on the machine and the answer that matters is the one the
-    suite runs against.
+    Queried via `uv run`, since this script may run under any Python, and the
+    project's environment is what the suite runs against.
     """
     program = (
         "import json;from importlib.metadata import distributions;"
@@ -320,19 +291,16 @@ def _versions() -> dict[str, str]:
 
 
 def _normal(name: str) -> str:
-    """One spelling of a package name, since a wheel and its metadata differ.
-
-    `pygments` is `Pygments` to its own metadata and `typing_extensions` is
-    `typing-extensions`, and neither difference is worth a table.
-    """
+    """Normalize a package name, e.g. `Pygments` -> `pygments` and `typing_extensions`
+    -> `typing-extensions`."""
     return name.lower().replace("_", "-")
 
 
-# -- doing things -------------------------------------------------------------
+# -- helpers -----------------------------------------------------------------
 
 
 def _fetch(url: str, path: Path, offline: bool) -> None:
-    """Download one file, unless it is already here."""
+    """Download one file, unless it is already cached."""
     if path.is_file():
         return
     if offline:
@@ -348,7 +316,7 @@ def _run(command: list[str], where: Path) -> None:
 
 
 def _fresh(output: Path) -> None:
-    """Empty the output directory, so that nothing stale is ever served."""
+    """Empty the output directory so nothing stale is served."""
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)

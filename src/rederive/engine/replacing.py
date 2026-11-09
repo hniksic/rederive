@@ -1,27 +1,21 @@
-"""Manage Substitute: what the user says a name stands for, written in.
+"""Manage Substitute: replace variables or subexpressions with what the user typed.
 
-The one command that computes nothing. It puts a value where a variable was,
-or one expression where a highlighted subexpression was, writes the answer out
-and stops - so `a*x^2 + b*x + c` with 2 for x, 3 for a and 5 for b comes back
-as `3*2^2 + 5*2 + c` and not as 22. The manual makes a point of this (section
-4.8): substitution does not commute with simplification, so what was written
-in is worth looking at before anything is done to it.
+This command computes nothing. It substitutes and stops, so `a*x^2 + b*x + c` with 2
+for x, 3 for a and 5 for b gives `3*2^2 + 5*2 + c`, not 22. The manual (section 4.8)
+notes that substitution doesn't commute with simplification, so the user may want to
+see the result before simplifying.
 
-Not to be confused with the evaluation every other command starts with. That
-one writes in what a label, an assignment or a definition already stands for,
-on the way into sympy. This one writes in what the user has just typed,
-and never goes near sympy - there is nothing there for it to do that would not
-also simplify.
+This differs from the evaluation other commands start with, which substitutes labels,
+assignments and definitions on the way into sympy. This one never touches sympy, which
+would simplify.
 
-A replacement is a pair of trees: what to look for, and what to write in its
-place. Matching is structural and exact, so substituting `k` for `t^3` in
-`t^6 + t^3` gives `t^6 + k` and never `k^2 + k`. Every match is replaced, and
-nothing inside what has just been written in is looked at again - which is
-what makes the substitution simultaneous, as the original's is: `x + 2*y` with
-`y` for `x` and `x` for `y` is `y + 2*x`, not `x + 2*x`.
+A replacement is a pair of trees: what to find and what to put in its place. Matching
+is structural and exact, so substituting `k` for `t^3` in `t^6 + t^3` gives `t^6 + k`,
+not `k^2 + k`. Every match is replaced and substituted values aren't searched again, so
+substitution is simultaneous, as in Derive: `x + 2*y` with `y` for `x` and `x` for `y`
+is `y + 2*x`, not `x + 2*x`.
 
-The answer is written out and read back, as every other command's is, so that
-the entry's spans index the text it shows.
+The answer is printed and reparsed so the entry's spans index its text.
 """
 
 from __future__ import annotations
@@ -34,7 +28,7 @@ from rederive.syntax import ParseState, parse_expression, write_expression
 
 __all__ = ["Replacement", "replace", "replaced"]
 
-#: One replacement: the subtree to look for, and what to write in its place.
+#: One replacement: the subtree to find, and what to put in its place.
 Replacement = tuple[Node, Node]
 
 
@@ -45,9 +39,8 @@ def replace(
 ) -> Result:
     """Derive's Manage Substitute: `node` with `replacements` written into it.
 
-    Nothing is simplified. `state` is the symbol table the answer is reparsed
-    with, and a session passes its own: every name the answer can carry is one
-    its own lines have already read.
+    Nothing is simplified. `state` is the symbol table used to reparse the answer; a
+    session passes its own, which already knows every name the answer can contain.
     """
     text = write_expression(replaced(node, replacements))
     return Result(parse_expression(text, state or ParseState()).node, text)
@@ -56,10 +49,9 @@ def replace(
 def replaced(node: Node, replacements: Sequence[Replacement]) -> Node:
     """The substituted tree, before it is written back out.
 
-    The tree-level entry point, as `simplified` is for Simplify. Its spans
-    index nothing: what was written in brings the offsets of wherever it was
-    read from, which is why the command prints and reparses before the answer
-    becomes an entry.
+    The tree-level entry point, as `simplified` is for Simplify. Its spans are
+    meaningless, since substituted subtrees keep offsets from wherever they were
+    parsed; hence the command prints and reparses.
     """
     for target, value in replacements:
         if same_expression(node, target):
@@ -71,13 +63,11 @@ def replaced(node: Node, replacements: Sequence[Replacement]) -> Node:
 
 
 def same_expression(one: Node, other: Node) -> bool:
-    """Whether two trees are the same expression, wherever they were written.
+    """Whether two trees are the same expression, ignoring position and spelling.
 
-    A `Node` carries where it was read from as well as what it says, and two
-    occurrences of `t^3` in one line carry different offsets. How it was
-    spelled is not part of the question either: `2x` and `2*x` are one product,
-    a numeral is what it is worth rather than the digits it was typed as, and a
-    pair of fences the grammar did not need is no part of what a line says.
+    Offsets differ between occurrences of `t^3` in one line. Spelling is also ignored:
+    `2x` and `2*x` are the same product, a numeral compares by value, and redundant
+    parentheses don't count.
     """
     return (
         one.kind is other.kind

@@ -1,41 +1,26 @@
-"""One spelling of a control: what a plot window offers, written down once.
+"""The commands of plot windows, defined once for all backends.
 
-A window's commands are a vocabulary rather than code. The name of each, the
-words a menu writes it with, the keys that press it on a desktop and in a page,
-whether it is an action, a toggle or a choice, and which group of the menu it
-stands in: all of that is here, once, and every backend renders it. Two windows
-that read their menus from this table cannot disagree about a word, a key or an
-order, because there is nowhere else either of them could have read one from.
+Each control's name, menu label, desktop and web keys, kind (action, toggle, choice)
+and menu group are defined here, and every backend renders them, so windows can't
+disagree on labels, keys or order. This extends the "one spelling of an expression"
+rule to controls: if a label, key or menu order appears in two files, something is
+wrong.
 
-That is the existing "one spelling of an expression" rule applied a level up:
-**one spelling of a control**. If a label, a key or a menu order appears in two
-files, the seam has leaked.
+What a menu should show *now* (whether `Grid` is ticked, which curve `Remove` names, or
+whether it is shown at all) depends on the window. The backend passes a small snapshot,
+`Flat` for 2D or `Solid` for 3D, and `menu` returns the entries for that state. The
+backend keeps the view state itself, so a drag never has to consult Python.
 
-The other half of a menu is what it should say *now* - `Grid` ticked or not,
-`Remove` naming the curve the click was over or absent because it was over
-nothing. That cannot be a constant, so it is a function of a snapshot the
-backend hands in: `Flat` for a 2D window, `Solid` for a 3D one, and `menu` is
-the function from either to the entries as they should currently read. The
-backend keeps the view state and hands over a copy of the little of it a menu
-depends on, which is what keeps a drag from having to ask Python what it came
-to.
+Keys are listed twice because the alphabets differ: `keys` uses the desktop toolkit's
+names (also shown in menus), `web` uses browser key event names, where single letters
+match either case. Keys the browser reserves, such as Ctrl+W, are omitted from `web`.
 
-Keys are written twice because they are two different alphabets, not two
-opinions: `keys` is what a desktop toolkit and a menu's shortcut column spell,
-`web` is what a page's key events report, and a single letter there is matched
-whichever case it arrives in. A key a page may not have - Ctrl+W and its
-neighbours belong to the browser - is simply not in the second column, and the
-control says so by being short of one rather than by pretending.
+Likewise `paged` is an alternative label for the page, used only where the page
+behaves differently: Export has no dialog in the page, so its label drops the `...`.
 
-A label may be written twice for the same sort of reason, and one is: `paged`
-is the words a page uses where a page does something else. It is not a licence
-to reword an entry - it exists because a menu's `...` is a promise of a dialog,
-and the one command whose page has no dialog to put up must not make it.
-
-What is not here is the gestures. The arrow keys, Escape, Tab and Enter mean
-one thing while a trace marker is up and another while it is not, no menu entry
-names them, and they belong to whatever answers a key press. A control is
-something that has a name and can be offered.
+Gestures aren't controls. The arrow keys, Escape, Tab and Enter mean different things
+depending on whether a trace marker is shown, have no menu entries, and are handled
+by the key handler.
 """
 
 from __future__ import annotations
@@ -67,12 +52,11 @@ __all__ = [
 
 
 class Kind(StrEnum):
-    """What sort of control an entry is, which is what a renderer draws it as.
+    """The kind of control, which determines how it is rendered.
 
-    A toggle is drawn with a tick where the toolkit has one and says its state
-    in words where it has not, which is what `flipped` is for. A choice is a
-    submenu of alternatives written down here; a list is a submenu of whatever
-    the window happens to hold, and its items come from the snapshot.
+    A toggle shows a tick, or states its state in words using `flipped`. A choice is a
+    submenu of fixed alternatives; a list is a submenu of the window's current items,
+    taken from the snapshot.
     """
 
     ACTION = "action"
@@ -83,62 +67,52 @@ class Kind(StrEnum):
 
 @dataclass(frozen=True)
 class Control:
-    """One thing a plot window does, as everything about it but the doing.
+    """A plot window command, described without its implementation.
 
-    `name` is what the backends dispatch on and is the only part of a control
-    that is not for reading. `label` is how a menu writes it, `bar` how a
-    toolbar button does where it has one, and `hint` what such a button says
-    when the pointer rests on it. A label holding `{plot}` is about whatever
-    the click was over and is filled in when the menu is read.
+    `name` is what backends dispatch on. `label` is the menu text, `bar` the toolbar
+    button text if there is one, and `hint` the button's tooltip. `{plot}` in a label
+    is replaced with the name of the plot that was clicked.
 
-    `group` is which run of the menu the entry belongs to: a rule is drawn
-    wherever the number changes, so the grouping is a property of the table
-    rather than of the code that walks it. `menu` says whether the control is
-    on the context menu at all - a toolbar toggle and a key with no entry are
-    controls like any other, and a window that could not name them would be
-    back to spelling their keys itself.
+    `group` is the menu group; a separator is drawn where it changes. `menu` says
+    whether the control is on the context menu; toolbar toggles and key-only commands
+    are defined here too, so their keys are spelled in one place.
     """
 
     name: str
     label: str = ""
     kind: Kind = Kind.ACTION
-    #: The keys that press it, as a desktop toolkit spells them and as a page
-    #: reports them. A page spells a letter in lower case and matches either.
+    #: The control's keys, as named by the desktop toolkit and by browser key events.
+    #: The web keys write letters in lower case and match either case.
     keys: tuple[str, ...] = ()
     web: tuple[str, ...] = ()
     group: int = 0
     menu: bool = True
     bar: str = ""
     hint: str = ""
-    #: The label a toggle takes while it is on, where it says its state in
-    #: words rather than with a tick.
+    #: The label of a toggle while it is on, for toggles that show their state in words
+    #: rather than with a tick.
     flipped: str = ""
-    #: The words a page writes it with, where what the page does is not what the
-    #: desktop does. Export is the whole of the list: a trailing `...` promises
-    #: a dialog, and a download that cannot ask for a name has none to offer.
+    #: The label in the page, where the page behaves differently. Only Export uses it:
+    #: a trailing `...` promises a dialog, and the page's download has none.
     paged: str = ""
-    #: What a choice offers, and the words one of its items is written with.
+    #: A choice's alternatives, and the format of an item's label.
     choices: tuple[float, ...] = ()
     item: str = ""
-    #: What a control that is one of a set stands for - which plane a camera
-    #: preset faces.
+    #: The value of a control in a set, such as the plane a camera preset faces.
     value: str = ""
-    #: The event a page hears this control through, where its key does not
-    #: arrive as a key press. Copy image is the whole of the list: a page that
-    #: cancels the Ctrl+C keydown cancels the copy it was about to be offered,
-    #: so the browser hands the command over as a `copy` event instead and the
-    #: key ladder leaves the stroke alone. The key is still the key, which is
-    #: why it stays written where every other one is.
+    #: The browser event that triggers this control instead of a key press. Only Copy
+    #: image uses it: canceling the Ctrl+C keydown would also cancel the copy, so the
+    #: page handles the `copy` event and leaves the keystroke alone. The key is still
+    #: listed for display.
     event: str = ""
 
 
 @dataclass(frozen=True)
 class Entry:
-    """One line of a menu as it should currently read.
+    """A fully resolved menu line, ready to render.
 
-    Resolved: the label is the words to draw, the keys are the ones this
-    platform presses, and a toggle's tick is already decided. A renderer that
-    has to consult anything else to draw this has been handed too little.
+    The label is final, the keys are the platform's, and a toggle's tick is decided.
+    The renderer needs nothing else.
     """
 
     name: str
@@ -147,24 +121,21 @@ class Entry:
     keys: tuple[str, ...] = ()
     checked: bool = False
     enabled: bool = True
-    #: Whether a rule stands above this entry, which is where one group of the
-    #: menu ends and the next begins.
+    #: Whether a separator precedes this entry, starting a new menu group.
     separated: bool = False
     #: The lines of a submenu, for a choice or a list.
     items: tuple[Entry, ...] = ()
-    #: What an item of a submenu carries: the size a point is to be drawn at,
-    #: or which of the window's plots a line is about.
+    #: The value of a submenu item: a point size, or the index of a plot.
     value: float | int | str | None = None
 
 
 @dataclass(frozen=True)
 class Pointed:
-    """The plot a click was over, which is what the tail of a menu is about.
+    """The plot that was right-clicked, for the plot-specific menu entries.
 
-    A right click on a curve, on a legend row or on a surface is a click about
-    one plot, and the entries that answer it are named after it and read its
-    two sticky looks. Nothing here is the plot itself: a snapshot carries what
-    a menu has to know and not a plot list.
+    A right click on a curve, legend row or surface targets one plot, and those
+    entries are named after it and reflect its style. Only what the menu needs is
+    included, not the plot itself.
     """
 
     named: str
@@ -175,12 +146,10 @@ class Pointed:
 
 @dataclass(frozen=True)
 class Flat:
-    """A 2D window as its menu has to read it.
+    """A snapshot of a 2D window's state, for building its menu.
 
-    Small on purpose. It is everything the description of the controls depends
-    on and nothing else, so that a backend can build one on every right click
-    without thinking about the cost, and so that a field added here is a field
-    some entry visibly needs.
+    Deliberately minimal: only what the controls depend on, so it is cheap to build on
+    every right click.
     """
 
     tracing: bool = False
@@ -193,11 +162,10 @@ class Flat:
 
 @dataclass(frozen=True)
 class Solid:
-    """A 3D window as its menu has to read it.
+    """A snapshot of a 3D window's state, for building its menu.
 
-    `surfaces` is how the window's own plots name themselves, in the order it
-    holds them, which is what the `Remove` submenu lists and what an item of it
-    indexes back into.
+    `surfaces` are the names of the window's plots in order, listed by the `Remove`
+    submenu, whose items index into it.
     """
 
     spinning: bool = False
@@ -211,17 +179,15 @@ class Solid:
 
 State = Flat | Solid
 
-#: The sizes a data plot's points can be drawn at, which is the one choice
-#: either window offers.
+#: The available point sizes of a data plot.
 POINT_SIZES = (3.0, 5.0, 8.0, 12.0)
 
-#: The plot a click was over, in the labels that are about it.
+#: Placeholder for the clicked plot's name in labels.
 PLOT = "{plot}"
 
 
-#: What a 2D window does. The order is the order of its menu, the groups are
-#: where its rules fall, and the entries with no `menu` are the toolbar's
-#: toggles and the keys no entry names.
+#: The 2D window's controls, in menu order. Entries with `menu=False` are toolbar
+#: toggles and key-only commands.
 FLAT: tuple[Control, ...] = (
     Control(
         name="range.set",
@@ -298,8 +264,7 @@ FLAT: tuple[Control, ...] = (
         bar="clear",
         hint="Remove every plot from this window (Del)",
     ),
-    # Ctrl+W is the desktop's second spelling of Close and belongs to the
-    # browser in a page, so the page answers to the letter alone.
+    # Ctrl+W belongs to the browser, so the page uses only Q.
     Control(
         name="close",
         label="Close",
@@ -326,9 +291,7 @@ FLAT: tuple[Control, ...] = (
         item="{size:g} px",
         group=3,
     ),
-    # The toolbar's two toggles. They stand where their state is read rather
-    # than on a menu that has to be opened to be read, which is why neither is
-    # an entry; the words are still this table's.
+    # Toolbar toggles, kept off the menu since the toolbar already shows their state.
     Control(
         name="scales.equal",
         kind=Kind.TOGGLE,
@@ -346,8 +309,7 @@ FLAT: tuple[Control, ...] = (
         bar="polar",
         hint="Show every curve as r = f(θ)",
     ),
-    # The commands with neither an entry nor a button: stepping forward through
-    # the view history, which is the other half of Back, and the two zooms.
+    # Key-only commands: forward through the view history, and zoom.
     Control(
         name="view.forward",
         label="Forward",
@@ -372,8 +334,8 @@ FLAT: tuple[Control, ...] = (
 )
 
 
-#: What a 3D window does. A 3D window is a camera, so its menu is where to look
-#: from; what the toolbar already shows the state of is not repeated on it.
+#: The 3D window's controls. The menu is mostly about the camera; toggles shown on the
+#: toolbar aren't repeated in it.
 SOLID: tuple[Control, ...] = (
     Control(
         name="camera.home",
@@ -460,9 +422,8 @@ SOLID: tuple[Control, ...] = (
         web=("q",),
         group=2,
     ),
-    # M rather than W, deliberately: Ctrl-W closes the window, and a frequent
-    # toggle one slipped modifier from destroying the picture would be a poor
-    # place for it.
+    # M rather than W, since Ctrl-W closes the window and a frequent toggle shouldn't be
+    # one slipped modifier away from that.
     Control(
         name="mesh",
         kind=Kind.TOGGLE,
@@ -497,9 +458,8 @@ SOLID: tuple[Control, ...] = (
         web=("l",),
         menu=False,
     ),
-    # One surface between wire and solid, which is the exception a legend row
-    # offers rather than the every-surface `mesh` box, beside the words either
-    # window removes a plot with.
+    # Per-surface entries of a legend row's menu: wireframe toggle (overriding the
+    # `mesh` box) and removal.
     Control(
         name="surface.wire",
         label="Draw as wire mesh",
@@ -515,13 +475,10 @@ SOLID: tuple[Control, ...] = (
 
 
 def control(name: str, controls: tuple[Control, ...]) -> Control:
-    """The control this name is of, in the window that offers it.
+    """The control with this name in the given window's table.
 
-    The table is asked for rather than searched for, because the two windows
-    share names - both clear, both close, both hold a legend - and share none
-    of the words: what `Clear` removes is plots in one window and surfaces in
-    the other, and a lookup that guessed would sooner or later say the wrong
-    one.
+    The table must be given because both windows have controls with the same name
+    but different labels, e.g. `Clear` removes plots in one and surfaces in the other.
     """
     for one in controls:
         if one.name == name:
@@ -530,31 +487,28 @@ def control(name: str, controls: tuple[Control, ...]) -> Control:
 
 
 def plain(one: Control) -> str:
-    """A control's label before a menu knows what it is about.
+    """A control's label with the `{plot}` placeholder removed.
 
-    A menu built once and read many times has to be built with words that are
-    true of nothing in particular, and `Remove` is the one entry whose words
-    name a plot when a click has picked one out.
+    Used for menus built once and reused, which can't name a particular plot.
     """
     return one.label.replace(PLOT, "").strip()
 
 
 def keys(one: Control, page: bool = False) -> tuple[str, ...]:
-    """The keys that press a control here, which is not the same alphabet."""
+    """A control's keys for the desktop or for the page."""
     return one.web if page else one.keys
 
 
 def listed(controls: tuple[Control, ...]) -> tuple[Control, ...]:
-    """The controls that are on a context menu, in the order it offers them."""
+    """The controls on the context menu, in menu order."""
     return tuple(one for one in controls if one.menu)
 
 
 def choices(one: Control, page: bool = False) -> tuple[Entry, ...]:
-    """What a choice offers, as the lines of its submenu.
+    """A choice's alternatives as submenu entries.
 
-    Written down rather than read off a snapshot, since the alternatives are
-    the same however the window stands - a menu of point sizes offers four
-    sizes whatever a point is currently drawn at.
+    They are fixed rather than taken from the snapshot, since they don't depend on
+    the window state.
     """
     return tuple(
         Entry(
@@ -570,17 +524,14 @@ def choices(one: Control, page: bool = False) -> tuple[Entry, ...]:
 def menu(
     state: State, page: bool = False, offers: Container[str] | None = None
 ) -> tuple[Entry, ...]:
-    """The context menu of a window in this state, as it should currently read.
+    """The context menu for a window in this state.
 
-    Labels resolved, toggles ticked, and anything the state has nothing for
-    left out: a menu is about the window it was raised over, and an entry that
-    would name a curve the click was not near has nothing to name.
+    Labels are resolved, toggles ticked, and inapplicable entries (such as plot entries
+    when no plot was clicked) left out.
 
-    `offers` is what the backend asking can actually do, where it cannot yet do
-    everything. A control it has nothing behind is left out rather than offered
-    dead, and it is left out here rather than by the renderer so that the rules
-    fall around what is left: a group whose every entry has gone takes its rule
-    with it.
+    `offers`, if given, is the set of controls the backend implements; others are left
+    out. This is done here rather than in the renderer so that separators are placed
+    correctly, and a group whose entries are all gone loses its separator.
     """
     resolve = _flat if isinstance(state, Flat) else _solid
     controls = FLAT if isinstance(state, Flat) else SOLID
@@ -600,12 +551,10 @@ def menu(
 def card(
     state: State, page: bool = False, offers: Container[str] | None = None
 ) -> tuple[Entry, ...]:
-    """The menu one legend row offers, which is about a plot and not a view.
+    """The menu of a legend row, with only the entries about its plot.
 
-    A menu of its own rather than the canvas's, because half of a canvas menu
-    is about the view and a click on a legend row is about one plot - but the
-    words are the canvas menu's own words, which is what makes the row and the
-    plot one target with two places to hit it.
+    The canvas menu is largely about the view, so a legend row gets its own menu, but
+    with the same entries the canvas offers for a clicked plot.
     """
     if state.pointed is None:
         return ()
@@ -622,7 +571,7 @@ def card(
 
 
 def _flat(one: Control, state: Flat, page: bool) -> Entry | None:
-    """One entry of a 2D window's menu, or None where it does not apply."""
+    """An entry of a 2D window's menu, or None if it doesn't apply."""
     pointed = state.pointed
     if one.name in ("plot.remove", "points.connect", "points.size"):
         if pointed is None:
@@ -641,7 +590,7 @@ def _flat(one: Control, state: Flat, page: bool) -> Entry | None:
 
 
 def _solid(one: Control, state: Solid, page: bool) -> Entry | None:
-    """One entry of a 3D window's menu, or None where it does not apply."""
+    """An entry of a 3D window's menu, or None if it doesn't apply."""
     pointed = state.pointed
     if one.name in ("plot.remove", "surface.wire") and pointed is None:
         return None
@@ -656,8 +605,7 @@ def _solid(one: Control, state: Solid, page: bool) -> Entry | None:
     entry = _made(one, state, page, checked=checked, flipped=flipped)
     if one.name != "surface.remove":
         return entry
-    # A submenu of an empty window is offered greyed rather than left off,
-    # because what it would list is what the window is empty of.
+    # In an empty window the submenu is shown disabled rather than omitted.
     return replace(
         entry,
         enabled=bool(state.surfaces),
@@ -671,7 +619,7 @@ def _solid(one: Control, state: Solid, page: bool) -> Entry | None:
 def _made(
     one: Control, state: State, page: bool, checked: bool, flipped: bool
 ) -> Entry:
-    """The entry a control comes to, with the words a menu draws filled in."""
+    """The menu entry for a control, with its label resolved."""
     if flipped and one.flipped:
         label = one.flipped
     elif page and one.paged:

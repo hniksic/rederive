@@ -1,27 +1,15 @@
 """Entry point: `rederive` / `python -m rederive`.
 
-The engine worker is spawned here rather than by the app, because it is the
-program that owns it and not the screen: the worker starts before the first
-frame, so its sympy import is paid for while the user is still reading the
-menu, and it is ended in a `finally`, so however the app leaves there is no
-child left behind.
+The engine worker is spawned here rather than by the app, so that it starts before the
+first frame (its sympy import overlaps with the user reading the menu) and is shut down
+in a `finally`, leaving no child process behind however the app exits.
 
-Files named on the command line are read here too, into the session the app is
-then handed. The original reads them the same way - `DERIVE ARITH` starts on
-ARITH rather than on an empty worksheet - and the point of doing it before the
-first frame is the same as for the worker: what the user is shown is already
-what they asked for.
+Files named on the command line are also read here, before the first frame, as the
+original did: `DERIVE ARITH` starts on ARITH rather than on an empty worksheet.
 
-Nothing at import time may have an effect, and nothing may run outside the
-guard below. A spawned worker re-imports whatever this module is, and a side
-effect here would start a second copy of the app inside the child.
-
-That re-import is also why the screen is imported inside `main` and not here.
-Spawning runs the parent's `__main__` again in the child, and the `rederive`
-script is a wrapper whose own first line imports this module, so everything
-this module's body names is loaded a second time in a process that computes
-and never paints. What the body may name is therefore the command line and
-nothing else; Textual is reached in `main`, which the child does not call.
+Nothing may have an effect at import time or run outside the `__main__` guard, because a
+spawned worker re-imports this module. For the same reason Textual is imported inside
+`main`, which the child never calls, rather than at module level.
 """
 
 from __future__ import annotations
@@ -39,19 +27,14 @@ if TYPE_CHECKING:
 
 USAGE = "usage: rederive [--version] [-m|-u|-t|-d] FILE ..."
 
-#: The switch that says what this program is and what it carries, instead of
-#: starting the app. A release is a binary with its own interpreter, its own sympy
-#: and its own Qt inside it, so what it runs is not what the machine has installed
-#: and there is no way to find out from outside. That makes this the first thing to
-#: ask a user for, and the build workflow reads it too, against `.python-version`
-#: and `uv.lock`.
+#: Print version information instead of starting the app. A release binary bundles its
+#: own interpreter, sympy and Qt, so this is the only way to tell what it runs. The build
+#: workflow checks its output against `.python-version` and `uv.lock`.
 VERSION = "--version"
 
-#: How a switch says the files after it are to be read. The original wrote
-#: these after the name and behind a slash - `NUMBER/U` - which cannot be
-#: written here, a slash being what separates a directory from what is in it.
-#: They are switches in front of the name instead, each holding until the next
-#: one, so that the original's `NUMBER/U PLOT2D/M` is `-u NUMBER -m PLOT2D`.
+#: Switches that say how the following files are read. The original used a slash suffix
+#: (`NUMBER/U`), which would clash with path separators, so these are prefix switches,
+#: each in effect until the next: `NUMBER/U PLOT2D/M` becomes `-u NUMBER -m PLOT2D`.
 SWITCHES = {
     "-m": "math",
     "--math": "math",
@@ -63,17 +46,16 @@ SWITCHES = {
     "--demo": "demo",
 }
 
-#: What a file with each extension is taken to be when no switch says. In
-#: search order, which is what a name given without an extension is looked for
-#: under: the original supplied MTH, DAT and DMO the same way.
+#: File kind implied by each extension when no switch is given. The order is also the
+#: search order for a name given without an extension, as in the original.
 BY_SUFFIX = {
     worksheet.SUFFIX: "math",
     worksheet.DATA_SUFFIX: "data",
     worksheet.DEMO_SUFFIX: "demo",
 }
 
-#: The extension each kind supplies to a name given without one. A utility file
-#: is a math file read a different way, so it is looked for under MTH.
+#: Default extension for each kind. A utility file is a math file read differently, so
+#: it uses MTH.
 SUFFIXES = {
     "math": worksheet.SUFFIX,
     "utility": worksheet.SUFFIX,
@@ -87,11 +69,11 @@ class Usage(Exception):
 
 
 def named(arguments: Sequence[str]) -> list[tuple[str, Path]]:
-    """The files the command line names, each with how it is to be read.
+    """Return the files named on the command line, each with its kind.
 
-    A switch holds until the next one; a name with no switch in front of it is
-    read by its extension, and one given without an extension is looked for
-    under each in turn, so that `rederive arith` finds ARITH.DMO.
+    A switch holds until the next one. Without a switch, the kind comes from the
+    extension, and a name without an extension is looked up under each in turn, so
+    `rederive arith` finds ARITH.DMO.
     """
     kind: str | None = None
     files: list[tuple[str, Path]] = []
@@ -106,12 +88,11 @@ def named(arguments: Sequence[str]) -> list[tuple[str, Path]]:
 
 
 def _resolved(kind: str | None, path: Path) -> tuple[str, Path]:
-    """What `path` is to be read as, and the file that name means.
+    """Return the kind and actual file for `path`.
 
-    A switch settles it. Without one an extension does, and a name carrying
-    neither is looked for under each extension in turn - falling back on a math
-    file, so that a name that is nowhere is reported as the file the user most
-    likely meant rather than as three that are all missing.
+    A switch decides the kind, otherwise the extension does. A name with neither is
+    looked up under each extension, falling back to a math file, so a missing file is
+    reported as the one the user most likely meant.
     """
     if kind is not None:
         return kind, worksheet.path_of(str(path), SUFFIXES[kind])
@@ -125,16 +106,13 @@ def _resolved(kind: str | None, path: Path) -> tuple[str, Path]:
 
 
 def read(session: Session, files: Sequence[tuple[str, Path]]) -> tuple[Path | None, str]:
-    """Read every file but the demonstration, and say what there is to report.
+    """Read every file except the demonstration.
 
-    Returns the demonstration to run once the screen is up, since that one is
-    not a file to be read but a session to be driven, and whatever the reading
-    has to say for itself.
+    Returns the demonstration to run once the screen is up, and a message to show.
 
-    A math file is merged rather than loaded even though `Transfer Load Derive`
-    loads: the two are the same thing into a worksheet with nothing in it, and
-    merging is what lets a second one named after the first add to it instead
-    of replacing it.
+    Math files are merged rather than loaded: into an empty worksheet the two are the
+    same, and merging lets each subsequent file add to the worksheet instead of
+    replacing it.
     """
     readers: dict[str, Callable[[Path], int]] = {
         "math": session.merge,
@@ -159,7 +137,7 @@ def read(session: Session, files: Sequence[tuple[str, Path]]) -> tuple[Path | No
 
 
 def _reported(skipped: int) -> str:
-    """What the message line says about lines that would not parse, if any."""
+    """Return the message about lines that failed to parse, if any."""
     if not skipped:
         return ""
     lines = "line" if skipped == 1 else "lines"
@@ -167,20 +145,15 @@ def _reported(skipped: int) -> str:
 
 
 def provenance() -> str:
-    """This program's version, and the interpreter, sympy and environment it is on.
+    """Return the versions of this program, Python, sympy, and the platform.
 
-    One `name version` per line, so that a person can read it and a workflow can
-    check it without parsing prose. The first three lines are true wherever the
-    program runs; what comes after them is the environment's to say, since a
-    build that has no Qt to report has something else, and `rederive.platform` is
-    the side that knows which.
+    One `name version` per line, readable by people and easy for a workflow to check.
+    The lines after the first three come from `rederive.platform`, since they depend on
+    the environment (e.g. whether there is Qt).
 
-    Sympy is imported here and nowhere else on this side of the program, and the
-    toolkit only in the platform and the plot host. The app process is kept clear
-    of both - the mathematics belongs to the worker and the windows to the host,
-    and `tests/test_packages.py` holds this module to that - which is affordable
-    because this path prints its lines and leaves rather than going on to open a
-    session.
+    The app process otherwise never imports sympy (it belongs to the worker) or the GUI
+    toolkit (it belongs to the plot host), as `tests/test_packages.py` enforces. Doing
+    it here is fine because this path prints and exits without opening a session.
     """
     import platform
 
@@ -202,17 +175,13 @@ def _refused(refused: Usage) -> int:
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
-    """Read what the command line names, then hand the session to the screen.
+    """Read the files named on the command line, then run the app on the session.
 
-    The command line is looked at before the worker is started, so that a line
-    that says nothing usable costs nothing to find out about.
+    The command line is validated before the worker starts, so a bad one fails fast.
 
-    The imports are spread through here rather than gathered at the top of the
-    module, and their order is the point. The worker is put up as soon as there
-    is something to put it up for, and the screen is imported after that, so the
-    child's sympy and the parent's Textual are loaded at the same time instead
-    of one behind the other. Only the engine proxy is needed to start a worker,
-    and it is the cheap half.
+    The order of the local imports matters: the worker (which needs only the cheap
+    engine proxy) is started before the screen is imported, so the child's sympy import
+    and the parent's Textual import run in parallel.
     """
     given = sys.argv[1:] if arguments is None else arguments
     if VERSION in given:

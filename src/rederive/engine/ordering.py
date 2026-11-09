@@ -1,35 +1,26 @@
 """Derive's variable order list, and the ordering it induces.
 
-Sums and products are commutative, so the normal form has to pick an order for
-their operands; Derive picks it from a list of variables it calls the order
-list, which starts out as `x`, `y`, `z`. A variable on the list is more main
-than one after it on the list and more main than one not on the list at all;
-variables off the list are ordered among themselves alphabetically.
+Derive orders variables by a list it calls the order list, initially `x`, `y`, `z`. A
+listed variable is more main than any later or unlisted one; unlisted variables are
+ordered alphabetically.
 
-What the list reaches is everywhere a command has to pick a variable to be
-main. Simplify's normal form first: every sum is written as a rational function
-of the most main variable it holds, so the list decides which sums get
-multiplied out and which are left folded. That is the manual's own
-demonstration - `(x + 1)^9 + y` is a ninth-degree polynomial under `x y z` and
-comes back as it was written under `y x z`, because the ninth power is then
-free of the primary variable. Then the order Factor and Expand offer their
-variables in, which makes the first one chosen the primary variable; the
-generators an Expand about all of them expands about; and the order a `Declare
-Function` definition's variables become the function's parameters in.
+The list applies wherever a command picks a main variable. Simplify's normal form writes
+every sum as a rational function of its most main variable, so the list decides which
+sums get multiplied out: `(x + 1)^9 + y` becomes a ninth-degree polynomial under `x y z`
+but is left alone under `y x z`, where the ninth power is free of the main variable. The
+list also orders the variables Factor and Expand offer (the first chosen becomes main),
+the generators of an Expand about all variables, and the parameters of a `Declare
+Function` definition.
 
-It reaches the order a sum and a product are written in too. A term sorts by
-the variable it leads with, so `5*y^3 + 2*x^2 - 3*a*x` is written
-`2*x^2 - 3*a*x + 5*y^3`, and a factor by the variable of its base, so
-`z^3*b^2*a*2*x^5*c` is written `2*a*b^2*c*x^5*z^3` - a product being the one
-place a name the list does not know goes *ahead* of one it does. Both of those
-are `printer`'s work rather than this module's, and both are a spelling and not
-a normal form: which way round a sum is written says nothing about what the sum
-is. Operands the list says nothing about keep the order sympy had them in.
+It also determines how sums and products are written. A term sorts by its leading
+variable, so `5*y^3 + 2*x^2 - 3*a*x` is written `2*x^2 - 3*a*x + 5*y^3`; a factor sorts
+by its base, so `z^3*b^2*a*2*x^5*c` is written `2*a*b^2*c*x^5*z^3` (in products,
+unlisted names go *before* listed ones). That is `printer`'s job, and is presentation
+only, not part of the normal form. Operands the list doesn't distinguish keep sympy's
+order.
 
-`Manage Ordering` rewrites the list, so the list is session state rather than a
-constant: it travels in the `Context`, alongside everything else a command's
-answer depends on. `ORDER_LIST` is only what a session starts with, and is what
-a caller with no session of its own orders by.
+`Manage Ordering` changes the list, so it is session state carried in the `Context`.
+`ORDER_LIST` is the initial list, also used by callers without a session.
 """
 
 from __future__ import annotations

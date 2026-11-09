@@ -1,76 +1,56 @@
-"""What an approximate number is: the simplest rational the precision allows.
+"""Approximate numbers: the simplest rational the precision allows.
 
-Derive's approximate arithmetic is exact arithmetic over approximate numbers,
-and an approximate number is a *rational* - the simplest one that stands for
-the value to the precision asked for. Approximating π to six digits gives
-355/113, which is why `Notation := Rational` shows exactly that, and why an
-approximate answer is as exact a value as any other: it is just a different
-value from the one it approximates.
+Derive's approximate arithmetic is exact arithmetic on approximate numbers, each a
+*rational*: the simplest one representing the value to the requested precision. π to
+six digits is 355/113, which `Notation := Rational` shows; an approximate answer is an
+exact value, just different from the one it approximates.
 
-Three consequences:
+Consequences:
 
-* A number that needs no digits does not get any. The simplest rational
-  standing in for 5 is 5, and the one standing in for two thirds is two
-  thirds - so `2/3` approximated is `2/3`, and shown to six digits it is
-  `0.666666`, cut rather than rounded up to `0.666667`.
-* A value keeps the digits it is shown by. `SQRT(3)` is `1.73205` and not the
-  `1.73204` that a simpler rational a little below it would show.
-* Every digit shown is the value's own. A number is worked out as if exactly,
-  with as much working precision as that takes, and rounded only then - not
-  rounded piece by piece and computed with afterwards, which lets the
-  arithmetic carry the rounding of the pieces into the answer. The thousandth
-  power of a root of 12, written in radicals, is 12 and not the `11.9994` that
-  rounding its radicals first leaves, and `SQRT(10^200 + 1) - 10^100` is
-  `5.00000*10^-101` and not the 0 of two rounded numbers cancelling. This is
-  where the original is left behind on purpose: it rounds the pieces, and
-  answers those two `12 - 0.000430980*#i` and 0.
+* Numbers that need no digits get none. 5 stays 5 and two thirds stays `2/3`, shown to
+  six digits as `0.666666` (truncated, not rounded to `0.666667`).
+* A value keeps its displayed digits. `SQRT(3)` is `1.73205`, not the `1.73204` a
+  slightly smaller, simpler rational would show.
+* Every digit shown is correct. A number is computed as if exactly, with whatever
+  working precision that takes, and only then rounded, rather than rounding the pieces
+  and letting arithmetic carry their errors. The thousandth power of a root of 12
+  written in radicals is 12, not `11.9994`, and `SQRT(10^200 + 1) - 10^100` is
+  `5.00000*10^-101`, not 0. Here we deliberately deviate from Derive, which rounds the
+  pieces and answers `12 - 0.000430980*#i` and 0.
 
-Where this parts from the manual: 3.8 p.46 turns on the two fractions of
-`SQRT(3422357/2313 - 1140443/771)` being rounded before they are subtracted,
-which is what would leave Approximate mode short of the exactly 2/3 that Mixed
-mode reaches. Both are quotients of whole numbers, so neither is rounded here
-and both modes answer 2/3. Rounding every step instead does not reach the
-manual's digits either, and what its 0.666622 really records is binary
-floating point; `test_manual` holds the case and says so.
+Deviation from the manual: 3.8 p.46 relies on the two fractions in `SQRT(3422357/2313
+- 1140443/771)` being rounded before subtraction, so Approximate mode falls short of
+the exact 2/3 that Mixed mode reaches. Both are ratios of integers, so neither is
+rounded here and both modes give 2/3. Rounding every step doesn't reproduce the
+manual's digits either; its 0.666622 reflects binary floating point. `test_manual`
+documents this.
 
-"To the precision asked for" is a tolerance, and it is one digit tighter than
-the digits shown. The looser reading - the simplest rational that displays the
-same digits - admits an error of a whole unit in the last digit shown, and
-picks deliberately the coarsest value that gets away with it. That is the
-worst possible choice for a number that is about to be computed with, because
-the arithmetic around an approximate number is exact and so carries the whole
-of that error forward. `SQRT(1000003) - SQRT(1000002)` is what it costs: both
-roots display `1000.00`, the coarsest rational displaying that is 1000, and a
-difference of about 0.0005 comes out 0 with nothing to say it did. The guard
-digit is what keeps the substituted value close enough that a cancellation
-between two of them still means something.
+"To the requested precision" is a tolerance one digit tighter than the digits shown.
+The looser reading (the simplest rational with the same displayed digits) allows an
+error of a whole unit in the last digit and picks the coarsest such value, which is
+the worst choice for further exact arithmetic. With it, `SQRT(1000003) -
+SQRT(1000002)` would give 0: both roots display `1000.00`, the simplest rational
+displaying that is 1000, and a difference of about 0.0005 vanishes. The guard digit
+keeps substituted values close enough for cancellations to stay meaningful.
 
-`approximated` is the other half: what a precision mode does to a whole
-expression, which is this rule applied to every number in it that needs digits
-and to nothing else. A number there is the largest one the expression holds:
-in `x*SQRT(2) + pi` the numbers are `SQRT(2)` and `pi`, and in `x + SQRT(3) -
-SQRT(2)` it is the difference of the two roots.
+`approximated` applies this rule to every number in an expression that needs digits.
+Each number is the largest numeric subexpression: in `x*SQRT(2) + pi` these are
+`SQRT(2)` and `pi`, and in `x + SQRT(3) - SQRT(2)` the difference of the roots.
 
-The answer is the simplest rational within the tolerance, found by walking the
-continued fraction of the interval's ends: at each step the whole part they
-share is the next term of the answer, and the walk stops at the first step
-where an integer falls between them. That is what "simplest" means here, and
-it is why π comes out 355/113 - not because a coarse tolerance let it, but
-because π is approximated by 355/113 far better than a denominator of 113 has
-any right to be.
+The simplest rational within the tolerance is found by walking the continued fractions
+of the interval's ends: each shared whole part is the next term, until an integer
+falls between them. π gives 355/113 not because the tolerance is coarse but because
+355/113 is an unusually good approximation for its denominator.
 
-The original can be asked what it does rather than reasoned about: under
-Rational notation with NotationDigits at 32 it prints an approximation as the
-ratio it is. Asked that way, the original confirms the tolerance above wherever
-its own value is accurate - its π over three to nine digits is 333/106,
-355/113, 103993/33102, 208341/66317, the first convergent inside 10^-(digits +
-1) every time - and shows that where it is not, no tolerance would have helped.
-Its SQRT(10001) at six digits is 180109/1801, where 20001/200 is simpler and
-two hundred times nearer; its SQRT(2) at three digits is 379/268, where 239/169
-is simpler and three times nearer. Those are not a choice of rational but the
-error of its own square root, which works a digit or two past the precision
-asked for. `test_manual`'s `NOT_YET_HELD` records which of the manual's pages
-that costs.
+Derive's behavior can be checked directly: under Rational notation with NotationDigits
+at 32 it prints approximations as ratios. That confirms this tolerance wherever its
+value is accurate: π at three to nine digits gives 333/106, 355/113, 103993/33102,
+208341/66317, each the first convergent within 10^-(digits + 1). Where it isn't, no
+tolerance would match: its SQRT(10001) at six digits is 180109/1801, though 20001/200
+is simpler and two hundred times nearer, and SQRT(2) at three digits is 379/268,
+though 239/169 is simpler and three times nearer. That is the error of its own square
+root, computed a digit or two past the requested precision. `test_manual`'s
+`NOT_YET_HELD` records which manual pages this affects.
 """
 
 from __future__ import annotations
@@ -99,32 +79,29 @@ __all__ = [
     "simplest_rational",
 ]
 
-#: Digits carried past the ones asked for while an irrational is evaluated, so
-#: that the digits asked for are the value's own rather than a rounding of it.
+#: Extra digits used when evaluating an irrational, so the requested digits are
+#: correct rather than rounded.
 GUARD = 5
 
-#: The most digits a number is worked out to while its digits are found. Enough
-#: to see through any cancellation short of an exact zero: `SQRT(10^200 + 1) -
-#: 10^100` needs about two hundred and fifty, and a hidden zero exhausts it in
-#: milliseconds.
+#: Maximum working precision when evaluating a number. Enough for any cancellation
+#: short of an exact zero (`SQRT(10^200 + 1) - 10^100` needs about 250), and a hidden
+#: zero exhausts it in milliseconds.
 MAX_DIGITS = 1000
 
 _TEN = Fraction(10)
 
 
 def simplest(value: Fraction, digits: int, cut: bool = True) -> Fraction:
-    """The simplest rational standing in for `value` at `digits` of precision.
+    """The simplest rational representing `value` at `digits` of precision.
 
-    Only a rational that shows the value's own digits will do, the digits shown
-    being cut rather than rounded. The tolerance alone would admit a simpler one
-    just below a value whose digits end where the precision does, and `3.14159`
-    typed would show `3.14158`; or one just above a value that falls short of
-    the next digit, and `APPROX(0.12399, 3)` would show `0.124`. So the interval
-    searched is the tolerance narrowed to the numbers that cut to the value's
-    digits, which always holds the value itself.
+    The result must truncate to the value's own digits. The tolerance alone would
+    allow a simpler rational just below, so typing `3.14159` would show `3.14158`, or
+    just above, so `APPROX(0.12399, 3)` would show `0.124`. So the search interval is
+    the tolerance narrowed to numbers truncating to the value's digits, which always
+    contains the value.
 
-    A value worked out from approximate numbers is not held to its digits, which are
-    not its own, and `cut` false searches the whole tolerance: see `reapproximated`.
+    With `cut` false the whole tolerance is searched, for values computed from
+    approximate numbers whose digits aren't meaningful; see `reapproximated`.
     """
     if not value:
         return Fraction(0)
@@ -136,14 +113,12 @@ def simplest(value: Fraction, digits: int, cut: bool = True) -> Fraction:
     low, high = value - tolerance, value + tolerance
     if cut:
         low, high = max(low, shown), min(high, shown + unit)
-    # The next digit up is the one end that is not the value's own.
+    # The upper end belongs to the next digit, so it is excluded.
     open_high = cut and high == shown + unit
     simplest_here = _simplest_between(low, high, high_open=open_high)
-    # Simplest fixes the denominator, not the whole answer: where the interval
-    # holds several rationals over that denominator, they are equally simple
-    # and the one nearest the value is the one it stands for. `10^7*pi` turns
-    # on it, the interval there holding six whole numbers of which 31415929 is
-    # the value's own.
+    # Simplest fixes only the denominator: if the interval holds several rationals
+    # over it, pick the nearest. For `10^7*pi` the interval holds six integers, and
+    # 31415929 is the right one.
     denominator = simplest_here.denominator
     nearest = Fraction(round(value * denominator), denominator)
     inside = low <= nearest and (nearest < high if open_high else nearest <= high)
@@ -155,13 +130,10 @@ def _simplest_between(
 ) -> Fraction:
     """The simplest rational between `low` and `high`, which must be positive.
 
-    Each end is in the interval unless it is open. The whole parts of the two
-    ends agree until the interval is wide enough to hold an integer, and
-    everything they agree on is forced: any rational between them starts the
-    same way. So each shared whole part is written down and the walk moves on
-    to the reciprocals of what is left, where the ends trade places. The first
-    integer to fall between them ends it, and the smallest such integer is the
-    simplest thing the interval can hold.
+    Each end is included unless open. While both ends share a whole part, any
+    rational between them has it too, so it is recorded and the walk continues with
+    the reciprocals of the remainders (swapping the ends). Once an integer falls
+    between them, the smallest one is the simplest choice.
     """
     whole = low.numerator // low.denominator
     if low.denominator == 1 and not low_open:
@@ -169,8 +141,8 @@ def _simplest_between(
     if whole + 1 < high or (whole + 1 == high and not high_open):
         return Fraction(whole + 1)
     if low == whole:
-        # What is left reaches down to nothing, and its reciprocal up without
-        # bound, so the smallest whole number that reciprocal admits ends it.
+        # The remainder reaches zero, so its reciprocal is unbounded above; take the
+        # smallest admissible integer.
         bound = 1 / (high - whole)
         floor = bound.numerator // bound.denominator
         return whole + Fraction(1, floor + 1 if high_open or floor < bound else floor)
@@ -180,29 +152,24 @@ def _simplest_between(
 
 
 def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
-    """What the precision mode does to an expression.
+    """`expression` with the precision mode applied.
 
-    The last step of every command's pipeline. Factor simplifies exactly, then
-    factors, and only then rounds - so that radical factoring reaches `SQRT(2)`
-    first and shows `1.41421` because of this, rather than factoring a number
-    that has already been rounded.
+    The last step of every command's pipeline. Factor simplifies exactly, factors,
+    and only then rounds, so radical factoring reaches `SQRT(2)` before it is shown as
+    `1.41421`.
 
-    It is also what an iteration does to each iterate it hands on, an iterate
-    being a value in its own right and the next step's number going in.
+    Iterations also apply it to each iterate before the next step.
     """
     digits = context.precision_digits
     noted = _noted.get()
     match context.precision:
         case Precision.APPROXIMATE:
-            # Each number is approximated as a whole, and then what is left of
-            # the arithmetic around them - a coefficient multiplied into a
-            # rational, say - is rounded too.
+            # Approximate each number as a whole, then round any remaining rationals
+            # (e.g. a coefficient multiplied into a rational).
             #
-            # What the first pass already rounded is left alone by the second,
-            # since rounding an approximate number again is not idempotent: the
-            # tolerance is measured from wherever the value now stands, so a
-            # second pass may reach a simpler rational a whole tolerance away
-            # and cost the last digit shown.
+            # The second pass skips what the first rounded, since rounding is not
+            # idempotent: the tolerance is measured from the new value, so it could
+            # reach a simpler rational a whole tolerance away and lose a digit.
             approximate: set[sp.Rational] = set()
             result = _rounded(
                 _approximated(expression, digits, approximate), digits, approximate
@@ -220,13 +187,11 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
 
 
 def reapproximated(number: sp.Basic, context: Context) -> sp.Basic:
-    """`number`, worked out from approximate numbers, as an approximate number itself.
+    """`number`, computed from approximate numbers, approximated in turn.
 
-    The digits of such a number are those of the approximations it is made of, so
-    it stands for what they stood for only to the tolerance, and is not held to
-    the digits it happens to show: an approximate `180/pi` is 57.2957 cut short,
-    and times `pi/180` it is 0.9999999, where what it stands for is 1. So the whole
-    tolerance is searched, as `simplest` does when its digits are not to be cut.
+    Such a number is accurate only to the tolerance, and its displayed digits aren't
+    meaningful: an approximate `180/pi` is 57.2957 truncated, and times `pi/180` it
+    gives 0.9999999 instead of 1. So the whole tolerance is searched (`cut` false).
     """
     digits = context.precision_digits
     value = _evaluated(number, digits + GUARD)
@@ -242,20 +207,18 @@ def reapproximated(number: sp.Basic, context: Context) -> sp.Basic:
 P = ParamSpec("P")
 R = TypeVar("R")
 
-#: The approximate numbers the command being worked has produced, while one is.
+#: The approximate numbers produced by the running command, if any.
 _noted: ContextVar[set[Fraction] | None] = ContextVar("noted", default=None)
 
 
 def noting_approximations(command: Callable[P, R]) -> Callable[P, R]:
-    """`command`, noting which of the numbers in its answer are approximate.
+    """Decorate `command` to record which numbers in its answer are approximate.
 
-    An approximate number is a rational like any other, and nothing in the value
-    tells `EXP(100)` approximated, a whole number of 44 digits of which 6 are the
-    value's own, from a whole number that is exact. The notation writes the two
-    differently - see `is_approximation` - so the numbers approximation hands back
-    are remembered for as long as the command runs, its printing included. A
-    command run inside another notes into the outer one's record, the answer being
-    one answer.
+    An approximate number is an ordinary rational, so nothing distinguishes an
+    approximated `EXP(100)` (a 44-digit integer with 6 meaningful digits) from an
+    exact integer. The notation writes them differently (see `is_approximation`), so
+    approximations are recorded while the command runs, including printing. Nested
+    commands record into the outermost one's set.
     """
 
     @functools.wraps(command)
@@ -279,7 +242,7 @@ def _noting() -> Iterator[None]:
 
 
 def is_approximation(value: Fraction) -> bool:
-    """Whether `value` is a number approximation produced for the current command."""
+    """Whether `value` is an approximation produced by the current command."""
     noted = _noted.get()
     return noted is not None and value in noted
 
@@ -305,15 +268,12 @@ def _evalf(expression: sp.Basic, digits: int) -> sp.Basic:
 def _rounded(
     expression: sp.Basic, digits: int, approximate: Set[sp.Rational] = frozenset()
 ) -> sp.Basic:
-    """Every number in `expression` as the simplest rational at this precision.
+    """Every number in `expression` replaced by the simplest rational at this precision.
 
-    Which is what Derive's approximate numbers are, so this is what makes
-    `2*y*3` come out `6*y` in every precision mode - only the numbers that
-    actually need digits get them - and what leaves an approximate answer an
-    exact value that `Notation := Rational` can write out in full.
+    So `2*y*3` gives `6*y` in every precision mode, and an approximate answer is an
+    exact value that `Notation := Rational` can write in full.
 
-    A number in `approximate` is one this precision has already rounded, and it
-    stands as it is.
+    Numbers in `approximate` have already been rounded and are left alone.
     """
     try:
         return expression.replace(
@@ -327,15 +287,13 @@ def _rounded(
 
 
 def simplest_rational(number: sp.Basic, digits: int, cut: bool = True) -> sp.Rational:
-    """`simplest` for a sympy number: a rational, or a float evaluation produced.
+    """`simplest` for a sympy rational, or a float produced by evaluation.
 
-    A float is read as the decimal digits it shows, not as the binary fraction
-    it is stored as. The two differ past the float's precision, and the
-    difference is no part of the value: `SQRT(10^200 + 1)` evaluates to a float
-    that shows `1.0000000000e+100` and is stored as `10^100 - 1.73*10^87`. Both
-    are within the tolerance, and the nearest of the equally simple candidates
-    would be the stored one, which leaves the binary error in a number that is
-    then computed with exactly.
+    A float is read as its decimal digits, not its stored binary fraction, which
+    differs past the float's precision: `SQRT(10^200 + 1)` evaluates to a float
+    showing `1.0000000000e+100` but stored as `10^100 - 1.73*10^87`. Both are within
+    tolerance, and choosing the nearest candidate to the stored value would keep the
+    binary error in a number later used exactly.
     """
     if isinstance(number, sp.Float):
         value = Fraction(Decimal(str(number)))
@@ -345,24 +303,24 @@ def simplest_rational(number: sp.Basic, digits: int, cut: bool = True) -> sp.Rat
     return sp.Rational(simplest(value, digits, cut))
 
 
-#: Digits past the tolerance a long rational is kept to before it is approximated.
+#: Digits beyond the tolerance kept when shortening a long rational before
+#: approximating it.
 SHORTENED = 30
 
 
 def _shortened(numerator: int, denominator: int, digits: int) -> Fraction:
-    """`numerator/denominator`, or a rational of fewer digits next to it.
+    """`numerator/denominator`, or a nearby rational with fewer digits.
 
-    A rational of a few hundred thousand digits - `(1 + 10^-5)^10^5` worked out
-    exactly - costs seconds of arithmetic on every step of finding the simplest
-    rational near it, and nearly all of its digits are far below the tolerance.
-    Those are dropped first: what is left is a binary fraction within
-    `10^-(digits + SHORTENED)` of the value, relatively and for a large value
-    absolutely, which no choice made at a tolerance of `10^-(digits + 1)` can tell
-    from it. Its whole part is the value's own, so the nearest whole number to a
-    large value is not disturbed either.
+    A rational with hundreds of thousands of digits (`(1 + 10^-5)^10^5` computed
+    exactly) makes each step of finding the simplest rational take seconds, though
+    nearly all its digits are far below the tolerance. They are dropped, leaving a
+    binary fraction within `10^-(digits + SHORTENED)` of the value (relatively, and
+    absolutely for large values), indistinguishable at a tolerance of `10^-(digits +
+    1)`. The whole part is kept exactly, so rounding a large value to an integer is
+    unaffected.
 
-    Only a long denominator is worth shortening. Over a short one the arithmetic is
-    cheap, and a whole number is kept exactly what it is.
+    Only long denominators are shortened; short ones are cheap, and integers stay
+    exact.
     """
     bits = int((digits + SHORTENED) * 3.33) + 64
     if denominator.bit_length() <= 2 * bits:
@@ -378,21 +336,17 @@ def _approximated(
 ) -> sp.Basic:
     """Approximate each number in `expression` as a whole, outermost first.
 
-    A number is worked out as if exactly and only then rounded, so every digit
-    of the answer is the value's own: `(12^(1/1000)*w)^1000`, `w` a root of
-    unity written in radicals, is 12, where rounding `12^(1/1000)` and the
-    radicals first and raising them to the thousandth power exactly would carry
-    their error a thousandfold into the answer.
+    A number is computed as if exactly and only then rounded, so every digit is
+    correct: `(12^(1/1000)*w)^1000`, with `w` a root of unity in radicals, is 12,
+    whereas rounding the pieces first would multiply their error a thousandfold.
 
-    Outermost first is what reaches the whole number rather than its pieces,
-    and a sum or a product that is only partly numeric has its numeric terms
-    worked out together: `x + SQRT(1000003) - SQRT(1000002)` is `x + 0.000499999`
-    and not two roots rounded and then subtracted.
+    Going outermost first approximates whole numbers rather than pieces, and the
+    numeric terms of a partly numeric sum or product are combined first: `x +
+    SQRT(1000003) - SQRT(1000002)` is `x + 0.000499999`, not two rounded roots
+    subtracted.
 
-    What each number is replaced by is a rational, since that is what an
-    approximate number is. `approximate` collects those rationals for the
-    caller, which is how the rounding of the finished answer knows what it has
-    already rounded.
+    Each number is replaced by a rational. `approximate` collects them so the final
+    rounding knows what is already rounded.
     """
 
     def approximation(part: sp.Basic) -> sp.Basic:
@@ -415,9 +369,8 @@ def _approximated(
         if args == node.args:
             return node
         if isinstance(node, Relational):
-            # A relation comes back as a relation between the approximated sides,
-            # not decided by the assumptions on them: `x = 1.73205*#i` for a real
-            # `x` is a solution soLve found, and not the `false` sympy makes of it.
+            # Keep the relation rather than letting assumptions decide it: `x =
+            # 1.73205*#i` for real `x` is a solution soLve found, not `false`.
             return node.func(*args, evaluate=False)
         return node.func(*args)
 
@@ -428,30 +381,21 @@ def _approximated(
 
 
 def _needs_digits(expression: sp.Basic) -> bool:
-    """Whether this number has to be worked out before it can be written down.
+    """Whether this number must be evaluated to be written down.
 
-    Every number does, unless sympy can show that it is rational: a rational
-    is already what an approximate number is, and anything else stands for
-    digits nothing has computed yet.
+    Every number must, unless sympy proves it rational.
 
-    The question is which way round to ask it, and the answer is not the
-    obvious one. `is_irrational` has a third answer besides yes and no, and
-    that third answer is the common one - sympy leaves a product of surds open,
-    since irrationals can multiply to a rational - so asking for a proof of
-    irrationality leaves everything unprovable exact, and approximating a
-    wholly numeric expression can then answer with radicals still standing in
-    it. Asking for a proof of rationality instead sends the unprovable cases
-    the other way, and a number can only come out a number.
+    Testing `is_rational is not True` rather than `is_irrational` matters: the latter
+    is often unknown (a product of surds can be rational), so it would leave unproven
+    cases exact, and a wholly numeric expression could keep radicals after
+    approximation.
 
-    Finiteness is asked the same way round and for the same reason. Only what
-    is known to be infinite is refused: `LN(0)` has no digits and never will,
-    while `SI(2)`, `EI(2)` and `ERFI(2)` are finite numbers sympy simply does not
-    prove finite, and demanding the proof left every one of them written as
-    itself. An unevaluated integral or sum is the same case, and approximating
-    one numerically is what the original does with what it cannot do exactly.
-    Nothing is risked by asking loosely here: `_approximate` takes only what
-    comes back a float or a rational, so a value that will not evaluate - `nan`,
-    or a quadrature that does not converge - is left standing anyway.
+    Finiteness is tested the same way: only numbers known to be infinite are
+    refused. `LN(0)` has no digits, but `SI(2)`, `EI(2)` and `ERFI(2)` are finite
+    though sympy can't prove it. Unevaluated integrals and sums are the same case,
+    and Derive approximates them numerically. This is safe because `_approximate`
+    accepts only a float or rational result, so `nan` or a non-converging quadrature
+    is left alone.
     """
     return (
         expression.is_number
@@ -462,11 +406,10 @@ def _needs_digits(expression: sp.Basic) -> bool:
 
 
 def _approximate(part: sp.Basic, digits: int) -> sp.Basic:
-    """The approximate number `part` stands for, or `part` where there is none.
+    """The approximation of `part`, or `part` itself if it can't be evaluated.
 
-    A number whose value is not real - `SQRT(-2)`, `(1 + #i)^10` - is approximated
-    one part at a time, as the rational real part plus `#i` times the rational
-    imaginary part, which is how Derive approximates it too.
+    A non-real number such as `SQRT(-2)` or `(1 + #i)^10` is approximated as a
+    rational real part plus `#i` times a rational imaginary part, as in Derive.
     """
     value = _evaluated(part, digits + GUARD)
     if value is None:
@@ -480,17 +423,14 @@ def _approximate(part: sp.Basic, digits: int) -> sp.Basic:
 def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
     """The real and imaginary parts of `part`, each correct to `digits`.
 
-    Sympy raises its working precision until the digits asked for are the
-    value's own, up to `MAX_DIGITS`. A value it cannot tell from zero by then
-    comes back with no significant digits at all, and is zero: no nonzero value
-    is that small next to the numbers it was computed from.
+    Sympy raises its working precision up to `MAX_DIGITS` until the digits are
+    correct. A value still indistinguishable from zero comes back with no significant
+    digits and is taken as zero.
 
-    The precision sympy guarantees is relative to the whole of a complex value,
-    so a part far smaller than the other may be noise. Where it is below what
-    the precision can see it is taken for zero, which is what makes
-    `(12^(1/1000)*w)^1000` 12 rather than `12 + 5.06*10^-17*#i`. Where it is
-    above, the value is worked out again with as many more digits as the part is
-    smaller, so that its own digits are right too.
+    Sympy's precision is relative to the whole complex value, so a much smaller part
+    may be noise. If it is below the precision it is taken as zero, making
+    `(12^(1/1000)*w)^1000` 12 rather than `12 + 5.06*10^-17*#i`. Otherwise the value
+    is re-evaluated with enough extra digits for that part to be correct as well.
     """
     value = _evalf(part, digits)
     parts = _parts(value)
@@ -510,13 +450,12 @@ def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
 
 
 def _parts(value: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
-    """`value`'s real and imaginary parts, where both are numbers with digits."""
+    """`value`'s real and imaginary parts, if both are floats or rationals."""
     real, imaginary = value.as_real_imag()
     parts = []
     for number in (real, imaginary):
         if isinstance(number, sp.Float):
-            # No significant digits: what sympy answers for a value it could
-            # not tell from zero.
+            # No significant digits: sympy couldn't distinguish the value from zero.
             parts.append(sp.Integer(0) if number._prec <= 1 else number)
         elif number.is_Rational:
             parts.append(number)

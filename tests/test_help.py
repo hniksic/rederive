@@ -78,8 +78,7 @@ def test_the_state_subject_lays_out_in_one_column_where_two_would_not_fit():
     settings = Settings()
     wide = helps.pages(helps.BY_WORD["State"], settings, 20, 80)
     narrow = helps.pages(helps.BY_WORD["State"], settings, 20, 40)
-    # Two settings to a row where there is room for two columns, one where
-    # there is not.
+    # Two settings per row when two columns fit, otherwise one.
     assert any(line.count(":") == 2 for page in wide for line in page)
     assert all(line.count(":") <= 1 for page in narrow for line in page)
     assert len(narrow) > len(wide)
@@ -118,7 +117,7 @@ async def test_next_and_previous_turn_the_pages(app):
         assert work_area(app) != first
         await pilot.press("p")
         assert work_area(app) == first
-        # There is nothing before the first page, and asking stays put.
+        # There is no page before the first, so the reader stays put.
         await pilot.press("p")
         assert work_area(app) == first
 
@@ -173,8 +172,8 @@ async def test_f1_opens_line_editing_and_gives_the_line_back(app):
         await pilot.press("f1")
         assert title(app) == helps.BY_WORD[helps.EDITING].title
         assert band(app) == [" HELP EDITING: Next Previous Subjects Resume"]
-        # One Resume gives the line back, wherever in the subject it is pressed
-        # and with what was typed on it still there.
+        # A single Resume returns to the line from anywhere in the subject, with the
+        # typed text intact.
         await pilot.press("n", "escape")
         assert app.helping is None
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")
@@ -199,13 +198,12 @@ async def test_subjects_opens_the_rest_of_the_document_over_the_line(app):
         await pilot.press("a", *"x^2+1")
         await pilot.press("f1", "s")
         assert title(app) == helps.MENU_TITLE
-        # A subject picked off that menu is read under it and comes back to it,
-        # which is where it was opened from.
+        # A subject chosen from that menu returns to the menu.
         await pilot.press("f")
         assert title(app) == helps.BY_WORD["Functions"].title
         await pilot.press("escape")
         assert title(app) == helps.MENU_TITLE
-        # And the menu itself stands where the subject stood: over the line.
+        # Resuming from the menu returns to the line.
         await pilot.press("escape")
         assert app.helping is None
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")

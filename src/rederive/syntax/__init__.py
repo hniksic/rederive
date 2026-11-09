@@ -1,18 +1,13 @@
-"""Derive expression syntax: text in, expression trees out, and text again.
+"""Derive expression syntax: parsing text into expression trees, and writing them back.
 
-Nothing outside this package may import from inside it except through the
-names re-exported here.
+Code outside this package should import only the names re-exported here.
 
-`write_expression` is the parser run backwards, and the two are kept together
-because they are one contract: what the writer writes, the parser reads back as
-the same tree.
+`write_expression` is the inverse of the parser: what it writes parses back to the same
+tree. `write_source` writes a tree as C, Python, Rust or Julia, with no such round-trip
+guarantee.
 
-`write_source` is the same job against another notation - a tree in, a line of
-C, Python, Rust or Julia out - and has no such contract, nothing here being
-able to read those back. It lives here because it is a writer.
-
-Parsing produces no mathematics. `2+3` yields a sum node, never `5`: authored
-expressions stay inert until the user asks for a Simplify.
+Parsing does no math: `2+3` yields a sum node, not `5`. Authored expressions stay inert
+until the user simplifies them.
 """
 
 from __future__ import annotations
@@ -73,11 +68,11 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ParseResult:
-    """One expression, and what accepting it would declare.
+    """A parsed expression and the declarations it makes.
 
-    `declarations` is what this expression would add to the symbol table:
-    variable definitions, function definitions and setting changes. The parser
-    does not apply them to the caller's state at top level; the caller does.
+    `declarations` lists the variable definitions, function definitions and setting
+    changes the expression would add to the symbol table. The caller, not the parser,
+    applies them.
     """
 
     node: Node
@@ -86,22 +81,21 @@ class ParseResult:
 
 
 def parse_expression(text: str, state: ParseState) -> ParseResult:
-    """Parse exactly one expression. Raises DeriveSyntaxError.
+    """Parse exactly one expression, raising DeriveSyntaxError on failure.
 
-    Used by the Author line. For a file, go through `Source.from_file` and
-    `parse_source` instead, so comments and `~` splices are handled.
+    Used by the Author line. For files, use `Source.from_file` and `parse_source`, which
+    handle comments and `~` continuations.
     """
     source = Source.from_line(text)
     return _parse_one(source, state, 0, len(source.text))
 
 
 def source_lines(source: Source) -> Iterator[tuple[int, int]]:
-    """The span of each expression of a prepared file, in `source.text`.
+    """Yield the span in `source.text` of each expression in a prepared file.
 
-    One line, one expression: comments are already gone and a `~` continuation
-    has already joined its lines into one, so what is left is either blank or a
-    whole expression. This is where that rule lives; a caller that has to
-    survive a line which does not parse walks the spans itself.
+    After comment stripping and `~` splicing, each non-blank line is one expression.
+    Callers that must recover from a line that fails to parse iterate the spans
+    themselves.
     """
     text = source.text
     start = 0
@@ -117,11 +111,10 @@ def source_lines(source: Source) -> Iterator[tuple[int, int]]:
 
 
 def parse_source(source: Source, state: ParseState) -> Iterator[ParseResult]:
-    """Parse a .MTH/.DMO source, one expression at a time.
+    """Parse a .MTH/.DMO source lazily, one expression at a time.
 
-    Lazy by contract, not by convenience: `InputMode := Word` on line 3 must
-    change how line 5 lexes, so the caller applies each result's declarations
-    before pulling the next expression.
+    Laziness is required: `InputMode := Word` on line 3 changes how line 5 lexes, so the
+    caller must apply each result's declarations before pulling the next one.
     """
     for start, stop in source_lines(source):
         yield _parse_one(source, state, start, stop)

@@ -1,15 +1,12 @@
 """Writing an expression as a product: the rewrites, and nothing else.
 
-This is the mathematics of Derive's Factor with no command around it. It takes
-a sympy expression and gives one back, so it sits below `pipeline` and can be
-used by it: the `FACTOR` head an authored line may carry is evaluated during
-Simplify, and the Factor command is `factor.py` on top of both.
+The mathematics of Derive's Factor, sympy expression in and out. It sits below
+`pipeline`, which uses it to evaluate an authored `FACTOR`; the Factor command is
+`factor.py` on top of both.
 
-Derive's Factor has two dials and no others. The *amount* says how hard to
-try, in five steps that each do everything the one before it does and then
-more; the *factorization variables* say which variables the factors are
-allowed to be about, and everything else is left alone. There is no "factor
-out this" hint, so there is nothing here that takes one.
+Factor has two parameters. The *amount* says how hard to try, in five cumulative
+steps. The *factorization variables* say which variables factors may involve;
+everything else is left alone.
 
 The five amounts:
 
@@ -24,22 +21,17 @@ The five amounts:
 * raDical also allows fractional powers of numbers, so `x^2 - 2` splits.
 * Complex also allows complex numbers, so `x^2 + 2` splits.
 
-The first three are sympy calls. The last two are not: sympy factors over the
-rationals and over an extension it must be handed, and neither is what "as far
-as the reals allow" means. So those two work from the roots - the irreducible
-factors of the rational factorization, split by `roots` where it succeeds -
-and rebuild the product. raDical keeps a conjugate pair together as the real
-quadratic it multiplies out to, which is what leaves `x^3 - 2` as
-`(x - 2^(1/3))*(x^2 + 2^(1/3)*x + 2^(2/3))` rather than refusing to split it
-at all.
+The first three are sympy calls. Sympy factors only over the rationals or a given
+extension, not "as far as the reals allow", so the last two split each irreducible
+rational factor by its `roots` (where that succeeds) and rebuild the product. raDical
+keeps each conjugate pair together as a real quadratic, so `x^3 - 2` becomes
+`(x - 2^(1/3))*(x^2 + 2^(1/3)*x + 2^(2/3))`.
 
-A root that cannot be shown to be real is treated as real, not rejected. That
-is what factors `a*x^2 + b*x + c` into the quadratic formula, where nothing is
-known about `a`, `b` or `c` and Derive still splits it.
+A root not provably non-real is treated as real. That is how `a*x^2 + b*x + c` factors
+by the quadratic formula with nothing known about `a`, `b` or `c`, as in Derive.
 
-Every transformation is offered inside a `try` and a failure leaves the
-previous form standing, so this is as total as Simplify is: nothing sympy does
-can turn a valid entry into an error.
+Every transformation runs inside a `try`, and a failure keeps the previous form, so
+like Simplify this never turns a valid entry into an error.
 """
 
 from __future__ import annotations
@@ -55,18 +47,17 @@ from rederive.engine.shape import distributed
 
 __all__ = ["amount_named", "factored_expression"]
 
-#: What to put a factored scalar through afterwards, if anything. The precision
-#: mode is the only caller so far, and it is a callback rather than a `Context`
-#: because rounding belongs to `pipeline`, which sits above this file.
+#: Optional post-processing of a factored scalar, currently only rounding for the
+#: precision mode. It is a callback rather than a `Context` because rounding belongs
+#: to `pipeline`, which sits above this module.
 Finish = Callable[[sp.Expr], sp.Expr]
 
 
 def amount_named(word: str) -> Amount | None:
-    """The amount `word` names, however it was capitalised, or None.
+    """The amount named by `word`, case-insensitively, or None.
 
-    However it was capitalised because the word may have come from an authored
-    `FACTOR(u, Rational, x)`, and the parser's default case mode does not
-    preserve the capital that the menu spelling carries.
+    Case is ignored because the word may come from an authored `FACTOR(u, Rational,
+    x)`, and the parser's default case mode doesn't preserve the menu's capitals.
     """
     for member in Amount:
         if member.value.lower() == word.lower():
@@ -82,13 +73,11 @@ def factored_expression(
 ) -> sp.Basic:
     """`expression` written as a product, as far as `amount` allows.
 
-    `variables` names the factorization variables in the order they were
-    chosen, empty meaning all of them. Every scalar the expression is built
-    out of is factored and then passed through `finish`, so a caller that
-    rounds can round the factors rather than what they were factored from.
+    `variables` names the factorization variables in the order chosen, empty meaning
+    all. Each scalar in the expression is factored and then passed through `finish`, so
+    rounding applies to the factors rather than to the original.
 
-    Total: a rewrite that fails is a rewrite not taken, and nothing here
-    raises on anything the conversion layer produced.
+    Never raises on output of the conversion layer; a failed rewrite is skipped.
     """
     request = _Request(amount, tuple(variables), finish)
     return distributed(expression, lambda scalar: _leaf(scalar, request))
@@ -96,7 +85,7 @@ def factored_expression(
 
 @dataclass(frozen=True)
 class _Request:
-    """What was asked for, carried down to every scalar it reaches."""
+    """The factoring parameters, passed down to each scalar."""
 
     amount: Amount
     variables: tuple[str, ...]
@@ -107,10 +96,10 @@ class _Request:
 
 
 def _leaf(expression: sp.Basic, request: _Request) -> sp.Basic:
-    """One scalar, factored by the amount asked for.
+    """One scalar, factored by the requested amount.
 
-    A number is its prime decomposition whatever the amount, which is why the
-    original does not even ask for one when the whole expression is a number.
+    A number is decomposed into primes regardless of amount, which is why Derive
+    doesn't ask for an amount when the whole expression is a number.
     """
     if not isinstance(expression, sp.Expr):
         return expression
@@ -129,17 +118,14 @@ def _leaf(expression: sp.Basic, request: _Request) -> sp.Basic:
 def _generators(
     expression: sp.Expr, variables: Sequence[str]
 ) -> tuple[sp.Symbol, ...]:
-    """The factorization variables, as the symbols this expression holds.
+    """The factorization variables, as the symbols in this expression.
 
-    Named by the caller as text, because that is what a prompt collects, and
-    resolved against the expression so that the symbol carries whatever a
-    declared domain told the conversion layer about it.
+    The caller names them as text (from a prompt); resolving them against the
+    expression gets symbols carrying their declared domain assumptions.
 
-    Empty when nobody chose, and that is passed on empty rather than filled in
-    with every symbol: sympy picks its own generators then, which is the case
-    where the expression is a polynomial in something that is not a symbol at
-    all - `SIN(x)^2 - 1` factors in `SIN(x)`, and naming `x` would say it
-    factors in nothing.
+    If none were chosen this stays empty rather than listing every symbol, so sympy
+    picks its own generators. That matters for polynomials in non-symbols: `SIN(x)^2 -
+    1` factors in `SIN(x)`, but not in `x`.
     """
     free = {symbol.name: symbol for symbol in expression.free_symbols}
     return tuple(free[name] for name in variables if name in free)
@@ -151,9 +137,8 @@ def _generators(
 def _trivial(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:
     """Over a common denominator, with the content pulled out.
 
-    The generators are not consulted. Trivial content is the gcd of the
-    coefficients and the least power of every variable that occurs, which is
-    the same expression whichever variables were named.
+    The generators are ignored: the content (gcd of the coefficients and the least
+    power of each variable) is the same whichever variables were named.
     """
     return sp.factor_terms(sp.together(expression))
 
@@ -161,8 +146,8 @@ def _trivial(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:
 def _squarefree(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:
     """Trivial content, plus the perfect powers split off.
 
-    Numerator and denominator separately, because `sqf` wants a polynomial and
-    a ratio of two factored polynomials is the factored ratio.
+    Numerator and denominator are handled separately, because `sqf` needs a
+    polynomial.
     """
     numerator, denominator = sp.fraction(sp.together(expression))
     top = sp.sqf(numerator, *generators)
@@ -172,12 +157,12 @@ def _squarefree(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Ex
 
 
 def _rational(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:
-    """As far as it goes over the rationals.
+    """Factored over the rationals.
 
-    `factor` restricted to the chosen generators is exactly Derive's rule that
-    a subexpression in none of the factorization variables is left alone:
-    factoring `x^2*y^2 - x^2 - y^4 + y^2` about `x` alone keeps `y^2 - 1`
-    whole, where naming both variables splits it.
+    Restricting `factor` to the chosen generators matches Derive's rule that
+    subexpressions free of the factorization variables are left alone: factoring
+    `x^2*y^2 - x^2 - y^4 + y^2` about `x` keeps `y^2 - 1` whole, but about both splits
+    it.
     """
     return sp.factor(expression, *generators)
 
@@ -210,10 +195,8 @@ def _from_roots(
 ) -> sp.Expr:
     """The rational factorization, with each factor split by its roots.
 
-    Splitting happens in the primary factorization variable - the first one
-    chosen - which is what makes the choice an ordering and not just a set.
-    With nothing chosen it is the first variable by name, since one of them
-    has to go first and the expression itself offers no order.
+    Splitting happens in the primary (first chosen) factorization variable, so the
+    choice is ordered. With none chosen, the alphabetically first variable is used.
     """
     variable = generators[0] if generators else _primary(expression)
     content, factors = sp.factor_list(expression, *generators)
@@ -230,19 +213,16 @@ def _primary(expression: sp.Expr) -> sp.Symbol:
 
 
 def _split(base: sp.Expr, variable: sp.Symbol, complex_allowed: bool) -> sp.Expr:
-    """One factor irreducible over the rationals, split by its roots.
+    """A factor irreducible over the rationals, split by its roots.
 
-    Comes back as it went in unless every root is known: `roots` answers with
-    what it could solve, and a partial answer is no factorization. A quintic
-    it cannot crack is a factor that stays whole, which is the honest result
-    rather than a numeric approximation nobody asked for.
+    Returned unchanged unless `roots` finds all roots; a partial answer is no
+    factorization. An unsolvable quintic thus stays whole rather than being
+    approximated numerically.
 
-    `trig` is Viete's solution of the cubic, and asking for it changes nothing
-    but the casus irreducibilis - the irreducible cubic whose three roots are
-    all real, which Cardano's formula can only write through `#i`. The
-    trigonometric form is real on its face, so the reals allow what the
-    radicals hid: `x^3 - 3*x + 1` splits under raDical rather than staying
-    whole for want of a root that could be shown real.
+    `trig` requests Viete's solution of the cubic, which only affects the casus
+    irreducibilis: an irreducible cubic with three real roots that Cardano's formula
+    can only write using `#i`. The trigonometric form is visibly real, so `x^3 - 3*x +
+    1` splits under raDical.
     """
     polynomial = sp.Poly(base, variable)
     if polynomial.degree() < 2:
@@ -265,15 +245,12 @@ def _split(base: sp.Expr, variable: sp.Symbol, complex_allowed: bool) -> sp.Expr
 
 
 def _linear(variable: sp.Symbol, root: sp.Expr) -> sp.Expr:
-    """The factor `x - r`, with the minus sign wherever the original puts it.
+    """The factor `x - r`, with the minus sign placed as Derive does.
 
-    Over a common denominator either way, since a root of a quadratic is a
-    quotient and the original writes it as one. Which side of the bar the sign
-    lands on is what is left to choose, and the original leaves it out of the
-    numerator: the quadratic formula's two factors are
-    `x + (SQRT(b^2 - 4*a*c) + b)/(2*a)` and `x - (SQRT(b^2 - 4*a*c) - b)/(2*a)`
-    (4.6, p.79), each written with the sign in the operator rather than on the
-    leading term underneath it.
+    The root is put over a common denominator, as Derive writes it. A leading minus
+    goes into the operator rather than the numerator: the quadratic formula's factors
+    are `x + (SQRT(b^2 - 4*a*c) + b)/(2*a)` and `x - (SQRT(b^2 - 4*a*c) - b)/(2*a)`
+    (manual 4.6, p.79).
     """
     root = sp.together(root)
     if root.could_extract_minus_sign():
@@ -282,12 +259,11 @@ def _linear(variable: sp.Symbol, root: sp.Expr) -> sp.Expr:
 
 
 def _paired(roots: list[sp.Expr], variable: sp.Symbol) -> list[sp.Expr] | None:
-    """The complex roots, two by two, as the real quadratics they multiply to.
+    """The complex roots, paired into conjugates, as the real quadratics they give.
 
-    This is what "as far as the reals allow" means: a conjugate pair has no
-    real linear factors but their product has real coefficients, so the pair
-    becomes one quadratic rather than nothing. None when a root has no partner
-    here, which leaves the whole factor alone rather than half-split.
+    A conjugate pair has no real linear factors, but its product is a real
+    quadratic. Returns None if a root has no conjugate, so the whole factor is left
+    alone rather than half-split.
     """
     remaining = list(roots)
     quadratics = []
@@ -311,9 +287,8 @@ def _paired(roots: list[sp.Expr], variable: sp.Symbol) -> list[sp.Expr] | None:
 def _quadratic(variable: sp.Symbol, root: sp.Expr, mate: sp.Expr) -> sp.Expr:
     """`(x - r)*(x - conj(r))` multiplied out and collected about `x`.
 
-    Collected rather than left expanded so that the coefficient of `x` is one
-    number: `x^2 + x*(1 - SQRT(5))/2 + 1` rather than the same thing with the
-    `x` term split in two.
+    Collected so the coefficient of `x` is a single term: `x^2 + x*(1 - SQRT(5))/2 +
+    1` rather than having the `x` term split in two.
     """
     product = sp.collect(sp.expand((variable - root) * (variable - mate)), variable)
     if not product.is_Add:
@@ -327,15 +302,11 @@ def _quadratic(variable: sp.Symbol, root: sp.Expr, mate: sp.Expr) -> sp.Expr:
 def _decomposed(expression: sp.Expr) -> sp.Expr:
     """A rational number as a product of prime powers.
 
-    `1234567890/49` is `2*3^2*5*3607*3803/7^2`: the denominator's primes come
-    back with negative exponents, which is the same product written where the
-    notation can hold it. A negative number keeps its sign outside the product,
-    as `-12` -> `-2^2*3`, rather than carrying a factor of -1.
+    `1234567890/49` is `2*3^2*5*3607*3803/7^2`, the denominator's primes having
+    negative exponents. A negative number keeps its sign outside, as `-12` ->
+    `-2^2*3`, rather than carrying a factor of -1.
 
-    Anything that is not a rational number - a root, a constant, a float - has
-    no prime decomposition and comes back as itself, and so does a number with
-    nothing to decompose: 0, 1, -1 and the primes are already written as a
-    product of primes.
+    Non-rationals (roots, constants, floats) are returned as is, as are 0, 1 and -1.
     """
     if not isinstance(expression, sp.Rational) or expression in (0, 1, -1):
         return expression
@@ -345,28 +316,20 @@ def _decomposed(expression: sp.Expr) -> sp.Expr:
 def _primes(number: sp.Rational) -> sp.Expr:
     """`number` as a product of prime powers, built rather than evaluated.
 
-    Every piece has to be assembled unevaluated: sympy would otherwise
-    multiply the product straight back into the integer it came from, which is
-    the one thing this must not return. A negative number is negated as a
-    whole, rather than given a factor of -1 to carry, so that the sign lands
-    before the product where the original puts it.
+    The pieces are assembled unevaluated, since sympy would otherwise multiply them
+    back into the original integer. A negative number is negated as a whole, putting
+    the sign before the product as Derive does.
 
-    The whole is held unevaluated for a second reason as well. A decomposition
-    says what divides what, so no precision mode may round it - Derive prints
-    `2*3^2*5*3607*3803` in Approximate mode too - and rounding it would lose
-    the number and not just the factors, six significant digits of
-    `1234567890` being a different integer. Sealing it here means every caller
-    is exempt without having to know it needs to be.
+    The `UnevaluatedExpr` wrapper also keeps any precision mode from rounding it:
+    Derive prints `2*3^2*5*3607*3803` in Approximate mode too, and six significant
+    digits of `1234567890` would be a different integer. Sealing it here exempts every
+    caller automatically.
 
-    The search is unbounded, which is the one computation here with no upper
-    cost: a sixty-digit semiprime pegs a core for as long as it is left to.
-    Bounding it is worse than not, because a bound is `limit=`, and that is not
-    a budget - sympy switches elliptic-curve factoring off entirely when it is
-    given one, and hands back a residual it never even tested for primality.
-    So a bounded search is slower *and* answers with a composite written among
-    the primes. Running it out instead means every factorization is complete,
-    and the cost of the hopeless number is Escape, which takes the worker down
-    with the computation still in it.
+    The search is unbounded, so a sixty-digit semiprime can occupy a core
+    indefinitely. Bounding it with `limit=` is worse: sympy then disables
+    elliptic-curve factoring and may return an untested composite among the primes,
+    so it is slower *and* wrong. Unbounded, every factorization is complete, and a
+    hopeless number can be aborted with Esc.
     """
     powers = sp.factorrat(abs(number))
     pieces = [

@@ -1,13 +1,7 @@
-"""What an antiderivative is printed as.
+"""Choosing the printed form of an antiderivative.
 
-An indefinite integral is one antiderivative out of many, and which one is printed is
-a choice rather than a result. `antiderivative` is where an answer `indefinite` has
-taken is put through that choice: the case of a split worth printing, the constants
-taken out, the logarithms matched, the form continuous wherever the integrand is.
-What its gate asks of an answer before it is taken is here too, being a question of
-its form: whether it is on the principal sheet, whether it says something for every
-value of the variable, which case of a split holds, and whether the notation can say
-it.
+`antiderivative` picks which antiderivative of an accepted answer to print. The form
+checks `indefinite` applies before accepting an answer also live here.
 """
 
 from __future__ import annotations
@@ -36,30 +30,15 @@ __all__ = [
 
 
 def antiderivative(head: sp.Basic, value: sp.Basic, tabled: bool = False) -> sp.Basic:
-    """An answer taken for an integral, in the form Derive writes it in.
+    """An accepted answer to an integral, in the form Derive writes it.
 
-    An indefinite integral is one antiderivative out of many: any two of them
-    differ by a constant, and which one is printed is a choice rather than a
-    result. Derive prints the one with no constant added and never a case split
-    where a single antiderivative serves everywhere. Sympy's tables make the
-    other choice both times, so the choice is made here.
+    Derive prints the antiderivative with no added constant, and avoids a case split
+    where one antiderivative works everywhere; sympy's tables do neither. Definite and
+    unevaluated integrals are left alone, apart from dropping a parameter split that
+    distinguishes nothing.
 
-    Nothing is taken out of a definite integral, where a constant does not
-    cancel but is part of the answer, nor out of an integral that was not done:
-    neither has an antiderivative in hand to choose among. A definite integral's
-    split over a parameter is still dropped where it distinguishes nothing.
-
-    Where a parametrised answer carries a logarithm, the manual rules are asked for a
-    shorter one, as `_shorter_by_the_manual_rules` explains: not where the answer is
-    `tabled`, written the way the integral tables write it already or by the manual
-    rules themselves.
-
-    The rational part of an antiderivative of a rational function is written over the
-    factors of its denominator, with the constant that makes it vanish at zero where
-    that is shorter, as `_with_a_factored_rational_part` explains.
-
-    Whether the answer is one to take at all is not asked here: `indefinite` has
-    proved it, or knows it right by construction, before it is handed over.
+    Unless the answer is `tabled`, a parametrized answer with a logarithm is offered to
+    the manual rules for a shorter form. The answer is assumed already proved.
     """
     if len(head.limits) != 1 or value.has(sp.Integral):
         return value
@@ -79,10 +58,10 @@ def antiderivative(head: sp.Basic, value: sp.Basic, tabled: bool = False) -> sp.
     return forced(value, lambda v: _with_a_factored_rational_part(v, integrand, variable))
 
 
-#: The integrals of 6.11 with a logarithmic singularity at zero, and the logarithm of
-#: the same argument that takes it off: `CI(z) - LN(z)` and `COSH_INT(z) - LN(z)` are
-#: entire, the two sharing a branch cut, and `EI(z) - LN(z^2)/2` is continuous and
-#: real along the real line, where `EI` is real on both sides of zero.
+#: The 6.11 integrals with a logarithmic singularity at zero, mapped to the logarithm of
+#: the same argument that cancels it: `CI(z) - LN(z)` and `COSH_INT(z) - LN(z)` are
+#: entire (the two share a branch cut), and `EI(z) - LN(z^2)/2` is continuous and real
+#: on the real line, where `EI` is real on both sides of zero.
 _WITH_A_LOGARITHM: dict[type, Callable[[sp.Basic], sp.Basic]] = {
     sp.Ci: sp.log,
     sp.Chi: sp.log,
@@ -91,19 +70,15 @@ _WITH_A_LOGARITHM: dict[type, Callable[[sp.Basic], sp.Basic]] = {
 
 
 def _with_matching_logarithms(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """An antiderivative with the logarithms that cancel the singularities of integrals
-    of 6.11 written over those integrals' arguments.
+    """An antiderivative whose logarithms are rewritten over the arguments of the 6.11
+    integrals whose singularities they cancel.
 
-    `INT(SIN(a*x)^2/x, x)` is `LN(x)/2 - CI(2*a*x)/2`, whose derivative is the
-    integrand on each side of zero; but for a negative `a` the logarithm and the
-    cosine integral take their imaginary parts on opposite sides, and the answer jumps
-    by `#i*pi/2` at zero, where the integrand is regular. So does `CI(a*x) - CI(b*x)`
-    where `a` and `b` differ in sign. Where terms `c_j*LN(L_j)` and `d_k*CI(u_k)`, every
-    `L_j` and `u_k` a multiple of one polynomial of degree 1 in the variable, have
-    coefficients that add up to zero, the logarithms are written as the sum of
-    `-d_k*LN(u_k)`. That differs from them by a constant on each side of zero and
-    makes the whole continuous through it. Logarithms that do not cancel the
-    singularities are left as they are: the integrand is singular there itself.
+    `INT(SIN(a*x)^2/x, x)` is `LN(x)/2 - CI(2*a*x)/2`, but for negative `a` the two
+    take their imaginary parts on opposite sides of zero, so the answer jumps by
+    `#i*pi/2` where the integrand is regular. When logarithm and 6.11 terms in
+    multiples of one linear argument have coefficients summing to zero, the logarithms
+    are replaced by `-d_k*LN(u_k)`, which differs by a constant on each side and is
+    continuous.
     """
     if not isinstance(value, sp.Basic) or not value.has(*_WITH_A_LOGARITHM):
         return value
@@ -146,31 +121,17 @@ def _with_matching_logarithms(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
 def _with_a_factored_rational_part(
     value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic:
-    """An antiderivative of a rational function with its rational part written over
-    the factors of its denominator, and with the constant that makes that part vanish
-    at zero where that writes it shorter.
+    """An antiderivative of a rational function with its rational part written over the
+    factors of its denominator, shifted to vanish at zero when that is shorter.
 
-    The rational part is the sum of the terms that are rational functions of the
-    variable and not polynomials in it: what Hermite's reduction splits off, over
-    `gcd(q, q')` for the integrand's denominator `q`. That denominator is a product of
-    powers of the square-free factors of `q`, and multiplied out it hides them:
-    `INT(1/(1 + x)^3, x)` is `-1/(2*(x + 1)^2)`, which says where its pole is, and not
-    `-1/(2*x^2 + 4*x + 2)`. So the denominator is written as a factor free of the
-    variable times a power of each of the factors `_denominator_factors` finds, by
-    dividing them out: the irreducible factors of `q`, but with a binomial such as
-    `x^3 + 1` kept whole. Where the factored quotient reads back multiplied out, as
-    `_multiplied_when_read` says, it is left multiplied out, and so it is where the
-    factored part would have the whole answer put over one denominator, as
-    `_merged_only_when_factored` says.
+    `INT(1/(1 + x)^3, x)` should be `-1/(2*(x + 1)^2)`, not `-1/(2*x^2 + 4*x + 2)`. The
+    denominator is written over `_denominator_factors`, unless the factored form would
+    read back multiplied out anyway (`_multiplied_when_read`) or would make the whole
+    answer merge over one denominator (`_merged_only_when_factored`).
 
-    The rational part `R` and `R - R(0)` are antiderivatives alike, and the second is
-    taken where its numerator has fewer terms: `INT(x^4/(1 + x)^6, x)` is
-    `x^5/(5*(x + 1)^5)`, where `R` is a quartic over the same denominator. Only where
-    `q(0)` is known not to be zero for any value of the parameters: where it may be,
-    `R(0)` has a pole there that `R` does not, as at `a = 0` in `INT(x^4/(a + b*x)^6,
-    x)`, and `R - R(0)` would be undefined for a value of the parameters the integral
-    is defined for. The rest of the answer, its polynomial and its logarithms and
-    arctangents, is left as it is.
+    `R - R(0)` is used if its numerator is shorter (`INT(x^4/(1 + x)^6, x)` is
+    `x^5/(5*(x + 1)^5)`), but only if `q(0)` is nonzero for every parameter value;
+    otherwise `R(0)` adds a pole, as at `a = 0` in `INT(x^4/(a + b*x)^6, x)`.
     """
     if integrand.is_rational_function(variable) is not True:
         return value
@@ -202,8 +163,8 @@ def _with_a_factored_rational_part(
 
 
 def _shorter_at_zero(part: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
-    """`R - R(0)` for the cancelled rational part `R`, where `R(0)` is other than zero
-    and the numerator of the difference has fewer terms than that of `R`, or None."""
+    """`R - R(0)` for the cancelled rational part `R`, if `R(0)` is nonzero and the
+    difference has a numerator with fewer terms than `R`'s, otherwise None."""
     numerator, denominator = sp.fraction(part)
     below = sp.cancel(denominator.subs(variable, 0))
     if below == 0:
@@ -219,14 +180,12 @@ def _shorter_at_zero(part: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
 
 
 def _denominator_factors(q: sp.Poly) -> list[sp.Poly]:
-    """The factors the rational part's denominator is written over, from the
-    integrand's cancelled denominator `q`.
+    """The factors to write the rational part's denominator over, from the integrand's
+    cancelled denominator `q`.
 
-    Each square-free factor of `q` is split into the variable, where the variable
-    divides it, and the rest. The rest is factored over the rationals, unless it is a
-    binomial `a*x^n + b`, which is a factor whole: `x^4 + 3*x^2 + 2` gives `x^2 + 1`
-    and `x^2 + 2`, `x^3 - x` gives `x` and `x^2 - 1`, and `x^3 + 1` stays as it is. A
-    factor that cannot be factored is taken whole.
+    Each square-free factor of `q` is split into a power of the variable and the rest,
+    which is factored over the rationals unless it is a binomial: `x^4 + 3*x^2 + 2`
+    gives `x^2 + 1` and `x^2 + 2`, but `x^3 + 1` stays whole.
     """
     variable = q.gens[0]
     factors: list[sp.Poly] = []
@@ -250,11 +209,9 @@ def _denominator_factors(q: sp.Poly) -> list[sp.Poly]:
 
 
 def _over_the_factors(part: sp.Basic, bases: list[sp.Poly]) -> sp.Basic | None:
-    """The cancelled rational part over a factor free of the variable times a power of
-    each of `bases`, or None where its denominator is no such product.
-
-    The factor free of the variable is written square-free in the parameters,
-    `2*(4*a*c - b^2)^2` and not a polynomial of degree four in them.
+    """The cancelled rational part over a constant times powers of `bases`, or None if its
+    denominator isn't such a product. The constant is written square-free in the
+    parameters.
     """
     if not bases:
         return None
@@ -278,14 +235,11 @@ def _over_the_factors(part: sp.Basic, bases: list[sp.Poly]) -> sp.Basic | None:
 
 
 def _merged_only_when_factored(factored: sp.Basic, multiplied: sp.Basic) -> bool:
-    """Whether the simplifier would put the whole answer over one denominator with its
-    rational part factored, and not with it multiplied out.
+    """Whether the simplifier would merge the whole answer over one denominator with its
+    rational part factored, but not with it multiplied out.
 
-    Simplify keeps `radsimp`'s answer over one denominator wherever that counts fewer
-    operations, and a factored denominator is a common factor `radsimp` can merge
-    every other term over: `INT(1/(x^6 + 16)^2, x)`, its logarithms and arctangents
-    carrying `2^(2/3)`, would come back as one quotient twice the length of the sum.
-    Such an answer keeps its rational part multiplied out.
+    A factored denominator gives `radsimp` a common factor to merge everything over:
+    for `INT(1/(x^6 + 16)^2, x)` the result is twice as long as the sum.
     """
     return pays(sp.radsimp(factored), factored) and not pays(
         sp.radsimp(multiplied), multiplied
@@ -293,27 +247,20 @@ def _merged_only_when_factored(factored: sp.Basic, multiplied: sp.Basic) -> bool
 
 
 def _multiplied_when_read(written: sp.Basic) -> bool:
-    """Whether the quotient is a sum over a number times a single sum, which is read
-    back over that denominator multiplied out.
-
-    Sympy multiplies a number into a sum as it builds the product of the two, so
-    `(3 - 4*x)/(2*(x^2 + 1))` reads back as `(3 - 4*x)/(2*x^2 + 2)`, and it is that form
-    that a second Simplify keeps.
+    """Whether the quotient is a sum over a number times a sum, which sympy reads back
+    with the denominator multiplied out: `(3 - 4*x)/(2*(x^2 + 1))` becomes `(3 -
+    4*x)/(2*x^2 + 2)`.
     """
     numerator, denominator = sp.fraction(written)
     return numerator.is_Add and denominator.is_Add
 
 
 def somewhere_only(value: sp.Basic) -> bool:
-    """Whether the answer is a split that leaves some values of the variable without
-    a case, and so says nothing there.
+    """Whether the answer is a split that leaves some values of the variable without a
+    case.
 
-    Sympy's rule for a trigonometric substitution writes the condition it was made
-    under into its answer: `INT(SQRT(x^2 - 1)/x, x)` comes back as `SQRT(x^2 - 1) -
-    ACOS(1/x)` where `-1 < x < 1`, and no case otherwise. That is the interval where
-    the integrand is not real, and the answer is undefined on the whole of the real
-    line where the integral is something. An antiderivative has to be one wherever
-    the integrand is defined, so an answer like this is no answer.
+    Sympy's trigonometric substitution answers `INT(SQRT(x^2 - 1)/x, x)` only for `-1 <
+    x < 1`, exactly where the integrand isn't real. Such an answer is rejected.
     """
     return any(
         split.args[-1].cond is not sp.true for split in value.atoms(sp.Piecewise)
@@ -323,11 +270,9 @@ def somewhere_only(value: sp.Basic) -> bool:
 def anywhere(
     value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic | None:
-    """The one case of an answer `somewhere_only` refuses, where it differentiates
-    back to the integrand for every value of the variable, or None.
-
-    `INT(1/(x^2*SQRT(x^2 - 1)), x)` comes back as `SQRT(x^2 - 1)/x` under the same
-    condition, and the condition is all that is wrong with it.
+    """The single case of an answer refused by `somewhere_only`, if it differentiates back
+    unconditionally, otherwise None. For `INT(1/(x^2*SQRT(x^2 - 1)), x)` the condition
+    is the only thing wrong.
     """
     folded = attempt(value, sp.piecewise_fold)
     if not isinstance(folded, sp.Piecewise) or len(folded.args) != 1:
@@ -339,23 +284,15 @@ def anywhere(
 def _shorter_by_the_manual_rules(
     head: sp.Basic, value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic:
-    """The answer the manual rules give, where it pays over sympy's and holds.
+    """The manual rules' answer, if it is shorter than sympy's and holds.
 
-    Over a parameter whose sign it does not know, sympy's rational integrator can
-    tell the real roots of a denominator from the complex ones no better than the
-    reader can, and writes the logarithms it would otherwise have paired into
-    arctangents: `INT(1/(x^2 + a), x)` is `SQRT(-1/a)*LN(x + a*SQRT(-1/a))/2 -
-    SQRT(-1/a)*LN(x - a*SQRT(-1/a))/2` to it. That is an antiderivative, and the
-    manual rules have a shorter one - `ATAN(x/SQRT(a))/SQRT(a)`, under the condition
-    that `a` is positive, which `single_case` finds says nothing - and the shorter
-    one is what Derive prints for every `a`. So where a parametrised answer carries a
-    logarithm, the manual rules are asked as well, and theirs is printed where it is
-    shorter and differentiates back unconditionally.
+    With a parameter of unknown sign, sympy's rational integrator can't tell real roots
+    from complex ones and leaves `INT(1/(x^2 + a), x)` as a pair of logarithms. The
+    manual rules give `ATAN(x/SQRT(a))/SQRT(a)`, which Derive prints for every `a`.
 
-    Not over a quadratic with parametric coefficients, which `engine.rational`
-    already writes the table's way, as one logarithm and one arctangent of it: the
-    manual rules spend most of a minute on `INT(1/(x*(a*x^2 + b*x + c)^3), x)` to find
-    nothing shorter.
+    Skipped for a quadratic with parametric coefficients, which `engine.rational`
+    already writes the table's way, and where the manual rules can spend a minute
+    finding nothing.
     """
     manual = _by_the_manual_rules(head, integrand, variable)
     if manual is None:
@@ -367,16 +304,12 @@ def _shorter_by_the_manual_rules(
 
 
 def _plainly_rational(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the integrand is a rational function of the variable over a quadratic
-    with parametric coefficients and no linear term, and the answer's logarithms are
-    all of polynomials in it with polynomial coefficients, free of roots, `#i` and
-    fractions.
+    """Whether the integrand is rational over a parametric quadratic with no linear term,
+    and the answer's logarithms are all of plain polynomials.
 
-    The manual rules improve on the logarithms of a pair of roots the rational
-    integrator could not tell were complex, as those of `x^2 + a`; where the quadratic
-    came out real, as `x^2 + a^2` does, they find nothing shorter, and spend ten
-    seconds on `INT(1/(x*(a^2 + x^2)^3), x)`, whose answer is in `LN(x)` and `LN(x^2 +
-    a^2)`, to find it.
+    The manual rules only improve on logarithms of roots the rational integrator
+    couldn't tell were complex (`x^2 + a`). For a real quadratic like `x^2 + a^2` they
+    find nothing shorter and can spend ten seconds doing it.
     """
     if not over_a_parametric_quadratic(integrand, variable, binomials=True):
         return False
@@ -394,37 +327,21 @@ def _plainly_rational(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) 
 
 
 def continuous(value: sp.Basic, variable: sp.Basic | None) -> sp.Basic:
-    """An antiderivative made continuous in its parameters, where a constant does it.
+    """An antiderivative made continuous in its parameters, where subtracting a constant
+    achieves that.
 
-    `INT(x^n, x)` is `x^(n + 1)/(n + 1)` for every `n` but `-1`, and `LN(x)` there,
-    and sympy answers with that case split. But the integrand is analytic in `n` at
-    `-1`, so the integral from any fixed point is too, and the pole in the formula
-    is nowhere but in its constant of integration: `(x^(n + 1) - 1)/(n + 1)` is an
-    antiderivative for every `n`, with `LN(x)` as its limit. That is the one Derive
-    prints, and the split was never about the integral.
+    Sympy answers `INT(x^n, x)` with a split at `n = -1`, but the pole is only in the
+    constant of integration: `(x^(n + 1) - 1)/(n + 1)` works for every `n`, with
+    `LN(x)` as its limit, and is what Derive prints. So for each pole a parameter
+    introduces, its principal part is subtracted if it is free of the variable.
+    Otherwise the integrand itself is singular and the split stays, as it does for a
+    branch point.
 
-    So every pole a parameter puts into the answer is looked at. Its principal part
-    - the terms of the Laurent expansion that blow up - is a constant of
-    integration wherever it is free of the variable, and is taken out. Where it
-    depends on the variable the integrand itself is singular there, the split is
-    doing real work, and it stays; so does one whose expansion is no Laurent series
-    at all, a fractional power or a logarithm of the parameter being a branch point
-    rather than a pole.
-
-    Derive does this where its tables happen to, which is for powers and
-    exponentials: `INT(SIN(a*x), x)` is `-COS(a*x)/a` to it, undefined at `a = 0`
-    for no reason the integral knows of. Here it is done for every parameter, and
-    the answers Derive subtracts from come out identical.
-
-    With no variable to be free of, as in a definite integral, nothing may be
-    subtracted; a split still goes where the generic case has no pole to begin
-    with, `INT(x^n, x, 1, 2)` being `(2^(n + 1) - 1)/(n + 1)` with `LN(2)` as its
-    limit.
-
-    A parameter's pole can be spread over denominators that also carry the
-    variable - `a^2*TAN(a*x/2) + a^2` - where it is no divisor of its own. Where
-    none is found as written, the common factors are taken out and it is looked
-    for again.
+    Derive does this only for powers and exponentials (it gives `INT(SIN(a*x), x)` as
+    `-COS(a*x)/a`); here it is done for every parameter. With no variable (a definite
+    integral) nothing is subtracted, but a split is still dropped where the generic
+    case has no pole. If no pole is found as written, common factors are pulled out
+    first, since a pole can hide in denominators like `a^2*TAN(a*x/2) + a^2`.
     """
     folded = attempt(value, sp.piecewise_fold)
     if not isinstance(folded, sp.Piecewise):
@@ -447,13 +364,11 @@ def continuous(value: sp.Basic, variable: sp.Basic | None) -> sp.Basic:
 def _regularized(
     expression: sp.Basic, variable: sp.Basic | None
 ) -> tuple[sp.Basic, bool, bool]:
-    """The expression less the constant principal parts of its parameter poles.
+    """The expression minus the constant principal parts of its parameter poles.
 
-    Returns the result, whether any pole was examined, and whether any was left in
-    place. The expansion is taken in the divisor itself rather than in the
-    parameter: `INT(a^x, x)` has its pole where `LN(a)` vanishes, and expanding in
-    `LN(a)` subtracts `1/LN(a)`, which is Derive's constant, where expanding in
-    `a - 1` would subtract `1/(a - 1)`, an uglier constant for the same answer.
+    Returns the result, whether any pole was examined, and whether any was kept. The
+    expansion is in the divisor itself, so `INT(a^x, x)` subtracts Derive's `1/LN(a)`
+    rather than `1/(a - 1)`.
     """
     found = kept = False
     for divisor in parametric_divisors(expression, variable):
@@ -471,8 +386,8 @@ def _regularized(
 
 
 def parametric_divisors(expression: sp.Basic, variable: sp.Basic | None) -> list:
-    """The bases divided by in the expression that are free of the variable but not
-    of symbols: each is somewhere a parameter puts a pole into the answer."""
+    """The divisors in the expression that contain symbols but not the variable; each
+    is where a parameter puts a pole into the answer."""
     divisors = {
         power.base
         for power in expression.atoms(sp.Pow)
@@ -484,12 +399,11 @@ def parametric_divisors(expression: sp.Basic, variable: sp.Basic | None) -> list
 
 
 def _principal_part(expression: sp.Basic, divisor: sp.Basic) -> sp.Basic | None:
-    """The terms of the expression's Laurent expansion in the divisor that blow up
-    where it vanishes, or None where there is no such expansion to speak of.
+    """The diverging terms of the expression's Laurent expansion in the divisor, or None
+    if there is none.
 
-    A divisor in more than one parameter, or one that does not determine its
-    parameter, is passed over. A power of one that does - `n^2 + 2*n + 1`, which is
-    `(n + 1)^2` - is expanded in what it is a power of.
+    A divisor in several parameters, or one that can't be solved for its parameter, is
+    skipped; a power such as `(n + 1)^2` is expanded in its base.
     """
     if len(divisor.free_symbols) != 1:
         return None
@@ -522,24 +436,18 @@ def _principal_part(expression: sp.Basic, divisor: sp.Basic) -> sp.Basic | None:
     return principal.subs(coordinate, divisor)
 
 
-#: Functions with a logarithmic branch point where their argument is plus or minus
-#: this.
+#: Functions with a logarithmic branch point where their argument is plus or minus the
+#: given value.
 _BRANCH_POINTS = {sp.log: 0, sp.atan: sp.I, sp.acot: sp.I, sp.atanh: 1, sp.acoth: 1}
 
 
 def _logarithmic_branch_point(expression: sp.Basic, coordinate: sp.Basic) -> bool:
-    """Whether the expression holds a logarithm or an inverse tangent whose argument
-    is at a branch point where the coordinate is zero, so that it has no Laurent
-    expansion there.
+    """Whether the expression has a logarithm or inverse tangent at a branch point when
+    the coordinate is zero, so there is no Laurent expansion.
 
-    Sympy's `series` takes many seconds to find that out about an arctangent: in
-    the coefficient `a`, `INT(x^2/(a*x^2 + b*x + c), x)` is over `ATAN((2*a*x +
-    b)/SQRT(4*a*c - b^2))`, which is `ATAN(-#i*b/ABS(b))` where `a` is zero.
-
-    An arctangent whose argument goes to complex infinity is taken as no expansion
-    either: it tends to plus or minus `pi/2` by the side and the sign of what is
-    divided, and sympy spends most of a minute on `ATAN((c - 2*a^2*x)/(2*a*SQRT(b +
-    c*x - a^2*x^2)))` in `a` to find that out.
+    Checked directly because sympy's `series` takes seconds to a minute to find out,
+    for example for `INT(x^2/(a*x^2 + b*x + c), x)` at `a = 0`. An arctangent whose
+    argument goes to complex infinity also counts.
     """
     for call in expression.atoms(*_BRANCH_POINTS):
         if not call.has(coordinate):
@@ -558,17 +466,13 @@ def _logarithmic_branch_point(expression: sp.Basic, coordinate: sp.Basic) -> boo
 
 
 def unwritable(value: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether an antiderivative holds, in the variable, a function the notation has
-    no word for.
+    """Whether an antiderivative contains a function of the variable the notation can't
+    express.
 
-    Such an answer is declined whatever it proves to be: `is_written` turns it down
-    before it reaches the worksheet, and nothing between here and there takes a
-    function of the variable out of it. So it is refused, as an unproved answer is,
-    before it is put to `differentiates_back`, which would run `sympy.simplify` over a
-    hypergeometric series to find out - for seconds, and for nothing. A constant the
-    notation cannot say is not what decides, since `_without_constants` may yet drop
-    it, and a case split is left to `single_case` to narrow before anything is said
-    about it.
+    `is_written` would reject it later anyway, so refusing it now saves
+    `differentiates_back` seconds of simplifying a hypergeometric series. Constants and
+    case splits don't count, since `_without_constants` and `single_case` may remove
+    them.
     """
     if value.has(sp.Piecewise):
         return False
@@ -585,18 +489,12 @@ def unwritable(value: sp.Basic, variable: sp.Basic) -> bool:
 def on_the_principal_sheet(
     value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic:
-    """An antiderivative with its full turns about the origin taken out, where that
-    leaves one.
+    """An antiderivative with full turns about the origin removed, if it still
+    differentiates back.
 
-    Sympy's Meijer G route answers `INT(LN(1 - x)/x, x)` with
-    `-POLYLOG(2, x*EXP_POLAR(2*pi*#i))`: the polylogarithm on the sheet a full turn
-    away, which differs from the principal one past the cut at 1 and so is a mark
-    `unpolarify` keeps. A full turn is still the number 1, though, and dropping it
-    gives `-POLYLOG(2, x)`, which is an antiderivative in its own right; any
-    antiderivative is a right answer to an indefinite integral. So the turns are
-    dropped and the result kept where it differentiates back to the integrand, which
-    is decided rather than merely not refuted. A mark of any other angle, such as the
-    half turn in `EI(x*EXP_POLAR(pi*#i))`, moves the argument and is not touched.
+    Sympy's Meijer G route answers `INT(LN(1 - x)/x, x)` with `-POLYLOG(2,
+    x*EXP_POLAR(2*pi*#i))`. A full turn is the number 1, and `-POLYLOG(2, x)` is also
+    an antiderivative. Other angles actually move the argument and are kept.
     """
     if not value.has(sp.exp_polar):
         return value
@@ -616,7 +514,7 @@ def on_the_principal_sheet(
 
 
 def _full_turns(angle: sp.Basic) -> bool:
-    """Whether a polar angle is a whole number of turns, and so leaves 1 where it is."""
+    """Whether a polar angle is a whole number of turns, i.e. the factor is 1."""
     turns = attempt(angle, lambda a: a / (2 * sp.pi * sp.I))
     return bool(turns is not None and turns.is_integer)
 
@@ -624,9 +522,8 @@ def _full_turns(angle: sp.Basic) -> bool:
 def _by_the_manual_rules(
     head: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic | None:
-    """The integral again by the rules a calculus course teaches, where it is proved
-    to differentiate back and the notation can say it, or None: what is not is no
-    improvement on the answer already taken."""
+    """The integral computed by sympy's manual (textbook) rules, if the result is
+    expressible and proved to differentiate back, otherwise None."""
     manual = attempt(head, lambda h: h.doit(deep=False, manual=True))
     if manual is None or manual.has(sp.Integral):
         return None
@@ -636,27 +533,15 @@ def _by_the_manual_rules(
 
 
 def single_case(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """A split over antiderivatives narrowed to the one worth printing.
+    """A split over antiderivatives narrowed to the one case worth printing.
 
-    Sympy splits where its table has more than one form to offer: the integral
-    of `(SQRT(b^2 - 4*a*c) - b)/(2*a)` comes back an `ASINH` where `a*c` is
-    negative and a logarithm elsewhere, and the two are the same function up to
-    a constant, so the split distinguishes nothing. What settles that is the
-    unconditional case, the one sympy writes last: where it differentiates back
-    to the integrand with no condition attached it is an antiderivative wherever
-    it is defined, and so are the cases that agree with it.
+    Sympy splits where its table has several forms that differ only by a constant. The
+    unconditional last case decides: if it differentiates back, it is valid everywhere.
+    A shorter conditional case that also differentiates back unconditionally can
+    replace it: `INT(1/(x^2 + a), x)` gives the `ATAN` Derive prints for every `a`.
 
-    That case has to be the one that holds, but it need not be the one printed.
-    A conditional case is worth the whole domain where it differentiates back
-    just as unconditionally and says it shorter - `INT(1/(x^2 + a), x)` splits
-    into an `ATAN` where `a` is positive and a pair of logarithms elsewhere, and
-    the `ATAN` is the answer Derive gives for every `a`.
-
-    Where the unconditional case does not hold the split is left alone here:
-    `INT(x^2*COS(a*x^3 + b), x)` splits on whether `a` is zero, and
-    `SIN(a*x^3 + b)/(3*a)` is the answer for every `a` it is defined for - which
-    is every `a` but the one the other case is there for. Whether that pole is
-    the integral's or only its constant's is `continuous`'s question.
+    If the unconditional case fails, the split stays; whether its pole belongs to the
+    integral or the constant is for `continuous` to decide.
     """
     folded = attempt(value, sp.piecewise_fold)
     if not isinstance(folded, sp.Piecewise):
@@ -673,19 +558,11 @@ def single_case(value: sp.Basic, integrand: sp.Basic, variable: sp.Basic) -> sp.
 
 
 def _without_constants(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """The antiderivative with every constant of integration taken out of it.
+    """The antiderivative with all constants of integration removed.
 
-    A term free of the variable is such a constant, and so is a factor free of
-    the variable inside a logarithm, `LN(k*u)` being `LN(u)` plus a constant.
-    Sympy leaves both: the integral above comes back over `LN(2*b + 2*SQRT(b^2 -
-    4*a*c))`, where Derive's answer is over `LN(b + SQRT(b^2 - 4*a*c))`.
-
-    A constant deeper in than that is no constant of integration - it is part of
-    whatever holds it - so only the terms of the answer itself are looked at,
-    through a factor common to all of them where there is one. That goes for the
-    logarithms too: only one that is a term, times a factor free of the variable,
-    sheds a constant. In `x*LN(a*x) - x` the `LN(a)` it holds is `x*LN(a)`, and
-    that is no constant.
+    These are terms free of the variable, and constant factors inside a top-level
+    logarithm, `LN(k*u)` being `LN(u)` plus a constant. Deeper constants are part of
+    their term: in `x*LN(a*x) - x`, the `LN(a)` contributes `x*LN(a)`.
     """
     coefficient, terms = _split(value, variable)
     bare = [_bare_term(term, variable) for term in sp.Add.make_args(terms)]
@@ -696,13 +573,12 @@ def _without_constants(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
 
 
 def _bare_term(term: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """A term of an antiderivative with the constant factor taken out of its
-    logarithm, where it is a logarithm times a factor free of the variable.
+    """A term with the constant factor removed from its logarithm, if it is a logarithm
+    times a constant.
 
-    A logarithm of something never positive for a real variable is written over its
-    negation, which is `pi*#i` less, a constant as well: sympy answers `INT(SEC(x),
-    x)` over `LN(SIN(x) - 1)`, which is complex for every real `x`, and `LN(1 -
-    SIN(x))` is real wherever the integral is.
+    A logarithm of something never positive is rewritten over its negation, a constant
+    `pi*#i` away: sympy's `LN(SIN(x) - 1)` for `INT(SEC(x), x)` becomes `LN(1 -
+    SIN(x))`.
     """
     factor, rest = _split(term, variable)
     if not isinstance(rest, sp.log) or len(rest.args) != 1:
@@ -716,8 +592,8 @@ def _bare_term(term: sp.Basic, variable: sp.Basic) -> sp.Basic:
 
 
 def _never_positive(argument: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether a function of a real variable alone is at most zero for every value of
-    it, by the bounds of its value over the whole line."""
+    """Whether a function of a real variable alone is nonpositive everywhere, judged by
+    its bounds over the whole real line."""
     if variable.is_real is not True or argument.free_symbols != {variable}:
         return False
     bounds = attempt(
@@ -729,12 +605,8 @@ def _never_positive(argument: sp.Basic, variable: sp.Basic) -> bool:
 
 
 def _without_flat_logarithms(terms: list[sp.Basic], variable: sp.Basic) -> list:
-    """The terms less their logarithms, where those add up to a constant.
-
-    `LN(x^2)/2 - LN(x)` mentions the variable and is still a constant of
-    integration: its derivative is zero, and the sum is zero for positive `x` and
-    `-pi*#i` for negative. Sympy leaves such a pair in `INT(SIN(x)/x^2, x)`, and
-    `a` times it in `INT(SIN(a*x)/x^2, x)`.
+    """The terms without their logarithms, if those sum to a constant, as `LN(x^2)/2 -
+    LN(x)` does in sympy's `INT(SIN(x)/x^2, x)`.
     """
     logarithms = [term for term in terms if _is_logarithm_term(term, variable)]
     if len(logarithms) < 2:
@@ -754,18 +626,12 @@ def _is_logarithm_term(term: sp.Basic, variable: sp.Basic) -> bool:
 
 
 def _carried(coefficient: sp.Basic, terms: list[sp.Basic]) -> sp.Basic:
-    """A coefficient with a denominator times the terms of an antiderivative, kept in
-    front of the terms it still divides.
+    """A fractional coefficient distributed into the terms where its denominator cancels
+    and kept in front of the rest.
 
-    Sympy integrates `(SQRT(b^2 - 4*a*c) - b)/(2*a)` over `b` with the `1/(2*a)` in
-    front of everything, one of the terms being `-2*a*c*LN(SQRT(b^2 - 4*a*c) + b)`.
-    Left that way, the `a` inside makes the whole a quotient over `a`, and the normal
-    form writes it as one. Derive's answer is `b*(SQRT(b^2 - 4*a*c) - b)/(4*a) -
-    c*LN(SQRT(b^2 - 4*a*c) + b)`: the term the coefficient cancels into is a term of
-    its own, and the coefficient stays a single factor in front of the rest.
-
-    A coefficient with nothing symbolic underneath divides nothing and is left in
-    front of the whole sum, for the normal form to write as it would any product.
+    Derive writes `b*(SQRT(b^2 - 4*a*c) - b)/(4*a) - c*LN(SQRT(b^2 - 4*a*c) + b)` where
+    sympy puts `1/(2*a)` in front of everything, which the normal form would merge into
+    one quotient. A purely numeric coefficient stays in front of the whole sum.
     """
     if not sp.fraction(coefficient)[1].free_symbols:
         return coefficient * sp.Add(*terms)
@@ -777,11 +643,8 @@ def _carried(coefficient: sp.Basic, terms: list[sp.Basic]) -> sp.Basic:
 
 
 def _bare_logarithm(call: sp.Basic, variable: sp.Basic) -> sp.Basic:
-    """`LN(k*u)` as `LN(u)`, where `k` is free of the variable.
-
-    The factor has to be looked for: sympy writes the argument out, so what is
-    there to find is `2*b + 2*SQRT(b^2 - 4*a*c)` rather than the product it
-    collects to.
+    """`LN(k*u)` as `LN(u)`, where `k` is free of the variable. The factor must be
+    extracted, since sympy writes the argument expanded.
     """
     argument = attempt(call.args[0], sp.factor_terms)
     if argument is None:
@@ -793,10 +656,9 @@ def _bare_logarithm(call: sp.Basic, variable: sp.Basic) -> sp.Basic:
 
 
 def _split(expression: sp.Basic, variable: sp.Basic) -> tuple[sp.Basic, sp.Basic]:
-    """`expression` as a factor free of the variable times the rest of it.
+    """`expression` split into a factor free of the variable times the rest.
 
-    `as_independent` asked for a product takes the terms of a sum for factors -
-    `1 - x` comes back as `1` times `-x` - so only a product is put to it.
+    Only products go to `as_independent`, which treats the terms of a sum as factors.
     """
     if not isinstance(expression, sp.Mul):
         return sp.S.One, expression
@@ -804,10 +666,8 @@ def _split(expression: sp.Basic, variable: sp.Basic) -> tuple[sp.Basic, sp.Basic
 
 
 def parametrised(head: sp.Basic) -> bool:
-    """Whether the integrand mentions more than the variables integrated over.
-
-    The limits do not count: they are substituted into an antiderivative that
-    has already been found, so they are no part of the search that costs.
+    """Whether the integrand contains symbols other than the integration variables. Limits
+    don't count, since they are substituted after the costly search.
     """
     variables = {limit[0] for limit in head.limits}
     return bool(head.function.free_symbols - variables)

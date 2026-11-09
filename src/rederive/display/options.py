@@ -1,8 +1,8 @@
-"""What the caller tells the renderer.
+"""Options passed to the renderer.
 
-Plain data, built by whoever owns the settings. The display layer does not
-import `rederive.model.settings`: a pane that renders one expression with a
-throwaway set of options must not have to own a `Settings` object to do it.
+Plain data built by whoever owns the settings. The display layer doesn't import
+`rederive.model.settings`, so a pane can render with throwaway options without needing a
+`Settings` object.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ IMPLICIT = "Implicit"
 class DisplayOptions:
     """The settings a render depends on.
 
-    `compressed` is `DisplayFormat := Compressed`, `notation_digits` is
-    `NotationDigits`, the significant digits a number with a radix point is
-    shown to, and `height` is the number of rows the pane can show. `None`
-    means lay out freely; a render that would be taller degrades its outermost
-    divisions and matrices to linear forms until it fits.
+    `compressed` is `DisplayFormat := Compressed`, and `notation_digits` is
+    `NotationDigits`, the significant digits shown for numbers with a radix point.
+    `height` is the number of rows the pane can show, or `None` for no limit; a render
+    that would be taller turns its outermost divisions and matrices into linear forms
+    until it fits.
     """
 
     times: str = DOT

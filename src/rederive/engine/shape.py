@@ -1,11 +1,8 @@
-"""Running a scalar rewrite over whatever shape an entry came in.
+"""Applying a scalar rewrite inside a non-scalar entry.
 
-Factor and Expand both rewrite scalars, and both are handed whole worksheet
-entries, which need not be scalars at all: a relation, a vector or matrix, a
-definition. What makes an entry one of those has to survive the rewrite for
-the line to still read as one, so the shape is walked here and the command
-sees only the scalars inside it. It is the same distribution Simplify makes,
-and for the same reason.
+Factor and Expand rewrite scalars but receive whole entries, which may be relations,
+vectors, matrices or definitions. The structure must survive the rewrite, so it is
+walked here and the command sees only the scalars inside, as in Simplify.
 """
 
 from __future__ import annotations
@@ -20,19 +17,18 @@ from rederive.engine.to_sympy import Assign, Declare, FunDef, InertVector, Logic
 
 __all__ = ["attempt", "distributed"]
 
-#: What to do to one scalar.
+#: A rewrite of one scalar.
 Leaf = Callable[[sp.Basic], sp.Basic]
 
 
 def distributed(expression: sp.Basic, leaf: Leaf) -> sp.Basic:
-    """Apply `leaf` to every scalar `expression` is built out of.
+    """Apply `leaf` to every scalar in `expression`.
 
-    A relation is rewritten side by side, a vector or matrix element by
-    element, a definition on its value alone.
+    A relation is rewritten side by side, a vector or matrix element-wise, and a
+    definition on its value only.
 
-    A boolean beyond a single relation comes back untouched. Derive rewrites
-    those into normal forms of its own, which are different operations sharing
-    a name, and not this milestone's.
+    Other booleans are returned untouched. Derive rewrites those into its own normal
+    forms, which are different operations not yet implemented.
     """
 
     def again(part: sp.Basic) -> sp.Basic:
@@ -59,12 +55,11 @@ def distributed(expression: sp.Basic, leaf: Leaf) -> sp.Basic:
 
 
 def attempt(expression: sp.Expr, rewrite: Callable[[sp.Expr], sp.Basic]) -> sp.Expr:
-    """`rewrite`, or the expression unchanged if it will not run.
+    """Apply `rewrite`, or return the expression unchanged if it fails.
 
-    Unlike Simplify's gated rewrites this does not ask whether the answer got
-    shorter.
-    The rewrite was asked for by name, and `(x + 2)*(x - 2)` is the answer to
-    Factor even though it counts more operations than `x^2 - 4`.
+    Unlike Simplify's gated rewrites this doesn't require the answer to be shorter,
+    since the rewrite was explicitly requested: `(x + 2)*(x - 2)` is Factor's answer
+    though it has more operations than `x^2 - 4`.
     """
     try:
         candidate = rewrite(expression)

@@ -52,23 +52,21 @@ def test_defaults_are_the_originals(settings):
 def test_watchers_hear_which_settings_changed(settings):
     heard = []
     settings.watch(heard.append)
-    # Notation is in there because the precision carries it along.
+    # Notation is included because changing the precision changes it too.
     changed = settings.apply({"Precision": "Mixed", "PrecisionDigits": 6})
     assert changed == ("Precision", "Notation")
     assert heard == [frozenset({"Precision", "Notation"})]
-    # Applying the same values again is not a change, and says nothing.
+    # Reapplying the same values changes nothing and notifies nobody.
     assert settings.apply({"Precision": "Mixed"}) == ()
     assert len(heard) == 1
 
 
 def test_the_precision_carries_the_notation_along(settings):
-    """What Options Precision does to Options Notation, silently.
+    """Options Precision silently updates Options Notation, as in the original.
 
-    As in the original: taking the precision approximate leaves the Options
-    Notation screen showing Scientific, and asking for seventeen digits of
-    precision leaves it showing seventeen. Neither is recorded - only the
-    field the user changed is - which is why this happens in `apply` rather
-    than in the dialog.
+    Approximate precision switches the notation to Scientific, and 17 digits of
+    precision sets 17 notation digits. Only the field the user changed is recorded,
+    which is why this happens in `apply` rather than in the dialog.
     """
     settings.apply({"Precision": "Approximate"})
     assert settings["Notation"] == "Scientific"
@@ -76,16 +74,15 @@ def test_the_precision_carries_the_notation_along(settings):
     assert settings["NotationDigits"] == 17
     settings.apply({"Precision": "Exact"})
     assert settings["Notation"] == "Rational"
-    # A call that says what the notation is to be keeps what it says.
+    # An explicit notation in the same call wins.
     settings.apply({"Precision": "Approximate", "Notation": "Decimal"})
     assert settings["Notation"] == "Decimal"
 
 
 def test_the_notation_can_be_set_after_the_precision(settings):
-    """The manual's own instruction: notation last, when you want your own.
+    """Setting notation after precision keeps it, as the manual instructs.
 
-    `Precision := Approximate` then `Notation := Rational` leaves Rational
-    standing, which is the order the manual tells you to use.
+    `Precision := Approximate` followed by `Notation := Rational` leaves Rational.
     """
     settings.assign("Precision", "Approximate")
     settings.assign("Notation", "Rational")
@@ -147,7 +144,7 @@ def test_a_digit_count_below_one_is_refused(settings):
     dialog.next_field()
     dialog.type_character("0")
     assert dialog.commit() is None
-    # The dialog stays put, with the offending digit still there to correct.
+    # The dialog stays open, with the offending digit left to correct.
     assert dialog.text == "0"
     assert settings["PrecisionDigits"] == 6
 
@@ -158,7 +155,7 @@ def test_other_asks_for_a_base_between_2_and_36(settings):
     dialog.cycle()  # -> Other
     assert dialog.commit() is None
     assert dialog.prompt is not None
-    # The base offered is the one in effect, not the one just stepped over.
+    # The base offered is the current one, not the one just stepped over.
     assert dialog.text == "10"
     dialog.type_character("4")
     dialog.type_character("0")
@@ -192,11 +189,11 @@ def test_a_record_is_written_the_way_the_settings_say_to_write_it(settings):
 
 
 def test_a_record_is_the_expression_the_parser_would_have_read(settings):
-    """A record is built, not parsed, but the two must not disagree.
+    """A record is built, not parsed, but parsing it must give the same result.
 
-    Every value of every recorded field goes round: the parser reads the record
-    back as the setting it records, and as the same expression. `Normal` and
-    `Expand` are the ones this catches - both are built-in functions too.
+    Every value of every recorded field is checked: the parser reads the record back
+    as the same setting and the same expression. This catches `Normal` and `Expand`,
+    which are also built-in functions.
     """
     for dialog in DIALOGS:
         for field in dialog.fields:
@@ -215,8 +212,8 @@ def test_a_record_is_the_expression_the_parser_would_have_read(settings):
 
 
 def test_a_numeric_record_is_built_because_it_may_not_lex(settings):
-    # `InputBase := 7` is written in base ten and read in base seven, where 7
-    # is not a digit. The record is the expression, and it says seven.
+    # `InputBase := 7` is written in base ten but would be read in base seven, where
+    # 7 is not a digit. The record is built as an expression, so it still means 7.
     settings.apply({"InputBase": 7})
     node = settings.assignment_node("InputBase")
     assert settings.assignment("InputBase") == "InputBase := 7"

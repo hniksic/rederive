@@ -2,26 +2,24 @@
 
 The cases come from `BRONSTEIN-INTEGRALS.md`: Bronstein & Semendyayev's table of basic
 integrals, the worked examples of the integration methods, the numbered table of
-indefinite integrals and the table of definite integrals. Each case is the integral as
-transcribed there and the text the worksheet shows for it.
+indefinite integrals, and the table of definite integrals. Each case pairs the integral
+as transcribed with the text the worksheet shows.
 
-This is the net under `test_integrate.py`, whose inline cases each name the rule of
-integration they are about: the tables in full, for what a change breaks that no case
-there covers.
+This is a safety net under `test_integrate.py`, whose cases each target one integration
+rule: the full tables catch breakage those cases miss.
 
-Every expected value here was checked before it was recorded, not read off the engine:
-an antiderivative by differentiating it numerically and comparing with the integrand
-at points where the integrand is real, a definite integral against the book's value or
-against quadrature. What is pinned is the form, so a case that fails may still be a
-right answer written differently; the check is then to differentiate it again.
+Every expected value was verified before being recorded, not copied from the engine:
+antiderivatives by numerical differentiation at points where the integrand is real,
+definite integrals against the book's value or quadrature. The form is what is pinned,
+so a failure may be a correct answer written differently; check it by differentiating.
 
-An id is the book's entry number (`D` for the definite table, `pNNN.k` for the
-unnumbered entries on page NNN). `@n=3` marks a concrete instance of an entry with a
-symbolic exponent, which is how a reduction formula is tested: the book's right-hand
-side has another integral in it, and the general form stays unevaluated.
+An id is the book's entry number (`D` for the definite table, `pNNN.k` for unnumbered
+entries on page NNN). `@n=3` marks a concrete instance of an entry with a symbolic
+exponent, used to test reduction formulas, whose general form stays unevaluated because
+the book's right-hand side contains another integral.
 
-Left out are the entries Simplify does not answer, answers wrongly, or answers in more
-than ten seconds; `BRONSTEIN-FAILURES.md` lists them.
+Entries that Simplify doesn't answer, answers wrongly, or takes over ten seconds on are
+omitted; `BRONSTEIN-FAILURES.md` lists them.
 """
 
 from __future__ import annotations

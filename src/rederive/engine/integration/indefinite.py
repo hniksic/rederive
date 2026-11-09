@@ -1,37 +1,20 @@
-"""An integral, asked of the methods that may answer it, in order.
+"""Integration by trying each method in turn.
 
-`integral` is where every integral comes in. `_METHODS`, at the foot of the module, is
-the whole order the methods are asked in, and `_accepted` is the one place where what a
-method answers is taken or refused. What is peculiar to an integral between limits is
-`definite`'s, and the form an answer taken here is printed in is `form`'s.
+Every integral enters through `integral`. `_METHODS`, at the end of the module, lists
+the methods in order, and `_accepted` decides whether a method's answer is taken.
+Definite-integral fixes live in `definite`, and the printed form of answers in `form`.
 
-A method answers with a `Candidate`, or with None where it does not apply, and the first
-answer `_accepted` takes is the integral's. The methods that are right by construction
-come first. They are the integrands done here by a construction of their own -
-rational, trigonometric, radical, exponential - and then the rules a calculus course
-teaches: the substitution `u = g(x)` where the integrand is `h(g(x))*g'(x)`, products of
-sines and cosines written as sums, parts over an arc or a logarithm, a variable that is
-positive by construction, the substitution of a square root. Each writes its answer the
-way the integral tables do, and over the parameters with no split.
+Methods correct by construction come first: our own rational, trigonometric, radical
+and exponential integrators, then textbook rules (substitution, products as sums,
+integration by parts, a positive variable, substituting a square root). They write
+answers as the integral tables do, without parameter splits. Sympy's general
+integrators come next, mainly for answers in special functions; they are slower, split
+more and are sometimes wrong, so their answers are taken only if proved to
+differentiate back and expressible in the notation.
 
-Sympy's general integrators come after them, for what they do not reach, which is mostly
-the integrals whose answers are special functions, `SI(x)`, `EI(x)`, `ERF(x)` and
-`POLYLOG(2, x)`, and the definite integrals the tables of Meijer G functions answer.
-Asked first, they would answer much of the rest too, but more slowly, split over the
-values of the variable or the parameters, and now and then wrongly: so an answer of
-sympy's is taken only where it is proved to differentiate back to the integrand, and no
-answer is taken in a function the notation has no word for. Where a rule of the course
-writes a longer answer than sympy's for some kind of integrand, the rule's own guard
-says so: products as sums leave the powers of sines and cosines to sympy, and parts
-over a quotient is asked after it.
-
-Two more of sympy's methods are no entries of the list but its retries: the manual
-rules alone, and the whole integral again over a variable nothing is assumed of. They
-answer what sympy's general integrators answered wrongly or in a function the notation
-has no word for, `INT(SIN(x)/x^2, x)` among them, and are asked only once one of those
-answers has been refused. Where sympy found nothing they would find nothing either, and
-an integral that stands, `INT(LN(x)^2*ATAN(x), x)`, would spend seconds on each before
-standing anyway.
+The manual rules alone and the integral over an unassumed variable are retries, tried
+only after a sympy answer is refused, since where sympy found nothing they find nothing
+either.
 """
 
 from __future__ import annotations
@@ -85,18 +68,12 @@ __all__ = ["by_a_positive_substitution", "by_sympy", "integral", "within_reach"]
 
 @lru_cache(maxsize=256)
 def integral(head: sp.Basic) -> sp.Basic:
-    """An integral, by sympy, with what sympy gets wrong about definite ones put right.
+    """Evaluate an integral, correcting what sympy gets wrong about definite integrals.
 
-    A definite integral is split where a step function in it jumps, and looked at
-    where its integrand blows up, before sympy is asked: a step is something sympy
-    integrates over only in part, and a singularity inside the interval is one it
-    reads straight through, as an antiderivative taken across it would. What sympy
-    then answers under a condition on a parameter, or with a parameter whose sign it
-    did not know, is asked again on each side of that sign.
-
-    The answer is a function of the head alone, and is kept: an integral that stands
-    is asked again by the pass that simplifies the answer, and by the next command
-    over the line, and asking sympy costs seconds where a lookup costs nothing.
+    Definite integrals are first split at step-function jumps and examined at their
+    singularities; an answer that depends on a parameter's sign is recomputed for each
+    sign. Results are cached, since an unevaluated integral is requested again by
+    simplification and by later commands.
     """
     stepped = between_the_steps(head)
     if stepped is not None:
@@ -110,13 +87,12 @@ def integral(head: sp.Basic) -> sp.Basic:
 
 
 def _integral_through(head: sp.Basic) -> sp.Basic:
-    """An integral, by its methods, once its steps have been looked at: see `integral`.
+    """An integral evaluated by the methods, after step functions are handled; see
+    `integral`.
 
-    What the methods make of a definite integral is put to the verdicts of `definite`
-    around them. What still stands after those is split by `_by_linearity` into
-    integrals of its terms, outside the methods and after the verdicts: an integral
-    that diverges, or turns on the sign of a parameter, is answered as a whole before
-    it is taken apart.
+    A definite integral's answer is checked against the verdicts of `definite`. Only
+    then is an unevaluated integral split by `_by_linearity`, so that one that diverges
+    or depends on a sign is answered as a whole first.
     """
     verdict = at_the_singularities(head)
     if verdict is not None and verdict not in VERDICTS:
@@ -150,36 +126,32 @@ def _integral_through(head: sp.Basic) -> sp.Basic:
 
 
 class Candidate(NamedTuple):
-    """An answer a method offers, what `_accepted` is to make of it, and what is asked
-    where `_accepted` refuses it."""
+    """A method's answer, with flags for `_accepted` and the methods to retry if it is
+    refused."""
 
     value: sp.Basic
-    #: Right by construction, and not put to the proof.
+    #: Correct by construction, so not proved.
     trusted: bool = False
-    #: Written the way the integral tables write it already, or by the manual rules
-    #: themselves: the manual rules are not asked for a shorter one.
+    #: Already in the integral tables' form, or produced by the manual rules, so the
+    #: manual rules aren't tried for a shorter one.
     tabled: bool = False
-    #: Made of answers taken already, and in their form: taken as it stands.
+    #: Built from already accepted and formatted answers, so taken as is.
     formed: bool = False
-    #: The methods asked, in order, where this answer is refused: what answers an
-    #: integral that sympy answered wrongly need not be asked of one it did not answer.
+    #: Methods to retry, in order, if this answer is refused. They're only worth trying
+    #: when sympy answered wrongly, not when it found nothing.
     retries: tuple[Method, ...] = ()
 
 
-#: What a method is: a head in, an answer offered or None out.
+#: A method takes a head and returns a candidate answer or None.
 Method = Callable[[sp.Basic], Candidate | None]
 
 
 def _answered(head: sp.Basic, methods: tuple[Method, ...]) -> sp.Basic | None:
-    """The first answer `_accepted` takes, in its form, or None where none is taken.
+    """The first answer `_accepted` takes, in printed form, or None.
 
-    An answer refused is as good as none, but for its `retries`: those are asked in
-    turn, each answer of theirs put to the same gate, and the first taken is the
-    integral's. With none taken the methods after it are asked. A retry is asked at
-    most once, though the bounded and the full methods may both have an answer
-    refused: it is asked of the head and not of the answer, and would search the same
-    seconds again for what it did not find the first time. An answer that is `formed`
-    already is taken as it stands, and any other in the form `antiderivative` chooses.
+    When an answer is refused, its `retries` are tried through the same check. Each
+    retry runs at most once, since it works from the head and would repeat the same
+    slow search.
     """
     retried: set[Method] = set()
     for method in methods:
@@ -208,30 +180,18 @@ def _answered(head: sp.Basic, methods: tuple[Method, ...]) -> sp.Basic | None:
 
 
 def _accepted(head: sp.Basic, candidate: Candidate) -> sp.Basic | None:
-    """The answer a method offers, as it is taken, or None where it is refused.
+    """The method's answer as accepted, or None if it is refused.
 
-    Nothing of sympy's is trusted: an answer of sympy's is taken only where its
-    derivative is proved to be the integrand, each case of a split where it applies as
-    `differentiates_back` proves it, or else once the split has been narrowed to the
-    case `single_case` proves and keeps. One that is not is refused, and with nothing
-    after it to answer the integral stands: unevaluated is an answer, an
-    antiderivative nobody proved is not. A `trusted` answer is right by construction
-    and is not put to the proof, which on the derivative of `ATAN(SQRT(b^2 +
-    c^2)*TAN(a*x)/ABS(b))` takes longer than the integral did.
+    A sympy answer is accepted only if `differentiates_back` proves it, or after
+    `single_case` narrows it to a proved case; an unevaluated integral is better than
+    an unproved antiderivative. `trusted` answers skip the proof, which can take longer
+    than the integration did.
 
-    An answer in a function of the variable the notation has no word for is refused,
-    trusted or not, and before it is proved: it would be declined in the end anyway,
-    proving it runs `sympy.simplify` for seconds over a hypergeometric series, making
-    `INT(1/(x*(a*x + b)^n), x)` continuous in `n` takes minutes over the Lerch function
-    sympy writes it in.
-
-    Before either, an answer is taken back to the principal sheet where it strayed off
-    it, and one that says nothing for some values of the variable is narrowed to its one
-    case that holds for every value, and refused where there is no such case.
-
-    A definite integral's answer, a multiple integral's, one with an integral left
-    standing in it and one `formed` already are taken as they are, there being no
-    antiderivative in hand to prove.
+    An answer in a function the notation can't express is refused first, trusted or
+    not, since proving it can take seconds to minutes. Before that, the answer is moved
+    to the principal sheet, and one undefined for some values of the variable is
+    narrowed to a case valid everywhere. Answers with no antiderivative to prove
+    (definite, multiple, unevaluated, or `formed`) are taken as is.
     """
     value = candidate.value
     if (
@@ -258,10 +218,8 @@ def _accepted(head: sp.Basic, candidate: Candidate) -> sp.Basic | None:
 
 
 def by_sympy(head: sp.Basic) -> sp.Basic:
-    """An integral by sympy's methods alone, `_SYMPY`, asked as `integral` asks them.
-
-    `definite` asks this of the integrals it makes up on the way to a verdict, which it
-    wants as sympy answers them.
+    """An integral evaluated by sympy's methods alone, as `integral` runs them. `definite`
+    uses this for the auxiliary integrals it builds.
     """
     value = _answered(head, _SYMPY)
     return head if value is None else value
@@ -270,24 +228,14 @@ def by_sympy(head: sp.Basic) -> sp.Basic:
 def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
     """An integral of a rational function of its variable, done here, or None.
 
-    Sympy's rational integrator loses terms, as `engine.rational` explains, so a
-    rational integrand is not offered to it: the antiderivative is that module's,
-    and goes through the same choices as any other. A definite integral of one is
-    the difference of that antiderivative's limits at the ends, approached from
-    inside, which is Derive's way with every definite integral (7.4, p.199) and the
-    same difference sympy would take with an antiderivative that was whole. A pole
-    between the ends or at one of them, where the limits are numbers, has been
-    looked at by `at_the_singularities` before this is asked; where the ends come
-    to nothing, or the antiderivative was not had, sympy is asked after all - but
-    not of an integral with no parameter in it, its integrand or its ends, whose
-    antiderivative is had always: sympy would answer from the same `ratint` that loses the roots, and
-    answers `INT(1/(x^8 + 1), x, 0, 1)` with 0, or search for minutes for the real
-    roots of a resolvent, as it does over `1/(x^5 + x + 1)`. That integral stands.
+    Sympy's rational integrator loses terms (see `engine.rational`), so that module
+    supplies the antiderivative. A definite integral is the difference of its limits at
+    the ends, as Derive does (7.4, p.199). If that fails, sympy is tried, except for an
+    integral with no parameters: sympy would give 0 for `INT(1/(x^8 + 1), x, 0, 1)` or
+    spend minutes on `1/(x^5 + x + 1)`, so it is left unevaluated.
 
-    Only an integrand rational as a whole is taken: a rational term in a sum with a
-    transcendental one goes to sympy with the rest, and what sympy makes of it has to
-    be proved like any other answer of sympy's. The antiderivative made here is right
-    by construction and is not put to that proof.
+    Only integrands rational as a whole qualify; a rational term in a larger sum goes
+    to sympy with the rest.
     """
     if len(head.limits) != 1 or len(head.limits[0]) not in (1, 3):
         return None
@@ -301,8 +249,8 @@ def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
         return Candidate(primitive, trusted=True)
     _, low, high = head.limits[0]
     if low.has(variable) or high.has(variable):
-        # `INT(1/x, x, 1, x)` is the antiderivative from 1 to `x`: the variable of
-        # integration is another than the one the end is written in.
+        # `INT(1/x, x, 1, x)` is the antiderivative from 1 to `x`; rename the
+        # integration variable so it differs from the one in the limit.
         bound = sp.Dummy(variable.name, **variable.assumptions0)
         return _of_a_rational_function(
             sp.Integral(integrand.xreplace({variable: bound}), (bound, low, high))
@@ -328,30 +276,18 @@ def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
 def _toward_an_end(
     primitive: sp.Basic, integrand: sp.Basic, variable: sp.Basic, end: sp.Basic
 ) -> sp.Basic:
-    """The antiderivative of a rational function, written for its limit at an end.
+    """The antiderivative of a rational function, rewritten so its limit at an end can be
+    taken.
 
-    A `RootSum` is a sum of `a*LN(h(a, x))` over the roots `a` of a polynomial, and
-    sympy takes the limit of no expression with one in it. Where each `h` is linear
-    in `x` with a leading coefficient of 1, each logarithm is of `x` less a root of
-    the integrand's denominator, which is either not real or is a pole, and so the
-    sum is continuous: at a finite end it is put in at its value there. At `inf`, see
-    below, each logarithm tends to `LN(1)`, and the sum to nothing. At `-inf` each
-    tends to `LN(-1)`, which is `#i*pi` or `-#i*pi` as the root's imaginary part has
-    one sign or the other, and the sum is left to stand, as it is at any end where
-    an `h` is of another form.
+    Sympy can't take limits of a `RootSum` of `a*LN(h(a, x))`. If each `h` is monic and
+    linear in `x`, the sum is continuous and is evaluated at a finite end, and tends to
+    zero at `inf`; at `-inf` it is left alone.
 
-    At an infinite end where the integrand falls off as the square of the reciprocal
-    of the variable or faster, so that the integral converges there, each `LN(p)` of a
-    polynomial of degree `d` is written as `LN(p/x^d)`, which tends to a number. The
-    two differ by `d*LN(x)`, `LN(ABS(x))` at `-inf`, and those add up to nothing:
-    the antiderivative has a limit there, and nothing else in it grows. The limit
-    of the sum as it stands is not always had: the coefficients of `LN(x)` in the
-    logarithms of `INT(1/(x^7 + 1), x)` cancel only by identities of the cosines of
-    multiples of `pi/7`, which sympy does not see, and it takes the limit at `inf`
-    for `inf`.
-
-    Anywhere else, and where a logarithm in it is of no polynomial, the
-    antiderivative is as it stands.
+    At an infinite end where the integrand decays like `1/x^2` or faster, each `LN(p)`
+    is rewritten as `LN(p/x^d)`; the dropped `d*LN(x)` terms must cancel since the
+    integral converges. Sympy can't always see that: for `INT(1/(x^7 + 1), x)` the
+    cancellation needs identities of cosines of multiples of `pi/7`, and it gets `inf`
+    at `inf`.
     """
     sums = [rs for rs in primitive.atoms(sp.RootSum) if rs.has(variable)]
     if not all(_of_monic_linear_logarithms(rs, variable) for rs in sums):
@@ -363,7 +299,7 @@ def _toward_an_end(
         return primitive
     if sums and end is not sp.oo:
         return primitive
-    # The logarithms outside the sums: those inside are over the sums' own variables.
+    # Only logarithms outside the sums; those inside are over the sums' own variables.
     outside = primitive.xreplace({rs: sp.S.Zero for rs in sums})
     logarithms = [log for log in outside.atoms(sp.log) if log.has(variable)]
     if not all(log.args[0].is_polynomial(variable) for log in logarithms):
@@ -383,8 +319,8 @@ def _toward_an_end(
 
 
 def _of_monic_linear_logarithms(rs: sp.RootSum, variable: sp.Basic) -> bool:
-    """Whether the `RootSum` is of `a*LN(h(a, x))`, each `h` linear in the variable
-    with a leading coefficient of 1."""
+    """Whether the `RootSum` is of `a*LN(h(a, x))`, with each `h` linear and monic in
+    the variable."""
     (t,), body = rs.fun.args
     coefficient, logarithm = body.as_independent(variable, as_Add=False)
     if coefficient != t or not isinstance(logarithm, sp.log):
@@ -397,13 +333,8 @@ def _of_monic_linear_logarithms(rs: sp.RootSum, variable: sp.Basic) -> bool:
 
 def _of_a_trigonometric_function(head: sp.Basic) -> Candidate | None:
     """An antiderivative of a rational function of the sine and cosine of one linear
-    argument, done here by `engine.trigonometric`, or None.
-
-    Sympy's own ways with these spend up to minutes over parametric coefficients,
-    `INT(1/(b + c*SIN(a*x))^2, x)` among them, and answer with a split over the values
-    of the parameters for which the generic formula fails. The substitution the
-    integral tables use makes a rational function of these, and the rational
-    integrator writes its parametric quadratics without roots or cases.
+    argument, by `engine.trigonometric`, or None. Sympy can spend minutes on these with
+    parametric coefficients, and splits over parameter values.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -415,14 +346,12 @@ def _of_a_trigonometric_function(head: sp.Basic) -> Candidate | None:
 
 
 def _of_a_radical(head: sp.Basic) -> Candidate | None:
-    """An antiderivative of a rational function of the variable and roots of linear
-    or quadratic polynomials in it, done here by `engine.radical`, or None.
+    """An antiderivative of a rational function of the variable and roots of linear or
+    quadratic polynomials, by `engine.radical`, or None.
 
-    Sympy's own ways with these spend minutes over parametric coefficients, as on
-    `(a*x^2 + b*x + c)^(7/2)` or `1/(SQRT(a*x + b)*(f*x + g)^3)`, and answer with a
-    split over the values of the parameters, or not at all. An integral left in the
-    answer is integrated as a head of its own; where one of them stands, or is the
-    head itself, this is None, and the head goes the general way.
+    Sympy can spend minutes on these with parametric coefficients. Remaining integrals
+    in the answer are evaluated separately; if one fails or is the head itself, this
+    returns None.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -441,27 +370,17 @@ def _of_a_radical(head: sp.Basic) -> Candidate | None:
 
 
 def _over_an_exponential(head: sp.Basic) -> Candidate | None:
-    """An antiderivative of a rational function of exponentials of multiples of one
-    linear argument, by the substitution `u = #e^(g*x)`, or None.
+    """An antiderivative of a rational function of exponentials of multiples of one linear
+    argument, by the substitution `u = #e^(g*x)`, or None.
 
-    The Risch algorithm writes the logarithmic part of such an integral over the roots
-    of a polynomial whose coefficients carry the parameters, and where it cannot tell
-    real roots from complex ones leaves the sum over them standing: `INT(1/(b*#e^(a*x)
-    + c*#e^(-a*x)), x)` comes back as `ROOT_SUM(4*b*c*z^2 + 1, z, z*LN(#e^(a*x) +
-    2*c*z))/a`. Under `u = #e^(a*x)` that is the integral of `1/(a*(b*u^2 + c))`, which
-    the rational integrator writes as the table does, `ATAN(SQRT(b)*u/SQRT(c))/(a*
-    SQRT(b)*SQRT(c))`. Nor is what the Risch algorithm makes of these always the same
-    from one run to the next: it takes `#e^(a*x)` or `#e^(-a*x)` for its generator by
-    the order of a set, and `INT(COTH(a*x)^2, x)` comes back as `x - 2/(a*#e^(2*a*x) -
-    a)` or as `x + 2/(a*#e^(-2*a*x) - a)` by the seed of the process's string hashes.
-    The substitution here is chosen by the exponents alone.
+    Risch leaves such integrals as a `ROOT_SUM` when it can't tell real roots from
+    complex ones, where the substitution gives the table's `ATAN` form. Risch is also
+    nondeterministic here, its generator depending on the string hash seed.
 
-    Each exponent is `k*x + m` with the ratios of the `k` rational numbers; `g` is the
-    largest of them that each `k` is a whole multiple of, and `#e^(k*x + m)` is
-    `#e^m*u^(k/g)`. None where something else in the integrand depends on the variable,
-    or the denominator of the rational function of `u` has an irreducible factor of
-    degree above 2: the logarithmic part over the roots of a cubic is a page of nested
-    radicals that the steps after this take minutes over.
+    `g` is the largest value of which every exponent's slope is an integer multiple.
+    Returns None if anything else depends on the variable, or if the rational function
+    of `u` has an irreducible denominator factor above degree 2, whose roots would give
+    pages of nested radicals.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -510,27 +429,17 @@ def _over_an_exponential(head: sp.Basic) -> Candidate | None:
 
 
 def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
-    """An antiderivative over `u = g(x)`, where the integrand is `h(g(x))*g'(x)` and
-    holds a power whose exponent is a symbol, or None.
+    """An antiderivative by `u = g(x)`, where the integrand is `h(g(x))*g'(x)` and
+    contains a power with a symbolic exponent, or None.
 
-    Sympy finds `u = SIN(a*x)` in `SIN(a*x)^n*COS(a*x)`, but not `u = x^n` in
-    `1/(x*SQRT(x^n + a^2))`, nor `u = TAN(a*x)` in `TAN(a*x)^n/COS(a*x)^2`, as it
-    writes the derivative `a*(TAN(a*x)^2 + 1)`. The candidates for `g` are each such
-    power with a number added to its exponent or multiplying it taken off, `x^n` for
-    `x^(n - 1)` or `x^(2*n)`, and its base where that is a function, the derivative
-    of a tangent or cotangent also written over the square of the cosine or sine. Where
-    the integrand over `g'` is free of `x` once `g` is `u`, `INT(h(u), u)` is
-    integrated as a head of its own, and its answer `H(u)` gives `H(g(x))`.
+    Sympy misses `u = x^n` in `1/(x*SQRT(x^n + a^2))` and `u = TAN(a*x)` in
+    `TAN(a*x)^n/COS(a*x)^2`. Candidates for `g` are such powers with a numeric part of
+    the exponent removed, and their bases if they are functions. If the integrand over
+    `g'` is free of `x` after substitution, `INT(h(u), u)` is integrated separately.
 
-    That answer keeps the form the integral in `u` has, but for a split over a
-    parameter, `IF(n /= -1, u^(n + 1)/(n + 1), LN(u))`, which is made continuous as
-    `continuous` makes it. A pole not split over is left: the `1/n` the derivative
-    of `x^n` puts into `2*ATAN(SQRT(x^n - a^2)/a)/(a*n)` is the table's, and its
-    principal part, `2*ATAN(SQRT(1 - a^2)/a)/(a*n)`, is imaginary for `a` past one.
-    One substitution deep only: the integral in `u` is not taken apart again.
-
-    The answer is an antiderivative by construction, the integral in `u` having been
-    answered under the same rules as any other head, and is not checked again.
+    A parameter split in the result is made continuous; a pole without a split is left,
+    since its principal part may be imaginary. Only one level of substitution is done,
+    and the result is correct by construction.
     """
     if _substituting.get() or len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -579,10 +488,10 @@ def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
 
 
 def _sine_and_cosine(integrand: sp.Basic, variable: sp.Basic) -> list[tuple]:
-    """The candidates for `u` in `_by_derivative_divides` that a sine or cosine of a
-    linear argument gives, over a radical in it: `u = COS(x)` for `SIN(x)/SQRT(1 -
-    q^2*SIN(x)^2)`, the even powers of the sine being written in the cosine. A
-    rational function of the two is `engine.trigonometric`'s, and is not looked at."""
+    """Candidates for `u` in `_by_derivative_divides` from a sine or cosine of a linear
+    argument under a radical, as `u = COS(x)` for `SIN(x)/SQRT(1 - q^2*SIN(x)^2)`.
+    Rational functions of the two are left to `engine.trigonometric`.
+    """
     calls = integrand.atoms(sp.sin, sp.cos)
     if not calls or not any(
         power.exp.is_Rational and not power.exp.is_integer and power.base.has(*calls)
@@ -603,8 +512,8 @@ def _sine_and_cosine(integrand: sp.Basic, variable: sp.Basic) -> list[tuple]:
 def _squares_as_complements(
     expression: sp.Basic, inner: sp.Basic, u: sp.Basic
 ) -> sp.Basic:
-    """An expression with the even powers of the sine written in `u` where `u` stands
-    for the cosine of the same argument, and the other way round."""
+    """The expression with even powers of the sine written in terms of `u`, where `u`
+    stands for the cosine of the same argument, or vice versa."""
     if not isinstance(inner, (sp.sin, sp.cos)):
         return expression
     other = (sp.cos if isinstance(inner, sp.sin) else sp.sin)(*inner.args)
@@ -614,24 +523,17 @@ def _squares_as_complements(
     )
 
 
-#: Whether `_by_derivative_divides` is integrating over its substitution already.
+#: Whether `_by_derivative_divides` is already integrating its substituted integral.
 _substituting: ContextVar[bool] = ContextVar("_substituting", default=False)
 
 
 def _by_products_as_sums(head: sp.Basic) -> Candidate | None:
-    """An antiderivative of the integrand with its products of sines and cosines
-    written as sums, or None.
+    """An antiderivative of the integrand with products of sines and cosines rewritten as
+    sums, or None.
 
-    Sympy leaves `INT(SIN(a*x)*COS(a*x)/x, x)` standing, and answers `INT(SIN(2*a*x)/x,
-    x)`, the same integral with the product written as a sine of the double angle,
-    with `SI(2*a*x)`. The integral with the products written as sums is integrated as
-    a head of its own, once: the sums are not taken apart again. The two integrands
-    are the same function, so its answer is this one's.
-
-    Not over a rational function of sines and cosines alone, which sympy's rules for
-    their powers integrate the table's way: `INT(SIN(a*x)^3, x)` is `(COS(a*x) +
-    2)*(COS(a*x) - 1)^2/(3*a)` by `u = COS(a*x)`, where the sum `3*SIN(a*x)/4 -
-    SIN(3*a*x)/4` gives a cosine of the triple angle.
+    Sympy leaves `INT(SIN(a*x)*COS(a*x)/x, x)` unevaluated but answers the equivalent
+    `INT(SIN(2*a*x)/x, x)`. Rational functions of sines and cosines alone are skipped,
+    since sympy's power rules give the table's form there.
     """
     if _summing.get() or len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -666,8 +568,8 @@ def _by_products_as_sums(head: sp.Basic) -> Candidate | None:
 
 
 def _of_sines_and_cosines(integrand: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the integrand is a rational function of sines and cosines of the
-    variable, the variable appearing nowhere else."""
+    """Whether the integrand is a rational function of sines and cosines, with the
+    variable appearing nowhere else."""
     calls = [call for call in integrand.atoms(sp.sin, sp.cos) if call.has(variable)]
     stand_ins = [sp.Dummy() for _ in calls]
     written = integrand.xreplace(dict(zip(calls, stand_ins)))
@@ -675,31 +577,27 @@ def _of_sines_and_cosines(integrand: sp.Basic, variable: sp.Basic) -> bool:
 
 
 def _multiplicity(factor: sp.Basic) -> int:
-    """How many calls a factor of a product is, two for `SIN(x)^2`."""
+    """How many calls a factor counts as, e.g. two for `SIN(x)^2`."""
     exponent = factor.as_base_exp()[1]
     return int(exponent) if exponent.is_Integer and exponent > 0 else 1
 
 
-#: Whether `_by_products_as_sums` is integrating the sums already.
+#: Whether `_by_products_as_sums` is already integrating the rewritten sums.
 _summing: ContextVar[bool] = ContextVar("_summing", default=False)
 
 
-#: The functions an integrand is integrated by parts over: their derivatives are
-#: algebraic, and so is what is left to integrate once they are differentiated.
+#: The functions integrated by parts. Their derivatives are algebraic, and so is what
+#: is left to integrate.
 _PARTED = (sp.asin, sp.acos, sp.atan, sp.acot, sp.log)
 
 
 def _by_parts_over_a_polynomial(head: sp.Basic) -> Candidate | None:
-    """An antiderivative by parts, as `_by_parts` makes it, where `P` is a polynomial
-    and the answer is written without `#i`, `ABS` or `SIGN`; or None.
+    """An antiderivative by parts, as in `_by_parts`, where `P` is a polynomial and the
+    answer has no `#i`, `ABS` or `SIGN`, or None.
 
-    Sympy answers `INT(x*ATAN(x/a), x)` with `a^3*ATAN(x/ABS(a))/(2*ABS(a))` among its
-    terms, where by parts it is `a^2*ATAN(x/a)/2`. Over a quotient sympy does better:
-    `V*f'` has a pole of its own where `V` has, and for `INT(ATAN(x/a)/x^2, x)` the
-    integral left over is written `LN(x)/a - LN(x^2 + a^2)/(2*a)`, which sympy writes
-    together as the table does, `-LN(a^2/x^2 + 1)/(2*a)`. So it does where the integral
-    left over is written over `#i` or a sign, as that of `INT(x*ASIN(x/a), x)` is. Those
-    are left to sympy, and to `_by_parts` after it.
+    Sympy answers `INT(x*ATAN(x/a), x)` with `ABS` terms where parts gives
+    `a^2*ATAN(x/a)/2`. For quotients, and where the remaining integral involves `#i` or
+    a sign, sympy does better, so those are left to it.
     """
     candidate = _by_parts_with(head, over_a_polynomial=True)
     if candidate is None or candidate.value.has(sp.I, sp.Abs, sp.sign):
@@ -708,29 +606,21 @@ def _by_parts_over_a_polynomial(head: sp.Basic) -> Candidate | None:
 
 
 def _by_parts(head: sp.Basic) -> Candidate | None:
-    """An antiderivative of `P(x)*f(x) + Q(x)` by parts, where `f` is an arc or a
-    logarithm, `P` and `Q` are rational and `P` has a rational antiderivative `V`, or
-    None.
+    """An antiderivative of `P(x)*f(x) + Q(x)` by parts, where `f` is an inverse
+    trigonometric function or a logarithm, `P` and `Q` are rational, and `P` has a
+    rational antiderivative `V`, or None.
 
-    The answer is `V*f - INT(V*f') + INT(Q)`, `f'` being algebraic: sympy leaves
-    `INT(ASIN(x/a)/x^2, x)` standing, and does not get past the two roots of the
-    derivative of `ACOSH(x/a)` written as the logarithm of 6.6, where the integral of
-    `x/(a*SQRT(x/a - 1)*SQRT(x/a + 1))` is the product of the roots again. Where `V`
-    has a logarithm in it, `V*f'` is not algebraic and the head stands. So does it
-    where an integral left over stands. One step deep only.
-
-    Asked after sympy's bounded and full methods, as `_by_parts_over_a_polynomial` says
-    why. Their retries, the manual rules and the unassumed variable, come before it
-    only where sympy answered and was refused: where it found nothing they are not
-    asked, and over `INT(LN(x + SQRT(x^2 + 1))/x^2, x)` they would search for seconds
-    and find nothing, where this answers at once.
+    The answer is `V*f - INT(V*f') + INT(Q)`, with `f'` algebraic; sympy leaves
+    `INT(ASIN(x/a)/x^2, x)` unevaluated. Only one level deep. It runs after sympy, but
+    before the retries only if sympy answered, since on `INT(LN(x + SQRT(x^2 + 1))/x^2,
+    x)` the retries would search for seconds in vain.
     """
     return _by_parts_with(head, over_a_polynomial=False)
 
 
 def _by_parts_with(head: sp.Basic, over_a_polynomial: bool) -> Candidate | None:
-    """An antiderivative by parts, as `_by_parts` says, `P` a polynomial where
-    `over_a_polynomial` is set; or None."""
+    """An antiderivative by parts, as in `_by_parts`, requiring `P` to be a polynomial
+    if `over_a_polynomial` is set, or None."""
     if _parting.get() or len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
     variable, integrand = head.limits[0][0], head.function
@@ -771,21 +661,19 @@ def _by_parts_with(head: sp.Basic, over_a_polynomial: bool) -> Candidate | None:
     return Candidate(answer, trusted=True, tabled=True)
 
 
-#: Whether `_by_parts` is integrating what it left over already.
+#: Whether `_by_parts` is already integrating its remaining integrals.
 _parting: ContextVar[bool] = ContextVar("_parting", default=False)
 
 
-#: The arcs that have no elementary antiderivative over their variable: see
-#: `_an_arc_over_its_variable`.
+#: Inverse trigonometric functions `f` for which `f(b*x)/x` has no elementary
+#: antiderivative; see `_an_arc_over_its_variable`.
 _ARCS_OVER_THE_VARIABLE = (sp.asin, sp.acos, sp.atan, sp.acot)
 
 
 def _an_arc_over_its_variable(head: sp.Basic) -> bool:
-    """Whether the head is an indefinite integral of `c*f(b*x)/x`, `f` an arc.
-
-    Its antiderivative is a dilogarithm or a Clausen function, which is not
-    elementary, and sympy spends twenty seconds on `INT(ATAN(x/a)/x, x)` before it
-    says so.
+    """Whether the head is an indefinite integral of `c*f(b*x)/x` with `f` an inverse
+    trigonometric function, whose antiderivative is non-elementary and on which sympy
+    spends twenty seconds.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return False
@@ -807,9 +695,9 @@ def _an_arc_over_its_variable(head: sp.Basic) -> bool:
 
 
 def _derivatives(function: sp.Basic, variable: sp.Basic) -> list[sp.Basic]:
-    """The derivative of a function of the variable, written as sympy writes it and,
-    for a tangent or cotangent and their hyperbolic kin, over a square as the tables
-    write it: `a/COS(a*x)^2` beside `a*(TAN(a*x)^2 + 1)`."""
+    """The derivative of a function of the variable as sympy writes it, plus, for
+    tangent, cotangent and their hyperbolic forms, the tables' form over a square:
+    `a/COS(a*x)^2` besides `a*(TAN(a*x)^2 + 1)`."""
     (argument,) = function.args
     inner = sp.diff(argument, variable)
     squares = {
@@ -823,32 +711,17 @@ def _derivatives(function: sp.Basic, variable: sp.Basic) -> list[sp.Basic]:
 
 
 def _by_linearity(head: sp.Basic) -> sp.Basic:
-    """An integral sympy left standing, as a sum of integrals where its integrand is a
-    sum in disguise.
+    """An integral sympy left unevaluated, as a sum of integrals where its integrand is a
+    disguised sum.
 
-    Sympy integrates a sum term by term, keeping as an integral only the terms it
-    cannot do - but only a sum it is handed. `(x*G(x) + F(x))/G(x)` is a quotient to
-    it, and the whole integral is given up for the one term that will not integrate.
-    Derive divides the numerator into its terms and answers `INT(F(x)/G(x), x) +
-    x^2/2`. So a quotient whose numerator is a sum is written as one integral per
-    term, and those are new heads: each is integrated, or left standing, on its own,
-    and none is the integral already tried whole.
+    Sympy integrates a literal sum term by term, but one non-integrable term sinks a
+    quotient like `(x*G(x) + F(x))/G(x)`, which Derive splits. So a quotient with a sum
+    numerator becomes one integral per term. A denominator polynomial in one sine or
+    cosine is split into partial fractions over it, but only for indefinite integrals.
 
-    A quotient whose denominator is a polynomial in one sine or cosine of a linear
-    argument is split into partial fractions over that function, so that one
-    nonelementary piece does not take the rest down with it: of `INT(x/((SIN(a*x) +
-    1)*SIN(a*x)), x)`, `INT(x/(SIN(a*x) + 1), x)` is integrated and only
-    `INT(x/SIN(a*x), x)` is left standing. Only for an antiderivative, as the pieces of a definite integral that
-    converges need not converge.
-
-    For the same reason a definite integral's numerator is split only where some of
-    the pieces have a value and none of those is infinite: neither `INT(x^t/LN(x), x,
-    0, 1)` nor `INT(x^s/LN(x), x, 0, 1)` converges, while `INT((x^t - x^s)/LN(x), x,
-    0, 1)` does. Where one piece has a finite value, the rest converge if the whole
-    does.
-
-    An integrand that was a sum to begin with has had its terms tried by sympy
-    already, and is not offered again.
+    A definite integral is split only if some pieces have finite values and none is
+    infinite, since the pieces of a convergent integral need not converge: `INT((x^t -
+    x^s)/LN(x), x, 0, 1)` converges, while its two pieces don't.
     """
     integrand = head.function
     if isinstance(integrand, sp.Add):
@@ -873,8 +746,8 @@ def _by_linearity(head: sp.Basic) -> sp.Basic:
 
 
 def _partial_fractions(head: sp.Basic, denominator: sp.Basic) -> list[sp.Basic]:
-    """The integrand of an antiderivative as its partial fractions over the one
-    periodic function its denominator is a polynomial in, or [] where it is not."""
+    """The integrand of an antiderivative as partial fractions over the single periodic
+    function its denominator is a polynomial in, or [] if there is none."""
     if any(len(limit) != 1 for limit in head.limits):
         return []
     variables = [limit[0] for limit in head.limits]
@@ -890,18 +763,12 @@ def _partial_fractions(head: sp.Basic, denominator: sp.Basic) -> list[sp.Basic]:
 
 
 def _by_a_radical(head: sp.Basic) -> Candidate | None:
-    """The integral by the substitution of a square root of a polynomial in it, or None.
+    """The integral by substituting a square root of a polynomial that it contains, or
+    None.
 
-    `INT(SQRT(x^2 - 1)/x, x)` is `INT(u^2/(u^2 + 1), u)` over `u = SQRT(x^2 - 1)`,
-    which is `u - ATAN(u)`; written back, `SQRT(x^2 - 1) - ATAN(SQRT(x^2 - 1))` is an
-    antiderivative for `x` on either side of the interval where the root is not real.
-    Sympy's own methods answer it over a split at that interval, or under the condition
-    that `x` is outside it, and Derive prints no split where one antiderivative serves
-    everywhere.
-
-    Sympy makes the substitution only where the integrand is a function of the root and
-    of the root's derivative, and the result is put to the proof `holds` makes, so it is
-    taken only where it differentiates back for every `x`.
+    `INT(SQRT(x^2 - 1)/x, x)` becomes `u - ATAN(u)` with `u = SQRT(x^2 - 1)`, valid on
+    both sides of the interval where the root isn't real, where sympy's own methods
+    split. The result must pass `holds`.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -931,18 +798,11 @@ def _by_a_radical(head: sp.Basic) -> Candidate | None:
 
 
 def _by_the_bounded_methods(head: sp.Basic) -> Candidate | None:
-    """An integral by sympy's methods whose cost is bounded, `BOUNDED`, or None.
+    """An integral by sympy's bounded-cost methods, `BOUNDED`, or None.
 
-    An answer with an integral of what they could not do left standing in it is
-    offered only where the full methods are not affordable: where they are, they are
-    asked for the whole of it instead. Not over an arc over its variable, which no
-    method of sympy's has an elementary antiderivative for.
-
-    Between limits, an integral they leave standing, or answer only under a sign they
-    do not know, is asked of the Meijer G route as well, and its answer is offered
-    where it is better, as `_by_meijer_g` says.
-
-    An answer refused is asked again of `_RETRIES`, as of any of sympy's methods.
+    An answer still containing an unevaluated integral is offered only if the full
+    methods are unaffordable. For a definite integral left unevaluated or depending on
+    an unknown sign, the Meijer G route is also tried.
     """
     if _an_arc_over_its_variable(head):
         return None
@@ -963,15 +823,11 @@ def _by_the_bounded_methods(head: sp.Basic) -> Candidate | None:
 
 
 def _by_meijer_g(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral over at most one parameter by Meijer G functions, or None.
+    """A definite integral with at most one parameter, by Meijer G functions, or None.
 
-    The bounded methods answer `INT(x^n*#e^(-x), x, 0, inf)` with `uppergamma(n + 1,
-    0)`, which is `GAMMA(n + 1)` where `n > -1` and nothing elsewhere, and leave
-    `INT(COS(a*x)*#e^(-x^2), x, -inf, inf)` standing. Sympy's Meijer G route knows
-    the tables of definite integrals these come out of, writes the condition it
-    needs, and over a single parameter answers quickly; over more of them it is
-    not asked, its search growing with each. An answer that is no better - that
-    still turns on a sign it does not know, or is the integral itself - is None.
+    This answers integrals like `INT(COS(a*x)*#e^(-x^2), x, -inf, inf)` that the
+    bounded methods leave. With more parameters the search grows too much. An answer
+    that still depends on an unknown sign gives None.
     """
     variables = {limit[0] for limit in head.limits}
     if len(head.function.free_symbols - variables) > 1:
@@ -986,24 +842,12 @@ def _by_meijer_g(head: sp.Basic) -> sp.Basic | None:
 
 
 def _by_the_full_methods(head: sp.Basic) -> Candidate | None:
-    """An integral by every method of sympy's, the heuristic Risch algorithm among
-    them, or None.
+    """An integral by all of sympy's methods, including heuristic Risch, or None.
 
-    The heuristic Risch algorithm is what finds the integrals nothing else does, and
-    its cost grows with the generators of the integrand: it builds an ansatz over every
-    one it can see and solves for the coefficients. With nothing symbolic to carry it
-    is quick. `INT(t^(a-1)*(#e^(z*t)*(1-t)^(b-a-1) - 1), t, 0, 1/2)` - a real line out
-    of the Kummer function in Derive's own utility library - carries three parameters
-    over four generators, and sympy spends most of a minute and gigabytes of memory
-    before answering, correctly, that it does not know. Simplify must not do that: a
-    minute is not an answer, and the same integral comes back unevaluated either way.
-
-    So over a parametrised integrand the expensive method is asked only where the
-    ansatz is small enough to be affordable, which `affordable` is the measured rule
-    for. Everything else comes back unevaluated, which is a documented answer where a
-    minute of thrashing is not.
-
-    An answer refused is asked again of `_RETRIES`, as of any of sympy's methods.
+    Heuristic Risch builds an ansatz over all generators, and with parameters its cost
+    explodes: an integral from the Kummer function in Derive's utility library takes
+    most of a minute and gigabytes of memory before giving up. So for a parametrized
+    integrand it runs only if `affordable` says so.
     """
     if _an_arc_over_its_variable(head) or _unaffordable(head):
         return None
@@ -1015,53 +859,39 @@ def _by_the_full_methods(head: sp.Basic) -> Candidate | None:
 
 
 def _unaffordable(head: sp.Basic) -> bool:
-    """Whether the integrand is parametrised past what the full methods can afford."""
+    """Whether the integrand has too many parameters for the full methods to afford."""
     return parametrised(head) and not affordable(head)
 
 
-#: Integration by the methods whose cost is bounded: sympy's tables, the
-#: trigonometric rules, Risch, and the manual rules. Not `meijerg`, which
-#: answers `INT(#e^x*COS(x), x)` with a page of Bessel functions when it is
-#: reached on its own, and not `heurisch`, whose cost is the problem below.
+#: Hints for the bounded-cost methods: sympy's tables, the trigonometric rules, Risch,
+#: and the manual rules. Excludes `meijerg`, which on its own answers
+#: `INT(#e^x*COS(x), x)` with a page of Bessel functions, and `heurisch`, whose cost
+#: is the problem described below.
 BOUNDED = {"meijerg": False, "heurisch": False}
 
 
-#: How many bases may carry a symbolic exponent before the ansatz is too big.
-#: Two is `INT(x^(a-1)*(1-x)^(b-1), x)`, which sympy answers in under a second;
-#: `INT(x^(a-1)*(1-x)^(c-a-1)*(1-x*z)^(-b), x)` is the same shape with a third,
-#: and does not finish. Measured over every parametrised integral in Derive's
-#: utility library: under this rule each one either answers within a second or
-#: is refused, and no refusal loses an answer the rule would have found.
+#: The maximum number of bases with symbolic exponents before the ansatz is too big.
+#: With two, `INT(x^(a-1)*(1-x)^(b-1), x)`, sympy answers in under a second; with a
+#: third, `INT(x^(a-1)*(1-x)^(c-a-1)*(1-x*z)^(-b), x)`, it doesn't finish. Measured
+#: over every parametrized integral in Derive's utility library: under this rule each
+#: either answers within a second or is refused, and no refusal loses an answer.
 _ANSATZ = 2
 
 
 def affordable(head: sp.Basic) -> bool:
-    """Whether the heuristic method can be asked about a parametrised integrand.
+    """Whether the heuristic method can be run on a parametrized integrand.
 
-    Cheap where the integrand is algebraic - a product of powers of polynomials
-    in the variable - because each base is one generator and nothing composes
-    to make more. `#e^(z*COS(t))*COS(n*t)` is where that stops being true: the
-    exponential of a cosine is a generator built on another, and sympy does not
-    finish. Neither does a product of three powers with symbolic exponents, so
-    the count is bounded as well.
+    It is cheap for products of powers of polynomials, where each base is one
+    generator. Compositions like `#e^(z*COS(t))` don't finish, nor do three powers with
+    symbolic exponents, so their count is bounded by `_ANSATZ`. A symbolic exponent is
+    allowed only on a base with at most two terms; on a full quadratic the search takes
+    minutes and fails.
 
-    A symbolic exponent is taken only over a base of at most two terms in the
-    variable, `a*x + b` or `a^2 + x^2`. Over a full quadratic the search comes back
-    empty-handed, and slowly: `INT(1/(a*x^2 + b*x + c)^n, x)` takes over a minute to
-    stand, and even `INT(1/(x^2 + x + 1)^n, x)` takes seconds.
-
-    An exponential, sine or cosine of a linear argument is one generator more, with
-    nothing built on it, and so is a logarithm of a power of the variable: `INT(#e^(a*x)
-    *COS(b*x), x)` and `INT(x^n*LN(x), x)` are answered in a fraction of a second. They
-    count against the same bound as the symbolic exponents, a third of either kind
-    being where the ansatz grows past a few seconds, and a logarithm is taken only
-    beside powers, a logarithm times a cosine being past that as well. A polynomial
-    in one sine or cosine of a linear argument, `SIN(a*x) + 1`, is that same generator
-    under a rational function, and counts as it does: `INT(x/(SIN(a*x) + 1), x)` is
-    answered in a fraction of a second. Only for an
-    antiderivative: between limits, the cases sympy splits these into for the
-    values of the parameters where the generic formula fails are no constants of
-    integration, and each has to be had and printed.
+    For indefinite integrals, an exponential, sine or cosine of a linear argument, a
+    logarithm of a power of the variable, or a polynomial in one sine or cosine counts
+    as one more generator against the same bound; a logarithm is allowed only alongside
+    powers. For definite integrals these are excluded, since the cases sympy splits off
+    would each have to be computed.
     """
     variables = [limit[0] for limit in head.limits]
     indefinite = all(len(limit) == 1 for limit in head.limits)
@@ -1092,13 +922,13 @@ def affordable(head: sp.Basic) -> bool:
     return symbolic <= _ANSATZ
 
 
-#: The functions of a linear argument the heuristic method affords a generator for.
+#: Functions of a linear argument that the heuristic method can afford as generators.
 _PERIODIC = (sp.sin, sp.cos, sp.sinh, sp.cosh)
 
 
 def _linear_generator(factor: sp.Basic, variables: list) -> bool:
-    """Whether the factor is an exponential, sine or cosine of an argument linear in
-    the variable, or a logarithm of a power of it."""
+    """Whether the factor is an exponential, sine or cosine of an argument linear in the
+    variable, or a logarithm of a power of the variable."""
     if isinstance(factor, sp.log):
         argument = factor.args[0]
         _, rest = argument.as_independent(*variables, as_Add=False)
@@ -1113,8 +943,9 @@ def _linear_generator(factor: sp.Basic, variables: list) -> bool:
 
 
 def in_one_periodic(base: sp.Basic, variables: list) -> sp.Basic | None:
-    """The one sine, cosine or hyperbolic one of an argument linear in the variable
-    that `base` is a polynomial in, with the variable appearing nowhere else, or None."""
+    """The single sine or cosine (circular or hyperbolic) of a linear argument that `base`
+    is a polynomial in, with the variable appearing nowhere else, or None.
+    """
     generators = {
         atom for atom in base.atoms(*_PERIODIC) if _linear_generator(atom, variables)
     }
@@ -1130,23 +961,14 @@ def in_one_periodic(base: sp.Basic, variables: list) -> sp.Basic | None:
 
 @lru_cache(maxsize=256)
 def within_reach(head: sp.Basic) -> dict[str, bool]:
-    """The hints for sympy on a definite integral: the Risch algorithm and the manual
-    rules switched off where they cannot find an antiderivative, and none otherwise.
+    """Sympy hints for a definite integral: Risch and the manual rules disabled if they
+    can't find an antiderivative, otherwise no hints.
 
-    Sympy values a definite integral over an interval right of zero by an
-    antiderivative over a positive variable, and its manual rules, which the Risch
-    algorithm hands what it proves nonelementary, search on over such a variable for
-    minutes: `INT(LN(1 + x)/(x^2 + 1), x, 1, 2)` does not come back. Over a variable
-    nothing is assumed of, the same two methods give up on it at once. An integrand
-    that both give up on there has no antiderivative they would find over a positive
-    variable either, the function being the same, and the definite integral is left
-    to the methods that do without one: the tables, and the Meijer G route for an
-    infinite end. The Risch algorithm is switched off along with the manual rules, as
-    sympy hands its nonelementary part to them with every other hint dropped.
-
-    A rational function has an elementary antiderivative always, and is not asked:
-    the Risch algorithm would integrate it by sympy's `ratint`, which searches for
-    minutes for the real roots of the resolvent of `1/(x^5 + x + 1)`.
+    Over a positive variable the manual rules can search for minutes (`INT(LN(1 +
+    x)/(x^2 + 1), x, 1, 2)`), while over an unassumed variable they give up at once, so
+    that is checked first. Risch is disabled too, since sympy passes its non-elementary
+    part to the manual rules. Rational functions are skipped, as Risch would use the
+    slow `ratint`.
     """
     if not definite(head):
         return {}
@@ -1169,16 +991,11 @@ def within_reach(head: sp.Basic) -> dict[str, bool]:
 
 
 def _standing(head: sp.Basic, value: sp.Basic | None) -> sp.Basic | None:
-    """`value`, as the head itself where it is the same integral under another class.
+    """`value`, or the head itself if `value` is the same integral in another guise.
 
-    Sympy hands back an integral its Risch algorithm proved nonelementary as a
-    `NonElementaryIntegral`, over the integrand as the algorithm rewrote it, which is
-    not equal to the `Integral` it was asked and so is taken for an answer: written
-    out, read back, asked on each side of a parameter's sign and asked all over
-    again as a head of its own. What it says is that the head stands, and that is
-    what it is called. So does the same integral over an integrand sympy only
-    factored, as it gives back `INT(t/((t^2 + z^2)*(#e^(2*pi*t) - 1)), t, 0, inf)` with
-    the exponential split into two factors.
+    Sympy returns a proved non-elementary integral as a `NonElementaryIntegral`, or an
+    integral over a merely factored integrand. Neither compares equal to the head, so
+    it would be mistaken for an answer.
     """
     if not isinstance(value, sp.Integral):
         return value
@@ -1201,31 +1018,21 @@ def _over_a_positive_variable(head: sp.Basic) -> Candidate | None:
 def by_a_positive_substitution(
     integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic | None:
-    """The integral over a new variable that is positive wherever the integrand is
-    real, or None.
+    """The integral over a new variable that is positive wherever the integrand is real,
+    or None.
 
-    Sympy takes a real variable out of a square root as if it were positive:
-    `INT(1/(x*SQRT(x^2 + a^2)), x)` comes back as `-ASINH(ABS(a)/x)/ABS(a)`, and
-    `INT(1/(x^2*SQRT(a*x + b)), x)` over `SQRT(b/(a*x) + 1)/SQRT(x)`. Both
-    differentiate back for positive `x` only. A variable that is positive by
-    construction gives sympy nothing to get wrong:
+    Sympy pulls a real variable out of a square root as if it were positive, so
+    `INT(1/(x*SQRT(x^2 + a^2)), x)` comes back valid only for positive `x`. A variable
+    positive by construction avoids this:
 
-    - where every root in the integrand is of one linear `a*x + b`, it is the root
-      `t = (a*x + b)^(1/q)` itself, over which the integrand is rational where it
-      was rational in `x` and the root;
-    - where the integrand is odd, it is `u = x^2`, and the antiderivative, a function
-      of `x^2`, is even as it must be; a root of a linear function of `u` is then
-      taken out as above, which for `SQRT(x^2 + a^2)` is the substitution of the
-      root itself;
-    - where it is even, it is `x` itself taken positive, and the antiderivative is
-      kept where it is proved odd, `F(x) + F(-x)` simplifying to a constant: its
-      derivative is then even, as the integrand is, and it holds for negative `x` as
-      well.
+    - if every root is of one linear `a*x + b`, the root `t = (a*x + b)^(1/q)` itself;
+    - if the integrand is odd, `u = x^2`, then a root of a linear function of `u` as
+      above;
+    - if it is even, `x` assumed positive, keeping the result if proved odd, so it
+      holds for negative `x` too.
 
-    Each of these is an antiderivative by construction, sympy's answer over the
-    positive variable once it is proved to differentiate back there. Where it is split
-    over the parameters, the last case is taken alone where it is proved to
-    differentiate back to the integrand.
+    If the result is split over parameters, the last case is used alone if it is
+    proved.
     """
     value = _positive_antiderivative(integrand, variable)
     if value is None or value.has(sp.Integral):
@@ -1240,8 +1047,8 @@ def by_a_positive_substitution(
 def _positive_antiderivative(
     integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic | None:
-    """An antiderivative by the substitutions `by_a_positive_substitution` lists, not
-    yet checked, or None where none applies."""
+    """An unchecked antiderivative by the substitutions in `by_a_positive_substitution`,
+    or None if none applies."""
     radicands = {
         power.base
         for power in integrand.atoms(sp.Pow)
@@ -1279,8 +1086,7 @@ def _positive_antiderivative(
 
 
 def _odd(expression: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the expression plus its value at the negated variable simplifies to
-    something free of the variable."""
+    """Whether `f(x) + f(-x)` simplifies to something free of the variable."""
     balance = attempt(
         expression, lambda e: sp.simplify(e + e.subs(variable, -variable))
     )
@@ -1290,8 +1096,8 @@ def _odd(expression: sp.Basic, variable: sp.Basic) -> bool:
 def _by_a_linear_root(
     integrand: sp.Basic, variable: sp.Basic, radicand: sp.Basic, polynomial: sp.Poly
 ) -> sp.Basic | None:
-    """The integral over `t = radicand^(1/q)`, the radicand linear in the variable and
-    `q` the common denominator of the powers it is raised to, or None."""
+    """The integral over `t = radicand^(1/q)`, where the radicand is linear in the
+    variable and `q` is the common denominator of its exponents, or None."""
     order = sp.ilcm(
         1,
         *(
@@ -1302,7 +1108,7 @@ def _by_a_linear_root(
     )
     root = sp.Dummy("t", positive=True)
     slope, offset = polynomial.all_coeffs()
-    # radicand^(k/order) is root^k for the principal root, for every radicand.
+    # radicand^(k/order) is root^k for the principal root, for any radicand.
     rooted = attempt(
         integrand,
         lambda f: f.replace(
@@ -1326,13 +1132,8 @@ def _by_a_linear_root(
 
 
 def _by_the_manual_rules(head: sp.Basic) -> Candidate | None:
-    """An antiderivative by the rules a calculus course teaches alone, or None.
-
-    They are the one method of sympy's that does not reach the algorithm the wrong
-    answers come out of, and what the methods before them answer wrongly they may
-    answer right; theirs is put to the same proof. Nor are they asked again for a
-    shorter answer than their own. One of `_RETRIES`, asked only where an answer of
-    sympy's was refused.
+    """An antiderivative by sympy's manual rules alone, or None. It avoids the algorithm
+    the wrong answers come from; one of `_RETRIES`.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -1343,16 +1144,11 @@ def _by_the_manual_rules(head: sp.Basic) -> Candidate | None:
 
 
 def _over_any_variable(head: sp.Basic) -> Candidate | None:
-    """The integral again over a variable nothing is assumed of, or None.
+    """The integral redone over a variable with no assumptions, or None.
 
-    What sympy's Meijer G route makes of a real variable is not always what it makes
-    of an unassumed one: over a real `x` it writes `ABS(x)/x` into the answer to
-    `INT(SIN(x)/x^2, x)` and gets the negative half wrong, while over a plain symbol
-    it answers `CI(x) - SIN(x)/x` plus logarithms that cancel. That answer is put to
-    the same proof as any other. One of `_RETRIES`, asked only where an answer of
-    sympy's was refused, and not where the full methods are not affordable: they are
-    what is asked again here, and the bounded methods offer an answer where they are
-    not.
+    For real `x`, sympy's Meijer G route gets `INT(SIN(x)/x^2, x)` wrong for negative
+    `x`, but over a plain symbol it is right. One of `_RETRIES`, skipped when the full
+    methods are unaffordable.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -1369,13 +1165,12 @@ def _over_any_variable(head: sp.Basic) -> Candidate | None:
     return Candidate(again.subs(plain, variable), tabled=True)
 
 
-#: What is asked of an integral where an answer of sympy's general integrators is
-#: refused, in order.
+#: Methods tried, in order, after an answer from sympy's general integrators is
+#: refused.
 _RETRIES: tuple[Method, ...] = (_by_the_manual_rules, _over_any_variable)
 
-#: The methods an integral is asked, in order. Each takes the head and offers a
-#: `Candidate`, or None where it does not apply; which candidates are `trusted` or
-#: `formed`, and which have `retries`, is the method's to say.
+#: The integration methods, in the order tried. Each takes the head and returns a
+#: `Candidate` or None, and sets its `trusted`, `formed` and `retries` fields.
 _METHODS: tuple[Method, ...] = (
     _of_a_rational_function,
     _of_a_trigonometric_function,
@@ -1391,5 +1186,5 @@ _METHODS: tuple[Method, ...] = (
     _by_parts,
 )
 
-#: Sympy's methods, in the order `_METHODS` asks them, none of them trusted.
+#: Sympy's methods, in `_METHODS` order, none of them trusted.
 _SYMPY: tuple[Method, ...] = (_by_the_bounded_methods, _by_the_full_methods)

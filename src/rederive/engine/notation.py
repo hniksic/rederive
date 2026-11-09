@@ -1,45 +1,39 @@
 """Derive's four numerical output styles, as rules over an exact value.
 
-`Options Notation` says how a number the engine works out is written: as the
-ratio it is worth, as a decimal point numeral, in scientific notation, or in
-whichever of the three suits the number. The style reaches a number wherever
-one sits, so `x/3` simplified under Decimal is `0.333333·x`.
+`Options Notation` chooses how computed numbers are written: as a ratio, a decimal, in
+scientific notation, or whichever suits the number (Mixed). It applies to every number
+in a result, so `x/3` simplified under Decimal is `0.333333·x`.
 
-Three rules hold across the styles, and all three come from the original:
+Three rules, all from Derive, hold across styles:
 
-* A decimal numeral is *cut*, never rounded, and never into its whole part:
-  two thirds is `0.666666` and `1234567.891` is `1234567.8`. What is cut to is
-  significant digits, so the zeros a small number leads with are free -
-  `1/300000` keeps six digits of its own in `0.00000333333`.
-* The cut neither pads nor strips. A tenth to six digits is `0.1` because the
-  expansion ends there, while `0.10000000000000001` is `0.100000` because it
-  does not: the zeros stand for the digits that follow.
-* Scientific notation is for extreme magnitudes only. A number worth at least
-  a ten-thousandth and less than ten thousand is written as a plain decimal
-  numeral whatever the digit count, which is why `1234.56` is not `1.23456·10³`.
+* Decimals are *truncated*, never rounded, and never into the whole part: two thirds is
+  `0.666666` and `1234567.891` is `1234567.8`. Digits are significant digits, so leading
+  zeros are free: `1/300000` is `0.00000333333`.
+* Truncation neither pads nor strips. A tenth to six digits is `0.1` because the
+  expansion ends there, while `0.10000000000000001` is `0.100000`: the zeros stand for
+  digits that follow.
+* Scientific notation is only for extreme magnitudes. Numbers from a ten-thousandth up
+  to (not including) ten thousand are plain decimals, so `1234.56` is not `1.23456·10³`.
 
-`decimal` is what Decimal notation writes an exact number as. An approximate one
-has only its precision's digits to show, and Decimal writes it the way `scientific`
-does; the printer knows which numbers those are.
+`decimal` is how Decimal notation writes an exact number. An approximate number has only
+its precision's digits, and Decimal writes it as `scientific` does; the printer knows
+which numbers are approximate.
 
-What the styles do *not* reach is a numeral the user wrote. `12345.6789` typed
-on the author line is shown as `12345.6` under every style, cut by
-`NotationDigits` alone; the display layer does that, and the value behind it is
-untouched either way.
+Numerals the user typed are not affected by the style. `12345.6789` on the author line
+shows as `12345.6` under every style, truncated by `NotationDigits` in the display
+layer; the value itself is unchanged.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
-#: Neither half of a ratio may be bigger than this for Mixed to keep it a
-#: ratio. The original's line falls exactly between 144 and 145: it writes
-#: `1/144` and `144/5` as ratios, and `1/145` and `146/5` as decimals.
+#: Largest numerator and denominator Mixed writes as a ratio. Derive writes `1/144` and
+#: `144/5` as ratios, and `1/145` and `146/5` as decimals.
 SIMPLE = 144
 
-#: The magnitudes a plain decimal numeral covers, as powers of ten. Outside
-#: them scientific notation takes over: `10^-5` and `10^4` are the first
-#: exponents written that way.
+#: Range of powers of ten written as plain decimals; `10^-5` and `10^4` are the first
+#: written in scientific notation.
 PLAIN = (-4, 3)
 
 _TEN = Fraction(10)
@@ -53,10 +47,9 @@ def simple(value: Fraction) -> bool:
 def decimal(value: Fraction, digits: int) -> str:
     """`value` as a decimal numeral of `digits` significant digits.
 
-    A whole number is written whole, however many digits that takes; the point
-    is never moved to make a number fit. Anything else keeps at least one
-    digit after the point, which is what is left for `1234567.891` once seven
-    of its six digits are spent.
+    A whole number is written in full regardless of `digits`. Anything else keeps at
+    least one digit after the point, which is why `1234567.891` with six digits gives
+    `1234567.8`.
     """
     sign = "-" if value < 0 else ""
     value = abs(value)
@@ -72,8 +65,7 @@ def decimal(value: Fraction, digits: int) -> str:
 def scientific(value: Fraction, digits: int) -> str:
     """`value` as `m*10^e`, or as a decimal numeral where its magnitude allows.
 
-    The mantissa is dropped when it is one, so a power of ten is written as
-    one: `10^-6`, not `1·10^-6`.
+    A mantissa of one is dropped: `10^-6`, not `1·10^-6`.
     """
     if not value:
         return "0"
@@ -87,8 +79,8 @@ def scientific(value: Fraction, digits: int) -> str:
 
 
 def exponent(value: Fraction) -> int:
-    """The power of ten `value`, which must be positive, begins at."""
-    # The digit counts put it within one, and the comparisons settle it.
+    """The exponent of the leading power of ten of `value`, which must be positive."""
+    # The digit counts are within one of the answer; the loops correct it.
     guess = len(str(value.numerator)) - len(str(value.denominator))
     while value < _TEN**guess:
         guess -= 1
@@ -100,8 +92,8 @@ def exponent(value: Fraction) -> int:
 def _expansion(rest: Fraction, keep: int, started: bool) -> str:
     """The digits after the point, `keep` significant ones or as far as exact.
 
-    `started` is False while the digits are still the leading zeros of a
-    number below one, which are placeholders and cost nothing.
+    `started` is False while emitting the leading zeros of a number below one, which
+    don't count as significant.
     """
     digits = []
     while rest and keep:

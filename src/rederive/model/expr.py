@@ -4,11 +4,9 @@ A tree is the only thing that crosses the engine/UI boundary: a node kind, the
 source span it covers, its operands, and - for leaves and operators - the text
 that identifies it.
 
-One generic node type rather than a class per kind. The dominant consumers
-(subexpression navigation, inverse-video selection, the built-up typesetter)
-all walk generically over `(kind, span, children)`, and a class hierarchy would
-force `isinstance` dispatch through all of it for no gain. `Kind` is a
-`StrEnum`, which recovers most of the type safety.
+There is one generic node type rather than a class per kind, because the main consumers
+(subexpression navigation, selection highlighting, the typesetter) walk generically over
+`(kind, span, children)`. Making `Kind` a `StrEnum` recovers most of the type safety.
 """
 
 from __future__ import annotations
@@ -59,18 +57,14 @@ class Node:
     a parenthesized operand's span excludes them: in `x (x + 1)` the sum's span
     covers `x + 1`.
 
-    `value` carries the canonical spelling - the operator, or a leaf's text.
-    `surface` carries how it was actually written when that differs, so that
-    nothing a printer would need is discarded at parse time: `None` means
-    "spelled canonically".
+    `value` is the canonical spelling: the operator, or a leaf's text. `surface` is
+    how it was actually written, or `None` if canonically, so the printer loses
+    nothing at parse time.
 
-    `SUM` and `PRODUCT` are runs rather than pairs, holding all their terms at
-    once the way the original does. Their operators sit between the terms, so
-    `value` and `surface` carry one character per gap and are one shorter than
-    `children`: `a-b+c` is a `SUM` of three with `value` `"-+"`. A `PRODUCT`
-    is all `*` canonically, and its surface says how each gap was written -
-    `*`, `·`, or a space for juxtaposition, which is written as nothing at
-    all.
+    `SUM` and `PRODUCT` hold all their terms at once, as in the original, rather than
+    being binary. `value` and `surface` then have one character per gap between terms:
+    `a-b+c` is a `SUM` of three with `value` `"-+"`. A `PRODUCT`'s value is all `*`,
+    and its surface records each gap as `*`, `·`, or a space for juxtaposition.
     """
 
     kind: Kind

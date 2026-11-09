@@ -1,37 +1,23 @@
-"""The original's own demonstrations: what they are, and where they still are.
+"""Catalog of the original's demonstrations and where to download them.
 
-Derive shipped a tour of itself - six scripts of a comment and an expression,
-over and over, and three galleries of expressions worth drawing - and those
-files are still the best thing to show the program off with. They are not
-Rederive's to ship, so what is here is a catalogue rather than the files: the
-name each one has, what to call it in a menu - a page's title and a menu band's
-one word - which of the two kinds of demonstration it is, and the addresses it
-can be downloaded from.
+Derive shipped six demo scripts (alternating comments and expressions) and three
+galleries of expressions to plot. They are still the best way to show off the program,
+but they aren't ours to ship, so this module only lists them: file name, menu title and
+menu word, kind, and download URLs.
 
-Fetching is deliberately not here. A browser downloads with `fetch` and a
-desktop with whatever a desktop has, and neither can do the other's; what both
-need is the same nine names and the same URLs, which is why the list is Python
-rather than living in the page that first wanted it. What a browser does when a
-source will not answer *it* in particular is the browser's own business and is
-in `web/demos.js`.
+Fetching lives elsewhere, since the browser (`web/demos.js`) and the desktop
+(`rederive.fetch`) download differently. Both share this list.
 
-The two kinds differ in what a step does. A script's step is authored and
-simplified; a gallery's is authored and drawn, which is what the galleries were
-written for - the original's own first line is "Interesting expressions to plot
-in a 2D-plot window". The extensions say the same thing by accident: the scripts
-are `.DMO` and the galleries are `.MTH`.
+A script step is authored and simplified; a gallery step is authored and plotted.
+Scripts happen to be `.DMO` files and galleries `.MTH`.
 
-**About the addresses.** `SOURCES` are Internet Archive items opened one file
-at a time out of an archive image - a zip of the Derive 3.14 diskette, a rar of
-Derive 4. Two images carry the same set, so every demonstration can be asked of
-both at once and whichever answers first is the one that runs: an image that is
-slow or refusing today costs nothing while the other is up.
+`SOURCES` are Internet Archive URLs that extract one file from an archived image: a zip
+of the Derive 3.14 diskette and a rar of Derive 4. Both contain all the demos, so they
+can be queried in parallel and the first answer used.
 
-`IMAGE` is the same diskette taken whole, and it is there because both of those
-go through one piece of machinery - the archive's own extractor - and that is
-the piece observed to fail. It costs three hundred kilobytes rather than one,
-and a zip has to be opened at the other end, so it is nobody's first choice; it
-is the road that is still there when the others are not.
+`IMAGE` is the whole 3.14 diskette as a single download, a fallback for when the
+archive's extractor (which both `SOURCES` depend on) is down. It is about 300 KB rather
+than a few, and must be unzipped locally.
 """
 
 from __future__ import annotations
@@ -40,29 +26,20 @@ from dataclasses import dataclass
 
 __all__ = ["DEMOS", "GALLERIES", "IMAGE", "SCRIPTS", "SOURCES", "Demo", "named"]
 
-#: Where a file of a DOS release is reached, by the name it has inside the
-#: image. Formatted with the file name and nothing else: every name in the
-#: catalogue is bare ASCII of the shape `ALGEBRA.DMO`, so there is nothing in
-#: one for a URL to have to escape.
+#: URL templates for a file inside each archived image. The file name is substituted
+#: unescaped, which is fine since every catalog name is plain ASCII like `ALGEBRA.DMO`.
 SOURCES = (
     "https://archive.org/download/derive314cas/DERIVE_3.14.zip/{file}",
     "https://archive.org/download/derive-for-dos-v-4/"
     "DERIVE%20for%20DOS%20V4.rar/DERIVE%20for%20DOS%2F{file}",
 )
 
-#: The whole of the Derive 3.14 diskette, as one file. Three hundred kilobytes
-#: against a demonstration's one, and every demonstration is inside it.
-#:
-#: The road that does not go through the archive's extractor, and so the one
-#: left when the extractor is the thing that is down - which is not a
-#: hypothetical: the `derive-v-3` item's extractor answers nothing but 503 and
-#: has for as long as this was being written. Whoever takes this road pays for
-#: it in bytes and in having to open a zip, and gets all nine files for the
-#: one download.
+#: The whole Derive 3.14 diskette, containing every demonstration. It bypasses the
+#: archive's extractor, which does fail in practice: the `derive-v-3` item's extractor
+#: has consistently answered 503.
 IMAGE = "https://archive.org/download/derive314cas/DERIVE_3.14.zip"
 
-#: What a menu offers the two kinds under. A gallery is a demonstration too,
-#: and the heading is what says how it differs.
+#: Menu headings for the two kinds of demonstration.
 SCRIPTS = "Demonstrations"
 GALLERIES = "Plot galleries"
 
@@ -71,37 +48,32 @@ GALLERIES = "Plot galleries"
 class Demo:
     """One of the original's demonstration files, and what to call it."""
 
-    #: The name the file has, which is the name it is downloaded and kept under.
+    #: File name, used for downloading and storing it.
     file: str
-    #: What a menu calls it. The original named these by their subject and so
-    #: does this, in the words a menu has room for.
+    #: Menu title, naming the subject.
     title: str
-    #: The same thing in one word, for a menu whose words are typed at rather
-    #: than clicked: the capital in it is the letter that chooses it, as the
-    #: capital in every option of the program's own menus is.
+    #: One-word title for the keyboard menu. Its capital letter is the key that selects
+    #: it, as in the program's other menus.
     word: str
     #: Whether its steps are drawn rather than simplified.
     plotting: bool = False
 
     @property
     def group(self) -> str:
-        """The heading it is offered under."""
+        """The menu heading it appears under."""
         return GALLERIES if self.plotting else SCRIPTS
 
     @property
     def urls(self) -> tuple[str, ...]:
-        """Every address the file can be had from, in no particular order.
+        """All URLs the file can be downloaded from, in no particular order.
 
-        All of them, rather than one and a fallback: the caller is expected to
-        ask them at once and take whichever answers, since asking one after the
-        other adds the waits together.
+        The caller is expected to query them in parallel and take the first answer.
         """
         return tuple(source.format(file=self.file) for source in SOURCES)
 
 
-#: The catalogue, in the order a menu offers it: the six scripts as the original
-#: ordered them - arithmetic first, calculus late - and then the three
-#: galleries, from the flat to the solid.
+#: The catalog in menu order: the six scripts in the original's order, then the three
+#: galleries.
 DEMOS: tuple[Demo, ...] = (
     Demo("ARITH.DMO", "Arithmetic", "Arithmetic"),
     Demo("ALGEBRA.DMO", "Algebra", "alGebra"),
@@ -116,10 +88,9 @@ DEMOS: tuple[Demo, ...] = (
 
 
 def named(file: str) -> Demo | None:
-    """The demonstration `file` names, or nothing where it names none.
+    """Return the demonstration with file name `file`, or None.
 
-    Matched as the catalogue spells it, which is how the original spelled it:
-    these names are capitals and there is no second file of any of them.
+    The match is case-sensitive, against the catalog's uppercase names.
     """
     for demo in DEMOS:
         if demo.file == file:

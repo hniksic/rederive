@@ -1,46 +1,34 @@
 #!/usr/bin/env python3
-"""Ask a built executable the four questions a bundle can fail on.
+"""Smoke-test a built executable for the ways a bundle can break.
 
 Run from the repository root, against what the spec left in `dist`:
 
     uv run python packaging/smoke.py dist/rederive
 
-An executable that imports cleanly is not an executable that works. Everything a
-bundle can lose it loses silently at build time and loudly at run time, in a place no
-import can reach: the help text is not read until the user asks for help, the engine
-does not run until there is something to compute, and the stylesheet is not read by
-anything the analysis can see at all. So the checks here drive the real program
-through a terminal rather than importing anything from it, and each one stands for a
-way the bundle can be wrong:
+A bundle that imports cleanly can still be missing files that are only read later: the
+help text, the engine's dependencies, the stylesheet. So these checks drive the real
+program through a terminal, each covering one way the bundle can be wrong:
 
-* The command line, which says the archive unpacked and the app's own modules import.
-* `--version`, which says what the bundle actually carries. A release is a binary
-  with its own interpreter, its own sympy and its own Qt inside it, so the versions
-  it reports are the only evidence of what was built - a machine that quietly
-  supplied its own Python produces a bundle that passes every other check here and
-  is still not the program the suite tested. It is also the whole of what says the
-  plot toolkit survived the build, since the program has to import Qt and pyqtgraph
-  to answer.
-* The first frame, which says the stylesheet was found - Textual refuses to start
-  without it.
-* The Help menu, which says `help.txt` was found and read as a resource.
-* A computation from each of several areas of the mathematics, which says the worker
-  was spawned, re-entered the executable as a child, imported sympy there and sent an
-  answer back. These cost the most and cover the most: nothing else exercises the
-  child process at all, and a module the build's analysis failed to bring along is
-  not missing until something reaches for it.
+* The command line: the archive unpacked and the app's modules import.
+* `--version`: what the bundle actually carries. A release ships its own interpreter,
+  sympy and Qt, and the reported versions are the only evidence of what was built; a
+  bundle that picked up the build machine's Python would pass every other check. It
+  also shows that Qt and pyqtgraph survived the build, since the program imports them
+  to report their versions.
+* The first frame: the stylesheet was found (Textual won't start without it).
+* The Help menu: `help.txt` was found and read as a resource.
+* A computation from each of several areas of mathematics: the worker spawned,
+  re-entered the executable as a child, imported sympy and answered. Nothing else
+  exercises the child process, and a module missing from the build only shows up when
+  something uses it.
 
-The first two run on Windows, there being no pty to drive the rest through. That
-leaves the Windows build covered for unpacking and for what it carries, but not for
-anything above that, which is worth knowing about rather than papering over, so it is
-reported and not skipped silently.
+On Windows only the first two run, since there's no pty. The gap is reported rather than
+skipped silently.
 
-Plotting is the other gap, and it is reported the same way. A plot is a window in a
-child process, and this runs where there is nothing to put one on - the app refuses
-the command outright on a Linux machine with no display. What `--version` proves is
-that the bundle carries an importable Qt and pyqtgraph. Whether a window actually
-opens, and whether the backend PyOpenGL picks by name at run time came along with it,
-nothing here asks: the suite draws offscreen, but against the source tree.
+Plotting isn't checked either, and is reported the same way: there's no display, and
+the app refuses to plot on Linux without one. `--version` proves Qt and pyqtgraph import,
+but not that a window opens or that the PyOpenGL backend chosen at run time was bundled.
+The test suite draws offscreen, but against the source tree.
 """
 
 from __future__ import annotations
@@ -53,40 +41,30 @@ import sys
 import time
 from pathlib import Path
 
-#: The terminal the app is driven in. Wide enough that the menu bar is not wrapped
-#: into something the expectations below cannot find.
+#: Terminal size. Wide enough that the menu bar doesn't wrap and break the expectations.
 COLUMNS, ROWS = 100, 30
 
-#: How long any one thing is waited for. Generous: this runs on build machines whose
-#: load is nobody's to predict, and a slow answer is not a wrong one.
+#: Timeout for each wait. Generous, since build machines can be heavily loaded.
 PATIENCE = 30.0
 
-#: How much of the session a failure writes out. A whole one is a hundred kilobytes or
-#: so and every byte of it is wanted, this being the only sighting of a failure anyone
-#: gets; the cap is a runaway's ceiling rather than a budget, and what it drops it says
-#: it dropped. The end is what is kept, a check having failed at the end of it.
+#: Maximum session transcript written on failure. A session is typically around 100 KB
+#: and all of it is useful; the cap only guards against runaways. The end is kept, since
+#: that's where the check failed, and the dropped amount is reported.
 TRANSCRIPT = 512 * 1024
 
-#: How long the screen has to have stood still for a failure to call it settled. Set
-#: above a second, which is the rate of the fastest thing that repaints without anyone
-#: asking: a running computation writes its elapsed time in whole seconds, so a screen
-#: with one under way is redrawn that often and nothing about that is progress.
+#: How long the screen must be still before a failure calls it settled. Over a second,
+#: because a running computation redraws its elapsed time every second.
 SETTLED = 1.5
 
-#: A control sequence, which is everything in the stream that is not a character to be
-#: placed. Written out rather than reached for from a library so that this script goes
-#: on being one file with nothing behind it. The first branch is a CSI, whose parameters
-#: and final byte are read because the cursor is moved by one of them; the rest carry a
-#: title, name a character set, or are the two-byte escapes, and are matched to be
-#: skipped. The parameters are split in two so that a private sequence - `?1049h` and
-#: the like, which no reading here wants - leaves `parameters` empty and is stepped over
-#: with the others.
+#: A terminal control sequence. Written out by hand so this script has no dependencies.
+#: The first branch is a CSI, whose parameters and final byte are captured because one of
+#: them moves the cursor. The parameters are split so that private sequences like
+#: `?1049h` leave `parameters` empty and are skipped. The remaining branches (titles,
+#: character sets, two-byte escapes) are matched only to be skipped.
 #:
-#: The fourth branch is the one whose terminator never came. It can only be the last
-#: thing in the data, the app having been mid-write when the wait gave up, and it has to
-#: be recognised where it is: what would otherwise match is the two-byte escape below
-#: it, which takes the `\x1b[` and leaves the parameter digits to be drawn as if they
-#: were an answer.
+#: The fourth branch matches a sequence cut off at the end of the data, when the wait
+#: gave up mid-write. Without it the two-byte escape branch would consume `\x1b[` and
+#: leave the parameter digits to be drawn as text.
 CONTROL = re.compile(
     r"\x1b\[(?P<parameters>[0-9;]*)[0-9;?<>=!\"$' ]*(?P<final>[@-~])"
     r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
@@ -95,25 +73,20 @@ CONTROL = re.compile(
     r"|\x1b."
 )
 
-#: The final bytes that move the cursor somewhere absolute, which is the whole of the
-#: motion the app writes: it addresses a row and writes the row.
+#: Final bytes of absolute cursor moves, the only motion the app uses.
 CURSOR = ("H", "f")
 
-#: What the expansion of `(x + 1)^7` puts on the screen. A fragment of the middle of
-#: the line, so that neither the 2D layout of the exponents above it nor the width of
-#: the window can move it out of reach.
+#: A fragment from the middle of the expansion of `(x + 1)^7`, chosen so that neither the
+#: 2D exponent layout nor the window width can hide it.
 EXPANSION = "21·x"
 
-#: What Simplify is asked for, what says the answer arrived, and the part of the
-#: mathematics each one stands for. One per area the bundle has to have brought whole,
-#: because an area is only missing once something reaches for it: the polynomial above
-#: reaches none of these, and a build without sympy's integrals answers every other
-#: check here correctly.
+#: Expressions to simplify, the expected screen fragment, and the area of mathematics
+#: each covers. A missing part of sympy only shows up when used, so each area needs its
+#: own check; a build without integrals would pass the expansion check.
 #:
-#: Each expected fragment was read off a real screen rather than derived from the text
-#: form of the answer. An answer is typeset in two dimensions, so only a piece of one
-#: line can be waited for, and only answers that come out on a single line are asked
-#: for here - `#e` draws as `ê`, and a fraction would put its halves on three lines.
+#: Expected fragments were read off a real screen. Answers are typeset in 2D, so only
+#: answers that fit on a single line are used (`#e` draws as `ê`; a fraction would
+#: span three lines).
 COMPUTATIONS = (
     ("INT(1/(1 + x^2), x)", "ATAN(x)", "integrals"),
     ("SOLVE(x^2 - 4, x)", "[x = -2, x = 2]", "solving"),
@@ -121,15 +94,14 @@ COMPUTATIONS = (
     ("LIM((1 + 1/n)^n, n, inf)", "ê", "limits"),
 )
 
-#: What the Author line asks, and what Simplify asks after it.
+#: Prompts for Author and Simplify.
 AUTHOR_PROMPT = "AUTHOR expression:"
 SIMPLIFY_PROMPT = "SIMPLIFY expression:"
 
-#: The label the command menu carries, which is how the app says it is back at the
-#: top and ready for the next command.
+#: Command menu label, shown when the app is ready for the next command.
 COMMAND_MENU = "COMMAND:"
 
-#: What Quit asks before it goes.
+#: Quit's confirmation prompt.
 ABANDON = "Abandon expressions (Y/N)?"
 
 
@@ -138,15 +110,15 @@ def report(check: str, detail: str = "") -> None:
 
 
 class Failed(Exception):
-    """A check the executable did not pass, named the way the report reads."""
+    """A failed check, described as the report shows it."""
 
 
 def usage_check(binary: Path) -> None:
-    """A named file that is not there is refused, which takes the whole app to say.
+    """Check that a nonexistent file argument is refused.
 
-    Reaching this message means the archive unpacked, the interpreter started and
-    every module from the entry point down to the command line parser imported. It is
-    the cheapest question that has a real answer, so it is asked first.
+    Getting this message means the archive unpacked, the interpreter started and the
+    modules up to the command line parser imported. It's the cheapest real check, so it
+    runs first.
     """
     finished = subprocess.run(
         [str(binary), "no-such-worksheet.mth"],
@@ -162,17 +134,15 @@ def usage_check(binary: Path) -> None:
     report("command line", "refuses a file that is not there")
 
 
-#: The lines `--version` has to produce for the bundle to be worth checking further.
-#: A version-shaped answer for each is all this asks; which versions they ought to be
-#: is a question for the build workflow, which has `.python-version` and `uv.lock` to
-#: compare them against and this script does not. `Qt` and `pyqtgraph` are here
-#: because the program has to import the toolkit to print them, which is the only
-#: word this script gets on whether plotting survived the build.
+#: Components `--version` must report. Only a version-like value is checked; the build
+#: workflow compares actual versions against `.python-version` and `uv.lock`. Reporting
+#: `Qt` and `pyqtgraph` requires importing them, which is this script's only check that
+#: plotting survived the build.
 CARRIED = ("rederive", "Python", "sympy", "Qt", "pyqtgraph")
 
 
 def version_check(binary: Path) -> None:
-    """The bundle says what it is, and what interpreter, sympy and Qt it brought."""
+    """Check that `--version` reports the bundled interpreter, sympy and Qt."""
     finished = subprocess.run(
         [str(binary), "--version"], capture_output=True, text=True, timeout=PATIENCE
     )
@@ -192,7 +162,7 @@ def version_check(binary: Path) -> None:
 
 
 class Terminal:
-    """The app in a pty, and the two things a check needs: type this, wait for that."""
+    """The app running in a pty, with methods to type keys and wait for output."""
 
     def __init__(self, binary: Path) -> None:
         import fcntl
@@ -217,30 +187,25 @@ class Terminal:
         os.write(self._master, keys.encode())
 
     def escape(self) -> None:
-        """Go back one step, and be sure the app got there before typing again.
+        """Press Escape and wait for the command menu before typing anything else.
 
-        Escape is the one key that cannot be sent with another behind it. A terminal
-        writes Alt-A as Escape then `A`, so a key arriving in the same breath as an
-        Escape is read as the two of them together and lands somewhere nobody asked
-        for. Waiting for the command menu to come back separates them, and checks
-        that going back worked while it is at it.
+        Alt-A is sent as Escape followed by `A`, so a key sent right after Escape would
+        be read as an Alt combination. Waiting for the menu separates them and confirms
+        that going back worked.
         """
         self.type("\x1b")
         self.wait_for(COMMAND_MENU)
 
     def wait_for(self, text: str, patience: float = PATIENCE) -> None:
-        """Read until `text` is on the screen, or say what was there instead.
+        """Read until `text` appears, or raise `Failed` describing what was there.
 
-        Only what arrives from here on can match. The app draws the same command menu
-        after every command, so a wait that accepted what was on the screen already
-        would pass on the last command's frame rather than this one's.
+        Only output arriving after the call can match; the app redraws the same command
+        menu after every command, so matching earlier output would pass on the previous
+        frame.
 
-        That makes a failure's evidence narrow, and the two halves of what is reported
-        answer the two halves of the question. `self._session` is everything the app
-        has drawn since it started, which is what a screen has to be replayed from: a
-        frame is written as the differences from the one before it, so bytes that begin
-        at this wait draw an incomplete picture. The volume and the timing come from
-        `self._seen` alone, which is the only part of the stream this wait is about.
+        On failure, the screen is replayed from `self._session` (everything drawn since
+        startup), because frames are written as differences from the previous one. Volume
+        and timing are reported from `self._seen`, the output during this wait.
         """
         import select
 
@@ -276,7 +241,7 @@ class Terminal:
 
 
 def _plain(data: bytes) -> str:
-    """The screen with the escape sequences that drew it taken back out."""
+    """Return the output with escape sequences removed."""
     text = data.decode("utf-8", "replace")
     for pattern in (
         r"\x1b\][^\x07\x1b]*(\x07|\x1b\\)",
@@ -289,17 +254,12 @@ def _plain(data: bytes) -> str:
 
 
 def _arrival(seen: bytes, quiet: float | None) -> str:
-    """Which of the three failures this was, they having nothing to do with each other.
+    """Classify a timeout into one of three unrelated failures.
 
-    Nothing drawn at all means the app never answered: it is wedged behind something,
-    or gone with the pty still open. Drawing that stopped and stayed stopped means it
-    did answer, settled, and settled on something other than what was expected, which
-    is a question about the answer rather than about whether one came. Drawing that
-    went on to the deadline means the loop is alive and something under it is not: a
-    screen is repainted for the clock and the memory gauge whatever else has stalled,
-    so paint arriving to the last moment says the app is waiting too.
-
-    The three are worth a different morning each, and a bare timeout says none of them.
+    Nothing drawn means the app never responded: it's stuck, or gone with the pty still
+    open. Drawing that stopped means the app settled on something other than expected.
+    Drawing that continued to the deadline means the event loop is alive (the clock and
+    memory gauge keep repainting) but the app is stuck waiting on something.
     """
     if not seen or quiet is None:
         return "Nothing was drawn in that time."
@@ -310,20 +270,12 @@ def _arrival(seen: bytes, quiet: float | None) -> str:
 
 
 def _held(session: bytes, seen: bytes, text: str) -> str:
-    """Where the expected text was, of the four places a match has to survive.
+    """Report which of four successive forms of the output contain the expected text.
 
-    A wait fails on one question, and that answer is worth little by itself: each form
-    below is derived from the one above it, and a match needs every one of them to have
-    kept the text. Reporting only the last conflates an app that never wrote the text
-    with a script that read correct bytes wrongly, and those are not the same morning's
-    work - the first is a bug in the program, the second a bug in here.
-
-    So each is asked separately and the rawest is asked first. The bytes are the
-    primary record: they are what the app sent, and every form under them is this
-    script's own reading of it, which can be wrong in ways the app is not. Nothing here
-    concludes anything from what it finds. A wait that reports the reason it failed
-    rather than the facts it failed on is only as good as the reasoning behind it, and
-    the reasoning is what there is least of at the point a check first goes wrong.
+    Each form is derived from the previous one, so this distinguishes an app that never
+    wrote the text (a program bug) from this script misreading correct bytes (a script
+    bug). The raw bytes come first, as the primary record. Only facts are reported, not
+    conclusions drawn from them.
     """
     wanted = text.encode()
     offset = session.find(wanted)
@@ -343,26 +295,15 @@ def _held(session: bytes, seen: bytes, text: str) -> str:
 
 
 def _transcript(session: bytes) -> str:
-    """Everything the app wrote, in a form a log can carry and a reader can undo.
+    """Format everything the app wrote so it can be logged and exactly recovered.
 
-    The screen above is this script's reading of these bytes, and the reading is the
-    part that can be wrong: a replay that mishandles one sequence draws a screen that
-    looks settled and is not what the app sent. So the bytes go in the log too, and a
-    question this script does not currently know to ask can still be put to them.
+    The replayed screen is this script's interpretation and could be wrong, so the raw
+    bytes are logged too for later analysis.
 
-    They are written the way Python writes bytes, rather than encoded: an escape
-    sequence stays legible as `\\x1b[5;1H`, a character that came out wrong is visible
-    as the bytes it came out as, and the whole is still exactly recoverable. Base64
-    would be shorter and would have to be decoded before it said anything at all.
-
-    Each line is a whole literal rather than a slice of one, which is what makes the
-    recovery exact: a stream is mostly spaces, and a line that ended in one would
-    otherwise lose it to the indentation it was printed under or to whatever the log
-    puts in front of every line. So a reader takes the literals, in order, and joins
-    what they evaluate to.
-
-    Only the log holds this. Should a failure ever need comparing with one from months
-    before, both logs have to have been read while they were still there.
+    They're written as Python bytes literals rather than base64, so escape sequences stay
+    readable (`\\x1b[5;1H`) and mangled characters are visible. Each line is a complete
+    literal, so trailing spaces survive log indentation and prefixes; joining the
+    evaluated literals recovers the stream exactly.
     """
     dropped = max(len(session) - TRANSCRIPT, 0)
     kept = session[dropped:]
@@ -377,21 +318,16 @@ def _transcript(session: bytes) -> str:
 
 
 def _screen(data: bytes) -> list[str]:
-    """The rows of the terminal, replayed from everything written to it.
+    """Replay the output onto a terminal grid and return its rows.
 
-    Escape sequences are obeyed here rather than deleted. Deleting them concatenates
-    the fragments of every repaint into something that reads like a screen and is not
-    one - a status bar written at the far corner lands spliced onto the end of whatever
-    line was drawn before it, and a frame drawn twice appears twice.
+    Escape sequences are interpreted rather than stripped, since stripping splices
+    repaints together (a status bar written in a corner ends up appended to the previous
+    line, and a frame drawn twice appears twice).
 
-    Little has to be understood to place a character correctly, because little is what
-    the app writes. It repaints by addressing a row and writing the whole of it, so the
-    only moves this honours are the absolute ones; nothing it sends erases, scrolls or
-    inserts. Everything else - colour, the alternate screen, mouse reporting, the
-    terminal's replies to its own questions - decides how a character looks or how the
-    session behaves and never where a character goes, so it is recognised in order to
-    be stepped over. So is the one the timeout cut in half, which is why a failure's
-    screen ends in the app's own last row rather than in the digits of a colour.
+    The app repaints by addressing a row and writing all of it, and never erases,
+    scrolls or inserts, so only absolute cursor moves are honored. Other sequences
+    (color, alternate screen, mouse reporting, terminal replies) don't affect placement
+    and are skipped, as is a sequence truncated by the timeout.
     """
     grid = [[" "] * COLUMNS for _ in range(ROWS)]
     text = data.decode("utf-8", "replace")
@@ -418,11 +354,10 @@ def _screen(data: bytes) -> list[str]:
 
 
 def _shown(data: bytes) -> str:
-    """The screen as the terminal held it, indented to sit under the failure.
+    """Return the replayed screen, indented for the failure report.
 
-    Blank rows between two written ones are the layout the app chose and are kept. The
-    ones above and below everything it wrote are the empty part of a worksheet that
-    fills from the foot, and say nothing worth the lines they take in a log.
+    Blank rows between written ones are kept as layout; leading and trailing blank rows
+    are dropped.
     """
     lines = _screen(data)
     while lines and not lines[-1]:
@@ -437,8 +372,7 @@ def _shown(data: bytes) -> str:
 def _simplify(terminal: Terminal, expression: str, expected: str) -> None:
     """Author `expression`, Simplify it, and wait for the answer to appear.
 
-    Simplify is offered the expression just authored, so the prompt takes an empty
-    line the way the expansion above does.
+    Simplify defaults to the expression just authored, so an empty line accepts it.
     """
     terminal.type("A")
     terminal.wait_for(AUTHOR_PROMPT)
@@ -451,7 +385,7 @@ def _simplify(terminal: Terminal, expression: str, expected: str) -> None:
 
 
 def session_checks(binary: Path) -> None:
-    """Start the app, ask it for help, make it compute, and let it go."""
+    """Start the app, open help, run computations, and quit."""
     terminal = Terminal(binary)
     try:
         terminal.wait_for("Press H for help")

@@ -1,25 +1,18 @@
-"""The app side of the plot host: one child process, spawned when first needed.
+"""The app side of the plot host, a child process spawned on first use.
 
-Shaped like `engine.remote` and different from it in the two ways that matter.
-The engine worker is stateless and killed on purpose; the plot host is stateful
-- it *is* the windows - so nothing here ever kills it, and its death is always
-someone else's doing. And an engine call blocks until the answer is computed,
-while a plot request is answered the moment the host has taken it: the drawing
-happens afterwards, and what it has to say for itself comes back later as an
-event.
+It resembles `engine.remote`, with two key differences. The engine worker is stateless
+and killed deliberately; the plot host holds the windows, so nothing here kills it. And
+an engine call blocks until the answer is computed, while a plot request is answered as
+soon as the host accepts it; drawing happens afterwards, and its outcome comes back
+later as an event.
 
-So there are two directions of traffic on one pipe. A reader thread owns the
-receiving end: replies it hands to whichever call is waiting, events it hands
-to the callback the app registered. The app's callback goes through Textual's
-`call_from_thread` and lands on the message line, which is why nothing here
-touches the screen and why the callback is allowed to be slow.
+A reader thread receives from the pipe, passing replies to the waiting call and events
+to the app's callback. The callback goes through Textual's `call_from_thread` to the
+message line, so nothing here touches the screen and the callback may be slow.
 
-Spawning is lazy because the host costs a Qt toolkit and a sympy import, and a
-session that never plots must not pay for either. It is also lazy in the other
-direction: after the host dies the next Plot command starts a new one, so the
-recovery path is the ordinary path with nothing in the way of it. Open windows
-die with the host, which the app reports and does not try to restore - view
-state is deliberately not persisted anywhere, so there is nothing to restore.
+The host is spawned lazily because it loads Qt and sympy, which a session that never
+plots shouldn't pay for. After the host dies, the next Plot command starts a new one.
+Open windows die with it and aren't restored, since view state isn't persisted.
 """
 
 from __future__ import annotations
@@ -40,43 +33,32 @@ from rederive.plot.protocol import Event, Refused, Reply, Request
 
 __all__ = ["DIED", "PlotError", "PlotProxy"]
 
-#: How long to wait for a freshly spawned host to say it has imported Qt,
-#: sympy and pyqtgraph and opened its connection to the display. Generous: a
-#: cold filesystem is slow and the wait happens once per session.
+#: How long to wait for a new host to import Qt, sympy and pyqtgraph and connect to the
+#: display. Generous, since a cold filesystem is slow and this happens once per session.
 READY_TIMEOUT = 60.0
 
-#: How long a request may wait for its acknowledgement. Requests are answered
-#: before any drawing is done, so this is a deadlock guard and not a budget:
-#: nothing the host does between receiving a request and acknowledging it can
-#: take a second.
+#: How long to wait for a request's acknowledgement. Requests are acknowledged before
+#: drawing, so this only guards against deadlock.
 REPLY_TIMEOUT = 30.0
 
-#: What the app says when the host is gone. The one message that is about the
-#: process rather than about the picture.
+#: Message shown when the host process is gone.
 DIED = "plot window process died"
 
-#: What a plot window is drawn with, in the order the host reaches for them.
-#: They are the `plot` extra and the extra is opt-in, so an install may simply
-#: not have them - which is a working install of everything else.
+#: Modules needed to draw plots. They come with the opt-in `plot` extra, so a working
+#: install may lack them.
 DRAWN_WITH = ("pyqtgraph", "PySide6", "OpenGL")
 
-#: What the app says where those were never installed. The one refusal that is
-#: about the install rather than about the machine, so it says what to do about
-#: it: everything else in the program goes on working without them.
+#: Message shown when those modules aren't installed, saying how to install them.
 UNINSTALLED = "plot windows are not installed - `pip install rederive[plot]` adds them"
 
 
 @contextlib.contextmanager
 def _real_stderr() -> Iterator[None]:
-    """The process's own error stream, for as long as a spawn takes.
+    """Restore the real `sys.stderr` while spawning.
 
-    Textual redirects `sys.stderr` at an object that answers -1 to `fileno`,
-    which is honest - a screen is not a file descriptor - and fatal to the
-    first spawn of the session: the multiprocessing resource tracker hands the
-    error stream's descriptor to the child it starts, and -1 is not one, so the
-    whole spawn is refused with `bad value(s) in fds_to_keep`. Putting the real
-    stream back around `start` costs nothing and is the only place in the
-    program that has to know the screen is not a file.
+    Textual replaces `sys.stderr` with an object whose `fileno` returns -1. The
+    multiprocessing resource tracker passes that descriptor to its child, so the first
+    spawn would fail with `bad value(s) in fds_to_keep`.
     """
     original = sys.stderr
     if sys.__stderr__ is None or original is sys.__stderr__:
@@ -90,95 +72,82 @@ def _real_stderr() -> Iterator[None]:
 
 
 class PlotError(Exception):
-    """A plot request could not be delivered, or was refused in words.
+    """A plot request could not be delivered, or was refused.
 
-    One exception for both because the app does the same thing with them: the
-    message goes on the message line behind `Plot: `. Which of the two it was
-    only matters to the proxy, which respawns after the first kind.
+    One exception for both, since the app shows either on the message line after
+    `Plot: `. Only the proxy cares which it was: it respawns after a delivery failure.
     """
 
 
 class PlotProxy:
-    """The plot host as a few method calls, with a process behind them or not.
+    """Method-call interface to the plot host process, which may not be running.
 
-    One request is in flight at a time. The host is single-threaded from the
-    protocol's point of view - its Qt loop takes requests in the order they
-    arrive - and nothing the app does needs two answers at once.
+    One request is in flight at a time: the host's Qt loop handles requests in order,
+    and the app never needs two answers at once.
     """
 
     def __init__(self, events: Callable[[Event], None] | None = None) -> None:
-        #: Where asynchronous events go. Called on the reader thread, so the
-        #: app's own callback is what marshals them onto its event loop.
+        #: Callback for asynchronous events. It is called on the reader thread, so it
+        #: must marshal them onto the app's event loop.
         self.events = events
-        # Spawn on every platform, never fork: the app has Textual's threads
-        # and event loop in it, and a forked copy of those in a process that is
-        # about to start a Qt event loop is not something to reason about.
+        # Always spawn, never fork: forking a process running Textual's threads and
+        # event loop, and then starting a Qt loop in it, would be unpredictable.
         self._context: BaseContext = multiprocessing.get_context("spawn")
         self._call = threading.Lock()
         self._process: BaseProcess | None = None
         self._connection: Connection | None = None
         self._reader: threading.Thread | None = None
-        #: The reply the reader thread has taken off the pipe, and the number
-        #: it belongs to. A reply wearing another number is an answer to a call
-        #: that was abandoned, and is dropped.
+        #: Replies received by the reader thread, keyed by request number. Replies to
+        #: abandoned calls are dropped.
         self._replies: dict[int, Reply] = {}
         self._arrived = threading.Condition()
         self._number = 0
         self._ready = False
         self._stopped = False
-        #: The sticky plot preferences the app last held - read from the
-        #: settings store, whether a state file or a host's own report put
-        #: them there - and whether the host has yet to be told about them. A
-        #: host that has just started always has: it knows only the protocol's
-        #: own defaults.
+        #: The app's current sticky plot preferences (from a state file or the host's
+        #: report), and whether the host has yet to be sent them. A newly started host
+        #: always needs them, since it knows only the defaults.
         self._preferences: protocol.Prefer | None = None
         self._unsaid = False
-        #: Why the host is gone, once it is. Cleared by the next spawn, so a
-        #: message is reported exactly once.
+        #: Why the host is gone, if it is. Cleared by the next spawn, so the message is
+        #: reported once.
         self._death: str | None = None
-        #: How many hosts have been spawned. Nothing reads it but the tests,
-        #: which is where respawn policy is worth asserting about.
+        #: How many hosts have been spawned, for tests of the respawn policy.
         self.starts = 0
 
     @property
     def running(self) -> bool:
-        """Whether there is a host to ask now, without starting one."""
+        """Whether a host is running, without starting one."""
         process = self._process
         return process is not None and process.is_alive()
 
     # -- the requests ------------------------------------------------------
 
     async def add(self, request: protocol.Add) -> protocol.Placed:
-        """Plot an expression, and say which window took it.
+        """Plot an expression, returning the placement reply.
 
-        Awaited, and everything under it blocks: the send waits for the host's
-        acknowledgement and the first send of a session waits for a process to
-        import Qt, so the wait goes on a thread of the loop's own pool exactly
-        as an engine call's does. Where the waiting happens is not the app's
-        business, and a browser that has no thread to wait in answers the same
-        call with no wait at all.
+        Sending blocks until the host acknowledges, and the first send also waits for
+        the host to start, so the call runs on a thread from the loop's pool, as an
+        engine call does. A browser backend can answer the same call without waiting.
 
-        The whole reply comes back rather than the number alone, because the
-        acknowledgement message turns on more than the number: whether the
-        plot replaced a curve already there is the host's to know.
+        The whole reply is returned rather than just the window number, because the
+        acknowledgement also depends on whether the plot replaced an existing one.
         """
         return await asyncio.to_thread(self.plot, request)
 
     def plot(self, request: protocol.Add) -> protocol.Placed:
-        """`add` itself, on whatever thread is willing to wait for it."""
+        """The blocking implementation of `add`."""
         reply = self._ask(request)
         if isinstance(reply, protocol.Placed):
             return reply
         raise PlotError(_unexpected(reply))
 
     def prefer(self, preferences: protocol.Prefer) -> None:
-        """Remember what a new window and a new plot are to be built with.
+        """Store the preferences for new windows and plots.
 
-        Nothing is sent from here, and nothing is started. What preferences
-        matter to is the next window and the next plot, so they travel in front
-        of the next request instead of as traffic of their own - which is why
-        this may be called straight from the app's event loop, as the settings
-        watcher does: it stores four values and returns.
+        Nothing is sent or started: the preferences are sent before the next request.
+        This makes it safe to call from the app's event loop, as the settings watcher
+        does.
         """
         if preferences == self._preferences:
             return
@@ -186,10 +155,9 @@ class PlotProxy:
         self._unsaid = True
 
     def describe(self) -> tuple[protocol.WindowInfo, ...]:
-        """What windows are open and what is in them.
+        """The open windows and their contents.
 
-        Answers with nothing where no host has been started, since that is the
-        truth and starting one to hear it would open a Qt toolkit to say that
+        Returns nothing if no host is running, rather than starting one just to learn
         there are no windows.
         """
         if not self.running:
@@ -200,40 +168,34 @@ class PlotProxy:
         raise PlotError(_unexpected(reply))
 
     async def release(self, finished: bool = False) -> None:
-        """Say that the demonstration is over, so its window is nobody's screen.
+        """Tell the host the demonstration is over.
 
-        Awaited on a thread, as `add` is, and for a sharper reason than `add`
-        has. This is asked as a demonstration ends, and what ended it may have
-        been a key pressed in the plot window - an event the reader thread is
-        still inside of, since it hands events to the app's loop and waits
-        there for them to be taken. Asking for this answer *on* that loop would
-        be waiting for the one thread that could deliver it, which is a wait of
-        exactly one reply timeout and ends with a live host declared dead.
+        This runs on a thread, like `add`, for an important reason. The demonstration
+        may have been ended by a key pressed in the plot window, an event the reader
+        thread is still delivering to the app's loop. Waiting for the reply on that
+        loop would deadlock until the reply timeout, after which a live host would be
+        declared dead. In general, nothing that waits for the host may be called from
+        the app's event loop.
 
-        So the rule the whole class rests on: nothing that waits for the host
-        may be called from the app's event loop.
-
-        Nothing where there is no host: a demonstration that drew nothing
-        started none, and starting one to tell it that nothing is waiting would
-        open a Qt toolkit to say nothing. Nothing either where the host has
-        died, which is a message the demonstration's own step already carried.
+        Does nothing if no host is running: a demonstration that drew nothing started
+        none, and a dead host was already reported by the demonstration step.
         """
         if not self.running:
             return
         await asyncio.to_thread(self._release, finished)
 
     def _release(self, finished: bool) -> None:
-        """The round trip itself, on whatever thread is willing to wait for it."""
+        """The blocking implementation of `release`."""
         try:
             self._ask(protocol.Release(finished))
         except PlotError:
             pass
 
     def shutdown(self) -> None:
-        """End the host for good, which is what leaving the app comes to.
+        """Stop the host for good, when the app exits.
 
-        Quiet about everything: a host that has already died is a host that
-        needs no shutting down, and the app is on its way out either way.
+        Errors are ignored: a dead host needs no shutdown, and the app is exiting
+        anyway.
         """
         with self._call:
             self._stopped = True
@@ -250,11 +212,10 @@ class PlotProxy:
     # -- one request -------------------------------------------------------
 
     def _ask(self, request: Request) -> Reply:
-        """Send one request and wait for the acknowledgement it is owed.
+        """Send a request and wait for its acknowledgement.
 
-        Preferences the host has not been told about go first, so that the
-        window this request may open is built with them. They are one cheap
-        message and only ever sent when something has changed.
+        Unsent preferences are sent first, so a window opened by this request uses
+        them.
         """
         with self._call:
             if self._stopped:
@@ -266,10 +227,9 @@ class PlotProxy:
             return self._deliver(request)
 
     def _deliver(self, request: Request) -> Reply:
-        """One request down the pipe, and the acknowledgement it is owed.
+        """Send a request and wait for its acknowledgement.
 
-        The caller holds the call lock and has seen to it that there is a host
-        on the other end.
+        The caller holds the call lock and has ensured the host is running.
         """
         number = self._next()
         connection = self._connection
@@ -284,7 +244,7 @@ class PlotProxy:
         return reply
 
     def _await(self, number: int, timeout: float) -> Reply:
-        """Wait for the reader thread to hand over the answer to `number`."""
+        """Wait for the reader thread to receive the reply to request `number`."""
         with self._arrived:
             while True:
                 reply = self._replies.pop(number, None)
@@ -301,12 +261,11 @@ class PlotProxy:
         return self._number
 
     def _require(self) -> None:
-        """See that there is a host to ask, or start one and wait for it.
+        """Ensure a host is running, starting one and waiting for it if needed.
 
-        A handshake that comes back a refusal is a host that could not start -
-        a missing wheel, a display Qt would not open - and it says so in its
-        own words rather than in the words the death of a process gets. The
-        process is gone either way, so the next request starts another.
+        A refused handshake means the host could not start (e.g. a missing wheel or a
+        display Qt can't open), and its message is reported instead of the generic
+        `DIED`. The next request will start another host.
         """
         if self.running:
             return
@@ -317,22 +276,18 @@ class PlotProxy:
             self._clear()
             raise PlotError(reply.message)
         self._ready = True
-        # A fresh host knows only the protocol's defaults, whatever it may have
-        # been told before it died.
+        # A new host knows only the defaults, whatever its predecessor was told.
         self._unsaid = self._preferences is not None
 
     # -- the process -------------------------------------------------------
 
     def _spawn(self) -> None:
-        """Put a host up. Raises `PlotError` where the system will not have one.
+        """Start a host process, raising `PlotError` if that's impossible.
 
-        The toolkit is looked for before a process is started for it. A host
-        without one refuses in its own words already - that is the path a
-        display Qt will not open takes - but the words are an ImportError's,
-        which name a module rather than the extra it came in, and finding out
-        costs a spawn and a Python start-up. Looked for rather than imported:
-        the app process is deliberately free of the toolkit, and `find_spec`
-        answers without loading anything.
+        The toolkit modules are checked first. The host would report them missing
+        anyway, but as an ImportError naming a module rather than the extra, and only
+        after a spawn and Python startup. `find_spec` checks without importing, keeping
+        the toolkit out of the app process.
         """
         if not all(_installed(name) for name in DRAWN_WITH):
             raise PlotError(UNINSTALLED)
@@ -351,8 +306,8 @@ class PlotProxy:
             _close(parent)
             _close(child)
             raise PlotError(f"the plot window could not be started: {error}") from None
-        # The child's end belongs to the child now; holding it here would keep
-        # the pipe open past its death and turn every death into a hang.
+        # Close our copy of the child's end, or the pipe would stay open after the child
+        # dies and we'd hang instead of noticing.
         child.close()
         self.starts += 1
         self._death = None
@@ -362,11 +317,10 @@ class PlotProxy:
         self._reader.start()
 
     def _reading(self, connection: Connection) -> None:
-        """The reader thread: replies to whoever waits, events to the app.
+        """Reader thread: pass replies to the waiting call and events to the app.
 
-        It ends when the pipe does, and the end of the pipe is how the death of
-        the host is noticed however it died - a crash, a kill, or the shutdown
-        the app asked for.
+        It ends when the pipe closes, which is how the host's death is detected,
+        whether by crash, kill or requested shutdown.
         """
         while True:
             try:
@@ -385,10 +339,10 @@ class PlotProxy:
             self._arrived.notify_all()
 
     def _event(self, event: Event) -> None:
-        """Hand one asynchronous event to the app, whatever it makes of it.
+        """Pass an asynchronous event to the app's callback.
 
-        A callback that raises must not take the reader thread down with it:
-        the app would then hear about nothing further and never learn why.
+        Exceptions from the callback are swallowed so they don't kill the reader
+        thread, which would silently cut off all further messages.
         """
         callback = self.events
         if callback is None:
@@ -399,18 +353,17 @@ class PlotProxy:
             pass
 
     def _collapsed(self) -> PlotError:
-        """The host is gone: clear it away and say so.
+        """Forget the dead host and return the error to raise.
 
-        The next request spawns another, which is the whole of the recovery.
-        Open windows are not restored: they died with the process, and the
-        design keeps no view state anywhere that could put them back.
+        The next request spawns a new host. Open windows died with the process and are
+        not restored, since no view state is kept.
         """
         message = self._death or DIED
         self._clear()
         return PlotError(message)
 
     def _clear(self) -> None:
-        """Forget the host, whatever became of it."""
+        """Forget the host, whatever its state."""
         connection, self._connection = self._connection, None
         _close(connection)
         self._process = None
@@ -421,12 +374,10 @@ class PlotProxy:
 
 
 def _installed(name: str) -> bool:
-    """Whether a module is there to be imported, without importing it.
+    """Whether a module is installed, checked without importing it.
 
-    An install that has the module but not what it is built on - a PySide6
-    whose Qt libraries are missing - answers yes here and refuses in the host's
-    own words, which is where a broken install belongs: this question is only
-    about whether the wheel was ever fetched.
+    A broken install (e.g. PySide6 without its Qt libraries) passes this check and is
+    reported by the host; this only checks whether the wheel was installed.
     """
     try:
         return importlib.util.find_spec(name) is not None
@@ -435,10 +386,10 @@ def _installed(name: str) -> bool:
 
 
 def _unexpected(reply: Reply) -> str:
-    """What to say about an answer of a kind the request does not take.
+    """The error message for a reply of an unexpected type.
 
-    It cannot happen while both sides are this file and `host.py`, and saying
-    so beats an assertion in a program whose plot windows are optional.
+    This can't happen with the current host, but an error message is friendlier than
+    an assertion for an optional feature.
     """
     return f"the plot window answered with {type(reply).__name__}"
 

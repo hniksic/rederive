@@ -40,17 +40,14 @@ async def author(pilot, text):
 
 
 def authored(app, *texts):
-    """Entries put on the worksheet through the session rather than typed.
+    """Add entries through the session instead of typing them.
 
-    The Author line does no more than hand what was typed to `Session.author`,
-    so this leaves the same worksheet behind, with the last entry selected
-    whole and the panes painted for it. It is for setting a test up when the
-    keys under test are the ones pressed afterwards, and it is most of what a
-    test costs saved: each key typed through the pilot waits for the app to go
-    idle, and a line of six keys is seventy milliseconds where this is one. A
-    line with a trailing `=` is the one the line does more with, and belongs on
-    the line itself; so does a test of the line, or of what the first key after
-    one finds laid out.
+    The Author line just hands its text to `Session.author`, so this leaves the same
+    worksheet, with the last entry selected and the panes painted. Use it for setup
+    when the keys under test come afterwards: each key pressed through the pilot waits
+    for the app to go idle, so typing a six-key line costs ~70ms versus ~1ms here.
+    Type the line for real when it ends in `=` (the Author line does more with it), or
+    when the Author line itself or the layout it leaves is what's being tested.
     """
     for text in texts:
         app.session.author(text)
@@ -59,10 +56,9 @@ def authored(app, *texts):
 
 # -- the opening notice --------------------------------------------------------
 
-# The original's notice is a painting rather than a state: it survives a menu
-# opened and escaped, a dialog committed and a line abandoned, and is gone for
-# good the moment anything else draws the work area - an expression, a help
-# page, a window command, a Clear. These say the same of this one.
+# As in the original, the notice is just what was painted, not a state: it survives
+# menus, dialogs and abandoned lines, and is gone for good once anything else draws the
+# work area (an expression, a help page, a window command, a Clear).
 
 
 async def test_the_opening_notice_stands_across_the_empty_pane(app):
@@ -75,12 +71,12 @@ async def test_the_opening_notice_stands_across_the_empty_pane(app):
             f"Version {__version__}",
             "Press H for help, T D for demos",
         ]
-        # Centred across the pane, and clear of the top of it and the bottom.
+        # Centered, with blank rows at the top and bottom.
         width = app.query_one("#panes").size.width
         assert all(line == line.strip().center(width).rstrip() for line in shown if line)
         assert shown[0] == "" and shown[-1] == ""
-        # The name block stands high and the help line low, with the pane's
-        # empty middle between them rather than a single blank row.
+        # The name block sits high and the help line low, with more than one blank
+        # row between them.
         rows = [at for at, line in enumerate(shown) if line]
         assert rows[0] < len(shown) // 3 < rows[-1]
         assert rows[-1] - rows[-2] > 1
@@ -90,8 +86,7 @@ async def test_the_opening_notice_gives_the_pane_up_for_the_first_expression(app
     async with app.run_test() as pilot:
         authored(app, "x")
         assert work_area(app) == ["#1:  x"]
-        # A worksheet emptied later is an empty worksheet, not a program that
-        # has just started, so the notice does not come back.
+        # The notice doesn't come back when the worksheet is emptied later.
         await pilot.press("t", "c", "e", "y")
         assert work_area(app) == []
 
@@ -184,8 +179,7 @@ async def test_a_narrow_terminal_keeps_every_word_of_the_menu(app, width):
             "COMMAND:",
             *menus.ALGEBRA.words,
         ]
-        # Every row is a row of the band, so none of them is a wrap of the one
-        # above it and none has fallen off the bottom.
+        # The band is as tall as its lines, so none wraps or is cut off.
         assert app.query_one("#menu").size.height == len(lines)
         assert max(len(line) for line in lines) <= width
 
@@ -193,8 +187,7 @@ async def test_a_narrow_terminal_keeps_every_word_of_the_menu(app, width):
 async def test_a_narrow_terminal_keeps_both_lines_of_a_dialog(app):
     async with app.run_test(size=(60, 24)) as pilot:
         await pilot.press("o", "r")
-        # The dialog band is shown by the keys above, and stands as tall as the
-        # fields need only once the layout has caught up with them.
+        # The band reaches the height the fields need only after the layout catches up.
         await laid_out(pilot, app, "#fields")
         lines = band(app)
         assert lines[0].startswith(" OPTIONS RADIX: Input:")
@@ -213,8 +206,8 @@ async def test_a_resized_terminal_lays_the_menu_out_again(app):
 
 async def test_a_terminal_too_short_for_the_menu_keeps_its_other_lines(app):
     async with app.run_test(size=(30, 10)) as pilot:
-        # Five rows go to the rule, the message and status lines and two rows
-        # of expressions; the menu takes what is left and is cut off there.
+        # Five rows go to the rule, message and status lines and two rows of
+        # expressions; the menu gets what's left and is cut off.
         assert len(band(app)) == 5
         assert message(app) == "Enter option"
         await pilot.pause()
@@ -236,11 +229,11 @@ async def test_author_appends_and_selects_the_new_entry(app):
 async def test_a_trailing_equals_enters_the_value_beside_what_was_typed(app, key):
     async with app.run_test() as pilot:
         await pilot.press("a", *"2^3=", key)
-        # One entry, and the user's own: the `=` was typed, not commanded. The
-        # value is there already, so Ctrl-Enter has nothing left to simplify.
+        # One entry, annotated as the user's: the `=` was typed, not a command. The
+        # value is already there, so Ctrl-Enter has nothing left to simplify.
         assert entries(app) == ["2^3 = 8"]
         assert annotation(app) == "User"
-        # Computed, so it is timed like every other computation.
+        # It was computed, so it is timed.
         assert message(app).startswith("Compute time:")
 
 
@@ -291,7 +284,7 @@ async def test_a_syntax_error_leaves_the_author_line_up(app):
         assert author_input.value == "12.34.5"
         # Positioned where Derive stops reading: the second decimal point.
         assert author_input.cursor_position == 5
-        # The line is still there to be corrected and entered again.
+        # The line stays up to be corrected.
         await pilot.press("delete")
         await pilot.press("enter")
         assert [entry.text for entry in app.session.entries] == ["12.345"]
@@ -301,8 +294,8 @@ async def test_a_syntax_error_leaves_the_author_line_up(app):
 async def test_a_built_up_render_is_painted_and_labelled(app):
     async with app.run_test() as pilot:
         authored(app, "(x+1)/(x^2+2x+3)")
-        # The label sits on the vertically centred row, biased downward, and
-        # the render's own rows are indented to the same column.
+        # The label sits on the middle row (rounding down the screen), and the
+        # render's rows share one indent.
         assert work_area(app) == [
             "          x + 1",
             "     ──────────────",
@@ -425,8 +418,7 @@ async def test_the_annotation_follows_the_selection(app):
 
 @pytest.mark.parametrize("key", ["s", "f", "l"], ids=str)
 async def test_an_expression_line_that_does_not_read_is_left_up(app, key):
-    """Simplify and approX read the line one way, Factor and Expand another, and
-    soLve a third."""
+    """Covers the three line readers: Simplify/approX, Factor/Expand, and soLve."""
     async with app.run_test() as pilot:
         authored(app, "x")
         await pilot.press(key)
@@ -457,9 +449,8 @@ async def test_quit_asks_before_abandoning_expressions(app):
 
 # -- Factor, which asks three questions before it answers ---------------------
 #
-# Every screen asserted here was checked against the original.
-# The order is the original's and not the manual's, which describes the amount
-# as being asked for before the variables.
+# Every screen asserted here was checked against the original. The question order
+# follows the original, not the manual, which has the amount asked before the variables.
 
 
 async def test_factor_asks_for_expression_then_variables_then_amount(app):
@@ -545,10 +536,9 @@ async def test_a_name_that_is_no_variable_is_refused(app):
 
 # -- Expand, which asks the same three questions ------------------------------
 #
-# Every screen asserted here was checked against the original.
-# Expand asks for an amount where Factor asks for one - the two are one flow -
-# but for a different reason and off a menu of its own: only a ratio has a
-# denominator to factor, and Complex is not among the amounts on offer.
+# Every screen asserted here was checked against the original. Expand shares Factor's
+# flow, but asks for an amount only for a ratio (which has a denominator to factor), and
+# its amount menu lacks Complex.
 
 
 async def test_expand_asks_for_the_expression_and_answers(app):
@@ -594,8 +584,7 @@ async def test_a_ratio_is_asked_about_and_a_polynomial_is_not(app):
 
 
 async def test_the_two_amount_menus_remember_separately(app):
-    """The original keeps a choice made on one off the other: Factor left on
-    Trivial still opens Expand on Rational."""
+    """As in the original, Factor left on Trivial still opens Expand on Rational."""
     async with app.run_test() as pilot:
         authored(app, "x^2 - 4")
         await pilot.press("f", "enter", "t")
@@ -635,10 +624,9 @@ async def test_expand_of_a_part_copies_the_rest_of_the_expression(app):
 
 # -- soLve, which asks up to three questions and appends any number of answers -
 #
-# Every screen asserted here was checked against the original. The variable
-# line carries no number, the original asking it once per variable it wants
-# and never saying which one is up, and the interval comes up only in
-# Approximate precision.
+# Every screen asserted here was checked against the original. The variable line is
+# unnumbered, as the original asks it once per variable needed without saying which,
+# and the interval is asked only in Approximate precision.
 
 
 async def test_solve_asks_for_the_expression_and_appends_every_solution(app):
@@ -681,7 +669,7 @@ async def test_an_underdetermined_system_is_asked_about_once_per_equation(app):
         await pilot.press("l", "enter")
         assert prompt(app) == ("SOLVE variable:", "x")
         await pilot.press("enter")
-        # The default walks the pool, the chosen one having left it.
+        # The next default is the next variable not yet chosen.
         assert prompt(app) == ("SOLVE variable:", "y")
         await pilot.press("enter")
         assert entries(app)[-1] == "[x = (1 - z)/2, y = (1 - z)/2]"
@@ -754,9 +742,9 @@ async def test_the_arbitrary_counter_runs_across_the_session(app):
 
 # -- approX, which asks the one question Simplify asks ------------------------
 #
-# Every screen asserted here was checked against the original. The command is
-# Simplify at approximate precision, and its line says so and no more: there
-# is no question about digits, which come from Options Precision.
+# Every screen asserted here was checked against the original. The command is Simplify
+# at approximate precision. It doesn't ask for digits, which come from Options
+# Precision.
 
 
 async def test_approx_offers_the_highlighted_expression(app):
@@ -774,7 +762,7 @@ async def test_approx_offers_the_highlighted_expression(app):
 
 
 async def test_approx_leaves_the_precision_setting_alone(app):
-    """The mode is approximate for the one command, and Simplify says so."""
+    """approX is approximate for that command only, as a later Simplify shows."""
     async with app.run_test() as pilot:
         authored(app, "1/3")
         await pilot.press("x", "enter")
@@ -801,10 +789,9 @@ async def test_an_abandoned_approx_leaves_the_history_alone(app):
 
 
 def numbered(app):
-    """The history as text: each entry's label, and the notation it holds.
+    """The history as `#label: text` lines, in linear notation.
 
-    Not what the work area draws, which is built up from the same tree and
-    written in glyphs; `work_area` is what asks for that.
+    For the rendered 2D display, use `work_area` instead.
     """
     return [f"#{entry.number}: {entry.text}" for entry in app.session.entries]
 
@@ -995,8 +982,7 @@ async def test_a_label_that_names_no_expression_leaves_the_move_question_up(app)
         authored(app, "x", "y")
         await pilot.press("v", "9", "tab", "1", "tab", "1", "enter")
         assert band(app) == [" MOVE: Before: 9      Start: 1      End: 1"]
-        # The refusal takes the highlight back to the field that was wrong,
-        # so the correction is typed where the mistake is.
+        # The refusal puts focus back on the wrong field, ready for correction.
         assert message(app) == 'Enter label number or type "end"'
         await pilot.press("2")
         assert band(app) == [" MOVE: Before: 2      Start: 1      End: 1"]
@@ -1224,8 +1210,8 @@ async def test_a_blank_answer_that_names_nothing_abandons_the_command(app, keys,
 
 # -- Build, which asks for operands and operators until Done ------------------
 #
-# Every screen asserted here was checked against the original, whose versions
-# draw all of them the same way.
+# Every screen asserted here was checked against the original, and is the same in all
+# its versions.
 
 
 async def test_build_asks_for_an_operand_then_an_operator_then_another(app):
@@ -1242,7 +1228,7 @@ async def test_build_asks_for_an_operand_then_an_operator_then_another(app):
         await pilot.press("+")
         assert prompt(app) == ("BUILD next expression:", "#1")
         await pilot.press("enter")
-        # An operand answered leaves the menu open on the word that finishes.
+        # After an operand, the menu highlight is on Done.
         assert highlighted(app) == "Done"
         await pilot.press("d")
         assert entries(app) == ["x^2*y", "x^2*y+x^2*y"]
@@ -1271,8 +1257,8 @@ async def test_the_operators_chain_until_done(app):
         await pilot.press("+", "down", "enter")
         await pilot.press("*", "down", "enter")
         await pilot.press("d")
-        # Left to right, with the fences the grouping calls for - and an
-        # annotation written flat, which is how the original writes it.
+        # Built left to right with the needed parentheses; the annotation is
+        # written flat, as the original writes it.
         assert entries(app)[-1] == "(2+3)*4"
         assert annotation(app) == "#1+#2*#3"
 
@@ -1318,7 +1304,7 @@ async def test_a_highlighted_part_is_what_is_built_from(app):
         await pilot.press("f6", "right", "down")
         assert highlighted_expression(app) == "   2\na·x"
         await pilot.press("b")
-        # The line still names the entry; the part is what it stands for.
+        # The line names the entry, but the highlighted part is what's used.
         assert prompt(app) == ("BUILD first expression:", "#1")
         await pilot.press("enter", "d")
         assert entries(app)[-1] == "a*x^2"
@@ -1367,8 +1353,8 @@ async def test_ctrl_enter_on_done_enters_one_expression(app):
         authored(app, "x^2*y")
         await pilot.press("b", "enter", "+", "enter")
         await pilot.press("ctrl+j")
-        # One entry, not two: what was built never reaches the history, and
-        # the annotation says both what it was and that it was taken.
+        # One entry, not two: the built expression isn't added, and the annotation
+        # records both how it was built and that it was simplified.
         assert entries(app) == ["x^2*y", "2*x^2*y"]
         assert annotation(app) == "Simp(#1+#1)"
 
@@ -1513,8 +1499,8 @@ async def test_one_limit_of_a_pair_sends_the_line_to_the_other(app):
         authored(app, "x^2*y")
         await pilot.press("c", "i", "enter", "enter")
         await pilot.press("0", "enter")
-        # Neither taken nor refused outright: the empty half is what is asked
-        # for now, and answering it commits.
+        # Neither committed nor refused: focus moves to the empty limit, and
+        # filling it commits.
         assert entries(app) == ["x^2*y"]
         assert band(app) == [
             " CALCULUS INTEGRATE: Lower limit: 0                  Upper limit:"
@@ -1554,8 +1540,7 @@ async def test_a_highlighted_part_is_what_is_taken(app):
         await pilot.press("f6", "right", "down")
         assert highlighted_expression(app) == "   2\na·x"
         await pilot.press("c", "d", "enter", "enter", "enter")
-        # Extraction, not substitution: the part alone is what the head goes
-        # round, and the entry it came out of is left as it was.
+        # The part is extracted, not substituted: DIF wraps just the part.
         assert entries(app)[-1] == "DIF(a*x^2,x)"
         assert annotation(app) == "Dif(#1',x)"
 
@@ -1591,9 +1576,8 @@ async def test_nothing_is_computed_until_a_simplify_asks_for_it(app):
 
 # -- Esc in the middle of a command -------------------------------------------
 #
-# Esc on a line abandons the command at once, whatever it has asked so far; on a
-# submenu or a dialog it takes that off and the command with it. Either way it
-# goes back to the menu the command was picked from.
+# Esc abandons the command at any step, on a line, submenu or dialog, and returns to
+# the menu the command was picked from.
 
 COMMAND_MENU = " COMMAND:"
 DECLARE_MENU = " DECLARE: Function Variable Matrix vectoR"
@@ -1681,8 +1665,7 @@ async def test_jump_asks_for_a_label_and_highlights_what_it_names(app):
     async with app.run_test() as pilot:
         authored(app, "x", "y", "z")
         await pilot.press("j")
-        # Nothing is offered: the command is for going somewhere else, so the
-        # label of where the highlight already is would be no use.
+        # Nothing is offered, as the current label would be pointless to jump to.
         assert prompt(app) == ("JUMP to:", "")
         assert message(app) == "Enter label number"
         await pilot.press("1", "enter")
@@ -1706,7 +1689,7 @@ async def test_a_label_past_the_last_one_leaves_the_line_up(app):
         assert prompt(app) == ("JUMP to:", "9")
         assert message(app) == "Enter label number"
         assert highlighted_expression(app) == "y"
-        # The line is still there to be corrected and entered again.
+        # The line stays up to be corrected.
         await pilot.press("backspace", "1", "enter")
         assert highlighted_expression(app) == "x"
 
@@ -1760,14 +1743,13 @@ async def test_jumping_to_the_expression_you_are_inside_of_keeps_the_part(app):
     ids=str,
 )
 async def test_an_empty_history_asks_for_nothing(app, key, line):
-    """One command for each place the question is settled: the line Simplify and
-    approX share, the one Factor and Expand share, soLve's, and the three commands
-    that ask nothing at all when there is nothing to name."""
+    """One command per code path: the lines shared by Simplify/approX and by
+    Factor/Expand, soLve's line, and three commands that ask nothing when the history
+    is empty."""
     async with app.run_test() as pilot:
         await pilot.press(key)
         if line is not None:
-            # Nothing is highlighted, so nothing is offered, and Enter on the
-            # empty line asks for nothing.
+            # Nothing is offered, and Enter on the empty line does nothing.
             assert prompt(app) == (line, "")
             await pilot.press("enter")
         assert app.session.entries == []
@@ -1777,10 +1759,9 @@ async def test_an_empty_history_asks_for_nothing(app, key, line):
 
 # -- walking the history with a question up -----------------------------------
 #
-# The keys that move the highlight from one expression to another go on doing
-# it while a prompt line has the screen; the ones that move a cursor along the
-# line belong to the line. Every screen asserted here was checked against the
-# original.
+# Keys that move the highlight between expressions keep working while a prompt line is
+# up; keys that move the cursor along the line belong to the line. Every screen
+# asserted here was checked against the original.
 
 
 async def test_the_history_keys_walk_while_a_prompt_line_is_up(app):
@@ -1788,8 +1769,8 @@ async def test_the_history_keys_walk_while_a_prompt_line_is_up(app):
         authored(app, "2 + 3", "y", "z")
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#3")
-        # The line takes the label of wherever the highlight lands, which is
-        # what the manual recommends over typing the number.
+        # The line takes the label of wherever the highlight lands, which the manual
+        # recommends over typing the number.
         await pilot.press("up")
         assert prompt(app)[1] == "#2"
         assert highlighted_expression(app) == "y"
@@ -1805,7 +1786,7 @@ async def test_a_label_walked_onto_is_selected_as_the_offered_one_was(app):
         authored(app, "x", "y", "z")
         await pilot.press("s", "up")
         assert prompt(app)[1] == "#2"
-        # Typing replaces it, exactly as it replaces the label first offered.
+        # Typing replaces it, just like the originally offered label.
         await pilot.press("3")
         assert prompt(app)[1] == "#3"
 
@@ -1817,7 +1798,7 @@ async def test_a_line_that_was_typed_on_is_left_as_it_is(app):
         await pilot.press(*"2+3")
         assert prompt(app)[1] == "#2+3"
         await pilot.press("up")
-        # The highlight moved; the line is the user's now, so it stands.
+        # The highlight moved, but the line, now edited, is kept.
         assert highlighted_expression(app) == "y"
         assert prompt(app)[1] == "#2+3"
 
@@ -1826,8 +1807,7 @@ async def test_a_cursor_key_hands_the_line_over_for_good(app):
     async with app.run_test() as pilot:
         authored(app, "x", "y", "z")
         await pilot.press("s")
-        # End collapses the selection the offered label came up with, and the
-        # line stops taking labels from then on.
+        # End deselects the offered label, and the line stops taking labels.
         await pilot.press("end", "up")
         assert highlighted_expression(app) == "y"
         assert prompt(app)[1] == "#3"
@@ -1837,8 +1817,8 @@ async def test_a_stretch_marked_out_by_hand_hands_the_line_over_too(app):
     async with app.run_test() as pilot:
         authored(app, "x", "y", "z")
         await pilot.press("s")
-        # A selection of the user's own is not the offering, however much it
-        # looks like one, so the walk leaves both the line and it alone.
+        # A user-made selection isn't the offered label, even if it looks the same,
+        # so walking leaves the line and selection alone.
         await pilot.press("home", "shift+end")
         await pilot.press("up")
         assert highlighted_expression(app) == "y"
@@ -1858,10 +1838,9 @@ async def test_the_cursor_keys_move_no_highlight_while_a_line_is_up(app):
 
 # -- copying an expression and pasting it -------------------------------------
 #
-# Ctrl-C takes what is highlighted and Ctrl-V puts it back on the line being
-# typed. The copy goes out to the system clipboard as well as to the program's
-# own, but a headless run keeps its hands off the desktop's clipboard, so these
-# check the copy that is kept here.
+# Ctrl-C copies the highlighted expression and Ctrl-V pastes it on the line being
+# typed. The copy goes to both the system clipboard and the app's own, but headless runs
+# leave the system clipboard alone, so these tests check the app's copy.
 
 
 async def test_ctrl_c_copies_the_highlighted_expression_and_ctrl_v_pastes_it(app):
@@ -1869,17 +1848,15 @@ async def test_ctrl_c_copies_the_highlighted_expression_and_ctrl_v_pastes_it(app
         authored(app, "x + 1", "y")
         await pilot.press("ctrl+c")
         assert app.clipboard == "y"
-        # Text handed to a clipboard leaves no other mark, so the message line
-        # is what says the key landed.
+        # The message confirms the copy, which is otherwise invisible.
         assert message(app) == "Copied the highlighted expression"
         await pilot.press("a", "ctrl+v")
         assert prompt(app) == ("AUTHOR expression:", "y")
 
 
 async def test_a_headless_copy_keeps_off_the_desktop_clipboard(app, monkeypatch):
-    # The suite runs on somebody's desktop, and a test pressing Ctrl-C must
-    # not write on their clipboard; the headless guard in `copy_to_clipboard`
-    # is what stands between the two, and this is the test of the guard.
+    # Tests pressing Ctrl-C must not write to the developer's clipboard. This tests
+    # the headless guard in `copy_to_clipboard` that prevents it.
     touched = []
     environment = type(platform.current())
     monkeypatch.setattr(environment, "copy", lambda self, text: touched.append(text))
@@ -1891,9 +1868,9 @@ async def test_a_headless_copy_keeps_off_the_desktop_clipboard(app, monkeypatch)
 
 
 async def test_ctrl_v_pastes_the_system_clipboard_where_it_is_read(app, monkeypatch):
-    # Outside a test Ctrl-V reads the desktop's clipboard, and falls back on
-    # the copy kept here where nothing is read. The run stands in for one that
-    # is not headless, with a clipboard of its own in place of the desktop's.
+    # Outside tests Ctrl-V reads the system clipboard, falling back on the app's copy
+    # when that yields nothing. This simulates a non-headless run with a fake system
+    # clipboard.
     held = ["a + b\nsecond line"]
     environment = type(platform.current())
     monkeypatch.setattr(environment, "paste", lambda self: held[0])
@@ -1921,8 +1898,8 @@ async def test_ctrl_c_copies_only_the_highlighted_part(app):
 async def test_the_highlight_can_be_walked_and_copied_under_a_line(app):
     async with app.run_test() as pilot:
         authored(app, "x + 1", "y")
-        # Which is the point of the pair: build a new expression out of one
-        # already on screen without leaving the line it is being built on.
+        # The main use: build a new expression from one on screen without leaving
+        # the line.
         await pilot.press("a", *"2 (")
         await pilot.press("up")
         assert highlighted_expression(app) == "x + 1"
@@ -1935,8 +1912,7 @@ async def test_a_copy_outlives_the_line_it_was_pasted_on(app):
         authored(app, "sin(x)")
         await pilot.press("ctrl+c")
         await pilot.press("a", "ctrl+v", "escape")
-        # The clipboard belongs to the program rather than to the command that
-        # read the line, so it is still there for the next one.
+        # The clipboard belongs to the app, not the command, so it persists.
         await pilot.press("a", "ctrl+v", "ctrl+v")
         assert prompt(app)[1] == "SIN(x)SIN(x)"
 
@@ -1947,15 +1923,14 @@ async def test_pasting_takes_the_offered_label_hash_and_all(app):
         await pilot.press("ctrl+c")
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
-        # As F3 does: what is pasted stands where an expression goes, and a `#`
-        # in front of one says nothing.
+        # As with F3, the paste replaces the whole offered label, `#` included.
         await pilot.press("ctrl+v")
         assert prompt(app)[1] == "y"
 
 
 async def test_a_terminal_paste_takes_the_offered_label_too(app):
-    # What the terminal's own paste key sends, and what the browser's Ctrl-V
-    # becomes: a paste event rather than a key. It lands as Ctrl-V's does.
+    # The terminal's paste key, and Ctrl-V in the browser, send a paste event rather
+    # than a key. It should behave like Ctrl-V.
     async with app.run_test() as pilot:
         authored(app, "x", "y")
         await pilot.press("s")
@@ -1972,8 +1947,7 @@ async def test_ctrl_v_pastes_onto_any_line_but_not_at_the_menu(app):
         await pilot.press("ctrl+c")
         await pilot.press("t", "s", "d")
         assert prompt(app)[0] == "TRANSFER SAVE DERIVE file:"
-        # Pasting is about the text on the line, so it applies to the lines that
-        # collect something other than an expression too.
+        # Pasting works on lines that don't take an expression, too.
         await pilot.press("ctrl+v")
         assert prompt(app)[1] == "x"
         await pilot.press("escape", "escape", "escape")
@@ -1996,11 +1970,9 @@ async def test_ctrl_v_with_nothing_copied_writes_nothing(app):
 
 # -- copying and cutting what is marked out on the line ------------------------
 #
-# A stretch marked out on the line is a selection like a sweep of the screen is,
-# and takes precedence over the highlight the same way: what a key acts on is
-# what is selected, and the highlighted expression is what Ctrl-C means only
-# when nothing is. Ctrl-X is the line's alone - a copy with the stretch taken
-# off - and says so where there is nothing marked.
+# Text selected on the line takes precedence over the highlighted expression: Ctrl-C
+# copies the highlighted expression only when nothing is selected. Ctrl-X works only on
+# the line's selection, and says so when there is none.
 
 
 async def test_ctrl_c_copies_what_is_marked_out_on_the_line(app):
@@ -2012,23 +1984,21 @@ async def test_ctrl_c_copies_what_is_marked_out_on_the_line(app):
         await pilot.press("ctrl+c")
         assert app.clipboard == "π"
         assert message(app) == COPIED_TEXT
-        # The line keeps what was copied, this being a copy and not a move.
+        # Copying leaves the line unchanged.
         assert prompt(app)[1] == "2 π"
 
 
 async def test_the_label_a_line_offers_is_not_a_selection_of_the_users(app):
     async with app.run_test() as pilot:
         authored(app, "x + 1", "y")
-        # Simplify comes up with `#2` selected, so that typing replaces it -
-        # which is the command speaking rather than the user marking a stretch
-        # out. Ctrl-C means the highlighted expression under such a line, that
-        # being the whole point of copying with a line up.
+        # Simplify preselects `#2` so typing replaces it. That's not a user selection,
+        # so Ctrl-C still copies the highlighted expression.
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
         await pilot.press("ctrl+c")
         assert app.clipboard == "y"
         assert message(app) == COPIED
-        # And still after the walk that rewrites the offering.
+        # Also after walking rewrites the offered label.
         await pilot.press("up")
         assert prompt(app)[1] == "#1"
         await pilot.press("ctrl+c")
@@ -2044,7 +2014,7 @@ async def test_ctrl_x_cuts_what_is_marked_out_and_keeps_the_copy(app):
         assert prompt(app)[1] == "12+"
         assert app.clipboard == "π"
         assert message(app) == CUT_TEXT
-        # A cut is a copy, so what it took is there to be put back.
+        # A cut is also a copy, so it can be pasted back.
         await pilot.press("ctrl+v")
         assert prompt(app)[1] == "12+π"
 
@@ -2055,8 +2025,7 @@ async def test_ctrl_x_with_nothing_marked_out_says_so(app):
         await pilot.press("a")
         await pilot.press(*"x+1")
         await pilot.press("ctrl+x")
-        # The line stands as it was, and the highlighted expression is not
-        # something the key will take away.
+        # The line is unchanged, and the highlighted expression is not cut.
         assert prompt(app)[1] == "x+1"
         assert app.clipboard == ""
         assert message(app) == NOTHING_TO_CUT
@@ -2076,16 +2045,15 @@ async def test_ctrl_x_at_the_menu_cuts_nothing_and_says_nothing(app):
     async with app.run_test() as pilot:
         authored(app, "x+1")
         await pilot.press("ctrl+x")
-        # There is no line at the menu, so there is nothing to explain either.
+        # There's no line at the menu, so no message either.
         assert app.clipboard == ""
         assert message(app) == "Enter option"
 
 
 # -- F3 and F4, the original's keys for the same thing -------------------------
 #
-# They write the highlighted expression onto the line directly. Copy and paste
-# are what the help offers, but a session driven from the manual still reaches
-# for these, so they go on working.
+# They write the highlighted expression onto the line directly. The help offers copy and
+# paste instead, but these are kept for users following the manual.
 
 
 async def test_f3_writes_the_highlighted_expression_onto_the_author_line(app):
@@ -2093,7 +2061,7 @@ async def test_f3_writes_the_highlighted_expression_onto_the_author_line(app):
         authored(app, "x + 1", "y")
         await pilot.press("a", "f3")
         assert prompt(app) == ("AUTHOR expression:", "y")
-        # Walking under the line is what picks what F3 takes.
+        # Walking the highlight under the line picks what F3 takes.
         await pilot.press("up", "f3")
         assert prompt(app)[1] == "yx+1"
 
@@ -2110,8 +2078,7 @@ async def test_f3_writes_at_the_cursor_and_leaves_it_after(app):
         authored(app, "x + 1")
         await pilot.press("a", *"ab", "left", "f3")
         assert prompt(app)[1] == "ax+1b"
-        # The cursor sits after what was written, so the next thing typed
-        # follows it rather than landing back where the line was.
+        # The cursor ends up after the inserted text.
         await pilot.press(*"c")
         assert prompt(app)[1] == "ax+1cb"
 
@@ -2119,8 +2086,8 @@ async def test_f3_writes_at_the_cursor_and_leaves_it_after(app):
 async def test_f3_takes_only_the_highlighted_part(app):
     async with app.run_test() as pilot:
         authored(app, "x (x + 1)")
-        # Descending happens before the line goes up: with a prompt line on
-        # screen the sideways keys are the line's own.
+        # Descend before opening the line, since with a line up the sideways keys
+        # belong to the line.
         await pilot.press("right", "right")
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("a", "f3")
@@ -2151,9 +2118,8 @@ async def test_f3_writes_onto_the_substitute_value_line(app):
         authored(app, "x + 1", "a")
         await pilot.press("m", "s", "enter")
         assert prompt(app)[0] == "MANAGE SUBSTITUTE value:"
-        # The manual gives F3 for this line by name: the value put in the place
-        # of a variable is as often an expression already on screen as it is
-        # something typed.
+        # The manual names F3 for this line, as the substituted value is often an
+        # expression already on screen.
         await pilot.press("f3")
         assert prompt(app)[1] == "a"
 
@@ -2163,9 +2129,8 @@ async def test_the_substitute_value_line_takes_what_the_highlight_walks_onto(app
         authored(app, "x (x + 1)", "a + b")
         await pilot.press("m", "s", "enter")
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "a")
-        # Which expression is being substituted into is settled, but what goes
-        # in the variable's place is not, and this is how it is found: walk to
-        # it, walk into it, and take it.
+        # The target expression is settled; the value is found by walking to it,
+        # into it, and taking it.
         await pilot.press("up")
         assert highlighted_expression(app) == "x·(x + 1)"
         await pilot.press("f6", "right", "right")
@@ -2177,8 +2142,7 @@ async def test_the_substitute_value_line_takes_what_the_highlight_walks_onto(app
 async def test_f3_writes_nothing_on_a_line_that_takes_no_expression(app):
     async with app.run_test() as pilot:
         authored(app, "x", "y")
-        # Jump takes a label number, Declare a variable's name: neither is an
-        # expression, so neither takes what F3 would write.
+        # Jump takes a label number and Declare a name, not an expression.
         for keys in (("j",), ("d", "v")):
             await pilot.press(*keys)
             await pilot.press("f3", "f4")
@@ -2191,8 +2155,8 @@ async def test_f3_takes_the_offered_label_hash_and_all(app):
         authored(app, "x", "y")
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
-        # The `#` stands outside the selection a typed digit replaces, but what
-        # F3 writes is an expression and there is no `#` in front of one.
+        # A typed digit replaces only the number, but F3 writes an expression, so it
+        # replaces the `#` too.
         await pilot.press("f3")
         assert prompt(app)[1] == "y"
 
@@ -2212,11 +2176,10 @@ async def test_the_alt_keys_write_glyphs_onto_the_line(app):
 
 async def test_alt_minus_writes_the_plus_or_minus_operator(app):
     async with app.run_test() as pilot:
-        # The key needs a terminal that tells a modifier from an Escape, which
-        # is what the keyboard protocol Textual asks for is for.
+        # The key needs a terminal that distinguishes Alt from Escape, which the
+        # keyboard protocol Textual requests provides.
         await pilot.press("a", "alt+minus", *"x", "enter")
-        # The glyph is drawn, and written `"+-"` - the spelling the original
-        # writes it in, quotes and all - where the entry is text.
+        # Drawn as the glyph, and stored as `"+-"` (with quotes), as in the original.
         assert work_area(app) == ["#1:  ±x"]
         assert numbered(app)[-1] == '#1: "+-"x'
 
@@ -2225,8 +2188,8 @@ async def test_a_glyph_written_by_an_alt_key_parses(app):
     async with app.run_test() as pilot:
         await pilot.press("a", "alt+p", "enter")
         assert work_area(app) == ["#1:  π"]
-        # The subscript operator is a word here and a glyph in the original, so
-        # the key writes it spaced the way the printer spaces it.
+        # The subscript operator is a word here (a glyph in the original), so the
+        # key writes it spaced as the printer does.
         await pilot.press("a", *"x", "alt+v", "2", "enter")
         assert numbered(app)[-1] == "#2: x SUB 2"
 
@@ -2238,8 +2201,7 @@ async def test_the_alt_keys_write_on_any_line_but_not_at_the_menu(app):
         await pilot.press("alt+p")
         assert prompt(app)[1].endswith("π")
         await pilot.press("escape", "escape", "escape")
-        # At the menu the letter under Alt is not a mnemonic either: nothing
-        # runs, and the menu is where it was.
+        # At the menu, Alt-P is not the P mnemonic: nothing runs.
         await pilot.press("alt+p")
         assert highlighted_menu_option(app) == "Author"
         assert message(app) == "Enter option"
@@ -2256,7 +2218,7 @@ async def test_f6_hands_the_sideways_keys_to_the_highlight_and_back(app):
         assert highlighted_expression(app) == "x + 1"
         await pilot.press("f3")
         assert prompt(app)[1] == "x+1"
-        # Back in line-edit mode the same keys are the cursor's again.
+        # Back in line-edit mode the keys move the cursor again.
         await pilot.press("f6")
         assert flags(app) == ["Lin"]
         await pilot.press("home", *"2")
@@ -2270,8 +2232,7 @@ async def test_the_arrow_key_setting_says_which_mode_a_line_starts_in(app):
         authored(app, "ArrowKeyMode := Subexpression")
         await pilot.press("a")
         assert flags(app) == []
-        # F6 is for the line in hand only: the next one starts where the
-        # setting says again.
+        # F6 applies to the current line only; the next starts per the setting.
         await pilot.press("f6")
         assert flags(app) == ["Lin"]
         await pilot.press("escape", "a")
@@ -2282,8 +2243,7 @@ async def test_no_line_up_means_no_mode_words_to_report(app):
     async with app.run_test() as pilot:
         authored(app, "x")
         assert flags(app) == []
-        # Overwrite outlives the line it was set on, but there is no line for
-        # the status line to say it of.
+        # Overwrite persists, but with no line up it isn't shown.
         await pilot.press("a", "insert", "escape")
         assert flags(app) == []
 
@@ -2296,15 +2256,14 @@ async def test_ins_toggles_overwrite(app):
         assert flags(app) == ["Ovr", "Lin"]
         await pilot.press(*"XY")
         assert prompt(app)[1] == "XYc"
-        # At the end of the line there is nothing to stand on, so it grows.
+        # At the end of the line, overwrite appends.
         await pilot.press("end", *"d")
         assert prompt(app)[1] == "XYcd"
         await pilot.press("insert")
         assert flags(app) == ["Lin"]
         await pilot.press("home", *"Z")
         assert prompt(app)[1] == "ZXYcd"
-        # The original spelled Ins as Ctrl-V too; that key pastes here, so it
-        # leaves the mode alone.
+        # In the original Ctrl-V was also Ins; here it pastes and leaves the mode.
         await pilot.press("ctrl+v")
         assert flags(app) == ["Lin"]
 
@@ -2312,8 +2271,8 @@ async def test_ins_toggles_overwrite(app):
 async def test_overwrite_stands_until_it_is_turned_back(app):
     async with app.run_test() as pilot:
         await pilot.press("a", "insert", "escape")
-        # It is how the user is typing rather than what a command asked, so it
-        # outlives the line it was set on.
+        # It's a typing preference, not part of a command, so it persists across
+        # lines.
         await pilot.press("a", *"abc", "home", *"X")
         assert flags(app) == ["Ovr", "Lin"]
         assert prompt(app)[1] == "Xbc"
@@ -2323,8 +2282,8 @@ async def test_overwrite_replaces_what_is_selected_as_inserting_does(app):
     async with app.run_test() as pilot:
         authored(app, "x", "y")
         await pilot.press("s", "insert")
-        # The offered label comes up selected, and typing takes it away whole
-        # rather than standing on its first character.
+        # Typing replaces the whole selected label rather than overwriting its
+        # first character.
         assert prompt(app)[1] == "#2"
         await pilot.press("1")
         assert prompt(app)[1] == "#1"
@@ -2341,8 +2300,8 @@ async def test_a_kill_is_put_back_at_the_cursor_and_the_cursor_follows_it(app):
         assert prompt(app)[1] == "a + b"
         # Ctrl-K takes the line from the cursor on, so the whole of it here.
         await pilot.press("home", "ctrl+k", "escape")
-        # The ring belongs to the line rather than to the command, so a line
-        # abandoned altogether still leaves what it deleted to be put back.
+        # The kill ring outlives the command, so kills from an abandoned line can
+        # still be yanked.
         await pilot.press("a", *"2 (", "ctrl+y", *")")
         assert prompt(app) == ("AUTHOR expression:", "2 (a + b)")
         await pilot.press("enter")
@@ -2352,16 +2311,14 @@ async def test_a_kill_is_put_back_at_the_cursor_and_the_cursor_follows_it(app):
 async def test_deletions_that_follow_one_another_come_back_as_one(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"a + b + c")
-        # Three words taken a word at a time are one kill, as Emacs and bash
-        # join theirs, so the line comes back whole rather than a word of it.
+        # Consecutive kills join into one, as in Emacs and bash.
         await pilot.press("ctrl+w", "ctrl+w")
         assert prompt(app)[1] == "a + "
         await pilot.press("ctrl+w")
         assert prompt(app)[1] == ""
         await pilot.press("ctrl+y")
         assert prompt(app)[1] == "a + b + c"
-        # Backspace and Delete are corrections rather than kills, so what Ctrl-U
-        # took is still what comes back.
+        # Backspace and Delete aren't kills, so Ctrl-Y still yanks what Ctrl-U took.
         await pilot.press("ctrl+u", *"cde", "backspace", "left", "delete")
         assert prompt(app)[1] == "c"
         await pilot.press("ctrl+y")
@@ -2372,8 +2329,7 @@ async def test_a_deletion_after_something_else_starts_a_kill_of_its_own(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"a b", "ctrl+w", *"c", "ctrl+w")
         assert prompt(app)[1] == "a "
-        # Typing between the two says they are separate deletions, so the last
-        # of them is what Ctrl-Y puts back.
+        # Typing in between makes them separate kills, so Ctrl-Y yanks only the last.
         await pilot.press("ctrl+y")
         assert prompt(app)[1] == "a c"
 
@@ -2385,11 +2341,10 @@ async def test_alt_y_walks_back_through_the_kills_before_the_last(app):
         assert prompt(app)[1] == "second"
         await pilot.press("alt+y")
         assert prompt(app)[1] == "first"
-        # Past the oldest it comes round to the newest again.
+        # Past the oldest it wraps around to the newest.
         await pilot.press("alt+y")
         assert prompt(app)[1] == "second"
-        # The cursor has moved on since the yank, so there is nothing left to
-        # reconsider: what Alt-Y would have swapped stands as it is.
+        # Once something is typed after the yank, Alt-Y does nothing.
         await pilot.press(*")")
         await pilot.press("alt+y")
         assert prompt(app)[1] == "second)"
@@ -2409,7 +2364,7 @@ async def test_the_jump_line_walks_and_enter_alone_keeps_where_it_went(app):
 
 async def test_the_page_keys_walk_a_paneful_at_a_time(app):
     async with app.run_test(size=(80, 25)) as pilot:
-        # Twenty-five rows leave a twenty-row pane, which is the original's.
+        # Twenty-five rows leave a twenty-row pane, as in the original.
         authored(app, *(str(number) for number in range(1, 31)))
         await pilot.press("j", *"20", "enter")
         await pilot.press("pageup")
@@ -2418,7 +2373,7 @@ async def test_the_page_keys_walk_a_paneful_at_a_time(app):
         assert selected_number(app) == 2
         await pilot.press("pagedown")
         assert selected_number(app) == 10
-        # The two spellings of first and last the original gives them.
+        # The original's two key pairs for first and last.
         await pilot.press("ctrl+pageup")
         assert selected_number(app) == 1
         await pilot.press("ctrl+pagedown")
@@ -2453,7 +2408,7 @@ async def test_factors_variable_line_takes_no_notice_of_them(app):
         authored(app, "x", "y", "x^2 - y^2")
         await pilot.press("f", "enter")
         assert prompt(app)[0] == "FACTOR variable 1:"
-        # What to factor has been settled by now, so the highlight stays put.
+        # The expression is already chosen, so the highlight stays put.
         for key in ("up", "down", "pageup", "pagedown", "ctrl+home", "ctrl+end"):
             await pilot.press(key)
             assert highlighted_expression(app) == " 2    2\nx  - y"
@@ -2468,7 +2423,7 @@ async def test_factors_variable_line_takes_no_notice_of_them(app):
     ids=str,
 )
 async def test_the_lines_that_name_no_expression_walk_under_it_too(app, keys, line):
-    """A line collecting a name, and a line an expression is entered on."""
+    """A line asking for a name, and a line for entering an element."""
     async with app.run_test() as pilot:
         authored(app, "x", "y", "a z + b")
         await pilot.press(*keys)
@@ -2478,7 +2433,7 @@ async def test_the_lines_that_name_no_expression_walk_under_it_too(app, keys, li
         assert highlighted_expression(app) == "y"
         await pilot.press("ctrl+home")
         assert highlighted_expression(app) == "x"
-        # None of them names an expression, so none takes the label walked onto.
+        # Neither names an expression, so neither takes the label walked onto.
         assert prompt(app) == (line, offered)
 
 
@@ -2487,8 +2442,7 @@ async def test_a_line_that_takes_no_expression_is_offered_no_f6(app):
         authored(app, "x (x + 1)", "y")
         await pilot.press("m", "a", "enter")
         assert prompt(app)[0] == "ANNOTATION:"
-        # There is no expression on this line to walk, so there is no mode to
-        # be in and nothing for the status line to say.
+        # The line takes no expression, so it has no arrow-key mode to show.
         assert flags(app) == []
         await pilot.press("f6")
         assert flags(app) == []
@@ -2511,9 +2465,9 @@ async def test_subexpression_mode_leaves_such_a_line_its_sideways_keys(app):
 async def test_a_new_entry_is_scrolled_to_even_when_the_scroll_beats_the_layout(
     app, monkeypatch
 ):
-    # Textual may run a callback scheduled after the refresh before the layout that
-    # makes room for the new entry; the scroll is then clamped to the old height.
-    # Running it at once is that ordering every time.
+    # Textual may run an after-refresh callback before the layout that makes room for
+    # the new entry, clamping the scroll to the old height. Running callbacks
+    # immediately forces that ordering.
     monkeypatch.setattr(
         WorkArea,
         "call_after_refresh",
@@ -2539,33 +2493,28 @@ async def test_solutions_that_first_overflow_the_pane_are_scrolled_to(app):
         assert pane.scroll_offset.y == pane.max_scroll_y
 
 
-#: A render far wider than the eighty-column pane, drawn exactly as authored,
-#: so the columns on show can be read off it by slicing.
+#: A render much wider than an 80-column pane, drawn exactly as authored, so the
+#: visible columns can be computed by slicing.
 WIDE = " + ".join(str(number) for number in range(100, 130))
 
-#: Columns a render has to itself in an eighty-column pane, the label field
-#: holding the other five, and what one Ctrl-Right takes: a third of them.
+#: Columns available to a render in an 80-column pane (the label takes five), and the
+#: distance of one Ctrl-Right (a third of that).
 SHOWABLE = 75
 STEP = 25
 
-#: Columns kept on show beyond a highlight the pane has scrolled to follow.
+#: Columns kept visible beyond a highlight that the pane scrolled to follow.
 MARGIN = 2
 
 
 def from_the_right(term):
-    """The shift that brings `term` in from the right edge, and no more."""
+    """The minimal scroll that brings `term` into view from the right."""
     return WIDE.index(term) + len(term) + MARGIN - SHOWABLE
 
 
 async def scrolled(pilot, keys):
-    """A worksheet with the wide entry in the middle, selected and scrolled.
-
-    The entries go up through the session: what these tests are about is where
-    the keys in `keys` take the render, not the typing that wrote it.
-    """
+    """Set up a worksheet with `WIDE` in the middle, select it, and press `keys`."""
     authored(pilot.app, "x+1", WIDE, "x+1")
-    # A pane not laid out yet measures nothing, and a scroll has to know how
-    # wide the pane it moves over is.
+    # Scrolling needs the pane's width, so let it lay out first.
     await pilot.pause()
     await pilot.press("up")
     await pilot.press(*keys)
@@ -2581,7 +2530,7 @@ async def test_scrolling_sideways_moves_the_selected_entry_alone(app):
             "",
             "#3:  x + 1",
         ]
-        # The highlight goes with it, cut off where the render now starts.
+        # The highlight scrolls too, cut off at the left edge.
         assert highlighted_expression(app) == WIDE[STEP:]
 
 
@@ -2596,7 +2545,7 @@ async def test_each_step_sideways_is_a_third_of_what_the_pane_shows(app):
 async def test_a_scroll_stops_at_either_end_of_the_render(app):
     async with app.run_test() as pilot:
         await scrolled(pilot, ["ctrl+right"] * 10)
-        # The last column of the render, and no blanks past it.
+        # Stops at the render's last column, with no blanks past it.
         assert work_area(app)[2] == "#2:  " + WIDE[len(WIDE) - 75 :]
         await pilot.press(*["ctrl+left"] * 10)
         assert work_area(app)[2] == "#2:  " + WIDE
@@ -2612,11 +2561,11 @@ async def test_a_narrow_entry_has_nowhere_to_scroll_to(app):
 async def test_a_highlight_that_moves_brings_the_render_back_with_it(app):
     async with app.run_test() as pilot:
         await scrolled(pilot, ["ctrl+right"])
-        # Down to the entry below and back up. The entry comes back selected
-        # whole, which is a selection starting at the left edge of its render.
+        # Down and back up reselects the whole entry, which starts at the left edge,
+        # so the scroll resets.
         await pilot.press("down", "up")
         assert work_area(app)[2] == "#2:  " + WIDE
-        # And a move to the first part of it asks for the same thing.
+        # So does moving to its first part.
         await pilot.press("ctrl+right")
         assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
         await pilot.press("right")
@@ -2626,12 +2575,12 @@ async def test_a_highlight_that_moves_brings_the_render_back_with_it(app):
 
 async def test_a_highlight_walking_off_the_right_takes_the_render_with_it(app):
     async with app.run_test() as pilot:
-        # Twelve terms in, the render still reaches the highlight unscrolled.
+        # Twelve terms in, the highlight is still visible unscrolled.
         await scrolled(pilot, ["right"] * 12)
         assert highlighted_expression(app) == "111"
         assert work_area(app)[2] == "#2:  " + WIDE
-        # The thirteenth is past the edge, so the render moves - by the two
-        # columns that bring it in with a margin, and by no more than that.
+        # The thirteenth is past the edge, so the render scrolls just enough to show
+        # it with the margin.
         await pilot.press("right")
         assert highlighted_expression(app) == "112"
         assert from_the_right("112") == MARGIN
@@ -2645,8 +2594,8 @@ async def test_a_highlight_walking_back_left_brings_the_render_back(app):
         await scrolled(pilot, ["right"] * 25)
         assert highlighted_expression(app) == "124"
         assert work_area(app)[2] == "#2:  " + WIDE[from_the_right("124") :]
-        # Walking back, the render follows once the highlight reaches its edge,
-        # and stops with the same margin standing in front of it.
+        # Walking back, the render follows once the highlight reaches the left edge,
+        # keeping the same margin.
         await pilot.press(*["left"] * 12)
         assert highlighted_expression(app) == "112"
         assert work_area(app)[2] == "#2:  " + WIDE[WIDE.index("112") - MARGIN :]
@@ -2657,8 +2606,8 @@ async def test_a_highlight_walking_back_left_brings_the_render_back(app):
 
 async def test_a_highlight_already_on_show_moves_no_render(app):
     async with app.run_test() as pilot:
-        # Scrolled by hand, with the highlight still inside what is on show:
-        # the pane stays where it was put rather than snapping to the highlight.
+        # Scrolled by hand with the highlight still visible: the pane stays put
+        # rather than snapping to the highlight.
         await scrolled(pilot, ["right"] * 11 + ["ctrl+right"])
         assert highlighted_expression(app) == "110"
         assert work_area(app)[2] == "#2:  " + WIDE[STEP:]
@@ -2669,8 +2618,7 @@ async def test_a_highlight_already_on_show_moves_no_render(app):
 
 async def test_a_selection_too_wide_to_show_is_shown_from_its_left(app):
     async with app.run_test() as pilot:
-        # The whole entry is wider than the pane, so its two ends cannot both
-        # be brought in. The end it is read from wins.
+        # The entry is wider than the pane, so it's shown from its left end.
         await scrolled(pilot, ["ctrl+right", "down", "up"])
         assert work_area(app)[2] == "#2:  " + WIDE
 
@@ -2686,10 +2634,8 @@ async def test_a_highlight_scrolled_off_the_left_is_not_painted(app):
 
 # -- and the same scroll spelled without a modifier ----------------------------
 #
-# A window manager that keeps Ctrl-Left and Ctrl-Right for itself leaves the
-# pane no way to be scrolled by hand, so `<` and `>` say the same thing. They
-# are characters, which is what the rest of these are about: they scroll only
-# where nothing is waiting to be typed into.
+# `<` and `>` scroll like Ctrl-Left and Ctrl-Right, for window managers that grab those
+# keys. Being characters, they scroll only where nothing is waiting for typed input.
 
 
 async def test_the_angle_brackets_scroll_as_the_ctrl_keys_do(app):
@@ -2731,7 +2677,7 @@ async def test_only_a_line_or_a_text_field_wants_typing(app):
         await pilot.press("x", "enter")
         await pilot.pause()
         assert not app.wants_typing
-        # A menu and a dialog's choices answer a tap, and a text field does not.
+        # Menus and dialog choices respond to taps; text fields need a keyboard.
         await pilot.press("o", "r")
         assert not app.wants_typing
         await pilot.press("space", "space", "enter")

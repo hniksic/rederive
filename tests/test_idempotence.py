@@ -1,27 +1,22 @@
-"""Simplify's answers are fixed points of Simplify, over every case the suite states.
+"""Check that Simplify's answers are fixed points of Simplify, across the whole suite.
 
-`test_simplify.py` already asks this of the inputs it lists in `EVERY_CASE`, under
-whatever context each one uses. This asks it of every `simp(text) == expected` the
-suite states with the default context, wherever it is stated - the parametrized lists
-and the inline asserts of `test_simplify.py`, `test_calculus.py`, `test_matrices.py`,
-`test_logic.py`, `test_approximate.py`, `test_functions.py`, `test_integrate.py` and
-`test_manual.py` alike: the expected text simplifies to itself. An expected value is
-written by hand, and a form the engine would not keep is a form it could never have
-answered with.
+`test_simplify.py` checks this for its `EVERY_CASE` inputs. This module checks that the
+expected text of every default-context `simp(text) == expected` in the suite simplifies
+to itself, whether in a parametrized list or an inline assert, across
+`test_simplify.py`, `test_calculus.py`, `test_matrices.py`, `test_logic.py`,
+`test_approximate.py`, `test_functions.py`, `test_integrate.py` and `test_manual.py`.
+Expected values are written by hand, and a form the engine wouldn't keep is one it could
+never have produced.
 
-That the answer to an input simplifies to itself is the same question, where the case
-holds: its test says the answer is the expected text, and this one says the expected
-text stays put. So the answer is simplified again only for the cases their own files
-record as not held - the manual's spellings `test_manual.py` lists in `NEVER_TO_HOLD`
-and `NOT_YET_HELD`, and the ones `test_functions.py` keeps under a strict xfail - whose
-answer may be something other than the expected text, and so a form of its own to ask
-about. Asking it of every case would simplify every input a second time, on top of
-the run its own test gives it, for an answer the two tests together already know.
+Where a case passes, its answer is the expected text, so checking the expected text is
+enough. Answers are simplified a second time only for cases their files mark as failing
+(`NEVER_TO_HOLD` and `NOT_YET_HELD` in `test_manual.py`, and the strict xfails in
+`test_functions.py`), since their answers differ from the expected text. Doing it for
+every case would just simplify every input twice.
 
-The pairs are read out of the files' source rather than imported, so that a case
-added to any of them is covered here without being listed twice; what each file
-records as not held is imported from it, so that a case struck off there is asked here
-again as it should be.
+The pairs are parsed from the files' source rather than imported, so new cases are
+covered without being listed twice. The failing-case lists are imported, so a case
+removed from them is checked again here.
 """
 
 from __future__ import annotations
@@ -49,8 +44,8 @@ _SOURCES = (
     "test_manual.py",
 )
 
-#: A default-context case, as this module reads it: input, expected text, the
-#: functions the input is read with declared, and the id of the test that states it.
+#: A default-context case: input, expected text, the functions declared when parsing
+#: the input, and the id of the test that states it.
 Pair = tuple[str, str, tuple[str, ...], str]
 
 
@@ -67,7 +62,7 @@ def _simp_calls(node: ast.AST) -> list[ast.Call]:
 
 
 def _declared_in(function: ast.FunctionDef) -> dict[str, tuple[str, ...]]:
-    """The states a test builds with `declaring`, by the name it binds each one to."""
+    """Map each variable a test assigns from `declaring(...)` to the declared names."""
     found = {}
     for node in ast.walk(function):
         if (
@@ -85,8 +80,8 @@ def _declared_in(function: ast.FunctionDef) -> dict[str, tuple[str, ...]]:
 def _functions_read_with(
     call: ast.Call, declared: dict[str, tuple[str, ...]]
 ) -> tuple[str, ...] | None:
-    """The functions a `simp` call of one literal reads its text with, or None where
-    it is given a context, or a state that is not one `declaring` built."""
+    """The functions declared for a single-literal `simp` call, or None if it is given
+    a context or a state not built by `declaring`."""
     if len(call.args) != 1 or not _is_text(call.args[0]):
         return None
     if not call.keywords:
@@ -99,14 +94,13 @@ def _functions_read_with(
 
 
 def _pairs_in(path: Path) -> list[Pair]:
-    """The default-context cases one test file states.
+    """The default-context cases stated in one test file.
 
-    A list counts where a parametrized test consumes it and calls `simp` with the text
-    alone; an inline assert counts where it compares `simp` of one literal with another.
-    The functions are those the input is read with declared, which an inline assert
-    names by a state `declaring` built in the same test. A case out of a list is
-    identified the way pytest identifies it, by the test's name and the `ids=str` of
-    its two texts; an inline assert by the test's name alone.
+    A list counts if a parametrized test consumes it and calls `simp` with just the
+    text; an inline assert counts if it compares `simp` of a literal with a literal.
+    Inline asserts may pass a state built by `declaring` in the same test. List cases
+    get pytest's id (test name plus the `ids=str` of both texts); inline asserts get
+    just the test name.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     consumed: dict[str, str] = {}
@@ -174,8 +168,8 @@ EVERY_PAIR = _every_pair()
 
 
 def _unheld(pair: Pair) -> bool:
-    """Whether the test stating this case expects it to fail, so that the answer to
-    the input is not the expected text and is to be asked about on its own."""
+    """Whether the case's own test expects it to fail, so its answer differs from the
+    expected text and needs checking separately."""
     text, _, _, test_id = pair
     return (
         test_id in test_manual.NEVER_TO_HOLD
@@ -184,12 +178,12 @@ def _unheld(pair: Pair) -> bool:
     )
 
 
-#: The cases whose answer is not the expected text, by their own tests' account.
+#: Cases whose own tests say the answer is not the expected text.
 UNHELD_PAIRS = [pair for pair in EVERY_PAIR if _unheld(pair)]
 
 _TRUTH_TABLE = "TRUTH_TABLE(p, q, p AND q, p OR q, p XOR q, p IMP q)"
 
-#: Inputs whose answer a second Simplify changes, input to reason.
+#: Inputs whose answer changes on a second Simplify, mapped to the reason.
 SETTLES_LATER = {
     "SOLVE(-2*x + 3*y <= 7, x)": (
         "the bound's quotient distributes on a second pass, where the original keeps "
@@ -201,10 +195,9 @@ SETTLES_LATER = {
     ),
 }
 
-#: Expected texts that do not simplify to themselves beyond the answers of the inputs
-#: above, expected text to reason. These are the manual's printed spellings that
-#: `test_manual.py` records in `NEVER_TO_HOLD` and `NOT_YET_HELD` as decided or not yet
-#: kept.
+#: Further expected texts that don't simplify to themselves, mapped to the reason. These
+#: are the manual's printed spellings that `test_manual.py` lists in `NEVER_TO_HOLD`
+#: and `NOT_YET_HELD`.
 _BARS = "the manual's bars; the writer spells every absolute value ABS"
 MANUAL_SPELLINGS = {
     "|x - y|/2 + (x + y)/2": _BARS,
@@ -220,9 +213,9 @@ MANUAL_SPELLINGS = {
 }
 
 
-#: Expected texts that do not simplify to themselves because the spelling Derive is
-#: observed to print contradicts a rule it follows elsewhere, expected text to reason.
-#: `test_functions.py` records the same cases as not held.
+#: Expected texts that don't simplify to themselves because Derive's printed spelling
+#: contradicts a rule it follows elsewhere, mapped to the reason. `test_functions.py`
+#: marks the same cases as failing.
 CONFLICTING_SPELLINGS = {
     "1/2 - ERF(SQRT(2)*m/(2*s) - SQRT(2)*z/(2*s))/2": (
         "Derive's (ERF(...) + 1)/2 contradicts its semi-fraction rule elsewhere, "
@@ -253,8 +246,8 @@ def _marked(
 
 
 def test_the_pairs_are_found():
-    """The collection reads something: an empty list would pass every case below,
-    and the record of what is not held is read against the ids it names."""
+    """The collection finds cases: an empty list would pass everything below, and the
+    failing-case lists are matched against the collected ids."""
     assert len(EVERY_PAIR) > 500
     assert len(UNHELD_PAIRS) > 5
 

@@ -1,21 +1,17 @@
 """The half of the engine that computes: the commands, and sympy underneath them.
 
-Importing this is asking for sympy - some four hundred modules of it, a third of a
-second, thirty-odd megabytes - so importing it is also a claim about which process is
-doing it. The worker makes that claim in `worker.serve`, once the log and the memory
-limits are in place. Tests and direct callers make it because computing in place is
-exactly what they want. The app process must never make it: it holds a `RemoteEngine`
-and the computing happens at the other end of a pipe, which is what lets Esc kill a
-computation and what keeps a worksheet savable when the mathematics has died.
+Importing this loads sympy (some four hundred modules, a third of a second, thirty-odd
+megabytes), so only a process meant to compute should do it. The worker imports it in
+`worker.serve` once logging and memory limits are set up; tests and direct callers
+import it to compute in-process. The app process never does: it holds a `RemoteEngine`
+and computes over a pipe, so Esc can kill a computation and a worksheet stays savable
+when the worker dies.
 
-Everything `client` offers is offered here too, so a caller who may compute writes
-one import and not two. The subset is the point of the pair: `client` is what anyone
-may hold, and this is what anyone who may compute may hold. Which one a module
-imports is its declaration of what it is allowed to do, and the only such
-declaration - there is no third way in, and `tests/test_packages.py` is what says so.
+This re-exports everything in `client`, so a caller that may compute needs one import.
+Which of the two a module imports declares what it may do; there is no third way in,
+as `tests/test_packages.py` enforces.
 
-The commands themselves - what Simplify promises, what Factor's amounts mean, what
-soLve answers with - are documented in `rederive.engine`.
+The commands themselves are documented in `rederive.engine`.
 """
 
 from __future__ import annotations

@@ -1,20 +1,13 @@
-"""Plotting in a browser, asked without one: the panes, the requests, the answers.
+"""Tests for browser plotting, run without a browser.
 
-Three questions this file exists to ask. What a pane does when a plot lands in
-it and what it then asks the engine worker for; what the worker makes of such a
-request, which is where the arrays are and so where every kind either draws or
-does not; and that the split holds - the main thread routes and the arrays never
-come through it.
+Covers what a pane does when a plot lands in it and what it asks the engine worker
+for, what the worker answers (it holds the arrays, so that's where each plot kind
+succeeds or fails), and that the main thread only routes requests and never sees the
+arrays. For 3D plots, it also checks that what crosses to the page is exactly what
+`plot/surface.py` builds, since the desktop draws from the same code.
 
-The solids are asked the same three questions and one more, which is the only
-one a 3D picture has that a flat one has not: that what crosses is exactly what
-`plot/surface.py` builds, since that file is what the desktop draws from too and
-two programs drawing one surface differently would be two programs.
-
-The page is faked and the runtime bridge is faked, and neither is a pretend
-browser: the first records what it was told to draw and the second is the pair of
-identity functions Pyodide's are on a desktop. What is real is everything
-between them, which is the whole of what stage 5 wrote in Python.
+The page and the Pyodide bridge are faked: the page records what it was told to draw,
+and the bridge is a pair of identity functions. Everything in between is real.
 """
 
 import asyncio
@@ -56,7 +49,7 @@ def parsed(text):
 
 
 def _landing(text, label="#1", kind=PlotKind.CURVE, variables=("x",), **keywords):
-    """One plot the way the app sends it, for a pane to take."""
+    """A plot request as the app sends it to a pane."""
     return plots.Add(
         worksheet=1,
         node=parsed(text),
@@ -70,7 +63,7 @@ def _landing(text, label="#1", kind=PlotKind.CURVE, variables=("x",), **keywords
 
 
 def _plot(text, kind=PlotKind.CURVE, variables=("x",), context=None):
-    """One plot as the worker is sent one."""
+    """A plot as sent to the worker."""
     return Plot(
         worksheet=1,
         label="#1",
@@ -96,7 +89,7 @@ def _sample(text, kind=PlotKind.CURVE, variables=("x",), context=None, **keyword
 
 
 def _answered(request, held=None):
-    """One sampling, run where the worker would run it."""
+    """Run one sampling request as the worker would."""
     table = sampler.methods(lambda _partial: None)
     return table[asking.SAMPLE](request)
 
@@ -118,7 +111,7 @@ def engine():
 
 @pytest.fixture
 def session(page, solids, engine):
-    """A plot session over panes, sampling nowhere: the requests are the point."""
+    """A plot session whose requests are recorded rather than sampled."""
     executor = WorkerExecutor(engine)
     backend = WebBackend(page, solids, engine)
     page.attend(backend.handed({"landed": executor.landed}))
@@ -139,18 +132,15 @@ async def test_a_plot_opens_a_pane_and_lands_in_it(session, page):
 
 
 async def test_a_pane_names_a_plot_with_what_the_app_wrote(session, page):
-    # Not with anything this side rendered: the page is handed the one line the
-    # syntax writer made, cut to a legend's width by the plot model.
+    # The page gets the syntax writer's text, cut to legend width by the plot model.
     session.add(_landing("SIN(x)/x + COS(x)", label="#7"))
     spec = next(iter(page.panes[1].plots.values()))
     assert spec["name"] == "#7  SIN(x)/x + COS(x)"
     assert spec["kind"] == "curve"
     assert spec["color"] == "#ffffff"
-    # Two colors, as the desktop's windows hold: the second is what the same
-    # curve is drawn in on the white ground a picture leaving the pane is drawn
-    # on. Both are `plot/model.py`'s, so a plot copied out of a browser is the
-    # color it is copied out of a window in - and a white curve is black there,
-    # white on white paper being an empty picture.
+    # As on the desktop, there's a second color for exported pictures, which have a
+    # white background, so a white curve becomes black. Both come from
+    # `plot/model.py`, so exports match the desktop's.
     assert spec["paper"] == "#000000"
 
 
@@ -202,9 +192,8 @@ async def test_a_closed_pane_hands_its_kind_on_and_says_so(session, page):
 async def test_a_pane_that_reframes_for_a_new_curve_says_it_in_pythons_words(
     session, page
 ):
-    # The page decides that a curve arrived with none of itself in view and
-    # which way it reframed; what is said about it is the sentence the desktop
-    # says in the same circumstance, naming the curve as the plot list does.
+    # The page decides whether and how to reframe for a curve that is out of view;
+    # the message is the desktop's, naming the curve as the plot list does.
     session.add(_landing("SIN(x) + 40"))
     page.panes[1].say["fitted"](1, True)
     assert page.panes[1].message == "#1  SIN(x) + 40: y autoscaled to fit"
@@ -223,8 +212,7 @@ async def test_a_legend_row_hides_a_curve_without_removing_it(session, page):
 async def test_the_menus_remove_takes_a_plot_out_for_good(session, page):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
-    # The menu is raised over the curve, which is what the entry is about, and
-    # what comes back afterwards is the name of a control and nothing else.
+    # The menu is raised over the curve; the command then comes back by name only.
     assert "Remove #1  SIN(x)" in _labels(pane.say["menu"](_flat(pointed=1)))
     pane.say["command"]("plot.remove", None)
     assert pane.plots == {}
@@ -250,8 +238,8 @@ async def test_the_polar_toggle_rereads_every_curve_in_the_pane(session, page):
     pane = page.panes[1]
     pane.say["command"]("view.polar", None)
     assert pane.plots[1]["kind"] == "polar"
-    # The page is told, since the rings it draws and the r and θ it reads the
-    # pointer out in follow the mode, and so is the button that shows it.
+    # The page is told too, since its polar rings and r/θ pointer readout depend on
+    # the mode, and so is the toggle button.
     assert (pane.polar, pane.buttons["view.polar"]) == (True, True)
     assert pane.message == "Polar: curves are read as r = f(θ)"
     pane.say["command"]("view.polar", None)
@@ -273,7 +261,7 @@ async def test_adding_a_plot_asks_for_it_over_the_view_the_page_shows(
     assert request.yrange == (-4.0, 4.0)
     assert request.size == (800.0, 640.0)
     assert request.model.text == "SIN(x)"
-    # And the pane was told which generation to expect back.
+    # The pane is told which generation to expect back.
     assert page.panes[1].started == [(1, 1, True)]
 
 
@@ -292,7 +280,7 @@ async def test_a_view_change_samples_every_plot_again(session, page, engine):
     engine.sent.clear()
     page.panes[1].say["changed"]()
     await settle()
-    # One in flight, so only the first is out; the second waits its turn.
+    # Only one request is in flight at a time; the second waits.
     assert len(engine.sent) == 1
     assert page.panes[1].started[-2:] == [(1, 2, False), (2, 2, False)]
 
@@ -384,7 +372,7 @@ async def test_a_terminated_worker_lets_go_of_the_sampling_it_took(
     assert len(engine.sent) == 1
     engine.lost("Aborted")
     assert heard == [plots.Trouble(1, "#1", "Aborted")]
-    # And the queue moves again, so the curve behind it is not lost with it.
+    # The queue moves again, so the next curve isn't lost.
     page.panes[1].say["changed"]()
     await settle()
     assert len(engine.sent) == 2
@@ -399,7 +387,7 @@ async def test_a_dragged_view_costs_one_sampling_per_curve_and_not_one_per_frame
     for _ in range(60):
         page.panes[1].say["changed"]()
         await settle()
-    # One went out; the fifty-nine behind it displaced each other in the queue.
+    # One went out; the other 59 replaced each other in the queue.
     assert len(engine.sent) == 1
     page.handlers["landed"](engine.sent[-1][0], "")
     await settle()
@@ -411,20 +399,16 @@ async def test_a_dragged_view_costs_one_sampling_per_curve_and_not_one_per_frame
 
 # -- what a pane offers -------------------------------------------------------------
 #
-# The commands of a pane, their words, their keys and the order a menu stands
-# them in are `plot/controls.py`'s, and a pane renders them. So the table below
-# is checked in rather than derived: it is what a person would otherwise have to
-# read off two files and compare by eye, and it is asserted against both sides -
-# against the description the desktop's windows render, and against the menu and
-# the key ladder this backend actually hands the page.
+# A pane's commands, labels, keys, and menu order come from `plot/controls.py`. The
+# table below is spelled out rather than derived, so it can be read at a glance, and is
+# checked against both the description the desktop renders and the menu and keys this
+# backend hands the page.
 
 
-#: What a 2D window offers, command by command: the words a menu writes it with,
-#: the key a desktop presses it by, the key a page presses it by, and whether
-#: the browser can do it yet. A platform short of a key is a platform that has
-#: none for that command - Ctrl+W closes a tab, so the page answers to the
-#: letter alone - and a command that is not served is left off the browser's
-#: menu rather than offered dead.
+#: The 2D window's commands: name, menu label, desktop key, page key, and whether the
+#: browser supports it. An empty key means none on that platform (the page uses bare
+#: letters since e.g. Ctrl+W closes a tab). Unsupported commands are left off the
+#: browser's menu.
 FLAT_CONTROLS = (
     ("range.set", "Set range...", "", "", True),
     ("view.all", "View all", "A", "a", True),
@@ -442,7 +426,7 @@ FLAT_CONTROLS = (
     ("points.size", "Point size", "", "", True),
 )
 
-#: And what a 3D window offers, on the same terms.
+#: The same for the 3D window.
 SOLID_CONTROLS = (
     ("camera.home", "Home view", "Home", "Home", True),
     ("camera.xy", "Face the xy plane", "1", "1", True),
@@ -458,27 +442,23 @@ SOLID_CONTROLS = (
 )
 
 
-#: The entries a canvas menu only has when the click was over a plot, which is
-#: what the tail of a menu is about and what a menu raised over nothing is short
-#: of.
+#: Menu entries present only when the click was over a plot.
 _POINTED = ("plot.remove", "points.connect", "points.size")
 
 
 def _flat(pointed=jsnull, **fields):
-    """The snapshot a 2D pane hands over when a menu opens, as the page builds it.
+    """The snapshot a 2D pane hands over when a menu opens.
 
-    A click over no curve is the page's own `null` rather than Python's `None`:
-    the snapshot is built in JavaScript, it has the field, and what it has put
-    in the field is nothing. Pyodide hands the two over as two different
-    things, so a test that said `None` here would be asking the seam an easier
-    question than the page asks it.
+    A click over no curve gives JavaScript's `null`, not Python's `None`. Pyodide
+    passes the two differently, so using `None` here would test an easier case than
+    the real page presents.
     """
     state = {"tracing": False, "grid": True, "legend": True, "equal": True}
     return types.SimpleNamespace(pointed=pointed, **{**state, **fields})
 
 
 def _deep(pointed=jsnull, **fields):
-    """The same for a 3D pane, which has a camera where the other has a view."""
+    """The same for a 3D pane."""
     state = {"spinning": False, "boxed": True, "names": True, "legend": True}
     return types.SimpleNamespace(pointed=pointed, **{**state, **fields})
 
@@ -488,12 +468,12 @@ def _labels(entries):
 
 
 def _listing(entries):
-    """The `Remove` entry of a 3D menu, which is a submenu of what the pane holds."""
+    """The `Remove` entry of a 3D menu, a submenu listing the pane's surfaces."""
     return next(entry for entry in entries if entry["name"] == "surface.remove")
 
 
 def _described(table):
-    """The table as `plot/controls.py` has it, in the shape checked in above."""
+    """The `plot/controls.py` table, in the shape of the tables above."""
     return tuple(
         (
             one.name,
@@ -510,24 +490,21 @@ def _described(table):
     [(FLAT_CONTROLS, controls.FLAT), (SOLID_CONTROLS, controls.SOLID)],
 )
 def test_neither_backend_may_move_a_word_a_key_or_a_place_by_itself(checked, table):
-    # The whole of the checked-in table against the description both backends
-    # render: a menu that changed its words, its keys or its order in one of
-    # them changed them in the description, and the description is here.
+    # Both backends render this description, so any change to labels, keys, or
+    # order shows up here.
     assert _described(table) == tuple(row[:4] for row in checked)
 
 
 def test_a_page_rewords_one_entry_and_no_others():
-    # The exception to a word being written once, pinned so that it stays one
-    # exception: `paged` is for a command a page does differently, not for a
-    # backend to reword a menu.
+    # `paged` is for commands a page does differently, not for rewording menus;
+    # make sure it stays a single exception.
     for table in (controls.FLAT, controls.SOLID):
         reworded = {one.name: one.paged for one in table if one.paged}
         assert reworded == {"image.export": "Export"}
 
 
 async def test_the_browser_serves_what_the_table_says_it_serves(session, page, solids):
-    # The other half of the same claim, asked of this backend: what a pane may
-    # be asked for is the served column, and a pane is handed exactly that much.
+    # A pane is handed exactly the commands marked as supported.
     session.add(_landing("SIN(x)"))
     session.add(_plotted("x*y", "#2"))
     for checked, pane in (
@@ -542,10 +519,9 @@ async def test_the_browser_serves_what_the_table_says_it_serves(session, page, s
 def test_neither_drawing_module_is_left_a_color_or_a_length_of_its_own(
     session, page, solids
 ):
-    # What a picture is drawn at is `plot/appearance.py`'s, which is the module
-    # the desktop's windows import: a number written in a drawing module as
-    # well is a number the two backends can drift apart on. Both modules are
-    # dressed with the one description, before any pane exists to be drawn.
+    # Drawing constants live in `plot/appearance.py`, shared with the desktop, so
+    # the backends can't drift apart. Both page modules get the same description
+    # before any pane exists.
     assert page.look is solids.look
     assert page.panes == {} and solids.panes == {}
     look = page.look
@@ -571,9 +547,8 @@ def test_neither_drawing_module_is_left_a_color_or_a_length_of_its_own(
 
 
 def test_the_page_is_handed_its_colors_in_the_units_a_page_reads(session, page):
-    # The two conversions between the module and the description, which are the
-    # only arithmetic in the seam: the canvas takes a tint as `rgba(...)` and
-    # the card takes one as an integer with its alpha beside it.
+    # The only conversions in the seam: the canvas takes `rgba(...)`, and the card
+    # takes an integer color with a separate alpha.
     look = page.look
     assert look["grid"] == "rgba(144, 144, 144, 0.18)"
     assert appearance.AXIS_COLOR == "#909090" and appearance.GRID_ALPHA == 0.18
@@ -585,9 +560,8 @@ def test_the_page_is_handed_its_colors_in_the_units_a_page_reads(session, page):
 
 
 async def test_a_pane_renders_the_menu_the_desktop_renders(session, page):
-    # Word for word, with the one exception the table itself writes down: a page
-    # exports without asking anything, so its entry is `Export` and not the
-    # desktop's `Export...`.
+    # Word for word, except that a page exports without a dialog, so its entry is
+    # `Export` rather than `Export...`.
     session.add(_landing("SIN(x)"))
     entries = page.panes[1].say["menu"](_flat())
     assert [(entry["name"], entry["label"]) for entry in entries] == [
@@ -603,13 +577,11 @@ async def test_a_pane_renders_the_menu_the_desktop_renders(session, page):
         ("clear", "Clear"),
         ("close", "Close"),
     ]
-    # Which is now the whole of the menu the desktop offers a window holding a
-    # curve: nothing is left off, so the two lists are one list.
+    # Nothing from the desktop's menu is missing.
     assert [entry["name"] for entry in entries] == [
         row[0] for row in FLAT_CONTROLS if row[4] and row[0] not in _POINTED
     ]
-    # The keys are the page's own spelling of the same bindings, and the rules
-    # fall where the description puts them.
+    # Keys use the page's spelling, and separators fall where the description says.
     assert [entry["keys"][0] if entry["keys"] else "" for entry in entries] == [
         "", "a", "Home", "Backspace", "t", "g", "l", "Ctrl+C", "Ctrl+S", "Delete", "q",
     ]
@@ -633,22 +605,18 @@ async def test_a_menu_is_read_off_the_pane_as_it_opens(session, page):
 async def test_a_menu_raised_over_nothing_is_a_menu_about_the_view(
     session, page, solids
 ):
-    """The page's `null` is nothing, in either kind of pane.
+    """The page's `null` means no plot, in either kind of pane.
 
-    A right click on empty canvas is the ordinary way a menu is asked for, and
-    what the snapshot then carries where a plot would be is the page's own word
-    for having none. Read as an answer rather than as nothing it is a serial to
-    be looked up, and looking it up is where a menu stops being a menu - so
-    both kinds are asked here, both being handed the same word.
+    Right-clicking empty canvas is the usual way to open a menu, and the snapshot
+    then carries `null` for the plot. Treating it as a serial to look up would break
+    the menu, so both pane kinds are checked.
     """
     session.add(_landing("SIN(x)"))
     session.add(_plotted("SIN(x y)"))
     flat, deep = page.panes[1], solids.panes[2]
     assert _labels(flat.say["menu"](_flat()))[0] == "Set range..."
     assert _labels(deep.say["menu"](_deep()))[0] == "Home view"
-    # And the tail that is about one plot is absent rather than about a plot
-    # nobody pointed at, which is the same answer as for a field with nothing
-    # in it at all.
+    # The per-plot entries are absent.
     assert "Remove #1  SIN(x)" not in _labels(flat.say["menu"](_flat()))
     assert _labels(flat.say["card"](_flat())) == []
     assert _labels(deep.say["card"](_deep())) == []
@@ -658,19 +626,18 @@ async def test_a_control_the_page_names_reaches_the_thing_it_names(session, page
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
     for name in ("view.all", "trace", "grid", "legend", "image.copy", "image.export"):
-        # With the value the page sends where a control carries none, which is
-        # `null` and not an omitted argument.
+        # The page sends `null`, not an omitted argument, for a valueless command.
         pane.say["command"](name, jsnull)
     assert pane.done == [
         "autoscale", "trace", "grid", "legend", "copy", "export"
     ]
-    # The two zooms are keys with no entry, and the factor is `plot/actions.py`'s
-    # rather than the page's.
+    # The zooms are keys without menu entries; the factor comes from
+    # `plot/actions.py`.
     pane.say["command"]("view.zoom.in", None)
     pane.say["command"]("view.zoom.out", None)
     assert pane.done[-2:] == [("zoom", 0.5), ("zoom", 2.0)]
-    # A name the pane has nothing for is a menu somebody left open, and does
-    # nothing at all rather than raising into a click handler.
+    # An unknown name (e.g. from a stale menu) is ignored rather than raising into
+    # a click handler.
     pane.say["command"]("nothing.at.all", None)
     assert len(pane.done) == 8
 
@@ -681,9 +648,8 @@ async def test_home_is_the_framing_the_desktop_opens_on_with_the_lock_back_on(
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
     pane.say["command"]("view.home", None)
-    # `plot/view.py` says what a fresh window shows and `plot/actions.py` says
-    # that Home relocks the scales, and the pane is told both rather than
-    # working either out.
+    # The pane is told the framing (from `plot/view.py`) and that Home relocks the
+    # scales (from `plot/actions.py`), rather than working either out.
     assert pane.done[-1] == ("reframe", (-5.0, 5.0, -4.0, 4.0), True)
 
 
@@ -692,9 +658,8 @@ async def test_view_all_says_which_of_the_two_things_happened(session, page):
     pane = page.panes[1]
     pane.say["command"]("view.all", None)
     assert pane.message == "Framed on everything drawn"
-    # The framing is the page's, since the rectangle each curve wants came off
-    # the worker with its samples; the sentence about it is Python's, and there
-    # is one for the case where there was nothing to frame.
+    # The page does the framing, since it has each curve's bounds from the worker;
+    # Python supplies the message, including one for when there's nothing to frame.
     pane.framable = False
     pane.say["command"]("view.all", None)
     assert pane.message == "Nothing to frame yet"
@@ -718,13 +683,12 @@ async def test_a_solid_pane_offers_the_camera_and_what_it_holds(session, solids)
         "Clear",
         "Close",
     ]
-    # Which is the whole of the menu the desktop offers a window holding a
-    # surface: nothing is left off, so the two lists are one list.
+    # Nothing from the desktop's menu is missing.
     assert [entry["name"] for entry in entries] == [
         row[0] for row in SOLID_CONTROLS if row[4]
     ]
-    # The submenu lists what the pane holds, in the order it holds them, and an
-    # item names its surface by where it stands in that list.
+    # The submenu lists the pane's surfaces in order, and an item's value is its
+    # position in that list.
     listing = _listing(entries)
     assert _labels(listing["items"]) == ["#1  SIN(x y)", "#2  x^2 - y^2"]
     pane.say["command"]("surface.remove", listing["items"][1]["value"])
@@ -734,17 +698,15 @@ async def test_a_solid_pane_offers_the_camera_and_what_it_holds(session, solids)
 async def test_the_camera_a_preset_looks_from_is_the_desktops(session, solids):
     session.add(_plotted("SIN(x y)"))
     pane = solids.panes[1]
-    # A fresh pane opens on the camera `plot/actions.py` names, and Home view
-    # returns to it; a preset turns the camera and leaves it standing where it
-    # was, which is what a distance of zero means.
+    # A fresh pane opens on the camera from `plot/actions.py`, and Home view
+    # returns to it. A preset turns the camera without moving it (distance 0).
     assert pane.camera == (30.0, -60.0, 23.0)
     pane.say["command"]("camera.xz", None)
     assert pane.camera == (0.0, -90.0, 0.0)
     assert pane.message == "Facing the xz plane"
     pane.say["command"]("camera.home", None)
     assert pane.camera == (30.0, -60.0, 23.0)
-    # And what a turning pane says names the key that stops it in the page's own
-    # spelling of it, which is not the desktop's.
+    # The rotation message names the stop key in the page's spelling.
     pane.say["command"]("camera.spin", None)
     assert pane.spinning == "Rotating - r stops it"
 
@@ -752,8 +714,7 @@ async def test_the_camera_a_preset_looks_from_is_the_desktops(session, solids):
 async def test_a_solids_legend_row_offers_the_menu_about_that_surface(session, solids):
     session.add(_plotted("SIN(x y)"))
     pane = solids.panes[1]
-    # The per-surface exception first and what removes the surface second, in
-    # the words and the order the desktop's legend offers them.
+    # Same entries, labels, and order as the desktop's legend menu.
     assert _labels(pane.say["card"](_deep(pointed=1))) == [
         "Draw solid",
         "Remove #1  SIN(x y)",
@@ -773,9 +734,9 @@ async def test_one_surfaces_wire_is_its_own_exception_and_not_the_panes(
     pane.say["command"]("mesh", None)
     assert [spec["wire"] for spec in pane.plots.values()] == [False, False]
     heard.clear()
-    # The row menu flips one surface and nothing else: the `mesh` button stands
-    # where it was and nothing goes back to the sticky preferences, since an
-    # exception is not what the next surface should arrive as.
+    # The row menu flips only this surface: the `mesh` button is unchanged and the
+    # sticky preferences aren't updated, since a per-surface exception shouldn't
+    # apply to the next surface.
     pane.say["card"](_deep(pointed=1))
     assert _labels(pane.say["card"](_deep(pointed=1))) == [
         "Draw as wire mesh",
@@ -785,7 +746,7 @@ async def test_one_surfaces_wire_is_its_own_exception_and_not_the_panes(
     assert [spec["wire"] for spec in pane.plots.values()] == [True, False]
     assert pane.buttons["mesh"] is False
     assert heard == []
-    # And the entry then reads the other way round, off the surface itself.
+    # The entry label then reflects the surface's new state.
     assert _labels(pane.say["card"](_deep(pointed=1)))[0] == "Draw solid"
 
 
@@ -803,9 +764,8 @@ async def test_del_clears_a_solid_pane_and_takes_the_axis_names_with_it(
 async def test_the_axes_of_a_solid_are_named_by_the_first_surfaces_expression(
     session, solids
 ):
-    # A pane with nothing in it is told the three letters every reader supplies
-    # anyway; a surface names them after its own variables, and the vertical one
-    # after whatever the expression called it.
+    # An empty pane uses x, y, z; a surface renames the horizontal axes after its
+    # variables.
     session.add(_landing("u^2 + v^2", kind=PlotKind.SURFACE, variables=("u", "v")))
     assert solids.panes[1].axes == ("u", "v", "z")
 
@@ -818,8 +778,7 @@ async def test_a_solids_picture_leaves_the_pane_and_says_what_happened(
     for name in ("image.copy", "image.export"):
         pane.say["command"](name, None)
     assert pane.done[-2:] == ["copy", "export"]
-    # And the sentences are the flat pane's own, since what they are about is a
-    # browser rather than a picture.
+    # The messages are the same as a 2D pane's, since they're about the browser.
     pane.say["copied"]("", "")
     assert pane.message == "Copied the plot to the clipboard"
     pane.say["copied"]("", "NotAllowedError: Write permission denied")
@@ -833,49 +792,41 @@ async def test_a_solids_picture_leaves_the_pane_and_says_what_happened(
 
 # -- the two files the page draws with -----------------------------------------------
 #
-# Nothing here runs any JavaScript. What it reads is the source of the page's
-# two plotting modules, for the one thing about a pane that decides whether the
-# seam works at all and that no amount of Python can see from this side: a pane
-# is an object, everything Python asks of one it asks by name, and a field of
-# that name is that name. `this.named = true` written beside `named(across,
-# along, up)` is a pane whose axes cannot be told what they are called, and the
-# fake page cannot show it - the fake is Python, where the same collision is
-# spelled differently and where a fake that had it would be a fake nobody would
-# write.
+# These tests don't run JavaScript; they read the source of the page's two plotting
+# modules. Python calls pane methods by name, and in JavaScript a field with the same
+# name shadows the method: `this.named = true` beside `named(across, along, up)` would
+# break axis naming. The fake page can't catch this, so the source is checked.
 
-#: Where the page's own files are, which is beside the tests rather than in
-#: the package: they are the page, and the package is what the page loads.
+#: The page's files, which live outside the package that the page loads.
 PAGE = Path(__file__).resolve().parent.parent / "web"
 
-#: And where the desktop's windows are, for the one thing a pane has to agree
-#: with them about that neither side can be asked for without a toolkit.
+#: The desktop's window sources, read as text since no toolkit is installed here.
 WINDOWS = Path(__file__).resolve().parent.parent / "src" / "rederive" / "plot" / "qt"
 
-#: Which module draws which kind of pane, under what name on either side of the
-#: seam. The backend's class and the page's carry the same name because they
-#: are the two halves of one thing.
+#: Page module, class name (shared by the backend and the page), and fake, for each
+#: kind of pane.
 DRAWN = (("plot2d.js", "Pane", FakePane), ("plot3d.js", "Solid", FakeSolid))
 
 
 def _drawing(module, named):
-    """One class of one of the page's modules, as its own run of the file."""
+    """The source of one class in one of the page's modules."""
     source = (PAGE / module).read_text(encoding="utf-8")
     start = source.index(f"\nclass {named} {{\n")
     return source[start : source.index("\n}\n", start)]
 
 
 def _methods(body):
-    """The methods a class declares, which are its members at one indent."""
+    """The methods a class declares (members at one indent level)."""
     return set(re.findall(r"^  (?:async )?([A-Za-z_$][\w$]*)\(", body, re.M))
 
 
 def _fields(body):
-    """The fields it puts on itself, wherever in it that is done."""
+    """The fields a class assigns on `this`, anywhere in its body."""
     return set(re.findall(r"this\.([A-Za-z_$][\w$]*)\s*=[^=]", body))
 
 
 def _asked(named):
-    """Every call one backend pane makes into the page it draws through."""
+    """Every method a backend pane class calls on its page object."""
     source = Path(backend.__file__).read_text(encoding="utf-8")
     start = source.index(f"\nclass {named}:\n")
     body = source[start : source.find("\n\nclass ", start + 1)]
@@ -884,12 +835,11 @@ def _asked(named):
 
 @pytest.mark.parametrize("module, named, fake", DRAWN)
 def test_no_field_of_a_pane_carries_the_name_of_one_of_its_methods(module, named, fake):
-    """A pane's own bookkeeping may not be spelled like anything it does.
+    """No pane field may share a name with a pane method.
 
-    Python reaches a pane's methods by name and JavaScript has one namespace
-    for both, so a field assigned in the constructor silently replaces the
-    method it is named after - and the call that finds it says only that a
-    boolean is not callable, from the far side of a proxy.
+    JavaScript has one namespace for both, so such a field silently replaces the
+    method, and the call fails with an obscure "not callable" error through the
+    proxy.
     """
     body = _drawing(module, named)
     assert _methods(body) & _fields(body) == set()
@@ -899,12 +849,7 @@ def test_no_field_of_a_pane_carries_the_name_of_one_of_its_methods(module, named
 def test_every_call_the_backend_makes_on_a_pane_is_one_the_pane_answers(
     module, named, fake
 ):
-    """And the seam is the same shape on all three sides of it.
-
-    The page is what a browser calls, the fake is what these tests call, and a
-    name the backend uses that either is short of is a call that would go
-    nowhere - in a browser, or in every test at once.
-    """
+    """Every method the backend calls exists on both the real page and the fake."""
     called = _asked(named)
     assert called, "the backend calls into a pane by name, so there is a list"
     assert called <= _methods(_drawing(module, named))
@@ -913,37 +858,30 @@ def test_every_call_the_backend_makes_on_a_pane_is_one_the_pane_answers(
 
 # -- the things about a pane that only its own source says -------------------------
 #
-# Still no JavaScript. What is read below is the shape of a handful of rules that
-# hold nowhere else: a page hands the keyboard to the document after a press on
-# anything it cannot focus, a wheel is turned by a distance rather than a number
-# of times, what a fresh pane opens showing follows from how tall it stands, and
-# a marker on a function follows the pointer. None of them is visible from Python
-# - the fake page has no DOM, no pointer, no focus and no size - and each has
-# already been got wrong once, so what can be asserted about them is asserted
-# here.
+# More source checks for page behavior invisible from Python, since the fake page has
+# no DOM, pointer, focus, or size: focus handling, wheel zoom, initial pane shape,
+# trace marker movement, and so on. Each of these has been broken before.
 
 
 def _handler(source, opening):
-    """One event handler of a page module, from its listener to its brace."""
+    """The source of one event handler, from its listener to its closing brace."""
     body = source[source.index(opening) :]
     return body[: body.index("});")]
 
 
 def _method(body, named):
-    """One method of a page's class, from its name to the brace that closes it."""
+    """The source of one method of a page class."""
     start = body.index(f"\n  {named}(")
     return body[start : body.index("\n  }\n", start)]
 
 
 def test_a_press_on_a_menu_entry_is_cancelled_so_a_command_keeps_the_keyboard():
-    """A command that raises a dialog must be left holding what it focused.
+    """A dialog raised from a menu keeps the focus it set.
 
-    The browser's answer to a press on something it cannot focus - a menu
-    entry, the space beside a field - is to hand the keyboard to the document,
-    and it does it after the handler has run. So a dialog raised from a menu
-    entry has its first field taken off it again unless the press was
-    cancelled, and an overlay whose keys go to the document behind it answers
-    to neither Enter nor Escape.
+    After a press on something unfocusable (a menu entry, the space beside a field),
+    the browser moves focus to the document once the handler has run. Unless the
+    press is cancelled, a dialog opened from a menu loses focus on its first field,
+    and the overlay ignores Enter and Escape.
     """
     controls_js = (PAGE / "controls.js").read_text(encoding="utf-8")
     assert "press.preventDefault();" in _handler(
@@ -957,11 +895,10 @@ def test_a_press_on_a_menu_entry_is_cancelled_so_a_command_keeps_the_keyboard():
 
 @pytest.mark.parametrize("module", ("plot2d.js", "plot3d.js"))
 def test_a_tool_button_takes_the_keyboard_back_before_its_command_runs(module):
-    """And the same rule for the buttons, which a page can focus.
+    """A tool button returns focus to the pane before running its command.
 
-    A button keeps the keyboard once it is pressed, so a pane has to take it
-    back; taking it back after the command has run is what leaves `view...`
-    raising an inspector that cannot be typed into.
+    A pressed button keeps focus, so the pane takes it back. Doing so after the
+    command runs would steal focus from, e.g., the inspector `view...` opens.
     """
     source = (PAGE / module).read_text(encoding="utf-8")
     run = _handler(source, "controls.bar(this.tools")
@@ -969,15 +906,13 @@ def test_a_tool_button_takes_the_keyboard_back_before_its_command_runs(module):
 
 
 def test_the_wheel_zooms_by_how_far_it_was_turned_rather_than_once_per_event():
-    """A trackpad is a wheel that reports a stream of very small turns.
+    """Wheel zoom scales with scroll distance, not the number of events.
 
-    A factor applied whole per event is right for a mouse, which fires one
-    event per detent, and compounds into a zoom of several hundred for a
-    trackpad. So the factor is raised to the distance scrolled, in whichever of
-    the three units the page reported it in, and one turn of a wheel comes to
-    about what one turn of a wheel comes to on a desktop - where pyqtgraph
-    scales by 1.02 raised to the wheel's angle in eighths of a degree, and a
-    detent is fifteen degrees of it.
+    A fixed factor per event suits a mouse (one event per detent) but compounds
+    wildly on a trackpad, which sends many tiny events. So the factor is raised to
+    the distance scrolled, in whatever unit the page reports, and one detent zooms
+    about as much as on the desktop, where pyqtgraph scales by 1.02 per eighth of a
+    degree and a detent is 15 degrees.
     """
     source = (PAGE / "plot2d.js").read_text(encoding="utf-8")
     listener = _handler(source, "over.addEventListener('wheel'")
@@ -990,23 +925,19 @@ def test_the_wheel_zooms_by_how_far_it_was_turned_rather_than_once_per_event():
 
 
 def test_a_fresh_pane_opens_no_flatter_than_a_fresh_window():
-    """Because what a fresh view shows follows from the shape of the picture.
+    """A fresh pane's aspect ratio is at least as tall as a fresh window's.
 
-    x runs from -5 to 5 and the ordinate follows from equal scales, so two
-    programs whose pictures are different shapes open on different rectangles -
-    which `plot/view.py` says is two programs. A pane has to stand taller than
-    a window for its width rather than merely as tall, since it spends more of
-    itself on chrome: a title bar of its own, and wider gutters for the numbers
-    along the edges. How much taller only a browser can measure; that it is at
-    least as tall is measurable here.
+    x runs from -5 to 5 and y follows from equal scales, so the initial view depends
+    on the picture's shape. A pane spends more space on chrome (its own title bar,
+    wider tick-label gutters), so it must be relatively taller than a window. Only a
+    browser can measure exactly how much; here we check it's at least as tall.
     """
     source = (PAGE / "plot2d.js").read_text(encoding="utf-8")
     pane = tuple(
         int(re.search(rf"const PANE_{name} = (\d+);", source).group(1))
         for name in ("WIDTH", "HEIGHT")
     )
-    # By path rather than by import: this file is the browser's half of the
-    # tests and runs where no toolkit is installed.
+    # Read by path rather than imported, since no toolkit is installed here.
     window = (WINDOWS / "window2d.py").read_text(encoding="utf-8")
     opens = re.search(r"self\.resize\((\d+), (\d+)\)", window)
     assert opens is not None, "the desktop window opens at a size, and this reads it"
@@ -1015,13 +946,11 @@ def test_a_fresh_pane_opens_no_flatter_than_a_fresh_window():
 
 @pytest.mark.parametrize("module", ("plot2d.js", "plot3d.js"))
 def test_a_pane_is_put_where_the_one_placement_says_and_not_where_it_likes(module):
-    """Two kinds of pane share a page, so they share where a pane opens.
+    """Both pane kinds are positioned by the shared `place.js`.
 
-    A module that worked its own corner out would cascade on its own, and two
-    panes of different kinds would open on top of each other; it would also be
-    the arithmetic written twice, which is the thing this seam exists to stop.
-    Where the corner actually lands only a browser can measure, since it is the
-    size of the viewport that decides it.
+    If each module placed its own panes, they would cascade separately and panes of
+    different kinds would open on top of each other. The actual position depends on
+    the viewport, which only a browser can measure.
     """
     source = (PAGE / module).read_text(encoding="utf-8")
     body = _drawing(module, "Pane" if module == "plot2d.js" else "Solid")
@@ -1030,17 +959,14 @@ def test_a_pane_is_put_where_the_one_placement_says_and_not_where_it_likes(modul
 
 
 def test_a_marker_on_a_function_follows_the_pointer_and_one_on_a_curve_does_not():
-    """Which is what makes trace feel like pointing at the curve.
+    """Trace on a function follows the pointer's x; on a parametric curve it doesn't.
 
-    A marker riding a parametric curve stays where it is - its place is a
-    parameter value and the pointer's x is not one - and a marker on a function
-    goes where the pointer is. `Window2D._moved` is the same rule on the
-    desktop, and a pane that gave up as soon as a marker was up would be a pane
-    whose trace mode answered only to the keyboard.
+    A parametric marker's position is a parameter value, which the pointer's x is
+    not. `Window2D._moved` does the same on the desktop. Without this, trace mode
+    would respond only to the keyboard.
 
-    The pointer readout gives way to the marker, because a pane has one line to
-    say things on where the window has two. What a person reads while a marker
-    is up is the curve's own value, and a readout would write over it.
+    While a marker is up, the pointer readout is suppressed, because a pane has only
+    one status line (the window has two) and the curve's value would be overwritten.
     """
     moved = _method(_drawing("plot2d.js", "Pane"), "_pointed")
     assert "if (this.tracing !== null) return;" not in moved
@@ -1052,13 +978,10 @@ def test_a_marker_on_a_function_follows_the_pointer_and_one_on_a_curve_does_not(
 
 
 def test_the_legend_card_stands_in_the_corner_a_plot_window_stands_it_in():
-    """Which corner a legend is in has no shared spelling, and so has to be read.
+    """The legend card is in the top left in both the page and the desktop window.
 
-    `plot/controls.py` says what a control is called and `plot/forms.py` what a
-    field asks for, but where a floating card sits is a stylesheet on one side
-    and a widget move on the other, and nothing makes the two agree. They drifted
-    apart once already - a window's card in the top left, a pane's in the top
-    right - so what each of them says is compared here.
+    Legend position is CSS on one side and a widget move on the other, with no shared
+    definition, so the sources are compared. They have drifted apart before.
     """
     card = re.search(
         r"\.plot-legend \{(.*?)\n  \}", (PAGE / "index.html").read_text("utf-8"), re.S
@@ -1076,11 +999,10 @@ def test_the_legend_card_stands_in_the_corner_a_plot_window_stands_it_in():
 def test_the_names_written_into_an_exported_picture_stand_where_the_card_does(
     module, named, fake
 ):
-    """A picture that leaves a pane carries its plot list, in the same corner.
+    """Exported pictures paint the plot names in the same corner as the legend card.
 
-    The card is an element and no part of the canvas, so the names are painted
-    on by hand when the picture is taken. Painted into the other corner they
-    would be a picture nobody could lay beside the pane it came from.
+    The card is a DOM element, not part of the canvas, so the names are painted
+    separately when exporting.
     """
     body = _method(_drawing(module, named), "_namePlots")
     assert "ctx.textAlign = 'left';" in body
@@ -1088,13 +1010,12 @@ def test_the_names_written_into_an_exported_picture_stand_where_the_card_does(
 
 
 def test_the_trace_chip_stays_inside_the_picture_wherever_the_marker_is():
-    """A marker off the picture is a chip drawn over the tool row above it.
+    """The trace chip is hidden or clamped so it never leaves the plot area.
 
-    The ring and its hairline are drawn on the canvas inside the clip the
-    picture is drawn in, so they leave the view the way the desktop's do. The
-    chip is an element, which nothing clips for it: it is hidden where its point
-    is outside the picture and kept inside it where the point is near an edge.
-    The reading is on the status line either way, so nothing is silenced.
+    The ring and hairline are drawn on the clipped canvas, but the chip is a DOM
+    element that nothing clips, so it would otherwise overlap the tool row. It is
+    hidden when its point is outside the plot and clamped near edges. The reading
+    stays on the status line either way.
     """
     body = _method(_drawing("plot2d.js", "Pane"), "_chip")
     hidden = body.index("chip.style.display = 'none';")
@@ -1103,12 +1024,10 @@ def test_the_trace_chip_stays_inside_the_picture_wherever_the_marker_is():
 
 
 def test_the_page_calls_the_same_two_kinds_parametrized_that_the_protocol_does():
-    """One vocabulary of kinds, as there is one spelling of a control.
+    """The page's set of parametrized kinds matches `plot/protocol.py`.
 
-    Which kinds are ridden at a parameter rather than at an abscissa decides
-    what the pointer does, what an arrow key steps by and what a click snaps to.
-    A page that read a kind of its own into that list would be a second answer
-    to a question `plot/protocol.py` has already answered.
+    Whether a kind is traced by parameter or by x decides what the pointer, arrow
+    keys, and clicks do.
     """
     source = (PAGE / "plot2d.js").read_text(encoding="utf-8")
     named = re.search(r"const PARAMETRIZED = new Set\(\[([^\]]*)\]\);", source)
@@ -1122,27 +1041,23 @@ def test_the_page_calls_the_same_two_kinds_parametrized_that_the_protocol_does()
 
 # -- the commands that are more than a menu entry ----------------------------------
 #
-# Everything below is a 2D command with something behind it: a history, a form,
-# a choice, a picture leaving the pane. What they have in common is where the
-# work is divided - the view stays on the page, the words and the arithmetic
-# stay in Python, and what a person typed is read by the engine and by nothing
-# else - so what is asked of each is that it crossed the seam the right way.
+# 2D commands involving a history, a form, a choice, or an export. In each, the view
+# stays on the page, messages and arithmetic stay in Python, and typed input is parsed
+# only by the engine. The tests check that each command splits the work this way.
 
 
 async def test_backspace_steps_back_through_where_the_view_has_been(session, page):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
-    # A gesture says where the view stood before it moved it, and that is the
-    # whole of what a drag tells this side. The history is Python's, because
-    # `plot/view.py` already says what a step through one comes to.
+    # A drag reports only where the view was before it moved. The history is kept
+    # in Python, using `plot/view.py`.
     pane.say["remembered"](-5.0, 5.0, -4.0, 4.0)
     pane.shown = [-1.0, 1.0, -1.0, 1.0, 800.0, 640.0]
     pane.say["command"]("view.back", None)
     assert pane.done[-1] == ("reframe", (-5.0, 5.0, -4.0, 4.0), False)
     pane.say["command"]("view.forward", None)
     assert pane.done[-1] == ("reframe", (-1.0, 1.0, -1.0, 1.0), False)
-    # A step past the end of the history is a command that found nothing to do,
-    # and the view is left where it is rather than moved to nowhere.
+    # Stepping past the end of the history leaves the view alone.
     standing = len(pane.done)
     pane.say["command"]("view.forward", None)
     assert len(pane.done) == standing
@@ -1151,19 +1066,17 @@ async def test_backspace_steps_back_through_where_the_view_has_been(session, pag
 async def test_a_double_click_puts_what_it_landed_on_in_the_middle_of_the_view(
     session, page
 ):
-    """The desktop's `center_on`, which the page had no way of asking for.
+    """The page's equivalent of the desktop's `center_on`.
 
-    The gesture is the page's, since counting two clicks is the page's business,
-    and everything after it is `plot/actions.py`'s: the view keeps its size, and
-    the framing it left is pushed so that the view is one Backspace from where
-    it was.
+    The page detects the double click; `plot/actions.py` does the rest. The view
+    keeps its size, and the old framing is pushed so Backspace returns to it.
     """
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
     pane.shown = [-5.0, 5.0, -4.0, 4.0, 800.0, 640.0]
     pane.say["centred"](2.0, 1.0)
-    # The lock stays on, a view moved without being resized having the scales it
-    # had; every other framing that is about fitting releases it.
+    # The scale lock stays on since the view wasn't resized; fitting framings
+    # release it.
     assert pane.done[-1] == ("reframe", (-3.0, 7.0, -3.0, 5.0), True)
     pane.say["command"]("view.back", None)
     assert pane.done[-1] == ("reframe", (-5.0, 5.0, -4.0, 4.0), False)
@@ -1176,8 +1089,8 @@ async def test_a_typed_range_is_read_by_the_engine_so_minus_pi_is_an_answer(
     pane = page.panes[1]
     await drain(page, engine)
     engine.sent.clear()
-    # `Set range...` puts up the form `plot/forms.py` describes, filled from the
-    # view as it stands: a form opened to change one edge is three edges right.
+    # `Set range...` shows the form from `plot/forms.py`, prefilled from the current
+    # view so changing one edge leaves the others right.
     pane.say["command"]("range.set", None)
     assert pane.form["name"] == "range"
     assert [one["label"] for one in pane.form["fields"]] == [
@@ -1187,8 +1100,8 @@ async def test_a_typed_range_is_read_by_the_engine_so_minus_pi_is_an_answer(
         "Top",
     ]
     assert pane.values == ("-5", "5", "-4", "4")
-    # What is typed is parsed where it was typed and evaluated where the numbers
-    # are, which is why the fields take expressions in a page as on a desktop.
+    # Input is parsed here and evaluated by the worker, so the fields accept
+    # expressions, as on the desktop.
     engine.answers.append((-np.pi, np.pi, -1.0, 1.0))
     pane.say["typed"]("range", ["-π", "π", "-1", "1"])
     await settle()
@@ -1218,9 +1131,8 @@ async def test_a_typed_range_is_read_by_the_engine_so_minus_pi_is_an_answer(
 async def test_a_range_that_is_not_one_says_in_what_way(
     session, page, engine, texts, worth, said
 ):
-    # Never silence, in every way a range can fail to be one: a text that will
-    # not parse never reaches the worker, and one that parses to nothing worth a
-    # number and one that runs backwards each have a sentence of their own.
+    # Every invalid range gets a message. Unparsable text never reaches the worker;
+    # non-numeric and backwards ranges each have their own message.
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
     await drain(page, engine)
@@ -1248,8 +1160,7 @@ async def test_the_axes_are_named_after_what_is_plotted_against(session, page):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
     assert pane.axes == ("x", "#1")
-    # Two curves share the abscissa, and the ordinate then belongs to neither -
-    # a stack of names down the side of the canvas is what the legend is for.
+    # With two curves, the y axis is left unnamed; the legend lists them.
     session.add(_landing("COS(x)", "#2"))
     assert pane.axes == ("x", "")
 
@@ -1275,16 +1186,15 @@ async def test_equal_scales_is_a_control_and_the_page_is_the_side_that_holds_it(
 ):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
-    # A button on the tool row rather than an entry, since a toggle whose state
-    # is worth reading is worth reading without opening anything.
+    # A tool row button rather than a menu entry, so its state is always visible.
     assert ("1:1", "Equal scales on both axes") == next(
         (one["bar"], one["hint"])
         for one in pane.commands
         if one["name"] == "scales.equal"
     )
     pane.say["command"]("scales.equal", None)
-    # The lock is view state - a rubber band releases it without asking anybody
-    # - so the page flips it and the menu reads it back off the snapshot.
+    # The lock is view state (rubber-band zoom releases it), so the page flips it
+    # and the menu reads it back from the snapshot.
     assert pane.done[-1] == "equalize"
 
 
@@ -1295,13 +1205,12 @@ async def test_a_picture_that_left_the_pane_says_so_and_a_refused_one_says_why(
     pane = page.panes[1]
     pane.say["copied"]("", "")
     assert pane.message == "Copied the plot to the clipboard"
-    # While tracing it is the traced point that goes, which is the one reading a
-    # plot makes that the algebra window can take back.
+    # While tracing, the traced point is copied instead, so it can be pasted into
+    # the algebra window.
     pane.say["copied"]("[1.000000, 0.841471]", "")
     assert pane.message == "Copied [1.000000, 0.841471]"
-    # And a clipboard the browser refused is the case this exists for: Chromium
-    # gates an image on permission, and a copy that did nothing and said nothing
-    # would look exactly like a key bound to nothing.
+    # Chromium requires permission to copy images, and a silently failed copy would
+    # look like an unbound key, so the refusal is reported.
     pane.say["copied"]("", "NotAllowedError: Write permission denied")
     assert pane.message == (
         "The browser did not allow the clipboard:"
@@ -1314,8 +1223,7 @@ async def test_an_export_is_a_download_and_says_what_size_of_picture_it_was(
 ):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
-    # Pixels rather than the desktop's vector file, and the sentence says the
-    # size rather than leaving it to be discovered.
+    # A PNG rather than the desktop's vector file; the message gives its size.
     pane.say["exported"]("plot1.png", 1440, 1000, "")
     assert pane.message == "Downloaded plot1.png, 1440 by 1000 pixels"
     pane.say["exported"]("plot1.png", 0, 0, "the download was blocked")
@@ -1325,8 +1233,8 @@ async def test_an_export_is_a_download_and_says_what_size_of_picture_it_was(
 async def test_the_parameter_range_is_a_strip_the_engine_reads(session, page, engine):
     session.add(_landing("SIN(x)"))
     pane = page.panes[1]
-    # The strip is `plot/forms.py`'s, handed over when the pane is made, and it
-    # stands only while there is a plot for it to be about.
+    # The strip comes from `plot/forms.py` and is only shown when there's a
+    # parametric plot.
     assert pane.strip["name"] == "trange"
     assert pane.parameters == (None, "", "", "")
     session.add(
@@ -1335,26 +1243,23 @@ async def test_the_parameter_range_is_a_strip_the_engine_reads(session, page, en
     assert pane.parameters == (2, "t", "-3.14159", "3.14159")
     await drain(page, engine)
     engine.sent.clear()
-    # A bound typed into it is an expression like any other, and the plot is
-    # sampled again over the trees it came to.
+    # Typed bounds are expressions, and the plot is resampled over them.
     pane.say["ranged"](2, "0", "2π")
     await settle()
     assert engine.sent[0][2].model.bounds is not None
-    # One that will not read is refused in the parameter's own name, and the
-    # fields go back to the range the curve is actually drawn over.
+    # An unparsable bound is refused with a message naming the parameter, and the
+    # fields revert to the actual range.
     pane.say["ranged"](2, "(", "2π")
     assert pane.message == "The t bounds are expressions, like -π or 2π"
     assert pane.parameters == (2, "t", "-3.14159", "3.14159")
-    # And the range a sampling came back with is what they then show, spelled
-    # by Python: nothing on the page writes a number into a field.
+    # The fields show the range the sampling returned, formatted by Python.
     pane.say["spanned"](2, 0.0, 6.28318)
     assert pane.parameters == (2, "t", "0", "6.28318")
 
 
 async def test_copy_image_is_heard_as_an_event_rather_than_as_a_key(session, page):
-    # The one control whose key does not go on the page's key ladder. Cancelling
-    # the Ctrl+C keydown cancels the copy the browser was about to offer, so the
-    # description says which event carries it and the page listens for that.
+    # The only control not bound as a key: cancelling the Ctrl+C keydown would
+    # cancel the browser's copy event, so the page listens for `copy` instead.
     session.add(_landing("SIN(x)"))
     offered = {one["name"]: one for one in page.panes[1].commands}
     assert offered["image.copy"]["event"] == "copy"
@@ -1363,11 +1268,10 @@ async def test_copy_image_is_heard_as_an_event_rather_than_as_a_key(session, pag
 
 
 async def settle():
-    """Let whatever the executor queued actually reach the worker.
+    """Let whatever the executor queued reach the worker.
 
-    A request is posted from a coroutine, because a worker that is still
-    booting has to be waited for; in a browser the loop is the browser's and
-    turns constantly, and here it has to be turned by hand.
+    Requests are posted from a coroutine, since a booting worker must be awaited.
+    In a browser the event loop runs constantly; here it must be turned by hand.
     """
     await asyncio.sleep(0)
 
@@ -1438,10 +1342,8 @@ def test_a_parametric_pair_comes_back_as_a_path_and_its_range():
     assert answer["trange"] == pytest.approx([-np.pi, np.pi])
     radius = np.hypot(answer["xs"].astype(np.float64), answer["ys"].astype(np.float64))
     assert np.allclose(radius[np.isfinite(radius)], 1.0, atol=1e-5)
-    # The parameter each sample came from crosses with the samples, which is what
-    # lets a click on a curve that doubles back name a place on it: a point in
-    # the plane is not a parameter, so the page snaps to the nearest sample and
-    # rides on from the parameter that one came from.
+    # Each sample's parameter value is sent along, so a click on a self-crossing
+    # curve can snap to the nearest sample and continue from its parameter.
     assert answer["ts"].shape == answer["xs"].shape
     turned = answer["ts"].astype(np.float64)
     assert np.allclose(np.cos(turned), answer["xs"].astype(np.float64), atol=1e-5)
@@ -1449,8 +1351,7 @@ def test_a_parametric_pair_comes_back_as_a_path_and_its_range():
 
 
 def test_a_polar_curve_is_composed_where_the_numbers_are():
-    # r = 2 is a circle of radius 2, and what crosses is x and y: turning the
-    # angle into a point is two lines of numpy and no part of a drawing library.
+    # r = 2 is a circle of radius 2; the worker converts to x and y itself.
     answer = _answered(_sample("2", kind=PlotKind.POLAR, variables=("θ",)))
     radius = np.hypot(answer["xs"].astype(np.float64), answer["ys"].astype(np.float64))
     assert np.allclose(radius[np.isfinite(radius)], 2.0, atol=1e-5)
@@ -1466,7 +1367,7 @@ def test_a_polar_curve_in_degrees_turns_by_degrees():
             degrees=True,
         )
     )
-    # One turn of 180 degrees, so the radius runs out to 180 rather than to π.
+    # θ runs to 180 degrees, so the radius reaches 180 rather than π.
     radius = np.hypot(answer["xs"].astype(np.float64), answer["ys"].astype(np.float64))
     assert float(np.nanmax(radius)) == pytest.approx(180.0, rel=1e-3)
 
@@ -1502,8 +1403,8 @@ def test_a_region_comes_back_as_one_byte_a_cell_over_its_rectangle():
     assert answer["mask"].dtype == np.uint8
     assert answer["mask"].size == answer["nx"] * answer["ny"]
     grid = answer["mask"].reshape(answer["ny"], answer["nx"])
-    # The rows arrive from the top, which is how an image is read: the top-left
-    # corner is high y and low x, where y > x is true.
+    # Rows run top to bottom, like an image: the top-left corner is high y and low
+    # x, where y > x holds.
     assert grid[0, 0] == 1
     assert grid[-1, -1] == 0
 
@@ -1604,9 +1505,8 @@ def test_the_cache_is_keyed_by_content_and_not_by_who_asked():
 
 
 def test_two_readings_of_one_tree_are_two_entries():
-    # `x^2 + y^2 = 4` is a difference where it is a contour and a truth value
-    # where it is a region, and a cache that confused the two would shade the
-    # wrong side of a curve.
+    # `x^2 + y^2 = 4` is a difference as a contour and a truth value as a region;
+    # confusing the two would shade the wrong side of the curve.
     held = sampler.Closures()
     contoured = _plot("x^2 + y^2 = 4", PlotKind.IMPLICIT, ("x", "y"))
     shaded = _plot("x^2 + y^2 = 4", PlotKind.REGION, ("x", "y"))
@@ -1656,7 +1556,7 @@ async def test_a_solid_opens_a_pane_of_its_own_beside_the_flat_ones(
 
 
 def _solid(text, label="#1", variables=("x", "y"), context=None):
-    """One surface as the worker is sent one."""
+    """A surface as sent to the worker."""
     return Surface(
         worksheet=1,
         label=label,
@@ -1682,7 +1582,7 @@ def _grid(text, grid=(16, 16), domain=(-5.0, 5.0), zrange=None, **keywords):
 
 
 def _standing(request):
-    """One evaluation, run where the worker would run it."""
+    """Run one grid evaluation as the worker would."""
     table = sampler.methods(lambda _partial: None)
     return table[asking.GRID](request)
 
@@ -1698,8 +1598,8 @@ async def test_a_surface_opens_a_pane_of_its_own_and_lands_in_it(session, solids
     assert pane.presented == 1
     assert pane.title == "SIN(x y) - Rederive 3D plot (current)"
     assert [spec["name"] for spec in pane.plots.values()] == ["#1  SIN(x y)"]
-    # The solid palette, which is the curve palette turned by one: a white
-    # surface is a white shape with a white shape behind it.
+    # The surface palette is the curve palette shifted by one, skipping white,
+    # which would make shapes indistinguishable.
     assert [spec["color"] for spec in pane.plots.values()] == ["#ffff55"]
 
 
@@ -1713,8 +1613,7 @@ async def test_a_surface_is_asked_for_over_the_domain_the_pane_opens_on(
     assert request.xdomain == (-5.0, 5.0)
     assert request.ydomain == (-5.0, 5.0)
     assert request.grid == (64, 64)
-    # Alone in the picture, the surface says what the box is rather than being
-    # told - which is what makes one surface cost one evaluation.
+    # A lone surface determines its own box, so it needs only one evaluation.
     assert request.zrange is None
     assert solids.panes[1].started == [(1, 1)]
 
@@ -1736,8 +1635,7 @@ async def test_a_typed_grid_evaluates_again_and_the_next_pane_opens_on_it(
     engine.sent.clear()
     engine.answers.append((-2.0, 2.0, -2.0, 2.0))
     solids.panes[1].say["framed"]("-2", "2", "-2", "2", "32", "32")
-    # Twice: what the bounds are worth comes back first, and the evaluation
-    # over the domain they came to goes out behind it.
+    # Twice: the bounds are evaluated first, then the grid request goes out.
     await settle()
     await settle()
     assert heard[-1] == plots.Preferred(plots.Prefer(grid=32))
@@ -1745,7 +1643,7 @@ async def test_a_typed_grid_evaluates_again_and_the_next_pane_opens_on_it(
     assert request.xdomain == (-2.0, 2.0)
     assert request.grid == (32, 32)
     assert solids.panes[1].message == "Evaluating over the new domain at 32 by 32"
-    # And `Describe` reports the domain, which is what a 3D window is framed by.
+    # `Describe` reports the domain, which frames a 3D window.
     assert session.describe().windows[0].xrange == (-2.0, 2.0)
 
 
@@ -1754,9 +1652,8 @@ async def test_a_typed_domain_is_read_by_the_engine_so_minus_pi_is_an_answer(
 ):
     session.add(_plotted("SIN(x y)"))
     pane = solids.panes[1]
-    # The strip is `plot/forms.py`'s, handed over when the pane is made, and the
-    # bounds in it are expressions rather than floats - parsed where they were
-    # typed and evaluated where the numbers are, exactly as a flat pane's are.
+    # The strip comes from `plot/forms.py`, and its bounds are expressions,
+    # evaluated by the worker as in a 2D pane.
     assert pane.strip["name"] == "domain"
     assert [one["name"] for one in pane.strip["fields"]] == [
         "x0",
@@ -1801,11 +1698,9 @@ async def test_a_typed_domain_is_read_by_the_engine_so_minus_pi_is_an_answer(
 async def test_a_domain_that_is_not_one_says_in_what_way(
     session, solids, engine, texts, worth, said
 ):
-    # Never silence, in every way a domain can fail to be one, and the fields go
-    # back to what the pane is actually evaluating over: a text that will not
-    # parse never reaches the worker, a grid that is not a pair of counts is
-    # refused before it does, and one that parses to nothing worth a number and
-    # one that runs backwards each have a sentence of their own.
+    # Every invalid domain gets a message and the fields revert. Unparsable text and
+    # a non-numeric grid never reach the worker; non-numeric and backwards bounds
+    # each have their own message.
     session.add(_plotted("SIN(x y)"))
     await drain(page_of(solids), engine)
     engine.sent.clear()
@@ -1845,8 +1740,8 @@ async def test_one_surface_in_a_pane_is_drawn_in_the_box_it_asked_for(
     session.add(_plotted("SIN(x y)"))
     await settle()
     engine.sent.clear()
-    # What the page says when it has drawn: what the values measure in z, and
-    # the box they were placed in. The same, for a surface standing alone.
+    # After drawing, the page reports the z extent and the box used. For a lone
+    # surface they agree, so nothing is re-requested.
     solids.panes[1].say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-1.0, 1.0])
     await settle()
     assert engine.sent == []
@@ -1860,8 +1755,8 @@ async def test_two_surfaces_are_drawn_in_one_box(session, solids, engine):
     pane.say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-1.0, 1.0])
     await answered(solids, engine)
     at = len(engine.sent)
-    # The second surface reaches higher, so the box grows and every mesh built
-    # to the box that is gone - both of them - is asked for again in the new one.
+    # The second surface reaches higher, so the box grows and both meshes are
+    # requested again for the new box.
     pane.say["stood"](2, [-25.0, 25.0, -25.0, 25.0], [-1.0, 1.0])
     await answered(solids, engine)
     asked = engine.sent[at:]
@@ -1873,9 +1768,8 @@ async def test_a_pooled_box_that_cuts_a_spike_says_so_in_the_desktops_words(
 ):
     session.add(_plotted("SIN(x y)"))
     pane = solids.panes[1]
-    # The whole of these values runs far past their middle 98%, which is what a
-    # spike is: the box takes the middle, and the sentence about it is the one
-    # `plot/actions.py` writes for both windows.
+    # The full range far exceeds the middle 98%, i.e. a spike. The box uses the
+    # middle, and the message comes from `plot/actions.py`, shared with the desktop.
     pane.say["stood"](1, [-500.0, 500.0, -3.0, 3.0], [-500.0, 500.0])
     assert pane.message == "z clipped to the 1st-99th percentile: -3 to 3"
 
@@ -1884,10 +1778,9 @@ def test_a_pooled_box_is_the_box_a_window_holding_the_arrays_would_build():
     from rederive.plot import view as framing
     from rederive.plot.surface import extent, spanned
 
-    # The desktop has the values and the browser has four numbers a surface, and
-    # the two arrive at one box because the pooling is one function that both of
-    # them call. A window measures and pools in one breath; a pane measures in
-    # the worker, sends the summary and pools on the main thread.
+    # The desktop has the full arrays, the browser only four numbers per surface,
+    # but both use the same pooling function. A pane measures in the worker and
+    # pools on the main thread.
     gentle = np.linspace(-1.0, 1.0, 400)
     spiked = np.concatenate([np.linspace(-3.0, 3.0, 399), [900.0]])
     assert framing.pooled([spanned(gentle), spanned(spiked)]) == extent(
@@ -1899,7 +1792,7 @@ def test_a_pooled_box_is_the_box_a_window_holding_the_arrays_would_build():
 
 
 async def answered(solids, engine):
-    """Acknowledge the evaluation with the worker, which sends the next one."""
+    """Acknowledge the evaluation in flight, so the next one is sent."""
     await settle()
     if engine.sent:
         solids.handlers["landed"](engine.sent[-1][0], "")
@@ -1909,8 +1802,8 @@ async def answered(solids, engine):
 async def test_the_inspector_is_the_form_the_desktops_dialog_is(session, solids):
     session.add(_plotted("SIN(x y)"))
     pane = solids.panes[1]
-    # The same nine fields in the same three groups, and the three answers the
-    # desktop's dialog offers - which is the one form that names its own.
+    # The same nine fields, three groups, and three buttons as the desktop's
+    # dialog; this is the only form with its own buttons.
     assert pane.form["name"] == "view"
     assert [one["name"] for one in pane.form["fields"]] == [
         *("cx", "cy", "cz", "lx", "ly", "lz"),
@@ -1925,8 +1818,8 @@ async def test_the_inspector_is_the_form_the_desktops_dialog_is(session, solids)
         "Autoscale z",
         "Close",
     ]
-    # It opens on the box the pane is standing in, spelled by Python: the domain
-    # and the z are this side's, and the camera is the page's to fill in.
+    # It opens on the current box, formatted by Python; the page fills in the
+    # camera.
     pane.say["command"]("view.inspect", None)
     assert pane.inspected == ("0", "0", "0", "10", "10", "2")
 
@@ -1936,8 +1829,8 @@ async def test_the_inspector_sets_the_box_and_the_camera(session, solids, engine
     pane = solids.panes[1]
     await drain(page_of(solids), engine)
     engine.sent.clear()
-    # A center and a length an axis, and where to look from: the domain moves,
-    # the surface is evaluated over it, and the camera goes where it was told.
+    # A center, per-axis lengths, and a camera: the domain moves, the surface is
+    # re-evaluated, and the camera moves.
     pane.say["typed"](
         "view", ["1", "0", "0", "4", "10", "2", "45", "20", "30"], "apply"
     )
@@ -1945,7 +1838,7 @@ async def test_the_inspector_sets_the_box_and_the_camera(session, solids, engine
     assert pane.fields == ("-1", "3", "-5", "5", "64", "64")
     assert engine.sent[-1][2].xdomain == (-1.0, 3.0)
     assert pane.camera == (20.0, 45.0, 30.0)
-    # And a box that is not numbers is refused rather than swallowed.
+    # Non-numeric input is refused.
     pane.say["typed"]("view", ["a"] * 9, "apply")
     assert pane.message == "The view is described in numbers"
 
@@ -1958,8 +1851,8 @@ async def test_a_typed_z_outranks_the_data_until_autoscale_gives_it_back(
     pane.say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-1.0, 1.0])
     await drain(page_of(solids), engine)
     engine.sent.clear()
-    # Somebody who asks for -4 to 4 in z wants the surface cut off at 4, so the
-    # mesh is built to it and the next measurement does not autoscale it away.
+    # A typed z range of -4 to 4 is used for the mesh and not autoscaled away by
+    # the next measurement.
     pane.say["typed"](
         "view", ["0", "0", "0", "10", "10", "8", "0", "0", "20"], "apply"
     )
@@ -1969,8 +1862,7 @@ async def test_a_typed_z_outranks_the_data_until_autoscale_gives_it_back(
     pane.say["stood"](1, [-1.0, 1.0, -1.0, 1.0], [-4.0, 4.0])
     await drain(page_of(solids), engine)
     engine.sent.clear()
-    # `Autoscale z` hands the extent back to the data, and the surface is asked
-    # for again in the box its own values want.
+    # `Autoscale z` returns control to the data, and the surface is re-requested.
     pane.say["typed"]("view", [""] * 9, "reset")
     await settle()
     assert engine.sent[0][2].zrange is None
@@ -1989,12 +1881,12 @@ async def test_a_surface_that_would_not_evaluate_reports_itself(
 
 
 def page_of(solids):
-    """The one handler a drain needs, which for a solid is the same table."""
+    """Adapt `solids` for `drain`, which only needs its handlers."""
     return _Landing(solids)
 
 
 class _Landing:
-    """Enough of a page for `drain`: the acknowledgement, and nothing else."""
+    """Just enough of a page for `drain`."""
 
     def __init__(self, solids):
         self.handlers = solids.handlers
@@ -2004,7 +1896,7 @@ class _Landing:
 
 
 def _geometry(text, grid=(16, 16), domain=(-5.0, 5.0), zrange=None):
-    """The same surface, built the way the desktop's window builds one."""
+    """Build a surface the way the desktop window does."""
     from rederive.plot import evaluate
     from rederive.plot.surface import Box, brightened, extent, mesh, wire
 
@@ -2046,8 +1938,7 @@ def test_a_surfaces_box_is_the_one_the_desktops_inspector_reads():
     assert answer["center"] == pytest.approx(list(box.center))
     assert answer["lengths"] == pytest.approx(list(box.lengths))
     assert answer["world"] == 10.0
-    # And the numbers arrive spelled, in the function the desktop's fields and
-    # tick labels are spelled by: the page shows what Python wrote.
+    # The numbers arrive already formatted with `written`, as on the desktop.
     assert answer["reading"]["lengths"] == [written(one) for one in box.lengths]
     assert answer["reading"]["lengths"][:2] == ["10", "10"]
 
@@ -2057,9 +1948,8 @@ def test_the_writing_on_the_box_is_chosen_and_spelled_where_the_numbers_are():
 
     answer = _standing(_grid("SIN(x y)"))
     box = _geometry("SIN(x y)")["box"]
-    # A tick a page draws is a coordinate in the box's own world units and a
-    # string: the ruler is `plot/surface.py`'s, the spelling is `written`, and
-    # the page projects a point it was handed and works out neither.
+    # Each tick is a world-unit coordinate and a label, chosen by `plot/surface.py`
+    # and formatted by `written`; the page only projects them.
     across = answer["ticks"]["x"]
     assert [one["text"] for one in across] == [
         written(value) for value in ticks(*box.x)
@@ -2079,9 +1969,8 @@ def test_a_grid_of_n_by_n_is_n_squared_vertices_and_twice_the_faces():
 
 
 def test_a_dome_stops_where_it_stops_rather_than_a_grid_step_short():
-    # `SQRT(1-x^2-y^2)` is a dome over the unit disc and nothing outside it, so
-    # the mesh has fewer faces than a full grid and every vertex of it is in the
-    # box - which is what the refined boundary is for.
+    # `SQRT(1-x^2-y^2)` is a dome over the unit disc, so the mesh has fewer faces
+    # than a full grid; the refined boundary keeps it from stopping a step short.
     answer = _standing(_grid("SQRT(1 - x^2 - y^2)", grid=(16, 16), domain=(-2.0, 2.0)))
     assert 0 < answer["faces"].size < 3 * 2 * 15 * 15
     assert answer["trouble"] == ""
@@ -2094,8 +1983,8 @@ def test_a_spike_clips_the_box_to_the_percentiles_and_says_so():
 
 
 def test_a_surface_placed_in_a_box_it_was_given_asks_for_nothing():
-    # The box a pane holding two surfaces hands down: the mesh stands in it, and
-    # what the values themselves wanted is reported beside it rather than used.
+    # With a given box (as for a pane with two surfaces), the mesh uses it, and the
+    # values' own extent is only reported.
     answer = _standing(_grid("SIN(x y)", zrange=(-4.0, 4.0)))
     assert answer["zrange"] == pytest.approx([-4.0, 4.0])
     assert answer["wanted"] == pytest.approx([-1.0, 1.0], abs=1e-4)

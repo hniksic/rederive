@@ -1,15 +1,11 @@
-"""The Manage commands, driven the way a user drives them.
+"""The Manage commands, driven through the UI.
 
-Four of them set something and are dialogs; Renumber, Annotate and Ordering act
-on the session instead, and ask for what they need on a line of their own.
+Four of them are settings dialogs; Renumber, Annotate and Ordering act on the session and
+prompt for input on a line of their own.
 
-The expected band text and message lines are what the original puts on the same
-screens, minus the leading blank the pane indents by. Every version shows the
-same words on every one of them.
-
-Only the keys peculiar to these screens are exercised here; the rest of what a
-dialog does belongs to `test_options` and `test_settings`, since it is the same
-machinery underneath.
+Expected band and message text matches the original (the same in every version), minus
+the pane's leading blank. Only keys specific to these screens are tested here; general
+dialog behavior is covered by `test_options` and `test_settings`.
 """
 
 import pytest
@@ -42,7 +38,7 @@ def session():
 
 
 async def manage(pilot, *keys):
-    """Open the Manage menu and press on."""
+    """Open the Manage menu and press the given keys."""
     await pilot.press("m", *keys)
 
 
@@ -53,7 +49,7 @@ def authored(session, *texts):
 
 
 def labels(session):
-    """The history as the work area shows it: each entry's label and its text."""
+    """Each entry's label and text, as the work area shows them."""
     return [f"#{entry.number}: {entry.text}" for entry in session.entries]
 
 
@@ -127,7 +123,7 @@ async def test_trigonometry_asks_three_questions_over_two_lines(app):
         await pilot.press("tab")
         assert message(app) == "Select angle mode"
         assert highlighted(app) == "Radian"
-        # And round to the first field again, committing nothing on the way.
+        # Tab wraps to the first field without committing anything.
         await pilot.press("tab")
         assert message(app) == "Angle sums & multiple angles"
         assert entries(app) == []
@@ -161,7 +157,7 @@ async def test_space_and_backspace_step_the_active_field(app):
         assert highlighted(app) == "Real"
         await pilot.press("backspace")
         assert highlighted(app) == "Principal"
-        # Backspace wraps around the near end rather than leaving the field.
+        # Backspace wraps around rather than leaving the field.
         await pilot.press("backspace")
         assert highlighted(app) == "Any"
 
@@ -192,7 +188,7 @@ async def test_escape_abandons_every_pending_change(app):
         assert app.settings["Trigpower"] == "Auto"
         assert app.settings["Angle"] == "Radian"
         assert entries(app) == []
-        # And one Esc lands on the Manage menu, not past it.
+        # A single Esc returns to the Manage menu.
         assert band(app)[0].startswith(" MANAGE: ")
 
 
@@ -204,7 +200,7 @@ async def test_an_authored_assignment_changes_the_setting_it_names(app):
         await pilot.press("a", *"Branch := Real", "enter")
         assert app.settings["Branch"] == "Real"
         assert app.session.context.branch is Branch.REAL
-        # And the screen that owns it opens on what was authored.
+        # The Branch screen then opens on the authored value.
         await manage(pilot, "b")
         assert highlighted(app) == "Real"
 
@@ -230,8 +226,7 @@ def test_every_manage_setting_reaches_the_context(session):
 
 
 async def test_the_branch_setting_changes_the_answer(app):
-    """The point of the step: the principal cube root of -8 is complex, and the
-    real branch of it is -2."""
+    """The principal cube root of -8 is complex; the real one is -2."""
     async with app.run_test() as pilot:
         await pilot.press("a", *"(-8)^(1/3)", "enter")
         await pilot.press("s", "enter")
@@ -246,8 +241,8 @@ async def test_the_branch_setting_changes_the_answer(app):
 
 
 async def test_renumber_puts_the_labels_back_in_sequence(session):
-    """The manual's own case: a remove leaves 1, 3, 4, and renumbering makes it
-    1, 2, 3 - the annotation of the last entry moving with the label it names."""
+    """The manual's example: after a remove, 1, 3, 4 becomes 1, 2, 3, and the last
+    entry's annotation follows the label it refers to."""
     authored(session, "x", "y", "z")
     session.remove(2, 2)
     await session.simplify("#3")
@@ -259,8 +254,8 @@ async def test_renumber_puts_the_labels_back_in_sequence(session):
 
 
 def test_renumber_follows_the_order_the_entries_sit_in(session):
-    """What a move, or a remove and an unremove, leaves: labels out of sequence
-    because the entries are no longer stacked in the order they were numbered."""
+    """Renumbering follows display order, e.g. after a remove and unremove has left
+    the labels out of sequence."""
     authored(session, "a", "b", "c", "d", "e")
     session.remove(2, 3)
     session.unremove()
@@ -270,14 +265,14 @@ def test_renumber_follows_the_order_the_entries_sit_in(session):
 
 
 async def test_renumber_moves_a_reference_inside_an_expression(session):
-    """Rederive keeps `#3` as a reference where the original resolved it as it
-    read the line, so renumbering has to move it or it points somewhere else."""
+    """Unlike the original, which resolved `#3` when reading the line, Rederive keeps
+    it as a reference, so renumbering must update it."""
     authored(session, "x", "y", "z")
     session.remove(2, 2)
     session.author("#3 + 1")
     session.renumber()
     assert labels(session) == ["#1: x", "#2: z", "#3: #2+1"]
-    # And it still names the same expression it named before.
+    # It still refers to the same expression.
     assert (await session.simplify("#3")).text == "z + 1"
 
 
@@ -321,7 +316,7 @@ def test_renumber_leaves_the_highlight_where_it_was(session):
 
 
 async def test_renumber_runs_on_the_keystroke(app):
-    """No prompt, no dialog, no message: the command menu comes straight back."""
+    """No prompt, dialog or message: the command menu comes straight back."""
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter", "a", *"y", "enter")
         await pilot.press("r", *"2", "tab", *"2", "enter")
@@ -348,8 +343,8 @@ async def test_annotate_asks_for_a_label_and_then_for_the_text(app):
 
 
 async def test_the_label_field_follows_the_highlight(app):
-    """As `Remove` and `Unremove` do: the manual would rather you picked the
-    expression than typed its number."""
+    """As with `Remove` and `Unremove`, the manual prefers picking the expression to
+    typing its number."""
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter", "a", *"y", "enter")
         await manage(pilot, "a")
@@ -395,7 +390,7 @@ async def test_a_label_that_names_no_entry_is_refused(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x", "enter")
         await manage(pilot, "a", *"7", "enter")
-        # The question stays up with what was typed still on it to correct.
+        # The prompt stays up with the input left for correction.
         assert band(app) == [" MANAGE ANNOTATE: Expression: 7"]
 
 
@@ -449,16 +444,16 @@ async def test_ordering_takes_a_new_list_and_records_nothing(app):
     async with app.run_test() as pilot:
         await manage(pilot, "o", *"y x z", "enter")
         assert app.session.order == ("y", "x", "z")
-        # Unlike the four settings screens, this one appends no expression.
+        # Unlike the settings screens, this appends no expression.
         assert entries(app) == []
         assert band(app)[0].startswith(" COMMAND: ")
-        # And the next Manage Ordering opens on what was entered.
+        # The next Manage Ordering opens on the new list.
         await manage(pilot, "o")
         assert prompt(app) == ("MANAGE ORDER variables:", "y x z")
 
 
 async def test_a_line_that_is_not_variables_is_refused(app):
-    """The original stores `q 2 + w` verbatim; reproducing that would be a bug."""
+    """The original stores `q 2 + w` verbatim, which is a bug we don't reproduce."""
     async with app.run_test() as pilot:
         await manage(pilot, "o", *"q 2 + w", "enter")
         assert app.session.order == ("x", "y", "z")
@@ -512,9 +507,9 @@ def test_the_order_list_decides_a_declared_functions_parameters(session):
 
 # -- Manage Substitute -------------------------------------------------------
 #
-# The manual's own exercises (section 4.8) make the corpus: the answers below
-# are what the original appends for them, unsimplified and annotated `Sub(#1)`
-# whether a whole expression or a subexpression was highlighted.
+# Cases come from the manual's exercises (section 4.8). The expected answers are what the
+# original appends: unsimplified and annotated `Sub(#1)`, whether a whole expression or a
+# subexpression was highlighted.
 
 
 def highlight(session, *route):
@@ -527,7 +522,7 @@ def highlight(session, *route):
 def test_a_value_is_written_in_for_each_variable(session):
     authored(session, "a x^2 + b x + c")
     entry = session.substitute("#1", {"x": "2", "a": "3", "b": "5", "c": "c"})
-    # Left exactly as it was written: 22 is what a Simplify of it would say.
+    # Left unsimplified; Simplify would give 22.
     assert entry.text == "3*2^2+5*2+c"
     assert entry.annotation == "Sub(#1)"
 
@@ -538,8 +533,7 @@ def test_an_expression_may_be_written_in_as_well_as_a_number(session):
 
 
 def test_the_substitutions_all_go_in_at_once(session):
-    """Interchanging two variables interchanges them: `x` for `y` is not read
-    again once `y` has been written in for `x`."""
+    """Substitutions are simultaneous, so swapping `x` and `y` really swaps them."""
     authored(session, "x + 2 y")
     assert session.substitute("#1", {"x": "y", "y": "x"}).text == "y+2*x"
 
@@ -586,19 +580,18 @@ async def test_the_result_is_appended_unsimplified_and_can_be_simplified_after(s
 
 
 def test_every_match_of_the_highlighted_part_is_replaced(session):
-    """The manual's own example: only the whole highlighted product matches, so
-    the radical in the denominator is left where it is."""
+    """The manual's example: only the whole highlighted product matches, so the
+    radical in the denominator is left alone."""
     authored(session, "3 SQRT(x^2 + y^2)/(2 + SQRT(x^2 + y^2))")
     assert highlight(session, "right").kind == "product"
     entry = session.substitute_part("#1", "r")
     assert entry.text == "r/(2+SQRT(x^2+y^2))"
-    # No quote on the label: the answer is derived from the whole entry, since
-    # that is where the substitution happened.
+    # No quote on the label: the result derives from the whole entry.
     assert entry.annotation == "Sub(#1)"
 
 
 def test_a_match_is_the_whole_subexpression_and_not_a_part_of_one(session):
-    """`k` for `t^3` gives `t^6 + k`, never `k^2 + k`: `t^6` is not a match."""
+    """`k` for `t^3` gives `t^6 + k`, not `k^2 + k`: only whole subexpressions match."""
     authored(session, "t^6 + t^3")
     assert highlight(session, "right", "right").value == "^"
     assert session.substitute_part("#1", "k").text == "t^6+k"
@@ -611,8 +604,7 @@ def test_the_same_subexpression_is_replaced_wherever_it_stands(session):
 
 
 def test_a_match_is_of_the_expression_and_not_of_how_it_was_written(session):
-    """`2 x` and `2*x` are one product written two ways, and a match is a match
-    of the tree."""
+    """`2 x` and `2*x` are the same tree, so both match."""
     authored(session, "2 x + 2*x")
     highlight(session, "right")
     assert session.substitute_part("#1", "u").text == "u+u"
@@ -629,7 +621,7 @@ def test_a_highlighted_part_is_what_makes_the_command_ask_once(session):
     assert not session.substitutes_part("#1")
     highlight(session, "right", "right")
     assert session.substitutes_part("#1")
-    # A highlight in another entry says nothing about the one being named.
+    # A highlight in a different entry doesn't count.
     authored(session, "z")
     session.select_entry(0)
     highlight(session, "right")
@@ -646,8 +638,8 @@ async def test_substitute_asks_for_the_expression_and_then_for_each_variable(app
         assert prompt(app) == ("MANAGE SUBSTITUTE expression:", "#1")
         assert message(app) == "Enter expression"
         await pilot.press("enter")
-        # The variables come in main order: x is on the order list, and the
-        # rest sort alphabetically behind it.
+        # Variables come in main order: x is on the order list, the rest follow
+        # alphabetically.
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "x")
         assert message(app) == "Enter replacement for x"
         await pilot.press(*"2", "enter")
@@ -657,7 +649,7 @@ async def test_substitute_asks_for_the_expression_and_then_for_each_variable(app
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "b")
         await pilot.press(*"5", "enter")
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "c")
-        # Enter on the name it offers leaves that variable standing.
+        # Enter on the offered name leaves that variable unchanged.
         await pilot.press("enter")
         assert entries(app)[-1] == "3*2^2+5*2+c"
         assert annotation(app) == "Sub(#1)"
@@ -689,8 +681,8 @@ async def test_a_subexpression_is_asked_about_once_and_offered_nothing(app):
 
 
 async def test_an_expression_with_nothing_in_it_to_replace_asks_nothing(app):
-    """`2 + 3` has no variable and no highlight inside it, so there is nothing
-    to ask and nothing to append - and the Manage menu is still up."""
+    """`2 + 3` has no variables or highlight, so nothing is asked or appended and the
+    Manage menu stays up."""
     async with app.run_test() as pilot:
         await pilot.press("a", *"2 + 3", "enter")
         await manage(pilot, "s", "enter")
@@ -699,8 +691,8 @@ async def test_an_expression_with_nothing_in_it_to_replace_asks_nothing(app):
 
 
 async def test_ctrl_enter_simplifies_what_was_substituted(app):
-    """The original nests the annotation as `Simp(Sub(#1))`; every Ctrl-Enter
-    here appends a separate entry instead, and this one is no exception."""
+    """The original nests the annotation as `Simp(Sub(#1))`; here Ctrl-Enter always
+    appends a separate entry instead."""
     async with app.run_test() as pilot:
         await pilot.press("a", *"a x^2 + b x + c", "enter")
         await manage(pilot, "s", "enter", *"2", "enter", *"3", "enter")
@@ -730,7 +722,7 @@ async def test_escape_abandons_substitute_from_either_question(app, keys, step):
         await pilot.press("escape")
         assert entries(app) == ["x+1"]
         assert app.substituting is None
-        # One Esc lands on the Manage menu, as it does from any of its lines.
+        # One Esc returns to the Manage menu, as from any of its prompts.
         assert band(app)[0].startswith(" MANAGE: ")
 
 
@@ -768,8 +760,8 @@ def test_a_state_file_carries_the_manage_settings(session, tmp_path):
 
 
 def test_a_state_file_carries_the_variable_order_list(session, tmp_path):
-    """Not a setting - no field owns it and nothing records it as an assignment
-    - but Derive kept it in DERIVE.INI, so a session opens the way you left it."""
+    """The order list isn't a setting, but Derive kept it in DERIVE.INI, so it is
+    saved and restored with the state."""
     file = tmp_path / "state.ini"
     session.order = ("y", "x", "z")
     session.save_state(file)

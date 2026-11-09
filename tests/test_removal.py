@@ -1,11 +1,7 @@
-"""Remove and Unremove at the session level: which entries go, and what comes
-back.
+"""Remove and Unremove at the session level: which entries go, and what comes back.
 
-The two commands are one mechanism seen from both ends, so they are tested
-together: what Remove takes out is exactly what Unremove has to be able to put
-back, labels and annotations included.
-
-Every rule asserted here was checked against the original.
+They are tested together because Unremove must restore exactly what Remove took out,
+labels and annotations included. Every rule here was checked against the original.
 """
 
 import pytest
@@ -20,7 +16,7 @@ def session():
 
 
 def labels(session):
-    """The history as the work area shows it: each entry's label and its text."""
+    """Each entry's label and text, as the work area shows them."""
     return [f"#{entry.number}: {entry.text}" for entry in session.entries]
 
 
@@ -94,7 +90,7 @@ def test_the_block_is_physically_contiguous_and_not_numerically(session):
 async def test_what_a_removed_line_defined_is_left_standing(session):
     authored(session, "k := 4", "x")
     session.remove(1, 1)
-    # The value outlives the line that gave it, as it does in the original.
+    # The value outlives its line, as in the original.
     assert (await session.simplify("k + 1")).text == "5"
 
 
@@ -202,7 +198,7 @@ def test_a_label_already_taken_is_given_afresh_on_the_way_back(session):
     session.author("q")
     session.unremove(3)
     assert labels(session) == ["#1: x", "#2: y", "#3: z", "#4: q"]
-    # The second copy cannot have #1 and #2, so it continues the counter.
+    # The second copy can't reuse #1 and #2, so it continues the counter.
     session.unremove(3)
     assert labels(session) == [
         "#1: x",

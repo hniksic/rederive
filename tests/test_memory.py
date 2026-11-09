@@ -15,8 +15,8 @@ def test_this_process_holds_a_plausible_amount():
     size = memory.resident_bytes()
     if size is None:
         pytest.skip(f"{sys.platform} does not report a resident set")
-    # A Python interpreter with sympy loaded is megabytes at the very least,
-    # and no run of the suite is a gigabyte.
+    # Python with sympy loaded takes at least megabytes, and the suite never reaches
+    # gigabytes.
     assert 1 << 20 < size < 8 << 30
 
 
@@ -43,10 +43,10 @@ def test_a_size_is_written_in_its_largest_whole_unit(size, written):
 
 
 def test_the_gauge_counts_the_worker_in_where_there_is_one():
-    """The gauge is about the program, and the program is two processes.
+    """The gauge covers the whole program, which runs as two processes.
 
-    This one stands in for the worker as its own worker, which is the one
-    process certain to be there and certain to be readable.
+    The test process registers itself as the worker, since it is certain to exist and
+    be readable.
     """
     alone = memory.resident_bytes()
     if alone is None:
@@ -63,7 +63,7 @@ def test_a_worker_that_is_gone_is_left_out_rather_than_refused():
     alone = memory.resident_bytes()
     if alone is None:
         pytest.skip(f"{sys.platform} does not report a resident set")
-    # A pid nothing answers to: the figure is still true about the app.
+    # A nonexistent pid: the figure still reports the app alone.
     memory.register_worker(-1)
     try:
         assert memory.resident_bytes() == pytest.approx(alone, rel=0.5)
@@ -72,10 +72,9 @@ def test_a_worker_that_is_gone_is_left_out_rather_than_refused():
 
 
 def test_a_worker_that_can_only_be_read_from_inside_reports_instead():
-    """The browser's half of the gauge: a Web Worker nothing outside can measure.
+    """In the browser, a Web Worker can't be measured from outside, so it reports itself.
 
-    The figure arrives from the worker rather than being taken off it, and the
-    gauge adds it in exactly as it adds a resident set it read itself.
+    The gauge adds the reported figure just like a resident set it measured itself.
     """
     alone = memory.resident_bytes()
     if alone is None:
@@ -83,22 +82,20 @@ def test_a_worker_that_can_only_be_read_from_inside_reports_instead():
     memory.worker_holds(64 << 20)
     try:
         assert memory.resident_bytes() == alone + (64 << 20)
-        # A later figure replaces the earlier one: it is the same heap read
-        # again, not a second heap.
+        # A later figure replaces the earlier one rather than adding to it.
         memory.worker_holds(96 << 20)
         assert memory.resident_bytes() == alone + (96 << 20)
     finally:
         memory.worker_holds(None)
-    # And a worker that has gone takes its figure with it.
+    # Clearing the worker drops its figure.
     assert memory.resident_bytes() == alone
 
 
 def test_a_worker_that_can_be_measured_is_measured():
-    """A process to read beats a figure somebody sent, there being one truth.
+    """A measurable worker process takes precedence over a reported figure.
 
-    Neither environment does both, so this is about the gauge and not about
-    either of them: what the two calls mean is `go and read this` and `this is
-    what it said`, and a reading nobody has to be asked for is the better one.
+    No real environment provides both; this pins the gauge's rule that a direct
+    measurement beats a reported one.
     """
     alone = memory.resident_bytes()
     if alone is None:
@@ -113,11 +110,10 @@ def test_a_worker_that_can_be_measured_is_measured():
 
 
 def test_a_busy_worker_reports_out_of_its_collector_and_not_on_every_pass(monkeypatch):
-    """The rule the browser's gauge moves by while a computation is running.
+    """How often the browser's gauge updates while a computation runs.
 
-    The collection itself is not staged here - what is being checked is which
-    passes are worth a look at the heap, and a test that filled one to find out
-    would be measuring the machine it happens to run on.
+    No real garbage collection is triggered; the test only checks which collector
+    callbacks lead to reading the heap, without depending on the machine.
     """
     import time
 
@@ -125,28 +121,22 @@ def test_a_busy_worker_reports_out_of_its_collector_and_not_on_every_pass(monkey
 
     looks = []
     monkeypatch.setattr(worker, "_held", lambda: looks.append(1))
-    # The end of a collection, and the first since the last look: report.
+    # The end of a collection, with no recent reading: report.
     monkeypatch.setattr(worker, "_looked", 0.0)
     worker._collected("stop", {})
     assert len(looks) == 1
-    # The start of the same collection is the same figure asked twice.
+    # The start of a collection is not reported.
     worker._collected("start", {})
     assert len(looks) == 1
-    # And a collection that comes round again straight away is passed over:
-    # an expansion collects thousands of times a second, and a gauge nobody can
-    # read that fast is not worth the looking.
+    # A collection right after a reading is skipped: an expansion can collect thousands
+    # of times a second, far faster than anyone can read the gauge.
     monkeypatch.setattr(worker, "_looked", time.monotonic())
     worker._collected("stop", {})
     assert len(looks) == 1
 
 
 def test_a_tab_reads_its_own_heap_and_says_nothing_outside_one():
-    """The reading a browser has, asked for where there is no browser.
-
-    Outside Pyodide there is no heap to read, and the gauge is empty rather
-    than broken - which is also what the whole of this suite sees, since it
-    runs on a desktop.
-    """
+    """Outside Pyodide there is no heap to read, so the web gauge is empty, not broken."""
     from rederive.platform.web import Web, heap
 
     assert heap() is None
@@ -155,11 +145,9 @@ def test_a_tab_reads_its_own_heap_and_says_nothing_outside_one():
 
 
 def test_a_platform_that_will_not_answer_leaves_the_field_empty(monkeypatch):
-    """An install without psutil is the ordinary shape of this, and it is supported.
+    """This is the normal case for an install without psutil, which is supported.
 
-    The gauge is the one part of the program that has nothing to fall back on, so
-    what it does instead is say nothing - a field that is not there reads better
-    than a figure that is not true.
+    With no reading available, the field is omitted rather than showing a wrong figure.
     """
     environment = type(platform.current())
     monkeypatch.setattr(environment, "process_bytes", lambda self, pid=None: None)

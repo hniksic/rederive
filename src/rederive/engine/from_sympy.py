@@ -1,19 +1,16 @@
 """sympy -> Node, by way of the printer and the parser.
 
-A result becomes a worksheet entry only here, whoever computed it. The route
-is print then reparse rather than build a tree directly, and that is
-deliberate: the reparsed tree has spans indexing the very text the entry
-shows, so subexpression navigation, highlighting and the built-up display all
-work on a result exactly as they work on something the user authored.
+Every result becomes a worksheet entry here. It is printed and reparsed rather than
+converted directly so that the tree's spans index the entry's text, making navigation,
+highlighting and the built-up display work as they do on authored input.
 
-The reparse needs a symbol table - in Character mode `tera` is one name only
-once something has declared it - so the caller may supply a `ParseState`, and
-`parse_state_for` builds one that knows every name the expression mentions.
+Reparsing needs a symbol table (in Character mode `tera` is one name only once
+declared), so the caller may supply a `ParseState`; `parse_state_for` builds one that
+knows every name in the expression.
 
-A result under a decimal notation is written twice: once as it is shown, which
-is what the worksheet draws and saves, and once as the ratios it is made of,
-which is what the next command computes with. `Result.value` is the second,
-and it is None when the two would be the same text.
+Under a decimal notation a result is written twice: as shown, which the worksheet draws
+and saves, and as exact ratios, which the next command computes with. The latter is
+`Result.value`, None when both texts are identical.
 """
 
 from __future__ import annotations
@@ -37,30 +34,24 @@ from rederive.syntax import (
     parse_expression,
 )
 
-#: What joins a subscripted symbol's parts in its name.
+#: Separator between the parts of a subscripted symbol's name.
 _SUBSCRIPT = " SUB "
 
-#: Every answer the notation could not say, each the first time it was met.
+#: Every distinct answer that couldn't be written in author notation.
 #:
-#: Falling back to an inert string is right for a head nobody foresaw. Doing it
-#: silently is not: `RootSum`, `AccumBounds` and the set heads all reached the
-#: worksheet as dead text and none of them was found by anything but somebody
-#: going to look. So each is noted here and written to the log, and the suite
-#: reads the list to ask of every command it runs that the list stayed empty.
+#: Falling back to an inert string is right for unforeseen heads, but not silently:
+#: `RootSum`, `AccumBounds` and the set heads all reached the worksheet as dead text
+#: unnoticed. So each is recorded here and logged, and the test suite checks that the
+#: list stays empty.
 UNREADABLE: list[str] = []
 
 
 def _unreadable(text: str) -> None:
-    """Note an answer that is not author notation, where it can be read.
+    """Record and log an answer that isn't author notation.
 
-    The worker has no terminal and its standard error is its log file, opened
-    by the first thing written to it, so a line here is a line in the log of
-    the process that computed the answer - which is where a head nobody
-    anticipated should turn up, rather than in somebody's reading of a node
-    kind.
-
-    Once per distinct text and per process. An answer met a thousand times is
-    one thing to name, and a log that repeats itself is a log nobody reads.
+    The worker's stderr is its log file, so this lands in the log of the process
+    that computed the answer. Each distinct text is logged once per process to keep
+    the log readable.
     """
     if text in UNREADABLE:
         return
@@ -76,12 +67,11 @@ def from_sympy(
 ) -> Result:
     """Write `expression` as author notation, and read it back as a tree.
 
-    `authored` is passed to the printer, which writes what it names as the text
-    it is given rather than as the expression it holds.
+    `authored` is passed to the printer, which writes each expression it maps as the
+    given text.
     """
     context = context or Context()
-    # Named first, so that the symbol table below is built from the names the
-    # text actually carries rather than from the dummies behind them.
+    # Name dummies first so the symbol table is built from the names in the text.
     expression = named(expression)
     text = author_text(expression, context, authored)
     if state is None:
@@ -91,18 +81,16 @@ def from_sympy(
     try:
         node = parse_expression(text, state).node
     except DeriveSyntaxError:
-        # Nothing the engine produces should be unreadable, but a result that
-        # is stays inert and legible rather than taking the command down.
+        # This shouldn't happen, but an unreadable result is kept as an inert string
+        # rather than failing the command.
         _unreadable(text)
         return Result(Node(Kind.STRING, 0, len(text), (), text), text)
     if node.kind is Kind.STRING and not isinstance(expression, StringLiteral):
-        # A head the printer had no word for, written as the quoted string the
-        # notation keeps unreadable text in. It reparses, and it is as dead as
-        # one that did not, so it is worth the same notice. A string the author
-        # wrote is a string and not a failure.
+        # The printer had no name for a head and quoted it as a string. It reparses
+        # but is just as dead, so record it too. Authored strings are not failures.
         _unreadable(text)
     elif not is_written(expression):
-        # The same, for a function head quoted inside a larger answer.
+        # Likewise for a function head quoted inside a larger answer.
         _unreadable(text)
     return Result(node, text, _exact(expression, context, state, text, authored))
 
@@ -114,13 +102,11 @@ def _exact(
     text: str,
     authored: dict[sp.Basic, str] | None = None,
 ) -> Node | None:
-    """The same answer written as the ratios it is made of, or None if that is
-    what `text` already is.
+    """The answer written with exact ratios, or None if that is what `text` is.
 
-    A decimal style writes a number to as many digits as it is shown to, and
-    reading that back is reading a different number - which is what the
-    original saves to a file, and not what it goes on computing with. So the
-    exact writing is kept beside the shown one.
+    A decimal style writes a number only to the digits shown, so reading it back gives
+    a different number. Derive saves the shown form but computes with the exact one,
+    so both are kept.
     """
     if context.notation is Notation.RATIONAL:
         return None
@@ -138,17 +124,14 @@ def _exact(
 def _knowing(
     state: ParseState, expression: sp.Basic, context: Context
 ) -> ParseState:
-    """The caller's state, plus the names only the result mentions.
+    """A copy of the caller's state, with the result's new names declared.
 
-    The caller's modes are what the session is working in and are kept exactly.
-    Its symbol table is not enough on its own: an answer can name something the
-    author line never did - the bound variable sympy invents for the Leibniz
-    rule, say - and in Character mode `k1` is `k*1` until something declares
-    it, so the answer would read back as a different expression.
+    The caller's modes are kept. Its symbol table may lack names the answer introduces
+    (e.g. a bound variable sympy invents for the Leibniz rule), and in Character mode
+    `k1` reads as `k*1` until declared.
 
-    A copy, because the caller's state belongs to the caller. Declaring the
-    engine's own working names into the session's table would leave them there
-    as variables the user never wrote.
+    The state is copied so the engine's working names don't leak into the session's
+    table as variables the user never wrote.
     """
     known = replace(
         state, functions=dict(state.functions), variables=dict(state.variables)
@@ -169,20 +152,16 @@ def _knowing(
 def parse_state_for(expression: sp.Basic, context: Context) -> ParseState:
     """A parse state that reads back everything `expression` can mention.
 
-    Every name in the expression, and every name the context knows, is
-    declared, so that a multi-character name lexes as the one name it is.
+    Every name in the expression and the context is declared, so multi-character
+    names lex as one name.
 
-    The modes are the default ones - Character input, case-insensitive - and
-    only the input base comes from the context, which is all the context
-    carries. A session working in another mode has a state of its own and
-    should pass it: under `CaseMode := Sensitive`, `n` and `N` are two
-    variables, and a state that folds them would read one result as the
-    other.
+    Modes are the defaults (Character input, case-insensitive); only the input base
+    comes from the context. A session in another mode should pass its own state: under
+    `CaseMode := Sensitive`, `n` and `N` are different variables.
     """
     state = ParseState(input_base=context.input_base)
-    # Every symbol, not only the free ones: the index of a sum and the
-    # variable of a limit have to lex as themselves too. A declared nonscalar
-    # is a `MatrixSymbol` and no `Symbol`, and its name has to lex as well.
+    # All symbols, not only free ones: a sum's index and a limit's variable must lex
+    # too. Declared nonscalars are `MatrixSymbol`s, not `Symbol`s.
     for symbol in expression.atoms(sp.Symbol, sp.MatrixSymbol):
         if isinstance(symbol, StringLiteral):
             continue
@@ -190,8 +169,7 @@ def parse_state_for(expression: sp.Basic, context: Context) -> ParseState:
             _declare_variable(state, part)
     for name in (*context.domains, *context.assignments):
         _declare_variable(state, name)
-    # Functions last: a name is one or the other, and the later declaration
-    # displaces the earlier.
+    # Functions last, so they override a variable of the same name.
     for call in expression.atoms(AppliedUndef):
         _declare_function(state, type(call).__name__, len(call.args))
     for definition in expression.atoms(FunDef):
@@ -216,8 +194,8 @@ def _declare_function(state: ParseState, name: str, arity: int) -> None:
 def _is_name(text: str) -> bool:
     """Whether `text` is a name the lexer would read whole.
 
-    Labels, arbitrary constants and subscripted symbols carry punctuation the
-    lexer has its own rules for, and declaring them would teach it nothing.
+    Labels, arbitrary constants and subscripted symbols contain punctuation the lexer
+    handles itself, so declaring them is pointless.
     """
     return bool(text) and text[0].isalpha() and all(
         character.isalnum() or character == "_" for character in text

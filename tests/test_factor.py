@@ -1,15 +1,11 @@
-"""What Factor must produce.
+"""Tests of the Factor command.
 
-Author text in, author text out, as the Simplify cases are, and for the same
-reason: the text the worksheet shows is the whole of what the command
-promises.
+Like the Simplify cases, these compare text in to text out, since the displayed text is
+what the command promises.
 
-Almost every case here comes from the original rather than from the manual,
-so what is recorded is what the original actually prints, including the
-places the manual is wrong about it. Where the engine's form
-differs from the original's - term order, an equivalent spelling - the
-engine's form is recorded and the case says so; nothing is weakened to make a
-test pass.
+Nearly all cases come from what the original actually prints, even where the manual
+disagrees. Where the engine's form differs (term order, an equivalent spelling), the
+engine's form is recorded and the case says so; nothing is weakened to make a test pass.
 """
 
 from __future__ import annotations
@@ -36,18 +32,18 @@ def parse(text, state=None):
 
 
 def fact(text, amount=RATIONAL, variables=(), context=None):
-    """`text` factored, as the worksheet would show it."""
+    """Factor `text` and return it as the worksheet would show it."""
     return factor(parse(text), context or Context(), amount, variables).text
 
 
 # -- the five amounts ---------------------------------------------------------
 
-# Every expected value below is the original's own answer, and the order the
-# factors come in is the original's too: of two that differ only in the sign of
-# a coefficient the positive one leads, `x^2 - 4` -> `(x + 2)*(x - 2)`.
+# Every expected value below is the original's answer, factor order included: of two
+# factors differing only in a coefficient's sign, the positive one comes first, as in
+# `x^2 - 4` -> `(x + 2)*(x - 2)`.
 AMOUNTS = [
-    # Trivial puts the expression over a common denominator and pulls out the
-    # gcd of the coefficients and the least power of each variable.
+    # Trivial puts the expression over a common denominator and pulls out the gcd of
+    # the coefficients and the lowest power of each variable.
     ("3 - 1/(x + 2)", TRIVIAL, "(3*x + 5)/(x + 2)"),
     ("6*x^2 + 10*x^3/y", TRIVIAL, "2*x^2*(5*x + 3*y)/y"),
     ("2*x^3 - 12*x^2 + 18*x", TRIVIAL, "2*x*(x^2 - 6*x + 9)"),
@@ -73,10 +69,10 @@ def test_the_amount_says_how_far_to_go(text, amount, expected):
 
 
 def test_squarefree_stops_at_equal_powers():
-    """The manual's own example of squarefree deliberately stopping short.
+    """The manual's example of Squarefree deliberately stopping short.
 
-    `x^2 - 4` is left whole because `x + 2` and `x - 2` are the same power of
-    a sum; only Rational goes on to split it.
+    `x^2 - 4` stays whole because `x + 2` and `x - 2` appear to the same power; only
+    Rational splits it.
     """
     text = "x^4 + 2*x^3 - 3*x^2 - 8*x - 4"
     assert fact(text, SQUAREFREE) == "(x + 1)^2*(x^2 - 4)"
@@ -99,11 +95,10 @@ def test_an_amount_never_undoes_the_one_before_it():
 
 
 def test_a_radical_factor_keeps_a_real_quadratic_whole():
-    """raDical means as far as the reals allow, not "split or give up".
+    """raDical factors as far as the reals allow, not "fully split or give up".
 
-    `x^3 - 2` has one real root and a conjugate pair. The pair has no real
-    linear factors, but their product does, so it comes back as the quadratic
-    it multiplies out to.
+    `x^3 - 2` has one real root and a conjugate pair. The pair gives no real linear
+    factors, but its product is a real quadratic, which is kept.
     """
     assert fact("x^3 - 2", RADICAL) == "(x - 2^(1/3))*(x^2 + 2^(1/3)*x + 2^(2/3))"
 
@@ -114,20 +109,19 @@ def test_a_complex_factor_splits_the_pair_a_radical_one_keeps():
 
 
 def test_the_reals_reach_further_than_one_quadratic():
-    # Derive prints the same two quadratics, its `x` coefficients written
-    # `1/2 - SQRT(5)/2` where the engine writes the one fraction.
+    # Derive prints the same two quadratics, but writes the `x` coefficients as
+    # `1/2 - SQRT(5)/2` where the engine writes a single fraction.
     assert fact("x^5 - 1", RADICAL) == (
         "(x - 1)*(x^2 + (SQRT(5) + 1)*x/2 + 1)*(x^2 + (1 - SQRT(5))*x/2 + 1)"
     )
 
 
 def test_a_root_nobody_can_place_is_treated_as_real():
-    """The quadratic formula, where nothing is known about a, b or c.
+    """The quadratic formula, with nothing known about a, b or c.
 
-    Derive splits this, so a root that cannot be *shown* to be real has to be
-    allowed rather than rejected, and the form is the original's own (4.6,
-    p.79): each factor written with the sign of its root in the operator rather
-    than on the leading term of the numerator.
+    Derive splits this, so a root that can't be *shown* to be real must be allowed. The
+    form is the original's (4.6, p.79): each factor puts the root's sign in the operator
+    rather than on the numerator's leading term.
     """
     assert fact("a*x^2 + b*x + c", RADICAL, ("x",)) == (
         "a*(x + (SQRT(b^2 - 4*a*c) + b)/(2*a))*(x - (SQRT(b^2 - 4*a*c) - b)/(2*a))"
@@ -140,13 +134,11 @@ def test_a_factor_whose_roots_are_unknown_stays_whole():
 
 
 def test_an_irreducible_cubic_with_three_real_roots_splits_over_the_reals():
-    """The casus irreducibilis, which Cardano's formula can only write in `#i`.
+    """The casus irreducibilis, which Cardano's formula can only write using `#i`.
 
-    The three roots are real, and under Cardano each was written as nested
-    radicals over an imaginary unit that cancels but cannot be cancelled: the
-    split happened, by the rule that treats an unplaceable root as real, and
-    the answer was unreadable. Viete's trigonometric form is real on its face,
-    and it is what Derive prints.
+    All three roots are real, but Cardano writes them as nested radicals around an
+    imaginary unit that can't be simplified away, which is unreadable. Viete's
+    trigonometric form is visibly real, and it is what Derive prints.
     """
     assert fact("x^3 - 3*x + 1", RADICAL) == (
         "(x + 2*COS(pi/9))*(x - 2*COS(2*pi/9))*(x - 2*COS(4*pi/9))"
@@ -157,8 +149,8 @@ def test_an_irreducible_cubic_with_three_real_roots_splits_over_the_reals():
 
 
 def test_naming_fewer_variables_leaves_the_rest_alone():
-    """The manual's rule that a subexpression in no factorization variable is
-    neither expanded nor factored."""
+    """Per the manual, a subexpression free of the factorization variables is neither
+    expanded nor factored."""
     text = "x^2*y^2 - x^2 - y^4 + y^2"
     assert fact(text, RATIONAL, ("x", "y")) == "(x + y)*(x - y)*(y + 1)*(y - 1)"
     assert fact(text, RATIONAL, ("x",)) == "(x + y)*(x - y)*(y^2 - 1)"
@@ -179,8 +171,8 @@ def test_a_variable_the_expression_does_not_mention_selects_nothing():
 
 
 def test_a_polynomial_in_something_that_is_not_a_variable():
-    """Nothing chosen lets sympy pick its own generator, which is what makes
-    this factor in `SIN(x)` rather than in `x`, where it factors in nothing."""
+    """With no variables given, sympy picks its own generator, so this factors in
+    `SIN(x)`; in `x` it wouldn't factor at all."""
     assert fact("SIN(x)^2 - 1", RATIONAL) == "(SIN(x) - 1)*(SIN(x) + 1)"
 
 
@@ -191,7 +183,7 @@ NUMBERS = [
     ("1234567890/49", "2*3^2*5*3607*3803/7^2"),
     ("10!", "2^8*3^4*5^2*7"),
     ("-12", "-2^2*3"),
-    # Nothing to decompose: these are already products of primes.
+    # Nothing to decompose.
     ("7", "7"),
     ("1/7", "1/7"),
     ("0", "0"),
@@ -206,20 +198,18 @@ def test_a_number_is_its_prime_decomposition(text, expected):
 
 
 def test_the_amount_does_not_reach_a_number():
-    """Which is why the original does not ask for one when the whole
-    expression is a number."""
+    """Which is why the original doesn't ask for an amount when the expression is a
+    number."""
     for amount in Amount:
         assert fact("1234567890", amount) == "2*3^2*5*3607*3803"
 
 
 def test_a_number_no_trial_division_reaches_is_decomposed_anyway():
-    """The search is not bounded, so a semiprime past trial division splits.
+    """The search is unbounded, so semiprimes beyond trial division still split.
 
-    Both of these are out of reach of the small primes and of Fermat's method
-    alike - the factors are nowhere near each other - and what finds them is
-    elliptic-curve factorization. Sympy switches that off entirely the moment
-    it is handed a `limit`, so asking for a bounded search is what would leave
-    these two written as themselves.
+    These are out of reach of both trial division and Fermat's method (the factors are
+    far apart); elliptic-curve factorization finds them. Sympy disables that whenever
+    it is given a `limit`, so a bounded search would leave them unfactored.
     """
     assert fact("2^101 - 1") == "7432339208719*341117531003194129"
     assert fact("2^128 + 1") == "59649589127497217*5704689200685129054721"
@@ -236,13 +226,10 @@ def test_the_decomposition_is_the_number_it_came_from():
 
 
 def test_a_numeral_longer_than_the_interpreter_converts_by_default():
-    """A number the printer can write is one the parser can read back.
+    """Any number the printer can write, the parser can read back.
 
-    CPython converts at most 4300 digits between an int and a numeral unless it
-    is told otherwise, and `5000!` runs to 16326 of them. Factor is where the
-    ceiling shows: Simplify reaches the number from a numeral short enough to
-    convert, and factoring the answer it printed has to read the whole of it
-    back in.
+    By default CPython converts at most 4300 digits between int and str, and `5000!`
+    has 16326. Factoring Simplify's printed answer has to parse all of it.
     """
     written = simplify(parse("5000!")).text
     assert written == str(math.factorial(5000))
@@ -255,8 +242,7 @@ def test_a_number_that_is_no_rational_has_no_decomposition():
 
 
 def test_a_polynomials_coefficients_are_not_decomposed():
-    """The manual is explicit: factoring a polynomial leaves its numeric
-    coefficients alone. The `12` stays a `12`."""
+    """Per the manual, factoring a polynomial leaves its numeric coefficients alone."""
     assert fact("12*x^2 - 12") == "12*(x + 1)*(x - 1)"
 
 
@@ -285,11 +271,10 @@ def test_an_assignment_keeps_its_shape():
 
 
 def test_rounding_happens_after_factoring_not_before():
-    """Approximate mode has to reach SQRT(2) before it can show 1.41421.
+    """Approximate mode has to find SQRT(2) before it can show 1.41421.
 
-    Factoring a number that had already been rounded would find nothing to
-    factor, so the precision mode is applied to the answer rather than to the
-    input.
+    Rounding first would leave nothing to factor, so precision applies to the answer,
+    not the input.
     """
     assert fact("x^2 - 2", RADICAL, context=APPROXIMATE) == (
         "(x + 1.41421)*(x - 1.41421)"
@@ -305,11 +290,11 @@ def test_an_exact_factorization_is_exact():
 
 @pytest.mark.parametrize("mode", list(Precision), ids=str)
 def test_a_decomposition_is_never_rounded(mode):
-    """A prime decomposition says what divides what, so no precision mode
-    reaches it: the original prints it whole in Approximate mode too.
+    """No precision mode rounds a prime decomposition; the original prints it whole in
+    Approximate mode too.
 
-    Rounding it would not just lose the factors, it would lose the number -
-    six significant digits of `1234567890` is a different integer.
+    Rounding would lose not just the factors but the number: six significant digits of
+    `1234567890` is a different integer.
     """
     context = Context(precision=mode)
     assert fact("1234567890", context=context) == "2*3^2*5*3607*3803"
@@ -317,8 +302,8 @@ def test_a_decomposition_is_never_rounded(mode):
 
 
 def test_rounding_reaches_the_factors_beside_a_decomposition():
-    """The precision mode applies scalar by scalar, so one entry can hold both
-    an exact decomposition and a rounded factorization."""
+    """Precision applies per scalar, so one entry can hold both an exact decomposition
+    and a rounded factorization."""
     assert fact("[1234567890, x^2 - 2]", RADICAL, context=APPROXIMATE) == (
         "[2*3^2*5*3607*3803, (x + 1.41421)*(x - 1.41421)]"
     )
@@ -326,8 +311,8 @@ def test_rounding_reaches_the_factors_beside_a_decomposition():
 
 # -- the promises -------------------------------------------------------------
 
-# Every kind of thing the parser produces, factored. None of these may raise;
-# what they come back as is not the point.
+# One of every kind of expression the parser produces. None may raise; the result
+# doesn't matter.
 TOTAL = [
     "x",
     "?",
@@ -363,9 +348,8 @@ def test_factoring_an_answer_again_changes_nothing(text, amount, expected):
 
 # -- FACTOR as an authored function -------------------------------------------
 
-# `FACTOR(u, amount, x, y, ...)` is the author-line spelling of the command,
-# so Simplify is what evaluates it. Every expected value below is the
-# original's own answer for that very line.
+# `FACTOR(u, amount, x, y, ...)` is the command written as a function, evaluated by
+# Simplify. Every expected value is the original's answer for that line.
 HEADS = [
     ("FACTOR(4*x^3 - 8*x^2 - 11*x - 3, Rational, x)", "(x - 3)*(2*x + 1)^2"),
     ("FACTOR(x^2 - 1)", "(x + 1)*(x - 1)"),
@@ -389,12 +373,12 @@ def test_simplify_evaluates_a_factor_head(text, expected):
 
 
 def test_a_factor_head_splits_what_the_radicals_split():
-    # Two quadratics over the rationals, each split by its own square root.
+    # Two rational quadratics, each split by its own square root.
     assert simplify(parse("FACTOR(x^4 - 5*x^2 + 6, raDical)"), Context()).text == (
         "(x + SQRT(2))*(x + SQRT(3))*(x - SQRT(2))*(x - SQRT(3))"
     )
-    # A polynomial whose coefficients hold a radical is factored over the field
-    # they lie in, even at the default amount.
+    # A polynomial with radical coefficients is factored over their field, even at the
+    # default amount.
     assert simplify(parse("FACTOR(x^2 - x*SQRT(2) - x + SQRT(2))"), Context()).text == (
         "(x - 1)*(x - SQRT(2))"
     )
@@ -407,43 +391,41 @@ def test_the_amount_argument_may_be_left_out():
 
 
 def test_a_factor_head_is_factored_where_it_stands():
-    """It is an expression like any other, so it may be part of a larger one."""
+    """`FACTOR` may be part of a larger expression."""
     assert simplify(parse("2*FACTOR(x^2 - 1)"), Context()).text == (
         "2*(x + 1)*(x - 1)"
     )
 
 
 def test_a_factor_head_in_a_sum_is_the_sum_s_to_write():
-    """A sum is written in the normal form whatever its terms were asked to look
-    like, and a factored polynomial in one is multiplied out; a factored number is
-    no polynomial and stays. Checked against the original."""
+    """A sum is written in normal form regardless of its terms, so a factored polynomial
+    in it is multiplied out; a factored number is not a polynomial and stays. Checked
+    against the original."""
     assert simplify(parse("FACTOR(x^2 - 1) + x^3"), Context()).text == "x^3 + x^2 - 1"
     assert simplify(parse("x*FACTOR(x^2 - 1) + 1"), Context()).text == "x^3 - x + 1"
     assert simplify(parse("FACTOR(12) + 1"), Context()).text == "2^2*3 + 1"
 
 
 def test_nothing_later_undoes_a_factor_head():
-    """Everything that reshapes a sum - the gated rewrites and the normal form
-    alike - runs before this, so none of them is offered the chance to multiply
-    it back out."""
+    """Everything that reshapes a sum (gated rewrites and the normal form) runs before
+    `FACTOR`, so nothing multiplies it back out."""
     assert simplify(parse("FACTOR(x^2 - 4)"), Context()).text == "(x + 2)*(x - 2)"
 
 
 def test_a_word_that_names_no_amount_is_not_an_amount():
-    """`Turing` is a Derive 6 matrix factoring this engine has no mathematics
-    for. It must not be read as an amount, and it must not raise."""
+    """`Turing` is a Derive 6 matrix factorization this engine doesn't implement. It
+    must not be read as an amount, and must not raise."""
     simplify(parse("FACTOR(w, Turing)"), Context())
 
 
 def test_only_factor_is_evaluated():
-    # FACTORS is the syntactic decomposition and not this command under another
-    # name: a number is one factor, however many primes it is a product of.
+    # FACTORS is a syntactic decomposition, not this command: a number is a single
+    # factor, however many primes divide it.
     assert simplify(parse("FACTORS(10!)"), Context()).text == "[3628800]"
 
 
 def test_a_subtree_is_factored_on_its_own():
-    """Factor works on any subtree, which is what lets the session factor what
-    the user has highlighted."""
+    """Factor works on any subtree, so the session can factor the user's selection."""
     node = parse("(x^2 - 1) + SIN(z)")
     part = node.children[0]
     assert factor(part, Context(), RATIONAL).text == "(x + 1)*(x - 1)"
@@ -458,12 +440,11 @@ def test_a_pythagorean_difference_becomes_a_single_square():
 
 
 def test_the_pythagorean_gap_belongs_to_simplify():
-    """Derive answers `-COS(x)^2` for the *Simplify* of `SIN(x)^2 - 1`, so
-    Factor prints it only because Simplify ran first.
+    """Derive's Simplify turns `SIN(x)^2 - 1` into `-COS(x)^2`; Factor shows that only
+    because Simplify ran first.
 
-    This engine's Simplify leaves the difference alone, which is why Factor
-    answers with the factorization instead. Closing it is a `pipeline` change,
-    and this case is here to say where it belongs; when Simplify learns the
-    identity, this test is what will fail and point at the one above.
+    This engine's Simplify leaves it alone, so Factor returns the factorization. The fix
+    belongs in `pipeline`; when Simplify learns the identity, this test will fail and
+    point at the skipped one above.
     """
     assert simplify(parse("SIN(x)^2 - 1"), Context()).text == "SIN(x)^2 - 1"

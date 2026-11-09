@@ -1,44 +1,28 @@
-"""The engine worker under Pyodide: the same request table, over `postMessage`.
+"""The engine worker under Pyodide: the desktop request table, over `postMessage`.
 
-The desktop worker is a child process reading a pipe; this one is a Web Worker
-reading its own `onmessage`, and between the two there is one table of methods
-and one set of rules. `engine.worker.methods` is that table, imported from here
-so that a browser cannot drift into answering a different set of questions than
-a desktop does, and the statelessness the table is served under is the same
-contract: nothing is kept between requests but warm imports and sympy's own
-cache, which is what makes terminating this worker a recovery rather than a
-loss.
+The desktop worker is a child process reading a pipe; this is a Web Worker reading
+`onmessage`. Both serve `engine.worker.methods`, imported here so the two can't drift
+apart, under the same statelessness contract: nothing persists between requests except
+warm imports and sympy's cache, so terminating the worker loses nothing.
 
-This worker serves one family the desktop's does not, and it is the plot
-sampling. It is here rather than in a third interpreter because sampling wants
-sympy and numpy, and a Pyodide of its own would be another hundred megabytes and
-a second sympy boot for a picture. The state it keeps is the one the contract
-licenses - a content-keyed cache of lambdified expressions, which the protocol
-treats as maybe-empty and rebuilds on demand - and nothing else.
+This worker also does plot sampling, which needs sympy and numpy; a separate Pyodide
+would cost another hundred megabytes and a second sympy startup. Its only state is the
+content-keyed cache of lambdified expressions the contract allows, which the protocol
+treats as possibly empty.
 
-Its answers leave by a different door. Everything the engine says is a pickle,
-because Python is what reads it; a sampling says arrays, and arrays go to the
-JavaScript that draws them, as a message of typed arrays that the page's own
-listener picks up. The main thread's Python sees such a message go past and
-reads nothing out of it, which is what keeps a numerical library out of the
-instance that paints the screen.
+Engine answers are pickles read by Python. Sampling answers are typed arrays sent
+directly to the page's JavaScript, which the main thread's Python ignores, keeping numpy
+out of the instance that draws the screen.
 
-One thing it says was not asked for, and that is how far its heap has grown.
-The status line's gauge is about the program, the program is two instances, and
-this is the one nothing outside can measure - so it reports, and the page's
-engine remembers the last figure. It reports while it is working as well as
-between requests, out of the collector, which is the only part of a busy worker
-that comes round often enough to say anything.
+The worker also reports its heap size unprompted, since the main thread can't measure a
+worker's memory and the status line gauge covers both. It reports between requests and,
+during long computations, from the garbage collector callback.
 
-What the desktop worker does that this one does not is take the tty off the
-program and open a log. A worker has no tty to take, and what it prints goes to
-the page's console, which is the browser's log file and needs no opening.
+Unlike the desktop worker, it doesn't detach from the tty or open a log; its output goes
+to the browser console.
 
-The last message a worker sends is the interesting one. A `MemoryError` is
-answered before the worker closes itself, because the client wants to know
-which of the several ways of running out of memory this was and the message
-channel is the only way to tell it - the same order, and for the same reason,
-as the child process's.
+On `MemoryError`, the error is reported before the worker closes itself, so the client
+can tell which kind of out-of-memory failure occurred, as with the child process.
 """
 
 from __future__ import annotations
@@ -56,38 +40,26 @@ from rederive.plot.web import protocol as plots
 
 __all__ = ["serve"]
 
-#: How often the worker may look at its own heap while it is working. Often
-#: enough that a gauge on the page moves while a long computation runs, seldom
-#: enough that the looking is no part of what the computation costs: a
-#: collection during an expansion comes round thousands of times a second, and
-#: reading the heap on every one of them would be measuring rather than
-#: computing.
+#: Minimum interval between heap readings during a computation. Collections can run
+#: thousands of times a second during an expansion, and reading the heap on each would
+#: be too costly.
 HEAP_PERIOD_SECONDS = 0.25
 
-#: When the heap was last looked at, and what was said about it. A figure that
-#: has not moved is not sent again: WebAssembly memory only ever grows, so most
-#: of what a look finds is what the last one found.
+#: Time of the last heap reading and the last size reported. Unchanged sizes aren't
+#: resent; WebAssembly memory only grows, so most readings repeat the last one.
 _looked = 0.0
 _said: int | None = None
 
-#: Whether a report is being made now, which is the one thing a report must not
-#: start another of: it allocates, an allocation can collect, and a collection
-#: is what called this.
+#: Guards against reentry: reporting allocates, which can trigger a collection, which
+#: would report again.
 _reporting = False
 
 
 def serve() -> None:
-    """Be the engine, for as long as the page keeps this worker alive.
+    """Serve engine and sampling requests for the lifetime of the worker.
 
-    The order is the point of it, as it is on the desktop: the engine is
-    imported before the handshake goes out, so a page that has heard `ready`
-    knows the next request pays for nothing but its own answer. What comes
-    before the import here is the page's own - the runtime, the package - and
-    is finished by the time this is called.
-
-    The sampling table is built after the engine's, and its cost is numpy and
-    this package's own plotting half - a fraction of what sympy costs, and paid
-    before the handshake with everything else.
+    As on the desktop, the engine and sampler (with numpy) are imported before `ready`
+    is sent, so no request after the handshake pays import costs.
     """
     import js
     from pyodide.ffi import create_proxy
@@ -115,26 +87,19 @@ def _asked(table: dict[str, Callable[..., Any]], data: Any) -> None:
         _close()
         return
     except Exception:
-        # Including `RecursionError`, which costs the answer and not the
-        # worker: the engine promises never to raise on parser output, so
-        # anything arriving here is a bug worth surfacing and not worth a
-        # fresh Pyodide.
+        # Including `RecursionError`, which fails the request but not the worker. The
+        # engine never raises on parser output, so anything here is a bug worth
+        # reporting, not worth restarting Pyodide.
         _post(_trouble(number, BUG))
     _held()
 
 
 def _held() -> None:
-    """Say what this worker's heap has grown to, the answer being on its way out.
+    """Report this worker's heap size to the page.
 
-    The status line's memory gauge is about the program and the program is two
-    instances, and this is the half that cannot be measured from outside: a Web
-    Worker's memory is its own. So it says so, after every request it serves and
-    once when it comes up.
-
-    A message of its own, and a plain one rather than a pickle: the page's
-    engine knows it by its field the way it knows a sampling by its own, and
-    nothing about a gauge is worth a numbered request or a place in the
-    protocol every other answer is read under.
+    A Web Worker's memory can't be measured from outside, so it reports at startup and
+    after each request. The report is a plain message with a `heap` field rather than a
+    pickled, numbered answer, since it isn't a reply to anything.
     """
     global _looked, _said, _reporting
 
@@ -152,35 +117,21 @@ def _held() -> None:
         _said = size
         js.self.postMessage(to_js({"heap": size}, dict_converter=js.Object.fromEntries))
     except Exception:
-        # A gauge is not worth an error, and this one runs in the middle of
-        # other people's work: a browser that would not take the message, or a
-        # heap too full to build one, costs the field its next figure and
-        # nothing else.
+        # This runs in the middle of other work, and a gauge isn't worth an error; a
+        # failure just skips one reading.
         pass
     finally:
         _reporting = False
 
 
 def _collected(phase: str, _info: dict[str, Any]) -> None:
-    """Report the heap from inside a collection, which is the one way to report at all.
+    """Report the heap from a garbage collector callback during a computation.
 
-    A worker in the middle of a computation is a thread running Python and
-    nothing else: no timer fires, no message is read, and the request that
-    started it will not return for however long it takes. So a gauge that only
-    spoke between requests sat still through exactly the computation somebody
-    was watching it for - which is the one time a memory reading is worth
-    looking at.
+    While a request runs, no timers fire and no messages are read, so the collector is
+    the only hook that runs. A computation that fills the heap collects often, so the
+    gauge keeps up; one that doesn't allocate has nothing new to report anyway.
 
-    The collector is where the program is instead. An expansion that is filling
-    the heap is collecting constantly, so the figure follows the work; a
-    computation that allocates nothing collects nothing and has nothing new to
-    say, which is the right answer rather than a missing one. Neither is a
-    timer, and neither pretends to be: the reading is fresh to within a
-    collection, and a program that has stopped allocating stops reporting.
-
-    The end of a collection rather than the start of one, which is half the
-    calls for the same figure, and only every `HEAP_PERIOD_SECONDS` however
-    often collections come round.
+    Reports only at the end of a collection, at most once per `HEAP_PERIOD_SECONDS`.
     """
     if phase != "stop" or _reporting:
         return
@@ -190,13 +141,11 @@ def _collected(phase: str, _info: dict[str, Any]) -> None:
 
 
 def _drawing(answer: dict[str, Any]) -> None:
-    """Hand one picture to the page, as the arrays a canvas can draw.
+    """Send a sampling to the page's JavaScript as typed arrays, not a pickle.
 
-    Not a pickle, and deliberately so: what is in it is samples, and samples
-    are for the side that draws. A 1-D contiguous array of single precision
-    crosses as one typed array with one copy; anything with a second dimension
-    in it would cross as a nested list of JavaScript numbers, which the runtime
-    documents as extremely slow and which a drag would feel every frame of.
+    A contiguous 1-D float32 array crosses as one typed array with a single copy. A
+    multi-dimensional array would become nested JS lists, which Pyodide documents as
+    very slow and would make dragging sluggish.
     """
     import js
     from pyodide.ffi import to_js
@@ -205,11 +154,9 @@ def _drawing(answer: dict[str, Any]) -> None:
 
 
 def _trouble(number: int, kind: str) -> bytes:
-    """Say what went wrong, and leave the traceback where it can be read.
+    """Build an error answer, including the traceback, and print it to the console.
 
-    The client gets the traceback text as well as the message, since a bug in
-    the engine is worth more than its last line; the console keeps a copy for
-    the deaths where there is nothing left to send one with.
+    The console copy survives when the worker dies before the answer can be sent.
     """
     text = traceback.format_exc()
     print(text, file=sys.stderr)
@@ -217,14 +164,14 @@ def _trouble(number: int, kind: str) -> bytes:
 
 
 def _message() -> str:
-    """The current exception in one line, as a message line can show it."""
+    """Return the current exception as one line for the message line."""
     kind, value, _ = sys.exc_info()
     name = "error" if kind is None else kind.__name__
     return f"{name}: {value}" if str(value) else name
 
 
 def _post(payload: bytes) -> None:
-    """Hand one pickle to the page, as the bytes a structured clone can carry."""
+    """Send a pickle to the page as a `Uint8Array`."""
     import js
 
     buffer = js.Uint8Array.new(len(payload))
@@ -233,9 +180,8 @@ def _post(payload: bytes) -> None:
 
 
 def _close() -> None:
-    """End this worker from the inside, a heap that has just failed a huge
-    allocation not being worth trusting. The client is about to replace it
-    either way; closing is what stops it answering anything else first."""
+    """Close this worker, whose heap can't be trusted after a failed allocation. The
+    client replaces it anyway; closing stops it from answering anything else first."""
     import js
 
     js.self.close()

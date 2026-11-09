@@ -1,23 +1,17 @@
-"""The dialogs as fields: what is asked for, and what is said when it will not read.
+"""Plot dialogs described as fields, along with their validation messages.
 
-`Set range...`, the 3D domain and grid, the parameter range of a parametric or
-polar plot and the 3D inspector are all one thing: named fields, filled with
-text, read, argued with, applied. Only the drawing of them differs - a desktop
-renders a dialog and a page renders an overlay - so the fields, their words,
-their arrangement and every sentence a refusal is made of are here, and each
-backend renders what it finds.
+`Set range...`, the 3D domain and grid, the parameter range of parametric and polar
+plots, and the 3D inspector are all sets of named text fields that are read, validated
+and applied. Only their rendering differs (a dialog on the desktop, an overlay in the
+page), so the fields, labels, layout and error messages are defined here and each
+backend renders them.
 
-The bounds are expressions rather than floats everywhere they appear, which is
-the point of parsing them in one place: `-π` is what a person types, and a
-field that special-cased a constant or two would be a parser by stealth. What
-the trees are worth is arithmetic and belongs to whoever computes, so this half
-reads the text and hands on nodes; the numbers come back later and are argued
-with here as well.
+Bounds are parsed as expressions rather than floats, so users can type `-π`. This module
+only parses the text into nodes; evaluating them is up to the caller, and the resulting
+numbers are validated here.
 
-Nothing here draws, measures or evaluates. A width is in the units a field is
-laid out in and is a hint about how much is going to be typed rather than a
-size, and a form that a backend cannot lay out exactly is a form it may lay out
-its own way.
+Nothing here draws or evaluates. Field widths are hints about how much text is expected,
+and a backend may lay out a form its own way.
 """
 
 from __future__ import annotations
@@ -67,12 +61,11 @@ __all__ = [
 
 @dataclass(frozen=True)
 class Field:
-    """One thing a form asks for: what it is called, and what it is called by.
+    """One input field of a form.
 
-    `label` is the word standing in front of the field where it has one, and is
-    empty where the row or the column it stands in is what names it. `width` is
-    how much text is expected in it - a bound is longer than a grid count - and
-    is a hint rather than a size.
+    `label` is shown in front of the field, and is empty when the row or column names
+    it. `width` is a hint about how much text is expected (a bound is longer than a
+    grid count).
     """
 
     name: str
@@ -82,7 +75,7 @@ class Field:
 
 @dataclass(frozen=True)
 class Row:
-    """One line of a group: what the line is called, and the fields on it."""
+    """One line of a group: its label and the fields on it."""
 
     label: str
     fields: tuple[str, ...]
@@ -90,11 +83,10 @@ class Row:
 
 @dataclass(frozen=True)
 class Group:
-    """A run of fields under one heading, laid out as the thing they describe.
+    """Fields under one heading, arranged in rows.
 
-    `heads` are the words over the columns, where the columns mean something -
-    the three axes of a box - and are empty where each field carries its own
-    label instead.
+    `heads` are column headings when the columns mean something (such as the three
+    axes of a box), and empty when each field has its own label.
     """
 
     title: str
@@ -103,7 +95,7 @@ class Group:
 
 
 class Role(StrEnum):
-    """What a button of a form does, which is what a toolkit places it by."""
+    """What a form button does, which determines where a toolkit places it."""
 
     APPLY = "apply"
     RESET = "reset"
@@ -112,7 +104,7 @@ class Role(StrEnum):
 
 @dataclass(frozen=True)
 class Button:
-    """One answer a form offers, and whether it is the accented one."""
+    """A form button, and whether it is the primary one."""
 
     label: str
     role: Role
@@ -121,12 +113,11 @@ class Button:
 
 @dataclass(frozen=True)
 class Form:
-    """A dialog as the fields it holds rather than as the window it is drawn in.
+    """A dialog, described by its fields independently of how it is drawn.
 
-    `heading` is what the window manager writes over it and `title` what the
-    form writes at the top of itself; both name the window they are about, so
-    both hold `{number}`. `subtitle` is the one thing worth knowing that three
-    fields with numbers in them would not say.
+    `heading` is the window title and `title` is shown at the top of the form; both
+    contain `{number}` for the plot window they refer to. `subtitle` is a short hint
+    shown under the title.
     """
 
     name: str
@@ -138,7 +129,7 @@ class Form:
     buttons: tuple[Button, ...] = ()
 
     def field(self, name: str) -> Field:
-        """The field this name is of."""
+        """The field with this name."""
         for one in self.fields:
             if one.name == name:
                 return one
@@ -147,14 +138,12 @@ class Form:
 
 @dataclass(frozen=True)
 class Piece:
-    """One thing standing in a strip of fields along a toolbar.
+    """One element of a toolbar strip: a word, a field, or a divider.
 
-    A strip is a row rather than a form: a word, a field, another word, another
-    field. `entry` names one of the strip's fields and `word` is anything that
-    is not one; a divider is where one answer ends and the next begins, since a
-    domain in x, a domain in y and a grid are three answers and not six numbers
-    in a row. A word holding `{parameter}` is rewritten as the strip changes
-    which plot it is about, and `name` is how the window finds it again.
+    `entry` names one of the strip's fields and `word` is literal text. A divider
+    separates groups of fields, such as the x domain, the y domain and the grid. A word
+    containing `{parameter}` is rewritten when the strip switches to another plot, and
+    `name` lets the window find it.
     """
 
     word: str = ""
@@ -165,27 +154,24 @@ class Piece:
 
 @dataclass(frozen=True)
 class Strip:
-    """A run of fields along a toolbar, in the order they stand."""
+    """A row of fields on a toolbar, in display order."""
 
     name: str
     fields: tuple[Field, ...]
     pieces: tuple[Piece, ...]
 
     def field(self, name: str) -> Field:
-        """The field this name is of."""
+        """The field with this name."""
         for one in self.fields:
             if one.name == name:
                 return one
         raise KeyError(name)
 
 
-# -- the four things a plot window asks to be told -----------------------------
+# -- the four forms of a plot window -------------------------------------------
 
 
-#: The four edges of a 2D view, typed out. Deliberately a form and not a screen
-#: of settings: a framing is four numbers, and everything else about the view
-#: belongs to the mouse. The two are laid out as the picture is, the horizontal
-#: pair over the vertical one.
+#: The four edges of a 2D view. The horizontal pair is laid out above the vertical one.
 RANGE = Form(
     name="range",
     heading="Range of plot {number}",
@@ -205,10 +191,8 @@ RANGE = Form(
     ),
 )
 
-#: The numbers behind a 3D picture: the box, as a person reads one - where it
-#: is and how big it is, under the axis each column is about - and where it is
-#: looked at from. Six fields in a list would be the same six numbers with the
-#: shape taken out of them.
+#: The 3D inspector: the box as center and length per axis (one column per axis), and
+#: the camera position.
 VIEW = Form(
     name="view",
     heading="View of plot {number}",
@@ -243,9 +227,8 @@ VIEW = Form(
     ),
 )
 
-#: The rectangle a 3D window evaluates over and how finely it samples it, which
-#: are the two things that change what was computed rather than where it is
-#: looked at from.
+#: The domain a 3D window evaluates over and its sampling grid. Unlike the inspector,
+#: changing these requires re-evaluation.
 DOMAIN = Strip(
     name="domain",
     fields=(
@@ -275,9 +258,8 @@ DOMAIN = Strip(
     ),
 )
 
-#: The parameter range of the selected parametric or polar plot, which is where
-#: a different piece of a curve is asked for. The name is the parameter's own,
-#: so the strip says what it is a range of.
+#: The parameter range of the selected parametric or polar plot, labeled with the
+#: parameter's name.
 TRANGE = Strip(
     name="trange",
     fields=(Field("low", width=64), Field("high", width=64)),
@@ -291,7 +273,7 @@ TRANGE = Strip(
 )
 
 
-# -- what a form says when it will not read ------------------------------------
+# -- validation messages -------------------------------------------------------
 
 EXPRESSIONS = "The bounds are expressions, like -π or 2π"
 PARAMETER_EXPRESSIONS = "The {parameter} bounds are expressions, like -π or 2π"
@@ -306,11 +288,9 @@ NUMBERS = "The view is described in numbers"
 
 
 def parsed(texts: Sequence[str], state: ParseState) -> tuple[Node, ...] | None:
-    """Read what was typed as expressions, or None where one of them is not.
+    """Parse the texts as expressions, or return None if any fails to parse.
 
-    Whole texts rather than numbers, under the parse state the plot arrived
-    with, because that is the grammar the person typing is writing in. What the
-    trees are worth is nobody's business here.
+    The plot's parse state is used, since that is the syntax the user is typing in.
     """
     try:
         return tuple(parse_expression(text.strip(), state).node for text in texts)
@@ -319,11 +299,7 @@ def parsed(texts: Sequence[str], state: ParseState) -> tuple[Node, ...] | None:
 
 
 def counts(texts: Sequence[str], most: int = MAX_GRID) -> tuple[int, int] | None:
-    """A grid as the pair of counts it is, clamped, or None where it is not one.
-
-    A window never samples finer than it can draw, whoever asked, and never
-    coarser than a pair of samples an axis.
-    """
+    """Read a grid as a pair of counts clamped to [2, `most`], or None if invalid."""
     try:
         read = [int(float(text.strip())) for text in texts]
     except ValueError:
@@ -332,7 +308,7 @@ def counts(texts: Sequence[str], most: int = MAX_GRID) -> tuple[int, int] | None
 
 
 def numbers(texts: Sequence[str]) -> tuple[float, ...] | None:
-    """What was typed as plain numbers, or None where one of them is not one."""
+    """Read the texts as plain numbers, or None if any isn't one."""
     try:
         return tuple(float(text) for text in texts)
     except ValueError:
@@ -340,7 +316,7 @@ def numbers(texts: Sequence[str]) -> tuple[float, ...] | None:
 
 
 def framed(values: Sequence[float]) -> str:
-    """Why four typed bounds are not a framing, in words, or nothing at all."""
+    """The error message for four invalid view bounds, or "" if they are valid."""
     left, right, bottom, top = values
     if not all(math.isfinite(value) for value in values):
         return NOT_NUMBERS
@@ -350,13 +326,11 @@ def framed(values: Sequence[float]) -> str:
 
 
 def domained(values: Sequence[float]) -> str:
-    """Why a typed domain is not a rectangle, in words, or nothing at all.
+    """The error message for an invalid domain, or "" if it is valid.
 
-    Two ways of not being one, and which of them a backend can meet depends on
-    what it can hand the evaluation. A desktop's fields answer with the value
-    they were replacing, so a bound worth nothing reverts by arithmetic there
-    and only an inverted domain is left; a page's come back as a NaN, which is
-    refused by name rather than allowed to become a rectangle nobody typed.
+    On the desktop a bound that doesn't evaluate reverts to its previous value, so
+    only an inverted domain can occur. The page sends such a bound as NaN, which is
+    rejected here.
     """
     x0, x1, y0, y1 = values
     if not all(math.isfinite(value) for value in values):
@@ -365,7 +339,7 @@ def domained(values: Sequence[float]) -> str:
 
 
 def showing(left: float, right: float, bottom: float, top: float) -> str:
-    """What a view framed by hand is now showing, as the window says it."""
+    """The message describing a manually framed view."""
     return SHOWING.format(
         left=roughly(left),
         right=roughly(right),
@@ -375,22 +349,20 @@ def showing(left: float, right: float, bottom: float, top: float) -> str:
 
 
 def evaluating(grid: tuple[int, int]) -> str:
-    """What a 3D window says when a typed domain sends it back to the numbers."""
+    """The message shown when a 3D window re-evaluates over a typed domain."""
     return EVALUATING.format(nx=grid[0], ny=grid[1])
 
 
 def spanned(center: float, length: float) -> tuple[float, float]:
-    """The two edges an axis of the inspector's box describes."""
+    """The two edges of an inspector box axis given its center and length."""
     return (center - length / 2, center + length / 2)
 
 
 def alike(one: Sequence[float], other: Sequence[float]) -> bool:
-    """Whether two ranges are the same range, allowing for what a field wrote.
+    """Whether two ranges are equal up to the rounding of a field's display.
 
-    A number that went out to a field as `16.6667` and came back is the same
-    number for this purpose: what is being asked is whether somebody typed
-    something, not whether two floats are equal. Which is a question about a
-    form rather than about arithmetic, and is why it lives here.
+    A number shown in a field as `16.6667` and read back counts as unchanged: the
+    question is whether the user edited the field, not whether two floats are equal.
     """
     span = max(abs(other[1] - other[0]), 1e-12)
     return all(abs(a - b) <= 1e-4 * span for a, b in zip(one, other))

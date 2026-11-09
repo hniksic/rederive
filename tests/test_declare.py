@@ -1,16 +1,15 @@
-"""The Declare commands: what each of them writes, and what it then means.
+"""The Declare commands: what each one writes and what it then defines.
 
-Every expected expression here is what the original appends for the same
-answers. The commands themselves are driven through the app in `test_ui`;
-what is tested here is the session side - that the expression is the one the
-original writes, and that authoring it defines what it says it defines.
+Every expected expression is what the original Derive appends for the same answers. The
+UI side is tested in `test_ui`; these tests cover the session: that the written
+expression matches the original, and that authoring it defines what it says.
 """
 
 import pytest
 
 from rederive.model.session import NAMED_INTERVALS, Bounds, Session
 
-#: Each word of the interval menu, and the declaration choosing it writes.
+#: Each choice in the interval menu, and the declaration it writes.
 INTERVALS = [
     ("All", "x :ε Real"),
     ("Positive", "x :ε Real (0, ∞)"),
@@ -30,12 +29,10 @@ def texts(session):
 
 
 def drawn(entry):
-    """The one line an entry is drawn on.
+    """Return the single rendered line of an entry.
 
-    What a declaration is written in is the notation it is *shown* in - `:ε`
-    and `∞` are glyphs and never text - so a test about the notation asks the
-    render rather than the entry's own text, which is the canonical author
-    notation a file holds.
+    Glyphs like `:ε` and `∞` appear only in the rendering, not in the entry's text
+    (which is the canonical notation saved to a file), so notation tests check the render.
     """
     assert len(entry.layout.lines) == 1
     return entry.layout.lines[0]
@@ -62,7 +59,7 @@ def test_an_integer_domain_carries_its_interval_too(session):
 
 
 def test_an_infinite_bound_is_open_however_it_was_set(session):
-    """A variable cannot be declared infinite, so `≤ ∞` is still `∞)`."""
+    """A variable can't be infinite, so a closed infinite bound is written open: `∞)`."""
     bounds = Bounds(closed_low=True, closed_high=True)
     assert drawn(session.declare_domain("x", "Real", bounds)) == "x :ε Real (-∞, ∞)"
 
@@ -104,17 +101,17 @@ def test_a_blank_value_leaves_the_name_an_unassigned_variable(session):
 async def test_the_definitions_own_variables_become_the_parameters(session):
     entry = session.declare_function("hyp", "sqrt(a^2 + b^2)")
     assert entry.text == "HYP(a,b):=SQRT(a^2+b^2)"
-    # The name is a function's now, so it is drawn as one: upper case.
+    # The name is now a function, so it is drawn in upper case.
     assert entry.layout.lines[-1] == "HYP(a, b) := √(a  + b )"
     session.author("HYP(3, 4)")
     assert (await session.simplify("#2")).text == "5"
 
 
 def test_the_parameters_are_not_variables_of_the_session(session):
-    """The command declares a function, and nothing else.
+    """The command declares only the function.
 
-    Its parameters are known names only while the body is read, and none of them
-    outlives it as a variable of the session's.
+    Parameters are known only while the body is parsed and do not become session
+    variables.
     """
     session.declare_function("hyp", "sqrt(a^2 + b^2)")
     assert session.state.variables == {}
@@ -138,7 +135,7 @@ def test_a_constant_and_a_function_are_not_variables(session):
 
 
 def test_a_definition_with_no_variables_defines_no_function(session):
-    """Which is what the original writes for one: a variable with a value."""
+    """The original writes such a definition as a variable with a value."""
     assert session.declare_function("q", "5").text == "q:=5"
     assert session.assignments["q"].value == "5"
 

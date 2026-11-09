@@ -1,11 +1,8 @@
-"""The output inventory: one spelling per name, one glyph per mark.
+"""Output spellings: one per name, one glyph per mark.
 
-Deliberately not `rederive.syntax.names`. Input accepts many spellings of a
-name and output produces exactly one, so the two tables are separate even
-where they overlap; a test guards the overlap by checking that every name the
-lexer knows has a spelling here.
-
-Unicode is always available, so there is no ASCII fallback anywhere below.
+This is separate from `rederive.syntax.names` because input accepts many spellings of a
+name while output produces exactly one. A test checks that every name the lexer knows
+has a spelling here. Unicode is assumed, so there are no ASCII fallbacks.
 """
 
 from __future__ import annotations
@@ -17,13 +14,12 @@ from rederive.display.options import ASTERISK, DOT, IMPLICIT
 #: How the times operator prints, per `options.times`. Implicit is one space.
 TIMES: dict[str, str] = {ASTERISK: "*", DOT: "·", IMPLICIT: " "}
 
-#: The dot product, U+2219. A different character from the multiplication dot
-#: `·` U+00B7, and it keeps a space each side in both display formats: `[1,
-#: 2]∙[3, 4]` would read as one bracketed expression.
+#: The dot product, U+2219, distinct from the multiplication dot `·` U+00B7. It keeps a
+#: space on each side in both display formats, since `[1, 2]∙[3, 4]` would read as one
+#: bracketed expression.
 DOT_PRODUCT = " ∙ "
 
-#: The constants, in the spelling Derive shows them in. The four that have no
-#: glyph print as their name.
+#: The constants as Derive shows them. Those without a glyph print as their name.
 CONSTANTS: dict[str, str] = {
     "pi": "π",
     "inf": "∞",
@@ -52,15 +48,15 @@ GREEK: dict[str, str] = {
 
 NAMES: dict[str, str] = CONSTANTS | GREEK
 
-#: Operators whose canonical spelling is not what is printed. `/=` has no
-#: glyph in Derive's font and prints as written.
+#: Operators that print differently from their canonical spelling. `/=` has no glyph in
+#: Derive's font and prints as written.
 OPERATORS: dict[str, str] = {"<=": "≤", ">=": "≥", "+-": "±"}
 
 #: The domain operator, which keeps its spaces in both formats.
 DOMAIN = " :ε "
 
-#: The fraction bar. Compressed format ends the bar with a half-width cell,
-#: which narrows it without costing a column.
+#: The fraction bar. Compressed format ends the bar with a half-width cell, to make it
+#: look narrower without changing its column count.
 BAR = "─"
 HALF_BAR = "╴"
 
@@ -68,8 +64,8 @@ SQRT = "√"
 SUM = "Σ"
 PRODUCT = "Π"
 ARROW = "→"
-#: A subscript too deep to lower, written the way `^` writes a superscript
-#: too deep to raise. The original holds both arrows in its own font.
+#: Marks a subscript too deep to lower, as `^` marks a superscript too deep to raise.
+#: Derive's font has both arrows.
 LOWERED = "↓"
 DERIVATIVE = "d"
 LIMIT = "lim"
@@ -91,18 +87,16 @@ PARENS = Fence(("(", ")"), ("┌", "│", "└"), ("┐", "│", "┘"))
 BRACKETS = Fence(("[", "]"), ("┌", "│", "└"), ("┐", "│", "┘"))
 #: Absolute value: the same rail whatever the height.
 RAILS = Fence(("│", "│"), ("│", "│", "│"), ("│", "│", "│"))
-#: The integral sign, drawn as a rail of its own. Box-drawing arcs rather than
-#: `⌠` and `⌡`: those are math symbols, which a terminal clips to the cell like
-#: any other glyph, so the sign breaks where the pieces meet. The box-drawing
-#: block is the one a terminal joins seamlessly, which is why the matrix rails
-#: hold together.
+#: The integral sign, drawn as a rail. It uses box-drawing arcs rather than `⌠` and `⌡`,
+#: which terminals clip to the cell so the sign breaks where the pieces meet. Terminals
+#: join box-drawing characters seamlessly, as with the matrix rails.
 INTEGRAL = ("╭", "│", "╯")
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 def name(canonical: str) -> str:
-    """How a name prints. Anything not in the inventory prints as it is."""
+    """How a name prints. Names not listed here print unchanged."""
     return NAMES.get(canonical, canonical)
 
 
@@ -111,15 +105,14 @@ def operator(canonical: str) -> str:
 
 
 def numeral(value: str, base: int, digits: int) -> str:
-    """`value`, decimal text from the parser, in the output base.
+    """`value`, decimal text from the parser, written in the output base.
 
-    Above base ten the digits run A to Z, and a numeral that would begin with
-    a letter takes a leading zero so that it cannot be read as a variable
-    name: fourteen is `0E` in hexadecimal, not `E`. A value carrying a radix
-    point is shown to `digits` significant digits and otherwise as written
-    whatever the base, since converting a fraction would be arithmetic and
-    this layer does none. A ratio, which is what a numeral worth no finite
-    decimal carries, has each of its two whole halves converted.
+    Above base ten the digits run A to Z, and a numeral starting with a letter gets a
+    leading zero so it can't be read as a variable: fourteen is `0E` in hexadecimal, not
+    `E`. A value with a radix point is cut to `digits` significant digits but not
+    converted, whatever the base, since that would be arithmetic and this layer does
+    none. A ratio (used for numerals with no finite decimal form) has each half
+    converted.
     """
     if "." in value:
         return _fraction(value, digits)
@@ -131,14 +124,12 @@ def numeral(value: str, base: int, digits: int) -> str:
 def _fraction(value: str, digits: int) -> str:
     """A numeral with a radix point, cut to `digits` significant digits.
 
-    Cut, never rounded, and never into the whole part: `12345.67891` has spent
-    five of its six digits before it reaches the point, and `1234567.891` all
-    of them, so each keeps the one fractional digit a number written with a
-    point cannot do without. The zeros a small number leads with hold a place
-    rather than say a digit, which is why `0.000123456789` keeps six of its
-    own. Zeros the cut leaves trailing are kept: they stand for the digits
-    that follow, so `0.10000000000000001` is shown `0.100000` where a tenth,
-    whose digits run out, is shown `0.1`.
+    Truncated, never rounded, and never into the whole part, with at least one
+    fractional digit kept: `12345.67891` becomes `12345.6` and `1234567.891` becomes
+    `1234567.8`. Leading zeros don't count, so `0.000123456789` keeps six
+    digits after them. Trailing zeros left by the cut are kept because they stand for
+    digits that follow: `0.10000000000000001` shows as `0.100000`, while a tenth shows as
+    `0.1`.
     """
     integer, _, fraction = value.partition(".")
     whole = integer.lstrip("0")

@@ -1,21 +1,18 @@
 """Node -> sympy: a faithful translation, not a simplification.
 
-This is one of the engine's two doors, and it belongs to no single command.
-Every node kind maps to the sympy object that means the same thing, and nothing
-more happens here than sympy's own automatic evaluation: `2 + 3` becomes `5`
-because `Add` says so, not because Simplify asked. Command-agnostic semantics -
-the constant and function tables, assumptions from declared domains, the angle
-mode, the special-value overrides such as `SIGN(0)` - live here; which
-transformations to attempt is the calling pipeline's business.
+Every node kind maps to the equivalent sympy object, and nothing happens beyond sympy's
+automatic evaluation (`2 + 3` becomes `5` because `Add` does that, not because Simplify
+asked). Command-independent semantics live here: constant and function tables,
+assumptions from declared domains, angle mode, and special-value overrides such as
+`SIGN(0)`. Which transformations to try is up to the calling pipeline.
 
-The mapping is total. A construct sympy has no head for converts to an inert
-head that carries its operands and prints back to the author notation it came
-from, so that anything the engine does not understand survives a round trip
-untouched.
+The mapping is total. Constructs sympy has no head for become inert heads that carry
+their operands and print back as written, so anything the engine doesn't understand
+survives a round trip.
 
-Labels, assignments and function definitions are the evaluator's business, which
-is this conversion with an environment threaded through it (`evaluate`); on its
-own, `to_sympy` converts a label and leaves every other name a variable.
+Labels, assignments and function definitions are handled by `evaluate`, which is this
+conversion with an environment threaded through. On its own, `to_sympy` converts labels
+and leaves every other name a variable.
 """
 
 from __future__ import annotations
@@ -81,64 +78,55 @@ __all__ = [
     "vector_of",
 ]
 
-#: The heads a conversion leaves standing for a command to evaluate: the
-#: author-line spellings of Factor, Expand and soLve, and `RATE`, which is a
-#: bounded soLve of section 6.12's annuity under another name. Their answers
-#: depend on a simplified operand, so they cannot be worked out here; the
-#: evaluation runs them once the operand is a value, and a call over one is then
-#: an ordinary call - `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is a vector of roots.
+#: Heads left for a command to evaluate: the in-expression forms of Factor, Expand and
+#: soLve, and `RATE`, a bounded soLve of section 6.12's annuity. They need a simplified
+#: operand, so evaluation runs them once the operand is a value; an enclosing call then
+#: works normally, e.g. `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is a vector of roots.
 COMMAND_HEADS = ("EXPAND", "FACTOR", "SOLVE", "RATE")
 
 
-#: How big a number raising to a power may build before the engine declines to
-#: build it: sixteen megabits, about five million decimal digits and two
-#: megabytes of them. Generous by design, since it must never fire on
-#: legitimate work - `2^1000000` is under it, and `10000!` is a power of
-#: nothing - and far below what makes a machine swap.
+#: Largest number, in bits, a power may build: 16 megabits, about five million decimal
+#: digits. Generous so it never fires on legitimate work (`2^1000000` is under it), but
+#: far below what makes a machine swap.
 POWER_BITS = 1 << 24
 
-#: The largest power, in bits of its numerator or its denominator, that is
-#: approximated where the exact power is too big to build. Every approximate number
-#: is a rational, so an approximation of `(1/3)^10^7` would be one over a number of
-#: millions of digits, and that takes seconds to write down.
+#: Largest power, in bits of numerator or denominator, that is approximated when the
+#: exact power is too big. Approximate numbers are rationals, so approximating
+#: `(1/3)^10^7` would need a denominator of millions of digits, taking seconds.
 APPROXIMATE_POWER_BITS = 1 << 22
 
 
-#: The dimension every declared nonscalar has. A nonscalar is a `MatrixSymbol`,
-#: which needs a shape, and one shared square shape is the only one that lets
-#: `a . b` be built at all - two matrices multiply only where their dimensions
-#: agree, and a declaration says nothing about dimensions. A `Dummy` rather than
-#: a name, because it must not be a variable: `Symbol("n")` would be the user's
-#: own `n`, and substituting `n := 3` would silently reshape every matrix in the
-#: worksheet. It stays out of `free_symbols`, so nothing that counts variables
-#: sees it either.
+#: The dimension of every declared nonscalar. A `MatrixSymbol` needs a shape, and a
+#: shared square shape is the only way `a . b` can always be built, since declarations
+#: say nothing about dimensions. It is a `Dummy` so it can't be confused with the
+#: user's `n` (assigning `n := 3` would reshape every matrix) and stays out of
+#: `free_symbols`.
 DIMENSION = sp.Dummy("n", positive=True, integer=True)
 
 
 # -- inert heads ------------------------------------------------------------
 #
-# What sympy has no object for. Each is a head sympy will carry around but
-# never rewrite, and the printer turns each back into the notation it came
-# from.
+# Constructs sympy has no object for. Sympy carries these heads around without
+# rewriting them, and the printer turns them back into the original notation.
 
 
 class PlusMinus(sp.Function):
-    """`+-u`, with the ambiguity sealed in.
+    """`+-u`, kept ambiguous.
 
-    Its argument simplifies; arithmetic does not penetrate it, so `+-1 + 1`
-    stays a sum of two things rather than becoming `0` or `2`.
+    Its argument simplifies, but arithmetic doesn't see through it, so `+-1 + 1` stays
+    a sum rather than becoming `0` or `2`.
     """
 
     nargs = 1
 
 
 class Gcd(sp.Function):
-    """`GCD(m, n)` of arguments that are not all numbers.
+    """`GCD(m, n)` with non-numeric arguments.
 
-    Derive's greatest common divisor is a function of integers, and one of an
-    expression stands rather than being a polynomial gcd: sympy would answer `1`
-    for two different variables, where section 6.13 has `LCM(m, n)` as
-    `|m*n|/GCD(n, m)`. It becomes the number once numbers are written in.
+    Derive's GCD is a function of integers, so with symbolic arguments it stands rather
+    than becoming a polynomial gcd (sympy would give `1` for two different variables,
+    while section 6.13 writes `LCM(m, n)` as `|m*n|/GCD(n, m)`). It evaluates once the
+    arguments are numbers.
     """
 
     nargs = 2
@@ -153,9 +141,8 @@ class Gcd(sp.Function):
 class StringLiteral(sp.Symbol):
     """A string literal: data, not mathematics.
 
-    A `Symbol` rather than a function so that it is atomic everywhere sympy
-    looks at it, and its own class so that `"x"` and the variable `x` are
-    different objects.
+    A `Symbol` subclass so sympy treats it as atomic, but a distinct class so `"x"` and
+    the variable `x` differ.
     """
 
 
@@ -166,31 +153,25 @@ class Dot(sp.Function):
 
 
 class Added(sp.Function):
-    """`u + v` where the shapes will not add.
+    """`u + v` where the shapes can't be added.
 
-    A vector and a vector of another length, or a matrix and a vector, have no sum,
-    and sympy refuses to build one. The terms are kept as they are, those of one
-    shape already added together and the scalars among them as one term in front.
+    Vectors of different lengths, or a matrix and a vector, have no sum, and sympy
+    refuses to build one. Terms of the same shape are added together, and the scalars
+    are combined into one leading term.
     """
 
 
 class Quotient(sp.Function):
-    """`u/v` where `v` is a vector or a matrix that is not square.
-
-    Dividing by a square matrix is multiplying by its inverse, and nothing else
-    has one: the quotient stands as written.
-    """
+    """`u/v` where `v` is a vector or non-square matrix, which has no inverse."""
 
     nargs = 2
 
 
 class Subscript(sp.Function):
-    """`u SUB v` where `u` is no vector and the two are not both names.
+    """`u SUB v` where `u` isn't a vector and the two aren't both names.
 
-    The common `x SUB 1` is a symbol in its own right rather than this, so
-    that a subscripted variable can be differentiated with respect to and
-    solved for. This head is for everything else, where a name would have to
-    swallow a whole subexpression to be written at all.
+    The common `x SUB 1` becomes a symbol instead, so it can be differentiated with
+    respect to and solved for. This head covers everything else.
     """
 
     nargs = 2
@@ -203,19 +184,16 @@ class Transposed(sp.Function):
 
 
 class Power(sp.Function):
-    """`u^v` whose value is a number too big to be worth building.
+    """`u^v` whose value is a number too big to build.
 
-    A head of its own rather than a `Pow` built with `evaluate=False`, because
-    that is not durable: `together` and `as_numer_denom` rebuild a power from
-    its parts, and rebuilding is exactly the evaluation being refused. This
-    carries the same two operands and no sympy routine can talk it into
-    multiplying them out. See `_explodes` for what makes one.
+    A separate head rather than an unevaluated `Pow`, because `together` and
+    `as_numer_denom` rebuild powers from their parts, which would trigger the
+    evaluation. See `_explodes` for when one is made.
 
-    Its value is still a number that can be approximated, as long as an approximate
-    number that size is cheap to write down, which `APPROXIMATE_POWER_BITS` says. It
-    is worked out in floating point, with the base evaluated to as many more bits as
-    the exponent has, since that is how much the exponent magnifies the base's error
-    by: `(1 + 10^-20)^10^20` is `#e` to twenty decimal places.
+    It can still be approximated if the result is small enough
+    (`APPROXIMATE_POWER_BITS`). This is done in floating point, with extra precision
+    equal to the exponent's bit length, since the exponent magnifies the base's error:
+    `(1 + 10^-20)^10^20` is `#e` to twenty decimal places.
     """
 
     nargs = 2
@@ -233,20 +211,18 @@ class Power(sp.Function):
 
 
 class Truth(sp.Function):
-    """A logical value or relation as an operand of arithmetic, such as `false` in
-    `x*PRIME(4)`.
+    """A logical value or relation used in arithmetic, such as `false` in `x*PRIME(4)`.
 
-    Sympy's arithmetic takes only expressions, and a boolean among its operands either is
-    refused or builds a sum or product that no later rewrite can take apart. The truth
-    value is no number, so the arithmetic on it stands: wrapped, it is an operand like an
-    unknown one, `true + true` being `2*true`, and it prints as the value it holds.
+    Sympy arithmetic accepts only expressions; a boolean operand is either refused or
+    produces a sum or product nothing can take apart. Wrapped, it behaves like an
+    unknown (`true + true` is `2*true`) and prints as its value.
     """
 
     nargs = 1
 
 
 class InertVector(sp.Function):
-    """A vector sympy will not hold as a matrix, a ragged one above all."""
+    """A vector sympy can't hold as a matrix, typically a ragged one."""
 
 
 class Logical(sp.Function):
@@ -274,37 +250,28 @@ class Declare(sp.Function):
 class Taylor(sp.Function):
     """`TAYLOR(u, x, a, n)`, unevaluated until `.doit()`.
 
-    Sympy computes a series but has no head to hold an uncomputed one, so this
-    is that head: it converts like the other calculus heads, waits where they
-    wait, and prints back as the call it was authored as when it will not
-    evaluate.
+    Sympy has no head for an uncomputed series, so this provides one. It behaves like
+    the other calculus heads and prints back as written if it doesn't evaluate.
     """
 
     nargs = 4
 
     def doit(self, deep: bool = False, **hints) -> sp.Basic:
-        """The Taylor polynomial, or this head where there is none.
+        """The Taylor polynomial, or this head if there is none.
 
-        Derive's order is the maximum degree, and sympy's is the exponent the
-        expansion is cut off before, so the order asked for is one less than
-        the one passed on. The order term goes: a Taylor polynomial is a
-        polynomial, which is also the test of whether one was found - a series
-        in fractional powers, or one with a logarithm in it, is no polynomial,
-        and such an expansion is not what was asked for.
+        Derive's order is the maximum degree, while sympy's is the exponent the
+        expansion stops before, hence the `+ 1`. The order term is dropped, and the
+        result must be a polynomial: a series in fractional powers or with logarithms
+        isn't a Taylor polynomial.
 
-        Where it is not one, the definition answers instead. A series and a
-        Taylor polynomial are the same thing only where the function has the
-        derivatives the polynomial is summed from, and where it has not, the
-        definition says what the original says: `TAYLOR(SQRT(x), x, 0, 0)` is
-        0, the value at the point being all the order asks for, and
-        `TAYLOR(SQRT(x), x, 0, 2)` is `?`, the first derivative at zero being
+        Otherwise the definition is used, matching the original where the derivatives
+        don't exist: `TAYLOR(SQRT(x), x, 0, 0)` is 0 (just the value at the point), and
+        `TAYLOR(SQRT(x), x, 0, 2)` is `?`, since the first derivative at zero is
         infinite (7.3, p.176).
 
-        A function with a kink or a jump in it may have none of those derivatives
-        at the point, and sympy then expands it from the right alone: `ABS(x)` at
-        zero would be `x`. Such a function has a Taylor polynomial only where its
-        expansions from the two sides agree with each other and with its value,
-        and where they do not, the call stands.
+        At a kink or jump, sympy expands from the right only (`ABS(x)` at zero would
+        give `x`). Such functions get a Taylor polynomial only if the expansions from
+        both sides agree; otherwise the call stands.
         """
         expression, variable, point, order = self.args
         if not (order.is_Integer and order >= 0):
@@ -323,7 +290,7 @@ class Taylor(sp.Function):
         return self if summed is None else summed
 
 
-#: The functions that are not analytic where their argument crosses a jump or a kink.
+#: Functions that are not analytic where their argument crosses a jump or kink.
 _KINKED = (
     sp.Abs,
     sp.sign,
@@ -344,11 +311,11 @@ def _from_both_sides(
     order: int,
     series: sp.Basic,
 ) -> bool:
-    """Whether `series`, the expansion from the right, is also the one from the left.
+    """Whether `series`, the expansion from the right, matches the one from the left.
 
-    `ABS(x)` at zero is `x` from the right and `-x` from the left, and has no Taylor
-    polynomial there. `x*ABS(x)` is the same 0 from both sides to the first order,
-    which is all a once differentiable function promises.
+    `ABS(x)` at zero is `x` from the right and `-x` from the left, so it has no Taylor
+    polynomial there. `x*ABS(x)` is 0 from both sides to first order, which is all a
+    once-differentiable function promises.
     """
     try:
         left = expression.series(variable, point, order + 1, dir="-").removeO()
@@ -360,12 +327,11 @@ def _from_both_sides(
 def _summed_from_derivatives(
     expression: sp.Basic, variable: sp.Basic, point: sp.Basic, order: int
 ) -> sp.Basic | None:
-    """The Taylor polynomial as its definition writes it, term by term.
+    """The Taylor polynomial built term by term from its definition.
 
-    Every term is a derivative at the point over a factorial, and a derivative
-    that is not finite there leaves the whole polynomial undefined - `?`, which
-    is `nan`. A point the derivatives cannot be read at leaves nothing to sum
-    and comes back as none.
+    Each term is a derivative at the point over a factorial. An infinite derivative
+    makes the whole polynomial undefined (`?`, i.e. `nan`). Returns None if a derivative
+    can't be evaluated at the point.
     """
     terms: list[sp.Basic] = []
     derivative = expression
@@ -387,10 +353,10 @@ def _summed_from_derivatives(
 def _at_the_point(
     expression: sp.Basic, variable: sp.Basic, point: sp.Basic
 ) -> sp.Basic | None:
-    """What `expression` is worth at `point`: its value, or its limit there.
+    """The value of `expression` at `point`, or its limit there.
 
-    The limit is what a derivative that is `0/0` at the point is worth, which
-    is what every derivative of `EXP(-1/x^2)` at zero is.
+    The limit handles derivatives that are `0/0` at the point, as every derivative of
+    `EXP(-1/x^2)` is at zero.
     """
     value = expression.subs(variable, point)
     if not (value.has(sp.nan, sp.zoo) or value.is_infinite):
@@ -400,32 +366,26 @@ def _at_the_point(
 
 
 class MovingLimit(sp.Function):
-    """`LIM(u, x, a)` where `a` mentions `x`: the substitution, held until asked.
+    """`LIM(u, x, a)` where `a` mentions `x`: a deferred substitution.
 
-    Nothing approaches a moving point, so such a call is no limit at all, and
-    what the original does with it is substitute: `LIM((x*v - y)^2, y, x*v -
-    y)` is `y^2`, the whole `y` being replaced at once by what the point says.
-    Sympy refuses to build a limit of this shape, which is exactly right and
-    leaves the meaning to be supplied here.
+    A limit to a moving point isn't a limit, and the original simply substitutes:
+    `LIM((x*v - y)^2, y, x*v - y)` is `y^2`, with all of `y` replaced at once. Sympy
+    refuses to build such a limit, so the meaning is supplied here.
 
-    `ODE1.MTH` is written around it. `CLAIRAUT` differentiates the equation
-    with `y` standing for `x*v - y` and then puts the point back, and both
-    steps are this call; `HOMOGENEOUS` and `GEN_HOM` change variables the same
-    way.
+    `ODE1.MTH` relies on this: `CLAIRAUT` substitutes `x*v - y` for `y`,
+    differentiates, and substitutes back, both via this call; `HOMOGENEOUS` and
+    `GEN_HOM` change variables the same way.
 
-    A head rather than the substitution itself, because the substitution has to
-    happen after whatever stands under it has been worked out. `LIM(DIF(LIM(p,
-    y, x*v - y), y), y, x*v - y)` substitutes into a derivative, and one still
-    unevaluated would come back a `SUBS` that nothing then opens. So this waits
-    where the calculus heads wait, and the evaluation works it out after the
-    derivative underneath it, by which time there is a polynomial to put the
-    point into.
+    It is a head because the substitution must happen after its operand is evaluated:
+    in `LIM(DIF(LIM(p, y, x*v - y), y), y, x*v - y)`, substituting into an unevaluated
+    derivative would produce a `SUBS` nothing expands. So it waits like the calculus
+    heads, and is evaluated after the derivative beneath it.
     """
 
     nargs = 3
 
     def doit(self, deep: bool = False, **hints) -> sp.Basic:
-        """The substitution, or this head where it will not go through."""
+        """The substitution, or this head if it fails."""
         expression, variable, point = self.args
         try:
             return expression.subs(variable, point)
@@ -434,16 +394,14 @@ class MovingLimit(sp.Function):
 
 
 class Approx(sp.Function):
-    """`APPROX(u, n)`: `u` rounded to `n` digits, held until it can be.
+    """`APPROX(u, n)`: `u` rounded to `n` digits, deferred until evaluation.
 
-    Rounding is the last thing a command does, and what it has to round is the
-    answer and not the question: `APPROX(INT(u, x))` must see the value that
-    integral came out as. So this waits where the calculus heads wait, and the
-    evaluation that works those out works this one out after them - which the
-    conversion cannot do itself, having no pipeline to call.
+    Rounding must apply to the answer, not the question: `APPROX(INT(u, x))` must see
+    the integral's value. So it waits like the calculus heads and is evaluated after
+    them, which conversion can't do without a pipeline.
 
-    The head carries its digit count even where the call left it out, because
-    what precision the caller was working at is known here and nowhere later.
+    The digit count is filled in even if the call omitted it, because the caller's
+    precision is known only here.
     """
 
     nargs = 2
@@ -452,28 +410,22 @@ class Approx(sp.Function):
 class Antidifference(sp.Function):
     """`SUM(u, n)` with no limits, unevaluated until `.doit()`.
 
-    `F` is the antidifference of `f` when `f(n) = F(n + 1) - F(n)`, which is
-    the discrete analogue of an antiderivative and is what a definite sum
-    telescopes down to. The constant of summation is dropped the way an
-    integral's is.
-
-    Sympy has no head for one, so this is that head, and it waits where the
-    calculus heads wait for the reason `Taylor` gives.
+    `F` is the antidifference of `f` when `f(n) = F(n + 1) - F(n)`, the discrete
+    analogue of an antiderivative. The constant of summation is dropped, as for
+    integrals. Sympy has no head for this, as with `Taylor`.
     """
 
     nargs = 2
 
     def doit(self, deep: bool = False, **hints) -> sp.Basic:
-        """The antidifference, or this head where there is none.
+        """The antidifference, or this head if there is none.
 
-        Gosper's algorithm decides it: its certificate `t` is the rational
-        function with `t(n)*f(n)` the antidifference, and no certificate means
-        no hypergeometric antidifference exists - `SUM(1/n^2, n)` among them,
-        which is a documented refusal and not an error. The certificate is
-        canonical and carries no constant, so nothing has to be taken off it.
+        Gosper's algorithm gives a rational certificate `t` with `t(n)*f(n)` the
+        antidifference; no certificate means no hypergeometric antidifference exists
+        (e.g. `SUM(1/n^2, n)`). The certificate carries no constant.
 
-        Only the powers are gathered afterwards, so that `SUM(1/2^n, n)` comes
-        out as one power rather than as `-2/2^n`.
+        Powers are then combined, so `SUM(1/2^n, n)` comes out as one power rather than
+        `-2/2^n`.
         """
         expression, index = self.args
         if type(index) is not sp.Symbol:
@@ -493,27 +445,21 @@ class Antidifference(sp.Function):
 class Antiquotient(sp.Function):
     """`PRODUCT(u, n)` with no limits, unevaluated until `.doit()`.
 
-    `F` is the antiquotient of `f` when `f(n) = F(n + 1)/F(n)`: the
-    antidifference of section 7.5 with multiplication in place of addition, and
-    what a definite product telescopes down to. The constant factor is dropped
-    the way the constant of summation is.
+    `F` is the antiquotient of `f` when `f(n) = F(n + 1)/F(n)`, the multiplicative
+    analogue of section 7.5's antidifference. The constant factor is dropped.
     """
 
     nargs = 2
 
     def doit(self, deep: bool = False, **hints) -> sp.Basic:
-        """The antiquotient, or this head where there is none.
+        """The antiquotient, or this head if there is none.
 
-        There is no routine for one, so it is built from its definition: the
-        running product of the body up to `n - 1`, which telescopes to exactly
-        an `F` with `F(n + 1)/F(n)` the body again.
+        Built from the definition as the product of the body up to `n - 1`, whose
+        ratio `F(n + 1)/F(n)` is the body.
 
-        What sympy answers with is not always a closed form. A body Derive has
-        no answer for comes back holding a `RisingFactorial`, which the
-        notation has no spelling for, or the product itself, which is no answer
-        at all; `combsimp` turns some of those into factorials, and where it
-        does not the head stands, as it does for the manual's own
-        `PRODUCT(k^2 + 1, k)`.
+        Sympy may answer with a `RisingFactorial` (which Derive can't write) or the
+        unevaluated product. `combsimp` converts some of these to factorials;
+        otherwise the head stands, as for the manual's `PRODUCT(k^2 + 1, k)`.
         """
         expression, index = self.args
         if type(index) is not sp.Symbol:
@@ -535,10 +481,9 @@ class Antiquotient(sp.Function):
         return value
 
 
-#: The heads that stand for a computation: the calculus ones, and `APPROX`,
-#: which waits for the same reason. It has to round the value an integral came
-#: out as rather than the integral, and evaluating innermost first is exactly
-#: what gives it that. The evaluation works each one out where it is made.
+#: Heads representing deferred computations: the calculus heads, and `APPROX`, which
+#: must round the value of an inner integral rather than the integral itself.
+#: Evaluation works out each one as it is built, innermost first.
 CALCULUS_HEADS = (
     sp.Derivative,
     sp.Integral,
@@ -555,8 +500,8 @@ CALCULUS_HEADS = (
 
 # -- the constant table -----------------------------------------------------
 
-#: `e` and `i` are ordinary variables; only `#e` and `#i` are the constants.
-#: The parser has already told the two apart, so nothing here needs to.
+#: `e` and `i` are ordinary variables; only `#e` and `#i` are constants (the parser
+#: has already distinguished them).
 CONSTANTS: dict[str, sp.Basic] = {
     "pi": sp.pi,
     "#e": sp.E,
@@ -566,12 +511,11 @@ CONSTANTS: dict[str, sp.Basic] = {
     "true": sp.true,
     "false": sp.false,
     "euler_gamma": sp.EulerGamma,
-    # An arbitrary point on the complex unit circle, which is what Derive
-    # answers `|z| = 2` with: `z = 2*unit_circle`. Sympy has no such object, so
-    # it is a symbol - but a bare one, carrying none of the assumptions an
-    # undeclared variable gets. Real is exactly what it is not, and `SQRT(x^2)
-    # -> ABS(x)` firing on it would be a guess. The arithmetic Derive gives it,
-    # `unit_circle*inf` for complex infinity above all, is out of scope.
+    # An arbitrary point on the complex unit circle, as in Derive's answer to
+    # `|z| = 2`: `z = 2*unit_circle`. It is a bare symbol without the assumptions of an
+    # undeclared variable; in particular it isn't real, so `SQRT(x^2) -> ABS(x)` must
+    # not fire on it. Derive's special arithmetic for it (such as `unit_circle*inf`
+    # for complex infinity) is not implemented.
     "unit_circle": sp.Symbol("unit_circle"),
 }
 
@@ -584,10 +528,9 @@ _RELATIONS: dict[str, Callable[..., sp.Basic]] = {
     ">=": sp.Ge,
 }
 
-#: How each boolean operator reads as a bitwise one on integers, two's
-#: complement throughout: `NOT 5` is -6 and `3 OR 5` is 7. Under the word the
-#: operator is written and held under, since an operator held for want of
-#: operands to read is offered both readings again by that word.
+#: Bitwise meaning of each boolean operator on integers, in two's complement: `NOT 5`
+#: is -6 and `3 OR 5` is 7. Keyed by the operator name a held `Logical` head stores,
+#: so it can be retried with both readings once its operands are known.
 _BITWISE: dict[str, Callable[..., int]] = {
     "NOT": lambda a: ~a,
     "AND": lambda a, b: a & b,
@@ -611,7 +554,7 @@ def to_sympy(node: Node, context: Context | None = None) -> sp.Basic:
 
 
 class Converter:
-    """One conversion's worth of state: the context, and the labels in hand."""
+    """State for one conversion: the context and the labels being expanded."""
 
     def __init__(self, context: Context, open_labels: frozenset[int] = frozenset()):
         self.context = context
@@ -644,8 +587,7 @@ class Converter:
             case Kind.SUB:
                 return self._sub(node)
             case Kind.ABS:
-                # The bars and the call are one head, so that what one of them
-                # declines to make of a matrix the other declines too.
+                # Bars and the call share one head, so they treat matrices alike.
                 return self.call("ABS", [self.convert(node.children[0])])
             case Kind.CALL | Kind.APPLY:
                 return self.call(str(node.children[0].value), self._children(node)[1:])
@@ -665,8 +607,8 @@ class Converter:
                 return self._declaration(node)
             case Kind.SHOWVALUE:
                 return self.convert(node.children[0])
-        # PARAMS and INTERVAL reach the engine only inside the node that owns
-        # them; anything else is an inert head over whatever it holds.
+        # PARAMS and INTERVAL only appear inside their owning nodes; anything else
+        # becomes an inert head.
         return self.opaque(str(node.kind).upper(), self._children(node))
 
     def _children(self, node: Node) -> list[sp.Basic]:
@@ -675,13 +617,12 @@ class Converter:
     # -- leaves -------------------------------------------------------------
 
     def _number(self, node: Node) -> sp.Basic:
-        """A numeral, which `value` spells as `2.5`, as `25` or as `1/3`.
+        """A numeral, written in `value` as `2.5`, `25` or `1/3`.
 
-        Exact and Mixed read it as the rational it is, so `0.1` is one tenth
-        and not the binary float nearest to it. Approximate rounds that
-        rational to the current precision, which is where the difference
-        between the two modes comes from: the numbers going in are rounded,
-        and what is done with them afterwards is exact either way.
+        Exact and Mixed read it as an exact rational, so `0.1` is one tenth, not the
+        nearest binary float. Approximate rounds that rational to the current
+        precision; that input rounding is the difference between the modes, since the
+        arithmetic afterwards is exact either way.
         """
         value = sp.Rational(str(node.value))
         if self.context.precision is Precision.APPROXIMATE:
@@ -692,7 +633,7 @@ class Converter:
     def _name(self, node: Node) -> sp.Basic:
         name = str(node.value)
         if name == "deg":
-            # One degree, measured like any angle in the unit the user works in.
+            # One degree, expressed in the current angle unit.
             return self.angle_out(CONSTANTS[name])
         constant = CONSTANTS.get(name)
         if constant is not None:
@@ -700,21 +641,19 @@ class Converter:
         return self.symbol(name)
 
     def symbol(self, name: str) -> sp.Basic:
-        """The symbol `name` stands for, carrying its declared assumptions.
+        """The symbol for `name`, with its declared assumptions.
 
-        A degenerate interval declares a value rather than a range, so `x
-        :epsilon Real [7, 7]` makes `x` the number 7.
+        A degenerate interval declares a value: `x :epsilon Real [7, 7]` makes `x` the
+        number 7.
 
-        A name declared nonscalar is a matrix, which is what section 8.8's
-        algebra is the algebra of: transposition reverses a product, an inverse
-        reverses one, and a determinant of an inverse is a reciprocal. Sympy
-        knows all of that about a `MatrixSymbol` and none of it about a symbol
-        that is merely noncommutative, so a declared nonscalar is one.
+        A name declared nonscalar becomes a `MatrixSymbol`, since sympy knows section
+        8.8's matrix algebra (transposes and inverses reverse products, the determinant
+        of an inverse is a reciprocal) for those but not for merely noncommutative
+        symbols.
 
-        Only a name a declaration reaches by name. `default :epsilon Nonscalar`
-        widens the domain of everything at once, and everything includes the
-        argument of every `SIN` - a matrix there converts and means nothing. So
-        the default domain is worth its assumptions and not its shape.
+        This applies only to names declared explicitly. `default :epsilon Nonscalar`
+        would make every variable a matrix, including arguments of `SIN`, so the
+        default domain contributes its assumptions but not its shape.
         """
         domain = self.context.domain(name)
         value = self._degenerate(domain)
@@ -725,11 +664,10 @@ class Converter:
         return sp.Symbol(name, **self.assumptions(domain))
 
     def assumptions(self, domain: Domain) -> dict[str, bool]:
-        """The sympy assumptions a domain declaration is worth.
+        """The sympy assumptions implied by a domain declaration.
 
-        Complex means "not known to be real", which is the assumption that
-        stops `SQRT(x^2)` from becoming `ABS(x)`: sympy leaves `real`
-        undecided under it, so no rewrite that needs a real variable fires.
+        Complex means "not known to be real": sympy leaves `real` undecided, so rewrites
+        needing a real variable, like `SQRT(x^2)` -> `ABS(x)`, don't fire.
         """
         if domain.kind is DomainKind.NONSCALAR:
             return {"commutative": False}
@@ -737,8 +675,7 @@ class Converter:
             return {"complex": True}
         facts = {"integer": True} if domain.kind is DomainKind.INTEGER else {"real": True}
         low, high = self._bound(domain.low), self._bound(domain.high)
-        # An interval is worth the sign it implies, and a bound is strict
-        # either because it is written open or because it is away from zero.
+        # An interval implies a sign; the bound is strict if open or away from zero.
         if low is not None and low.is_nonnegative:
             strict = low.is_positive or not domain.closed_low
             facts["positive" if strict else "nonnegative"] = True
@@ -748,7 +685,7 @@ class Converter:
         return facts
 
     def _degenerate(self, domain: Domain) -> sp.Basic | None:
-        """The value of a one-point interval such as `[7, 7]`, if that is one."""
+        """The value of a one-point interval such as `[7, 7]`, or None."""
         if not (domain.closed_low and domain.closed_high):
             return None
         low, high = self._bound(domain.low), self._bound(domain.high)
@@ -757,11 +694,10 @@ class Converter:
         return low
 
     def _bound(self, node: Node | None) -> sp.Basic | None:
-        """What an interval bound is worth, or None if it is not a number.
+        """The value of an interval bound, or None if it isn't a number.
 
-        Bounds convert without domains in hand: they are what the domains are
-        being read from, and a bound that named a declared variable would send
-        the reading round in a circle.
+        Bounds are converted without domains, since domains are being built from them
+        and a bound naming a declared variable would recurse.
         """
         if node is None:
             return None
@@ -772,10 +708,9 @@ class Converter:
         return value if getattr(value, "is_number", False) else None
 
     def _label(self, node: Node) -> sp.Basic:
-        """`#3`: whatever expression 3 is, or an inert `#3` if nobody knows.
+        """`#3`: the expression labeled 3, or an inert `#3` if unknown.
 
-        A label that reaches itself, directly or through another, stops being
-        followed and stays inert.
+        A label that refers back to itself, directly or indirectly, stays inert.
         """
         try:
             number = int(str(node.value))
@@ -792,24 +727,18 @@ class Converter:
     def over_equations(
         self, build: Callable[[list[sp.Basic]], sp.Basic], operands: list[sp.Basic]
     ) -> sp.Basic | None:
-        """`build` done to both sides of whichever `operands` are equations.
+        """Apply `build` to both sides of whichever `operands` are equations.
 
-        Sections 4.13 pp.108-111: an equation is an expression like any other,
-        so arithmetic on one is arithmetic on both of its sides.
-        `(x^2 + 5*x + 6 = 0) - 6` is `x^2 + 5*x = -6`, `4*(x^2 + 5*x + 6 = 0)`
-        is `4*x^2 + 20*x + 24 = 0`, and `EXP(LN(x) = 5)` is `x = #e^5`. An
-        operand that is no equation stands for itself on either side, and
-        several equations are taken side by side.
+        Per section 4.13 (pp.108-111), arithmetic on an equation applies to both sides:
+        `(x^2 + 5*x + 6 = 0) - 6` is `x^2 + 5*x = -6`, `4*(x^2 + 5*x + 6 = 0)` is
+        `4*x^2 + 20*x + 24 = 0`, and `EXP(LN(x) = 5)` is `x = #e^5`. Non-equation
+        operands appear on both sides, and multiple equations are combined side by side.
 
-        None where there is no equation among the operands, which is the
-        ordinary case and leaves the caller to build what it was going to
-        build.
+        Returns None if no operand is an equation, the usual case.
 
-        Equality and nothing else. Whatever is done to both sides of an
-        equation leaves an equation, which is what makes the mapping sound for
-        every operation there is; an order relation survives less than that -
-        multiplying by a negative reverses it - so one stands as it was
-        written.
+        Only equalities are mapped, since any operation on both sides preserves an
+        equation. Inequalities don't survive everything (multiplying by a negative
+        reverses them), so they stand as written.
         """
         if not any(isinstance(operand, sp.Equality) for operand in operands):
             return None
@@ -823,7 +752,7 @@ class Converter:
         return self._related(sp.Eq, build(sides[0]), build(sides[1]))
 
     def _operands(self, node: Node) -> list[sp.Basic]:
-        """The operands of an arithmetic operator, each logical one held in `Truth`."""
+        """An arithmetic operator's operands, with logical ones wrapped in `Truth`."""
         return [
             Truth(operand)
             if _truth_value(operand)
@@ -832,7 +761,7 @@ class Converter:
         ]
 
     def _sum(self, node: Node) -> sp.Basic:
-        """A run of terms, with one operator per gap."""
+        """A sequence of terms, with one operator between each pair."""
         operators = str(node.value)
 
         def added(terms: list[sp.Basic]) -> sp.Basic:
@@ -851,15 +780,13 @@ class Converter:
         return added(terms) if mapped is None else mapped
 
     def _product(self, node: Node) -> sp.Basic:
-        """A run of factors.
+        """A sequence of factors.
 
-        Multiplication of two vectors is the dot product where the shapes
-        leave no other reading, which is why a run that sympy will not
-        multiply is folded factor by factor rather than abandoned.
+        Multiplying two vectors means the dot product when the shapes allow nothing
+        else, so a product sympy refuses is folded factor by factor.
 
-        A run holding a declared nonscalar is folded that way from the start:
-        section 8.4 says `a*b` is the matrix product where `a` and `b` are
-        matrices, and `_dot` is where that product is built.
+        A product containing a declared nonscalar is folded that way from the start,
+        since section 8.4 makes `a*b` the matrix product for matrices, built in `_dot`.
         """
         factors = self._operands(node)
         mapped = self.over_equations(self._multiplied, factors)
@@ -897,9 +824,8 @@ class Converter:
     def _operated(self, operator: str, left: sp.Basic, right: sp.Basic) -> sp.Basic:
         match operator:
             case "/":
-                # Dividing by a matrix is multiplying by its inverse, which is
-                # the only reading the notation has for it. Sympy declines the
-                # division itself.
+                # Dividing by a matrix means multiplying by its inverse; sympy refuses
+                # the division itself.
                 if _symbolic_matrix(right):
                     return self._times(left, _matrix_power(right, sp.Integer(-1)))
                 if isinstance(right, sp.MatrixBase):
@@ -916,37 +842,33 @@ class Converter:
                 if _symbolic_matrix(left):
                     return _matrix_power(left, right)
                 if isinstance(left, sp.MatrixBase) and not left.is_square:
-                    # Only a square matrix has powers. A vector's are not the
-                    # elementwise ones either, so the power stands.
+                    # Only square matrices have powers; a vector's power isn't
+                    # elementwise either, so it stands.
                     return Power(left, right)
                 try:
                     return left**right
                 except Exception:
-                    # A power sympy declines over a matrix written out is a
-                    # singular one's inverse. It is the same unevaluated head a
-                    # symbolic matrix's is, and `u^-1` is what it prints as.
+                    # An explicit matrix power sympy refuses is a singular matrix's
+                    # inverse. Use the same unevaluated head as for symbolic matrices,
+                    # which prints as `u^-1`.
                     if isinstance(left, sp.MatrixBase):
                         return sp.MatPow(left, right)
                     return sp.Pow(left, right, evaluate=False)
         return self._dot(left, right)
 
     def _dot(self, left: sp.Basic, right: sp.Basic) -> sp.Basic:
-        """`u . v`: the matrix product, of which the dot product is one case.
+        """`u . v`: the matrix product, with the dot product as a special case.
 
-        Two flat vectors are the case the notation is named after, and their
-        product is the number `[2, 3] . [4, 5]` is worth rather than the one by
-        one matrix holding it. Everything else conforms or it does not: `n` by
-        `m` times `m` by `p` is the matrix product, and shapes that will not
-        multiply keep the operator itself, unevaluated.
+        Two flat vectors give a number (`[2, 3] . [4, 5]`), not a 1x1 matrix. Otherwise
+        `n` by `m` times `m` by `p` is the matrix product, and nonconforming shapes keep
+        the operator unevaluated.
 
-        A flat vector to the right of a matrix stands for the column it would
-        have to be, and what comes back is flat again: the matrix's rows dotted
-        with the vector, one number each. A column written as a column keeps
-        its shape instead, `[[2], [3]]` being a matrix and not a vector.
+        A flat vector right of a matrix is treated as a column, and the result is flat
+        again: each row dotted with the vector. An explicit column like `[[2], [3]]` is
+        a matrix and keeps its shape.
 
-        A declared nonscalar is a matrix whose elements nobody knows, and the
-        product of two of those is symbolic: sympy holds it and rewrites it by
-        the rules of section 8.8.
+        Declared nonscalars are matrices with unknown elements, so their product is
+        symbolic, which sympy rewrites by the rules of section 8.8.
         """
         if _symbolic_matrix(left) or _symbolic_matrix(right):
             return _symbolic_product(left, right)
@@ -977,8 +899,7 @@ class Converter:
             case "-":
                 return -operand
             case "+-":
-                # `±inf` is the notation for unsigned infinity, and the way
-                # back from what the printer writes `zoo` as.
+                # `±inf` is unsigned infinity, which is how the printer writes `zoo`.
                 if operand in (sp.oo, -sp.oo):
                     return sp.zoo
                 return PlusMinus(operand)
@@ -987,11 +908,9 @@ class Converter:
     def _postop(self, node: Node) -> sp.Basic:
         """`u!`, `u%` and ``u` ``.
 
-        Section 8.5: the transpose of a scalar is the scalar, so ``x` `` is `x`
-        wherever `x` is one - which is everything not declared nonscalar. A
-        matrix's transpose is the matrix transposed, and sympy does both. What
-        is neither - an inert head, a relation - keeps the operator as it was
-        written.
+        Per section 8.5, the transpose of a scalar is the scalar, so ``x` `` is `x`
+        unless `x` is declared nonscalar. Matrices are transposed by sympy. Anything
+        else, such as an inert head or a relation, keeps the operator.
         """
         operand = self.convert(node.children[0])
         match str(node.value):
@@ -1007,37 +926,34 @@ class Converter:
         return Transposed(operand) if collapsed is None else collapsed
 
     def _sub(self, node: Node) -> sp.Basic:
-        """Element access on a vector, a subscripted variable otherwise.
+        """Element access on a vector, or a subscripted variable otherwise.
 
-        A vector is either of the two ways one is held: a matrix, and the inert
-        vector everything deeper than a matrix is. Both are indexed, so `SUB`
-        chains as far as there are dimensions and `q SUB 2 SUB 1 SUB 2` reads a
-        number out of a vector of matrices. A base that is no vector at all is
-        the subscripted name `x SUB 1` instead.
+        A vector is either a matrix or an inert vector (for anything deeper). Both are
+        indexable, so `SUB` chains across dimensions: `q SUB 2 SUB 1 SUB 2` reads a
+        number from a vector of matrices. A non-vector base gives a subscripted name
+        like `x SUB 1`.
 
-        An index that is a vector reaches through as many dimensions as it
-        holds, `m SUB [2, 3]` being `m SUB 2 SUB 3`.
+        A vector index reaches through several dimensions: `m SUB [2, 3]` is
+        `m SUB 2 SUB 3`.
         """
         base, index = (self.operand(child) for child in self._children(node))
         if not isinstance(base, (sp.MatrixBase, InertVector)):
             return self._subscript(node.children[0], base, index)
         element = _at(base, index)
         if element is None:
-            # An index that is no index yet: the access itself survives.
+            # Not a usable index yet, so keep the access unevaluated.
             return self.opaque("ELEMENT", [base, index])
         return element
 
     def _subscript(self, base_node: Node, base: sp.Basic, index: sp.Basic) -> sp.Basic:
-        """`x SUB 1` as one symbol, named the way it is written.
+        """`x SUB 1` as a single symbol named as written.
 
-        One symbol rather than a head over two, so that a subscripted variable
-        can be differentiated with respect to and solved for like any other.
-        The name is the author notation, which is what makes it print and
-        reparse as the subscript it is.
+        A single symbol can be differentiated with respect to and solved for like any
+        variable, and its name prints and reparses as the subscript.
 
-        That only works while both parts are names or plain numerals. Anything
-        else would have to hide a whole subexpression inside a name, where no
-        substitution could reach it, so it becomes a `Subscript` instead.
+        This requires both parts to be names or plain numerals. Otherwise a
+        subexpression would be hidden inside a name, out of reach of substitution, so a
+        `Subscript` head is used instead.
         """
         if not (type(base) is sp.Symbol and _nameable(index)):
             return Subscript(base, index)
@@ -1056,22 +972,20 @@ class Converter:
         return applied ** self.convert(exponent)
 
     def _vector(self, node: Node) -> sp.Basic:
-        """A vector of rows is a matrix; a flat one is a row.
+        """A vector of rows is a matrix; a flat vector is a row.
 
-        Only of rows: a matrix has two dimensions and no more, so a vector
-        whose elements are matrices themselves stays a vector, its elements
-        left whole. Stacking them would run the rows of
-        `[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]` together into a 2x4 and lose
-        the dimension that was written.
+        Matrices have only two dimensions, so a vector of matrices stays a vector.
+        Stacking `[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]` would merge it into a 2x4 and
+        lose a dimension.
 
-        Ragged or mixed vectors are no matrix at all, and stay inert.
+        Ragged or mixed vectors stay inert.
         """
         if not node.children:
             return sp.Matrix(0, 0, [])
         return self.vector_over(node.children, self._children(node))
 
     def vector_over(self, rows: Sequence[Node], elements: list[sp.Basic]) -> sp.Basic:
-        """The vector `rows` are written as, over the values they converted to."""
+        """The vector for `rows`, built from their converted values."""
         if all(row.kind is Kind.VECTOR for row in rows):
             widths = {len(row.children) for row in rows}
             if (
@@ -1086,8 +1000,7 @@ class Converter:
                     return InertVector(*elements)
         if any(row.kind is Kind.VECTOR for row in rows):
             return InertVector(*elements)
-        # A matrix holds mathematics; a vector of relations or of booleans is
-        # a container, and stays one.
+        # A vector of relations or booleans is just a container, not a matrix.
         if not all(isinstance(element, sp.Expr) for element in elements):
             return InertVector(*elements)
         try:
@@ -1096,13 +1009,11 @@ class Converter:
             return InertVector(*elements)
 
     def _relation(self, node: Node) -> sp.Basic:
-        """Assembled unevaluated: the engine never decides a bare relation.
+        """A relation, built unevaluated; conversion never decides one.
 
-        A chain nests to the left in the grammar and means the conjunction of
-        its links: `1 <= a <= b - 1` is `1 <= a AND a <= b - 1`, which is how
-        the shipped library writes `c <= a <= 0`. Reading it as written would
-        be comparing the truth value of the first link with a number, which is
-        not a statement anybody made.
+        A chain (left-nested in the grammar) means the conjunction of its links:
+        `1 <= a <= b - 1` is `1 <= a AND a <= b - 1`, as the shipped library uses with
+        `c <= a <= 0`. Read literally, it would compare a truth value with a number.
         """
         links, _ = self._chain(node)
         if len(links) == 1:
@@ -1145,11 +1056,10 @@ class Converter:
         return FunDef(sp.Symbol(str(node.value)), params, *body)
 
     def _declaration(self, node: Node) -> sp.Basic:
-        """A declaration describes itself.
+        """A declaration, converted to a `Declare` head describing itself.
 
-        The symbol it names carries the facts the declaration states, whether
-        or not the context has caught up with it, and it stays a symbol even
-        where the declaration gives it a value.
+        The named symbol carries the declared facts even if the context doesn't have
+        them yet, and stays a symbol even if the declaration gives it a value.
         """
         name = str(node.children[0].value)
         declared = domain_of_node(node)
@@ -1167,14 +1077,12 @@ class Converter:
     # -- calls --------------------------------------------------------------
 
     def call(self, name: str, args: Sequence[sp.Basic]) -> sp.Basic:
-        """A function call, by the function tables, opaque where it is not.
+        """A function call via the function tables, or an inert head.
 
-        A call the tables cannot make sense of - the wrong number of arguments,
-        a matrix where a number belongs - falls back to the inert head, which
-        is the "return it unchanged rather than guess" rule in miniature.
+        A call the tables can't handle (wrong argument count, a matrix where a number
+        belongs) becomes an inert head rather than a guess.
 
-        A function of numbers given an equation is applied to both sides of it,
-        `MAPPED_OVER_EQUATIONS` saying which functions those are.
+        Functions in `MAPPED_OVER_EQUATIONS` applied to an equation apply to both sides.
         """
         primed = self._primed(name, args)
         if primed is not None:
@@ -1195,25 +1103,21 @@ class Converter:
         return self.opaque(name, args) if result is None else result
 
     def _primed(self, name: str, args: Sequence[sp.Basic]) -> sp.Basic | None:
-        """`BB'(r)`: a function derived as many times as it carries marks.
+        """`BB'(r)`: a function differentiated once per prime mark.
 
-        The derivative is with respect to the first argument, which is what
-        `CC'(u, v)` means in the original, and it is taken before the point is
-        written in: `BB'(r^2)` is `BB'` at `r^2`, not the derivative of
-        `BB(r^2)`. A point that is a variable the other arguments do not
-        mention says that already, and gives the plainer `DIF(BB(r), r)` that
-        prints back as the same prime; anything else needs the substitution,
-        since `CC'(u, u)` is the slope in the first argument alone and
-        `DIF(CC(u, u), u)` is the slope in both.
+        The derivative is with respect to the first argument, as `CC'(u, v)` means in
+        the original, and is taken before substituting the point: `BB'(r^2)` is `BB'`
+        at `r^2`, not the derivative of `BB(r^2)`. If the point is a variable not in
+        the other arguments, the plain `DIF(BB(r), r)` suffices and prints back as the
+        same prime; otherwise a substitution is needed, since `CC'(u, u)` differs from
+        `DIF(CC(u, u), u)`.
 
-        The head under the marks is looked up like any other, so `SIN'(x)` is
-        the derivative of the sine. Only a head nobody has defined stays a
-        derivative of itself, and that is the one the printer writes a prime
-        for.
+        The head is looked up normally, so `SIN'(x)` is the derivative of the sine.
+        Only an undefined head stays a derivative of itself, which the printer writes
+        with a prime.
 
-        None where there is nothing to derive, and none where the head declines
-        to be: an inert call under the marks reads back as the same marks, the
-        way any head the tables cannot make sense of does.
+        Returns None if there are no marks or the derivative fails; the call then
+        becomes an inert head that prints back with the same marks.
         """
         base = name.rstrip(PRIME_MARK)
         order = len(name) - len(base)
@@ -1240,42 +1144,38 @@ class Converter:
         return sp.Subs(derivative, (variable,), (point,))
 
     def operand(self, value: sp.Basic) -> sp.Basic:
-        """`value` as an operand to take an element of. The evaluation's differs."""
+        """`value` as an operand to index into. Overridden by the evaluator."""
         return value
 
     def opaque(self, name: str, args: Sequence[sp.Basic]) -> sp.Basic:
-        """An inert application: it survives, and it prints back as itself."""
+        """An inert application that prints back as itself."""
         return sp.Function(name)(*args)
 
     # -- the angle mode, which is a conversion rule and not a printing one ---
 
     def angle_in(self, value: sp.Basic) -> sp.Basic:
-        """A trig argument, in radians whatever the user measured it in."""
+        """A trig argument converted to radians from the user's angle unit."""
         if self.context.angle is Angle.DEGREE:
             return value * sp.pi / 180
         return value
 
     def angle_out(self, value: sp.Basic) -> sp.Basic:
-        """An inverse trig result, in the unit the user is working in."""
+        """An inverse trig result converted to the user's angle unit."""
         if self.context.angle is Angle.DEGREE:
             return value * 180 / sp.pi
         return value
 
 
 def _symbolic_product(left: sp.Basic, right: sp.Basic) -> sp.Basic:
-    """`u . v` where one side at least is a matrix nobody knows the elements of.
+    """`u . v` where at least one side is a symbolic matrix.
 
-    Sympy's own product is what does most of section 8.8: it flattens a run of
-    them, so `(a . b) . c` and `a . (b . c)` are the one expression, and it
-    knows the rules that reverse a product under transposition and under
-    inversion.
+    Sympy's product handles most of section 8.8: it flattens nested products, so
+    `(a . b) . c` and `a . (b . c)` are the same, and reverses products under
+    transposition and inversion.
 
-    The one thing it does that Derive does not is cancel a matrix against its
-    own inverse. `a . a^-1` comes back from the original exactly as it was
-    written - the identity of an unknown dimension is not something the
-    notation can spell, so an answer holding one could not be shown at all.
-    Where the factors would cancel the product is built unevaluated instead,
-    which leaves it written as it stands and cancels nothing later either.
+    Unlike Derive, sympy cancels a matrix against its inverse. The original returns
+    `a . a^-1` unchanged, since an identity of unknown dimension can't be written. So
+    where factors would cancel, the product is built unevaluated.
     """
     factors = [*_matrix_factors(left), *_matrix_factors(right)]
     try:
@@ -1287,13 +1187,11 @@ def _symbolic_product(left: sp.Basic, right: sp.Basic) -> sp.Basic:
 
 
 def _transposed_scalar(value: sp.Basic) -> sp.Basic | None:
-    """`value` where its transpose is itself, None where that is not settled.
+    """`value` if it is its own transpose, or None if that isn't settled.
 
-    Section 8.5 says the transpose of a scalar is the scalar, and sympy is
-    what decides which quantities are scalars. What it will not decide it
-    hands back as a transpose of its own, and that is no answer: an inert head
-    is no more a scalar than it is a matrix, so `VECTOR(u, i, 1, n)`` keeps
-    the operator it was written with.
+    Per section 8.5, a scalar's transpose is the scalar, and sympy decides what is
+    scalar. If sympy returns an unevaluated transpose, as for an inert head like
+    `VECTOR(u, i, 1, n)``, the operator is kept.
     """
     if not isinstance(value, sp.Expr):
         return None
@@ -1305,13 +1203,11 @@ def _transposed_scalar(value: sp.Basic) -> sp.Basic | None:
 
 
 def _matrix_power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
-    """`u^n` where `u` is a matrix nobody knows the elements of.
+    """`u^n` where `u` is a symbolic matrix.
 
-    A zero exponent is the identity matrix, and that is one thing the notation
-    cannot write down: an identity of unknown dimension has no spelling, so the
-    power is kept as it was authored rather than answered with something
-    unshowable. Everything else is sympy's, which is where `(a . b)^-1` becomes
-    `b^-1 . a^-1`.
+    A zero exponent would give an identity of unknown dimension, which can't be
+    written, so the power is kept as authored. Everything else is left to sympy, which
+    turns `(a . b)^-1` into `b^-1 . a^-1`.
     """
     if exponent == 0:
         return sp.MatPow(base, exponent)
@@ -1322,10 +1218,10 @@ def _matrix_power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
 
 
 def _truth_value(operand: sp.Basic) -> bool:
-    """Whether `operand` is a logical value or relation and no expression.
+    """Whether `operand` is a logical value or relation rather than an expression.
 
-    A symbol is both, to sympy, and it is an expression here. An equation is neither:
-    arithmetic on one is arithmetic on its sides, which `over_equations` is for.
+    Sympy symbols are both, and count as expressions here. Equations are excluded, since
+    arithmetic on them is handled by `over_equations`.
     """
     return (
         isinstance(operand, Boolean)
@@ -1334,11 +1230,10 @@ def _truth_value(operand: sp.Basic) -> bool:
 
 
 def _unconformable_sum(terms: list[sp.Basic]) -> sp.Basic:
-    """The sum of `terms` where some of them are matrices of different shapes.
+    """The sum of `terms` where some are matrices of different shapes.
 
-    Each shape's matrices are added together and the scalars are added together,
-    and what is left of the sum is those few terms, kept in the order their shapes
-    first appear.
+    Matrices of each shape are added together, as are the scalars, and the resulting
+    terms are kept in order of first appearance.
     """
     scalars: list[sp.Basic] = []
     shapes: dict[tuple[int, int], list[sp.Basic]] = {}
@@ -1355,7 +1250,7 @@ def _unconformable_sum(terms: list[sp.Basic]) -> sp.Basic:
 
 
 def _added_terms(terms: list[sp.Basic]) -> list[sp.Basic]:
-    """`terms` with the terms of any sum that would not add among them spliced in."""
+    """`terms` with the terms of any nested unconformable sum spliced in."""
     spliced = []
     for term in terms:
         if isinstance(term, Added):
@@ -1373,26 +1268,25 @@ def _added_terms(terms: list[sp.Basic]) -> list[sp.Basic]:
 
 
 def _matrix_factors(value: sp.Basic) -> list[sp.Basic]:
-    """A product's factors, so that a run of them is folded flat."""
+    """The factors of a matrix product, for flattening."""
     return list(value.args) if isinstance(value, sp.MatMul) else [value]
 
 
 def _symbolic_matrix(value: sp.Basic) -> bool:
-    """Whether `value` is a matrix held as an expression, not as its elements.
+    """Whether `value` is a symbolic matrix rather than one with explicit elements.
 
-    A matrix written out is both a `MatrixBase` and, when it is immutable, a
-    `MatrixExpr`, and everything written out is worked out rather than kept
-    symbolic. What is left is what has no elements to work with: a declared
-    nonscalar and whatever is built over one.
+    An explicit matrix is a `MatrixBase` (and, when immutable, also a `MatrixExpr`), and
+    is computed with directly. Symbolic ones are declared nonscalars and expressions
+    built from them.
     """
     return isinstance(value, sp.MatrixExpr) and not isinstance(value, sp.MatrixBase)
 
 
 def _cancelling(factors: Sequence[sp.Basic]) -> bool:
-    """Whether these factors hold a matrix beside its own inverse.
+    """Whether these factors include a matrix and its inverse.
 
-    Read off the exponents rather than off adjacency, `a . b . a^-1` being a
-    product sympy cancels too once it has sorted what commutes.
+    Checked by summing exponents rather than adjacency, since sympy also cancels
+    `a . b . a^-1` after reordering what commutes.
     """
     exponents: dict[sp.Basic, sp.Basic] = {}
     for factor in factors:
@@ -1406,20 +1300,17 @@ def _cancelling(factors: Sequence[sp.Basic]) -> bool:
 
 
 def _explodes(base: sp.Basic, exponent: sp.Basic) -> bool:
-    """Whether `base^exponent` is a number too big to be worth building.
+    """Whether `base^exponent` is a number too big to build.
 
-    Sympy evaluates `Integer**Integer` as the power is constructed, so this is
-    the only place the question can be asked: by the time `10^10^10` exists it
-    is ten billion digits of it, four gigabytes, and an OOM kill rather than an
-    answer - and the kill takes the worksheet with it. Refusing beforehand is
-    what Derive does with what it cannot do: the expression comes back as it
-    was written, an inert power that prints and saves as `10^10^10`.
+    Sympy evaluates `Integer**Integer` on construction, so this must be checked first:
+    `10^10^10` would be ten billion digits, and an OOM kill would take the worksheet
+    with it. As with anything Derive can't do, the expression comes back as written,
+    an inert power that prints and saves as `10^10^10`.
 
-    Only exact rationals are judged. A float power costs the working precision
-    whatever the exponent, and a symbolic one is not a number to build.
+    Only exact rationals are checked; float powers cost only the working precision, and
+    symbolic ones aren't built as numbers.
     """
-    # By class rather than by assumption: not everything raised to a power is
-    # a number with assumptions to ask about, a matrix least of all.
+    # Check by class rather than assumptions, since the base may be a matrix.
     if not (isinstance(exponent, sp.Integer) and isinstance(base, sp.Rational)):
         return False
     if base.is_zero:
@@ -1431,8 +1322,8 @@ def _explodes(base: sp.Basic, exponent: sp.Basic) -> bool:
 def _nameable(value: sp.Basic) -> bool:
     """Whether a subscript index can be part of a symbol's name.
 
-    A name and a nonnegative numeral can; a negative one cannot, since
-    `x SUB -1` is not something the grammar reads back.
+    Names and nonnegative numerals can; a negative numeral can't, since the grammar
+    doesn't read back `x SUB -1`.
     """
     if type(value) is sp.Symbol:
         return True
@@ -1444,7 +1335,7 @@ def _all_matrices(elements: list) -> bool:
 
 
 def _element(matrix: sp.MatrixBase, index: sp.Basic) -> sp.Basic | None:
-    """`v SUB n`, counting from 1. None if that is not an index."""
+    """`v SUB n`, counting from 1, or None if `n` isn't a valid index."""
     if not isinstance(index, sp.Integer) or index < 1:
         return None
     number = int(index)
@@ -1464,13 +1355,11 @@ def _one(args: list) -> sp.Basic:
 
 
 def _direct(func: Callable[..., sp.Basic]) -> Handler:
-    """A head that is its sympy counterpart applied to its arguments.
+    """A head that maps directly to a sympy function.
 
-    Not over a matrix nobody knows the elements of. Sympy answers `ABS(a)`
-    there with the square root of `a . CONJ(a)` that defines it and `RE(a)`
-    with the half sum of `a` and its conjugate that defines it, which is true,
-    is no simplification, and is written with heads the notation has no
-    spelling for. Such a call comes back as it was written.
+    Symbolic matrix arguments are refused: sympy would expand `ABS(a)` and `RE(a)` into
+    their definitions in terms of `a . CONJ(a)` and the conjugate, which is no
+    simplification and uses heads Derive can't write. Such calls come back as written.
     """
 
     def handler(conv: Converter, args: list) -> sp.Basic:
@@ -1482,10 +1371,10 @@ def _direct(func: Callable[..., sp.Basic]) -> Handler:
 
 
 def _trig(func: Callable[..., sp.Basic]) -> Handler:
-    """A trigonometric head, its argument read in the angular unit in force.
+    """A trigonometric head, with its argument in the current angle unit.
 
-    The special angles sympy spells differently from the original are worked
-    out here rather than left to it; everything else is sympy's own value.
+    Special angles that sympy writes differently from the original are computed here;
+    everything else is left to sympy.
     """
 
     def handler(conv: Converter, args: list) -> sp.Basic:
@@ -1496,34 +1385,27 @@ def _trig(func: Callable[..., sp.Basic]) -> Handler:
     return handler
 
 
-#: The odd parts of a denominator whose angle has a value in radicals. Section
-#: 6.3 p.104 names them: an argument of `pi/n` comes out algebraic for `n` a
-#: power of two times 1, 3, 5 or 15. Any other odd part - `pi/7`, `pi/56` - has
-#: no radical to be written with, and waits as the call it was written as.
+#: Odd parts of `n` for which `pi/n` has trigonometric values in radicals (section
+#: 6.3 p.104): `n` must be a power of two times 1, 3, 5 or 15. Others, like `pi/7` or
+#: `pi/56`, stay as written.
 _ALGEBRAIC_PARTS = frozenset({1, 3, 5, 15})
 
 
 def _halved_angle(func: Callable[..., sp.Basic], argument: sp.Basic) -> sp.Basic | None:
-    """The sine or cosine of `argument`, worked out by halving, or `None`.
+    """The sine or cosine of `argument` computed by the half-angle formula, or None.
 
-    The original reaches an angle with more than two factors of two under it by
-    the half-angle formula, and writes the nested square root that comes out:
-    `SIN(pi/24)` is `SQRT(-SQRT(2)/8 - SQRT(6)/8 + 1/2)`, the root of half of
-    one less the cosine of `pi/12`. Sympy reaches the same angle by an angle
-    difference instead, so `SIN(pi/24)` is a sum of two radicals there, and
-    `SIN(pi/16)` is no value at all: sympy has no table entry for a sixteenth
-    and no rule that builds one.
+    The original uses the half-angle formula for denominators with more than two factors
+    of two, writing nested roots: `SIN(pi/24)` is `SQRT(-SQRT(2)/8 - SQRT(6)/8 + 1/2)`.
+    Sympy uses an angle difference instead (a sum of two radicals), and has no value for
+    `SIN(pi/16)` at all.
 
-    Only where a third factor of two is under the angle. A denominator of `m`,
-    `2*m` or `4*m` is one sympy already has the flat value for - `SQRT(2)/2`,
-    `SQRT(6)/4 - SQRT(2)/4` - and halving into those would write a nested root
-    where neither writes one.
+    Only applies with at least three factors of two. For denominators `m`, `2*m` or
+    `4*m`, sympy already has flat values like `SQRT(2)/2` or `SQRT(6)/4 - SQRT(2)/4`,
+    and halving would introduce nesting neither writes.
 
-    Which of the two roots the formula gives is the one the sign of the value
-    picks, and the sign is read off where the angle falls in the period: a sine is
-    positive for an angle a whole number of turns past one between 0 and pi, and a
-    cosine is the sine of the angle a quarter turn on. It is never zero: a
-    vanishing sine or cosine needs a denominator of 1 or 2.
+    The sign of the root comes from where the angle falls in the period: sine is
+    positive between 0 and pi (mod 2*pi), and cosine is the sine a quarter turn on. The
+    value is never zero, which would need a denominator of 1 or 2.
     """
     if func not in (sp.sin, sp.cos):
         return None
@@ -1547,12 +1429,11 @@ def _arctrig(func: Callable[..., sp.Basic]) -> Handler:
 
 
 def _gcd_of(values: list[sp.Basic]) -> sp.Basic:
-    """The greatest common divisor of `values`, standing where they are not numbers.
+    """The greatest common divisor of `values`, unevaluated for non-numbers.
 
-    The numbers among them are one divisor between them, and a zero divides
-    nothing away: `GCD(6, 4, m)` is `GCD(2, m)` and `GCD(m, 0)` is `ABS(m)`. The
-    rest are taken two at a time from the left, `GCD(a, b, c)` being
-    `GCD(c, GCD(b, a))`.
+    The numbers are combined into one divisor, and zero contributes nothing:
+    `GCD(6, 4, m)` is `GCD(2, m)` and `GCD(m, 0)` is `ABS(m)`. The rest are nested
+    pairwise from the left.
     """
     numbers = [value for value in values if value.is_number]
     others = [value for value in values if not value.is_number]
@@ -1571,10 +1452,9 @@ def _gcd_of(values: list[sp.Basic]) -> sp.Basic:
 
 
 def _lcm_of(values: list[sp.Basic]) -> sp.Basic:
-    """The least common multiple of `values`, two at a time from the left.
+    """The least common multiple of `values`, combined pairwise from the left.
 
-    Of two that are not both numbers it is the product over their greatest common
-    divisor, `LCM(m, n)` being `|m*n|/GCD(n, m)`.
+    For non-numbers, `LCM(m, n)` is `|m*n|/GCD(n, m)`.
     """
     result = values[0] if len(values) > 1 else sp.Abs(values[0])
     for value in values[1:]:
@@ -1604,18 +1484,17 @@ _INVERSE_TRIGONOMETRIC = {
 }
 
 def _ln(value: sp.Basic) -> sp.Basic:
-    """`LN(z)`, which at zero is `-inf`.
+    """`LN(z)`, which is `-inf` at zero.
 
-    That is the limit of the logarithm as a positive argument falls to zero, and
-    from any direction its real part `LN(ABS(z))` falls the same way. Sympy answers
-    complex infinity, as for a pole, which would let `LN(0)` be `+inf` as well.
+    That is the limit from the positive side, and the real part `LN(ABS(z))` tends to it
+    from every direction. Sympy gives complex infinity, which would allow `+inf` too.
     """
     if getattr(value, "is_zero", None) is True:
         return -sp.oo
     return sp.log(value)
 
 
-#: Functions that are their sympy counterpart applied to its arguments.
+#: Functions that map directly to a sympy function.
 _DIRECT: dict[str, Callable[..., sp.Basic]] = {
     "SQRT": sp.sqrt,
     "EXP": sp.exp,
@@ -1643,19 +1522,17 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
     "ACOTH": sp.acoth,
     "ASECH": sp.asech,
     "ACSCH": sp.acsch,
-    # The hyperbolic cosine and sine integrals, which Derive shipped no name
-    # for. Upper-casing `Chi` cannot name the first: `CHI` is the chi-square
-    # distribution. `COSH_INT` is free, reads in Derive's idiom, and its
-    # partner is spelled to match rather than as the `SHI` upper-casing gives
-    # it.
+    # The hyperbolic cosine and sine integrals, which Derive has no names for.
+    # `CHI` (upper-cased `Chi`) is already taken, so these are `COSH_INT` and the
+    # matching `SINH_INT`.
     "COSH_INT": sp.Chi,
     "SINH_INT": sp.Shi,
     "EI": sp.Ei,
     "SI": sp.Si,
     "CI": sp.Ci,
     "ERFI": sp.erfi,
-    # Sympy holds the digamma function as the polygamma function of order zero, which
-    # the printer writes back as `DIGAMMA`.
+    # Sympy represents digamma as polygamma of order zero; the printer writes it back
+    # as `DIGAMMA`.
     "DIGAMMA": sp.digamma,
     "POLYGAMMA": sp.polygamma,
     "POLYLOG": sp.polylog,
@@ -1666,20 +1543,16 @@ _DIRECT: dict[str, Callable[..., sp.Basic]] = {
 def _sign(conv: Converter, args: list) -> sp.Basic:
     """`SIGN(0)` is `+-1`, overriding sympy's `0`.
 
-    Section 6.8 defines the sign of a complex number as its point on the unit
-    circle, `z/|z|`, and the original answers `SIGN(3 + 4*#i)` with
-    `3/5 + 4*#i/5`. Sympy takes only the pure imaginaries that far, so a
-    number off both axes is divided by its magnitude here. Only a number:
-    what `SIGN(z)` is for a name depends on where the name lies, and it waits
-    as it always did.
+    Section 6.8 defines the sign of a complex number as `z/|z|`, so `SIGN(3 + 4*#i)` is
+    `3/5 + 4*#i/5`. Sympy only does this for pure imaginaries, so other complex numbers
+    are divided by their magnitude here. Symbolic arguments stay unevaluated.
     """
     value = _one(args)
     if value.is_zero:
         return PlusMinus(sp.Integer(1))
     if value.is_number and value.is_extended_real is False:
         magnitude = sp.Abs(value)
-        # A magnitude that will not come out is no answer: the bars are as
-        # much of a wait as the `SIGN` was, and longer to read.
+        # An unevaluated magnitude is no improvement over `SIGN`.
         if not magnitude.has(sp.Abs):
             return value / magnitude
     return sp.sign(value)
@@ -1688,9 +1561,9 @@ def _sign(conv: Converter, args: list) -> sp.Basic:
 def _step(conv: Converter, args: list) -> sp.Basic:
     """`STEP(x)` is `SIGN(x)/2 + 1/2`.
 
-    The 6.1 help says so where the sign of `x` cannot be determined, and the sign of zero
-    is indeterminate: `STEP(0)` is `SIGN(0)/2 + 1/2`, undecided on the jump in the way
-    `CHI` is on the edge of its interval.
+    The 6.1 help gives this when the sign of `x` is unknown, and the sign of zero is
+    indeterminate: `STEP(0)` is `SIGN(0)/2 + 1/2`, undecided at the jump, just as `CHI`
+    is at the edge of its interval.
     """
     value = _one(args)
     if value.is_zero:
@@ -1701,16 +1574,13 @@ def _step(conv: Converter, args: list) -> sp.Basic:
 def _chi(conv: Converter, args: list) -> sp.Basic:
     """`CHI(a, x, b)`: the indicator of the interval between `a` and `b`.
 
-    One difference of signs, `SIGN(x - a)/2 - SIGN(x - b)/2`, which is the
-    equivalent the manual gives for the case where the comparisons cannot be
-    made - and, as the original shows, the answer in every other case too.
-    Nothing here has to rule on where `x` lies, because the signs do: between
-    the two the difference is 1, outside it is 0, and beyond a reversed pair it
-    is -1, which is the manual's `CHI(a, x, b) = -CHI(b, x, a)`.
+    Computed as `SIGN(x - a)/2 - SIGN(x - b)/2`, which the manual gives for when the
+    comparisons can't be made, and which the original uses in every case. The signs do
+    the work: 1 inside, 0 outside, and -1 for a reversed interval, matching the manual's
+    `CHI(a, x, b) = -CHI(b, x, a)`.
 
-    The endpoints follow from the same formula rather than from a rule of their
-    own. `SIGN(0)` is `±1`, so `CHI(0, 0, 1)` is `±1/2 + 1/2`: the indicator is
-    undecided exactly on the edge of the interval it indicates.
+    At the endpoints, `SIGN(0)` is `±1`, so `CHI(0, 0, 1)` is `±1/2 + 1/2`, undecided
+    exactly on the edge.
 
     `a` defaults to 0 and `b` to 1, so `CHI(x)` indicates the unit interval.
     """
@@ -1733,13 +1603,11 @@ def _log(conv: Converter, args: list) -> sp.Basic:
 
 
 def _normal(conv: Converter, args: list) -> sp.Basic:
-    """`NORMAL(z, m, s)`: the normal distribution of mean `m` and deviation `s`.
+    """`NORMAL(z, m, s)`: the normal distribution with mean `m` and deviation `s`.
 
-    The statistical function, which is what Derive means by the name - nothing
-    to do with normal form, and nothing a pipeline is needed for. The manual
-    writes it over the error function as `(ERF(√2·z/(2·s) - √2·m/(2·s)) + 1)/2`,
-    and with `m` defaulting to 0 and `s` to 1 that leaves `NORMAL(z)` the
-    cumulative distribution `Φ(z)` of the standard Gaussian.
+    The statistical function, unrelated to normal form. The manual defines it as
+    `(ERF(SQRT(2)*z/(2*s) - SQRT(2)*m/(2*s)) + 1)/2`. With the defaults `m = 0` and
+    `s = 1`, `NORMAL(z)` is the standard normal cumulative distribution.
     """
     value, *rest = args
     mean = rest[0] if rest else sp.Integer(0)
@@ -1749,20 +1617,18 @@ def _normal(conv: Converter, args: list) -> sp.Basic:
 
 # -- the annuity of section 6.12 ---------------------------------------------
 #
-# `v*(1 + i)^n + p*(1 + i*t)*((1 + i)^n - 1)/i + f = 0` is the contract the
-# financial functions describe: a present value `v` earning a periodic rate `i`
-# over `n` periods against a fixed payment `p`, ending at a future value `f`,
-# where `t` says where in the period the payment falls. Each function below is
-# that equation solved for one of its own.
+# The financial functions describe the contract
+# `v*(1 + i)^n + p*(1 + i*t)*((1 + i)^n - 1)/i + f = 0`: a present value `v` earning a
+# periodic rate `i` over `n` periods with a fixed payment `p`, ending at a future
+# value `f`, where `t` says when in the period payments fall. Each function solves
+# the equation for one variable.
 #
-# Every one of them divides by the rate, so every one is undefined where there
-# is no rate: `PMT(0, 10, 1000)` is `?`, and the original takes no limit to
-# rescue it.
+# All of them divide by the rate, so they are undefined at a zero rate:
+# `PMT(0, 10, 1000)` is `?`, and the original takes no limit.
 #
-# Four of the five are solved for here. The rate is not one of them: no
-# rearrangement isolates `i`, and what the original does instead is search for
-# it, which is why `RATE` fills its arguments in here and is answered by the
-# pipeline, where a solver can be reached.
+# Four of the five are solved here. The rate can't be isolated, so the original
+# searches for it; `RATE` therefore only fills in its arguments here and is answered
+# by the pipeline, which has a solver.
 
 
 def annuity(
@@ -1773,7 +1639,7 @@ def annuity(
     future: sp.Basic,
     when: sp.Basic,
 ) -> sp.Basic:
-    """Section 6.12's contract, worth zero when its six terms agree."""
+    """Section 6.12's contract, which is zero when its six terms are consistent."""
     return (
         present * (1 + rate) ** periods
         + payment * (1 + rate * when) * ((1 + rate) ** periods - 1) / rate
@@ -1782,12 +1648,10 @@ def annuity(
 
 
 def _financial(args: list, count: int) -> list:
-    """The arguments of a financial function, with the ones it lets go filled in.
+    """The arguments of a financial function, with optional ones filled in.
 
-    The two values a contract can do without default to zero, and so does the
-    time of payment, which is the end of the period. Fewer arguments than say
-    what the contract is, or more than the function takes, and there is nothing
-    to compute: the call stays inert, as any other unreadable one does.
+    The two optional values default to zero, as does the payment time (end of period).
+    Too few or too many arguments raise, leaving the call inert.
     """
     if not 2 <= len(args) <= count:
         raise TypeError("not a financial contract")
@@ -1795,14 +1659,14 @@ def _financial(args: list, count: int) -> list:
 
 
 def _present_value(conv: Converter, args: list) -> sp.Basic:
-    """`PVAL(i, n, p, f, t)`: what the contract is worth now."""
+    """`PVAL(i, n, p, f, t)`: the contract's present value."""
     rate, periods, payment, future, when = _financial(args, 5)
     due = payment * (rate * when + 1)
     return ((due - future * rate) / (1 + rate) ** periods - due) / rate
 
 
 def _future_value(conv: Converter, args: list) -> sp.Basic:
-    """`FVAL(i, n, p, v, t)`: what the contract will be worth."""
+    """`FVAL(i, n, p, v, t)`: the contract's future value."""
     rate, periods, payment, present, when = _financial(args, 5)
     due = payment * (rate * when + 1)
     grown = (1 + rate) ** periods * (rate * (payment * when + present) + payment)
@@ -1810,14 +1674,14 @@ def _future_value(conv: Converter, args: list) -> sp.Basic:
 
 
 def _payment(conv: Converter, args: list) -> sp.Basic:
-    """`PMT(i, n, v, f, t)`: what is paid each period."""
+    """`PMT(i, n, v, f, t)`: the payment per period."""
     rate, periods, present, future, when = _financial(args, 5)
     growth = (1 + rate) ** periods
     return rate * (present * growth + future) / ((1 - growth) * (rate * when + 1))
 
 
 def _periods(conv: Converter, args: list) -> sp.Basic:
-    """`NPER(i, p, v, f, t)`: how many periods it runs for."""
+    """`NPER(i, p, v, f, t)`: the number of periods."""
     rate, payment, present, future, when = _financial(args, 5)
     due = payment * (rate * when + 1)
     return sp.log(
@@ -1825,35 +1689,28 @@ def _periods(conv: Converter, args: list) -> sp.Basic:
     ) / sp.log(1 + rate)
 
 
-#: The generator `RANDOM` draws from. Its own rather than the module's, so
-#: that seeding it says something about this program and not about whatever
-#: else in the process wanted a random number.
+#: The generator `RANDOM` draws from, separate from the module's so seeding it doesn't
+#: affect anything else in the process.
 _GENERATOR = random.Random()
 
-#: When the program started, which is what `RANDOM(0)` reports the distance
-#: from, and the outcomes a number in [0, 1) is drawn from. The original draws
-#: a rational rather than a decimal - `RANDOM(1)` answers 242469/1540430 - and
-#: a power of two divided out is the same kind of number, reduced the same way.
+#: The program start time, from which `RANDOM(0)` measures, and the number of outcomes
+#: a number in [0, 1) is drawn from. The original draws a rational (`RANDOM(1)` gives
+#: 242469/1540430), and a fraction over a power of two is likewise a rational.
 _STARTED = time.monotonic()
 _OUTCOMES = 2**32
 
 
 def _random(conv: Converter, args: list) -> sp.Basic:
-    """`RANDOM(n)`: a pseudo-random number, or the seed one is drawn from next.
+    """`RANDOM(n)`: a pseudo-random number, or a new seed.
 
-    Section 6.13 gives four cases and lets the size of a whole `n` choose
-    between them: above 1 an integer in [0, n), at 1 a number in [0, 1), below
-    0 a seed of `-n` which it answers with, and at 0 a seed taken from the
-    clock, answered with the reading it was taken from. `n` is a whole number
-    of outcomes or it is nothing: `RANDOM(6.5)` chooses no case and stays as it
-    stands.
+    Section 6.13 gives four cases by the integer `n`: above 1, an integer in [0, n); at
+    1, a number in [0, 1); below 0, seed with `-n` and return it; at 0, seed from the
+    clock and return the reading. A non-integer like `RANDOM(6.5)` stays as written.
 
-    One draw per call written, which is where this parts company with the
-    original: a generated vector substitutes into a body already converted, so
-    `VECTOR(RANDOM(6), n, 1, 100)` is one throw shown a hundred times rather
-    than the manual's hundred throws. Drawing later instead would cost the
-    other half of it, two dice in one sum being one inert call to sympy however
-    many times it is written.
+    Unlike the original, there is one draw per written call: a generated vector
+    substitutes into an already converted body, so `VECTOR(RANDOM(6), n, 1, 100)`
+    repeats one throw a hundred times. Drawing later instead would break the other
+    case, since two dice in one sum would be one identical inert call to sympy.
     """
     number = _one(args)
     if not number.is_Integer:
@@ -1872,14 +1729,12 @@ def _random(conv: Converter, args: list) -> sp.Basic:
 
 
 def _rate(conv: Converter, args: list) -> sp.Basic:
-    """`RATE(n, p, v, f, t)`: the rate the contract implies, and where to look.
+    """`RATE(n, p, v, f, t)`: the contract's rate, with search bounds filled in.
 
-    The original shows the search rather than performing it silently: this
-    simplifies to `RATE(n, p, v, f, t, 0, 1)`, the last two arguments being the
-    bounds it looks between, and a rate that is negative or above 100% has to
-    be given bounds of its own as the sixth and seventh. Filling those in is
-    all that happens here, and doing it again to the filled-in form changes
-    nothing.
+    The original makes the search visible: this simplifies to
+    `RATE(n, p, v, f, t, 0, 1)`, where the last two arguments bound the search, and a
+    negative rate or one above 100% needs explicit bounds. Only the filling in happens
+    here, and it is idempotent.
     """
     if len(args) == 6 or len(args) > 7:
         raise TypeError("not a financial contract")
@@ -1894,12 +1749,10 @@ def _atan(conv: Converter, args: list) -> sp.Basic:
 
 
 def _acot(conv: Converter, args: list) -> sp.Basic:
-    """`ACOT(x, y)` is `ATAN(y, x)`, which section 6.4 says it is.
+    """`ACOT(x, y)` is `ATAN(y, x)`, per section 6.4.
 
-    Two arguments name the two legs of the triangle rather than their ratio, so
-    the cotangent of the pair is the tangent of the same pair read the other way
-    round - and the quadrant comes with it, which is the whole point of writing
-    the legs down separately.
+    The two arguments are the legs of the triangle rather than their ratio, which
+    preserves the quadrant.
     """
     if len(args) == 2:
         return conv.angle_out(sp.atan2(args[1], args[0]))
@@ -1907,28 +1760,24 @@ def _acot(conv: Converter, args: list) -> sp.Basic:
 
 
 def _phase(conv: Converter, args: list) -> sp.Basic:
-    """`PHASE(z)`, which is an angle and is given in the unit the user works in."""
+    """`PHASE(z)`, an angle in the user's angle unit."""
     return conv.angle_out(_direct(sp.arg)(conv, args))
 
 
 def _erf(conv: Converter, args: list) -> sp.Basic:
-    """`ERF(z, w)` is `ERF(w) - ERF(z)`: the error function between the two.
-
-    One argument is the error function itself, which is the same integral taken
-    from zero.
-    """
+    """`ERF(z, w)` is `ERF(w) - ERF(z)`; with one argument, the ordinary error
+    function."""
     if len(args) == 2:
         return sp.erf(args[1]) - sp.erf(args[0])
     return sp.erf(_one(args))
 
 
 def _absolute(conv: Converter, args: list) -> sp.Basic:
-    """`ABS(z)`, and `ABS(v)` for a vector: how far from the origin it is.
+    """`ABS(z)`, and the magnitude `ABS(v)` of a vector.
 
-    Section 8.2 defines the absolute value of a vector as the square root of the
-    sum of the squares of its elements, its magnitude. A matrix is a vector of
-    vectors, and the same definition read over one gives the square root of the
-    sum of the squares of its rows' magnitudes - every element squared once.
+    Section 8.2 defines a vector's absolute value as the square root of the sum of the
+    squares of its elements. Applied to a matrix as a vector of rows, this squares
+    every element once.
     """
     value = _one(args)
     if _symbolic_matrix(value):
@@ -1940,11 +1789,10 @@ def _absolute(conv: Converter, args: list) -> sp.Basic:
 
 
 def _floor(conv: Converter, args: list) -> sp.Basic:
-    """`FLOOR(m, n)` is the floor of `m/n`, and `n` defaults to 1.
+    """`FLOOR(m, n)` is the floor of `m/n`; `n` defaults to 1.
 
-    A vector is floored element by element, which is what NUMBER.MTH's
-    `CONTINUED_FRACTION(u, n) := FLOOR(ITERATES(1/MOD(x_), x_, u, n))` asks for:
-    the partial quotients are the integer parts of the whole iterate vector.
+    Vectors are floored element-wise, as NUMBER.MTH's
+    `CONTINUED_FRACTION(u, n) := FLOOR(ITERATES(1/MOD(x_), x_, u, n))` requires.
     """
     numerator, denominator = _with_unit_default(args)
     if isinstance(numerator, sp.MatrixBase):
@@ -1976,18 +1824,15 @@ def _with_unit_default(args: list) -> tuple[sp.Basic, sp.Basic]:
 
 
 def _statistic(over: Callable[[list], sp.Basic]) -> Handler:
-    """A statistic of a sample, in each of the three forms it can be written.
+    """A statistic of a sample, given in any of three forms.
 
-    The sample is the arguments themselves, or the elements of one vector, or -
-    where the one argument is a matrix - the elements of each of its rows, in
-    which case the answers make a vector.
+    The sample is the arguments, the elements of a single vector, or, for a single
+    matrix, each of its rows (giving a vector of answers).
 
-    Which of the three a single argument is depends on what it turned out to be,
-    and one that is still a call nobody could make is none of them yet: the
-    utility files write `RMS(VECTOR(...))`, where nothing generates until the
-    definition is applied, and reading that as a sample of one would answer
-    `ABS` of a vector that has not been built. A sample of one is what anything
-    else is, the formulas being written over `n` arguments for any `n`.
+    A single argument that is still an unevaluated call isn't treated as a sample yet:
+    the utility files write `RMS(VECTOR(...))`, where the vector is generated only when
+    the definition is applied, and treating it as a sample of one would compute `ABS`
+    of an unbuilt vector. Any other single argument is a sample of one.
     """
 
     def handler(conv: Converter, args: list) -> sp.Basic:
@@ -2012,7 +1857,7 @@ def _statistic(over: Callable[[list], sp.Basic]) -> Handler:
 
 
 def _average(values: list) -> sp.Basic:
-    """The arithmetic mean: the sum over how many were summed."""
+    """The arithmetic mean."""
     return sp.Add(*values) / len(values)
 
 
@@ -2021,19 +1866,14 @@ def _root_mean_square(values: list) -> sp.Basic:
 
 
 def _variance(values: list) -> sp.Basic:
-    """The sample variance, which the manual is explicit is the unbiased one.
+    """The unbiased sample variance, as the manual specifies.
 
-    Divided by `n - 1` and not by `n`: the deviations are taken from the
-    sample's own average rather than from the distribution's, which makes them
-    smaller than the true ones by just the amount that one degree of freedom
-    accounts for. A sample of one is the case that leaves, and Derive answers
-    it with the zero its deviations sum to rather than with the `0/0` the
-    formula reads as.
+    Divided by `n - 1` rather than `n`, since deviations from the sample mean are
+    smaller than from the true mean by one degree of freedom. For a sample of one,
+    Derive gives 0 rather than `0/0`.
 
-    Each deviation carries a factor of `1/n` from the average inside it, so the
-    sum arrives as `n` separate squares over `n^2` and has to be put back over
-    one denominator to be read: `VAR(x, y)` is `(x - y)^2/2`, which is Derive's
-    answer and not the three terms multiplying it out gives.
+    The result is factored to recombine the `1/n` factors from the mean: `VAR(x, y)` is
+    `(x - y)^2/2`, as in Derive, not three expanded terms.
     """
     if len(values) == 1:
         return sp.Integer(0)
@@ -2043,35 +1883,26 @@ def _variance(values: list) -> sp.Basic:
 
 
 def _standard_deviation(values: list) -> sp.Basic:
-    """The square root of the sample variance, on the same convention."""
+    """The square root of the sample variance."""
     return sp.sqrt(_variance(values))
 
 
 def _fit(conv: Converter, args: list) -> sp.Basic:
     """`FIT(v, A)`: the least squares fit of a parameterized expression to data.
 
-    The label vector `v` names the data variables and then the expression
-    written over them, and the data matrix `A` carries one row per point: a
-    value for each data variable, then the value the expression is meant to
-    take there. What is left of the expression's variables once the data ones
-    are taken out are the parametric ones, and those are what the fit solves
-    for.
+    The label vector `v` lists the data variables followed by the expression. Each row
+    of the data matrix `A` gives values for the data variables and then the target
+    value. The expression's remaining variables are the parameters solved for.
 
-    The expression has to be linear in the parametric variables, but not in the
-    data ones - which is what makes `q*ATAN(t) + r*SIN(t)` a fit anyone can
-    ask for. Substituting a row's data values leaves an expression in the
-    parameters alone, and its derivative with respect to each parameter is that
-    parameter's coefficient there; a coefficient that still mentions a
-    parameter says the dependence was never linear, and the call comes back the
-    way it was written. What the parameters do not account for moves to the
-    other side, so the row reads as one equation of the linear system whose
-    least squares solution is the fit. As many rows as parameters solves it
-    exactly; more rows minimize the squared discrepancies.
+    The expression must be linear in the parameters, but not necessarily in the data
+    variables, so `q*ATAN(t) + r*SIN(t)` works. Substituting a row's data gives an
+    expression in the parameters whose derivatives are their coefficients; a coefficient
+    that still contains a parameter means nonlinearity, and the call stands. Each row
+    becomes one equation of a linear system solved by least squares, exactly when rows
+    equal parameters.
 
-    Everything degenerate raises: no parametric variables, rows of the wrong
-    width, fewer rows than the fit has freedom, or a design matrix of deficient
-    rank. None of those name a fit, and an inert call says so better than an
-    answer that was picked out of a family would.
+    Degenerate cases raise, leaving the call inert: no parameters, rows of the wrong
+    width, too few rows, or a rank-deficient design matrix.
     """
     labels, data = args
     labels = _matrix(labels)
@@ -2106,16 +1937,12 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
 def _is_number(conv: Converter, args: list) -> sp.Basic:
     """`NUMBER(u)`: whether `u` simplified to a number.
 
-    A predicate, and it answers one of the two truth-values however the question
-    comes out, because a test that stayed inert would leave the `IF` or `SELECT`
-    it was written for undecided. That is what the utility files use it for:
-    `NUMBER(d)` is false while `d` is still the parameter it was written as,
-    which is how a definition tells an argument that was supplied from one that
-    was left out.
+    Always answers true or false, since an inert test would leave its `IF` or `SELECT`
+    undecided. The utility files rely on this: `NUMBER(d)` is false while `d` is still an
+    unbound parameter, which tells a supplied argument from an omitted one.
 
-    A number is an integer or a rational, which is what Derive's exact
-    arithmetic is over, together with the approximation of one that Approximate
-    mode works in. A radical, `#i` and `inf` are not numbers by that reading.
+    A number is an integer, a rational, or a float from Approximate mode. Radicals,
+    `#i` and `inf` don't count.
     """
     return sp.true if isinstance(_one(args), (sp.Rational, sp.Float)) else sp.false
 
@@ -2123,15 +1950,12 @@ def _is_number(conv: Converter, args: list) -> sp.Basic:
 def _is_prime(conv: Converter, args: list) -> sp.Basic:
     """`PRIME(m)`: whether `m` is a prime number.
 
-    A predicate like `NUMBER`, and answering one of the two truth-values is the
-    whole of what it is for: `SELECT(PRIME(k), k, 1, 100)` has nothing to select
-    on from anything else. What is no integer is no prime, but neither is it
-    false - `PRIME(k)` with `k` still a variable is a question nobody has asked
-    yet - so that call comes back as it was written.
+    A predicate like `NUMBER`, so that e.g. `SELECT(PRIME(k), k, 1, 100)` works. A
+    non-integer isn't simply false, since `PRIME(k)` for a variable `k` hasn't been
+    asked yet, so such a call stays as written.
 
-    The manual's second argument is how many rounds of a probabilistic test to
-    run before believing the answer. The test here is not probabilistic, so the
-    count is accepted and makes no difference.
+    The manual's second argument is the number of rounds of a probabilistic test. The
+    test here is deterministic, so it is accepted and ignored.
     """
     value, *rounds = args
     if not isinstance(value, sp.Integer):
@@ -2140,10 +1964,10 @@ def _is_prime(conv: Converter, args: list) -> sp.Basic:
 
 
 def _next_prime(conv: Converter, args: list) -> sp.Basic:
-    """`NEXT_PRIME(m)`: the first prime above `m`, which need be no integer.
+    """`NEXT_PRIME(m)`: the first prime strictly above `m`, which needn't be an
+    integer.
 
-    Strictly above, so `NEXT_PRIME(7)` is 11. A repeat count is accepted and
-    ignored, as it is for `PRIME`.
+    `NEXT_PRIME(7)` is 11. A repeat count is accepted and ignored, as for `PRIME`.
     """
     value, *rounds = args
     if not isinstance(value, sp.Rational):
@@ -2160,18 +1984,15 @@ def _denominator(conv: Converter, args: list) -> sp.Basic:
 
 
 def _terms(conv: Converter, args: list) -> sp.Basic:
-    """`TERMS(u)`: what `u` is written as the sum of, as a vector.
+    """`TERMS(u)`: the terms of `u` as a vector.
 
-    Syntactic terms, so nothing is multiplied out first: `TERMS(x*(a + b)^2 + c)`
-    has two of them, and the manual tells the caller to compose with `EXPAND`
-    where that is not what was wanted. An expression that is no sum is one term.
+    Terms are syntactic, so nothing is expanded: `TERMS(x*(a + b)^2 + c)` has two, and
+    the manual says to compose with `EXPAND` otherwise. A non-sum is a single term.
 
-    An order there had to be, and it is the one the terms were already in:
-    descending total degree, which is what the printer writes a sum by.
+    Terms are ordered by descending total degree, as the printer writes sums.
 
-    A vector distributes, each element contributing its own row - so `TERMS` of
-    a vector of sums is the matrix of their terms wherever those come out the
-    same length.
+    A vector distributes, each element giving a row, so `TERMS` of a vector of sums is a
+    matrix if they have equal numbers of terms.
     """
     value = _one(args)
     if isinstance(value, sp.MatrixBase):
@@ -2182,23 +2003,16 @@ def _terms(conv: Converter, args: list) -> sp.Basic:
 
 
 def _factors(conv: Converter, args: list) -> sp.Basic:
-    """`FACTORS(u)`: what `u` is written as the product of, as a vector.
+    """`FACTORS(u)`: the factors of `u` as a vector.
 
-    `TERMS`'s counterpart, and syntactic in the same way: nothing is factored
-    first, so `FACTORS(x^2 - 1)` is one factor and the manual tells the caller
-    to compose with `FACTOR` where that is not what was wanted. A number is one
-    factor too - `FACTORS(12)` is `[12]`, not the prime factorisation, which is
-    what `FACTOR` is for.
+    The counterpart of `TERMS`, and likewise syntactic: `FACTORS(x^2 - 1)` is one factor
+    (compose with `FACTOR` otherwise), and `FACTORS(12)` is `[12]`, not a prime
+    factorization.
 
-    The order is Derive's, which is by the factors' bases and not their
-    exponents: most main first, `main_order`'s reading of most main, so
-    `FACTORS(2*x*y)` is `[x, y, 2]` with the number - main in nothing - last.
-    Among factors over the same main variable the compound comes before the
-    simple, `[(x + 1)^2, x]` and `[SIN(x), x]`, which is descending in sympy's
-    own ordering of them.
+    Factors are ordered as in Derive, by `_by_mainness`: `FACTORS(2*x*y)` is
+    `[x, y, 2]`, and `[(x + 1)^2, x]` and `[SIN(x), x]` put compound factors first.
 
-    A vector distributes, each element contributing its own row, exactly as
-    `TERMS` does.
+    A vector distributes, each element giving a row, as with `TERMS`.
     """
     value = _one(args)
     if isinstance(value, sp.MatrixBase):
@@ -2210,14 +2024,12 @@ def _factors(conv: Converter, args: list) -> sp.Basic:
 
 
 def _by_mainness(pieces: list) -> list:
-    """`pieces` from most main to least, which is Derive's ordering of them.
+    """`pieces` sorted from most main to least, as Derive orders them.
 
-    Most main is `main_order`'s reading of the variable a piece is mainly
-    about, and the compound comes before the simple where two are about the
-    same variable: `SIN(x)` ahead of `x`, `(x + 1)^2` ahead of `x`. That second
-    part is descending in sympy's own ordering, which is the one that puts the
-    plain symbol first. What mentions no variable at all is main in nothing and
-    goes last, which is where a product's numeric coefficient belongs.
+    Mainness follows `main_order` for the piece's variables. Among pieces with the same
+    main variable, compound ones come first (`SIN(x)` and `(x + 1)^2` before `x`), which
+    is the reverse of sympy's order. Pieces without variables, like a numeric
+    coefficient, go last.
     """
     order = main_order(name for piece in pieces for name in _named_in(piece))
 
@@ -2230,17 +2042,16 @@ def _by_mainness(pieces: list) -> list:
 
 
 def _named_in(value: sp.Basic) -> set[str]:
-    """The variables `value` mentions. A string literal is data, not one."""
+    """The names of variables in `value`, excluding string literals."""
     return {symbol.name for symbol in value.free_symbols if type(symbol) is sp.Symbol}
 
 
 def _side(index: int) -> Handler:
     """`LHS(u)` and `RHS(u)`: one side of a relation.
 
-    A vector distributes, which is the manual's own reason for the pair:
-    `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is the vector of roots. What is no
-    relation has no sides to take and answers with itself, both ways - Derive
-    gives `LHS(2*x + 3)` back as `2*x + 3`.
+    Vectors distribute, so `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is the vector of roots. A
+    non-relation is returned as is for both, as Derive gives `LHS(2*x + 3)` as
+    `2*x + 3`.
     """
 
     def handler(conv: Converter, args: list) -> sp.Basic:
@@ -2248,9 +2059,7 @@ def _side(index: int) -> Handler:
         if isinstance(value, sp.MatrixBase):
             return vector_of([handler(conv, [e]) for e in _elements_of(value)])
         if isinstance(value, InertVector):
-            # Which is what a vector of relations is: sympy holds no matrix of
-            # them, and a vector of relations is exactly what has sides worth
-            # taking.
+            # A vector of relations, which sympy can't hold as a matrix.
             return vector_of([handler(conv, [e]) for e in value.args])
         if value.is_Relational:
             return value.args[index]
@@ -2260,41 +2069,34 @@ def _side(index: int) -> Handler:
 
 
 def _quotient(conv: Converter, args: list) -> sp.Basic:
-    """`QUOTIENT(u, v)`: how many times `v` goes into `u`."""
+    """`QUOTIENT(u, v)`: the polynomial quotient of `u` by `v`."""
     return _divided(args)[0]
 
 
 def _remainder(conv: Converter, args: list) -> sp.Basic:
-    """`REMAINDER(u, v)`: what is left of `u` when `v` has gone into it."""
+    """`REMAINDER(u, v)`: the polynomial remainder of `u` by `v`."""
     return _divided(args)[1]
 
 
 def _divided(args: list) -> tuple[sp.Basic, sp.Basic]:
-    """Polynomial division, in the main variable and over everything else.
+    """Polynomial division in the main variable, with other variables as coefficients.
 
-    The division is with respect to one variable, and the other variables ride
-    along in the coefficients as a field would: `QUOTIENT(x*y + 1, y)` is
-    `x + 1/y` with nothing left over, because as polynomials in `x` the divisor
-    is a constant and a constant divides exactly.
+    Other variables act as field coefficients: `QUOTIENT(x*y + 1, y)` is `x + 1/y` with
+    no remainder, since in `x` the divisor is a constant.
 
-    Two numbers have no variable to divide in, and are a field on their own:
-    the quotient is the fraction and the remainder is nothing, so
-    `QUOTIENT(7, 2)` is `7/2` rather than 3. That is Derive's answer, and the
-    manual's "`u` and `v` should be rational numbers or polynomials" is the
-    same statement - the rationals are where its division is exact.
+    Two numbers divide exactly: `QUOTIENT(7, 2)` is `7/2`, not 3, as in Derive (the
+    manual says `u` and `v` should be rationals or polynomials).
 
-    What the main one is, sympy's own reading of what the two are polynomials
-    in, ordered by `_by_mainness`: usually a variable, and a kernel where the
-    expression is a polynomial in one. `QUOTIENT(SIN(x), SIN(x)^2)` is 0 with
-    `SIN(x)` left over, which only makes sense in `SIN(x)`; `QUOTIENT(SIN(x),
-    x)` is `SIN(x)/x` in the same reading, the divisor being a coefficient
-    there. Both are Derive's answers.
+    The main variable is the most main (by `_by_mainness`) of sympy's generators, which
+    may be a kernel: `QUOTIENT(SIN(x), SIN(x)^2)` is 0 with remainder `SIN(x)`, and
+    `QUOTIENT(SIN(x), x)` is `SIN(x)/x`, the divisor being a coefficient. Both match
+    Derive.
     """
     numerator, denominator = args
     try:
         generators = sp.parallel_poly_from_expr((numerator, denominator))[1].gens
     except sp.PolificationFailed:
-        # Two numbers, which are a field on their own.
+        # Two numbers: divide exactly.
         return numerator / denominator, sp.Integer(0)
     return sp.div(numerator, denominator, _by_mainness(list(generators))[0])
 
@@ -2302,8 +2104,7 @@ def _divided(args: list) -> tuple[sp.Basic, sp.Basic]:
 def _polynomial_gcd(conv: Converter, args: list) -> sp.Basic:
     """`POLY_GCD(u, v)`: the greatest common divisor of two polynomials.
 
-    `GCD` over a wider domain rather than a different function, and numbers are
-    the polynomials of no variables: `POLY_GCD(12, 18)` is 6.
+    Numbers are constant polynomials, so `POLY_GCD(12, 18)` is 6.
     """
     left, right = args
     return sp.gcd(left, right)
@@ -2312,16 +2113,12 @@ def _polynomial_gcd(conv: Converter, args: list) -> sp.Basic:
 def _variables(conv: Converter, args: list) -> sp.Basic:
     """`VARIABLES(u)`: the free variables of `u`, from most main to least.
 
-    Most main first is `ordering`'s order and Derive's own: the order list `x`,
-    `y`, `z` ahead of everything else, and everything else alphabetically. An
-    order there had to be - sympy holds the free variables as a set, and an
-    answer the worksheet stores as text has to print the same every time.
+    The order is `ordering`'s, as in Derive: `x`, `y`, `z` first, then alphabetical. A
+    fixed order is needed since sympy returns a set and the answer must print the same
+    every time.
 
-    The symbols found are the ones returned, rather than symbols built again
-    from their names, so that each carries the domain it was declared with.
-
-    A string literal is a `Symbol` to sympy and data to Derive, and is no more a
-    free variable of the expression holding it than a numeral is.
+    The original symbols are returned, so they keep their declared domains. String
+    literals are excluded.
     """
     found = _one(args).free_symbols
     by_name = {symbol.name: symbol for symbol in found if type(symbol) is sp.Symbol}
@@ -2329,16 +2126,13 @@ def _variables(conv: Converter, args: list) -> sp.Basic:
 
 
 def _dif(conv: Converter, args: list) -> sp.Basic:
-    """`DIF(u, x)` and `DIF(u, x, n)`, unevaluated. `.doit()` is a decision.
+    """`DIF(u, x)` and `DIF(u, x, n)`, unevaluated.
 
-    A negative order is an antiderivative taken that many times (7.4, p.177):
-    `DIF(u, x, -2)` is the second antiderivative, which is `INT(INT(u, x), x)`.
-    Sympy has no head for a derivative of negative order, and the integral is
-    the same computation waiting in the same place.
+    A negative order means repeated antiderivatives (7.4, p.177): `DIF(u, x, -2)` is
+    `INT(INT(u, x), x)`, since sympy has no head for a negative-order derivative.
 
-    A vector or matrix is differentiated element by element, and so keeps its shape
-    whatever the elements come to: `DIF([1, 1], x)` is `[0, 0]`, where sympy would
-    answer the derivative of a matrix that does not mention `x` with the scalar 0.
+    Vectors and matrices are differentiated element-wise and keep their shape:
+    `DIF([1, 1], x)` is `[0, 0]`, where sympy would give the scalar 0.
     """
     _variable(args[1])
     if isinstance(args[0], sp.MatrixBase):
@@ -2356,15 +2150,12 @@ def _dif(conv: Converter, args: list) -> sp.Basic:
 def _integral(conv: Converter, args: list) -> sp.Basic:
     """`INT(u, x)` and `INT(u, x, a, b)`, both unevaluated.
 
-    A vector or matrix is integrated element by element, keeping its shape. A vector
-    as one of the limits is one integral per element of it: `INT(x^2, x, 0, [1, 2])`
-    is `[1/3, 8/3]`. Two vectors of limits pair up nothing in particular, and the
-    call stands.
+    Vectors and matrices are integrated element-wise, keeping their shape. A vector
+    limit gives one integral per element: `INT(x^2, x, 0, [1, 2])` is `[1/3, 8/3]`. Two
+    vector limits are refused, and the call stands.
 
-    A definite integral of an equation is the equation of the integrals of its
-    sides. An antiderivative of one is not: each side's antiderivative is fixed only
-    up to its own constant, so `INT(y = x, x)` has no equation that follows from
-    `y = x`, and the call stands.
+    A definite integral of an equation integrates both sides. An antiderivative of one
+    doesn't, since each side has its own constant, so `INT(y = x, x)` stands.
     """
     _variable(args[1])
     if isinstance(args[0], sp.MatrixBase):
@@ -2389,7 +2180,7 @@ def _integral(conv: Converter, args: list) -> sp.Basic:
 
 
 def _variable(variable: sp.Basic) -> None:
-    """Refuse a vector where a calculus function takes the variable it works in."""
+    """Refuse a vector as a calculus function's variable."""
     if isinstance(variable, (sp.MatrixBase, InertVector)):
         raise TypeError("not a variable")
 
@@ -2397,11 +2188,10 @@ def _variable(variable: sp.Basic) -> None:
 def _over_vector_limits(
     conv: Converter, build: Callable[[Converter, list], sp.Basic], args: list
 ) -> sp.Basic | None:
-    """`build` over each element of the one limit in `args` that is a vector.
+    """Apply `build` for each element of whichever limit in `args` is a vector.
 
-    `args` is `u, k, a, b`, and the answer is the vector of the calls with each
-    element of that vector in its place, or None where neither limit is a vector.
-    Two vectors of limits pair up nothing in particular, and are refused.
+    `args` is `u, k, a, b`. Returns the vector of results, or None if neither limit is
+    a vector. Two vector limits are refused.
     """
     expression, variable, low, high = args
     if isinstance(low, sp.MatrixBase) and isinstance(high, sp.MatrixBase):
@@ -2416,13 +2206,12 @@ def _over_vector_limits(
 def _summation(conv: Converter, args: list) -> sp.Basic:
     """`SUM(u, k, a, b)`, and `SUM(v)` over the elements of a vector.
 
-    A third argument that is a vector is the values `k` takes, rather than the
-    ends of a range it runs through. One that is not is the top of a range from
-    1: `SUM(u, k, m)` is `SUM(u, k, 1, m)`. A vector as one of the two ends is one
-    sum per element of it, as it is for `INT`: `SUM(k, k, [1, 2], 3)` is `[6, 5]`.
+    A vector third argument lists the values of `k`; otherwise it is the upper end of a
+    range from 1, so `SUM(u, k, m)` is `SUM(u, k, 1, m)`. A vector limit gives one sum
+    per element, as for `INT`: `SUM(k, k, [1, 2], 3)` is `[6, 5]`.
 
-    An indefinite `SUM(u, k)` is the antidifference of `u`, which is a
-    computation and so waits for the evaluation the way the calculus heads do.
+    An indefinite `SUM(u, k)` is the antidifference of `u`, deferred like the calculus
+    heads.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Add(*args[0])
@@ -2442,10 +2231,8 @@ def _summation(conv: Converter, args: list) -> sp.Basic:
 def _product(conv: Converter, args: list) -> sp.Basic:
     """`PRODUCT(u, k, a, b)`, and `PRODUCT(v)` over a vector's elements.
 
-    A third argument that is a vector names the values, and one that is not ends a
-    range from 1, as they do for `SUM`; a vector as one end of the range is one
-    product per element of it, and an indefinite `PRODUCT(u, k)` is the antiquotient
-    of `u`.
+    Arguments work as for `SUM`. An indefinite `PRODUCT(u, k)` is the antiquotient of
+    `u`.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Mul(*args[0])
@@ -2463,15 +2250,14 @@ def _product(conv: Converter, args: list) -> sp.Basic:
 
 
 def _from_one(args: list) -> list:
-    """The arguments of a sum or a product with the low end of a range from 1
-    filled in where only the high end is written."""
+    """Sum or product arguments with a lower limit of 1 filled in if omitted."""
     if len(args) == 3:
         return [*args[:2], sp.Integer(1), args[2]]
     return args
 
 
 def _over_values(conv: Converter, args: list) -> list[sp.Basic]:
-    """The body of a sum or a product at each value its index is given."""
+    """The body of a sum or product evaluated at each listed index value."""
     expression, index, values = args
     if type(index) is not sp.Symbol:
         raise TypeError("not a variable")
@@ -2479,26 +2265,23 @@ def _over_values(conv: Converter, args: list) -> list[sp.Basic]:
 
 
 def _taylor(conv: Converter, args: list) -> sp.Basic:
-    """`TAYLOR(u, x, a, n)`, unevaluated. Computing it is a pipeline's call."""
+    """`TAYLOR(u, x, a, n)`, unevaluated; the pipeline decides when to compute it."""
     return Taylor(*args)
 
 
 def _approximation(conv: Converter, args: list) -> sp.Basic:
     """`APPROX(u)` at the session's precision, `APPROX(u, n)` at `n` digits.
 
-    Unevaluated, for the reason `Approx` gives: the rounding waits for the
-    pipeline. The digit count is filled in here because this is the last place
-    that knows what the caller was working at.
+    Left unevaluated as explained in `Approx`. The digit count is filled in here, the
+    last place that knows the caller's precision.
 
-    The number that comes back carries the digits it was asked for, but inside a
-    larger expression the printer writes it at the session's precision, so a count
-    above that one is computed and not shown. A call that is the whole expression is
-    `pipeline.approx` at its count instead, and shows them.
+    The result has the requested digits, but inside a larger expression the printer
+    uses the session's precision, so extra digits are computed but not shown. A call
+    that is the whole expression goes through `pipeline.approx` and shows them.
 
-    A count that is a number has to be a workable one, and anything else is
-    carried as it stands: NUMBER.MTH asks `PARTS(i_)` for a count written in
-    `i_`, and what the index is worth is not known until the sum around the call
-    is written out. `digit_count` is asked again when the rounding happens.
+    A numeric count must be usable; a symbolic one is kept as is. NUMBER.MTH gives
+    `PARTS(i_)` a count in terms of `i_`, known only once the enclosing sum is
+    expanded. `digit_count` is checked again when rounding.
     """
     value, *rest = args
     digits = _one(rest) if rest else sp.Integer(conv.context.precision_digits)
@@ -2508,14 +2291,11 @@ def _approximation(conv: Converter, args: list) -> sp.Basic:
 
 
 def digit_count(digits: sp.Basic) -> int | None:
-    """The whole number of digits `digits` asks for, or None where it asks for none.
+    """The integer number of digits `digits` asks for, or None if not a usable count.
 
-    A count need not be written as a whole number. NUMBER.MTH asks `PARTS` for
-    `LOG(1/(4*n*SQRT(3))*EXP(pi*SQRT(2*n/3)), 10) + 5` digits, which is 5.78
-    where `n` is 4: the digits an estimate of the answer needs, plus five to
-    spare. What can be worked to is the digits that are whole there, so the
-    count is the floor of what was asked for, and less than one digit is no
-    precision at all.
+    The count needn't be an integer: NUMBER.MTH asks `PARTS` for
+    `LOG(1/(4*n*SQRT(3))*EXP(pi*SQRT(2*n/3)), 10) + 5` digits, which is 5.78 for
+    `n = 4`. The floor is used, and less than one digit is invalid.
     """
     try:
         whole = sp.floor(digits)
@@ -2525,17 +2305,15 @@ def digit_count(digits: sp.Basic) -> int | None:
 
 
 def _conditional(conv: Converter, args: list) -> sp.Basic:
-    """`IF(c)`, `IF(c, u)` and `IF(c, u, v)` as the case split sympy writes them as.
+    """`IF(c)`, `IF(c, u)` and `IF(c, u, v)` as a sympy `Piecewise`.
 
-    Which branch a conditional is worth is the evaluator's business, which
-    decides the test before converting either branch; this is the conversion
-    of one written as it stands, which is what an undecidable one is shown as.
-    What has no `Piecewise` is Derive's fourth argument, the value where the
-    test cannot be decided at all; that form stays an inert head.
+    Choosing a branch is up to the evaluator, which decides the test before converting
+    either branch; this converts a conditional as written, which is how an undecidable
+    one is shown. Derive's four-argument form (with a value for an undecidable test) has
+    no `Piecewise` equivalent and stays an inert head.
 
-    A conditional with nothing but a test is the test as a number, one or zero,
-    which is what makes `SUM(IF(PRIME(n)), n, 1, 100)` count the primes it
-    finds rather than collect them.
+    `IF(c)` alone is the test as 1 or 0, so `SUM(IF(PRIME(n)), n, 1, 100)` counts
+    primes.
     """
     if len(args) == 1:
         return sp.Piecewise(
@@ -2549,32 +2327,26 @@ def _conditional(conv: Converter, args: list) -> sp.Basic:
 
 
 def authored_conditionals(node: Node, context: Context) -> dict[sp.Basic, str]:
-    """Every conditional in `node`, keyed by what it converts to.
+    """Every conditional in `node`, as text keyed by its converted expression.
 
-    Derive leaves an undecidable conditional exactly as it was typed: the test
-    is not turned round, the arms are not evaluated, and `IF(x > 0, 2 + 3,
-    4 + 5)` comes back with the arithmetic undone. None of that can be read off
-    the converted expression, where `2 + 3` was five before any command saw it,
-    so the text is taken from the tree here and given to the printer, which
-    writes it wherever the expression it converts to stands in an answer.
+    Derive shows an undecidable conditional exactly as typed: the test isn't rearranged
+    and the arms aren't evaluated, so `IF(x > 0, 2 + 3, 4 + 5)` keeps its arithmetic.
+    The converted expression has already lost that (`2 + 3` is 5), so the text is taken
+    from the tree and given to the printer, which uses it wherever that expression
+    appears in an answer.
 
-    What is written always converts back to what it is written for - the text
-    is where the key came from - so this substitutes a spelling and never a
-    value. Two conditionals that converge on one expression converge on one
-    spelling of it too, which is the whole of the imprecision.
+    The text always converts back to its key, so this only changes spelling, never
+    value. The one imprecision is that two conditionals converting to the same
+    expression share one spelling.
 
-    Keyed by the expression rather than spliced into it, so that a command runs
-    on exactly what it ran on before and an answer's operand order and
-    parentheses are decided by the conditional itself. A conditional the
-    evaluation decided is the key of nothing - what stands in the answer is the
-    arm it took, simplified - and one it reshaped, an argument written into a
-    function's `IF` above all, no longer matches what was written and is printed
-    as it now is. Both are what Derive shows.
+    Keying by expression rather than splicing means commands run on the same input as
+    before. A conditional the evaluator decided has no key in the answer (only the
+    chosen arm remains), and one it reshaped (typically an argument substituted into a
+    function's `IF`) no longer matches and prints as computed. Both match Derive.
 
-    The conversion is the authored subtree's own, before anything writes a
-    definition into it, since what is to be shown is what the author wrote.
-    Where that differs from what the command converted the two do not match,
-    and the answer is written as computed.
+    The authored subtree is converted before any definitions are substituted, since
+    the goal is to show what the author wrote; if that differs from what the command
+    converted, there is no match and the answer prints as computed.
     """
     authored: dict[sp.Basic, str] = {}
     for found in _conditional_nodes(node):
@@ -2588,11 +2360,7 @@ def authored_conditionals(node: Node, context: Context) -> dict[sp.Basic, str]:
 
 
 def _conditional_nodes(node: Node) -> list[Node]:
-    """Every `IF` call in the tree, outermost first.
-
-    One nested in another is here too: its own arms are its own to keep, and
-    the outer text is written whole whenever the outer conditional survives.
-    """
+    """Every `IF` call in the tree, outermost first, including nested ones."""
     found = []
     if node.kind in (Kind.CALL, Kind.APPLY) and len(node.children) > 1:
         if str(node.children[0].value).upper() == "IF":
@@ -2603,11 +2371,10 @@ def _conditional_nodes(node: Node) -> list[Node]:
 
 
 def is_conditional(expression: sp.Basic) -> bool:
-    """Whether this is a case split: a `Piecewise`, or the `IF` that has none.
+    """Whether this is a conditional: a `Piecewise`, or an inert `IF`.
 
-    Derive's fourth argument, the value to take where the test cannot be
-    decided, has no `Piecewise` to be and stays an inert head; the two are the
-    same thing to everything that resolves one.
+    The inert `IF` covers Derive's four-argument form, which has no `Piecewise`
+    equivalent; both are treated alike when resolved.
     """
     if isinstance(expression, sp.Piecewise):
         return True
@@ -2619,15 +2386,12 @@ def is_conditional(expression: sp.Basic) -> bool:
 
 
 def as_condition(test: sp.Basic) -> sp.Basic:
-    """The test of a conditional, read the way Derive reads one.
+    """A conditional's test, read as Derive reads it.
 
-    A relation, or a truth-value built out of relations, asks what it says -
-    including one written with an operator sympy declined, which is a question
-    about truth however it is spelled. Any other expression is a comparison
-    with zero that was written short: `IF(0, a, b)` is `a` and `IF(5, a, b)` is
-    `b`, because the test Derive reads there is `test = 0`. Passing such a test
-    on as it stands would instead put its truthiness to sympy, which reads it
-    the other way round.
+    Relations and boolean combinations of them (including `Logical` heads) are tests as
+    written. Any other expression is shorthand for comparing with zero: `IF(0, a, b)` is
+    `a` and `IF(5, a, b)` is `b`, because Derive reads the test as `test = 0`. Sympy's
+    truthiness would read it the opposite way.
     """
     if isinstance(test, (Boolean, Logical)):
         return _test(test)
@@ -2635,20 +2399,15 @@ def as_condition(test: sp.Basic) -> sp.Basic:
 
 
 def _test(test: sp.Basic) -> sp.Basic:
-    """A condition as sympy reads one: a relation evaluated, not held.
+    """A condition with its relations evaluated rather than held.
 
-    Everywhere else a relation is assembled undecided, so that answering one is
-    the pipeline's to do - over the declared domains, and with the two sides
-    simplified first - rather than sympy's as a side effect of the conversion.
-    The test of a conditional is the exception, `Piecewise` being entitled to
-    answer its own conditions, and an unevaluated relation is also the one form
-    of a condition it mishandles.
+    Elsewhere relations are built unevaluated, so the pipeline decides them using
+    declared domains and simplified sides. Conditional tests are the exception:
+    `Piecewise` decides its own conditions and mishandles unevaluated relations.
 
-    A conjunction of relations is where that matters most, since a held link
-    inside one is a link sympy cannot decide and a `Piecewise` refuses to be
-    built over. `NUMBER.MTH` writes `FIBONACCI`'s guard as
-    `n >= 0 AND FLOOR(n) = n`, and both links are settled the moment `n` is a
-    number.
+    This matters most for conjunctions, where an unevaluated link can't be decided and
+    `Piecewise` refuses to build. `NUMBER.MTH` guards `FIBONACCI` with
+    `n >= 0 AND FLOOR(n) = n`, and both links must be settled once `n` is a number.
     """
     if test.is_Relational:
         return test.func(test.lhs, test.rhs)
@@ -2658,21 +2417,18 @@ def _test(test: sp.Basic) -> sp.Basic:
 
 
 def _truth_table(conv: Converter, args: list) -> sp.Basic:
-    """`TRUTH_TABLE(p, q, ..., b1, b2, ...)`: the table, as a matrix.
+    """`TRUTH_TABLE(p, q, ..., b1, b2, ...)`: the truth table, as a matrix.
 
-    The leading arguments that are bare variables are the truth variables and
-    everything after them is an expression to evaluate; a call that is nothing
-    but variables is the table of the assignments themselves, which is what
-    `TRUTH_TABLE(p, q)` answers with.
+    The leading bare variables are the truth variables and the rest are expressions to
+    evaluate; with only variables, as in `TRUTH_TABLE(p, q)`, the table lists just the
+    assignments.
 
-    The first row names the columns exactly as they were written, and the rows
-    under it run through every assignment with the last variable changing
-    fastest and `true` before `false` - the order the manual prints its table
-    in, which is the binary numbers counted down from all-ones.
+    The first row is the column headings as written. The remaining rows cover every
+    assignment, last variable changing fastest and `true` before `false`, as the manual
+    prints it.
 
-    Every expression has to come out true or false at every assignment. One
-    that does not is no Boolean expression, and the call comes back as written
-    rather than a table with a hole in it.
+    Every expression must be true or false at every assignment; otherwise the call
+    stays as written.
     """
     variables: list[sp.Basic] = []
     for value in args:
@@ -2690,20 +2446,17 @@ def _truth_table(conv: Converter, args: list) -> sp.Basic:
     return vector_of(rows)
 
 
-#: The sympy head each logical operator lives under, and the word it is
-#: written with. `Logical` is the inert one, so a heading held under it is a
-#: heading Simplify walks past.
+#: Each sympy logical head and its operator name, for building inert `Logical`
+#: headings that Simplify leaves alone.
 _HEADINGS = {sp.And: "AND", sp.Or: "OR", sp.Xor: "XOR", sp.Implies: "IMP", sp.Not: "NOT"}
 
 
 def _as_written(expression: sp.Basic) -> sp.Basic:
-    """A column heading: the expression as a name for itself rather than a claim.
+    """A column heading: the expression as written, made inert.
 
-    A heading is what the column is about, and `p XOR q` heads the column of
-    what `p XOR q` comes to at each assignment. Left live, Simplify would
-    answer it - and a column headed `NOT p AND q OR p AND NOT q` names its
-    rows no better for being right. The inert head keeps the operator standing
-    where it was written; the rows below it are where the operator is applied.
+    A live `p XOR q` heading would be simplified into
+    `NOT p AND q OR p AND NOT q`, which is correct but a worse label. The inert head
+    keeps the operator as written.
     """
     word = _HEADINGS.get(type(expression))
     if word is None:
@@ -2713,7 +2466,7 @@ def _as_written(expression: sp.Basic) -> sp.Basic:
 
 
 def _decided(expression: sp.Basic, assignment: dict) -> sp.Basic:
-    """One cell: an expression at one assignment of its variables."""
+    """One cell: the expression's value under one assignment."""
     value = _test(expression.subs(assignment))
     if value not in (sp.true, sp.false):
         raise TypeError("not a boolean")
@@ -2721,12 +2474,11 @@ def _decided(expression: sp.Basic, assignment: dict) -> sp.Basic:
 
 
 def _substitution(conv: Converter, args: list) -> sp.Basic:
-    """`SUBS(u, [x, ...], [a, ...])`, the way the printer writes sympy's `Subs`.
+    """`SUBS(u, [x, ...], [a, ...])`, as the printer writes sympy's `Subs`.
 
-    The way back matters more here than legibility. A `Subs` holds a derivative
-    that is only meaningful unevaluated - `d/dv f(v)` at `v = y` is not the
-    derivative of a constant - and reading one back as an inert head would put
-    that derivative where the evaluation works it out, to zero.
+    This must read back as a `Subs`: it holds a derivative that only makes sense
+    unevaluated (`d/dv f(v)` at `v = y` isn't the derivative of a constant), and as an
+    inert head that derivative would be evaluated to zero.
     """
     expression, variables, points = args
     return sp.Subs(expression, tuple(_matrix(variables)), tuple(_matrix(points)))
@@ -2735,21 +2487,16 @@ def _substitution(conv: Converter, args: list) -> sp.Basic:
 def _limit(conv: Converter, args: list) -> sp.Basic:
     """`LIM(u, x, a)` is two-sided; a fourth argument picks a side.
 
-    A zero picks neither, and is the two-sided limit again: that is what
-    `Calculus Limit` writes for the direction it calls Both, and it writes the
-    argument whichever direction was chosen, so the four-argument form is the
-    only one that command ever builds.
+    A zero side means two-sided, which is what the `Calculus Limit` command writes for
+    Both (it always writes the fourth argument).
 
-    A vector of variables against a vector of points is the limits taken one
-    after another, in the order written, which is the form the manual offers
-    for substituting where substitution alone would divide by zero. Iterated
-    and not multivariate: `LIM(u, [x, y], [a, b])` need not agree with
-    `LIM(u, [y, x], [b, a])`, and the manual says so.
+    Vectors of variables and points take the limits one after another, in order, which
+    the manual suggests where plain substitution would divide by zero. These are
+    iterated, not multivariate, limits: `LIM(u, [x, y], [a, b])` may differ from
+    `LIM(u, [y, x], [b, a])`, as the manual notes.
 
-    A point that mentions the variable is no point to approach, and that call
-    is the substitution `MovingLimit` describes. A side written on one says
-    nothing either, there being nothing to come at from a side, so it is
-    dropped along with the limit.
+    A point mentioning the variable is a substitution (`MovingLimit`), and any side
+    argument is ignored.
     """
     if isinstance(args[1], sp.MatrixBase):
         return _iterated_limit(args)
@@ -2764,12 +2511,11 @@ def _limit(conv: Converter, args: list) -> sp.Basic:
 def _approached(
     expression: sp.Basic, variable: sp.Basic, point: sp.Basic, direction: str
 ) -> sp.Basic:
-    """One limit: the head sympy holds it in, or the substitution it means.
+    """One limit as a sympy `Limit`, or a `MovingLimit` substitution.
 
-    A matrix is approached element by element, sympy having no limit of a
-    matrix and the limit of one being the matrix of the limits. That is how
-    SOLVE.MTH's `NEWTON_AUX` writes the current iterate into a whole augmented
-    matrix at once, with `LIM(a, x, xk)` over the `a` its caller built.
+    Matrices are handled element-wise, since sympy has no matrix limits. SOLVE.MTH's
+    `NEWTON_AUX` relies on this, substituting the current iterate into a whole augmented
+    matrix with `LIM(a, x, xk)`.
     """
     if isinstance(expression, sp.MatrixBase):
         return expression.applyfunc(
@@ -2781,11 +2527,10 @@ def _approached(
 
 
 def _iterated_limit(args: list) -> sp.Basic:
-    """`LIM(u, [x, y], [a, b])`: the limit in `x`, and then in `y`.
+    """`LIM(u, [x, y], [a, b])`: the limit in `x`, then in `y`.
 
-    The first variable is approached innermost, so that the outer limit is
-    taken of what the inner one came to. Every limit is left for the
-    evaluation to take, the inner one first.
+    The first variable is innermost, so the outer limit applies to the inner result.
+    All limits are left for evaluation.
     """
     expression, variables, points = args
     names = _elements_of(variables)
@@ -2800,18 +2545,13 @@ def _iterated_limit(args: list) -> sp.Basic:
 def _interval(conv: Converter, args: list) -> sp.Basic:
     """`INTERVAL(a, b)`: a value known only to lie between `a` and `b`.
 
-    What a limit that stays bounded without settling comes to. `SIN(1/x)` near
-    zero takes every value in `INTERVAL(-1, 1)` and no one of them, so there is
-    no limit to name, and the bounds are what is known. Sympy calls this the
-    accumulation bounds and does interval arithmetic over it, which is why the
-    value keeps working after it is written down: `INTERVAL(-1, 1) + 1` is
-    `INTERVAL(0, 2)`, and it differentiates, integrates and approximates.
+    This is the result of a limit that stays bounded without converging: near zero,
+    `SIN(1/x)` takes every value in `INTERVAL(-1, 1)`. Sympy's accumulation bounds
+    support interval arithmetic, so `INTERVAL(-1, 1) + 1` is `INTERVAL(0, 2)`, and the
+    value can be differentiated, integrated and approximated.
 
-    Two arguments, the lower bound first. Bounds the wrong way round describe no
-    value at all, and an undecided pair - `INTERVAL(x, 2)`, where nothing says
-    which is lower - is not one either. Both raise instead of being turned round
-    or taken on trust, leaving the call inert rather than pretending to a
-    meaning it has not got.
+    The lower bound comes first. Reversed bounds, or bounds whose order is unknown like
+    `INTERVAL(x, 2)`, raise and leave the call inert.
     """
     low, high = args
     if (low <= high) is not sp.true:
@@ -2822,38 +2562,31 @@ def _interval(conv: Converter, args: list) -> sp.Basic:
 def _root_sum(conv: Converter, args: list) -> sp.Basic:
     """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`.
 
-    What the logarithmic part of a rational integral comes to where the
-    denominator has no factors to take it apart into: `INT(1/(x^5 - x - 1), x)`
-    is such a sum over the roots of the quintic, and there is no writing it out
-    in radicals. Sympy holds the summand as a `Lambda` over the polynomial's
-    generator; the notation says the same thing by naming the bound variable
-    second, as `SUM` names its index.
+    This is the logarithmic part of a rational integral whose denominator doesn't
+    factor: `INT(1/(x^5 - x - 1), x)` is such a sum over the quintic's roots, which have
+    no radical form. Sympy holds the summand as a `Lambda`; the notation names the bound
+    variable second, as `SUM` does.
 
-    Three arguments, a variable where the variable belongs, and a polynomial in
-    that variable alone. Anything else is a call this cannot make sense of, and
-    it raises rather than guess - `ROOT_SUM(u, k)` is an inert head, not a sum
-    over the roots of something.
+    Requires exactly three arguments, a variable, and a polynomial in that variable
+    alone; otherwise it raises, so e.g. `ROOT_SUM(u, k)` stays inert.
     """
     polynomial, variable, summand = args
     if type(variable) is not sp.Symbol:
         raise TypeError("not a variable")
     if polynomial.free_symbols - {variable}:
         raise ValueError("not a polynomial in that variable alone")
-    # `Poly` refuses what is no polynomial at all and the degree refuses a
-    # constant: neither `SIN(t)` nor 2 has roots for a sum to run over.
+    # `Poly` rejects non-polynomials like `SIN(t)`, and constants have no roots.
     if sp.Poly(polynomial, variable).degree() < 1:
         raise ValueError("not a polynomial with roots")
     return sp.RootSum(polynomial, sp.Lambda(variable, summand), variable)
 
 
 def _root_of(conv: Converter, args: list) -> sp.Basic:
-    """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counted from zero.
+    """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counting from zero.
 
-    One root of the kind `ROOT_SUM` sums over, and what sympy hands back where
-    a quintic or worse has to be solved. The index orders the roots the way
-    sympy orders them - the real ones ascending, then the complex ones - and it
-    is part of the value: two roots of one polynomial are told apart by nothing
-    else.
+    A single root of the kind `ROOT_SUM` sums over, which sympy returns when solving
+    quintics and higher. The index uses sympy's order (real roots ascending, then
+    complex) and is the only thing distinguishing roots of the same polynomial.
     """
     polynomial, variable, index = args
     if type(variable) is not sp.Symbol:
@@ -2864,11 +2597,10 @@ def _root_of(conv: Converter, args: list) -> sp.Basic:
 
 
 def _determinant(conv: Converter, args: list) -> sp.Basic:
-    """`DET(u)`: the number, or what section 8.8 says a symbolic one is worth.
+    """`DET(u)`: the determinant, or section 8.8's identities for symbolic matrices.
 
-    A matrix of numbers has a determinant to work out. A matrix nobody knows
-    the elements of has the identities instead - `DET(a^-1)` is `1/DET(a)` and
-    `DET(a . b)` is `DET(a)*DET(b)` - and sympy knows both.
+    For symbolic matrices sympy applies `DET(a^-1)` = `1/DET(a)` and
+    `DET(a . b)` = `DET(a)*DET(b)`.
     """
     value = _one(args)
     if _symbolic_matrix(value):
@@ -2884,11 +2616,10 @@ def _trace(conv: Converter, args: list) -> sp.Basic:
 
 
 def _dimension(conv: Converter, args: list) -> sp.Basic:
-    """How many elements a vector has, or how many rows a matrix has.
+    """The number of elements in a vector, or rows in a matrix.
 
-    A vector of relations is a vector too, and counting one is what the shipped
-    libraries do to a `SOLVE`: how many solutions there are is the question
-    they branch on, and no solutions is an empty vector rather than an error.
+    Vectors of relations count too: the shipped libraries branch on the number of
+    `SOLVE` solutions, and no solutions is an empty vector rather than an error.
     """
     value = _one(args)
     if isinstance(value, InertVector):
@@ -2898,18 +2629,13 @@ def _dimension(conv: Converter, args: list) -> sp.Basic:
 
 
 def _element_of(conv: Converter, args: list) -> sp.Basic:
-    """`ELEMENT(v, i)`, `ELEMENT(m, i, j)`, and on for as many dimensions as
-    there are, counting from 1.
+    """`ELEMENT(v, i)`, `ELEMENT(m, i, j)`, and so on for any number of dimensions,
+    counting from 1.
 
-    Each index in turn takes an element out of what the one before reached, so
-    the head goes as deep as it is given indices: `ELEMENT(q, 2, 1, 2)` reads
-    a number out of a vector of matrices.
-
-    A vector of relations is a vector too, and taking one out of it is how the
-    shipped ODE library reads a solution: `RHS((SOLVE(z, y)) SUB 1)`.
-
-    An index that is itself a vector is the indices in turn, so that
-    `m SUB [2, 3]` reaches what `m SUB 2 SUB 3` reaches.
+    Each index selects from the previous result: `ELEMENT(q, 2, 1, 2)` reads a number
+    from a vector of matrices. Vectors of relations work too, as the shipped ODE library
+    uses in `RHS((SOLVE(z, y)) SUB 1)`. A vector index applies its elements in turn, so
+    `m SUB [2, 3]` is `m SUB 2 SUB 3`.
     """
     value, *indices = args
     if not indices:
@@ -2922,11 +2648,10 @@ def _element_of(conv: Converter, args: list) -> sp.Basic:
 
 
 def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
-    """One element of a vector however the vector is held.
+    """One element of a vector, whichever way it is represented.
 
-    None where `index` is no index of `value`, and where `value` is no vector to take an
-    element of: an index vector can reach through `[a, b, c]` to the scalar `c` and
-    still have an index left over.
+    Returns None if `index` is invalid or `value` isn't a vector, which can happen
+    midway through an index vector that reaches a scalar with indices left over.
     """
     if isinstance(index, sp.MatrixBase):
         for step in _elements_of(index):
@@ -2945,13 +2670,12 @@ def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
 
 
 def _delete_element(conv: Converter, args: list) -> sp.Basic:
-    """`DELETE_ELEMENT(v, n)`: `v` with its `n`th element gone, counting from 1.
+    """`DELETE_ELEMENT(v, n)`: `v` without its `n`th element, counting from 1.
 
-    A matrix's elements are its rows, as they are everywhere else, so what goes
-    is the `n`th row. That is what VECTOR.MTH's `MINOR` is built on: delete a
-    row, transpose, delete what was a column, transpose back.
+    A matrix's elements are its rows, so this deletes a row. VECTOR.MTH's `MINOR`
+    relies on this: delete a row, transpose, delete a row again, transpose back.
 
-    `n` defaults to 1, as it does for the other two element functions.
+    `n` defaults to 1, as for the other element functions.
     """
     vector, *rest = args
     elements = _elements_of(_matrix(vector))
@@ -2960,10 +2684,10 @@ def _delete_element(conv: Converter, args: list) -> sp.Basic:
 
 
 def _replace_element(conv: Converter, args: list) -> sp.Basic:
-    """`REPLACE_ELEMENT(u, v, n)`: `v` with `u` where its `n`th element was.
+    """`REPLACE_ELEMENT(u, v, n)`: `v` with its `n`th element replaced by `u`.
 
-    The new value comes first and the vector second, which is the manual's order
-    and the one `INSERT_ELEMENT` shares. `n` defaults to 1.
+    New value first, then the vector, as in the manual and `INSERT_ELEMENT`. `n`
+    defaults to 1.
     """
     value, vector, *rest = args
     elements = _elements_of(_matrix(vector))
@@ -2972,12 +2696,10 @@ def _replace_element(conv: Converter, args: list) -> sp.Basic:
 
 
 def _insert_element(conv: Converter, args: list) -> sp.Basic:
-    """`INSERT_ELEMENT(u, v, n)`: `v` with `u` written in before its `n`th.
+    """`INSERT_ELEMENT(u, v, n)`: `v` with `u` inserted before its `n`th element.
 
-    The new value first and the vector second, the order `REPLACE_ELEMENT`
-    has, and `n` defaults to 1. One past the end is an index here where it is
-    none anywhere else, because that is how an element is added to the end:
-    `INSERT_ELEMENT(d, [a, b, c], 4)` is `[a, b, c, d]`.
+    Arguments are ordered as for `REPLACE_ELEMENT`, and `n` defaults to 1. One past the
+    end is allowed here, to append: `INSERT_ELEMENT(d, [a, b, c], 4)` is `[a, b, c, d]`.
     """
     value, vector, *rest = args
     elements = _elements_of(_matrix(vector))
@@ -2986,31 +2708,23 @@ def _insert_element(conv: Converter, args: list) -> sp.Basic:
 
 
 def _reversed_vector(conv: Converter, args: list) -> sp.Basic:
-    """`REVERSE_VECTOR(v)`: `v` with its elements back to front.
-
-    A matrix's elements are its rows, so a matrix comes back with its rows in
-    the opposite order and each row as it was.
-    """
+    """`REVERSE_VECTOR(v)`: `v` with its elements reversed (a matrix's rows, for a
+    matrix)."""
     return vector_of(_elements_of(_matrix(_one(args)))[::-1])
 
 
 def _appended(conv: Converter, args: list) -> sp.Basic:
-    """`APPEND(v, w, ...)`: the elements of each, run together into one vector.
+    """`APPEND(v, w, ...)`: the elements of each, concatenated into one vector.
 
-    A matrix's elements are its rows, so appending matrices stacks them - which
-    is what the manual's `APPEND_COLUMNS` exercise turns on: transpose the two,
-    append, transpose back. A single matrix is the exception the manual names
-    separately, and it flattens: `APPEND([[a, b], [c, d]])` is `[a, b, c, d]`,
-    not the matrix it started as.
+    A matrix's elements are its rows, so appending matrices stacks them, as the
+    manual's `APPEND_COLUMNS` exercise uses (transpose, append, transpose back). A
+    single matrix is the documented exception and flattens: `APPEND([[a, b], [c, d]])`
+    is `[a, b, c, d]`.
 
-    A plain vector appended to a matrix of its width is one row of that matrix,
-    which is what SOLVE.MTH's `NEWTONS` writes its system under its gradients
-    with. A row of a matrix is a vector here and a matrix of one row is that
-    same vector, there being one shape for both, so the `[u]` of
-    `APPEND(GRAD(u, x), [u])` reaches this already flattened to `u`. Joining a
-    vector of rows to a vector of scalars is ragged nonsense; reading the
-    scalars as the row they are exactly the width of is the matrix Derive
-    answers.
+    A plain vector appended to a matrix of its width becomes one row, as SOLVE.MTH's
+    `NEWTONS` uses to put its system under its gradients. A one-row matrix is the same
+    as a vector here, so the `[u]` in `APPEND(GRAD(u, x), [u])` arrives as `u`. Treating
+    it as a row of matching width gives Derive's matrix instead of a ragged vector.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return vector_of(list(args[0]))
@@ -3026,12 +2740,10 @@ def _appended(conv: Converter, args: list) -> sp.Basic:
 
 
 def _stacked_width(args: list) -> int | None:
-    """The one row width the matrices among `args` all have, if there is one.
+    """The common row width of the multi-row matrices in `args`, if any.
 
-    None where no argument is a matrix of more than one row - which is every
-    call that only joins vectors, so `APPEND([a, b], [c, d])` is `[a, b, c, d]`
-    and not a matrix - and none where two matrices disagree about their width,
-    a vector being no row of both.
+    None if there are no multi-row matrices (so `APPEND([a, b], [c, d])` is
+    `[a, b, c, d]`, not a matrix), or if their widths differ.
     """
     widths = {
         argument.cols
@@ -3042,22 +2754,20 @@ def _stacked_width(args: list) -> int | None:
 
 
 def _place(index: sp.Basic, count: int) -> int:
-    """Which of `count` elements an index picks out, counting from 1."""
+    """The zero-based position of the 1-based `index` among `count` elements."""
     if not isinstance(index, sp.Integer) or not 1 <= index <= count:
         raise ValueError("not an index")
     return int(index) - 1
 
 
 def _generated_vector(conv: Converter, args: list) -> sp.Basic:
-    """`VECTOR(u, k, ...)`: `u` at each value `k` takes, as a vector.
+    """`VECTOR(u, k, ...)`: a vector of `u` at each value of `k`.
 
-    Four ways of saying which values those are - a count, a range, a range with
-    a step, and a vector of the values themselves - and a nested call makes a
-    matrix, a vector of vectors being all a matrix is.
+    The values are given as a count, a range, a range with a step, or a vector of
+    values. Nested calls make a matrix.
 
-    Bounds that are not numbers describe no sequence, and the call stays inert
-    until they are: that is what makes `VECTOR([v SUB i], i, DIMENSION(v))`
-    keep its shape in a definition and generate when the definition is applied.
+    Non-numeric bounds leave the call inert until they are numbers, which keeps
+    `VECTOR([v SUB i], i, DIMENSION(v))` intact in a definition until it is applied.
     """
     body, index, *rest = args
     if type(index) is not sp.Symbol:
@@ -3068,8 +2778,8 @@ def _generated_vector(conv: Converter, args: list) -> sp.Basic:
 def steps(rest: list) -> list[sp.Basic]:
     """The values a generated vector's variable takes, in order.
 
-    `(n - m)/s + 1` of them, rounded down, which is one element for a range that
-    the step cannot cross and none at all for a range going the wrong way.
+    There are `(n - m)/s + 1` of them, rounded down: one if the step overshoots the
+    range, none if the range runs the wrong way.
     """
     if len(rest) == 1 and isinstance(rest[0], sp.MatrixBase):
         return _elements_of(rest[0])
@@ -3085,15 +2795,12 @@ def steps(rest: list) -> list[sp.Basic]:
 def _selected(conv: Converter, args: list) -> sp.Basic:
     """`SELECT(u, k, ...)`: the values of `k` for which `u(k)` holds.
 
-    Which values those are is said in the same four ways `VECTOR` says it, and
-    `steps` reads them the same. What comes back is the values themselves and
-    not anything computed from them, which is the whole difference between the
-    two: `SELECT(PRIME(k), k, 1, 100)` is the primes under a hundred.
+    Values are specified as for `VECTOR`. The result is the values themselves:
+    `SELECT(PRIME(k), k, 1, 100)` is the primes under a hundred.
 
-    Every test has to come out true or false. One that stays a relation nobody
-    can decide would silently drop the element it was asked about, so the call
-    comes back as it was written instead - which is also what keeps a `SELECT`
-    inside a definition intact until the definition is applied.
+    Every test must be true or false. An undecidable one would silently drop its
+    element, so the call stays as written instead, which also keeps a `SELECT` in a
+    definition intact until it is applied.
     """
     body, index, *rest = args
     if type(index) is not sp.Symbol:
@@ -3102,7 +2809,7 @@ def _selected(conv: Converter, args: list) -> sp.Basic:
 
 
 def chosen_from(values: list, test: Callable[[sp.Basic], sp.Basic]) -> sp.Basic:
-    """The vector of `values` whose `test` holds; a test that does not decide raises."""
+    """The vector of `values` passing `test`; an undecided test raises."""
     chosen = []
     for value in values:
         held = _test(test(value))
@@ -3114,31 +2821,28 @@ def chosen_from(values: list, test: Callable[[sp.Basic], sp.Basic]) -> sp.Basic:
 
 
 def _iterates(conv: Converter, args: list) -> sp.Basic:
-    """`ITERATES(u, x, x0)` and `ITERATES(u, x, x0, n)`: the sequence, as a vector.
+    """`ITERATES(u, x, x0)` and `ITERATES(u, x, x0, n)`: the sequence as a vector.
 
-    `x0`, `u(x0)`, `u(u(x0))` and so on: `n` updates make `n + 1` elements, and
-    a count left out means "until a value comes round again".
+    `x0`, `u(x0)`, `u(u(x0))` and so on: `n` updates give `n + 1` elements, and
+    without a count it runs until a value repeats.
     """
     body, variable, start, *rest = args
     return iterated("ITERATES", conv, variable, start, rest, body=body)
 
 
 def _iterate(conv: Converter, args: list) -> sp.Basic:
-    """`ITERATE(...)`: the same sequence's last element, and nothing else.
+    """`ITERATE(...)`: the last element of the `ITERATES` sequence.
 
-    Counted, that is the `n`th update and there is no more to ask. Uncounted,
-    the sequence ended by repeating something, and only a value that repeated
-    *itself* is a value the iteration arrived at: a longer cycle converges to
-    nothing, and the manual's answer for that is `?`. Repeating is the same
-    question `_until_repeated` stopped on, so it is asked the same way, at the
-    digits the two would be shown to.
+    With a count, that is the `n`th update. Without one, the sequence ended on a
+    repeat, and only a fixed point (a value repeating *itself*) counts as converged; a
+    longer cycle gives `?`, as in the manual. The repeat is checked at displayed
+    precision, as in `_until_repeated`.
     """
     body, variable, start, *rest = args
     return iterated("ITERATE", conv, variable, start, rest, body=body)
 
 
-#: What an iteration's body is at one iterate: given the variables and the
-#: values they take there, the body with those values in.
+#: Evaluates an iteration's body for given variables and their current values.
 Step = Callable[[list, list], sp.Basic]
 
 
@@ -3151,11 +2855,10 @@ def iterated(
     step: Step | None = None,
     body: sp.Basic | None = None,
 ) -> sp.Basic:
-    """`ITERATE` or `ITERATES` from `start`, `rest` holding the count if there is one.
+    """`ITERATE` or `ITERATES` from `start`, with the optional count in `rest`.
 
-    `step` is what writes an iterate into the body. The conversion substitutes
-    the values into the `body` it converted; the evaluation passes a step of its
-    own, which evaluates the body afresh at every iterate.
+    `step` computes the next iterate. Conversion substitutes values into the converted
+    `body`; the evaluator passes its own step, which re-evaluates the body each time.
     """
     sequence = _sequence(conv, variable, start, rest, step, body)
     if name == "ITERATES":
@@ -3182,11 +2885,10 @@ def _sequence(
     step: Step | None,
     body: sp.Basic | None,
 ) -> list[sp.Basic]:
-    """The iterates, however many were asked for.
+    """The iterates, as many as requested.
 
-    A negative count iterates the inverse of `u` instead, `|n|` times, which is
-    what `MISC.MTH` defines `INVERSE(u, x) := ITERATE(u, x, x, -1)` on. That is
-    an inverse of the body as converted, which only a caller holding one has.
+    A negative count iterates the inverse of `u` `|n|` times, which `MISC.MTH` uses to
+    define `INVERSE(u, x) := ITERATE(u, x, x, -1)`. This needs the converted body.
     """
     names, values = _iterated_over(variable, start)
     if step is None:
@@ -3212,25 +2914,20 @@ def _sequence(
 def _until_repeated(
     conv: Converter, step: Step, names: list, values: list
 ) -> list[sp.Basic]:
-    """The sequence run out to where it comes round.
+    """The sequence, run until a value repeats.
 
-    The repeated value is the last element rather than being dropped, so
-    `ITERATES(1/x, x, 2)` is `[2, 1/2, 2]` - which is what tells `ITERATE`
-    whether the cycle it found has length one.
+    The repeated value is kept as the last element, so `ITERATES(1/x, x, 2)` is
+    `[2, 1/2, 2]`, which tells `ITERATE` whether the cycle has length one.
 
-    Coming round is asked of the iterates as they are shown, not as they are
-    carried. An approximate iterate is carried at the guard digits, so a
-    converging sequence goes on differing in digits nobody sees and would run to
-    the bound below before two of its elements were ever equal; what the manual
-    prints is the sequence stopping where the screen stops changing.
-    `ITERATES(#e^(-x/20), x, 1)` is the case, and it is why the vector ends in
-    three copies of `0.953446` rather than two - the first two differ at the
-    seventh digit and the third does not. Where the mode works no number out
-    the iterate is exact and shows as itself, so this is exact equality again.
+    Repeats are detected on displayed values, not carried ones. Approximate iterates
+    carry guard digits, so a converging sequence would keep differing in invisible
+    digits until it hit the bound; the manual's output stops when the display stops
+    changing. That is why `ITERATES(#e^(-x/20), x, 1)` ends in three copies of
+    `0.953446`: the first two differ in the seventh digit. In exact modes this is plain
+    equality.
 
-    What Derive does when nothing ever repeats is iterate until memory is gone.
-    That is no answer an engine can give, so an iteration that has not come
-    round within the bounds below comes back the call it was written as.
+    Derive iterates until memory runs out if nothing repeats. Here, an iteration that
+    doesn't repeat within the bounds below raises, leaving the call as written.
     """
     iterates = [_state(names, values)]
     shown = [_as_shown(iterates[-1], conv.context)]
@@ -3245,23 +2942,19 @@ def _until_repeated(
     raise ValueError("comes round to nothing")
 
 
-#: How far an uncounted iteration is run before it is given up on, and how big
-#: an iterate may get on the way. Both bounds are needed: a sequence that does
-#: not come round usually runs away instead, and it runs away faster than any
-#: count can catch - repeated squaring passes thirty thousand digits in
-#: seventeen steps. Neither bound is near anything a converging iteration
-#: reaches.
+#: Limits for an uncounted iteration: the number of steps and the size of an iterate.
+#: Both are needed, since a non-repeating sequence usually blows up faster than a step
+#: limit catches (repeated squaring passes 30000 digits in 17 steps). Converging
+#: iterations come nowhere near either.
 _ITERATIONS = 100
 _ITERATE_BITS = 100_000
 _ITERATE_OPERATIONS = 1000
 
 
 def outsized(value: sp.Basic) -> bool:
-    """Whether a value has grown past what carrying it any further is worth.
+    """Whether a value has grown too large to keep iterating on.
 
-    The bound an uncounted iteration stops at: a computation that runs until
-    something says it has gone far enough, and how big the thing it is carrying
-    has grown is what says it.
+    This is the size limit for open-ended computations like uncounted iteration.
     """
     if sp.count_ops(value) > _ITERATE_OPERATIONS:
         return True
@@ -3271,17 +2964,15 @@ def outsized(value: sp.Basic) -> bool:
 
 
 def _iterated_over(variable: sp.Basic, start: sp.Basic) -> tuple[list, list]:
-    """The variables an iteration updates, and the values they start at.
+    """The variables an iteration updates, and their starting values.
 
-    One variable and one value, or - one of the two forms the manual writes
-    Fibonacci in - a vector of variables and a vector of their values, so that
-    an iteration remembering more than one previous iterate needs no
-    subscripts: `ITERATE([k, j + k], [j, k], [0, 1], n)`.
+    Either one variable and one value, or a vector of variables with a vector of
+    values, one of the manual's two forms of Fibonacci:
+    `ITERATE([k, j + k], [j, k], [0, 1], n)`.
 
-    The other form is one variable holding the whole vector, read back with
-    subscripts: `ITERATE([v SUB 2, v SUB 1 + v SUB 2], v, [0, 1], n)`. That is
-    one name and one value here, and `_bindings` is where its subscripts are
-    written in.
+    The other form is one variable holding the vector, accessed by subscripts:
+    `ITERATE([v SUB 2, v SUB 1 + v SUB 2], v, [0, 1], n)`. That is one name and one
+    value here; `_bindings` fills in the subscripts.
     """
     if isinstance(variable, sp.MatrixBase):
         names = _elements_of(variable)
@@ -3296,24 +2987,20 @@ def _iterated_over(variable: sp.Basic, start: sp.Basic) -> tuple[list, list]:
 
 
 def _state(names: list, values: list) -> sp.Basic:
-    """One iterate: the value the variable took, or the vector they all took."""
+    """One iterate: the single variable's value, or the vector of all values."""
     return values[0] if len(names) == 1 else vector_of(values)
 
 
 def _updated(conv: Converter, step: Step, names: list, values: list) -> list:
-    """The variables' next values: the body where they stand now.
+    """The variables' next values: the body evaluated at the current ones.
 
-    Every one written in at once, since the update of a system reads all of the
-    previous iterate and none of the one being built, and a system's update has
-    to come back as many values as it consumed.
+    All are substituted at once, since a system's update reads only the previous
+    iterate, and it must return as many values as it took.
 
-    An iterate is worked out as a number where the precision mode says numbers
-    are worked out, which is not merely faster but is what an iteration in that
-    mode means: every iterate is an answer the sequence shows, and the next step
-    reads it as a number going in. Left exact, each step writes the whole of the
-    last one into every transcendental head it holds, and SOLVE.MTH's `NEWTONS`
-    over `#e^(x*y)` and `ATAN(x*y)` builds a tower six deep that no amount of
-    time reduces to the six digits the page prints.
+    In Approximate mode each iterate is evaluated numerically, which is what iteration
+    means there and not just faster: left exact, each step nests the previous one into
+    every transcendental head, and SOLVE.MTH's `NEWTONS` over `#e^(x*y)` and
+    `ATAN(x*y)` builds a six-deep tower that never reduces to the printed six digits.
     """
     written = _worked_out(step(names, values), conv.context)
     if len(names) == 1:
@@ -3325,18 +3012,13 @@ def _updated(conv: Converter, step: Step, names: list, values: list) -> list:
 
 
 def _worked_out(value: sp.Basic, context: Context) -> sp.Basic:
-    """`value` with its numbers worked out, if the precision mode works any out.
+    """`value` evaluated numerically, in Approximate mode only.
 
-    A value on its way to another computation rather than to the screen, so it
-    is carried at the guard digits and not at the digits shown. That is what the
-    guard is for - the digits asked for are meant to be the value's own rather
-    than a rounding of a rounding - and an iteration is where it tells: the
-    manual's `ITERATES(#e^(-x/20), x, 1, 5)` shows `0.953441` at its fourth
-    iterate, which is the value's own sixth digit and not the `0.953440` that
-    rounding every step to six leaves.
+    This is an intermediate value, so it carries guard digits to avoid compounding
+    rounding errors. The manual's `ITERATES(#e^(-x/20), x, 1, 5)` shows `0.953441` at
+    the fourth iterate, not the `0.953440` that rounding each step to six digits gives.
 
-    Exact and Mixed work no number out early. An exact iteration is exact all
-    the way, however large that grows.
+    Exact and Mixed modes stay exact throughout, however large the values grow.
     """
     if context.precision is not Precision.APPROXIMATE:
         return value
@@ -3345,11 +3027,10 @@ def _worked_out(value: sp.Basic, context: Context) -> sp.Basic:
 
 
 def _as_shown(value: sp.Basic, context: Context) -> sp.Basic:
-    """`value` as the screen would have it, which is what two iterates compare by.
+    """`value` at displayed precision, used to compare iterates.
 
-    The counterpart of `_worked_out`: that carries an iterate at the guard
-    digits, and this is the value those digits stand for. Only a mode that works
-    numbers out has anything to strip, an exact iterate being its own display.
+    The counterpart of `_worked_out`, which adds guard digits; this removes them. Exact
+    iterates are returned unchanged.
     """
     if context.precision is not Precision.APPROXIMATE:
         return value
@@ -3357,12 +3038,10 @@ def _as_shown(value: sp.Basic, context: Context) -> sp.Basic:
 
 
 def _bindings(body: sp.Basic, names: list, values: list) -> dict:
-    """What to write into the body: each variable, and each of its subscripts.
+    """Substitutions for the body: each variable, and each of its subscripts.
 
-    A variable holding a vector is read back element by element, and `v SUB 1`
-    is one symbol rather than a head over two - that is what makes a
-    subscripted variable something to solve for. A symbol is not reached by
-    substituting for `v`, so the elements are written in under those names too.
+    `v SUB 1` is a separate symbol, so substituting for `v` doesn't reach it; the
+    elements of a vector value are bound to those subscript symbols as well.
     """
     bindings = dict(zip(names, values, strict=True))
     for name, value in zip(names, values, strict=True):
@@ -3380,7 +3059,7 @@ def _bindings(body: sp.Basic, names: list, values: list) -> dict:
 
 
 def _subscripted(symbol: sp.Symbol, name: sp.Symbol) -> int | None:
-    """Which element of `name` this symbol is a subscript of, if it is one."""
+    """The index if `symbol` is a subscript of `name`, else None."""
     prefix = f"{name.name} SUB "
     if not symbol.name.startswith(prefix):
         return None
@@ -3389,12 +3068,10 @@ def _subscripted(symbol: sp.Symbol, name: sp.Symbol) -> int | None:
 
 
 def _inverted(body: sp.Basic, names: list) -> sp.Basic:
-    """The function that undoes `body`, for an iteration counted backwards.
+    """The inverse of `body`, for an iteration with a negative count.
 
-    Solving `u(x) = t` for `x`: `ITERATES(TAN(x), x, x, -1)` is `[x, ATAN(x)]`.
-    A function it is only where the solution is the one it has, so anything
-    with a choice of inverses has none here, and a system of variables has none
-    at all.
+    Solves `u(x) = t` for `x`: `ITERATES(TAN(x), x, x, -1)` is `[x, ATAN(x)]`. Only a
+    unique (or principal, see `_undone`) inverse is accepted, and systems have none.
     """
     if len(names) != 1:
         raise ValueError("no inverse of a system")
@@ -3407,22 +3084,17 @@ def _inverted(body: sp.Basic, names: list) -> sp.Basic:
 
 
 def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None:
-    """`body = value` solved for `name`, by the principal branch where it has one.
+    """`body = value` solved for `name`, on the principal branch if there are several.
 
-    A periodic function solves for as many values as it has periods, and the
-    inverse Derive answers with is the principal one and no other:
-    `INVERSE(SIN(x/b), x)` is `b*ASIN(x)` (9.21, p.285). So where the equation
-    solves to more than one value the outermost call is undone by the function
-    that inverts it, and what it was applied to is undone in turn - which is
-    the principal branch by construction, `ASIN` being what `SIN` inverts to.
+    A periodic function has many solutions, but Derive gives the principal one:
+    `INVERSE(SIN(x/b), x)` is `b*ASIN(x)` (9.21, p.285). So with multiple solutions the
+    outermost call is undone by its principal inverse, then its argument recursively.
 
-    A power is the same case without a call to name: an even one solves to a
-    root and its negative, and the principal one is the reciprocal power. That
-    is the inverse `INT_SUBST(t*SIN(t^2), t, t^2)` substitutes with, the
-    manual's own `SQRT(t)` for its `t^2` (9.21, p.285).
+    Powers work the same way: an even power has two roots, and the principal one is
+    the reciprocal power, as in `INT_SUBST(t*SIN(t^2), t, t^2)`, which substitutes the
+    manual's `SQRT(t)` (9.21, p.285).
 
-    None where nothing here undoes it: a call with no inverse to name, or an
-    equation that solves to nothing.
+    Returns None if there is no known inverse or no solution.
     """
     solutions = sp.solve(sp.Eq(body, value), name)
     if len(solutions) == 1:
@@ -3437,10 +3109,8 @@ def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None
     return _undone(body.args[0], name, inverse(value))
 
 
-#: What inverts a function sympy names no inverse for, because the function is
-#: not one to one and sympy answers only where the inverse is unambiguous. The
-#: principal branch is the answer here, which is the branch the notation's own
-#: inverse names: `ASIN` for `SIN`, and so on down the pairs.
+#: Principal inverses of functions that aren't one-to-one, for which sympy gives no
+#: inverse: `ASIN` for `SIN`, and so on.
 _PRINCIPAL_INVERSES = {
     sp.sin: sp.asin,
     sp.cos: sp.acos,
@@ -3452,7 +3122,7 @@ _PRINCIPAL_INVERSES = {
 
 
 def _inverse_function(body: sp.Basic) -> Callable | None:
-    """What undoes the call `body`, or none where nothing here does."""
+    """The inverse of the call `body`, or None."""
     principal = _PRINCIPAL_INVERSES.get(type(body))
     if principal is not None:
         return principal
@@ -3463,18 +3133,17 @@ def _inverse_function(body: sp.Basic) -> Callable | None:
 
 
 def _elements_of(matrix: sp.MatrixBase) -> list[sp.Basic]:
-    """What a vector holds: its elements, or its rows where it is a matrix."""
+    """A vector's elements, or a matrix's rows."""
     if matrix.rows == 1:
         return list(matrix)
     return [matrix[row, :] for row in range(matrix.rows)]
 
 
 def vector_of(elements: list) -> sp.Basic:
-    """A vector of values that were computed rather than written.
+    """A vector of computed values, shaped by the values alone.
 
-    Their shape is all there is to go on, `_vector` having had the notation to
-    read: rows of one width stack into a matrix, plain expressions make one row,
-    and anything else is a vector sympy will not hold.
+    Unlike `_vector`, there is no notation to go by: rows of equal width stack into a
+    matrix, plain expressions make one row, and anything else is an `InertVector`.
     """
     if not elements:
         return sp.Matrix(0, 0, [])
@@ -3489,13 +3158,12 @@ def vector_of(elements: list) -> sp.Basic:
 
 
 def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
-    """`AND` and its neighbours over these operands: what the operands make it.
+    """`AND` and the other logical operators, interpreted by their operands.
 
-    Bitwise on integers, boolean on anything sympy will read as a statement,
-    and the inert `Logical` where it is neither yet - an operand that is still
-    a variable, or a call nobody has answered. An evaluation that writes a value
-    in for the variable converts the operator again and reads it then: `LUCAS`'s
-    `(n AND d_) = 0` tests a bit of `n` once its iteration has made `d_` a number.
+    Bitwise on integers, boolean on anything sympy accepts as a statement, and an inert
+    `Logical` otherwise (e.g. an operand that is still a variable). Evaluation
+    reconverts it once values are known: `LUCAS`'s `(n AND d_) = 0` tests a bit of `n`
+    once iteration makes `d_` a number.
     """
     bitwise = _BITWISE.get(word)
     numbers = operands and all(isinstance(operand, sp.Integer) for operand in operands)
@@ -3513,24 +3181,19 @@ def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
     return Logical(sp.Symbol(word), *operands)
 
 
-#: The sympy head each operator word a `Logical` carries stands for, which is
-#: `_HEADINGS` read the other way round.
+#: The inverse of `_HEADINGS`: operator name to sympy head.
 _BOOLEAN_HEADS = {word: head for head, word in _HEADINGS.items()}
 
 
 def _settled(operand: sp.Basic) -> sp.Basic:
-    """One operand of a boolean, written the one way a boolean can hold it.
+    """A boolean operand with relations put in canonical form.
 
-    A conjunction holds its operands in a set, so which of them comes first is
-    decided by how each is spelled rather than by how it was written - and one
-    statement has two spellings, `a >= b` and `b <= a`. That matters because a
-    range is *printed* as a chain, which turns the first into the second on the
-    way out: without a canonical form the same statement would come back in a
-    different order every time it was read.
+    A conjunction stores its operands as a set, ordered by spelling, and `a >= b` and
+    `b <= a` spell the same statement differently. Ranges print as chains, which
+    rewrites one into the other, so without canonicalization the order would change on
+    every round trip.
 
-    Nothing is decided here and nothing is simplified. `x >= 1` is already
-    canonical; what changes is only which side a relation nobody is comparing
-    was written from.
+    Nothing is decided or simplified; only the orientation of the relation changes.
     """
     return operand.canonical if isinstance(operand, Relational) else operand
 
@@ -3543,10 +3206,10 @@ def _identity_matrix(conv: Converter, args: list) -> sp.Basic:
 
 
 def _cross(conv: Converter, args: list) -> sp.Basic:
-    """`CROSS(u, v)` over three elements each, or over two.
+    """`CROSS(u, v)` for three-element or two-element vectors.
 
-    The plane's case is the third component of the space's, the one the other
-    two come to zero in, and it is that number rather than a vector holding it.
+    In the plane, the result is the scalar third component of the spatial cross
+    product (the other two being zero).
     """
     left, right = (_matrix(argument) for argument in args)
     if left.shape == right.shape == (1, 2):
@@ -3555,26 +3218,20 @@ def _cross(conv: Converter, args: list) -> sp.Basic:
 
 
 def _row_reduce(conv: Converter, args: list) -> sp.Basic:
-    """`ROW_REDUCE(A)`, and `ROW_REDUCE(A, B)` over the augmented matrix.
+    """`ROW_REDUCE(A)`, and `ROW_REDUCE(A, B)` on the augmented matrix.
 
-    The echelon form the manual describes is the reduced one - the first nonzero
-    element of every row is 1 and everything above it is 0 - which is what
-    `rref` computes, by the multiplications and additions of rows that leave a
-    system's solution set alone.
+    The manual's echelon form is the reduced one (leading 1s with zeros above), as
+    computed by `rref`.
 
-    A second matrix is adjoined to the right of the first and the pair reduced
-    together, which is how `A . X = B` is solved: the columns `B` occupied come
-    out holding `X` wherever `A` was nonsingular. A second argument that is a
-    vector is one such column, `A . X = b` being the everyday case and the one
-    VECTOR.MTH's `APPROX_EIGENVECTOR` is written in terms of.
+    A second matrix is adjoined to the right, solving `A . X = B`: `B`'s columns end up
+    holding `X` if `A` is nonsingular. A vector second argument is a single column, as
+    in `A . X = b`, which VECTOR.MTH's `APPROX_EIGENVECTOR` uses.
 
-    The entries are the numbers they stand for where the precision mode says
-    they are. Choosing a pivot means asking of each candidate whether it is
-    zero, and sympy answers an entry it cannot decide by simplifying it: over a
-    Newton step, whose entries are exponentials and arctangents of one another,
-    that is a factorization of a polynomial in several transcendental
-    generators and it does not come back. An approximate number is a rational,
-    and whether a rational is zero is a question with an answer.
+    In Approximate mode the entries are evaluated numerically first. Pivoting asks
+    whether entries are zero, and sympy simplifies undecided ones: for a Newton step
+    with nested exponentials and arctangents, that means factoring a polynomial in
+    several transcendental generators, which never finishes. Approximate numbers are
+    rationals, so zero-testing is trivial.
     """
     matrix, *rest = args
     matrix = _worked_out(_matrix(matrix), conv.context)
@@ -3589,19 +3246,13 @@ def _row_reduce(conv: Converter, args: list) -> sp.Basic:
 def _characteristic_polynomial(conv: Converter, args: list) -> sp.Basic:
     """`CHARPOLY(A, v)`: `DET(A - v*IDENTITY_MATRIX(DIMENSION(A)))`.
 
-    That determinant, and not the monic polynomial textbooks usually mean by the
-    name, because the manual defines the function as the determinant of the
-    difference of the matrix and a variable times the identity matrix. Negating
-    all `n` rows of `v*I - A` multiplies its determinant by `(-1)^n`, so the two
-    agree in even dimensions and differ in sign in odd ones. Sympy computes the
-    monic one - the cheap way, by recurrence rather than by expanding a
-    determinant full of `v` - and the sign puts it back the way Derive reads it.
+    The manual defines it as this determinant, not the usual monic polynomial
+    `DET(v*I - A)`; they differ by `(-1)^n`. Sympy computes the monic one efficiently,
+    and the sign is adjusted for odd dimensions.
 
-    The polynomial is computed over a dummy and the variable written in
-    afterwards, because a polynomial canonicalizes its generator into a bare
-    symbol: computed over `v` itself, the answer would hold a `v` stripped of
-    whatever `v` was declared, which is a different variable of the same name and
-    would not cancel against the one the user has.
+    The polynomial is computed over a dummy and `v` substituted afterwards, because
+    `Poly` strips its generator's assumptions, and a `v` without its declared domain
+    wouldn't cancel against the user's `v`.
     """
     matrix, variable = _matrix_and_variable(conv, args)
     polynomial = matrix.charpoly(sp.Dummy()).as_expr(variable)
@@ -3611,26 +3262,20 @@ def _characteristic_polynomial(conv: Converter, args: list) -> sp.Basic:
 def _eigenvalues(conv: Converter, args: list) -> sp.Basic:
     """`EIGENVALUES(A, v)`: the zeros of `A`'s characteristic polynomial in `v`.
 
-    Equations rather than bare values, `[z = 2, z = b]`, because what the
-    function does is solve the characteristic equation, and that is how Derive
-    writes a solved equation's answer everywhere else. Each zero is listed once
-    however many times it is a root: a multiplicity says how many parameters the
-    eigenvector carries, and is no second eigenvalue.
+    Returned as equations, `[z = 2, z = b]`, as Derive writes solutions elsewhere. Each
+    zero appears once regardless of multiplicity.
 
-    Sympy hands back a set, which has no order, and the answer has to print the
-    same every time. Sympy's own canonical order is the one taken, and it is the
-    order the manual's examples print in: numbers before names, and `a - b`
-    before `a + b`.
+    Sympy returns an unordered set, so sympy's canonical order is used for stable
+    output; it matches the manual's examples (numbers before names, `a - b` before
+    `a + b`).
 
-    A zero sympy can only name by its index in a polynomial's root list is no
-    answer: the manual solves the characteristic equation by the quadratic,
-    cubic and quartic formulas and says exact eigenvalues are rarely attainable
-    beyond that, so a matrix whose eigenvalues will not come out in radicals
-    comes back the call it was written as.
+    Zeros expressible only as `CRootOf` are rejected and the call stays as written: the
+    manual uses the quadratic, cubic and quartic formulas and notes exact eigenvalues
+    are rarely available beyond that.
 
-    `trig` reaches `roots` through `eigenvals` and picks Viete's cubic over
-    Cardano's for the casus irreducibilis, so a symmetric matrix - whose
-    eigenvalues are real by construction - is not answered in `#i`.
+    `trig=True` makes `roots` use Viete's cubic rather than Cardano's for the casus
+    irreducibilis, so symmetric matrices, whose eigenvalues are real, don't get answers
+    in `#i`.
     """
     matrix, variable = _matrix_and_variable(conv, args)
     zeros = sorted(matrix.eigenvals(trig=True), key=sp.default_sort_key)
@@ -3640,12 +3285,10 @@ def _eigenvalues(conv: Converter, args: list) -> sp.Basic:
 
 
 def _matrix_and_variable(conv: Converter, args: list) -> tuple[sp.MatrixBase, sp.Basic]:
-    """A matrix and the variable to write an answer about it in.
+    """A matrix and the variable for the answer.
 
-    The variable is optional and defaults to `w`, which is the manual's default
-    and carries whatever `w` has been declared, as a written one would. Whether
-    the matrix is square is sympy's to complain about, and a call it will not
-    take is a call that comes back the way it was written.
+    The variable defaults to `w`, as in the manual, with its declared domain. Sympy
+    checks squareness; if it fails, the call stays as written.
     """
     matrix, *rest = args
     variable = _one(rest) if rest else conv.symbol("w")
@@ -3655,32 +3298,25 @@ def _matrix_and_variable(conv: Converter, args: list) -> tuple[sp.MatrixBase, sp
 
 
 def _gradient(conv: Converter, args: list) -> sp.Basic:
-    """`GRAD(u)`, and `GRAD(u, alpha)` in the coordinates `alpha` describes.
+    """`GRAD(u)`, and `GRAD(u, alpha)` in the coordinate system `alpha`.
 
-    The gradient of a scalar field: the vector whose element `i` says how fast
-    `u` grows per unit of length along coordinate `i`. Per unit of *length*, not
-    per unit of coordinate, which is what the scale factor divides out - in
-    spherical coordinates a radian of colongitude is `r*SIN(phi)` of arc, so the
-    derivative with respect to it has to be divided by that to be a rate the
-    other elements can be compared against.
+    The gradient of a scalar field: element `i` is the rate of growth of `u` per unit
+    *length* along coordinate `i`, so each derivative is divided by its scale factor.
+    In spherical coordinates a radian of colongitude is `r*SIN(phi)` of arc.
 
-    A vector of expressions has one gradient per element, and those gradients
-    stand side by side as the columns of the matrix this answers: element
-    `[i][j]` is how fast element `j` of the field grows along coordinate `i`, so
-    a row is one coordinate's rates across the whole field. That is the
-    transpose of the Jacobian `VECTOR.MTH` builds a row at a time as
-    `JACOBIAN(u, alpha)`, and SOLVE.MTH's `NEWTONS` is what says which way round
-    it goes: ``APPEND(GRAD(u, x), [u])` `` writes the field under the gradients
-    and transposes the lot, which is the augmented matrix `[J | u]` whose row
-    reduction is one Newton step. The other way round it would solve against the
-    transposed Jacobian and converge to nothing.
+    For a vector field, the gradients of the elements are the columns of the result:
+    element `[i][j]` is the rate of element `j` along coordinate `i`. That is the
+    transpose of `VECTOR.MTH`'s `JACOBIAN(u, alpha)`. SOLVE.MTH's `NEWTONS` fixes this
+    orientation: ``APPEND(GRAD(u, x), [u])` `` appends the field under the gradients and
+    transposes, giving the augmented matrix `[J | u]` whose row reduction is a Newton
+    step. The other orientation would solve against the transposed Jacobian and fail to
+    converge.
 
-    A vector standing *under* a head is another matter and is refused. The body
-    of `VECTOR(GRAD(u SUB m_, alpha), m_, DIMENSION(u))` converted while `m_` is
-    still a variable hands GRAD the inert `ELEMENT(u, m_)`, a head carrying the
-    whole vector `u`. Differentiating one of those is sympy's matrix chain rule
-    and answers a matrix of nonsense, so the call stays as written; the
-    evaluation makes it once a value at a time, when the index has one.
+    A vector hidden *inside* a head is refused. Converting the body of
+    `VECTOR(GRAD(u SUB m_, alpha), m_, DIMENSION(u))` with `m_` still symbolic gives
+    GRAD the inert `ELEMENT(u, m_)`, which carries the whole vector `u`; sympy's matrix
+    chain rule would produce nonsense. The call stays as written, and evaluation calls
+    it again once the index has a value.
     """
     expression, *rest = args
     if isinstance(expression, sp.MatrixBase):
@@ -3696,13 +3332,11 @@ def _gradient(conv: Converter, args: list) -> sp.Basic:
 
 
 def _divergence(conv: Converter, args: list) -> sp.Basic:
-    """`DIV(v)`, and `DIV(v, alpha)`: how much the field `v` spreads out.
+    """`DIV(v)`, and `DIV(v, alpha)`: the divergence of the field `v`.
 
-    The flux out of an infinitesimal coordinate box per unit of the volume it
-    encloses. That volume is `H = h1*h2*...*hn` times the box's extent in the
-    coordinates, and the pair of faces the field crosses along coordinate `i`
-    has area `H/hi` times theirs - which is the whole of why the scale factors
-    sit where they do, and why they cancel wherever they are all 1.
+    The flux out of an infinitesimal coordinate box per unit volume. The volume is
+    `H = h1*h2*...*hn` times the box's coordinate extent, and the faces crossed along
+    coordinate `i` have area `H/hi` times theirs, which places the scale factors.
     """
     elements = _field(args[0])
     variables, scales = _coordinates(conv, args[1:], len(elements))
@@ -3712,9 +3346,8 @@ def _divergence(conv: Converter, args: list) -> sp.Basic:
 def _laplacian(conv: Converter, args: list) -> sp.Basic:
     """`LAPLACIAN(u)`, and `LAPLACIAN(u, alpha)`: `DIV(GRAD(u))`.
 
-    Which is what the manual defines it as, so it is computed that way rather
-    than by a formula of its own - the two would have to agree anyway, and one
-    of them would then be a second place to get the scale factors wrong.
+    Computed from the manual's definition rather than a separate formula, so the scale
+    factors are handled in one place.
     """
     expression, *rest = args
     if isinstance(expression, sp.MatrixBase):
@@ -3727,15 +3360,12 @@ def _laplacian(conv: Converter, args: list) -> sp.Basic:
 def _curl(conv: Converter, args: list) -> sp.Basic:
     """`CURL(v)`, and `CURL(v, alpha)`, for a vector of two or three elements.
 
-    The circulation around an infinitesimal loop per unit of the area it
-    encloses, one loop per pair of coordinates. In space the three of them are
-    the elements of a vector, each named after the coordinate its loop turns
-    about.
+    The circulation around an infinitesimal loop per unit area, one loop per pair of
+    coordinates. In space, the three circulations form a vector, each component
+    labeled by the axis its loop turns about.
 
-    In the plane there is one loop and so one number, and Derive returns that
-    number rather than the space vector `[0, 0, w]` it is the last element of.
-    The manual calls this the more common convention; it is also the only one
-    that keeps the answer in the plane the question was asked in.
+    In the plane there is a single loop, and Derive returns that scalar rather than
+    `[0, 0, w]`, which the manual calls the more common convention.
     """
     elements = _field(args[0])
     if len(elements) not in (2, 3):
@@ -3747,34 +3377,27 @@ def _curl(conv: Converter, args: list) -> sp.Basic:
     return vector_of(turns)
 
 
-#: Which pair of coordinates each element of a space curl turns in: the one
-#: after the element's own, cyclically, and the one after that. Taking them in
-#: that order rather than in sorted order is what gives the middle element its
-#: sign, and it is the order that makes the curl a right-handed cross product of
-#: the derivative with the field.
+#: The coordinate pair for each component of a spatial curl: the next two coordinates
+#: cyclically. This order (rather than sorted) gives the middle component its correct
+#: sign, making the curl a right-handed cross product.
 _LOOPS = ((1, 2), (2, 0), (0, 1))
 
 
 def _potential(conv: Converter, args: list) -> sp.Basic:
     """`POTENTIAL(v)`, `POTENTIAL(v, a)` and `POTENTIAL(v, a, alpha)`.
 
-    The line integral of `v` from `a` to the coordinates themselves, along the
-    staircase path that moves one coordinate at a time: leg `i` runs coordinate
-    `i` from `a SUB i` up to where it is, with the coordinates before it already
-    arrived and the ones after it still at `a`. Where `v` is conservative the
-    path does not matter and the result is a scalar whose gradient is `v`.
+    The line integral of `v` from `a` to the coordinates themselves, along a staircase
+    path moving one coordinate at a time: leg `i` moves coordinate `i` from `a SUB i`,
+    with earlier coordinates already at their final values and later ones still at
+    `a`. For a conservative `v`, the result is a scalar whose gradient is `v`.
 
-    Where it is not, the integral still has a value and Derive still returns it.
-    The manual is explicit that POTENTIAL "merely computes a certain line
-    integral" and that checking `GRAD` of the answer against `v` - or, in two
-    and three dimensions, `CURL(v)` against zero - is the caller's job. So there
-    is nothing to detect here and no `?` to answer: a field with no potential
-    gets the integral along that one path, which is a real number and the wrong
-    answer to a question that has none.
+    For a non-conservative field, Derive still returns the integral along this path.
+    The manual says POTENTIAL "merely computes a certain line integral", leaving it to
+    the caller to check `GRAD` of the answer (or `CURL(v)` against zero).
 
-    `a` defaults to the origin. The manual warns that this is a choice and not
-    always a good one - a start where the field is infinite gives an infinite
-    potential - and that is what the second argument is for.
+    `a` defaults to the origin. The manual notes this can be a poor choice (starting
+    where the field is infinite gives an infinite potential), which is what the second
+    argument is for.
     """
     elements = _field(args[0])
     start, rest = _start(args[1:], len(elements))
@@ -3785,30 +3408,26 @@ def _potential(conv: Converter, args: list) -> sp.Basic:
         along = (scales[index] * element).subs(list(arrived), simultaneous=True)
         walked += _leg(along, variables[index], start[index])
     if walked is sp.nan:
-        # Legs that diverge opposite ways, which have no sum.
+        # Legs diverging in opposite directions have no sum.
         raise ValueError("no value")
     return walked
 
 
 def _vector_potential(conv: Converter, args: list) -> sp.Basic:
-    """`VECTOR_POTENTIAL(v)`, and the same optional `a` and `alpha`.
+    """`VECTOR_POTENTIAL(v)`, with the same optional `a` and `alpha`.
 
-    A vector whose curl is `v`, for a three-element `v`. Vector potentials
-    differ by any gradient, so one has to be picked, and the one picked here is
-    the manual's: the third element is zero, and the other two are the line
-    integrals that forces.
+    A vector whose curl is the three-element `v`. Vector potentials differ by a
+    gradient, so the manual's choice is used: the third element is zero, and the other
+    two are the line integrals this forces.
 
-    With `A SUB 3` gone, two of the three curl equations are ordinary
-    integrations along the third coordinate, and they fix `h1*A SUB 1` and
-    `h2*A SUB 2` up to a function of the first two coordinates. The third
-    equation then has to hold everywhere, and it is enough to make it hold on
-    the slice `x3 = a SUB 3`, where those integrals vanish - that is the second
-    integral in the first element, and there is nothing left over for the second
-    element to carry.
+    With `A SUB 3` zero, two curl equations become integrations along the third
+    coordinate, fixing `h1*A SUB 1` and `h2*A SUB 2` up to a function of the first two
+    coordinates. The third equation then only needs to hold on the slice
+    `x3 = a SUB 3`, where those integrals vanish; that gives the second integral in the
+    first element.
 
-    As with POTENTIAL, a field with nonzero divergence has no vector potential
-    and gets this vector anyway: the manual leaves comparing `CURL` of the
-    answer against `v` to the caller.
+    As with POTENTIAL, a field with nonzero divergence still gets this vector; checking
+    `CURL` of the answer is left to the caller.
     """
     elements = _field(args[0])
     if len(elements) != 3:
@@ -3829,7 +3448,7 @@ def _vector_potential(conv: Converter, args: list) -> sp.Basic:
 
 
 def _holds_vector(value: sp.Basic) -> bool:
-    """Whether a vector stands anywhere in `value`, at the top or under a head."""
+    """Whether `value` contains a vector anywhere."""
     if isinstance(value, (sp.MatrixBase, InertVector)):
         return True
     return any(
@@ -3850,11 +3469,10 @@ def _divergence_of(elements: list, variables: list, scales: list) -> sp.Basic:
 
 
 def _circulation(field: list, variables: list, scales: list, j: int, k: int) -> sp.Basic:
-    """The loop in the `j`, `k` coordinate plane, per unit of the area it holds.
+    """The circulation in the `j`, `k` coordinate plane, per unit area.
 
-    What goes around the loop is the field's component along each side times the
-    length of that side, which is where the scale factors inside the derivatives
-    come from; the area they enclose is where the one outside comes from.
+    The scale factors inside the derivatives turn components into side lengths; the
+    one outside divides by the enclosed area.
     """
     along_k = sp.diff(scales[k] * field[k], variables[j])
     along_j = sp.diff(scales[j] * field[j], variables[k])
@@ -3862,16 +3480,15 @@ def _circulation(field: list, variables: list, scales: list, j: int, k: int) -> 
 
 
 def _leg(integrand: sp.Basic, variable: sp.Basic, low: sp.Basic) -> sp.Basic:
-    """`INT(integrand, variable, low, variable)`, done rather than held.
+    """`INT(integrand, variable, low, variable)`, evaluated.
 
-    The integration variable is a dummy because the upper limit is the
-    coordinate itself, and an integral sympy cannot do would leave that dummy in
-    the answer under a name no worksheet can read - so it is no answer, and the
-    call it came from comes back the way it was written.
+    The integration variable is a dummy since the upper limit is the coordinate
+    itself. If sympy can't do the integral, the dummy would remain under an unreadable
+    name, so this raises and the calling function stays as written.
 
-    The integral is the one `INT` would answer, singularities and all: a leg that
-    starts where the field is infinite is `inf` or `-inf` as a whole, as
-    `INT(1/t, t, 0, x)` is, and not an antiderivative with an infinity added to it.
+    Singularities are handled as `INT` does: a leg starting where the field is infinite
+    is `inf` or `-inf` as a whole, like `INT(1/t, t, 0, x)`, not an antiderivative plus
+    infinity.
     """
     dummy = sp.Dummy()
     walked = integral(
@@ -3885,10 +3502,10 @@ def _leg(integrand: sp.Basic, variable: sp.Basic, low: sp.Basic) -> sp.Basic:
 
 
 def _start(rest: list, count: int) -> tuple[list[sp.Basic], list]:
-    """Where the line integrals start, and whatever arguments follow it.
+    """The starting point of the line integrals, and the remaining arguments.
 
-    The origin unless a vector says otherwise, one coordinate per element of the
-    field, which is the manual's default of "a vector of zeros".
+    Defaults to the origin, the manual's "vector of zeros", with one coordinate per
+    field element.
     """
     if not rest:
         return [sp.Integer(0)] * count, []
@@ -3902,27 +3519,20 @@ def _start(rest: list, count: int) -> tuple[list[sp.Basic], list]:
 def _coordinates(
     conv: Converter, rest: list, count: int | None = None
 ) -> tuple[list[sp.Basic], list[sp.Basic]]:
-    """The coordinate system a differential vector operator works in.
+    """The coordinate variables and scale factors for a vector differential operator.
 
-    Three-dimensional Cartesian `x`, `y`, `z` when nothing says otherwise, each
-    carrying whatever it has been declared, as a written one would.
+    Defaults to Cartesian `x`, `y`, `z`, with their declared domains.
 
-    A vector of variables names Cartesian coordinates of the caller's choosing,
-    and there may be any number of them - `GRAD(u, [w, x, y, z])` is a
-    four-element gradient. A two-row matrix is a coordinate geometry matrix:
-    variables above, and below them the scale factors `hi` for which
-    `ds^2 = (h1*dx1)^2 + ... + (hn*dxn)^2`. That is all an orthogonal curvilinear
-    system is, which is why the same three lines of formula serve Cartesian,
-    cylindrical and spherical coordinates alike. Only the matrices themselves are
-    built in; the names `cylindrical` and `spherical` are assignments in
-    VECTOR.MTH.
+    A vector of variables gives Cartesian coordinates of any dimension:
+    `GRAD(u, [w, x, y, z])` is a four-element gradient. A two-row matrix gives
+    variables above and scale factors `hi` below, with
+    `ds^2 = (h1*dx1)^2 + ... + (hn*dxn)^2`; this describes any orthogonal curvilinear
+    system, so the same formulas serve Cartesian, cylindrical and spherical coordinates.
+    The names `cylindrical` and `spherical` are assignments in VECTOR.MTH.
 
-    `count` is how many coordinates the field has elements for, and it has to be
-    all of them: a field with fewer elements than the system has coordinates is
-    not a field on that system, and Derive answers `DIV([x, y])` with itself
-    rather than with the divergence of some two-dimensional field it guessed at.
-    A two-element `CURL` is the same question and the same answer - what makes
-    it a planar curl is being given a planar system to work in.
+    `count`, the number of field elements, must match the number of coordinates: Derive
+    returns `DIV([x, y])` unchanged rather than guessing a two-dimensional system. The
+    same goes for a two-element `CURL`, which needs an explicit planar system.
     """
     if rest:
         given = _matrix(_one(rest))
@@ -3945,7 +3555,7 @@ def _coordinates(
 
 
 def _field(value: sp.Basic) -> list[sp.Basic]:
-    """A vector field's components. A matrix holds no field; a vector does."""
+    """A vector field's components; matrices are refused."""
     matrix = _matrix(value)
     if matrix.rows != 1 or not matrix.cols:
         raise TypeError("not a vector")
@@ -3958,11 +3568,9 @@ def _matrix(value: sp.Basic) -> sp.MatrixBase:
     return value
 
 
-#: What each function name converts to. A name absent from here converts to an
-#: inert head over its converted arguments, which is what keeps every arbitrary
-#: user function alive through a round trip - and what makes
-#: `DIF(F(x)^3, x)` differentiable. `SOLVE` is absent for a different reason:
-#: it is `COMMAND_HEADS`, and the evaluation runs it.
+#: Converters for each function name. Other names become inert heads, which keeps user
+#: functions intact through a round trip and makes `DIF(F(x)^3, x)` differentiable.
+#: `SOLVE` is absent because it is in `COMMAND_HEADS`, run by the evaluator.
 FUNCTIONS: dict[str, Handler] = {
     **{name: _trig(func) for name, func in _TRIGONOMETRIC.items()},
     **{name: _arctrig(func) for name, func in _INVERSE_TRIGONOMETRIC.items()},
@@ -3986,8 +3594,8 @@ FUNCTIONS: dict[str, Handler] = {
     "NPER": _periods,
     "RATE": _rate,
     "RANDOM": _random,
-    # Section 6.13 has these two take any number of arguments, a vector, or a matrix
-    # of rows to answer a vector of: the reading a statistic gives its sample.
+    # Per section 6.13 these take arguments like a statistic: any number of values, a
+    # vector, or a matrix whose rows give a vector of answers.
     "GCD": _statistic(_gcd_of),
     "LCM": _statistic(_lcm_of),
     "AVERAGE": _statistic(_average),
@@ -4048,17 +3656,13 @@ FUNCTIONS: dict[str, Handler] = {
 }
 
 
-#: Which functions an equation given to one maps over, section 4.13 p.111:
-#: `EXP(LN(x) = 5)` is `x = #e^5`. Every one of them is a function of numbers,
-#: which is the whole of the rule - applying such a function to both sides of an
-#: equation is the only reading it has for one.
+#: Functions that map over an equation argument (section 4.13 p.111):
+#: `EXP(LN(x) = 5)` is `x = #e^5`. These are all functions of numbers, for which
+#: applying to both sides is the only sensible meaning.
 #:
-#: The functions left out are the ones an equation is an argument to rather than
-#: a number for. `LHS` and `RHS` take a side of it, `SOLVE` solves it, `IF` asks
-#: whether it holds, and mapping over the equation would take from each of them
-#: the very thing it was given. A name with no reading at all is left out too: an
-#: inert head is whatever the user's own function is, and nobody here knows that
-#: it is a function of numbers.
+#: Functions that take an equation as such are excluded: `LHS` and `RHS` take a side,
+#: `SOLVE` solves it, and `IF` tests it. Unknown names are excluded too, since a user
+#: function isn't known to be a function of numbers.
 MAPPED_OVER_EQUATIONS: frozenset[str] = (
     frozenset(_TRIGONOMETRIC)
     | frozenset(_INVERSE_TRIGONOMETRIC)

@@ -14,7 +14,7 @@ def session():
 
 
 def labels(session):
-    """The history as the work area shows it: each entry's label and its text."""
+    """Each entry's label and text, as the work area shows them."""
     return [f"#{entry.number}: {entry.text}" for entry in session.entries]
 
 
@@ -61,7 +61,7 @@ def test_the_entries_keep_the_labels_they_moved_with(session):
     authored(session, "x", "y", "z")
     session.move_block(1, 2, 2)
     session.author("q")
-    # Nothing was renumbered, so the next label goes on counting from three.
+    # Nothing was renumbered, so the next label continues from three.
     assert labels(session) == ["#2: y", "#1: x", "#3: z", "#4: q"]
 
 
@@ -91,14 +91,15 @@ def test_a_destination_inside_the_block_moves_nothing(session):
     session.select_entry(4)
     assert session.move_block(3, 2, 4) == 0
     assert labels(session) == ["#1: x", "#2: y", "#3: z", "#4: w", "#5: v"]
-    # Not even the highlight moves: the original does nothing at all with it.
+    # Even the highlight stays put, as in the original.
     assert session.selected_entry.text == "v"
 
 
 def test_moving_an_expression_to_where_it_already_is_does_nothing(session):
     authored(session, "x", "y", "z")
     session.select_entry(0)
-    # Which is what Enter alone answers, every field opening on the highlight.
+    # This is what pressing Enter alone does, since every field defaults to the
+    # highlight.
     assert session.move_block(2, 2, 2) == 0
     assert labels(session) == ["#1: x", "#2: y", "#3: z"]
     assert session.selected_entry.text == "x"
@@ -107,8 +108,8 @@ def test_moving_an_expression_to_where_it_already_is_does_nothing(session):
 def test_the_entry_just_past_the_block_is_a_destination_like_any_other(session):
     authored(session, "x", "y", "z", "w")
     session.select_entry(0)
-    # The order comes out unchanged, but the move was made: the highlight went
-    # to the destination, which is how the original tells the two apart.
+    # The order is unchanged, but the move happened: as in the original, the highlight
+    # goes to the destination.
     assert session.move_block(4, 2, 3) == 2
     assert labels(session) == ["#1: x", "#2: y", "#3: z", "#4: w"]
     assert session.selected_entry.text == "w"

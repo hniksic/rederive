@@ -1,12 +1,11 @@
 """The evaluation state every engine command reads.
 
-`Context` is plain data - settings, variable domains, assignments, function
-definitions and labels - and knows nothing about the session, so a test or a
-command can build one directly. `Context.from_settings` is the bridge from the
-session's `Settings` store and the parser's declarations.
+`Context` is plain data (settings, variable domains, assignments, function definitions
+and labels) independent of the session, so tests and commands can build one directly.
+`Context.from_settings` builds one from the session's `Settings` and the parser's
+declarations.
 
-A variable nobody declared is a real number, not a complex one;
-`Context.domain` is where that default lives.
+Undeclared variables are real, not complex; see `Context.domain`.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ class Precision(StrEnum):
 
 
 class Notation(StrEnum):
-    """How a number the engine works out is written. See `engine.notation`."""
+    """How computed numbers are written. See `engine.notation`."""
 
     DECIMAL = "Decimal"
     MIXED = "Mixed"
@@ -46,7 +45,7 @@ class Branch(StrEnum):
 
 
 class Direction(StrEnum):
-    """What Exponential, Logarithm and Trigonometry each select."""
+    """The choices for the Exponential, Logarithm and Trigonometry settings."""
 
     AUTO = "Auto"
     COLLECT = "Collect"
@@ -67,8 +66,8 @@ class Angle(StrEnum):
 class DomainKind(StrEnum):
     """The domains a `:epsilon` declaration names.
 
-    `UNKNOWN` is the parser's fallback for a domain it does not recognise; it
-    is treated as Real, which is what an undeclared variable is anyway.
+    `UNKNOWN` is the parser's fallback for an unrecognized domain; it is treated as
+    Real, like an undeclared variable.
     """
 
     INTEGER = "Integer"
@@ -82,9 +81,8 @@ class DomainKind(StrEnum):
 class Domain:
     """What `x :epsilon Real [0, inf)` says about `x`.
 
-    The bounds are expression trees rather than numbers: a declaration may
-    name a bound symbolically, and the conversion layer alone decides what
-    facts a bound is worth.
+    The bounds are expression trees, since they may be symbolic; the conversion layer
+    decides what facts they imply.
     """
 
     kind: DomainKind = DomainKind.REAL
@@ -98,30 +96,27 @@ class Domain:
         return self.low is not None or self.high is not None
 
 
-#: The notation each precision mode selects. Options Precision moves Options
-#: Notation with it, so that approximate arithmetic is read in the style that
-#: suits it; the original does this silently, recording only the precision.
+#: The notation each precision mode selects. Setting Options Precision also changes the
+#: notation, as Derive does silently (recording only the precision).
 NOTATION_FOR: dict[Precision, Notation] = {
     Precision.EXACT: Notation.RATIONAL,
     Precision.APPROXIMATE: Notation.SCIENTIFIC,
     Precision.MIXED: Notation.MIXED,
 }
 
-#: What an undeclared variable is, where nothing says otherwise.
+#: The domain of an undeclared variable, unless `default` is declared.
 DEFAULT_DOMAIN = Domain()
 
-#: The name that stands for every variable no declaration names. `Declare
-#: Variable` takes it where it asks for a name, and `default :epsilon Complex`
-#: is how the manual has you widen the domain of everything at once.
+#: Name standing for every undeclared variable. `Declare Variable` accepts it, and the
+#: manual uses `default :epsilon Complex` to widen the domain of all variables.
 DEFAULT_NAME = "default"
 
 
 def domain_of_node(node: Node) -> tuple[str, Domain] | None:
     """Read a `DOMAIN` node as a name and the domain it declares.
 
-    The parser reports a `DomainDeclaration` for the same node, but that
-    carries only the kind; the interval survives in the tree alone, so this is
-    how a caller keeps it.
+    The parser's `DomainDeclaration` for the node carries only the kind; the interval
+    is available only from the tree.
     """
     if node.kind is not Kind.DOMAIN or not node.children:
         return None
@@ -140,7 +135,7 @@ def domain_of_node(node: Node) -> tuple[str, Domain] | None:
     )
 
 
-#: A user function: its parameter names and the body they stand in.
+#: A user function: its parameter names and its body.
 Definition = tuple[tuple[str, ...], Node]
 
 
@@ -148,9 +143,8 @@ Definition = tuple[tuple[str, ...], Node]
 class Context:
     """Everything an engine command's answer may depend on.
 
-    The factory values are exact arithmetic to six digits, principal branch,
-    every transformation mode on Auto, radians, base ten, and the variable
-    order list Derive starts with.
+    Defaults are exact arithmetic to six digits, principal branch, every
+    transformation mode on Auto, radians, base ten, and Derive's initial order list.
     """
 
     precision: Precision = Precision.EXACT
@@ -165,22 +159,17 @@ class Context:
     angle: Angle = Angle.RADIAN
     input_base: int = 10
     order: tuple[str, ...] = ORDER_LIST
-    """The variable order list, most main first, as `Manage Ordering` left it.
+    """The variable order list, most main first, as set by `Manage Ordering`.
 
-    Session state rather than a setting: it is a list of variable names and not
-    a value a dialog field takes, nothing records it as a `Name := Value`, and
-    `Settings` holds exactly what the Options and Manage screens own. What it
-    shares with the settings is that a command's answer depends on it, which is
-    what this class is, so it travels here.
+    This is session state rather than a setting (it isn't a dialog field value or a
+    `Name := Value`), but command answers depend on it, so it belongs here.
     """
     arbitrary_index: int = 1
-    """The next free `@n`, which soLve mints its arbitrary values from.
+    """The next free `@n` for soLve's arbitrary values.
 
-    Session state, like the order list: `x = x` solves to `x = @1` and the
-    counter never goes back, so no two solves in one worksheet can mint the
-    same constant. It travels here because a command's answer depends on it,
-    which is what makes the answer a function of the tree and the context
-    alone.
+    Session state, like the order list: `x = x` solves to `x = @1` and the counter
+    only increases, so no two solves in a worksheet produce the same constant. It
+    lives here so that answers depend only on the tree and the context.
     """
     domains: Mapping[str, Domain] = field(default_factory=dict)
     assignments: Mapping[str, Node] = field(default_factory=dict)
@@ -188,10 +177,9 @@ class Context:
     labels: Mapping[int, Node] = field(default_factory=dict)
 
     def domain(self, name: str) -> Domain:
-        """What is known about the variable `name`.
+        """The domain of variable `name`.
 
-        A variable nobody named falls back on whatever `default` was declared,
-        and on Real where that was not declared either.
+        Undeclared variables get the domain declared for `default`, or Real.
         """
         declared = self.domains.get(name)
         if declared is not None:
@@ -201,16 +189,12 @@ class Context:
     def with_precision(
         self, precision: Precision, digits: int | None = None
     ) -> Context:
-        """The same context evaluated at another precision, as approX asks for.
+        """The same context at another precision, as approX uses.
 
-        The notation goes with it, style and digits both. Changing the
-        precision changes the style numbers are written in, and asking for a
-        number of digits asks for that many to be shown - the manual says both,
-        and the original does both. That is what makes approX answer in
-        scientific notation however the notation is set (`approX 10^7·π` is
-        `3.14159·10⁷` under Rational too), and what makes approX to twelve
-        digits show twelve. The style an answer was written in is the style it
-        keeps, since a render is never remade.
+        The notation style and digits change with it, as in Derive. So approX answers
+        in scientific notation regardless of the notation setting (`approX 10^7·π` is
+        `3.14159·10⁷` under Rational too), and approX to twelve digits shows twelve.
+        An answer keeps the style it was written in, since renders are never redone.
         """
         return replace(
             self,
@@ -235,9 +219,8 @@ class Context:
     ) -> Context:
         """Build a context from the session's settings and declarations.
 
-        `declarations` supplies the domain *kinds* the session has recorded;
-        `domains` overrides them where the caller kept an interval too, which
-        only the `DOMAIN` node has.
+        `declarations` supplies the recorded domain *kinds*; `domains` overrides them
+        with full domains, including intervals, which only the `DOMAIN` node has.
         """
         declared = {
             declaration.name: Domain(
@@ -271,7 +254,7 @@ class Context:
 
 
 def _choice(enum: type[_Choice], value: str, fallback: _Choice) -> _Choice:
-    """The member `value` names, however it was capitalised."""
+    """The member named by `value`, case-insensitively."""
     for member in enum:
         if member.value.lower() == value.lower():
             return member
@@ -281,10 +264,10 @@ def _choice(enum: type[_Choice], value: str, fallback: _Choice) -> _Choice:
 def _setting(
     settings: Settings, name: str, enum: type[_Choice], fallback: _Choice
 ) -> _Choice:
-    """Read one setting as the member of `enum` that spells it.
+    """Read a setting as a member of `enum`.
 
-    Every setting read here is owned by a dialog field, so the store carries
-    it; the fallback is for a value that field's choices do not name.
+    Every setting read here belongs to a dialog field, so it is always present; the
+    fallback covers values outside the field's choices.
     """
     return _choice(enum, str(settings[name]), fallback)
 

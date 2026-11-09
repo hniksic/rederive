@@ -1,168 +1,103 @@
 """The Rederive Algebra pane as a Textual application.
 
-Key handling deliberately bypasses Textual's focus model. In DOS Derive the
-command menu and the expression highlight are two cursors that exist at the
-same time, driven by disjoint key sets: Tab/Space/Backspace/Enter and the
-mnemonic letters drive the menu, while the arrow keys drive the selection in
-the work area. So the menu keys are app-level priority bindings, switched off
-by `check_action` whenever the author line is up and the Input should get the
-keystrokes instead.
+Key handling bypasses Textual's focus model. In DOS Derive the command menu and the
+expression highlight are two simultaneous cursors driven by disjoint keys:
+Tab/Space/Backspace/Enter and the mnemonic letters drive the menu, and the arrow keys
+drive the selection. So the menu keys are app-level priority bindings, disabled by
+`check_action` while a prompt line is up and its Input should get the keys. The keys
+that move the highlight between expressions keep working under a prompt line, since a
+line has no vertical movement; Left, Right, Home and End belong to the line while it
+is up.
 
-The keys that move the highlight from one expression to another are the
-exception: they keep working while a prompt line has the screen, since a line
-of text has nothing vertical for them to do. The ones that move a cursor along
-the line - Left, Right, Home, End - belong to the line while it is up, and to
-the highlight when it is not.
+The mouse drives the same two cursors. Clicking a menu word does what its letter does,
+clicking an expression moves the highlight (one level deeper per click, so a term of a
+long sum is reachable without hitting its exact character), and the wheel scrolls the
+pane. Each gesture applies only where its key would, so the mouse can't do anything
+the keyboard can't. Textual's text selection is off, leaving Shift-drag (Option-drag on
+a Mac) to the terminal; a drag over the input line selects text in the line, for
+Ctrl-C and Ctrl-X.
 
-The mouse is a second way in to the same two cursors, and never a third thing
-to learn: a click on a menu word runs what that word's letter runs, a click on
-an expression moves the highlight the arrows move - one level further in each
-time, so a term of a long sum is reachable without hitting the single character
-it is drawn as - and the wheel scrolls the pane the history stands in. Every
-gesture applies exactly where its key applies, so nothing can be reached by
-mouse that the keyboard cannot reach and nothing can be done under a
-half-answered question that a key would not do. Sweeping text off the screen
-is the terminal's own gesture and is left to it: Textual's selection is off, so a
-drag over the screen does nothing here, and Shift-drag (Option-drag on a Mac)
-selects as the terminal always does under a program that takes the mouse. A
-sweep over the line being typed is a different thing: the line takes the drag
-itself and marks the stretch out as its own selection, which is what Ctrl-C and
-Ctrl-X then act on.
+Submenus and Options dialogs stack on the command menu. Esc pops one level, and
+committing a dialog returns to the command menu, as in Derive. Commands with their own
+question (the block `Remove` deletes, where `Unremove` restores) also use a dialog,
+whose answer is passed to the command rather than stored in settings.
 
-Submenus and Options dialogs stack on top of the command menu: Esc pops one
-level, and committing a dialog returns all the way to the command menu, as the
-original does. A command with a question of its own puts up a dialog too - the
-block `Remove` takes out, the place `Unremove` puts it back - and gets its
-answer handed to it rather than stored, since it is about the command in hand
-and not about the system.
+Commands that read a line (Author, Simplify, approX, Factor, Expand, Jump, the
+Transfer commands) show the prompt band, an Input with a label. The mode says which
+command the line belongs to and what Enter does. A completed command returns to the
+command menu; Esc abandons the line and leaves the submenu up.
 
-A command that needs a line of its own - Author, Simplify, approX, Factor and
-Expand an expression, Jump a label number, the Transfer commands a file name -
-takes the screen with the prompt band instead, which is one Input with a label
-in front of it. The mode says which command the line belongs to, and so what
-Enter does with it. A command that runs is finished with, so it leaves the
-command menu up rather than the submenu it was picked from; Esc, which abandons
-the line instead, leaves that submenu where it was.
+Ctrl-Enter is Enter followed by simplifying the entered expression, on every line that
+enters an expression. Terminals without the extended keyboard protocol send Ctrl-J for
+it.
 
-Ctrl-Enter is Enter with the expression the command enters simplified after it,
-on every line an expression is entered from. It is one key in two spellings:
-Ctrl-J is what a terminal sends for it unless it speaks the keyboard protocol
-that tells the two apart.
+Ctrl-C copies the highlighted expression to the system clipboard (through the terminal
+and through desktop tools), or the selected text if part of the line is selected;
+Ctrl-X also cuts it. Ctrl-V pastes from the system clipboard onto the line, falling back
+on an internal copy where there are no desktop tools (as over ssh). The terminal's own
+paste key works everywhere, and in a browser Ctrl-V goes to the browser. Derive's F3
+and F4, which copy the highlight onto the line, still work, but help documents copy
+and paste instead.
 
-An expression moves by way of the clipboard: Ctrl-C puts what is highlighted on
-the system clipboard, both through the terminal and past it by the desktop's
-own tools, and Ctrl-V writes what is on the system clipboard onto the line being
-typed. Where a stretch of the line is marked out, that is what Ctrl-C copies
-instead, a selection being the plainest way of saying what a key is to act on,
-and Ctrl-X is the same for the line with the stretch taken off it.
-Ctrl-V reads the clipboard by the desktop's tools, and falls back on the copy
-kept here where there are none, as across ssh; the terminal's own paste key
-still works everywhere, the text arriving as if it had been typed. In a browser
-the page hands Ctrl-V to the browser, which pastes as the terminal's key does.
-The original's F3 and F4, which write the highlight onto the line directly,
-still work; the help offers copy and paste instead.
+File name lines complete as you type. The first matching name appears dimmed after the
+cursor and Right accepts it. Tab inserts the common prefix of all matches and opens a
+list above the line: Up and Down move through it, updating the line, Enter enters a
+directory or accepts a file, Esc closes the list, and typing narrows it. Unlike
+Derive's read-only F1 listing, the list can be navigated.
 
-A line that names a file completes what is typed on it, and opens a list of the
-names on offer to look through. The first name the letters so far could grow
-into stands past the cursor, dimmed, and Right takes it - that is the fast path,
-for a name half known. Tab is the other one: it writes out as much of the names
-as they all share and opens the list above the line, where Up and Down walk the
-names with the one in hand highlighted, Enter goes into a directory or takes a
-file, Esc puts the list away, and typing narrows it. Tab has nothing else to do
-on such a line, the menu it steps being off the screen.
+Commands that reach the math engine are awaited on a worker task. Where the engine can
+be aborted, the screen enters a modal state until the answer arrives: the worksheet
+isn't read or repainted, and only Esc (abort) is active. The message line shows the
+running command and elapsed time, and the status line shows memory use, so the user can
+decide whether to wait. All dispatches go through one helper and finish in a completion
+handler.
 
-The list is what makes a file worth looking for rather than only worth typing:
-every key that moves the highlight moves the line with it, so there is never a
-hidden position to keep track of, and every one of them has a key that undoes
-it. That is the whole difference from the original's F1 file listing, which
-could only be read and never walked.
+Two things use the band for something other than a menu. Yes/no questions (Quit, and
+the Clear commands that discard expressions) leave the menu up without a highlight,
+with `confirm` holding the action for Y. A demo takes over the band, showing the comment
+for each step, and any key runs the next step.
 
-A command that reaches the math engine is awaited rather than called. It goes on
-a worker task of its own, and where the engine can be aborted the screen goes
-into a mode until the answer comes back: the worksheet is neither read nor
-repainted, since the command owns the session until it is done, and the only key
-that means anything is Esc, which aborts. What does keep moving is the message
-line, saying which command is running and how long it has been, and the status
-line's memory gauge - which together are how a user decides whether this one is
-worth waiting for. Every dispatch site goes through one helper, and every one of
-them finishes in a completion handler rather than in the line that started it.
+Multi-question commands keep their partial answers in a state object, since each prompt
+is gone when the next appears, and since the questions asked depend on the answers, the
+sequence lives in the handlers rather than in a table:
 
-Two commands take the band for something other than a menu. A question with a
-Y or N for an answer - Quit, and the two Clear commands that throw expressions
-away - leaves the menu up with its highlight off, and `confirm` holds what a Y
-does. A demonstration takes the band outright: the comment above each step
-stands where the menu words go, and any key runs the next step.
+- Factor and Expand share one flow, `Asking`: an expression, then variables one at a
+  time on the prompt band, then an amount from a menu. A `Command` holds what differs
+  (the prompt word, the amounts, when to ask for one, and what runs at the end). A
+  number is factored without asking anything further.
+- Manage Renumber runs immediately, Annotate asks for a label in a dialog then for the
+  text on a line, and Ordering edits the order list on a line. None of them appends to
+  the history.
+- Manage Substitute (`Substituting`) asks for an expression, then a value for each of
+  its variables, or one replacement for a highlighted subexpression. It appends the
+  result unsimplified, so Ctrl-Enter on the last value is useful.
+- The Declare commands (`Declaring`, `Defining`, `Entering`) replace each question with
+  the next rather than stacking them, because Derive abandons the whole command from any
+  of them; one Esc always returns to the Declare menu.
+- Build (`Building`) loops until `Done`: an operand on a line, an operator from a menu,
+  and another operand if the operator is binary. Each operator folds the tree so far
+  into a new node. The menu is taken down while an operand is asked for, so Esc
+  abandons the whole command as in Derive.
+- soLve (`Solving`) asks for an expression, then as many variables as it leaves
+  undetermined (computed from the target's variables and equation count), then, only in
+  Approximate precision, a search interval in a dialog. It may append any number of
+  expressions; with no solutions it appends nothing and says so on the message line,
+  as Derive does.
+- The seven Calculus commands ask for an expression and a variable (defaulting to the
+  expression's primary variable), then show a command-specific dialog. A `Calculus`
+  holds the head to write, the annotation word, the dialog, and how its answers become
+  arguments. They append the head unevaluated, for Simplify.
 
-Factor and Expand ask more than one question, and ask them in both forms: an
-expression, then a variable at a time on the prompt band, then an amount off a
-menu stacked on the command menu. The two are one flow here, `Asking`, because
-the original puts the same questions in the same order for both; a `Command`
-holds what differs, which is the word on the prompts, the amounts on offer,
-when the amount is worth asking about, and what runs at the end. What has been
-answered so far lives in the `Asking` until there is enough to run the command,
-since each prompt is gone by the time the next one is up. How many questions
-get asked depends on the answers - a number is decomposed without being asked
-about at all - so the sequence is in the handlers rather than in a table.
+Build and Calculus handle Ctrl-Enter on their last question themselves. Derive enters
+just one expression, the simplified one, so the command removes the Ctrl-Enter mark and
+simplifies what it built instead of appending it, as `Simp(#1+#1)` and
+`Simp(Dif(#1,x))` show.
 
-The Manage commands that are not settings screens ask in both forms too, and
-one of them asks nothing at all: Renumber runs on the keystroke, Annotate puts
-up a dialog for the label and then a line for the text, and Ordering puts up a
-line carrying the order list. None of the three appends anything to the
-history, so none of them has a compute time to report.
-
-Substitute is the fourth and the only one that derives an expression. It asks
-the way Factor and Expand do - an expression, then a line per answer - and
-what it asks for depends on what is highlighted: a value for each variable of
-a whole expression, or one replacement for a highlighted subexpression. It
-appends what it was given without simplifying it, so Ctrl-Enter on the last
-value is worth pressing, and the lines it collects are `Substituting`.
-
-The `Window` commands are the one group that works on more than one worksheet.
-`self.session` is the active window's, so every command in this file goes on
-reading and writing one session and knows nothing about the rest; what the
-window commands do is change which one that is, or make another. The screen
-follows: one work area per window, placed over a frame that draws what is
-between them, and a frame with nothing to draw while there is one window -
-which is the original's unsplit screen, borderless and eighty columns wide.
-
-The Declare commands are the same shape and each keeps its own answers -
-`Declaring`, `Defining`, `Entering` - but their questions replace each other
-rather than stacking, because the original abandons the whole command from
-whichever of them is up. A question answered off a menu therefore pops it
-before putting the next one, and one Esc always lands back on the Declare menu.
-
-Build is the one command with no end to its questions: an operand on a line, an
-operator off a menu, another operand where the operator takes one, and round
-again until `Done`. What it has put together lives in a `Building` and is one
-tree however many operators have gone into it, since each of them folds the
-last into a new node. The menu comes down rather than aside whenever an operand
-is asked for, so that Esc on that line abandons the whole command as the
-original does, and goes back up on `Done` and after every unary operator.
-
-soLve asks in both forms as well, and is the one command that appends any
-number of expressions rather than exactly one: an expression on a line, then a
-variable at a time for as many as the expression leaves undecided, then - in
-Approximate precision alone - the interval to search, off a dialog. What has
-been answered so far lives in a `Solving`. How many variable questions get
-asked is worked out from two numbers the session supplies before anything is
-computed, the variables of the target and how many equations it is, so the
-sequence is again in the handlers. An answer of no solutions at all appends
-nothing and says so on the message line, that being the whole of what the
-original does with one.
-
-The seven Calculus commands are one flow the other way about: the same two
-lines - an expression, then the variable, offered as the primary variable of
-what was named - and then a dialog that differs. A `Calculus` holds what
-differs, which is the head to write, the word the annotation is spelled with,
-the dialog, and how what comes back off it becomes the arguments after the
-variable. None of them computes: each appends the head unevaluated for a
-Simplify after it to take.
-
-Both of them take Ctrl-Enter on their last question and neither uses the
-general path for it. The original enters one expression and not two - the built
-form never reaches the history - so the mark Ctrl-Enter left is taken back off
-and the command simplifies what it built instead of appending it, which is what
-`Simp(#1+#1)` and `Simp(Dif(#1,x))` say.
+The `Window` commands work across worksheets. `self.session` is the active window's, so
+other commands deal with a single session; window commands change which one is active
+or create another. There is one work area per window over a frame that draws the
+borders. With one window the frame is empty, matching Derive's unsplit borderless
+screen.
 """
 
 from __future__ import annotations
@@ -232,17 +167,16 @@ MODE_MENU = "menu"
 MODE_AUTHOR = "author"
 MODE_SIMPLIFY = "simplify"
 MODE_APPROX = "approx"
-#: The two modes the prompt band is in while Factor or Expand is asking.
+#: Prompt band modes while Factor or Expand is asking.
 MODE_ASKING = "asking"
 MODE_ASKING_VARIABLE = "asking_variable"
-#: The two lines Build reads an operand on, the second of which comes back
-#: after every binary operator.
+#: Build's two operand lines; the second returns after every binary operator.
 MODE_BUILD = "build"
 MODE_BUILD_NEXT = "build_next"
-#: The two lines every Calculus command reads before the one that is its own.
+#: The two lines every Calculus command reads before its own dialog.
 MODE_CALCULUS = "calculus"
 MODE_CALCULUS_VARIABLE = "calculus_variable"
-#: The two lines soLve reads before the interval Approximate precision asks for.
+#: The two lines soLve reads before the interval (asked only in Approximate precision).
 MODE_SOLVE = "solve"
 MODE_SOLVE_VARIABLE = "solve_variable"
 MODE_JUMP = "jump"
@@ -256,28 +190,24 @@ MODE_FUNCTION_VARIABLE = "function_variable"
 MODE_ELEMENT = "element"
 MODE_ANNOTATION = "annotation"
 MODE_ORDER = "order"
-#: The two modes the prompt band is in while Manage Substitute is asking.
+#: Prompt band modes while Manage Substitute is asking.
 MODE_SUBSTITUTE = "substitute"
 MODE_SUBSTITUTE_VALUE = "substitute_value"
 MODE_DEMO = "demo"
-#: The mode a computation holds the screen in. Modal on purpose: the command
-#: owns the session until it is done, so nothing may read the worksheet and no
-#: key but Esc means anything.
+#: The mode while a computation runs. It is modal because the command owns the session
+#: until done: nothing may read the worksheet, and only Esc is active.
 MODE_COMPUTE = "compute"
-#: The mode help holds the screen in. A menu mode like the command menu - the
-#: same keys move the same highlight - but the work area is showing a document
-#: rather than a worksheet, so the keys that walk the history turn pages here.
+#: The mode while help is shown. A menu mode like the command menu, but the work area
+#: shows a document, so the history navigation keys turn pages.
 MODE_HELP = "help"
 
-#: The two modes a menu band is being driven in.
+#: Modes in which the menu band has the keys.
 MENU_MODES = (MODE_MENU, MODE_HELP)
 
-#: Which way each movement turns a page of help. The keys are the ones that
-#: walk the history everywhere else, which is what makes them the ones a reader
-#: reaches for.
+#: Help paging direction per key: the keys that move through the history elsewhere.
 HELP_PAGING = {"down": 1, "page_down": 1, "up": -1, "page_up": -1}
 
-#: The modes in which the prompt band has the screen, and the keys with it.
+#: Modes in which the prompt band is shown and has the keys.
 PROMPT_MODES = (
     MODE_AUTHOR,
     MODE_SIMPLIFY,
@@ -304,23 +234,19 @@ PROMPT_MODES = (
     MODE_SUBSTITUTE_VALUE,
 )
 
-#: The one prompt line that takes no notice of the keys that walk the history:
-#: the variable line Factor and Expand collect on, where the original holds the
-#: highlight still. Under every other line it goes on walking, whatever that
-#: line is collecting. Which expression is being worked on may be settled by
-#: then, but naming it is not all the highlight is for: it is also where a
-#: value is found, and copying is how it is taken onto the line.
+#: Prompt lines that ignore history navigation keys: only the Factor and Expand
+#: variable line, where Derive keeps the highlight still. Under every other line the
+#: highlight can still move, since it is also used to find values to copy onto the
+#: line.
 SETTLED_MODES = (MODE_ASKING_VARIABLE,)
 
-#: The prompt lines the highlight can still be walked under, which is every
-#: other one of them.
+#: Prompt lines under which the highlight can be moved: all the others.
 WALKED_MODES = tuple(mode for mode in PROMPT_MODES if mode not in SETTLED_MODES)
 
-#: The prompt lines that come up naming an expression, and so take the label of
-#: wherever the walk lands - for as long as the label they offered is still
-#: selected on them. A line typed on is a line the user has taken over. The
-#: Declare lines take an expression too but are offered nothing to begin with,
-#: so there is nothing on them to keep in step with the highlight.
+#: Prompt lines that start out with the highlighted expression's label, and follow the
+#: highlight as it moves, as long as the offered label is still selected (typing takes
+#: the line over). The Declare lines also take expressions but start empty, so they
+#: have nothing to keep in sync.
 LABELLED_MODES = (
     MODE_SIMPLIFY,
     MODE_APPROX,
@@ -332,13 +258,10 @@ LABELLED_MODES = (
     MODE_SUBSTITUTE,
 )
 
-#: The prompt lines an expression is entered on, and so the ones Ctrl-Enter
-#: says something on: it enters the line and simplifies what the command
-#: entered. The lines that derive an expression instead - Simplify, approX, and
-#: the expression Factor and Expand ask for - have simplified it already, and
-#: Jump enters nothing at all, so on those Ctrl-Enter is Enter and nothing more.
-#: Substitute's value line is one of these: it derives an expression and
-#: deliberately leaves it unsimplified, so there is something left to ask for.
+#: Prompt lines that enter an expression, where Ctrl-Enter enters and then simplifies.
+#: Lines that derive an expression (Simplify, approX, Factor and Expand's expression)
+#: already simplify it, and Jump enters nothing, so there Ctrl-Enter is plain Enter.
+#: Substitute's value line is included because it leaves its result unsimplified.
 ENTERING_MODES = (
     MODE_AUTHOR,
     MODE_VARIABLE_VALUE,
@@ -348,36 +271,28 @@ ENTERING_MODES = (
     MODE_SUBSTITUTE_VALUE,
 )
 
-#: The prompt lines an expression is written on or named on, which is where the
-#: keys that work on an expression apply: F3 and F4 write onto them, and F6
-#: hands them their sideways keys. The manual gives F3 for the author line and
-#: then says of the Declare value lines and of Substitute's that they take "all
-#: the normal line editing features provided by the Author command"; the lines
-#: that name an expression take them too, and the original marks exactly this
-#: set with the `Lin` flag on the status line.
+#: Prompt lines that take or name an expression, where expression keys apply: F3 and F4
+#: copy onto them, and F6 gives them the left/right keys. The manual documents F3 for
+#: the author line and says the Declare and Substitute value lines take "all the normal
+#: line editing features provided by the Author command"; Derive shows the `Lin` flag
+#: on exactly this set.
 #:
-#: The lines left out are the ones collecting something that is not an
-#: expression - a variable, a file name, a label number, an annotation - and
-#: there the sideways keys stay the line's whatever the arrow key setting says.
+#: Lines collecting something else (a variable, file name, label number, annotation)
+#: always keep the left/right keys, regardless of the arrow key setting.
 EXPRESSION_LINES = (
     tuple(mode for mode in ENTERING_MODES if mode != MODE_FILE) + LABELLED_MODES
 )
 
-#: What each Alt key writes. The original held these in the IBM PC character
-#: set and offered the Alt keys as a second way in beside spelling the name
-#: out; the names still work, so this is a shorthand and never the only way to
-#: write any of them.
+#: What each Alt key inserts, a shortcut for typing the name out (as in Derive, whose
+#: table used the IBM PC character set).
 #:
-#: Where the original's table and ours disagree on a letter's case - it has
-#: `Θ`, `Φ` and `Ω` because those were the only forms its character set held -
-#: the key writes the spelling this program prints, so that what is typed and
-#: what comes back read alike. `#e` and `#i` are written as the names rather
-#: than as their glyphs for the same reason.
+#: Where Derive's case differs (its `Θ`, `Φ` and `Ω` were the only forms its character
+#: set had), the key inserts what this program prints, so input and output match. `#e`
+#: and `#i` are inserted as names rather than glyphs for the same reason.
 #:
-#: Alt-minus needs a terminal that speaks the keyboard protocol telling a key
-#: and its modifiers apart; without one the key arrives as an Escape and a
-#: hyphen and nothing here sees it. The letters do not: those come through
-#: either way. `±` is written `+-` where the key does not land.
+#: Alt-minus needs a terminal with the extended keyboard protocol; otherwise it arrives
+#: as Escape plus hyphen and isn't seen. The letters work either way. Without Alt-minus,
+#: type `±` as `+-`.
 ALT_GLYPHS = {
     "a": "α",
     "b": "β",
@@ -396,19 +311,15 @@ ALT_GLYPHS = {
     "i": "#i",
     "0": "∞",
     "minus": "±",
-    # The subscript operator, which is a glyph in the original and a word here.
-    # It is spaced, as the printer spaces it.
+    # The subscript operator, a glyph in Derive and a word here, spaced as printed.
     "v": " SUB ",
 }
 
-# The Author line is the one line the original advertises help on, and F1 is
-# the key it advertises. Every other line takes the key too; only this one says
-# so, there being nowhere to say it that is not the message line.
+# As in Derive, only the Author line mentions F1 help, although every line supports it.
 ENTER_EXPRESSION = "Enter expression (press F1 for help)"
-#: What every command that derives an expression from another asks for, the
-#: help the Author line offers being left off theirs.
+#: Prompt for commands that derive an expression, without the Author line's help hint.
 ENTER_TO_DERIVE = "Enter expression"
-#: What Quit and the two Clear commands that throw expressions away both ask.
+#: Asked by Quit and the two Clear commands that discard expressions.
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
@@ -416,102 +327,81 @@ APPROX_PROMPT = " APPROX expression: "
 JUMP_PROMPT = " JUMP to: "
 EXPRESSION_PROMPT = " {word} expression: "
 VARIABLE_PROMPT = " {word} variable {number}: "
-#: What Build asks on each of its two operand lines. The first names what is
-#: being built from; the second comes back after every binary operator.
+#: Build's two operand prompts; the second returns after every binary operator.
 BUILD_PROMPT = " BUILD first expression: "
 BUILD_NEXT_PROMPT = " BUILD next expression: "
-#: What every Calculus command asks first, and then second.
+#: The first and second prompts of every Calculus command.
 CALCULUS_PROMPT = " CALCULUS {word} expression: "
 CALCULUS_VARIABLE_PROMPT = " CALCULUS {word} variable: "
 ENTER_VARIABLE = "Enter variable"
-#: What soLve asks on its two lines. The variable line carries no number: the
-#: original asks it once per variable it wants and never says which one this is.
+#: soLve's two prompts. As in Derive, the variable prompt isn't numbered, though it is
+#: asked once per variable.
 SOLVE_PROMPT = " SOLVE expression: "
 SOLVE_VARIABLE_PROMPT = " SOLVE variable: "
-#: What the message line says when a solve found nothing. Nothing is appended
-#: and the highlight stays where it was, so the message is the whole of the
-#: answer.
+#: Shown when solving finds nothing. Nothing is appended and the highlight stays put.
 NO_SOLUTIONS = "No solutions found"
-#: What the message line offers while the variables are being collected. The
-#: first question may be answered for all of them at once; the ones after it
-#: end the list instead, since something has been chosen by then.
+#: Message line text while collecting variables. Return on the first prompt selects
+#: all of them; on later prompts it ends the list.
 FIRST_VARIABLE = "Return for all or select 1: {variables}"
 NEXT_VARIABLE = "Return for no more or select next: {variables}"
-#: What the message line says once an answer is in.
+#: Shown once an answer arrives.
 COMPUTE_TIME = "Compute time: {elapsed}"
-#: What it says while one is being worked out: which command is running, how
-#: long it has been running, and the one key that will stop it.
+#: Shown during a computation: the command, the elapsed time, and how to abort.
 COMPUTING = "{command}: {elapsed}   ESC aborts"
-#: And what it says when that key was pressed. The original reported the time a
-#: command took whether or not it finished, and so does this.
+#: Shown on abort. Like Derive, this reports the time even for unfinished commands.
 ABORTED = "Aborted after {elapsed}"
-#: How each command that computes names itself while it runs.
+#: How computing commands name themselves while running.
 SIMPLIFYING = "Simplifying"
 APPROXIMATING = "Approximating"
 SOLVING = "Solving"
-#: And how Build and the Calculus commands name themselves when they were taken
-#: with plain Enter. They reach no engine then, so the clock never gets far
-#: enough to write this - a name is wanted all the same, the dispatch being the
-#: same dispatch.
+#: The name for Build and Calculus commands confirmed with plain Enter. They don't
+#: reach the engine, so this is never shown, but the shared dispatch needs a name.
 BUILDING = "Building"
-#: What a command is doing while it works out which variables to offer, which
-#: is a question for the engine and so can cost something, though it hardly
-#: ever does.
+#: Shown while a command asks the engine which variables to offer, which is usually
+#: but not always fast.
 READING = "Reading expression"
-#: How the Plot command names itself while it runs. It reaches the engine for
-#: the variables of the expression and then the plot host, which on the first
-#: plot of a session is a process starting up, so it is worth a clock.
+#: The Plot command's name while running. It queries the engine for variables and then
+#: the plot host, which must start up on the first plot, so it can take a while.
 PLOTTING = "Plotting"
-#: What the message line says when a plot has landed. No window is named -
-#: windows are titled by their contents, and the one the plot went to has just
-#: been raised - and the second wording is how replacement teaches itself: a
-#: plot that replaced a curve already there says so in one word.
+#: Shown when a plot is done. No window is named, since windows are titled by content
+#: and the target window has just been raised. The second wording tells the user that
+#: the plot replaced an existing curve.
 PLOTTED = "Plotting {label}"
 REPLOTTED = "Replotting {label}"
-#: What Plot says when there is nothing highlighted to plot.
+#: Shown by Plot when nothing is highlighted.
 NOTHING_TO_PLOT = "no expression to plot"
-#: What the message line says when a plot window sends a traced point home.
-#: The new entry is named by its label, so the next command can ask for it.
+#: Shown when a plot window sends back a traced point, naming the new entry's label so
+#: the next command can refer to it.
 POINT_ENTERED = "Entered {text} as {label}"
-#: How long a point sent home waits before asking again, while a running
-#: command owns the worksheets.
+#: Retry delay for a point sent back from a plot while a command owns the worksheets.
 POINT_RETRY = 0.25
-#: Seconds between two readings of the elapsed time. Fast enough that the
-#: figure looks like a clock rather than a series of guesses.
+#: Seconds between elapsed time updates, fast enough to look like a running clock.
 TICK = 0.1
-#: How long a computation has to run before it says anything at all. Nearly
-#: every command answers within this, and a clock that appears and vanishes
-#: inside a tenth of a second is a flicker rather than a reading - so the
-#: message line is left saying what it said until there is a wait worth
-#: reporting.
+#: How long a computation runs before the clock appears. Most commands finish sooner,
+#: and a clock that appears only briefly would just flicker.
 CLOCK_AFTER = 1.0
 
-#: All Jump takes on its line: a label number, spaces around it allowed. A sign
-#: is not refused, since the original does not refuse one either.
+#: Jump's input: a label number, optionally surrounded by spaces. A sign is accepted,
+#: as in Derive.
 LABEL_NUMBER = re.compile(r"[-+]?[0-9]+")
 
-#: What Unremove says when there is nothing to put back. Every other refusal
-#: in either command is the beep alone, but this one has no dialog to leave up.
+#: Shown by Unremove when there is nothing to restore. Other refusals in Remove and
+#: Unremove only beep, but this one has no dialog to leave up.
 BUFFER_EMPTY = "Unremove buffer empty"
 
-#: What the message line says when Ctrl-C has taken a copy. A clipboard leaves
-#: no mark on the screen, so this is the whole of the receipt. What was copied
-#: is not quoted back: the message line is one line, and an expression is as
-#: long as it likes.
+#: Confirmation of Ctrl-C, since copying leaves no visible trace. The copied expression
+#: isn't quoted, since it may not fit on the line.
 COPIED = "Copied the highlighted expression"
-#: And what it says when what was copied is selected text instead - a stretch of
-#: the line being typed.
+#: Confirmation of Ctrl-C copying selected text from the input line.
 COPIED_TEXT = "Copied the selected text"
-#: What Ctrl-X says when it has taken that stretch off the line.
+#: Confirmation of Ctrl-X.
 CUT_TEXT = "Cut the selected text"
-#: And what it says when there is nothing on the line to cut. Cutting is about
-#: the line and nothing else, so the refusal names the line: a highlighted
-#: expression is not something a key can take away, however selected it looks.
+#: Shown by Ctrl-X with no selection on the line. Cutting only applies to the line, not
+#: to a highlighted expression, which the message makes clear.
 NOTHING_TO_CUT = "Nothing is selected on the line to cut"
 
-# The lines the four Declare commands read, and what the message line asks for
-# on each. `default` is the variable that stands for all the unnamed ones,
-# which is why the name field says so.
+# Prompts and messages for the Declare commands. `default` stands for all undeclared
+# variables, hence the name field's hint.
 VARIABLE_NAME_PROMPT = " DECLARE VARIABLE name: "
 VARIABLE_VALUE_PROMPT = " DECLARE VARIABLE value: "
 FUNCTION_NAME_PROMPT = " DECLARE FUNCTION name: "
@@ -526,33 +416,29 @@ ENTER_FUNCTION_VARIABLE = "Enter variable or press ENTER"
 ENTER_VECTOR_ELEMENT = "Enter vector element {number}"
 ENTER_MATRIX_ELEMENT = "Enter matrix element ({row},{column})"
 
-#: What a matrix element comes up offering, so that a sparse matrix is mostly
-#: Enter presses. A vector element is offered nothing, as in the original.
+#: Default for a matrix element, so entering a sparse matrix is mostly pressing Enter.
+#: Vector elements have no default, as in Derive.
 MATRIX_ZERO = "0"
 
-# The two Manage commands that read a line. Annotate comes up carrying what the
-# entry says now - `User`, or the `Simp(#3)` a command wrote - and Ordering
-# carries the order list as it stands, both selected so that typing replaces
-# them. The original's line editor overwrites instead, so typing `w` over
-# `x y z` there gives `w y z`; every prefilled line in Rederive comes up
-# selected, and this one is not worth an exception.
+# The two Manage commands that read a line. Annotate starts with the entry's current
+# annotation (`User`, or a command's `Simp(#3)`), and Ordering with the current order
+# list, both selected so typing replaces them. Derive overwrites instead (typing `w`
+# over `x y z` gives `w y z`), but every prefilled line here starts selected.
 ANNOTATION_PROMPT = " ANNOTATION: "
 ORDER_PROMPT = " MANAGE ORDER variables: "
 ENTER_ANNOTATION = "Enter annotation"
 ENTER_ORDER = "Enter variables in desired order"
 
-# Manage Substitute, which reads a line for the expression and one for each
-# value. A variable's line comes up carrying the variable's own name, so that
-# Enter alone leaves it alone; a subexpression has no name to offer and its
-# line comes up empty, the message line saying what is being replaced.
+# Manage Substitute reads the expression, then one line per value. A variable's line
+# starts with its own name, so Enter leaves it unchanged; a subexpression's line starts
+# empty, with the message line saying what is being replaced.
 SUBSTITUTE_PROMPT = " MANAGE SUBSTITUTE expression: "
 SUBSTITUTE_VALUE_PROMPT = " MANAGE SUBSTITUTE value: "
 ENTER_REPLACEMENT = "Enter replacement for {name}"
 SUBEXPRESSION = "subexpression"
 
-# Every command that names a file, and what it asks for. The original offered
-# a directory listing on F1; the line completes what is typed on Tab instead,
-# which answers the same question without taking the screen.
+# Prompts for the commands that take a file name. Instead of Derive's F1 directory
+# listing, Tab completes on the line.
 LOAD_PROMPT = " TRANSFER LOAD DERIVE file: "
 LOAD_STATE_PROMPT = " TRANSFER LOAD STATE file: "
 LOAD_DATA_PROMPT = " TRANSFER LOAD DATA file: "
@@ -563,77 +449,61 @@ SAVE_SOURCE_PROMPT = " TRANSFER SAVE {word} file: "
 SAVE_STATE_PROMPT = " TRANSFER SAVE STATE file: "
 DEMO_PROMPT = " TRANSFER DEMO OTHER file: "
 ENTER_FILE = "Enter filename (TAB completes, opens the list)"
-#: What the message line says while that list is open, being the keys that are
-#: worth knowing there and are not the ones the line itself already answers.
+#: Message line text while the completion list is open, listing its keys.
 BROWSING_FILES = "↑↓ choose   ENTER open   ESC close"
 FILE_NOT_FOUND = "File not found"
 CANNOT_READ = "Cannot read file"
 CANNOT_WRITE = "Cannot write file"
-#: What the message line says when a file held a line that would not parse.
-#: The original drops such a line without a word; saying so is cheap, and a
-#: worksheet quietly missing an expression is worth knowing about.
+#: Shown when lines in a loaded file fail to parse. Derive drops them silently, but a
+#: missing expression is worth reporting.
 UNREADABLE = "{count} expression{s} could not be read"
-#: The same for a state file, whose lines are settings rather than expressions.
+#: The same for a state file, whose lines are settings.
 UNSET = "{count} setting{s} could not be read"
-#: What the state prompts offer when nothing has been read or written yet.
+#: Default for the state file prompts before any state file has been used.
 STATE_FILE = "rederive.ini"
-#: What the message line says between two steps of a demonstration. Esc is
-#: named because a demonstration is the one thing in the program that goes on
-#: taking the screen by itself, and nobody watching one should have to wonder
-#: whether they are in it until the last step.
+#: Shown between demo steps. Esc is mentioned because a demo is the only thing that
+#: keeps the screen on its own, and users should know how to leave it early.
 PRESS_ANY_KEY = "Press any key to continue, ESC to stop"
 
-#: What it says while one of the original's demonstrations is on its way. The
-#: name is the file's rather than the menu's word: what is being waited for is
-#: a file, and it is the name the demonstration answers to afterwards.
+#: Shown while downloading one of Derive's demos. It uses the file name rather than
+#: the menu word, since that's what the demo is called afterwards.
 FETCHING = "Fetching {name} from the Internet Archive..."
-#: And when it does not arrive. Every road was tried before this is said, so
-#: what it carries is the refusal of the one that was meant to work.
+#: Shown when the download fails after all sources are tried, with the error from the
+#: primary source.
 CANNOT_FETCH = "{name} could not be downloaded: {trouble}"
-#: What a second demonstration asked for over the first one's download is
-#: answered with. Two at once would be two screens racing for the same
-#: worksheet, and the one already asked for is the one on its way.
+#: Shown when a demo is requested while another is still downloading. Two at once would
+#: race for the same worksheet.
 STILL_FETCHING = "{name} is still on its way; the next one can be asked for after"
 
-#: The opening notice, standing across the pane until something else is drawn
-#: there. The original filled its screen with a version, an address, a fax
-#: number and a plea not to copy the diskettes; what is worth keeping of that
-#: is the name, what the program is, which version it is, and where the help
-#: is. The name block sits high and the help line low, as the original spaced
-#: them, so the pane reads as a title page rather than a huddle in the middle.
+#: The opening notice, shown until something else is drawn. Derive's included an
+#: address, fax number and a copying warning; this keeps the name, description and
+#: version, with the help hint at the bottom, spaced like Derive's title page.
 GREETING = (
     "R E D E R I V E",
     "A Mathematical Assistant",
     "",
     f"Version {__version__}",
 )
-#: The line the notice stands at the foot of the pane, away from the name. Two
-#: keystrokes rather than one: the original's own tour of itself is three keys
-#: away, and nothing else on the screen would ever say so.
+#: The notice's footer line. It mentions the demos, which nothing else on screen
+#: would.
 GREETING_FOOTER = "Press H for help, T D for demos"
-#: The same line where the demonstrations are already in front of the user. A
-#: page offers them on a button of its own, so the keystrokes are worth nothing
-#: there and the help is the only thing the notice has left to say.
+#: The footer when the demos are already offered elsewhere, such as a button on a web
+#: page.
 GREETING_HELP = "Press H for help"
 
 
 class FileNames(Suggester):
-    """What a file prompt offers as it is typed: the first name on offer.
+    """Suggests the first matching file name as a file prompt is typed.
 
-    Textual prints the rest of that name past the cursor, dimmed, and takes it
-    on Right or End. That is the shortest way to a name already half known, and
-    it stands alongside the list Tab opens rather than instead of it: the offer
-    costs no keys and no screen, and the list is for when one name is not
-    enough to go on. Only what would grow the line is offered, so the dimmed
-    text is never empty and never repeats what has been typed.
+    Textual shows the rest of the name dimmed after the cursor and accepts it on Right
+    or End. This complements the list Tab opens. Only names that extend the line are
+    suggested.
 
-    Nothing is cached: files come and go while the program runs, and a name
-    that is offered but no longer there is worse than no offer at all.
+    Nothing is cached, since files come and go while the program runs.
     """
 
     def __init__(self, suffix: str) -> None:
-        # Names are matched as they are typed, this being a filesystem that
-        # tells `Work.mth` from `work.mth`.
+        # Case-sensitive, since the filesystem distinguishes `Work.mth` from `work.mth`.
         super().__init__(use_cache=False, case_sensitive=True)
         self.suffix = suffix
 
@@ -644,16 +514,14 @@ class FileNames(Suggester):
 
 @dataclass
 class Demonstration:
-    """A demonstration file part way through.
+    """A demo in progress.
 
-    A DMO file is a math file whose comments are the script: each expression is
-    authored and then simplified, with the comment above it on the band where
-    the menu goes, and the demonstration waits there for a key. Esc leaves it
-    where it is, which is what `at` is for - naming the same file again picks
-    the demonstration up rather than starting it over.
+    A DMO file is a math file whose comments form the script: each expression is
+    authored and simplified, with its preceding comment shown on the menu band, and
+    the demo waits for a key between steps. Esc pauses it; `at` lets naming the same
+    file again resume rather than restart it.
 
-    A plot gallery is the same script with a picture for an answer, which is
-    the whole of what `plotting` says.
+    A plot gallery (`plotting`) is the same, except each step is plotted.
     """
 
     path: Path
@@ -670,17 +538,15 @@ class Demonstration:
 
 @dataclass(frozen=True)
 class Command:
-    """What tells Factor and Expand apart, the questions being the same.
+    """What differs between Factor and Expand, which ask the same questions.
 
-    `needs_amount` says whether the amount is worth asking about for the
-    expression in hand, which is a different question for each: Factor asks
-    unless the expression is a number it can only decompose, and Expand asks
-    only where there is a denominator to factor.
+    `needs_amount` says whether to ask for the amount: Factor asks unless the
+    expression is a number, and Expand asks only if there is a denominator to factor.
     """
 
-    #: The word the prompts are written with, and the menu title's first word.
+    #: The command word in prompts and in the amount menu title.
     word: str
-    #: How the message line names the command while it is running.
+    #: The command's name on the message line while running.
     running: str
     amounts: Menu
     needs_amount: Callable[[Session, str], bool]
@@ -708,50 +574,46 @@ EXPAND = Command(
 )
 
 
-#: The menus that answer a question a command asked rather than list commands.
+#: Menus that answer a command's question rather than listing commands.
 AMOUNT_MENUS = (FACTOR.amounts, EXPAND.amounts)
 
 
 def _text(values: Mapping[str, str | int], setting: str) -> str:
-    """One answer off a Calculus dialog, which is always an expression or blank."""
+    """One answer from a Calculus dialog: an expression, or blank."""
     return str(values[setting]).strip()
 
 
 def _filled(values: Mapping[str, str | int], *settings: str) -> str | None:
-    """The first of `settings` left blank while another was filled in.
+    """The first of `settings` left blank while another is filled in, or None.
 
-    What the paired limits refuse: both blank asks for the indefinite form and
-    both filled for the definite one, so a half-answered pair is the one thing
-    that is neither, and the original puts the highlight on the empty half
-    rather than taking it.
+    Paired limits must be both blank (indefinite) or both filled (definite). As in
+    Derive, a half-filled pair is refused with the highlight on the empty field.
     """
     blank = [setting for setting in settings if not _text(values, setting)]
     return blank[0] if blank and len(blank) < len(settings) else None
 
 
 def _needed(values: Mapping[str, str | int], *settings: str) -> str | None:
-    """The first of `settings` left blank, for the fields that must be answered."""
+    """The first of the required `settings` left blank, or None."""
     return next((setting for setting in settings if not _text(values, setting)), None)
 
 
 def _limits(values: Mapping[str, str | int], setting: str) -> tuple[str, ...]:
-    """A pair of limits as arguments: both of them, or neither."""
+    """A pair of limits as arguments: both, or neither."""
     low, high = _text(values, f"{setting}Lower"), _text(values, f"{setting}Upper")
     return (low, high) if low and high else ()
 
 
 @dataclass(frozen=True)
 class Calculus:
-    """What tells the seven Calculus commands apart.
+    """What differs among the seven Calculus commands.
 
-    All of them ask the same two questions - which expression, and which
-    variable - and then one line of their own, which is `dialog`. What comes
-    back off that line becomes the arguments after the variable, in the order
-    the head takes them rather than the order the line asks them in: `Taylor`
-    asks for the degree first and writes the point first.
+    All ask for an expression and a variable, then show their own `dialog`. Its answers
+    become the arguments after the variable, in the head's order rather than the
+    dialog's: `Taylor` asks for the degree first but writes the point first.
 
-    None of them computes. Each appends `head(u, x, ...)` for a later Simplify
-    to take, and `prefix` is how the status line names that: `Dif(#1,x)`.
+    None of them computes. Each appends `head(u, x, ...)` for a later Simplify, and
+    `prefix` names it in the annotation, as in `Dif(#1,x)`.
     """
 
     word: str
@@ -763,19 +625,17 @@ class Calculus:
 
 
 def _order(values: Mapping[str, str | int]) -> tuple[str, ...]:
-    """The order of a derivative, left off when it is the first.
+    """The order of a derivative, omitted for a first derivative.
 
-    The original writes `DIF(u, x)` for a first derivative and `DIF(u, x, n)`
-    for any other, so a field still reading `1` writes no argument at all. It
-    is the text that is compared and not what it is worth: the field takes an
-    expression, and `2 - 1` is not the answer `1` is.
+    Derive writes `DIF(u, x)` for a first derivative and `DIF(u, x, n)` otherwise. The
+    text is compared rather than its value, so `2 - 1` is still written out.
     """
     order = _text(values, "DifferentiateOrder")
     return () if order == "1" else (order,)
 
 
 def _vector_values(values: Mapping[str, str | int]) -> tuple[str, ...]:
-    """Where a `Vector` index starts, ends, and steps - the step if it is not one."""
+    """A `Vector` index's start, end, and step, omitting a step of 1."""
     step = _text(values, "VectorStep")
     arguments = (_text(values, "VectorStart"), _text(values, "VectorEnd"))
     return arguments if step == "1" else (*arguments, step)
@@ -846,18 +706,15 @@ CALCULUS_COMMANDS: dict[str, Calculus] = {
 
 @dataclass
 class Helping:
-    """The help now on screen, and what leaving it goes back to.
+    """The help on screen, and what leaving it returns to.
 
-    `topic` is None while the subject menu is showing, which is the level Esc
-    and `Resume` fall back to from a subject and out of altogether from there.
-    `pages` is how many pages the subject came to when it was last laid out -
-    a number that belongs to the pane's size and not to the document, so it is
-    written each time the page is painted and read by the keys that turn one.
+    `topic` is None on the subject menu; from a subject, Esc and `Resume` return there,
+    and from the subject menu they leave help. `pages` is the subject's page count at
+    the last layout; it depends on the pane size, so it is updated on every paint.
 
-    `resume` and `message` are what the screen was doing when help was asked
-    for. Help can be asked for from a line half typed, and that line has to
-    come back with its text and its question intact, so what the message line
-    said goes with it.
+    `resume` and `message` record the screen's mode and message when help was opened.
+    Help can be opened from a partly typed line, which must come back intact along with
+    its message.
     """
 
     resume: str = MODE_MENU
@@ -869,34 +726,30 @@ class Helping:
 
 @dataclass
 class Asking:
-    """A Factor or Expand command part way through its questions.
+    """A Factor or Expand command in progress.
 
-    The command asks for an expression, then for variables, then for an
-    amount, and each answer has to outlive the prompt that collected it.
+    It asks for an expression, then variables, then an amount, keeping the answers.
     """
 
     command: Command
     request: str = ""
-    #: The variables not chosen yet, in the order they are offered.
+    #: Variables not yet chosen, in the order offered.
     remaining: tuple[str, ...] = ()
-    #: The ones chosen so far, in the order they were, which is what makes the
-    #: first of them the primary variable.
+    #: Variables chosen so far, in order; the first is the primary variable.
     chosen: tuple[str, ...] = ()
 
 
 @dataclass
 class Building:
-    """A Build command part way through, which is one expression and its name.
+    """A Build command in progress: the expression so far and its annotation.
 
-    Every operator folds what has been built so far into a new tree, so there
-    is never more than the one expression to carry: `#1 + #2` becomes the sum,
-    and a `*` after it multiplies that sum by whatever comes next. `annotation`
-    is built the same way, out of what each operand was called - and it is
-    written flat, as the original writes it, so `#1+#2*#3` names an expression
-    that is `(#1 + #2)·#3`.
+    Each operator folds the expression so far into a new tree: `#1 + #2` becomes the
+    sum, and a following `*` multiplies that sum by the next operand. `annotation` is
+    built the same way from the operands' names, written flat as in Derive, so
+    `#1+#2*#3` names `(#1 + #2)·#3`.
 
-    `operator` is the binary operator waiting on its right operand, and None
-    whenever the operator menu is what is up.
+    `operator` is a binary operator awaiting its right operand, or None while the
+    operator menu is shown.
     """
 
     node: Node | None = None
@@ -906,11 +759,10 @@ class Building:
 
 @dataclass
 class Calculating:
-    """A Calculus command part way through its questions.
+    """A Calculus command in progress.
 
-    The expression and the variable are collected on lines of their own and
-    have to outlive them; everything else is answered at once, on the dialog
-    the command finishes on.
+    Keeps the expression and variable from their lines; the rest is answered in the
+    final dialog.
     """
 
     command: Calculus
@@ -920,64 +772,58 @@ class Calculating:
 
 @dataclass
 class Solving:
-    """A soLve command part way through its questions.
+    """A soLve command in progress.
 
-    It asks for an expression, then for as many variables as the expression
-    leaves undecided, then - in Approximate precision alone - for the interval
-    to search. `wanted` is how many variable answers are still owed, which is
-    one for a scalar the expression does not settle and one per equation for an
-    underdetermined system.
+    It asks for an expression, then as many variables as it leaves undetermined, then,
+    only in Approximate precision, a search interval. `wanted` is the number of
+    variables still to ask for: one for an ambiguous scalar equation, and one per
+    equation for an underdetermined system.
     """
 
     request: str = ""
-    #: How many variables are still to be answered for.
     wanted: int = 0
-    #: The ones not chosen yet, most main first, which is the order the
-    #: defaults walk in.
+    #: Variables not yet chosen, most significant first, the order defaults are
+    #: offered in.
     remaining: tuple[str, ...] = ()
-    #: The ones chosen so far, in the order they were.
+    #: Variables chosen so far, in order.
     chosen: tuple[str, ...] = ()
 
 
 @dataclass
 class Substituting:
-    """A Manage Substitute command part way through its questions.
+    """A Manage Substitute command in progress.
 
-    It asks for an expression and then for what to write into it: one value
-    per variable, or the one replacement a highlighted subexpression takes.
-    `part` says which of the two, since a subexpression has no variables to
-    count and no name to ask under.
+    It asks for an expression, then for one value per variable, or for a single
+    replacement of a highlighted subexpression. `part` says which.
     """
 
     request: str = ""
     part: bool = False
-    #: The variables not answered yet, most main first, which is the order the
-    #: original asks about them in.
+    #: Variables not yet answered, most significant first, as Derive asks them.
     remaining: tuple[str, ...] = ()
-    #: What has been answered so far: one value per variable answered.
+    #: Answers so far, one value per variable.
     values: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
 class Declaring:
-    """A Declare Variable command part way through its questions.
+    """A Declare Variable command in progress.
 
-    The command asks for a name, then for a value or a domain, then - for the
-    two domains that have one - for an interval.
+    It asks for a name, then a value or domain, then, for Integer and Real, an
+    interval.
     """
 
     name: str
-    #: The domain, once one has been chosen off the menu.
+    #: The domain, once chosen from the menu.
     kind: str = ""
 
 
 @dataclass
 class Defining:
-    """A Declare Function command part way through its questions.
+    """A Declare Function command in progress.
 
-    It asks for a name and a definition; a definition left blank turns it into
-    an arbitrary function, and it goes on asking for that function's variables
-    until a blank answer ends the list.
+    It asks for a name and a definition. A blank definition declares an arbitrary
+    function, whose variables are then asked for until a blank answer.
     """
 
     name: str
@@ -988,7 +834,7 @@ class Defining:
 class Entering:
     """A Declare Matrix or Declare vectoR command collecting its elements.
 
-    A vector is one row of elements and says so by carrying no row count.
+    A vector has `rows` set to None.
     """
 
     columns: int
@@ -1001,20 +847,20 @@ class Entering:
 
     @property
     def place(self) -> tuple[int, int]:
-        """Which element is being asked for, counting rows and columns from 1."""
+        """The row and column of the element being asked for, counting from 1."""
         entered = len(self.elements)
         return entered // self.columns + 1, entered % self.columns + 1
 
     @property
     def grid(self) -> list[tuple[str, ...]]:
-        """The elements as rows, which is what a matrix is written from."""
+        """The elements grouped into rows."""
         return [
             self.elements[start : start + self.columns]
             for start in range(0, len(self.elements), self.columns)
         ]
 
 
-#: What the navigation keys mean inside an Options dialog's number field.
+#: What navigation keys do in an Options dialog's number field.
 CURSOR_MOVES = {
     "left": "back",
     "right": "forward",
@@ -1022,27 +868,24 @@ CURSOR_MOVES = {
     "last_sibling": "end",
 }
 
-#: The movements that walk the history rather than the line or the field they
-#: are pressed on: on a prompt line, and on the dialogs whose fields name
-#: expressions. The rest move the cursor of whatever is up.
+#: Movements that navigate the history, even on a prompt line or a dialog whose fields
+#: name expressions. Other movements move the cursor of whatever is shown.
 ENTRY_MOVES = ("up", "down", "page_up", "page_down", "first_entry", "last_entry")
 
-#: The movements that have to be told how tall the pane is, being about how
-#: much of the history is on screen rather than about how it is put together.
+#: Movements that depend on the pane height.
 PAGE_MOVES = ("page_up", "page_down")
 
 
 def _takes_anything(values: dict[str, str | int]) -> str | None:
-    """What a dialog whose command judges none of its fields refuses: nothing."""
+    """A refusal check that accepts everything, for dialogs without validation."""
     return None
 
 
 def _pane_of(widget: Widget | None) -> WorkArea | None:
-    """The work area `widget` is, or is inside, if it is either.
+    """The work area that is or contains `widget`, or None.
 
-    A pane paints its expressions into a widget of its own, so the pointer lands
-    on that rather than on the pane, and the pane is what a click has to be
-    answered against.
+    A pane paints into a child widget, so clicks land on the child and must be mapped
+    to the pane.
     """
     if widget is None:
         return None
@@ -1053,12 +896,11 @@ def _pane_of(widget: Widget | None) -> WorkArea | None:
 
 
 def _variables_wanted(equations: int, variables: int) -> int:
-    """How many variables soLve asks about, given what it was handed.
+    """How many variables soLve asks for.
 
-    A scalar - no equations counted, the expression being no vector of them -
-    asks once unless it holds exactly one variable, which settles it. A system
-    asks once per equation, and only where there are more variables than
-    equations: with as many or fewer there is nothing to choose.
+    A scalar expression (`equations` is 0) asks once, unless it has exactly one
+    variable. A system asks once per equation, but only if there are more variables
+    than equations; otherwise there is nothing to choose.
     """
     if not equations:
         return 0 if variables == 1 else 1
@@ -1067,12 +909,11 @@ def _variables_wanted(equations: int, variables: int) -> int:
 
 @dataclass(frozen=True)
 class Outcome:
-    """What became of one session command, whichever task it ran on.
+    """The result of a session command, whichever task it ran on.
 
-    Every way a command can end arrives here rather than as an exception up
-    the stack, because the task the command ran on is not the one that has to
-    report it: a computation that is killed mid-bignum has no return path of
-    its own.
+    Every outcome is captured here rather than raised, because the task that ran the
+    command isn't the one that reports it, and a computation killed mid-way has no
+    return path of its own.
     """
 
     value: object = None
@@ -1081,11 +922,10 @@ class Outcome:
 
 
 async def _ran(run: Callable[[], Awaitable[object]]) -> Outcome:
-    """Await one session command and time it, however it ends.
+    """Await a session command and time it, however it ends.
 
-    Everything is caught. A refusal, a death of the engine worker and a bug
-    that got past the engine's promises are all things the message line can
-    say, and none of them is worth taking the app down for.
+    All exceptions are caught: a refusal, a dead engine worker, or a bug should be
+    reported on the message line rather than crash the app.
     """
     started = time.monotonic()
     try:
@@ -1095,23 +935,18 @@ async def _ran(run: Callable[[], Awaitable[object]]) -> Outcome:
 
 
 def _elapsed(seconds: float) -> str:
-    """How long something took, said as coarsely as it can be said truthfully.
+    """A duration, with precision appropriate to its size.
 
-    A tenth of a second is worth knowing about a command that takes a moment
-    and is noise about one that takes an hour, so the unit follows the figure:
-    `3.1s` while a decimal still says something, `42s` past ten of them, and
-    `10m 8s` or `2h 10m 8s` once there are minutes and hours to count.
+    `3.1s` under ten seconds, then `42s`, `10m 8s` or `2h 10m 8s`.
     """
     tenths = f"{seconds:.1f}"
     return f"{tenths}s" if float(tenths) < 10 else _whole(seconds)
 
 
 def _whole(seconds: float) -> str:
-    """How long something has been running, counted in whole seconds.
+    """A duration in whole seconds: `3s`, `42s`, `10m 8s` or `2h 10m 8s`.
 
-    A figure that is still climbing has no use for a tenth that is out of date
-    the moment it is read, so the running clock counts `3s`, `42s`, `10m 8s`
-    and `2h 10m 8s` and leaves the decimal to the time finally reported.
+    Used by the running clock, where tenths would be stale as soon as shown.
     """
     minutes, second = divmod(round(seconds), 60)
     if not minutes:
@@ -1121,28 +956,25 @@ def _whole(seconds: float) -> str:
 
 
 def _plot_reason(error: Exception) -> str:
-    """What a Plot command that went wrong says after the `Plot: ` prefix.
+    """The message for a failed Plot command, after the `Plot: ` prefix.
 
-    Every way it can go wrong has a message worth reading as it stands: an
-    expression no reading fits, an engine that died under the variables call, a
-    host that would not start. What is left is a bug, and its type name is more
-    use than nothing.
+    Expected failures carry a readable message. Anything else is a bug, for which the
+    exception type name is better than nothing.
     """
     return str(error) or type(error).__name__
 
 
 def _appending(kept: list[tuple[str, bytes]]) -> Callable[[str, bytes], None]:
-    """A place for a download to put the files nobody asked for.
+    """A callback for a download to store extra files it received.
 
-    They arrive on the thread the download runs on, and what becomes of them is
-    the loop's, as everything the program holds on to is, so what the thread is
-    given is a list rather than the keeping itself.
+    It runs on the download thread, so it only appends to a list that the event loop
+    processes later.
     """
     return lambda file, data: kept.append((file, data))
 
 
 def _reported(outcome: Outcome) -> str:
-    """What the message line says about a command that has finished."""
+    """The message line text for a finished command."""
     error = outcome.error
     if error is None:
         return COMPUTE_TIME.format(elapsed=_elapsed(outcome.seconds))
@@ -1157,21 +989,18 @@ class RederiveApp(App[None]):
     CSS_PATH = "rederive.tcss"
     TITLE = "Rederive"
     AUTO_FOCUS = None
-    #: The last line of the opening notice. A subclass whose environment shows
-    #: the demonstrations off by itself says the other one, there being no
-    #: reason to point at two keystrokes for something already on the screen.
+    #: The last line of the opening notice. Subclasses whose environment already
+    #: offers the demos use `GREETING_HELP` instead.
     GREETING_LINE = GREETING_FOOTER
-    # Nothing on screen belongs to anything but the pane itself.
+    # The screen belongs entirely to the pane.
     ENABLE_COMMAND_PALETTE = False
-    # Selecting text off the screen is left to the terminal; see "mouse routing".
+    # Leave screen text selection to the terminal; see "mouse routing".
     ALLOW_SELECT = False
     BINDINGS = [
-        # Tab completes the name where a file is being named, and steps the
-        # menu everywhere else; `check_action` picks between the two, which
-        # leaves the second binding to take the key when the first declines it.
-        # Shift-Tab and the arrows pair off the same way: on a file prompt with
-        # the list open they walk it, and everywhere else they do what they
-        # always did.
+        # Tab completes file names on a file prompt and steps the menu elsewhere;
+        # `check_action` disables the first binding when it doesn't apply. Shift-Tab and
+        # the arrows likewise navigate an open completion list, and act normally
+        # otherwise.
         Binding("tab", "complete_file", "Complete filename", priority=True, show=False),
         Binding("tab", "menu_next", "Next option", priority=True, show=False),
         Binding("space", "menu_space", "Next option", priority=True, show=False),
@@ -1187,13 +1016,11 @@ class RederiveApp(App[None]):
         Binding("pageup", "browse_page(-1)", "Previous page", priority=True, show=False),
         Binding("backspace", "menu_erase", "Previous option", priority=True, show=False),
         Binding("delete", "menu_delete", "Delete", priority=True, show=False),
-        # Enter on an open list takes the name it points at rather than the
-        # command: the file is not read until the list is out of the way, so
-        # looking around can never load something by accident.
+        # Enter on an open list takes the highlighted name rather than running the
+        # command, so browsing never loads a file by accident.
         Binding("enter", "browse_take", "Take name", priority=True, show=False),
         Binding("enter", "menu_invoke", "Invoke option", priority=True, show=False),
-        # Ctrl-Enter reaches a terminal as Ctrl-J, unless it speaks the keyboard
-        # protocol that tells the two apart; both spell the same command.
+        # Terminals without the extended keyboard protocol send Ctrl-Enter as Ctrl-J.
         Binding(
             "ctrl+j",
             "enter_and_simplify",
@@ -1208,46 +1035,33 @@ class RederiveApp(App[None]):
             priority=True,
             show=False,
         ),
-        # Ctrl-C takes a copy of the highlighted expression and Ctrl-V puts it,
-        # or whatever else is on the clipboard, on the line being typed, which
-        # is how a new expression is built out of ones already on the worksheet
-        # without any of it being typed again. The arrows still walk the highlight with a line up, which is
-        # what makes the pair worth having: move onto what is wanted, copy it,
-        # and paste it where it is going.
+        # Ctrl-C copies the highlighted expression and Ctrl-V pastes the clipboard onto
+        # the line, to build new expressions from existing ones. The arrows still move
+        # the highlight while a line is up, so you can move, copy, and paste.
         Binding("ctrl+c", "copy_highlighted", "Copy", priority=True, show=False),
         Binding("ctrl+v", "paste_clipboard", "Paste", priority=True, show=False),
-        # Ctrl-X is the third of them, and the one that is only ever about the
-        # line: it takes what is selected there off it. The binding has to be
-        # the app's rather than the line's own, since the line would cut the
-        # label a command offered as readily as a stretch the user marked out.
+        # Ctrl-X cuts the selection on the line. It is bound at the app level because
+        # the line's own binding would also cut a label offered by a command.
         Binding("ctrl+x", "cut_selected", "Cut", priority=True, show=False),
-        # The original's keys for the same thing, kept because a session driven
-        # from the manual still reaches for them: F3 writes the highlighted
-        # expression straight onto the line, and F4 writes it fenced. Neither is
-        # advertised in the help, copy and paste being what a reader now expects.
+        # Derive's equivalents, kept for users following the manual: F3 inserts the
+        # highlighted expression onto the line, and F4 inserts it in parentheses. Help
+        # documents copy and paste instead.
         Binding("f3", "insert_highlighted(0)", "Insert", priority=True, show=False),
         Binding("f4", "insert_highlighted(1)", "Insert ()", priority=True, show=False),
-        # F1 and F2 are the Window commands worth a key of their own: the next
-        # window, and the next of a window's overlays. They apply at the
-        # command menu and nowhere else, the original giving F1 to Help on
-        # every line that is being typed.
+        # F1 and F2 step to the next window and the next overlay. They only apply at the
+        # command menu, since on input lines Derive uses F1 for help.
         Binding("f1", "window_step(1)", "Next window", priority=True, show=False),
         Binding(
             "shift+f1", "window_step(-1)", "Previous window", priority=True, show=False
         ),
-        # The other half of F1: on a line being typed there is no window to
-        # step to that would not take the line with it, and the key is help
-        # instead. The two never apply at once, so which of the bindings takes
-        # the key is `check_action`'s to say.
+        # On an input line F1 is help instead; `check_action` picks the binding.
         Binding("f1", "help", "Help", priority=True, show=False),
         Binding("f2", "window_flip(1)", "Next overlay", priority=True, show=False),
         Binding(
             "shift+f2", "window_flip(-1)", "Previous overlay", priority=True, show=False
         ),
-        # F6 hands the sideways keys back and forth between the line and the
-        # highlight; Ins does the same for making room and standing on what is
-        # there. The original spelled Ins as Ctrl-V too, which that key can no
-        # longer be: pasting is what it means everywhere else.
+        # F6 toggles whether left/right keys go to the line or the highlight; Ins
+        # toggles insert/overwrite. Derive also used Ctrl-V for Ins, but here it pastes.
         Binding("f6", "toggle_arrow_mode", "Arrow keys", priority=True, show=False),
         Binding("insert", "toggle_inserting", "Insert mode", priority=True, show=False),
         *[
@@ -1271,18 +1085,17 @@ class RederiveApp(App[None]):
         Binding("pagedown", "nav('page_down')", "Page down", priority=True, show=False),
         Binding("ctrl+home", "nav('first_entry')", "Top", priority=True, show=False),
         Binding("ctrl+end", "nav('last_entry')", "Bottom", priority=True, show=False),
-        # The original's other spelling of the same two commands.
+        # Derive's alternative keys for the same two commands.
         Binding("ctrl+pageup", "nav('first_entry')", "Top", priority=True, show=False),
         Binding(
             "ctrl+pagedown", "nav('last_entry')", "Bottom", priority=True, show=False
         ),
-        # Ctrl-Right and Ctrl-Left scroll the work area sideways over a render
-        # too wide for the pane. They move no selection, so they are not nav.
+        # Ctrl-Right and Ctrl-Left scroll a render that is too wide for the pane. They
+        # don't move the selection, so they aren't `nav`.
         Binding("ctrl+right", "scroll_work(1)", "Right", priority=True, show=False),
         Binding("ctrl+left", "scroll_work(-1)", "Left", priority=True, show=False),
-        # The same two commands under a spelling no window manager takes for
-        # itself, for the terminals where the Ctrl keys never arrive. They are
-        # characters, so they only scroll where nothing is waiting to be typed.
+        # Alternatives for terminals where those Ctrl keys don't arrive. Being
+        # characters, they only scroll when no line is being typed.
         Binding(">", "scroll_work_typed(1)", "Right", priority=True, show=False),
         Binding("<", "scroll_work_typed(-1)", "Left", priority=True, show=False),
     ]
@@ -1295,165 +1108,135 @@ class RederiveApp(App[None]):
         opening: str = "",
         plotter: Any = None,
     ) -> None:
-        """`demo` and `opening` are what the command line asked for.
+        """`demo` and `opening` come from the command line.
 
-        A demonstration named there is started as soon as there is a screen to
-        run it on; anything the reading of the other files had to say stands on
-        the message line in place of the usual invitation, since the user has
-        not been asked anything yet and a count of lines that would not parse
-        is the more useful thing to be told.
+        The demo, if any, starts once the screen is up. `opening` is a message from
+        loading the other files (such as a count of unparsable lines), shown instead
+        of the usual prompt.
 
-        `plotter` is where a plot goes when one is asked for, and the default
-        is the plot host this program has always had. A caller that draws
-        windows another way - a browser, a test - hands its own in.
+        `plotter` receives plot requests, defaulting to the standard plot host. Callers
+        that draw plot windows differently (a browser, a test) pass their own.
         """
-        # Before the base class, which asks for the CSS variables as it starts.
-        # A session brings its own settings, there being only one store.
+        # Set up before the base class, which reads the CSS variables on init. A session
+        # brings its own settings, since there is only one store.
         if settings is None:
             settings = session.settings if session is not None else Settings()
         self.settings = settings
         self.palette = Palette(self.settings)
         super().__init__()
-        #: Every window there is. `session` is whichever one is active, which
-        #: is what every command in this file works on.
+        #: All windows. `session` is the active one, which all commands here act on.
         self.windows = Windows(session if session is not None else Session(self.settings))
-        #: The work area each window is drawn in, made as windows are and kept
-        #: for reuse once they close: which window a widget belongs to has to
-        #: hold still, since the sideways scroll of a pane is the window's.
+        #: Each window's work area, created with the window and kept for reuse after it
+        #: closes. The mapping must be stable, since a pane's scroll belongs to its
+        #: window.
         self.panes: dict[Window, WorkArea] = {}
         self.spare: list[WorkArea] = []
-        #: The worksheet the program opened on, and whether the opening notice
-        #: still stands over it. The original painted its notice once and gave
-        #: it up to whatever drew the work area next - an expression, a help
-        #: page, a window command, a Clear - while a menu opened and escaped or
-        #: a dialog committed left it standing, and nothing ever brought it
-        #: back. `_opening_screen` is that rule.
+        #: The initial worksheet, and whether the opening notice is still shown. As in
+        #: Derive, the notice is replaced by whatever draws the work area next (an
+        #: expression, help, a window command, a Clear) and never returns, while menus
+        #: and dialogs leave it in place. See `_opening_screen`.
         self.opening_session = self.windows.session
         self.greeting = True
-        #: The plot windows, which live in a child process that is not started
-        #: until something is plotted. Constructing this costs nothing: no Qt,
-        #: no numpy, no process, and the app process stays as free of all three
-        #: as it is of sympy. A caller with windows of another kind hands them
-        #: in instead - the five calls below are the whole of what this side
-        #: asks of them, and what is behind them is not this side's business.
+        #: The plot windows, in a child process started on the first plot. Constructing
+        #: this is cheap and doesn't import Qt or numpy, keeping them (like sympy) out
+        #: of the app process. Callers may pass another implementation; the calls
+        #: below are its whole interface.
         self.plots = PlotProxy() if plotter is None else plotter
-        #: Which thread the loop this app runs on will be. Taken here because
-        #: an app is built on the thread it is then run on, and read where an
-        #: event has to be told whether it needs to cross to that thread or is
-        #: on it already.
+        #: The event loop's thread (the app is run on the thread that creates it), used
+        #: to tell whether an event must be passed to the loop thread.
         self._on_loop = threading.get_ident()
         self.plots.events = self._plot_reported
         self.plots.prefer(preferences(self.settings))
         self.settings.watch(self._settings_changed)
         self.mode = MODE_MENU
-        #: The command menu, plus whatever submenu or dialog is stacked on it.
+        #: The command menu, plus any submenus or dialogs stacked on it.
         self.stack: list[MenuCursor | DialogEditor] = [MenuCursor(ALGEBRA)]
         self.message = opening or ENTER_OPTION
-        #: The demonstration the command line named, until it has been started.
+        #: The demo named on the command line, until started.
         self.opening_demo = demo
-        #: What to do with the file the prompt line is naming.
+        #: The action for the file named on the prompt line.
         self.file_command: Callable[[str], None] | None = None
-        #: The extension that command supplies, and so what Tab completes to.
+        #: That command's file extension, used for completion.
         self.file_suffix = worksheet.SUFFIX
-        #: The names the open list is showing, and which of them has been taken
-        #: onto the line - None while the list is open but the line is still
-        #: the user's own typing. The list is closed when `completions` is
-        #: empty. Keeping the two together is what stops the line and the list
-        #: from ever disagreeing about which name is being talked about.
+        #: The names in the completion list, and the index of the one copied onto the
+        #: line (None if the line holds the user's typing). The list is closed when
+        #: `completions` is empty. Kept together so the line and list never disagree.
         self.completions: list[str] = []
         self.completed: int | None = None
-        #: What to do with the values of the dialog that stores none.
+        #: The handler for the values of a dialog that doesn't store them.
         self.answer: Callable[[dict[str, str | int]], None] | None = None
-        #: Which of that dialog's fields its command will not take, when it is
-        #: choosy about them.
+        #: Returns the first field of that dialog the command refuses, if any.
         self.refuses: Callable[[dict[str, str | int]], str | None] = _takes_anything
-        #: The block of labels the next save writes, when one was asked for.
+        #: The label range the next save writes, if one was asked for.
         self.block: tuple[int | None, int | None] = (None, None)
-        #: A Factor or Expand command's answers so far, while it is asking.
+        #: State of the Factor or Expand command in progress, if any.
         self.asking: Asking | None = None
-        #: What a Build has put together so far, while it is building.
+        #: State of the Build in progress, if any.
         self.building: Building | None = None
-        #: A Calculus command's answers so far, while it is asking.
+        #: State of the Calculus command in progress, if any.
         self.calculating: Calculating | None = None
-        #: A soLve command's answers so far, while it is asking.
+        #: State of the soLve command in progress, if any.
         self.solving: Solving | None = None
-        #: A Manage Substitute's answers so far, while it is asking.
+        #: State of the Manage Substitute in progress, if any.
         self.substituting: Substituting | None = None
-        #: The same for the three Declare commands that ask more than one
-        #: question, each of which is asking whenever it is not None.
+        #: State of the multi-question Declare commands in progress, if any.
         self.declaring: Declaring | None = None
         self.defining: Defining | None = None
         self.entering: Entering | None = None
-        #: The entry `Manage Annotate` is asking about, once it has been named.
+        #: The entry `Manage Annotate` is annotating, once chosen.
         self.annotating: int | None = None
-        #: The shape the next Declare Matrix and Declare vectoR offer, which is
-        #: the last one entered. The original starts a matrix at three by three
-        #: and offers no dimension at all until a vector has been entered.
+        #: The defaults for the next Declare Matrix and Declare vectoR: the last size
+        #: entered. As in Derive, matrices start at three by three and vectors with no
+        #: default.
         self.matrix_size = (3, 3)
         self.dimension: int | str = ""
-        #: Whether the arrow keys belong to the line being edited rather than
-        #: to the highlight. Set from `ArrowKeyMode` each time a line goes up
-        #: and toggled under it by F6, so that the setting says where every
-        #: command starts and the key says where this one goes on.
+        #: Whether the left/right keys go to the line rather than the highlight. Reset
+        #: from `ArrowKeyMode` whenever a line is shown, and toggled by F6.
         self.line_edit = True
-        #: Whether a character typed on a line makes room for itself. Off is
-        #: the original's overwrite mode, and unlike the arrow key mode it is
-        #: not reset per command: it is how the user is typing, not what the
-        #: command asked.
+        #: Insert mode, as opposed to Derive's overwrite mode. Unlike the arrow key mode,
+        #: it isn't reset per command.
         self.inserting = True
-        #: The line and selection a command put up, which is what it is
-        #: offering rather than anything the user marked out. A line holding
-        #: anything else is the user's, and its selection is what the keys that
-        #: copy and cut act on.
+        #: The line text and selection a command prefilled. Once the line differs, it
+        #: belongs to the user, and copy and cut act on its selection.
         self.offering: tuple[str, Selection] | None = None
-        #: What a Y answers, while a command is asking for one.
+        #: The action for Y while a command asks a yes/no question.
         self.confirm: Callable[[], None] | None = None
-        #: Whether that question has the dialog it came from standing under it,
-        #: which is the one thing an answer has to put away either way.
+        #: Whether that question was asked over a dialog, which the answer must close.
         self.confirmed_over = False
-        #: The dialog `_ask` last put up, so that a command can show it again
-        #: with its answer settled on it.
+        #: The dialog `_ask` last showed, so a command can redisplay it with its answer.
         self.asked: Dialog | None = None
-        #: The history as it stood when Ctrl-Enter was pressed, or None while no
-        #: line has been taken that way. Whatever the command adds to it is what
-        #: gets simplified once the command is done.
+        #: The history when Ctrl-Enter was pressed, or None. Entries the command adds
+        #: after it are simplified when the command is done.
         self.simplifying: tuple[sessions.Entry, ...] | None = None
-        #: The help on screen, or None while the worksheet has the work area.
+        #: The help on screen, or None.
         self.helping: Helping | None = None
-        #: The demonstration under way, running or suspended.
+        #: The current demo, running or paused.
         self.demo: Demonstration | None = None
-        #: The one being downloaded, or None while none is. One at a time: two
-        #: would be two demonstrations racing for the same worksheet.
+        #: The demo being downloaded, or None. Only one at a time, since two would race
+        #: for the same worksheet.
         self.fetching: str | None = None
-        #: How one of the original's demonstrations is fetched when it is not
-        #: here yet, and where it is kept once it is. The desktop's own sockets
-        #: unless something puts its own in - a tab has no sockets and one road
-        #: out, which is the browser's, and `rederive.web.demos` is that road.
+        #: Fetches one of Derive's demos. Uses sockets by default; in a browser tab,
+        #: `rederive.web.demos` replaces it with a browser-based fetch.
         self.fetcher: Callable[[catalogue.Demo], Awaitable[bytes]] = self._downloaded
-        #: What has been downloaded in this run, by the name the original gave
-        #: it. A demonstration is shown rather than installed: nothing is
-        #: written to the directory the program was started in, and what is
-        #: worth keeping of one is the worksheet it leaves behind. The second
-        #: viewing of one is instant and the next run downloads it again.
+        #: Demos downloaded in this run, by Derive's file name. They are kept in memory
+        #: and not written to disk, so a repeat viewing is instant but the next run
+        #: downloads again.
         self.downloads: dict[str, str] = {}
-        #: Whether a plot window closed while the demonstration was waiting
-        #: over it, which is a click on its way here: closing a window gives
-        #: this one the keyboard back, and the click that closed it comes with.
+        #: Whether a plot window closed while a demo was waiting. Closing a window
+        #: returns focus here, and the closing click arrives along with it.
         self.closed_window = False
-        #: How the message line names the computation now running, or None
-        #: while none is.
+        #: The name of the running computation for the message line, or None.
         self.computing: str | None = None
-        #: When it started, and the timer that writes the elapsed time out.
+        #: When it started, and the timer that updates the elapsed time.
         self.started = 0.0
         self.ticker: Any = None
-        #: The mode to go back to once it has finished, which is the one the
-        #: command was dispatched from: a refused line has to find its prompt
-        #: still up and still its own.
+        #: The mode to return to when it finishes: the one it was dispatched from, so a
+        #: refused line finds its prompt still up.
         self.resumed = MODE_MENU
-        #: The state file last read or written, offered back by both commands.
+        #: The state file last read or written, offered by both state commands.
         self.state_file = STATE_FILE
-        #: Each amount menu's own cursor, kept across invocations rather than
-        #: made fresh: the original opens it on whatever was chosen last.
+        #: Each amount menu's cursor, kept across invocations since Derive opens it on
+        #: the last choice.
         self.amounts = {
             command.amounts: MenuCursor(
                 command.amounts, command.amounts.words.index("Rational")
@@ -1508,20 +1291,17 @@ class RederiveApp(App[None]):
             ),
             (menus.WINDOW_SPLIT, "Vertical"): partial(self._command_window_split, True),
         }
-        # The seven Calculus commands differ only in what they write and what
-        # their last line asks, so they are one command told which off the word.
+        # The Calculus commands share one implementation, parametrized by `Calculus`.
         for word, calculus in CALCULUS_COMMANDS.items():
             self.commands[(menus.CALCULUS, word)] = partial(
                 self._command_calculus, calculus
             )
-        # The four language saves differ only in which language they write, so
-        # they are one command told which one off the menu word.
+        # Likewise the language saves, parametrized by language.
         for language in LANGUAGES:
             self.commands[(menus.TRANSFER_SAVE, language.word)] = partial(
                 self._command_save_source, language
             )
-        # And the nine demonstrations differ only in which file they run, so
-        # they are one command told which one off the catalogue.
+        # Likewise the demos, parametrized by the catalogue entry.
         for demonstration in catalogue.DEMOS:
             self.commands[(menus.TRANSFER_DEMO, demonstration.word)] = partial(
                 self._command_demonstration, demonstration
@@ -1533,12 +1313,11 @@ class RederiveApp(App[None]):
         return {**super().get_css_variables(), **self.palette.css_variables()}
 
     def get_driver_class(self) -> Any:
-        """Textual's choice, with the terminal's hangup handled where the choice was a tty.
+        """Textual's driver, replaced by one that handles terminal hangup where possible.
 
-        Only Textual's own driver for Linux and macOS is stood in for, and only by
-        its own subclass: a driver named in the environment, and Windows, are left
-        as Textual has them. `driver` is imported here rather than at the top since
-        it imports the Linux driver, which Windows cannot.
+        Only Textual's Linux/macOS driver is replaced, by its subclass; a driver named in
+        the environment, and the Windows driver, are left alone. `driver` is imported
+        here because it imports the Linux driver, which fails on Windows.
         """
         chosen = super().get_driver_class()
         if sys.platform == "win32":
@@ -1551,7 +1330,7 @@ class RederiveApp(App[None]):
 
     @property
     def session(self) -> Session:
-        """The active window's worksheet, which is the one commands act on."""
+        """The active window's worksheet, which commands act on."""
         return self.windows.session
 
     @property
@@ -1561,16 +1340,14 @@ class RederiveApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Panes(Frame(id="frame"), id="panes")
-        # Above the line it belongs to and below the work area it borrows its
-        # rows from, so that the names and the name being typed read together.
+        # Between the work area, whose rows it borrows, and the input line it belongs to.
         yield CompletionList(id="completions")
         yield MenuRule(id="rule")
         yield MenuBand(id="menu")
         yield FieldBand(id="fields")
         yield Horizontal(
             Static(AUTHOR_PROMPT, id="prompt-label"),
-            # The prompt decides for itself what comes up selected, which is
-            # the label number alone and never the `#` in front of it.
+            # The prompt chooses its own selection: the label number without the `#`.
             PromptLine(id="prompt-input", select_on_focus=False),
             id="prompt-band",
         )
@@ -1578,11 +1355,10 @@ class RederiveApp(App[None]):
         yield StatusLine(id="status")
 
     def on_unmount(self) -> None:
-        """Leaving takes the plot host with it, windows and all.
+        """Shut down the plot host on exit.
 
-        The host is a daemon child and would go anyway; asking it to stop is
-        how it goes tidily, closing its windows rather than having them
-        disappear.
+        The host is a daemon child and would exit anyway, but this closes its windows
+        cleanly.
         """
         self.plots.shutdown()
 
@@ -1591,13 +1367,12 @@ class RederiveApp(App[None]):
         self.query_one("#fields").display = False
         self.query_one("#completions").display = False
         self.refresh_screen()
-        # After the first render, so that the demonstration's first step has a
-        # screen to happen on rather than one still being put together.
+        # Start the demo after the first render, so its first step has a screen.
         if self.opening_demo is not None:
             demo, self.opening_demo = self.opening_demo, None
             self._demo(str(demo))
 
-    # -- what is on top ----------------------------------------------------
+    # -- top of the stack --------------------------------------------------
 
     @property
     def top(self) -> MenuCursor | DialogEditor:
@@ -1605,34 +1380,27 @@ class RederiveApp(App[None]):
 
     @property
     def editor(self) -> DialogEditor | None:
-        """The Options dialog on screen, if one is."""
+        """The Options dialog on screen, if any."""
         return self.top if isinstance(self.top, DialogEditor) else None
 
     # -- rendering ---------------------------------------------------------
 
     def place_windows(self) -> None:
-        """Give every window a pane, put it where the window is, and paint it.
+        """Give every window a pane, position it, and paint it.
 
-        Panes are made as they are needed and set aside rather than destroyed
-        when a window closes, so that a widget once made can be handed to the
-        next window that wants one.
+        Panes are created on demand and kept for reuse when a window closes.
 
-        Every window paints its own selection, active or not: the original
-        shows the highlight in every pane at once, and what says which window
-        a command would act on is its number in the frame.
+        As in Derive, every window shows its own highlight, active or not; the active
+        window is marked by its number in the frame.
 
-        A computation under way is why the painting is conditional. A resize
-        reaches here at any moment, and while a command is running that command
-        owns the worksheet - so the panes are moved to where the windows now are
-        and left showing what they showed.
+        A resize can arrive while a command is computing and owns the worksheet. Then
+        the panes are only repositioned, not repainted.
         """
         panes = self.query_one(Panes)
         height, width = panes.size.height, panes.size.width
         areas = self.windows.areas(height, width)
         framed = self.windows.framed
         painting = self.mode != MODE_COMPUTE
-        # The sessions are read only while nothing is computing: while a command
-        # runs it owns them.
         if painting and not self._opening_screen():
             self.greeting = False
         for window in self.windows.windows:
@@ -1651,13 +1419,11 @@ class RederiveApp(App[None]):
             if not painting:
                 continue
             if self.helping is not None and window is self.windows.active:
-                # Help stands in the window it was asked from and in no other,
-                # so every other pane goes on showing its own worksheet.
+                # Help appears only in the window it was opened from.
                 page, titled = self._help_page(rect.height, rect.width)
                 pane.show_help(page, rect.height, rect.width, titled)
             elif self.greeting:
-                # Which is the one window there is: the notice stands only
-                # while the screen is the one the program opened with.
+                # There is only one window while the notice is shown.
                 pane.show_greeting(
                     GREETING, self.GREETING_LINE, rect.height, rect.width
                 )
@@ -1672,14 +1438,12 @@ class RederiveApp(App[None]):
         self.query_one(MenuRule).refresh()
 
     def _opening_screen(self) -> bool:
-        """Whether the work area is still the one the program started with.
+        """Whether the screen is still as the program started, for the opening notice.
 
-        Which is what the opening notice stands on: the window the program
-        opened, that window's own worksheet, nothing in it, and no help page
-        over it. Everything the original gave the notice up to shows here as
-        one of those - an expression to draw, a help page, a second session a
-        split or an overlay made - bar the two Clear commands, which draw over
-        it without changing any of them and so put it away themselves.
+        True if there is one session, the initial one, it is empty, and no help is
+        shown. Everything in Derive that replaces the notice (an expression, help, a
+        split or overlay) breaks one of these, except the Clear commands, which clear
+        the notice themselves.
         """
         sessions = self.windows.sessions()
         return (
@@ -1699,33 +1463,26 @@ class RederiveApp(App[None]):
         self.query_one("#fields").display = editor is not None
         if editor is not None:
             self.query_one(FieldBand).show(editor)
-            # Unless the dialog is standing there answered while its command
-            # asks whether it may throw expressions away: then the question is
-            # what the message line has to say, not the field.
+            # Unless a yes/no question is asked over the dialog, which takes the message
+            # line.
             if self.mode != MODE_CONFIRM:
                 self.message = editor.message
         elif self.mode == MODE_DEMO:
-            # A demonstration takes the band for its own script, the comment
-            # above the expression it has just run standing where the menu was.
+            # A demo shows the comment for the step just run in place of the menu.
             self.query_one(MenuBand).say(self._demo_comment())
         else:
             cursor = self.top
             assert isinstance(cursor, MenuCursor)
-            # A confirmation takes the highlight off the menu entirely.
+            # A yes/no question removes the menu highlight.
             highlighted = None if self.mode == MODE_CONFIRM else cursor.index
-            # And so it takes the pointer's mark off, the words having stopped
-            # answering: where a click is taken is a thing about the mode as
-            # much as about where the pointer is, and the mode is what has just
-            # changed. The pointer's own position is the app's, since a mouse
-            # that has not moved has sent nothing to read it off.
+            # Update the pointer mark too, since whether words respond to clicks depends
+            # on the mode, which may have just changed. The app tracks the pointer
+            # position, since a stationary mouse sends no events.
             self._point(self.mouse_position)
             self.query_one(MenuBand).show(cursor.menu, highlighted)
         self.query_one(MessageLine).show(self.message)
-        # The annotation belongs to the entry, so it follows the selection: it
-        # says where the expression now highlighted came from. Beside it is the
-        # file the session last read or wrote, named rather than pathed: the
-        # status line is a glance, and the prompt is where the whole path is
-        # offered back for editing.
+        # The highlighted entry's annotation, and the name (not path) of the file the
+        # session last read or wrote; the file prompt offers the full path.
         entry = self.session.selected_entry
         file = self.session.file
         self.query_one(StatusLine).show(
@@ -1736,15 +1493,12 @@ class RederiveApp(App[None]):
         )
 
     def _flags(self) -> str:
-        """The mode words for the status line, in the slot the original has.
+        """The mode indicators for the status line, where Derive shows them.
 
-        Both are about a line being typed, so neither is said where there is no
-        line. `Ovr` stands where a character typed would stand on what is under
-        the cursor: the original named insert instead, but making room is how
-        every line starts and how it is left, so overwrite is the state worth
-        naming. `Lin` says the arrow keys are the line's, which is only worth
-        saying where they could have been the highlight's: on a line an
-        expression is written on, and on no other.
+        Both only apply while a line is being typed. `Ovr` marks overwrite mode (Derive
+        marked insert instead, but insert is the default here). `Lin` marks that the
+        left/right keys go to the line, shown only on expression lines where they could
+        go to the highlight.
         """
         if self.mode not in PROMPT_MODES:
             return ""
@@ -1754,7 +1508,7 @@ class RederiveApp(App[None]):
         return " ".join(words)
 
     def _show_flags(self) -> None:
-        """Put the mode words up without disturbing the rest of the screen."""
+        """Update the mode indicators without refreshing the rest of the screen."""
         self.query_one(StatusLine).indicate(self._flags())
 
     def _set_message(self, message: str) -> None:
@@ -1762,17 +1516,14 @@ class RederiveApp(App[None]):
         self.query_one(MessageLine).show(message)
 
     def _settings_changed(self, changed: frozenset[str]) -> None:
-        """React to settings that other parts of the screen are built from.
+        """React to settings changes that affect the screen or the plot host.
 
-        Color is a property of painting, so a color change repaints everything.
-        The settings that decide how an expression is drawn are not: an entry
-        keeps the render it was authored with, as it does in the original.
+        A color change repaints everything. Display settings don't, since as in Derive
+        an entry keeps the render it was authored with.
 
-        The sticky plot preferences are neither: they belong to a process that
-        may not be running, so they are handed to the proxy, which passes them
-        on in front of the next request it sends. A state file loaded with
-        plot preferences in it arrives here the same way a control the host
-        reported does.
+        Plot preferences go to the proxy, which forwards them with the next request,
+        since the host may not be running. This covers both a loaded state file and a
+        change reported by the host.
         """
         if changed & COLOR_SETTINGS:
             self.refresh_css()
@@ -1781,23 +1532,20 @@ class RederiveApp(App[None]):
             self.plots.prefer(preferences(self.settings))
 
     def _beep(self) -> None:
-        """The error beep for a key with no command, unless Mute silenced it."""
+        """Beep for an invalid key, unless muted."""
         if self.settings["Mute"] == "No":
             self.bell()
 
     # -- computing ---------------------------------------------------------
     #
-    # Every command that reaches the math engine goes through here, and where
-    # the engine can be aborted the screen is modal while one does. The command
-    # owns the session for as long as it is awaited, so the worksheet is neither
-    # read nor repainted until the answer is in and the completion handler puts
-    # it back; what does keep moving is the message line's elapsed time and the
-    # status line's memory gauge, which together are how a user decides whether
-    # this one is worth waiting for.
+    # Every command that reaches the math engine goes through here. Where the engine
+    # can be aborted, the screen is modal while it runs: the command owns the session,
+    # so the worksheet isn't read or repainted until the completion handler runs. Only
+    # the elapsed time and the memory gauge keep updating.
 
     @property
     def _abortable(self) -> bool:
-        """Whether the engine behind the session can be stopped once started."""
+        """Whether the session's engine can be aborted."""
         return hasattr(self.session.runner, "abort")
 
     def _compute(
@@ -1806,49 +1554,42 @@ class RederiveApp(App[None]):
         run: Callable[[], Awaitable[object]],
         done: Callable[[Outcome], None],
     ) -> None:
-        """Await one session command on a task of its own, and hand it to `done`.
+        """Await a session command on its own task, then pass the outcome to `done`.
 
-        One shape for every engine there is. Where the call waits is the
-        engine's business - a thread blocking on a pipe on the desktop - and all
-        that is needed here is a task to await it on, which leaves the event
-        loop free to repaint and to hear Esc.
+        This works for every engine; how the call waits (on the desktop, a thread
+        blocking on a pipe) is the engine's business. The task leaves the event loop
+        free to repaint and handle Esc.
 
-        The modal dressing is the part that is not for everyone. An engine
-        computing in this process can be neither aborted nor watched, so putting
-        the screen into a mode with no way out of it would be a lie: that one
-        gets the task and no mode, no clock and no Esc.
+        The modal state is only used for abortable engines. An in-process engine can't
+        be aborted or watched, so it gets the task without the mode, clock or Esc.
         """
         if self._abortable:
             self.resumed = self.mode
             self.mode = MODE_COMPUTE
             self.computing = label
             self.started = time.monotonic()
-            # The line being computed from keeps the screen, and loses the keys:
-            # with nothing focused every key reaches the app, where all but Esc
-            # are dropped.
+            # The line stays visible but loses focus, so all keys reach the app, which
+            # ignores all but Esc.
             self.set_focus(None)
-            # Nothing is written now: the clock starts only if the command is
-            # still running a second from here, which almost none of them are.
+            # The clock appears only if the command is still running after a second.
             self.ticker = self.set_interval(TICK, self._tick)
         self.run_worker(self._computing(run, done))
 
     async def _computing(
         self, run: Callable[[], Awaitable[object]], done: Callable[[Outcome], None]
     ) -> None:
-        """The task side: wait for the answer, then let the loop finish the command."""
+        """Wait for the answer on the worker task, then finish the command."""
         outcome = await _ran(run)
         self._computed(done, outcome)
 
     def _computed(self, done: Callable[[Outcome], None], outcome: Outcome) -> None:
         """Stop the clock and let the command finish.
 
-        The mode goes back to the one the command was dispatched from before
-        the handler runs, since a handler that leaves its prompt up - a line
-        that would not read - is leaving the mode that prompt belongs to. A
-        command that was never modal has no mode to put back, and `computing`
-        is what says which this was. The focus is not put back here: Textual
-        applies a focus on the next beat, and a handler that takes the prompt
-        down in this one would leave a hidden line holding the keyboard.
+        The mode is restored before the handler runs, since a handler that leaves its
+        prompt up (for an unparsable line) expects that prompt's mode. `computing` says
+        whether the command was modal. Focus isn't restored here: Textual applies focus
+        on the next tick, and if the handler hides the prompt, a hidden line would keep
+        the keyboard.
         """
         if self.ticker is not None:
             self.ticker.stop()
@@ -1859,12 +1600,10 @@ class RederiveApp(App[None]):
         done(outcome)
 
     def _tick(self) -> None:
-        """Write the elapsed time out, which is the whole of the repainting.
+        """Update the elapsed time on the message line.
 
-        Not before there is a wait worth reporting, and not where the figure
-        has not moved: a command that answers at once leaves the message line
-        as it found it, and a clock counted in whole seconds changes once a
-        second however often it is read.
+        Nothing is shown before `CLOCK_AFTER`, and the line is only repainted when the
+        whole-second figure changes.
         """
         if self.computing is None:
             return
@@ -1876,7 +1615,7 @@ class RederiveApp(App[None]):
             self._set_message(said)
 
     def _abort(self) -> None:
-        """Esc while a computation runs: take the engine away from under it."""
+        """Esc during a computation: abort the engine."""
         abort = getattr(self.session.runner, "abort", None)
         if abort is not None:
             abort()
@@ -1884,45 +1623,27 @@ class RederiveApp(App[None]):
     # -- key routing -------------------------------------------------------
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Menu and navigation keys only apply while a command band is up.
+        """Enable menu and navigation keys only while a command band is up.
 
-        While a prompt line has the screen they belong to the Input, down to
-        Space and Backspace. The movements that walk the history are the
-        exception: a line of text has nothing vertical for them to do, so they
-        go on moving the highlight with the question still up - on every line
-        but the one Factor and Expand collect a variable on. On a line an
-        expression is written on, subexpression arrow mode sends the sideways
-        ones the same way, leaving the line no movements at all - which is the
-        trade the mode is: the cursor for the run of the expression tree.
+        While a prompt line is up, the keys belong to the Input, including Space and
+        Backspace. Exceptions:
 
-        Ctrl-Enter is the other exception: it is a form of Enter, so it applies
-        wherever Enter does - on a menu, on a dialog, and on a prompt line.
+        - History movements keep moving the highlight, since a line has no vertical
+          movement, except on the Factor and Expand variable line. On expression lines,
+          subexpression arrow mode sends left/right to the highlight as well, leaving
+          the line no cursor movement.
+        - Ctrl-Enter applies wherever Enter does: menus, dialogs and prompt lines.
+        - Tab completes on file prompts and steps the menu elsewhere.
+        - F3, F4 and F6 apply only on expression lines. The Alt keys, Ctrl-V and the
+          insert toggle apply on every line.
+        - Ctrl-C copies the highlighted expression when nothing is selected, so it also
+          works at the menu, but only when the worksheet is shown (not in help or a
+          demo). Ctrl-X applies wherever Ctrl-C does, so it can report that there's
+          nothing to cut.
+        - Completion list keys apply only while the list is open; otherwise Up and Down
+          move through the history as on other lines.
 
-        Tab is a third: it completes the name on a file prompt, and steps the
-        menu everywhere else.
-
-        F3 and F4 are a fourth: they write onto the lines an expression is
-        written on, and nowhere else. F6 goes with them, there being nothing
-        for it to hand the sideways keys to on a line collecting a name; the
-        Alt keys, Ctrl-V and the key that toggles insert mode apply to every
-        line, since they are about the text.
-
-        Ctrl-C need not be about a line at all: what it copies where nothing is
-        selected is the highlighted expression, so it applies at the menu as
-        well as under every line, and only where the worksheet is the thing on
-        screen - not in help, and not over a demonstration. Ctrl-X applies
-        wherever Ctrl-C does, though there is only ever a line for it to cut
-        from: taking the key at the menu too is what lets it say so.
-
-        The keys that walk the list of names are the fifth, and they only
-        apply while that list is open. Closed, Up and Down go on walking the
-        history from a file prompt as they do from any other, so opening the
-        list is what decides which of the two they mean - and the list is on
-        screen saying so.
-
-        A computation under way answers none of them. It is modal down to the
-        last key: only Esc means anything, and it is handled where the keys
-        with no binding are.
+        During a computation no bindings apply; Esc is handled with the unbound keys.
         """
         if self.mode == MODE_COMPUTE:
             return False
@@ -1935,27 +1656,21 @@ class RederiveApp(App[None]):
         if action == "scroll_work":
             return self.mode == MODE_MENU
         if action == "scroll_work_typed":
-            # `<` and `>` scroll where the Ctrl keys do, save that a field
-            # collecting text has the better claim on a character: they are the
-            # spelling for a terminal whose window manager eats Ctrl-Left and
-            # Ctrl-Right, not a second command.
+            # Like the Ctrl keys, except that a text field takes the characters.
             return self.mode == MODE_MENU and self.editor is None
         if action == "help":
-            # F1 is help on a line and the next window everywhere else, which
-            # is the original's split. Asking for help from inside help would
-            # have nowhere to go back to.
+            # As in Derive, F1 is help on a line and the next window elsewhere. Help
+            # can't be opened from within help.
             return self.mode in PROMPT_MODES
         if action.startswith("window_"):
-            # At the command menu and nowhere else, not even under a Window
-            # submenu: switching windows out from under a half-answered
-            # question is not something the original offers.
+            # Only at the command menu, not even in a Window submenu, so windows never
+            # switch under a half-answered question.
             return self.mode == MODE_MENU and len(self.stack) == 1
         if action == "nav":
             if self.mode == MODE_MENU:
                 return True
             if self.mode == MODE_HELP:
-                # The keys that walk the history turn the pages of a subject,
-                # and there are no pages to turn on the subject menu.
+                # History keys turn the pages of a subject; the subject menu has none.
                 return (
                     self.helping is not None
                     and self.helping.topic is not None
@@ -1979,15 +1694,14 @@ class RederiveApp(App[None]):
         return True
 
     def on_key(self, event: Any) -> None:
-        """Keys with no binding: mnemonics, digits, and the answers to a question.
+        """Handle unbound keys: mnemonics, digits, and yes/no answers.
 
-        A field that holds text takes the rest of the printable characters as
-        well, since an interval bound is written with `-`, `.` and `/`.
+        A text field also takes other printable characters, since interval bounds use
+        `-`, `.` and `/`.
 
-        While a computation runs there is one key: Esc, which aborts it. Every
-        other key is swallowed rather than queued, so that a handful pressed at
-        a frozen-looking screen does not all happen at once when the answer
-        arrives.
+        During a computation only Esc (abort) works. Other keys are discarded rather
+        than queued, so keys pressed at a seemingly frozen screen don't all fire when
+        the answer arrives.
         """
         if self.mode == MODE_COMPUTE:
             event.stop()
@@ -2009,7 +1723,7 @@ class RederiveApp(App[None]):
             event.prevent_default()
             self._answer_confirm(bool(event.character) and event.character.lower() == "y")
         elif self.mode == MODE_DEMO:
-            # Any key steps the demonstration; Esc suspends it where it is.
+            # Any key steps the demo; Esc pauses it.
             event.stop()
             event.prevent_default()
             if event.key == "escape":
@@ -2019,10 +1733,8 @@ class RederiveApp(App[None]):
         elif self.mode in PROMPT_MODES and event.key == "escape":
             event.stop()
             event.prevent_default()
-            # An open list of names is what Esc puts away first, the name it
-            # left on the line and all. Only once the line is on its own does
-            # the next Esc abandon the command, so backing out of looking
-            # around is not the same key press as backing out of the command.
+            # Esc first closes an open completion list, leaving the chosen name on the
+            # line; only the next Esc abandons the command.
             if self.browsing:
                 self._close_list()
                 self._set_message(ENTER_FILE)
@@ -2030,7 +1742,7 @@ class RederiveApp(App[None]):
                 self._end_prompt(done=False)
 
     def _typing_text(self, character: str) -> bool:
-        """Whether `character` is one the active field takes as text."""
+        """Whether the active field takes `character` as text."""
         editor = self.editor
         return (
             character.isprintable()
@@ -2039,11 +1751,10 @@ class RederiveApp(App[None]):
         )
 
     def _menu_takes(self, character: str) -> bool:
-        """Whether the menu on top has a word `character` invokes.
+        """Whether the top menu has a word that `character` invokes.
 
-        Letters and digits are offered to whatever is up whatever it is; this
-        is for the ones that are neither, which only the Build operator menu
-        answers to - there `+` and `!` are mnemonics like any other.
+        Letters and digits are always passed on; this is for other characters, which
+        only the Build operator menu uses as mnemonics, such as `+` and `!`.
         """
         cursor = self.top
         if not isinstance(cursor, MenuCursor):
@@ -2082,38 +1793,28 @@ class RederiveApp(App[None]):
 
     # -- mouse routing -----------------------------------------------------
     #
-    # The mouse is a second way in to what the keys already do, and every
-    # gesture ends in the handler the equivalent key ends in: a click on a menu
-    # word invokes what that word's own letter invokes, a click on an expression
-    # moves the highlight the arrows move, a click on a value of an Options
-    # dialog sets it the way typing its letter would. Nothing is reachable with
-    # the mouse that is not reachable from the keyboard, and a gesture applies
-    # exactly where its key applies - a click cannot switch windows out from
-    # under a half-answered question any more than F1 can.
+    # Each mouse gesture ends in the same handler as the equivalent key: clicking a
+    # menu word invokes it as its letter would, clicking an expression moves the
+    # highlight, and clicking a dialog value sets it as typing its letter would. The
+    # mouse can't reach anything the keyboard can't, and gestures apply only where
+    # their keys do; for example, a click can't switch windows under a half-answered
+    # question any more than F1 can.
     #
-    # Where the pointer is is the one thing worth reading off a mouse event.
-    # Only a click carries the widget it landed on, and the two command bands
-    # lay themselves out for the width there is rather than to fixed columns, so
-    # each of them is asked what it drew at the cell rather than told.
+    # Only the pointer position is used. The command bands lay out for the actual
+    # width, so each band is asked what it drew at a given cell.
     #
-    # Sweeping text off the screen is the terminal's, which is why `ALLOW_SELECT`
-    # is off: a drag here would otherwise be Textual's own selection, drawn in
-    # colors of its own across every band it crossed.
+    # `ALLOW_SELECT` is off so that drag-selecting screen text is left to the terminal
+    # instead of Textual.
 
     def on_click(self, event: events.Click) -> None:
-        """A click, routed to whatever it was pointing at.
+        """Route a click to whatever it points at.
 
-        A computation under way answers none of them, as it answers no key but
-        Esc, and a demonstration takes a click the way it takes any key: as the
-        cue for the next step.
+        Clicks are ignored during a computation, and in a demo they step it like any
+        key.
 
-        One click is not the user's own, and it is the one that arrives when a
-        demonstration's plot window has just been closed: the desktop hands the
-        keyboard back to this window, and most desktops hand the click that did
-        it straight through to the program underneath. Closing a window must
-        not step a demonstration - that would answer a window the user shut
-        with another one - so that click is dropped and the next one is taken
-        as any other is.
+        When a demo's plot window is closed, most desktops pass the closing click
+        through to this window. That click is dropped so that closing a plot doesn't
+        step the demo and open another one.
         """
         if self.mode == MODE_COMPUTE:
             return
@@ -2136,38 +1837,33 @@ class RederiveApp(App[None]):
                 self._clicked_entry(pane, event)
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
-        """The pointer moving: mark the menu word it has come to rest on.
+        """Mark the menu word under the pointer.
 
-        The one gesture that ends in no handler a key ends in, because it does
-        nothing to the session. What it does is say that the words are there to
-        be clicked at all, which a band of words the keyboard drives says
-        nowhere else. It marks only where a click would be taken, so that
-        nothing lights up that would not answer.
+        The only gesture with no key equivalent; it just shows that words can be
+        clicked, and only marks words that a click would invoke.
         """
         self._point(event.screen_offset)
 
     def _point(self, at: Offset | None) -> None:
-        """Tell the menu band where the pointer is, or that it is nowhere."""
+        """Tell the menu band where the pointer is, if words are clickable."""
         self.query_one(MenuBand).point_at(at if self.picking else None)
 
     @property
     def picking(self) -> bool:
         """Whether a click on a menu word would invoke it.
 
-        A dialog stands on the same band, and a confirmation leaves the menu up
-        with nothing on it to pick; a computation under way answers no click at
-        all, and a demonstration answers every one of them with its next step.
+        Not while a dialog or yes/no question occupies the band, during a computation,
+        or in a demo.
         """
         return self.mode in MENU_MODES and self.editor is None
 
     @property
     def wants_typing(self) -> bool:
-        """Whether what is on screen is waiting for text that only a keyboard gives.
+        """Whether the screen is waiting for typed input.
 
-        A line being read, a Y/N question, and a dialog's field being typed
-        into, a number or a text. A menu and a dialog's choices answer a pointer
-        as well as a letter, so they are not on the list: this is what a touch
-        screen asks before it puts its keyboard up over half the program.
+        True for a prompt line, a yes/no question, or a typed dialog field. Menus and
+        dialog choices can be clicked, so they don't count. A touch screen uses this to
+        decide whether to show its on-screen keyboard.
         """
         if isinstance(self.focused, PromptLine) or self.mode == MODE_CONFIRM:
             return True
@@ -2187,11 +1883,9 @@ class RederiveApp(App[None]):
         self._wheel_across(-1, event)
 
     def _under(self, event: events.MouseEvent) -> Widget | None:
-        """The widget the pointer is over, whatever the event was delivered to.
+        """The widget under the pointer, whatever the event was delivered to.
 
-        Read off the pointer's own position rather than off the event: the wheel
-        events do not say what they landed on, and the answer has to be the same
-        for all of them.
+        Uses the pointer position, since wheel events don't say what they landed on.
         """
         try:
             widget, _ = self.get_widget_at(*event.screen_offset)
@@ -2200,13 +1894,9 @@ class RederiveApp(App[None]):
         return widget
 
     def _clicked_word(self, band: MenuBand, event: events.Click) -> None:
-        """A click on a menu word: what that word's own letter would invoke.
+        """Invoke the clicked menu word, as its letter would.
 
-        The highlight is left where it is, as it is when a mnemonic letter is
-        typed: what a menu word means is its command, and running one is not
-        stepping to it. Only while a menu is what the band is showing - a dialog
-        stands on the same band, and a confirmation leaves the menu up with
-        nothing on it to pick.
+        Like a mnemonic, it leaves the highlight in place. Only applies when `picking`.
         """
         if not self.picking:
             return
@@ -2215,13 +1905,11 @@ class RederiveApp(App[None]):
             self.invoke_command(index)
 
     def _clicked_field(self, band: FieldBand, event: events.Click) -> None:
-        """A click on an Options dialog: the field, or the value, it landed on.
+        """Handle a click on an Options dialog field or value.
 
-        A value is set the way typing its own letter sets it - the field takes
-        it and the highlight moves on, and a dialog with one field settles there
-        and then. Anywhere else on a field moves the highlight onto it and no
-        more, which is what Tab does; the cursor lands at the start of what is
-        there, since that is where entering a field always puts it.
+        Clicking a value sets it as typing its letter would, which commits a dialog that
+        settles on a choice. Clicking elsewhere on a field activates it, as Tab would,
+        with the cursor at its start.
         """
         editor = self.editor
         if editor is None or self.mode != MODE_MENU:
@@ -2238,12 +1926,10 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _clicked_name(self, listing: CompletionList, event: events.Click) -> None:
-        """A click on the list of names: point at that name, and take it.
+        """Highlight and take the clicked name, as Enter on it would.
 
-        Which is what Enter on it does: a directory is gone into and the list
-        stays up on what is inside it, and a file lands on the line where the
-        next Enter is the one that reads it. So a click never opens a file
-        either.
+        A directory is entered with the list kept open, and a file is put on the line
+        for the next Enter to open, so a click never opens a file.
         """
         if not self.browsing:
             return
@@ -2254,22 +1940,18 @@ class RederiveApp(App[None]):
         self.action_browse_take()
 
     def _clicked_entry(self, pane: WorkArea, event: events.Click) -> None:
-        """A click in a window's history: select what it was pointing at.
+        """Select what was clicked in a window's history.
 
-        A click in a window that is not the active one makes that window active
-        first, which is Window Goto and so is offered where that command is: at
-        the command menu, with nothing half answered standing on it.
+        A click in an inactive window activates it, like Window Goto, so it only works
+        at the command menu with nothing half-answered.
 
-        In the active window it moves the highlight, and applies wherever the
-        keys that walk the history apply - under every prompt line but the one
-        Factor and Expand collect a variable on, and under a dialog only where
-        that dialog is one whose fields name expressions. Either kind of line
-        takes the label of where the click landed, exactly as it does when an
-        arrow key moves the highlight there.
+        In the active window, the click moves the highlight wherever history keys apply:
+        under every prompt line except the Factor and Expand variable line, and under
+        dialogs whose fields name expressions. The line or field then takes the new
+        label, as with the arrow keys.
 
-        Unlike the arrows, a click reaches a subexpression whatever the arrow
-        key mode says. That mode is about a key two things want; nothing else
-        wants the mouse.
+        Unlike the arrows, a click reaches subexpressions regardless of the arrow key
+        mode, which only resolves a key conflict the mouse doesn't have.
         """
         window = next((each for each in self.panes if self.panes[each] is pane), None)
         if window is None or self.mode == MODE_HELP:
@@ -2296,14 +1978,11 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _wheel(self, direction: int, event: events.MouseEvent) -> None:
-        """The wheel, over whatever it is pointing at.
+        """Handle the wheel over whatever it points at.
 
-        A pane with more history than fits scrolls itself, Textual having done
-        it before this is reached; the highlight stays where it was, the way a
-        pane scrolled sideways by hand stays where it was put. What is left for
-        here is the wheel over something that does not scroll itself - a list of
-        names to walk, a page of help to turn - and the sideways scroll, which
-        is a repaint of one entry rather than a scroll of the pane.
+        Textual already scrolls a history pane, leaving the highlight in place. This
+        handles what doesn't scroll itself: the completion list, help pages, and
+        sideways scrolling, which repaints one entry rather than scrolling the pane.
         """
         if self.mode == MODE_COMPUTE:
             return
@@ -2313,7 +1992,7 @@ class RederiveApp(App[None]):
         widget = self._under(event)
         if isinstance(widget, CompletionList):
             if self.browsing:
-                # Down and Up, which is what a wheel over a list of things is.
+                # Like Down and Up.
                 if direction > 0:
                     self.action_browse_next()
                 else:
@@ -2322,17 +2001,13 @@ class RederiveApp(App[None]):
         if _pane_of(widget) is not self.work_area or self.helping is None:
             return
         if self.helping.topic is not None:
-            # The keys that walk the history turn the pages of a subject, and
-            # the wheel is the same movement by another means. The subject menu
-            # has no pages to turn.
+            # Turn the subject's pages, like the history keys.
             self._turn_help(direction)
 
     def _wheel_across(self, direction: int, event: events.MouseEvent) -> None:
-        """The wheel sideways, over a render too wide for the pane it is in.
+        """Scroll the pane under the pointer sideways.
 
-        Which pane it scrolls is the one under the pointer, that being the one
-        whose expression is being read; no selection moves and no window becomes
-        active, exactly as with Ctrl-Right and Ctrl-Left.
+        As with Ctrl-Right and Ctrl-Left, the selection and active window don't change.
         """
         if self.mode == MODE_COMPUTE:
             return
@@ -2363,8 +2038,7 @@ class RederiveApp(App[None]):
     def action_menu_space(self) -> None:
         """Space steps the highlight, or the active field's value.
 
-        On a field that holds text it is a character like any other, which is
-        how a bound is blanked out before another is typed over it.
+        On a text field it types a space, which is how a bound is blanked out.
         """
         editor = self.editor
         if editor is None:
@@ -2378,11 +2052,10 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def action_menu_erase(self) -> None:
-        """Backspace undoes what Space does, and otherwise steps back.
+        """Backspace reverses Space, or steps back.
 
-        On a field that holds text it erases the character before the cursor,
-        and on one whose choices Space steps forward through it steps back
-        through them rather than leaving the field.
+        On a text field it erases the character before the cursor, and on a choice field
+        it steps back through the choices rather than leaving the field.
         """
         editor = self.editor
         if editor is not None and (editor.erase() or editor.cycle(-1)):
@@ -2406,13 +2079,10 @@ class RederiveApp(App[None]):
             self._commit()
 
     def action_enter_and_simplify(self) -> None:
-        """Ctrl-Enter: what Enter does, and the expression it enters simplified.
+        """Ctrl-Enter: Enter, then simplify the entered expression.
 
-        The manual spells the key out for a vector and a matrix, but the
-        original takes it on every line an expression is entered from, and it
-        is the same thing on each of them: the command runs, and what it left
-        in the history is simplified after it. On the lines that enter nothing
-        of their own, and everywhere a menu or a dialog is up, it is Enter.
+        The manual documents it only for vectors and matrices, but Derive accepts it on
+        every line that enters an expression. Elsewhere it acts as Enter.
         """
         if self.mode in ENTERING_MODES or self._enters_expression():
             self.simplifying = tuple(self.session.entries)
@@ -2422,13 +2092,10 @@ class RederiveApp(App[None]):
             self._submitted(self.query_one("#prompt-input", Input).value)
 
     def _enters_expression(self) -> bool:
-        """Whether Enter on what is up would append an expression to simplify.
+        """Whether Enter on the current menu or dialog appends an unsimplified expression.
 
-        Which is what makes Ctrl-Enter worth pressing somewhere other than on a
-        prompt line: the `Done` of Build's operator menu, and the dialog each
-        Calculus command finishes on. Both append an expression nobody has
-        asked to have taken any further, so both leave something for a
-        Simplify after them to do.
+        True for `Done` on Build's operator menu and for each Calculus command's final
+        dialog, where Ctrl-Enter is useful outside a prompt line.
         """
         if self.mode != MODE_MENU:
             return False
@@ -2438,16 +2105,15 @@ class RederiveApp(App[None]):
         return top.menu is menus.BUILD_OPERATOR and top.word == building.DONE
 
     def action_menu_escape(self) -> None:
-        """Leave the submenu or dialog on top, abandoning what it was set to.
+        """Pop the submenu or dialog on top, discarding its changes.
 
-        A menu that asks a question rather than listing commands is abandoned
-        along with the command that put it up. There is nothing to go back to:
-        the amount is the last thing Factor and Expand ask for, and the Declare
-        Variable questions are put up one in place of the last, so that Esc
-        leaves any of them for the Declare menu as the original does.
+        Popping a menu that asks a question also abandons its command, since there is
+        no earlier question to return to: the amount is Factor and Expand's last
+        question, and the Declare Variable questions replace each other, so Esc returns
+        to the Declare menu as in Derive.
 
-        In help Esc is `Resume`: up one level from a subject, and out of help
-        from the subject menu.
+        In help, Esc is `Resume`: from a subject to the subject menu, and from there
+        out of help.
         """
         if self.mode == MODE_HELP:
             self._help_back()
@@ -2465,42 +2131,32 @@ class RederiveApp(App[None]):
             self.refresh_screen()
 
     def _ask_again(self) -> None:
-        """Put the uncovered menu's own prompt back on the message line.
+        """Restore the uncovered menu's prompt on the message line.
 
-        A dialog does this for itself, since its prompt follows the field the
-        highlight is on.
+        Dialogs do this themselves, since their prompt depends on the active field.
         """
         if isinstance(self.top, MenuCursor):
             self.message = self.top.message
 
     def _restart_menu(self) -> None:
-        """Highlight the first word of the menu that has just come back up.
+        """Highlight the first word of the menu just uncovered.
 
-        The original draws a menu afresh every time it appears, so where Tab
-        left the highlight is forgotten as soon as an option is entered: what
-        a command or a submenu comes back to is Author.
+        Derive redraws a menu each time it appears, so returning from a command or
+        submenu always highlights the first word (Author on the command menu).
         """
         cursor = self.top
         if isinstance(cursor, MenuCursor):
             cursor.index = 0
 
     def action_nav(self, movement: str) -> None:
-        """The arrows walk the history, or a number field's cursor.
+        """Arrow keys move the highlight, or a number field's cursor.
 
-        In help they turn pages instead: there is no history on the screen to
-        walk, and paging is what a reader wants those keys for.
+        In help they turn pages. With a prompt line up, only history movements reach
+        here; `check_action` leaves the rest to the line. Choice fields have no cursor,
+        so as in Derive they ignore arrows.
 
-        With a prompt line up, only the movements that walk the history get
-        here at all: the rest are the line's own, and `check_action` leaves
-        them to it.
-
-        A dialog's selection fields take no arrow keys at all in the original,
-        which falls out of this: there is no cursor in them to move.
-
-        A dialog whose fields name expressions is the exception. There the keys
-        that walk the history still walk it, and the field takes the label of
-        whatever they land on - which the manual recommends over typing the
-        number, as being harder to get wrong.
+        In dialogs whose fields name expressions, history keys move the highlight and
+        the field takes its label, which the manual recommends over typing the number.
         """
         if self.mode == MODE_HELP:
             self._turn_help(HELP_PAGING[movement])
@@ -2518,12 +2174,10 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _walk_prompt(self, movement: str) -> None:
-        """Move the highlight while a prompt line has the screen.
+        """Move the highlight while a prompt line is up.
 
-        The question stays up and the line keeps what is on it, so this is how
-        the history is looked around with a command part way through asking:
-        the manual's own advice for naming an expression is to move the
-        highlight onto it rather than to type its number.
+        The line keeps its contents, so the history can be browsed mid-command; the
+        manual recommends naming an expression by highlighting it.
         """
         self._move_selection(movement)
         if self.mode in LABELLED_MODES:
@@ -2531,12 +2185,10 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _relabel_prompt(self) -> None:
-        """Put the label of where the highlight landed on the prompt line.
+        """Replace the label on the prompt line with the highlighted entry's.
 
-        Only while the line still stands as the command put it up. A cursor key
-        collapses the selection the label came up in, typing replaces it and
-        marking a stretch out by hand makes it the user's own; any of the three
-        and the line is the user's from then on and is left as it stands.
+        Only while the line is as the command prefilled it. Moving the cursor, typing,
+        or selecting text makes the line the user's, and it is then left alone.
         """
         entry = self.session.selected_entry
         line = self.query_one("#prompt-input", Input)
@@ -2546,17 +2198,14 @@ class RederiveApp(App[None]):
         number = str(entry.number)
         line.value = f"{line.value[:start]}{number}{line.value[end:]}"
         line.selection = Selection(start, start + len(number))
-        # The relabelled line is the command's offering still, so what the keys
-        # that copy and cut act on is unchanged by the walk.
+        # The relabeled line still counts as the command's offering.
         self.offering = (line.value, line.selection)
 
     def _selected_on_line(self) -> str | None:
-        """What the user has selected on the prompt line, or None for nothing.
+        """The text the user selected on the prompt line, or None.
 
-        None where no line is up, where nothing is selected on it, and where
-        what is selected is what the command offered: a line comes up with its
-        offering selected so that typing replaces it, and an offering nobody
-        has touched is the command speaking rather than the user.
+        None if no line is up, nothing is selected, or the selection is the command's
+        untouched prefilled offering.
         """
         if self.mode not in PROMPT_MODES:
             return None
@@ -2566,22 +2215,17 @@ class RederiveApp(App[None]):
         return line.selected_text
 
     def copy_to_clipboard(self, text: str) -> None:
-        """Hand text to the system clipboard, keeping the copy Ctrl-V reads.
+        """Copy text to the system clipboard, also keeping the copy Ctrl-V falls back on.
 
-        Two roads lead to the clipboard, and the copy takes both. The escape
-        sequence the base class writes asks the terminal to pass the text on;
-        it is the only road there is when the program runs across ssh, but
-        nothing comes back either way, and a terminal built on VTE reads the
-        sequence and drops it. The platform is the road around the terminal: it
-        hands the text to whatever clipboard the environment keeps, and is
-        quiet where it keeps none. A headless run takes the first road alone: a
-        test has a clipboard of its own to check, and the environment's is not
-        it to write on.
+        Two mechanisms are used. The base class writes an escape sequence asking the
+        terminal to copy the text; that's the only option over ssh, but it reports
+        nothing back, and VTE-based terminals ignore it. The platform layer copies via
+        the desktop clipboard where there is one. Headless runs (tests) skip the
+        platform layer so as not to touch the real clipboard.
 
-        An environment where neither road leads anywhere says so, and that is
-        what the second argument is for. Nothing on a desktop ever uses it; a
-        browser does, because there the escape sequence goes nowhere at all and
-        the page's clipboard is a permission the user may not have given.
+        `_copy_refused` reports when neither mechanism works. That happens only in a
+        browser, where the escape sequence goes nowhere and clipboard access needs the
+        user's permission.
         """
         super().copy_to_clipboard(text)
         if self.is_headless:
@@ -2589,34 +2233,23 @@ class RederiveApp(App[None]):
         platform.current().copy(text, self._copy_refused)
 
     def _copy_refused(self, why: str) -> None:
-        """Say that the copy did not happen after all, wherever the receipt went.
+        """Report that the copy failed.
 
-        It arrives late by nature - a browser answers a clipboard write with a
-        promise - so it lands on the message line after the receipt for the key
-        and writes over it, which is the right way round: the last thing said
-        about a copy should be the true one.
+        This arrives asynchronously (a browser clipboard write returns a promise), so it
+        overwrites the earlier confirmation on the message line, as it should.
         """
         self._set_message(why)
 
     def action_copy_highlighted(self) -> None:
-        """Ctrl-C: take a copy of what is selected, or of the highlighted expression.
+        """Ctrl-C: copy the selected text on the line, or the highlighted expression.
 
-        Where a stretch of the line being typed is marked out, that is what is
-        copied, a selection being the plainest way of saying what a key is to
-        act on.
+        Without a user selection, it copies the highlighted expression or subexpression
+        as linear text, which can be typed back in. A label prefilled on the line
+        doesn't count as a selection, so under a line one can move the highlight and
+        copy.
 
-        With nothing selected it is the highlighted expression: the whole of
-        one selected whole, and just the part where the highlight is inside
-        one. That is the entry's own text rather than the two-dimensional
-        render, so what comes back is something a line will take again. The
-        label a command offers on its line does not stand in the way of this,
-        which is what keeps the pair worth having under a line: walk the
-        highlight onto what is wanted and copy it.
-
-        The copy goes out to the system clipboard as well as staying here,
-        which is what carries an expression to another program;
-        `copy_to_clipboard` above says by which roads. No road reports back,
-        so the receipt on the message line is what says the key landed.
+        The text goes to the system clipboard (see `copy_to_clipboard`). Since that
+        gives no feedback, the message line confirms the copy.
         """
         marked = self._selected_on_line()
         if marked is not None:
@@ -2631,13 +2264,11 @@ class RederiveApp(App[None]):
         self._set_message(COPIED)
 
     def action_cut_selected(self) -> None:
-        """Ctrl-X: take what is selected off the line, keeping the copy.
+        """Ctrl-X: cut the user's selection on the line.
 
-        Ctrl-C and a deletion in one key, and about the line and nothing else.
-        Where the line has no selection of the user's own there is nothing to
-        cut, and the message line says so rather than the key quietly doing
-        something else: a highlighted expression is not a selection a key can
-        take away, and neither is the label a command offers on its line.
+        It applies only to the line. Without a user selection (a highlighted expression
+        or a prefilled label don't count), the message line says there is nothing to
+        cut.
         """
         text = self._selected_on_line()
         if text is None:
@@ -2651,18 +2282,11 @@ class RederiveApp(App[None]):
         self._set_message(CUT_TEXT)
 
     def action_paste_clipboard(self) -> None:
-        """Ctrl-V: put what is on the clipboard on the line being typed.
+        """Ctrl-V: paste the clipboard onto the line.
 
-        In at the cursor, over whatever is selected, with the cursor left after
-        it, as everything else that writes on the line does. A line offering a
-        label gives up its `#` as well: what is pasted stands where an
-        expression goes, and a `#` in front of one says nothing.
-
-        What comes back is the system clipboard where the environment will read
-        it, so that text copied in another program pastes as readily as a copy
-        taken here, and the copy this program holds where it will not. A
-        headless run keeps to the copy held here, for the reason
-        `copy_to_clipboard` gives.
+        It inserts at the cursor, replacing any selection, including the `#` of a
+        prefilled label. It reads the system clipboard where possible, and otherwise
+        (and in headless runs) the internal copy.
         """
         text = None if self.is_headless else platform.current().paste()
         if not text:
@@ -2673,19 +2297,12 @@ class RederiveApp(App[None]):
         self._paste_on_line(text)
 
     def on_prompt_line_pasted(self, event: PromptLine.Pasted) -> None:
-        """A paste from the terminal's own key, or from the browser's Ctrl-V.
-
-        It lands as Ctrl-V's does, so the `#` of an offered label goes with it
-        whichever key brought it. Away from a line there is nothing to paste on.
-        """
+        """Handle a paste from the terminal's key or the browser's Ctrl-V, like Ctrl-V."""
         if self.mode in PROMPT_MODES and event.text:
             self._paste_on_line(event.text)
 
     def _paste_on_line(self, text: str) -> None:
-        """Write the first line of `text` on the line, over an offered label too.
-
-        Only the first, the line being one line.
-        """
+        """Write the first line of `text` onto the line, replacing a prefilled label."""
         lines = text.splitlines()
         if not lines or not lines[0]:
             return
@@ -2693,20 +2310,11 @@ class RederiveApp(App[None]):
         self._write_on_line(lines[0])
 
     def action_insert_highlighted(self, fenced: int) -> None:
-        """F3 and F4: write the highlighted expression onto the author line.
+        """F3 and F4: insert the highlighted expression onto the line.
 
-        What goes on the line is what is highlighted, which is the whole of an
-        expression selected whole and just the part when the highlight is
-        inside one. F4 fences what it writes, since the line it lands on is
-        being built out of other things: `x + 1` dropped beside a factor would
-        otherwise read as two terms, and the fence is what keeps it one.
-
-        It goes in at the cursor, over whatever is selected on the line, and
-        the cursor is left after it so that another can follow.
-
-        On a line offering a label the `#` goes too, though it stands outside
-        the selection a typed digit replaces: what F3 writes is an expression,
-        and a `#` in front of one says nothing.
+        F4 wraps it in parentheses, so that, say, `x + 1` next to a factor stays one
+        term. It inserts at the cursor, replacing any selection, including the `#` of a
+        prefilled label.
         """
         text = self.session.highlighted_text
         if text is None:
@@ -2718,12 +2326,7 @@ class RederiveApp(App[None]):
         self._write_on_line(text)
 
     def _take_offered_label(self) -> None:
-        """Widen the selection over the `#` of a label the line still offers.
-
-        Only while the whole of the offering is still selected, which is what
-        says the line is as the command put it up rather than as the user has
-        left it.
-        """
+        """Extend the selection over the `#` of a prefilled label, if still selected."""
         if self.mode not in LABELLED_MODES:
             return
         line = self.query_one("#prompt-input", PromptLine)
@@ -2732,39 +2335,33 @@ class RederiveApp(App[None]):
             line.selection = Selection(0, end)
 
     def action_insert_glyph(self, key: str) -> None:
-        """An Alt key: write the glyph it stands for onto the line."""
+        """An Alt key: insert its glyph onto the line."""
         self._write_on_line(ALT_GLYPHS[key])
 
     def _write_on_line(self, text: str) -> None:
-        """Put `text` in at the cursor, over whatever is selected.
-
-        The cursor is left after it, so that what follows goes on after it
-        rather than back where the line was.
-        """
+        """Insert `text` at the cursor, replacing any selection."""
         line = self.query_one("#prompt-input", PromptLine)
         line.replace(text, *sorted(line.selection))
 
     def action_toggle_arrow_mode(self) -> None:
-        """F6: hand the sideways keys to the line, or to the highlight.
+        """F6: toggle whether left/right keys go to the line or the highlight.
 
-        Which way it starts is the `Options Input` setting, read afresh each
-        time a line goes up; this is how it is changed for the line in hand
-        without changing what the next command starts in.
+        Each line starts in the mode from `Options Input`; this changes it only for the
+        current line.
         """
         self.line_edit = not self.line_edit
         self._show_flags()
 
     def action_toggle_inserting(self) -> None:
-        """Ins: make room for what is typed, or stand on it."""
+        """Ins: toggle insert and overwrite modes."""
         self.inserting = not self.inserting
         self.query_one("#prompt-input", PromptLine).overwrite = not self.inserting
         self._show_flags()
 
     def _move_selection(self, movement: str) -> bool:
-        """One movement of the highlight, and whether it moved anything.
+        """Move the highlight, returning whether it moved.
 
-        A page is the one movement that has to know how tall the pane is: how
-        far it goes is however many expressions are on screen.
+        Page movements are sized by the pane height.
         """
         if movement in PAGE_MOVES:
             rows = max(1, self.work_area.size.height)
@@ -2772,7 +2369,7 @@ class RederiveApp(App[None]):
         return getattr(self.session, f"move_{movement}")()
 
     def _walk_history(self, editor: DialogEditor, movement: str) -> None:
-        """Move the selection, and label the active field with where it landed."""
+        """Move the selection, and set the active field to the new entry's label."""
         if not self._move_selection(movement):
             self._beep()
         entry = self.session.selected_entry
@@ -2780,12 +2377,12 @@ class RederiveApp(App[None]):
             editor.retype(str(entry.number))
 
     def action_scroll_work(self, direction: int) -> None:
-        """Ctrl-Right and Ctrl-Left, over a selected render wider than the pane."""
+        """Ctrl-Right and Ctrl-Left: scroll a selected render wider than the pane."""
         self.work_area.scroll_across(direction)
         self.refresh_screen()
 
     def action_scroll_work_typed(self, direction: int) -> None:
-        """`>` and `<`, which scroll exactly as the Ctrl keys do."""
+        """`>` and `<`, equivalent to the Ctrl keys."""
         self.action_scroll_work(direction)
 
     def _move_highlight(self, step: int) -> None:
@@ -2798,8 +2395,8 @@ class RederiveApp(App[None]):
         cursor = self.top
         assert isinstance(cursor, MenuCursor)
         word = cursor.menu.words[index]
-        # The color and amount menus answer a question the command beneath
-        # them asked, so what is picked off them is a value and not a command.
+        # The color and amount menus answer a question, so they pick values, not
+        # commands.
         if cursor.menu is COLORS:
             self._chose_color(index)
             return
@@ -2809,8 +2406,7 @@ class RederiveApp(App[None]):
         if cursor.menu is menus.BUILD_OPERATOR:
             self._chose_operator(word)
             return
-        # The two help menus choose a subject and turn its pages; neither
-        # picks a command, and both are answered where help is kept.
+        # The help menus choose a subject and turn its pages.
         if cursor.menu is menus.HELP:
             self._chose_subject(word)
             return
@@ -2836,7 +2432,7 @@ class RederiveApp(App[None]):
     # -- Options -----------------------------------------------------------
 
     def _open(self, target: Menu | Dialog) -> None:
-        """Stack a submenu or an Options dialog on what is showing."""
+        """Push a submenu or an Options dialog."""
         if isinstance(target, Menu):
             self.stack.append(MenuCursor(target))
         else:
@@ -2850,11 +2446,10 @@ class RederiveApp(App[None]):
         answer: Callable[[dict[str, str | int]], None],
         refuses: Callable[[dict[str, str | int]], str | None] = _takes_anything,
     ) -> None:
-        """Stack a dialog that stores nothing, and say who wants its values.
+        """Push a dialog whose values go to `answer` instead of the settings.
 
-        `refuses` names the first field the command cannot use, for the answers
-        a field cannot rule out on its own: a label number is a number whatever
-        the history holds, so only the command knows whether it names anything.
+        `refuses` returns the first field the command can't accept, for checks a field
+        can't make itself, such as whether a label number names an existing entry.
         """
         self.answer = answer
         self.refuses = refuses
@@ -2862,12 +2457,11 @@ class RederiveApp(App[None]):
         self._open(dialog)
 
     def _answered(self, values: dict[str, str | int]) -> None:
-        """Give such a dialog's values to the command that put it up."""
+        """Pass an unstored dialog's values to its command."""
         refused = self.refuses(values)
         if refused is not None:
-            # The original says nothing about an answer it will not take: the
-            # question stays up, with what was typed still on it to correct,
-            # and the highlight back on the field that was wrong.
+            # As in Derive, a refused answer just beeps: the dialog stays up with its
+            # contents, and the offending field becomes active.
             editor = self.editor
             assert editor is not None
             editor.focus(refused)
@@ -2881,10 +2475,9 @@ class RederiveApp(App[None]):
         answer(values)
 
     def _names_nothing(self, values: dict[str, str | int], *settings: str) -> str | None:
-        """The first of `settings` whose label names no entry, if any does not.
+        """The first of `settings` whose label names no entry, or None.
 
-        The one answer that names no entry and is still an answer is `end`,
-        which stands for the place past the last one rather than for an entry.
+        `end` is accepted, since it means the position after the last entry.
         """
         for setting in settings:
             value = values[setting]
@@ -2893,7 +2486,7 @@ class RederiveApp(App[None]):
         return None
 
     def _chose_color(self, index: int) -> None:
-        """A color picked off the color menu belongs to the dialog beneath it."""
+        """Apply a color chosen from the color menu to the dialog beneath it."""
         self.stack.pop()
         editor = self.editor
         assert editor is not None
@@ -2907,8 +2500,7 @@ class RederiveApp(App[None]):
         asking = editor.prompt is not None
         values = editor.commit()
         if values is None:
-            # Unless Enter has just put up the `Other` prompt, which is not a
-            # refusal but the next question.
+            # Don't beep if Enter just opened the `Other` prompt.
             if asking or editor.prompt is None:
                 self._beep()
             self.refresh_screen()
@@ -2923,8 +2515,7 @@ class RederiveApp(App[None]):
             del self.stack[1:]
         self._restart_menu()
         self.settings.apply(values)
-        # Recorded after the change, so that the record itself is written the
-        # way the new settings say to write it.
+        # Record after applying, so the record uses the new settings.
         for field in changed:
             if field.recorded:
                 self.session.record(field.setting)
@@ -2944,11 +2535,10 @@ class RederiveApp(App[None]):
         self._ask_expression(MODE_APPROX, APPROX_PROMPT)
 
     def _ask_expression(self, mode: str, label: str) -> None:
-        """Put up the line Simplify and approX both read, which is one line.
+        """Show the expression line shared by Simplify and approX.
 
-        The highlighted expression's label is offered, and there is nothing
-        else to ask: approX takes its precision from the settings rather than
-        from a question, so the two commands differ only in what they run.
+        It offers the highlighted expression's label. approX takes its precision from
+        the settings, so the two commands differ only in what they run.
         """
         entry = self.session.selected_entry
         offered = "" if entry is None else f"#{entry.number}"
@@ -2957,30 +2547,25 @@ class RederiveApp(App[None]):
     def _prompt(
         self, mode: str, label: str, offered: str, message: str, keep: int = 0
     ) -> None:
-        """Put the prompt band up for a command that reads a line.
+        """Show the prompt band for a command that reads a line.
 
-        What is offered comes up selected, so that typing replaces it and Enter
-        alone accepts it. `keep` is how much of it stands outside the
-        selection: the `#` of a label number, which typing a digit should not
-        take away, and nothing at all of a file name. That selection is
-        remembered as the offering, which is how the keys that copy and cut
-        tell it from a stretch the user marked out.
+        `offered` starts selected, so typing replaces it and Enter accepts it. `keep` is
+        how many leading characters stay unselected, such as the `#` of a label. The
+        selection is recorded as the offering, to tell it apart from a user selection.
 
-        The arrow key mode is read from the settings here rather than kept from
-        the last command, because that setting says what a command starts in
-        and F6 says where it goes on from there.
+        The arrow key mode is reset from the settings for each command; F6 changes it
+        only for the current line.
         """
         self.mode = mode
         self.line_edit = self.settings["ArrowKeyMode"] == "LineEdit"
         self.query_one("#menu").display = False
-        # A dialog may be what asked the question before this one - the label
-        # `Manage Annotate` reads, the size `Declare Matrix` reads - and the
-        # band it was on goes with it.
+        # Hide any dialog that asked the previous question (such as `Manage Annotate`'s
+        # label or `Declare Matrix`'s size).
         self.query_one("#fields").display = False
         self.query_one("#prompt-band").display = True
         self.query_one("#prompt-label", Static).update(label)
         line = self.query_one("#prompt-input", PromptLine)
-        # A file prompt puts its own back; nothing else on a line completes.
+        # File prompts set their own suggester afterwards.
         line.suggester = None
         line.overwrite = not self.inserting
         self._close_list()
@@ -2993,45 +2578,33 @@ class RederiveApp(App[None]):
 
     # -- Help --------------------------------------------------------------
     #
-    # Help stands where the expressions stand, in the window it was asked from
-    # and in no other: no border of its own, nothing overlaid and nothing
-    # dimmed underneath. It has two levels and no more - a menu of subjects,
-    # and a subject read a page at a time - so the whole of the navigation is
-    # Next, Previous and Resume. There is nothing to search and no link to
-    # follow, which is the original's bargain: a reference to read, not a web
-    # to walk.
+    # Help replaces the expressions in the window it was opened from, with no border,
+    # overlay or dimming. As in Derive it has two levels, a subject menu and a subject
+    # read page by page, navigated with Next, Previous and Resume; there is no search
+    # and no links.
     #
-    # Both menus go on the stack every other menu goes on, so leaving one
-    # uncovers whatever asked for help - the command menu, or the submenu a
-    # half-answered command was picked from. The prompt line is not on that
-    # stack, and what it was asking is remembered in the `Helping` instead.
+    # Help menus go on the regular menu stack, so leaving help uncovers whatever
+    # opened it. The prompt line isn't on the stack, so its state is kept in `Helping`.
     #
-    # F1 goes one level deep and not two: it opens the line editing subject
-    # itself, since that is what a reader with a line half typed is asking
-    # about, and what stands under that subject is the line. So Resume from it
-    # means the line and nothing else, and the subject carries a `Subjects`
-    # word that puts the menu up in its place for the rest of the document.
+    # F1 on a line opens the line editing subject directly, one level deep. Resume
+    # returns to the line, and a `Subjects` word replaces the subject with the subject
+    # menu.
 
     def _command_help(self) -> None:
-        """The Help command: the subject menu, over the worksheet."""
+        """The Help command: show the subject menu."""
         self._open_help(MODE_MENU, ENTER_OPTION)
 
     def action_help(self) -> None:
-        """F1 on a line being typed, which keeps the line for the way back.
+        """F1 on an input line: open the line editing subject, keeping the line.
 
-        It opens on line editing rather than on the subject menu: the key is
-        pressed with a line half typed, and what is wanted then is the keys
-        that work on that line. The subject stands on its own there, with
-        nothing under it but the line, so Resume gives the line straight back
-        and `Subjects` is what opens the rest of the document.
+        Resume returns straight to the line, and `Subjects` opens the subject menu.
         """
         self._open_help(self.mode, self.message, helps.EDITING)
 
     def _open_help(self, resume: str, message: str, word: str | None = None) -> None:
-        """Put help up, over whatever the screen was doing.
+        """Show help, remembering what the screen was doing.
 
-        A `word` opens that subject instead of the subject menu, and one level
-        deep rather than two: what it stands on is what help was asked from.
+        A `word` opens that subject directly instead of the subject menu.
         """
         self.helping = Helping(resume, message)
         self.mode = MODE_HELP
@@ -3040,10 +2613,8 @@ class RederiveApp(App[None]):
         else:
             self.helping.topic = helps.BY_WORD[word]
             self.stack.append(MenuCursor(menus.HELP_PAGES_ALONE[word]))
-        # A line goes off the screen with its text intact: nothing is read off
-        # it until it comes back, and nothing writes to it while it is gone. An
-        # open list of names goes for good, since it stands in the rows help is
-        # about to take and the name it was offering is already on the line.
+        # The line is hidden with its text intact. The completion list is closed, since
+        # help takes its rows and its current name is already on the line.
         self._close_list()
         self.query_one("#prompt-band").display = False
         self.set_focus(None)
@@ -3051,7 +2622,7 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _chose_subject(self, word: str) -> None:
-        """A subject off the subject menu, or the Resume at the end of it."""
+        """Handle a choice from the subject menu: a subject, or Resume."""
         assert self.helping is not None
         if word == helps.RESUME:
             self._help_back()
@@ -3062,7 +2633,7 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _read_help(self, word: str) -> None:
-        """A word off the menu a subject is read under, whichever of them."""
+        """Handle a word from a subject's page menu."""
         if word == helps.RESUME:
             self._help_back()
         elif word == helps.SUBJECTS:
@@ -3071,13 +2642,10 @@ class RederiveApp(App[None]):
             self._turn_help(1 if word == helps.NEXT else -1)
 
     def _show_subjects(self) -> None:
-        """Subjects: the menu of them, in place of the subject on the screen.
+        """Subjects: replace the current subject with the subject menu.
 
-        In place and not on top of it, which is what keeps Resume meaning the
-        one thing: F1 opened a subject over the line, so the menu it leads to
-        stands over the line too, and one Resume from either gives the line
-        back. A subject picked off that menu goes on top of it as usual, the
-        menu being what it was opened from and so what it comes back to.
+        Replacing rather than pushing means one Resume still returns to the line that F1
+        was pressed on. Subjects chosen from that menu are pushed on top of it as usual.
         """
         assert self.helping is not None
         self.helping.topic = None
@@ -3086,12 +2654,9 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _turn_help(self, step: int) -> None:
-        """Turn a page; past the last one is out to where it was opened from.
+        """Turn a page. Past the last page, leave the subject, as in Derive.
 
-        Which is the original's way out and worth keeping: a subject read
-        through ends where it was started from, with no key pressed to leave
-        it. The other end stops instead - there is nothing before the first
-        page, and coming round to the last would be a jump and not a turn.
+        Before the first page it stops rather than wrapping to the last.
         """
         assert self.helping is not None
         page = self.helping.page + step
@@ -3102,11 +2667,10 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _help_back(self) -> None:
-        """Resume: up one level, and out of help from the top one.
+        """Resume: go up one level, or leave help from the top level.
 
-        Which level is the top one is a question for the stack rather than for
-        the screen: a subject reached through the subject menu uncovers it,
-        and one F1 opened directly has nothing of help under it and so leaves.
+        A subject opened from the subject menu returns to it; one opened directly by F1
+        leaves help.
         """
         assert self.helping is not None
         self.stack.pop()
@@ -3120,8 +2684,7 @@ class RederiveApp(App[None]):
         self.helping = None
         self.mode = resume
         if resume in PROMPT_MODES:
-            # The line comes back as it was left, down to where the cursor
-            # stood in it: only the band was taken away.
+            # The line comes back exactly as it was left, cursor included.
             self.query_one("#prompt-band").display = True
             self.query_one("#prompt-input", Input).focus()
         else:
@@ -3130,14 +2693,11 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _help_page(self, rows: int, width: int) -> tuple[list[str], bool]:
-        """The page now showing, laid out for a pane this size, and its title.
+        """The current page laid out for the pane size, and whether it has a title row.
 
-        How a subject paginates is a question about the pane and not about the
-        document, so it is answered here, as the page is painted: a window
-        that has just been split or resized re-wraps and paginates again, and
-        the page in hand is held inside whatever the new size came to. The
-        flag says whether the first row is a title, the subject menu carrying
-        its own heading inside a centred document rather than above one.
+        Pagination depends on the pane size, so it is redone on every paint, and the
+        page number is clamped after a split or resize. The subject menu has no title
+        row, since its heading is part of its centered layout.
         """
         assert self.helping is not None
         topic = self.helping.topic
@@ -3154,11 +2714,8 @@ class RederiveApp(App[None]):
     def _command_jump(self) -> None:
         """Ask which expression to highlight.
 
-        Nothing is offered on the line: the command is for going somewhere
-        else, so the label of where the highlight already is would be no use.
-
-        A history with nothing in it has nothing to jump to, and the original
-        asks nothing at all: no line, no message, just the beep.
+        Nothing is offered on the line, since the current label would be useless. With
+        an empty history it just beeps, as in Derive.
         """
         if not self.session.entries:
             self._beep()
@@ -3166,11 +2723,10 @@ class RederiveApp(App[None]):
         self._prompt(MODE_JUMP, JUMP_PROMPT, "", menus.ENTER_LABEL)
 
     def _jumped(self, answer: str) -> None:
-        """Enter on the jump line: a label number and nothing else.
+        """Enter on the Jump line.
 
-        A line with nothing on it asks for nothing, and leaves the highlight
-        where it was. Anything that is not a number, and any number past the
-        last label, is refused: the beep, and the line left up to be corrected.
+        An empty line leaves the highlight in place. Anything other than an existing
+        label number beeps and leaves the line up for correction.
         """
         answer = answer.strip()
         if not answer:
@@ -3184,10 +2740,9 @@ class RederiveApp(App[None]):
     # -- Remove and Unremove -----------------------------------------------
 
     def _command_remove(self) -> None:
-        """Ask which block of expressions to take out, offering the highlighted one.
+        """Ask which block of expressions to remove, offering the highlighted one.
 
-        A history with nothing in it has no block to name, and the original
-        asks nothing at all: no dialog, no message, just the beep.
+        With an empty history it just beeps, as in Derive.
         """
         entry = self.session.selected_entry
         if entry is None:
@@ -3203,10 +2758,10 @@ class RederiveApp(App[None]):
         self._return_to_menu(ENTER_OPTION)
 
     def _command_unremove(self) -> None:
-        """Put the last removal back, asking where when there is a choice.
+        """Restore the last removal, asking where if there is a choice.
 
-        An empty buffer is the one thing either command says anything about. An
-        empty history is no choice of where, so the expressions simply go back.
+        An empty buffer is reported on the message line. With an empty history there's
+        no choice, so the expressions are restored directly.
         """
         if not self.session.removed:
             self._set_message(BUFFER_EMPTY)
@@ -3229,10 +2784,9 @@ class RederiveApp(App[None]):
     # -- moVe --------------------------------------------------------------
 
     def _command_move(self) -> None:
-        """Ask which block to rearrange and where to put it.
+        """Ask which block to move and where.
 
-        A history with nothing in it has no block to name, and the original
-        asks nothing at all: no dialog, no message, just the beep.
+        With an empty history it just beeps, as in Derive.
         """
         entry = self.session.selected_entry
         if entry is None:
@@ -3268,18 +2822,15 @@ class RederiveApp(App[None]):
         )
 
     def _asked(self, request: str) -> None:
-        """The expression is settled: work out what is left to ask.
+        """The expression is known; determine what else to ask.
 
-        Fewer than two variables is no choice, so none is asked for. The
-        amount is asked for only where it would make a difference, which each
-        command decides for itself - so a number is decomposed and a sum is
-        expanded on the spot, with no question put at all.
+        Variables are asked for only if there are at least two. The amount is asked for
+        only where the command says it matters, so a number is factored and a sum
+        expanded with no questions.
 
-        Which variables the expression holds is the engine's answer and not a
-        walk over the tree, so even this question goes through the compute path:
-        converting an expression is where a hostile one detonates, and it would
-        detonate here as readily as in the command itself. It is a round trip of
-        well under a millisecond on anything sane.
+        The variables come from the engine, so this goes through the compute path, since
+        converting a pathological expression can blow up here as in the command itself.
+        Normally it takes well under a millisecond.
         """
         pending = self.asking
         assert pending is not None
@@ -3299,7 +2850,7 @@ class RederiveApp(App[None]):
         )
 
     def _asked_variables(self, needs_amount: bool, outcome: Outcome) -> None:
-        """The variables are known: put the next question, or run the command."""
+        """The variables are known: ask the next question, or run the command."""
         pending = self.asking
         assert pending is not None
         if isinstance(outcome.error, DeriveSyntaxError):
@@ -3317,7 +2868,7 @@ class RederiveApp(App[None]):
             self._answer()
 
     def _ask_variable(self) -> None:
-        """Put up the next variable question."""
+        """Show the next variable question."""
         pending = self.asking
         assert pending is not None
         number = len(pending.chosen) + 1
@@ -3332,10 +2883,8 @@ class RederiveApp(App[None]):
     def _asked_variable(self, answer: str) -> None:
         """One answer to a variable question.
 
-        An empty line ends the list, and so does choosing the last variable
-        there was: either way what is left to ask is the amount. A name that is
-        not one of the variables on offer is refused and the question put
-        again, which is what the original does with it.
+        An empty line, or choosing the last remaining variable, ends the list. As in
+        Derive, a name not on offer beeps and asks again.
         """
         pending = self.asking
         assert pending is not None
@@ -3358,7 +2907,7 @@ class RederiveApp(App[None]):
             self._variables_settled()
 
     def _variables_settled(self) -> None:
-        """The variables are in: put the amount question, or run the command."""
+        """The variables are chosen: ask for the amount, or run the command."""
         pending = self.asking
         assert pending is not None
         if pending.command.needs_amount(self.session, pending.request):
@@ -3367,7 +2916,7 @@ class RederiveApp(App[None]):
             self._answer()
 
     def _ask_amount(self) -> None:
-        """Stack the amount menu on the command menu, the prompt band done."""
+        """Hide the prompt band and push the amount menu."""
         pending = self.asking
         assert pending is not None
         self._hide_prompt()
@@ -3377,7 +2926,7 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _chose_amount(self, index: int) -> None:
-        """The amount is the last question, so choosing one runs the command."""
+        """Choosing the amount, the last question, runs the command."""
         pending = self.asking
         assert pending is not None
         self.amounts[pending.command.amounts].index = index
@@ -3385,7 +2934,7 @@ class RederiveApp(App[None]):
         self._answer(pending.command.amounts.words[index])
 
     def _answer(self, amount: str | None = None) -> None:
-        """Run the command, and say how long the answer took."""
+        """Run the command and report how long it took."""
         pending = self.asking
         assert pending is not None
         self.asking = None
@@ -3402,11 +2951,10 @@ class RederiveApp(App[None]):
         )
 
     def _appended(self, outcome: Outcome) -> None:
-        """The answer is in, or the reason there is none.
+        """Report the answer, or the reason there is none.
 
-        A refusal is reported rather than corrected: the line parsed when it
-        was collected, so one is all but unreachable, and there may be no
-        prompt left to put the cursor in.
+        Errors are reported rather than corrected, since the input was already parsed
+        and the prompt may be gone.
         """
         self._end_prompt(_reported(outcome))
 
@@ -3418,19 +2966,17 @@ class RederiveApp(App[None]):
         self._ask_operand(MODE_BUILD, BUILD_PROMPT)
 
     def _ask_operand(self, mode: str, label: str) -> None:
-        """Put up one of the two operand lines, offering what is highlighted.
+        """Show an operand line, offering the highlighted expression's label.
 
-        Which is the whole of what makes Build worth having: the label comes up
-        already on the line, the arrow keys move it to another expression, and
-        F6 walks into one - so an operand buried in an expression costs no
-        typing at all.
+        The arrow keys change the label to another expression, and F6 allows selecting
+        a subexpression, so operands usually need no typing.
         """
         entry = self.session.selected_entry
         offered = "" if entry is None else f"#{entry.number}"
         self._prompt(mode, label, offered, ENTER_TO_DERIVE, keep=1)
 
     def _build_operand(self, text: str) -> None:
-        """The first operand: resolve what it names, and ask for an operator."""
+        """Resolve the first operand and ask for an operator."""
         pending = self.building
         assert pending is not None
         resolved = self._resolved(text)
@@ -3440,7 +2986,7 @@ class RederiveApp(App[None]):
         self._ask_operator(0)
 
     def _build_next(self, text: str) -> None:
-        """The right operand of the binary operator that asked for it."""
+        """Resolve the right operand of the pending binary operator."""
         pending = self.building
         assert pending is not None
         operator = pending.operator
@@ -3455,11 +3001,10 @@ class RederiveApp(App[None]):
         self._ask_operator(len(building.WORDS) - 1)
 
     def _resolved(self, text: str) -> tuple[Node, str] | None:
-        """What an operand line names, and what an annotation calls it.
+        """The expression an operand line names, and its name for the annotation.
 
-        None when there is nothing to go on with: a line with nothing on it
-        abandons the whole command, as it does on the author line, and one that
-        does not read is left up to be corrected.
+        Returns None if an empty line abandoned the command, as on the author line, or
+        if the line failed to parse and was left up for correction.
         """
         if not text.strip():
             self._end_prompt(done=False)
@@ -3471,11 +3016,10 @@ class RederiveApp(App[None]):
             return None
 
     def _ask_operator(self, index: int) -> None:
-        """Stack the operator menu, the prompt band done with for now.
+        """Hide the prompt band and show the operator menu.
 
-        It opens on `+` the first time and on `Done` from then on, which is
-        where the original leaves it: an operand has just been settled, so the
-        likeliest next word is the one that finishes.
+        As in Derive, it opens on `+` the first time and on `Done` afterwards, the most
+        likely next choice.
         """
         self._hide_prompt()
         self.mode = MODE_MENU
@@ -3488,13 +3032,11 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _chose_operator(self, word: str) -> None:
-        """One word off the operator menu: apply it, or finish the expression.
+        """Apply an operator from the menu, or finish the expression.
 
-        A unary operator has everything it needs and folds the expression on
-        the spot, leaving the menu up for another. A binary one takes the menu
-        down and asks for its right operand - down rather than aside, so that
-        Esc on that line abandons the command as the original does, instead of
-        stepping back to the menu.
+        A unary operator is applied immediately, leaving the menu up. A binary one pops
+        the menu and asks for its right operand, so Esc on that line abandons the
+        command, as in Derive.
         """
         pending = self.building
         assert pending is not None and pending.node is not None
@@ -3512,15 +3054,11 @@ class RederiveApp(App[None]):
         self._ask_operand(MODE_BUILD_NEXT, BUILD_NEXT_PROMPT)
 
     def _built(self, pending: Building) -> None:
-        """Done: append what was built, and give the menu back.
+        """Done: append the built expression and return to the menu.
 
-        Through the compute path either way. Ctrl-Enter simplifies what was put
-        together, which is an engine call like any other; plain Enter appends it
-        as it stands, which reaches no engine at all and is dispatched the same
-        way because the answer arrives where every other command's answer does.
-        Nothing is caught here: a line that would not read is all but
-        unreachable - every operand was read as it was collected - and the
-        completion handler says so as readily as this could.
+        Ctrl-Enter simplifies it, which needs the engine; plain Enter appends it as is.
+        Both go through the compute path so the answer arrives in the usual handler.
+        Errors are left to that handler, since every operand was already parsed.
         """
         assert pending.node is not None
         node, annotation = pending.node, pending.annotation
@@ -3533,14 +3071,11 @@ class RederiveApp(App[None]):
         )
 
     def _wanted_simplified(self) -> bool:
-        """Whether the key that finished the command was Ctrl-Enter.
+        """Whether the command was finished with Ctrl-Enter, clearing the mark.
 
-        Answered here rather than left to the general path, because these two
-        commands do not append an expression and then simplify it. The
-        original enters one expression and not two: what Build put together is
-        simplified instead of being appended, and the annotation records both
-        steps at once. So the mark Ctrl-Enter left is taken back off, and there
-        is nothing for the return to the menu to find.
+        Build and Calculus don't use the general path, which appends and then
+        simplifies. Derive enters only the simplified expression, with an annotation
+        recording both steps, so the Ctrl-Enter mark is cleared here.
         """
         if self.simplifying is None:
             return False
@@ -3563,13 +3098,11 @@ class RederiveApp(App[None]):
         )
 
     def _calculus_expression(self, request: str) -> None:
-        """The expression is settled: work out which variable to offer.
+        """The expression is known; find the variable to offer.
 
-        The one the original offers is the primary variable of what was named,
-        which is the engine's answer rather than a walk over the tree - and so
-        is asked for the way Factor asks for the same list, down the compute
-        path. An expression with no variables in it is offered none, and the
-        line comes up empty.
+        As in Derive, this is the expression's primary variable, obtained from the
+        engine through the compute path as in Factor. Without variables the line starts
+        empty.
         """
         pending = self.calculating
         assert pending is not None
@@ -3589,7 +3122,7 @@ class RederiveApp(App[None]):
         )
 
     def _calculus_variables(self, outcome: Outcome) -> None:
-        """The variables are known: ask which one, offering the most main."""
+        """The variables are known: ask which one, offering the primary one."""
         pending = self.calculating
         assert pending is not None
         if isinstance(outcome.error, DeriveSyntaxError):
@@ -3607,11 +3140,10 @@ class RederiveApp(App[None]):
         )
 
     def _calculus_variable(self, text: str) -> None:
-        """The variable, which has to be one: anything else is not an answer.
+        """Accept the variable answer, which must be a variable.
 
-        The original refuses such a line without saying anything at all - no
-        message, no beep - and leaves it up with the cursor back at the start,
-        so that the name can be typed over.
+        As in Derive, anything else is refused silently, with no message or beep, and
+        the cursor moves to the start so the name can be typed over.
         """
         pending = self.calculating
         assert pending is not None
@@ -3626,21 +3158,18 @@ class RederiveApp(App[None]):
         self._ask(pending.command.dialog, self._calculus_answered, self._calculus_refuses)
 
     def _calculus_refuses(self, values: dict[str, str | int]) -> str | None:
-        """Which field of the last line the command in hand will not take."""
+        """The field of the final dialog the current command refuses, if any."""
         pending = self.calculating
         assert pending is not None
         return pending.command.refuses(values)
 
     def _calculus_answered(self, values: dict[str, str | int]) -> None:
-        """The last line is answered: write the expression and append it.
+        """The final dialog is answered: build the expression and append it.
 
-        Plain Enter computes nothing - the command writes a head around what was
-        named and stops, which is what leaves a Simplify after it something to
-        do - and it is dispatched down the compute path anyway, since that is
-        where a Ctrl-Enter's Simplify has to go and where the answer of either
-        arrives. A field holding something that is not an expression is reported
-        by the completion handler; the line is gone by then, so it is said
-        rather than corrected.
+        Plain Enter computes nothing, only wrapping the head around the expression.
+        It still goes through the compute path, which Ctrl-Enter's Simplify needs. An
+        unparsable field is reported by the completion handler, since the dialog is
+        gone by then.
         """
         pending = self.calculating
         assert pending is not None
@@ -3660,16 +3189,9 @@ class RederiveApp(App[None]):
 
     # -- soLve -------------------------------------------------------------
     #
-    # Up to three questions, and how many of them get asked depends on the
-    # answers rather than on a table: an expression, then a variable at a time
-    # for as many as the expression leaves undecided, then the interval - in
-    # Approximate precision alone, that being the one mode that searches.
-    #
-    # The count of variable questions is the one thing here that is not Factor
-    # under another name. A scalar equation in one variable settles it and asks
-    # nothing; in none or in several it asks once. A system asks once per
-    # equation, and only where there are more variables than equations to go
-    # round - a square or overdetermined system has no choice to offer.
+    # Up to three questions, depending on the answers: an expression, then variables
+    # one at a time, then, only in Approximate precision (the one mode that searches),
+    # the interval. See `_variables_wanted` for how many variables are asked for.
 
     def _command_solve(self) -> None:
         """Ask which expression to solve, offering the highlighted one."""
@@ -3679,12 +3201,10 @@ class RederiveApp(App[None]):
         self._prompt(MODE_SOLVE, SOLVE_PROMPT, offered, ENTER_TO_DERIVE, keep=1)
 
     def _solve_expression(self, request: str) -> None:
-        """The expression is settled: work out what is left to ask.
+        """The expression is known; determine what else to ask.
 
-        How many equations it is comes off the tree and costs nothing; which
-        variables it holds is the engine's answer, and goes down the compute
-        path for the reason Factor's does - converting an expression is where a
-        hostile one detonates.
+        The equation count comes cheaply from the tree; the variables come from the
+        engine, through the compute path as in Factor.
         """
         pending = self.solving
         assert pending is not None
@@ -3704,7 +3224,7 @@ class RederiveApp(App[None]):
         )
 
     def _solve_planned(self, equations: int, outcome: Outcome) -> None:
-        """The variables are known: put the next question, or run the command."""
+        """The variables are known: ask the next question, or run the command."""
         pending = self.solving
         assert pending is not None
         if isinstance(outcome.error, DeriveSyntaxError):
@@ -3722,7 +3242,7 @@ class RederiveApp(App[None]):
             self._solve_bounds()
 
     def _ask_solve_variable(self) -> None:
-        """Put up the variable line, offering the most main one still free."""
+        """Show the variable line, offering the most significant remaining variable."""
         pending = self.solving
         assert pending is not None
         offered = pending.remaining[0] if pending.remaining else ""
@@ -3733,9 +3253,8 @@ class RederiveApp(App[None]):
     def _solve_variable(self, text: str) -> None:
         """One answer to a variable question.
 
-        A line that is not a variable is refused the way every other variable
-        line refuses one: in silence, with the cursor back at the start so the
-        name can be typed over.
+        Anything but a variable is refused silently, with the cursor moved to the start,
+        as on other variable lines.
         """
         pending = self.solving
         assert pending is not None
@@ -3753,7 +3272,7 @@ class RederiveApp(App[None]):
             self._solve_bounds()
 
     def _solve_bounds(self) -> None:
-        """The interval, which only Approximate precision has anything to do with."""
+        """Ask for the interval, only in Approximate precision."""
         if str(self.settings["Precision"]) != "Approximate":
             self._run_solve()
             return
@@ -3762,7 +3281,7 @@ class RederiveApp(App[None]):
         self._ask(menus.SOLVE_BOUNDS, self._solve_bounded, self._solve_refuses)
 
     def _solve_refuses(self, values: dict[str, str | int]) -> str | None:
-        """Neither bound may be left blank: an interval needs two ends."""
+        """Refuse a blank bound."""
         return _needed(values, "SolveLower", "SolveUpper")
 
     def _solve_bounded(self, values: dict[str, str | int]) -> None:
@@ -3779,12 +3298,7 @@ class RederiveApp(App[None]):
         )
 
     def _solved(self, outcome: Outcome) -> None:
-        """The solutions are in, or there were none.
-
-        No solutions appends nothing and leaves the highlight where it was, so
-        the message line is what says so - there being no beep machinery here
-        and, in the original, nothing else said either.
-        """
+        """Append the solutions, or report that there were none."""
         if outcome.error is None and not outcome.value:
             self._end_prompt(NO_SOLUTIONS)
             return
@@ -3792,20 +3306,18 @@ class RederiveApp(App[None]):
 
     # -- Declare -----------------------------------------------------------
     #
-    # All four commands end the same way: they hand the session what they
-    # collected, it writes the expression and authors it, and the command menu
-    # comes back up. What differs is the questions, and how many of them the
-    # answers call for.
+    # All four commands pass what they collected to the session, which writes and
+    # authors the expression, and then return to the command menu. They differ in
+    # their questions.
 
     def _command_declare_variable(self) -> None:
         self._prompt(MODE_VARIABLE_NAME, VARIABLE_NAME_PROMPT, "", ENTER_VARIABLE_NAME)
 
     def _variable_name(self, text: str) -> None:
-        """The name is in: ask what to declare it as.
+        """The name is known; ask what to declare it as.
 
-        A blank line names nothing and abandons the command. A name that
-        cannot be declared - a pre-defined function or constant - is refused
-        and the question put again, as the original puts it again.
+        A blank line abandons the command. A name that can't be declared (a predefined
+        function or constant) is refused and asked again, as in Derive.
         """
         name = text.strip()
         if not name:
@@ -3818,7 +3330,7 @@ class RederiveApp(App[None]):
         self._ask_domain()
 
     def _ask_domain(self) -> None:
-        """Stack the domain menu, opened on what the variable is already."""
+        """Show the domain menu, opened on the variable's current domain."""
         pending = self.declaring
         assert pending is not None
         self._open_question(
@@ -3828,10 +3340,9 @@ class RederiveApp(App[None]):
         )
 
     def _chose_domain(self, word: str) -> None:
-        """A value, or one of the four domains.
+        """Handle Value or one of the four domains.
 
-        Complex and Nonscalar have no interval to ask about, so choosing one
-        of them is the last answer the command needs.
+        Complex and Nonscalar have no interval, so they complete the command.
         """
         pending = self.declaring
         assert pending is not None
@@ -3850,7 +3361,7 @@ class RederiveApp(App[None]):
         )
 
     def _chose_interval(self, word: str) -> None:
-        """One of the named intervals, the whole line, or bounds to be entered."""
+        """Handle a named interval, All, or Interval (bounds to be entered)."""
         pending = self.declaring
         assert pending is not None
         self.stack.pop()
@@ -3890,7 +3401,7 @@ class RederiveApp(App[None]):
         )
 
     def _variable_value(self, text: str) -> None:
-        """The value, or a blank line to leave the variable unassigned."""
+        """Assign the value; a blank line leaves the variable unassigned."""
         pending = self.declaring
         assert pending is not None
         self._declared(lambda: self.session.declare_value(pending.name, text))
@@ -3910,7 +3421,7 @@ class RederiveApp(App[None]):
         self._prompt(MODE_FUNCTION_VALUE, FUNCTION_VALUE_PROMPT, "", ENTER_DEFINITION)
 
     def _function_value(self, text: str) -> None:
-        """The definition, or a blank line to declare an arbitrary function."""
+        """Define the function; a blank line declares an arbitrary function."""
         pending = self.defining
         assert pending is not None
         if not text.strip():
@@ -3927,10 +3438,10 @@ class RederiveApp(App[None]):
         )
 
     def _function_variable(self, text: str) -> None:
-        """One of an arbitrary function's variables; a blank line ends the list.
+        """Add an arbitrary function's variable; a blank line ends the list.
 
-        A function with no variables is no function: the original writes
-        `g :=`, which leaves the name an unassigned variable.
+        With no variables, Derive writes `g :=`, leaving the name an unassigned
+        variable.
         """
         pending = self.defining
         assert pending is not None
@@ -3966,7 +3477,7 @@ class RederiveApp(App[None]):
         self._ask_element()
 
     def _ask_element(self) -> None:
-        """Put up the next element question, one element at a time."""
+        """Ask for the next element."""
         pending = self.entering
         assert pending is not None
         row, column = pending.place
@@ -3980,8 +3491,8 @@ class RederiveApp(App[None]):
     def _element(self, text: str) -> None:
         """One element of the vector or matrix being entered.
 
-        A blank line abandons the whole command, as it does in the original:
-        there is no such thing as a vector with a hole in it.
+        A blank line abandons the whole command, as in Derive, since elements can't be
+        missing.
         """
         pending = self.entering
         assert pending is not None
@@ -4003,17 +3514,16 @@ class RederiveApp(App[None]):
             self._declared(lambda: self.session.declare_matrix(pending.grid))
 
     def _refuse_name(self) -> None:
-        """Put the name question again, with nothing on the line."""
+        """Beep and clear the line to ask for the name again."""
         self._beep()
         self.query_one("#prompt-input", Input).value = ""
 
     def _declared(self, declare: Callable[[], object]) -> None:
-        """Run one Declare command, and leave the command menu up.
+        """Run a Declare command and return to the command menu.
 
-        A line that does not read leaves the prompt up to be corrected, as an
-        authored one does. Only the commands that read a line can raise; the
-        ones answered off a menu cannot, since a name and a bound were judged
-        before they were taken.
+        An unparsable line leaves the prompt up for correction, as with Author. Only
+        commands that read a line can raise, since names and bounds were validated when
+        entered.
         """
         try:
             declare()
@@ -4023,10 +3533,10 @@ class RederiveApp(App[None]):
         self._end_prompt()
 
     def _open_question(self, menu: Menu, word: str, asks: str) -> None:
-        """Stack a menu that asks a question, opened on the word already true.
+        """Show a question menu, opened on the current answer `word`.
 
-        It replaces whichever question was up rather than covering it, so that
-        Esc leaves the whole command however far through it is.
+        The previous question was already popped, so Esc always abandons the whole
+        command.
         """
         self._hide_prompt()
         self.mode = MODE_MENU
@@ -4037,26 +3547,19 @@ class RederiveApp(App[None]):
 
     # -- Manage ------------------------------------------------------------
     #
-    # The four commands here that are not settings screens. Three of them append
-    # nothing to the history: renumbering, annotating and ordering are things
-    # done to the session rather than expressions derived from it. Substitute is
-    # the one that derives one, and it asks the way Factor and Expand do.
+    # The four Manage commands that aren't settings screens. Renumber, Annotate and
+    # Ordering modify the session without appending to the history. Substitute derives
+    # an expression and asks like Factor and Expand.
 
     def _command_renumber(self) -> None:
-        """Put the labels back in sequence. No question, no message, no record.
-
-        It runs on the keystroke and leaves the command menu up. A history
-        already in sequence, and one with nothing in it, come to the same
-        thing: the command runs and there is nothing to see.
-        """
+        """Renumber the labels in sequence, immediately and without a message."""
         self.session.renumber()
         self._done_with_menu()
 
     def _command_annotate(self) -> None:
         """Ask which expression to annotate, offering the highlighted one.
 
-        A history with nothing in it has nothing to annotate, so the command is
-        over before it has asked anything.
+        With an empty history it does nothing.
         """
         entry = self.session.selected_entry
         if entry is None:
@@ -4068,11 +3571,7 @@ class RederiveApp(App[None]):
         return self._names_nothing(values, "AnnotateExpression")
 
     def _annotating(self, values: dict[str, str | int]) -> None:
-        """The expression is named: ask what to say about it.
-
-        The line comes up carrying what the entry says now, so that Enter alone
-        leaves it as it was and typing replaces it.
-        """
+        """The expression is chosen; ask for the annotation, offering the current one."""
         number = int(values["AnnotateExpression"])
         entry = self.session.numbered(number)
         assert entry is not None
@@ -4082,11 +3581,10 @@ class RederiveApp(App[None]):
         )
 
     def _annotate(self, text: str) -> None:
-        """Enter on the annotation line: what the entry now says it came from.
+        """Set the entry's annotation from the line.
 
-        A blank line is a blank annotation and not an abandoned command, there
-        being no other way to take one back; Esc is what abandons, and it
-        leaves the Manage menu up as it does on any prompt line.
+        A blank line sets a blank annotation, the only way to clear one. Esc abandons
+        the command, as on any prompt line.
         """
         number, self.annotating = self.annotating, None
         assert number is not None
@@ -4094,18 +3592,17 @@ class RederiveApp(App[None]):
         self._end_prompt()
 
     def _command_ordering(self) -> None:
-        """Ask for the variable order list, offering the one in force."""
+        """Ask for the variable order list, offering the current one."""
         self._prompt(
             MODE_ORDER, ORDER_PROMPT, " ".join(self.session.order), ENTER_ORDER
         )
 
     def _ordered(self, text: str) -> None:
-        """Enter on the ordering line: the variables in the order wanted.
+        """Set the variable order from the line.
 
-        A line that is not a list of variable names is refused with the beep
-        and left up to be corrected, which is what every refused answer gets.
-        Nothing is recorded: unlike the four Manage screens that set something,
-        this one appends no expression to the history.
+        Anything other than a list of variable names beeps and stays up for
+        correction. Unlike the Manage settings screens, nothing is recorded in the
+        history.
         """
         names = self.session.order_list(text)
         if names is None:
@@ -4124,12 +3621,10 @@ class RederiveApp(App[None]):
         )
 
     def _substitute_expression(self, request: str) -> None:
-        """The expression is settled: work out what is left to ask.
+        """The expression is known; determine what else to ask.
 
-        A highlighted subexpression is one question, whatever it holds. A whole
-        expression is one question per variable - and an expression with no
-        variables in it leaves nothing to ask and nothing to append, so the
-        command is over where it stands, the Manage menu still up.
+        A highlighted subexpression needs one replacement. A whole expression needs a
+        value per variable; without variables the command ends with the Manage menu up.
         """
         pending = self.substituting
         assert pending is not None
@@ -4152,7 +3647,7 @@ class RederiveApp(App[None]):
         )
 
     def _substitute_variables(self, outcome: Outcome) -> None:
-        """The variables are known: ask about the first, or find none to ask about."""
+        """The variables are known: ask about the first, if any."""
         pending = self.substituting
         assert pending is not None
         if isinstance(outcome.error, DeriveSyntaxError):
@@ -4168,12 +3663,10 @@ class RederiveApp(App[None]):
             self._end_prompt(done=False)
 
     def _ask_value(self) -> None:
-        """Put up the next value question.
+        """Ask for the next value.
 
-        A variable's own name is what its line offers, so that Enter alone
-        leaves that variable standing. A subexpression is offered nothing:
-        there is no name for it, and the message line says what is being
-        replaced instead.
+        A variable's line offers its own name, so Enter leaves it unchanged. A
+        subexpression's line starts empty, with the message line naming it.
         """
         pending = self.substituting
         assert pending is not None
@@ -4188,10 +3681,9 @@ class RederiveApp(App[None]):
     def _substitute_value(self, text: str) -> None:
         """One answer to a value question.
 
-        A line that does not read is refused and left up to be corrected, as an
-        authored one is. A blank line leaves that variable alone and asks about
-        the next; on the subexpression question, where there is nothing else to
-        ask, it abandons the command rather than appending a copy.
+        An unparsable line stays up for correction, as with Author. A blank line leaves
+        the variable unchanged and moves on; for a subexpression it abandons the
+        command rather than appending a copy.
         """
         pending = self.substituting
         assert pending is not None
@@ -4221,14 +3713,14 @@ class RederiveApp(App[None]):
             )
 
     def _substituted(self, run: Callable[[], object]) -> None:
-        """Write the values in, and say how long the answer took."""
+        """Perform the substitution and report how long it took."""
         self.substituting = None
         started = time.monotonic()
         try:
             run()
         except DeriveSyntaxError as error:
-            # Every line was read as it was collected, so this is all but
-            # unreachable; there may be no prompt left to put the cursor in.
+            # Nearly unreachable, since every line was parsed when entered; the prompt
+            # may be gone, so just report it.
             self._end_prompt(str(error))
             return
         took = _elapsed(time.monotonic() - started)
@@ -4237,7 +3729,7 @@ class RederiveApp(App[None]):
     # -- Transfer ----------------------------------------------------------
 
     def _command_save(self) -> None:
-        """Write the worksheet as a math file, asking the block first when Some."""
+        """Save the worksheet as a math file, asking for the block if Range is Some."""
         self._begin_save(SAVE_PROMPT, self._save, worksheet.SUFFIX)
 
     def _chose_block(
@@ -4251,10 +3743,9 @@ class RederiveApp(App[None]):
         self._ask_file(label, command, suffix)
 
     def _command_save_source(self, language: Language) -> None:
-        """Write the worksheet as source code, asking the block first when Some.
+        """Save the worksheet as source code, asking for the block if Range is Some.
 
-        The same command as `Transfer Save Derive` down to the block it writes;
-        only the notation and the extension differ.
+        Same as `Transfer Save Derive` except for the notation and extension.
         """
         self._begin_save(
             SAVE_SOURCE_PROMPT.format(word=language.word.upper()),
@@ -4265,10 +3756,9 @@ class RederiveApp(App[None]):
     def _begin_save(
         self, label: str, command: Callable[[str], None], suffix: str
     ) -> None:
-        """Ask for a save's block if the Range option says Some, then its name.
+        """Ask for the block to save if Range is Some, then the file name.
 
-        A history with nothing in it is nothing to write, and the original
-        simply declines: no prompt, no message, just the beep.
+        With an empty history it just beeps, as in Derive.
         """
         if not self.session.entries:
             self._beep()
@@ -4312,15 +3802,12 @@ class RederiveApp(App[None]):
         suffix: str = worksheet.SUFFIX,
         offered: str | None = None,
     ) -> None:
-        """Put the prompt band up for a command that names a file.
+        """Show the prompt band for a command that takes a file name.
 
-        The file the session last used comes up on the line, as it does in the
-        original, so that saving twice over the same name is one keystroke. The
-        two State commands offer their own file instead: a settings file is not
-        the worksheet, and neither is a name for the other.
+        As in Derive, the session's last file is offered, so saving again is one
+        keystroke. The State commands offer the last state file instead.
 
-        The line completes what is typed on it, offering the files the command
-        can use - the ones ending in `suffix` - and the directories to look in.
+        The line completes files ending in `suffix`, and directories.
         """
         self.file_command = command
         self.file_suffix = suffix
@@ -4330,30 +3817,24 @@ class RederiveApp(App[None]):
         self._prompt(MODE_FILE, label, offered, ENTER_FILE)
         self.query_one("#prompt-input", Input).suggester = FileNames(suffix)
 
-    # -- naming a file: completing it, and looking around for it -------------
+    # -- file name completion and browsing ------------------------------------
 
     @property
     def browsing(self) -> bool:
-        """Whether the list of names is open over the line being typed."""
+        """Whether the completion list is open."""
         return bool(self.completions)
 
     def action_complete_file(self) -> None:
-        """Tab on a file prompt: fill the name in as far as it goes, then look.
+        """Tab on a file prompt: complete the common prefix, then browse.
 
-        Tab does one thing at a time and leaves the screen saying which. It
-        writes out as much of the matching names as they all share and opens
-        the list of them; where one name matches and nothing else does, it
-        takes that name outright and there is nothing to open. With the list
-        already up and nothing left to share, it steps to the next name in it.
-
-        So Tab only ever moves forward, and what it will do next is on the
-        screen rather than in a mode nobody can see. Nothing on offer is the
-        beep, as a key with no command is.
+        Tab inserts the common prefix of the matching names and opens a list of them;
+        a single match is accepted directly. With the list open and nothing more to
+        complete, it steps to the next name. With no matches it beeps.
         """
         line = self.query_one("#prompt-input", Input)
         if self.browsing:
-            # Typing can narrow an open list to names that share more than the
-            # line does; writing that out comes before stepping through them.
+            # Typing may have narrowed the list to names sharing a longer prefix; complete
+            # that before stepping.
             shared = commonprefix(self.completions)
             if self.completed is None and len(shared) > len(line.value):
                 self._put(line, shared)
@@ -4365,8 +3846,7 @@ class RederiveApp(App[None]):
             self._beep()
             return
         if len(found) == 1:
-            # One name and one only: take it, and if it is a directory, look
-            # straight inside it rather than asking for another Tab first.
+            # A single match: take it, and list a directory's contents right away.
             self._take(line, found[0])
             return
         shared = commonprefix(found)
@@ -4375,44 +3855,33 @@ class RederiveApp(App[None]):
         self._open_list(found, self._at_in(found, line.value))
 
     def action_browse_next(self) -> None:
-        """Down, or Tab with the list up: the next name, wrapping round."""
+        """Down, or Tab with the list open: the next name, wrapping around."""
         self._highlight(0 if self.completed is None else self.completed + 1)
 
     def action_browse_previous(self) -> None:
-        """Up or Shift-Tab: the previous name, wrapping round.
-
-        The key the old completion never had. Overshooting the name wanted no
-        longer means going the whole way round the list to reach it again.
-        """
+        """Up or Shift-Tab: the previous name, wrapping around."""
         self._highlight(-1 if self.completed is None else self.completed - 1)
 
     def action_browse_take(self) -> None:
-        """Enter on an open list: take the name it points at.
+        """Enter on an open list: take the highlighted name.
 
-        A directory is gone into and the list stays up on what is inside it,
-        which is how the tree is walked down. A file closes the list and stands
-        on the line, where the next Enter is the one that reads it - so no file
-        is ever opened by the same keystroke that chose it.
+        A directory is entered, with the list showing its contents. A file closes the
+        list and stays on the line for the next Enter to open, so choosing a file never
+        opens it.
         """
         at = 0 if self.completed is None else self.completed
         self._take(self.query_one("#prompt-input", Input), self.completions[at])
 
     def action_browse_page(self, by: int) -> None:
-        """Page Up and Page Down: a screenful of names at a time.
-
-        They stop at the ends rather than wrapping, so that a long directory
-        can be paged through without falling off either end of it.
-        """
+        """Page Up and Page Down: move by a screenful, stopping at the ends."""
         at = 0 if self.completed is None else self.completed
         rows = self.query_one(CompletionList).visible_rows(len(self.completions))
         self._highlight(at + by * rows, wrap=False)
 
     def _highlight(self, at: int, wrap: bool = True) -> None:
-        """Point the list at one of its names, and put that name on the line.
+        """Highlight a name in the list and put it on the line.
 
-        Every name in the list starts with what was typed - that is what put it
-        there - so writing one onto the line only ever carries the line
-        further, and never takes back a letter the user chose.
+        Every name starts with what was typed, so this only extends the line.
         """
         count = len(self.completions)
         self.completed = at % count if wrap else max(0, min(at, count - 1))
@@ -4422,11 +3891,7 @@ class RederiveApp(App[None]):
         self._draw_list()
 
     def _take(self, line: Input, name: str) -> None:
-        """Accept `name` onto the line, going on inside it if it is a directory.
-
-        Taking a directory reopens the list on what is in it, which is what
-        walking down a tree is: one key per level, each level on the screen.
-        """
+        """Put `name` on the line, and if it is a directory, list its contents."""
         self._put(line, name)
         self._close_list()
         self._set_message(ENTER_FILE)
@@ -4436,17 +3901,13 @@ class RederiveApp(App[None]):
         if found:
             self._open_list(found, None)
         else:
-            # A directory holding nothing this command can read is a dead end,
-            # and the beep is what says so: the list would otherwise just go.
+            # Beep for a directory with nothing usable, rather than silently closing.
             self._beep()
 
     def _at_in(self, found: list[str], value: str) -> int | None:
-        """Which name a freshly opened list points at, if it points at one.
+        """The initially highlighted name in a new list: the one matching the line.
 
-        A line typed out into one of the names exactly points at that name, so
-        that the list says where the line already is. Anything shorter points
-        at nothing: the list is open to be looked at, and the line stays the
-        user's until a key takes a name from it.
+        Otherwise nothing is highlighted and the line stays the user's typing.
         """
         return found.index(value) if value in found else None
 
@@ -4462,20 +3923,19 @@ class RederiveApp(App[None]):
         listing.show(
             [_last_name(name) for name in self.completions],
             self.completed,
-            # Every name in the list is in the same directory, so any of them
-            # says which one the list is showing.
+            # All names are in the same directory.
             _directory_of(self.completions[0]),
         )
 
     def _close_list(self) -> None:
-        """Put the list away, whatever became of the name it was offering."""
+        """Close the completion list."""
         self.completions, self.completed = [], None
         listing = self.query(CompletionList)
         if listing:
             listing.first().display = False
 
     def _put(self, line: Input, name: str) -> None:
-        """Write a name onto the line, the cursor after it, ready to go on."""
+        """Put a name on the line, with the cursor at the end."""
         line.value = name
         line.cursor_position = len(name)
 
@@ -4492,7 +3952,7 @@ class RederiveApp(App[None]):
             self.state_file = str(path)
 
     def _written(self, write: Callable[[], object]) -> bool:
-        """Run a save, leaving the name up to be corrected if it will not write."""
+        """Run a save, leaving the name up for correction if writing fails."""
         try:
             write()
         except OSError:
@@ -4524,7 +3984,7 @@ class RederiveApp(App[None]):
         suffix: str = worksheet.SUFFIX,
         refused: str = UNREADABLE,
     ) -> bool:
-        """Read a file into the session, leaving the line up if it cannot be."""
+        """Read a file into the session, leaving the line up if it can't be read."""
         path = worksheet.path_of(name, suffix)
         try:
             skipped = command(path)
@@ -4542,7 +4002,7 @@ class RederiveApp(App[None]):
         return True
 
     def _refuse_file(self, message: str) -> None:
-        """Say what went wrong and leave the name up to be corrected."""
+        """Report the error and leave the name up for correction."""
         self._beep()
         self._set_message(message)
 
@@ -4555,7 +4015,7 @@ class RederiveApp(App[None]):
         self._clearing(self.session.clear_all)
 
     def _command_clear_variables(self) -> None:
-        """Forget every assigned value. Nothing on screen goes, so nothing asks."""
+        """Clear all variable values, without confirmation since no expressions go."""
         self.session.clear_variables()
         self._done_with_menu()
 
@@ -4564,15 +4024,10 @@ class RederiveApp(App[None]):
         self._done_with_menu()
 
     def _clearing(self, clear: Callable[[], None]) -> None:
-        """Throw the history away, having asked first.
+        """Clear the history, after confirming as Quit does.
 
-        The two commands that take expressions out ask before they do, in the
-        same words Quit asks in. A history with nothing in it is nothing to
-        lose, so there is nothing to ask about.
-
-        Either way the pane is drawn empty afterwards, which is what takes the
-        opening notice off a worksheet that had nothing to clear: the original's
-        Clear drew over its notice too.
+        An empty history needs no confirmation. Either way the pane is drawn empty,
+        which also removes the opening notice, as Derive's Clear did.
         """
         self.greeting = False
         if not self.session.entries:
@@ -4587,17 +4042,12 @@ class RederiveApp(App[None]):
         self._ask_file(DEMO_PROMPT, self._demo, worksheet.DEMO_SUFFIX)
 
     def _command_demonstration(self, demo: catalogue.Demo) -> None:
-        """Run one of the original's own demonstrations, fetching it if need be.
+        """Run one of Derive's demos, downloading it if needed.
 
-        Three places it can be, in the order they are looked in. A file of that
-        name is one, and it wins: somebody with the original's own diskette, or
-        who saved the demonstration with `Transfer Save`, means that file rather
-        than a download. The download of an earlier viewing is the second, and
-        the network is the last.
+        Sources, in order: a local file of that name (from Derive's diskette or saved
+        with `Transfer Save`), a download from earlier in this run, then the network.
 
-        A gallery is refused before anything is downloaded rather than after:
-        what it demonstrates is a plot window, and paying for a file to be told
-        there is no window to draw it in would be the wrong order.
+        A plot gallery is refused before downloading if plotting is unavailable.
         """
         if self.fetching is not None:
             self._beep()
@@ -4618,17 +4068,11 @@ class RederiveApp(App[None]):
         self.run_worker(self._fetching(demo))
 
     async def _fetching(self, demo: catalogue.Demo) -> None:
-        """Wait for a demonstration to arrive, then run it.
+        """Wait for a demo download, then run it.
 
-        On a task of its own, since a download is the one thing this program
-        does that can take a visible while: the loop goes on repainting, and the
-        menu stays up and readable under the message that says what is awaited.
-
-        Where the bytes come from is `fetcher`'s business and not this one's,
-        and so is what becomes of them afterwards. What is left here is the
-        waiting, the refusal, and the running of what arrived - which is run
-        from the text in hand, that being the only place a demonstration just
-        downloaded is certain to be.
+        Runs on its own task, since downloads can take a while, so the screen stays
+        responsive. `fetcher` handles where the bytes come from and how they're kept;
+        this handles waiting, errors, and running the demo from the received text.
         """
         try:
             raw = await self.fetcher(demo)
@@ -4641,24 +4085,16 @@ class RederiveApp(App[None]):
         self.demonstrate(demo.file, demo.plotting, worksheet.decoded(raw))
 
     async def _downloaded(self, demo: catalogue.Demo) -> bytes:
-        """One of the nine off the network, remembered for as long as this runs.
+        """Download one of the nine demos, keeping it in memory for this run.
 
-        The desktop's road out, and the default one: a caller whose environment
-        downloads some other way - a browser, which has one road out and it is
-        the page's - hands its own in as `fetcher`.
+        The default `fetcher`; a browser environment substitutes its own.
 
-        Remembered rather than written. Nobody asking to be shown a
-        demonstration asked for a file in the directory they started the program
-        in, and a viewing that leaves nine of them behind is worse: the whole
-        diskette brings the eight nobody asked for with it, and they are held
-        here too so that none of them is downloaded twice in one run. What is
-        worth keeping of a demonstration is what it left in the worksheet, and
-        `Transfer Save` is how that is kept.
+        Downloads are kept in memory rather than written to the current directory.
+        The whole diskette arrives at once, so the other eight demos are kept too,
+        to avoid downloading them again. `Transfer Save` can save a demo's worksheet.
         """
-        # Imported here rather than at the top, because it is the import that
-        # costs: urllib carries http, email and ssl behind it, and a page - which
-        # downloads with the browser's own `fetch` and never comes this way -
-        # would otherwise pay for all of them to draw a menu.
+        # Imported lazily because urllib pulls in http, email and ssl, which a browser
+        # page (using its own `fetch`) would otherwise load for nothing.
         from rederive import fetch
 
         kept: list[tuple[str, bytes]] = []
@@ -4670,22 +4106,18 @@ class RederiveApp(App[None]):
     def demonstrate(
         self, name: str, plotting: bool = False, text: str | None = None
     ) -> None:
-        """Run `name` as a demonstration, from wherever the program is.
+        """Run `name` as a demo, from whatever state the program is in.
 
-        What the page's demo menu comes in by, which is a click and can land on
-        any screen the program has. A demonstration takes the screen, so
-        whatever was on it - a prompt part way through, a help page, a
-        suspended demonstration of another file - is left behind first.
+        Used by the web page's demo menu, which can be clicked at any time. Whatever was
+        on screen (a prompt, help, a paused demo) is abandoned first.
 
-        A gallery is refused where a plot is, and in the same sentence: what it
-        demonstrates is a window, and there is no window to be had.
+        A plot gallery is refused with the same message as Plot when plotting is
+        unavailable.
         """
         self.greeting = False
         self.helping = None
         self.mode = MODE_MENU
-        # Every half-answered command goes with the screen it was on, which is
-        # what `_end_prompt` is: a line abandoned leaves nothing pending behind
-        # it, and a demonstration is nobody's answer to a question.
+        # Abandon any half-answered command.
         self._end_prompt()
         if plotting and not available():
             self._plot_refused(UNAVAILABLE)
@@ -4695,19 +4127,16 @@ class RederiveApp(App[None]):
     def _demo(
         self, name: str, plotting: bool = False, text: str | None = None
     ) -> None:
-        """Start the demonstration in `name`, or pick up the suspended one.
+        """Start the demo in `name`, or resume the paused one.
 
-        Naming the file a suspended demonstration came from resumes it where it
-        stopped, which is what the manual means by issuing another Demo command
-        to carry on. Any other name starts that file from its first step.
+        Naming the paused demo's file resumes it, as the manual describes for issuing
+        another Demo command. Any other name starts from the first step.
 
-        `plotting` is what the file demonstrates: the original's plot galleries
-        are scripts whose steps are pictures rather than answers, and the only
-        difference between the two is what a step does once it is authored.
+        `plotting` marks a plot gallery, whose steps are plotted rather than
+        simplified.
 
-        `text` is the file, for the one caller that has it already: a
-        demonstration just downloaded has its bytes in hand and may have failed
-        to be written anywhere, so what it runs is what came over the wire.
+        `text` is the file's contents, passed for a just-downloaded demo, which isn't
+        stored on disk.
         """
         suffix = worksheet.SUFFIX if plotting else worksheet.DEMO_SUFFIX
         path = worksheet.path_of(name, suffix)
@@ -4725,8 +4154,7 @@ class RederiveApp(App[None]):
                 self._refuse_file(CANNOT_READ)
                 return
             self.demo = Demonstration(path, steps, plotting=plotting)
-        # A demonstration simplifies each step as it takes it, so a file named
-        # with Ctrl-Enter has nothing left to ask for.
+        # A demo simplifies each step anyway, so ignore Ctrl-Enter.
         self.simplifying = None
         self._hide_prompt()
         del self.stack[1:]
@@ -4734,18 +4162,15 @@ class RederiveApp(App[None]):
         self._demo_step()
 
     def _demo_step(self) -> None:
-        """Author the next expression and set its computation going.
+        """Author the next expression and start computing it.
 
-        A step that does not parse is passed over rather than stopping the
-        demonstration: a script is not a worksheet, and there is nothing on the
-        line to correct. The work is dispatched rather than run, so the step's
-        own computation is as abortable as any other; what happens when it
-        lands is `_demo_ready`.
+        Unparsable steps are skipped rather than stopping the demo, since there's no
+        line to correct. The computation is dispatched, so it can be aborted like any
+        other; `_demo_ready` handles the result.
         """
         demo = self.demo
         assert demo is not None
-        # A window closed under the step that has just been taken is not a
-        # click owed by the step about to be: the flag lives inside one wait.
+        # The closed-window flag applies only within one wait between steps.
         self.closed_window = False
         while not demo.done:
             _, text = demo.steps[demo.at]
@@ -4766,31 +4191,24 @@ class RederiveApp(App[None]):
                     self._demo_ready,
                 )
             return
-        # Out of steps, which is the one ending that takes the picture with it.
+        # Out of steps: the only ending that also closes the plot.
         self._end_demo(finished=True)
 
     async def _demo_plot(self, request: str) -> object:
-        """Draw the step, the picture being what a plot gallery demonstrates.
+        """Plot a gallery step.
 
-        Classifying and drawing in one, rather than the two computations the
-        Plot command makes of them: a demonstration has nothing to say between
-        them, and one step is one wait.
-
-        The picture is the only one the window keeps. A gallery is a sequence
-        of unrelated curves, and the eleventh drawn over the ten before it is
-        a picture of nothing.
+        Classifies and draws in one computation, unlike the Plot command, since a demo
+        has nothing to show in between. Each picture replaces the previous one, since
+        gallery curves are unrelated.
         """
         drawing = await self._classified(request, None)
         return await self._plot(replace(drawing, demonstrating=True))
 
     def _demo_ready(self, outcome: Outcome) -> None:
-        """The step's answer is in: show it and wait on a key.
+        """Show the step's result and wait for a key.
 
-        A refusal passes the step over as an unparsable one does - a gallery
-        line that is a picture of nothing is a line to walk past, exactly as a
-        line that will not parse is. Anything else - an abort above all - ends
-        the demonstration where it stands, which is where a suspended one is
-        picked up from.
+        A refused step (unparsable or unplottable) is skipped. Any other error,
+        notably an abort, pauses the demo at that point.
         """
         if isinstance(outcome.error, (DeriveSyntaxError, PlotError, Unplottable)):
             self._demo_step()
@@ -4803,25 +4221,19 @@ class RederiveApp(App[None]):
         self.refresh_screen()
 
     def _suspend_demo(self) -> None:
-        """Esc leaves the demonstration where it is, to be picked up later."""
+        """Esc pauses the demo, to be resumed later."""
         self._end_demo()
 
     def _end_demo(self, message: str = ENTER_OPTION, finished: bool = False) -> None:
-        """The demonstration has stopped, whichever of its four ways it stopped in.
+        """Stop the demo, however it ended.
 
-        A gallery's window is let go of here. It has been standing over this one
-        so that a step could be looked at while the key that replaces it was
-        pressed, and with nothing waiting on it any more it is either an
-        ordinary window again or gone: `finished` is the demonstration that ran
-        to its end, and its last picture goes with it, the window having been
-        the demonstration's screen rather than a window anyone opened. Stopping
-        one is how a picture worth keeping is kept.
+        A gallery's plot window is released here. If the demo `finished`, the window
+        closes with it, since it was the demo's screen; if stopped early, it stays as an
+        ordinary window, which is how a picture can be kept.
 
-        On a task, because it is a word to the plot host and the host is a
-        process: what waits for its answer must not be this loop. The key that
-        ended the demonstration may have been pressed in the plot window, and
-        the thread carrying that key over is waiting for this very call to
-        return before it can carry anything else - the answer included.
+        The release runs on a worker because the host is another process and this loop
+        mustn't wait for it: the key that ended the demo may have come from the plot
+        window, and the thread that delivered it is blocked until this call returns.
         """
         if self.demo is not None and self.demo.plotting:
             self.run_worker(self.plots.release(finished))
@@ -4831,7 +4243,7 @@ class RederiveApp(App[None]):
         self._return_to_menu(message)
 
     def _demo_comment(self) -> str:
-        """The comment of the step now showing, which is the band's whole line."""
+        """The comment of the current step, shown on the menu band."""
         demo = self.demo
         if demo is None or not demo.at:
             return ""
@@ -4839,28 +4251,23 @@ class RederiveApp(App[None]):
 
     # -- Plot --------------------------------------------------------------
     #
-    # Two commands, both about the highlighted expression. `Plot` classifies
-    # it and sends it to the receiver - the plot window the user last touched
-    # - and `New` is the same into a window of its own. Everything else about
-    # a plot lives in the plot window itself: removal is a right-click on the
-    # curve or its legend entry, and clearing is the window's own toolbar.
+    # Two commands for the highlighted expression: `Plot` classifies it and sends it to
+    # the receiver (the plot window last used), and `New` sends it to a new window.
+    # Everything else is done in the plot window: right-click a curve or its legend
+    # entry to remove it, and use the toolbar to clear.
     #
-    # Everything here goes through the compute path, including the parts that
-    # are not computations. Two of the three steps can wait: the variables of
-    # the expression are an engine call, and the first plot of a session starts
-    # a process that imports Qt and sympy before it answers. The message line's
-    # clock is what makes that wait legible instead of a freeze.
+    # Everything goes through the compute path, even the non-computations. Getting the
+    # variables is an engine call, and the first plot starts a process that imports Qt
+    # and sympy, so the message line's clock keeps the wait from looking like a freeze.
     #
-    # The app holds no plot state at all. Which window is the receiver, what
-    # is in it, what it is called - the host owns all of it, because the host
-    # is the only side that sees the user touch or close a window.
+    # The app holds no plot state. The host owns which window is the receiver and what
+    # it contains, since only it sees the user interact with windows.
 
     def _command_plot(self, where: plots.Where | None) -> None:
         """Plot the highlighted expression, into the receiver or a new window.
 
-        The same rules as Simplify decide what is plotted: a highlighted
-        subexpression is what gets plotted, and the whole entry otherwise. No
-        question is asked - that is the point of the command.
+        As with Simplify, a highlighted subexpression is plotted, otherwise the whole
+        entry. It deliberately asks no questions.
         """
         if not available():
             self._plot_refused(UNAVAILABLE)
@@ -4875,12 +4282,10 @@ class RederiveApp(App[None]):
         )
 
     async def _classified(self, request: str, where: plots.Where | None) -> plots.Add:
-        """What `request` is a plot of, as the request that would draw it.
+        """Classify `request` and build the plot request for it, without sending it.
 
-        Down the compute path, because the variables of the expression are an
-        engine call and can take as long as any other. Nothing here depends on
-        any window's state - polar is the window's own view mode - and nothing
-        is sent: what comes back is the request, ready to go.
+        Runs on the compute path because getting the variables is an engine call. It
+        doesn't depend on window state (polar is the window's own view mode).
         """
         target, label = self.session.named_target(request)
         variables = await self.session.variables(request)
@@ -4890,9 +4295,8 @@ class RederiveApp(App[None]):
         kind = plotted.kind
         options = plotted.options
         if kind in (plots.PlotKind.FAMILY, plots.PlotKind.SURFACES):
-            # A vector is one expression to the user and several plots in the
-            # window, whether its elements are curves or surfaces, so each of
-            # them carries the text the syntax writer made of it.
+            # A vector is one expression but several plots, so each element carries
+            # its own text.
             options = replace(
                 options,
                 texts=tuple(
@@ -4903,8 +4307,8 @@ class RederiveApp(App[None]):
         if kind not in plots.DRAWN:
             raise PlotError(plots.UNDRAWN.format(kind=kind.value))
         return plots.Add(
-            # The worksheet is named by identity: two algebra overlays can
-            # each own a `#3`, and the plot list is keyed by the pair.
+            # Identify the worksheet by identity, since two overlays can each have a
+            # `#3`; plots are keyed by the pair.
             worksheet=id(self.session),
             node=target,
             context=self.session.context,
@@ -4913,18 +4317,16 @@ class RederiveApp(App[None]):
             label=label,
             text=text,
             options=options,
-            # The parse state travels with the plot so that the window's own
-            # fields - the parameter range, a surface's domain - read a typed
-            # bound with the same grammar the worksheet does.
+            # The parse state lets the window's fields (parameter range, surface
+            # domain) parse typed bounds like the worksheet does.
             state=self.session.state,
         )
 
     def _plot_classified(self, outcome: Outcome) -> None:
-        """The expression is classified: send it. Nothing is ever asked.
+        """Send the classified plot, without asking anything.
 
-        A parametric or polar plot is drawn over one turn and its range is a
-        property of the picture, adjusted in the plot window's own toolbar
-        while it is being looked at.
+        Parametric and polar plots are drawn over one turn; the range is adjusted from
+        the plot window's toolbar.
         """
         if outcome.error is not None:
             self._plot_refused(_plot_reason(outcome.error))
@@ -4937,50 +4339,39 @@ class RederiveApp(App[None]):
         self._compute(PLOTTING, partial(self._plot, request), self._plot_done)
 
     async def _plot(self, request: plots.Add) -> str:
-        """Send one plot, and word the acknowledgement it comes back with.
+        """Send a plot and return the confirmation message.
 
-        Awaited rather than called, exactly as an engine command is, and for
-        the same reason: where the waiting happens belongs to the side that
-        does the drawing - a thread blocking on a pipe where there is a host,
-        nothing at all where there is no window to open - and the loop has a
-        screen to keep painting either way.
-
-        Whether the plot replaced a curve already there is only known once the
-        host has answered, which is why the sentence is made here rather than
-        by the command: a plot that replaced says `Replotting`, which is how
-        replacement teaches itself.
+        Awaited like an engine command, so the loop keeps painting however the plotter
+        waits. Only the host's answer says whether an existing curve was replaced, so
+        the message (`Plotting` or `Replotting`) is made here.
         """
         placed = await self.plots.add(request)
         worded = REPLOTTED if placed.replaced else PLOTTED
         return worded.format(label=request.label)
 
     def _plot_done(self, outcome: Outcome) -> None:
-        """Say where the plot landed, or why it did not."""
+        """Report the plot, or why it failed."""
         if outcome.error is not None:
             self._plot_refused(_plot_reason(outcome.error))
             return
         self._plot_finished(str(outcome.value))
 
     def _plot_finished(self, message: str) -> None:
-        """A Plot command has run, so the command menu has the screen again."""
+        """Return to the command menu after a Plot command."""
         del self.stack[1:]
         self._restart_menu()
         self._return_to_menu(message)
 
     def _plot_refused(self, reason: str) -> None:
-        """Every plot refusal reads as one sentence off the same prefix."""
+        """Report a plot refusal, with the common prefix."""
         self._plot_finished(f"{PREFIX}{reason}")
 
     def _plot_reported(self, event: plots.Event) -> None:
-        """An event off the plot windows, put on the event loop.
+        """Pass an event from the plot windows to the event loop.
 
-        Nothing may be read or written from here but the handing over itself: a
-        message line is a screen and the screen belongs to the loop. Which hand
-        does the handing depends on where the windows are. A host in a child
-        process reports on the proxy's reader thread and has to cross to the
-        loop; panes in this very page report on the loop already, there being no
-        thread for them to report on, and crossing from it to itself is the one
-        thing `call_from_thread` refuses to do.
+        Only the event loop may touch the screen. A host process reports on the proxy's
+        reader thread and must cross to the loop; in-page panes already report on the
+        loop, where `call_from_thread` would fail.
         """
         if threading.get_ident() == self._on_loop:
             self.call_next(self._plot_event, event)
@@ -4988,24 +4379,18 @@ class RederiveApp(App[None]):
         self.call_from_thread(self._plot_event, event)
 
     def _plot_event(self, event: plots.Event) -> None:
-        """What the host has to say for itself, on the message line.
+        """Handle an event from the plot host, on the event loop.
 
-        Arrives on the event loop from the proxy's reader thread. A window the
-        user closed is not worth a word - the user closed it and can see that
-        it is gone - but it is worth remembering while a demonstration is
-        waiting, since the click that closed it is about to arrive here and is
-        not the cue it would look like. A curve that would not evaluate is
-        exactly the silence this design refuses to have, and a point sent home
-        from a plot is the one event that writes rather than prints.
+        A closed window isn't reported, but during a demo it is noted, since the closing
+        click is about to arrive and isn't a step cue. Evaluation trouble is reported
+        rather than ignored. A traced point is authored into a worksheet.
 
-        A sticky control moved in a plot window says nothing at all: the new
-        values go into the settings store, which is where they outlive the
-        host and where a state file finds them, and the settings watcher hands
-        them back to the proxy for the host after this one.
+        A changed sticky control is stored silently in the settings, where it outlives
+        the host and is saved in state files; the settings watcher passes it back to the
+        proxy for future hosts.
         """
         if isinstance(event, plots.Closed):
-            # Said in `on_click`: the click that closed a demonstration's
-            # window is on its way here behind this, and is not a cue.
+            # See `on_click`.
             self.closed_window = self.mode == MODE_DEMO
         elif isinstance(event, plots.Stepped):
             self._plot_stepped(event)
@@ -5017,39 +4402,26 @@ class RederiveApp(App[None]):
             self.settings.apply(learned(event.preferences))
 
     def _plot_stepped(self, event: plots.Stepped) -> None:
-        """A key pressed in a demonstration's window, taken as pressed here.
+        """Treat a key pressed in a demo's plot window as pressed here.
 
-        Which is what makes the message line honest: the window holding the
-        step is the one the desktop is likeliest to have given the keyboard to,
-        so `any key to continue` has to be true there as well as here. Only the
-        keys that window had no use for arrive, Esc among the ones that do not
-        - Esc there closes the picture, and stopping the demonstration is this
-        screen's own Esc.
+        The plot window likely has focus, so "any key to continue" must work there too.
+        Only keys the window doesn't use arrive; Esc there closes the picture, while
+        stopping the demo is this screen's Esc.
 
-        A key that arrives with no demonstration waiting is dropped: the two
-        sides are a pipe apart, and a step can be answered after this side has
-        finished with the demonstration it belonged to.
+        Keys arriving after the demo has ended are dropped.
         """
         if self.mode == MODE_DEMO:
             self._demo_step()
 
     def _plot_traced(self, event: plots.Traced) -> None:
-        """A point sent home from a plot window: author it as a new entry.
+        """Author a point sent back from a plot window as a new entry.
 
-        The event names the worksheet the plot came from, but that overlay may
-        have closed since, so the entry's home is decided in two steps: the
-        originating worksheet where it is still on screen, and the active one
-        otherwise. The point was sent to be computed with, and the active
-        worksheet is where the next command happens, so landing it there beats
-        dropping a number the user explicitly asked for.
+        It goes to the originating worksheet if it is still open, otherwise to the
+        active one, rather than dropping a point the user asked for.
 
-        `Trouble` only prints, while this writes into a worksheet, so when the
-        event arrives matters. While a command computes it owns the worksheets,
-        and the point waits its turn rather than racing it - nothing is dropped,
-        it lands when the command lets go. Mid-dialog and mid-edit the append is
-        safe: the entry goes in under whatever line or dialog is up, the panes
-        repaint around it, and the selection moves to the new entry - which is
-        what puts the point one `F3` away from the line being edited.
+        While a command computes, it owns the worksheets, so the point is retried
+        later. During a dialog or edit, appending is safe: the panes repaint and the
+        selection moves to the new entry, so `F3` can copy it onto the line.
         """
         if self.mode == MODE_COMPUTE:
             self.set_timer(POINT_RETRY, partial(self._plot_traced, event))
@@ -5061,9 +4433,8 @@ class RederiveApp(App[None]):
         try:
             entry = session.author(event.text)
         except DeriveSyntaxError as error:
-            # A point that will not read under the worksheet's settings - a
-            # digit the input base does not have - refuses in the parser's own
-            # words, exactly as the same text pasted on the author line would.
+            # A point unparsable under the worksheet's settings (such as a digit invalid
+            # in the input base) reports the parser's error, as Author would.
             self._set_message(f"{PREFIX}{error}")
             return
         self.place_windows()
@@ -5071,24 +4442,21 @@ class RederiveApp(App[None]):
 
     # -- Window ------------------------------------------------------------
     #
-    # Seven commands over a tree of windows, of which the app owns only the
-    # screen half: which pane a window is drawn in, and how big. The tree
-    # itself, the numbering and the geometry are `model.windows`.
+    # Seven commands over the window tree. The app handles only the screen side (each
+    # window's pane and size); the tree, numbering and geometry are in `model.windows`.
     #
-    # One of them can throw a worksheet away - Close - so it asks before it
-    # does, with the answered field still on the band.
+    # Close can discard a worksheet, so it asks first, with the dialog still shown.
     #
-    # Every window in the tree is an Algebra window, plot windows being windows
-    # of the desktop instead, so `Open` makes one without asking what to make.
-    # Everything here works for every window: splitting copies the worksheet,
-    # and the two copies are two derivations from there on.
+    # All tree windows are Algebra windows (plot windows are desktop windows), so
+    # `Open` doesn't ask for a type. Splitting copies the worksheet, and the copies
+    # evolve independently.
 
     def _command_window_split(self, vertical: bool) -> None:
         """Ask where to cut the active window in two."""
         size = self._active_size(vertical)
         low, high = windows.split_range(vertical, size)
         if high < low:
-            # Nowhere left to put a divider. The original refuses in silence.
+            # No room for a divider. Derive just beeps.
             self._beep()
             return
         self._ask(
@@ -5104,8 +4472,7 @@ class RederiveApp(App[None]):
         """Ask which window to close, offering the active one."""
         count = len(self.windows.windows)
         if count == 1 and not self.windows.active.stacked:
-            # There has to be a window. The original refuses outright: no
-            # prompt, no message, the Window menu still up.
+            # The last window can't be closed. Derive just beeps.
             self._beep()
             return
         self._ask(
@@ -5142,35 +4509,30 @@ class RederiveApp(App[None]):
         self._done_with_menu()
 
     def _command_window_step(self, direction: int) -> None:
-        """Next and Previous, which ask nothing and run on the keystroke."""
+        """Next and Previous, which run immediately."""
         self.windows.step(direction)
         self._done_with_menu()
 
     def _command_window_flip(self, direction: int = 1) -> None:
-        """Flip, which brings the next overlay of the active window up."""
+        """Flip: show the next overlay of the active window."""
         self.windows.active.flip(direction)
         self._done_with_menu()
 
     def _command_window_open(self) -> None:
-        """Overlay a fresh worksheet on the active window, asking nothing.
+        """Overlay a new worksheet on the active window.
 
-        The original asked what type to make it, which was a question with
-        three answers; with plot windows outside the tree there is one, so the
-        command runs on the keystroke like Next and Previous.
+        Derive asked for a window type, but plot windows are outside the tree here, so
+        there's only one type and the command runs immediately.
         """
         self.windows.open(windows.ALGEBRA, self._new_session())
         self._done_with_menu()
 
     def _new_session(self) -> Session:
-        """An empty worksheet for a window that has just been made.
-
-        It shares the settings, which belong to the system and not to a window,
-        and the engine, which is the one child process every window computes in.
-        """
+        """An empty worksheet for a new window, sharing the settings and the engine."""
         return Session(self.settings, self.session.runner)
 
     def _active_size(self, vertical: bool) -> int:
-        """How wide or tall the active window's interior is on screen now."""
+        """The current width or height of the active window's interior."""
         panes = self.query_one(Panes)
         rect = self.windows.interior(
             self.windows.active, panes.size.height, panes.size.width
@@ -5178,19 +4540,19 @@ class RederiveApp(App[None]):
         return rect.width if vertical else rect.height
 
     def action_window_step(self, direction: int) -> None:
-        """F1 and Shift-F1: the next and the previous window, without the menu."""
+        """F1 and Shift-F1: go to the next or previous window."""
         self.windows.step(direction)
         self.refresh_screen()
 
     def action_window_flip(self, direction: int) -> None:
-        """F2 and Shift-F2: the next and the previous overlay of this window."""
+        """F2 and Shift-F2: show the next or previous overlay of this window."""
         self.windows.active.flip(direction)
         self.refresh_screen()
 
     # -- confirmations -----------------------------------------------------
 
     def _ask_confirm(self, confirmed: Callable[[], None]) -> None:
-        """Put a Y/N question up, and say what a Y does."""
+        """Ask a yes/no question, running `confirmed` on Y."""
         self.confirm = confirmed
         self.mode = MODE_CONFIRM
         self.message = ABANDON_PROMPT
@@ -5199,25 +4561,22 @@ class RederiveApp(App[None]):
     def _confirm_over(
         self, values: dict[str, str | int], confirmed: Callable[[], None]
     ) -> None:
-        """Ask the question with the dialog that was just answered still up.
+        """Ask a yes/no question with the just-answered dialog still shown.
 
-        Which is where the original leaves it: the window number or the type
-        entered stands on the band, in the parentheses that say it is settled
-        rather than being typed, while the message line asks whether the
-        expressions may go.
+        As in Derive, the band shows the entered value in parentheses (settled, not
+        being edited) while the message line asks whether to discard the expressions.
         """
         assert self.asked is not None
         editor = DialogEditor(self.asked, self.settings)
         editor.values.update(values)
-        # No field is live, so every one of them prints the way a field that is
-        # not the active one does.
+        # No active field, so every field prints as inactive.
         editor.active = -1
         self.stack.append(editor)
         self.confirmed_over = True
         self._ask_confirm(confirmed)
 
     def _answer_confirm(self, yes: bool) -> None:
-        """Y runs the command; anything else leaves the menu it was picked from."""
+        """Y runs the command; anything else returns to the menu it came from."""
         confirmed, self.confirm = self.confirm, None
         self.mode = MODE_MENU
         if self.confirmed_over:
@@ -5229,28 +4588,23 @@ class RederiveApp(App[None]):
         self._return_to_menu(ENTER_OPTION)
 
     def _done_with_menu(self) -> None:
-        """A command that ran is finished with, and so is the path to it."""
+        """Return to the command menu after a completed command."""
         del self.stack[1:]
         self._restart_menu()
         self._return_to_menu(ENTER_OPTION)
 
     def _command_quit(self) -> None:
-        """Leave, asking once for all the windows rather than once for each."""
+        """Quit, confirming once for all windows if any have expressions."""
         if not any(session.entries for session in self.windows.sessions()):
             self.exit()
             return
         self._ask_confirm(self.exit)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Typing on a file prompt with the list open: narrow it to what fits.
+        """Update an open completion list as the file prompt is edited.
 
-        The list follows the line rather than going stale on it, so a letter
-        cuts it down and a Backspace opens it back out. Backspacing over a
-        separator is what walks back up the tree, the list showing the parent
-        directory again as soon as the separator is gone.
-
-        The names this widget writes come back through here too; they are the
-        ones the list is already pointing at, and nothing needs doing for them.
+        Typing narrows the list and Backspace widens it; deleting a separator goes back
+        to the parent directory. Changes from highlighting a name are ignored.
         """
         if not self.browsing:
             return
@@ -5264,12 +4618,12 @@ class RederiveApp(App[None]):
             self._set_message(ENTER_FILE)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter on a prompt line: the whole line, wherever the cursor is."""
+        """Enter on a prompt line submits the whole line."""
         event.stop()
         self._submitted(event.value)
 
     def _submitted(self, value: str) -> None:
-        """Take the line, whichever command's question it is answering."""
+        """Dispatch the submitted line to the command for the current mode."""
         if self.mode == MODE_SIMPLIFY:
             self._simplify(value)
         elif self.mode == MODE_APPROX:
@@ -5318,7 +4672,7 @@ class RederiveApp(App[None]):
             self._author(value)
 
     def _named(self, name: str) -> None:
-        """Enter on a file prompt: a line with nothing on it names nothing."""
+        """Enter on a file prompt; an empty line abandons the command."""
         if not name.strip():
             self._end_prompt(done=False)
             return
@@ -5328,24 +4682,20 @@ class RederiveApp(App[None]):
     def _author(self, text: str) -> None:
         """Enter the line as a new expression.
 
-        A line with nothing on it enters nothing and gives the menu back, the
-        way Esc does. A line that does not parse is not entered. Derive says
-        so, beeps, and leaves the line up with the cursor where it stopped
-        reading - which may be anywhere to the right of the mistake.
+        An empty line returns to the menu, like Esc. An unparsable line is not entered:
+        as in Derive, it beeps, reports the error, and leaves the cursor where parsing
+        stopped, which may be past the actual mistake.
 
-        A line typed with a trailing `=` enters the value beside what was
-        typed, and that value has to be computed: it goes on a task like every
-        other computation, so the clock runs and Esc reaches it. Every other
-        line is appended where it stands, there being nothing to wait for.
+        A line with a trailing `=` also enters its value, which must be computed, so it
+        runs as a computation with the clock and Esc. Other lines are appended directly.
         """
         if not text.strip():
             self._end_prompt(done=False)
             return
         try:
             if self.session.shows_value(text):
-                # Ctrl-Enter on such a line is Enter: the line has asked for
-                # its value already, and simplifying the equation it enters
-                # would only decide it true.
+                # Ignore Ctrl-Enter: the value is already computed, and simplifying the
+                # resulting equation would just yield true.
                 self.simplifying = None
                 self._compute(
                     SIMPLIFYING, partial(self.session.show_value, text), self._derived
@@ -5368,13 +4718,11 @@ class RederiveApp(App[None]):
     def _derive(
         self, request: str, run: Callable[[str], Awaitable[object]], label: str
     ) -> None:
-        """Run `run` on what the line asks for, and say how long it took.
+        """Run `run` on the line's expression and report how long it took.
 
-        An empty line asks for nothing, so it leaves the history alone. A line
-        that does not read stays up to be corrected, as an authored one does -
-        which is why the refusal is judged where the answer is, rather than
-        here: the line is not read until the command runs, and by then the
-        command is on a task of its own.
+        An empty line does nothing. An unparsable line stays up for correction, as with
+        Author; this is detected in `_derived`, since the line is only parsed when the
+        command runs on its task.
         """
         if not request.strip():
             self._end_prompt()
@@ -5382,18 +4730,16 @@ class RederiveApp(App[None]):
         self._compute(label, partial(run, request), self._derived)
 
     def _derived(self, outcome: Outcome) -> None:
-        """The answer is in, or the reason there is none."""
+        """Report the answer, or refuse an unparsable line."""
         if isinstance(outcome.error, DeriveSyntaxError):
             self._refused(outcome.error)
             return
         self._end_prompt(_reported(outcome))
 
     def _refused(self, error: DeriveSyntaxError) -> None:
-        """Say where the line stopped reading, and leave it up.
+        """Report a parse error and leave the line up with the cursor at the error.
 
-        The line is focused as well as pointed at, because a command that ran
-        took the keyboard off it while it ran, and a refused line is the user's
-        again.
+        The line is refocused, since a running command took focus away.
         """
         self._beep()
         self._set_message(str(error))
@@ -5402,7 +4748,7 @@ class RederiveApp(App[None]):
         line.cursor_position = error.offset
 
     def _hide_prompt(self) -> None:
-        """Give the screen back to the menu band, whatever comes next."""
+        """Hide the prompt band and show the menu band."""
         self._close_list()
         self.query_one("#prompt-input", Input).value = ""
         self.query_one("#prompt-band").display = False
@@ -5410,12 +4756,11 @@ class RederiveApp(App[None]):
         self.set_focus(None)
 
     def _end_prompt(self, message: str = ENTER_OPTION, done: bool = True) -> None:
-        """The command is over, answered or abandoned: put a menu back up.
+        """End the command, completed or abandoned, and show a menu.
 
-        A command that ran is finished with, so the whole path it was reached
-        by goes: `Transfer Save Derive` leaves the command menu up, not the
-        Transfer Save menu it was picked from. Abandoning the line instead
-        leaves that menu where it was, which is what Esc does.
+        A completed command (`done`) returns to the command menu: `Transfer Save Derive`
+        doesn't return to the Transfer Save menu. Abandoning, like Esc, leaves the
+        submenu up.
         """
         self.asking = None
         self.building = None
@@ -5433,15 +4778,13 @@ class RederiveApp(App[None]):
         self._return_to_menu(message)
 
     def _entered_to_simplify(self) -> list[sessions.Entry]:
-        """What the command entered, for a line taken with Ctrl-Enter.
+        """The entries the command added, if it was invoked with Ctrl-Enter.
 
-        Empty when there is nothing to simplify: the line was taken with Enter,
-        or the command entered no expression after all. A command that enters
-        more than one - a Transfer that reads a file - has every one of them
-        simplified, in the order they came in.
+        Empty if Enter was used or nothing was entered. A command that enters several,
+        such as a Transfer that reads a file, has all of them simplified in order.
 
-        What is new is told by identity rather than by label, since `Transfer
-        Load` starts the numbering again and a number proves nothing.
+        New entries are found by identity rather than label, since `Transfer Load`
+        restarts the numbering.
         """
         before, self.simplifying = self.simplifying, None
         if before is None:
@@ -5450,11 +4793,9 @@ class RederiveApp(App[None]):
         return [entry for entry in self.session.entries if id(entry) not in known]
 
     async def _simplify_entered(self, entered: list[sessions.Entry]) -> None:
-        """Simplify each of them in turn, one engine call after another.
+        """Simplify each entry in turn.
 
-        An abort lands in the middle of the list and is left there: what has
-        already been simplified stands, and the rest is abandoned, which is the
-        same bargain every other abort makes.
+        An abort keeps what has been simplified so far and skips the rest.
         """
         for entry in entered:
             await self.session.simplify(f"#{entry.number}")
@@ -5471,40 +4812,36 @@ class RederiveApp(App[None]):
         )
 
     def _simplified_entered(self, message: str, outcome: Outcome) -> None:
-        # Simplifying is the last thing that happened, so its compute time is
-        # what the message line says - unless the command has something of its
-        # own to say, as a file that would not all read has. Going wrong is
-        # always worth saying, whatever the command had in mind.
+        # Report the simplification's compute time, unless the command has its own
+        # message (such as unreadable lines in a file). Errors are always reported.
         if message == ENTER_OPTION or outcome.error is not None:
             message = _reported(outcome)
         self._menu_again(message)
 
     def _menu_again(self, message: str) -> None:
-        """The command menu has the screen again, with something to say."""
+        """Return to the command menu with `message`."""
         self.mode = MODE_MENU
         self.message = message
         self.refresh_screen()
 
 
 def _last_name(name: str) -> str:
-    """A completion's last component, the directory separator kept if it has one."""
+    """A completion's last component, keeping a trailing separator."""
     trimmed = name.rstrip("/")
     return trimmed.rpartition("/")[2] + name[len(trimmed) :]
 
 
 def _directory_of(name: str) -> str:
-    """The directory a completion is in, as the list's title names it.
+    """The directory of a completion, for the list's title.
 
-    What the names in the list have in common, which is the part of the path
-    the list does not repeat down its rows. A name with no directory in front
-    of it is in the one the program was started in.
+    A name without a directory is in the current directory, `./`.
     """
     head = name.rstrip("/").rpartition("/")[0]
     return f"{head}/" if head else "./"
 
 
 def _color_index(editor: DialogEditor) -> int:
-    """Where the color menu opens: on the color the field is already set to."""
+    """The color menu index of the field's current color, for opening the menu."""
     current = editor.value(editor.field)
     return next(
         (index for index in range(len(COLORS.words)) if menus.color_at(index) == current),

@@ -1,5 +1,4 @@
-"""Reading a running app's screen back the way the original's is read: as text,
-plus which runs of it are in inverse video."""
+"""Read a running app's screen as text, plus which runs are in inverse video."""
 
 from rich.text import Text
 
@@ -19,13 +18,12 @@ def styled(widget, style):
 
 
 async def laid_out(pilot, app, identifier):
-    """Wait until the widget `identifier` names has been given a size.
+    """Wait until the widget `identifier` has been given a size.
 
-    Showing a widget or setting how tall it stands writes a style; the size that
-    follows from it is the compositor's, and arrives some turns of the message
-    loop later, on the screen's own idle. Until it does the widget measures
-    nothing, so a test that reads `size` or `region` after a keystroke waits here
-    for the layout rather than for the widget's queue to drain.
+    Showing a widget or setting its height only writes a style; the compositor assigns
+    the size a few message-loop turns later, on the screen's idle. A test that reads
+    `size` or `region` after a keystroke must wait for that layout, not just for the
+    widget's queue to drain.
     """
     for _ in range(20):
         if app.query_one(identifier).size.height:
@@ -35,13 +33,11 @@ async def laid_out(pilot, app, identifier):
 
 
 async def resized(pilot, app, width, height):
-    """Resize the terminal, and wait until the screen has been laid out for it.
+    """Resize the terminal and wait until the screen has been laid out for it.
 
-    The new size reaches a widget's `size` first, and the menu is drawn again for it
-    only later, in its own `on_resize`; how tall the menu then stands is the
-    compositor's again, and the windows above it get what it leaves. So this waits
-    for the menu to have been drawn at the new width and to stand as tall as that
-    drawing asked, by which time the panes have the room that is left.
+    The menu is redrawn for the new size only later, in its `on_resize`, and its height
+    then determines the room left for the windows above it. So this waits until the menu
+    has been drawn at the new width and laid out at the height it asked for.
     """
     await pilot.resize_terminal(width, height)
     menu = app.query_one("#menu")
@@ -103,7 +99,7 @@ def work_area(app, number=None):
 
 
 def frame(app):
-    """The window borders as lines of text, the rule below them included."""
+    """The window borders as lines of text, including the rule below them."""
     lines = text_of(app.query_one("#frame")).plain.splitlines()
     return lines + [text_of(app.query_one("#rule")).plain]
 
@@ -149,7 +145,7 @@ def chosen(app):
 
 
 def listing_title(app):
-    """What the border of that list says: the directory, and how much shows."""
+    """The completion list's border title: the directory and how much is shown."""
     return app.query_one("#completions").border_title.strip()
 
 

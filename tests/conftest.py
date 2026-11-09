@@ -1,17 +1,14 @@
-"""Test-wide configuration, and the net under every answer.
+"""Test-wide configuration, and a check that every answer stays readable.
 
-Textual's pilot sleeps 20 ms twice per simulated keystroke, comparing wall clock
-against process time to guess whether the app has settled.  The guess costs far more
-than the app it watches, and buys little: it is a wall-clock heuristic, and a process
-that a busy machine has descheduled looks idle to it, so what it settles is not
-something a test can rest on either way.  Shrink the granularity so a test costs what
-its work costs.
+Textual's pilot sleeps 20 ms twice per simulated keystroke, using a wall-clock heuristic
+to guess whether the app has settled. The guess is expensive and unreliable anyway (a
+process descheduled on a busy machine looks idle), so shrink the granularity to make a
+test cost only what its work costs.
 
-What pilot.press does promise is a drain: every widget's message queue emptied once.
-A drain is not a layout pass.  Showing a widget or setting how tall it stands writes a
-style, and the size that follows is assigned later, on the screen's own idle, so a test
-that reads `size` or `region` has to wait for the layout itself - `laid_out` in
-`screen.py` is how.
+What pilot.press does guarantee is a drain: every widget's message queue emptied once.
+That is not a layout pass. Showing a widget or setting its height writes a style, and
+the resulting size is assigned later, when the screen is idle, so a test that reads
+`size` or `region` must wait for layout - `laid_out` in `screen.py` does that.
 """
 
 import sys
@@ -19,15 +16,15 @@ import sys
 import pytest
 import textual._wait as _wait
 
-# Read before assigning, so a rename upstream fails loudly rather than quietly
-# creating an attribute nobody looks at.
+# Read before assigning, so an upstream rename fails loudly rather than silently creating
+# an unused attribute.
 assert _wait.SLEEP_GRANULARITY and _wait.SLEEP_IDLE
 _wait.SLEEP_GRANULARITY = 0.002
 _wait.SLEEP_IDLE = _wait.SLEEP_GRANULARITY / 20.0
 
-#: Where the engine keeps its record of answers author notation could not say.
-#: Named rather than imported: a test that never loads the engine should not
-#: pay for sympy, and one that never loads it produced no answer either.
+#: Module holding the engine's record of answers author notation could not express. Named
+#: rather than imported so a test that never loads the engine doesn't pay for sympy (and
+#: such a test produced no answers anyway).
 _FROM_SYMPY = "rederive.engine.from_sympy"
 
 
@@ -39,29 +36,25 @@ def _record():
 
 @pytest.fixture(autouse=True)
 def answers_stay_readable():
-    """No test may produce an answer that is not author notation.
+    """Fail any test that produces an answer not expressible in author notation.
 
-    A result reaches the worksheet by being printed and read back, and one the
-    reader cannot take is kept as inert text: legible, and dead. That is the
-    right thing to do with a head nobody foresaw and the wrong thing to leave
-    unnoticed - `RootSum` was a wrong answer for as long as it was, and
-    `AccumBounds` an unusable one, because a dead result and a live one look
-    alike from the outside.
+    A result reaches the worksheet by being printed and parsed back, and one the parser
+    can't read is kept as inert text. That's the right fallback for an unforeseen head,
+    but it must not go unnoticed: `RootSum` and `AccumBounds` both slipped through this
+    way, since a dead result looks like a live one.
 
-    So the question is asked of every test rather than of a corpus of its own.
-    What the suite already runs is what a corpus would hold - the shipped
-    library and the parser's cases go through Simplify in
-    `test_simplify_corpus.py`, and Approximate, Factor, Expand and soLve have
-    files of their own - and asking here costs a list length per test instead
-    of a second run of all of it.
+    Checking every test covers what a dedicated corpus would (the shipped library and
+    parser cases already run through Simplify in `test_simplify_corpus.py`, and
+    Approximate, Factor, Expand and soLve have their own files) at the cost of a list
+    length per test.
 
-    A test that means to produce one asks for `unreadable_answers` and reads
+    A test that expects unreadable answers requests `unreadable_answers` and inspects
     the record itself.
     """
     record = _record()
     if record is None:
-        # Nothing here can answer anything, and a record that appeared while
-        # the test ran is one whose earlier entries are not this test's.
+        # Nothing can produce answers yet, and a record that appears during the test
+        # may hold entries that aren't this test's.
         yield
         return
     seen = len(record)
@@ -71,10 +64,10 @@ def answers_stay_readable():
 
 @pytest.fixture
 def unreadable_answers(monkeypatch):
-    """An empty record of unsayable answers, for a test that expects some.
+    """A fresh, empty record of unreadable answers, for a test that expects some.
 
-    Empty rather than shared, since the engine notes each text once per process
-    and a text some earlier test met would leave nothing to see.
+    Not the shared one, since the engine records each text only once per process and an
+    earlier test may already have recorded it.
     """
     import rederive.engine.from_sympy as from_sympy
 

@@ -1,22 +1,17 @@
-"""What a command does to a view, and nothing that draws one.
+"""The effect of view commands, independent of any backend.
 
-`plot.view` has the arithmetic - what a default framing is, what rectangle a
-set of samples wants, where the view has been. What was missing beside it is
-the answer to the question a command asks: the user pressed Back, so what is
-the view now, is the aspect lock still on, and what does the window have to say
-about it. That answer is the same in a window and in a page, and it is here.
+`plot.view` has the arithmetic (default framing, the rectangle that fits a set of
+samples, view history). This module answers what a command like Back does: what the
+view becomes, whether the aspect lock stays on, and what the window should say.
 
-A `Framing` is therefore the whole of a 2D view's state bar the ranges
-themselves: where the view has been, whether the scales are locked equal, and
-whether anybody has moved it off the framing it opened with. The ranges stay
-with the backend, which is the side that draws them and the side a drag talks
-to; every method here is handed the range the view is at and answers with the
-range it should go to. `Framed` is that answer - a rectangle to look at and a
-sentence to say, either of which may be nothing.
+`Framing` holds a 2D view's state other than the ranges themselves: the history, the
+aspect lock, and whether the view was moved from its initial framing. The ranges stay
+with the backend, which draws them and handles drags, so each method takes the current
+range and returns a `Framed`: the new rectangle and a message, either of which may be
+empty.
 
-The 3D half is smaller, because a 3D window is a camera and a camera has no
-history: what is here is where it opens, the three presets, and how far one key
-press turns it.
+For 3D there is only the initial camera, the three presets and the step for one key
+press, since a camera has no history.
 """
 
 from __future__ import annotations
@@ -55,88 +50,73 @@ __all__ = [
     "facing",
 ]
 
-#: How far the arrow keys pan a 2D view, as a fraction of it, and by what
-#: factor a zoom key changes the scale.
+#: How far the arrow keys pan a 2D view, as a fraction of it, and the factor by which
+#: a zoom key changes the scale.
 PAN_SHARE = 0.25
 ZOOM_FACTOR = 2.0
 
-#: How much room a framing that is fitting something leaves around it, as a
-#: fraction of the rectangle: a curve drawn along the very edge of the canvas
-#: is a curve half of which is off it.
+#: Margin left around a fitted framing, as a fraction of the rectangle, so curves don't
+#: run along the edge of the canvas.
 FIT_PADDING = 0.05
 FRESH_PADDING = 0.1
 
-#: What a window says when a plot arrives with nothing of it in view and the
-#: framing has to move for there to be a picture at all. A function is framed
-#: in y alone - its abscissa is the view, which is what it was sampled over -
-#: while a parametric curve or a matrix of points can be off the screen in both
-#: directions and is framed in both.
+#: Messages for a plot that arrived entirely out of view and had to be reframed. A
+#: function is framed in y only, since it was sampled over the visible x range; a
+#: parametric curve or point matrix is framed in both directions.
 AUTOSCALED_Y = "{named}: y autoscaled to fit"
 AUTOSCALED = "{named}: autoscaled to fit"
 
-#: What a window says when `View all` has been asked for. The one framing
-#: command worth a word either way: it either moved the view a long way, which
-#: is worth confirming, or it found nothing to move it around, which looks
-#: exactly like a command that did nothing at all.
+#: Messages for `View all`. It may move the view a long way, which is worth confirming,
+#: or find nothing to frame, which would otherwise look like the command did nothing.
 FRAMED_ALL = "Framed on everything drawn"
 NOTHING_FRAMED = "Nothing to frame yet"
 
-#: What a window says when the polar reading goes on and off. The reading is
-#: the view's rather than one plot's, so the sentence is about every curve in
-#: the window.
+#: Messages for toggling polar mode, which applies to every curve in the window.
 POLAR_ON = "Polar: curves are read as r = f(θ)"
 POLAR_OFF = "Polar off: curves are read as y = f(x)"
 
 
 @dataclass(frozen=True)
 class Framed:
-    """Where a framing command leaves the view, and what it has to say about it.
+    """The view a framing command produces, and the message to show.
 
-    Ranges of None mean the command found nothing to do - a step back through
-    an empty history, a plot with no finite samples - and a window that applies
-    one of these is meant to notice and leave the view alone.
+    Ranges of None mean there was nothing to do (e.g. stepping back through an empty
+    history, or a plot with no finite samples), and the view should be left alone.
     """
 
     ranges: Ranges | None = None
     message: str = ""
-    #: How much room to leave around the rectangle. A framing that was asked
-    #: for exactly takes none; one that is fitting samples leaves a little.
+    #: Margin around the rectangle: none for an exact framing, a little when fitting
+    #: samples.
     padding: float = 0.0
-    #: Whether the ordinate alone is to be framed, the abscissa being the range
-    #: the samples were taken over already.
+    #: Whether to frame only the ordinate, the abscissa being the range the samples
+    #: were taken over.
     ordinate: bool = False
 
 
 class Framing:
-    """Where a 2D view has been, and what a command does to it next.
+    """State of a 2D view apart from its ranges, and the effect of commands on it.
 
-    Three things live here and none of them is a range. The history, because
-    Back is a command and not a gesture; the aspect lock, because every framing
-    that is about fitting releases it and Home takes it back, and something has
-    to remember which; and whether the view is still the one the window opened
-    with, since the default framing is a thing to be given up rather than
-    returned to - a window nobody has moved is reframed when it is resized, and
-    one that has been moved is not.
+    It holds the history (for Back and Forward), the aspect lock (released by fitting
+    framings, restored by Home), and whether the view is still the initial one: an
+    unmoved window is reframed on resize, a moved one is not.
 
-    Every method takes `here`, the range the view is at now, because the
-    backend is the side that holds it: a page's interaction loop must be able
-    to answer a drag without asking Python where the view is.
+    Every method takes `here`, the current range, because the backend owns it: a page's
+    interaction loop must handle a drag without asking Python where the view is.
     """
 
     def __init__(self) -> None:
         self.history = view.History()
-        #: Whether the two axes are held to the same scale, so that a circle
-        #: is round.
+        #: Whether both axes have the same scale, so that a circle is round.
         self.equal = True
         #: Whether the view is still the framing the window opened with.
         self.default = True
 
     def remember(self, here: Ranges | None) -> None:
-        """Push the range as it is now, before something changes it.
+        """Push the current range onto the history before something changes it.
 
-        Called by every gesture rather than by a range signal, because a signal
-        arrives after the change and the thing worth keeping is what was there
-        before it.
+        Called by gestures rather than from a range signal, because the signal arrives
+        after the change.
         """
         if here is None:
             return
@@ -144,10 +124,9 @@ class Framing:
         self.history.remember(here)
 
     def home(self, here: Ranges | None, width: float, height: float) -> Framed:
-        """The default framing: x in [-5, 5], the origin centred, equal scales.
+        """The default framing: x in [-5, 5], origin centered, equal scales.
 
-        The scales relock, so that Home is the framing every window opens with
-        and a released lock is a departure from it like any pan or zoom.
+        This relocks the scales, restoring exactly the framing a window opens with.
         """
         self.remember(here)
         self.equal = True
@@ -155,7 +134,7 @@ class Framing:
         return Framed(view.home_range(width, height))
 
     def stepped(self, here: Ranges | None, direction: int) -> Framed:
-        """Where the view has been, one step back or forward."""
+        """Step back or forward through the view history."""
         if here is None:
             return Framed()
         return Framed(self.unlocked(self.history.step(direction, here)))
@@ -163,29 +142,26 @@ class Framing:
     def everything(
         self, here: Ranges | None, samples: list[tuple[np.ndarray, np.ndarray]]
     ) -> Framed:
-        """Frame every sample given, which is what `View all` does.
+        """Frame all the given samples, for `View all`.
 
-        The plots with nothing to frame are the caller's to leave out: a region
-        is evaluated over whatever the view shows and so agrees with any
-        framing at all.
+        The caller leaves out plots with nothing to frame, such as regions, which are
+        evaluated over whatever the view shows.
         """
         self.remember(here)
         self.equal = False
         return Framed(view.framing(samples), padding=FIT_PADDING)
 
     def typed(self, here: Ranges | None, ranges: Ranges) -> Framed:
-        """A framing written out rather than gestured, which is four numbers.
+        """Frame explicitly typed ranges.
 
-        The history is pushed first, so a range typed by mistake is one step
-        from the range it replaced, and the lock goes the way it goes for every
-        framing that is about fitting: somebody who asks for these four numbers
-        is asking for these four numbers.
+        The history is pushed first, so a mistyped range is one Back away. The aspect
+        lock is released so the ranges are shown exactly as typed.
         """
         self.remember(here)
         return Framed(self.unlocked(ranges))
 
     def centred(self, here: Ranges | None, x: float, y: float) -> Framed:
-        """Put a point in the middle of the canvas, the view keeping its size."""
+        """Center the view on a point, keeping its size."""
         if here is None:
             return Framed()
         self.remember(here)
@@ -201,12 +177,11 @@ class Framing:
         graph: bool,
         named: str,
     ) -> Framed:
-        """Reframe for a new plot that has points but none of them in view.
+        """Reframe for a new plot that has points, but none of them in view.
 
-        Exactly when the alternative is an empty picture, and never otherwise:
-        a window whose framing moved under every added curve would be a window
-        nobody could compare two curves in. `graph` says the plot is drawn
-        against the abscissa and is therefore to be framed in y alone.
+        This happens only when the picture would otherwise be empty; reframing for every
+        added curve would make curves impossible to compare. `graph` means the plot is
+        drawn against the abscissa and is framed in y only.
         """
         if here is None:
             return Framed()
@@ -219,11 +194,10 @@ class Framing:
         return Framed(fitted, message, padding=FRESH_PADDING, ordinate=graph)
 
     def unlocked(self, ranges: Ranges | None) -> Ranges | None:
-        """Release equal scales for a framing that is about fitting.
+        """Release the aspect lock for a fitting framing, and return `ranges` unchanged.
 
-        Answers with what it was given, so that the release and the range it is
-        the price of are one expression rather than two statements that have to
-        be kept in the same order.
+        Returning the input lets callers release the lock and use the range in one
+        expression.
         """
         if ranges is not None:
             self.equal = False
@@ -232,11 +206,10 @@ class Framing:
 
 @dataclass(frozen=True)
 class Camera:
-    """Where a 3D window is looked at from: elevation, azimuth and distance.
+    """A 3D camera position: elevation, azimuth and distance.
 
-    A distance of zero is no distance at all rather than a near one: the three
-    presets turn the camera and leave it where it stands, so how far out the
-    reader is looking from is not theirs to say.
+    A distance of zero means "keep the current distance": the plane presets only rotate
+    the camera.
     """
 
     elevation: float
@@ -244,21 +217,20 @@ class Camera:
     distance: float = 0.0
 
 
-#: The camera a fresh 3D window opens with and `Home view` returns to: a
-#: three-quarter view from above, far enough out that the whole cube is in it.
+#: The camera of a new 3D window and of `Home view`: a three-quarter view from above,
+#: far enough out to show the whole cube.
 CAMERA = Camera(elevation=30.0, azimuth=-60.0, distance=23.0)
 
-#: The three presets, which face the xy plane from above, the xz plane from the
-#: front and the yz plane from the side.
+#: Presets facing the xy plane from above, the xz plane from the front and the yz plane
+#: from the side.
 PLANES = {
     "xy": Camera(elevation=90.0, azimuth=-90.0),
     "xz": Camera(elevation=0.0, azimuth=-90.0),
     "yz": Camera(elevation=0.0, azimuth=0.0),
 }
 
-#: How far one arrow key turns the camera, and how fast a rotation turns it by
-#: itself. A rotation is for reading a shape from every side while the eye
-#: stays still, so it is slow: a turn takes half a minute.
+#: How far one arrow key turns the camera, and the speed of auto-rotation. Rotation is
+#: slow (a full turn takes about half a minute) so the shape can be studied.
 ORBIT_DEGREES = 5.0
 SPIN_MS = 33
 SPIN_DEGREES = 0.4
@@ -266,17 +238,16 @@ SPIN_DEGREES = 0.4
 FACING = "Facing the {plane} plane"
 ROTATING = "Rotating - {key} stops it"
 
-#: What a 3D window says when a spike sent its box to the middle of the values
-#: rather than to the whole of them. The picture is then missing what was cut
-#: away, which is exactly why it has to be said.
+#: Message shown when spikes caused the 3D box to be clipped to the middle of the value
+#: range, so the user knows part of the surface is cut away.
 CLIPPED = "z clipped to the 1st-99th percentile: {low} to {high}"
 
 
 def facing(plane: str) -> Camera:
-    """Where to look from to have one coordinate plane face the reader."""
+    """The camera that faces the given coordinate plane."""
     return PLANES[plane]
 
 
 def clipped(low: float, high: float) -> str:
-    """The sentence a clipped box owes, in the numbers a window spells with."""
+    """The message for a clipped box, with numbers formatted as the window shows them."""
     return CLIPPED.format(low=written(low), high=written(high))

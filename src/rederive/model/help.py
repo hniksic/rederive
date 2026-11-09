@@ -1,30 +1,20 @@
 """The help document, and how a pageful of it is laid out.
 
-Derive's help was a full-screen reference painted into the work area of the
-window it was asked from - no border, no title bar, no scrollbar, nothing
-overlaid and nothing dimmed underneath. It had exactly two levels: a menu of
-subjects, and a subject read a page at a time. There were no links, no index
-and no search; the section numbers printed through the text pointed at the
-paper manual, and following one meant picking the manual up. That shape is
-kept here, less the parts that were about paper, and less the subject listing
-the utility files, this program shipping none of its own. The original's two
-plot subjects are one here: they were a menu apiece and this program's plot
-windows have no menus to list, being windows of the desktop that are driven
-with a mouse, while the one thing worth a page - what an expression is a plot
-of - is the same question in both dimensions.
+Derive's help was a plain full-screen reference drawn into the work area of the
+current window, with two levels: a menu of subjects, and a subject read a page at
+a time. There were no links, index or search. We keep that shape, minus the
+references to the paper manual and the subject on utility files (we ship none).
+The original's two plot subjects are merged into one, since our plot windows are
+mouse-driven with no menus to document, and what an expression plots as is the
+same question in 2D and 3D.
 
-Nothing in this module draws anything. A topic is a run of blocks, a block is
-a run of source lines that belong on one page together, and laying one out is
-a question about the width and the height of the window it is going into -
-which is why pages are worked out at paint time and never stored. A pane that
-is resized, or split, re-wraps and re-paginates on the next paint, exactly as
-the original's did.
+Nothing here draws. A topic is a sequence of blocks, each a group of lines kept on
+one page. Layout depends on the window size, so pages are computed at paint time
+and never stored, and a resized or split pane re-paginates, as in the original.
 
-The one subject that is generated rather than written is the one saying what
-the system is set to. It is read off the same dialogs `Options` and `Manage`
-put on the band, so it cannot fall out of step with them. Derive wrote that
-page out too, with `*SETTING*` placeholders its viewer substituted, which
-means a renamed setting there printed a placeholder and nobody noticed.
+The settings subject is generated from the same dialogs `Options` and `Manage`
+use, so it can't get out of sync. (Derive used `*SETTING*` placeholders, which
+silently broke when a setting was renamed.)
 """
 
 from __future__ import annotations
@@ -35,35 +25,31 @@ from importlib.resources import files
 
 from rederive.model.settings import DIALOGS, Settings
 
-#: What the Help Menu is titled, what it says at the bottom, and the last of
-#: its items - the one that is not a subject and leads back to the program.
+#: The Help Menu's title, bottom instruction, and final item, which returns to the
+#: program.
 MENU_TITLE = "Rederive Help Menu"
 INSTRUCTION = "Press letter for desired subject"
 RESUME = "Resume"
 RETURN = "Return to Rederive"
 
-#: What the menu line of a topic page offers besides `Resume`.
+#: Menu options of a topic page besides `Resume`.
 NEXT = "Next"
 PREVIOUS = "Previous"
 
-#: The subject F1 opens on a line being typed, that being what the keys are
-#: about when there is a line to use them on, and the word that leads from it
-#: to the menu of every other subject.
+#: The subject F1 opens while a line is being edited, and the option that leads
+#: from it to the subject menu.
 EDITING = "Editing"
 SUBJECTS = "Subjects"
 
-#: The two rows a topic page spends before its text: the title, and the blank
-#: line under it. The Help Menu carries its own title inside its body, being a
-#: centred document rather than a titled page.
+#: Rows above a topic page's text: the title and a blank line. The Help Menu
+#: includes its title in its body instead.
 TITLE_ROWS = 2
 
-#: Below this many columns the settings dump is laid out in one column rather
-#: than two. Two columns of a narrow split pane would be two columns of
-#: wrapped fragments, which is worse than a page more of readable lines.
+#: Below this width, the settings dump uses one column instead of two, to avoid
+#: wrapped fragments in narrow panes.
 NARROW = 60
 
-#: Directives in the source file: one starts a topic, the other stands in for
-#: the settings dump.
+#: Source file directives: start of a topic, and placeholder for the settings dump.
 _TOPIC = "%topic"
 _SETTINGS = "%settings"
 
@@ -72,11 +58,10 @@ _SETTINGS = "%settings"
 class Topic:
     """One subject of the help document.
 
-    `word` is what the `HELP:` menu line carries and so what the mnemonic
-    letter is taken from, `entry` is the line the Help Menu shows, and `title`
-    heads every page of the subject. The two are not the same: the menu reads
-    `line Editing commands` where the option reads `Editing`, which is the
-    original's own arrangement.
+    `word` is the option on the `HELP:` menu line (and provides the mnemonic
+    letter), `entry` is the line in the Help Menu, and `title` heads each page. As
+    in the original, these differ: the menu shows `line Editing commands` for the
+    option `Editing`.
     """
 
     word: str
@@ -88,27 +73,21 @@ class Topic:
 
 
 def letter(entry: str) -> str:
-    """The capital that invokes `entry`, which is the rule menu words follow."""
+    """The mnemonic letter of `entry`: its first capital, as in menus."""
     return next((character for character in entry if character.isupper()), entry[:1])
 
 
 def entries() -> list[str]:
-    """The lines the Help Menu lists, the way it lists them.
-
-    Every subject, and then the item that is no subject: the one that goes
-    back to what the program was doing.
-    """
+    """The Help Menu's lines: every subject, then the return item."""
     lines = [f"{letter(topic.entry)} - {topic.entry}" for topic in TOPICS]
     return lines + [f"{letter(RETURN)} - {RETURN}"]
 
 
 def menu_page(rows: int, width: int) -> list[str]:
-    """The Help Menu as a page: a title, the items, and how to choose one.
+    """The Help Menu as a page: title, items, and instruction.
 
-    The items are one block, centred as a block on the longest of them rather
-    than each on its own, so their letters line up down the left. A pane too
-    short for the whole thing gives up the blank lines first and the closing
-    instruction next: the items are what the page is for.
+    The items are centred as one block so their letters line up. A short pane
+    drops the blank lines first, then the instruction.
     """
     items = entries()
     left = " " * max(0, (width - max(len(item) for item in items)) // 2)
@@ -125,10 +104,9 @@ def menu_page(rows: int, width: int) -> list[str]:
 
 
 def pages(topic: Topic, settings: Settings, rows: int, width: int) -> list[list[str]]:
-    """`topic` laid out for a pane `rows` tall and `width` wide, a page a list.
+    """`topic` laid out as pages for a pane `rows` tall and `width` wide.
 
-    Every page carries the title row and the blank line under it, so what
-    comes back is what the pane shows and the caller has nothing left to add.
+    Each page includes the title and blank row, ready to display.
     """
     body = max(1, rows - TITLE_ROWS)
     if topic.settings:
@@ -151,10 +129,8 @@ def _centred(text: str, width: int) -> str:
 def _wrapped(block: tuple[str, ...], width: int) -> list[str]:
     """A block's source lines, each wrapped to `width`.
 
-    A line that has to be broken keeps its own indent on the lines it breaks
-    onto, so a wrapped table row stays under its own column rather than
-    starting again at the margin. Derive broke to the margin, and mid-word at
-    that; neither is worth imitating.
+    Continuation lines keep the original line's indent, so wrapped table rows stay
+    in their column. (Derive wrapped to the margin, even mid-word.)
     """
     return [row for line in block for row in _wrap(line, width)]
 
@@ -173,11 +149,10 @@ def _wrap(line: str, width: int) -> list[str]:
 
 
 def _paginate(blocks: list[list[str]], rows: int) -> list[list[str]]:
-    """Whole blocks to a page, with a blank line between two on the same page.
+    """Lay out whole blocks on pages, separated by blank lines.
 
-    A block taller than a whole page is cut across pages, since there is no
-    other way to show it; a block that would only overhang the page it is on
-    starts the next one instead.
+    A block that doesn't fit on the current page starts a new one; a block taller
+    than a page is split across pages.
     """
     pages: list[list[str]] = []
     page: list[str] = []
@@ -197,10 +172,10 @@ def _paginate(blocks: list[list[str]], rows: int) -> list[list[str]]:
 
 
 def _columns(blocks: list[list[str]], rows: int, width: int) -> list[list[str]]:
-    """Two columns to a page: fill the left one downwards, then the right one.
+    """Lay out blocks in two columns per page, left column first.
 
-    Which is how the original lays its settings page out, and it is worth the
-    trouble - a column of short `label: value` lines wastes most of eighty.
+    The original does this for the settings page, since a single column of short
+    `label: value` lines wastes most of the width.
     """
     across = max(1, width // 2)
     columns: list[list[str]] = [[]]
@@ -230,17 +205,15 @@ def _at(lines: list[str], row: int) -> str:
 def _settings_blocks(settings: Settings) -> list[list[str]]:
     """The settings dump: one block per screen, its name then its fields.
 
-    Every screen the program can put up is listed, in the order the settings
-    module holds them, so a screen added there appears here without anything
-    being written about it.
+    Screens come from `DIALOGS`, so new ones appear automatically.
     """
     blocks: list[list[str]] = []
     for dialog in DIALOGS:
         name = _screen_name(dialog.title)
         rows = [name]
         for field in dialog.fields:
-            # The one field with no caption of its own is the one whose screen
-            # has nothing else on it, so the screen's own last word names it.
+            # The only uncaptioned field is alone on its screen, so label it with
+            # the screen name's last word.
             label = field.label or name.rpartition(" ")[2]
             rows.append(f"  {label}:  {settings[field.setting]}")
         blocks.append(rows)
@@ -248,7 +221,7 @@ def _settings_blocks(settings: Settings) -> list[list[str]]:
 
 
 def _screen_name(title: str) -> str:
-    """`OPTIONS COLOR MENU:` as the command path that reaches it."""
+    """Turn a title like `OPTIONS COLOR MENU:` into `Options Color Menu`."""
     return title.rstrip(":").title()
 
 
@@ -295,8 +268,8 @@ def _source() -> str:
     return (files("rederive.model") / "help.txt").read_text(encoding="utf-8")
 
 
-#: Every subject, in the order the Help Menu lists them.
+#: All subjects, in Help Menu order.
 TOPICS: tuple[Topic, ...] = _read(_source())
 
-#: Each subject by the option that names it, for the menu that chooses one.
+#: Subjects by their menu option word.
 BY_WORD: dict[str, Topic] = {topic.word: topic for topic in TOPICS}

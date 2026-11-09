@@ -1,14 +1,12 @@
 """The mouse: clicking, pointing at a subexpression, and the wheel.
 
-Every gesture here has a key that does the same thing, and these say so: what a
-click on a menu word does is what that word's own letter does, what a click on
-an expression does is what the arrows do, and what the wheel does is what
-Ctrl-Right and the paging keys do. So the tests are mostly about geometry - the
-cell the pointer was over, and what was drawn there - since that is the one part
-the keyboard never had to answer.
+Every gesture has a keyboard equivalent: clicking a menu word is typing its letter,
+clicking an expression is using the arrows, and the wheel is Ctrl-Right and the paging
+keys. So the tests are mostly about geometry: which cell the pointer was over and what
+was drawn there.
 
-The bands lay themselves out for the width there is, so nothing here counts
-columns by hand: each cell is found in what the band actually drew.
+Bands lay out to fit the width, so cells are found in what was actually drawn rather
+than by counting columns.
 """
 
 import pytest
@@ -50,13 +48,11 @@ async def author(pilot, text):
 
 
 async def click_cell(pilot, app, row, column, number=None):
-    """Click a cell of a window's work area, as its lines are numbered.
+    """Click a cell of a window's work area, by row and column.
 
-    The pause is what makes the cell the right one: the panes are placed
-    absolutely as the windows are, one turn of the loop after the keystroke that
-    moved them, so a region read without waiting is where the pane was. A
-    terminal has no such problem - it reports the cell a user pointed at, on the
-    screen as composited - so this is the test's own bookkeeping.
+    The pause is needed because panes are repositioned one loop turn after the
+    keystroke that moved them, so reading the region immediately gives the old position.
+    A real terminal reports the composited cell, so this is only a test concern.
     """
     await pilot.pause()
     await pilot.click(content(app, number), offset=(column, row))
@@ -75,7 +71,7 @@ async def click_on(pilot, app, text, row=None, number=None):
 
 
 def word_cell(app, word):
-    """The command band, and the cell it has drawn `word` in."""
+    """Return the command band widget and the cell where it drew `word`."""
     for row, line in enumerate(band(app)):
         column = line.find(word)
         if column != -1:
@@ -102,8 +98,8 @@ async def wheel(
 ):
     """Turn the wheel one notch over a cell of `widget`.
 
-    Textual's pilot drives clicks and hovers but not the wheel, so the event is
-    posted the way a terminal reports one: at a screen cell, naming no widget.
+    Textual's pilot can't scroll, so the event is posted as a terminal reports it: at a
+    screen cell, with no widget.
     """
     await pilot.pause()
     forward, backward = (
@@ -145,12 +141,11 @@ async def test_a_click_on_an_expression_selects_that_expression(app):
 
 
 async def test_a_click_inside_the_selected_expression_goes_one_level_in(app):
-    """A term of a long sum is reachable without hitting its one character."""
+    """Lets the user reach a term without hitting its exact character."""
     async with app.run_test() as pilot:
         await author(pilot, "(x+1)/y")
         assert highlighted_expression(app) == " x + 1\n───────\n   y"
-        # The `x` of the numerator: the numerator first, then the `x` itself,
-        # and an atom is where it stops.
+        # Clicking `x` selects the numerator, then `x` itself, then stays on the atom.
         await click_on(pilot, app, "x")
         assert highlighted_expression(app) == "x + 1"
         await click_on(pilot, app, "x")
@@ -165,9 +160,8 @@ async def test_a_click_on_another_branch_takes_it_where_the_two_part(app):
         await click_on(pilot, app, "x")
         await click_on(pilot, app, "x")
         assert highlighted_expression(app) == "x"
-        # The denominator is a different branch, so the click lands on the whole
-        # of it - the level at which it and the `x` differ - and the next one
-        # goes in.
+        # The denominator is a different branch, so the click selects all of it (the
+        # level where it diverges from `x`), and the next click goes in.
         await click_on(pilot, app, "y")
         assert highlighted_expression(app) == "y + 2"
         await click_on(pilot, app, "y")
@@ -185,7 +179,7 @@ async def test_a_click_on_an_operator_goes_back_out_to_what_owns_it(app):
 
 
 async def test_a_click_on_the_label_selects_the_whole_expression(app):
-    """The number in front of a render names all of it and no part of it."""
+    """The label in front of a render stands for the whole expression."""
     async with app.run_test() as pilot:
         await author(pilot, "x+y")
         await click_on(pilot, app, "x")
@@ -213,7 +207,7 @@ async def test_a_click_on_the_blank_row_between_two_entries_moves_nothing(app):
 
 
 async def test_a_click_above_a_short_history_moves_nothing(app):
-    """The pane is taller than the history, and the space above it is nobody's."""
+    """The pane is taller than the history, and the space above it belongs to nothing."""
     async with app.run_test() as pilot:
         await author(pilot, "x")
         await author(pilot, "y")
@@ -229,13 +223,13 @@ async def test_a_click_on_the_opening_notice_does_nothing(app):
 
 
 async def test_a_click_lands_where_a_scrolled_render_is_drawn(app):
-    """A render scrolled sideways is read at the columns it is showing."""
+    """A click on a sideways-scrolled render hits the column currently shown."""
     async with app.run_test() as pilot:
         await author(pilot, "+".join("abcdefghijklmnopqrstuvwxyz"))
         await pilot.press("ctrl+right")
         assert app.work_area.shift
-        # The render has moved under the label field, so the letter on screen is
-        # not the letter that column held before the scroll.
+        # The render moved under the label field, so this column now shows a different
+        # letter than before the scroll.
         shown = work_area(app)[0]
         assert not shown.startswith("#1:  a")
         column = next(at for at in range(5, len(shown)) if shown[at].isalpha())
@@ -244,7 +238,7 @@ async def test_a_click_lands_where_a_scrolled_render_is_drawn(app):
 
 
 async def test_a_click_on_the_label_of_a_scrolled_render_selects_it_whole(app):
-    """The label field does not move with the render, and neither does its rule."""
+    """The label field doesn't scroll with the render, and neither does its rule."""
     async with app.run_test() as pilot:
         await author(pilot, "+".join("abcdefghijklmnopqrstuvwxyz"))
         await click_cell(pilot, app, 0, 5)
@@ -258,7 +252,7 @@ async def test_a_click_on_the_label_of_a_scrolled_render_selects_it_whole(app):
 
 
 async def test_a_click_relabels_the_line_that_was_offered_a_label(app):
-    """Which is what an arrow key does, and what the manual recommends."""
+    """As an arrow key does, and as the manual recommends."""
     async with app.run_test() as pilot:
         await author(pilot, "x+1")
         await author(pilot, "y+2")
@@ -266,12 +260,12 @@ async def test_a_click_relabels_the_line_that_was_offered_a_label(app):
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
         await click_on(pilot, app, "x")
         assert prompt(app) == ("SIMPLIFY expression:", "#1")
-        # And the line still has the keyboard: nothing on screen took it.
+        # The line keeps keyboard focus.
         assert app.focused is app.query_one("#prompt-input")
 
 
 async def test_a_click_reaches_a_subexpression_under_a_line(app):
-    """The arrow key mode is about a key two things want; nothing wants the mouse."""
+    """The arrow key mode resolves a conflict over the keys; the mouse has none."""
     async with app.run_test() as pilot:
         await author(pilot, "x+1")
         await pilot.press("s")
@@ -282,7 +276,7 @@ async def test_a_click_reaches_a_subexpression_under_a_line(app):
 
 
 async def test_a_click_moves_nothing_on_the_one_line_that_holds_the_highlight(app):
-    """The variable line Factor collects on, where the original holds it still."""
+    """Factor's variable line, where the original keeps the highlight fixed."""
     async with app.run_test() as pilot:
         await author(pilot, "x*y+x")
         await pilot.press("f", "enter")
@@ -301,7 +295,7 @@ async def test_a_click_on_a_menu_word_runs_that_command(app):
 
 
 async def test_a_click_on_a_word_of_the_second_row_runs_that_command(app):
-    """Where a word is drawn is what a click has to be read against."""
+    """A click is matched against where the word was actually drawn."""
     async with app.run_test() as pilot:
         assert len(band(app)) == 2 and "Window" in band(app)[1]
         await click_word(pilot, app, "Window")
@@ -309,7 +303,7 @@ async def test_a_click_on_a_word_of_the_second_row_runs_that_command(app):
 
 
 async def test_a_click_on_a_menu_word_leaves_the_highlight_where_it_is(app):
-    """As typing a mnemonic letter does: running a command is not stepping to it."""
+    """As typing its letter does: running a command doesn't move the highlight to it."""
     async with app.run_test() as pilot:
         await click_word(pilot, app, "Window")
         assert highlighted(app) == "Close"
@@ -334,7 +328,7 @@ async def test_a_click_on_the_menu_title_does_nothing(app):
 
 
 async def test_a_click_on_a_menu_word_does_nothing_while_a_question_is_up(app):
-    """A confirmation leaves the menu up with nothing on it to pick."""
+    """During a confirmation the menu is shown but nothing on it can be picked."""
     async with app.run_test() as pilot:
         await author(pilot, "x")
         await click_word(pilot, app, "Quit")
@@ -361,7 +355,7 @@ async def test_a_click_chooses_a_help_subject_and_comes_back(app):
 
 
 async def test_the_word_under_the_pointer_is_marked(app):
-    """Which is the whole of what the mark says: this word is a click away."""
+    """The mark shows which word a click would pick."""
     async with app.run_test() as pilot:
         assert pointed(app) is None
         await hover_word(pilot, app, "Simplify")
@@ -369,7 +363,7 @@ async def test_the_word_under_the_pointer_is_marked(app):
 
 
 async def test_the_mark_follows_the_pointer_to_the_next_word(app):
-    """One word at a time, wherever on the band the words have been laid out."""
+    """One word at a time, wherever the band laid the words out."""
     async with app.run_test() as pilot:
         await hover_word(pilot, app, "Author")
         assert pointed(app) == "Author"
@@ -392,8 +386,7 @@ async def test_the_mark_goes_away_when_the_pointer_leaves_the_band(app):
 
 
 async def test_the_highlighted_word_takes_the_mark_as_well(app):
-    """The two say different things, so the pointer resting on the highlight
-    shows both rather than hiding one under the other."""
+    """The highlight and the mark mean different things, so a word can show both."""
     async with app.run_test() as pilot:
         await hover_word(pilot, app, "Author")
         assert highlighted(app) == "Author"
@@ -401,8 +394,8 @@ async def test_the_highlighted_word_takes_the_mark_as_well(app):
 
 
 async def test_a_submenu_marks_its_own_words_rather_than_the_ones_it_came_from(app):
-    """The mark is a cell of the band, not a word of the menu that was on it:
-    a submenu with nothing where the pointer stands marks nothing."""
+    """The mark follows the band's cell, not the previous menu's word: if the submenu
+    has nothing under the pointer, nothing is marked."""
     async with app.run_test() as pilot:
         await hover_word(pilot, app, "Window")
         await click_word(pilot, app, "Window")
@@ -413,7 +406,7 @@ async def test_a_submenu_marks_its_own_words_rather_than_the_ones_it_came_from(a
 
 
 async def test_no_word_is_marked_while_a_question_is_up(app):
-    """Nothing on the band answers a click then, so nothing on it invites one."""
+    """Nothing on the band responds to a click then, so nothing is marked."""
     async with app.run_test() as pilot:
         await author(pilot, "x")
         await hover_word(pilot, app, "Quit")
@@ -430,14 +423,14 @@ async def test_no_word_is_marked_while_a_question_is_up(app):
 
 
 async def test_a_click_on_a_value_sets_it_and_moves_the_highlight_on(app):
-    """Which is what typing that value's own letter does."""
+    """As typing the value's letter does."""
     async with app.run_test() as pilot:
         await pilot.press("o", "n")
         assert app.editor.values["Notation"] == "Rational"
         await click_word(pilot, app, "Decimal")
         assert app.editor.values["Notation"] == "Decimal"
         assert app.editor.field.setting == "NotationDigits"
-        # And nothing is applied until the dialog is committed.
+        # Nothing is applied until the dialog is committed.
         assert app.settings["Notation"] == "Rational"
         await pilot.press("enter")
         assert app.settings["Notation"] == "Decimal"
@@ -471,9 +464,9 @@ async def test_escape_after_a_click_still_abandons_the_dialog(app):
 
 
 async def test_a_click_on_a_word_that_is_no_field_does_nothing(app):
-    """`Declare Variable Interval` prints the variable between its two bounds."""
+    """`Declare Variable Interval` shows the variable, not a field, between its bounds."""
     async with app.run_test() as pilot:
-        # Declare Variable w, Integer, Interval: the bounds, with `w` between.
+        # Declare Variable w, Integer, Interval.
         await pilot.press("d", "v", *"w", "enter", "i", "i")
         line = band(app)[0]
         assert " w " in line
@@ -498,7 +491,7 @@ async def test_a_click_on_an_expression_fills_a_field_that_names_one(app):
 
 
 async def test_a_click_on_an_expression_does_nothing_under_another_dialog(app):
-    """A dialog whose fields name no expression takes no notice of the highlight."""
+    """A dialog with no expression fields ignores clicks on expressions."""
     async with app.run_test() as pilot:
         await author(pilot, "x")
         await author(pilot, "y")
@@ -523,7 +516,7 @@ async def test_a_click_in_another_window_makes_it_active_and_selects_there(app):
 
 
 async def test_a_click_in_another_window_is_refused_under_a_submenu(app):
-    """Switching windows out from under a half-answered question is not offered."""
+    """Windows can't be switched in the middle of a submenu."""
     async with app.run_test(size=(80, 25)) as pilot:
         await author(pilot, "x")
         await pilot.press("w", "s", "v", "enter")
@@ -580,7 +573,7 @@ async def test_the_wheel_turns_the_pages_of_a_help_subject(app):
 
 
 async def test_the_wheel_turns_no_page_on_the_subject_menu(app):
-    """There are no pages to turn there, as there is nothing for Down to turn."""
+    """The subject menu has no pages, just as Down turns none there."""
     async with app.run_test() as pilot:
         await pilot.press("h")
         page = work_area(app)
@@ -599,11 +592,11 @@ async def test_a_click_takes_a_name_off_the_list_without_reading_it(app, tmp_pat
         await pilot.press(*f"{tmp_path}/", "tab")
         assert completions(app) == ["one.mth", "two.mth"]
         listing = app.query_one("#completions")
-        # Row 1 of the list, inside its border, is the second name.
+        # Row 2 of the widget, inside its border, is the second name.
         await pilot.pause()
         await pilot.click(listing, offset=(2, 2))
         assert prompt(app)[1] == f"{tmp_path}/two.mth"
-        # The list is put away and nothing has been read: Enter is still owed.
+        # The list closes but nothing is loaded until Enter.
         assert completions(app) is None
         assert entries(app) == []
         await pilot.press("enter")
@@ -619,15 +612,14 @@ async def test_the_wheel_walks_the_list_of_names(app, tmp_path):
         names = completions(app)
         assert len(names) == 3
         listing = app.query_one("#completions")
-        # One notch is Down and one is Up, down to where they start from.
+        # A notch down is Down and a notch up is Up.
         await wheel(pilot, app, listing, 1, offset=(2, 2))
         assert chosen(app) == names[0]
         await wheel(pilot, app, listing, 1, offset=(2, 2))
         assert chosen(app) == names[1]
         await wheel(pilot, app, listing, -1, offset=(2, 2))
         assert chosen(app) == names[0]
-        # And the name it points at is on the line, as every way of walking it
-        # leaves it.
+        # The chosen name is on the prompt line, as with any way of moving through it.
         assert prompt(app)[1].endswith(names[0])
 
 
@@ -635,7 +627,7 @@ async def test_the_wheel_walks_the_list_of_names(app, tmp_path):
 
 
 async def test_a_click_steps_a_demonstration(app, tmp_path):
-    """Any key steps one, and a click is one more way of saying go on."""
+    """Any key advances a demonstration, and so does a click."""
     path = tmp_path / "show.dmo"
     path.write_text("; adds two numbers\n2 + 3\n\n; and a symbolic one\n(x+1)^2\n")
     async with app.run_test() as pilot:
@@ -650,7 +642,7 @@ async def test_a_click_steps_a_demonstration(app, tmp_path):
 
 
 async def test_a_drag_over_the_pane_selects_nothing(app):
-    """Selecting text off the screen is the terminal's, so Ctrl-C still copies the
+    """Screen text selection is left to the terminal, so Ctrl-C still copies the
     highlighted expression."""
     async with app.run_test() as pilot:
         await author(pilot, "x+1")
@@ -666,7 +658,7 @@ async def test_a_drag_over_the_pane_selects_nothing(app):
 
 
 async def test_a_sweep_over_the_line_being_typed_is_the_lines_own(app):
-    """The line takes the drag itself, and Ctrl-C and Ctrl-X act on what it marked."""
+    """The input line handles the drag, and Ctrl-C and Ctrl-X act on its selection."""
     async with app.run_test() as pilot:
         await author(pilot, "a/b")
         await pilot.press("a")
@@ -700,7 +692,7 @@ async def test_repeated_clicks_go_in_rather_than_sweeping_the_pane(app):
 
 
 async def test_a_click_says_nothing_while_a_computation_runs():
-    """It is modal down to the last key, and the mouse is no way round that."""
+    """A computation is fully modal, and the mouse can't get around that."""
     runner = Blocking()
     app = RederiveApp(Session(runner=runner))
     async with app.run_test() as pilot:

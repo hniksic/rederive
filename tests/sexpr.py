@@ -3,11 +3,10 @@
 The mapping is total: every node has exactly one written form, and
 `(juxt a b)` is distinct from `(* a b)`.
 
-A sum or a product is a run of terms rather than a nest of pairs, and carries
-one operator per gap. When every gap is the same the operator heads the form,
-`(+ a b c)` and `(juxt x y z)`; when they differ the run is named and the
-operators are written between the terms it joins, `(sum a - b + c)` and
-`(prod 2 juxt x * y)`.
+A sum or product is a flat run of terms with one operator per gap. If all gaps share
+an operator it heads the form, as in `(+ a b c)` and `(juxt x y z)`; otherwise the
+form is headed `sum` or `prod` and the operators go between the terms, as in
+`(sum a - b + c)` and `(prod 2 juxt x * y)`.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ def to_sexpr(node: Node) -> str:
         case Kind.VECTOR:
             return _form("vec", children)
         case Kind.REL:
-            # Binary, and the operator is written between its operands.
+            # The operator is written between the two operands.
             return _form("rel", [children[0], str(node.value), children[1]])
         case Kind.NOT | Kind.AND | Kind.OR | Kind.XOR | Kind.IMP:
             return _form(str(node.kind), children)
@@ -75,7 +74,7 @@ def _form(head: str, parts: list[str]) -> str:
 
 
 def _run(node: Node, children: list[str]) -> str:
-    """A sum or a product, written by its gaps."""
+    """Write a sum or product according to the operators in its gaps."""
     gaps = [_gap(node, index) for index in range(len(children) - 1)]
     if len(set(gaps)) == 1:
         return _form(gaps[0], children)

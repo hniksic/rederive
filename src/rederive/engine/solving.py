@@ -1,53 +1,23 @@
-"""The mathematics of soLve: what the solutions of an equation are.
+"""The mathematics of soLve: finding the solutions of an equation.
 
-Below the pipeline rather than above it, for the reason `factoring` is: an
-authored `SOLVE(u, x)` asks for exactly what the command asks for, and Simplify
-is what evaluates an authored line. So the command in `solve` is the pipeline
-and then this, and the `SOLVE` head is this reached from inside the pipeline.
+This sits below the pipeline, like `factoring`, so the `solve` command and an authored
+`SOLVE` head share it. The result is a tuple of entries, one worksheet line each: a
+relation with the variable on the left, a system's solution vector, a chained range `-2
+< x < 2`, or one entry per piece of a union.
 
-What comes back is a tuple of *entries*, not a set of values, because that is
-the shape the original answers in: one worksheet line per solution, each of
-them a relation with the variable alone on the left. A system answers with one
-entry holding the whole solution vector, an interval with one chained relation
-`-2 < x < 2`, and a union of intervals with one entry per piece.
+Three non-solutions are distinguished. The empty tuple means "no solutions found". An
+identity gives `x = @1`, with the counter from `Context.arbitrary_index` so constants
+are unique per session. An unsolvable equation gives its residual equation (zero on the
+right), as the original does; this module never raises on parser output.
 
-Three answers are not solutions and have to be told apart, because the command
-does different things with them:
+Two deliberate differences from the original: periodic equations get one representative
+per family near the origin, without Derive's redundant ones, and solutions come in a
+stable order, reals ascending and then complex ones by angle.
 
-* The empty tuple is "no solutions found". Nothing is appended and the message
-  line says so.
-* An equation that holds for every value answers `x = @1`, an arbitrary-value
-  constant. `Context.arbitrary_index` is where the counter that mints those
-  comes in, and it is the session's rather than this module's so that no two
-  solves in one worksheet ever mint the same one.
-* An equation nothing here can solve answers with the residual equation -
-  everything moved to the left, zero on the right - which is what the original
-  appends for an equation it cannot solve. It is a normal one-entry answer and never an
-  exception: this module promises what the rest of the engine promises, that
-  nothing the parser produced makes it raise. The original appends one for
-  `3^x = x^2` too, which is solved here in Lambert W.
-
-Where the original's answers and ours differ they differ in spelling, and
-deliberately so in two places. A periodic equation gets a finite sample of
-representatives near the origin, one per solution family, where Derive emits
-redundant ones - `SIN(x) = 1/2` is `pi/6` and `5*pi/6` here and `pi/6`,
-`5*pi/6`, `-7*pi/6` there. And multiple solutions come out in a stable order,
-reals ascending and then the complex ones by their angle, where the original's order is
-whatever its solver happened to produce.
-
-Domains do not filter solutions (manual 5.4): a declaration says what a
-variable *is*, which is what decides how an answer simplifies, and never which
-of the answers are wanted. Solutions are sought over the complexes whatever a
-variable was declared, with one exception: an equation in the `ABS` of a real
-variable, undeclared ones included, is solved over the reals, since over the
-complexes its solutions are curves no list of relations describes.
-
-What does filter them is asking for it: `SOLVE(u, x, Real)` keeps only the solutions
-not having an imaginary component (manual 6.1), which is `real` here. A solution is
-dropped only where it is known to have one - a number whose imaginary part is more
-than evaluation noise, or a value sympy proves non-real - so `x = SQRT(a)` stands,
-as do an arbitrary value, a range, and the residual equation of what nothing here
-could solve. A system's solution vector goes where any of its values would.
+Domains don't filter solutions (manual 5.4); solutions are found over the complexes,
+except that an equation in the `ABS` of a real variable is solved over the reals.
+`SOLVE(u, x, Real)` drops solutions known to have an imaginary component (manual 6.1);
+`x = SQRT(a)`, ranges and residual equations stay.
 """
 
 from __future__ import annotations
@@ -68,15 +38,13 @@ from rederive.engine.to_sympy import InertVector
 
 __all__ = ["equations_of", "oriented", "solutions", "solution_variables"]
 
-#: How many pieces a bracketing scan cuts an interval into before it starts
-#: bisecting. Fine enough to separate the roots of anything an ordinary
-#: worksheet holds, coarse enough that the scan itself costs nothing.
+#: The number of pieces a bracketing scan cuts an interval into before bisecting:
+#: fine enough to separate roots in ordinary worksheets, coarse enough to be cheap.
 _SCAN = 64
 
-#: Where Mixed mode's search starts, and how far the doubling goes before it
-#: gives up and answers with the residual equation. The manual documents the
-#: doubling and not the cap; the cap is ours, because a search that never ends
-#: is not an answer.
+#: The starting half-width of Mixed mode's search, and the limit on doubling before
+#: it gives up and returns the residual equation. The manual documents the doubling
+#: but not a cap; the cap is ours, since an endless search is not an answer.
 _REACH = 10
 _REACH_CAP = 1 << 16
 
@@ -103,21 +71,17 @@ def solutions(
 ) -> tuple[sp.Basic, ...]:
     """The entries `expression` solves to, one per worksheet line.
 
-    `variables` names what to solve for, in the order chosen; empty means work
-    it out - the one variable of a scalar, or as many of a system's most main
-    as it has equations. `bounds` is the interval a numeric search is confined
-    to, and is what Approximate precision asks the user for; None leaves the
-    precision mode to decide, which is exact everywhere but Mixed. `divisors` are
-    what the equation divides by as it was written, before Simplify cancelled
-    anything: a value that provably makes one of them zero is no solution. `real`
-    leaves out the solutions known to have an imaginary component.
+    `variables` lists the variables to solve for; if empty, the most main ones are
+    used, one per equation. `bounds` confines a numeric search (Approximate precision);
+    None leaves it to the precision mode. `divisors` are what the equation divided by
+    before Simplify cancelled anything: a value making one zero is not a solution.
+    `real` drops solutions known to have an imaginary component.
     """
     context = context or Context()
     constants = _Constants(context.arbitrary_index)
     if not variables and not _named_in(expression):
-        # An equation whose variable cancelled out of it, `x/x = 1`, is still an
-        # equation in that variable: it is in what the equation divides by, and it
-        # takes any value there.
+        # An equation whose variable cancelled out, like `x/x = 1`, is still in that
+        # variable via its divisors, and is solved by any value of it.
         divided = {name for divisor in divisors for name in _named_in(divisor)}
         variables = main_order(divided, context.order)[:1]
     try:
@@ -131,34 +95,26 @@ def solutions(
             real,
         )
     except Exception:
-        # The engine never raises on parser output, and "I could not solve
-        # this" is an answer rather than a failure: the residual equation says
-        # exactly as much as is known.
+        # The engine never raises on parser output, and "can't solve this" is an
+        # answer, not a failure: the residual equation says exactly what is known.
         return _unsolvable(expression, context)
 
 
 def solution_variables(
     expression: sp.Basic, context: Context, count: int = 1
 ) -> tuple[sp.Symbol, ...]:
-    """The variables soLve works on where the user named none.
-
-    Most main first, and `count` of them: one for a scalar equation, one per
-    equation for a system. Fewer where the expression holds fewer.
-    """
+    """The `count` most main variables, for when the user names none."""
     names = main_order(_named_in(expression), context.order)
     symbols = _symbols_of(expression)
     return tuple(symbols.get(name, sp.Symbol(name)) for name in names[:count])
 
 
 def equations_of(expression: sp.Basic) -> tuple[Relational, ...] | None:
-    """The equations of a system, or None where this is no system.
+    """The equations of a system, or None if this isn't a system.
 
-    A system is a vector of relations or expressions, which is what the original
-    solves and what the UI counts to decide how many variables to ask about. An
-    expression in it is the equation `u = 0`, as a bare expression solved on its own
-    is: `[a - 1, b - 2]` is `[a = 1, b = 2]`, which is how `EXACT_EIGENVECTOR` in
-    VECTOR.MTH states its system. A vector holding vectors or truth values is no
-    system.
+    A system is a vector of relations or expressions, an expression meaning `u = 0`, as
+    in `EXACT_EIGENVECTOR` in VECTOR.MTH. A vector containing vectors or truth values
+    isn't a system.
     """
     elements = _elements(expression)
     if not elements or not all(_equatable(e) for e in elements):
@@ -179,11 +135,8 @@ def _equatable(element: sp.Basic) -> bool:
 
 
 def oriented(solved: sp.Basic) -> sp.Basic:
-    """A solved relation with the variable on the left.
-
-    Sympy answers `-3 < x`; the answer to a question about `x` is written
-    `x > -3`. Shared with Simplify, which reduces a conjunction of relations
-    over one variable to the range it describes and writes it the same way.
+    """A solved relation with the variable on the left: sympy's `-3 < x` becomes `x > -3`.
+    Simplify uses this for ranges too.
     """
     if isinstance(solved, sp.And | sp.Or):
         return solved.func(*(oriented(part) for part in solved.args))
@@ -192,7 +145,7 @@ def oriented(solved: sp.Basic) -> sp.Basic:
     return solved
 
 
-# -- which of the three shapes this is ---------------------------------------
+# -- dispatch on the kind of problem ------------------------------------------
 
 
 def _solutions(
@@ -221,8 +174,7 @@ def _scalar(
 ) -> tuple[sp.Basic, ...]:
     """One equation or inequality, solved for one variable.
 
-    An inequality is solved over the reals already, so `real` asks nothing more of
-    one.
+    Inequalities are already solved over the reals, so `real` has no effect on them.
     """
     chosen = _chosen(expression, context, variables, 1)
     if not chosen:
@@ -241,7 +193,7 @@ def _chosen(
     variables: tuple[str, ...],
     count: int,
 ) -> tuple[sp.Symbol, ...]:
-    """The variables to solve for: the user's answers, or the most main ones."""
+    """The variables to solve for: the user's choices, or the most main ones."""
     if not variables:
         return solution_variables(expression, context, count)
     symbols = _symbols_of(expression)
@@ -249,11 +201,7 @@ def _chosen(
 
 
 def _residual(expression: sp.Basic) -> sp.Basic:
-    """What has to be zero: a relation's difference, or the expression itself.
-
-    A bare expression is solved as `u = 0`, which is the manual's own rule and
-    what makes `SOLVE(x^2 - 4, x)` mean what `SOLVE(x^2 - 4 = 0, x)` means.
-    """
+    """What must be zero: a relation's difference, or a bare expression itself."""
     if isinstance(expression, Relational):
         return expression.lhs - expression.rhs
     return expression
@@ -273,18 +221,13 @@ def _equation(
 ) -> tuple[sp.Basic, ...]:
     """`residual = 0` solved for `variable`, by whatever the precision allows.
 
-    Bounds mean a numeric search and nothing else, which is Approximate mode.
-    Exact and Mixed both solve exactly first; where that answers nothing, Mixed
-    goes looking for a real root over a widening interval and Exact stops.
+    Bounds mean a numeric search (Approximate). Exact and Mixed try an exact solution
+    first, and Mixed then searches for a real root over a widening interval.
 
-    An exact candidate is kept unless it is provably no solution: one that makes a
-    divisor of the equation as written zero is not (`_divides_by_zero`), and nor is
-    one a solver found for an equation it rewrote first, where putting it back
-    shows it does not hold (`_fails`). With `real`, nor is one known to have an
-    imaginary component (`_imaginary`); a periodic family is judged by the
-    representative it is written as. Where that leaves nothing the answer is "no
-    solutions found", the same as for an equation that has none. A numeric search
-    only ever finds real roots.
+    A candidate is dropped only if provably not a solution: it zeros a divisor of the
+    original equation (`_divides_by_zero`), substituting it back fails (`_fails`), or,
+    with `real`, it is known to be non-real (`_imaginary`). If nothing remains, the
+    answer is "no solutions found".
     """
     if bounds is not None:
         return _numeric(residual, variable, bounds[0], bounds[1], context)
@@ -312,24 +255,13 @@ def _equation(
 
 
 def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
-    """Every value of `variable` that makes `residual` vanish, or None.
+    """Every value of `variable` that makes `residual` vanish, or None if unknown.
 
-    None is "nothing here knows", which is a different answer from the empty
-    set and is what the residual equation gets appended for.
-
-    A polynomial goes to `roots` rather than to `solveset`, for two reasons the
-    original shares: `roots` gives the radicals - Cardano's and Ferrari's
-    included - where `solveset` is content to name a root by the polynomial it
-    is a root of, and it collapses multiplicities, so `x^2*(8*x - 9)` has two
-    solutions and not three. A polynomial it cannot split is one nothing can
-    split in radicals, and that is exactly when the original gives up too.
-
-    `trig` asks for Viete's cubic rather than Cardano's, which differs only for
-    the casus irreducibilis: three real roots that the radicals can only reach
-    through `#i`. `SOLVE(x^3 - 3*x + 1 = 0, x)` is then the original's own
-    `2*COS(2*pi/9)` and its two companions, and not three nested radicals over
-    an imaginary unit that cancels. A rational cubic with one real root has its
-    radicals from `_cardano_roots`, which writes them as the original does.
+    Polynomials go to `roots` rather than `solveset`, as in the original: it gives
+    radicals rather than naming roots by their polynomial, and collapses
+    multiplicities. `trig` gives Viete's form in the casus irreducibilis, so `x^3 - 3*x
+    + 1` yields the original's `2*COS(2*pi/9)` and companions; a rational cubic with
+    one real root gets its radicals from `_cardano_roots`.
     """
     polynomial = _polynomial(residual, variable)
     if polynomial is not None:
@@ -365,13 +297,9 @@ def _has_absolute(residual: sp.Basic, variable: sp.Symbol) -> bool:
 def _over_reals(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     """The real solutions of an equation in `ABS`, or None.
 
-    For a real variable an `ABS` is its argument or the negation of it, depending on
-    the argument's sign, so the equation is finitely many equations, each over the
-    part of the line where its signs hold, and what each solves to is kept where it
-    lies inside its own part. `solveset` over the reals does that splitting. Over
-    the complexes `ABS(x) = 3` is a whole circle, which no list of relations
-    describes, so a variable not known to be real is not solved this way. The
-    answer can be a range: `ABS(x) = x` holds for `x >= 0`.
+    `solveset` over the reals splits the equation by the signs of the `ABS` arguments.
+    Over the complexes `ABS(x) = 3` is a circle, so this is only for real variables.
+    The answer can be a range: `ABS(x) = x` holds for `x >= 0`.
     """
     try:
         found = sp.solveset(residual, variable, sp.S.Reals)
@@ -381,14 +309,9 @@ def _over_reals(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
 
 
 def _exponential(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
-    """The solutions of `residual` with every power of a positive number in the
-    variable written as a power of `#e`, or None where that solves nothing more.
-
-    `solveset` inverts `#e^x = c` over the complexes into its whole family of
-    logarithms, and leaves `3^x = c` as a condition, so `3^(2*x) - 4*3^x + 3 = 0`
-    stood where `#e^(2*x) - 3*#e^x + 2 = 0` was solved. `3^x` is `#e^(x*LN(3))`,
-    and solved in that spelling it has the same families, `x = 1` and `x = 0` being
-    their real members.
+    """The solutions of `residual` with powers of positive numbers rewritten as powers of
+    `#e`, or None if that doesn't help, since `solveset` inverts `#e^x = c` but not
+    `3^x = c`.
     """
 
     def rewritable(part: sp.Basic) -> bool:
@@ -413,13 +336,11 @@ def _exponential(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
 
 
 def _binomial_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
-    """The roots of `a*x^n + b` for a real `-b/a`, as one real root times each root
-    of unity, or None for any other polynomial.
+    """The roots of `a*x^n + b` for real `-b/a`, as one real root times each root of
+    unity, or None.
 
-    `roots` multiplies the real root into every term of the root of unity, so
-    `x^100 = 12` is answered with the hundredth root of 12 written three times
-    over in every solution. Written once, a solution reads as the point on a
-    circle it is: `12^(1/100)*(COS(pi/50) + #i*SIN(pi/50))`.
+    `roots` distributes the real root into every term, so `x^100 = 12` would repeat the
+    hundredth root of 12 three times per solution.
     """
     degree = polynomial.degree()
     terms = polynomial.terms()
@@ -438,12 +359,9 @@ def _binomial_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
 
 
 def _cardano_factored(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
-    """The roots of a rational polynomial with a cubic factor `_cardano_roots`
-    writes, each factor solved on its own, or None for any other polynomial.
-
-    `roots` splits a polynomial into its factors over the rationals too, so solving
-    them one at a time loses nothing; it is done only where a factor is such a cubic,
-    so that every other polynomial is answered as `roots` answers it.
+    """The roots of a rational polynomial with a cubic factor handled by `_cardano_roots`,
+    each factor solved separately, or None. Since `roots` also factors over the
+    rationals, this loses nothing.
     """
     try:
         if polynomial.degree() < 3 or polynomial.domain not in (sp.ZZ, sp.QQ):
@@ -463,17 +381,13 @@ def _cardano_factored(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
 
 def _cardano_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
     """The roots of an irreducible rational cubic with one real root, in Cardano's
-    radicals written as the original writes them, or None for any other polynomial.
+    radicals as the original writes them, or None.
 
-    For `t^3 + p*t + q`, the cubic shifted to lose its square term, the real root is
-    `u + v` with `u` and `v` the real cube roots of `-q/2 + SQRT(D)` and
-    `-q/2 - SQRT(D)`, where `D = q^2/4 + p^3/27` is positive exactly when the other
-    two roots are a complex pair; they are `-(u + v)/2 +- SQRT(3)*#i*(u - v)/2`.
-    `roots` writes `u` alone and `v` as `-p/(3*u)`, which is the same number:
-    `x^3 + 3*x + 1` is `3/(27*SQRT(5)/2 + 27/2)^(1/3) - (27*SQRT(5)/2 + 27/2)^(1/3)/3`
-    there and `(4*SQRT(5) - 4)^(1/3)/2 - (4*SQRT(5) + 4)^(1/3)/2` here. Each cube root
-    is written by `_real_cube_root`, so a negative radicand never stands under a
-    root that the engine would take as its principal, complex, branch.
+    For the depressed cubic `t^3 + p*t + q`, the real root is `u + v`, the real cube
+    roots of `-q/2 +- SQRT(D)` with `D = q^2/4 + p^3/27` positive, and the complex pair
+    is `-(u + v)/2 +- SQRT(3)*#i*(u - v)/2`. `roots` would write `v` as `-p/(3*u)`.
+    `_real_cube_root` keeps negative radicands from being taken on the complex
+    principal branch.
     """
     if polynomial.degree() != 3 or polynomial.domain not in (sp.ZZ, sp.QQ):
         return None
@@ -493,8 +407,8 @@ def _cardano_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
     if u is None or v is None:
         return None
     mean = shift - (u + v) / 2
-    # The imaginary part has the coefficients of `u - v` taken out, which is how it
-    # simplifies again: `SQRT(3)*#i*(U - V)/4` rather than `SQRT(3)*#i*(U/2 - V/2)/2`.
+    # Pull the coefficients of `u - v` out of the imaginary part, as simplification
+    # would: `SQRT(3)*#i*(U - V)/4` rather than `SQRT(3)*#i*(U/2 - V/2)/2`.
     terms = sp.Add.make_args(u - v)
     coefficients = [term.as_coeff_Mul()[0] for term in terms]
     numerator = math.gcd(0, *(k.p for k in coefficients))
@@ -505,14 +419,11 @@ def _cardano_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
 
 
 def _real_cube_root(value: sp.Basic) -> sp.Basic | None:
-    """The real cube root of `alpha + beta*SQRT(m)`, for rational `alpha` and `beta`,
-    as a person writes it, or None for a value of any other shape.
+    """The real cube root of `alpha + beta*SQRT(m)` for rational `alpha` and `beta`, in
+    natural form, or None.
 
-    A negative value's root is the negation of its negation's, and the value's
-    denominator comes out of the root with integer coefficients left inside it:
-    `(-SQRT(5) - 1)/2` has the root `-(4*SQRT(5) + 4)^(1/3)/2`. A cube that divides
-    every coefficient inside comes out too, `(16*SQRT(5) + 16)^(1/3)` being
-    `2*(2*SQRT(5) + 2)^(1/3)`.
+    The sign and denominator are pulled out, as are cube factors: `(-SQRT(5) - 1)/2`
+    has the root `-(4*SQRT(5) + 4)^(1/3)/2`.
     """
     alpha, surd = value.as_coeff_Add()
     beta, radical = surd.as_coeff_Mul()
@@ -541,13 +452,10 @@ def _real_cube_root(value: sp.Basic) -> sp.Basic | None:
 def _inverted(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     """What `solve` finds where `solveset` gives up, or None.
 
-    `solveset` has no Lambert W inversion and `solve` has, so `x*#e^x = 1` is
-    `LAMBERTW(1)` from the one and a condition set from the other. `solve` keeps to the
-    variable's assumptions, which for an authored variable means real, and it then
-    answers on both real branches where there are two: `x = LN(x) + 2` has both its
-    roots. That makes an empty answer "no real solution" rather than "no solution", so
-    it is not taken for one; nor is a solution with a head the notation has no word for,
-    or one that does not check out when put back into the equation.
+    `solve` can invert Lambert W (`x*#e^x = 1`), and answers on both real branches. It
+    respects the variable's real assumption, so an empty answer means only "no real
+    solution" and isn't accepted; nor are inexpressible solutions or ones that don't
+    check out.
     """
     try:
         found = sp.solve(residual, variable)
@@ -561,10 +469,9 @@ def _inverted(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
 
 
 def _satisfies(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
-    """Whether `value` is proved to make `residual` vanish, by simplifying what it
-    leaves, with the identities of the Lambert W function written out first where
-    simplifying does not see them, as it does not that the logarithm of
-    `-LAMBERTW(-#e^(-2), -1)` undoes it."""
+    """Whether substituting `value` is proved to make `residual` vanish, applying Lambert
+    W identities that simplification misses.
+    """
     try:
         left = residual.subs(variable, value)
         if sp.simplify(left).is_zero is True:
@@ -577,12 +484,13 @@ def _satisfies(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool
 
 
 def _unwound(expression: sp.Basic) -> sp.Basic:
-    """The expression with its powers written as exponentials, `#e^(k*W)` written
-    `(z/W)^k` for an integer `k`, and `LN(c*W)` written `LN(c*z) - W`, for `W` a branch
-    of `LAMBERTW(z)`, `c` 1 or -1 and `c*W` real and positive, or `c` 1 and `W` real:
-    `W*#e^W` is `z` on every branch, and for a real `W` the principal logarithms of
-    the two sides agree. Two rounds, the exponential of a logarithm being reached once
-    the logarithm is written out."""
+    """The expression with Lambert W identities applied, for `W` a branch of
+    `LAMBERTW(z)`.
+
+    `#e^(k*W)` becomes `(z/W)^k`, and `LN(c*W)` becomes `LN(c*z) - W` where `c*W` is
+    real and positive or `c` is 1 and `W` real, since `W*#e^W` is `z` on every branch.
+    Two rounds, since rewriting a logarithm can expose an exponential of it.
+    """
 
     def exponential(call: sp.exp) -> sp.Basic | None:
         multiple, branch = sp.expand(call.args[0]).as_coeff_Mul()
@@ -614,15 +522,10 @@ def _unwound(expression: sp.Basic) -> sp.Basic:
 
 
 def _fails(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
-    """Whether putting `value` back into `residual` provably leaves it nonzero.
+    """Whether substituting `value` into `residual` provably leaves it nonzero.
 
-    A solver that combines logarithms solves `LN(x) + LN(x - 1) = LN(6)` as
-    `x*(x - 1) = 6`, and so offers -2 as well as 3. But `LN(-2) + LN(-3)` is
-    `LN(6) + 2*pi*#i`, the principal logarithms of the two negative numbers each
-    carrying `pi*#i`, and -2 is no solution. Each candidate is therefore put back,
-    the principal branch being the one every function is taken on, and the result
-    simplified. Only a decided answer drops one: a value with a parameter left in it
-    is kept, and so is one whose result is not proved nonzero.
+    Combining logarithms turns `LN(x) + LN(x - 1) = LN(6)` into `x*(x - 1) = 6`,
+    offering the false solution -2. Only decided results drop a candidate.
     """
     try:
         left = residual.xreplace({variable: value})
@@ -636,10 +539,8 @@ def _fails(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
 def _divides_by_zero(
     divisors: tuple[sp.Basic, ...], variable: sp.Symbol, value: sp.Basic
 ) -> bool:
-    """Whether `value` provably makes one of the equation's divisors zero.
-
-    The divisors are those of the equation as written, and the symbol in them is
-    found by name, which is how a variable is known on either side of Simplify.
+    """Whether `value` provably zeros one of the equation's divisors. The variable is
+    matched by name, which identifies it across Simplify.
     """
     for divisor in divisors:
         try:
@@ -658,12 +559,8 @@ def _divides_by_zero(
 
 
 def _cancels(residual: sp.Basic, variable: sp.Symbol) -> bool:
-    """Whether `residual` is a rational function of `variable` that is zero once its
-    terms are brought over one denominator, which makes the equation an identity.
-
-    `1/(x - 1) + 1 = x/(x - 1)` holds wherever both sides are defined, and solveset
-    answers it with the empty set; like `(x^2 - 1)/(x - 1) = x + 1`, it solves to an
-    arbitrary value.
+    """Whether `residual` is a rational function that cancels to zero, making the equation
+    an identity, like `1/(x - 1) + 1 = x/(x - 1)`, which solveset says has no solution.
     """
     try:
         return bool(residual.is_rational_function(variable)) and sp.cancel(residual) == 0
@@ -672,7 +569,7 @@ def _cancels(residual: sp.Basic, variable: sp.Symbol) -> bool:
 
 
 def _polynomial(residual: sp.Basic, variable: sp.Symbol) -> sp.Poly | None:
-    """`residual` as a polynomial in `variable`, or None where it is not one."""
+    """`residual` as a polynomial in `variable`, or None if it isn't one."""
     try:
         return sp.Poly(residual, variable)
     except Exception:
@@ -686,12 +583,8 @@ def _entries(
     constants: _Constants,
     admissible: Callable[[sp.Basic], bool] = lambda value: True,
 ) -> tuple[sp.Basic, ...] | None:
-    """The relations one solution set is written as, in a stable order.
-
-    The values `admissible` turns down are left out. A set that is a range, which
-    an equation in `ABS` can solve to, is written as the inequalities saying so.
-    None where the set is one no finite list of relations describes, which is
-    the residual equation's case.
+    """A solution set as relations in a stable order, omitting values `admissible`
+    rejects, or None if no finite list of relations describes it.
     """
     if _is_everything(found):
         return (_equated(variable, constants.fresh(), context),)
@@ -702,13 +595,10 @@ def _entries(
 
 
 def _members(found: sp.Set) -> list[sp.Basic] | None:
-    """What a solution set holds, as a finite list of values, or None.
+    """The members of a solution set as a finite list, or None.
 
-    A periodic equation's answer is an image of the integers, and there is no
-    notation for one: Derive has no `x = 2*pi*n` and neither have we. What is
-    written instead is one representative per solution family, taken at the
-    index nearest the origin, which is the finite sample the original prints -
-    minus its redundancies, since each family contributes exactly once.
+    Solution families (images of the integers) have no notation, so each contributes
+    one representative near the origin.
     """
     if found is sp.S.EmptySet:
         return []
@@ -731,21 +621,11 @@ def _members(found: sp.Set) -> list[sp.Basic] | None:
 
 
 def _remaining(inside: sp.Set, excluded: sp.Set) -> list[sp.Basic] | None:
-    """The members of `inside` that are not provably members of `excluded`.
+    """The members of `inside` that aren't provably members of `excluded`.
 
-    `SOLVE(1 - 2*m/r = 0, r)` is what this is here for: sympy answers
-    `Complement({2*m}, {0})`, because dividing by `r` is only allowed where `r`
-    is not zero, and `2*m` is zero for one value of `m`. Dropping a candidate
-    needs proof that it is excluded, and there is none here - `m` is an
-    undeclared parameter, and an undecidable case is not an exclusion - so
-    `2*m` stands and the answer is the original's own `r = 2*m`. Nothing is
-    papered over by that: with `m` literally zero the residual is the constant
-    1, sympy answers with the empty set, and no solution is offered at all.
-
-    Only a finite `inside` is read this way. The complement of a solution
-    family is a set no finite list of relations describes - removing one member
-    of `2*pi*n` leaves the rest, and there is no notation for the rest - so
-    None is the answer there, and the residual equation is what gets appended.
+    For `SOLVE(1 - 2*m/r = 0, r)` sympy answers `Complement({2*m}, {0})`. Undecidable
+    isn't excluded, so the answer is the original's `r = 2*m`. Only finite sets are
+    handled; a family minus a member has no notation.
     """
     if not isinstance(inside, sp.FiniteSet) or not isinstance(excluded, sp.FiniteSet):
         return None
@@ -753,32 +633,23 @@ def _remaining(inside: sp.Set, excluded: sp.Set) -> list[sp.Basic] | None:
 
 
 def _provably_holds(excluded: sp.Set, value: sp.Basic) -> bool:
-    """Whether `excluded` provably holds `value`, undecided counting as no.
-
-    Sympy's own membership test answers with a boolean where it knows and with
-    an undecided `Contains` or equation where it does not, and only the boolean
-    true is proof.
-    """
+    """Whether `excluded` provably contains `value`; only sympy's boolean true counts."""
     try:
         return excluded.contains(value) is sp.true
     except Exception:
         return False
 
 
-#: The indices a family is sampled at, nearest the origin first. Two periods
-#: each way is enough to find the member nearest zero: no family's own step is
-#: bigger than its period, so a third would only ever be further out.
+#: The indices at which a family is sampled, nearest the origin first. Two periods each
+#: way suffice to find the member nearest zero: no family's step exceeds its period, so
+#: a third would only be further out.
 _NEARBY = (0, -1, 1, -2, 2)
 
 
 def _representative(family: sp.ImageSet) -> sp.Basic | None:
-    """The member of one solution family nearest the origin.
-
-    Which is what "a finite sample near the origin" comes to, and it is worth
-    the few evaluations: sympy writes the second family of `COS(x) = 1/2` as
-    `2*n*pi + 5*pi/3`, whose index-zero member is `5*pi/3` and whose nearest
-    member is `-pi/3` - the one the original prints. A family whose members are
-    no numbers to compare - `2*n*pi*#i + LN(2)` is one - is sampled at zero.
+    """The member of one solution family nearest the origin, as the original prints it:
+    for `COS(x) = 1/2` that is `-pi/3`, not the index-zero `5*pi/3`. A family that
+    can't be compared numerically is sampled at zero.
     """
     members = []
     for index in _NEARBY:
@@ -792,7 +663,8 @@ def _representative(family: sp.ImageSet) -> sp.Basic | None:
 
 
 def _distance(value: sp.Basic) -> tuple[int, float, int]:
-    """How far from the origin a family member is, ties going to the positive."""
+    """The distance of a family member from the origin, with ties going to the positive
+    one."""
     number = _complex(value)
     if number is None:
         return (1, 0.0, 0)
@@ -800,21 +672,14 @@ def _distance(value: sp.Basic) -> tuple[int, float, int]:
 
 
 def _is_everything(found: sp.Set) -> bool:
-    """Whether the set is every value there is, which is an identity."""
+    """Whether the set contains every value, i.e. the equation is an identity."""
     return found in (sp.S.Complexes, sp.S.Reals, sp.S.UniversalSet)
 
 
 def _unsolved(expression: sp.Basic, context: Context) -> tuple[sp.Basic, ...]:
-    """The residual relation, which is what anything unsolved is worth.
-
-    `COS(x) = x` comes back `COS(x) - x = 0`: no warning, no guess, and an entry
-    that says exactly what was asked without pretending to have answered it.
-    The operator is kept, so an inequality nobody could solve comes back an
-    inequality - moving everything to the left of a `<` does not make it an `=`.
-
-    Where the two sides will not even subtract - a matrix set equal to a
-    number - there is no residual to write, and the relation as it stands says
-    as much as is known about it.
+    """The residual relation, the answer for anything unsolved: `COS(x) = x` comes back as
+    `COS(x) - x = 0`. The operator is kept, and a relation whose sides can't be
+    subtracted is returned as is.
     """
     func = expression.func if isinstance(expression, Relational) else sp.Eq
     try:
@@ -825,11 +690,8 @@ def _unsolved(expression: sp.Basic, context: Context) -> tuple[sp.Basic, ...]:
 
 
 def _unsolvable(expression: sp.Basic, context: Context) -> tuple[sp.Basic, ...]:
-    """The residual form of anything at all, for the paths that give up.
-
-    A system falls back to the vector of its own residual equations rather
-    than to "no solutions found", which would be a lie: not knowing and there
-    being nothing to know are different answers.
+    """The residual form of anything, for code paths that give up. A system gives its
+    vector of residuals, since "no solutions found" would be false.
     """
     equations = equations_of(expression)
     if equations is None:
@@ -849,14 +711,11 @@ def _inequality(
 ) -> tuple[sp.Basic, ...]:
     """`<`, `<=`, `>`, `>=` and `/=`, solved into ranges of the variable.
 
-    A range over one variable is asked for as a set, because a set says
-    plainly what one interval and a union of two look like: one interval is
-    one chained entry `-2 < x < 2`, a union is one entry per piece, and a
-    half-line is a single relation. Anything else - a symbolic bound above
-    all - is reduced instead, and comes back as relations already.
+    A one-variable problem is solved as a set, giving one chained entry per interval.
+    Anything else, such as a symbolic bound, goes to `reduce_inequalities`.
     """
-    # The relations reach here undecided, which is how Simplify assembles one;
-    # the solvers need the evaluated form they build their own answers from.
+    # Relations arrive unevaluated, as Simplify builds them; the solvers need the
+    # evaluated form.
     evaluated = _evaluated(relation)
     if evaluated is sp.true:
         return (_equated(variable, constants.fresh(), context),)
@@ -896,7 +755,7 @@ def _ranges(
     context: Context,
     constants: _Constants,
 ) -> tuple[sp.Basic, ...] | None:
-    """One entry per piece of a solution set, or None where it is no range."""
+    """One entry per piece of a solution set, or None if it isn't a range."""
     if found is sp.S.EmptySet:
         return ()
     if _is_everything(found):
@@ -922,11 +781,8 @@ def _span(
     context: Context,
     constants: _Constants,
 ) -> sp.Basic:
-    """One interval as the relation the original writes it as.
-
-    Two finite ends make the chain `-2 < x < 2`, one end makes a single
-    relation `x > 1`, and neither makes an identity - the inequality holds
-    wherever the variable does.
+    """One interval as a relation: a chain for two finite ends, a single relation for one,
+    and an identity for none.
     """
     low, high = interval.start, interval.end
     below = sp.Lt if interval.right_open else sp.Le
@@ -949,7 +805,7 @@ def _reduced(
     context: Context,
     constants: _Constants,
 ) -> tuple[sp.Basic, ...] | None:
-    """What `reduce_inequalities` answered, as entries with the variable left."""
+    """The answer of `reduce_inequalities`, as entries with the variable on the left."""
     if reduced is sp.true:
         return (_equated(variable, constants.fresh(), context),)
     if reduced is sp.false:
@@ -971,11 +827,8 @@ def _reduced(
 
 
 def _written(relation: Relational, context: Context) -> Relational:
-    """A relation with both sides in the normal form every answer is written in.
-
-    `reduce_inequalities` answers `x >= 3*y/2 - 7/2`, and a sum is written as a
-    rational function of its own primary variable wherever it stands, which is
-    what makes that `x >= (3*y - 7)/2`.
+    """A relation with both sides in normal form, so `x >= 3*y/2 - 7/2` becomes `x >= (3*y
+    - 7)/2`.
     """
     return _relation(
         relation.func,
@@ -994,14 +847,11 @@ def _system(
     constants: _Constants,
     real: bool,
 ) -> tuple[sp.Basic, ...]:
-    """A vector of equations, solved for as many variables as there are of them.
+    """A vector of equations, solved for as many variables as there are equations.
 
-    One entry comes of it whatever the count, and that entry is the solution
-    vector: `[x + y = 3, x - y = 1]` answers `[x = 2, y = 1]`. Variables the
-    user did not choose stay as themselves on the right, which is what makes
-    `[x + y + z = 1, x - y = 0]` solvable for `x` and `y` alone. With `real`, a
-    solution any of whose values is known to have an imaginary component is left
-    out.
+    Each solution is one entry, the solution vector. Unchosen variables stay on the
+    right, so `[x + y + z = 1, x - y = 0]` can be solved for `x` and `y`. With `real`,
+    a solution with any known non-real value is dropped.
     """
     joined = InertVector(*equations)
     chosen = _chosen(joined, context, variables, len(equations))
@@ -1035,22 +885,12 @@ def _linear(
     chosen: tuple[sp.Symbol, ...],
     constants: _Constants,
 ) -> list[dict[sp.Symbol, sp.Basic]] | None:
-    """The solution of a system linear in the chosen variables, or None.
+    """The solution of a system linear in the chosen variables, or None if `linsolve`
+    rejects it. An empty list means the system is inconsistent.
 
-    An empty list is a consistent answer - the system is inconsistent and has
-    no solutions - and None means `linsolve` would not take it, which is what
-    sends a system on to the nonlinear route.
-
-    The variables are handed over in reverse, and that is not cosmetic.
-    A singular consistent system has a free variable, `linsolve` leaves the
-    *last* of the variables free, and the original parametrises the *first*:
-    `[x + 3*y = 1, 2*x + 6*y = 2]` is `[x = @1, y = (1 - @1)/3]` and not the
-    other way about. Reversing the list is what puts the freedom where the
-    original puts it.
-
-    Whatever is left free is replaced by a fresh `@n` rather than left as
-    itself, so that an answer says which quantity is arbitrary instead of
-    reading as an equation the variable still appears in.
+    The variables are passed in reverse because `linsolve` leaves the last one free and
+    the original parametrizes the first: `[x + 3*y = 1, 2*x + 6*y = 2]` is `[x = @1, y
+    = (1 - @1)/3]`. Free variables become fresh `@n` constants.
     """
     try:
         found = sp.linsolve(residuals, list(reversed(chosen)))
@@ -1076,12 +916,8 @@ def _linear(
 def _nonlinear(
     residuals: list[sp.Basic], chosen: tuple[sp.Symbol, ...]
 ) -> list[dict[sp.Symbol, sp.Basic]] | None:
-    """A system `linsolve` refused, as far as `solve` will take it.
-
-    Beyond the original, which handles only systems linear in the solution
-    variables and refers the rest to a manual five-step recipe. An empty answer
-    is read as "nothing found" rather than as "no solutions": `solve` says the
-    same thing either way, and claiming there are none would be a guess.
+    """A system `linsolve` refused, solved as far as `solve` can, beyond what the original
+    handles. An empty answer means "nothing found", not "no solutions".
     """
     try:
         found = sp.solve(residuals, list(chosen), dict=True)
@@ -1102,14 +938,11 @@ def _numeric(
     high: sp.Basic,
     context: Context,
 ) -> tuple[sp.Basic, ...]:
-    """Every real root inside `[low, high]`, as Approximate precision wants them.
+    """Every real root in `[low, high]`, for Approximate precision.
 
-    Better than the original where it costs nothing: Derive returns one root
-    even when the interval holds several, and a polynomial's roots can all be
-    had at once. Anything else is bracketed by a scan for a sign change and
-    then bisected, which finds one root and says so by finding only one; where the
-    interval is infinite that search is `_unbounded`'s, and where it finds nothing
-    the equation stands unsolved rather than claimed to have no root.
+    Unlike Derive, all of a polynomial's roots are returned. Anything else is bracketed
+    by a sign-change scan and bisected, finding one root; an infinite interval goes to
+    `_unbounded`, and if that finds nothing the equation is returned unsolved.
     """
     if _polynomial(residual, variable) is None and not _finite(low, high):
         found = _unbounded(residual, variable, low, high, context)
@@ -1129,8 +962,8 @@ def _real_roots(
 ) -> list[sp.Basic]:
     polynomial = _polynomial(residual, variable)
     if polynomial is not None:
-        # Each distinct root once, its multiplicity collapsed as the exact path
-        # collapses it: `(x - 1)^2` has the one solution 1.
+        # Each distinct root once, collapsing multiplicity as the exact path does:
+        # `(x - 1)^2` has the single solution 1.
         try:
             found = [root for root, _ in polynomial.real_roots(multiple=False)]
         except Exception:
@@ -1155,13 +988,10 @@ def _unbounded(
     high: sp.Basic,
     context: Context,
 ) -> tuple[sp.Basic, ...] | None:
-    """A root in an interval with an infinite end, or None where none turned up.
+    """A root in an interval with an infinite end, or None.
 
-    A scan cannot cover an infinite interval, so this searches a finite window of
-    it that doubles as Mixed mode's search does, from `_REACH` out to `_REACH_CAP`:
-    about the origin where both ends are infinite, and reaching away from the
-    finite end where one is. Finding nothing proves nothing about the rest of the
-    interval, which is why that answer is None and not the empty tuple.
+    This searches a doubling window like Mixed mode's, from `_REACH` to `_REACH_CAP`.
+    Finding nothing proves nothing, hence None rather than an empty tuple.
     """
     first, last = _number(low), _number(high)
     if first is None or last is None or not first < last:
@@ -1183,12 +1013,8 @@ def _unbounded(
 
 
 def _approximate(root: sp.Basic, context: Context) -> sp.Basic:
-    """A root as the approximate number it is: the simplest rational showing it.
-
-    Which is what every other approximate number in the engine is, so a root
-    found numerically prints the way an approximated constant prints -
-    `-1.16730` at six digits, cut rather than rounded up, and written in
-    whatever style the precision mode selected.
+    """A root as the simplest rational with its digits, like every approximate number, so
+    it prints like one: `-1.16730` at six digits, truncated.
     """
     digits = context.precision_digits
     return simplest_rational(root.evalf(digits + GUARD), digits)
@@ -1202,7 +1028,7 @@ def _within(root: sp.Basic, low: sp.Basic, high: sp.Basic) -> bool:
 
 
 def _number(value: sp.Basic) -> float | None:
-    """`value` as a real float, or None where it is not one."""
+    """`value` as a real float, or None if it isn't real."""
     try:
         found = complex(sp.sympify(value).evalf())
     except Exception:
@@ -1219,11 +1045,8 @@ def _bracketed(
     high: sp.Basic,
     context: Context,
 ) -> sp.Basic | None:
-    """One root of `residual` in `[low, high]`, found by a scan and a bisection.
-
-    The scan is what makes the bisection honest: bisecting an interval whose
-    ends do not straddle a root finds nothing, and one that holds several roots
-    has to be cut small enough for one of them to be alone in a piece.
+    """One root of `residual` in `[low, high]`, found by scanning and bisection. The scan
+    finds a piece whose ends straddle a single root.
     """
     first, last = _number(low), _number(high)
     if first is None or last is None or not first < last:
@@ -1237,8 +1060,8 @@ def _bracketed(
         if value is None:
             previous = None
             continue
-        # A value too small for a float is 0.0 without being zero: `#e^x` far
-        # out to the left is no root.
+        # A value too small for a float is 0.0 without being zero: `#e^x` far to
+        # the left is not a root.
         if value == 0.0 and _vanishes(evaluated):
             return _approximate(sp.Float(point), context)
         if previous is not None and (previous < 0) != (value < 0):
@@ -1270,12 +1093,8 @@ def _bisect(
 def _searched(
     residual: sp.Basic, variable: sp.Symbol, context: Context
 ) -> tuple[sp.Basic, ...] | None:
-    """Mixed mode's own last resort: look for a real root, reaching further.
-
-    The manual has Mixed searching `[-10, 10]` and doubling the interval until
-    something turns up. The cap is ours: a search that has reached sixty-five
-    thousand and found nothing is not going to, and the residual equation is a
-    better answer than a computation that will not stop.
+    """Mixed mode's last resort: search `[-10, 10]` and double until a real root turns up,
+    as the manual describes. The cap is ours.
     """
     reach = _REACH
     while reach <= _REACH_CAP:
@@ -1288,16 +1107,16 @@ def _searched(
     return None
 
 
-# -- writing an answer down --------------------------------------------------
+# -- formatting answers -------------------------------------------------------
 
 
 def _equated(variable: sp.Symbol, value: sp.Basic, context: Context) -> sp.Basic:
-    """`x = value`, with the value written the way every answer is written."""
+    """`x = value`, with the value in normal form like every answer."""
     return _relation(sp.Eq, variable, normal_form(value, context.order))
 
 
 def _relation(func, left: sp.Basic, right: sp.Basic) -> sp.Basic:
-    """A relation assembled undecided, as the engine assembles every relation."""
+    """A relation built unevaluated, as the engine builds every relation."""
     try:
         return func(left, right, evaluate=False)
     except Exception:
@@ -1307,11 +1126,8 @@ def _relation(func, left: sp.Basic, right: sp.Basic) -> sp.Basic:
 def _answers(
     variable: sp.Symbol, values: Iterable[sp.Basic], context: Context
 ) -> tuple[sp.Basic, ...]:
-    """`x = value` for each distinct value, in the order `_ordered` gives.
-
-    Values that differ as written can be the same number once written down:
-    `solveset` answers `x^(1/3)/3 + 3/x^(1/3) = 1` with the cubes of a conjugate
-    pair, and both are -27. So repeats are dropped again after the writing.
+    """`x = value` for each distinct value, in `_ordered` order. Duplicates are removed
+    again after normalization, since different-looking values can be equal.
     """
     written: list[sp.Basic] = []
     for value in _ordered(values):
@@ -1322,13 +1138,8 @@ def _answers(
 
 
 def _tidied(value: sp.Basic) -> sp.Basic:
-    """`value` in the plainer of two spellings a solver can leave it in.
-
-    A square root of a product of sums is the root of their expanded product
-    where that is no longer: `roots` writes `SQRT(-(x + r)*(x - r))` for what is
-    `SQRT(r^2 - x^2)`. And a negated quotient over a negative number is the
-    quotient of the two negations, `LN(3)/(LN(3) - LN(2))` rather than
-    `-LN(3)/(LN(2) - LN(3))`. Each is the same number either way.
+    """`value` in the plainer of two forms a solver may produce: `SQRT(r^2 - x^2)` for
+    `SQRT(-(x + r)*(x - r))`, and `LN(3)/(LN(3) - LN(2))` for `-LN(3)/(LN(2) - LN(3))`.
     """
     try:
         value = value.replace(_factored_radicand, _expanded_radicand)
@@ -1374,11 +1185,8 @@ def _unnegated(value: sp.Basic) -> sp.Basic:
 
 
 def _ordered(values: Iterable[sp.Basic]) -> list[sp.Basic]:
-    """The solutions in the order they are appended: reals up, then the rest.
-
-    The original's order is its solver's accident - `x^2 - 5*x + 6` comes out
-    ascending and `x^2 - 4` comes out `2, -2` - so there is nothing to be
-    faithful to and something to gain from being predictable.
+    """The solutions in output order: reals ascending, then the rest. The original's order
+    is accidental, so predictability wins.
     """
     seen: list[sp.Basic] = []
     for value in values:
@@ -1393,28 +1201,24 @@ def _rank(value: sp.Basic) -> tuple[int, float, float, object]:
         return (2, 0.0, 0.0, sp.default_sort_key(value))
     if not number.imag:
         return (0, number.real, 0.0, ())
-    # Round the circle from the positive real axis, the conjugate with the
-    # positive part first, which is how the original prints a pair: `x = #i`
-    # and then `x = -#i`. The angle is rounded so that a pair whose angles
-    # differ in the last bit of their evaluation still sorts as a pair.
+    # Sort by angle from the positive real axis, with the positive-imaginary conjugate
+    # first, as the original prints a pair: `x = #i`, then `x = -#i`. The angle is
+    # rounded so a pair differing in the last bit still sorts together.
     angle = round(abs(cmath.phase(number)), 9)
     return (1, angle, 0.0 if number.imag > 0 else 1.0, (abs(number),))
 
 
-#: How small an imaginary part is, relative to the number's magnitude, for it to be
-#: taken for evaluation noise. A real root that sympy writes through `#i` terms that
-#: cancel evaluates with an imaginary residue some twenty digits down; one that is
-#: genuinely complex has an imaginary part nowhere near this small.
+#: The imaginary part, relative to the number's magnitude, below which it is taken as
+#: evaluation noise. A real root written with cancelling `#i` terms evaluates with an
+#: imaginary residue some twenty digits down; a genuinely complex one is nowhere near
+#: this small.
 _NOISE = 1e-9
 
 
 def _imaginary(value: sp.Basic) -> bool:
-    """Whether `value` is known to have an imaginary component.
-
-    A number is evaluated, and has one where its imaginary part is more than
-    `_NOISE` of its size. A value with a parameter in it has one only where sympy
-    proves it not real: `SQRT(a)` is real for some `a`, and is no known non-real
-    solution.
+    """Whether `value` is known to have an imaginary component: for a number, an evaluated
+    imaginary part above `_NOISE` of its magnitude; for a parametric value, proved
+    non-real by sympy.
     """
     try:
         if not value.free_symbols:
@@ -1434,11 +1238,11 @@ def _complex(value: sp.Basic) -> complex | None:
         return None
 
 
-# -- reading an expression ---------------------------------------------------
+# -- inspecting expressions ---------------------------------------------------
 
 
 def _elements(expression: sp.Basic) -> list[sp.Basic]:
-    """What a vector holds, or nothing at all where this is no vector."""
+    """The elements of a vector, or an empty list if this isn't a vector."""
     if isinstance(expression, InertVector):
         return list(expression.args)
     if isinstance(expression, sp.MatrixBase) and expression.rows == 1:
@@ -1447,11 +1251,8 @@ def _elements(expression: sp.Basic) -> list[sp.Basic]:
 
 
 def _symbols_of(expression: sp.Basic) -> dict[str, sp.Symbol]:
-    """The expression's own symbols by name, so their declarations survive.
-
-    A variable named on a prompt is a name; the symbol the conversion built
-    for it carries what its domain declaration said, and rebuilding it from
-    the name alone would throw that away.
+    """The expression's symbols by name, so their domain declarations are preserved when
+    the user names a variable.
     """
     return {
         symbol.name: symbol

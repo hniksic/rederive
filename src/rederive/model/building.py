@@ -1,22 +1,16 @@
-"""Build: the operators its menu offers, and the tree each one makes.
+"""The operators of the Build menu, and the tree each one makes.
 
-Build is Author for people who would rather point than type. It takes an
-expression, then an operator, then - for a binary one - another expression,
-and goes on taking operators until Done; what comes out is appended
-unsimplified, exactly as an authored line is. Its whole point is that the
-operands are picked off the screen, so an expression too long to retype, or a
-subexpression buried in one, costs the same three keystrokes as `x`.
+Build is like Author, but operands are picked off the screen rather than typed. It takes
+an expression, then an operator, then (for a binary operator) another expression, and
+repeats until Done. The result is appended unsimplified, like an authored line.
 
-The list is the original's, in the original's order, and it is not the list of
-everything the grammar can write: it is the handful of operators worth a
-keystroke. Anything else is quicker to author.
+The operator list is the original's, in its order: just the few operators worth a menu
+entry, not everything the grammar supports.
 
-Nothing here computes. Each operator says how to hang two trees, or one, off a
-new node, and what the status line calls the result - `#1+#2` for a sum of two
-entries, `SIN(#1)` for a sine of one, `User` standing in for an operand that
-was typed rather than pointed at. The spans of what is built index nothing,
-because a built expression is written out and read back before it becomes an
-entry, the way every derived expression is.
+Each operator builds a new node from one or two trees and provides the status line's
+annotation of the result: `#1+#2`, `SIN(#1)`, or `User` for an operand that was typed.
+Spans of built nodes are meaningless, because the built expression is written out and
+reparsed before it becomes an entry.
 """
 
 from __future__ import annotations
@@ -26,11 +20,11 @@ from dataclasses import dataclass
 
 from rederive.model.expr import Kind, Node
 
-#: The `1` of `Recip`, which is the one operand no operator is given.
+#: The `1` in `Recip`'s `1/u`.
 ONE = Node(Kind.NUMBER, 0, 0, (), "1")
 
-#: What the operator menu's last word is called. Not an operator: it says that
-#: what has been built is finished with.
+#: The last word of the operator menu, which finishes building rather than applying
+#: an operator.
 DONE = "Done"
 
 
@@ -38,10 +32,9 @@ DONE = "Done"
 class Operator:
     """One word of the Build operator menu.
 
-    `arity` is how many operands it takes, and so whether choosing it asks for
-    another expression. `annotation` is how the status line spells the result:
-    a binary operator writes itself between its operands, and a unary one
-    writes itself around its one, whether it is a function name or a sign.
+    `arity` is the number of operands, which determines whether choosing it asks for
+    another expression. `annotation` is a format string for the status line's
+    description of the result.
     """
 
     word: str
@@ -54,7 +47,7 @@ class Operator:
 
 
 def _sum(sign: str) -> Callable[[Node, Node], Node]:
-    """`u + v` or `u - v`, which is one run of two terms with a sign between."""
+    """Build `u + v` or `u - v`, a two-term `SUM`."""
     return lambda left, right: Node(Kind.SUM, 0, 0, (left, right), sign)
 
 
@@ -89,18 +82,17 @@ def _call(name: str) -> Callable[[Node], Node]:
 
 
 def _binary(word: str, build: Callable[[Node, Node], Node]) -> Operator:
-    """An operator that writes itself between its two operands."""
+    """Return an infix operator."""
     return Operator(word, 2, build, "{0}" + word + "{1}")
 
 
 def _function(word: str) -> Operator:
-    """A named function of one operand, invoked and annotated by that name."""
+    """Return a one-argument function call operator."""
     return Operator(word, 1, _call(word.upper()), word.upper() + "({0})")
 
 
-#: The operator menu, in the original's order. The four that are neither a
-#: function name nor an infix symbol are the interesting ones: `Minus` negates,
-#: `Recip` writes `1/u`, and the two symbols beside them are postfix.
+#: The operator menu, in the original's order. `Minus` negates, `Recip` builds `1/u`,
+#: and the backquote, `!` and `%` are postfix.
 OPERATORS: tuple[Operator, ...] = (
     _binary("+", _sum("+")),
     _binary("-", _sum("-")),
@@ -122,12 +114,12 @@ OPERATORS: tuple[Operator, ...] = (
     Operator("%", 1, _postfix("%"), "%({0})"),
 )
 
-#: The words the menu shows, which are the operators and then `Done`.
+#: The menu's words: the operators, then `Done`.
 WORDS: tuple[str, ...] = tuple(operator.word for operator in OPERATORS) + (DONE,)
 
 _BY_WORD = {operator.word: operator for operator in OPERATORS}
 
 
 def operator(word: str) -> Operator | None:
-    """The operator `word` names, or None for `Done`, which is not one."""
+    """Return the operator named `word`, or None for `Done`."""
     return _BY_WORD.get(word)

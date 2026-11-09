@@ -1,18 +1,13 @@
-"""The dark chrome the plot windows wear, in one place.
+"""The dark styling of the plot windows' chrome.
 
-The canvas has always been near-black. Everything around it - the toolbar, the
-fields, the menus, the status line, the dialogs - came from whatever the
-desktop's own theme happened to be, which put a bright frame around a dark
-picture and made the window look like two programs. These are the colors that
-frame it instead, and `dress` is the one call that puts them on an application:
-one style sheet, one palette, and every window the host opens is inside it.
+The toolbar, fields, menus, status line and dialogs are styled dark to match the
+near-black canvas, rather than following the desktop theme. `dress` applies the style
+sheet and palette to the application, covering every window the host opens.
 
-What is here is furniture. The curve palette is not: what a curve is drawn in
-is the picture's own business and lives with the picture, in `window2d`.
+This covers only the chrome; the curve palette is in `plot.model`.
 
-The module is deliberately free of the toolkit at import time, since the host
-imports it before it knows whether there is a toolkit to import at all; every
-function here reaches for Qt when it is called.
+The module doesn't import Qt at import time, since the host imports it before knowing
+whether Qt is available; functions import Qt when called.
 """
 
 from __future__ import annotations
@@ -21,26 +16,24 @@ from typing import Any
 
 __all__ = ["dangerous", "dress", "divider", "field", "monospace"]
 
-#: The bar the controls stand on, and the hairline that ends it.
+#: The toolbar background and its bottom border.
 CHROME = "#131318"
 CHROME_EDGE = "#23232b"
 
-#: A field the keyboard can reach: its inset ground, its edge, and its ink.
+#: Input fields: background, border and text.
 FIELD = "#191920"
 FIELD_EDGE = "#2b2b34"
 FIELD_TEXT = "#d5d9e0"
 
-#: The three weights the chrome writes in: a control's own text, the label
-#: beside one, and the dimmest, which names a number rather than saying
-#: anything.
+#: Text colors: control text, its hover color, labels, and the dimmest, for disabled
+#: items.
 TEXT = "#b6bcc7"
 TEXT_OVER = "#dde3ec"
 MUTED = "#7d8595"
 DIM = "#6d7482"
 
-#: The one accent, and what a control that is *on* is filled, edged and
-#: written in. One color for the whole program, so that "this is on" reads the
-#: same wherever it is said.
+#: The single accent color, and the fill, border and text of controls that are on, so
+#: "on" looks the same everywhere.
 ACCENT = "#65b2f1"
 ACCENT_FILL = "rgba(101, 178, 241, 0.14)"
 ACCENT_EDGE = "rgba(101, 178, 241, 0.55)"
@@ -49,50 +42,41 @@ ACCENT_FILL_OVER = "rgba(101, 178, 241, 0.22)"
 ACCENT_EDGE_OVER = "rgba(101, 178, 241, 0.75)"
 FIELD_EDGE_OVER = "#3b414e"
 
-#: The status line: its ground, the hairline above it, the voice it speaks in,
-#: and the brighter ink the pointer readout puts its numbers in.
+#: The status line: background, top border, text, and the brighter pointer readout.
 STATUS = "#101015"
 STATUS_EDGE = "#1f1f27"
 STATUS_TEXT = "#8d93a0"
 READOUT = "#d7dbe3"
 
-#: What a control that throws something away turns into under the pointer. It
-#: is the only warm color in the window, and it is never shown until the
-#: pointer is actually on the control.
+#: Hover colors of destructive controls, the only warm color in the window, shown only
+#: under the pointer.
 DANGER_EDGE = "#7c3f42"
 DANGER_TEXT = "#e2a1a1"
 DANGER_FILL = "rgba(224, 110, 110, 0.07)"
 
-#: The floating card a legend is drawn as, and the wash a row takes under the
-#: pointer. The wash is written twice because it is read twice: once by the
-#: style sheet, which wants a string, and once by a painter, which wants four
-#: numbers.
+#: The legend card and its row hover color. The hover color is an RGBA tuple, since a
+#: painter rather than the style sheet uses it.
 CARD = "rgba(17, 17, 23, 0.88)"
 CARD_EDGE = "rgba(255, 255, 255, 0.07)"
 CARD_ROW_OVER = (255, 255, 255, 18)
 CARD_RADIUS = 9
 
-#: The same card for the white background every image export is taken on, so
-#: that a legend of paper colors is read on paper rather than on the dark.
+#: The legend card for image exports, which use a white background.
 CARD_PAPER = "rgba(255, 255, 255, 0.90)"
 CARD_PAPER_EDGE = "rgba(0, 0, 0, 0.12)"
 CARD_PAPER_ROW_OVER = (0, 0, 0, 18)
 
-#: The object names the sheet knows a control by. A `clear` is the destructive
-#: one, a dialog's `Apply` is the accented one, and a divider is the hairline
-#: between two groups of controls: three selectors rather than three widgets
-#: carrying styles of their own.
+#: Object names the style sheet selects on: destructive controls (`clear`), a dialog's
+#: primary button (`Apply`), and dividers between groups of toolbar controls.
 DANGER = "danger"
 PRIMARY = "primary"
 DIVIDER = "divider"
 
-#: How tall the hairline between two groups of controls stands, before the
-#: sheet's own margin takes a few pixels off either end of it.
+#: Divider height, before the style sheet's margin trims both ends.
 DIVIDER_LENGTH = 22
 
-#: How round a chip is drawn. Large enough to be a pill at the height a
-#: toolbar button comes out at, and a plain number rather than the 999 the
-#: trick is usually written with, because Qt draws the corner it is given.
+#: Toolbar button corner radius, which makes a pill shape at the button's height. (The
+#: usual 999 trick doesn't work, since Qt draws the radius literally.)
 PILL_RADIUS = 11
 
 STYLESHEET = f"""
@@ -204,14 +188,11 @@ QToolTip {{
 
 
 def dress(application: Any) -> None:
-    """Put the dark chrome on an application, once, before it opens a window.
+    """Apply the dark styling to the application, before any window opens.
 
-    The style sheet is the whole of the design and the palette is the safety
-    net under it: a scroll bar, a spin box arrow or a menu tick that no
-    selector here names still has to be dark, because it is drawn beside things
-    that are. Fusion is asked for by name for the same reason - it is the one
-    style that takes a palette everywhere, where a native theme paints its own
-    colors over half of it.
+    The style sheet does most of the work; the palette covers elements it doesn't name,
+    such as scroll bars, spin box arrows and menu ticks. Fusion is selected because it
+    respects the palette everywhere, unlike native themes.
     """
     from pyqtgraph.Qt import QtGui
 
@@ -245,13 +226,10 @@ def dress(application: Any) -> None:
 
 
 def divider(vertical: bool = True) -> Any:
-    """The hairline between two groups of controls on a toolbar.
+    """A thin divider between groups of toolbar controls.
 
-    A separator that is a widget rather than a `QToolBar` separator, because
-    the stock one is drawn by the style and this one is drawn by the sheet:
-    one pixel of the chrome's edge color, standing clear of both groups. It is
-    given a size of its own, since an empty frame in a bar's layout is a frame
-    of no width and no height at all.
+    A widget rather than a `QToolBar` separator, so the style sheet can draw it. It is
+    given an explicit size, since an empty frame would otherwise have none.
     """
     from pyqtgraph.Qt import QtWidgets
 
@@ -264,21 +242,18 @@ def divider(vertical: bool = True) -> Any:
     return line
 
 
-#: The class `field` hands out, made on its first call and kept. A widget class
-#: cannot be written at module scope here - that would want the toolkit at
-#: import time - and one class per field would be one class per window.
+#: The field class, created on the first call to `field`, since defining it at module
+#: scope would import Qt.
 _FITTED: Any = None
 
 
 def field(width: int) -> Any:
-    """One number a person types, `width` pixels across and right-aligned.
+    """A right-aligned numeric input field, `width` pixels wide.
 
-    A field too narrow for what is in it has to say so. Qt scrolls such a text
-    to its end, which on a right-aligned field leaves `.14159` of `-3.14159`:
-    the sign and the whole number are gone and what is left reads as a
-    different number altogether. So the text is elided at its end instead, and
-    the whole of it comes back the moment the field takes the keyboard - what
-    is edited is always the value and never the elision of it.
+    Qt scrolls text too long for the field to its end, so `-3.14159` might show as
+    `.14159`, which reads as a different number. Instead, the text is elided at the end,
+    and the full text returns when the field gets focus, so the value itself is always
+    what is edited.
     """
     from pyqtgraph.Qt import QtCore, QtWidgets
 
@@ -286,12 +261,11 @@ def field(width: int) -> Any:
     if _FITTED is None:
 
         class Fitted(QtWidgets.QLineEdit):
-            """A field that elides what it cannot show, and knows what it holds."""
+            """A line edit that elides text it can't show, but keeps the full text."""
 
             def __init__(self) -> None:
                 super().__init__()
-                #: The text in full, which is what the field is worth however
-                #: much of it is on show, and whether it is showing less.
+                #: The full text, and whether the shown text is elided.
                 self._full = ""
                 self._short = False
 
@@ -309,17 +283,15 @@ def field(width: int) -> Any:
                 super().focusInEvent(event)
 
             def keyPressEvent(self, event: Any) -> None:
-                # Nothing is ever typed into an elision. Taking the keyboard is
-                # what normally puts the whole text back, and this is the net
-                # under a key that reaches the field some other way.
+                # Never type into elided text. Focus normally restores the full
+                # text, but a key can arrive without focus.
                 self._whole()
                 super().keyPressEvent(event)
 
             def focusOutEvent(self, event: Any) -> None:
-                # Whatever was typed is the value now, and it is taken before
-                # the event goes any further: `editingFinished` is emitted from
-                # inside it, and what the handler reads has to be that text and
-                # not the elision this ends with.
+                # Store the typed text before passing the event on, since
+                # `editingFinished` is emitted from inside it and its handler must
+                # read the full text, not the elision.
                 self._full = super().text()
                 self._short = False
                 super().focusOutEvent(event)
@@ -330,18 +302,13 @@ def field(width: int) -> Any:
                 self._fit()
 
             def _whole(self) -> None:
-                """Put the text back in full, for a field about to be typed in."""
+                """Restore the full text, before typing."""
                 if self._short:
                     self._short = False
                     super().setText(self._full)
 
             def _fit(self) -> None:
-                """Show as much of the text as there is room for.
-
-                A field being typed in is left alone: what is on show there is
-                the text itself, and the value is whatever the keyboard has
-                made of it rather than the last thing put in.
-                """
+                """Elide the text to fit, unless the field has focus."""
                 if self.hasFocus():
                     return
                 shown = self.fontMetrics().elidedText(
@@ -351,7 +318,7 @@ def field(width: int) -> Any:
                 super().setText(shown)
 
             def _room(self) -> int:
-                """How wide the text may be, which the sheet's padding decides."""
+                """The width available for text, after the style sheet's padding."""
                 option = QtWidgets.QStyleOptionFrame()
                 self.initStyleOption(option)
                 return (
@@ -371,30 +338,23 @@ def field(width: int) -> Any:
 
 
 def dangerous(bar: Any, action: Any) -> None:
-    """Name the button an action is drawn as, so the sheet can warn on it.
-
-    A control that throws the picture away is a control that should say so
-    where the pointer is on it and nowhere else, and the one thing the sheet
-    cannot work out for itself is which control that is.
-    """
+    """Mark an action's toolbar button as destructive, for its warning hover style."""
     button = bar.widgetForAction(action)
     if button is not None:
         button.setObjectName(DANGER)
 
 
 def monospace(size: int = 9) -> Any:
-    """The face numbers that change under the eye are written in.
+    """A fixed-pitch font for numbers that change as the pointer moves.
 
-    A reading whose digits move as the pointer does has to keep its columns
-    still, so this is the fixed-pitch face the platform offers, asked for
-    tabular figures where the toolkit is new enough to ask.
+    Uses tabular figures where supported, so digits stay in their columns.
     """
     from pyqtgraph.Qt import QtGui
 
     font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
     font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
     font.setPointSize(size)
-    try:  # a proportional fallback still owes us aligned columns
+    try:  # aligned digits even if the fallback font is proportional
         font.setFeature("tnum", 1)
     except Exception:  # pragma: no cover - an older toolkit
         pass

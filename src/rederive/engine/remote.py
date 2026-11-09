@@ -1,34 +1,26 @@
-"""The app side of the engine worker: five calls, one pipe, one child process.
+"""The app side of the engine worker: engine calls over a pipe to a child process.
 
-`RemoteEngine` answers the five calls `Session` makes the engine by, so a session
-handed one computes in a child process without knowing it. Each call ships the
-tree, the context and the parse state down a pipe and blocks on the answer, on a
-thread `asyncio.to_thread` lends it: the event loop stays free to repaint, to tick
-the elapsed time, and to hear Esc. Everything under those five calls is written in
-the blocking style that thread is for - a pull-based receive loop with deadlines,
-a resident set polled between reads, a handshake waited out.
+`RemoteEngine` implements the engine calls `Session` uses, so a session given one
+computes in a child process transparently. Each call sends the tree, context and parse
+state over a pipe and blocks for the answer on an `asyncio.to_thread` thread, leaving
+the event loop free to repaint, update the elapsed time, and handle Esc. Everything
+below the calls is blocking code: a receive loop with deadlines, memory polling
+between reads, waiting for the handshake.
 
-Esc is the whole reason for the child. Sympy cannot be politely interrupted
-mid-bignum - there is no cooperative cancellation to ask for - so an abort is
-the process being taken away from under the computation. That makes killing the
-worker an ordinary operation rather than a catastrophe, and it is only ordinary
-because the worker is stateless: the replacement knows everything the dead one
-knew, which is nothing.
+The child process exists for Esc. Sympy has no cooperative cancellation, so aborting
+means killing the process. That is routine because the worker is stateless, so its
+replacement loses nothing.
 
-What every death then comes to is not this module's to decide. It is one path for
-all of them, it is the same path for a worker that is a browser tab's rather than a
-process, and it is `policy` - the three-strikes rule included. What is here is the
-half that cannot travel: spawning, signalling, and reading a pipe.
+How deaths are handled, including the three-strikes rule, is decided in `policy`,
+shared with browser workers. This module has the process-specific part: spawning,
+signaling, and reading a pipe.
 
-The memory cap is enforced from here rather than in the child, because the
-portable answer is to watch from outside. `RLIMIT_AS` is enforced on Linux, is
-famously not enforced on macOS, and does not exist on Windows; the watchdog
-polls the worker's resident set while a request is in flight and works
-everywhere a resident set can be read. Where none can - an environment with no
-psutil, and any environment with no such thing to read - there is no watchdog at
-all rather than one polling for a figure that will never come, and the cap is
-whatever the child's own kernel will enforce. There is deliberately no limit on
-time: Derive users let computations run for hours, and Esc is the time limit.
+The memory cap is enforced by watching from outside, since that is portable:
+`RLIMIT_AS` works on Linux, is ignored on macOS, and doesn't exist on Windows. The
+watchdog polls the worker's resident set during a request. Where it can't be read (no
+psutil, or nothing to read), there is no watchdog, and the cap is whatever the child's
+kernel enforces. There is deliberately no time limit: Derive users let computations
+run for hours, and Esc is the time limit.
 """
 
 from __future__ import annotations
@@ -72,48 +64,40 @@ __all__ = [
     "default_cap",
 ]
 
-#: How much of the machine the worker may hold before it is taken away: half of
-#: physical memory. Generous enough that no legitimate computation meets it -
-#: `10000!` is a megabyte - and small enough that the app, the terminal and the
-#: rest of the system are still there when it does.
+#: The worker's memory cap as a divisor of physical memory, i.e. half. Generous enough
+#: for any legitimate computation (`10000!` is a megabyte), yet leaving room for the
+#: app, terminal and system.
 DEFAULT_CAP_SHARE = 2
 
-#: The cap on a machine that will not say how much memory it has. Two
-#: gigabytes is more than any worksheet needs and less than any desktop has.
+#: The cap when physical memory is unknown. Two gigabytes is more than any worksheet
+#: needs and less than any desktop has.
 DEFAULT_CAP = 2 << 30
 
-#: Seconds between readings of the worker's resident set while a request is in
-#: flight. Often enough to catch a runaway before it hurts, rare enough that
-#: the reading costs nothing next to the computation it is watching.
+#: Seconds between readings of the worker's resident set during a request. Frequent
+#: enough to catch a runaway, rare enough to cost nothing.
 WATCH_PERIOD = 0.5
 
-#: How long to wait for a freshly spawned worker to finish importing sympy.
-#: Generous: a cold filesystem on a loaded machine is slow, and the wait is
-#: abortable anyway.
+#: Seconds to wait for a new worker to finish importing sympy. Generous, since a cold
+#: filesystem on a loaded machine is slow, and the wait is abortable anyway.
 READY_TIMEOUT = 30.0
 
 
 def default_cap() -> int:
-    """Half of physical memory, or a fixed figure where the machine will not say."""
+    """Half of physical memory, or `DEFAULT_CAP` if that is unknown."""
     total = memory.total_bytes()
     return DEFAULT_CAP if total is None else total // DEFAULT_CAP_SHARE
 
 
 class RemoteEngine:
-    """The five engine calls, answered by a child process that can be killed.
+    """The engine calls, answered by a killable child process.
 
-    The calls are awaitable and everything under them blocks, `asyncio.to_thread`
-    being what joins the two. That is the desktop reading of the session's async
-    engine seam, and it is today's semantics to the letter: a thread waits on the
-    pipe, Esc kills the worker, and the waiting call raises the exception naming
-    the cause.
+    The calls are awaitable and everything below them blocks, bridged by
+    `asyncio.to_thread`. A thread waits on the pipe, Esc kills the worker, and the
+    waiting call raises an exception naming the cause.
 
-    One request is in flight at a time, which is what the lock is for: the
-    session is single-threaded and the worker holds nothing between requests,
-    so there is nothing a second concurrent request could be about. `abort`
-    is the exception - it is called from the event loop while the lock is held
-    by whoever is waiting, and it deliberately takes no lock of its own, since
-    a busy worker's cooperation is exactly what it cannot have.
+    The `_call` lock allows one request at a time, which is all a single-threaded
+    session needs. `abort` is called from the event loop while a waiting request
+    holds that lock, so it deliberately doesn't take it.
     """
 
     def __init__(
@@ -125,42 +109,35 @@ class RemoteEngine:
         self.cap = default_cap() if cap is None else cap
         self._period = period
         self._ready_timeout = ready_timeout
-        #: Whether there is a resident set to read, and so a watchdog to run.
-        #: Asked once: an environment does not grow the ability while it runs.
+        #: Whether the resident set can be read, and so whether to run the watchdog.
         self._watching = memory.measures_processes()
-        # Spawn on every platform, never fork: forking a process with a Textual
-        # app's threads and event loop in it is not safe, and one start-up
-        # behaviour everywhere is worth the second of import it costs.
+        # Always spawn, never fork: forking a process with a Textual app's threads and
+        # event loop is unsafe, and consistent startup everywhere is worth the extra
+        # second of imports.
         self._context: BaseContext = multiprocessing.get_context("spawn")
         self._call = threading.Lock()
         self._guard = threading.Lock()
         self._process: BaseProcess | None = None
         self._connection: Connection | None = None
         self._ready = False
-        #: Why we did the killing, when we did. Set before the kill and read by
-        #: the death path, which is what tells an abort from a segfault.
+        #: Why we killed the worker, if we did. Set before the kill and read by the
+        #: death path, to tell an abort from a crash.
         self._reason: EngineError | None = None
-        #: The three-strikes rule and what put the proxy down, which are the
-        #: parts of dying that have nothing to do with a child process.
+        #: The transport-independent death policy (three strikes, down state).
         self._deaths = Deaths()
-        #: How many aborts have been asked for. A call reads it before it
-        #: starts and gives up if it has moved: an Esc pressed while the call
-        #: is still queueing for a worker is as much an abort as one pressed
-        #: while sympy is grinding, and the user must not find the command run
-        #: anyway on the worker that turns up next.
+        #: Number of aborts requested. A call reads it before starting and gives up if
+        #: it changes, so Esc pressed while a call is still queued for a worker aborts
+        #: it rather than letting it run on the next worker.
         self._aborts = 0
         self._stopped = False
         self._number = 0
-        #: How many workers have been spawned. Nothing reads it but the tests,
-        #: which is where respawn policy is worth asserting about.
+        #: Number of workers spawned, used by tests of the respawn policy.
         self.starts = 0
 
     # -- the engine interface ----------------------------------------------
     #
-    # Five awaitable calls over a blocking machine. Each hands `_ask` to a thread
-    # and waits for that thread rather than for the pipe, which is what leaves the
-    # loop free while the answer is being computed: the thread is where the wait
-    # happens, and it is the thread the kill lands under.
+    # Awaitable calls over blocking machinery. Each runs `_ask` on a thread and awaits
+    # the thread, leaving the loop free while the answer is computed.
 
     async def simplify(
         self, node: Node, context: Context, state: ParseState | None = None
@@ -211,17 +188,16 @@ class RemoteEngine:
         return await self._await("relation_of", (node, context))
 
     async def _await(self, method: str, args: tuple[Any, ...]) -> Any:
-        """One request, waited for on a thread of the loop's own pool."""
+        """Run one request on a thread from the loop's pool and await it."""
         return await asyncio.to_thread(self._ask, method, args)
 
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
-        """Put a worker up, and let it import sympy while the user reads the menu.
+        """Start a worker, letting it import sympy in the background.
 
-        Returns as soon as the process exists; the handshake is waited for in
-        the background, so that the first command usually finds a worker that
-        has already paid for its imports.
+        Returns once the process exists; the handshake is awaited in the background,
+        so the first command usually finds a worker with its imports done.
         """
         with self._call:
             self._stopped = False
@@ -230,11 +206,10 @@ class RemoteEngine:
                 self._warm()
 
     def abort(self) -> None:
-        """Take the computation away, there being no way to ask it to stop.
+        """Abort the current computation by killing the worker.
 
-        Called from the event loop while a thread is blocked on the pipe. The
-        reason is recorded first so that the death the kill causes is read as
-        an abort rather than as a crash.
+        Called from the event loop while a thread is blocked on the pipe. The reason
+        is recorded first so the resulting death is reported as an abort, not a crash.
         """
         with self._guard:
             self._aborts += 1
@@ -242,7 +217,7 @@ class RemoteEngine:
         self._kill()
 
     def shutdown(self) -> None:
-        """End the worker for good, which is what leaving the app comes to."""
+        """Stop the worker permanently, on app exit."""
         with self._guard:
             self._stopped = True
         self._kill()
@@ -258,12 +233,10 @@ class RemoteEngine:
     # -- one request -------------------------------------------------------
 
     def _ask(self, method: str, args: tuple[Any, ...]) -> Any:
-        """Send one request and wait for its answer, whatever becomes of it.
+        """Send one request and wait for its answer or the worker's death.
 
-        The abort count is read before the queueing starts, so that an Esc
-        pressed while this call is still waiting - for the lock, or for a
-        worker to finish importing sympy - stops it as surely as one pressed
-        while the answer is being computed.
+        The abort count is read before queueing, so Esc pressed while waiting for the
+        lock or for a worker to start aborts the call too.
         """
         aborts = self._aborts
         with self._call:
@@ -281,23 +254,22 @@ class RemoteEngine:
                 raise self._collapse() from None
             while True:
                 answer = self._receive()
-                # An answer wearing another number belongs to a request that
-                # was abandoned. It cannot happen while an aborted worker is
-                # always killed rather than reused, and it is cheap insurance.
+                # An answer with another number belongs to an abandoned request. This
+                # can't happen since aborted workers are always killed, but the check
+                # is cheap insurance.
                 if answer[0] == number:
                     return self._answered(answer)
 
     def _abandoned(self, aborts: int) -> None:
-        """Give up where an abort has arrived since this call started."""
+        """Raise `EngineAborted` if an abort arrived since this call started."""
         if self._aborts != aborts:
             raise EngineAborted("Aborted")
 
     def _require(self) -> None:
-        """See that there is a worker to ask, or say why there will not be one.
+        """Ensure a ready worker exists, or raise why there isn't one.
 
-        A proxy that has gone down is retried exactly once here, which is the
-        whole of the retry policy: the user pressing a command key is the
-        clock, and nothing spins behind their back.
+        A client that is down retries once here; that is the whole retry policy (see
+        `Deaths.retrying`).
         """
         if self._stopped:
             raise EngineDown("The engine has been shut down")
@@ -309,7 +281,7 @@ class RemoteEngine:
         self._await_ready()
 
     def _await_ready(self) -> None:
-        """Wait for the worker to say it has finished importing the engine."""
+        """Wait for the worker's handshake after it imports the engine."""
         if self._ready:
             return
         deadline = time.monotonic() + self._ready_timeout
@@ -321,10 +293,9 @@ class RemoteEngine:
                 return
 
     def _receive(self, deadline: float | None = None) -> Any:
-        """The next message from the worker, watching its appetite while it waits.
+        """The next message from the worker, checking its memory while waiting.
 
-        Every way the wait can end other than a message is a death, and the
-        death path is what decides which one it was.
+        Any other end to the wait is a death, classified by the death path.
         """
         connection = self._connection
         if connection is None:
@@ -345,13 +316,10 @@ class RemoteEngine:
                 self._kill()
 
     def _watch(self, process: BaseProcess) -> None:
-        """The memory cap, polled from outside where there is a figure to poll.
+        """Kill the worker if its resident set exceeds the cap.
 
-        A reading that fails is no reading: a worker that has just died has
-        nothing to report, and the death path is about to hear about it anyway.
-        Where the environment reads no resident set at all this is never called,
-        and the poll below is left doing the one job it has either way, which is
-        noticing that the worker has gone.
+        A failed reading is ignored: the worker has probably just died, and the death
+        path will handle it. Not called where resident sets can't be read.
         """
         held = memory.process_bytes(process.pid)
         if held is not None and held > self.cap:
@@ -359,13 +327,13 @@ class RemoteEngine:
             self._kill()
 
     def _answered(self, answer: Any) -> Any:
-        """What one response means: a value, a survivable bug, or a death."""
+        """Interpret one response: a value, a survivable bug, or a death."""
         if answer[1] == "ok":
             return answer[2]
         _, _, kind, message, traceback_text = answer
         if kind == worker.MEMORY:
-            # The worker exits after saying this, so the death path runs now
-            # rather than surprising the next command.
+            # The worker exits after this, so run the death path now rather than
+            # surprising the next command.
             self._record(EngineMemoryExceeded(self._out_of_memory()))
             raise self._collapse()
         raise EngineBug(message, traceback_text)
@@ -376,13 +344,11 @@ class RemoteEngine:
     # -- the one death path ------------------------------------------------
 
     def _collapse(self) -> EngineError:
-        """A worker is gone: say why, clear it away, and put another in its place.
+        """Handle a dead worker: determine why, clean up, and start a replacement.
 
-        Every cause arrives here, which is what makes the recovery one piece of
-        code. What is decided here is only what a child process makes of it; how
-        many failures in a row are too many is `policy`'s. The exception is
-        returned rather than raised so that each caller raises it from where its
-        own error handling reads best.
+        Every kind of death comes here. How many failures in a row are too many is
+        decided by `policy`. The exception is returned rather than raised so each
+        caller can raise it where it suits.
         """
         with self._guard:
             process, self._process = self._process, None
@@ -408,7 +374,7 @@ class RemoteEngine:
     # -- spawning ----------------------------------------------------------
 
     def _spawn(self) -> None:
-        """Put a worker up. Raises `EngineDown` when the system will not have one."""
+        """Start a worker. Raises `EngineDown` if the process can't be started."""
         parent = child = None
         try:
             parent, child = self._context.Pipe(duplex=True)
@@ -422,8 +388,8 @@ class RemoteEngine:
             down = EngineDown(f"The engine could not be started: {error}")
             self._deaths.down = down
             raise down from None
-        # The child's end belongs to the child now; holding it here would keep
-        # the pipe open past its death and turn every death into a hang.
+        # Close our copy of the child's end, or the pipe would stay open past the
+        # child's death and every death would become a hang.
         child.close()
         self.starts += 1
         self._connection = parent
@@ -433,40 +399,38 @@ class RemoteEngine:
         memory.register_worker(process.pid)
 
     def _warm(self) -> None:
-        """Wait for the handshake off the calling thread, so a death is noticed.
+        """Wait for the handshake on a background thread, so a death is noticed.
 
-        Without this a worker that cannot start would sit dead in its pipe
-        until the next command, and the three-strikes rule would need three
-        commands to count to three instead of noticing on its own.
+        Otherwise a worker that can't start would go unnoticed until the next
+        command, and the three-strikes rule would need three commands to trigger.
         """
         threading.Thread(target=self._warming, daemon=True).start()
 
     def _warming(self) -> None:
         with self._call:
             if self._stopped or self._connection is None:
-                # Shut down, or replaced, while this thread waited its turn.
+                # Shut down or replaced while this thread waited for the lock.
                 return
             try:
                 self._await_ready()
             except EngineError:
-                # The death path has already put a replacement up, or has
-                # decided not to. There is no command waiting to be told.
+                # The death path has already handled it, and no command is waiting.
                 pass
 
     # -- killing -----------------------------------------------------------
 
     def _record(self, reason: EngineError) -> None:
-        """Say why the kill that is about to happen is happening.
+        """Record the reason for an imminent kill.
 
-        Only while there is something to kill, so that an Esc arriving as a
-        computation finishes cannot label the next worker's death.
+        Only if there is a worker to kill, so Esc pressed as a computation finishes
+        can't mislabel the next worker's death.
         """
         with self._guard:
             if self._process is not None and self._reason is None:
                 self._reason = reason
 
     def _kill(self) -> None:
-        """End the worker now. Called from the event loop, so it waits for nothing."""
+        """Kill the worker now, without waiting (called from the event loop)."""
         with self._guard:
             process = self._process
         if process is not None:
@@ -474,7 +438,7 @@ class RemoteEngine:
 
 
 def _kill_off(process: BaseProcess) -> None:
-    """Terminate, then kill: politeness first, but not for long."""
+    """Terminate the process, then kill it if it is still alive shortly after."""
     try:
         if process.is_alive():
             process.terminate()
@@ -502,11 +466,10 @@ def _close(connection: Connection | None) -> None:
 
 
 def _death_of(process: BaseProcess | None, ready: bool) -> EngineError:
-    """What to say about a worker nobody meant to kill.
+    """The error for a worker that died unintentionally.
 
-    The exit code is the whole of the evidence, and it reads well: a negative
-    one is the signal that ended the process, and `SIGKILL` from a process
-    nobody signalled is the system's OOM killer nine times in ten.
+    Based on the exit code: a negative one is the signal that ended the process, and
+    an unexpected `SIGKILL` is almost always the system's OOM killer.
     """
     log = "" if process is None or process.pid is None else worker.log_path(process.pid)
     code = None if process is None else process.exitcode

@@ -1,12 +1,9 @@
-"""Definite integrals: what sympy gets wrong between limits, put right.
+"""Definite integrals: fixes for what sympy gets wrong between limits.
 
-Sympy reads straight through a singularity inside the interval, integrates over a
-step function only in part, and answers under a condition on a parameter it could
-have split on. What is here looks at the steps and the singularities of an integrand
-before sympy is asked, and at what sympy answers after: an end it read past, a
-condition of convergence, a parameter whose sign decides the answer, a pole that
-moves with one. The dispatch in `indefinite` is what asks each of them, and what
-each integrates on the way is integrated by it again.
+Sympy integrates through interior singularities, handles step functions only partially,
+and answers under parameter conditions it could have split on. These functions examine
+the integrand before sympy runs and fix its answer afterwards. The dispatch in
+`indefinite` calls them, and any integral they need goes back through it.
 """
 
 from __future__ import annotations
@@ -18,8 +15,7 @@ import sympy as sp
 from sympy.core.relational import Relational
 from sympy.functions.elementary.trigonometric import TrigonometricFunction
 
-# The module rather than its names, since `indefinite` imports from this one: an
-# integral met on the way here is handed back to its dispatch.
+# Import the module rather than its names, since `indefinite` imports from this one.
 from rederive.engine.integration import indefinite
 from rederive.engine.integration.form import parametric_divisors
 from rederive.engine.integration.proof import (
@@ -53,24 +49,15 @@ __all__ = [
 
 
 def real_where_real(head: sp.Basic, value: sp.Basic) -> sp.Basic:
-    """A definite integral's value, refused where the integral is real and the value
-    is not proved to be.
+    """A definite integral's value, rejected if the integral is real but the value is not
+    proved real.
 
-    Sympy answers `INT(LN(x)/(x + 1), x, 0, 1)` with `-pi^2/12 + 2*#i*pi*LN(2)` and
-    `INT((x^t - 1)/LN(x), x, 0, 1)` with `LN(t + 1) + #i*pi`: its antiderivatives are
-    taken at an end on the other side of a branch cut. A real integrand over a real
-    interval has a real integral, so where the integrand is proved real on the open
-    interval for every real value of the parameters, as `Stretch` proves it, a value
-    with `#i` in it is kept only where its imaginary part is proved zero. Otherwise it
-    is replaced by the difference of Simplify's own antiderivative at the ends where
-    that is proved the integral, as `by_the_antiderivative` proves it, and the
-    integral stands where it is not.
-
-    An integrand not proved real on the interval, as `x^(1/3)` is not left of zero,
-    has a value that need not be real either, and is not looked at. Where it is real,
-    a value with an imaginary part that is infinite or still an integral is no answer
-    either: `INT(LN(x)*LN(1 - x), x, 0, 1)` comes back as `2 - #i*inf` plus an
-    integral over a split, which would take minutes to evaluate.
+    Sympy answers `INT(LN(x)/(x + 1), x, 0, 1)` with an imaginary part, from evaluating
+    an antiderivative across a branch cut. If `Stretch` proves the integrand real on
+    the interval, a value with `#i` is kept only if its imaginary part is proved zero,
+    and is otherwise replaced by `by_the_antiderivative` or left unevaluated. A value
+    with an infinite or unevaluated imaginary part is rejected too, since evaluating it
+    can take minutes.
     """
     if not definite(head) or value == head or not value.has(sp.I):
         return value
@@ -90,16 +77,12 @@ def real_where_real(head: sp.Basic, value: sp.Basic) -> sp.Basic:
 
 
 def odd_about_the_middle(head: sp.Basic) -> bool:
-    """Whether a definite integral that converges is zero by symmetry: over a finite
-    interval, with an integrand free of parameters that turns its sign when reflected
-    about the middle of it.
+    """Whether a convergent integral over a finite interval is zero because its
+    parameter-free integrand changes sign when reflected about the middle.
 
-    `INT(LN(TAN(x)), x, 0, pi/2)` has no antiderivative sympy finds, and `LN(TAN(pi/2
-    - x))` is `-LN(TAN(x))` on the interval. The integral is the integral of the
-    reflected integrand, so twice it is the integral of the sum of the two, and that
-    sum is proved zero on the interval: its derivative simplifies to zero, it is
-    continuous there as `unbroken` proves, and it is zero at the middle, where it is
-    twice the integrand.
+    This handles `INT(LN(TAN(x)), x, 0, pi/2)`, which has no antiderivative sympy
+    finds. The integrand plus its reflection is proved zero: its derivative is zero, it
+    is continuous, and it is zero at the middle.
     """
     variable, low, high = head.limits[0]
     integrand = head.function
@@ -120,27 +103,15 @@ def odd_about_the_middle(head: sp.Basic) -> bool:
 
 
 def by_the_antiderivative(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral sympy left standing, as the difference of the limits at the
-    ends of the antiderivative Simplify finds, where that is proved the integral, or
-    None.
+    """A definite integral sympy left unevaluated, as the endpoint difference of
+    Simplify's antiderivative if `unbroken` proves that correct, or None.
 
-    Sympy values a definite integral by an antiderivative of its own, and has none for
-    `INT(SIN(x)/SQRT(1 + q^2*COS(x)^2), x, 0, pi)`, which `u = COS(x)` makes
-    elementary. The antiderivative found here is the one an indefinite integral is
-    answered with. Its difference at the ends is the integral where it is continuous on
-    the open interval and differentiates to the integrand there, which `unbroken`
-    proves for every value of the parameters: an antiderivative over a logarithm whose
-    argument crosses zero inside the interval, or a polylogarithm on its cut, has a
-    difference that is not the integral. An integrand that both the Risch algorithm
-    and the manual rules give up on, as `within_reach` finds, is not looked at, its
-    antiderivative being out of reach.
+    Sympy has no antiderivative for `INT(SIN(x)/SQRT(1 + q^2*COS(x)^2), x, 0, pi)`, but
+    `u = COS(x)` makes it elementary. Integrands `within_reach` rules out are skipped.
 
-    That proof says nothing where the parameters make the antiderivative undefined,
-    as `1/(m^2 - 4)` in the antiderivative of `SIN(m*x)*SIN(2*x)` does at `m = 2`,
-    where the integral is `pi/2`. A value that has a value there itself, as the `0`
-    the integral over `0` to `pi` comes to for an integer `m` does, claims one the
-    proof does not cover, and is refused; one that is undefined there as well is the
-    generic answer it is.
+    The proof says nothing where the parameters make the antiderivative undefined, so a
+    value that is defined there is rejected: for `SIN(m*x)*SIN(2*x)` from `0` to `pi`,
+    the generic answer `0` is wrong at `m = 2`.
     """
     if head.function.has(sp.Piecewise) or indefinite.within_reach(head):
         return None
@@ -166,8 +137,8 @@ def by_the_antiderivative(head: sp.Basic) -> sp.Basic | None:
 
 
 def _defined_past(value: sp.Basic, antiderivative: sp.Basic, variable: sp.Basic) -> bool:
-    """Whether the value is defined at some value of the parameters where the
-    antiderivative divides by zero, or that is not known: see `by_the_antiderivative`.
+    """Whether the value is (or may be) defined at a parameter value where the
+    antiderivative divides by zero; see `by_the_antiderivative`.
     """
     for divisor in parametric_divisors(antiderivative, variable):
         for parameter in sorted(divisor.free_symbols, key=sp.default_sort_key):
@@ -194,16 +165,12 @@ def ends(
     high: sp.Basic,
     near: Callable[[sp.Basic], sp.Basic] | None = None,
 ) -> list[sp.Basic] | None:
-    """The antiderivative's limits at the upper end and then the lower, each
-    approached from inside the interval, or None where either is not had.
+    """The antiderivative's limits at the upper and then the lower end, approached from
+    inside, or None if either can't be computed.
 
-    Sympy leaves the limit of `ATAN((COS(a) + x)/ABS(SIN(a)))` at infinity standing,
-    not knowing that `ABS(SIN(a))` is not zero. Where it is zero the antiderivative is
-    not defined at any `x`, as it divides by it, so the limit is taken for the
-    absolute value positive, and kept where it divides by that value too.
-
-    With `near`, the limit at each end is taken of what `near` makes of that end, the
-    antiderivative written for the limit there.
+    Sympy leaves the limit of `ATAN((COS(a) + x)/ABS(SIN(a)))` at infinity unevaluated,
+    not knowing `ABS(SIN(a))` is nonzero, so `_positively` retries with it assumed
+    positive. If given, `near(end)` supplies the form to take the limit of at each end.
     """
     ends = []
     for point, side in ((high, "-"), (low, "+")):
@@ -220,10 +187,12 @@ def ends(
 def _positively(
     antiderivative: sp.Basic, variable: sp.Basic, point: sp.Basic, side: str
 ) -> sp.Basic | None:
-    """The limit of an antiderivative with its absolute values and square roots of
-    parameters taken for positive, where it is undefined with each of them zero and so
-    is the limit, or None: see `ends`. A square root is taken only where its radicand
-    is never negative."""
+    """The limit of an antiderivative with absolute values and square roots of parameters
+    assumed positive, or None; see `ends`.
+
+    Valid only if the antiderivative and the limit are both undefined when each of them
+    is zero. Square roots qualify only if their radicand is never negative.
+    """
     kernels = {
         sp.sqrt(call.base) if isinstance(call, sp.Pow) else call
         for call in antiderivative.atoms(sp.Abs, sp.Pow)
@@ -252,21 +221,14 @@ def _positively(
 
 
 def past_a_singular_end(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral from a singular end to a symbolic one, valued by how it
+    """A definite integral from a singular endpoint to a symbolic one, valued by how it
     diverges there, or None.
 
-    The antiderivative's limit at the singular end is taken from inside the interval,
-    which is the side the other end is on, and that side is not known: `INT(1/x^2, x,
-    0, alpha)` comes back as `inf - 1/alpha`, the integral for a positive `alpha`
-    only, as for a negative one it is `-inf`. Where the integrand blows up there no
-    slower than the reciprocal of the distance, the integral diverges whatever the
-    other end, which is a regular point of the integrand for all but isolated values,
-    adds to it. So where the answer has an infinity in it, the singular end is the
-    only real singularity of the integrand, and the integrand is real on both sides of
-    it, the integral is the infinity
-    `_end_verdict` finds on each side: `INT(COS(a*x)/x, x, 0, alpha)` is `inf` for
-    either sign of `alpha`. Where the two sides diverge to different infinities, or
-    to one not known, the integral stands.
+    `INT(1/x^2, x, 0, alpha)` comes back as `inf - 1/alpha`, correct only for positive
+    `alpha`. If the endpoint is the integrand's only real singularity and the integrand
+    is real on both sides, the integral diverges to the infinity `_end_verdict` finds,
+    whatever the other end: `INT(COS(a*x)/x, x, 0, alpha)` is `inf`. If the two sides
+    disagree, the integral is left unevaluated.
     """
     if not definite(head) or value in (sp.oo, -sp.oo):
         return None
@@ -290,28 +252,21 @@ def past_a_singular_end(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
     below = _end_verdict(integrand, variable, point, -1)
     if above not in (sp.oo, -sp.oo) or below not in (sp.oo, -sp.oo):
         return None
-    # Up from the singular end on the side above it, or down to it from there.
+    # Integrating up from the singular end on its upper side, or down to it from there.
     beyond, before = (above, -below) if point == low else (-above, below)
     return beyond if beyond == before else head
 
 
 def beyond_convergence(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral's divergent case valued, where it diverges to a sign.
+    """A definite integral with its divergent case evaluated, if it diverges to a signed
+    infinity.
 
-    Sympy answers an improper integral with a parameter in it over the condition
-    its convergence test proves: `INT(x^n, x, 1, inf)` is `-1/(n + 1)` where `n <
-    -1`, and elsewhere the integral itself, unevaluated. That is where the integral
-    diverges, and Derive says so: it works the antiderivative to its limit at each
-    end and prints the infinity it finds, so the second case is `inf` to it. Sympy
-    will find the same infinity where it knows the sign of the exponent, which the
-    parameter it was handed does not say and a dummy of known sign does.
-
-    So the complement of the condition is written as substitutions: `n < -1` fails
-    where `n` is `-1 - s` for a positive `s`, and where `n` is `-1` exactly. The
-    integral is asked again under each, and where every answer is one infinity,
-    that is the case's value. A finite answer, an unevaluated one, or two that
-    disagree keeps the integral standing: a convergence test proves convergence
-    and not divergence, and an oscillating integrand diverges to no sign at all.
+    Sympy answers `INT(x^n, x, 1, inf)` with `-1/(n + 1)` for `n < -1` and the
+    unevaluated integral otherwise, where Derive prints `inf`. The complement of the
+    condition is expressed as substitutions (`n = -1 - s` with positive `s`, and `n =
+    -1`), and if the integral is the same infinity under each, that is the value.
+    Otherwise it is left alone: a convergence test proves nothing about divergence, and
+    an oscillating integrand diverges to no signed infinity.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 3:
         return None
@@ -332,19 +287,16 @@ def beyond_convergence(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
     return sp.Piecewise((converged, condition), (outcomes.pop(), sp.true))
 
 
-#: The inequalities a convergence condition is written in, and the only ones
-#: whose complement is a sign the parameter can be given.
+#: The inequalities used in convergence conditions, and the only ones whose complement
+#: can be expressed by giving the parameter a sign.
 _INEQUALITIES = (sp.StrictLessThan, sp.StrictGreaterThan, sp.LessThan, sp.GreaterThan)
 
 
 def _complement(condition: sp.Basic) -> list[tuple[sp.Basic, sp.Basic]]:
     """Where a one-parameter inequality fails, as values of its parameter.
 
-    Each is the parameter written in terms of a dummy whose sign sympy knows: the
-    complement of `g > 0` is `g = -s` for a positive `s`, and where the inequality
-    was strict, `g = 0` as well. A condition that is no such inequality - on more
-    than one parameter, or on the real part of one, or that does not determine its
-    parameter - has no complement here, and the empty list leaves nothing valued.
+    The complement of `g > 0` is `g = -s` for positive `s`, plus `g = 0` if the
+    inequality is strict. Any other condition gives an empty list.
     """
     if not isinstance(condition, _INEQUALITIES) or len(condition.free_symbols) != 1:
         return []
@@ -371,50 +323,34 @@ def _complement(condition: sp.Basic) -> list[tuple[sp.Basic, sp.Basic]]:
     return points
 
 
-#: What `at_the_singularities` says of an integral it finds no infinity in: that
-#: every end it looked at converges, or that some end could not be decided.
+#: What `at_the_singularities` returns for an integral with no infinity found: every
+#: end examined converges, or some end could not be decided.
 CONVERGENT = sp.Symbol("convergent")
 _UNSETTLED = sp.Symbol("unsettled")
 UNDECIDED = sp.Symbol("undecided")
 VERDICTS = (CONVERGENT, _UNSETTLED, UNDECIDED)
 
-#: How many singularities an interval is looked at across.
+#: The maximum number of singularities in an interval to examine.
 _POLES = 40
 
 
 def at_the_singularities(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral decided by how its integrand behaves where it blows up.
+    """A definite integral decided by the integrand's behavior at its singularities.
 
-    The integral over an interval with a singularity in it is the sum of the
-    integrals up to the singularity and on from it, each an improper integral of
-    its own, and it exists only where each of those does. Taken straight through by
-    an antiderivative it comes out as a number anyway: `INT(1/x^2, x, -1, 1)` is -2
-    that way, for an integrand positive throughout, and `INT(1/x, x, -1, 1)` is the
-    principal value 0, or `-#i*pi` with the logarithm's branch in it. Neither is the
-    integral, which is `inf` for the first and has no value at all for the second.
+    An integral across a singularity exists only if both improper halves do, but an
+    antiderivative taken straight through gives a number anyway: -2 for `INT(1/x^2, x,
+    -1, 1)` instead of `inf`. So the interval is cut at every singularity sympy can
+    locate, and `_end_verdict` examines each side and any infinite end. One infinity
+    with all other ends converging is the integral; two of opposite signs give `?`. If
+    everything converges, the parts are integrated separately, since an antiderivative
+    can jump at an interior singularity; with no interior cut the result is
+    `CONVERGENT`, meaning sympy should be asked.
 
-    So the interval is cut at each singularity sympy can place in it, and the
-    integrand is looked at on each side of each cut, and at an infinite end, by
-    `_end_verdict`. An end where it blows up at least as fast as the reciprocal of
-    the distance makes that part of the integral diverge to the infinity of the
-    integrand's sign there. One such infinity, with every other end converging, is
-    the integral; two of opposite signs leave nothing to add up, and the answer is
-    `?`, which is what the sum of the parts - `inf - inf` - would be. An integrable
-    singularity, such as `1/SQRT(ABS(x))` or `LN(x)` at zero, is the integral sympy
-    finds, and `CONVERGENT` says to ask it. Where the singularity is inside the
-    interval the integral is still the sum of the parts: an antiderivative taken
-    across it can jump there, as `SQRT(pi)*ERF(1/x)/2` does for `#e^(-1/x^2)/x^2`,
-    so each part is integrated on its own.
-
-    `UNDECIDED` says an end diverges to an infinity whose sign is not known -
-    `a/x^2` at zero, with the sign of `a` unknown - and then sympy's answer, which
-    is the antiderivative's across it, is not had at all: the integral stands, or
-    is worked out on each side of the parameter's sign. `_UNSETTLED` says an end
-    could not be told either way, as `1/(x*LN(x))` at zero or the oscillating tail
-    of `SIN(x)/x` cannot, and sympy's answer is printed unless it is infinite.
-
-    None where there is nothing to look at: no singularity in the interval, an end
-    that is not a number, or a singularity that moves with a parameter.
+    `UNDECIDED` means an end diverges with unknown sign (`a/x^2` at zero), so sympy's
+    answer is unusable. `_UNSETTLED` means an end couldn't be decided (`1/(x*LN(x))` at
+    zero), and sympy's answer is used unless infinite. Returns None if there is no
+    singularity in the interval, an end isn't numeric, or a singularity moves with a
+    parameter.
     """
     if not definite(head):
         return None
@@ -471,26 +407,16 @@ def at_the_singularities(head: sp.Basic) -> sp.Basic | None:
 
 
 def with_moving_poles(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral of a rational function whose poles move with a parameter,
-    split on where the poles are, or None where none can be in the interval.
+    """A definite integral of a rational function whose poles move with a parameter, split
+    on where the poles are, or None if no pole can be in the interval.
 
-    `INT(1/(x - a)^2, x, 0, 2)` taken through its antiderivative is `-2/(a*(2 - a))`,
-    which is the integral only where `a` is outside `[0, 2]`: inside it the pole is
-    in the interval, and a pole of a rational function is never integrable. So the
-    values of the parameter that put a real pole between the ends, or on one, are
-    found. They are cut where what decides the integral can change: where a pole
-    reaches an end, where two poles meet, where one cancels against the numerator
-    or goes off to infinity. Between two such values every pole stays where it is
-    relative to the ends and keeps its order and the sign it blows up with, so the
-    integral is had by asking at one value inside, as at any number, and at each
-    cut by asking there. The answer already had is the integral for the other
-    values, and for these too where it agrees with every answer asked for - as one
-    split on the parameter's sign by `by_the_sign_of_a_parameter` can. An answer at
-    a value inside a stretch that is not an infinity, or `?`, means something was
-    missed, and the integral is left standing.
-
-    Poles that are real only for isolated values of the parameter, as `#i*a` is
-    real only at `a = 0`, are left to the formula, which blows up there as well.
+    `INT(1/(x - a)^2, x, 0, 2)` via its antiderivative is `-2/(a*(2 - a))`, wrong for
+    `a` in `[0, 2]`, where the non-integrable pole is inside. The parameter values that
+    put a real pole in the interval are cut wherever the integral's behavior can change
+    (a pole reaching an end, poles meeting, cancelling or going to infinity), and the
+    integral is computed at each cut and one sample per stretch. The existing answer
+    covers the remaining values. Poles real only at isolated parameter values are left
+    to the formula, which blows up there too.
     """
     if not definite(head):
         return None
@@ -606,15 +532,12 @@ def with_moving_poles(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
 
 
 def _real_pole(pole: sp.Basic, parameter: sp.Basic) -> sp.Basic | None:
-    """The values of the parameter for which a pole is real, or None where they are not
-    had.
+    """The parameter values for which a pole is real, or None if they can't be found.
 
-    A pole written without the imaginary unit is real where every radicand in it is at
-    least zero; one written with it, where its square is. Sympy takes the square of a
-    pole such as `SQRT(COS(a)^2 - 1) - COS(a)` for a number at least zero for every
-    `a`, which is why the radicands are asked first. A periodic function of the
-    parameter is solved over one period only, so the values are had there only where
-    they are isolated points, which repeat as isolated points.
+    Radicands are checked rather than the square of the pole where possible, since
+    sympy considers the square of `SQRT(COS(a)^2 - 1) - COS(a)` nonnegative for every
+    `a`. A periodic pole is solved over one period, so only isolated points are
+    accepted.
     """
     if pole.has(sp.I):
         conditions = [sp.Ge(pole**2, 0)]
@@ -637,8 +560,8 @@ def _real_pole(pole: sp.Basic, parameter: sp.Basic) -> sp.Basic | None:
 
 
 def _never_negative(call: sp.Basic) -> bool:
-    """Whether an absolute value, or a square root whose radicand is a function of one
-    real parameter that is at least zero for every value of it."""
+    """Whether the call is an absolute value, or a square root whose radicand is a
+    function of one real parameter that is nonnegative for every value of it."""
     if isinstance(call, sp.Abs):
         return True
     if not isinstance(call, sp.Pow) or call.exp != sp.S.Half:
@@ -679,11 +602,8 @@ def _orientation(low: sp.Basic, high: sp.Basic) -> int | None:
 
 
 def _ordered(points: set) -> list[sp.Basic] | None:
-    """Real numbers in increasing order, or None where they cannot be placed.
-
-    A point may carry a parameter of known sign, as `p` and `2*p` do for a positive
-    `p`, so the points are placed by deciding their differences rather than by
-    their values.
+    """Real numbers in increasing order, or None if they can't be ordered. Points are
+    compared by the sign of their difference, so `p` and `2*p` work for positive `p`.
     """
     ordered: list[sp.Basic] = []
     for point in points:
@@ -700,10 +620,9 @@ def _ordered(points: set) -> list[sp.Basic] | None:
     return ordered
 
 
-#: The powers of the distance an end is weighted with to show that it converges:
-#: an integrand bounded by such a power of the reciprocal distance to a point, or by
-#: such a power of the reciprocal of the variable towards an infinite end, is
-#: integrable there.
+#: Powers of the distance used to show convergence at an end: an integrand bounded by
+#: such a power of the reciprocal distance to a point, or of the reciprocal variable
+#: toward an infinite end, is integrable there.
 _NEAR = (sp.Rational(1, 2), sp.Rational(9, 10))
 _FAR = (sp.Integer(2), sp.Rational(11, 10))
 
@@ -711,17 +630,14 @@ _FAR = (sp.Integer(2), sp.Rational(11, 10))
 def _end_verdict(
     integrand: sp.Basic, variable: sp.Basic, end: sp.Basic, side: int
 ) -> sp.Basic:
-    """How the integral fares at one end of a part of the interval.
+    """How the integral behaves at one end of a part of the interval.
 
-    The end is approached from the side `side` points to, `1` being from above,
-    and `distance` is the positive distance to it, or the size of the variable
-    where the end is infinite. If the integrand times that distance tends to a
-    real number other than zero, or to an infinity, the integrand is of one sign
-    there and no smaller than a multiple of the reciprocal distance, whose
-    integral diverges; the part diverges to the infinity of that sign, or to one
-    `UNDECIDED` where the sign is not known. If it times a power of the distance
-    short of 1 (beyond 1 at an infinite end) stays bounded, the part converges by
-    comparison. Anything else is `_UNSETTLED`.
+    `side` is the direction of approach (`1` from above), and `distance` is the
+    distance to the end, or the variable's magnitude at an infinite end. If the
+    integrand times the distance tends to a nonzero value, the part diverges to the
+    infinity of its sign (`UNDECIDED` if unknown). If it stays bounded times a power of
+    the distance below 1 (above 1 at infinity), the part converges by comparison.
+    Otherwise it is `_UNSETTLED`.
     """
     if end.is_infinite:
         distance = variable if end is sp.oo else -variable
@@ -754,34 +670,25 @@ def _end_verdict(
     return _UNSETTLED
 
 
-#: The functions an integrand is split at the jumps of: each is constant, or a
-#: polynomial times a constant sign, between the points where its argument crosses
-#: a jump.
+#: Step functions at whose jumps an integrand is split. Between jumps, each is a
+#: constant or its argument times a constant sign.
 _STEPS = (sp.floor, sp.ceiling, sp.frac, sp.sign, sp.Abs, sp.Heaviside)
 _ROUNDING = (sp.floor, sp.ceiling, sp.frac)
 
-#: How many parts an interval is split into at the jumps of its steps.
+#: The maximum number of parts an interval is split into at step jumps.
 _STEP_PIECES = 64
 
 
 def between_the_steps(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral of a step function, as the sum over the steps.
+    """A definite integral of a step function, as a sum over the steps.
 
-    `INT(FLOOR(x), x, 0, 3)` is `0 + 1 + 2`: between consecutive integers the floor
-    is a constant, and the integral is the sum of the integrals over each stretch.
-    Sympy has no antiderivative for it, and so leaves the integral standing. Over
-    limits that are numbers the jumps are finitely many, and the integrand is
-    integrated stretch by stretch with each step replaced by the value it holds
-    there - a constant for `FLOOR`, a sign times its argument for `ABS`.
-
-    Only an integrand sympy cannot do whole is split: one with a rounding function
-    in it, or a sign or absolute value of something other than a polynomial, whose
-    antiderivative sympy makes up of pieces that hold only near the origin -
-    `INT(ABS(SIN(x)), x, 0, 10*pi)` is 20, ten arches of 2, where the
-    antiderivative taken across it gives 4. Each step's argument has to be free of
-    parameters, so that the jumps are numbers: a polynomial of degree at most two
-    for the rounding functions, whose crossings of each integer are then radicals,
-    and for the signs one sympy can solve for its zeros between the limits.
+    Sympy has no antiderivative for `INT(FLOOR(x), x, 0, 3)`. With numeric limits there
+    are finitely many jumps, so each piece is integrated with the steps replaced by
+    their values there. Only integrands sympy mishandles are split: those with a
+    rounding function, or a sign or absolute value of a non-polynomial, where sympy's
+    antiderivative is valid only near the origin (`INT(ABS(SIN(x)), x, 0, 10*pi)` gives
+    4 instead of 20). Step arguments must be parameter-free, and for rounding functions
+    at most quadratic, so the jumps are exact numbers.
     """
     if not definite(head):
         return None
@@ -832,8 +739,8 @@ def between_the_steps(head: sp.Basic) -> sp.Basic | None:
 def _jumps(
     step: sp.Basic, variable: sp.Basic, low: sp.Basic, high: sp.Basic
 ) -> set | None:
-    """The points strictly between the limits where a step function jumps, or None
-    where they cannot be had as exact numbers."""
+    """The points strictly between the limits where a step function jumps, or None if
+    they can't be found as exact numbers."""
     argument = step.args[0]
     if argument.free_symbols - {variable}:
         return None
@@ -867,15 +774,16 @@ def _jumps(
     return set(zeros)
 
 
-#: How many jumps of a step a period of its argument may hold.
+#: The maximum number of jumps of a step within one period of its argument.
 _PERIOD_JUMPS = 16
 
 
 class _Lattice(NamedTuple):
-    """The jumps of a step function at `start + k*spacing` for every integer `k`:
-    `values(k)` is what the step holds between the `k`-th jump and the next, `count`
-    is `k` as a function of the variable there, and `alternating` says the step is a
-    sign that changes at each jump rather than a floor that counts them."""
+    """The jumps of a step function at `start + k*spacing` for every integer `k`.
+
+    `values(k)` is the step's value after the `k`-th jump, `count` is `k` as a function
+    of the variable, and `alternating` is true for a sign rather than a floor.
+    """
 
     start: sp.Basic
     spacing: sp.Basic
@@ -887,29 +795,18 @@ class _Lattice(NamedTuple):
 def across_the_steps(head: sp.Basic) -> sp.Basic | None:
     """An indefinite integral of a step function, valid across all of its jumps.
 
-    Sympy integrates `ABS(SIN(x))` over the pieces it finds near the origin and
-    writes the last one out to infinity: `IF(x <= 0, COS(x), IF(x <= pi, 2 - COS(x),
-    COS(x) + 4))` is an antiderivative between `-pi` and `2*pi` and nowhere else.
-    A step whose argument crosses its jumps infinitely often - a sign of a periodic
-    function, or a rounding function at all - has no such answer, and whatever is
-    returned here is either an antiderivative on the whole line or the integral
-    left standing.
+    Sympy's antiderivative of `ABS(SIN(x))` is valid only between `-pi` and `2*pi`. For
+    a step with infinitely many jumps, this returns an antiderivative on the whole line
+    or the unevaluated integral.
 
-    The jumps are where the step's argument crosses zero (or an integer, for a
-    rounding function), at `start + k*spacing` for every integer `k`, and between
-    two of them the step is a constant: a sign that alternates, or the integer `k`
-    counted from the start. With that constant written as `w`, the integrand is a
-    function `G` of `x` and `w` to integrate as any other, and on the `k`-th stretch
-    `G(x, w_k) + C(k)` is an antiderivative for any constant `C(k)`. It is one
-    continuous across every jump where `C(k + 1) - C(k)` is what `G` drops there,
-    and that sum is had in closed form for a polynomial in `k` or one times `(-1)^k`.
-    Writing `k` as the `FLOOR` it is and `(-1)^k` as the sign it is gives the answer:
-    `2*FLOOR(x/pi) - COS(x)*SIGN(SIN(x))` for `ABS(SIN(x))`, and `x*FLOOR(x) -
-    FLOOR(x)*(FLOOR(x) + 1)/2` for `FLOOR(x)`. The answer is continuous wherever the
-    integrand is integrable, apart from the jumps themselves, where a sign is zero.
+    Between jumps at `start + k*spacing`, the step is a constant `w` (an alternating
+    sign or the integer `k`), so the integrand is an ordinary function `G(x, w)`.
+    Adding a constant `C(k)` to each stretch with `C(k + 1) - C(k)` equal to the drop
+    in `G` makes it continuous, and that sum has a closed form when the drop is
+    polynomial in `k`, possibly times `(-1)^k`. Writing `k` as a `FLOOR` and `(-1)^k`
+    as a sign gives `2*FLOOR(x/pi) - COS(x)*SIGN(SIN(x))` for `ABS(SIN(x))`.
 
-    None where there is no step, or none whose jumps go on forever: a sign or
-    absolute value of a polynomial has finitely many, and sympy's split is right.
+    Returns None if no step has infinitely many jumps.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -940,7 +837,7 @@ def _endless_steps(integrand: sp.Basic, variable: sp.Basic) -> bool:
 
 
 def _over_the_lattice(term: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
-    """One term of `across_the_steps`, with one step in it, or None."""
+    """The integral of one term of `across_the_steps`, containing one step, or None."""
     level = sp.Dummy("w", real=True)
     index = sp.Dummy("k", integer=True)
     written = attempt(term, _in_signs_and_floors)
@@ -975,14 +872,14 @@ def _over_the_lattice(term: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
     plain, alternate = cumulative
     value = antiderivative.subs(level, step) + plain.subs(index, lattice.count)
     if lattice.alternating:
-        # Between two jumps `(-1)^k` is the sign times the sign it starts with.
+        # Between two jumps, `(-1)^k` is the step's sign times its initial sign.
         value += lattice.values(0) * step * alternate.subs(index, lattice.count)
     return value
 
 
 def _in_signs_and_floors(term: sp.Basic) -> sp.Basic:
-    """The term with every step written as a sign or a floor, as it is between its
-    jumps: `ABS(u)` is `u*SIGN(u)`, `STEP(u)` is `(1 + SIGN(u))/2`, `CEILING(u)` is
+    """The term with every step written as a sign or floor, valid between jumps:
+    `ABS(u)` is `u*SIGN(u)`, `STEP(u)` is `(1 + SIGN(u))/2`, `CEILING(u)` is
     `FLOOR(u) + 1`, and the fractional part is `u - FLOOR(u)`."""
     return (
         term.replace(sp.Abs, lambda u: u * sp.sign(u))
@@ -993,13 +890,12 @@ def _in_signs_and_floors(term: sp.Basic) -> sp.Basic:
 
 
 def _lattice(step: sp.Basic, variable: sp.Basic) -> _Lattice | None:
-    """Where a sign or floor of a function of the variable alone jumps, as a
-    lattice, or None where its jumps are not equally spaced.
+    """The jumps of a sign or floor of a function of the variable alone, as a lattice, or
+    None if they aren't equally spaced.
 
-    A floor jumps where a linear argument crosses an integer. A sign jumps where a
-    continuous periodic argument crosses zero, and is taken where those crossings
-    are equally spaced and the sign alternates across each, as it does for a sine
-    or cosine of a linear argument.
+    A floor needs a linear argument. A sign needs a continuous periodic argument whose
+    zeros are equally spaced with the sign alternating, as for a sine of a linear
+    argument.
     """
     argument = step.args[0]
     if argument.free_symbols != {variable}:
@@ -1054,13 +950,9 @@ def _lattice(step: sp.Basic, variable: sp.Basic) -> _Lattice | None:
 def _cumulative(
     difference: sp.Basic, index: sp.Basic, alternating: bool
 ) -> tuple[sp.Basic, sp.Basic] | None:
-    """`C(k)` with `C(0) = 0` and `C(k + 1) - C(k)` the difference, for every
-    integer `k`, as polynomials `P` and `Q` in `k` with `C(k) = P(k) + (-1)^k*Q(k)`,
-    or None where the difference is not a polynomial in `k` or one times `(-1)^k`.
-
-    Each is had by undetermined coefficients: `P(k + 1) - P(k)` is the plain part
-    of the difference, and `-Q(k + 1) - Q(k)` its alternating part. The result is
-    checked against the difference it was solved for.
+    """`C(k)` with `C(0) = 0` and `C(k + 1) - C(k)` equal to the difference, as
+    polynomials `P` and `Q` with `C(k) = P(k) + (-1)^k*Q(k)`, or None if the difference
+    isn't of that form. Found by undetermined coefficients and verified.
     """
     parity = sp.Dummy("s")
     signed = difference.replace(
@@ -1114,8 +1006,8 @@ def _cumulative(
 
 
 def _parity(exponent: sp.Basic, index: sp.Basic, parity: sp.Basic) -> sp.Basic:
-    """`(-1)^exponent` for an exponent linear in the index, over `parity` standing
-    for `(-1)^index`; unchanged where the exponent is anything else."""
+    """`(-1)^exponent` for an exponent linear in the index, written in terms of `parity`
+    standing for `(-1)^index`; unchanged for any other exponent."""
     try:
         polynomial = sp.Poly(exponent, index)
     except sp.PolynomialError:
@@ -1129,8 +1021,8 @@ def _parity(exponent: sp.Basic, index: sp.Basic, parity: sp.Basic) -> sp.Basic:
 
 
 def _held(step: sp.Basic, variable: sp.Basic, point: sp.Basic) -> sp.Basic | None:
-    """What a step function is between two of its jumps, from its value at a point
-    between them, or None where that value is not decided."""
+    """What a step function equals between two jumps, judged by its value at a point
+    between them, or None if that value is undecided."""
     argument = step.args[0]
     if isinstance(step, sp.Abs):
         sign = attempt(argument, lambda a: sp.sign(a.subs(variable, point)))
@@ -1142,39 +1034,24 @@ def _held(step: sp.Basic, variable: sp.Basic, point: sp.Basic) -> sp.Basic | Non
     return value if value is not None and value.is_Number else None
 
 
-#: How many signs of a parameter an integral is asked again over.
+#: The maximum number of thresholds to split an integral's parameter on.
 _THRESHOLDS = 3
 
 
 def by_the_sign_of_a_parameter(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
-    """A definite integral over a parameter, worked out on each side of its sign.
+    """A definite integral with a parameter, computed separately for each sign of the
+    parameter.
 
-    What sympy makes of `INT(#e^(-a*x), x, 0, inf)` depends on what it knows of
-    `a`. Told nothing it answers `1/a` where the argument of `a` is less than a
-    right angle and leaves the integral standing elsewhere; through the
-    antiderivative it takes `INT(1/(x^2 + a^2), x, 0, inf)` to `ATAN(x/a)/a` at an
-    infinite `x`, and that is `ATAN(±inf/a)`, with the sign of the infinity
-    undecided; at the lower end of `INT(x^n, x, 0, 1)` it is left holding `0^(n +
-    1)`, which is 0 or infinite by the sign of `n + 1`. Told the sign, it answers:
-    `1/a` and `inf`, `pi/(2*a)` for a positive `a`, `1/(n + 1)` and `inf`.
+    Without knowing a sign, sympy answers under conditions or leaves expressions like
+    `ATAN(+/-inf/a)` or `0^(n + 1)`; given the sign, it answers. So the integral is
+    recomputed with the parameter above, below and at a threshold: the exponent of a
+    power of zero, a condition sympy wrote, the exponent plus one of a power of the
+    variable, or the parameter itself. If one expression matches all three answers (in
+    the threshold, its absolute value, or that times its sign), it is the answer, as
+    `pi/(2*ABS(a))`; otherwise it is a case split like `IF(a > 0, 1/a, inf)`.
 
-    So such an answer is asked again with the parameter on each side of a
-    threshold - above, below, and at it - and the three answers are put together.
-    The thresholds are the quantities the answer turned on: the exponent of a
-    power of zero, a condition sympy wrote, the exponent of a power of the
-    variable plus one (which decides whether it is integrable at zero), and the
-    parameter itself. Where one expression is all three answers - itself, of the
-    absolute value of the threshold, or that times its sign - it is the answer
-    (`pi/(2*ABS(a))`, `pi*SIGN(a)/2`); otherwise the answer is a case split (`IF(a >
-    0, 1/a, inf)`). A side that sympy cannot do, or does only with another
-    condition, leaves the answer as it was.
-
-    An integral sympy left standing over the unsigned parameter is not asked again
-    this way: what it could not do knowing nothing of the sign it cannot do knowing
-    it, since a sign it was not told leaves it more to answer with, under a
-    condition, and not less. `_integral_through` asks only over an answer that turned
-    on the sign, or over a head sympy was not asked about because the integrand's
-    behaviour at an end was undecided.
+    An integral sympy couldn't do at all isn't retried, since without the sign it could
+    still have answered under a condition.
     """
     if not definite(head) or not unresolved(head, value):
         return None
@@ -1196,14 +1073,12 @@ def by_the_sign_of_a_parameter(head: sp.Basic, value: sp.Basic) -> sp.Basic | No
 
 
 def _with_signed_conditions(value: sp.Basic, parameter: sp.Basic) -> sp.Basic:
-    """A case split over a real parameter with each condition written as its sign.
+    """A case split over a real parameter with each condition rewritten as a sign test.
 
-    Sympy writes the convergence of `INT(#e^(-a*x)*SIN(x), x, 0, inf)` as `ABS(PHASE(a))
-    < pi/2`, which over a real `a` is `a > 0`. A condition in the parameter alone
-    that is decided on each side of zero and at it is written as the comparison with
-    zero that holds on the same sides; any other is kept. One undecided at zero
-    alone, as a phase is, is taken not to hold there where every case after it is
-    the integral left standing, which is no wrong answer for any value.
+    Sympy writes `ABS(PHASE(a)) < pi/2`, which for real `a` is `a > 0`. Conditions
+    decided for positive, negative and zero values are replaced; a condition undecided
+    only at zero is taken as false there if every later case is the unevaluated
+    integral, which is never wrong.
     """
     size = sp.Dummy("p", positive=True)
 
@@ -1231,8 +1106,8 @@ def _with_signed_conditions(value: sp.Basic, parameter: sp.Basic) -> sp.Basic:
     return value.replace(lambda e: isinstance(e, sp.Piecewise), cases)
 
 
-#: The comparison with zero that holds where a parameter is positive, negative,
-#: and zero, as given.
+#: The comparison with zero that holds exactly when the parameter is positive,
+#: negative, and zero, as the key flags say.
 _SIGNED = {
     (True, False, False): lambda a: sp.StrictGreaterThan(a, 0),
     (False, True, False): lambda a: sp.StrictLessThan(a, 0),
@@ -1246,7 +1121,7 @@ _SIGNED = {
 
 
 def unresolved(head: sp.Basic, value: sp.Basic) -> bool:
-    """Whether an integral's answer is one that turns on a sign it does not know."""
+    """Whether an integral's answer depends on an unknown sign."""
     if value == head or value.has(sp.Integral, sp.Limit, sp.zoo, sp.nan):
         return True
     return any(_zero_power(power) for power in value.atoms(sp.Pow)) or any(
@@ -1255,15 +1130,16 @@ def unresolved(head: sp.Basic, value: sp.Basic) -> bool:
 
 
 def _zero_power(power: sp.Pow) -> bool:
-    """Whether this is a power of zero, which is 0 or infinite by its exponent's sign."""
+    """Whether this is a power of zero, which is 0 or infinite depending on its
+    exponent's sign."""
     return power.base == 0 and bool(power.exp.free_symbols)
 
 
 def _thresholds(
     head: sp.Basic, value: sp.Basic, parameter: sp.Basic, variable: sp.Basic
 ) -> list[sp.Basic]:
-    """The quantities an integral's answer may turn on, each the parameter plus a
-    number, most telling first."""
+    """The quantities an integral's answer may depend on, each the parameter plus a
+    number, most likely first."""
     candidates = [power.exp for power in value.atoms(sp.Pow) if _zero_power(power)]
     candidates += [gamma.args[0] for gamma in value.atoms(sp.uppergamma)]
     candidates += [
@@ -1296,8 +1172,8 @@ def _thresholds(
 def _on_each_side(
     head: sp.Basic, parameter: sp.Basic, threshold: sp.Basic
 ) -> sp.Basic | None:
-    """The integral as one answer for every value of the parameter, from its answers
-    where `threshold`, the parameter plus a number, is positive, negative and zero."""
+    """The integral as one answer for every parameter value, combined from its answers
+    where `threshold` (the parameter plus a number) is positive, negative and zero."""
     shift = threshold - parameter
     size = sp.Dummy("p", positive=True)
     answers = []
@@ -1331,8 +1207,8 @@ def _on_each_side(
 
 
 def _clean(answer: sp.Basic) -> bool:
-    """Whether an answer is a value: worked out, and an infinity, or no value at all,
-    only on its own."""
+    """Whether an answer is fully evaluated, with an infinity or undefined value only
+    as the whole answer."""
     if answer is sp.nan:
         return True
     if answer.has(sp.Integral, sp.Piecewise, sp.zoo, sp.nan, sp.uppergamma):

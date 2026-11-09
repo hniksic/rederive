@@ -1,26 +1,23 @@
 """What Simplify must produce: the normal form, and the command's contract.
 
-Author text in, author text out: each case is written the way a user would type
-it and asserted against the text the worksheet would show, because that is the
-whole of what the command promises. The cases are inline rather than in a corpus
-file so that a failure names the mathematics it is about.
+Each case is written as a user would type it and checked against the text the
+worksheet would show. Cases are inline rather than in a corpus file so that a failure
+names the mathematics involved.
 
-This file holds what Simplify itself answers for: numbers, polynomials and rational
-functions, the normal form a sum or a quotient is written in, the domains that decide
-what a rewrite may assume, absolute values, trigonometry, logarithms and the branch
-setting, substitution, and the contract over every case - that each node kind and each
-builtin survives being simplified, and that an answer is a fixed point of printing and
-of a second Simplify. What Simplify is merely the door to has files of its own:
-`test_integrate.py` for integrals, `test_calculus.py` for the other calculus heads,
-`test_matrices.py` for vectors and matrices, `test_logic.py` for relations, logic and
-conditionals, `test_approximate.py` for the precision modes and `test_functions.py` for
-special values and the named functions. Their case lists are imported below only to be
-asked the fixed-point question here.
+This file covers what Simplify itself does: numbers, polynomials and rational
+functions, the normal form of sums and quotients, the domains that license a rewrite,
+absolute values, trigonometry, logarithms and the branch setting, substitution, and the
+general contract: every node kind and builtin survives simplification, and every answer
+is a fixed point of printing and of a second Simplify. Other areas have their own files:
+`test_integrate.py`, `test_calculus.py`, `test_matrices.py`, `test_logic.py` (relations,
+logic, conditionals), `test_approximate.py` (precision modes) and `test_functions.py`
+(special values and named functions). Their case lists are imported here only for the
+fixed-point check.
 
-Where the engine's form differs from the manual's printed one - term order, an
-equivalent spelling - the engine's form is what is recorded, and the case says
-so. Nothing here is weakened to make a test pass: an expected value is either
-what Derive prints or a hand-checked equal of comparable simplicity.
+Where the engine's form differs from the manual's (term order, an equivalent spelling),
+the engine's form is recorded and the case says so. No expectation is weakened to make
+a test pass: each is either what Derive prints or a hand-checked equivalent of
+comparable simplicity.
 """
 
 from __future__ import annotations
@@ -74,8 +71,8 @@ ARITHMETIC = [
     ("0^0", "1"),
     ("MOD(2^100, 7)", "2"),
     ("GCD(12, 18, 27)", "3"),
-    # A divisor of integers, standing over anything else: checked against the
-    # original, which writes the arguments least main first.
+    # GCD of non-numbers stays unevaluated. Checked against the original, which writes
+    # the arguments least main first.
     ("GCD(m, n)", "GCD(n, m)"),
     ("GCD(6, 4, m)", "GCD(2, m)"),
     ("GCD(m, 0)", "ABS(m)"),
@@ -88,8 +85,8 @@ RATIONAL = [
     ("(x^2 + 2*x*y + y^2)/(x^2 - y^2)", "(x + y)/(x - y)"),
     ("(x + 1)^2 - x^2", "2*x + 1"),
     ("2*x/(x^2 - 1) - 1/(x - 1)", "1/(x + 1)"),
-    # Difference of squares. Multiplying out the product is what shows it; also
-    # expanding the power would produce a hundred terms, and be slow doing it.
+    # Difference of squares, found by multiplying out the product. Expanding the
+    # power as well would produce a hundred terms, slowly.
     ("x^2 - (x + (y+1)^50)*(x - (y+1)^50)", "(y + 1)^100"),
     (
         "a^3/((a-b)*(a-c)) + b^3/((b-c)*(b-a)) + c^3/((c-a)*(c-b))",
@@ -102,22 +99,21 @@ RADICALS = [
     ("SQRT(1/12)", "SQRT(3)/6"),
     ("SQRT(4 - 2*SQRT(3))", "SQRT(3) - 1"),
     ("SQRT(2)*SQRT(3)", "SQRT(6)"),
-    # A cube root denests too, where the radicand is a sum of surds that some
-    # cube of one is. Sympy denests square roots and no others, so this is the
-    # minimal polynomial factored over the field the surds generate.
+    # A cube root denests when the radicand is the cube of a sum of surds. Sympy
+    # only denests square roots, so this factors the minimal polynomial over the
+    # field the surds generate.
     ("(243*SQRT(5) - 294*SQRT(3))^(1/3)", "3*SQRT(5) - 2*SQRT(3)"),
     ("(10 + 6*SQRT(3))^(1/3)", "SQRT(3) + 1"),
-    # A root taken out of a root is a simplification even where the spelling without
-    # it is no shorter: the cube of the golden ratio is `2 + SQRT(5)`, and the square
-    # root of `2 + SQRT(3)` is two surds over two. One that does not denest stands.
+    # Denesting counts as simpler even when the result is no shorter: the cube of the
+    # golden ratio is `2 + SQRT(5)`, and `SQRT(2 + SQRT(3))` is two surds over two. A
+    # root that does not denest stays.
     ("(2 + SQRT(5))^(1/3)", "SQRT(5)/2 + 1/2"),
     ("SQRT(2 + SQRT(3))", "SQRT(6)/2 + SQRT(2)/2"),
     ("SQRT(4 + SQRT(15))", "SQRT(10)/2 + SQRT(6)/2"),
     ("x*SQRT(2 + SQRT(3))", "(SQRT(6) + SQRT(2))*x/2"),
     ("SQRT(1 + SQRT(2))", "SQRT(SQRT(2) + 1)"),
-    # A whole power of a sum of surds is a number of the field they span, and is
-    # written as one there whether or not that is shorter; so is its reciprocal. Under
-    # Expand too, which reaches the same number.
+    # An integer power of a sum of surds, or its reciprocal, is written as an element
+    # of the field they span, even if that is longer. Expand gives the same result.
     ("(1 + SQRT(2))^2", "2*SQRT(2) + 3"),
     ("(1 + SQRT(2))^5", "29*SQRT(2) + 41"),
     ("(1 + SQRT(2))^(-3)", "5*SQRT(2) - 7"),
@@ -129,27 +125,25 @@ RADICALS = [
     ("(1 + SQRT(2))^5*x", "(29*SQRT(2) + 41)*x"),
     ("EXPAND((SQRT(2) + 1)^3)", "5*SQRT(2) + 7"),
     ("EXPAND((1 + 2^(1/3))^3)", "3*2^(2/3) + 3*2^(1/3) + 3"),
-    # A power whose value runs to hundreds of digits keeps its exponent, and one of a
-    # transcendental or of a variable is no number of such a field.
+    # A power whose value would run to hundreds of digits keeps its exponent, and a
+    # power involving a transcendental or a variable is not expanded.
     ("(1 + SQRT(2))^1000", "(SQRT(2) + 1)^1000"),
     ("(1 + pi)^2", "(pi + 1)^2"),
     ("(x + SQRT(2))^2", "(x + SQRT(2))^2"),
     ("(x + 1)^5", "(x + 1)^5"),
-    # 3.8 p.47's quotient, where no one root of the four is anything simpler on
-    # its own: the numerator is `(SQRT(3) + 1)^(3/2)` and the denominator twice
-    # it, so the value is a number of the field `SQRT(3)` generates and the
-    # whole quotient at once is what shows it.
+    # The quotient from 3.8 p.47. None of the four roots simplifies on its own, but
+    # the numerator is `(SQRT(3) + 1)^(3/2)` and the denominator twice that, so the
+    # whole quotient lies in the field of `SQRT(3)`.
     ("(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)", "1/2"),
-    # The value need not be rational, only a number of that field.
+    # The value need not be rational, only in that field.
     (
         "SQRT(3)*(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)",
         "SQRT(3)/2",
     ),
-    # And a variable standing beside it is no reason to leave the number alone.
+    # A variable factor doesn't prevent it.
     ("x*(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)", "x/2"),
-    # The same three roots put together another way stand, that value being
-    # `(SQRT(3) + 1)^(3/2)/2` - one root deeper than the field, so there is no
-    # shorter spelling of it to find.
+    # Combined differently, the same roots stay: the value `(SQRT(3) + 1)^(3/2)/2`
+    # is one root deeper than the field, so there is no shorter spelling.
     (
         "(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))^2/SQRT(24*SQRT(3) + 40)",
         "(SQRT(3*SQRT(3) + 3) + SQRT(SQRT(3) + 1))^2/SQRT(24*SQRT(3) + 40)",
@@ -162,14 +156,12 @@ COMBINATORIAL = [
     ("(n + 2)!/(n - 1)!", "n*(n + 1)*(n + 2)"),
     ("COMB(5, 2)", "10"),
     ("PERM(5, 2)", "20"),
-    # Section 6.9 writes both as ratios of factorials, and a ratio that reduces
-    # is reduced rather than left standing: `COMB(x, 2)` is `x!/(2*(x - 2)!)`
-    # written out and `x*(x - 1)/2` once the two factorials have cancelled.
+    # Section 6.9 defines both as ratios of factorials, which are reduced:
+    # `COMB(x, 2)` is `x!/(2*(x - 2)!)`, which cancels to `x*(x - 1)/2`.
     ("COMB(x, 2)", "x*(x - 1)/2"),
     ("PERM(x, 2)", "x*(x - 1)"),
-    # A head that declined to evaluate keeps its `COMB`. Written out it would
-    # be a summand nobody has offered to sympy yet, and the search for a closed
-    # form over a ratio of factorials of the index does not come back.
+    # Inside an unevaluated head, `COMB` is kept. Rewritten as factorials of the
+    # index, sympy's search for a closed form of the sum never returns.
     (
         "SUM(COMB(n, k)*LN(k + 1), k, 0, n)",
         "SUM(COMB(n, k)*LN(k + 1), k, 0, n)",
@@ -185,69 +177,64 @@ def test_numbers_and_algebra(text, expected):
 
 
 def test_a_polynomial_is_not_factored():
-    # Factoring is the Factor command. Simplify leaves the sum a sum even
-    # though the product is shorter to write.
+    # Factoring is the Factor command's job. Simplify leaves the sum alone even
+    # though the product is shorter.
     assert simp("x^2 + 2*x") == "x^2 + 2*x"
 
 
 def test_a_high_power_of_a_sum_is_not_multiplied_out_to_be_thrown_away():
-    # Derive answers both of these unchanged, and answers at once. The
-    # sixtieth power is six hundred thousand terms multiplied out, which no
-    # rewrite here keeps and every rewrite that builds it pays for, so the
-    # expansion is counted before it is built and declined. The ratio is the
-    # case a polynomial test does not cover: `cancel` is worth offering where
-    # something really is divided, and not at this size.
+    # Derive returns both unchanged, instantly. Expanded, the sixtieth power has
+    # six hundred thousand terms that no rewrite keeps, so the expansion's size is
+    # estimated first and the expansion is declined. The ratio covers `cancel`,
+    # which is tried on quotients but must not be at this size.
     assert simp("(v + w + x + y + z)^60") == "(x + y + z + v + w)^60"
     assert simp("(v + w + x + y + z)^60/q") == "(x + y + z + v + w)^60/q"
 
 
 # -- the normal form ----------------------------------------------------------
 
-#: Every one checked against the original. A sum is written as a rational
-#: function of the most main variable it holds; a product or a power that is
-#: not itself a sum is left exactly as it was written.
+#: All checked against the original. A sum is written as a rational function of its
+#: most main variable; a product or power that is not itself a sum is left as written.
 #:
-#: The terms are the original's and so is the order they are written in, the
-#: order list deciding both which sums get multiplied out and which term of a
-#: sum leads. The point of each case is the first of those: what was left
-#: folded because the primary variable is not in it.
+#: Terms and term order match the original. The order list decides both which sums
+#: get multiplied out and which term leads; these cases are about the former, i.e.
+#: what stays folded because the primary variable is not in it.
 NORMAL_FORM = [
-    # A sum in the primary variable is multiplied out however long it gets,
-    # and a term free of the primary variable is not touched.
+    # A sum in the primary variable is multiplied out however long it gets; a term
+    # free of it is not touched.
     ("(x + 1)^9 + y", "x^9 + 9*x^8 + 36*x^7 + 84*x^6 + 126*x^5 + 126*x^4 "
                       "+ 84*x^3 + 36*x^2 + 9*x + y + 1"),
     ("(y + 1)^9 + x", "x + (y + 1)^9"),
     ("(x + 1)^2 + y", "x^2 + 2*x + y + 1"),
-    # No sum to write, so nothing happens - this is not a wholesale expansion.
+    # Not a sum, so nothing happens - this is not a wholesale expansion.
     ("(x + 1)^9", "(x + 1)^9"),
     ("2*x*(x - 3)^2", "2*x*(x - 3)^2"),
     ("(x + 1)*(y + 1)", "(x + 1)*(y + 1)"),
     ("(x + 1)*(x + 2)", "(x + 1)*(x + 2)"),
     ("(x + y)^2", "(x + y)^2"),
     ("(x + 1)^2/y", "(x + 1)^2/y"),
-    # Calls whose arguments are one polynomial written two ways are one kernel,
-    # and cancel as one.
+    # Calls whose arguments are the same polynomial written two ways cancel.
     ("#e^(2*x*(y + 1) + y) - #e^(2*x*y + 2*x + y)", "0"),
     ("SIN(2*x*(y + 1)) - SIN(2*x*y + 2*x)", "0"),
-    # Wherever the sum stands: inside a product, under a power, under a
-    # function, in a denominator, in an exponent, one element of a vector.
+    # The rule applies wherever the sum appears: in a product, a power, a function
+    # argument, a denominator, a vector element.
     ("z*((x + 1)^2 + y)", "z*(x^2 + 2*x + y + 1)"),
     ("((x + 1)^2 + y)^2", "(x^2 + 2*x + y + 1)^2"),
     ("SIN((x + 1)^2 + y)", "SIN(x^2 + 2*x + y + 1)"),
     ("1/((x + 1)^2 + y)", "1/(x^2 + 2*x + y + 1)"),
     ("1/((y + 1)^2 + x)", "1/(x + (y + 1)^2)"),
     ("[(x + 1)^2 + y, (y + 1)^2 + x]", "[x^2 + 2*x + y + 1, x + (y + 1)^2]"),
-    # An exponent that is not a whole number is no polynomial degree. The
-    # power is still a kernel of `x`, so it leads the `y` beside it.
+    # A non-integer exponent can't be expanded, but the power still involves `x`,
+    # so it leads the `y`.
     ("(x + 1)^n + y", "(x + 1)^n + y"),
-    # The coefficients are opaque: what is free of the primary variable is one
-    # quantity, so the answer is in powers of `2*y + 1` and not of `y`. The
-    # part that is free of `x` is then written about `y`, its own primary.
+    # Coefficients are opaque: the part free of `x` is one quantity, so the answer
+    # is in powers of `2*y + 1`, not `y`. The term free of `x` is then written about
+    # `y`, its own primary variable.
     ("(x + 2*y + 1)^3 + z", "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 "
                             "+ 8*y^3 + 12*y^2 + 6*y + z + 1"),
-    # The `x^2` coefficient keeps its numeric content, where the original
-    # writes `2*x^2*(y + 3)`; the original writes it the other way round too,
-    # and the manual's LAPLACIAN is the case this follows.
+    # The `x^2` coefficient keeps its numeric content, where the original writes
+    # `2*x^2*(y + 3)`. The original is inconsistent here; this follows the
+    # manual's LAPLACIAN example.
     ("((x + 1)^2 + y)^2 + z", "x^4 + 4*x^3 + x^2*(2*y + 6) + 4*x*(y + 1) "
                               "+ y^2 + 2*y + z + 1"),
     ("x*((y + 1)^2 + z) + w", "x*(y^2 + 2*y + z + 1) + w"),
@@ -265,10 +252,9 @@ def test_a_sum_is_written_about_its_primary_variable(text, expected):
     assert simp(text) == expected
 
 
-#: The rational half of the same rule, also checked against the original.
-#: Terms holding the primary variable go over a common denominator and long
-#: division takes the polynomial part out, so what is left over the
-#: denominator is proper.
+#: The rational half of the same rule, also checked against the original. Terms with
+#: the primary variable go over a common denominator, and long division extracts the
+#: polynomial part, leaving a proper fraction.
 RATIONAL_FORM = [
     ("1/(x + 1) + 1/(x + 2) + y", "y + (2*x + 3)/((x + 1)*(x + 2))"),
     ("1/(x + 1)^2 + 1/(x + 1) + y", "y + (x + 2)/(x + 1)^2"),
@@ -276,15 +262,14 @@ RATIONAL_FORM = [
     ("(x^3 + 1)/(x + 2) + y", "x^2 - 2*x + y - 7/(x + 2) + 4"),
     ("x/(x + 1) + y", "y - 1/(x + 1) + 1"),
     ("x^2 + 1/(x + 1) + y", "x^2 + y + 1/(x + 1)"),
-    # The denominator keeps whatever shape it was written in: Derive answers
-    # this with the two factors standing, not with a quartic underneath. It
-    # writes the numerator `2*(x^2 + y^2 + 18)`, which is the same number of
-    # terms with the 2 taken outside and is not a form this can hold - see
+    # The denominator keeps its written shape: Derive leaves the two factors rather
+    # than multiplying out a quartic. Derive writes the numerator as
+    # `2*(x^2 + y^2 + 18)`, a form we can't represent - see
     # `test_a_numeric_factor_stays_among_the_terms_it_divides`.
     ("1/(9 + x^2 + (y - 3)^2) + 1/(9 + x^2 + (y + 3)^2)",
      "(2*x^2 + 2*y^2 + 36)/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y + 18))"),
-    # A denominator free of the primary variable belongs to a coefficient, so
-    # it is combined only where more than one term carries it.
+    # A denominator free of the primary variable is part of a coefficient, so it
+    # is combined only when several terms share it.
     ("x/y + z", "x/y + z"),
     ("1/y + z", "1/y + z"),
     ("(x + 1)^2/y + z", "(x^2 + 2*x + y*z + 1)/y"),
@@ -298,19 +283,19 @@ def test_a_sum_of_ratios_is_written_over_one_denominator(text, expected):
     assert simp(text) == expected
 
 
-#: What a quotient's numerator has in common, written outside it, which is the
-#: form Derive's own gcd leaves behind and prints. Checked against the original.
+#: A quotient's numerator has its common factor pulled out, as Derive's gcd leaves
+#: it. Checked against the original.
 NUMERATOR_CONTENT = [
     ("(x^2 + x)/n", "x*(x + 1)/n"),
     ("(a x + a y)/z", "a*(x + y)/z"),
     ("(x y + x)/z", "x*(y + 1)/z"),
     ("(n^2 + n)/(x + 1)", "n*(n + 1)/(x + 1)"),
     ("(x^2 + x)/(2 y)", "x*(x + 1)/(2*y)"),
-    # A common factor and not a factorization: these two have nothing in
-    # common term by term, and Derive prints them as they stand as well.
+    # A common factor, not a factorization: these terms share nothing, and Derive
+    # prints them as they are.
     ("(x^2 - 1)/(y + 1)", "(x^2 - 1)/(y + 1)"),
     ("(x^2 + 2 x + 1)/y", "(x^2 + 2*x + 1)/y"),
-    # Nothing divided is no numerator to read: a polynomial keeps its terms.
+    # Without a quotient, a polynomial keeps its terms.
     ("x^2 + x", "x^2 + x"),
 ]
 
@@ -321,32 +306,28 @@ def test_a_quotient_carries_its_numerator_s_common_factor_outside(text, expected
 
 
 def test_a_numeric_factor_stays_among_the_terms_it_divides():
-    """`(2*x + 2)/y` and not `2*(x + 1)/y`, where Derive writes the second.
+    """`(2*x + 2)/y` rather than Derive's `2*(x + 1)/y`.
 
-    Not a judgement about which reads better. Sympy multiplies a number back
-    over a sum as it builds one, so the second form is one no answer can be
-    written in: printing it and reading the print back gives the first, and an
-    entry whose text and tree disagree is what `test_simplify_corpus` fails on.
-    A factor with a variable in it survives that round trip and is taken out.
+    Sympy distributes a number over a sum when building it, so the second form can't
+    survive a print/parse round trip, and `test_simplify_corpus` fails when text and
+    tree disagree. A factor containing a variable does survive, and is taken out.
     """
     assert simp("(2 x + 2)/y") == "(2*x + 2)/y"
     assert simp("(2 x y + 2 y)/z") == "2*y*(x + 1)/z"
 
 
-#: A number in front of a sum, which is the same rule seen from the other side:
-#: a polynomial's coefficients are rational, term by term, so a number that
-#: divides into them belongs among them and not in front. The one that does not
-#: divide in is a denominator the whole sum shares, and that one stays in front.
+#: The same rule from the other side: a polynomial's coefficients are rational, so a
+#: number that divides into them goes among them rather than in front. One that
+#: doesn't divide in is a denominator the whole sum shares, and stays in front.
 COEFFICIENTS = [
     ("(m^2 + m + 2)*(m - 1)!/2", "(m^2/2 + m/2 + 1)*(m - 1)!"),
     ("(n^2 + n)/2", "n^2/2 + n/2"),
     ("x*(x - 1)/2", "x*(x - 1)/2"),
     ("z*(x + y)/2", "z*(x + y)/2"),
-    # A whole number in front is not a denominator and is left where it is.
+    # An integer factor in front is not a denominator and stays.
     ("6*a*b*(a*x + b*y)", "6*a*b*(a*x + b*y)"),
-    # And the way back is not taken: a sum of terms with denominators of their
-    # own is never gathered over the one they have in common, however many
-    # carry it. All three come from the original.
+    # The reverse doesn't happen: terms with their own denominators are never
+    # gathered over a common one. All three come from the original.
     ("x^2/6 + x/2", "x^2/6 + x/2"),
     ("x^10/2 - x^9/3 + x/6", "x^10/2 - x^9/3 + x/6"),
     ("1/2 + SIN(x)/2", "SIN(x)/2 + 1/2"),
@@ -359,17 +340,16 @@ def test_a_number_that_divides_a_sum_is_written_into_it(text, expected):
 
 
 def test_a_sum_over_two_powers_of_one_thing_is_written_over_the_higher():
-    """The lower power divides the higher, so the sum is one ratio.
+    """The lower power divides the higher, so the sum becomes one ratio.
 
-    All four match the original. The rule is what its derivatives need: sympy
-    differentiates a quotient into a sum over two powers of the denominator,
-    where the original writes one ratio - and the numerator of that ratio is
-    often what the whole answer turns on, `1` in the first case here.
+    All four match the original. This matters for derivatives: sympy differentiates
+    a quotient into a sum over two powers of the denominator, where the original
+    writes one ratio, whose numerator (`1` in the first case) is often the point.
 
-    Only where it shortens the sum. `1/SQRT(x) + 1/x` over `x^(3/2)` is longer
-    than it was and the original leaves it alone, as it does the first case's
-    sum authored as it stands - two fixed points for the one expression, and
-    this takes the answer it gives to the question that was asked.
+    It applies only where it shortens the sum. `1/SQRT(x) + 1/x` over `x^(3/2)` is
+    longer, and the original leaves it alone. The original also leaves the first
+    case's sum alone if typed directly - the expression has two fixed points, and
+    this test follows the original's answer for the question asked.
     """
     assert simp("DIF(x/SQRT(1 - x^2), x)") == "1/(1 - x^2)^(3/2)"
     assert simp("DIF(x^3/SQRT(x^2 + 1), x)") == "x^2*(2*x^2 + 3)/(x^2 + 1)^(3/2)"
@@ -380,18 +360,17 @@ def test_a_sum_over_two_powers_of_one_thing_is_written_over_the_higher():
 def test_no_denominator_carries_a_denominator_of_its_own():
     """A compound fraction is cleared however long that makes it.
 
-    Against the original: `DIF(ATAN(x/a), x)` is `a/(x^2 + a^2)` there and
-    `1/(a + x^2/a)` to sympy, and the two are the same number of operations - so
-    the rule cannot be a count. It is a shape the original never writes.
+    The original gives `a/(x^2 + a^2)` for `DIF(ATAN(x/a), x)`, sympy gives
+    `1/(a + x^2/a)`. Both have the same operation count, so the rule can't be
+    a count; the original just never writes nested denominators.
     """
     assert simp("DIF(ATAN(x/a), x)") == "a/(x^2 + a^2)"
     assert simp("1/(1 + 1/x)") == "x/(x + 1)"
 
 
 def test_the_order_list_decides_what_gets_multiplied_out():
-    """The manual's 4.3 exercise, as the original answers it: the same entry
-    expands under one order list and comes back as it was written under
-    another, because the primary variable is what the list says it is."""
+    """The manual's 4.3 exercise: the same entry expands under one order list and
+    stays as written under another, because the list picks the primary variable."""
     assert simp("(x + 1)^9 + y", Context(order=("x", "y", "z"))).startswith("x^9")
     assert simp("(x + 1)^9 + y", Context(order=("y", "x", "z"))) == "y + (x + 1)^9"
 
@@ -404,8 +383,8 @@ DOMAINS = [
     ("SQRT(x^2)", "SQRT(x^2)", COMPLEX_X),
     ("SQRT(x^2)", "x", POSITIVE_X),
     ("SQRT(x^2)", "-x", declared("x :epsilon Real (-inf, 0)")),
-    # `x` real could be negative, and then `LN(x^2 - x)` is not `LN(x) +
-    # LN(x - 1)`. Term order is the engine's.
+    # A real `x` could be negative, and then `LN(x^2 - x)` is not
+    # `LN(x) + LN(x - 1)`. Term order is the engine's.
     ("LN(x^2 - x) - LN(x)", "LN(x^2 - x) - LN(x)", None),
     ("LN(x^2 - x) - LN(x)", "LN(x - 1)", POSITIVE_X),
     ("LN(x^2)", "LN(x^2)", None),
@@ -423,29 +402,26 @@ DOMAINS = [
         "IF(m /= 0, pi, 0)",
         declared("m :epsilon Integer"),
     ),
-    # 0 would be wrong where `m` is 2 or -2: the integral is then `pi/2` or
-    # `-pi/2`. Without a case split to say so, the integral stands.
+    # 0 would be wrong where `m` is 2 or -2 (the integral is then `pi/2` or
+    # `-pi/2`). Without a case split, the integral stays.
     (
         "INT(SIN(m*x)*SIN(2*x), x, 0, pi)",
         "INT(SIN(2*x)*SIN(m*x), x, 0, pi)",
         declared("m :epsilon Integer"),
     ),
-    # `#e^(k*LN(y))` is `y^k` for positive `y` and not otherwise. Derive
-    # answers it whatever `y` is; where nothing declares it, the expression is
-    # the answer.
+    # `#e^(k*LN(y))` is `y^k` only for positive `y`. Derive rewrites it regardless;
+    # here an undeclared `y` leaves it unchanged.
     ("#e^(3*x*LN(y))", "#e^(3*x*LN(y))", None),
     ("#e^(3*x*LN(y))", "y^(3*x)", declared("y :epsilon Real (0, inf)")),
-    # The tangent pair adds to a right angle turned the way its argument is
-    # signed, which is an answer and not a guess: both halves are written down.
-    # Off the real line it is neither - `SIGN` is no longer `±1` there, and the
-    # identity does not hold - so the pair stands as it was written.
+    # The tangent pair sums to a right angle with the sign of its argument, which
+    # covers both cases and so is not a guess. For complex arguments the identity
+    # doesn't hold (`SIGN` is no longer `±1`), so the pair stays.
     ("ACOT(t) + ATAN(t)", "pi*SIGN(t)/2", None),
     ("ACOT(x) + ATAN(x)", "ATAN(x) + ACOT(x)", COMPLEX_X),
 ]
 
-#: What a declaration's interval is worth past the sign of it. A symbol can
-#: carry "above zero" and nothing else, so everything here is a question the
-#: bounds answer and the converted expression cannot.
+#: What a declared interval tells beyond its sign. A sympy symbol can only carry
+#: assumptions like "positive", so these are questions only the bounds can answer.
 INTERVALS = [
     ("ABS(x - 1)", "1 - x", "x :epsilon Real (0, 1)"),
     ("ABS(x - 1)", "1 - x", "x :epsilon Real [0, 1]"),
@@ -454,24 +430,22 @@ INTERVALS = [
     ("SQRT((x - 1)^2)", "1 - x", "x :epsilon Real (0, 1)"),
     # Both bars come off, and then the sum cancels.
     ("ABS(x) + ABS(x - 1)", "1", "x :epsilon Real (0, 1)"),
-    # `SIGN` is the one that needs the strict question: it has a third answer
-    # at zero, where an absolute value has the same answer either way.
+    # `SIGN` needs a strict bound, since it has a third value at zero; an absolute
+    # value is the same either way.
     ("SIGN(x - 1)", "-1", "x :epsilon Real (0, 1)"),
     ("SIGN(x - 1)", "SIGN(x - 1)", "x :epsilon Real (0, 1]"),
     ("ABS(x - 1)", "1 - x", "x :epsilon Real (0, 1]"),
     ("MAX(x, 1)", "1", "x :epsilon Real (0, 1)"),
     ("MIN(x, 1)", "x", "x :epsilon Real (0, 1)"),
-    # The bounds are asked before `MAX` is written out as the closed form of
-    # 6.7, so a bound that decides which argument is the greater answers with
-    # that argument; one that does not leaves the formula, whose bars are
-    # undecidable over the same interval for the same reason.
+    # Bounds are checked before `MAX` is rewritten as the closed form of 6.7, so a
+    # bound that decides the larger argument returns it. Otherwise the formula is
+    # left, its absolute value undecidable for the same reason.
     ("MAX(x, 1)", "ABS(x - 1)/2 + x/2 + 1/2", "x :epsilon Real (0, 2)"),
-    # An integer variable is asked about through a real stand-in, sympy having
-    # no answer at all about one bounded by a relation.
+    # An integer variable is queried through a real stand-in, since sympy can't
+    # reason about an integer bounded by a relation.
     ("ABS(n - 7)", "7 - n", "n :epsilon Integer [2, 5]"),
     ("ABS(n - 7)", "ABS(n - 7)", "n :epsilon Integer [2, 9]"),
-    # The test of an `IF`, and the bare relation, which are asked the same
-    # question and get the same answer: a bound that decides one decides both.
+    # An `IF` test and a bare relation are decided the same way.
     ("IF(x < 1, a, b)", "a", "x :epsilon Real (0, 1)"),
     ("IF(x > 1, a, b)", "b", "x :epsilon Real (0, 1)"),
     ("IF(x <= 1, a, b)", "a", "x :epsilon Real (0, 1]"),
@@ -480,8 +454,8 @@ INTERVALS = [
     ("IF(x < 1, a, b)", "IF(x < 1, a, b)", "x :epsilon Real (0, 2)"),
     ("x < 1", "true", "x :epsilon Real (0, 1)"),
     ("x < 1", "x < 1", "x :epsilon Real (0, 2)"),
-    # A power, an absolute value or a monotone function of a bounded quantity is
-    # bounded too, by the interval arithmetic over its parts.
+    # Interval arithmetic bounds powers, absolute values and monotone functions of a
+    # bounded quantity.
     ("ABS(x^2 - 1)", "1 - x^2", "x :epsilon Real (0, 1)"),
     ("ABS(x) < 1", "true", "x :epsilon Real (-1, 1)"),
     ("ABS(x) < 1", "ABS(x) < 1", "x :epsilon Real [-1, 1)"),
@@ -494,10 +468,9 @@ INTERVALS = [
     ("#e^x < 2", "#e^x < 2", "x :epsilon Real (-1, 1)"),
     ("1/x > 1", "true", "x :epsilon Real (0, 1)"),
     ("ATAN(x) > pi/4", "true", "x :epsilon Real (1, inf)"),
-    # The arithmetic takes each occurrence of a variable on its own, so a bound
-    # that holds only because two of them move together is not seen: `x - x^2` is
-    # positive over `(0, 1)`, and stands. The answer to a question nobody can
-    # settle is the expression.
+    # Interval arithmetic treats each occurrence of a variable independently, so it
+    # misses bounds that depend on correlation: `x - x^2` is positive over `(0, 1)`,
+    # but stays unresolved.
     ("ABS(x - x^2)", "ABS(x^2 - x)", "x :epsilon Real (0, 1)"),
     # A step function is constant between consecutive integers.
     ("FLOOR(x)", "0", "x :epsilon Real (0, 1)"),
@@ -507,8 +480,8 @@ INTERVALS = [
     ("FLOOR(x + 3/2)", "1", "x :epsilon Real (-1/2, 1/2)"),
     ("FLOOR(-x)", "-1", "x :epsilon Real (0, 1)"),
     ("FLOOR(LN(x))", "1", "x :epsilon Real (3, 7)"),
-    # An inverse function undoes its function where the angle stays on one of its
-    # branches, moved onto the principal branch.
+    # An inverse function undoes its function when the angle stays within one
+    # branch, shifted onto the principal branch.
     ("ASIN(SIN(x))", "x", "x :epsilon Real (-1, 1)"),
     ("ASIN(SIN(x))", "x", "x :epsilon Real [-pi/2, pi/2]"),
     ("ASIN(SIN(x))", "pi - x", "x :epsilon Real (2, 4)"),
@@ -529,8 +502,8 @@ def test_an_interval_settles_what_a_sign_alone_cannot(text, expected, declaratio
 
 
 def test_two_declared_intervals_are_asked_together():
-    # One box over both variables, so a question about the pair is answerable
-    # where neither bound answers it alone.
+    # Both bounds are used together, answering questions about the pair that
+    # neither answers alone.
     box = declared("x :epsilon Real (0, 1)", "y :epsilon Real (2, 3)")
     assert simp("ABS(x - y)", box) == "y - x"
     assert simp("MAX(x, y)", box) == "y"
@@ -540,8 +513,8 @@ def test_two_declared_intervals_are_asked_together():
 
 
 def test_an_interval_costs_nothing_where_nothing_is_declared():
-    # The box is built only where a bound says something the symbol could not,
-    # so an undeclared variable reaches none of this.
+    # Intervals are used only when a bound says more than the symbol's assumptions,
+    # so undeclared variables skip this machinery entirely.
     assert simp("ABS(x - 1)") == "ABS(x - 1)"
     assert simp("MAX(x, 1)") == "ABS(x - 1)/2 + x/2 + 1/2"
     assert simp("IF(x < 1, a, b)") == "IF(x < 1, a, b)"
@@ -556,37 +529,37 @@ def test_a_one_point_interval_is_a_value():
     assert simp("x + 1", declared("x :epsilon Real [7, 7]")) == "8"
 
 
-#: A conditional an answer comes with, where the declaration decides its condition:
-#: the case it picks, and the else case worked out where that is the one.
+#: Conditional answers whose condition a declaration decides. The chosen branch is
+#: returned; if it is the else branch, that is worked out.
 DECIDED_BY_A_DECLARATION = [
     ("SUM(x^k, k, 0, inf)", "1/(1 - x)", "x :epsilon Real (-1, 1)"),
     ("SUM(x^k, k, 0, inf)", "1/(1 - x)", "x :epsilon Real (0, 1)"),
     ("SUM(k*x^k, k, 0, inf)", "x/(1 - x)^2", "x :epsilon Real (0, 1)"),
     ("SUM(x^k/k, k, 1, inf)", "-LN(1 - x)", "x :epsilon Real (-1, 1)"),
-    # Past one the series is the else case, and its terms grow without bound, so
-    # it diverges: to `inf` where they are positive and `-inf` where negative.
+    # Past one the series takes the else branch and diverges: to `inf` for
+    # positive terms and `-inf` for negative.
     ("SUM(x^k, k, 0, inf)", "inf", "x :epsilon Real (1, inf)"),
     ("SUM(x^k, k, 0, inf)", "inf", "x :epsilon Real [2, inf)"),
     ("SUM(k*x^k, k, 0, inf)", "inf", "x :epsilon Real (1, inf)"),
     ("SUM(-x^k, k, 0, inf)", "-inf", "x :epsilon Real (1, inf)"),
-    # Terms that alternate in sign have no limit to say which way the sum goes.
+    # With alternating signs the sum has no limit to report.
     (
         "SUM((-x)^k, k, 0, inf)",
         "SUM(x^k*(-1)^k, k, 0, inf)",
         "x :epsilon Real (1, inf)",
     ),
-    # A declaration that does not decide the condition leaves it.
+    # A declaration that doesn't decide the condition leaves it.
     (
         "SUM(x^k, k, 0, inf)",
         "IF(x < 1, 1/(1 - x), SUM(x^k, k, 0, inf))",
         "x :epsilon Real (0, 2)",
     ),
-    # A power of a declared base that tends to zero or grows without bound.
+    # A power of a declared base tending to zero or infinity.
     ("LIM(x^t, t, inf)", "0", "x :epsilon Real (0, 1)"),
     ("LIM(x^t, t, inf)", "inf", "x :epsilon Real (1, inf)"),
     ("LIM(x^t, t, -inf)", "0", "x :epsilon Real (1, inf)"),
     ("LIM(x^t, t, -inf)", "inf", "x :epsilon Real (0, 1)"),
-    # An authored test is asked the same question.
+    # A user-written test is decided the same way.
     ("IF(ABS(x) < 1, a, b)", "a", "x :epsilon Real (-1, 1)"),
     ("IF(LN(x) < 0, a, b)", "a", "x :epsilon Real (0, 1)"),
     ("IF(x > 1 OR x < -1, a, b)", "b", "x :epsilon Real (-1, 1)"),
@@ -604,23 +577,22 @@ def test_a_declaration_decides_the_conditional_an_answer_comes_with(
 
 
 def test_a_conditional_on_a_condition_already_asked_asks_it_once():
-    # The else case of a sum of `y*x^k` is the sum of `x^k`, which comes with the
-    # same condition once more, and where the first fails so does the second.
+    # The else branch for `y*x^k` is the sum of `x^k`, whose own conditional has
+    # the same condition; it fails wherever the first does, so it isn't repeated.
     assert simp("SUM(y*x^k, k, 0, inf)") == (
         "y*IF(ABS(x) < 1, 1/(1 - x), SUM(x^k, k, 0, inf))"
     )
 
 
 def test_a_recursion_guarded_by_a_declared_variable_stands():
-    """A test the declaration leaves open is suspended as any other is, so a
-    recursion over a declared variable does not unfold its untaken branch."""
+    """A recursion whose test the declaration leaves open is not unfolded."""
     body = parse("IF(n = 0, 1, n*F(n - 1))", declaring("F"))
     functions = {"F": (("n",), body)}
     assert simp("F(5)", Context(functions=functions)) == "120"
     context = replace(declared("m :epsilon Integer [0, 3]"), functions=functions)
     assert simp("F(m)", context) == "IF(m = 0, 1, m*F(m - 1))"
-    # Above two, the first tests are decided false and the recursion unfolds to the
-    # first one that is not.
+    # Above two, the first tests are false, so the recursion unfolds up to the
+    # first undecided one.
     context = replace(declared("m :epsilon Integer (2, inf)"), functions=functions)
     assert simp("F(m)", context) == "m*(m - 1)*(m - 2)*IF(m = 3, 1, (m - 3)*F(m - 4))"
 
@@ -632,7 +604,7 @@ CONJUGATE_PAIRS = [
     ("CONJ(z)^2*z", "CONJ(z)*ABS(z)^2"),
     ("CONJ(z)*z^3", "z^2*ABS(z)^2"),
     ("1/(z*CONJ(z))", "1/ABS(z)^2"),
-    # A quotient pairs nothing.
+    # A quotient doesn't pair.
     ("CONJ(z)/z", "CONJ(z)/z"),
 ]
 
@@ -644,9 +616,8 @@ def test_a_conjugate_pair_is_a_squared_modulus(text, expected):
 
 # -- absolute values and signs ------------------------------------------------
 
-#: One real quantity written three ways. A product holding two of `ABS(u)`,
-#: `SIGN(u)` and `u` says the same thing twice and comes back saying it once,
-#: whichever of the three is the shorter way to say it.
+#: `ABS(u)`, `SIGN(u)` and `u` are related, so a product of two of them reduces to
+#: whichever single form is shortest.
 SIGNED = [
     ("ABS(x)*SIGN(x)", "x", None),
     ("ABS(x)/SIGN(x)", "x", None),
@@ -657,43 +628,40 @@ SIGNED = [
     ("SIGN(x)^3", "SIGN(x)", None),
     ("1/SIGN(x)", "SIGN(x)", None),
     ("ABS(x)^2", "x^2", None),
-    # The argument is whatever it is written about, and the rest of the product
-    # is no part of the group it makes.
+    # The argument can be any expression, and other factors are left alone.
     ("ABS(SIN(x))*SIGN(SIN(x))", "SIN(x)", None),
     ("ABS(x - 1)/SIGN(x - 1)", "x - 1", None),
     ("y*ABS(x)*SIGN(x)", "x*y", None),
     ("ABS(x)*SIGN(y)", "ABS(x)*SIGN(y)", None),
-    # One of the three by itself is what it is, and so is a bare power.
+    # A single one of the three, or a bare power, stays.
     ("ABS(x)", "ABS(x)", None),
     ("SIGN(x)", "SIGN(x)", None),
     ("x^3", "x^3", None),
-    # A square is never negative but is zero at zero, which a sign tells apart, and
-    # `SIGN(ABS(x))` is no simpler a way to say so.
+    # A square is never negative but can be zero, which the sign distinguishes;
+    # `SIGN(ABS(x))` would be no simpler.
     ("SIGN(x^2)", "SIGN(x^2)", None),
     ("SIGN(x^2 + 1)", "1", None),
-    # A reciprocal has the sign of what it divides by, wherever it is defined; at
-    # zero it is not, so `SIGN(1/x^2)` is 1 where `SIGN(x^2)` is not.
+    # A reciprocal has the sign of its denominator where defined. It is undefined
+    # at zero, so `SIGN(1/x^2)` is 1 where `SIGN(x^2)` is not.
     ("SIGN(1/x)", "SIGN(x)", None),
     ("SIGN(x^(-3))", "SIGN(x)", None),
     ("SIGN(1/x^2)", "1", None),
     ("SIGN(1/ABS(x))", "1", None),
     ("SIGN(1/(x + y))", "SIGN(x + y)", None),
     ("SIGN(1/z)", "SIGN(1/z)", declared("z :epsilon Complex")),
-    # Zero is the point the identities are a licence at rather than a fact -
-    # `SIGN(0)` is zero, so the left side is undefined there and the right side
-    # is not - and a declaration away from zero makes them facts.
+    # At zero the identities above are only conventions (`SIGN(0)` is zero, so one
+    # side is undefined there); a declaration excluding zero makes them exact.
     ("ABS(x)*SIGN(x)", "x", POSITIVE_X),
     ("SIGN(x)^2", "1", POSITIVE_X),
     ("x/ABS(x)", "1", POSITIVE_X),
-    # Off the real line there is nothing to fold: `SIGN(z)` is `z/|z|` there,
-    # whose square is not one and whose product with `ABS(z)` sympy will not
-    # collect either.
+    # For complex `z` nothing folds: `SIGN(z)` is `z/|z|`, whose square is not one,
+    # and sympy won't collect its product with `ABS(z)` either.
     ("ABS(z)*SIGN(z)", "SIGN(z)*ABS(z)", declared("z :epsilon Complex")),
     ("ABS(z)/SIGN(z)", "ABS(z)/SIGN(z)", declared("z :epsilon Complex")),
     ("SIGN(z)^2", "SIGN(z)^2", declared("z :epsilon Complex")),
     ("z/ABS(z)", "z/ABS(z)", declared("z :epsilon Complex")),
     # An odd increasing function keeps the sign of a real argument, and an even
-    # function does not see its absolute value. Neither holds off the real line.
+    # function ignores its argument's absolute value. Neither holds for complex ones.
     ("SIGN(ATAN(x))", "SIGN(x)", None),
     ("SIGN(SINH(x))", "SIGN(x)", None),
     ("SIGN(x^3)", "SIGN(x)", None),
@@ -720,10 +688,9 @@ TRIGONOMETRY = [
     ("SIN(6*x)/SIN(3*x)", "2*COS(3*x)", None),
     ("ATAN(2 + SQRT(3))", "5*pi/12", None),
     ("ATAN(1, 1)", "pi/4", None),
-    # Complementary arcs of one argument are a right angle. The tangent pair is
-    # the one that turns with the sign of its argument, and answers the turn
-    # itself where nothing decides the sign; a declaration that decides it, or
-    # an argument that cannot be negative, gets the constant outright.
+    # Complementary arcs of one argument sum to a right angle. For the tangent pair
+    # the sign of the argument matters, so the answer has `SIGN` unless a
+    # declaration or a nonnegative argument decides it.
     ("ASIN(x) + ACOS(x)", "pi/2", None),
     ("ASEC(x) + ACSC(x)", "pi/2", None),
     ("2*ASIN(x) + 2*ACOS(x)", "pi", None),
@@ -735,37 +702,35 @@ TRIGONOMETRY = [
     ("ACOT(t) + ATAN(t)", "90*SIGN(t)", Context(angle=Angle.DEGREE)),
     ("ACOT(t) + ATAN(t)", "pi/2", declared("t :epsilon Real (0, inf)")),
     ("ACOT(t) + ATAN(t)", "-pi/2", declared("t :epsilon Real (-inf, 0)")),
-    # `ACOT(0)` is `pi/2`, so a square - which is a right angle's worth above
-    # zero and `pi/2` at it - is the constant and not the turn.
+    # `ACOT(0)` is `pi/2`, so for a square argument the sum is `pi/2` everywhere.
     ("ACOT(x^2) + ATAN(x^2)", "pi/2", None),
     ("ACOT(x^2 + 1) + ATAN(x^2 + 1)", "pi/2", None),
     ("ACOT(3) + ATAN(3)", "pi/2", None),
     ("ASIN(x) + ACOS(y)", "ASIN(x) + ACOS(y)", None),
-    # An arc of a ratio is the arc of a side of the right triangle the ratio
-    # describes, however the hypotenuse was written. The root has a branch cut,
-    # so a complex argument keeps the ratio it came in as.
+    # An arc of a side ratio of a right triangle becomes a different arc, however
+    # the hypotenuse is written. The root has a branch cut, so a complex argument
+    # stays as it is.
     ("ASIN(x/SQRT(x^2 + 1))", "ATAN(x)", None),
     ("ASIN(-x/SQRT(x^2 + 1))", "-ATAN(x)", None),
     ("ASIN((x + 1)/SQRT(x^2 + 2*x + 2))", "ATAN(x + 1)", None),
     ("ATAN(x/SQRT(1 - x^2))", "ASIN(x)", None),
     ("ASIN(x/SQRT(x^2 + 1))", "ASIN(x/SQRT(x^2 + 1))", COMPLEX_X),
     ("ATAN(x/SQRT(1 - x^2))", "ATAN(x/SQRT(1 - x^2))", COMPLEX_X),
-    # The reciprocal arcs are 6.4's definitions rather than identities over the
-    # reals, so they need no domain: `ASEC(z)` is `ACOS(1/z)` whatever `z` is,
-    # and `ACSC(z)` is `ASIN(1/z)`. Neither head is kept in an answer.
+    # The reciprocal arcs are defined (6.4) as `ASEC(z) = ACOS(1/z)` and
+    # `ACSC(z) = ASIN(1/z)` for any `z`, so need no domain. Neither appears in
+    # answers.
     ("ASEC(1/x)", "ACOS(x)", None),
     ("ACSC(1/x)", "ASIN(x)", None),
     ("ASEC(1/x)", "ACOS(x)", COMPLEX_X),
     ("ASEC(x)", "ACOS(1/x)", None),
-    # Two angles a factor apart cancel once both are written about the angle
-    # they are multiples of; a whole factor apart is `SIN(6*x)/SIN(3*x)` above,
-    # which needs none of that.
+    # Angles related by a fractional factor cancel once written in terms of the
+    # common angle. (An integer factor is `SIN(6*x)/SIN(3*x)` above.)
     ("1/(1 + TAN(a)*TAN(a/2))", "COS(a)", None),
     ("SIN(45)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
     ("ASIN(1/2)", "30", Context(angle=Angle.DEGREE)),
-    # An answer in degree mode measures its angles in degrees as the input does, so
-    # that it reads back as itself: the derivative's `pi/180` is the chain rule's
-    # factor, and the cosine's argument is still the `x` degrees it was given.
+    # In degree mode answers measure angles in degrees, like the input, so they read
+    # back as themselves. The derivative's `pi/180` comes from the chain rule, and
+    # the cosine's argument is still `x` degrees.
     ("SIN(2*x)", "SIN(2*x)", Context(angle=Angle.DEGREE)),
     ("SIN(x + y)", "SIN(x + y)", Context(angle=Angle.DEGREE)),
     ("ASIN(x)", "ASIN(x)", Context(angle=Angle.DEGREE)),
@@ -777,11 +742,10 @@ TRIGONOMETRY = [
     ("ASIN(SIN(x))", "ASIN(SIN(x))", Context(angle=Angle.DEGREE)),
     ("APPROX(SIN(x) + ASIN(y))", "SIN(x) + ASIN(y)", Context(angle=Angle.DEGREE)),
     ("APPROX(2*ASIN(y))", "2*ASIN(y)", Context(angle=Angle.DEGREE)),
-    # A phase is an angle, measured in the unit the inverse heads give theirs in.
+    # A phase is an angle, in the same unit as the inverse trig functions.
     ("PHASE(#i)", "90", Context(angle=Angle.DEGREE)),
     ("PHASE(-1 - #i)", "-135", Context(angle=Angle.DEGREE)),
-    # `deg` is the constant pi/180, so degrees work in radian mode too. In degree
-    # mode it is one degree measured in degrees, which is 1.
+    # `deg` is pi/180, so degrees work in radian mode too. In degree mode it is 1.
     ("SIN(45 deg)", "SQRT(2)/2", None),
     ("SIN(45 deg)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
     ("45 deg", "45", Context(angle=Angle.DEGREE)),
@@ -789,10 +753,9 @@ TRIGONOMETRY = [
     ("SIN(x)*COS(x)", "SIN(2*x)/2", Context(trigonometry=Direction.COLLECT)),
     ("COS(x)^2", "1 - SIN(x)^2", Context(trigpower=TrigPower.SINES)),
     ("SIN(x)^2", "1 - COS(x)^2", Context(trigpower=TrigPower.COSINES)),
-    # The original has no secant, and writes an even reciprocal power of a
-    # cosine over the tangent: `DIF(LN(COS(x)), x, 2)` is `- TAN(x)^2 - 1`
-    # there. Only where the cosine is the whole of the term, and only for an
-    # even power.
+    # The original has no secant and writes an even reciprocal power of a cosine in
+    # terms of the tangent: `DIF(LN(COS(x)), x, 2)` is `- TAN(x)^2 - 1` there. This
+    # applies only to an even power that is the whole term.
     ("1/COS(x)^2", "TAN(x)^2 + 1", None),
     ("1/COS(x)^4", "(TAN(x)^2 + 1)^2", None),
     ("SEC(x)^2", "TAN(x)^2 + 1", None),
@@ -815,15 +778,15 @@ def test_trigonometry(text, expected, context):
     ids=str,
 )
 def test_collect_writes_a_sine_and_a_cosine_as_one_phase_shifted_sine(text, expected):
-    # Ours rather than fu's: `TR10i` only collects equal coefficients.
+    # Our own rewrite, since fu's `TR10i` only collects equal coefficients.
     assert simp(text, Context(trigonometry=Direction.COLLECT)) == expected
 
 
-#: Arctangents of numbers add up through the Gaussian integers whose arguments they
-#: are: `ATAN(p/q)` is the argument of `q + p*#i`, and a sum of them is a rational
-#: multiple of pi exactly when the product lies on an axis or a diagonal.
+#: Arctangents of numbers are summed via Gaussian integers: `ATAN(p/q)` is the
+#: argument of `q + p*#i`, and a sum is a rational multiple of pi exactly when the
+#: product lies on an axis or a diagonal.
 ARC_TANGENT_SUMS = [
-    # `ATAN(1)` is `pi/4` as it is written, and the other two make up the rest.
+    # `ATAN(1)` is `pi/4`, and the other two make up the rest.
     ("ATAN(1) + ATAN(2) + ATAN(3)", "pi", None),
     ("ATAN(2) + ATAN(3)", "3*pi/4", None),
     ("ATAN(1/2) + ATAN(1/3)", "pi/4", None),
@@ -835,18 +798,18 @@ ARC_TANGENT_SUMS = [
     ("2*ATAN(1/3) + ATAN(1/7)", "pi/4", None),
     ("5*ATAN(1/7) + 2*ATAN(3/79)", "pi/4", None),
     ("2*ATAN(2) + ATAN(4/3)", "pi", None),
-    # The part that adds to a multiple of pi does, and the rest stands beside it.
+    # The part that sums to a multiple of pi is reduced, the rest stays.
     ("ATAN(2) + ATAN(3) + ATAN(1/7)", "3*pi/4 + ATAN(1/7)", None),
     ("ATAN(1/2) + ATAN(1/3) + x", "x + pi/4", None),
     ("y*ATAN(1/2) + y*ATAN(1/3)", "pi*y/4", None),
     ("ATAN(1/2) + ATAN(1/3)", "45", Context(angle=Angle.DEGREE)),
-    # Otherwise a plain sum is one arctangent only where its argument is no larger
-    # than the ones it replaces.
+    # Otherwise a sum becomes one arctangent only if its argument is no larger than
+    # the ones it replaces.
     ("ATAN(1/3) + ATAN(1/7)", "ATAN(1/2)", None),
     ("ATAN(1/2) + ATAN(1/4)", "ATAN(1/2) + ATAN(1/4)", None),
     ("ATAN(2) + ATAN(4)", "ATAN(4) + ATAN(2)", None),
     ("3*ATAN(1/5)", "3*ATAN(1/5)", None),
-    # `ATAN(1/u)` is `ACOT(u)` for a real `u`, and pairs with `ATAN(u)` the same way.
+    # `ATAN(1/u)` is `ACOT(u)` for real `u`, and pairs with `ATAN(u)` the same way.
     ("ATAN(x) + ATAN(1/x)", "pi*SIGN(x)/2", None),
     ("ATAN(x/y) + ATAN(y/x)", "pi*SIGN(x/y)/2", None),
     ("2*ATAN(x) + 2*ATAN(1/x)", "pi*SIGN(x)", None),
@@ -860,24 +823,24 @@ def test_arctangents_of_numbers_add_up(text, expected, context):
     assert simp(text, context) == expected
 
 
-#: Sines and cosines of whole multiples of one angle are reduced together, over the
-#: single angle, and written the shortest of the ways that are unique: as a sum of
-#: calls of multiples, or as a polynomial in one of the two functions.
+#: Sines and cosines of integer multiples of one angle are reduced together and
+#: written in the shorter of two canonical forms: a sum of functions of multiples, or
+#: a polynomial in one of the two functions.
 MULTIPLE_ANGLES = [
-    # `trigsimp` rewrites the last term alone and leaves the sum half done.
+    # `trigsimp` rewrites only the last term and leaves the sum half done.
     ("SIN(x)^6 + COS(x)^6 + 3*SIN(x)^2*COS(x)^2", "1"),
     ("SIN(x)^4 - COS(x)^4", "-COS(2*x)"),
     ("COS(2*x) + 2*SIN(x)^2", "1"),
     ("SIN(3*x) + 4*SIN(x)^3", "3*SIN(x)"),
     ("SIN(2*x)*COS(x) - COS(2*x)*SIN(x)", "SIN(x)"),
-    # A quotient that cancels to a polynomial is cancelled even where that is no
-    # shorter, and is then a sum of multiples.
+    # A quotient that cancels to a polynomial is cancelled even if that is no
+    # shorter, and becomes a sum of multiples.
     ("SIN(3*x)/SIN(x)", "2*COS(2*x) + 1"),
     ("COS(3*x)/COS(x)", "2*COS(2*x) - 1"),
     ("SIN(5*x)/SIN(x)", "2*COS(2*x) + 2*COS(4*x) + 1"),
     ("(COS(x) + COS(3*x))/COS(2*x)", "2*COS(x)"),
     ("SIN(3*x)/SIN(x) + 1", "4*COS(x)^2"),
-    # Nothing cancels in these, and nothing shorter is there to write.
+    # Nothing cancels in these, and there is no shorter form.
     ("SIN(x)^4 + COS(x)^4", "COS(x)^4 + SIN(x)^4"),
     ("SIN(x)*COS(2*x)", "SIN(x)*COS(2*x)"),
     ("SIN(3*x)/SIN(y)", "SIN(3*x)/SIN(y)"),
@@ -889,8 +852,8 @@ def test_calls_of_multiples_of_one_angle_reduce_together(text, expected):
     assert simp(text) == expected
 
 
-#: A call of a small multiple of an arc is the algebraic function the
-#: multiple-angle formulas make of it.
+#: A trig function of a small multiple of an arc becomes algebraic via the
+#: multiple-angle formulas.
 ARC_MULTIPLES = [
     ("SIN(2*ACOS(x))", "2*x*SQRT(1 - x^2)"),
     ("SIN(2*ASIN(x))", "2*x*SQRT(1 - x^2)"),
@@ -899,7 +862,7 @@ ARC_MULTIPLES = [
     ("SIN(2*ATAN(x))", "2*x/(x^2 + 1)"),
     ("TAN(2*ATAN(x))", "2*x/(1 - x^2)"),
     ("SIN(-2*ACOS(x))", "-2*x*SQRT(1 - x^2)"),
-    # Past the bound the call stands.
+    # Above the multiple limit the call stays.
     ("SIN(5*ACOS(x))", "SIN(5*ACOS(x))"),
 ]
 
@@ -909,8 +872,8 @@ def test_a_call_of_a_multiple_of_an_arc_is_algebraic(text, expected):
     assert simp(text) == expected
 
 
-#: Sums and products of trigonometric values of rational multiples of pi that are
-#: rational or quadratic, as the minimal polynomial of the whole proves them to be.
+#: Sums and products of trig values at rational multiples of pi that are rational or
+#: quadratic, as their minimal polynomial proves.
 TRIGONOMETRIC_CONSTANTS = [
     ("COS(pi/7) - COS(2*pi/7) + COS(3*pi/7)", "1/2"),
     ("COS(2*pi/7) + COS(4*pi/7) + COS(6*pi/7)", "-1/2"),
@@ -920,10 +883,10 @@ TRIGONOMETRIC_CONSTANTS = [
     ("TAN(pi/7)*TAN(2*pi/7)*TAN(3*pi/7)", "SQRT(7)"),
     ("TAN(pi/9)*TAN(2*pi/9)*TAN(4*pi/9)", "SQRT(3)"),
     ("COS(pi/11) + COS(3*pi/11) + COS(5*pi/11) + COS(7*pi/11) + COS(9*pi/11)", "1/2"),
-    # Beside a variable, in a sum or a product.
+    # Alongside a variable, in a sum or a product.
     ("x + COS(pi/9)*COS(2*pi/9)*COS(4*pi/9)", "x + 1/8"),
     ("x*COS(pi/9)*COS(2*pi/9)*COS(4*pi/9)", "x/8"),
-    # A value of higher degree is no simpler number, and stands.
+    # A value of higher degree is no simpler, and stays.
     ("SIN(pi/7) + SIN(2*pi/7)", "SIN(2*pi/7) + SIN(pi/7)"),
     ("2*COS(pi/7)", "2*COS(pi/7)"),
     ("SIN(1)*COS(2)", "SIN(1)*COS(2)"),
@@ -935,8 +898,8 @@ def test_a_trigonometric_constant_is_written_as_the_number_it_is(text, expected)
     assert simp(text) == expected
 
 
-#: An arcsine or arccosine of a real number past one in size is complex, and is
-#: written in rectangular form, as `ACOSH(1/2)` and `ATANH(2)` are.
+#: An arcsine or arccosine of a real number with magnitude above one is complex, and
+#: is written in rectangular form, as are `ACOSH(1/2)` and `ATANH(2)`.
 ARCS_OFF_THE_LINE = [
     ("ASIN(2)", "pi/2 - #i*LN(SQRT(3) + 2)"),
     ("ASIN(-2)", "-pi/2 + #i*LN(SQRT(3) + 2)"),
@@ -965,9 +928,8 @@ LOGARITHMS = [
     ("#e^(#i*pi)", "-1", None),
     ("LOG(8, 2)", "3", None),
     ("#e^(2*LN(x))", "x^2", None),
-    # The logarithm falls without bound as its argument falls to zero, so at zero
-    # it is minus infinity and not the unsigned infinity of a pole; a base below
-    # one turns the sign round.
+    # The logarithm at zero is `-inf`, not an unsigned pole infinity; a base below
+    # one flips the sign.
     ("LN(0)", "-inf", None),
     ("LN(0) + 1", "-inf", None),
     ("LN(1 - 1)", "-inf", None),
@@ -979,20 +941,18 @@ LOGARITHMS = [
     # `e` and `i` are ordinary variables; only `#e` and `#i` are the constants.
     ("LN(e)", "LN(e)", None),
     ("i^2", "i^2", None),
-    # Auto is 6.2's mixed direction: a sum of logarithms collects into one, and
-    # a logarithm of a power comes apart. The second is the direction the
-    # longer answer lies in, and it is taken anyway - what `LN(256)` is to
-    # `8*LN(2)` is what `SQRT(12)` is to `2*SQRT(3)`. Collect is the setting
-    # that keeps the power where it stands.
+    # Auto is 6.2's mixed direction: a sum of logarithms collects into one, and a
+    # logarithm of a power comes apart. The latter is done even though it is
+    # longer, just as `SQRT(12)` becomes `2*SQRT(3)`. Collect keeps the power.
     ("LN(256)", "8*LN(2)", None),
     ("8*LN(2)", "8*LN(2)", None),
     ("LN(256)", "LN(256)", Context(logarithm=Direction.COLLECT)),
     ("LN(4/9)", "2*LN(2/3)", None),
-    # Nothing comes out of an argument that is no whole power of anything, and
-    # the sum still collects over one that is not: Derive answers `LN(40)`.
+    # An argument that is not a perfect power stays, and a sum still collects into
+    # one: Derive answers `LN(40)`.
     ("LN(12)", "LN(12)", None),
     ("3*LN(2) + LN(5)", "LN(40)", None),
-    # The rule wants a nonnegative base, or an exponent within one of zero.
+    # The rule requires a nonnegative base, or an exponent with magnitude below one.
     ("LN(x^8)", "LN(x^8)", None),
     ("LN(x^8)", "8*LN(x)", declared("x :epsilon Real [0, inf)")),
     ("LN(SQRT(z))", "LN(z)/2", None),
@@ -1018,22 +978,22 @@ LOGARITHMS = [
     ("LN(x) + LN(y)", "LN(x) + LN(y)", Context(logarithm=Direction.COLLECT)),
     ("#e^(x + y)", "#e^x*#e^y", Context(exponential=Direction.EXPAND)),
     ("#e^x*#e^y", "#e^(x + y)", Context(exponential=Direction.COLLECT)),
-    # Powers of one base collect in Auto too, and not because they are shorter:
-    # `DIF(x^n, x)` is `n*x^n/x` to sympy, which counts the same and is a form
-    # the original does not write.
+    # Powers of one base also collect in Auto, not because it's shorter: sympy's
+    # `n*x^n/x` for `DIF(x^n, x)` is the same length, but the original never writes
+    # that form.
     ("x^n/x", "x^(n - 1)", None),
     ("DIF(x^n, x)", "n*x^(n - 1)", None),
-    # A power to a logarithm is the exponential of the product of two, whichever
-    # base is written, and is written over the smaller.
+    # `a^LN(b)` equals `b^LN(a)` (both are `#e^(LN(a)*LN(b))`), and is written with
+    # the smaller base.
     ("2^LN(3) - 3^LN(2)", "0", None),
     ("2^LN(5) - 5^LN(2)", "0", None),
     ("3^LN(2)", "2^LN(3)", None),
     ("#e^(LN(2)*LN(3))", "2^LN(3)", None),
     ("5^LN(2)/2^LN(5)", "1", None),
     ("x^LN(2)", "x^LN(2)", None),
-    # An even power of a real argument is that power of its absolute value. Expand
-    # takes the logarithm apart over it; Auto keeps the shorter `LN(x^2)`, as the
-    # rule of 6.2 does not reach it, and so does a complex argument.
+    # An even power of a real argument equals that power of its absolute value, so
+    # Expand splits the logarithm through it. Auto keeps the shorter `LN(x^2)` since
+    # 6.2's rule doesn't apply, as does a complex argument.
     ("LN(x^2)", "2*LN(ABS(x))", Context(logarithm=Direction.EXPAND)),
     ("LN(4*x^2)", "2*LN(ABS(x)) + 2*LN(2)", Context(logarithm=Direction.EXPAND)),
     ("LN(x^3)", "LN(x^3)", Context(logarithm=Direction.EXPAND)),
@@ -1056,8 +1016,8 @@ def test_logarithms_and_exponentials(text, expected, context):
 @pytest.mark.parametrize(
     ("text", "expected", "branch"),
     [
-        # The principal cube root, in the rectangular form 4.5 promises: Derive
-        # answers `1 + SQRT(3)*#i` and approximates it `1 + 1.73205*#i`.
+        # The principal cube root, in 4.5's rectangular form: Derive answers
+        # `1 + SQRT(3)*#i` and approximates it as `1 + 1.73205*#i`.
         ("(-8)^(1/3)", "1 + SQRT(3)*#i", Branch.PRINCIPAL),
         ("(-8)^(1/3)", "-2", Branch.REAL),
         ("SQRT(x^2)", "ABS(x)", Branch.PRINCIPAL),
@@ -1070,10 +1030,9 @@ def test_which_root_an_expression_may_mean(text, expected, branch):
     assert simp(text, Context(branch=branch)) == expected
 
 
-#: Section 4.5's rectangular form, and the three things it does not reach. A
-#: base that is no number has no rectangle until something says what it is; a
-#: fifth root buys one with a radical inside a radical, and a seventh with a
-#: cosine, which is the polar form the rule is about avoiding.
+#: Section 4.5's rectangular form, and three cases it doesn't cover: a symbolic base;
+#: a fifth root, which would need nested radicals; and a seventh, which would need a
+#: cosine, i.e. the polar form the rule avoids.
 RECTANGULAR = [
     ("(1 + #i)^3", "-2 + 2*#i"),
     ("(-8)^(2/3)", "-2 + 2*SQRT(3)*#i"),
@@ -1089,20 +1048,20 @@ def test_a_numeric_power_that_is_complex_is_written_in_rectangular_form(text, ex
     assert simp(text) == expected
 
 
-#: A power to a complex exponent is its principal value, `#e^(z*LN(b))`, and an
-#: exponential turning through a rational multiple of pi is written in rectangular
-#: form where the cosine and the sine are plainly written, as a root of -1 is above.
+#: A power with a complex exponent is its principal value, `#e^(z*LN(b))`. An
+#: exponential of a rational multiple of `pi*#i` is written in rectangular form when
+#: the cosine and sine have simple values, like a root of -1 above.
 COMPLEX_CONSTANTS = [
     ("#i^#i", "#e^(-pi/2)"),
     ("(-1)^#i", "#e^(-pi)"),
     ("#i^(2*#i)", "#e^(-pi)"),
     ("#i^(1 + #i)", "#i*#e^(-pi/2)"),
-    # Built again around its value, the logarithm of it is its exponent.
+    # The logarithm of the value recovers the exponent.
     ("LN(#i^#i)", "-pi/2"),
     ("#i^#i^#i", "#i^#e^(-pi/2)"),
     ("(2*#i)^#i", "#e^(-pi/2 + #i*LN(2))"),
     ("(1 + #i)^#i", "#e^(-pi/4 + #i*LN(2)/2)"),
-    # A positive base keeps its power, the shorter spelling of the same exponential.
+    # A positive base keeps its power, the shorter spelling.
     ("2^#i", "2^#i"),
     ("pi^#i", "pi^#i"),
     ("#e^(#i*pi/3)", "1/2 + SQRT(3)*#i/2"),
@@ -1112,12 +1071,12 @@ COMPLEX_CONSTANTS = [
     ("#e^(1 + #i*pi/3)", "#e*(1 + SQRT(3)*#i)/2"),
     ("#e^(pi*#i/3 + LN(2))", "1 + SQRT(3)*#i"),
     ("#e^(#i*pi/3)*x", "(1 + SQRT(3)*#i)*x/2"),
-    # The fifth and seventh parts of a turn are no rectangle plainly written, and a
-    # turn through one radian is no rational part of one.
+    # Fifths and sevenths of a turn have no simple rectangular form, and one radian
+    # is not a rational part of a turn.
     ("#e^(#i*pi/5)", "#e^(#i*pi/5)"),
     ("#e^(#i*pi/7)", "#e^(#i*pi/7)"),
     ("#e^#i", "#e^#i"),
-    # A cosine or a sine of a complex number is taken apart over its real angle.
+    # A cosine or sine of a complex number is split around its real angle.
     ("COS(pi + #i)", "-(#e^2 + 1)*#e^(-1)/2"),
     (
         "COS(pi/3 + #i)",
@@ -1132,9 +1091,9 @@ def test_a_complex_constant_is_written_as_its_principal_value(text, expected):
     assert simp(text) == expected
 
 
-#: A root of a polynomial that is a perfect power is taken, with the bars a real
-#: variable needs and no more: the intervals settle them, a positive base needs none,
-#: and a complex variable has no real absolute value to write.
+#: A root of a polynomial that is a perfect power is taken, with only the absolute
+#: values a real variable needs: intervals can settle them, a positive base needs
+#: none, and a complex variable is left alone.
 PERFECT_POWERS = [
     ("SQRT(x^2 + 2*x + 1)", "ABS(x + 1)", None),
     ("SQRT(x^2 - 2*x + 1)", "ABS(x - 1)", None),
@@ -1149,8 +1108,8 @@ PERFECT_POWERS = [
     ("SQRT(x^2 + 2*x + 1)", "x + 1", POSITIVE_X),
     ("SQRT(x^2 + 2*x + 1)", "-x - 1", declared("x :epsilon Real (-inf, -1)")),
     ("SQRT(x^2 + 2*x + 1)", "SQRT(x^2 + 2*x + 1)", COMPLEX_X),
-    # The principal cube root of a negative cube is no real number, and a negative
-    # radicand and one that is no power have no root to take.
+    # The principal cube root of a negative cube is not real, and a negative radicand
+    # or one that is not a perfect power has no root to take.
     ("(x^3 + 3*x^2 + 3*x + 1)^(1/3)", "(x^3 + 3*x^2 + 3*x + 1)^(1/3)", None),
     ("SQRT(-x^2 - 2*x - 1)", "SQRT(-x^2 - 2*x - 1)", None),
     ("SQRT(x^2 + 1)", "SQRT(x^2 + 1)", None),
@@ -1163,13 +1122,11 @@ def test_a_root_of_a_perfect_power_is_taken(text, expected, context):
 
 
 def test_an_interval_goes_on_being_computed_with():
-    """The head is live, because sympy's arithmetic over it is.
+    """`INTERVAL` takes part in arithmetic, because sympy's does.
 
-    Every value in the range is carried through the operation and the answer is
-    the range of the results, which is why the square is `INTERVAL(0, 1)`: the
-    square of the range is not the range of the squares. Differentiation and
-    integration pass it through the same way, so a limit like this can be used
-    for something rather than only looked at.
+    The result is the range of the operation over every value in the interval, which
+    is why the square is `INTERVAL(0, 1)`. Differentiation and integration pass it
+    through too, so a limit like this one can be used further.
     """
     assert simp("INTERVAL(-1, 1) + 1") == "INTERVAL(0, 2)"
     assert simp("2*INTERVAL(-1, 1)") == "INTERVAL(-2, 2)"
@@ -1179,11 +1136,9 @@ def test_an_interval_goes_on_being_computed_with():
     assert simp("INT(LIM(SIN(1/x), x, 0), y)") == "INTERVAL(-1, 1)*y"
 
 
-#: What an undecidable four-argument `IF` leaves standing where the rest of the
-#: pipeline expects an expression: the unknown clause is whatever was written.
-#: Both shapes reach the gated rewrites, and both are in Derive's own utility
-#: files - the truth value in `SYMMETRIC_TEST_1` and `B_TYPE`, the relation in
-#: `CLAIRAUT`, all three in ODE.MTH.
+#: An undecidable four-argument `IF` yields its unknown clause, which can be a
+#: non-expression. Both shapes occur in Derive's utility files: the truth value in
+#: `SYMMETRIC_TEST_1` and `B_TYPE`, the relation in `CLAIRAUT`, all in ODE.MTH.
 NOT_EXPRESSIONS = [
     ("IF(v = [] OR v = [a], true, false, false)", "false"),
     ("IF(x > 0, y = 1, y = 2, y = 3)", "y = 3"),
@@ -1194,12 +1149,10 @@ NOT_EXPRESSIONS = [
 def test_a_rewrite_is_not_asked_about_something_that_is_no_expression(text, expected):
     """A truth value has no numerator and no denominator.
 
-    Every gated rewrite is offered whatever the conditional left behind, and
-    that is not always an expression. Asking sympy to split a truth value into
-    a ratio builds a `Mul` out of a `BooleanFalse`, which it warns about and
-    says it will one day refuse - so the answer must arrive without a word from
-    sympy. A warning is not an exception, and the `try` around every rewrite
-    would not have caught it.
+    Gated rewrites are offered whatever the conditional produced, which is not always
+    an expression. Splitting a truth value into a ratio makes sympy build a `Mul` of a
+    `BooleanFalse` and emit a deprecation warning, which the `try` around each
+    rewrite would not catch. The test requires no warnings.
     """
     with warnings.catch_warnings(record=True) as raised:
         warnings.simplefilter("always")
@@ -1228,9 +1181,8 @@ def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
     assert simp(text) == expected
 
 
-#: Commands the engine has no mathematics for: calls to functions declared without
-#: a body, the functions below. Each must come back exactly as it went in, so that a
-#: worksheet holding one is not damaged by simplifying it.
+#: Calls to functions declared without a body. Each must come back unchanged, so
+#: simplifying a worksheet containing one doesn't damage it.
 OPAQUE = [
     "MY_FUNCTION(x, 2)",
     "ANOTHER(1)",
@@ -1243,11 +1195,9 @@ def test_what_the_engine_has_no_mathematics_for_passes_through(text):
     assert simp(text, state=declaring(*OPAQUE_FUNCTIONS)) == text
 
 
-#: Calls to a function the engine does know, written so that they name nothing
-#: it can answer: a fit with no parametric variable to solve for, data of a
-#: width the label vector does not match, and a dependence on the parameter
-#: that is not linear. Each comes back as it went in rather than being answered
-#: from a reading nobody asked for.
+#: `FIT` calls that can't be answered: no parameter to solve for, data whose width
+#: doesn't match the label vector, and a nonlinear dependence on the parameter. Each
+#: comes back unchanged rather than being guessed at.
 NO_FIT = [
     "FIT([x, 1], [[1, 2], [3, 4]])",
     "FIT([x, a*x + b], [[1, 2, 3], [3, 4, 5]])",
@@ -1269,20 +1219,18 @@ def test_an_assigned_variable_is_replaced_by_its_value():
 
 
 def test_a_bound_name_survives_an_assignment_wherever_the_head_binds_it():
-    """A root sum names its variable in both the polynomial and the summand.
+    """A root sum binds its variable in both the polynomial and the summand.
 
-    Everywhere else the binding stops after the first argument: a sum's limits
-    are outer expressions and are substituted, and so is the index a root is
-    counted by. But a root sum runs over the roots of a polynomial written in
-    the very variable its summand names, so an assigned `t` must reach neither
-    half - otherwise the answer to an integral becomes a different expression
-    the second time it is simplified.
+    Elsewhere the binding covers only the first argument: a sum's limits and a
+    root's index are substituted. But a root sum's polynomial and summand share the
+    variable, so an assigned `t` must reach neither; otherwise an integral's answer
+    would change when simplified again.
     """
     context = Context(assignments={"t": parse("5")})
     assert simp("ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))", context) == (
         "ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))"
     )
-    # The cases the exception must not swallow: an index, a limit, a free name.
+    # Cases that must still be substituted: an index, a limit, a free name.
     assert simp("ROOT_OF(z^5 - z - 1, z, t - 5)", context) == "ROOT_OF(z^5 - z - 1, z, 0)"
     assert simp("SUM(k, k, 1, t)", context) == "15"
     assert simp("SUM(t^2, t, 1, 3)", context) == "14"
@@ -1292,18 +1240,16 @@ def test_a_bound_name_survives_an_assignment_wherever_the_head_binds_it():
 def test_a_defined_function_is_replaced_by_its_body():
     context = Context(functions={"ACCELERATION": (("f", "m"), parse("f/m"))})
     assert simp("ACCELERATION(6, 2)", context) == "3"
-    # Partial application: the parameter nobody supplied stays as its name.
+    # Partial application: an unsupplied parameter stays as its name.
     assert simp("ACCELERATION(6)", context) == "6/m"
 
 
 def test_a_counted_sum_is_written_out_for_the_recursion_under_it():
-    """A range of known length is written out even where a body is still owed.
+    """A sum with a known number of terms is expanded before its summand is evaluated.
 
-    `NONZERO_ROWS` of VECTOR.MTH counts the rows of a matrix by summing a
-    recursion over `m SUB n_`, and with the index still a symbol that recursion
-    has nothing to stop at: it runs off the end of a vector whose length is
-    unknown, a level per pass, and never arrives. Written out first, each term
-    recurses over one row and every one of them ends.
+    `NONZERO_ROWS` of VECTOR.MTH counts a matrix's rows by summing a recursion over
+    `m SUB n_`. With a symbolic index the recursion never terminates. Expanded first,
+    each term recurses over one concrete row and terminates.
     """
     state = declaring("NONZERO")
     nonzero = parse(
@@ -1319,11 +1265,9 @@ def test_a_counted_sum_is_written_out_for_the_recursion_under_it():
 def test_two_spellings_of_one_variable_are_one_variable():
     """Case-insensitively, `x` and `X` name the same thing.
 
-    Which spelling a line carries depends on what had been declared when it was
-    read: `X := ELEMENT(x, 1)` declares `X` and mentions `x` before that
-    declaration exists, so the tree holds both. The session's symbol table is
-    what says they are one, and the answer is written under the spelling it
-    records.
+    The spelling in a tree depends on what was declared when it was parsed:
+    `X := ELEMENT(x, 1)` declares `X` but mentions `x` first, so the tree holds both.
+    The session's symbol table unifies them, and the answer uses its spelling.
     """
     state = ParseState()
     parsed = parse_expression("[a:=, b:=, c:=, X := ELEMENT(x, 1)]", state)
@@ -1331,8 +1275,7 @@ def test_two_spellings_of_one_variable_are_one_variable():
         state.declare(declaration)
     answer = simplify(parsed.node, Context(), state)
     assert answer.text == "[a :=, b :=, c :=, X := ELEMENT(X, 1)]"
-    # And with no symbol table there is nothing to resolve them against, so
-    # the tree stands as it was read.
+    # Without a symbol table the tree stays as parsed.
     assert simplify(parsed.node, Context()).text.endswith("X := ELEMENT(x, 1)]")
 
 
@@ -1356,8 +1299,8 @@ def test_an_assignment_that_reaches_itself_stops():
 
 
 def test_a_subtree_simplifies_on_its_own():
-    # The session simplifies what the user has highlighted, not only whole
-    # lines, so nothing in the engine may assume it has a whole entry.
+    # The session simplifies the highlighted subexpression, so the engine must not
+    # assume it has a whole entry.
     node = parse("1 + (2*x + 3*x)")
     assert simplify(node.children[1], Context()).text == "5*x"
 
@@ -1370,10 +1313,9 @@ def test_a_result_carries_a_tree_whose_spans_index_its_text():
 
 # -- from Soft Warehouse's own demo scripts -----------------------------------
 #
-# `artifacts/sessions/derive-3.14-dos/*.DMO` are the annotated demonstrations
-# that shipped with the original, and between them they are a capability test
-# for Simplify. These are their cases, in author notation, with what this
-# engine answers.
+# `artifacts/sessions/derive-3.14-dos/*.DMO` are the annotated demos shipped with the
+# original, which together make a good capability test for Simplify. These are their
+# cases, in author notation, with this engine's answers.
 
 DEMO_NUMBERS = [
     ("5 (9 - 3) / 2", "15"),
@@ -1384,7 +1326,7 @@ DEMO_NUMBERS = [
     ("(2 + #i) / (#i + 1)", "3/2 - #i/2"),
     ("SQRT(55/36 + 4/3 #i)", "4/3 + #i/2"),
     ("inf + inf + 5", "inf"),
-    # Two nested radicals that only denest one at a time.
+    # Two nested radicals that denest only separately.
     ("SQRT(5 + SQRT 24) + SQRT(5 - SQRT 24)", "2*SQRT(3)"),
 ]
 
@@ -1401,8 +1343,8 @@ DEMO_ALGEBRA = [
         "/((p*x^2+(k+t)*x+r)^2-(p*x^2+(k-t)*x+r)^2)",
         "-s/t",
     ),
-    # The fifth power common to both terms is collected back out, and the
-    # cofactor - not the factors' order, which is sympy's - is the answer.
+    # The common fifth power is factored out; the point is the cofactor, not the
+    # factor order, which is sympy's.
     (
         "2 (x^2 - y^2)^6 - (x^2 - y^2)^5(2 x^2 - 3)",
         "(x^2 - y^2)^5*(3 - 2*y^2)",
@@ -1421,15 +1363,14 @@ DEMO_FUNCTIONS = [
     ("SIGN 5", "1"),
     ("ABS (x^2)", "x^2"),
     ("(ABS x)^2", "x^2"),
-    # The statistics the demo closes on. A numeric coefficient distributes, so
-    # the average of three names is written termwise where the manual writes it
-    # as one quotient, and the demo's exact average of 1/1 through 1/10 is the
-    # tenth harmonic number over 10.
+    # The demo's closing statistics. A numeric coefficient distributes, so the
+    # average is written termwise where the manual writes one quotient. The average
+    # of 1/1 through 1/10 is the tenth harmonic number over 10.
     ("AVERAGE (x, y, z)", "x/3 + y/3 + z/3"),
     ("AVERAGE (VECTOR (1/k, k, 1, 10))", "7381/25200"),
     ("RMS ([2, 3, 5])", "SQRT(114)/3"),
-    # The unbiased sample variance of two things, and its square root, which
-    # comes out of the radical because the variance is a square.
+    # The unbiased sample variance of two values, and its square root, which comes
+    # out of the radical because the variance is a square.
     ("VAR (x, y)", "(x - y)^2/2"),
     ("STDEV (x, y)", "SQRT(2)*ABS(x - y)/2"),
 ]
@@ -1460,18 +1401,18 @@ DEMO_CALCULUS = [
     ("LIM (x^(1/x), x, inf)", "1"),
     ("LIM ((a^x - b^x) / x, x, 0)", "LN(a) - LN(b)"),
     ("LIM (1/x, x, 0, -1)", "-inf"),
-    # A numeric coefficient distributes rather than standing outside the sum,
-    # so that the text reads back as the expression it prints.
+    # A numeric coefficient distributes over the sum, so the text reads back as
+    # the same expression.
     ("INT (x^2, x, a, b)", "b^3/3 - a^3/3"),
     ("INT (1/SQRT x, x, 0, b^2)", "2*ABS(b)"),
     ("INT (INT (x y, y, 0, SQRT (r^2 - x^2)), x, 0, r)", "r^4/8"),
-    # The constant of integration is the one that makes the answer continuous
-    # at `a = 0`, where Derive's `SIN(a*x^3 + b)/(3*a)` is undefined.
+    # The constant of integration makes the answer continuous at `a = 0`, where
+    # Derive's `SIN(a*x^3 + b)/(3*a)` is undefined.
     ("INT (x^2 COS (a x^3 + b), x)", "(SIN(a*x^3 + b) - SIN(b))/(3*a)"),
     ("TAYLOR (#e^x, x, 0, 5)", "x^5/120 + x^4/24 + x^3/6 + x^2/2 + x + 1"),
     ("TAYLOR (LN COS (a x), x, 0, 7)", "-a^6*x^6/45 - a^4*x^4/12 - a^2*x^2/2"),
-    # The closed form keeps the shape the summation formula has, which is the
-    # factored one the demo's own screen shows.
+    # The closed form keeps the summation formula's factored shape, as the demo's
+    # screen shows.
     ("SUM (k, k, 0, n)", "n*(n + 1)/2"),
     ("SUM (k^3, k, 0, n)", "n^2*(n + 1)^2/4"),
     ("SUM (2^-k, k, 0, inf)", "2"),
@@ -1490,15 +1431,15 @@ DEMO_MATRICES = [
     ("[[a,b,c],[1,2,3]] SUB 2", "[1, 2, 3]"),
     ("2*[[a,2],[3,b]]+[[1,3],[a,-b]]", "[[2*a + 1, 7], [a + 6, b]]"),
     ("[2,a,5] . [2*a,3,-1]", "7*a - 5"),
-    # `.` is the matrix product wherever the shapes conform; the dot product is
-    # the case of it the operator is named after.
+    # `.` is the matrix product wherever the shapes conform, the dot product being
+    # a special case.
     ("[[a,b],[c,d]] . [[x],[y]]", "[[a*x + b*y], [c*x + d*y]]"),
     ("[[a,b],[c,d]] . [[a,b],[c,d]]^(-1)", "[[1, 0], [0, 1]]"),
     (
         "[[a,b],[c,d]]^(-1) . [[e],[f]]",
         "[[(d*e - b*f)/(a*d - b*c)], [(a*f - c*e)/(a*d - b*c)]]",
     ),
-    # The outer product, which the demo builds out of the same operator.
+    # The outer product, built with the same operator.
     (
         "[[a],[b],[c]] . [[2,3,4]]",
         "[[2*a, 3*a, 4*a], [2*b, 3*b, 4*b], [2*c, 3*c, 4*c]]",
@@ -1511,18 +1452,16 @@ DEMO_MATRICES = [
         "[[a,b],[2,3]]^(-1)",
         "[[3/(3*a - 2*b), -b/(3*a - 2*b)], [-2/(3*a - 2*b), a/(3*a - 2*b)]]",
     ),
-    # A singular system, and a consistent one: the zero row leaves the second
-    # unknown arbitrary, and the row above it reads `x + 2*y = 3`.
+    # A singular but consistent system: the zero row leaves the second unknown
+    # arbitrary, and the first row reads `x + 2*y = 3`.
     ("ROW_REDUCE([[2,4],[3,6]],[[6],[9]])", "[[1, 2, 3], [0, 0, 0]]"),
     ("CHARPOLY([[a,b],[b,a]],z)", "z^2 - 2*a*z + a^2 - b^2"),
-    # No variable given, so the answer is written in `w`, the manual's default.
-    # Derive lists these the other way round; the pair is the same pair.
+    # With no variable given, the answer uses `w`, the manual's default. Derive
+    # lists the two in the opposite order.
     ("EIGENVALUES([[a,b],[b,a]])", "[w = a - b, w = a + b]"),
-    # The demo's vector calculus, in the default Cartesian x, y, z. It closes by
-    # cross-checking itself: the vector it takes the potential of is the curl
-    # computed two lines above, and the answer is the vector that curl was of.
-    # The potential comes out in the engine's term order, leading term first,
-    # where Derive writes the same sum as `x + y^2 + z^3`.
+    # The demo's vector calculus, in default Cartesian x, y, z. It ends with a
+    # cross-check: the vector potential of the curl computed two lines above gives
+    # back the original vector.
     ("GRAD(x+y^2+z^3)", "[1, 2*y, 3*z^2]"),
     ("DIV([1,2*y,3*z^2])", "6*z + 2"),
     ("LAPLACIAN(x+y^2+z^3)", "6*z + 2"),
@@ -1548,8 +1487,8 @@ def test_a_case_from_the_demo_scripts(text, expected):
 
 # -- totality -----------------------------------------------------------------
 
-#: One expression per node kind the parser can build. `PARAMS` and `INTERVAL`
-#: ride along inside the definition and the declaration that own them.
+#: One expression per node kind the parser can build. `PARAMS` and `INTERVAL` are
+#: covered inside the definition and the declaration that contain them.
 KINDS = [
     "2/3",
     "x",
@@ -1604,11 +1543,9 @@ def test_a_construct_survives_being_simplified(text):
 
 @pytest.mark.parametrize("name", sorted(BUILTIN_FUNCTIONS), ids=str)
 def test_every_builtin_survives_being_simplified(name):
-    """Whatever the engine has no mathematics for comes back intact.
+    """Simplify is total over builtins: none raises or loses its arguments.
 
-    Not a claim that any of these compute anything - most do not yet. The
-    claim is that Simplify is total over them: no name in the inventory can
-    make it raise, and none of them loses its arguments on the way through.
+    This doesn't claim they compute anything; many don't yet.
     """
     text = f"{name}(x, 2)"
     once = simplify(parse(text), Context())
@@ -1617,12 +1554,12 @@ def test_every_builtin_survives_being_simplified(name):
 
 # -- invariants over every case above -----------------------------------------
 
-#: Inputs that take seconds to give up on and come back as written. That a standing
-#: head prints back as itself is asked of many cheaper cases.
+#: Inputs that take seconds to come back unchanged. Unevaluated heads are covered by
+#: many cheaper cases.
 SLOW_TO_STAND = {"INT(SIN(m*x)*SIN(2*x), x, 0, pi)"}
 
-#: Every input this module and its siblings simplify, with the context each uses, but
-#: for those above.
+#: Every input this module and its siblings simplify, with its context, except those
+#: above.
 EVERY_CASE = [
     *((text, None) for text, _ in ARITHMETIC + RATIONAL + RADICALS + COMBINATORIAL),
     *((text, context) for text, _, context in DOMAINS if text not in SLOW_TO_STAND),
@@ -1655,24 +1592,19 @@ EVERY_CASE = [
 ]
 
 
-#: The one shape a second Simplify is allowed to change, and the test after the
-#: next says what it changes it to.
+#: The only inputs whose answer a second Simplify may change; see
+#: `test_a_heading_heads_its_column_only_while_it_is_a_heading`.
 HEADED = {text for text, _ in TRUTH_TABLES}
 
 
 @pytest.mark.parametrize(("text", "context"), EVERY_CASE, ids=str)
 def test_a_result_is_a_fixed_point_of_printing_and_of_simplify(text, context):
-    """Print, parse, print: the second text is the first. And simplify, simplify:
-    the second answer is the first.
+    """An answer survives print/parse unchanged, and a second Simplify doesn't change it.
 
-    The first is the invariant the worksheet rests on. A result is stored as text
-    and read back later, and an answer that changed on the way through would make
-    the entry the user is looking at a different expression from the one the label
-    refers to. The second is what "sufficiently simple" means: a second pass that
-    found more to do would mean the first stopped early.
-
-    The two are asked of one answer, since the answer is most of what either costs
-    to ask.
+    The first is what the worksheet relies on: results are stored as text and read
+    back, so a change would make a label refer to a different expression than the
+    one shown. The second is what "fully simplified" means. Both are checked on one
+    answer since computing it is most of the cost.
     """
     context = context or Context()
     state = declaring(*OPAQUE_FUNCTIONS)
@@ -1685,16 +1617,14 @@ def test_a_result_is_a_fixed_point_of_printing_and_of_simplify(text, context):
 
 
 def test_a_heading_heads_its_column_only_while_it_is_a_heading():
-    """A truth table names its columns with the expressions they are about, and
-    a name is not a claim: the heading stands unsimplified over the values it
-    was worked out into. That holds while the heading is inside the table. Once
-    the table is on the worksheet it is a matrix of expressions like any other,
-    and a second Simplify answers `p XOR q` there as it would anywhere."""
+    """A truth table's column headings stay unsimplified inside the table. Once on
+    the worksheet the table is an ordinary matrix, and a second Simplify simplifies
+    `p XOR q` like anywhere else."""
     once = simplify(parse("TRUTH_TABLE(p, q, p XOR q)"), Context())
     assert once.text.startswith("[[p, q, p XOR q], ")
     again = simplify(once.node, Context())
     assert again.text.startswith("[[p, q, NOT p AND q OR p AND NOT q], ")
 
 
-#: The expressions the corpus holds that settle only on a second pass are
-#: recorded in `test_simplify_corpus.py`, beside the sweep that finds them.
+#: Corpus expressions that settle only on a second pass are listed in
+#: `test_simplify_corpus.py`, next to the sweep that finds them.

@@ -1,48 +1,38 @@
-"""What a declared interval is worth beyond the sign it implies.
+"""Using declared intervals beyond the sign they imply.
 
-`x :epsilon Real (0, 1)` says two things about `x`, and a sympy symbol can
-carry only one of them: there is a fact on a symbol for "above zero" and none
-for "below one". So the upper bound is dropped where the expression is
-converted, and `ABS(x - 1)` comes back as it went in, where Derive answers
-`1 - x`.
+A sympy symbol can carry "above zero" but not "below one", so for `x :epsilon Real (0,
+1)` the upper bound is lost in conversion, and `ABS(x - 1)` stays as is where Derive
+answers `1 - x`.
 
-The bounds travel beside the expression instead, as the relational predicates
-`ask` takes as its second argument, and every question this module puts is one
-question: what sign does this subexpression keep over the whole box the
-declarations describe. That answer settles an absolute value, a `SIGN`, the
-larger of two things, and the test of an `IF`.
+So the bounds are kept beside the expression, as predicates for `ask`'s second
+argument, and this module asks one kind of question: what sign does a subexpression
+keep over the whole box the declarations describe? That settles absolute values,
+`SIGN`, `MAX`/`MIN`, and `IF` tests.
 
-Three things about the way the question has to be put:
+How the question is asked:
 
-* It is asked as `nonnegative` or `nonpositive` wherever that suffices, because
-  a closed bound is worth an answer too: `ABS(x - 1)` is `1 - x` over `[0, 1]`
-  as much as over `(0, 1)`, and the strict form of the question comes back
-  undecided there. `SIGN` is the one that needs the strict form, having a third
-  answer at zero.
+* As `nonnegative` or `nonpositive` where that suffices, so closed bounds work too:
+  `ABS(x - 1)` is `1 - x` over `[0, 1]` as well as `(0, 1)`, where the strict question
+  would be undecided. Only `SIGN` needs the strict form, since zero is a third answer.
 
-* An integer variable is asked about through a real stand-in. Sympy answers
-  nothing at all about a symbol declared integer and bounded by a relation, and
-  every integer in an interval is a real in it, so the relaxed question has the
-  same answer wherever it has one. Relaxing can only lose an answer, never
-  change one - and it loses nothing that was already had, since what integrality
-  alone settles is settled before this module is reached.
+* Integer variables are replaced by real stand-ins. Sympy answers nothing about a
+  symbol declared integer and bounded by a relation, and every integer in an interval
+  is a real in it, so the relaxed question can only lose answers, never change them.
+  It loses none that matter, since what integrality alone settles is settled earlier.
 
-* Only where a bound says something a symbol could not. A zero bound is the
-  sign the symbol already carries and an infinite one bounds nothing, so a
-  declaration with neither kind of news never builds a box and never costs an
-  `ask`.
+* Only when a bound says something the symbol can't. A zero bound is already the
+  symbol's sign and an infinite one bounds nothing, so such declarations never build
+  a box or cost an `ask`.
 
-The reasoning behind the answers is sympy's first, which reaches about as far as
-the bounds are linear in, and then interval arithmetic's, which reaches through
-powers, absolute values and monotone functions: `x^2 - 1` and `LN(x)` are both
-negative over `(0, 1)`. The arithmetic takes each occurrence of a variable on its
-own, so `x - x^2` over `(0, 1)` is put somewhere in `(-1, 1)` and its sign is not
-settled. An unsettled question leaves the expression alone, which is the same
-answer an undeclared variable gets.
+Sympy's reasoning is tried first, which handles roughly linear bounds, then interval
+arithmetic, which handles powers, absolute values and monotone functions: `x^2 - 1`
+and `LN(x)` are both negative over `(0, 1)`. Interval arithmetic treats each
+occurrence of a variable independently, so `x - x^2` over `(0, 1)` is put in `(-1,
+1)` with unknown sign. An undecided question leaves the expression alone, as for an
+undeclared variable.
 
-What a range settles beyond a sign is settled here too: a `FLOOR` constant over
-it, an `ASIN(SIN(t))` whose angle keeps to one branch, and the cases of a
-conditional an answer came with.
+Ranges also settle a `FLOOR` constant over them, an `ASIN(SIN(t))` whose angle stays on
+one branch, and the cases of a conditional.
 """
 
 from __future__ import annotations
@@ -64,21 +54,19 @@ Answer = TypeVar("Answer")
 
 __all__ = ["covering", "decided", "settled"]
 
-#: The heads a known sign settles. Every one of them is a question about the
-#: sign of something it holds, which is why they are settled together.
+#: Heads settled by knowing the sign of an argument.
 _SIGNED = (sp.Abs, sp.sign, sp.Max, sp.Min)
 
-#: The heads a known range settles: a step function constant over it, an inverse
-#: undoing its function on one of its branches, and a conditional whose cases it
-#: decides.
+#: Heads settled by a known range: step functions constant over it, inverses undoing
+#: their function on one branch, and conditionals whose cases it decides.
 _RANGED = (sp.floor, sp.ceiling, sp.asin, sp.acos, sp.atan, sp.Piecewise)
 
 _SETTLED = _SIGNED + _RANGED
 
 
 def settled(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Every absolute value, sign, extremum, step, inverse and conditional the
-    declared intervals settle."""
+    """`expression` with every absolute value, sign, extremum, step, inverse and
+    conditional that the declared intervals settle resolved."""
     if not expression.has(*_SETTLED):
         return expression
     box = _box(expression, context)
@@ -97,9 +85,8 @@ def settled(expression: sp.Basic, context: Context) -> sp.Basic:
 def decided(test: sp.Basic, context: Context) -> bool | None:
     """Whether the declared intervals settle this relation, and which way.
 
-    `IF(x < 1, a, b)` is `a` where `x` was declared below one, and `x < 1` on
-    its own is `true` there: the test of an `IF` and a relation standing alone
-    are put the same question and get the same answer.
+    `IF(x < 1, a, b)` is `a` where `x` is declared below one, and `x < 1` alone is
+    `true` there: both ask the same question.
     """
     if isinstance(test, (sp.And, sp.Or, sp.Not)):
         return _connected(test, context)
@@ -118,11 +105,7 @@ def decided(test: sp.Basic, context: Context) -> bool | None:
 
 
 def _connected(test: sp.Basic, context: Context) -> bool | None:
-    """A conjunction, disjunction or negation, from what decides of its operands.
-
-    A conjunction is false where one operand is and true where all are, and a
-    disjunction the other way round; an operand left open decides nothing else.
-    """
+    """Decide a conjunction, disjunction or negation from its operands."""
     if isinstance(test, sp.Not):
         inner = decided(test.args[0], context)
         return None if inner is None else not inner
@@ -136,13 +119,12 @@ def _connected(test: sp.Basic, context: Context) -> bool | None:
 
 
 def covering(symbol: sp.Symbol, context: Context) -> list[sp.Basic] | None:
-    """Expressions in one positive variable that between them take every value the
-    declaration allows `symbol`, or None where it declares no interval.
+    """Expressions in one positive variable that together cover every value the
+    declaration allows `symbol`, or None if it declares no interval.
 
-    What lets sympy, which can be told a symbol is positive and nothing finer, work
-    over an interval: `(1, inf)` is `1 + p` for a positive `p`, `(0, 1)` is `1/(1 +
-    p)`, and a closed end is its value on its own beside them. The variable is the
-    positive symbol `p` of the first expression.
+    This lets sympy, which only knows "positive", work over an interval: `(1, inf)` is
+    `1 + p` for positive `p`, `(0, 1)` is `1/(1 + p)`, and each closed end is added as
+    its own value. The variable is the positive symbol `p` in the first expression.
     """
     domain = context.domain(symbol.name)
     if domain.kind not in (DomainKind.REAL, DomainKind.UNKNOWN):
@@ -166,10 +148,8 @@ def covering(symbol: sp.Symbol, context: Context) -> list[sp.Basic] | None:
     return values
 
 
-#: How each relation reads as a question about the sign of `lhs - rhs`, in the
-#: order the answers are worth asking for: the first that comes back true
-#: settles it, and the negative reading is asked second because a relation
-#: written down is more often meant to hold than not.
+#: Each relation as (verdict, predicate on `lhs - rhs`) pairs. The first predicate
+#: that holds decides; the one for "holds" comes first since relations usually do.
 _READINGS: dict[type, tuple[tuple[bool, Predicate], ...]] = {
     sp.StrictLessThan: ((True, Q.negative), (False, Q.nonnegative)),
     sp.LessThan: ((True, Q.nonpositive), (False, Q.positive)),
@@ -185,22 +165,21 @@ _READINGS: dict[type, tuple[tuple[bool, Predicate], ...]] = {
 
 @dataclass(frozen=True)
 class _Box:
-    """The declared intervals, as something to ask questions against."""
+    """The declared intervals, for asking questions against."""
 
-    #: Every bound as a predicate, conjoined.
+    #: The conjunction of all bounds as predicates.
     facts: sp.Basic
-    #: The real stand-ins the integer variables are asked about.
+    #: Real stand-ins for the integer variables.
     standing_in: dict[sp.Symbol, sp.Symbol]
 
-    #: Every bounded variable's interval, the real stand-ins' included.
+    #: Each bounded variable's interval, including the real stand-ins.
     ranges: dict[sp.Symbol, _Range]
 
     def asks(self, predicate: Predicate, expression: sp.Basic) -> bool:
         """Whether `predicate` holds of `expression` everywhere in the box.
 
-        Sympy is asked first, and what it does not settle is put to the interval
-        arithmetic of `_range`, which reaches through the absolute values and the
-        monotone functions sympy's reasoning about bounds does not look into:
+        Sympy is asked first, then the interval arithmetic of `_range`, which sees
+        through absolute values and monotone functions that sympy doesn't:
         `ABS(x) < 1` over `(-1, 1)`, and `LN(x) < 0` over `(0, 1)`.
         """
         relaxed = expression.xreplace(self.standing_in)
@@ -210,14 +189,13 @@ class _Box:
         return reach is not None and _holds(predicate, reach)
 
     def range_of(self, expression: sp.Basic) -> _Range | None:
-        """The values `expression` takes over the box, or None where they are not
-        known."""
+        """The values `expression` takes over the box, or None if unknown."""
         relaxed = expression.xreplace(self.standing_in)
         return _attempt(lambda: _range(relaxed, self.ranges))
 
     def sign_of(self, expression: sp.Basic) -> int | None:
-        """1 where the expression cannot be negative, -1 where it cannot be
-        positive, and None where the box does not say."""
+        """1 if the expression can't be negative, -1 if it can't be positive, else
+        None."""
         if self.asks(Q.nonnegative, expression):
             return 1
         return -1 if self.asks(Q.nonpositive, expression) else None
@@ -226,8 +204,8 @@ class _Box:
 def _box(expression: sp.Basic, context: Context) -> _Box | None:
     """The declared intervals over this expression's variables, or None.
 
-    None where no declaration says anything the symbols do not already carry,
-    which is the usual case and the one that has to stay free.
+    None if no declaration adds anything to the symbols' assumptions, which is the
+    common case and must stay cheap.
     """
     facts: list[sp.Basic] = []
     standing_in: dict[sp.Symbol, sp.Symbol] = {}
@@ -252,8 +230,8 @@ def _box(expression: sp.Basic, context: Context) -> _Box | None:
             if value is None or not value.is_finite:
                 continue
             facts.append(_predicate(about, value, closed, above))
-            # A bound at zero is the sign the symbol carries anyway; anything
-            # else is news, and news is what makes the asking worth its cost.
+            # A zero bound is already the symbol's sign; only other bounds make
+            # asking worthwhile.
             worth_asking = worth_asking or not value.is_zero
     if not (facts and worth_asking):
         return None
@@ -263,17 +241,17 @@ def _box(expression: sp.Basic, context: Context) -> _Box | None:
 def _predicate(
     about: sp.Symbol, value: sp.Basic, closed: bool, above: bool
 ) -> sp.Basic:
-    """One end of an interval, as the predicate that says it."""
+    """One end of an interval, as a predicate."""
     if above:
         return Q.ge(about, value) if closed else Q.gt(about, value)
     return Q.le(about, value) if closed else Q.lt(about, value)
 
 
 def _bound(node: Node | None) -> sp.Basic | None:
-    """What an interval bound is worth, or None where it is not a number.
+    """The value of an interval bound, or None if it isn't a number.
 
-    Read without the domains in hand, as the conversion reads them: a bound
-    naming a declared variable would send the reading round in a circle.
+    Converted without domains, as in the conversion layer, since a bound naming a
+    declared variable would otherwise recurse.
     """
     if node is None:
         return None
@@ -288,11 +266,9 @@ def _bound(node: Node | None) -> sp.Basic | None:
 class _Range:
     """An interval of the extended reals, each end open or closed.
 
-    An infinite end is always open. An end is marked closed only where the value is
-    known to be reached, so that a strict question is answered only where the
-    strict answer is the true one: marking a reached end open could decide
-    `ABS(x) < 1` over `[-1, 1]`, while marking an unreached one closed only leaves
-    a strict question undecided.
+    An infinite end is always open. An end is closed only if the value is known to be
+    reached. Wrongly marking a reached end open could decide `ABS(x) < 1` over `[-1,
+    1]`, while wrongly marking one closed merely leaves a strict question undecided.
     """
 
     low: sp.Basic
@@ -307,7 +283,7 @@ _WHOLE_LINE = _Range(sp.S.NegativeInfinity, sp.S.Infinity)
 def _declared(
     low: sp.Basic | None, closed_low: bool, high: sp.Basic | None, closed_high: bool
 ) -> _Range:
-    """What one declaration says about the values of its variable."""
+    """The range of a variable given its declared bounds."""
     low = sp.S.NegativeInfinity if low is None else low
     high = sp.S.Infinity if high is None else high
     return _Range(
@@ -319,7 +295,7 @@ def _declared(
 
 
 def _holds(predicate: Predicate, reach: _Range) -> bool:
-    """Whether every value in `reach` has the sign `predicate` asks about."""
+    """Whether `predicate` holds for every value in `reach`."""
     above_zero = _true(reach.low > 0) or (reach.low_open and _true(reach.low >= 0))
     below_zero = _true(reach.high < 0) or (reach.high_open and _true(reach.high <= 0))
     if predicate is Q.positive:
@@ -344,11 +320,10 @@ def _true(relation: sp.Basic) -> bool:
 def _range(expression: sp.Basic, ranges: dict[sp.Symbol, _Range]) -> _Range | None:
     """The values `expression` takes where its variables take theirs, or None.
 
-    Interval arithmetic over sums, products, powers and the monotone functions: a
-    hull, which may be wider than the values really taken - `x - x` over `(0, 1)`
-    is put at `(-1, 1)` - but never narrower, so that what it says about a sign
-    holds. An expression it has no rule for, or a variable that is not known to be
-    real, has no range.
+    Interval arithmetic over sums, products, powers and monotone functions. The result
+    may be wider than the true range (`x - x` over `(0, 1)` gives `(-1, 1)`) but never
+    narrower, so sign conclusions hold. Unsupported expressions and variables not
+    known real have no range.
     """
     if expression.is_number:
         if expression in (sp.oo, -sp.oo):
@@ -376,7 +351,7 @@ def _range(expression: sp.Basic, ranges: dict[sp.Symbol, _Range]) -> _Range | No
 
 
 def _assumed(symbol: sp.Symbol) -> _Range | None:
-    """What the assumptions of an undeclared symbol say about its values."""
+    """The range implied by an undeclared symbol's assumptions."""
     if symbol.is_extended_real is not True:
         return None
     if symbol.is_positive:
@@ -414,8 +389,8 @@ def _sum(a: _Range, b: _Range) -> _Range | None:
 
 
 def _product(a: _Range, b: _Range) -> _Range | None:
-    """The hull of the products, an end reached where both factors reach theirs or
-    one reaches zero. An infinity times zero is zero, the limit the hull needs."""
+    """The hull of the endpoint products. An end is reached if both factors' ends are,
+    or one is a reached zero. Infinity times zero is taken as zero, the needed limit."""
     candidates = []
     for x, x_open in ((a.low, a.low_open), (a.high, a.high_open)):
         for y, y_open in ((b.low, b.low_open), (b.high, b.high_open)):
@@ -430,8 +405,8 @@ def _product(a: _Range, b: _Range) -> _Range | None:
 
 
 def _hull(candidates: list[tuple[sp.Basic, bool]]) -> _Range | None:
-    """The interval from the least of these values to the greatest, each end closed
-    where some candidate at it is reached."""
+    """The interval from the least to the greatest value, each end closed if some
+    candidate at it is reached."""
     values = [value for value, _ in candidates]
     low = _extreme(values, least=True)
     high = _extreme(values, least=False)
@@ -463,7 +438,7 @@ def _power(expression: sp.Pow, ranges: dict[sp.Symbol, _Range]) -> _Range | None
         if reach is None:
             return None
         return _to_power(reach, exponent)
-    # A positive base to a varying power is the exponential of a product.
+    # A positive base to a variable power: rewrite as an exponential.
     if base.is_number and base.is_positive:
         return _range(sp.exp(exponent * sp.log(base), evaluate=False), ranges)
     return None
@@ -478,8 +453,8 @@ def _to_power(reach: _Range, exponent: sp.Basic) -> _Range | None:
         raised = _monotone_power(reach, -exponent)
         return None if raised is None else _reciprocal(raised)
     if exponent.is_extended_real and _true(reach.low >= 0):
-        # A fractional power is taken of a nonnegative base only, increasing for a
-        # positive exponent and decreasing for a negative one.
+        # Fractional powers only of a nonnegative base: increasing for a positive
+        # exponent, decreasing for a negative one.
         if exponent.is_positive:
             return _image(reach, lambda v: v**exponent, increasing=True)
         if _true(reach.low > 0) or reach.low_open:
@@ -502,7 +477,7 @@ def _monotone_power(reach: _Range, n: sp.Integer) -> _Range | None:
 
 
 def _reciprocal(reach: _Range) -> _Range | None:
-    """`1/u` over a range on one side of zero, an open zero end going to infinity."""
+    """`1/u` over a range on one side of zero; an open zero end goes to infinity."""
     if _true(reach.low > 0) or (reach.low_open and _true(reach.low >= 0)):
         return _image(reach, _inverse, increasing=False)
     if _true(reach.high < 0) or (reach.high_open and _true(reach.high <= 0)):
@@ -511,7 +486,7 @@ def _reciprocal(reach: _Range) -> _Range | None:
 
 
 def _inverse(value: sp.Basic) -> sp.Basic:
-    """`1/v` for a `v` that is not negative, zero being approached from above."""
+    """`1/v` for nonnegative `v`, with zero approached from above."""
     if value.is_zero:
         return sp.S.Infinity
     return sp.S.Zero if value.is_infinite else 1 / value
@@ -520,9 +495,8 @@ def _inverse(value: sp.Basic) -> sp.Basic:
 def _image(
     reach: _Range, function: Callable[[sp.Basic], sp.Basic], increasing: bool
 ) -> _Range | None:
-    """The range under a function that is monotone over it, which takes an end to an
-    end. An end that is infinite or that the function takes off to infinity is not
-    reached."""
+    """The image of the range under a function monotone over it, mapping ends to ends.
+    Infinite image ends are open."""
     low, high = function(reach.low), function(reach.high)
     if not (low.is_extended_real and high.is_extended_real):
         return None
@@ -534,7 +508,7 @@ def _image(
 
 
 def _over(lowest: sp.Basic, function: Callable[[sp.Basic], sp.Basic]):
-    """An increasing function defined from `lowest` up, as a rule for `_MONOTONE`."""
+    """A `_MONOTONE` rule for an increasing function defined from `lowest` up."""
 
     def rule(reach: _Range) -> _Range | None:
         if not _true(reach.low >= lowest):
@@ -545,7 +519,7 @@ def _over(lowest: sp.Basic, function: Callable[[sp.Basic], sp.Basic]):
 
 
 def _within(low: sp.Basic, high: sp.Basic, function, increasing: bool):
-    """A monotone function defined between `low` and `high`, as a rule."""
+    """A `_MONOTONE` rule for a monotone function defined between `low` and `high`."""
 
     def rule(reach: _Range) -> _Range | None:
         if not (_true(reach.low >= low) and _true(reach.high <= high)):
@@ -556,7 +530,7 @@ def _within(low: sp.Basic, high: sp.Basic, function, increasing: bool):
 
 
 def _everywhere(function: Callable[[sp.Basic], sp.Basic]):
-    """An increasing function of the whole line, as a rule."""
+    """A `_MONOTONE` rule for an increasing function defined everywhere."""
     return lambda reach: _image(reach, function, increasing=True)
 
 
@@ -574,7 +548,7 @@ def _magnitude(reach: _Range) -> _Range | None:
     )
 
 
-#: The functions whose range is the image of their argument's, each by its rule.
+#: Functions whose range is computed from their argument's range, with their rules.
 _MONOTONE: dict[type, Callable[[_Range], _Range | None]] = {
     sp.Abs: _magnitude,
     sp.exp: _everywhere(sp.exp),
@@ -592,7 +566,7 @@ _MONOTONE: dict[type, Callable[[_Range], _Range | None]] = {
 
 
 def _resolve(head: sp.Basic, box: _Box, context: Context) -> sp.Basic:
-    """One head, as what the box makes of it, or as it stands."""
+    """One head, resolved using the box if possible."""
     if isinstance(head, sp.Piecewise):
         return _cases(head, context)
     if isinstance(head, (sp.floor, sp.ceiling)):
@@ -611,10 +585,9 @@ def _resolve(head: sp.Basic, box: _Box, context: Context) -> sp.Basic:
 def _cases(head: sp.Piecewise, context: Context) -> sp.Basic:
     """A conditional without the cases the box rules out, or the one case it picks.
 
-    A case whose condition is false is dropped, and one whose condition is true
-    is the answer once every case ahead of it is dropped: `SUM(x^k, k, 0, inf)`
-    over `(0, 1)` is `1/(1 - x)`, and over `(1, inf)` it is the sum itself, which
-    is the else case.
+    False cases are dropped, and a true case is the answer if all before it were
+    dropped: `SUM(x^k, k, 0, inf)` over `(0, 1)` is `1/(1 - x)`, and over `(1, inf)` it
+    is the sum itself (the else case).
     """
     kept = []
     for value, condition in head.args:
@@ -634,8 +607,8 @@ def _cases(head: sp.Piecewise, context: Context) -> sp.Basic:
 
 
 def _step(head: sp.Basic, box: _Box) -> sp.Basic:
-    """`FLOOR(u)` where `u` stays between two consecutive integers, the lower one
-    included: the integer below. A ceiling the same way, from above."""
+    """`FLOOR(u)` as the lower integer when `u` stays in `[n, n + 1)`; `CEILING`
+    likewise from above."""
     if len(head.args) != 1:
         return head
     reach = box.range_of(head.args[0])
@@ -655,13 +628,12 @@ def _step(head: sp.Basic, box: _Box) -> sp.Basic:
 
 
 def _inverted(head: sp.Basic, box: _Box) -> sp.Basic:
-    """`ASIN(SIN(t))`, `ACOS(COS(t))` or `ATAN(TAN(t))` where `t` stays on one
-    branch of the function, which is `t` moved onto the principal one.
+    """`ASIN(SIN(t))`, `ACOS(COS(t))` or `ATAN(TAN(t))`, when `t` stays on one branch,
+    as `t` mapped to the principal branch.
 
-    `ASIN(SIN(t))` is `t` over `[-pi/2, pi/2]` and `pi - t` over `[pi/2,
-    3*pi/2]`: on the branch `k` half turns along, it is `(-1)^k*(t - k*pi)`. The
-    arc cosine's branches start at the multiples of pi, and the arc tangent's are
-    the open half turns about them.
+    `ASIN(SIN(t))` is `t` over `[-pi/2, pi/2]` and `pi - t` over `[pi/2, 3*pi/2]`; on
+    branch `k` it is `(-1)^k*(t - k*pi)`. Arc cosine branches start at multiples of
+    pi, and arc tangent branches are the open intervals of width pi centered on them.
     """
     inner = head.args[0]
     function = {sp.asin: sp.sin, sp.acos: sp.cos, sp.atan: sp.tan}[type(head)]
@@ -691,7 +663,7 @@ def _inverted(head: sp.Basic, box: _Box) -> sp.Basic:
 
 
 def _signum(head: sp.Basic, box: _Box) -> sp.Basic:
-    """`SIGN(u)`, which needs the strict question: zero is an answer of its own."""
+    """`SIGN(u)`, using strict questions since zero is a separate answer."""
     argument = head.args[0]
     if box.asks(Q.positive, argument):
         return sp.S.One
@@ -701,11 +673,10 @@ def _signum(head: sp.Basic, box: _Box) -> sp.Basic:
 
 
 def _extremum(head: sp.Basic, box: _Box) -> sp.Basic:
-    """`MAX(a, b)` or `MIN(a, b)` where the box says which of the two it is.
+    """`MAX(a, b)` or `MIN(a, b)`, if the box decides which argument it is.
 
-    Two arguments, because that is the comparison a sign answers. More of them
-    is a tournament, and one the box would have to be asked about a pair at a
-    time; nothing in the corpus writes one.
+    Only two arguments are handled; more would need pairwise comparisons, and
+    nothing in the corpus uses them.
     """
     if len(head.args) != 2:
         return head
@@ -718,7 +689,7 @@ def _extremum(head: sp.Basic, box: _Box) -> sp.Basic:
 
 
 def _attempt(question: Callable[[], Answer]) -> Answer | None:
-    """The answer, or None where asking it raised."""
+    """The answer, or None if the question raised."""
     try:
         return question()
     except Exception:

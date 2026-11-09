@@ -1,32 +1,23 @@
-"""The window bookkeeping, the routing, and the queue everything numeric goes through.
+"""Backend-independent plot session: window bookkeeping, routing, and the sample queue.
 
-This is the half of plotting that is the same whatever draws the picture, and
-it is most of what the plot host used to be: window numbering, which window of
-each kind is the receiver, what an activation means, how an `Add` is routed,
-how `Describe` is answered, and how the sticky preferences reach the next
-window and the next plot. It talks to a `Backend`, and it knows nothing else
-about what a window is.
+The session numbers windows, tracks the receiver window of each kind, routes `Add`
+requests, answers `Describe`, and applies sticky preferences to new windows and plots.
+It knows windows only through the `Backend` protocol.
 
-One pointer, and it is the window the user last touched: the windows report
-their own activation events - a click, a raise, an alt-tab - and the
-last-activated window of each kind is the *receiver* the next plot of that kind
-lands in. A plot's own arrival counts as a touch, since a plot is brought to the
-front of the window it draws into, and when the receiver closes it falls back to
-the last-activated survivor of its kind. The receiver says so in its own title,
-so the user can see where the next plot will land. The app never tracks any of
-this; it asks.
+Windows report their activation events (click, raise, alt-tab), and the last-activated
+window of each kind is the *receiver* for the next plot of that kind. A plot arriving
+in a window also counts as activation, since the window is brought to the front. When
+the receiver closes, the most recently activated remaining window of its kind takes
+over. The receiver is marked in its title. The app doesn't track any of this; it asks.
 
-The sticky preferences travel both ways. The app says what the next surface's
-grid and the next data plot's points are to be; they are read where a window is
-built and where a plot is added, which is what keeps a change out of the windows
-already open. And when a sticky control moves in a window, the new value is kept
-and reported to whoever is listening, because the app is the side that outlives
-this and writes state files.
+Preferences travel both ways. The app sends the defaults for the next surface's grid
+and data plot style; they are applied when a window is built or a plot is added, so open
+windows are unaffected. When a sticky control changes in a window, the new value is
+stored and reported to the app, which outlives the session and saves state files.
 
-The `Sampler` is the third piece. Jobs are keyed, and a new job displaces a
-pending one with the same key, which is what makes a dragged view cost one
-sampling and not sixty. What actually runs them is an `Executor` handed in: a
-sampling thread on the desktop, requests to the engine worker in the browser.
+The `Sampler` is a keyed job queue: a new job replaces a pending one with the same key,
+so a drag costs one sampling, not sixty. Jobs are run by an `Executor`: a sampling
+thread on the desktop, the engine worker in the browser.
 """
 
 from __future__ import annotations
@@ -45,41 +36,36 @@ __all__ = ["Executor", "PlotSession", "Sampler", "curves", "preferred", "said"]
 
 
 def said(error: Exception) -> str:
-    """One line naming an exception, for a message line to carry."""
+    """A one-line description of an exception, for the message line."""
     text = str(error).strip().splitlines()
     return text[0] if text else type(error).__name__
 
 
 class Executor(Protocol):
-    """What runs the sampler's jobs, one at a time, and delivers their answers.
+    """Runs the sampler's jobs one at a time and delivers their results.
 
-    The desktop's is a thread that pulls jobs and hands the answers back into
-    the Qt loop; the browser's asks the engine worker and resolves what comes
-    back. Neither is the sampler's business - what is, is which job runs next.
+    On the desktop it is a thread that pulls jobs and passes results back to the Qt
+    loop; in the browser it sends jobs to the engine worker.
     """
 
     def serving(self, sampler: Sampler) -> None:
-        """Take the sampler whose jobs are to be run, and start running them."""
+        """Start running jobs from `sampler`."""
 
     def wake(self) -> None:
-        """There is a job waiting. Called wherever `submit` is called."""
+        """Notify that a job is waiting. Called on every `submit`."""
 
     def deliver(self, done: Callable[[Any], None], answer: Any) -> None:
-        """Hand one answer to the side that draws, wherever that side runs."""
+        """Pass a result to the drawing side, on whatever thread it runs."""
 
 
 class Sampler:
-    """The keyed job queue everything numeric goes through, latest per key winning.
+    """Keyed queue for all numeric jobs, where the latest job for each key wins.
 
-    A new job displaces a pending one with the same key: the third view change
-    in a drag replaces the second's sampling of the same curve, which has not
-    started, and the queue therefore never grows longer than the number of
-    curves. A job already running is left to finish - it is holding arrays and
-    there is nothing to interrupt it with - and its answer is discarded by the
-    window if the view has moved on.
+    A new job replaces a pending one with the same key, so the queue is never longer
+    than the number of curves. A job already running can't be interrupted and runs to
+    completion; the window discards its result if the view has changed.
 
-    A job that raises answers with the exception rather than losing it: what
-    went wrong is the curve's problem and the window is the one that says so.
+    A job that raises returns the exception as its result, so the window can report it.
     """
 
     def __init__(self, executor: Executor) -> None:
@@ -96,11 +82,11 @@ class Sampler:
         done: Callable[[Any], None],
         report: Callable[..., None] | None = None,
     ) -> None:
-        """Queue one job, displacing any pending job with the same key.
+        """Queue a job, replacing any pending job with the same key.
 
-        `work` is called with a `report` of its own to hand partial answers to -
-        the uniform pass of a sampling, drawn while the refinement runs - and
-        both it and `done` are delivered where the drawing happens.
+        `work` is called with a `report` callback for partial results (such as the
+        uniform pass of a sampling, drawn while refinement runs). Both reports and the
+        final result are delivered to the drawing side.
         """
 
         def reporting(*arguments: Any) -> None:
@@ -114,18 +100,17 @@ class Sampler:
         self._executor.wake()
 
     def drop(self, matches: Callable[[Any], bool]) -> None:
-        """Forget the pending jobs whose keys match, a closed window's say."""
+        """Drop pending jobs whose keys match, e.g. those of a closed window."""
         with self._lock:
             for key in [key for key in self._order if matches(key)]:
                 self._order.remove(key)
                 self._jobs.pop(key, None)
 
     def take(self) -> tuple[Callable[[], Any], Callable[[Any], None]] | None:
-        """The next job and what to do with its answer, or None for none.
+        """The next job and its completion callback, or None if the queue is empty.
 
-        The executor's call, and the only way a job leaves the queue: whatever
-        is taken here is running, and a `submit` for the same key while it runs
-        queues a new job rather than replacing it.
+        Called by the executor. A taken job is considered running, so submitting the
+        same key afterwards queues a new job.
         """
         with self._lock:
             if not self._order:
@@ -141,12 +126,10 @@ def _answered(work: Callable[..., Any], reporting: Callable[..., None]) -> Any:
 
 
 class PlotSession:
-    """The window registry, the routing, and the request handlers.
+    """The window registry, plot routing, and request handlers.
 
-    Held by the process the windows live in on the desktop, and by the app
-    itself in the browser, where there is no such process: what it is is the
-    same either way, which is what makes a second backend a backend rather
-    than a second program.
+    On the desktop it lives in the plot host process; in the browser, in the app
+    itself. It is the same in both cases.
     """
 
     def __init__(
@@ -157,19 +140,15 @@ class PlotSession:
     ) -> None:
         self.backend = backend
         self.sampler = Sampler(executor)
-        #: Where asynchronous events go - a window closed, a curve that would
-        #: not evaluate, a preference the user moved. Assigned rather than
-        #: required, since the app is the side that decides what to do with one.
+        #: Callback for asynchronous events: a closed window, a curve that failed to
+        #: evaluate, a changed preference.
         self.events = events
-        #: The preferences the next window and the next plot are built with.
-        #: The dataclass defaults until the app says otherwise, which it does in
-        #: front of its first request, so a session driven by a test draws the
-        #: pictures the program's own defaults describe.
+        #: Preferences for the next window and plot. They start as the defaults; the
+        #: app sends its own before its first request.
         self.preferences = protocol.Prefer()
         self.windows: dict[int, WindowHandle] = {}
-        #: Which window is the receiver for each kind, and the order windows
-        #: have been touched in, most recent first - fed by the windows' own
-        #: activation events, and what a closed receiver falls back through.
+        #: The receiver window of each kind, and windows in order of activation, most
+        #: recent first, used to pick a new receiver when one closes.
         self._current: dict[WindowKind, int] = {}
         self._used: list[int] = []
         self._made = 0
@@ -177,12 +156,9 @@ class PlotSession:
     # -- requests ----------------------------------------------------------
 
     def handle(self, request: Any, reply: Callable[[Any], None]) -> None:
-        """One request, answered before anything is drawn.
+        """Handle a request, replying before anything is drawn.
 
-        The acknowledgement goes out first and the drawing happens afterwards,
-        which is the protocol's whole shape; a shutdown is the one request that
-        does anything after its own reply, and it has to be that way round -
-        the answer would otherwise travel a channel that has just been closed.
+        Shutdown also replies first, since afterwards the channel is closed.
         """
         try:
             if isinstance(request, protocol.Add):
@@ -204,7 +180,7 @@ class PlotSession:
             reply(protocol.Refused(said(error)))
 
     def add(self, request: protocol.Add) -> Any:
-        """Draw one expression, and say which window took it."""
+        """Draw an expression and return the window that received it."""
         kind = protocol.dimension(request.kind)
         if request.kind not in protocol.DRAWN:
             return protocol.Refused(protocol.UNDRAWN.format(kind=request.kind.value))
@@ -212,9 +188,8 @@ class PlotSession:
         if isinstance(window, protocol.Refused):
             return window
         drawing = curves(preferred(request, self.preferences))
-        # A family that has grown shorter leaves elements behind, and an
-        # element of a plot that is no longer there is a curve nobody can
-        # account for. A request that asked to be alone leaves nothing at all.
+        # Remove leftover elements of a family that has grown shorter. A
+        # demonstration clears the window entirely.
         kept = {plot.label for plot in drawing}
         for plot in list(window.plots):
             if request.demonstrating or (
@@ -223,8 +198,7 @@ class PlotSession:
                 and plot.label not in kept
             ):
                 window.remove(plot)
-        # Whether any of what is about to be drawn replaces a plot already
-        # there, which is the word the acknowledgement message turns on.
+        # Whether this replaces an existing plot, for the acknowledgement message.
         replaced = any(
             window.find(plot.worksheet, plot.label) is not None for plot in drawing
         )
@@ -235,36 +209,32 @@ class PlotSession:
         return protocol.Placed(window.number, replaced)
 
     def describe(self) -> protocol.Windows:
-        """What windows are open and what is in them."""
+        """The open windows and their contents."""
         return protocol.Windows(
             tuple(self.windows[number].describe() for number in sorted(self.windows))
         )
 
     def prefer(self, preferences: protocol.Prefer) -> None:
-        """Remember what the next window and the next plot are to be built with."""
+        """Store the preferences for the next window and plot."""
         self.preferences = preferences
 
     def release(self, finished: bool = False) -> None:
-        """The demonstration is over: its windows are ordinary windows again.
+        """End a demonstration, making its windows ordinary again.
 
-        Or gone, where it ran to its end: a gallery's window is the screen the
-        demonstration was shown on, and the last step is not a picture anybody
-        asked to keep. Every window is told, and each answers for itself -
-        whether a step was waiting in it is the window's own knowledge, and a
-        window somebody opened for a plot of their own must not be swept up
-        with them.
+        If it `finished`, its windows close instead. Every window is notified and
+        decides for itself, since only it knows whether it showed a demonstration step;
+        windows the user opened must not be closed.
 
-        Told over a copy of the registry, since a window that closes takes
-        itself out of it on the way.
+        Iterates over a copy, since closing windows remove themselves from the registry.
         """
         for window in list(self.windows.values()):
             window.release(finished)
 
     def shutdown(self) -> None:
-        """End the windows and whatever runs them: the app has gone."""
+        """Close the windows and stop the backend, as the app has gone."""
         self.backend.stop()
 
-    # -- what a window asks of the session ----------------------------------
+    # -- called by windows ---------------------------------------------------
 
     def sample(
         self,
@@ -276,7 +246,7 @@ class PlotSession:
         self.sampler.submit(key, work, done, report)
 
     def event(self, message: Any) -> None:
-        """One asynchronous event, to whoever is listening for them."""
+        """Send an asynchronous event to the listener, if any."""
         if self.events is not None:
             self.events(message)
 
@@ -284,38 +254,32 @@ class PlotSession:
         self.event(protocol.Trouble(window, label, message))
 
     def author(self, worksheet: int, text: str) -> None:
-        """A traced point a window sends home, to be authored into a worksheet."""
+        """Send a traced point to be added to a worksheet."""
         self.event(protocol.Traced(worksheet, text))
 
     def stepped(self) -> None:
-        """A key nobody here wanted, pressed in a window a step is waiting in.
+        """Forward a key pressed in a window showing a demonstration step.
 
-        Nothing is done with it: what a key means to a demonstration is the
-        app's, this side holding no demonstration at all. All the window knew
-        was that its picture was a step and that a key it had no use for
-        arrived in it.
+        The window doesn't use the key, and the demonstration is run by the app, so it
+        is simply passed on.
         """
         self.event(protocol.Stepped())
 
     def adjusted(self, **values: Any) -> None:
-        """A sticky control was left in a new position, named by its `Prefer` field.
+        """Record a changed sticky control, given by its `Prefer` field name.
 
-        The value is kept, so the next plot follows the last one's look, and
-        the whole of the preferences is reported: the app is the side that
-        survives this and carries the answer into a state file.
+        The value is stored so the next plot follows it, and the full preferences are
+        reported to the app, which saves them in the state file.
         """
         self.preferences = replace(self.preferences, **values)
         self.event(protocol.Preferred(self.preferences))
 
     def touched(self, number: int) -> None:
-        """A window the user touched is the receiver for its kind now.
+        """Make an activated window the receiver for its kind.
 
-        Fed by the windows' own activation events - a click, a raise, an
-        alt-tab - and by `add`, since a plot's arrival raises the window it
-        draws into and counts as a touch even where the window manager
-        declines to hand that window the focus. The same bookkeeping either
-        way, which is what makes it bookkeeping that cannot disagree with
-        what the user sees.
+        Called on the windows' activation events (click, raise, alt-tab) and by `add`,
+        since a plot arriving raises its window even if the window manager doesn't give
+        it focus.
         """
         window = self.windows.get(number)
         if window is None:
@@ -324,11 +288,10 @@ class PlotSession:
         self._make_current(number)
 
     def closed(self, number: int) -> None:
-        """A window the user closed: forget it, and hand its kind on.
+        """Forget a window the user closed, and pick a new receiver if needed.
 
-        The receiver of that kind falls back to the last-activated survivor
-        of its kind, so plotting after closing a window lands somewhere
-        rather than opening a new window every time.
+        The most recently activated remaining window of the same kind becomes the
+        receiver, so plotting after closing a window doesn't always open a new one.
         """
         window = self.windows.pop(number, None)
         if window is None:
@@ -348,10 +311,10 @@ class PlotSession:
     # -- the registry ------------------------------------------------------
 
     def _target(self, where: int | Where | None, kind: WindowKind) -> Any:
-        """The window an `Add` is for, making one where that is what is asked.
+        """The target window of an `Add`, opening one if needed.
 
-        Named by nothing, the plot goes to the receiver of its kind - the
-        window the user last touched - and opens one where none exists.
+        If no window is named, the plot goes to the receiver of its kind, or a new
+        window if there is none.
         """
         if isinstance(where, int):
             window = self.windows.get(where)
@@ -368,16 +331,13 @@ class PlotSession:
         return self.windows[number]
 
     def _open(self, kind: WindowKind) -> WindowHandle:
-        """A new window of `kind`, numbered where the last one left off.
+        """Open a new window of `kind` with the next number.
 
-        One sequence of numbers across both kinds, never reused, so the number
-        that keys the protocol names one window for the life of the session.
-        The user never reads it: a window is titled by what it holds.
+        Numbers are shared by both kinds and never reused, so a number identifies one
+        window for the session. Users never see it; windows are titled by contents.
 
-        This is the one construction site, and so the one place the sticky
-        preferences reach a window. They are read now rather than kept by the
-        window, which is what makes a changed preference show in the next
-        window and leave the open ones as they are.
+        Sticky preferences are applied here and only here, so changes affect the next
+        window but not open ones.
         """
         self._made += 1
         window = self.backend.open(self, kind, self._made, self.preferences)
@@ -386,7 +346,7 @@ class PlotSession:
         return window
 
     def _make_current(self, number: int) -> None:
-        """Make a window the receiver for its kind, and say so in the titles."""
+        """Make a window the receiver for its kind, and update titles to show it."""
         window = self.windows.get(number)
         if window is None:
             return
@@ -401,7 +361,7 @@ class PlotSession:
         self._used.insert(0, number)
 
     def _recent(self, kind: WindowKind) -> int | None:
-        """The last-touched window of `kind`, or the newest one there is."""
+        """The most recently activated window of `kind`, or else the newest one."""
         for number in self._used:
             window = self.windows.get(number)
             if window is not None and window.kind is kind:
@@ -411,16 +371,13 @@ class PlotSession:
 
 
 def preferred(request: protocol.Add, preferences: protocol.Prefer) -> protocol.Add:
-    """`request` with the preferences filled in wherever it has no opinion.
+    """`request` with unset data-plot options filled in from the preferences.
 
-    How a data plot draws its points is a property of the plot and not of the
-    window it lands in, so the preference is read when the plot is added rather
-    than when the window was built: a new data plot follows the preference in
-    force now, and one drawn a minute ago keeps whatever its right-click menu
-    was told. The grid goes the other way, and is read where a window is made.
+    Data point style belongs to the plot, not the window, so it is applied when the
+    plot is added; existing plots keep their style. (The grid preference, by contrast,
+    is applied when a window is created.)
 
-    A pure function, so that what a preference does to a request can be asked
-    without a toolkit to ask it in.
+    A pure function, so it can be tested without a toolkit.
     """
     options = request.options
     if options.connected is not None and options.point_size is not None:
@@ -442,16 +399,14 @@ def preferred(request: protocol.Add, preferences: protocol.Prefer) -> protocol.A
 
 
 def curves(request: protocol.Add) -> list[Plot]:
-    """The plots one `Add` becomes: one, or one per element of a family.
+    """The plots an `Add` produces: one, or one per element of a family.
 
-    A family is one expression to the user - `#3` is the vector - and several
-    curves or surfaces in the window, so its elements are labelled `#3.1`,
-    `#3.2` and take the next colors of the palette. Re-plotting `#3` therefore
-    replaces its own elements one by one, each keeping the color it had.
+    A family such as the vector `#3` becomes several curves or surfaces labeled `#3.1`,
+    `#3.2`, and so on, each taking the next palette color. Re-plotting `#3` replaces the
+    elements one by one, keeping their colors.
 
-    The elements are named with the texts the app wrote, since nothing here
-    renders an expression itself; a family that arrives without them falls back
-    on the label, which is at least true.
+    Elements are named with the texts rendered by the app, falling back to the label if
+    there are none.
     """
     if protocol.dimension(request.kind) is WindowKind.THREE_D:
         made: type[Plot] = Surface
@@ -469,9 +424,8 @@ def curves(request: protocol.Add) -> list[Plot]:
             context=request.context,
             options=request.options,
             state=request.state,
-            # How a data plot draws its points is the plot's own and is settled
-            # here, where the preferences have already been read into the
-            # request: what a backend is handed knows how it is to look.
+            # Preferences have already been filled into the request, so the data
+            # point style is final here.
             connected=bool(request.options.connected),
             point_size=request.options.point_size or POINT_SIZE,
         )

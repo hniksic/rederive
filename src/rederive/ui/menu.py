@@ -1,9 +1,8 @@
-"""The menus of the Algebra pane: the words, their mnemonic letters, and what
-each one opens.
+"""The Algebra pane's menus: their words, mnemonic letters, and what each word opens.
 
-`Unremove` is listed unconditionally. R-MENU1 says it appears only while there
-is something to restore, but the original shows it in the menu of a session
-where nothing has ever been removed, so the requirement is wrong about this.
+`Unremove` is always listed. R-MENU1 says it appears only when there is something to
+restore, but Derive shows it even in a session where nothing was removed, so the
+requirement is wrong here.
 """
 
 from __future__ import annotations
@@ -16,69 +15,64 @@ from rederive.model.session import Bounds
 
 MENU_TITLE = "COMMAND:"
 
-#: How many options go on a menu's first line; the rest go on the second.
+#: Number of options on a menu's first line; the rest go on the second.
 FIRST_LINE_OPTIONS = 10
 
 ENTER_OPTION = "Enter option"
 
-#: What the message line asks for on a field that names an expression.
+#: Message line prompt for a field that takes a label.
 ENTER_LABEL = "Enter label number"
 
-#: What it asks for on the one field that takes a word instead as well.
+#: Prompt for the one label field that also accepts a word.
 ENTER_LABEL_OR_END = 'Enter label number or type "end"'
 
-#: The word that sends the unremoved expressions past the last entry.
+#: The word that places expressions after the last entry.
 END = "end"
 
-#: What the message line asks for on a field that takes an expression, which is
-#: every field the Calculus commands ask about: the order of a derivative is an
-#: expression like any other, and `DIF(u, x, n + 1)` is a legitimate answer.
+#: Prompt for a field that takes an expression. All Calculus fields do; even a
+#: derivative's order is an expression, as in `DIF(u, x, n + 1)`.
 ENTER_ANY = "Enter expression"
 
-#: What it asks for on a pair of limits that may be left empty. Both blank is
-#: an answer: an indefinite integral, an antidifference, an antiquotient.
+#: Prompt for a pair of limits that may be left blank, which asks for an indefinite
+#: integral, antidifference, or antiquotient.
 ENTER_OR_SKIP = "Enter expression or press Enter"
 
-#: What the two fields of `Calculus Limit` ask for.
+#: Prompts for the two fields of `Calculus Limit`.
 ENTER_POINT = "Enter limit point"
 SELECT_DIRECTION = "Select approach direction"
 
-#: What the two fields of `Calculus Taylor` ask for. It is the one command
-#: whose last line says something different on each of them.
+#: Prompts for the two fields of `Calculus Taylor`, the only command with a different
+#: prompt for each field.
 ENTER_DEGREE = "Enter maximum degree"
 ENTER_EXPANSION_POINT = "Enter expansion point"
 
-#: What both fields of soLve's interval ask for, in the one precision mode
-#: that asks at all.
+#: Prompt for both fields of soLve's interval (asked only in Approximate precision).
 ENTER_BOUND = "Enter bound on solution"
 
-#: What the message line asks for on each field of the Declare dialogs.
+#: Prompts for the fields of the Declare dialogs.
 ENTER_ROWS = "Enter number of rows"
 ENTER_COLUMNS = "Enter number of columns"
 ENTER_ELEMENTS = "Enter number of elements"
 ENTER_LEFT_BOUND = "Enter left bound"
 ENTER_RIGHT_BOUND = "Enter right bound"
 
-#: What the two Window commands that name a window ask for.
+#: Prompt for the Window commands that take a window number.
 ENTER_WINDOW = "Enter window number"
 
-#: The two symbols a bound is written with: `<` for a bound the variable can
-#: never equal, `≤` for one it can.
+#: Bound symbols: `<` for a strict bound, `≤` for a bound the variable can equal.
 OPEN = "<"
 CLOSED = "≤"
 STRICTNESS = (OPEN, CLOSED)
 
-#: Columns a bound takes, so that the fields beside it do not shift as it is
-#: typed. Wide enough for the widest bound the original shows, `-∞`, and then
-#: some, as the original's own field is.
+#: Fixed width of a bound field, so neighboring fields don't shift while typing. Wider
+#: than the widest bound Derive shows, `-∞`, like Derive's own field.
 _BOUND_WIDTH = 6
 
 
 def mnemonic(word: str) -> str:
     """The lower-cased capital letter that invokes `word`, e.g. `l` for soLve.
 
-    A digit counts as a capital, which is how `2D-plot` and `3D-plot` are
-    told apart: they share their first letter and nothing else would.
+    A digit counts as a capital, which distinguishes `2D-plot` from `3D-plot`.
     """
     for character in word:
         if character.isupper() or character.isdigit():
@@ -107,11 +101,9 @@ class MenuCursor:
     menu: Menu
     index: int = 0
     asks: str | None = None
-    """What the message line says, when it is not the menu's own prompt.
+    """A message line that overrides the menu's own prompt.
 
-    The two Declare Variable menus name the variable they are asking about, so
-    their prompt is written when they are put up rather than when they are
-    declared.
+    The Declare Variable menus use it to name the variable being declared.
     """
 
     @property
@@ -156,37 +148,32 @@ ALGEBRA = Menu(
 ALGEBRA_MENU = ALGEBRA.words
 MNEMONICS = ALGEBRA.mnemonics
 
-#: How much factoring Factor does. `raDical` carries its capital because `R`
-#: belongs to Rational, and the amounts are in increasing order: each does
-#: everything the one before it does, and costs more time doing it.
+#: How much factoring Factor does, in increasing order: each amount does everything the
+#: previous one does, and takes longer. `raDical` uses `D` because `R` is Rational.
 AMOUNT = Menu(
     "FACTOR: Amount:",
     ("Trivial", "Squarefree", "Rational", "raDical", "Complex"),
     message="Select amount of factoring",
 )
 
-#: How much factoring Expand does to the denominator it makes partial
-#: fractions over. The same amounts less `Complex`, which the original leaves
-#: off this menu: a complex factor would put `#i` in an answer nobody asked to
-#: leave the reals for.
+#: How much Expand factors the denominator for partial fractions. Same as `AMOUNT` minus
+#: `Complex`, which Derive omits here because it would put `#i` into real answers.
 EXPAND_AMOUNT = Menu(
     "EXPAND: Amount:",
     tuple(word for word in AMOUNT.words if word != "Complex"),
     message=AMOUNT.message,
 )
 
-#: The seven Calculus commands. Every word carries its own initial, there
-#: being no clash among them, and every one of them asks the same first two
-#: questions - an expression and a variable - before the one line that is its
-#: own. Derive 6 grew a `Table` command; the DOS versions have no such option and
-#: neither has this.
+#: The seven Calculus commands. Each uses its initial as mnemonic, and each asks for an
+#: expression and a variable before its own dialog. Derive 6 added `Table`, but the DOS
+#: versions, and this one, don't have it.
 CALCULUS = Menu(
     "CALCULUS:",
     ("Differentiate", "Integrate", "Limit", "Product", "Sum", "Taylor", "Vector"),
 )
 
-#: The operators `Build` offers, on one line, `Done` last. The symbols are
-#: their own mnemonics; the words carry their initials.
+#: The operators `Build` offers, on one line, with `Done` last. Symbols are their own
+#: mnemonics; words use their initials.
 BUILD_OPERATOR = Menu(
     "BUILD: Operator:",
     building.WORDS,
@@ -194,16 +181,14 @@ BUILD_OPERATOR = Menu(
     first_line=len(building.WORDS),
 )
 
-#: Columns a Calculus field takes. Wide enough that a limit or a point of any
-#: ordinary length stands without the fields beside it shifting, which is what
-#: the original's own fields are sized for. The three of `Vector` are narrower,
-#: three of them having to fit across the line where the others fit two.
+#: Width of a Calculus field, enough for typical limits and points without shifting the
+#: neighboring field, as in Derive. `Vector` has three fields per line instead of two,
+#: so they are narrower.
 _FIELD_WIDTH = 17
 _NARROW_WIDTH = 14
 
-#: The three ways a limit may be approached, and what each is worth as the
-#: fourth argument of `LIM`. The original writes the argument whichever is
-#: chosen, so a two-sided limit built here is `LIM(u, x, a, 0)` and never the
+#: The limit directions and their values as `LIM`'s fourth argument. Like Derive, the
+#: argument is always written, so a two-sided limit is `LIM(u, x, a, 0)`, never the
 #: three-argument form.
 DIRECTIONS: dict[str, str] = {"Both": "0", "Left": "-1", "Right": "1"}
 
@@ -211,16 +196,15 @@ DIRECTIONS: dict[str, str] = {"Both": "0", "Left": "-1", "Right": "1"}
 def _expression_field(
     label: str, setting: str, default: str, message: str, width: int = _FIELD_WIDTH
 ) -> settings.TextField:
-    """One Calculus field, which holds an expression and judges none of it."""
+    """A Calculus field holding an expression, which it doesn't validate."""
     return settings.TextField(label, message, setting, default, width)
 
 
 def _limits(title: str, setting: str, low: str, high: str) -> settings.Dialog:
-    """The `Lower limit`/`Upper limit` line three of the commands share.
+    """The `Lower limit`/`Upper limit` line shared by three commands.
 
-    Both blank is an answer rather than a refusal - it asks for the indefinite
-    form - so the command that put the dialog up is what judges the pair, and
-    it only refuses the half-answered one.
+    Leaving both blank asks for the indefinite form, so validation is left to the
+    command, which rejects only a pair with one side blank.
     """
     return settings.Dialog(
         title,
@@ -239,8 +223,8 @@ def _limits(title: str, setting: str, low: str, high: str) -> settings.Dialog:
     )
 
 
-#: What `Calculus Differentiate` asks last. The order defaults to one, and a
-#: negative one asks for an antiderivative (manual 7.4).
+#: The order for `Calculus Differentiate`, defaulting to one. A negative order asks for
+#: an antiderivative (manual 7.4).
 DIFFERENTIATE = settings.Dialog(
     "CALCULUS DIFFERENTIATE:",
     ((_expression_field("Order", "DifferentiateOrder", "1", ENTER_ANY),),),
@@ -248,15 +232,15 @@ DIFFERENTIATE = settings.Dialog(
     enters=True,
 )
 
-#: The bounds of an integral, blank for the indefinite one.
+#: The bounds of an integral, blank for an indefinite integral.
 INTEGRATE = _limits("CALCULUS INTEGRATE:", "Integrate", "", "")
 
-#: The bounds of a sum and of a product, which unlike an integral's come up
-#: filled in: the original offers `1` to `n`.
+#: The bounds of a sum and a product. Unlike an integral's, they default to `1` and `n`,
+#: as in Derive.
 SUM = _limits("CALCULUS SUM:", "Sum", "1", "n")
 PRODUCT = _limits("CALCULUS PRODUCT:", "Product", "1", "n")
 
-#: The point a limit is taken at, and which side it is approached from.
+#: The limit point and the direction of approach.
 LIMIT = settings.Dialog(
     "CALCULUS LIMIT:",
     (
@@ -276,9 +260,8 @@ LIMIT = settings.Dialog(
     enters=True,
 )
 
-#: How far a Taylor series goes, and where it is expanded about. The line asks
-#: for the degree first and `TAYLOR` takes the point first, so the two are not
-#: in the same order; the command puts them back in the head's.
+#: The degree and expansion point of a Taylor series. The dialog asks for the degree
+#: first but `TAYLOR` takes the point first; the command reorders them.
 TAYLOR = settings.Dialog(
     "CALCULUS TAYLOR:",
     (
@@ -291,9 +274,8 @@ TAYLOR = settings.Dialog(
     enters=True,
 )
 
-#: The values a `Calculus Vector` index runs over. `End` is the one field with
-#: no default and the one the command cannot do without, which is why the
-#: original opens the line on it rather than on the leftmost.
+#: The range of a `Calculus Vector` index. `End` has no default and is required, so, as in
+#: Derive, the dialog opens on it rather than on the leftmost field.
 VECTOR = settings.Dialog(
     "CALCULUS VECTOR:",
     (
@@ -308,11 +290,9 @@ VECTOR = settings.Dialog(
     enters=True,
 )
 
-#: The interval soLve confines a numeric search to. Asked for in Approximate
-#: precision and in neither of the other two, which solve exactly and have no
-#: interval to be told about; the original opens it on the whole of `[-10, 10]`.
-#: Nothing here enters an expression, the command deriving its own, so
-#: Ctrl-Enter says nothing on this line.
+#: The interval for soLve's numeric search, asked only in Approximate precision (the
+#: other modes solve exactly). Defaults to `[-10, 10]` as in Derive. The command builds
+#: its own expression, so Ctrl-Enter does nothing on this line.
 SOLVE_BOUNDS = settings.Dialog(
     "SOLVE:",
     (
@@ -324,45 +304,41 @@ SOLVE_BOUNDS = settings.Dialog(
     stored=False,
 )
 
-#: The two Plot commands: into the receiver, or into a window of its own.
-#: `Plot` is first and so comes up highlighted, which is what makes `P` `P`
-#: draw the highlighted expression with no question asked - the muscle memory
-#: of the original, one keystroke shorter on the first plot since the window
-#: opens itself. Everything else about a plot lives in the plot window, which
-#: is where the picture it acts on is.
+#: The two Plot commands: plot into the receiving window, or into a new one. `Plot` is
+#: first and so highlighted, so `P` `P` plots the highlighted expression immediately,
+#: matching Derive's muscle memory (one keystroke shorter on the first plot, since the
+#: window opens itself). All other plot controls live in the plot window.
 PLOT = Menu("PLOT:", ("Plot", "New"))
 
 DECLARE = Menu("DECLARE:", ("Function", "Variable", "Matrix", "vectoR"))
 
-#: What Declare Variable asks once it has a name, and then once it has a
-#: domain. Both name the variable, which is what the `{name}` is for.
+#: Prompts Declare Variable shows after getting a name, then after getting a domain.
+#: `{name}` is replaced by the variable.
 SELECT_DOMAIN = "Select value or domain of {name}"
 SELECT_INTERVAL = "Select interval of {name}"
 
-#: The two menus Declare Variable puts up. They carry the same title, which is
-#: the original's: the message line is where it says which question is up.
+#: The two menus Declare Variable shows. As in Derive they share a title, and the
+#: message line tells them apart.
 DECLARE_VARIABLE = Menu(
     "DECLARE VARIABLE:",
     ("Value", "Integer", "Real", "Complex", "Nonscalar"),
     message=SELECT_DOMAIN,
 )
 
-#: The intervals, which only Integer and Real are asked about. `nonpoSitive`
-#: and `nonneGative` carry their capitals late because `N` belongs to Negative.
+#: The intervals, asked only for Integer and Real. `nonpoSitive` and `nonneGative` use
+#: later letters because `N` is Negative.
 DECLARE_INTERVAL = Menu(
     "DECLARE VARIABLE:",
     ("All", "Positive", "Negative", "nonpoSitive", "nonneGative", "Interval"),
     message=SELECT_INTERVAL,
 )
 
-#: The domains that have an interval to ask about. Complex and Nonscalar do
-#: not, so choosing one of those is the last answer the command needs.
+#: Domains that take an interval. Choosing Complex or Nonscalar ends the command.
 BOUNDED_DOMAINS = ("Integer", "Real")
 
-# Four of these eight commands set something and are dialogs; the other four
-# act on the session and ask for what they need on a line of their own.
-# `Trigonometry` goes on a line of its own because all eight will not fit
-# across eighty columns.
+# Four of these commands are settings dialogs; the other four act on the session and
+# prompt on their own line. `Trigonometry` is on the second line because all eight
+# don't fit in eighty columns.
 MANAGE = Menu(
     "MANAGE:",
     (
@@ -378,12 +354,10 @@ MANAGE = Menu(
     first_line=7,
 )
 
-# `Display` and `Execute` are the two of Derive's nine Options commands that
-# are not here: one chose between text and graphics modes on adapters that no
-# longer exist, the other shelled out to DOS. There is no plot screen either:
-# the plot preferences are sticky - a new surface or data plot starts out the
-# way the last one was left - and their controls live on the plot windows
-# themselves.
+# Derive's `Display` (text/graphics mode for obsolete adapters) and `Execute` (DOS
+# shell) are omitted. There is no plot options screen either: plot preferences are
+# sticky (a new plot starts as the last was left) and are controlled from the plot
+# windows.
 OPTIONS = Menu(
     "OPTIONS:",
     ("Color", "Input", "Mute", "Notation", "Output", "Precision", "Radix"),
@@ -391,61 +365,50 @@ OPTIONS = Menu(
 
 COLOR = Menu("OPTIONS COLOR:", ("Menu", "Work"))
 
-# The Transfer menus. `Print` is the one word of the original's that is gone:
-# its four commands are a printer driver - printer type, paper size, PCL font
-# strings - and paper is a non-goal, the way `Options Display` and `Options
-# Execute` are.
+# The Transfer menus. Derive's `Print` is omitted: its commands configure a printer
+# driver (printer type, paper size, PCL font strings), and printing is a non-goal.
 TRANSFER = Menu("TRANSFER:", ("Load", "Save", "Merge", "Clear", "Demo"))
 
 TRANSFER_LOAD = Menu("TRANSFER LOAD:", ("Derive", "State", "daTa", "Utility"))
 
-#: What the file prompt of the original's Demo command is called, now that the
-#: nine demonstrations it was nearly always used for are words of their own.
+#: The word for Derive's Demo file prompt, now that the nine built-in demos have their
+#: own words.
 DEMO_OTHER = "Other"
 
-#: The demonstrations, as options rather than as a file to be named.
+#: The demos, as menu options rather than a file name prompt.
 #:
-#: This is the one place the desktop departs from the original's Transfer menu,
-#: and the reason is what the command was for. Derive's Demo asked for a file
-#: name because the file was already there - the demonstrations sat on the
-#: diskette the program itself was started from, and there was nowhere else a
-#: demonstration could have come from. Here they have to be named before they
-#: can be had, so they are named on a menu, and `Other` is the original's own
-#: command for a demonstration file of your own.
+#: This is the one departure from Derive's Transfer menu. Derive's Demo asked for a
+#: file name because the demo files shipped on the program's diskette. Here the demos
+#: are listed on the menu, and `Other` is Derive's original prompt for a demo file of
+#: your own.
 #:
-#: The break falls where the scripts end: the six whose steps are simplified on
-#: the first line, the three galleries whose steps are drawn on the second.
-#: Every word carries a letter no other one carries, the two plot galleries
-#: telling themselves apart by their digit the way `2D-plot` and `3D-plot` do.
+#: The first line holds the six simplification scripts, the second the three plot
+#: galleries. Each word has a unique mnemonic; the two plot galleries are told apart by
+#: their digit, like `2D-plot` and `3D-plot`.
 TRANSFER_DEMO = Menu(
     "TRANSFER DEMO:",
     tuple(demo.word for demo in demos.DEMOS) + (DEMO_OTHER,),
     first_line=sum(1 for demo in demos.DEMOS if not demo.plotting),
 )
 
-# The original's four targets were Basic, C, Fortran and Pascal, the languages
-# a 1990s reader would paste an expression into. The command is the same
-# command; only the list is dated, so it is dated forward. Every word still
-# carries a mnemonic of its own, which is what the menu needs of it.
+# Derive's targets were Basic, C, Fortran and Pascal. The command is unchanged, but the
+# list of languages is updated. Each word has a unique mnemonic.
 TRANSFER_SAVE = Menu(
     "TRANSFER SAVE:",
     ("Derive", "C", "Python", "Rust", "Julia", "Options", "State"),
 )
 
-# Alphabetical, and so with the widest command first, exactly as the original
-# lists it.
+# Alphabetical, so the broadest command comes first, as in Derive.
 TRANSFER_CLEAR = Menu(
     "TRANSFER CLEAR:", ("All", "Expressions", "Functions", "Variables")
 )
 
-# The seven window commands. Every one of them starts with a letter no other
-# one starts with, so none needs a capital anywhere but in front.
+# The seven window commands, each with a unique initial.
 #
-# `Designate` is not among them. It chose what kind of window a window was, and
-# plot windows are top-level windows of the desktop rather than leaves of this
-# tree, so Algebra is the only kind there is; its one remaining use, making a
-# window over as a fresh worksheet, is `Transfer Clear`. A second kind of tree
-# window would bring it back with it.
+# `Designate` is omitted. It set a window's kind, but plot windows are top-level
+# desktop windows rather than leaves of this tree, so Algebra is the only kind. Its
+# remaining use, resetting a window to a fresh worksheet, is covered by `Transfer
+# Clear`. It would return if another kind of tree window were added.
 WINDOW = Menu(
     "WINDOW:",
     ("Close", "Flip", "Goto", "Next", "Open", "Previous", "Split"),
@@ -453,18 +416,17 @@ WINDOW = Menu(
 
 WINDOW_SPLIT = Menu("WINDOW SPLIT:", ("Horizontal", "Vertical"))
 
-#: The titles of the Window commands that ask for something. `Open` asks
-#: nothing any more: with one kind of window there is nothing to choose.
+#: Titles of the Window commands that prompt for something. `Open` doesn't prompt,
+#: since there is only one kind of window.
 WINDOW_CLOSE = "WINDOW CLOSE:"
 WINDOW_GOTO = "WINDOW GOTO:"
 
 
 def window_number(title: str, number: int, count: int) -> settings.Dialog:
-    """The dialog `Window Close` and `Window Goto` each ask a number on.
+    """The window number dialog for `Window Close` and `Window Goto`.
 
-    Close offers the active window and Goto the next one, which is the whole
-    difference between them: the number a command is most likely to want is
-    the one it opens on.
+    Close defaults to the active window and Goto to the next one, the most likely
+    choice for each.
     """
     return settings.Dialog(
         title,
@@ -486,12 +448,10 @@ def window_number(title: str, number: int, count: int) -> settings.Dialog:
 
 
 def window_split(vertical: bool, at: int, low: int, high: int) -> settings.Dialog:
-    """The dialog that asks where a split falls.
+    """The dialog asking where to split a window.
 
-    The line or column is counted from the window's own corner, so the answer
-    means the same thing wherever the window being split is. Both bounds come
-    from how big that window is now, which is what makes a window too small to
-    split refuse the command rather than accept an answer it cannot honor.
+    The line or column is counted from the window's corner. The bounds come from the
+    window's current size, so a window too small to split has no valid answer.
     """
     word = "column" if vertical else "line"
     return settings.Dialog(
@@ -514,11 +474,10 @@ def window_split(vertical: bool, at: int, low: int, high: int) -> settings.Dialo
 
 
 def save_block(first: int, last: int) -> settings.Dialog:
-    """The dialog that asks which block of expressions a save writes.
+    """The dialog asking which block of expressions to save.
 
-    Put up by `Transfer Save Derive` when the Range option says Some. It offers
-    the whole history and stores nothing: the block is answered for the one
-    save that asked, and the next save asks again.
+    Shown by `Transfer Save Derive` when the Range option is Some. It defaults to the
+    whole history and isn't stored, so each save asks again.
     """
     return settings.Dialog(
         "TRANSFER SAVE DERIVE:",
@@ -537,11 +496,10 @@ def save_block(first: int, last: int) -> settings.Dialog:
 
 
 def remove_block(number: int) -> settings.Dialog:
-    """The dialog that asks which block of expressions Remove takes out.
+    """The dialog asking which block of expressions to Remove.
 
-    Both fields offer the highlighted entry, so removing the expression you are
-    looking at is two keystrokes. Naming the same label twice removes it alone,
-    which is what the manual tells you to do for one expression.
+    Both fields default to the highlighted entry, so removing it takes two keystrokes.
+    Giving the same label twice removes one expression, as the manual describes.
     """
     return settings.Dialog(
         "REMOVE:",
@@ -561,10 +519,9 @@ def remove_block(number: int) -> settings.Dialog:
 
 
 def unremove_before(number: int) -> settings.Dialog:
-    """The dialog that asks where the removed expressions go back.
+    """The dialog asking where to restore removed expressions.
 
-    The one field takes the label of the entry to put them in front of, or
-    `end` to put them after the last one.
+    The field takes the label of the entry to insert before, or `end` to append.
     """
     return settings.Dialog(
         "UNREMOVE:",
@@ -587,12 +544,11 @@ def unremove_before(number: int) -> settings.Dialog:
 
 
 def move_block(number: int) -> settings.Dialog:
-    """The dialog that asks which block of expressions moVe rearranges, and where.
+    """The dialog asking which block of expressions to moVe, and where.
 
-    All three fields offer the highlighted entry, so the command opens on a
-    move of that one expression to where it already is. Only the destination
-    takes `end`, which sends the block past the last entry; a block has to be
-    delimited by labels that name something.
+    All three fields default to the highlighted entry, i.e. a no-op move of that
+    expression. Only the destination accepts `end`, meaning after the last entry; the
+    block itself must be given by actual labels.
     """
     return settings.Dialog(
         "MOVE:",
@@ -621,12 +577,11 @@ def move_block(number: int) -> settings.Dialog:
 
 
 def annotate_entry(number: int) -> settings.Dialog:
-    """The dialog that asks which expression `Manage Annotate` is annotating.
+    """The dialog asking which expression `Manage Annotate` annotates.
 
-    The one field offers the highlighted entry, and takes the arrow keys the
-    way `Remove` and `Unremove` do, so the expression can be picked rather than
-    numbered. What to say about it is the next question, and that one needs a
-    line rather than a field.
+    The field defaults to the highlighted entry and, like `Remove` and `Unremove`,
+    follows the arrow keys, so the expression can be picked rather than numbered. The
+    annotation text is asked for next, on a line of its own.
     """
     return settings.Dialog(
         "MANAGE ANNOTATE:",
@@ -648,10 +603,9 @@ def annotate_entry(number: int) -> settings.Dialog:
 
 
 def matrix_size(rows: int, columns: int) -> settings.Dialog:
-    """The dialog that asks how big the matrix Declare Matrix is entering is.
+    """The dialog asking for the size of the matrix Declare Matrix will enter.
 
-    It opens on the last size entered, three by three until one has been, so
-    that a session full of two-by-twos asks about the size once.
+    It defaults to the last size entered, or three by three initially.
     """
     return settings.Dialog(
         "DECLARE MATRIX:",
@@ -675,10 +629,10 @@ def matrix_size(rows: int, columns: int) -> settings.Dialog:
 
 
 def vector_dimension(dimension: int | str) -> settings.Dialog:
-    """The dialog that asks how many elements Declare vectoR is collecting.
+    """The dialog asking how many elements Declare vectoR will collect.
 
-    It opens on the last dimension entered, and on nothing at all until one
-    has been: unlike a matrix, the original offers no size to start from.
+    It defaults to the last dimension entered. Unlike for matrices, Derive offers no
+    initial default.
     """
     return settings.Dialog(
         "DECLARE VECTOR:",
@@ -701,10 +655,9 @@ def vector_dimension(dimension: int | str) -> settings.Dialog:
 def variable_bounds(name: str, bounds: Bounds) -> settings.Dialog:
     """The dialog that asks for the bounds of a variable's domain.
 
-    One line reading `lower (<)≤ variable (<)≤ upper`, where each strictness
-    field shows both symbols and parenthesizes the one in force. The variable
-    is a word on the line rather than a field: it is what is being bounded,
-    and there is nothing to answer about it.
+    One line reading `lower (<)≤ variable (<)≤ upper`, where each strictness field shows
+    both symbols and parenthesizes the active one. The variable is plain text, not a
+    field.
     """
     return settings.Dialog(
         "DECLARE VARIABLE:",
@@ -726,27 +679,25 @@ def variable_bounds(name: str, bounds: Bounds) -> settings.Dialog:
 
 
 def _strictness(setting: str, message: str, closed: bool) -> settings.ChoiceField:
-    """Whether one bound is strict: `<` for a bound the variable cannot reach."""
+    """The field choosing whether a bound is strict (`<`) or not (`≤`)."""
     return settings.ChoiceField(
         "", message, setting, STRICTNESS, CLOSED if closed else OPEN, recorded=False
     )
 
 
 def closed(value: str | int) -> bool:
-    """Whether a strictness field is set to the nonstrict of the two symbols."""
+    """Whether a strictness field is set to the nonstrict symbol."""
     return value == CLOSED
 
 
-#: The subjects help is divided into, and the word that leaves help. Help
-#: stands where the expressions do rather than over them, so its menu is a
-#: menu like any other: this one chooses a subject, and one of those below
-#: turns the pages of the subject chosen.
+#: The help subjects, plus the word that exits help. Help replaces the expression view
+#: rather than overlaying it, so its menus are ordinary: this one picks a subject, and
+#: the ones below page through it.
 HELP = Menu("HELP:", tuple(topic.word for topic in helps.TOPICS) + (helps.RESUME,))
 
-#: The menu a subject picked off the subject menu is read under, one per
-#: subject because each is titled with its own name. `Next` past the last page
-#: goes back to where the subject was opened from rather than round to the
-#: first, which is the original's own way out.
+#: The menu for reading a subject chosen from the subject menu, one per subject since
+#: each is titled with its name. As in Derive, `Next` past the last page returns to
+#: where the subject was opened rather than wrapping around.
 HELP_PAGES: dict[str, Menu] = {
     topic.word: Menu(
         f"HELP {topic.word.upper()}:", (helps.NEXT, helps.PREVIOUS, helps.RESUME)
@@ -754,9 +705,8 @@ HELP_PAGES: dict[str, Menu] = {
     for topic in helps.TOPICS
 }
 
-#: The menu the same subject is read under when F1 opened it straight from a
-#: line. Nothing is covered but the line, so `Resume` gives the line back, and
-#: `Subjects` is the way on to the rest of the document.
+#: The menu for a subject opened by F1 from a line. `Resume` returns to the line, and
+#: `Subjects` leads to the rest of the help.
 HELP_PAGES_ALONE: dict[str, Menu] = {
     topic.word: Menu(
         f"HELP {topic.word.upper()}:",
@@ -765,7 +715,7 @@ HELP_PAGES_ALONE: dict[str, Menu] = {
     for topic in helps.TOPICS
 }
 
-#: Which subject each of those menus reads, for the app to look one up by.
+#: The subject each help page menu shows, for lookup by the app.
 HELP_TOPICS: dict[Menu, str] = {
     menu: word
     for pages in (HELP_PAGES, HELP_PAGES_ALONE)
@@ -773,10 +723,9 @@ HELP_TOPICS: dict[Menu, str] = {
 }
 
 
-#: How each color is spelled on the color menu. Derive asked for a number, so
-#: these mnemonics are the remake's own; every one of the sixteen needs a letter
-#: of its own, which is what pushes `Blue`, `Brown`, `Gray` and `Aqua` off their
-#: initials.
+#: Color names as spelled on the color menu. Derive asked for a number, so these
+#: mnemonics are our own. All sixteen need unique letters, so `Blue`, `Brown`, `Gray`
+#: and `Aqua` don't use their initials.
 COLOR_WORDS: dict[str, str] = {
     "Black": "Black",
     "Blue": "blUe",
@@ -796,9 +745,8 @@ COLOR_WORDS: dict[str, str] = {
     "White": "White",
 }
 
-#: The color menu is titled by neither of the two commands that reach it: the
-#: full path, `OPTIONS COLOR MENU BACKGROUND:`, would leave no room for the
-#: colors. The message line says which slot is being colored instead.
+#: The color menu has a short title because a full path like `OPTIONS COLOR MENU
+#: BACKGROUND:` would leave no room for the colors. The message line names the slot.
 COLORS = Menu(
     "COLOR:",
     tuple(COLOR_WORDS.values()),
@@ -821,9 +769,8 @@ COLOR_TARGETS: dict[str, settings.Dialog] = {
     "Work": settings.COLOR_WORK,
 }
 
-#: What each word of the Manage menu opens. The four that are missing -
-#: Annotate, Ordering, Renumber and Substitute - are commands rather than
-#: screens, and the app is where they live.
+#: What each word of the Manage menu opens. Annotate, Ordering, Renumber and Substitute
+#: are commands rather than screens, implemented in the app.
 MANAGE_TARGETS: dict[str, Menu | settings.Dialog] = {
     "Branch": settings.BRANCH,
     "Exponential": settings.EXPONENTIAL,
@@ -831,9 +778,8 @@ MANAGE_TARGETS: dict[str, Menu | settings.Dialog] = {
     "Trigonometry": settings.TRIGONOMETRY,
 }
 
-#: Every word that opens another screen rather than doing something, by the
-#: menu it is listed on. A word on none of these lists is a command, and the
-#: app decides whether it has one.
+#: Words that open another screen rather than act, grouped by menu. Any other word is a
+#: command handled (or not) by the app.
 TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
     ALGEBRA: {
         "Calculus": CALCULUS,
@@ -859,20 +805,20 @@ TARGETS: dict[Menu, dict[str, Menu | settings.Dialog]] = {
 
 
 def color_at(index: int) -> str:
-    """The color the color menu's `index`-th word stands for."""
+    """The color named by the color menu's `index`-th word."""
     return settings.COLORS[index]
 
 
 def choice_word(value: str) -> str:
-    """How a field's value is spelled where its mnemonic letter matters."""
+    """A field value's spelling with its mnemonic capital."""
     return COLOR_WORDS.get(value, value)
 
 
 def pick(choices: tuple[str, ...], letter: str) -> str | None:
-    """The choice `letter` selects, or None if it selects none of them.
+    """The choice `letter` selects, or None.
 
-    First match wins, as in the original: on the Radix field `o` is Octal, and
-    `Other` can only be reached by stepping to it.
+    The first match wins, as in Derive: on the Radix field `o` is Octal, and `Other` can
+    only be reached with the arrow keys.
     """
     for choice in choices:
         if mnemonic(choice_word(choice)) == letter:

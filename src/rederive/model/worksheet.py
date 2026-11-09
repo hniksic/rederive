@@ -1,30 +1,22 @@
 """The math file: a worksheet as plain text.
 
-Rederive's own format rather than the original's, though the two look alike on
-purpose. A file is lines of text and nothing else:
+Rederive's own format, deliberately similar to the original's:
 
-* one expression per line, in the canonical author notation `write_expression`
-  produces - what the expression is, rather than how it happened to be typed;
-* a `;` line carries the annotation of the expression under it, so that a
-  Simplify's answer comes back knowing where it came from;
-* a line too long for the file's line length is broken and continued with a
-  trailing `~`.
+* one expression per line, in the canonical notation `write_expression` produces
+  rather than as typed;
+* a `;` line holds the annotation of the expression below it, so that, e.g., a
+  Simplify result keeps its origin;
+* a line exceeding the line length is continued with a trailing `~`.
 
-Blank lines carry nothing; one is written between records because it makes the
-file easier to read. That is the whole format: no header, no version, nothing
-that has to be kept in step with the program. A worksheet can be read, edited
-and diffed with any text editor, and the `.MTH` utility files the original
-shipped are already in it.
+Blank lines are ignored; one is written between records for readability. There is
+no header or version, so files can be edited and diffed as text, and the original's
+`.MTH` utility files are already in this format.
 
-Reading is the syntax package's job - `Source.from_file` strips the comments
-and joins the continuations. This module says what those comments *meant*, and
-how a file is written.
+`Source.from_file` in the syntax package strips comments and joins continuations
+when reading. This module interprets the comments and writes files.
 
-Nothing here opens a file itself. Reading one, listing a directory and asking
-whether a name is there all go through `platform.current().storage()`, which on
-a desktop is `pathlib` with one call in front of it and in a browser is a store
-the page keeps. What a path *means* stays here, since that is the same question
-wherever the file lands.
+All file access goes through `platform.current().storage()` (`pathlib` on the
+desktop, a page-local store in a browser); path interpretation stays here.
 """
 
 from __future__ import annotations
@@ -36,36 +28,30 @@ from pathlib import Path
 from rederive import platform
 from rederive.syntax.source import END_MARKER
 
-#: What a file is called when the name typed has no extension of its own.
+#: The extension added to a name typed without one.
 SUFFIX = ".mth"
 
-#: The two other extensions Transfer reads, for the two commands that read
-#: something else: a demonstration script and a file of numbers.
+#: Extensions of demonstration scripts and data files, which Transfer also reads.
 DEMO_SUFFIX = ".dmo"
 DATA_SUFFIX = ".dat"
 
 COMMENT = ";"
 CONTINUATION = "~"
 
-#: The other way a file carries a line of prose: a line that is nothing but a
-#: quoted string. The original's own plot galleries are written that way -
-#: `"A spike:"` above the expression it names - because a string is an
-#: expression there and a worksheet had nowhere else to put a caption.
+#: A line consisting only of a quoted string is also prose. The original's plot
+#: galleries use this for captions, e.g. `"A spike:"` above the expression.
 QUOTE = '"'
 
-#: The line length a file is written to, and the shortest one that can be
-#: written at all: a line needs room for a character and the tilde that
-#: continues it.
+#: The default line length, and the minimum: room for one character and the `~`.
 LINE_LENGTH = 79
 MINIMUM_LENGTH = 2
 
 
 @dataclass(frozen=True)
 class Record:
-    """One expression of a file, with the annotation written above it.
+    """One expression of a file, with its annotation.
 
-    An empty annotation is written as nothing: a line the user authored is the
-    ordinary case and needs no comment to say so.
+    An empty annotation (the usual case for authored lines) isn't written.
     """
 
     text: str
@@ -80,10 +66,9 @@ def write(
 ) -> str:
     """The file text for `records`, one record per paragraph.
 
-    `comment` is what an annotation is written behind, and `length` None asks
-    for no continuation at all. Both are for the source files `Transfer Save C`
-    and its neighbours write: those carry the same records behind the target
-    language's own comment marker, and none of the four minds a long line.
+    `comment` is the annotation prefix, and `length` None disables continuation.
+    Both exist for the source files written by `Transfer Save C` and similar,
+    which use the language's comment marker and allow long lines.
     """
     lines: list[str] = []
     for record in records:
@@ -97,9 +82,8 @@ def write(
 def _continued(text: str, length: int) -> list[str]:
     """`text` as lines of at most `length`, each but the last ending in `~`.
 
-    The break is by character count and nothing else, as the original's is: it
-    may cut a name or a numeral in half, and joining the lines back together is
-    what makes that harmless.
+    As in the original, lines break purely by character count, possibly inside a
+    name or number; reading joins them back.
     """
     if length < MINIMUM_LENGTH or len(text) <= length:
         return [text]
@@ -109,11 +93,11 @@ def _continued(text: str, length: int) -> list[str]:
 
 
 def annotations_of(text: str) -> dict[int, str]:
-    """The annotation of each expression of `text`, by the line it starts on.
+    """The annotation of each expression of `text`, keyed by its starting line.
 
     Lines are numbered from one, as `Source.locate` reports them. An annotation
-    applies to the next expression under it, and a second `;` line before that
-    expression replaces the first rather than adding to it.
+    applies to the next expression; a later `;` line before it replaces the
+    earlier one.
     """
     found: dict[int, str] = {}
     pending = ""
@@ -131,23 +115,17 @@ def annotations_of(text: str) -> dict[int, str]:
 
 
 def _lines(text: str) -> list[str]:
-    """A file's lines, as the reader sees them.
-
-    The Ctrl-Z that ends a DOS text file is not one of them, and neither is
-    anything behind it: every file the original wrote carries one, and a line
-    made of it would be read as an expression nobody wrote.
-    """
+    """A file's lines, up to the DOS Ctrl-Z end marker the original always wrote."""
     end = text.find(END_MARKER)
     return (text if end < 0 else text[:end]).splitlines()
 
 
 def decoded(raw: bytes) -> str:
-    """What a math file's bytes say, whichever of the two encodings wrote them.
+    """Decode a math file as UTF-8, falling back to code page 437.
 
-    UTF-8 is what Rederive writes. A file the original wrote is code page 437,
-    which only shows in one where a glyph left ASCII - a Greek variable name,
-    almost always - and that is what the fallback reads. Code page 437 decodes
-    any byte at all, so a file is never refused for what is in it.
+    Rederive writes UTF-8; the original wrote code page 437, which matters only for
+    non-ASCII glyphs such as Greek names. Code page 437 decodes any byte, so
+    decoding never fails.
     """
     try:
         return raw.decode("utf-8")
@@ -156,34 +134,27 @@ def decoded(raw: bytes) -> str:
 
 
 def text_of(path: Path) -> str:
-    """A file's text. Raises, as reading a file does, before anything changes.
-
-    The two encodings are `decoded`'s; what is here is the reading itself.
-    """
+    """A file's text, decoded by `decoded`. Raises on read errors."""
     return decoded(platform.current().storage().read(path))
 
 
 def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
-    """The steps of the demonstration file at `path`. Raises, as reading does."""
+    """The steps of the demonstration file at `path`. Raises on read errors."""
     return steps_of(text_of(path))
 
 
 def steps_of(text: str) -> tuple[tuple[str, str], ...]:
-    """The steps of a demonstration: each comment with the line under it.
+    """The steps of a demonstration: each comment paired with the line below it.
 
-    A demonstration file is a math file whose comments carry the script rather
-    than an annotation, so it is read the same way and the comments are what is
-    kept. A `~` continuation still joins its lines, and a step with no comment
-    above it is one whose band is blank.
+    A demonstration is a math file whose comments are script text rather than
+    annotations. `~` continuations are joined, and a step without a comment has a
+    blank band.
 
-    A line that is nothing but a quoted string is a comment here too. The
-    original's plot galleries are scripts of that shape - a caption, then the
-    expression it names - and they are demonstrations in everything but the
-    extension they were given.
+    A line that is only a quoted string also counts as a comment, so the original's
+    plot galleries (a caption, then the expression) work as demonstrations.
 
-    The text rather than the file, because a demonstration that has just been
-    downloaded is text before it is a file, and is to run whether or not the
-    directory it landed in would take it.
+    Takes text rather than a path so a downloaded demonstration can run without
+    being saved first.
     """
     comments = annotations_of(text)
     steps = []
@@ -209,12 +180,10 @@ def steps_of(text: str) -> tuple[tuple[str, str], ...]:
 
 
 def _captioning(line: str) -> bool:
-    """Whether a line is a quoted string and nothing else, and so a comment.
+    """Whether a line is a single quoted string, and so a comment.
 
-    Only a whole line counts, and only one string on it. A string is an
-    expression like any other where it stands beside one - `["x", 1]` is a
-    vector with a string in it, `"a" + "b"` is a sum of two - and what makes
-    this one prose is that the line is the string and nothing more.
+    Strings inside larger expressions, such as `["x", 1]` or `"a" + "b"`, don't
+    count.
     """
     if len(line) < 2 or not line.startswith(QUOTE) or not line.endswith(QUOTE):
         return False
@@ -222,37 +191,30 @@ def _captioning(line: str) -> bool:
 
 
 def path_of(name: str, suffix: str = SUFFIX) -> Path:
-    """The file a typed name asks for.
+    """The path for a typed file name.
 
-    A name with no extension gets `suffix`, the way the original supplied MTH,
-    DAT, INI or the extension of whichever language was being saved. A leading
-    `~` is the shell's home directory here, never a continuation: the tilde
-    only continues lines inside a file.
+    A name without an extension gets `suffix`, as the original supplied MTH, DAT,
+    INI or a language extension. A leading `~` means the home directory.
     """
     path = Path(name.strip()).expanduser()
     return path if path.suffix else path.with_suffix(suffix)
 
 
 def matches(name: str, suffix: str = SUFFIX) -> list[str]:
-    """Every name `name` could mean, in order, itself included.
+    """All names that `name` could be completed to, in order, including itself.
 
-    What a file prompt browses and completes from. Only what the command can
-    use is on offer - files whose extension is `suffix`, matched however it is
-    cased, since the original's own files are named in capitals - along with
-    every directory, offered with the separator after it so that going on from
-    there carries on inside it. A name beginning with a dot is offered only to
-    letters that begin with one, as a shell does.
+    Used by file prompts for browsing and completion. Offers files with extension
+    `suffix` (case-insensitively, since the original's files are uppercase) and all
+    directories, with a trailing separator. Dotfiles are offered only if `name`'s
+    last component starts with a dot, as in a shell.
 
-    What was typed is kept as it stands, `~` and all: only the last component
-    grows, so any of the answers can go straight back on the line. A name that
-    is already one of them is among them, which is what lets the list stay up
-    and stay honest once a name has been taken from it.
+    The typed prefix, including `~`, is kept verbatim, so any result can replace
+    the input directly. An exact match is included so the list stays consistent
+    after a pick.
 
-    What is *not* on offer is the library: the same list is what a save prompt
-    completes from, and offering a name that names a file of the program's own
-    in a prompt that is about to write one of yours would be a lie. The library
-    is reached by typing the name, and named in the help text and the README so
-    that it can be.
+    Library files are not offered, since save prompts complete from the same list
+    and must not suggest overwriting the program's own files. The library is
+    reached by typing its names, which the help text and README document.
     """
     storage = platform.current().storage()
     head, separator, typed = name.rpartition("/")
@@ -271,10 +233,5 @@ def matches(name: str, suffix: str = SUFFIX) -> list[str]:
 
 
 def completions(name: str, suffix: str = SUFFIX) -> list[str]:
-    """The matches that would grow `name`, which is what completing it can use.
-
-    `matches` less the name itself: a name typed out in full is no completion
-    of itself, and offering it as one would let a keystroke look like it had
-    done nothing.
-    """
+    """The matches that extend `name`, i.e. `matches` without `name` itself."""
     return [grown for grown in matches(name, suffix) if len(grown) > len(name)]

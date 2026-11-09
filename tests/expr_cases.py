@@ -41,7 +41,7 @@ class Case:
         return f"L{self.line}:{self.text}"
 
     def state(self) -> ParseState:
-        """A fresh state, as the directives in force describe it."""
+        """Return a fresh parse state configured by the directives in force."""
         state = ParseState()
         for setting in _items(self.state_spec):
             name, _, value = setting.partition("=")
@@ -79,7 +79,7 @@ class _Directives:
 
 
 def load(path: Path = CORPUS) -> list[Case]:
-    """Every case in the corpus, in file order."""
+    """Load every case in the corpus, in file order."""
     context = _Directives()
     preamble = True
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):

@@ -1,8 +1,8 @@
 """The Window command: the tree of windows, where they land, and the commands.
 
-Every geometry rule asserted here was checked against the original, whose
-versions agree on all of it: the frame characters, where a divider falls for a
-given answer, what answers are taken, and what each command asks.
+Every geometry rule here was checked against the original, whose versions all agree:
+the frame characters, where a divider falls, which answers are accepted, and what each
+command prompts for.
 """
 
 import pytest
@@ -22,10 +22,10 @@ from rederive.model.session import Session
 from rederive.model.windows import Windows
 from rederive.ui.app import RederiveApp
 
-#: The screen the original ran on, and the one every dump here was taken from.
+#: The original's screen size, at which every dump here was taken.
 SIZE = (80, 25)
 
-#: What the work area is then worth: twenty rows above the rule.
+#: The resulting work area: twenty rows above the rule.
 WORK, COLUMNS = 20, 80
 
 
@@ -63,15 +63,14 @@ def test_splitting_numbers_the_new_window_after_the_active_one():
     tree = Windows(Session())
     made = tree.split(False, 10, Session())
     assert tree.windows == [tree.active, made]
-    # The window the split was issued from stays active, so an expression
-    # authored next lands where the user was looking.
+    # The window that was split stays active, so the next expression lands there.
     assert tree.number == 1
 
 
 def test_numbers_are_a_walk_of_the_tree_and_not_an_order_of_creation():
     tree = Windows(Session())
     right = tree.split(True, 40, Session())
-    # Splitting the left column puts a window between the two that exist.
+    # Splitting the left column inserts a window between the existing two.
     below = tree.split(False, 10, Session())
     assert tree.windows == [tree.active, below, right]
 
@@ -85,7 +84,7 @@ def test_closing_a_window_gives_its_space_back_and_renumbers():
     tree.close(middle)
     assert tree.windows == [tree.windows[0], last]
     assert middle_split is last
-    # The closed window was active, so what took its space is.
+    # The closed window was active, so the one that took its space becomes active.
     assert tree.active is last
 
 
@@ -133,8 +132,8 @@ def test_the_only_window_takes_the_whole_work_area():
 def test_a_horizontal_split_puts_the_divider_on_the_line_it_was_given():
     tree = Windows(Session())
     tree.split(False, 10, Session())
-    # Rows 1 to 9 and 11 to 19, the divider taking row 10 and the frame rows 0
-    # and 20 - which is the original's own screen, cell for cell.
+    # Rows 1-9 and 11-19, with the divider on row 10 and the frame on rows 0 and 20,
+    # matching the original cell for cell.
     assert rows(tree) == [
         windows.Rect(1, 1, 9, 78),
         windows.Rect(11, 1, 9, 78),
@@ -224,8 +223,8 @@ def test_a_divider_running_into_another_takes_the_piece_with_those_arms():
     tree.active = right
     tree.split(False, 10, Session())
     drawing = tree.frame(WORK, COLUMNS)
-    # The lower left divider stops against the vertical one, which goes on
-    # above and below it; the lower right one starts there.
+    # The lower left divider stops at the vertical one, which continues through; the
+    # lower right one starts there.
     assert drawing.rows[10] == "2" + "═" * 39 + "4" + "═" * 38 + "╡"
 
 
@@ -272,7 +271,7 @@ async def test_a_split_copies_the_worksheet_and_the_histories_then_fork(app):
         await pilot.press("w", "s", "h", "enter")
         assert work_area(app, 1) == ["#1:  x"]
         assert work_area(app, 2) == ["#1:  x"]
-        # The window the split was issued from is the one that stays active.
+        # The window that was split stays active.
         await author(pilot, "y")
         assert work_area(app, 1) == ["#1:  x", "", "#2:  y"]
         assert work_area(app, 2) == ["#1:  x"]
@@ -293,8 +292,8 @@ async def test_a_line_the_window_is_too_small_for_is_refused(app):
         await pilot.press("w", "s", "h")
         await pilot.press("1", "9")
         await pilot.press("enter")
-        # The field stays up with what was typed still on it, as the original
-        # leaves it: no message, and nothing split.
+        # As in the original, the field stays up with the typed value, with no message
+        # and no split.
         assert band(app) == [" WINDOW SPLIT HORIZONTAL: At line: 19"]
         assert len(app.windows.windows) == 1
 
@@ -348,10 +347,10 @@ async def test_close_is_refused_outright_while_there_is_one_window(app):
 async def test_open_overlays_a_window_that_flip_brings_back(app):
     async with app.run_test(size=SIZE) as pilot:
         await author(pilot, "x")
-        # With plot windows outside the tree there is one kind of window left,
-        # so Open asks nothing and runs on the keystroke.
+        # Plot windows aren't in the tree, so only one window type remains and Open runs
+        # without asking.
         await pilot.press("w", "o")
-        # Still one window, and still no frame: an overlay shares both.
+        # Still one window and no frame: the overlay shares both.
         assert len(app.windows.windows) == 1
         assert work_area(app) == []
         await pilot.press("f2")
@@ -372,8 +371,8 @@ async def test_a_resized_terminal_lays_the_windows_out_again(app):
         await pilot.press("w", "s", "h", "enter")
         await resized(pilot, app, 60, 20)
         drawn = frame(app)
-        # Six rows below the work area: the rule, the three rows the menu
-        # takes across sixty columns, the message line and the status line.
+        # Six rows below the work area: the rule, three menu rows at sixty columns, the
+        # message line and the status line.
         assert len(drawn) == 15
         assert drawn[0] == "1" + "═" * 58 + "╕"
         assert drawn[10] == "2" + "═" * 58 + "╡"

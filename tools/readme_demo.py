@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
 """Record the animated session the README shows, as one animated WebP.
 
-The app is driven headlessly through Textual's pilot, a keystroke at a time, and
-every keystroke's screen is exported as Rich draws it. Each frame's SVG is
-rasterized by Inkscape, and the frames are encoded as one animated WebP, every
-frame held for as long as the script asks. The format is a raster one because a
-browser plays it for free: the same session as an animated SVG is a couple of
-thousand text nodes and a CSS animation per frame, all of them live for as long
-as the README is on screen, which makes the page sluggish.
+The app is driven headlessly through Textual's pilot, one keystroke at a time, and the
+screen is exported as SVG after each keystroke. Inkscape rasterizes the frames, which
+are then encoded as an animated WebP with per-frame durations. A raster format is used
+because an animated SVG of the same session would have thousands of live text nodes
+and CSS animations, making the README page sluggish.
 
-The script is the `play` coroutine: the two examples the Usage section walks
-through, then a quadratic solved symbolically, some trigonometry, a matrix
-inverse, and the Basel sum as the closing number. Every result it shows is
-computed by the real engine while the recording runs, so the animation cannot
-drift from what the program actually answers.
+The script is the `play` coroutine: the two Usage examples, a symbolic quadratic,
+some trigonometry, a matrix inverse, and the Basel sum. Results are computed by the
+real engine during recording, so the animation can't drift from the program.
 
-Needs Inkscape on the path, and Pillow, which is asked for on the command line
-rather than carried as a dependency of a project that never imports it. Run
-from the repository root:
+Requires Inkscape on the path, and Pillow, which is supplied on the command line rather
+than as a project dependency. Run from the repository root:
 
     uv run --with pillow python tools/readme_demo.py [-o demo.webp]
 """
@@ -42,10 +37,8 @@ from rederive.ui.app import MODE_COMPUTE, RederiveApp
 # every release. `plot_demo.py` imports this module and records with the same notice.
 ui.GREETING = ui.GREETING[:2]
 
-#: How long a frame stands, by what it shows: a character typed, a menu or
-#: prompt answered, an expression put up to be read, and a result to be taken
-#: in. The finale stays longest, being where the loop pauses before starting
-#: over.
+#: Frame durations by content: a typed character, a menu or prompt answer, an expression
+#: to read, and a result. The finale is longest, as the loop pauses there.
 TYPE = 0.06
 KEY = 0.7
 READ = 1.5
@@ -54,11 +47,11 @@ FINALE = 5.0
 
 
 class Recorder:
-    """The pilot with a camera: every action ends by filming the screen."""
+    """Wraps the pilot so that every action captures a frame."""
 
     def __init__(self, pilot):
         self.pilot = pilot
-        #: The film: an exported SVG and how long it stands, per frame.
+        #: Captured frames, as (SVG, duration) pairs.
         self.frames: list[tuple[str, float]] = []
 
     async def settle(self):
@@ -145,8 +138,7 @@ async def play(rec: Recorder):
 async def record() -> list[tuple[str, float]]:
     app = RederiveApp()
     async with app.run_test(size=(80, 24)) as pilot:
-        # A cursor that blinks on the wall clock would flicker at random in
-        # frames spaced by script time, so it is held steady instead.
+        # A blinking cursor would flicker randomly across frames, so disable blinking.
         app.query_one("#prompt-input", Input).cursor_blink = False
         # Let the opening screen finish painting before the first frame.
         await pilot.pause()
@@ -159,9 +151,8 @@ async def record() -> list[tuple[str, float]]:
 STYLE = re.compile(r"\.terminal-\d+-r\d+ \{ (?P<style>[^}]*?) \}")
 #: The generated id every name in a frame is prefixed with.
 PREFIX = re.compile(r"terminal-\d+-")
-#: A face Rich offers to fetch over the network. Nothing is fetched here: the
-#: rasterizer takes the font-family from the installed fonts, Fira Code if it
-#: is one of them and the default monospace face otherwise.
+#: A web font Rich references. It's removed so the rasterizer uses installed fonts:
+#: Fira Code if available, otherwise the default monospace face.
 FONT_FACE = re.compile(r"\s*@font-face \{.*?\n\s*\}", re.DOTALL)
 #: The group holding everything drawn inside the terminal.
 CONTENT = re.compile(r'<g transform="translate\(9, 41\)"[^>]*>')
@@ -169,16 +160,13 @@ CONTENT = re.compile(r'<g transform="translate\(9, 41\)"[^>]*>')
 CLIP = re.compile(
     r'id="t-clip-terminal">\s*<rect x="0" y="0" width="([\d.]+)" height="([\d.]+)"'
 )
-#: A cell background. The black ones are the empty screen, painted as one
-#: backdrop instead of a rect per run of cells.
+#: A black cell background, removed in favor of a single backdrop.
 BLACK = re.compile(r'<rect fill="#000000"[^>]*/>')
 
-#: The box-drawing characters the layouts are built from: fraction bars, matrix
-#: brackets, the integral sign's arcs, the rule over the menu. A terminal
-#: stretches these to fill the whole character cell so they join up; a font in
-#: an SVG does not reach across Rich's line spacing, and the integral sign
-#: comes apart. Each one is therefore redrawn as strokes spanning the exact
-#: cell, and its place in the text is blanked to keep the spacing.
+#: Box-drawing characters used in layouts: fraction bars, matrix brackets, integral
+#: arcs, the menu rule. Terminals stretch them to fill the cell so they join, but in an
+#: SVG the font doesn't span Rich's line spacing and the integral sign breaks apart. So
+#: each is redrawn as strokes spanning the cell, and blanked in the text.
 BOXED = set("─═│┌┐└┘╭╮╰╯")
 #: One run of styled text, as Rich writes it out.
 RUN = re.compile(
@@ -187,14 +175,13 @@ RUN = re.compile(
 )
 FILL = re.compile(r"fill: (#[0-9a-fA-F]{6})")
 
-#: The screen's geometry as Rich lays it out: a character cell's width and
-#: height, and how far a line's baseline sits below the top of its cell.
+#: Rich's screen geometry: cell width and height, and the baseline offset from the top
+#: of the cell.
 CELL = 12.2
 LINE = 24.4
 ASCENT = 18.5
-#: How the strokes are drawn: the line weight, the gap between the two strokes
-#: of `═`, and an arc's radius, which is half a cell so that the quarter turn
-#: ends exactly on the cell's edge.
+#: Stroke weight, the gap between the two strokes of `═`, and the arc radius (half a
+#: cell, so a quarter turn ends on the cell edge).
 WEIGHT = 2.0
 GAP = 2.0
 RADIUS = CELL / 2
@@ -205,11 +192,10 @@ def _fmt(value: float) -> str:
 
 
 def _drawn(character: str, x0: float, top: float, count: int = 1) -> str:
-    """The path commands for `count` cells of `character` starting at `x0`.
+    """Return SVG path commands for `count` cells of `character` starting at `x0`.
 
-    Only the two horizontals are ever drawn more than a cell at a time; the
-    rest take `count` of one. Corners meet edge centers exactly, and verticals
-    span the full cell height, so strokes in adjacent cells join without gaps.
+    Only the horizontals use `count` > 1. Corners meet edge centers and verticals span
+    the full cell height, so adjacent strokes join without gaps.
     """
     f = _fmt
     cx, mid, bottom = x0 + CELL / 2, top + LINE / 2, top + LINE
@@ -255,7 +241,7 @@ def _drawn(character: str, x0: float, top: float, count: int = 1) -> str:
 
 
 def _vectorized(match: re.Match, styles: dict[str, str]) -> tuple[str, str]:
-    """One text run with its box characters blanked, and the strokes drawing them."""
+    """Return a text run with box characters blanked, and the path that draws them."""
     body = html.unescape(match.group("body"))
     if not BOXED & set(body):
         return match.group(0), ""
@@ -286,14 +272,12 @@ def _vectorized(match: re.Match, styles: dict[str, str]) -> tuple[str, str]:
 
 
 def redraw(svg: str) -> str:
-    """One frame ready to rasterize: no web fonts, box drawing as strokes.
+    """Prepare one frame for rasterizing: no web fonts, box drawing as strokes.
 
-    Rich stamps every screenshot's ids with a hash of its content; the stamp is
-    cut off so that a frame reads the same as any other. The empty screen
-    arrives as a black rect per run of cells, and the runs meet at fractional
-    coordinates where a seam then shows, so one backdrop is painted instead.
-    The box-drawing characters leave the text and come back as strokes,
-    appended last so they are drawn over the cells they span.
+    Rich prefixes ids with a content hash, which is normalized away. The black rects
+    per run of cells meet at fractional coordinates and show seams, so they're replaced
+    by a single backdrop. Box-drawing strokes are appended last so they're drawn over
+    the cells.
     """
     styles = {
         match.group(0).split()[0].split("-")[-1]: match.group("style")
@@ -320,7 +304,7 @@ def redraw(svg: str) -> str:
 
 
 def rasterize(frames: list[str], width: int, directory: Path) -> list[Path]:
-    """Every frame as a PNG `width` pixels across, in one run of Inkscape."""
+    """Rasterize every frame to a PNG `width` pixels wide, in one Inkscape run."""
     if not shutil.which("inkscape"):
         raise SystemExit("inkscape rasterizes the frames, and is not on PATH")
     paths = []
@@ -337,13 +321,11 @@ def rasterize(frames: list[str], width: int, directory: Path) -> list[Path]:
 
 
 def encode(pngs: list[Path], holds: list[float], output: Path):
-    """The frames as one looping animated WebP, each held for its own time.
+    """Encode the frames as a looping animated WebP with per-frame durations.
 
-    Lossless, the terminal being flat-colored text that a lossy codec would
-    only smear, and `minimize_size` so that consecutive frames are stored as
-    the rectangle that changed - which for a keystroke is one character cell.
-    The compression method is the default four: six takes twenty times as long
-    to save half a percent.
+    Lossless, since a lossy codec would only smear flat-colored text. `minimize_size`
+    stores only the changed rectangle per frame, often a single cell. Method 4 (the
+    default) is used because 6 takes twenty times longer to save half a percent.
     """
     images = [Image.open(png).convert("RGB") for png in pngs]
     images[0].save(

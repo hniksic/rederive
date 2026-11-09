@@ -4,26 +4,19 @@
     uv run --with playwright python tools/smoke_web.py
     ... --directory build/web --browser chromium --shots build/shots
 
-What it does is what a user does in their first ten seconds: open the page, wait
-for the menu, author `(x + 1)^2 - (x - 1)^2`, simplify it, and read `4·x` off
-the screen. Everything between those keystrokes and that answer is the whole
-build - Pyodide in two instances, the Textual driver, xterm.js, the engine worker
-and the pickles between them - so a run that gets the answer has exercised the
-lot, and one that does not says which step it stopped at.
+It opens the page, waits for the menu, authors `(x + 1)^2 - (x - 1)^2`, simplifies
+it, and reads `4·x` off the screen. That exercises the whole build (two Pyodide
+instances, the Textual driver, xterm.js, the engine worker and the pickles between
+them), and a failure reports which step it stopped at.
 
-The screen is read out of xterm.js's own buffer rather than off the pixels. That
-is what the program wrote, character for character, and it is the only reading a
-test can assert against: a screenshot says whether a person would like it and
-nothing about whether the mathematics arrived.
+The screen is read from xterm.js's buffer rather than from pixels, giving the exact
+characters the program wrote.
 
-**Nothing here is a timing.** Stage 0 measured Playwright's Firefox running
-WebAssembly some eight times slower than the machine's own, so the waits below
-are generous on purpose and none of them means anything about how fast the build
-is.
+**Nothing here is a timing.** Playwright's Firefox runs WebAssembly about eight times
+slower than native, so the waits are deliberately generous and say nothing about the
+build's speed.
 
-The page is served by `python -m http.server`, which is what a static host is
-without the compression - the build names no other host at run time, so a
-directory and a port are the whole of what it needs.
+The page is served by `http.server`; the build needs no other host at run time.
 """
 
 from __future__ import annotations
@@ -38,26 +31,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: What is authored, and what the program must put on the screen for it. The
-#: difference of two squares, because it is the README's own example and
-#: because its answer is one line of two characters: an answer that has to be
-#: matched across a two-dimensional render would be testing the display rather
-#: than the build.
+#: The expression authored and the expected answer. This is the README's example, and
+#: its answer fits on one line, so the test doesn't depend on 2D rendering.
 AUTHORED = "(x+1)^2-(x-1)^2"
 ANSWER = "4·x"
 
-#: A word off the opening menu, which is how the page says the program is up.
-#: Not a timing: it is waited for until it appears or the clock runs out.
+#: A word from the opening menu, whose appearance means the program is up.
 MENU = "Author"
 
-#: How long each step may take before the run is called a failure. Firefox
-#: under Playwright is slow enough at WebAssembly that a budget written for
-#: Chromium would fail it for no reason, so both get the slower one.
+#: Time limits per step. Both browsers get Firefox's budget, since it is much slower at
+#: WebAssembly under Playwright.
 BOOT_SECONDS = 180
 ANSWER_SECONDS = 120
 
-#: How the buffer is read back: every row of the screen as text, which is
-#: exactly what a terminal would have shown.
+#: JS that reads every row of the terminal buffer as text.
 SCREEN = """() => {
   const term = window.rederive && window.rederive.term;
   if (!term) return '';
@@ -111,7 +98,7 @@ def _command_line(arguments: list[str] | None) -> argparse.Namespace:
 
 
 def _serving(directory: Path) -> tuple[http.server.HTTPServer, int]:
-    """A static server on a port the machine chose, in a thread of its own."""
+    """Start a static server on a free port in a background thread."""
     handler = partial(_Quiet, directory=str(directory))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -119,7 +106,7 @@ def _serving(directory: Path) -> tuple[http.server.HTTPServer, int]:
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
-    """The same server with its log off: 800 requests of it are not a report."""
+    """A request handler with logging disabled, to avoid hundreds of log lines."""
 
     def log_message(self, format: str, *args: object) -> None:
         pass
@@ -151,8 +138,7 @@ def _asked(page, url: str, name: str, shots: Path | None, troubles: list[str]) -
     if not _waiting(page, MENU, BOOT_SECONDS):
         return _failed(name, "the program never put its menu up", page, shots, troubles)
 
-    # Author, and then Simplify what was authored: two commands off the menu,
-    # each a letter, and each ending in the Enter that takes the line.
+    # Author the expression, then Simplify it.
     page.keyboard.press("a")
     page.wait_for_timeout(500)
     page.keyboard.type(AUTHORED)
@@ -176,7 +162,7 @@ def _asked(page, url: str, name: str, shots: Path | None, troubles: list[str]) -
 
 
 def _waiting(page, wanted: str, seconds: int) -> bool:
-    """Watch the terminal's own buffer until it holds `wanted`."""
+    """Poll the terminal buffer until it contains `wanted` or time runs out."""
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         if wanted in page.evaluate(SCREEN):
@@ -186,7 +172,7 @@ def _waiting(page, wanted: str, seconds: int) -> bool:
 
 
 def _failed(name, what, page, shots: Path | None, troubles: list[str]) -> bool:
-    """Say what went wrong, and leave the screen behind to be looked at."""
+    """Report a failure with the screen contents, page errors and a screenshot."""
     print(f"{name}: {what}", file=sys.stderr)
     print(page.evaluate(SCREEN), file=sys.stderr)
     for trouble in troubles:

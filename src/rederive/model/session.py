@@ -1,65 +1,48 @@
-"""The Algebra session: the numbered history and what is selected in it.
+"""The Algebra session: the numbered history and the selection within it.
 
-Pure Python - no Textual, no key names. The UI layer translates key presses
-into calls on `Session` and paints the result. This is the session layer, and
-it is where the math engine is reached from: the UI never calls a command
-itself, it asks the session for one.
+Pure Python, with no Textual and no key names. The UI translates key presses into calls
+on `Session` and paints the result; it never calls the math engine itself.
 
-Which engine answers is the one thing a session takes from outside. The five
-calls that can cost anything go through `runner`, and they are awaited: the
-program has to be able to go on drawing while one is in flight, and the caller
-that can wait for it is not the same everywhere - a thread on the desktop, an
-event on a page. Everything else this module asks the engine for costs nothing
-and is asked of `engine.client`, the half that holds no mathematics: that is
-what lets the app process draw a worksheet without sympy in it. A command that
-computes is a coroutine and every other one is an ordinary call, which is the
-line between what may wait and what may not.
+The engine is the one thing a session takes from outside. The five calls that can be
+expensive go through `runner` and are awaited, so the program can keep drawing while one
+runs; what does the waiting differs by platform (a thread on the desktop, an event on a
+web page). Everything else is cheap and goes to `engine.client`, which holds no
+mathematics, so the app process can draw a worksheet without importing sympy. Commands
+that compute are coroutines; all other commands are ordinary calls.
 
-Awaiting changes nothing about when the worksheet moves. The session appends an
-answer only once the call has returned, so a call that dies - or is aborted
-mid-await - leaves the worksheet exactly as the command found it.
+An answer is appended only after its call returns, so a call that fails or is aborted
+leaves the worksheet unchanged.
 
-The session owns the three things an authored line needs: the parse state, so
-that `InputMode`, `CaseMode` and every definition reach the lines that follow;
-the settings, which an authored `Name := Value` writes to exactly as an Options
-dialog does; and the render of each entry, made once when the entry is authored.
+The session owns the parse state (so `InputMode`, `CaseMode` and definitions carry to
+later lines), the settings (which an authored `Name := Value` writes to, like an Options
+dialog does), and each entry's render, made once when the entry is authored. It also
+owns the values, function bodies and variable domains the lines define, since every
+engine command needs them. `Session.context` bundles those with the settings for the
+engine.
 
-It also owns what the lines have defined - values, function bodies and variable
-domains - because only the tree holds those, and every engine command reads
-them. `Session.context` is that plus the settings, in the form the engine takes.
+The Declare commands are thin: each writes the expression the user could have typed and
+authors it, as the original does, so there is only one path into the symbol table.
 
-The Declare commands are how those definitions are made from the menu rather
-than from the author line, and they are thin for that reason: each writes the
-expression the user could have written and authors it, which is what the
-original does and what leaves one path into the symbol table instead of two.
+Renders are never remade. Changing the times operator or display format affects only
+later expressions; entries already on screen keep the look they had when entered, as in
+the original.
 
-A render is not remade. Switching the times operator or the display format
-changes how later expressions are drawn and leaves the ones already on screen
-alone, which is what the original does: what you see is what it looked like
-when it was entered.
+Entries leave the history only through `remove`, which keeps them in `removed` for
+`unremove`. Any engine command empties that buffer; `move_block` only rearranges, so it
+leaves the buffer alone.
 
-Entries leave the history only through `remove`, which keeps what it took in
-`removed` for `unremove` to put back. That buffer is the whole of what the two
-commands share, and any engine command empties it. `move_block` rearranges the
-history without taking anything out of it, so it leaves that buffer alone.
+Manage commands that need no engine live here too: `renumber` restores label sequence
+after removing and unremoving, `annotate` edits an entry's origin, and `order_list`
+reads the variable order list, which the engine receives through the context.
 
-The Manage commands that need no engine command of their own are here for the
-same reason the Declare ones are: `renumber` puts the labels back in sequence
-that removing and unremoving leave out of it, `annotate` edits where an entry
-says it came from, and `order_list` reads the variable order list, which is
-session state the engine hears about through the context.
+`substitute` does need the engine. It always works on the whole entry, however little is
+highlighted, because the substitution happens inside the entry and there is no part to
+splice an answer back into.
 
-`substitute` is the one that does need an engine command. It is beside the
-other three rather than among them because what it appends is derived from the
-whole entry however little of it was highlighted: the substitution happens
-inside the entry, so there is no part to splice an answer back into.
-
-`solve` is the one command that does not go through `_command` at all, because
-`_command` appends exactly one entry and soLve appends none, one, or several -
-one per solution. It names the whole entry for the same reason Substitute does,
-and it owns one piece of state besides the history: `arbitrary`, the counter
-the `@n` values come out of, which climbs past every one that reaches the
-worksheet and never goes back.
+`solve` bypasses `_command`, because `_command` appends exactly one entry while soLve
+appends one per solution (possibly none). Like Substitute it works on the whole entry.
+It also owns `arbitrary`, the counter for `@n` values, which advances past every one
+that reaches the worksheet and never goes back.
 """
 
 from __future__ import annotations
@@ -73,12 +56,9 @@ from typing import Any, Protocol
 from rederive import platform
 from rederive.display import DisplayOptions, Layout, Region, render
 
-# The client half of the engine, under the name the mathematics goes by, because a
-# session names the engine constantly and holds none of it: what it may reach for is
-# the proxy, the vocabulary and the questions a tree answers by itself. Naming the
-# half is what makes that a rule rather than a habit - an `engine.simplify` written
-# below does not resolve, and the one place that does need the other half says so in
-# an import of its own, which is `_computing_here`.
+# Only the client half of the engine is imported, under the name `engine`, so that an
+# accidental `engine.simplify` fails to resolve. The one place that needs the computing
+# half imports it separately, in `_computing_here`.
 from rederive.engine import client as engine
 from rederive.engine.replacing import same_expression
 from rederive.model import data, state, worksheet
@@ -110,57 +90,48 @@ Rect = tuple[int, int, int, int]
 #: What the status line says about a line the user wrote.
 AUTHORED = "User"
 
-#: How a declaration spells the domain operator and an infinite bound. The
-#: parser reads either spelling; these are the ones the original writes.
+#: How a declaration spells the domain operator and an infinite bound. The parser reads
+#: either spelling; these are the ones the original writes.
 DOMAIN_OPERATOR = ":ε"
 INFINITY = "∞"
 
 #: The name behind that glyph, as a tree carries it.
 _INFINITE = "inf"
 
-#: The word the Declare Variable menu offers for a variable that has been
-#: declared without a domain, and the two words its interval menu offers for
-#: an interval that has no name of its own.
+#: The Declare Variable menu's word for a variable declared without a domain, and the
+#: interval menu's two words for intervals without a name of their own.
 VALUE = "Value"
 ALL = "All"
 INTERVAL = "Interval"
 
-#: A reference to a numbered entry, wherever one is written: in an expression,
-#: and in an annotation such as `Simp(#3)`.
+#: A reference to a numbered entry, in an expression or an annotation like `Simp(#3)`.
 LABEL = re.compile(r"#(\d+)")
 
-#: An arbitrary value, as soLve writes one and as an authored `SOLVE` can mint
-#: one through a plain Simplify. The session watches every entry for these so
-#: that its counter never hands the same one out twice.
+#: An arbitrary value, as written by soLve or by Simplify of an authored `SOLVE`. The
+#: session scans every entry for these so its counter never reuses one.
 ARBITRARY = re.compile(r"@(\d+)")
 
-#: How a label rewriting names one label: the number to put in its place, or
-#: None to leave it as it is.
+#: Maps a label number to its replacement, or to None to leave it unchanged.
 Rename = Callable[[int], int | None]
 
-#: One engine command, as the session calls it. Every command takes the same
-#: three things and gives back an answer to wait for, which is what lets
-#: `_command` serve all of them and know nothing about which one it is running.
+#: One engine command. All take the same three arguments and return an awaitable
+#: answer, so `_command` can run any of them without knowing which.
 Command = Callable[[Node, "engine.Context", ParseState], Awaitable["engine.Result"]]
 
 
 class Runner(Protocol):
-    """The five engine calls that can cost anything, as the session makes them.
+    """The five engine calls that can be expensive.
 
-    Everything else the session asks the engine for - whether a tree is a
-    quotient, what its main variable is, how to write it - is a walk over a
-    tree and costs nothing, so it stays a direct call on the module. These five
-    convert to sympy, and converting alone can hang: `10^10^10` never finishes
+    Everything else the session asks the engine (is a tree a quotient, what is its main
+    variable, how is it written) is a cheap tree walk and stays a direct call. These
+    five convert to sympy, and conversion alone can hang: `10^10^10` never finishes
     being built.
 
-    They are awaited because the five are the only calls that can take long
-    enough to have to be waited for, and because where the waiting happens is
-    not the session's business. `remote.RemoteEngine` hands each one to a thread
-    that blocks on a pipe to a child process, which is how the app makes Esc
-    mean something; `_Here` computes it in this process, which is what a test
-    and a direct caller want; and an implementation with neither a thread nor a
-    process to spare can resolve one from an event and satisfy the same
-    signatures.
+    They are awaited so the session needn't care where the waiting happens.
+    `remote.RemoteEngine` runs each in a thread blocking on a pipe to a child process,
+    which is what makes Esc work in the app; `_Here` computes in-process, for tests and
+    direct callers; and an implementation without threads or processes can resolve
+    them from an event.
     """
 
     async def simplify(
@@ -204,14 +175,10 @@ class Runner(Protocol):
 
 
 class _Here:
-    """The engine computing in this process, wearing the five awaitable calls.
+    """The engine computing in this process, behind the five awaitable calls.
 
-    An answer worked out here is in hand the moment it is asked for, so nothing
-    below ever waits: these coroutines suspend at no point, and awaiting one
-    costs what the call costs and nothing more. That is exactly why a session
-    computing this way cannot be aborted - there is no moment between the ask
-    and the answer for an Esc to arrive in - and why the app hands in a proxy
-    instead.
+    These coroutines never suspend, so a session computing this way cannot be aborted:
+    there is no moment for an Esc to arrive. That is why the app uses a proxy instead.
     """
 
     def __init__(self, computing: Any) -> None:
@@ -264,18 +231,16 @@ class _Here:
 
 
 def _computing_here() -> Runner:
-    """The engine itself, for a session that was handed no proxy to compute through.
+    """The in-process engine, for a session given no proxy.
 
-    The one place the session layer reaches past the client half, and a function
-    rather than an import so that reaching happens when a session is made and not
-    when this module is read. What it costs is sympy, some four hundred modules of
-    it, which is why the app never takes this door: it hands in a `RemoteEngine`, and
-    the process that draws the screen goes on knowing no mathematics at all. Tests
-    and direct callers take it, and want exactly what it does.
+    This is the only place the session layer imports the computing half, and it does
+    so lazily, when a session is made rather than when this module is imported. That
+    import pulls in sympy (some four hundred modules), which is why the app passes a
+    `RemoteEngine` instead and its UI process never loads sympy. Tests and direct
+    callers use this.
 
-    `_Here` is the awaitable face over it and nothing more. The module's own calls
-    stay ordinary functions, since the worker calls them in the process where the
-    computing happens and has nothing to wait for either.
+    `_Here` only wraps the module in awaitables; the module's own functions stay
+    ordinary, since the worker process calls them directly.
     """
     from rederive.engine import computing
 
@@ -286,12 +251,9 @@ def _computing_here() -> Runner:
 class Bounds:
     """An interval as a declaration writes it: two bounds, each open or closed.
 
-    The bounds are text rather than trees, because this is what a data entry
-    field holds and what a declaration is written from. The default is the
-    whole real line, which is what the original opens its bounds screen on.
-
-    An infinite bound is always open however it was set, since a variable
-    cannot be declared infinite (manual section 4.10).
+    The bounds are text, as held by a data entry field. The default is the whole real
+    line, which is what the original's bounds screen starts with. An infinite bound is
+    always open, since a variable cannot be declared infinite (manual section 4.10).
     """
 
     low: str = f"-{INFINITY}"
@@ -307,8 +269,8 @@ class Bounds:
         return f"{opening}{self.low}, {self.high}{closing}"
 
 
-#: The bounds each word of the interval menu stands for. `All` is not among
-#: them: it is the whole line, which is written as no interval at all.
+#: The bounds each interval menu word stands for. `All` is absent because the whole
+#: line is written as no interval at all.
 NAMED_INTERVALS: dict[str, Bounds] = {
     "Positive": Bounds("0", INFINITY),
     "Negative": Bounds(f"-{INFINITY}", "0"),
@@ -321,17 +283,14 @@ NAMED_INTERVALS: dict[str, Bounds] = {
 class Entry:
     """One numbered line of the history: what was authored, and how it looks.
 
-    `text` is the expression in author notation and not the line that was
-    typed: an authored line is written back out from its tree, so `x (x + 1)`
-    is held as `x*(x+1)` and `(NOT p) OR (q AND r)` as `NOT p OR q AND r`.
-    `node`'s spans index that text, which is what lets a subexpression be taken
-    out of the line and put back into it. What the user sees is `layout`, drawn
-    from the same tree in the glyphs the screen has.
+    `text` is the expression in author notation, written back from its tree rather than
+    as typed: `x (x + 1)` is held as `x*(x+1)` and `(NOT p) OR (q AND r)` as
+    `NOT p OR q AND r`. `node`'s spans index this text, so a subexpression can be
+    extracted and spliced back. What the user sees is `layout`, drawn from the same tree.
 
-    `annotation` is where the entry came from, as the status line reports it:
-    `User` for a line that was written, `Simp(#3)` for one a Simplify derived
-    from entry 3, and `Simp(#3')` when only the highlighted part of entry 3
-    was simplified.
+    `annotation` is the entry's origin, as shown in the status line: `User` for an
+    authored line, `Simp(#3)` for a Simplify of entry 3, and `Simp(#3')` when only the
+    highlighted part of entry 3 was simplified.
     """
 
     number: int
@@ -340,14 +299,13 @@ class Entry:
     layout: Layout
     annotation: str = AUTHORED
     exact: Node | None = None
-    """The value behind the line, where the notation shows less than all of it.
+    """The exact value behind the line, when the notation shows less than all of it.
 
-    A decimal style shows one third as `0.333333` and saves it that way, and
-    that text read back is a different number. The original goes on computing
-    with the third, so `3·#n` is 1 and not 0.999999, and this is what makes
-    that so: what is drawn and saved is `node`, what a later command is given
-    is this. None where the two are the same, which is every authored line and
-    every answer under Rational notation.
+    A decimal style shows and saves one third as `0.333333`, which reads back as a
+    different number. The original keeps computing with the exact third, so `3·#n` is
+    1, not 0.999999. `node` is what is drawn and saved; this is what later commands
+    get. None when the two are the same, as for every authored line and every answer
+    in Rational notation.
     """
 
     @property
@@ -363,38 +321,33 @@ class Entry:
 class Session:
     """The expression history plus the selection cursor over it.
 
-    The selection is an entry index together with a route into that entry's
-    render; an empty route means the entry is selected as a whole. Every
-    navigation method returns whether it moved the selection, so the UI can
-    beep or stay quiet accordingly.
+    The selection is an entry index plus a route into that entry's render; an empty
+    route selects the whole entry. Every navigation method returns whether the
+    selection moved, so the UI can beep if not.
 
-    Navigation goes through the render rather than through the parse, because
-    the original's rule is that you select what you see: `a + b - c` offers
-    three terms, and `SIN(x + 1)` offers its argument and never its name.
+    Navigation follows the render rather than the parse, because in the original you
+    select what you see: `a + b - c` offers three terms, and `SIN(x + 1)` offers its
+    argument but never its name.
 
-    Stepping into an expression is not a walk from the left: each node
-    remembers the operand the selection last stood on under it, and stepping
-    back in returns there rather than to the first. One expression carries that
-    memory at a time - see `_preferred`.
+    Stepping into a node returns to the operand last selected under it rather than the
+    first one. Only one expression keeps that memory at a time; see `_preferred`.
     """
 
     def __init__(
         self, settings: Settings | None = None, runner: Runner | None = None
     ) -> None:
         self.settings = settings if settings is not None else Settings()
-        #: Who answers the five engine calls that can cost something. The
-        #: module by default, which computes here and cannot be interrupted;
-        #: the app hands in a proxy to a child process instead, so that a
-        #: computation can be aborted and its appetite capped.
+        #: Runs the five expensive engine calls. Defaults to in-process computation,
+        #: which can't be interrupted; the app passes a proxy to a child process so
+        #: computations can be aborted and their resource use capped.
         self.runner: Runner = runner if runner is not None else _computing_here()
         self.state = ParseState()
         self.entries: list[Entry] = []
         self.selected: int | None = None
         self.route: Route = ()
-        #: Which operand each node of the expression being explored was last
-        #: left on, keyed by the route to the node. What stepping in returns
-        #: to. Only one expression has it at a time: `_preferred_owner` says
-        #: which, and stepping into any other throws it away.
+        #: The operand last selected under each node of the explored expression, keyed
+        #: by route; stepping in returns there. It belongs to `_preferred_owner` only,
+        #: and stepping into another expression discards it.
         self._preferred: dict[Route, int] = {}
         self._preferred_owner: Entry | None = None
         #: The file this session was last saved to or read from, if any.
@@ -407,25 +360,22 @@ class Session:
         self.domains: dict[str, engine.Domain] = {}
         #: The variable order list `Manage Ordering` writes, most main first.
         self.order: tuple[str, ...] = engine.ORDER_LIST
-        #: The next free `@n`, which soLve mints its arbitrary values from.
-        #: Session-global and monotone: solving `x = x` three times gives `@1`,
-        #: `@2` and `@3`, and nothing is ever reused.
+        #: The next free `@n` for soLve's arbitrary values. It only increases: solving
+        #: `x = x` three times gives `@1`, `@2` and `@3`.
         self.arbitrary = 1
         self._next_number = 1
         self.settings.watch(self._settings_changed)
         self._settings_changed(PARSING_SETTINGS)
 
     def copy(self) -> "Session":
-        """This session again, as splitting a window gives the new half one.
+        """A copy of this session, for the new half of a split window.
 
-        The two share their settings, which are the system's and not a
-        window's, and the engine that answers for them. Everything else is
-        copied, so the histories fork: what is authored in one window from
-        here on is nothing to the other, down to the label numbers.
+        The copies share the settings, which are global rather than per-window, and the
+        runner. Everything else is copied, so the histories diverge from here on, down
+        to label numbers.
 
-        Entries are shared rather than copied because nothing ever edits one -
-        annotating replaces the entry in the list - so two histories may hold
-        the same entry and neither can change it under the other.
+        Entries themselves are shared, which is safe because they are never mutated
+        (annotating replaces the entry in the list).
         """
         other = Session(self.settings, self.runner)
         other.state = replace(
@@ -449,11 +399,10 @@ class Session:
         return other
 
     def discard(self) -> None:
-        """Stop listening to the settings, which a closed window's session must.
+        """Unsubscribe from the settings; called when the session's window closes.
 
-        A session mirrors three of the settings into its parse state and stays
-        subscribed for as long as it lives. Closing the window it belonged to
-        is where that ends.
+        A session mirrors three settings into its parse state and stays subscribed until
+        then.
         """
         self.settings.unwatch(self._settings_changed)
 
@@ -462,22 +411,18 @@ class Session:
     def author(self, text: str) -> Entry:
         """Parse `text`, append it as a new entry, and select it as a whole.
 
-        Raises `DeriveSyntaxError` and appends nothing when the line does not
-        parse. Nothing is simplified: an accepted expression is inert until the
-        user asks for something to be done to it (R-HIST1), and label numbers
-        only ever increase (R-HIST2).
+        Raises `DeriveSyntaxError` and appends nothing if the line doesn't parse. Nothing
+        is simplified: an expression is inert until the user acts on it (R-HIST1), and
+        label numbers only increase (R-HIST2).
 
-        What goes up is the expression rather than the line - see `_redrawn` -
-        so what the entry says is what was parsed and not how it was spelled.
+        The entry shows the parsed expression rather than the typed spelling; see
+        `_redrawn`.
 
-        What the line declares is applied before it is drawn, so a hand-written
-        `DisplayFormat := Compressed` prints itself compressed, as it does in
-        the original.
+        Declarations take effect before the line is drawn, so a typed
+        `DisplayFormat := Compressed` prints itself compressed, as in the original.
 
-        A line typed with a trailing `=` is entered here as the `showvalue` it
-        parses to, and nothing is computed for it either. What that line asks
-        for is `show_value`, which is a command because the value costs
-        something.
+        A line with a trailing `=` is entered as its `showvalue` parse, uncomputed. To
+        compute the value, use the `show_value` command.
         """
         result = self._authored(text)
         return self._append(result.source.text, result.node)
@@ -485,8 +430,8 @@ class Session:
     def _authored(self, text: str) -> ParseResult:
         """Parse `text` as an author line, and apply what the line declares.
 
-        The whole of authoring except the appending, so that the trailing `=`
-        line declares and defines exactly what the same line without it does.
+        This is all of authoring except the append, shared so that a line with a trailing
+        `=` declares and defines exactly what it would without it.
         """
         result = self._redrawn(parse_expression(text, self.state))
         for declaration in result.declarations:
@@ -497,39 +442,27 @@ class Session:
     def shows_value(self, text: str) -> bool:
         """Whether `text` is an author line typed with a trailing `=`.
 
-        Parsing costs nothing, so this is what the app asks before it decides
-        which way to enter a line: an append it can make where it stands, or a
-        computation to put on a task of its own.
+        Parsing is cheap, so the app asks this to decide whether entering the line is a
+        plain append or a computation to run as a separate task.
 
-        Raises `DeriveSyntaxError` when `text` does not parse, which is what
-        entering it would raise too.
+        Raises `DeriveSyntaxError` if `text` doesn't parse, as entering it would.
         """
         return parse_expression(text, self.state).node.kind is Kind.SHOWVALUE
 
     async def show_value(self, text: str) -> Entry:
         """Enter `text`, whose trailing `=` asks for its value beside it.
 
-        `2^3=` enters `2^3 = 8` (manual section 3.1): the expression as it was
-        typed, equated to what it simplifies to. The `=` belongs to the line
-        rather than to the expression, so the parser hands it back as a
-        `showvalue` over what was typed, and this is where that becomes an
-        equation.
+        `2^3=` enters `2^3 = 8` (manual section 3.1): the typed expression equated to its
+        simplified form. The parser returns the trailing `=` as a `showvalue` node, which
+        this turns into the equation.
 
-        A command and not part of `author` because the value has to be
-        computed, and every computation the session makes goes through the
-        runner - which the app fills with a child process, so that a long one
-        can be aborted and the process drawing the screen knows no mathematics.
-        `author` is the entry point that computes nothing, and stays one.
+        This is separate from `author` because the value must be computed, and all
+        computation goes through the runner. `author` never computes. A line without a
+        trailing `=` is simply authored, so this handles any author line.
 
-        A line with no trailing `=` is simply authored, so this serves the
-        whole author line and the app need only decide how to wait for it.
+        The entry is annotated as authored, since the user typed the `=`.
 
-        What is entered is the user's line and is annotated as one: the `=` was
-        typed rather than commanded, and the entry stands for the line and not
-        for a step taken on some earlier entry.
-
-        Raises `DeriveSyntaxError` and appends nothing when the line does not
-        parse.
+        Raises `DeriveSyntaxError` and appends nothing if the line doesn't parse.
         """
         result = self._authored(text)
         if result.node.kind is not Kind.SHOWVALUE:
@@ -543,11 +476,8 @@ class Session:
     def _equated(self, shown: Node, value: Node) -> tuple[str, Node]:
         """`shown = value` written out and read back, as one expression.
 
-        Written in the spelling an answer is written in, blanks around the
-        relation and around every sum sign, because half of what this line
-        shows is an answer. It is read back for the reason every other command
-        reads its answer back: an entry's spans have to index the text it
-        carries, or no part of it can be highlighted.
+        Written spaced, as answers are, since half of the line is an answer. It is read
+        back so the entry's spans index its text, which highlighting requires.
         """
         text = write_expression(Node(Kind.REL, 0, 0, (shown, value), "="), spaced=True)
         return text, parse_expression(text, self.state).node
@@ -555,21 +485,17 @@ class Session:
     def _redrawn(self, result: ParseResult) -> ParseResult:
         """`result` written back out from its tree and read again.
 
-        What lands on the worksheet is the expression rather than the line that
-        was typed, which is what the original puts up: `(NOT p) OR (q AND r)`
-        goes up as `NOT p OR q AND r`, the fences the grammar does not need
-        being gone. Nothing is reordered - `q OR p` stays `q OR p` - because
-        writing is the parser run backwards and not a normal form.
+        As in the original, the worksheet shows the expression rather than the typed line:
+        `(NOT p) OR (q AND r)` becomes `NOT p OR q AND r`, without unneeded parentheses.
+        Nothing is reordered (`q OR p` stays `q OR p`); writing is the inverse of parsing,
+        not a normal form.
 
-        It is read again rather than only written, so that the tree's spans
-        index the text the entry carries: that is what lets a subexpression be
-        copied out of the line and spliced back into it.
+        It is reparsed so the tree's spans index the entry's text, which lets a
+        subexpression be copied out and spliced back.
 
-        The reading is under the state the writing was read under, before what
-        the line declares is applied, or `InputBase := 16` would come back as
-        twenty-two. A tree the round trip does not return unchanged keeps the
-        line as it was typed, since an entry has to say what the user wrote
-        before it says it tidily.
+        Reparsing uses the state from before the line's declarations are applied, or
+        `InputBase := 16` would come back as twenty-two. If the round trip changes the
+        tree, the typed line is kept, since faithfulness beats tidiness.
         """
         try:
             written = parse_expression(write_expression(result.node), self.state)
@@ -580,10 +506,8 @@ class Session:
     def record(self, setting: str) -> Entry:
         """Append the `Name := Value` a settings change records.
 
-        The expression is built rather than parsed, because the settings have
-        already changed by the time it is written: `InputBase := 7` does not
-        lex in base seven, and Derive records the expression it constructs
-        rather than reading its own record back.
+        The expression is built rather than parsed, because the settings have already
+        changed: `InputBase := 7` would not lex in base seven.
         """
         return self._append(
             self.settings.assignment(setting), self.settings.assignment_node(setting)
@@ -614,11 +538,9 @@ class Session:
     def _minted(self, text: str) -> None:
         """Put the arbitrary-value counter past every `@n` this entry carries.
 
-        Every entry and not only a soLve's, because a `SOLVE` written on the
-        author line mints them too and reaches the history through a plain
-        Simplify - and because a worksheet read from a file carries whatever
-        the session that wrote it had minted. The counter only ever climbs, so
-        no two arbitrary values in one worksheet can stand for one quantity.
+        This applies to every entry, not just soLve's, because a typed `SOLVE` mints them
+        through Simplify, and a loaded worksheet carries whatever its session minted. The
+        counter never decreases, so no two arbitrary values in a worksheet collide.
         """
         for found in ARBITRARY.finditer(text):
             self.arbitrary = max(self.arbitrary, int(found.group(1)) + 1)
@@ -626,16 +548,14 @@ class Session:
     def _define(self, node: Node, declarations: Iterable[Declaration]) -> None:
         """Record what a line defines: a value, a function body, or a domain.
 
-        The parse state knows which names are taken; what they stand for lives
-        in the tree and nowhere else, so this is what carries `x := 5` to the
-        next command. A setting is not a variable: `Notation := Mixed` defines
-        nothing, and the declarations say which names those are.
+        The parse state knows which names are taken, but their meaning lives only in the
+        tree, so this is what carries `x := 5` to later commands. Settings are not
+        variables: `Notation := Mixed` defines nothing, and `declarations` identifies
+        them.
 
-        A function body defines nothing by being written down. `DSOLVE1(p, q,
-        x, y, x0, y0, a_) := IF("inapplicable" = a_ := ..., ...)` assigns `a_`
-        every time it is called and never when it is defined, so the walk stops
-        at a body: taking the assignment here would leave `a_` standing for the
-        body's own call with the parameters unwritten.
+        Assignments inside a function body are not definitions. `DSOLVE1(p, q, x, y, x0,
+        y0, a_) := IF("inapplicable" = a_ := ..., ...)` assigns `a_` when called, not when
+        defined, so the walk stops at function bodies.
         """
         settings = {
             declaration.setting
@@ -678,9 +598,8 @@ class Session:
     def declare(self, declaration: Declaration) -> None:
         """Apply one declaration: a setting to the settings, the rest to the state.
 
-        A setting never goes straight to the parse state. It is applied to the
-        settings, which mirror it back, so that a value no field takes cannot
-        leave the two disagreeing about what base a numeral is written in.
+        A setting goes to the settings, which mirror it back to the parse state, so an
+        invalid value can't leave the two disagreeing about, say, the input base.
         """
         if isinstance(declaration, SettingDeclaration):
             self.settings.assign(declaration.setting, declaration.value)
@@ -698,11 +617,7 @@ class Session:
         )
 
     def _settings_changed(self, changed: frozenset[str]) -> None:
-        """Keep the parse state's modes level with the settings.
-
-        The settings are the one store; the parse state mirrors the three of
-        them that decide how a line lexes.
-        """
+        """Mirror the three settings that affect lexing into the parse state."""
         for setting in changed & PARSING_SETTINGS:
             value = str(self.settings[setting])
             self.state.declare(SettingDeclaration(setting, value))
@@ -713,9 +628,7 @@ class Session:
     def context(self) -> engine.Context:
         """Everything an engine command's answer may depend on.
 
-        The whole history is offered as labels, so `#3` stands for entry 3
-        wherever it is written, and every entry is one whether or not anything
-        refers to it.
+        Every entry is offered as a label, so `#3` means entry 3 wherever it appears.
         """
         return engine.Context.from_settings(
             self.settings,
@@ -734,8 +647,8 @@ class Session:
     async def approx(self, request: str) -> Entry:
         """Append the approximated form of the expression `request` names.
 
-        Simplify of `APPROX` called on it, which approximates at whatever
-        `PrecisionDigits` says; the rest is Simplify's story exactly.
+        This simplifies `APPROX` applied to it, at `PrecisionDigits` precision; otherwise
+        it behaves exactly like Simplify.
         """
 
         def run(
@@ -755,9 +668,8 @@ class Session:
     ) -> Entry:
         """Append the factored form of the expression `request` names.
 
-        `amount` is how far to go and `variables` names the factorization
-        variables, in the order they were chosen; the rest is Simplify's story
-        exactly.
+        `amount` is how far to factor and `variables` lists the factorization variables in
+        the order chosen; otherwise it behaves exactly like Simplify.
         """
 
         def run(
@@ -775,9 +687,9 @@ class Session:
     ) -> Entry:
         """Append the expanded form of the expression `request` names.
 
-        `variables` names the expansion variables, in the order they were
-        chosen, and `amount` is how far the denominator of a ratio is factored
-        on the way to partial fractions; the rest is Simplify's story exactly.
+        `variables` lists the expansion variables in the order chosen, and `amount` is how
+        far a denominator is factored for partial fractions; otherwise it behaves exactly
+        like Simplify.
         """
 
         def run(
@@ -795,22 +707,17 @@ class Session:
     ) -> list[Entry]:
         """Append one entry per solution of the expression `request` names.
 
-        The one command that appends any number of entries rather than exactly
-        one: two roots make two, a system makes one holding the solution
-        vector, and no solutions make none at all - which is what the UI turns
-        into its message, there being nothing on the worksheet to say it with.
-        The entries come back in the order they were appended, so the selection
-        is left on the last of them.
+        Two roots give two entries, a system gives one holding the solution vector, and no
+        solutions give none, which the UI reports with a message. Entries are returned in
+        order, and the last one is selected.
 
-        Unlike Simplify, soLve acts on the whole entry even where part of it is
-        highlighted: a solution of a subexpression is not something there is
-        any way to splice back around the rest, so `#3` names entry 3 and
-        nothing else. `variables` is what to solve for, in the order the user
-        chose, and `bounds` the pair of expressions Approximate precision asks
-        for.
+        Unlike Simplify, soLve acts on the whole entry even if part is highlighted, since
+        a solution can't be spliced back into the rest. `variables` lists what to solve
+        for, in the order chosen, and `bounds` is the pair of expressions Approximate
+        precision asks for.
 
-        Raises `DeriveSyntaxError` and appends nothing when `request` or one of
-        the bounds does not parse.
+        Raises `DeriveSyntaxError` and appends nothing if `request` or a bound doesn't
+        parse.
         """
         entry, target = self._requested(request)
         interval = (
@@ -821,8 +728,7 @@ class Session:
                 parse_expression(bounds[1], self.state).node,
             )
         )
-        # Deriving an expression empties the unremove buffer, as every other
-        # engine command does.
+        # Like every engine command, this empties the unremove buffer.
         self.removed = []
         source = AUTHORED if entry is None else f"#{entry.number}"
         results = await self.runner.solve(
@@ -840,12 +746,10 @@ class Session:
     async def solve_variables(self, request: str) -> tuple[str, ...]:
         """The variables soLve would offer for what `request` names.
 
-        `variables` is not enough on its own: soLve names the whole entry where
-        the other commands name a highlighted part of it, so the list has to be
-        read off the same expression the command will act on. And where that
-        expression simplifies to one with no variable left, as `x/x = 1` does,
-        the list is the variables it was written in, there being still a
-        question to answer about each of them.
+        `variables` won't do, because soLve acts on the whole entry rather than the
+        highlighted part. And when the expression simplifies to one with no variables, as
+        `x/x = 1` does, the variables it was written in are listed, since there is still
+        a question to answer about each.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
@@ -853,11 +757,10 @@ class Session:
         return await self.runner.expression_variables(target, self.context, written=True)
 
     def equations(self, request: str) -> int:
-        """How many equations what `request` names is a system of, or zero.
+        """The number of equations in the system `request` names, or zero if not a system.
 
-        Which is what decides how many variables soLve asks about: a system of
-        E equations in more than E variables is asked about E times, and a
-        scalar at most once.
+        This decides how many variables soLve asks for: E times for a system of E
+        equations in more than E variables, and at most once for a scalar.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
@@ -867,17 +770,15 @@ class Session:
     def substitute(self, request: str, values: Mapping[str, str]) -> Entry:
         """Append what `request` names with a value written in for each variable.
 
-        `values` holds one replacement per variable name. A blank one leaves
-        that variable alone, which is what Enter on the name the prompt offers
-        comes to. They all go in at once, so answering `y` for `x` and `x` for
-        `y` interchanges the two rather than writing one of them twice.
+        `values` maps variable names to replacements; a blank one (Enter on the offered
+        name) leaves that variable alone. Substitution is simultaneous, so `y` for `x`
+        and `x` for `y` swaps them.
 
-        Nothing is simplified, which is the point of the command: `a*x^2 + b*x
-        + c` with 2, 3 and 5 written in is appended as `3*2^2 + 5*2 + c`, for
-        the user to look at before asking for a Simplify.
+        Nothing is simplified, by design: `a*x^2 + b*x + c` with 2, 3 and 5 written in
+        becomes `3*2^2 + 5*2 + c`, for the user to inspect before simplifying.
 
-        Raises `DeriveSyntaxError` and appends nothing when `request` or one of
-        the values does not parse.
+        Raises `DeriveSyntaxError` and appends nothing if `request` or a value doesn't
+        parse.
         """
         entry, target = self._requested(request)
         replacements = [
@@ -890,16 +791,14 @@ class Session:
     def substitute_part(self, request: str, value: str) -> Entry:
         """Append the entry `request` names with the highlighted part replaced.
 
-        Every exact match of that part in the whole entry goes, matching being
-        structural: substituting for `t^3` leaves the `t^6` beside it alone. A
-        blank value replaces nothing.
+        Every structural match of the part in the entry is replaced: substituting for
+        `t^3` leaves `t^6` alone. A blank value replaces nothing.
 
-        The answer is derived from the whole entry, since the substitution
-        happens inside it, so the annotation carries no quote - unlike a
-        Simplify of the same part, which transforms the part alone.
+        The result derives from the whole entry, so unlike Simplify of a part, the
+        annotation has no quote.
 
-        Raises `DeriveSyntaxError` and appends nothing when `request` or
-        `value` does not parse.
+        Raises `DeriveSyntaxError` and appends nothing if `request` or `value` doesn't
+        parse.
         """
         entry, target = self._requested(request)
         part = self._highlighted_in(entry)
@@ -913,9 +812,8 @@ class Session:
     def substitutes_part(self, request: str) -> bool:
         """Whether a Substitute for what `request` names would replace a part.
 
-        Which is what decides what the command asks for: a highlighted part is
-        one question offering nothing, and a whole expression is one question
-        per variable.
+        This decides the prompts: one question with no default for a highlighted part,
+        or one per variable for a whole expression.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
@@ -925,9 +823,8 @@ class Session:
     def target(self, request: str) -> Node:
         """The expression a command for `request` would act on.
 
-        What the command itself resolves, offered on its own because Factor and
-        Expand have to look at it before they can ask their questions: which
-        variables to offer, and whether to ask anything at all.
+        Factor and Expand need it before prompting, to decide which variables to offer
+        and whether to ask at all.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
@@ -936,10 +833,8 @@ class Session:
     def named_target(self, request: str) -> tuple[Node, str]:
         """That expression, and what an annotation calls it.
 
-        `#3` for a whole entry, `#3'` for the highlighted part of one, and
-        `User` for a line the user wrote out instead - which is what Build and
-        the Calculus commands write their annotations from, both of them
-        naming their operands rather than describing what was done to them.
+        The name is `#3` for a whole entry, `#3'` for its highlighted part, and `User` for
+        typed text. Build and the Calculus commands use it in their annotations.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
@@ -955,11 +850,10 @@ class Session:
     def is_variable(self, text: str) -> bool:
         """Whether `text` is a single variable name and nothing else.
 
-        All the Calculus variable fields take: the variable to differentiate
-        by, to integrate over, or to run a sum's index over. It need not be a
-        variable of the expression - differentiating by a name that is not in
-        it is a legitimate way to get zero - but it does have to be a name, and
-        one that stands for nothing else already.
+        This validates the Calculus variable fields (differentiation, integration or sum
+        index variable). It needn't occur in the expression, since differentiating by an
+        absent name legitimately gives zero, but it must be a name not already standing
+        for something else.
         """
         try:
             node = parse_expression(text, self.state).node
@@ -970,14 +864,12 @@ class Session:
     async def build(self, node: Node, annotation: str, simplified: bool = False) -> Entry:
         """Append a built expression, unsimplified, as Build leaves it.
 
-        `node` is hung together from operands the command resolved as it
-        collected them, so its spans index nothing; it is written out and read
-        back here, which is what gives the entry spans into the text it shows.
+        `node` is assembled from resolved operands, so its spans index nothing; it is
+        written out and read back to give the entry proper spans.
 
-        `simplified` is Ctrl-Enter on the operator menu's `Done`, and it
-        appends one entry rather than two: the original enters the simplified
-        expression alone, the built form it came from never reaching the
-        history, and says so by wrapping the annotation - `Simp(#1+#1)`.
+        `simplified` means Ctrl-Enter on the operator menu's `Done`. As in the original,
+        only the simplified expression is appended, with a wrapped annotation like
+        `Simp(#1+#1)`.
         """
         return await self._derived(node, annotation, simplified)
 
@@ -991,19 +883,16 @@ class Session:
     ) -> Entry:
         """Append `HEAD(u, ...)` over what `request` names, unsimplified.
 
-        The Calculus commands compute nothing: `Calculus Differentiate` leaves
-        a `DIF` standing for the derivative, and taking it is what a Simplify
-        after it is for. That is the whole of the command - which is why one
-        method serves all seven, told the head to write and the word the
-        annotation is spelled with.
+        The Calculus commands compute nothing: `Calculus Differentiate` leaves a `DIF`
+        for a later Simplify to evaluate. So one method serves all seven, given the head
+        to write and the annotation prefix.
 
-        `arguments` are the arguments after the expression, already in the
-        order the head takes them and with the ones the command leaves off
-        left off. The annotation names only the expression and the variable,
-        as the original's does: `Dif(#1,x)` says nothing about the order.
+        `arguments` follow the expression, in the head's order, with omitted ones left
+        out. As in the original, the annotation names only the expression and the
+        variable: `Dif(#1,x)` says nothing about the order.
 
-        Raises `DeriveSyntaxError` and appends nothing when `request` or one of
-        the arguments does not parse.
+        Raises `DeriveSyntaxError` and appends nothing if `request` or an argument doesn't
+        parse.
         """
         target, source = self.named_target(request)
         parsed = [parse_expression(text, self.state).node for text in arguments]
@@ -1017,13 +906,11 @@ class Session:
     ) -> Entry:
         """Append a tree built rather than computed, written out and read back.
 
-        Deriving an expression empties the unremove buffer, which every other
-        command that appends an answer does with it.
+        Like every command that appends an answer, this empties the unremove buffer.
 
-        A command taken with Ctrl-Enter simplifies what it built instead of
-        appending it, so that one entry comes of it and not two, and the
-        annotation records both steps: `Simp(Dif(#1,x))` is the derivative of
-        entry 3, taken.
+        With Ctrl-Enter (`simplified`), the built tree is simplified and only the result
+        appended, with an annotation recording both steps: `Simp(Dif(#1,x))` is the
+        evaluated derivative of entry 1.
         """
         self.removed = []
         result = engine.replace(node, (), self.state)
@@ -1036,19 +923,18 @@ class Session:
     async def variables(self, request: str) -> tuple[str, ...]:
         """The variables Factor or Expand would offer for what `request` names.
 
-        Most main first, as the original lists them. Fewer than two is no
-        choice at all, and the original asks nothing then.
+        Most main first, as in the original, which asks nothing when there are fewer
+        than two.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
         return await self.runner.expression_variables(self.target(request), self.context)
 
     async def relation(self, request: str) -> str | None:
-        """The operator what `request` names evaluates to a relation under, or None.
+        """The relation operator of what `request` names once evaluated, or None.
 
-        What Plot asks next to `variables`, for the same reason: `IM(u = v)` is a
-        call as written and an equation once evaluated, and the equation is what
-        is drawn.
+        Plot asks this alongside `variables`: `IM(u = v)` is a call as written but an
+        equation once evaluated, and the equation is what gets drawn.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
@@ -1071,18 +957,15 @@ class Session:
     async def _command(self, request: str, prefix: str, run: Command) -> Entry:
         """Run one engine command on what `request` names, and append the answer.
 
-        `#3` on its own is entry 3. When that is the entry the selection is in
-        and only part of it is highlighted, that part alone is transformed and
-        the rest of the entry is copied around it; the annotation marks such an
-        entry with a quote. Any other text is an expression in its own right,
-        transformed as it stands, and is annotated as the user's.
+        A bare `#3` is entry 3. If that entry is selected with only part highlighted, the
+        part alone is transformed and the rest copied around it, and the annotation gets
+        a quote. Any other text is transformed as an expression in its own right and
+        annotated as the user's.
 
-        Raises `DeriveSyntaxError` and appends nothing when `request` does not
-        parse.
+        Raises `DeriveSyntaxError` and appends nothing if `request` doesn't parse.
         """
         node = parse_expression(request, self.state).node
-        # Deriving an expression empties the unremove buffer, which is what the
-        # original does with the memory it was holding.
+        # Deriving an expression empties the unremove buffer, as in the original.
         self.removed = []
         entry = self._labelled(node)
         if entry is None:
@@ -1102,11 +985,10 @@ class Session:
         return self.numbered(number)
 
     def _requested(self, request: str) -> tuple[Entry | None, Node]:
-        """The entry `request` labels, if it labels one, and the whole of it.
+        """The entry `request` labels (or None), and the whole expression to act on.
 
-        What a substitution works on, which is the whole entry even where part
-        of it is highlighted: the part says what to replace, not what to
-        replace it in.
+        Substitution works on the whole entry even when part is highlighted: the part
+        says what to replace, not where.
         """
         node = parse_expression(request, self.state).node
         entry = self._labelled(node)
@@ -1115,9 +997,8 @@ class Session:
     def _highlighted_in(self, entry: Entry | None) -> Node | None:
         """The part of `entry` the selection has highlighted, if it has one.
 
-        Naming `#3` while a subexpression of entry 3 is highlighted names that
-        subexpression; any other entry is named whole, wherever the highlight
-        happens to be.
+        Only the selected entry can have a highlighted part; any other entry is named
+        whole.
         """
         if entry is None or entry is not self.selected_entry or not self.route:
             return None
@@ -1131,11 +1012,9 @@ class Session:
     ) -> Entry:
         """Append `node` with `replacements` written into it, unsimplified.
 
-        `entry` is where it came from, for the annotation to say so; None is a
-        line the user typed on the prompt rather than a label.
+        `entry` is the source, for the annotation; None means text typed at the prompt.
         """
-        # Deriving an expression empties the unremove buffer, as every other
-        # engine command does.
+        # Like every engine command, this empties the unremove buffer.
         self.removed = []
         result = engine.replace(node, replacements, self.state)
         source = AUTHORED if entry is None else f"#{entry.number}"
@@ -1148,9 +1027,8 @@ class Session:
     async def _answered_part(self, entry: Entry, run: Command, prefix: str) -> Entry:
         """`entry` again, with the highlighted part of it transformed.
 
-        The answer is spliced into the entry's own text and the whole line read
-        back, so that the new entry's spans index its text exactly as an
-        authored line's do.
+        The answer is spliced into the entry's text and the whole line reparsed, so the
+        new entry's spans index its text.
         """
         part = self.selected_node
         assert part is not None
@@ -1161,13 +1039,11 @@ class Session:
     def _spliced(self, entry: Entry, part: Node, fragment: str) -> tuple[str, Node]:
         """`entry`'s text with `fragment` written where `part` stands, and read back.
 
-        A fence too few would change what the line says, so the fenced splice is
-        what the answer falls back on. One too many says the same thing, but the
-        text is what a saved file holds, and the slot a part came out of often
-        carries fences already: the highlighted sum of `(5*x - 3*x + 1)^7` stood
-        between a pair the line still has. So the bare splice is what is taken
-        wherever the line reads back as the same expression either way, which is
-        the question asked here rather than guessed at from precedence.
+        Missing parentheses would change the meaning, so the parenthesized splice is the
+        fallback. Extra ones are harmless but end up in saved files, and the slot often
+        has parentheses already: the highlighted sum in `(5*x - 3*x + 1)^7` sits inside a
+        pair the line keeps. So the bare splice is used whenever it parses to the same
+        expression, checked by parsing rather than guessed from precedence.
         """
         fenced = entry.text[: part.start] + f"({fragment})" + entry.text[part.end :]
         node = parse_expression(fenced, self.state).node
@@ -1180,18 +1056,16 @@ class Session:
 
     # -- declaring ---------------------------------------------------------
     #
-    # Every Declare command comes to the same thing: it writes the expression
-    # the user could have written on the author line, and authors it. That is
-    # what the original does - the manual gives the equivalent authored line
-    # for each of them - and it is why nothing here has to touch the symbol
-    # table, the domains or the definitions: authoring already does all three.
+    # Every Declare command writes the expression the user could have typed and authors
+    # it, as the original does (the manual gives the equivalent line for each). So
+    # nothing here touches the symbol table, domains or definitions directly.
 
     def declare_domain(self, name: str, kind: str, bounds: Bounds | None = None) -> Entry:
         """Author `x :ε Real (0, ∞)`: the domain of one variable.
 
-        `kind` is Integer, Real, Complex or Nonscalar, and `bounds` the
-        interval, which only the first two can carry. `default` as the name
-        declares the domain every unnamed variable falls back on.
+        `kind` is Integer, Real, Complex or Nonscalar, and `bounds` the interval, allowed
+        only for the first two. The name `default` sets the fallback domain for
+        undeclared variables.
         """
         interval = "" if bounds is None else f" {bounds.text}"
         return self.author(f"{name} {DOMAIN_OPERATOR} {kind}{interval}")
@@ -1203,11 +1077,10 @@ class Session:
     def declare_function(self, name: str, definition: str) -> Entry:
         """Author `HYP(a, b) := √(a^2 + b^2)`, deriving the parameters.
 
-        The definition's own variables become the parameters, most main first
-        - unlike an authored definition, which is where the manual says to go
-        when the order or the number of them matters. A definition with no
-        variables in it defines no function: `q := 5` is what the original
-        writes for one, and that is a variable with a value.
+        The definition's variables become the parameters, most main first; the manual
+        recommends an authored definition when their order or number matters. A
+        definition with no variables yields a plain value assignment like `q := 5`, as
+        in the original.
         """
         variables = self.definition_variables(definition)
         return self.declare_arbitrary(name, variables, definition)
@@ -1217,8 +1090,8 @@ class Session:
     ) -> Entry:
         """Author `F(x, y) :=`: a function with parameters and no body.
 
-        Which is what the original calls an arbitrary function. With no
-        parameters there is no function either, and the line is `g :=`.
+        The original calls this an arbitrary function. With no parameters, the line is
+        just `g :=`.
         """
         head = f"{name}({', '.join(variables)})" if variables else name
         return self.author(f"{head} :={_after(definition)}")
@@ -1234,11 +1107,10 @@ class Session:
     # -- what the Declare screens open on ----------------------------------
 
     def declared_as(self, name: str) -> str:
-        """Which word of the Declare Variable menu `name` is already answered by.
+        """The Declare Variable menu word matching `name`'s current declaration.
 
-        The domain it was declared with, `Value` for a variable declared
-        without one, and `Real` for a name nothing has declared - which is the
-        domain such a variable has anyway.
+        That is its declared domain, `Value` if declared without one, or `Real` (the
+        implicit domain) if undeclared.
         """
         known = self.state.variables.get(self._canonical(name))
         if known is None:
@@ -1246,10 +1118,10 @@ class Session:
         return known.domain or VALUE
 
     def declared_interval(self, name: str) -> str:
-        """Which word of the interval menu `name`'s domain is already answered by.
+        """The interval menu word matching `name`'s domain.
 
-        `All` for a domain with no interval, the name of the interval where it
-        has one, and `Interval` for bounds that have no name of their own.
+        `All` if there is no interval, the interval's name if it has one, or `Interval`
+        for unnamed bounds.
         """
         domain = self.domains.get(self._canonical(name))
         if domain is None or not domain.has_interval:
@@ -1263,8 +1135,7 @@ class Session:
     def bounds_of(self, name: str) -> Bounds:
         """The bounds the Declare Variable Interval screen opens on.
 
-        The variable's own, where it has an interval; the whole real line
-        where it has not.
+        The variable's own interval if it has one, else the whole real line.
         """
         domain = self.domains.get(self._canonical(name))
         if domain is None or not domain.has_interval:
@@ -1282,14 +1153,12 @@ class Session:
     def declarable(self, name: str) -> bool:
         """Whether `name` may be declared.
 
-        It has to be one name - multi-character even in Character input mode,
-        which is what makes this a lexical question rather than a parse - and
-        it may not be one of the pre-defined functions or constants, which
-        cannot be redeclared (manual sections 4.10 and 4.12).
+        It must be a single name, multi-character even in Character input mode (so this is
+        a lexical check, not a parse), and not a pre-defined function or constant, which
+        can't be redeclared (manual sections 4.10 and 4.12).
 
-        A name the session's own lines defined may be declared again, which is
-        how `Declare Variable` turns a user-defined function back into a
-        variable and `Declare Function` turns a variable into a function.
+        Names the session itself defined may be redeclared, which is how `Declare
+        Variable` turns a user function back into a variable and vice versa.
         """
         if not is_name(name):
             return False
@@ -1303,23 +1172,22 @@ class Session:
         return name in self.state.functions or name in self.state.variables
 
     def _canonical(self, name: str) -> str:
-        """How a name typed on a Declare line is recorded, however it was cased."""
+        """The recorded form of a name typed on a Declare line, regardless of case."""
         return self.state.lookup(name) or name
 
     def reads(self, text: str) -> None:
         """Raise `DeriveSyntaxError` unless `text` is an expression.
 
-        What a command that collects expressions one at a time needs: an
-        element of a vector is judged as it is entered rather than when the
-        whole vector has been.
+        Used by commands that collect expressions one at a time, so each vector element
+        is checked as it is entered.
         """
         parse_expression(text, self.state)
 
     def is_bound(self, text: str) -> bool:
         """Whether `text` is something an interval bound may say.
 
-        A number or an infinity, which is what the original takes: it refuses
-        `a + 1` and accepts `-5`, `1/2` and `2.5`.
+        Like the original, this accepts a number or an infinity: `-5`, `1/2` and `2.5`,
+        but not `a + 1`.
         """
         try:
             node = parse_expression(text, self.state).node
@@ -1330,9 +1198,9 @@ class Session:
     def definition_variables(self, definition: str) -> tuple[str, ...]:
         """The variables in `definition`, most main first.
 
-        What `Declare Function` makes the parameters of the function it is
-        defining. A variable with a value assigned is one of them, since it is
-        still written as a variable; a constant and a function name are not.
+        `Declare Function` uses these as the parameters. Variables with assigned values
+        count, since they are still written as variables; constants and function names
+        don't.
 
         Raises `DeriveSyntaxError` when `definition` does not parse.
         """
@@ -1360,30 +1228,25 @@ class Session:
     def numbered(self, number: int) -> Entry | None:
         """The entry labelled `number`, or None when the history holds no such.
 
-        Removing an entry does not free its label, and unremoving one may have
-        to find it taken, so a label is worth looking up rather than indexing.
+        Labels don't correspond to positions after removing and unremoving, so they are
+        looked up.
         """
         return next((entry for entry in self.entries if entry.number == number), None)
 
     def remove(self, first: int, last: int) -> int:
         """Take out the block `first` and `last` delimit, and say how many went.
 
-        The two labels name the ends of a physically contiguous block, which is
-        not necessarily a numerically contiguous run of labels: an earlier
-        unremove can leave the history in an order its numbers do not follow.
-        Either end may be given first, and naming one label twice removes that
-        entry alone.
+        The labels delimit a physically contiguous block, which needn't be numerically
+        contiguous, since unremove can put entries out of order. Either end may come
+        first; the same label twice removes one entry.
 
-        The removed entries become the unremove buffer, replacing whatever was
-        in it. Their labels are not reused and the entries that stay keep
-        theirs, so removing renumbers nothing. The exception is a removal that
-        empties the history: the next entry is labelled 1 again, as in the
-        original, and a restored entry whose label has been taken since gets a
-        fresh one. What the removed lines defined is left standing, since a value
-        outlives the line that gave it.
+        The removed entries replace the unremove buffer. Labels are not reused and
+        nothing is renumbered, except that emptying the history restarts labels at 1, as
+        in the original (a restored entry whose label was taken since gets a fresh one).
+        Definitions made by the removed lines remain in effect.
 
-        The selection lands on the entry that takes the block's place, or on the
-        last entry when the block was at the end.
+        The selection moves to the entry now in the block's place, or to the last entry
+        if the block was at the end.
 
         Raises `KeyError` when either label names no entry.
         """
@@ -1402,17 +1265,15 @@ class Session:
     def unremove(self, before: int | None = None) -> int:
         """Put the removed expressions back, and say how many came.
 
-        They go in front of the entry labelled `before`; None puts them after
-        the last entry, which is what typing `end` in the field asks for.
+        They go before the entry labelled `before`; None (typing `end` in the field)
+        appends them at the end.
 
-        The buffer is not emptied, so the same block can be put back more than
-        once. A restored entry keeps its own label where the history has left it
-        free and takes a fresh one where it has not, which is what keeps two
-        entries from answering to the same number. The next authored entry comes
-        after every label the history then holds.
+        The buffer is kept, so a block can be restored repeatedly. A restored entry keeps
+        its label if free and gets a fresh one otherwise, so labels stay unique. The next
+        authored entry is numbered past every label in the history.
 
-        The selection lands on the entry the block went in front of, or on the
-        last of the restored ones when they went at the end.
+        The selection moves to the entry the block went before, or to the last restored
+        entry if they went at the end.
 
         Raises `KeyError` when `before` names no entry.
         """
@@ -1427,7 +1288,7 @@ class Session:
         return len(restored)
 
     def _index_of(self, number: int) -> int:
-        """Where the entry labelled `number` sits, which is what a block is cut by."""
+        """The index of the entry labelled `number`."""
         for index, entry in enumerate(self.entries):
             if entry.number == number:
                 return index
@@ -1436,9 +1297,9 @@ class Session:
     def _relabelled(self, entry: Entry, taken: set[int]) -> Entry:
         """`entry` under its own label, or under a fresh one when that is taken.
 
-        `taken` holds the labels in use, the ones restored so far included, and
-        gains the one handed out. A fresh label can itself be taken once an
-        emptied history has started again from 1, so it is skipped past.
+        `taken` holds labels in use, including ones restored so far, and gains the label
+        assigned. After an emptied history restarts from 1, a fresh label can itself be
+        taken, so taken ones are skipped.
         """
         if entry.number in taken:
             while self._next_number in taken:
@@ -1453,22 +1314,17 @@ class Session:
     def move_block(self, before: int | None, first: int, last: int) -> int:
         """Put the block `first` and `last` delimit in front of `before`.
 
-        None puts it after the last entry, which is what typing `end` in the
-        field asks for. The block is read the way `remove` reads one: a
-        physically contiguous run, either end first, one label twice for one
-        entry.
+        None (typing `end` in the field) moves it to the end. The block is delimited as
+        in `remove`.
 
-        The entries keep their labels, so a move leaves them out of sequence
-        for `renumber` to put back. Nothing is removed, so the unremove buffer
-        is left alone.
+        Entries keep their labels, leaving them out of sequence for `renumber`. The
+        unremove buffer is untouched.
 
-        A destination inside the block itself is nothing to do, and the
-        original does nothing about it: no beep, no message, and the highlight
-        left where it was. Everywhere else the highlight lands on the entry the
-        block went in front of, or on the last of the moved ones when they went
-        at the end.
+        A destination inside the block does nothing, silently, as in the original.
+        Otherwise the highlight moves to the entry the block went before, or to the last
+        moved entry if they went at the end.
 
-        Says how many entries moved, which is none in that one case.
+        Returns how many entries moved (zero in the no-op case).
 
         Raises `KeyError` when any of the three labels names no entry.
         """
@@ -1493,27 +1349,18 @@ class Session:
     def renumber(self) -> None:
         """Label the entries 1, 2, 3 ... in the order they physically sit.
 
-        Which is what `moVe`, `Remove` and `Unremove` leave out of sequence.
-        Every reference to a label that moved moves with it: in an annotation,
-        which is what the manual promises "provided the numbers are preceded by
-        the # character", and inside an expression, which it says nothing
-        about.
+        This fixes the sequence after `moVe`, `Remove` and `Unremove`. References to moved
+        labels are updated, both in annotations (as the manual promises "provided the
+        numbers are preceded by the # character") and inside expressions.
 
-        A `#3` in an expression is rewritten because Rederive keeps such a
-        reference as a reference where the original resolved it as it read the
-        line. Leaving it alone would silently repoint it at whichever entry
-        ends up wearing the number - which is the argument `merge` already
-        makes about a file whose expressions refer to each other.
+        Expressions must be rewritten because Rederive keeps `#3` as a reference, whereas
+        the original resolved it when reading the line. Otherwise it would silently point
+        at whichever entry gets the number; `merge` makes the same argument.
 
-        An entry whose text changed is drawn again, since what it says has
-        changed; the rest keep the render they were authored with. The
-        selection stays where it is, subexpression and all, relabelling
-        changing no expression's shape.
+        Entries whose text changed are re-rendered; the rest keep their renders. The
+        selection stays put, since relabeling changes no expression's shape.
 
-        The next authored entry comes one past the new last label, so that a
-        renumbered history goes on counting from where it now ends. A history
-        already in sequence is left alone, and an empty one is nothing to
-        renumber.
+        The next authored entry is numbered one past the new last label.
         """
         if not self.entries:
             return
@@ -1542,11 +1389,9 @@ class Session:
     def annotate(self, number: int, annotation: str) -> None:
         """Say where the entry labelled `number` came from.
 
-        The automatic `User` and `Simp(#3)` are the same field, so this edits
-        what the status line already shows and what `Transfer Save Derive`
-        already writes above the expression. Nothing is appended and the
-        selection does not move: annotating is a note about an expression and
-        not an expression.
+        This edits the same field as the automatic `User` and `Simp(#3)`, shown in the
+        status line and written by `Transfer Save Derive`. Nothing is appended and the
+        selection does not move.
 
         Raises `KeyError` when `number` names no entry.
         """
@@ -1558,17 +1403,13 @@ class Session:
     def order_list(self, text: str) -> tuple[str, ...] | None:
         """The variable order list `text` spells, or None when it is not one.
 
-        The words are variable names separated by spaces or commas, and each is
-        recorded as an expression would record it, so `X` goes on the list as
-        `x` unless `CaseMode := Sensitive` says the two are different
-        variables. A word that is not a variable name refuses the whole line,
-        and so does a variable named twice: one variable cannot be in two
-        places in one order. An empty line is an empty list, which leaves every
-        variable to be ordered alphabetically.
+        The words are variable names separated by spaces or commas, canonicalized as in
+        an expression, so `X` becomes `x` unless `CaseMode := Sensitive`. A word that is
+        not a variable name, or a repeated variable, rejects the whole line. An empty
+        line gives an empty list, ordering all variables alphabetically.
 
-        The original takes whatever is typed - `q 2 + w` was stored verbatim -
-        and
-        reproducing that would be a bug rather than fidelity.
+        The original stores whatever is typed (`q 2 + w` verbatim), but reproducing that
+        would be a bug, not fidelity.
         """
         names: list[str] = []
         for word in text.replace(",", " ").split():
@@ -1585,14 +1426,12 @@ class Session:
     def save(self, path: Path, first: int | None = None, last: int | None = None) -> int:
         """Write the history to `path`, and say how many entries went.
 
-        `first` and `last` bound the block of label numbers written, which is
-        what the Range option asks for; by default the whole history goes. The
-        settings decide whether annotations go with it and how long a line may
-        be, so a file is written the way `Transfer Save Options` was left.
+        `first` and `last` bound the label numbers written (the Range option); by
+        default the whole history is written. Annotations and line length follow the
+        `Transfer Save Options` settings.
 
-        An entry is written from its tree, not from the text it was typed as,
-        so the file says what the expression is rather than how it was reached:
-        `x (x + 1)` goes out as `x*(x+1)`, as it does in the original.
+        Entries are written from their trees, so `x (x + 1)` is saved as `x*(x+1)`, as in
+        the original.
         """
         records = self._records(first, last)
         platform.current().storage().write(path, self._file_text(records))
@@ -1602,9 +1441,8 @@ class Session:
     def written(self, first: int | None = None, last: int | None = None) -> str:
         """The file `save` would write, without writing it anywhere.
 
-        Split out because a browser has somewhere else to put it: the same text
-        is what a shared link carries, and a worksheet that read one way out of
-        a file and another out of a link would be two worksheets.
+        A browser puts the same text in a shared link, so a worksheet reads identically
+        from either.
         """
         return self._file_text(self._records(first, last))
 
@@ -1646,10 +1484,9 @@ class Session:
     ) -> int:
         """Write the history to `path` as `language` source, and say how many went.
 
-        The same records `save` writes, spelled in another notation: the Range
-        block and the annotation option apply exactly as they do to a math
-        file, and the line length does not, none of the four targets minding a
-        long line. An annotation goes behind the target's own comment marker.
+        The same records as `save`, in another notation. Range and the annotation option
+        apply, but line length doesn't, since no target language minds long lines.
+        Annotations go after the language's comment marker.
         """
         entries = list(self._block(first, last))
         text = worksheet.write(
@@ -1668,31 +1505,27 @@ class Session:
     def save_state(self, path: Path) -> None:
         """Write every system control setting to `path`, and the order list.
 
-        The session's own file is not touched: a state file is not the
-        worksheet, and the status line goes on naming the worksheet.
+        `file` is not updated, since a state file is not the worksheet.
         """
         platform.current().storage().write(path, self.state_written())
 
     def state_written(self) -> str:
         """The state file `save_state` would write, without writing it anywhere.
 
-        The settings half of `written`, and there for the same reason: a tab
-        keeps its settings in a store rather than in a file, and it keeps them
-        by asking the session what a file would have said.
+        The settings counterpart of `written`: a browser tab stores its settings as the
+        text a file would hold.
         """
         return state.write(self.settings, self.order)
 
     def load_state(self, path: Path) -> int:
         """Apply the settings in `path`, and say how many lines would not take.
 
-        The order list comes back with them, judged here rather than in the
-        file's own reader because what a variable name is depends on this
-        session's symbol table. A line of names it will not take is counted
-        like any other line that would not take.
+        The order list is restored too. It is validated here rather than in the file
+        reader, because what counts as a variable name depends on the symbol table, and
+        an invalid one counts as a refused line.
 
-        The history is left alone. What a setting change does to the history is
-        the same here as anywhere: the entries already drawn keep the render
-        they were drawn with, and the next one is drawn the new way.
+        The history is unchanged: existing entries keep their renders, and only new
+        ones reflect the new settings.
         """
         refused, ordering = state.read(worksheet.text_of(path), self.settings)
         if ordering is None:
@@ -1706,16 +1539,13 @@ class Session:
     def load(self, path: Path) -> int:
         """Replace the history with the expressions in `path`.
 
-        Numbering starts again at one, as it does in the original. What earlier
-        lines defined is left alone: clearing variables and functions is its
-        own command, and the file's own definitions are applied as it is read.
+        Numbering restarts at one, as in the original. Existing definitions remain
+        (clearing them is a separate command), and the file's definitions are applied as
+        it is read.
 
-        Returns how many of the file's expressions did not parse and were
-        therefore left out.
+        Returns how many of the file's expressions failed to parse and were skipped.
 
-        The file is read before the history goes, so that a name that turns out
-        to be nothing costs nothing: what is on screen is still there to try
-        again from.
+        The file is read before the history is cleared, so a bad path loses nothing.
         """
         text = worksheet.text_of(path)
         self.entries = []
@@ -1727,32 +1557,25 @@ class Session:
     def merge(self, path: Path) -> int:
         """Append the expressions in `path` to the history.
 
-        Numbering carries on, and every reference to a numbered entry moves
-        with it: a file whose third expression is `#1 + 2` still means its own
-        first expression once merged behind five others. The original resolves
-        such a reference as it reads, which comes to the same thing; Rederive
-        keeps the reference, so it is the reference that has to move.
+        Numbering continues, and label references are shifted to match: a file whose
+        third expression is `#1 + 2` still refers to its own first expression when merged
+        after five others. The original resolves references while reading; Rederive
+        keeps them, so they must be shifted.
         """
         return self._read(path, worksheet.text_of(path))
 
     def load_utility(self, path: Path) -> int:
         """Take the definitions in `path` without showing them.
 
-        A utility file is a library: the point of loading one is that its
-        functions and variables are available afterwards, not that two hundred
-        definitions land on screen. So nothing is appended, no numbering moves,
-        and the session goes on naming the worksheet it already had.
+        A utility file is a library whose definitions should become available, not
+        appear on screen. Nothing is appended, numbering is unchanged, and `file` keeps
+        naming the current worksheet.
 
-        A library's own text is read in Word input mode whatever mode the
-        session is in, so that every name in it is taken whole. The files were
-        written that way: SOLVE.MTH iterates over an `xk` which is one variable
-        and not `x*k`, and a library that only read correctly under a setting
-        the user happens to hold would be no library. Character mode is the
-        Author line's rule and stays the Author line's; what it decides is how
-        the reader's own letters run together, not how a file spells the names
-        it defines. The mode in force is put back from the settings afterwards,
-        those being the one store, so a file that assigns `InputMode` still
-        changes the session's - as any line that assigns a setting does.
+        Libraries are read in Word input mode regardless of the session's mode, because
+        they were written that way: SOLVE.MTH uses `xk` as one variable, not `x*k`.
+        Character mode applies only to the Author line. Afterwards the mode is restored
+        from the settings, so a file that assigns `InputMode` still changes it, like any
+        setting assignment.
 
         Returns how many of the file's expressions did not parse.
         """
@@ -1779,10 +1602,8 @@ class Session:
     def load_data(self, path: Path) -> int:
         """Append the matrices in `path`, and say how many blocks would not read.
 
-        A data file appends rather than replaces, as the original's does: the
-        numbers are something to work on beside what is already there, not a
-        worksheet of their own. A block holding something that is not a number
-        is left out and counted, as an unreadable line of a math file is.
+        As in the original, data is appended rather than replacing the history. A block
+        containing a non-number is skipped and counted.
         """
         skipped = 0
         for block in data.blocks(worksheet.text_of(path)):
@@ -1796,9 +1617,8 @@ class Session:
     def _read(self, path: Path, text: str) -> int:
         """Append what `path` holds, and say how many lines would not parse.
 
-        A line that does not parse is left out and the rest of the file is
-        read, which is what the original does with a file an editor has damaged
-        - one bad line does not cost you the other two hundred.
+        As in the original, a line that doesn't parse is skipped and the rest is read, so
+        one bad line doesn't lose the whole file.
         """
         source = Source.from_file(text, str(path))
         annotations = worksheet.annotations_of(text)
@@ -1814,12 +1634,10 @@ class Session:
         return skipped
 
     def _entered(self, text: str, annotation: str, offset: int) -> None:
-        """Append one line of a file as an entry, its references moved on.
+        """Append one line of a file as an entry, with its label references shifted.
 
-        Redrawn as an authored line is, so that a file written by hand comes up
-        as the expressions it holds rather than as the spellings it holds them
-        in. A file this program wrote is already in that form and comes back
-        unchanged.
+        The line is redrawn like an authored line, normalizing hand-written files; files
+        this program wrote come back unchanged.
         """
         result = parse_expression(text, self.state)
         if offset:
@@ -1838,10 +1656,8 @@ class Session:
     def clear_expressions(self) -> None:
         """Empty the history, and start the numbering again at one.
 
-        What the expressions defined is left standing: clearing a value is its
-        own command, and the manual is explicit that these are four commands
-        rather than degrees of one. The unremove buffer goes with the history -
-        there is nothing left for a restored entry to go back among.
+        Definitions remain; the manual treats the four clear commands as separate. The
+        unremove buffer is emptied too.
         """
         self.entries = []
         self.removed = []
@@ -1852,9 +1668,8 @@ class Session:
     def clear_variables(self) -> None:
         """Forget every value and domain a line has assigned.
 
-        The expressions that assigned them stay on screen; what goes is what
-        they mean to the next command, so a `v` that stood for 7 is a free
-        variable again.
+        The assigning expressions stay on screen, but a `v` that stood for 7 becomes a
+        free variable again.
         """
         self.assignments.clear()
         self.domains.clear()
@@ -1863,15 +1678,14 @@ class Session:
     def clear_functions(self) -> None:
         """Forget every function a line has defined.
 
-        The name goes from the symbol table as well as the body, so a later
-        `F(3)` reads as the original reads it, as `f*3`: a name nothing defines
-        is no function, and in Character mode a product of its letters.
+        Names are removed from the symbol table too, so a later `F(3)` reads as `f*3`, as
+        in the original.
         """
         self.functions.clear()
         self.state.clear(ClearWhat.FUNCTIONS)
 
     def clear_all(self) -> None:
-        """The other three at once, which is what the fourth command is."""
+        """Clear expressions, variables and functions."""
         self.clear_expressions()
         self.clear_variables()
         self.clear_functions()
@@ -1894,19 +1708,17 @@ class Session:
 
     @property
     def selected_node(self) -> Node | None:
-        """The subexpression that is selected. What an operation would act on."""
+        """The selected subexpression, which an operation would act on."""
         region = self.selected_region
         return region.node if region is not None else None
 
     @property
     def highlighted_text(self) -> str | None:
-        """What is highlighted, written as it stands in the entry's own text.
+        """The highlighted text, sliced from the entry's own text.
 
-        The whole entry where it is selected whole, and just the span of the
-        subexpression where the route points inside one. Taking the text rather
-        than reprinting the node is what makes this exact: the spans index the
-        text the entry was built from, so what comes back is what is on the
-        screen, down to how it was spelled. None when nothing is selected.
+        That is the whole entry or the selected subexpression's span. Slicing rather
+        than reprinting the node preserves the exact spelling. None when nothing is
+        selected.
         """
         entry = self.selected_entry
         if entry is None:
@@ -1919,8 +1731,7 @@ class Session:
     def selection_rect(self) -> Rect | None:
         """The rectangle to invert, in the selected entry's own render.
 
-        Rows and columns index that entry's `layout.lines`; the work area
-        offsets them by where it drew the entry.
+        Coordinates index the entry's `layout.lines`; the work area offsets them.
         """
         region = self.selected_region
         return region.rect if region is not None else None
@@ -1934,18 +1745,13 @@ class Session:
         return parent.children if parent is not None else ()
 
     def _descend(self, route: Route) -> bool:
-        """Step from `route` into the operand it was last left on.
+        """Step from `route` into the operand last selected there, else the first one.
 
-        The first operand where it has not been stepped into before. A node
-        with no operands to offer is where this refuses, which is what makes an
-        atom the bottom.
+        Fails on a node without operands.
 
-        The original keeps one such memory rather than one per entry, so
-        stepping into a second expression forgets the first: that one starts
-        from the left, and so does the expression left behind when the
-        highlight comes back to it. Passing over an expression as a whole is
-        not stepping in and leaves the memory alone, which is what lets the
-        history be looked down and returned from.
+        Like the original, there is one memory rather than one per entry, so stepping
+        into another expression forgets the first. Moving past an expression as a whole
+        is not stepping in and keeps the memory.
         """
         entry = self.selected_entry
         if entry is None:
@@ -1964,7 +1770,7 @@ class Session:
             self._preferred_owner = entry
 
     def _remember(self) -> None:
-        """Record where the selection stands as its parent's operand to return to."""
+        """Remember the current operand as the one to return to in its parent."""
         self._preferred[self.route[:-1]] = self.route[-1]
 
     # -- navigation --------------------------------------------------------
@@ -1980,24 +1786,17 @@ class Session:
         return moved
 
     def select_at(self, index: int, row: int, column: int) -> bool:
-        """Select what entry `index` draws at that cell of its own render.
+        """Select what entry `index` draws at that cell of its render.
 
-        Where the mouse points at another entry, that entry is selected whole:
-        the pointer has said which expression, and the arrows and the further
-        clicks are what go on to say which part of it.
+        A click on another entry selects it whole; further clicks and arrows pick parts.
 
-        Inside the entry already selected, the click goes one level towards
-        what it points at rather than all the way down to it, the way Right and
-        Down step in. So a click on the `x` of `(x + 1)/y` takes the numerator
-        and the next click takes the `x`, which is what makes a term of a long
-        sum reachable without hitting the one character it is drawn as. A click
-        pointing into a different branch takes that branch at the level the two
-        part company, and one pointing at something the selection is inside of -
-        the `+` between two terms belongs to the sum, not to either term - goes
-        back out to it.
+        Within the selected entry, a click moves one level toward its target, as Right
+        and Down do. So clicking the `x` of `(x + 1)/y` selects the numerator, and the
+        next click the `x`, making terms of a long sum easy to hit. A click in a different
+        branch selects that branch where the two diverge, and a click on an enclosing node
+        (the `+` belongs to the sum, not to either term) goes back out to it.
 
-        A cell no subexpression covers, the label field included, selects the
-        whole expression: the number in front of a render names all of it.
+        A cell no subexpression covers, including the label, selects the whole entry.
         """
         if not 0 <= index < len(self.entries):
             return False
@@ -2007,9 +1806,8 @@ class Session:
         pointed = entry.layout.route_at(row, column)
         if pointed is None:
             return self.select_entry(index)
-        # How much of the way there the selection already is, which is what says
-        # what one level further means: a step down where the cell is inside the
-        # selection, and a step across where the two have parted.
+        # The common prefix decides the step: down if the cell is inside the selection,
+        # across if the routes diverge.
         shared = 0
         for mine, theirs in zip(self.route, pointed):
             if mine != theirs:
@@ -2027,19 +1825,15 @@ class Session:
     def jump(self, number: int) -> bool:
         """Select the entry labelled `number`, and say whether one was found.
 
-        A label the history no longer holds - one that was removed, or one from
-        below where the numbering now starts - lands on the entry above it: the
-        one with the smallest label of those left over. So `0` always lands on
-        the first entry, and a label past the last one names nothing at all,
-        which is what the original refuses to jump to.
+        A missing label (removed, or below where numbering now starts) selects the entry
+        with the smallest label above it. So `0` selects the first entry, and a label
+        past the last finds nothing, which the original refuses too.
 
-        It is the label that is looked up and not the position, so a history an
-        unremove has left out of numerical order is jumped around the way its
-        labels read rather than the way it is stacked.
+        Lookup is by label, not position, which matters when unremove has left labels
+        out of order.
 
-        Landing on the entry already selected leaves the route alone, so
-        jumping to the expression you are inside of keeps the subexpression
-        highlighted. Any other entry is selected as a whole.
+        Jumping to the already selected entry keeps the highlighted subexpression; any
+        other entry is selected whole.
         """
         above = [
             index for index, entry in enumerate(self.entries) if entry.number >= number
@@ -2063,9 +1857,8 @@ class Session:
     def move_down(self) -> bool:
         """Next entry, or one level down into the operands.
 
-        Only a whole expression counts as being on the history: from inside one
-        this goes deeper, and a leaf is where it stops rather than carrying on
-        to the expression below.
+        Only from a whole expression does this move to the next entry; inside one it goes
+        deeper and stops at a leaf.
         """
         if self.selected is None:
             return False
@@ -2076,10 +1869,8 @@ class Session:
     def move_right(self) -> bool:
         """Into the expression, or on to the next operand.
 
-        Whole, either horizontal arrow steps in; the difference between them
-        only shows once inside, where this is the one that goes forward. The
-        last operand is where it stops: there is no wrapping round to the
-        first, and no climbing back out.
+        On a whole expression either horizontal arrow steps in. Inside, this stops at
+        the last operand, without wrapping or climbing out.
         """
         if self.selected_entry is None:
             return False
@@ -2094,9 +1885,8 @@ class Session:
     def move_left(self) -> bool:
         """Into the expression, or back to the previous operand.
 
-        A whole expression has no operand to the left of it, so the arrow does
-        there what its opposite does: it steps in. Inside, the first operand is
-        where it stops.
+        On a whole expression this steps in, like `move_right`. Inside, it stops at the
+        first operand.
         """
         if self.selected_entry is None:
             return False
@@ -2134,10 +1924,9 @@ class Session:
     def move_page_up(self, rows: int) -> bool:
         """Select the expression at the top of a pane of `rows`.
 
-        A page is measured in rows and not in entries, since a paneful of
-        built-up fractions is fewer expressions than a paneful of one-line
-        ones. An expression too tall to share the pane with anything is a page
-        of its own, and the highlight moves one entry rather than none.
+        A page is measured in rows, not entries, since tall expressions fill a pane
+        faster. An expression too tall to share the pane is a page of its own, so the
+        highlight still moves by one entry.
         """
         if self.selected is None:
             return False
@@ -2147,9 +1936,8 @@ class Session:
     def move_page_down(self, rows: int) -> bool:
         """Select the expression at the bottom of a pane of `rows`.
 
-        Once the highlight is on that expression the pane has to scroll to go
-        any further, and what comes up is the paneful below: the farthest entry
-        that still fits on screen together with the one selected now.
+        If the highlight is already there, the pane scrolls to the farthest entry that
+        still fits on screen together with the current one.
         """
         if self.selected is None:
             return False
@@ -2161,9 +1949,8 @@ class Session:
     def _page_to(self, index: int) -> bool:
         """Select entry `index` whole, unless the page had nowhere to go.
 
-        A page that runs into the end of the history moves nothing at all, and
-        that includes the route: an expression the highlight is inside of keeps
-        the subexpression highlighted rather than closing up to the whole.
+        At the end of the history nothing moves, including the route, so a highlighted
+        subexpression stays highlighted.
         """
         assert self.selected is not None
         index = max(0, min(index, len(self.entries) - 1))
@@ -2172,13 +1959,11 @@ class Session:
         return self.select_entry(index)
 
     def _pane(self, rows: int) -> tuple[int, int]:
-        """The entries a pane of `rows` holds, the first and the last.
+        """The first and last entries a pane of `rows` holds.
 
-        The pane is where the original puts it: the selected expression at the
-        bottom, with as much history above it as fits. What it cannot do is
-        scroll past the first expression, and when the top of the history is on
-        screen the rest of the pane is filled downward instead - which is what
-        leaves the highlight somewhere other than the bottom edge.
+        As in the original, the selected expression is at the bottom with as much
+        history above it as fits. When the top of the history is reached, the rest of the
+        pane is filled downward, leaving the highlight above the bottom edge.
         """
         assert self.selected is not None
         first = last = self.selected
@@ -2195,10 +1980,9 @@ class Session:
         return first, last
 
     def _paneful_below(self, rows: int) -> int:
-        """The farthest entry below the selected one that fits on the pane too.
+        """The farthest entry below the selected one that fits on the pane with it.
 
-        At least the next entry, whatever its height, so that a page key is
-        never a dead end.
+        At least the next entry, whatever its height, so paging never gets stuck.
         """
         assert self.selected is not None
         index = self.selected
@@ -2217,7 +2001,7 @@ def _is_infinite(bound: str) -> bool:
 
 
 def _after(text: str) -> str:
-    """What follows `:=` on a definition line; nothing at all clears it."""
+    """What follows `:=` on a definition line; empty text clears the definition."""
     return f" {text.strip()}" if text.strip() else ""
 
 
@@ -2237,9 +2021,8 @@ def _is_bound(node: Node) -> bool:
 def _bound_text(node: Node) -> str:
     """A bound as a data entry field shows it: on one line, infinity as a glyph.
 
-    A bound is a number or an infinity and nothing else, which is what makes
-    one line enough: a fraction is written `1/2` here and built up only where
-    an expression is drawn.
+    A bound is only a number or an infinity, so one line suffices: a fraction is
+    written `1/2`.
     """
     if node.kind is Kind.UNOP and node.value in ("-", "+"):
         return str(node.value) + _bound_text(node.children[0])
@@ -2251,9 +2034,8 @@ def _bound_text(node: Node) -> str:
 def _rewrite_labels(text: str, node: Node, rename: Rename) -> str:
     """`text` with every label it refers to renamed by `rename`.
 
-    Rewritten from the right, so that a span still indexes `text` when its turn
-    comes. Going through the tree rather than over the characters is what keeps
-    a `#3` inside a string literal the data it is.
+    Rewritten right to left so earlier spans stay valid. Walking the tree rather than
+    the characters leaves a `#3` inside a string literal alone.
     """
     for found in sorted(_subtrees(node), key=lambda found: found.start, reverse=True):
         if found.kind is not Kind.LABEL:
@@ -2270,7 +2052,7 @@ def _rewrite_labels(text: str, node: Node, rename: Rename) -> str:
 
 
 def _rewrite_annotation(annotation: str, rename: Rename) -> str:
-    """The same renaming over an annotation, which is text and not a tree."""
+    """`_rewrite_labels` for an annotation, which is text rather than a tree."""
 
     def renamed(found: re.Match[str]) -> str:
         number = rename(int(found.group(1)))
@@ -2280,36 +2062,33 @@ def _rewrite_annotation(annotation: str, rename: Rename) -> str:
 
 
 def _shift_labels(text: str, node: Node, offset: int) -> str:
-    """`text` with every label it refers to moved on by `offset`."""
+    """`text` with every label it refers to shifted by `offset`."""
     return _rewrite_labels(text, node, lambda number: number + offset)
 
 
 def _shift_annotation(annotation: str, offset: int) -> str:
-    """The same shift over an annotation, which is text and not a tree."""
+    """`_shift_labels` for an annotation, which is text rather than a tree."""
     if not offset:
         return annotation
     return _rewrite_annotation(annotation, lambda number: number + offset)
 
 
 def _same_tree(one: Node, other: Node) -> bool:
-    """Whether two trees say the same thing, spans and spelling aside.
+    """Whether two trees mean the same, ignoring spans and spelling.
 
-    Two nodes compare unequal when they cover different text, which every
-    rewritten line does, and how a product's gaps were written is no part of
-    what it means: `x y` and `x*y` are one expression. A numeral's surface is
-    its digits and does count, since `0FF` and `255` are the same value under
-    only one base.
+    Nodes compare unequal when they cover different text, as every rewritten line
+    does, and `x y` and `x*y` are the same expression. A numeral's digits do count,
+    since `0FF` and `255` are equal only in one base.
     """
     return _shape(one) == _shape(other)
 
 
 def _shape(node: Node) -> tuple:
-    """`node` as what it means, under the three normalizations writing makes.
+    """A comparable form of `node`, normalized as the writer normalizes it.
 
-    A bare application is a call and `|u|` is `ABS(u)` - the forms the writer
-    puts them in, which the display draws the same way either way - and a
-    numeral keeps its digits, those being the one surface spelling that says
-    something the value does not.
+    A bare application becomes a call and `|u|` becomes `ABS(u)`, as the writer
+    writes them. A numeral keeps its digits, the one surface spelling that carries
+    meaning beyond the value.
     """
     kind, children = node.kind, node.children
     if kind is Kind.APPLY:
@@ -2332,11 +2111,10 @@ def _subtrees(node: Node) -> Iterator[Node]:
 
 
 def _defining(node: Node) -> Iterator[Node]:
-    """`node` and everything under it that a line defines something by holding.
+    """The subtrees of `node` that can define something.
 
-    Everywhere `_subtrees` goes except inside a function body, which is a
-    recipe and not a line: what it assigns is assigned when the function is
-    called.
+    Like `_subtrees`, but not inside function bodies, whose assignments happen only
+    when the function is called.
     """
     yield node
     if node.kind is Kind.FUNDEF:

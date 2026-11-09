@@ -1,17 +1,15 @@
-"""The engine at arm's length: the answers, and every way the worker can die.
+"""The engine in a worker process: its answers, and every way the worker can die.
 
-Spawning a worker costs about a second of sympy import, so the tests that only
-want an answer share one. The tests that want a death each get their own,
-since a death is what they are about.
+Spawning a worker costs about a second of sympy import, so tests that only want an
+answer share one. Tests that kill the worker each get their own.
 
-The two private methods in the worker's table are what the abort and the cap
-are tested with. Timing a real computation to be slow enough or hungry enough
-would make these tests about sympy's mood rather than about the recovery path.
+The abort and the memory cap are tested with two private methods in the worker's table
+(`hang` and `allocate`). Relying on a real computation being slow or memory-hungry
+enough would make the tests depend on sympy rather than on the recovery path.
 
-For the same reason no death is aimed with a sleep. Each is fired off the
-engine's own signal - a request going out, a worker not up yet - by wrapping
-one method on the instance, so that the death lands where the test says it
-does on a fast machine and a loaded one alike.
+For the same reason no kill is timed with a sleep. Each is triggered by an engine
+event (a request being sent, a worker not yet up) by wrapping one method on the
+instance, so it lands at the intended point on both fast and loaded machines.
 """
 
 import signal
@@ -34,23 +32,22 @@ from rederive.engine.remote import (
 from rederive.model.session import Session
 from rederive.syntax import ParseState, parse_expression
 
-#: A cap small enough to be met on purpose and large enough for a worker with
-#: sympy imported to live under while it is.
+#: A cap small enough to hit on purpose, yet large enough for a worker with sympy
+#: imported to stay under otherwise.
 SMALL_CAP = 300 << 20
 
-#: How long a test waits for something a background thread is doing. Long
-#: enough that a loaded machine spawning workers is not mistaken for a broken
-#: one.
+#: How long a test waits on a background thread, long enough that a loaded machine
+#: spawning workers isn't mistaken for a broken one.
 PATIENCE = 60.0
 
 
 def tree(text):
-    """One expression, parsed the way a fresh session would parse it."""
+    """Parse an expression the way a fresh session would."""
     return parse_expression(text, ParseState()).node
 
 
 def until(condition, patience=PATIENCE):
-    """Wait for something a background thread is doing, and say whether it did."""
+    """Wait for a condition set by a background thread; return whether it became true."""
     deadline = time.monotonic() + patience
     while time.monotonic() < deadline:
         if condition():
@@ -60,10 +57,10 @@ def until(condition, patience=PATIENCE):
 
 
 def fire(event, action, patience=PATIENCE):
-    """Do something on another thread, at the moment the event says has come.
+    """Run `action` on another thread once `event` is set.
 
-    The wait is bounded so that a signal that never arrives fails the test
-    waiting on the action rather than hanging it.
+    The wait is bounded, so an event that never arrives fails the test rather than
+    hanging it.
     """
 
     def run():
@@ -74,14 +71,12 @@ def fire(event, action, patience=PATIENCE):
 
 
 def after_the_request(engine):
-    """An event set once the engine's next request is on the wire.
+    """An event set once the engine's next request has been sent.
 
-    `_ask` sends and then reads for the answer, so the first read is the first
-    thing that happens after the send, and a worker taken away on this event is
-    taken away from a request it already has. That is the distinction these
-    tests turn on: a kill that landed before the send would be the abandoned
-    call another test is about, `_ask` having read the abort count on the way
-    in.
+    `_ask` sends and then reads the answer, so the first read follows the send, and a
+    worker killed on this event is killed while handling the request. That matters
+    because a kill before the send would instead be the abandoned-call case tested
+    separately (`_ask` reads the abort count on entry).
     """
     sent = threading.Event()
     reading = engine._receive
@@ -95,12 +90,10 @@ def after_the_request(engine):
 
 
 class Queueing:
-    """The engine's call lock, saying when one thread has begun queueing for it.
+    """A wrapper around the engine's call lock that signals when a thread queues for it.
 
-    Wrapped rather than replaced, so that the threads holding the lock already
-    keep holding the same one. The event is set from inside the acquire, which
-    is past the point where `_ask` reads the abort count it will be judged
-    against.
+    Wrapped rather than replaced, so threads already holding the lock keep the same
+    one. The event is set inside the acquire, after `_ask` has read the abort count.
     """
 
     def __init__(self, lock, thread, event):
@@ -118,17 +111,14 @@ class Queueing:
 
 
 def a_worker_that_is_still_starting(engine):
-    """Start a worker, and say when a call of this thread's is queueing for it.
+    """Start a worker, returning an event set when this thread's call queues for it.
 
-    Two things have to be true at that moment and neither is worth guessing at
-    with a sleep. The worker must not be up yet, which is what the test using
-    this is about; and the call must have started, since an abort arriving
-    before `_ask` reads the abort count is not an abandoned call at all.
-
-    So the warming thread is held at the top of its first read - the read that
-    waits for the handshake - until this thread is queueing for the lock it
-    holds. When the event is set, the handshake is still unread and the call is
-    under way, whatever the machine's idea of how long importing sympy takes.
+    At that moment the worker must not be up yet, and the call must have started (an
+    abort before `_ask` reads the abort count is not an abandoned call). Rather than
+    guess with a sleep, the starting thread is held at its first read, the one awaiting
+    the handshake, until this thread is queueing for the lock it holds. So when the
+    event is set, the handshake is unread and the call is under way, however long the
+    sympy import takes.
     """
     arrived = threading.Event()
     queueing = threading.Event()
@@ -151,11 +141,10 @@ def a_worker_that_is_still_starting(engine):
 
 @pytest.fixture(scope="module")
 def remote():
-    """One worker for every test that only wants an answer out of it.
+    """A worker shared by every test that only wants answers from it.
 
-    Capped, because one of the tests through it computes a hostile expression
-    and a hostile expression is never run without a cap, and watched often
-    enough that the cap would stop a runaway rather than follow it.
+    Capped, because one test computes a hostile expression, and polled often enough
+    that the cap stops a runaway in time.
     """
     engine = RemoteEngine(cap=SMALL_CAP, period=0.05)
     engine.start()
@@ -165,7 +154,7 @@ def remote():
 
 @pytest.fixture
 def mortal():
-    """A worker of one test's own, for a test that means to kill it."""
+    """Make workers private to one test, for tests that kill them."""
     engines = []
 
     def make(**arguments):
@@ -194,8 +183,7 @@ async def test_expand_comes_back_from_the_child(remote):
 
 
 async def test_solve_comes_back_from_the_child(remote):
-    """Several results down one pipe, which is what makes soLve unlike the
-    other five: a tuple crosses where the others send one answer."""
+    """Unlike the other operations, soLve sends back a tuple of results."""
     answers = await remote.solve(tree("x^2 - 5*x + 6 = 0"), Context())
     assert [answer.text for answer in answers] == ["x = 2", "x = 3"]
 
@@ -224,9 +212,8 @@ async def test_a_session_given_one_computes_through_it(remote):
 
 async def test_an_abort_kills_the_worker_and_the_next_one_is_already_coming(mortal):
     engine = mortal()
-    # Asked for rather than started, so that the worker is up and past its
-    # imports before anything hangs: a `hang` that never got sent is not what
-    # this test is about.
+    # Make a request rather than just start, so the worker is past its imports before
+    # `hang` is sent.
     assert (await engine.simplify(tree("1 + 1"), Context())).text == "2"
     fire(after_the_request(engine), engine.abort)
     with pytest.raises(EngineAborted):
@@ -237,13 +224,11 @@ async def test_an_abort_kills_the_worker_and_the_next_one_is_already_coming(mort
 
 
 async def test_an_abort_while_a_call_is_still_waiting_stops_it_too(mortal):
-    """An Esc pressed before the worker is even up must still mean Esc.
+    """Esc must work even before the worker is up.
 
-    Here the abort lands while the call is queueing for a worker that is still
-    importing sympy. The command must not wait that import out and then run on
-    the replacement, which is the one thing an abort must never leave
-    happening - and which is a hang rather than a wrong answer, `hang` being
-    what was asked for.
+    The abort lands while the call is queueing for a worker still importing sympy. The
+    command must not wait out the import and then run on the replacement; since the
+    request is `hang`, that failure would show as a hang.
     """
     engine = mortal()
     fire(a_worker_that_is_still_starting(engine), engine.abort)
@@ -257,9 +242,8 @@ async def test_a_worker_over_the_cap_is_taken_away(mortal):
     engine.start()
     with pytest.raises(EngineMemoryExceeded) as raised:
         engine._ask("allocate", (2 * SMALL_CAP >> 20,))
-    # The refusal says what the cap was, written the way every other size the
-    # program reports is written. How that reads is `test_memory` to pin; what
-    # this one is about is that the figure named is the cap in force.
+    # The error names the cap in force, formatted like other sizes (the format itself
+    # is tested in `test_memory`).
     assert memory.written(SMALL_CAP) in str(raised.value)
     assert (await engine.simplify(tree("1 + 1"), Context())).text == "2"
 
@@ -269,17 +253,14 @@ async def test_a_worker_killed_from_outside_is_replaced(mortal):
     engine.start()
     await engine.simplify(tree("1 + 1"), Context())
     pid = engine._process.pid
-    # Killed through psutil rather than by a signal, `SIGKILL` being a name that
-    # does not exist on Windows. What the test is about is a worker taken away by
-    # something that is not the app - the OOM killer, a task manager - and every
-    # platform can do that even where it has no signal to do it with.
+    # Killed through psutil rather than a signal, since Windows has no `SIGKILL`. This
+    # simulates something outside the app (the OOM killer, a task manager) killing it.
     fire(after_the_request(engine), lambda: psutil.Process(pid).kill())
     with pytest.raises(EngineDied) as raised:
         engine._ask("hang", ())
-    # An exit code carrying a signal is the only evidence that a worker was
-    # killed rather than that it stopped, and Windows reports an ordinary code
-    # for a terminated process. The death is noticed there and recovered from
-    # either way; it is only the naming of the cause that needs a signal.
+    # Only a signal in the exit code shows the worker was killed rather than exited, and
+    # Windows reports an ordinary code. Recovery works either way; only naming the
+    # cause needs a signal.
     if hasattr(signal, "SIGKILL"):
         assert str(raised.value).startswith("The engine was killed")
     assert engine.starts == 2
@@ -287,7 +268,7 @@ async def test_a_worker_killed_from_outside_is_replaced(mortal):
 
 
 async def test_a_bug_in_the_engine_costs_the_answer_and_not_the_worker(remote):
-    """The shared worker, since the point is that it is still there afterwards."""
+    """Uses the shared worker, since the point is that it survives."""
     starts = remote.starts
     with pytest.raises(Exception) as raised:
         remote._ask("no_such_method", ())
@@ -299,9 +280,8 @@ async def test_a_bug_in_the_engine_costs_the_answer_and_not_the_worker(remote):
 def refuses_to_start(connection, cap):
     """A worker that dies before the handshake.
 
-    A module-level function because a spawned child is given its target by
-    name: it imports this module and looks the name up, which a closure or a
-    local would not survive.
+    Module-level because a spawned child imports this module and looks its target up by
+    name, which wouldn't work for a closure or local.
     """
     raise SystemExit(1)
 
@@ -313,11 +293,9 @@ async def test_a_worker_that_will_not_start_puts_the_proxy_down(monkeypatch, mor
         await engine.simplify(tree("1 + 1"), Context())
     assert until(lambda: engine._deaths.down is not None)
     assert engine.starts == STARTS_BEFORE_DOWN
-    # And it stays down: a command asked for while it is down tries exactly one
-    # more spawn, and nothing else spawns at all. There is no timer, no backoff
-    # and no retry thread in the proxy - `starts` moves only where a command
-    # moves it - so the count after the next command is the whole of the
-    # evidence that nothing spun behind the user's back in between.
+    # It stays down: a command issued while down tries exactly one more spawn, and
+    # nothing else spawns. The proxy has no timer, backoff or retry thread, so `starts`
+    # after the next command proves nothing respawned in the background.
     with pytest.raises(EngineDied):
         await engine.simplify(tree("1 + 1"), Context())
     assert engine.starts == STARTS_BEFORE_DOWN + 1
@@ -327,15 +305,12 @@ async def test_a_worker_that_will_not_start_puts_the_proxy_down(monkeypatch, mor
 
 
 async def test_a_hostile_power_comes_back_inert_and_the_session_stands(remote):
-    """`10^10^10` is the input that used to take the app and the worksheet.
+    """`10^10^10` is returned unevaluated without killing the worker.
 
-    Sympy builds `Integer**Integer` as the power is constructed, so converting
-    this one at all means ten billion digits and four gigabytes; the engine
-    declines to build it and hands back the power as it was written. The worker
-    is capped because a hostile input is never run without a cap, not because
-    this one still needs saving - and the assertion is that it is not needed:
-    the worker is the same worker afterwards, and the session on this side is
-    intact and computable with.
+    Sympy evaluates `Integer**Integer` on construction, which here would mean ten
+    billion digits and four gigabytes, so the engine declines to build it and returns
+    the power as written. The cap is a precaution; the test asserts it isn't needed:
+    the worker survives and the session remains usable.
     """
     starts = remote.starts
     session = Session(runner=remote)

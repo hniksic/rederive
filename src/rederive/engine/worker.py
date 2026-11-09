@@ -1,36 +1,27 @@
-"""The child process the engine runs in: requests down a pipe, answers back.
+"""The child process the engine runs in: requests come in over a pipe, answers go back.
 
-The worker holds no session state. Every request carries the whole of what the
-answer may depend on - the tree, the `Context`, the `ParseState` - and the
-worker keeps nothing between requests but warm imports and sympy's own cache.
-That is what makes killing it a recovery rather than a loss: a fresh worker is
-indistinguishable from the one that died, so Esc can abort a computation by
-taking the process out from under it, and every other death is the same thing
-happening for a different reason.
+The worker holds no session state. Each request carries everything the answer depends
+on (the tree, the `Context`, the `ParseState`), and the worker keeps only warm imports
+and sympy's cache between requests. A fresh worker is therefore indistinguishable from
+a dead one, so Esc can abort by killing the process, and any other death is recovered
+the same way.
 
-Statelessness is a contract rather than an accident. Should the worker ever
-grow per-session state for speed, it may only ever be a content-keyed cache the
-protocol treats as maybe-empty - the parent re-sends what the worker says it
-does not know - never the truth about a session.
+This is a contract. Any per-session state added for speed must be a content-keyed cache
+the protocol treats as possibly empty (the parent re-sends what the worker lacks),
+never the authoritative session state.
 
-The tty belongs to the app. Nothing the worker writes may land on it, so both
-descriptors go to the null device before anything can print, and the log file
-named after the process - where a traceback the parent could not carry back is
-to be read - is opened by the first write rather than at startup. Nearly every
-worker is signalled to death having said nothing, so a log opened eagerly would
-be an empty file per worker and per test, forever.
+The tty belongs to the app, so both descriptors are pointed at the null device before
+anything can print. The per-process log file, which holds tracebacks the parent
+couldn't receive, is opened on first write: most workers are killed without writing
+anything, and opening eagerly would leave an empty file per worker.
 
-Two private methods sit in the table beside the five public ones, so that the
-parent's abort and memory tests do not have to find a real computation slow
-enough or hungry enough to test with.
+The table also has two private methods so the parent's abort and memory tests needn't
+find a real computation slow or hungry enough.
 
-`methods` is that table, and it is public because this process is not the only
-one that serves it: a browser's worker reads `postMessage` where this one reads
-a pipe, and it answers out of the same table rather than out of a copy. What is
-here besides the table is the pipe, the tty and the limits, which belong to a
-child process alone - the connection's type is imported for the annotations
-only, so that a runtime with no `_multiprocessing` under it can still read this
-module for what it shares.
+`methods` is public because a browser worker serves the same table over `postMessage`.
+The rest of this module (pipe, tty, limits) is specific to a child process; the
+connection type is imported only for annotations, so runtimes without
+`_multiprocessing` can still import the shared parts.
 """
 
 from __future__ import annotations
@@ -57,43 +48,39 @@ __all__ = [
     "serve",
 ]
 
-#: The id the ready handshake carries. No request wears it, so the parent can
-#: tell the handshake from an answer without a second channel.
+#: The id of the ready handshake. No request uses it, so the parent can tell the
+#: handshake from an answer.
 READY = -1
 
-#: The two kinds of error an answer can name. A bug is an exception the engine
-#: promised not to raise, and the worker survives it; memory is a `MemoryError`,
-#: after which the worker exits, a heap that has just failed a huge allocation
-#: not being worth trusting.
+#: The two kinds of error an answer can report. A bug is an exception the engine
+#: promised not to raise, and the worker survives it. Memory is a `MemoryError`, after
+#: which the worker exits, since the heap can't be trusted after a failed allocation.
 BUG = "bug"
 MEMORY = "memory"
 
-#: How the log file is named, the pid being what the parent knows about a
-#: worker it cannot otherwise ask.
+#: Log file name, keyed by pid so the parent can find it without asking the worker.
 _LOG_NAME = "rederive-worker-{pid}.log"
 
-#: Both output streams, once they have been taken off the tty. The file behind
-#: them may not exist: it is opened by the first write, if one ever comes.
+#: The replacement for both output streams once they are off the tty. The file
+#: behind it is created on first write, if any.
 _log: Any = None
 
-#: What `allocate` is holding, so that the heap keeps it while it hangs.
+#: Memory held by `_allocate` so it isn't freed while it hangs.
 _held: Any = None
 
 
 def log_path(pid: int) -> str:
-    """Where the worker with this pid writes what it would have printed."""
+    """Path of the log file for the worker with this pid."""
     return os.path.join(tempfile.gettempdir(), _LOG_NAME.format(pid=pid))
 
 
 def serve(connection: Connection, cap: int | None) -> None:
-    """Be the engine, for as long as the parent keeps asking.
+    """Serve engine requests until the parent hangs up.
 
-    The order of the startup steps is the point of it: the tty is given up
-    before anything can print to it, SIGINT is disowned before the parent's
-    terminal can deliver one, the limits are in place before the engine is
-    imported, and the handshake goes out only once the import has cost what it
-    costs - so a parent that has heard `ready` knows the next request pays for
-    nothing but its own answer.
+    The startup order matters: release the tty before anything can print, ignore
+    SIGINT before the terminal can deliver one, set limits before importing the
+    engine, and send the handshake only after the import, so the next request pays
+    only for its own answer.
     """
     _take_the_log(os.getpid())
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -104,7 +91,7 @@ def serve(connection: Connection, cap: int | None) -> None:
 
 
 def _loop(connection: Connection, methods: dict[str, Callable[..., Any]]) -> None:
-    """One request at a time, until the parent hangs up or the heap gives out."""
+    """Handle requests one at a time until the parent hangs up or memory runs out."""
     while True:
         try:
             request = connection.recv()
@@ -114,25 +101,19 @@ def _loop(connection: Connection, methods: dict[str, Callable[..., Any]]) -> Non
         try:
             connection.send((number, "ok", methods[method](*args)))
         except MemoryError:
-            # Answer first, exit second: the parent wants to know which of the
-            # several ways of running out of memory this was, and the pipe is
-            # the only way to tell it.
+            # Report before exiting, so the parent knows how memory ran out.
             _report(connection, number, MEMORY)
             sys.exit(1)
         except Exception:
-            # Including `RecursionError`, which costs the answer and not the
-            # process: the engine promises never to raise on parser output, so
-            # anything arriving here is a bug worth surfacing and not worth a
-            # respawn.
+            # Including `RecursionError`. The engine promises not to raise on parser
+            # output, so this is a bug to report, but not worth a respawn.
             _report(connection, number, BUG)
 
 
 def _report(connection: Connection, number: int, kind: str) -> None:
-    """Send what went wrong, and write the traceback where it can be read.
+    """Send the error and its traceback to the parent, and log the traceback.
 
-    The parent gets the traceback text as well as the message, since a bug in
-    the engine is worth more than its last line; the log keeps a copy for the
-    deaths where there is no pipe left to carry one.
+    The log copy covers deaths where the pipe is gone.
     """
     text = traceback.format_exc()
     print(text, file=sys.stderr)
@@ -143,24 +124,21 @@ def _report(connection: Connection, number: int, kind: str) -> None:
 
 
 def _message() -> str:
-    """The current exception in one line, as a message line can show it."""
+    """The current exception as a one-line message."""
     kind, value, _ = sys.exc_info()
     name = "error" if kind is None else kind.__name__
     return f"{name}: {value}" if str(value) else name
 
 
 class _LazyLog(io.TextIOBase):
-    """An output stream that becomes the log file the first time it is written.
+    """An output stream that creates the log file on first write.
 
-    A worker that says nothing should leave nothing, and saying nothing is the
-    ordinary case: the file is created by the first write and never by starting
-    up. Creating it also moves the descriptors onto it, so a C extension writing
-    to fd 2 lands there too from that point on - the cost of being lazy is that
-    output from a C extension before the first write to these streams goes to
-    the null device, where a Python traceback would have named the file first.
+    Most workers write nothing, and should leave no file. Creating the file also points
+    fds 1 and 2 at it, so C extension output lands there from then on; C extension
+    output before the first Python write goes to the null device.
 
-    Every write is flushed. Nearly every worker dies by signal, and a line still
-    sitting in a buffer when SIGKILL arrives is a line nobody will ever read.
+    Every write is flushed, since most workers die by signal and buffered output would
+    be lost.
     """
 
     def __init__(self, pid: int) -> None:
@@ -169,7 +147,7 @@ class _LazyLog(io.TextIOBase):
         self._failed = False
 
     def write(self, text: str) -> int:
-        """Write to the log, opening it if this is the first thing to say."""
+        """Write to the log, opening it on first use."""
         file = self._materialize()
         if file is None:
             return len(text)
@@ -188,7 +166,7 @@ class _LazyLog(io.TextIOBase):
                 pass
 
     def fileno(self) -> int:
-        """The log's own descriptor, which asking for is enough to create it."""
+        """The log's file descriptor, creating the log if needed."""
         file = self._materialize()
         if file is None:
             raise OSError("worker log unavailable")
@@ -201,10 +179,10 @@ class _LazyLog(io.TextIOBase):
         return False
 
     def _materialize(self) -> Any:
-        """The open log file, opening it and taking the descriptors on the way.
+        """The open log file, opening it and redirecting fds 1 and 2 if needed.
 
-        A file that will not open is not worth a dead worker, so the failure is
-        remembered and every later write is discarded rather than retried.
+        If the file won't open, the failure is remembered and later writes are
+        discarded rather than retried.
         """
         if self._file is not None or self._failed:
             return self._file
@@ -224,16 +202,13 @@ class _LazyLog(io.TextIOBase):
 
 
 def _take_the_log(pid: int) -> None:
-    """Take both output streams off the tty, and promise a log if one is needed.
+    """Detach both output streams from the tty, logging lazily if needed.
 
-    The descriptors go to the null device rather than to the log, because they
-    are inherited from the app and the app owns the screen: they have to stop
-    pointing at it before the first import can print, which is long before
-    anyone knows whether this worker will have anything to say. `_LazyLog`
-    holds the promise and opens the file if the day comes.
+    The inherited descriptors point at the app's screen and must be redirected before
+    the first import can print, long before it is known whether a log is needed. So
+    they go to the null device, and `_LazyLog` opens the file on demand.
 
-    Anything that will not redirect is left alone: a worker without a log is
-    worth more than no worker.
+    Redirection failures are ignored: a worker without a log beats no worker.
     """
     global _log
     try:
@@ -253,14 +228,12 @@ def _take_the_log(pid: int) -> None:
 
 
 def _apply_limits(cap: int | None) -> None:
-    """Ask the kernel to enforce the memory cap, where it will.
+    """Ask the kernel to enforce the memory cap, where supported.
 
-    Belt to the parent's braces: the watchdog polls, and a single enormous
-    allocation can be made and filled between two polls. `RLIMIT_AS` catches
-    that one on Linux; macOS ignores it and Windows has nothing like it, which
-    is why the watchdog and not this is the enforcement. Core dumps are turned
-    off because a worker that segfaults holding a gigabyte of bignums should
-    not write a gigabyte to disk.
+    This backs up the parent's polling watchdog, which can miss a huge allocation made
+    between two polls. `RLIMIT_AS` catches that on Linux; macOS ignores it and Windows
+    lacks it, so the watchdog remains the primary enforcement. Core dumps are disabled
+    so a segfaulting worker holding a gigabyte of bignums doesn't write it to disk.
     """
     try:
         import resource
@@ -272,7 +245,7 @@ def _apply_limits(cap: int | None) -> None:
 
 
 def _limit(resource: Any, name: str, value: int) -> None:
-    """Set one soft limit, where the platform has it and will take it."""
+    """Set one soft limit, if the platform supports and accepts it."""
     which = getattr(resource, name, None)
     if which is None:
         return
@@ -286,13 +259,11 @@ def _limit(resource: Any, name: str, value: int) -> None:
 
 
 def methods() -> dict[str, Callable[..., Any]]:
-    """The table of what a request may ask for.
+    """The table of methods a request may call.
 
-    The engine is imported here rather than at module scope: importing sympy is
-    the second-costliest thing the worker ever does, and it must happen after
-    the log and the limits are in place. `computing` rather than `client` is the
-    worker saying which half of the engine it is: it is the half that computes,
-    and it is the only process that may be.
+    The engine is imported here rather than at module scope because importing sympy is
+    expensive and must happen after the log and limits are set up. The worker imports
+    `computing` rather than `client` because it is the process that computes.
     """
     from rederive.engine import computing
 
@@ -309,13 +280,13 @@ def methods() -> dict[str, Callable[..., Any]]:
 
 
 def _hang() -> None:
-    """Block forever, so that an abort has something certain to abort."""
+    """Block forever, giving abort tests something to abort."""
     while True:
         time.sleep(3600)
 
 
 def _allocate(megabytes: int) -> None:
-    """Take that much memory and hold it, so the cap has something to catch."""
+    """Allocate and hold `megabytes` of memory, for testing the memory cap."""
     global _held
     _held = [bytearray(1 << 20) for _ in range(megabytes)]
     _hang()

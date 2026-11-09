@@ -1,15 +1,13 @@
 """Arithmetic checked against an independent oracle rather than against expected text.
 
-The other Simplify tests state what the worksheet shows for hand-picked cases, which
-pins down the form of an answer. This file asks only whether the number is right, over
-many generated expressions: exact arithmetic against `fractions.Fraction` and `math`,
-and approximations against `mpmath` carried to far more digits than are asked for.
-Sympy does the arithmetic underneath, and this is the check that nothing between the
-text typed and the text shown loses or bends a value - the parser reading decimals and
-percentages, the printer writing digits, the rewrites in between.
+Other Simplify tests pin down the form of answers for hand-picked cases. This file checks
+only that the number is right, over many generated expressions: exact arithmetic against
+`fractions.Fraction` and `math`, and approximations against `mpmath` at far higher
+precision. Sympy does the arithmetic; this checks that nothing between input and output
+(parsing decimals and percentages, printing digits, rewrites) corrupts a value.
 
-The cases are drawn from a seeded generator, so a run is reproducible and a failing
-case is named by its text.
+Cases come from a seeded generator, so runs are reproducible and failing cases are
+identified by their text.
 """
 
 from __future__ import annotations
@@ -31,7 +29,7 @@ APPROXIMATE = Context().with_precision(Precision.APPROXIMATE)
 
 
 def written(value: Fraction) -> str:
-    """A rational as an exact Simplify writes it."""
+    """A rational as exact Simplify writes it."""
     if value.denominator == 1:
         return str(value.numerator)
     return f"{value.numerator}/{value.denominator}"
@@ -99,8 +97,8 @@ NUMBER = re.compile(
 
 
 def read_number(text: str) -> tuple[Fraction, Fraction, int]:
-    """A number written in digits: its value, the size of a unit in its last digit, and
-    how many significant digits it shows."""
+    """Parse a number in digits into its value, the unit of its last digit, and its
+    count of significant digits."""
     match = NUMBER.fullmatch(text)
     assert match, text
     mantissa = match["mantissa"] or "1"
@@ -114,8 +112,8 @@ def read_number(text: str) -> tuple[Fraction, Fraction, int]:
 
 @pytest.mark.parametrize(("text", "value"), EXACT, ids=[t for t, _ in EXACT])
 def test_decimal_notation_cuts_an_exact_value_without_changing_its_digits(text, value):
-    """Shown in digits, an exact value is cut to the notation's digits, never rounded:
-    what is shown is the true value with the digits after the last one dropped."""
+    """In decimal notation an exact value is truncated to the notation's digits, never
+    rounded."""
     shown, unit, significant = read_number(simp(text, DECIMAL))
     if shown == value:
         return
@@ -196,9 +194,8 @@ def transcendental(rng: random.Random, depth: int) -> tuple[str, mpmath.mpf]:
     """A random tree of roots, logarithms, exponentials, trigonometric functions and
     the four operations, built only where each function is real and finite.
 
-    No part of the tree is a value the oracle cannot tell from zero: SIN(pi) is zero
-    to its last digit and no further, and a logarithm or a root of that is the
-    oracle's noise rather than a value to check against."""
+    No subtree may be indistinguishable from zero to the oracle: SIN(pi) is zero only
+    to the oracle's precision, so a logarithm or root of it would be noise."""
     while True:
         text, value = _node(rng, depth)
         if abs(value) > TINY:

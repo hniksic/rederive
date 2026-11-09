@@ -1,10 +1,8 @@
 """Model layer: expression trees and the session state, free of any UI.
 
-The session is not re-exported here, and cannot be. `rederive.syntax` is built
-on `model.expr`, and the session is built on the syntax package, so importing
-the session from this `__init__` would make `import rederive.syntax` reach
-back into a half-initialised model package. `Entry` and `Session` come from
-`rederive.model.session`, the way `Settings` comes from
+The session can't be re-exported here: `rederive.syntax` depends on `model.expr`, and
+the session depends on `rederive.syntax`, so importing it here would create a circular
+import. Import `Entry` and `Session` from `rederive.model.session` and `Settings` from
 `rederive.model.settings`.
 """
 

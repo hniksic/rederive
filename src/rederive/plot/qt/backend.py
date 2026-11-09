@@ -1,9 +1,7 @@
-"""The backend the plot session opens Qt windows on, and the thread it samples on.
+"""The Qt backend for the plot session, and its sampling thread.
 
-Two objects, and both are the toolkit's side of a line drawn above them. The
-backend makes windows and takes them away again; the executor is the sampling
-thread and the one supported way of getting an answer from it back into a Qt
-event loop.
+The backend opens and closes windows. The executor runs sampling on a separate thread
+and delivers results back to the Qt event loop.
 """
 
 from __future__ import annotations
@@ -19,16 +17,13 @@ __all__ = ["QtBackend", "ThreadExecutor"]
 
 
 class ThreadExecutor:
-    """The thread everything numeric happens on, taking one job at a time.
+    """The thread that runs numeric work, one job at a time.
 
-    The answer is delivered on the Qt thread, because what happens to it is
-    drawing. That is what the signal is for: emitting from this thread into an
-    object that lives in the Qt thread is queued by Qt itself, and is the one
-    supported way across.
+    Results are delivered on the Qt thread, where they are drawn, via a signal emitted
+    to an object living in the Qt thread, which Qt queues.
 
-    There is no abort path and none is needed: sampling is depth- and
-    size-capped, so the worst a pathological expression can do is take a while
-    over its own curve.
+    Jobs can't be aborted, but sampling is depth- and size-capped, so a pathological
+    expression can only be slow.
     """
 
     def __init__(self) -> None:
@@ -67,27 +62,24 @@ class ThreadExecutor:
 
 
 class QtBackend:
-    """Plot windows as Qt windows, made where the session asks for one.
+    """Opens plot windows as Qt windows.
 
-    The two window classes are imported where a window is made rather than at
-    the top of the file, because each of them costs a toolkit: a session that
-    only ever draws curves never loads OpenGL, and a machine without it can
-    still plot everything else.
+    The window classes are imported on first use, so a session that only draws curves
+    never loads OpenGL, and a machine without OpenGL can still make 2D plots.
     """
 
     def __init__(self) -> None:
-        #: The windows now open, so that a shutdown can end them all. A window
-        #: the user closed reports itself closed and is dropped here.
+        #: The open windows, so shutdown can close them all. Windows closed by the user
+        #: are removed through `close`.
         self.windows: dict[int, Any] = {}
 
     def open(
         self, session: Any, kind: WindowKind, number: int, preferences: Prefer
     ) -> Any:
-        """One window, built with the sticky preferences in force now.
+        """Open a window with the current sticky preferences.
 
-        A 2D window takes no preference at all: it always opens with equal
-        scales, and its `1:1` toggle is the one-window exception that is
-        deliberately not remembered.
+        2D windows take no preferences: they always open with equal scales, and their
+        `1:1` toggle is deliberately not remembered.
         """
         if kind is WindowKind.THREE_D:
             from rederive.plot.qt.window3d import Window3D
@@ -103,16 +95,15 @@ class QtBackend:
         return window
 
     def close(self, number: int) -> None:
-        """Forget a window that has closed itself. Its own event said so."""
+        """Forget a window that has reported itself closed."""
         self.windows.pop(number, None)
 
     def stop(self) -> None:
-        """End every window, and the Qt loop they were running in.
+        """Close every window and quit the Qt loop.
 
-        The windows are made deaf first. A window tells the session it has
-        closed, and here every window closes at once; without this the registry
-        would be edited from inside its own iteration and an event would go up a
-        channel the app has already let go of.
+        The windows' sessions are replaced with a no-op first. Otherwise each closing
+        window would report to the session, modifying the registry during iteration and
+        sending events over a channel the app has already dropped.
         """
         from pyqtgraph.Qt import QtWidgets
 
@@ -124,7 +115,7 @@ class QtBackend:
 
 
 class _Deaf:
-    """A session that hears nothing, for windows being closed at shutdown."""
+    """A session that ignores everything, for windows closed at shutdown."""
 
     def __getattr__(self, name: str) -> Callable[..., None]:
         return lambda *arguments, **keywords: None

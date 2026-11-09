@@ -1,8 +1,8 @@
 """Widgets for the bands of an Algebra pane.
 
-These render model state and nothing else: no navigation rules, no parsing.
-Colors are read from the app's palette at render time, so an `Options Color`
-command repaints simply by asking for another render.
+These only render model state, with no navigation rules or parsing. Colors are read
+from the app's palette at render time, so `Options Color` takes effect on the next
+render.
 """
 
 from __future__ import annotations
@@ -37,20 +37,16 @@ from rederive.model.settings import (
 from rederive.model.windows import Drawing
 from rederive.ui.menu import Menu
 
-#: Columns the label field takes, and so the column every render starts in.
-#: `#1:` and `#10:` both leave the expression at column 5, as they do in the
-#: original; a number too long for the field pushes it right.
+#: Width of the label field, i.e. the column where renders start. `#1:` and `#10:` both
+#: start the expression at column 5, as in Derive; longer labels push it right.
 _LABEL_WIDTH = 5
 
-#: Share of the showable width one Ctrl-Right or Ctrl-Left takes, as the
-#: original steps it: a third at a time leaves two thirds of the render
-#: standing still, which is what makes it readable as a slide rather than as a
-#: new screen.
+#: Ctrl-Right and Ctrl-Left scroll by a third of the visible width, as in Derive.
+#: Keeping two thirds in place makes it read as a slide rather than a new screen.
 _SCROLL_SHARE = 3
 
-#: Columns of the render kept on show to either side of a highlight the pane
-#: has scrolled to follow. The original keeps two, which is what says that the
-#: expression goes on past the edge rather than ending there.
+#: Columns kept visible on either side of a highlight the pane scrolls to follow. Derive
+#: keeps two, which shows the expression continues past the edge.
 _SCROLL_MARGIN = 2
 
 #: Blanks between two fields of an Options dialog.
@@ -59,46 +55,37 @@ _FIELD_GAP = "  "
 #: Blanks between two words of a menu.
 _WORD_GAP = 1
 
-#: Rows a command band takes when what is on it fits in fewer, which is the
-#: two the original reserves for a menu however short it is.
+#: Minimum height of a command band; Derive reserves two rows even for a short menu.
 _BAND_ROWS = 2
 
-#: Rows a band leaves the rest of the screen when it grows to fit a narrow
-#: terminal: the rule above it, the message and status lines below it, and two
-#: for the expressions. A screen too short to hold the whole menu as well is
-#: one the band gives way on, rather than one it pushes the lines below it off
-#: the bottom of.
+#: Rows a band leaves for the rest of the screen when it grows on a narrow terminal: the
+#: rule above, the message and status lines below, and two for expressions. If the
+#: screen is too short, the band is cut off rather than pushing lines off the bottom.
 _BAND_RESERVE = 5
 
-#: Columns a number field's value takes, so that the field beside it does not
-#: shift as digits are typed. The original reserves the same width.
+#: Width of a number field's value, so the next field doesn't shift while typing. Derive
+#: uses the same width.
 _NUMBER_WIDTH = 5
 
-#: Where the status line names the file the session last read or wrote.
+#: Status line column showing the file the session last read or wrote.
 _FILE_COLUMN = 22
 
-#: Kills the prompt line keeps for Ctrl-Y to put back. Bash keeps ten and
-#: Emacs keeps far more; ten is more than a line of algebra is ever taken
-#: apart into, and the oldest going is what keeps a long session from holding
-#: on to every scrap of text it was ever asked to delete.
+#: Number of kills the prompt line keeps for Ctrl-Y, as in Bash. Plenty for a line of
+#: algebra, and bounded so a long session doesn't keep every deleted scrap.
 _KILLS_KEPT = 10
 
-#: Seconds between readings of the memory field. The figure is the app plus
-#: the engine worker, and the worker is where it moves: a computation that is
-#: eating the machine has to show it while there is still time to press Esc,
-#: which is a gauge that keeps up rather than one that catches up. Two readings
-#: a second cost two `psutil` calls and repaint only when the figure moves.
+#: Seconds between updates of the memory field, which shows the app plus the engine
+#: worker. A runaway computation must show up while there's still time to press Esc.
+#: Two `psutil` calls a second are cheap, and it repaints only when the figure changes.
 _MEMORY_PERIOD = 0.5
 
 
 @dataclass(frozen=True)
 class _Place:
-    """Where one field of a dialog was drawn, and what can be picked off it.
+    """Where a dialog field was drawn, and its clickable choices.
 
-    The columns are the band's own, so `start` and `end` are what a click on
-    that row is measured against. `choices` are the values the field offers,
-    each with the columns it took; a field that offers none carries an empty
-    tuple.
+    `start` and `end` are band columns, against which clicks on that row are checked.
+    `choices` are the field's values with their columns, empty if it offers none.
     """
 
     row: int
@@ -109,15 +96,15 @@ class _Place:
 
 
 def _width(field: Field) -> int:
-    """Columns a field's value takes; a text field says for itself."""
+    """Width of a field's value; text fields specify their own."""
     return field.width if isinstance(field, TextField) else _NUMBER_WIDTH
 
 
 def _captioned(item: Item) -> bool:
-    """Whether a dialog line's item prints something of its own in front.
+    """Whether a dialog line item prints a caption before its value.
 
-    A plain word does, and so does any field with a label. A field without one
-    starts with the space that goes before its value.
+    True for plain words and labeled fields. An unlabeled field starts with the space
+    before its value.
     """
     return isinstance(item, str) or bool(item.label)
 
@@ -131,10 +118,10 @@ def _indent(entry: Entry) -> int:
 
 
 def _label_row(entry: Entry) -> int:
-    """The row of the entry's render the label sits on.
+    """The row of the entry's render that holds the label.
 
-    Vertically centred, biased downward when the height is even: a four-row
-    fraction carries its label on the third row.
+    Vertically centered, biased downward for even heights: a four-row fraction has its
+    label on the third row.
     """
     return entry.height // 2
 
@@ -142,9 +129,7 @@ def _label_row(entry: Entry) -> int:
 def _painted(entry: Entry, offset: int = 0) -> list[str]:
     """The entry's render, each line prefixed with the label field.
 
-    `offset` is how far the render has been scrolled sideways. The label field
-    does not move with it: the number stays where it can be read whatever part
-    of a wide expression is on show.
+    `offset` is the horizontal scroll. The label doesn't scroll, so it stays readable.
     """
     indent = _indent(entry)
     label = _label(entry).ljust(indent)
@@ -164,11 +149,9 @@ def _marks(
 ) -> dict[int, tuple[int, int]]:
     """The columns the selection inverts on each row it covers.
 
-    The rectangle covers the blanks inside it, so the highlight over a built-up
-    fraction is a solid block rather than a ragged outline. `offset` is how far
-    the render has been scrolled sideways; the part of the selection that has
-    gone off the left edge is not painted, and one scrolled away entirely is
-    not painted at all.
+    The rectangle includes blanks, so a built-up fraction highlights as a solid block.
+    `offset` is the horizontal scroll; parts of the selection scrolled off the left edge
+    are not painted.
     """
     top, left, height, width = rect
     marks: dict[int, tuple[int, int]] = {}
@@ -180,13 +163,11 @@ def _marks(
 
 
 class _Rows(Widget):
-    """Rows of plain text, each drawn only when the screen asks for it.
+    """Rows of plain text, each drawn only when the screen requests it.
 
-    A worksheet can run to thousands of rows of which a pane shows a few dozen,
-    and a highlight moved one step has to cost what those few dozen cost. So
-    the rows are kept as plain strings with at most one inverted run on each,
-    and the height is their count rather than something measured off a
-    rendered text.
+    A worksheet can have thousands of rows while a pane shows a few dozen, and moving
+    the highlight should cost only what's visible. So rows are plain strings with at
+    most one inverted run each, and the height is simply their count.
     """
 
     def __init__(self, **arguments: Any) -> None:
@@ -203,7 +184,7 @@ class _Rows(Widget):
         marked: str = "",
         marks: dict[int, tuple[int, int]] | None = None,
     ) -> None:
-        """Show `lines` in the style `plain`, the `marks` runs in `marked`."""
+        """Show `lines` in style `plain`, with the `marks` runs in `marked`."""
         relaid = len(lines) != len(self._lines)
         self._lines, self._plain, self._marked = lines, plain, marked
         self._marks = marks or {}
@@ -211,7 +192,7 @@ class _Rows(Widget):
 
     @property
     def content(self) -> Text:
-        """What the rows show, as one text with the marked runs styled."""
+        """The rows as a single text, with marked runs styled."""
         text = Text("\n".join(self._lines), style=self._plain, no_wrap=True)
         start = 0
         for row, line in enumerate(self._lines):
@@ -247,15 +228,13 @@ def _packed(
     gap: int,
     tails: list[int] | None = None,
 ) -> list[list[int]]:
-    """Which of `items` go on each row of `room` columns, `gap` between them.
+    """Split `items` into rows of `room` columns, with `gap` between items.
 
-    An item too wide to share a row with what is already there opens the next
-    one; one too wide for a row of its own is left to be clipped, there being
-    nowhere else to put it.
+    An item that doesn't fit on the current row starts a new one; an item too wide for
+    any row is left to be clipped.
 
-    `tails` is how wide each item is where it ends a row, which is where the
-    blanks a field is padded with cost nothing: they are what the field beside
-    it stands clear of, and at the end of a row nothing stands beside it.
+    `tails` gives each item's width when it ends a row, which can be smaller because a
+    field's padding is unnecessary when nothing follows it.
     """
     tails = widths if tails is None else tails
     rows: list[list[int]] = []
@@ -268,19 +247,16 @@ def _packed(
 
 
 class Band(Static):
-    """A widget that colors itself from the palette the app is showing.
+    """A widget that takes its colors from the app's palette.
 
-    The two bands that carry commands - the menu and the Options dialog that
-    stands where it does - lay themselves out for the width there is rather
-    than for the eighty columns the original had. A line too long for the
-    terminal is broken again and the band grows a row, which it takes from the
-    work area above: the alternative is the row falling off the band, and a
-    command nobody can see is a command nobody can reach.
+    The command bands (the menu, and Options dialogs shown in its place) lay out for the
+    actual width rather than Derive's eighty columns. A line too long for the terminal
+    wraps and the band grows a row, taken from the work area above, so that no command
+    becomes unreachable.
     """
 
-    #: The width the rows on the band were last laid out for, 0 before any were.
-    #: A resize reaches `size` before the band's own `on_resize` has drawn it again,
-    #: so this is what says the drawing has caught up.
+    #: The width the band was last laid out for, or 0. A resize updates `size` before
+    #: `on_resize` redraws the band, so this tells whether the drawing has caught up.
     drawn_width: int = 0
 
     @property
@@ -289,26 +265,23 @@ class Band(Static):
 
     @property
     def width(self) -> int:
-        """Columns the band has. Before the first layout, the screen's."""
+        """The band's width, or the screen's before the first layout."""
         return self.size.width or self.app.size.width
 
     def room(self, prefix: int) -> int:
-        """Columns a row has for its contents, past a prefix that wide."""
+        """Columns available on a row after a prefix of width `prefix`."""
         return max(1, self.width - prefix)
 
     def put(self, rows: list[Text]) -> int:
-        """Show `rows`, the band standing as tall as there are rows to show.
+        """Show `rows`, growing the band to fit them.
 
-        How many of them it had room for comes back, since a row dropped off
-        the bottom carries nothing a click can land on.
+        Returns how many rows fit, since rows cut off at the bottom can't be clicked.
         """
         limit = max(_BAND_ROWS, self.app.size.height - _BAND_RESERVE)
         rows = rows[:limit]
         for row in rows:
-            # A row wider than the band is wrapped by the widget, and a
-            # wrapped row takes two of the rows the band has - which pushes
-            # the last of them off it. Cutting at the edge is what makes the
-            # band show the rows it was laid out with and no others.
+            # Truncate rather than let the widget wrap a row, which would push the last
+            # row off the band.
             row.truncate(self.width)
         self.styles.height = max(_BAND_ROWS, len(rows))
         self.update(Text("\n").join(rows))
@@ -316,69 +289,56 @@ class Band(Static):
         return len(rows)
 
     def within(self, offset: Offset) -> Offset:
-        """The screen cell `offset` as a row and column of this band's contents."""
+        """Convert screen cell `offset` to a position within this band's contents."""
         return offset - self.content_region.offset
 
 
 class WorkArea(VerticalScroll):
     """The numbered expression history, scrolled to keep the selection visible.
 
-    Each entry is painted as the lines of its own render, labelled down the
-    left edge and separated by one blank line, and the entries stack upward
-    from the bottom of the pane.
+    Each entry is painted as its rendered lines with a label on the left, separated by
+    a blank line, stacking upward from the bottom of the pane.
 
-    Nothing here wraps or reflows: a render is as wide as it is, and one wider
-    than the pane is clipped at the right edge until Ctrl-Right scrolls it into
-    view. That is what keeps the guarantee the selection depends on - one
-    subexpression, one rectangle.
+    Nothing wraps: a render wider than the pane is clipped at the right edge until
+    Ctrl-Right scrolls it into view. This preserves the guarantee the selection relies
+    on, one rectangle per subexpression.
 
-    Scrolling sideways moves the selected entry alone, as the original's does.
-    The rest of the history is a column of numbered expressions to read down,
-    and shifting all of it to see the end of one line would take the others out
-    from under their own numbers. Ctrl-Right and Ctrl-Left scroll it by hand,
-    and a highlight walking off either edge takes it along.
+    As in Derive, horizontal scrolling moves only the selected entry, so the others stay
+    aligned with their labels. Ctrl-Right and Ctrl-Left scroll manually, and moving the
+    highlight past either edge scrolls along with it.
 
-    Scrolling up and down is Textual's own, since the pane really is a scrollable
-    region: the wheel moves it and nothing here has to know. What this does have
-    to answer is where a click landed, which only the pane can say - it is the
-    one that knows what row each entry was painted on.
+    Vertical scrolling is Textual's own. The pane does have to map clicks back to
+    entries, since only it knows which row each entry was painted on.
     """
 
     can_focus = False
 
     def __init__(self, *args, **kwargs) -> None:
-        # Built here rather than composed, because a pane is made when its
-        # window is and painted in the same breath - before Textual has got
-        # round to composing it.
-        #
-        # A class rather than an id: there is one of these per window, and an
-        # id would have to be unique across all of them.
+        # Built here rather than composed, because a pane is painted as soon as its
+        # window is created, before Textual composes it. Identified by class rather
+        # than id since there is one per window.
         self.content = _Rows(classes="work-content")
         super().__init__(self.content, *args, **kwargs)
-        #: Columns the selected entry's render is currently shifted left by.
+        #: How many columns the selected entry is scrolled left.
         self.shift = 0
-        #: The selection the shift was last brought into view for, so that a
-        #: highlight standing still is not chased and a scrolled pane stays
-        #: where the user put it.
+        #: The selection last scrolled into view, so that an unchanged highlight isn't
+        #: chased and a manually scrolled pane stays put.
         self._followed: object = None
-        #: The selected entry's width and label field, as the last render saw
-        #: them, which is what a shift has to stay inside.
+        #: The selected entry's width and label width at the last render, which bound
+        #: the shift.
         self._widest = 0
         self._indent = _LABEL_WIDTH
-        #: Where the last render put each entry: the row its render starts on,
-        #: the column the render starts in, and how many rows it took. What a
-        #: click is read against, there being nothing else on screen that says
-        #: which expression a row belongs to.
+        #: Where the last render put each entry: start row, start column, and height.
+        #: Used to map clicks to entries.
         self._drawn: list[tuple[int, int, int]] = []
-        #: Which of them was drawn shifted, since the shift is the selected
-        #: entry's alone and a click on it has to be read past the shift.
+        #: Which entry was drawn shifted, so clicks on it can account for the shift.
         self._shifted: int | None = None
-        #: The rows of the selected entry, while they still wait to be scrolled into
-        #: view; see `_reveal`.
+        #: The selected entry's rows while waiting to be scrolled into view; see
+        #: `_reveal`.
         self._revealing: Region | None = None
 
     def reset(self) -> None:
-        """Forget where this pane stands, as a pane handed to a new window must."""
+        """Reset scroll and layout state, for reuse in a new window."""
         self.shift = 0
         self._followed = None
         self._widest = 0
@@ -396,7 +356,7 @@ class WorkArea(VerticalScroll):
         styles = self.app.palette.styles
         self._follow(entries, selected, rect)
         lines: list[str] = []
-        # For each entry, the line it starts on and the column its render does.
+        # Each entry's start line and start column.
         starts: list[int] = []
         indents: list[int] = []
         for index, entry in enumerate(entries):
@@ -422,15 +382,13 @@ class WorkArea(VerticalScroll):
     def _reveal(self) -> None:
         """Scroll the selected entry into view, once the layout has room for it.
 
-        A callback scheduled after the refresh can run before the layout that makes
-        the scrollable region tall enough for new content, and a scroll then is
-        clamped to the old height and leaves the newest entry below the edge. So the
-        region waits until the scrollable height takes it in, and a change of that
-        height is what asks again.
+        A post-refresh callback can run before the layout grows the scrollable region,
+        and scrolling then would be clamped to the old height, leaving the newest entry
+        out of view. So this waits until the virtual height includes the region, and is
+        retried when that height changes.
 
-        The scroll is forced because the pane's scrollbar is not yet up at that point
-        when this content is the first to overflow it, and Textual refuses to scroll
-        a pane without one.
+        The scroll is forced because, when this content is the first to overflow, the
+        scrollbar doesn't exist yet and Textual won't scroll a pane without one.
         """
         region = self._revealing
         if region is None or region.bottom > self.virtual_size.height:
@@ -444,17 +402,12 @@ class WorkArea(VerticalScroll):
     def show_help(self, lines: list[str], rows: int, width: int, titled: bool) -> None:
         """Paint a help page over this window's expressions.
 
-        Help is not an overlay: it stands where the expressions stand, in the
-        window it was asked from and in no other, with that window's border
-        still drawn around it and every other window still showing its own
-        worksheet. There is no border of its own, no scrollbar and no shadow,
-        which is how the original drew it.
+        As in Derive, help is not an overlay: it replaces the expressions in this window
+        only, inside the window's border, with no border, scrollbar or shadow of its own.
 
-        The page is padded out to the pane's full height, so that a document
-        shorter than the pane reads from the top rather than being pushed
-        against the bottom the way a history is. A titled page carries its
-        title on the first row in inverse video, over the title's own columns
-        and no further.
+        The page is padded to the pane's full height so it reads from the top rather
+        than sitting at the bottom like the history. A titled page shows its title on
+        the first row in inverse video, covering only the title's columns.
         """
         styles = self.app.palette.styles
         self._drawn, self._shifted, self._revealing = [], None, None
@@ -469,15 +422,12 @@ class WorkArea(VerticalScroll):
     def show_greeting(
         self, lines: Sequence[str], footer: str, rows: int, width: int
     ) -> None:
-        """Paint the opening notice where this window's expressions will stand.
+        """Paint the opening notice in place of this window's expressions.
 
-        Centred across the pane and spread down it: the name block stands in
-        the upper third and the footer a couple of rows off the bottom, which
-        is how a title page is spaced and how the original spaced this one.
-        The whole of it is padded out to the pane's full height, so that it
-        reads as a page rather than being pushed against the bottom the way a
-        history is. A pane too short for both gives up the tail of the block
-        rather than the footer, that being the line with a key in it.
+        Centered horizontally, with the name block in the upper third and the footer a
+        couple of rows from the bottom, spaced like a title page as in Derive. It is
+        padded to the pane's full height. If the pane is too short, the end of the block
+        is dropped rather than the footer, which names a key.
         """
         styles = self.app.palette.styles
         self._drawn, self._shifted, self._revealing = [], None, None
@@ -492,16 +442,13 @@ class WorkArea(VerticalScroll):
         self.content.paint(page, styles["work"])
 
     def pointed(self, offset: Offset) -> tuple[int, int, int] | None:
-        """Which entry the screen cell `offset` is on, and where in its render.
+        """The entry under screen cell `offset`, and the row and column within its render.
 
-        The row and the column are the entry's own: they index the lines the
-        layout painted, so what the caller does with them is a question about
-        the expression rather than about the pane. A column left of the render
-        comes back negative, which is what a click on the label field is - a
-        cell that names the whole expression and no part of it.
+        The row and column index the entry's layout lines. A column left of the render,
+        in the label field, is negative; it refers to the whole expression.
 
-        None where the cell is on no entry at all: the blank row between two of
-        them, or the space above a history too short to fill the pane.
+        Returns None if the cell is on no entry, such as the blank row between entries
+        or the space above a short history.
         """
         column, row = offset - self.content.region.offset
         for index, (start, indent, height) in enumerate(self._drawn):
@@ -514,15 +461,11 @@ class WorkArea(VerticalScroll):
 
     @property
     def showable(self) -> int:
-        """Columns the pane has for a render, once the label field is taken."""
+        """Columns available for a render, excluding the label field."""
         return max(1, self.size.width - self._indent)
 
     def _inside(self, shift: int) -> int:
-        """A shift clipped to the render it scrolls.
-
-        Neither end has anything to show past it, and a pane full of blanks is
-        a worse answer than one that has stopped.
-        """
+        """`shift` clamped so the pane doesn't scroll past either end of the render."""
         return max(0, min(shift, self._widest - self.showable))
 
     def _follow(
@@ -531,24 +474,22 @@ class WorkArea(VerticalScroll):
         selected: int | None,
         rect: tuple[int, int, int, int] | None,
     ) -> None:
-        """Take in what a shift needs, and bring a moved highlight into view.
+        """Update the scroll state and bring a moved highlight into view.
 
-        The render moves as little as it takes and only when the highlight has
-        moved, so a pane scrolled by hand stays where it was put until the
-        selection walks off it. A couple of columns are kept on show to either
-        side, since a subexpression flush against the edge reads as one that
-        has been cut off.
+        The render scrolls minimally, and only when the highlight has moved, so a
+        manually scrolled pane stays put until the selection leaves it. A couple of
+        columns of margin are kept on either side, since a subexpression flush against
+        the edge looks cut off.
 
-        The two ends cannot both be honored for a selection wider than the pane,
-        and the left one wins: that is where an expression is read from.
+        If the selection is wider than the pane, its left edge is kept in view.
         """
         if selected is None:
             self.shift, self._widest, self._indent = 0, 0, _LABEL_WIDTH
             return
         entry = entries[selected]
         self._widest, self._indent = entry.layout.width, _indent(entry)
-        # Before there is a pane to measure there is nothing to bring into it,
-        # and the selection stays unfollowed rather than followed wrongly.
+        # Until the pane has a size, leave the selection unfollowed rather than follow
+        # it wrongly.
         if rect is None or not self.size.width:
             return
         at = (selected, rect)
@@ -561,11 +502,7 @@ class WorkArea(VerticalScroll):
         self.shift = self._inside(self.shift)
 
     def scroll_across(self, direction: int) -> None:
-        """Scroll sideways, which moves no selection and reveals no new entry.
-
-        A third of the showable width at a time, which leaves two thirds of the
-        render standing still for the eye to carry across.
-        """
+        """Scroll the selected entry sideways by a third of the visible width."""
         self.shift = self._inside(
             self.shift + direction * max(1, self.showable // _SCROLL_SHARE)
         )
@@ -579,26 +516,19 @@ class MessageLine(Band):
 
 
 class PromptLine(Input):
-    """The line every command that reads a line reads on.
+    """The input line used by every command that reads a line.
 
-    Textual's own line inserts and never overwrites, so the original's second
-    text input mode is added here: with `overwrite` set, a character typed
-    stands on the one at the cursor instead of pushing it right. The key has to
-    be taken before the base class sees it, since that is where the insertion
-    would happen; a typed character over a selection replaces the selection in
-    either mode, which is what the base class does anyway.
+    Textual's input only inserts, so this adds Derive's overwrite mode: with
+    `overwrite` set, a typed character replaces the one at the cursor. The key is
+    intercepted before the base class would insert it. Typing over a selection replaces
+    it in either mode, as the base class already does.
 
-    The other addition is a kill ring, as Emacs, bash and every line editor
-    descended from them have: the deletions that take a run of text rather than
-    a character - Ctrl-U, Ctrl-K, Ctrl-W and Alt-Backspace - keep what they
-    took, Ctrl-Y puts the last of it back at the cursor, and Alt-Y straight
-    after a Ctrl-Y swaps that for the kill before it and keeps going back
-    through the ring. Deletions that follow one another with nothing in between
-    join into one kill, so a line taken apart a word at a time comes back
-    whole. The ring belongs to the line rather than to the command that put it
-    up, and the line is one widget for the whole run of the program: what was
-    deleted from an Author line can be put back on the next one, or on a
-    Substitute value, for as long as the session lasts.
+    It also adds an Emacs-style kill ring. Ctrl-U, Ctrl-K, Ctrl-W and Alt-Backspace save
+    what they delete, Ctrl-Y yanks the last kill, and Alt-Y right after Ctrl-Y cycles
+    back through earlier kills. Consecutive kills join into one, so a line deleted word
+    by word comes back whole. The ring belongs to the line, which is a single widget for
+    the whole session, so text deleted from one Author line can be yanked into the next
+    one or into a Substitute value.
     """
 
     BINDINGS = [
@@ -610,33 +540,31 @@ class PromptLine(Input):
 
     def __init__(self, **arguments: Any) -> None:
         super().__init__(**arguments)
-        #: What the deletions have taken out, oldest first.
+        #: Killed text, oldest first.
         self.kills: list[str] = []
-        #: Which way the deletion under way runs - -1 for one that takes text
-        #: before the cursor, 1 for one that takes text after it - or None
-        #: while what is being deleted is not a kill at all.
+        #: Direction of the kill in progress: -1 for text before the cursor, 1 for text
+        #: after it, or None if the current deletion isn't a kill.
         self._killing: int | None = None
-        #: The line and cursor the last kill left, which is what says whether
-        #: the next one carries straight on from it.
+        #: The line and cursor after the last kill, to tell whether the next kill
+        #: continues it.
         self._killed_at: tuple[str, int] | None = None
-        #: What the last yank put in: which kill it was, where it went, and
-        #: the line it left behind. Alt-Y needs all three, to tell a yank
-        #: still standing as it landed from one since typed over.
+        #: The last yank: kill index, start, end, and resulting line. Alt-Y uses these to
+        #: check that the yanked text hasn't been edited since.
         self._yanked: tuple[int, int, int, str] | None = None
 
     class Pasted(Message):
-        """Text the terminal or the browser pasted, for the app to write."""
+        """Text pasted from the terminal or browser, for the app to insert."""
 
         def __init__(self, text: str) -> None:
             super().__init__()
             self.text = text
 
     def _on_paste(self, event: events.Paste) -> None:
-        """A paste from the terminal or the browser goes on to the app.
+        """Forward a paste from the terminal or browser to the app.
 
-        The base class would write it over the selection, which on a line
-        offering a label leaves the `#` in front of what was pasted. The app
-        writes it as Ctrl-V does, `#` and all, so it is handed on there instead.
+        The base class would replace the selection, which on a line offering a label
+        leaves the `#` in front of the pasted text. The app handles it like Ctrl-V,
+        replacing the `#` too.
         """
         event.prevent_default()
         event.stop()
@@ -653,30 +581,29 @@ class PromptLine(Input):
         at = self.cursor_position
         self.replace(event.character, at, at + 1)
 
-    # -- deleting, and putting back what was deleted ------------------------
+    # -- kill and yank -------------------------------------------------------
 
     def action_delete_left_all(self) -> None:
-        """Ctrl-U: take out the line before the cursor, and keep it."""
+        """Ctrl-U: kill the text before the cursor."""
         self._kill(-1, super().action_delete_left_all)
 
     def action_delete_left_word(self) -> None:
-        """Ctrl-W: take out the word before the cursor, and keep it."""
+        """Ctrl-W: kill the word before the cursor."""
         self._kill(-1, super().action_delete_left_word)
 
     def action_delete_right_all(self) -> None:
-        """Ctrl-K: take out the line from the cursor on, and keep it."""
+        """Ctrl-K: kill the text from the cursor to the end."""
         self._kill(1, super().action_delete_right_all)
 
     def action_delete_right_word(self) -> None:
-        """Alt-Backspace: take out the word after the cursor, and keep it."""
+        """Alt-Backspace: kill the word after the cursor."""
         self._kill(1, super().action_delete_right_word)
 
     def _kill(self, direction: int, delete: Callable[[], None]) -> None:
-        """Run `delete`, and take what it removes as a kill running `direction`.
+        """Run `delete`, saving whatever it removes as a kill in `direction`.
 
-        The base class works out for itself how far each of them reaches, and
-        one of them falls back on another, so the reach is not read here: the
-        flag says only that whatever `delete` takes out is worth keeping.
+        The base class decides how much each action deletes (and some delegate to
+        others), so this only sets a flag that `delete` checks.
         """
         was, self._killing = self._killing, direction
         try:
@@ -685,12 +612,10 @@ class PromptLine(Input):
             self._killing = was
 
     def delete(self, start: int, end: int) -> None:
-        """Take out the text between `start` and `end`, keeping any kill.
+        """Delete the text between `start` and `end`, saving it if it's a kill.
 
-        Every deletion the line makes comes through here, which is what makes
-        this the one place the killed text can be caught. Backspace and Delete
-        come through it too and pass straight on: a character taken out one at
-        a time is a correction rather than something to put back later.
+        All deletions pass through here, making it the one place to capture killed
+        text. Backspace and Delete pass through without saving anything.
         """
         if self._killing is None:
             super().delete(start, end)
@@ -700,20 +625,17 @@ class PromptLine(Input):
         before = (self.value, self.cursor_position)
         super().delete(start, end)
         if not taken or self.value == before[0]:
-            # A kill with nothing in reach - Ctrl-K at the end of the line -
-            # leaves the run it was part of standing, so that the kills to
-            # either side of it still join.
+            # An empty kill, such as Ctrl-K at the end of the line, doesn't break the
+            # run, so kills on either side still join.
             return
         self._keep(taken, joins=before == self._killed_at)
         self._killed_at = (self.value, self.cursor_position)
 
     def _keep(self, taken: str, joins: bool) -> None:
-        """Put `taken` on the ring, or onto the end of the kill before it.
+        """Add `taken` to the ring, or append it to the previous kill if `joins`.
 
-        A kill that starts where the last one finished is a continuation of
-        it, so the two are kept as one: three words taken one at a time come
-        back as three words. Which end of the kill it joins is which way the
-        deletion ran, so text taken leftwards goes in front of what is there.
+        A kill that starts where the last one ended continues it. Text killed leftwards
+        is prepended, and text killed rightwards appended.
         """
         if joins and self.kills:
             last = self.kills[-1]
@@ -723,22 +645,19 @@ class PromptLine(Input):
         del self.kills[:-_KILLS_KEPT]
 
     def action_yank(self) -> None:
-        """Ctrl-Y: put the last kill back in at the cursor.
+        """Ctrl-Y: insert the last kill at the cursor, replacing any selection.
 
-        Over whatever is selected, as a typed character is, and with the
-        cursor left after it so that the line goes on from where the restored
-        text now ends.
+        The cursor ends up after the inserted text.
         """
         if self.kills:
             self._put(len(self.kills) - 1, *sorted(self.selection))
 
     def action_yank_pop(self) -> None:
-        """Alt-Y: swap what Ctrl-Y just put in for the kill before it.
+        """Alt-Y: replace the text just yanked with the previous kill.
 
-        Only straight after a yank, with what it put in still standing where
-        it landed: anything typed since, or the cursor moved off the end of
-        it, and there is no yank left to reconsider. Pressed again it goes on
-        back through the ring, and round to the newest again past the oldest.
+        Works only right after a yank, while the yanked text is unchanged and the cursor
+        is at its end. Repeating it cycles back through the ring, wrapping from oldest
+        to newest.
         """
         if self._yanked is None:
             return
@@ -756,58 +675,47 @@ class PromptLine(Input):
 
 
 class CompletionList(Band):
-    """The names a half-typed filename could mean, as a list to look through.
+    """The possible completions of a partly typed filename.
 
-    It opens above the line being typed, one name per row, the name the line is
-    currently showing highlighted in inverse video. A directory keeps the
-    separator that says it is one, so that the list reads as a place to go into
-    rather than a file to open.
+    It opens above the input line with one name per row, the one currently shown on the
+    line highlighted in inverse video. Directories keep their trailing separator.
 
-    The list is a window onto the names rather than all of them: `MAX_ROWS`
-    rows at a time, scrolled to keep the highlighted one inside, with the count
-    in the border title saying how much is out of sight. That is what makes it
-    a thing to look around a directory tree with, which a line of text cut
-    short at the pane's edge never was.
+    At most `MAX_ROWS` names are shown at once, scrolled to keep the highlight visible,
+    with a count in the border title showing how many are hidden. That makes it usable
+    for browsing a directory tree.
     """
 
-    #: The most rows the list takes from the work area above it. Ten is enough
-    #: for a directory to be taken in at a glance and still leaves the newest
-    #: expressions on screen at the sizes a terminal usually comes in.
+    #: Maximum rows taken from the work area. Enough to take in a directory at a glance
+    #: while leaving the newest expressions visible on a typical terminal.
     MAX_ROWS = 10
 
-    #: What the screen owes to everything that is not a name in this list: its
-    #: own two border rows, then the rule, the two the prompt band takes, the
-    #: message line, the status line, and one row of work area. The line being
-    #: typed is the one thing a list of names for it can never be worth
-    #: covering, so on a short terminal the list gives up rows rather than the
-    #: screen giving up the line.
+    #: Screen rows needed for everything but the names: the list's two border rows, the
+    #: rule, the two-row prompt band, the message and status lines, and one row of work
+    #: area. On a short terminal the list shrinks rather than hide the input line.
     ROWS_ELSEWHERE = 8
 
     def __init__(self, *arguments: object, **named: object) -> None:
         super().__init__(*arguments, **named)
-        #: What the list is currently showing, kept so that a resize can draw
-        #: it again: both the highlight bar and the title are cut to the width,
-        #: and the width is not known until the widget has been laid out.
+        #: What the list currently shows, kept for redrawing on resize, since the
+        #: highlight bar and title depend on the width, unknown until layout.
         self._showing: tuple[list[str], int | None, str] = ([], None, "")
-        #: Which name the top row is showing, since the list is a window onto
-        #: the names and a click names a row rather than a name.
+        #: Index of the name on the top row, for mapping clicked rows to names.
         self._first = 0
 
     def visible_rows(self, count: int) -> int:
-        """How many of `count` names show at once: as many as there is room for."""
+        """How many of `count` names fit on screen at once."""
         room = self.app.size.height - self.ROWS_ELSEWHERE
         return max(1, min(count, self.MAX_ROWS, room))
 
     def rows_for(self, count: int) -> int:
-        """How tall the list stands to show `count` names, borders included."""
+        """The list's height for `count` names, including borders."""
         return self.visible_rows(count) + 2
 
     def on_resize(self) -> None:
-        """Draw again for the new width, and for the new number of rows.
+        """Redraw for the new width and height.
 
-        A terminal that has just become short is why the height is set here as
-        well as when the list is filled: the rows the list may take have
-        changed, and the list is the one that has to give them up.
+        The height is recomputed here too, since a shrinking terminal reduces the rows
+        the list may take.
         """
         names, at, where = self._showing
         if names:
@@ -826,19 +734,17 @@ class CompletionList(Band):
         for row, name in enumerate(shown):
             highlight = at is not None and first + row == at
             style = self.colors["selection"] if highlight else self.colors["work"]
-            # Every row is padded to the full width so that the highlight reads
-            # as a bar across the list rather than a box around a word.
+            # Pad rows to the full width so the highlight is a bar across the list.
             width = max(self.size.width - 2, len(name) + 1)
             text.append(f" {name}".ljust(width) + "\n", style=style)
         self.border_title = self._title(where, len(names), first, len(shown))
         self.update(text)
 
     def name_at(self, offset: Offset) -> int | None:
-        """Which name the screen cell `offset` is on, if it is on one.
+        """The index of the name at screen cell `offset`, or None.
 
-        A row is one name across the whole width of the list, the highlight bar
-        being drawn that way, so only the row is asked about. None where the
-        cell is on the border or past the last name.
+        Each name spans the full row, so only the row matters. Returns None on the
+        border or past the last name.
         """
         names, _, _ = self._showing
         if not names:
@@ -850,24 +756,21 @@ class CompletionList(Band):
         return at if 0 <= point.y < self.visible_rows(len(names)) else None
 
     def _first_shown(self, count: int, at: int | None, rows: int) -> int:
-        """The name the window starts at, chosen to keep `at` inside it."""
+        """The index of the first visible name, chosen to keep `at` visible."""
         if at is None or count <= rows:
             return 0
-        # Centre the highlighted name where there is room on both sides, so
-        # that what is coming up is as visible as what has gone by.
+        # Center the highlighted name when possible.
         return max(0, min(at - rows // 2, count - rows))
 
     def _title(self, where: str, count: int, first: int, shown: int) -> str:
-        """What the border says: the directory, and how much of it is showing.
+        """The border title: the directory, and how many names are showing.
 
-        The count is kept whole and the directory is cut to fit around it,
-        from the left: the end of a path says where it is, and the start of one
-        is usually the part that was the same for everything on offer anyway.
+        The count is always shown in full, and the directory is truncated from the left
+        to fit, since the end of a path is the informative part.
         """
         seen = f"{first + 1}-{first + shown}"
         tally = f"{count}" if shown >= count else f"{seen} of {count}"
-        # The title sits in the top border, between the corners, and carries
-        # the dashes, the spaces and the dividing hyphen around the two parts.
+        # Leave room for the corners, padding and the hyphen between the two parts.
         room = self.size.width - len(tally) - 10
         if room > 0 and len(where) > room:
             where = "..." + where[-(room - 3) :]
@@ -877,42 +780,35 @@ class CompletionList(Band):
 class MenuBand(Band):
     """A menu of words, one of them highlighted in inverse video.
 
-    Where each word was drawn is kept as it is drawn, so that a click can be
-    answered with the word it landed on. The words are the only thing on the
-    band a mouse has any business with: the title is a caption.
+    Word positions are recorded while drawing, so clicks can be mapped to words. The
+    title isn't clickable.
 
-    The word the pointer is resting on is underlined, which is the one thing
-    the band says about the mouse rather than about the session: a menu of
-    words a keyboard drives does not otherwise look clickable, and a mark that
-    follows the pointer is how it says that it is.
+    The word under the mouse pointer is underlined, to show that the keyboard-driven
+    menu is also clickable.
     """
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        #: The menu on the band, so that a resize can lay it out again.
+        #: The menu shown, kept for relayout on resize.
         self._showing: tuple[Menu, int | None] | None = None
-        #: The columns each word took, as row, first column, last column and
-        #: which word of the menu it is.
+        #: Each word's row, start column, end column, and index in the menu.
         self._words: list[tuple[int, int, int, int]] = []
-        #: The screen cell the pointer is resting on, or None while it is
-        #: resting on nothing this band offers. Kept as a cell rather than as a
-        #: word, so that a band drawn again - a submenu opened under a pointer
-        #: that has not moved, a terminal resized - marks whatever word now
-        #: stands there.
+        #: The screen cell under the pointer, or None. Stored as a cell rather than a
+        #: word, so that after a redraw (a submenu opening, a resize) the word now at
+        #: that cell is marked.
         self._pointer: Offset | None = None
 
     def say(self, text: str) -> None:
-        """Put one line of plain text on the band in place of a menu.
+        """Show one line of plain text instead of a menu.
 
-        What a demonstration's script is shown on: the comment above the
-        expression it has just run stands where the menu words go.
+        Used by demo scripts to show the comment for the expression just run.
         """
         self._showing = None
         self._words = []
         self.put([Text(f" {text}", style=self.colors["option"], no_wrap=True)])
 
     def show(self, menu: Menu, highlighted: int | None) -> None:
-        """Render `menu`; `None` highlights nothing, as while Quit asks."""
+        """Render `menu`. `None` highlights nothing, as while Quit asks to confirm."""
         self._showing = (menu, highlighted)
         prefix = f" {menu.title} "
         indent = " " * len(prefix)
@@ -930,11 +826,9 @@ class MenuBand(Band):
         self._words = [word for word in words if word[0] < shown]
 
     def point_at(self, offset: Offset | None) -> None:
-        """Rest the pointer on the screen cell `offset`, or on nothing at all.
+        """Record the pointer at screen cell `offset`, or nowhere if None.
 
-        The band is drawn again only when this changes which word the pointer
-        is over, a word being as many cells wide as it has letters and the
-        pointer crossing every one of them on its way across.
+        Redraws only when the word under the pointer changes.
         """
         moved = self.word_at(offset) != self.word_at(self._pointer)
         self._pointer = offset
@@ -942,11 +836,7 @@ class MenuBand(Band):
             self.show(*self._showing)
 
     def word_at(self, offset: Offset | None) -> int | None:
-        """Which word of the menu the screen cell `offset` is on, if any is.
-
-        None where the cell is on none of them, and where there is no cell:
-        a pointer that is off the band is on no word.
-        """
+        """The index of the menu word at screen cell `offset`, or None."""
         if offset is None:
             return None
         point = self.within(offset)
@@ -956,15 +846,15 @@ class MenuBand(Band):
         return None
 
     def on_resize(self) -> None:
-        """Lay the menu out again for the width the terminal now has."""
+        """Relayout the menu for the new terminal width."""
         if self._showing is not None:
             self.show(*self._showing)
 
     def _mark(self, rows: list[Text], words: list[tuple[int, int, int, int]]) -> None:
-        """Underline the word the pointer is resting on, if it is on one.
+        """Underline the word under the pointer, if any.
 
-        Read off the layout just made rather than off the last one, so that a
-        word that has moved under a pointer standing still is the word marked.
+        Uses the new layout rather than the previous one, so a word that moved under a
+        stationary pointer is the one marked.
         """
         if self._pointer is None:
             return
@@ -975,16 +865,13 @@ class MenuBand(Band):
                 return
 
     def _rows(self, menu: Menu, prefix: int) -> list[list[int]]:
-        """Which words go on each row, as indices into the menu.
+        """The words on each row, as indices into the menu.
 
-        Every row carries the same prefix - the title, or the indent that
-        stands under it - so all of them have the same room for words.
+        Every row has a prefix of the same width (the title, or an indent under it).
 
-        The break the menu names is kept while both of its lines fit, which is
-        what keeps eighty columns showing what the original shows. Once one of
-        them does not, that break is a convention about a width this terminal
-        has not got, and the words are packed across the rows instead: fewer
-        rows than breaking each line separately takes, and none half empty.
+        The menu's own line break is kept while both lines fit, so eighty columns look
+        like Derive. Otherwise all words are packed across rows, which takes fewer rows
+        than wrapping each line separately.
         """
         room, widths = self.room(prefix), [len(word) for word in menu.words]
         break_at = min(menu.first_line, len(menu.words))
@@ -1003,7 +890,7 @@ class MenuBand(Band):
         indices: list[int],
         highlighted: int | None,
     ) -> tuple[Text, list[tuple[int, int, int]]]:
-        """One row of the menu, and the columns each word on it took."""
+        """One row of the menu, and the columns of each word on it."""
         colors = self.colors
         text = Text(prefix, style=colors["option"], no_wrap=True)
         placed = []
@@ -1019,28 +906,24 @@ class MenuBand(Band):
 
 
 class FieldBand(Band):
-    """An Options dialog: its title and its fields, the active one live.
+    """An Options dialog: its title and fields, with the active one editable.
 
-    A field that is not the active one shows its value in parentheses, the way
-    the original distinguishes "this is what it is set to" from "this is what
-    you are setting".
+    As in Derive, inactive fields show their value in parentheses, distinguishing the
+    current setting from the one being edited.
 
-    A line may also carry a plain word, which is printed where it stands and is
-    no field: the variable whose bounds `Declare Variable Interval` is asking
-    for stands between the two bounds.
+    A line may also contain a plain word that isn't a field, such as the variable name
+    between the two bounds in `Declare Variable Interval`.
 
-    Where every field and every one of its choices was drawn is kept as it is
-    drawn, so that a click can be answered with what it landed on: the field, or
-    the one value of it the pointer is over. A dialog laid out for the width
-    there is has no fixed columns to compute them from afterwards.
+    Positions of fields and their choices are recorded while drawing, so clicks can be
+    mapped to a field or value. The layout depends on the width, so they can't be
+    computed afterwards.
     """
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        #: The dialog on the band, so that a resize can lay it out again.
+        #: The dialog shown, kept for relayout on resize.
         self._showing: DialogEditor | None = None
-        #: Where each field went, as its row, the columns it took, which field
-        #: of the dialog it is, and the columns each of its choices took.
+        #: Where each field and its choices were drawn.
         self._places: list[_Place] = []
 
     def show(self, editor: DialogEditor) -> None:
@@ -1053,15 +936,12 @@ class FieldBand(Band):
         for number, items in enumerate(editor.lines):
             prefix = f" {title} " if number == 0 else indent
             if not _captioned(items[0]):
-                # A field with no caption prints a space in front of its
-                # value, and that space is the one the title would print, so
-                # the title goes without: `MANAGE BRANCH: Principal Real Any`.
-                # The value still begins in the column the next line indents
-                # to, which is what keeps the two lines square.
+                # An uncaptioned field starts with a space, so drop the title's trailing
+                # space: `MANAGE BRANCH: Principal Real Any`. The value still starts at
+                # the column the next line indents to.
                 prefix = prefix[:-1]
             drawn: list[Text] = []
-            # Which field each of them is, and where its choices are inside it;
-            # a plain word is neither and belongs to no field at all.
+            # The field index of each item and its choices; None and () for plain words.
             owners: list[int | None] = []
             choices: list[tuple[tuple[str, int, int], ...]] = []
             for item in items:
@@ -1075,10 +955,8 @@ class FieldBand(Band):
                 owners.append(index)
                 choices.append(offered)
                 index += 1
-            # A line too wide for the terminal is broken between its fields
-            # and carried on under the title, the same way a menu too wide for
-            # it is. A field is never split: what is asked and what stands as
-            # the answer belong beside each other.
+            # A line too wide for the terminal wraps between fields and continues under
+            # the title, like a menu. Fields themselves are never split.
             widths = [item.cell_len for item in drawn]
             tails = [cell_len(item.plain.rstrip()) for item in drawn]
             room = self.room(len(indent))
@@ -1114,12 +992,11 @@ class FieldBand(Band):
         self._places = [place for place in places if place.row < shown]
 
     def field_at(self, offset: Offset) -> tuple[int, str | None] | None:
-        """What the screen cell `offset` is on: which field, and which choice.
+        """The field and choice at screen cell `offset`.
 
-        The choice is None where the cell is on the field but on no value of it
-        - a label, or the blanks a number field is padded out to - which is a
-        cell that says which field without saying what to set it to. None
-        altogether where the cell is on no field: a plain word, or the title.
+        The choice is None if the cell is on the field but not on a value, such as its
+        label or a number field's padding. Returns None if the cell is on no field, such
+        as a plain word or the title.
         """
         point = self.within(offset)
         for place in self._places:
@@ -1132,22 +1009,20 @@ class FieldBand(Band):
         return None
 
     def on_resize(self) -> None:
-        """Lay the dialog out again for the width the terminal now has."""
+        """Relayout the dialog for the new terminal width."""
         if self._showing is not None:
             self.show(self._showing)
 
     def _field(
         self, editor: DialogEditor, field: Field, active: bool
     ) -> tuple[Text, tuple[tuple[str, int, int], ...]]:
-        """A field as it is drawn, and where each choice of it went inside that.
+        """A field as drawn, and the columns of its choices.
 
-        The columns are the field's own; the caller offsets them by where it
-        put the field. A field with nothing to pick from - one that is typed
-        into, or one whose choices are too many to print - offers none.
+        The columns are relative to the field; the caller offsets them. Typed fields,
+        and fields with too many choices to print, return no choices.
         """
         colors = self.colors
-        # A field with no label of its own is printed as its value alone, which
-        # is how the strictness of an interval bound is shown.
+        # A field without a label prints only its value, as with interval strictness.
         label = f"{field.label}:" if field.label else ""
         text = Text(label, style=colors["option"], no_wrap=True)
         current = editor.value(field)
@@ -1172,7 +1047,7 @@ class FieldBand(Band):
         active: bool,
         width: int,
     ) -> None:
-        """A field that is typed into: its value, and the cursor when it is live."""
+        """Append a typed field's value, with the cursor if it is active."""
         if not active:
             text.append(f" {str(current).ljust(width)}")
             return
@@ -1183,7 +1058,7 @@ class FieldBand(Band):
             text.append(character, style=cursor if position == editor.cursor else None)
         written = len(typed)
         if editor.cursor >= len(typed):
-            # Past the last character, the cursor is a cell of its own.
+            # At the end of the text, the cursor occupies its own cell.
             text.append(" ", style=cursor)
             written += 1
         text.append(" " * max(0, width - written))
@@ -1205,11 +1080,10 @@ class FieldBand(Band):
     def _parenthesized(
         text: Text, field: ChoiceField, current: str | int
     ) -> tuple[tuple[str, int, int], ...]:
-        """`Mode:(Character)Word` - the parentheses eat the spaces beside them.
+        """`Mode:(Character)Word`, where the parentheses replace the adjacent spaces.
 
-        Each choice takes the blank in front of it as well, so that every column
-        of the field belongs to the word it stands beside and a click between
-        two of them lands on one rather than on neither.
+        Each choice includes the blank before it, so a click between two choices lands
+        on one of them.
         """
         offered = []
         for index, choice in enumerate(field.choices):
@@ -1225,16 +1099,15 @@ class FieldBand(Band):
 
 
 class Panes(Container):
-    """The region the windows are drawn in: their borders and their contents.
+    """The region holding the windows, with their borders and contents.
 
-    The work areas are placed over it absolutely, one per window, and the
-    frame beneath them draws what is between. Both are asked for again
-    whenever this is resized, since where a divider falls is a question about
-    how much room there is.
+    The work areas, one per window, are positioned absolutely over it, and the frame
+    beneath draws the borders. Both are recomputed on resize, since divider positions
+    depend on the size.
     """
 
     def drawing(self) -> Drawing:
-        """The border as it stands, one row longer than this widget is tall."""
+        """The current border drawing, one row taller than this widget."""
         return self.app.windows.frame(self.size.height, self.size.width)
 
     def on_resize(self) -> None:
@@ -1244,11 +1117,9 @@ class Panes(Container):
 class Frame(Band):
     """The borders around and between the windows.
 
-    Blank while there is one window, which is how the original draws an
-    unsplit screen: no frame at all, and the whole 80 by 20 for expressions.
-    The number in each window's upper left corner is drawn here too, and the
-    active window's is the one cell of the frame in inverse video - which is
-    the only mark on screen saying which window a command would act on.
+    Blank with a single window, as in Derive, where an unsplit screen has no frame. Each
+    window's number is drawn in its upper left corner, and the active window's number
+    is in inverse video, the only indication of which window commands act on.
     """
 
     def render(self) -> Text:
@@ -1266,9 +1137,8 @@ class Frame(Band):
 class MenuRule(Band):
     """The rule between the work area and the command bands.
 
-    It is the window frame's bottom edge, so it carries the corners and the
-    feet of every vertical divider once the screen has been split, and is a
-    plain rule while it has nothing to join.
+    It is the bottom edge of the window frame, so it includes the corners and the ends
+    of vertical dividers once the screen is split.
     """
 
     def render(self) -> Text:
@@ -1279,25 +1149,19 @@ class MenuRule(Band):
 class StatusLine(Band):
     """Bottom line: selection annotation, current file, memory field, pane type.
 
-    Everything on it belongs to the active window: the annotation is the one
-    on the expression highlighted there, and the pane field names that
-    window's type. One line for however many windows are open, as the original
-    has it.
+    Everything on it refers to the active window: the annotation of its highlighted
+    expression and its pane type. As in Derive, there is one status line regardless of
+    the number of windows.
     """
 
     annotation = ""
     file = ""
-    #: The original's muLISP heap gauge lived here, saying how much of its
-    #: workspace was still free. The slot now says how much memory the process
-    #: holds, which is the closest thing a hosted program can report, and stays
-    #: empty on a platform that will not say.
+    #: Memory used by the process, in place of Derive's muLISP free-heap gauge. Empty on
+    #: platforms that don't report it.
     center = ""
-    #: The mode words that stand beside the memory field: `Ovr` while the text
-    #: input mode is overwrite rather than insert, `Lin` while the arrow keys
-    #: belong to the line being edited rather than to the highlight. Each is
-    #: named only in the state that is the odd one out, so the line stays quiet
-    #: where a line behaves as it usually does, and quiet altogether where
-    #: there is no line being typed.
+    #: Mode indicators next to the memory field: `Ovr` in overwrite mode, `Lin` when the
+    #: arrow keys move within the input line rather than the highlight. Each appears only
+    #: in the non-default state, and neither when no line is being edited.
     flags = ""
     pane = "Rederive Algebra"
 
@@ -1306,7 +1170,7 @@ class StatusLine(Band):
         self.set_interval(_MEMORY_PERIOD, self._read_memory)
 
     def _read_memory(self) -> None:
-        """Take the memory field's reading, repainting only when it moves."""
+        """Update the memory field, repainting only when it changes."""
         center = memory.label()
         if center != self.center:
             self.center = center
@@ -1323,11 +1187,9 @@ class StatusLine(Band):
         self.refresh()
 
     def indicate(self, flags: str) -> None:
-        """Set the mode words alone, the rest of the line standing as it is.
+        """Update only the mode indicators.
 
-        A key that changes how the line being typed behaves changes nothing
-        else on screen, and a whole refresh would have to know what band the
-        command it interrupted had up.
+        A full refresh would need to know which band the interrupted command had up.
         """
         if flags != self.flags:
             self.flags = flags

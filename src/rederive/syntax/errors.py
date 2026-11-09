@@ -1,7 +1,7 @@
-"""The one syntax error.
+"""The syntax error exception.
 
-One exception type, one message, one position. Lexer and parser both raise it;
-there is deliberately no hierarchy and no second message.
+The lexer and parser both raise this single exception type, with one message and one
+position. There is deliberately no hierarchy.
 """
 
 from __future__ import annotations
@@ -15,10 +15,9 @@ if TYPE_CHECKING:
 class DeriveSyntaxError(Exception):
     """A rejected expression.
 
-    `offset` is where the parser stopped, which is not necessarily where the
-    mistake is. `expected` is a short machine-readable hint that the v1 TUI
-    never shows; it exists so a richer front end can do better without changing
-    the engine.
+    `offset` is where the parser stopped, which may not be where the mistake is.
+    `expected` is a short machine-readable hint, unused by the TUI but available to a
+    richer front end.
     """
 
     def __init__(self, offset: int, expected: str, source: Source | None = None) -> None:

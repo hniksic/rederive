@@ -1,10 +1,9 @@
-"""Node -> sympy and back: the engine's two doors.
+"""Conversion from nodes to sympy and back.
 
-What is checked here is the translation, not the mathematics. A case asserts
-either what sympy object a construct becomes or that the text survives the
-round trip - author text -> tree -> sympy -> text - which is the property
-every command depends on and the only thing that keeps an unknown construct
-alive.
+These tests check the translation, not the mathematics. A case asserts either which
+sympy object a construct becomes, or that the text survives the round trip (text -> tree
+-> sympy -> text). Every command depends on the round trip, and it is the only thing that
+preserves constructs the engine doesn't understand.
 """
 
 from __future__ import annotations
@@ -50,11 +49,10 @@ def parse(text, state=None):
 
 
 def declaring(*names):
-    """A parse state in which each of `names` is a function, as defining it makes it.
+    """A parse state in which each of `names` is declared a function.
 
-    Upper case is how a function is written and not what makes a name one: before a
-    parenthesis a name nothing defines is a product, in Character mode of its
-    letters.
+    Upper case alone doesn't make a name a function: an undefined name before a
+    parenthesis is a product (in Character mode, of its letters).
     """
     state = ParseState()
     for name in names:
@@ -76,8 +74,8 @@ def written(text, context=None, state=None):
 def roundtrip(text, context=None, state=None):
     """The text after one pass through the engine, and after two.
 
-    Equal values mean the printer's output is a fixed point, which is what
-    makes a result safe to put in the worksheet and read back later.
+    Equal values mean the printer's output is a fixed point, so a result can safely be
+    stored in the worksheet and read back.
     """
     context = context or Context()
     first = from_sympy(convert(text, context, state), context)
@@ -118,13 +116,11 @@ def test_e_and_i_are_variables():
 
 
 def test_a_decimal_is_rounded_to_the_precision_in_approximate_mode():
-    """An approximate number is a rational: the simplest one the precision allows.
+    """An approximate number becomes the simplest rational the precision allows.
 
-    One tenth needs no digits, so it approximates itself. A number that needs
-    more digits than there are does not: six of them cannot tell
-    `123456789/10000` from `308642/25`, so that is what approximate mode reads
-    it as - the original's own answer - and it is the rounding on the way in
-    that makes approximate arithmetic approximate.
+    One tenth is exact. With six digits, `123456789/10000` is indistinguishable from
+    `308642/25`, so approximate mode reads it as the latter, matching the original. This
+    rounding on input is what makes approximate arithmetic approximate.
     """
     approximate = Context(precision=Precision.APPROXIMATE)
     assert convert("0.1", approximate) == sp.Rational(1, 10)
@@ -204,29 +200,27 @@ def test_a_subscript_on_a_matrix_selects_a_row():
 
 
 def test_a_subscript_reaches_through_every_dimension_there_is():
-    """`SUB` is `ELEMENT` under another spelling, so it goes as deep.
+    """`SUB` is another spelling of `ELEMENT`, so it reaches equally deep.
 
-    A base is a vector however the vector is held, the inert one a vector of
-    matrices is included, and each index in the chain takes an element out of
-    what the one before reached."""
+    This includes the inert vector that holds a vector of matrices. Each index in the
+    chain selects from the result of the previous one."""
     assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB 2 SUB 1 SUB 2") == 6
     assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB [2, 1, 2]") == 6
 
 
 def test_a_subscript_on_a_vector_with_no_index_yet_keeps_the_access():
-    """An index still a variable leaves the access itself to be made later.
+    """A variable index defers the access.
 
-    That is what a generated `VECTOR` body rests on: the body is converted
-    while the index is a variable, and the call is worth making again once a
-    number has been written in."""
+    A generated `VECTOR` body relies on this: the body is converted while the index is
+    still a variable, and re-evaluated once a number is substituted."""
     held = convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB i")
     assert isinstance(held, AppliedUndef)
     assert type(held).__name__ == "ELEMENT"
 
 
 def test_a_transpose_of_a_matrix_is_a_matrix_and_of_a_scalar_is_the_scalar():
-    # 8.5 p.205: the transpose of a scalar is the scalar, and everything not
-    # declared nonscalar is one. What is no expression at all keeps the head.
+    # 8.5 p.205: the transpose of a scalar is the scalar, and anything not declared
+    # nonscalar is a scalar. A non-expression such as an equation keeps the head.
     assert convert("[[1, 2], [3, 4]]`") == sp.Matrix([[1, 3], [2, 4]])
     assert convert("a`") == sp.Symbol("a", real=True)
     assert convert("a``") == sp.Symbol("a", real=True)
@@ -255,7 +249,7 @@ def test_a_dot_of_shapes_that_will_not_multiply_stays_inert():
 
 
 def test_multiplying_two_vectors_is_their_dot_product():
-    # Nothing else can be meant, and sympy will not multiply the shapes.
+    # Nothing else makes sense, and sympy won't multiply these shapes.
     assert convert("[2, 3] * [4, 5]") == sp.Integer(23)
 
 
@@ -276,13 +270,12 @@ def test_a_relation_is_assembled_and_not_decided():
 
 
 def test_a_relation_chain_is_the_conjunction_it_means():
-    """`1 <= a <= b` says two things about `a`, which is what the shipped
-    library writes it for. Reading it as the grammar nests it would be
-    comparing the truth value of the first link with `b`.
+    """`1 <= a <= b` constrains `a` on both sides, as the shipped library intends.
+    Nesting it as the grammar does would compare the truth value of `1 <= a` with `b`.
 
-    The links are held in canonical form, a conjunction holding its operands in
-    a set: `1 <= a` and `a >= 1` have to be one object or the order the pair
-    comes back in would depend on which of the two spellings was written."""
+    The links are canonicalized, because a conjunction stores its operands in a set:
+    `1 <= a` and `a >= 1` must be the same object, or the order of the pair would depend
+    on which spelling was written."""
     a, b, c = sp.symbols("a b c", real=True)
     assert convert("1 <= a <= b") == sp.And(sp.Ge(a, 1), sp.Le(a, b))
     assert convert("a >= 1 AND a <= b") == convert("1 <= a <= b")
@@ -310,11 +303,10 @@ def test_a_flat_vector_is_a_row_and_a_nested_one_is_a_matrix():
 
 
 def test_a_vector_of_matrices_keeps_its_elements_whole():
-    """A matrix has two dimensions and no more, so a deeper vector is none.
+    """A matrix has only two dimensions, so a deeper vector isn't a matrix.
 
-    Stacking the elements would run the rows of the two 2x2 matrices together
-    into one 2x4 and lose the dimension that was written, which is the
-    dimension a table of Christoffel symbols is built out of."""
+    Stacking the elements would merge two 2x2 matrices into one 2x4 and lose the third
+    dimension, which tables of Christoffel symbols need."""
     vector = convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]")
     assert isinstance(vector, InertVector)
     assert vector.args == (sp.Matrix([[1, 2], [3, 4]]), sp.Matrix([[5, 6], [7, 8]]))
@@ -409,8 +401,7 @@ def test_a_calculus_head_converts_unevaluated():
     assert isinstance(convert("SUM(k, k, 1, 5)"), sp.Sum)
     assert isinstance(convert("PRODUCT(k, k, 1, 5)"), sp.Product)
     assert isinstance(convert("LIM(SIN(x)/x, x, 0)"), sp.Limit)
-    # A series has no sympy head to be held in, so the engine has one, and it
-    # waits where the rest of them wait.
+    # Sympy has no unevaluated series head, so the engine provides one.
     assert isinstance(convert("TAYLOR(SIN(x), x, 0, 3)"), Taylor)
     assert convert("TAYLOR(SIN(x), x, 0, 3)").doit() == convert("x - x^3/6")
 
@@ -422,11 +413,11 @@ def test_a_two_sided_limit_stays_two_sided_and_a_side_is_kept():
 
 
 def test_a_conditional_converts_to_the_case_split_sympy_writes_it_as():
-    """The way back from a `Piecewise`, which is what makes a result settle.
+    """`IF` converts to `Piecewise`, so printed results round-trip.
 
-    Sympy answers a conditional integral with a `Piecewise` and the printer
-    writes it as the `IF` the notation has; reading that back as anything else
-    would leave a result whose written form changed on the next pass.
+    Sympy answers conditional integrals with a `Piecewise`, which the printer writes as
+    `IF`. Reading that back as anything else would change the written form on the next
+    pass.
     """
     conditional = convert("IF(x > 0, 1, -1)")
     assert isinstance(conditional, sp.Piecewise)
@@ -435,8 +426,8 @@ def test_a_conditional_converts_to_the_case_split_sympy_writes_it_as():
 
 
 def test_a_substitution_converts_back_from_the_vectors_it_is_written_as():
-    # Sympy holds a derivative taken at a point as a `Subs`, and it is the head
-    # that says the derivative inside is not to be evaluated.
+    # Sympy represents a derivative at a point as a `Subs`, which keeps the inner
+    # derivative unevaluated.
     y = sp.Symbol("y", real=True)
     substitution = convert("SUBS(DIF(F(v), v), [v], [y])", state=declaring("F"))
     assert isinstance(substitution, sp.Subs)
@@ -455,14 +446,12 @@ def test_a_substitution_converts_back_from_the_vectors_it_is_written_as():
     ids=str,
 )
 def test_a_sympy_class_name_is_no_function_name(text, letters):
-    """A function is called by a name of the notation's, not by a class sympy exports.
+    """Function names come from the notation, not from sympy's exported classes.
 
-    Sympy's hypergeometric and Bessel functions, its incomplete gammas and its
-    logarithmic integral have no name here, so writing one calls no sympy head: the
-    name is read as any name nothing defines is, letter by letter, and a function the
-    notation does know is found among the letters as it is in any other word. The
-    logarithmic integral is `EI(LN(x))` in the notation's own functions, and is
-    written that way.
+    Sympy's hypergeometric and Bessel functions, incomplete gammas and logarithmic
+    integral have no name here, so their sympy names are read like any undefined name:
+    letter by letter, with known functions found among the letters as in any word. The
+    logarithmic integral is written `EI(LN(x))`.
     """
     converted = convert(text)
     assert converted == convert(letters)
@@ -481,18 +470,17 @@ def test_a_sympy_class_name_is_no_function_name(text, letters):
     ids=str,
 )
 def test_a_sympy_class_name_takes_no_arguments(text):
-    # A name nothing defines is no function, and an argument list is only a product
-    # where it holds one argument.
+    # An undefined name isn't a function, and an argument list is only a valid factor
+    # when it holds one argument.
     with pytest.raises(DeriveSyntaxError):
         parse(text)
 
 
 def test_an_interval_converts_back_to_the_bounds_a_limit_answered_with():
-    """The way back from an `AccumBounds`, which is what the head stands for.
+    """`INTERVAL` converts back to sympy's `AccumBounds`.
 
-    The bounds are not a pair of numbers that look like a value: sympy computes
-    with the object itself, so reading `INTERVAL(-1, 1)` as anything else would
-    give a value that prints the same and adds up differently.
+    Sympy computes with the object itself, so reading `INTERVAL(-1, 1)` as anything else
+    would print the same but behave differently in arithmetic.
     """
     assert convert("INTERVAL(-1, 1)") == sp.AccumBounds(-1, 1)
     assert roundtrip("INTERVAL(-1, 1)") == ("INTERVAL(-1, 1)", "INTERVAL(-1, 1)")
@@ -504,24 +492,21 @@ def test_an_interval_converts_back_to_the_bounds_a_limit_answered_with():
     ids=str,
 )
 def test_an_interval_whose_bounds_are_no_bounds_stays_opaque(text):
-    """A range needs two ends, and the lower one has to be the lower one.
+    """An interval needs exactly two bounds, in increasing order.
 
-    Sympy's own constructor decides that where it can and the notation cannot
-    lean on it where it cannot: nothing says whether `x` is below two, and a
-    range that might be the wrong way round is not one. Each stays the call it
-    was written as rather than becoming a value of some other extent.
+    Sympy's constructor can't always check this: nothing says whether `x` is below two,
+    and a possibly reversed range is not a valid one. Each case stays the call it was
+    written as.
     """
     assert isinstance(convert(text), AppliedUndef)
 
 
 def test_a_sum_over_the_roots_of_a_polynomial_converts_back_from_its_bound_form():
-    """The way back from a `RootSum`, whose summand is a `Lambda`.
+    """`ROOT_SUM` converts back to a `RootSum`, whose summand is a `Lambda`.
 
-    A lambda is not something the notation writes, and it does not have to be:
-    naming the bound variable second is what every binding head does, and the
-    summand written in that variable says the same thing. Reading it back has
-    to rebuild the head itself - a sum over roots reassembled from its parts is
-    a different object, and one the printer would then write differently.
+    The notation has no lambda; like every binding head, it names the bound variable as
+    the second argument. Reading back must rebuild the `RootSum` itself, since a sum
+    reassembled from its parts is a different object that prints differently.
     """
     x, t = sp.Symbol("x", real=True), sp.Symbol("t", real=True)
     summed = convert("ROOT_SUM(t^3 + t + 1, t, t*LN(x - t))")
@@ -533,11 +518,10 @@ def test_a_sum_over_the_roots_of_a_polynomial_converts_back_from_its_bound_form(
 
 
 def test_a_single_root_of_a_polynomial_carries_the_index_that_picks_it():
-    """`ROOT_OF(p, t, n)`, where sympy carries the polynomial and the index.
+    """`ROOT_OF(p, t, n)` maps to sympy's `CRootOf`, which holds the polynomial and index.
 
-    The generator is not one of the class's own arguments, so the printer reads
-    it off the polynomial; without it the second root of a quintic and the
-    third would be written the same way.
+    The generator isn't an argument of the class, so the printer reads it from the
+    polynomial. The index keeps different roots of the same quintic distinct.
     """
     t = sp.Symbol("t", real=True)
     assert convert("ROOT_OF(t^5 - t - 1, t, 0)") == sp.CRootOf(t**5 - t - 1, t, 0)
@@ -563,31 +547,27 @@ def test_a_single_root_of_a_polynomial_carries_the_index_that_picks_it():
     ids=str,
 )
 def test_a_root_head_given_arguments_it_cannot_take_stays_opaque(text):
-    """None of these names a root, so none of them is read as one.
+    """None of these denote roots, so each stays the call it was written as.
 
-    A sine and a constant have no roots for a sum to run over, a polynomial in
-    two variables none until one of them is chosen, a half is no index and a
-    ninth root of a quintic is no root at all. Each stays the call it was
-    written as, which is what the inventory's totality test asks of every name
-    in it.
+    A sine and a constant aren't polynomials, a polynomial in two variables has no roots
+    until one is chosen, a half is not an index, and a quintic has no ninth root. The
+    inventory's totality test requires every name to behave this way.
     """
     assert isinstance(convert(text), AppliedUndef)
 
 
 def test_the_hyperbolic_integrals_are_named_rather_than_upper_cased():
-    """`CHI` is Derive's, so sympy's `Chi` is given a name of its own.
+    """Sympy's `Chi` and `Shi` are named `COSH_INT` and `SINH_INT`.
 
-    Upper-casing writes the hyperbolic cosine integral as `CHI`, which is the
-    chi-square distribution here and reads back as one - two functions under one
-    spelling, and no complaint from anything. Derive shipped no cosh-integral,
-    so `COSH_INT` is free, and its partner is written to match.
+    Upper-casing `Chi` would give `CHI`, which in Derive is the chi-square distribution,
+    silently conflating two functions. Derive had no cosh-integral, so `COSH_INT` is free.
     """
     x = sp.Symbol("x", real=True)
     assert convert("COSH_INT(x)") == sp.Chi(x)
     assert convert("SINH_INT(x)") == sp.Shi(x)
     assert roundtrip("COSH_INT(x)") == ("COSH_INT(x)", "COSH_INT(x)")
     assert roundtrip("SINH_INT(x)") == ("SINH_INT(x)", "SINH_INT(x)")
-    # The name the distribution had is still the distribution's.
+    # `CHI` is still the distribution.
     assert convert("CHI(x)") == sp.sign(x) / 2 - sp.sign(x - 1) / 2
 
 
@@ -611,7 +591,7 @@ def test_a_special_function_of_rederives_own_converts_and_reads_back(text, expec
 
 
 def test_the_polygamma_function_of_order_zero_is_the_digamma_function():
-    # Sympy has no digamma call of its own to hold, so the two spellings are one.
+    # Sympy has no separate digamma class, so the two spellings are the same object.
     assert convert("POLYGAMMA(0, x)") == convert("DIGAMMA(x)")
     assert written("POLYGAMMA(0, x)") == "DIGAMMA(x)"
 
@@ -620,15 +600,14 @@ def test_the_polygamma_function_of_order_zero_is_the_digamma_function():
     "name", ["SOLVE", "FIT", "ITERATE", "TRUTH_TABLE", "RANDOM"], ids=str
 )
 def test_a_name_derive_defines_is_not_displaced_by_a_sympy_head(name):
-    # The inventory has a reading of its own for each of these, and this call
-    # is one none of them can take; nothing found among sympy's classes may
-    # step in and answer it instead.
+    # Each of these has its own reading in the inventory that rejects this call; no sympy
+    # class of the same name may answer it instead.
     assert isinstance(convert(f"{name}(x, 2)"), AppliedUndef)
 
 
 def test_the_arbitrary_point_on_the_unit_circle_carries_no_assumptions():
-    # Real is exactly what it is not: 1, -1, #i and -#i are all of them points
-    # on it, so nothing that needs a real variable may fire on it.
+    # It isn't real: 1, -1, #i and -#i are all on the circle, so no rule that needs a
+    # real variable may fire.
     assert convert("unit_circle").is_real is None
     assert written("SQRT(unit_circle^2)") == "SQRT(unit_circle^2)"
 
@@ -641,7 +620,7 @@ def test_an_arbitrary_function_is_an_opaque_head_that_can_be_differentiated():
 
 
 def test_a_table_function_given_arguments_it_cannot_take_stays_opaque():
-    # Better an untouched call than a guess at what was meant.
+    # Better an untouched call than a guess.
     assert isinstance(convert("SIN(1, 2)"), AppliedUndef)
     assert written("SIN(1, 2)") == "SIN(1, 2)"
 
@@ -674,9 +653,8 @@ def test_radian_mode_still_understands_the_degree_constant():
 
 # -- round trips -------------------------------------------------------------
 
-#: One case per node kind, so that nothing the parser can build is lost on the
-#: way through sympy. `PARAMS` and `INTERVAL` ride along inside the definition
-#: and the declaration that own them.
+#: One case per node kind, so nothing the parser builds is lost through sympy. `PARAMS`
+#: and `INTERVAL` are covered inside the definition and declaration that contain them.
 KINDS = [
     "2/3",
     "x",
@@ -720,9 +698,8 @@ def test_a_construct_survives_the_round_trip(text):
     assert first == second
 
 
-#: Expressions already in the form the engine writes. These must come back
-#: character for character: what sympy has nothing to do to, it must not
-#: change. Anything sympy does evaluate belongs in the cases above instead.
+#: Expressions already in engine form, which must come back character for character.
+#: Anything sympy evaluates belongs in the cases above instead.
 UNCHANGED = [
     "x",
     "-x",
@@ -787,7 +764,7 @@ UNCHANGED = [
 
 @pytest.mark.parametrize("text", UNCHANGED)
 def test_an_expression_already_in_engine_form_comes_back_unchanged(text):
-    # With the functions the cases call defined, as an author would have them.
+    # Declare the functions the cases call, as an author would.
     assert written(text, state=declaring("F", "MY_FUNCTION")) == text
 
 
@@ -815,8 +792,8 @@ def test_every_node_kind_is_covered_by_a_round_trip_case():
         ("u :==", "u :=="),
         ("[[1, 2], [3]]", "[[1, 2], [3]]"),
         ("SOLVE(x^2 = 1, x)", "SOLVE(x^2 = 1, x)"),
-        # Four arguments, the last of them the value where the test cannot be
-        # decided: no `Piecewise` holds that, and the head stays inert.
+        # The fourth argument is the value when the test is undecidable. `Piecewise`
+        # can't express that, so the head stays inert.
         ("IF(x > 0, 1, -1, 0)", "IF(x > 0, 1, -1, 0)"),
     ],
     ids=str,

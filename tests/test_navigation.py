@@ -1,7 +1,7 @@
 """Selection and navigation rules, as pure model operations.
 
-The selection is a route into what was drawn, so these tests read it back as
-the cells it covers - what would be in inverse video on screen.
+Tests read the selection back as the screen cells it covers, i.e. what would be shown in
+inverse video.
 """
 
 import pytest
@@ -21,7 +21,7 @@ def session():
 
 
 def selected_text(session):
-    """The selected rectangle, as its rows with the padding stripped."""
+    """The rows of the selected rectangle, with trailing padding stripped."""
     entry = session.selected_entry
     top, left, height, width = session.selection_rect()
     rows = entry.layout.lines[top : top + height]
@@ -50,7 +50,7 @@ def test_a_line_that_does_not_parse_is_not_entered():
         session.author("12.34.5")
     assert session.entries == []
     assert session.selected is None
-    # The manual's own example: the cursor lands on the second decimal point.
+    # The manual's example: the cursor lands on the second decimal point.
     assert caught.value.offset == 5
 
 
@@ -83,7 +83,7 @@ def test_worked_example(session):
 
 
 def test_the_selection_names_the_subexpression_it_covers(session):
-    """`selected_node` is how an operation gets back to what is selected."""
+    """`selected_node` returns the selected subexpression."""
     session.move_first_entry()
     assert to_sexpr(session.selected_node) == "(* x (+ x 1))"
     session.move_right()
@@ -134,7 +134,7 @@ def test_stepping_back_in_returns_to_the_operand_you_left():
     assert selected_text(session) == "(a + b)·(c + d)"
     session.move_right()
     assert selected_text(session) == "c + d"
-    # Whichever arrow steps in, and however deep it was left.
+    # This works with either arrow and at any depth.
     session.move_down()
     session.move_right()
     assert selected_text(session) == "d"
@@ -147,7 +147,7 @@ def test_stepping_back_in_returns_to_the_operand_you_left():
 
 
 def test_each_operand_remembers_its_own_place():
-    """The place is the node's own, so a detour through a sibling keeps it."""
+    """The remembered place is per node, so a detour through a sibling keeps it."""
     session = Session()
     session.author("(p + q) (r + s)")
     session.move_right()
@@ -157,8 +157,8 @@ def test_each_operand_remembers_its_own_place():
     session.move_up()
     session.move_right()
     session.move_down()
-    # An operand not stepped into before starts at the first, and not wherever
-    # its sibling happens to stand.
+    # An operand not entered before starts at its first child, regardless of where
+    # its sibling was left.
     assert selected_text(session) == "r"
     session.move_up()
     session.move_left()
@@ -176,10 +176,10 @@ def test_end_leaves_a_place_to_return_to(session):
 
 
 def test_only_one_expression_remembers_at_a_time():
-    """Stepping into another expression is what takes the memory over.
+    """Stepping into another expression makes the first one forget its place.
 
-    Selecting one as a whole on the way past does not, which is what makes
-    looking down the history and coming back land where it left off.
+    Merely selecting another expression as a whole does not, so you can look down the
+    history and come back to where you left off.
     """
     session = Session()
     session.author("(a + b) (c + d)")
@@ -194,7 +194,7 @@ def test_only_one_expression_remembers_at_a_time():
     session.move_up()
     session.move_right()
     assert selected_text(session) == "c + d"
-    # Now step into it, and the first expression has forgotten.
+    # Stepping into it makes the first expression forget.
     session.move_up()
     session.move_down()
     session.move_right()
@@ -239,7 +239,7 @@ def test_atoms_have_nothing_to_descend_into(session):
 
 
 def test_a_run_offers_its_terms_and_not_its_pairs():
-    """What the cursor visits is decided by the render, not by the parse."""
+    """Navigation follows the rendered structure, not the parse tree."""
     session = Session()
     session.author("a + b - c")
     session.move_right()
@@ -247,7 +247,7 @@ def test_a_run_offers_its_terms_and_not_its_pairs():
     session.move_right()
     assert selected_text(session) == "b"
     session.move_right()
-    # The sign belongs to the run, so the third term is `c` and not `- c`.
+    # The sign belongs to the run, so the third term is `c`, not `- c`.
     assert selected_text(session) == "c"
     assert not session.move_right()
 
@@ -271,9 +271,8 @@ def test_a_selection_is_the_rectangle_a_subexpression_covers():
 
 # -- paging -------------------------------------------------------------------
 #
-# A page is however much of the history is on screen, so these tests say how
-# tall the pane is: 20 rows, which is the original's. The landings were checked
-# against it, key by key.
+# A page is however much history fits on screen, so these tests pass the pane height: 20
+# rows, as in the original. Landing positions were checked against the original.
 
 
 def paged(session):
@@ -285,8 +284,8 @@ def test_a_page_is_the_expressions_a_pane_holds():
     for number in range(1, 31):
         session.author(str(number))
     session.jump(20)
-    # Ten one-line expressions fit, blank lines between them counted, so a
-    # page keeps the expression it started from in view at the far edge.
+    # Ten one-line expressions fit, counting blank lines between them, and a page
+    # keeps the starting expression in view at the far edge.
     assert session.move_page_up(20) and paged(session) == 11
     assert session.move_page_up(20) and paged(session) == 2
 
@@ -296,7 +295,7 @@ def test_a_page_of_built_up_expressions_is_fewer_of_them():
     for number in range(1, 21):
         session.author(f"{number}/2")
     session.jump(20)
-    # Three rows each, so five to a pane rather than ten.
+    # Three rows each, so five per pane rather than ten.
     assert session.move_page_up(20) and paged(session) == 16
     assert session.move_page_up(20) and paged(session) == 12
     assert session.move_page_down(20) and paged(session) == 16
@@ -307,8 +306,8 @@ def test_paging_down_takes_the_bottom_of_the_pane_before_it_scrolls():
     for number in range(1, 31):
         session.author(str(number))
     session.jump(2)
-    # The pane cannot scroll past the first expression, so the highlight is
-    # not at its bottom edge: the first page down is to that edge.
+    # The pane can't scroll above the first expression, so the highlight isn't at the
+    # bottom edge; the first page down moves to that edge.
     assert session.move_page_down(20) and paged(session) == 10
     assert session.move_page_down(20) and paged(session) == 19
     assert session.move_page_down(20) and paged(session) == 28
@@ -342,7 +341,7 @@ def test_a_page_selects_the_expression_it_lands_on_whole(session):
 
 
 def test_a_page_that_cannot_move_keeps_the_subexpression(session):
-    """A page with nowhere to go moves nothing at all, the route included."""
+    """A page with nowhere to go leaves the route unchanged too."""
     session.move_first_entry()
     session.move_right()
     assert selected_text(session) == "x"
@@ -388,7 +387,7 @@ def test_a_label_past_the_last_one_names_nothing(session):
 def test_it_is_the_label_that_is_looked_up_and_not_the_position(session):
     session.remove(1, 1)
     session.unremove()
-    # The history now reads #2 #3 #1, which is not the order its labels read.
+    # The history now reads #2 #3 #1, out of label order.
     assert [entry.number for entry in session.entries] == [2, 3, 1]
     assert session.jump(1)
     assert session.selected == 2
@@ -438,7 +437,7 @@ def test_the_notation_digits_reach_the_renderer():
 
 
 async def test_showing_fewer_digits_is_not_keeping_fewer():
-    """A cut render says nothing about the number: the value is the whole of it."""
+    """Truncated display doesn't truncate the stored value."""
     session = Session()
     assert session.author("0.10000000000000001").layout.lines == ("0.100000",)
     session.author("0.10000000000000001 - 1/10")

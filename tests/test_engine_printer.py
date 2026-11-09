@@ -1,9 +1,8 @@
-"""What the engine's results look like, and that they read back.
+"""How the engine prints results, and that printed results parse back.
 
-Two things are checked of every printed form: that it is spelled the way the
-author line spells it, and that parsing it gives back the expression it came
-from. The second is the invariant the worksheet rests on - a result is stored
-as text and read again - so it is asserted on the tree, not on the text.
+Each printed form is checked for its spelling in author notation and for parsing back to
+the original expression. The worksheet stores results as text and rereads them, so the
+round trip is asserted on the tree, not the text.
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ def written(expression, context=None):
 
 
 def reread(expression, context=None):
-    """The expression, printed and parsed again."""
+    """Print the expression and parse it back."""
     context = context or Context()
     result = from_sympy(expression, context)
     return to_sympy(result.node, context)
@@ -124,13 +123,12 @@ def test_an_unevaluated_calculus_head_is_written_as_its_own_call(expression, exp
     [
         (sp.Derivative(F(x), x, evaluate=False), "F'(x)"),
         (sp.Derivative(F(x), (x, 2), evaluate=False), "F''(x)"),
-        # The chain rule leaves the derivative of the function itself, taken at
-        # a point that is no variable, which sympy holds as a substitution.
+        # The chain rule leaves the derivative evaluated at a non-variable point, which
+        # sympy represents as a substitution.
         (sp.Subs(sp.Derivative(F(xi), xi, evaluate=False), (xi,), (x**2,)), "F'(x^2)"),
-        # A slope in one of two arguments has to say which, so it stays a `DIF`.
+        # With two arguments the variable must be named, so it stays a `DIF`.
         (sp.Derivative(F(x, y), x, evaluate=False), "DIF(F(x, y), x)"),
-        # And a head sympy has a name for is written under that name: the prime
-        # is for the functions nobody defined.
+        # Primes are only for undefined functions; known heads keep their name.
         (sp.Derivative(sp.sin(x), x, evaluate=False), "DIF(SIN(x), x)"),
     ],
     ids=str,
@@ -142,11 +140,10 @@ def test_the_derivative_of_an_undefined_function_is_written_with_primes(
 
 
 def test_plus_or_minus_is_written_as_the_glyph():
-    """Deliberate, and not to be "corrected" to `+-`.
+    """Deliberate; don't "correct" it to `+-`.
 
-    `±` and the quoted `"+-"` are the operator's two input spellings; a bare
-    `+-u` is a plus applied to a minus, so writing a result that way turns
-    `±1` into `-1` the next time it is read.
+    `±` and the quoted `"+-"` are the operator's two input spellings. A bare `+-u` is
+    unary plus applied to a minus, so `±1` written that way would reread as `-1`.
     """
     assert written(PlusMinus(sp.Integer(1))) == "±1"
     assert written(sp.zoo) == "±inf"
@@ -160,17 +157,15 @@ def test_a_logical_operator_is_written_with_its_keyword():
     assert written(sp.Not(p)) == "NOT p"
     assert written(sp.And(p, q)) == "p AND q"
     assert written(sp.Implies(p, q)) == "p IMP q"
-    # An operand that binds more loosely takes parentheses. The operands of a
-    # commutative operator are written in the order list's order, by the
-    # variable each leads with, so this one leads with the group.
+    # A looser-binding operand is parenthesized. Commutative operands are ordered by
+    # their leading variable, so the group comes first here.
     assert written(sp.And(sp.Or(p, q), r)) == "(p OR q) AND r"
     assert written(sp.Not(sp.And(p, q))) == "NOT (p AND q)"
 
 
 def test_the_operands_of_a_commutative_operator_are_put_in_order():
-    """`AND` and `OR` have no order of their own, so one is chosen, and it is
-    the one the original writes in: by leading variable, negated first on a
-    tie. `IMP` is not commutative and keeps the order it is held in."""
+    """`AND` and `OR` operands are ordered as the original does: by leading variable,
+    negated first on a tie. `IMP` is not commutative and keeps its order."""
     p, q, r, s = sp.symbols("p q r s")
     assert written(sp.Or(r, q, p)) == "p OR q OR r"
     assert written(sp.Or(sp.And(s, r), sp.And(q, p))) == "p AND q OR r AND s"
@@ -178,27 +173,25 @@ def test_the_operands_of_a_commutative_operator_are_put_in_order():
     assert written(sp.Or(sp.And(p, q), sp.And(sp.Not(p), r))) == (
         "NOT p AND r OR p AND q"
     )
-    # The order list leads, and everything off it follows alphabetically.
+    # Variables in the order list come first, the rest alphabetically.
     assert written(sp.And(*sp.symbols("a z x"))) == "x AND z AND a"
     assert written(sp.Implies(q, p)) == "q IMP p"
 
 
 def test_the_terms_of_a_sum_are_put_in_order():
-    """A sum has no order of its own either, and the one chosen is the order
-    list's: a term sorts by the variable it leads with, terms of one variable
-    run by descending degree, and a term holding no variable goes last."""
+    """Terms sort by leading variable in order-list order, then by descending degree;
+    terms with no variable go last."""
     a, x, y, z = sp.symbols("a x y z")
     assert written(5 * y**3 + 2 * x**2 - 3 * a * x) == "2*x^2 - 3*a*x + 5*y^3"
     assert written(a + z) == "z + a"
     assert written(sp.Symbol("w") + x) == "x + w"
     assert written(x**2 + sp.Symbol("c") + 1) == "x^2 + c + 1"
-    # The real part of a complex number leads, whatever else it is beside.
+    # The real part of a complex number always comes first.
     assert written(7 * sp.I + 1) == "1 + 7*#i"
 
 
-#: The order the original writes terms of one variable in when the variable and
-#: the degree leave them tied, checked against it a pair at a time. It is not
-#: alphabetical: `LN` comes before `COS` and `TAN` before `SIN`.
+#: The original's order for terms tied on variable and degree, checked pairwise against
+#: it. It is not alphabetical: `LN` comes before `COS` and `TAN` before `SIN`.
 HEADS = {
     "ABS": sp.Abs,
     "ASIN": sp.asin,
@@ -220,7 +213,7 @@ HEADS = {
     ids=str,
 )
 def test_which_function_head_leads_a_sum_of_two(first, second):
-    """Either way round, the sum is written the one way."""
+    """The sum is written the same way whichever order it is built in."""
     z = sp.Symbol("z")
     expected = f"{first}(z) + {second}(z)"
     assert written(HEADS[first](z) + HEADS[second](z)) == expected
@@ -228,7 +221,7 @@ def test_which_function_head_leads_a_sum_of_two(first, second):
 
 
 def test_the_variable_of_a_term_outranks_its_head():
-    """All the `t` terms before all the `u` terms, whatever wraps them."""
+    """All `t` terms come before all `u` terms, regardless of the function heads."""
     t, u = sp.symbols("t u")
     assert written(sp.cos(u) + sp.sin(t)) == "SIN(t) + COS(u)"
 
@@ -236,21 +229,21 @@ def test_the_variable_of_a_term_outranks_its_head():
 @pytest.mark.parametrize(
     ("expression", "expected"),
     [
-        # Sympy takes these apart on evaluation; the original writes them whole.
+        # Sympy splits these on evaluation; the original writes them whole.
         (sp.Integer(12) ** sp.Rational(1, 100), "12^(1/100)"),
         (sp.Integer(12) ** sp.Rational(1, 4), "12^(1/4)"),
         (sp.Integer(72) ** sp.Rational(1, 4), "72^(1/4)"),
         (x * sp.Integer(12) ** sp.Rational(1, 4) / 7, "12^(1/4)*x/7"),
         # Sympy rationalizes the denominator, as the original does.
         (1 / sp.Integer(12) ** sp.Rational(1, 4), "108^(1/4)/6"),
-        # A root of higher order than either factor's is not made.
+        # Roots aren't combined into one of higher order than either factor's.
         (sp.Integer(2) ** sp.Rational(2, 3) * sp.sqrt(3), "2^(2/3)*SQRT(3)"),
-        # Nor is one longer than the factors it would replace.
+        # Nor into one longer than the factors it would replace.
         (
             5 / sp.Integer(12) ** sp.Rational(1, 100),
             "5*2^(49/50)*3^(99/100)/6",
         ),
-        # A whole number in front is not a root and stays apart.
+        # An integer coefficient stays separate.
         (sp.sqrt(12), "2*SQRT(3)"),
     ],
     ids=str,
@@ -261,9 +254,8 @@ def test_roots_of_integers_in_a_product_are_written_as_one(expression, expected)
 
 
 def test_two_bounds_on_one_variable_are_written_as_a_chain():
-    """A conjunction that is a range has a shorter spelling, and it is the one
-    the original writes: `-2 < x < 2`. Either bound may be written the other
-    way round and either strictness may be either way."""
+    """A conjunction forming a range is written as a chain, `-2 < x < 2`, as in the
+    original. Each bound may be written either way round, strict or not."""
     x, y = sp.symbols("x y", real=True)
     assert written(sp.And(x > -2, x < 2)) == "-2 < x < 2"
     assert written(sp.And(sp.Lt(-2, x), sp.Le(x, 2))) == "-2 < x <= 2"
@@ -272,17 +264,16 @@ def test_two_bounds_on_one_variable_are_written_as_a_chain():
 
 
 def test_a_pair_that_brackets_nothing_keeps_its_keyword():
-    """One variable bounded twice from the same side is no range, and neither
-    is a pair whose variables never meet. The one they have in common decides
-    which of them the chain is about, so `x < y AND y < 1` is a range around
-    `y` however it was written."""
+    """Two bounds from the same side, or on unrelated variables, are not a range.
+
+    The shared variable determines the chain, so `x < y AND y < 1` is a range around `y`.
+    """
     x, y, z = sp.symbols("x y z", real=True)
     assert written(sp.And(x < y, y < 1)) == "x < y < 1"
     assert written(sp.And(x < 1, y < 1)) == "x < 1 AND y < 1"
     assert written(sp.And(x > -2, x > 1)) == "x > -2 AND x > 1"
     assert written(sp.And(x < y, y < z)) == "x < y < z"
-    # `/=` bounds nothing, so the pair is two statements. The order is sympy's
-    # own, a conjunction being commutative.
+    # `/=` is not a bound, so this stays two statements, in sympy's order.
     assert written(sp.And(sp.Ne(x, 1), x < 2)) == "x < 2 AND x /= 1"
 
 
@@ -295,8 +286,7 @@ def test_a_pair_that_brackets_nothing_keeps_its_keyword():
     ids=str,
 )
 def test_a_numeral_is_written_in_its_base(number, base, expected):
-    # A numeral that would begin with a letter takes a leading zero, so that
-    # it cannot be read as a name.
+    # A numeral starting with a letter gets a leading zero so it isn't read as a name.
     assert numeral(number, base) == expected
 
 
@@ -316,8 +306,8 @@ def test_a_float_is_written_at_the_precision_of_the_context():
 
 def test_a_float_is_written_as_plain_digits_and_keeps_its_point():
     context = Context(precision=Precision.APPROXIMATE)
-    # There is no exponent notation to read back, and a whole float that lost
-    # its point would read back as an integer.
+    # Exponent notation can't be read back, and a whole float without its point would
+    # read back as an integer.
     assert written(sp.Float("1e20", 20), context) == "100000000000000000000."
     assert "." in written(sp.Float(3), context)
 
@@ -353,18 +343,17 @@ REREAD = [
     -sp.Symbol("tera", real=True),
 ]
 
-#: The heads sympy has no object for. They are the whole reason the outbound
-#: path is a printer and not a formatter, so they are read back too.
+#: Heads with no sympy equivalent. They are why output goes through a printer rather
+#: than a formatter, so they are round-tripped too.
 INERT = [
     PlusMinus(x),
-    # `PlusMinus(oo)` is absent on purpose: `±inf` is the notation for unsigned
-    # infinity, and reading it back gives sympy's own object for that.
+    # `PlusMinus(oo)` is omitted on purpose: `±inf` denotes unsigned infinity and reads
+    # back as sympy's `zoo`.
     StringLiteral("note"),
     Subscript(x + 1, 2),
     Subscript(x, -1),
-    # The transpose of anything sympy will transpose is what sympy makes of
-    # it - a scalar's is the scalar - so the inert head is left holding what is
-    # no expression at all.
+    # Sympy transposes whatever it can (a scalar's transpose is the scalar), so the
+    # inert head only remains around a non-expression.
     Transposed(sp.Eq(x, 1)),
     Dot(sp.Symbol("a", real=True), sp.Symbol("b", real=True)),
     InertVector(sp.Matrix(1, 2, [1, 2]), sp.Matrix(1, 1, [3])),
@@ -374,7 +363,7 @@ INERT = [
     FunDef(sp.Symbol("F"), sp.Tuple(x, y), x + y),
     FunDef(sp.Symbol("F"), sp.Tuple(x)),
     Declare(sp.Symbol("x", real=True), sp.Symbol("Real")),
-    # The declared symbol carries what the declaration says about it.
+    # The declared symbol carries the declared assumptions.
     Declare(
         sp.Symbol("k", integer=True, nonnegative=True),
         sp.Symbol("Integer"),
@@ -409,7 +398,7 @@ def test_printing_is_a_fixed_point(expression):
         (sp.LambertW(x, -1), "LAMBERTW(x, -1)"),
         (sp.polylog(2, x), "POLYLOG(2, x)"),
         (sp.polygamma(1, x), "POLYGAMMA(1, x)"),
-        # Sympy holds the digamma function as the polygamma function of order zero.
+        # Sympy represents digamma as polygamma of order zero.
         (sp.digamma(x), "DIGAMMA(x)"),
         (sp.polygamma(0, x), "DIGAMMA(x)"),
         (sp.gamma(x) * sp.polygamma(0, x), "GAMMA(x)*DIGAMMA(x)"),
@@ -424,8 +413,8 @@ def test_a_special_function_is_written_under_its_name_and_reads_back(
 
 
 def test_a_multi_character_name_reads_back_as_one_name():
-    # In Character mode `tera` is four factors until something declares it,
-    # and the state `from_sympy` builds is what declares it.
+    # In Character mode `tera` is four factors unless declared; the state `from_sympy`
+    # builds declares it.
     result = from_sympy(sp.Symbol("tera", real=True) * 2)
     assert result.text == "2*tera"
     assert to_sympy(result.node) == sp.Symbol("tera", real=True) * 2
@@ -434,29 +423,28 @@ def test_a_multi_character_name_reads_back_as_one_name():
 def test_a_caller_may_supply_the_parse_state():
     state = ParseState()
     from_sympy(sp.Symbol("kilo", real=True), Context(), state)
-    # The caller's state is used as given; it is not the engine's to replace.
+    # The caller's state is used as given, not replaced.
     assert "kilo" not in state.variables
 
 
 # -- what `.doit()` can hand back --------------------------------------------
 #
-# Sympy answers some integrals and derivatives with heads the notation has no
-# word for, and with bound variables it invented on the spot. Each has to come
-# out as something the author line could have been typed with, or the result is
-# unreadable and the entry is lost.
+# Sympy may answer integrals and derivatives with heads author notation lacks, and with
+# invented bound variables. Each must print as valid input, or the entry can't be
+# read back.
 
 
 def test_a_case_split_is_written_as_the_conditional_the_notation_has():
     piecewise = sp.Piecewise((1 / x, sp.Ne(x, 0)), (sp.oo, True))
     assert written(piecewise) == "IF(x /= 0, 1/x, inf)"
-    # Without a final `true` the last case has no else clause, which is right:
-    # outside every condition there is no value.
+    # Without a final `true` case there is no else clause: outside every condition there
+    # is no value.
     assert written(sp.Piecewise((1 / x, sp.Ne(x, 0)))) == "IF(x /= 0, 1/x)"
 
 
 def test_a_head_carrying_tuples_writes_them_as_vectors():
-    # `SUBS(F(y), (y,), (x,))` is not readable - a parenthesised list is no
-    # expression - and a vector is.
+    # `SUBS(F(y), (y,), (x,))` would not parse, since a parenthesized list is not an
+    # expression; a vector is.
     assert written(sp.Subs(sp.Function("F")(y), y, x)) == "SUBS(F(y), [y], [x])"
 
 
@@ -472,12 +460,11 @@ def test_a_head_carrying_tuples_writes_them_as_vectors():
 def test_a_sympy_function_without_a_name_is_written_as_a_string(
     expression, expected, unreadable_answers
 ):
-    """A sympy function the notation has no name for is not given one.
+    """A sympy function with no name in the notation isn't given one.
 
-    Upper-cased, `hyper` would be `HYPER`, a name nobody defined and that sympy's
-    export list alone would have made part of the notation. It is quoted instead, as
-    a set is, and noted as an answer that could not be said. The calculus heads
-    never hand one back: an answer that holds one leaves the head standing.
+    Upper-casing `hyper` to `HYPER` would invent a name only sympy defines. Instead it
+    is quoted, like a set, and recorded as unreadable. The calculus commands never
+    return one: an answer containing one leaves the original head unevaluated.
     """
     assert written(expression) == expected
     from_sympy(expression)
@@ -510,52 +497,43 @@ SETS = [
 def test_a_set_is_written_as_the_string_the_notation_holds_it_in(
     expression, expected, unreadable_answers
 ):
-    """Author notation has no word for a sympy set, and none may look as if it
-    had one.
+    """A sympy set has no author notation and must not look as if it had one.
 
-    soLve converts every set it is handed into chained relations and `@n`
-    before anything is printed, which is Derive's own idiom and is what makes
-    these unreachable rather than merely rare. What is pinned here is what
-    happens if some later path does not: the answer says it could not be
-    written, and stops there.
+    soLve converts sets to chained relations and `@n` before printing, as Derive does,
+    so these shouldn't be reached. This pins what happens if some path does reach
+    them: the answer is marked as unwritable.
 
-    Two spellings say it wrongly and are what this is against. A bare word is
-    a product of its letters to a Character-mode reader, so `EmptySet` reads
-    back as `e*m*p*t*y*s*e*t`, an expression in six variables and nonsense in
-    every one of them. And `Interval(0, 1)` is the built-in `INTERVAL`, which
-    is the range a limit keeps to rather than a set of reals: one text for two
-    meanings, which is the collision `LI` and `CHI` were. A string is neither
-    of those, and is inert on purpose.
+    Unquoted, `EmptySet` would read back in Character mode as `e*m*p*t*y*s*e*t`, and
+    `Interval(0, 1)` as the built-in `INTERVAL`, which means a limit's range rather
+    than a set (the same kind of collision `LI` and `CHI` were). A string is inert.
     """
     assert written(expression) == expected
     result = from_sympy(expression)
     assert result.node.kind is Kind.STRING
-    # And the engine says so where it can be read, which is the whole of what
-    # keeps the next one of these from going unnoticed.
+    # The engine also reports it, so new cases don't go unnoticed.
     assert unreadable_answers == [expected]
 
 
 def test_a_set_inside_a_set_is_not_quoted_twice():
-    """One head could not be written, not each of its parts.
+    """Only the outermost set is quoted.
 
-    The quotes go round the outermost set and everything under them is written
-    as it would have been anyway - author notation wherever a part of it has
-    one, which is what keeps the text legible enough to diagnose.
+    Its parts are written as usual, in author notation where possible, which keeps the
+    text legible enough to diagnose.
     """
     condition = sp.ConditionSet(x, sp.Eq(x**2, 1), sp.S.Reals)
     assert written(condition) == '"ConditionSet(x, x^2 = 1, Reals)"'
 
 
 def test_a_string_the_author_wrote_is_not_an_unreadable_answer(unreadable_answers):
-    """A `Kind.STRING` result is how an unwritable head is shown and also how a
-    string literal is, and only the first of them is a failure."""
+    """Both unwritable heads and string literals produce `Kind.STRING`, but only the
+    former is a failure."""
     assert from_sympy(StringLiteral("HELP.MTH")).node.kind is Kind.STRING
     assert unreadable_answers == []
 
 
 def test_a_sympy_bound_variable_is_written_as_an_ordinary_name():
-    # Sympy writes a `Dummy` as `_k1`, and `_k1` does not lex; `k1` and `xi` lex in
-    # Character mode as `k*1` and `x*i`. A letter is one name in every mode.
+    # Sympy prints a `Dummy` as `_k1`, which doesn't lex, and `k1` and `xi` lex in
+    # Character mode as `k*1` and `x*i`. A single letter is one name in every mode.
     assert written(sp.Dummy("k1")) == "k"
     assert written(sp.Dummy("xi_2") + 1) == "x + 1"
     assert written(sp.Dummy("xi") + x) == "x + x_"
@@ -563,45 +541,40 @@ def test_a_sympy_bound_variable_is_written_as_an_ordinary_name():
 
 
 def test_two_bound_variables_of_one_name_are_written_apart():
-    """Sympy tells its invented variables apart by an identity text cannot hold.
+    """Sympy distinguishes its invented variables by identity, which text can't hold.
 
-    Differentiating a product `n` times twice over gives two of them, both
-    called `k1`, and writing both as `k1` would produce text that reads back as
-    an expression in one variable where there were two. The names are also what
-    the terms of a sum are ordered by, so a name kept for two things would make
-    the written order depend on which of them came first.
+    Differentiating a product `n` times twice gives two dummies both named `k1`; writing
+    both as `k1` would merge them into one variable. Distinct names also keep the term
+    order of a sum deterministic.
     """
     first, second = sp.Dummy("k1"), sp.Dummy("k1")
     assert written(first + 2 * second) in ("k_ + 2*k", "k + 2*k_")
-    # And a name already in use is not taken over.
+    # A name already in use is not reused.
     assert written(sp.Dummy("k1") + sp.Symbol("k", real=True)) == "k + k_"
 
 
 def test_a_dot_product_keeps_its_parentheses_inside_a_negated_product():
-    # `-x*a . b` reads as `(-x*a) . b`: `.` and `*` are one level in the
-    # grammar, and the left operand would swallow the factor in front.
+    # `-x*a . b` reads as `(-x*a) . b`, since `.` and `*` have the same precedence.
     a, b = sp.symbols("a b", real=True)
     assert written(-x * Dot(a, b)) == "-x*(a . b)"
     assert written(x * Dot(a, b)) == "x*(a . b)"
 
 
 def test_a_power_of_a_matrix_is_written_in_author_notation():
-    # Sympy writes this one `Matrix(...)**(1/2)`, and `**` is no operator here:
-    # the text would read back as a product with an empty factor.
+    # Sympy prints this as `Matrix(...)**(1/2)`, and `**` is not an operator here.
     assert written(sp.sqrt(sp.Matrix(1, 1, [sp.Rational(1, 12)]))) == "SQRT([1/12])"
 
 
 def test_an_inert_head_is_parenthesised_by_what_it_is_written_as():
-    """`±u` is written like a sum, not like a call.
+    """`±u` is parenthesized like a sum, not like a call.
 
-    `#e^±inf*z` would read back as `(#e^±inf)*z`, which is a different
-    expression, and `±inf*z` as `±(inf*z)`: the plus-or-minus takes a whole
-    product, so unsigned infinity standing in one needs its parentheses.
-    `±inf` is the notation for unsigned infinity, and comes back as that.
+    `#e^±inf*z` would read back as `(#e^±inf)*z`, and `±inf*z` as `±(inf*z)`, since
+    plus-or-minus takes a whole product. So unsigned infinity (`±inf`) inside a product
+    needs parentheses.
     """
     assert written(sp.exp(sp.zoo * z)) == "#e^((±inf)*z)"
     assert to_sympy(from_sympy(sp.exp(sp.zoo * z)).node).args[0] == sp.zoo * z
-    # A plus-or-minus over anything else is the head it is written as.
+    # Plus-or-minus over anything else round-trips as the `PlusMinus` head.
     assert to_sympy(from_sympy(PlusMinus(sp.oo * z)).node) == PlusMinus(sp.oo * z)
 
 
@@ -622,16 +595,14 @@ def test_what_doit_hands_back_reads_back(expression):
 
 
 def test_a_supplied_state_learns_the_names_only_the_answer_uses():
-    """A caller's symbol table does not know every name an answer carries.
+    """Names that appear only in the answer are declared in a copy of the caller's state.
 
-    An answer can hold a name nobody typed on this worksheet, and in Character mode
-    `k1` is `k*1` until something declares it. The caller's state is not the engine's
-    to write to, so the declaration goes into a copy.
+    An answer can contain a name never typed on the worksheet, and in Character mode
+    `k1` is `k*1` unless declared. The engine must not modify the caller's state.
     """
     state = ParseState()
     invented = sp.Symbol("k1", real=True) * 2
     result = from_sympy(invented, Context(), state)
     assert result.text == "2*k1"
     assert to_sympy(result.node) == sp.Symbol("k1", real=True) * 2
-    # The session's own table is left as it was.
     assert "k1" not in state.variables

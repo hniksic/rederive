@@ -1,12 +1,11 @@
 """Which variables an expression holds, and whether it is a relation.
 
-The order the variables come out in is `ordering`'s, most main first, which is the
-order Factor and Expand offer their variables in - `x^2 - a^2` lists `x,a`, not
-`a,x` - and what makes the first one chosen the primary variable.
+Variables are listed most main first, per `ordering`, which is the order Factor and
+Expand offer them in: `x^2 - a^2` lists `x,a`, not `a,x`.
 
-Both questions are asked of the evaluation rather than of the tree, because the
-tree can be written around what it means: `#3` is a label, and `IM(u = v)` is a
-function applied to an equation, which the engine answers with an equation.
+Both questions are answered from the evaluated expression rather than the tree, since
+the tree may not show its meaning: `#3` is a label, and `IM(u = v)` is a function call
+that evaluates to an equation.
 """
 
 from __future__ import annotations
@@ -21,8 +20,7 @@ from rederive.model.expr import Node
 
 __all__ = ["expression_variables", "relation_of"]
 
-#: How a relation's operator is written, keyed by sympy's spelling of it. The
-#: orderings are spelled alike on both sides and are not listed.
+#: Derive spelling of relation operators that sympy spells differently.
 _RELATIONS = {"==": "=", "!=": "/="}
 
 
@@ -31,18 +29,14 @@ def expression_variables(
 ) -> tuple[str, ...]:
     """The variables `node` holds, most main first.
 
-    What a command has to know before it can ask anything, because whether it
-    asks at all depends on the answer: one variable is not a choice, so the
-    original puts up no prompt unless there are two or more.
+    Commands need this before prompting: Derive only asks for a variable when there
+    are two or more. Assigned variables are excluded, since substitution has already
+    replaced them.
 
-    What an assignment has given a value is not among them, since substitution
-    has already replaced it by the time there is anything to expand or factor.
-
-    With `written`, an expression that simplifies to one holding no variable
-    answers with the variables it was written in instead, so that soLve still has
-    something to offer for `x/x = 1`. Those are read off the evaluation with
-    sympy's own simplification held back, which leaves a bound variable and an
-    assigned one out just as the full evaluation does.
+    With `written`, an expression that simplifies to one without variables returns the
+    variables as written instead, so soLve has something to offer for `x/x = 1`. These
+    come from evaluating with sympy's automatic simplification disabled, which still
+    excludes bound and assigned variables.
     """
     context = context or Context()
     try:
@@ -56,12 +50,11 @@ def expression_variables(
 
 
 def relation_of(node: Node, context: Context | None = None) -> str | None:
-    """The operator `node` evaluates to a relation under, or None where it does not.
+    """The relation operator `node` evaluates to, or None if it isn't a relation.
 
-    Written as the notation writes it: `=`, `/=`, `<`, `<=`, `>`, `>=`. What the Plot
-    command asks before it decides what a line is a plot of, since a function
-    applied to an equation, `IM(2^(x + #i*y) = (x + #i*y)^6)`, is a call on the tree
-    and an equation once evaluated, and it is the equation that is drawn.
+    The operator is in Derive notation: `=`, `/=`, `<`, `<=`, `>`, `>=`. Plot uses
+    this to decide what to draw, since `IM(2^(x + #i*y) = (x + #i*y)^6)` is a call in
+    the tree but an equation once evaluated, and the equation is what gets drawn.
     """
     try:
         value = evaluated(node, context or Context())
@@ -74,6 +67,6 @@ def relation_of(node: Node, context: Context | None = None) -> str | None:
 
 def _variables(symbols: set[sp.Basic]) -> list[str]:
     """The names of the symbols that are variables."""
-    # `type is` rather than `isinstance`: a string literal is a `Symbol`
-    # subclass, and a string is data rather than a variable to work about.
+    # `type is` rather than `isinstance`: string literals are a `Symbol` subclass, and
+    # aren't variables.
     return [s.name for s in symbols if type(s) is sp.Symbol]

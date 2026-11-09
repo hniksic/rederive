@@ -1,37 +1,29 @@
-"""When a plot is sampled again, and what the sampling is asked to do for it.
+"""Resampling policy: when a plot is sampled again, and the sampling job for it.
 
-Sampling is in screen space and repeats on every view change, debounced. That
-is what makes zooming worth doing: a spike narrower than a pixel is not in the
-data until the view asks for it, and then it is. So a window that has been
-panned, zoomed, resized or reframed asks here for a job, hands the job to the
-session's sampler, and draws whatever comes back that is still about the view
-it is showing.
+Sampling is done in screen space and repeated, debounced, on every view change, so
+zooming in reveals detail such as spikes narrower than a pixel. A window that was
+panned, zoomed, resized or reframed gets a job here, passes it to the session's
+sampler, and draws the result if it still matches the current view.
 
-Three rules live here rather than in any window, because both backends need
-them and neither should invent its own.
+These rules are shared by both backends:
 
-**One job and one key for every kind.** A function is sampled over the
-abscissa, a parametric curve over its parameter with the error measured as a
-distance in the plane, a field over a grid at half the canvas resolution - and
-they are one job, keyed by the window and the plot, so a view change debounces
-an implicit grid exactly as it debounces a curve.
+**Every kind uses one job and one key.** A function is sampled over the abscissa, a
+parametric curve over its parameter (with error measured as distance in the plane), and
+a field over a grid at half the canvas resolution. Jobs are keyed by window and plot, so
+all kinds are debounced the same way.
 
-**A data plot is not re-sampled on a view change.** A matrix of constants is
-the same matrix at every zoom; clipping and downsampling are what the view
-change costs it, and the drawing side does both itself.
+**Data plots are not resampled on view changes.** The drawing side clips and
+downsamples them itself.
 
-**Everything the job needs is read before it starts.** The job runs somewhere
-else - a thread, a worker - and by the time it does the view may have moved and
-the plot may be gone, so it closes over values and touches no window.
+**A job reads everything it needs up front.** It runs elsewhere (a thread or worker),
+by which time the view may have changed or the plot may be gone, so it captures values
+and touches no window.
 
-The generation counter that goes with all this belongs to the plot: a job whose
-generation has moved on is a job about a view that is gone, and its answer is
-dropped by the side that would have drawn it.
+Each plot has a generation counter; results of a job from an outdated generation are
+dropped.
 
-The evaluation is imported where a job is built rather than at the top, so that
-the policy above can be read by a side with no numpy in it: the browser's plot
-list lives on a main thread that must not load a numerical library, and what it
-needs from here is the debounce and the rule about a data plot.
+`evaluate` is imported inside the job builders, so the browser's main thread can use
+this module's policy without loading numpy.
 """
 
 from __future__ import annotations
@@ -44,22 +36,19 @@ from rederive.plot.protocol import PARAMETRIZED, PlotKind
 
 __all__ = ["grid_job", "job", "keyed", "wanted"]
 
-#: How long to wait after the last view change before re-sampling. Long enough
-#: that a drag is one re-sample rather than sixty, short enough that letting go
-#: of the mouse feels like the end of the gesture.
+#: Delay after the last view change before resampling: long enough that a drag causes
+#: one resample rather than sixty, short enough to feel immediate on release.
 RESAMPLE_DELAY_MS = 100
 
-#: How fine the grid an implicit curve or a region is evaluated on is, as a
-#: fraction of the canvas, and the most points either axis of it may have. Half
-#: the canvas resolution is the design's own figure: marching squares
-#: interpolates within a cell, so a contour drawn from half-resolution samples
-#: is smooth at full resolution.
+#: Resolution of the grid for implicit curves and regions, as a fraction of the canvas
+#: resolution, and the maximum points per axis. Half resolution suffices because
+#: marching squares interpolates within a cell, so contours are still smooth.
 GRID_SHARE = 0.5
 MAX_GRID = 512
 
 
 def keyed(window: int, plot: Plot) -> tuple[int, int]:
-    """The job key of one plot in one window, which is what a re-sample replaces."""
+    """The job key of a plot in a window; a resample replaces the job with this key."""
     return (window, id(plot))
 
 
@@ -75,11 +64,10 @@ def job(
     size: tuple[float, float],
     degrees: bool = False,
 ) -> Callable[..., Any]:
-    """What the sampling is to do for one 2D plot over one view, as a callable.
+    """The sampling job for a 2D plot over a view.
 
-    The answer is read by the same kind that asked for it: a pair of arrays for
-    a function or a data plot, a sampled path for a parametric curve, a grid for
-    a field.
+    The result depends on the plot kind: a pair of arrays for a function or data plot,
+    a sampled path for a parametric curve, a grid for a field.
     """
     from rederive.plot import evaluate
 
@@ -109,11 +97,10 @@ def grid_job(
     ydomain: tuple[float, float],
     grid: tuple[int, int],
 ) -> Callable[..., Any]:
-    """What the sampling is to do for one surface over one domain.
+    """The sampling job for a surface over a domain.
 
-    The only thing that starts an evaluation in a 3D window. A camera move does
-    not come near it, which is the promise that window is built on: the mesh is
-    about the domain, and the domain is only ever changed by typing in it.
+    This is the only evaluation in a 3D window. Camera moves never re-evaluate; only
+    typing a new domain does.
     """
     from rederive.plot import evaluate
 
@@ -139,18 +126,14 @@ def _curve(
     size: tuple[float, float],
     degrees: bool,
 ) -> Callable[..., Any]:
-    """What the sampling does for a parametric or polar curve.
+    """The sampling job for a parametric or polar curve.
 
-    The two closures are made once and kept on the plot, like a function's one
-    is, so that a zoom re-samples without asking sympy anything. The first
-    sampling is over one turn, so the picture appears with no question asked;
-    bounds typed in the range fields arrive as trees - `-π` is what a person
-    types - and what they are worth is arithmetic that need only be done once,
-    here, before the range they make goes back to the plot.
+    The closures are built once and kept on the plot, so zooming resamples without
+    calling sympy. The first sampling is over one full turn. Bounds typed in the range
+    fields arrive as expressions (e.g. `-π`) and are evaluated here once.
 
-    A polar curve is a parametric one composed here rather than at the far end:
-    r(θ) is kept beside the pair because the readout and the trace are in r and
-    θ, and only the composition knows which closure that is.
+    A polar curve is turned into a parametric pair here. r(θ) is kept alongside the pair
+    because the readout and trace are in r and θ.
     """
     from rederive.plot import evaluate
 
@@ -165,8 +148,8 @@ def _curve(
         pair, inner, trange = made, radius, known
         if pair is None:
             if polar:
-                # A curve reread polar by the view arrives with its closure
-                # already made, and r = f(θ) is the same f.
+                # A curve switched to polar by the view already has its closure, and
+                # r = f(θ) uses the same f.
                 if inner is None:
                     inner = evaluate.closure(node, context, names)
                 pair = evaluate.polar_pair(inner, degrees)
@@ -192,16 +175,11 @@ def _field(
     yrange: tuple[float, float],
     size: tuple[float, float],
 ) -> Callable[..., Any]:
-    """What the sampling does for an implicit curve or a region.
+    """The sampling job for an implicit curve or a region.
 
-    Both are fields over the rectangle now in view rather than curves over an
-    abscissa, and both are recomputed for whatever the view has become, which
-    is what makes zooming into a contour reveal it rather than magnify it.
-
-    Half the canvas resolution is the design's figure and it is not a
-    compromise: marching squares interpolates inside a cell, so a contour drawn
-    from half-resolution samples is smooth at full resolution, and a grid at
-    the full one would cost four times as much to say the same thing.
+    Both are fields evaluated over the visible rectangle and recomputed whenever the
+    view changes, so zooming into a contour reveals detail rather than magnifying it.
+    The grid is at half the canvas resolution (see `GRID_SHARE`).
     """
     from rederive.plot import evaluate
 

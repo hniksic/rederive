@@ -1,14 +1,12 @@
-"""The evaluation state, what a declaration is worth, and what a name stands for.
+"""The evaluation context: domain declarations and substitution of names.
 
-A domain declaration is the whole of the "don't guess" rule: a rewrite fires
-because a declaration justifies it, so what matters here is which sympy
-assumption each declaration turns into, and that an undeclared variable is
-real.
+Domain declarations implement the "don't guess" rule: a rewrite fires only when a
+declaration justifies it. So these tests check which sympy assumptions each declaration
+produces, and that undeclared variables are real.
 
-The evaluation is the other half of the state: assignments, function
-definitions and labels are written in as the tree is worked out, and the cases
-below are about where that stops - a variable that reaches itself, a call with
-fewer arguments than parameters, a name a definition owns.
+Assignments, function definitions and labels are substituted during evaluation. The
+tests cover where substitution stops: self-referencing variables, calls with fewer
+arguments than parameters, and names bound by a definition.
 """
 
 from __future__ import annotations
@@ -40,20 +38,19 @@ def parse(text, state=None):
 
 
 def written(text, context, state=None):
-    """`text` worked out with everything the context knows written into it."""
+    """Evaluate `text` with everything the context defines substituted in."""
     return evaluated(parse(text, state), context)
 
 
 def same_as(text, state=None):
-    """What `written` should equal when the answer is `text` itself."""
+    """The expected result of `written` when the answer is `text` unchanged."""
     return to_sympy(parse(text, state))
 
 
 def declaring(*names):
-    """A parse state in which each of `names` is a function, as defining it makes it.
+    """A parse state declaring each of `names` as a function, as defining it would.
 
-    A name nothing defines is a product of letters before a parenthesis, so a call
-    to a function the context holds has to be read with the function declared.
+    Otherwise an undefined name before a parenthesis parses as a product of letters.
     """
     state = ParseState()
     for name in names:
@@ -62,7 +59,7 @@ def declaring(*names):
 
 
 def symbol(declaration):
-    """The symbol a declaration declares, as the converter builds it."""
+    """The sympy symbol the converter builds for a declared variable."""
     name, domain = domain_of_node(parse(declaration))
     return to_sympy(parse(name), Context(domains={name: domain}))
 
@@ -206,7 +203,7 @@ def test_a_one_point_interval_is_a_value():
 
 
 def test_an_open_bound_is_still_a_bound_at_infinity():
-    # No variable is infinite, so `inf` as a bound says only which side.
+    # No variable is infinite, so an `inf` bound only says which side.
     assert symbol("x :epsilon Real (0, inf)").is_positive
 
 
@@ -218,7 +215,7 @@ def test_a_declaration_only_reaches_the_variable_it_names():
 
 
 def test_a_domain_decides_whether_a_rewrite_is_allowed():
-    # The whole point of the declarations: no domain, no rewrite.
+    # The point of declarations: no domain, no rewrite.
     unknown = Context(domains={"x": Domain(DomainKind.COMPLEX)})
     name, domain = domain_of_node(parse("x :epsilon Real (0, inf)"))
     real = to_sympy(parse("SQRT(x^2)"))
@@ -243,8 +240,8 @@ def test_an_assignment_is_followed_as_far_as_it_goes():
 
 
 def test_a_variable_that_reaches_itself_is_expanded_once_and_left():
-    # `pn := pn + 1` is a legitimate thing to author. It must not spin, and it
-    # must not silently drop the name it could not expand again.
+    # `pn := pn + 1` is legitimate. It must neither loop forever nor drop the name it
+    # can't expand again.
     state = ParseState()
     state.declare(VariableDeclaration("pn", True))
     context = Context(assignments={"pn": parse("pn + 1", state)})
@@ -290,16 +287,14 @@ def test_an_argument_is_substituted_before_it_is_written_in():
 
 
 def test_a_recursion_that_never_arrives_stops_at_the_nesting_bound():
-    # Every level adds one, and the call left over at the bottom is the answer's
-    # own admission that it did not finish.
+    # Each level adds one, and the call left at the bottom shows it didn't finish.
     state = declaring("G")
     context = Context(functions={"G": (("x",), parse("G(x) + 1", state))})
     assert written("G(2)", context, state) == same_as("G(2) + 300", state)
 
 
 def test_a_parameter_stands_for_itself_inside_the_definition():
-    # The body of `F(u) := u + 1` is about the parameter, not about whatever
-    # `u` happens to be assigned elsewhere.
+    # In `F(u) := u + 1`, `u` is the parameter, not whatever `u` is assigned elsewhere.
     context = Context(assignments={"u": parse("7")})
     assert written("F(u) := u + 1", context) == same_as("F(u) := u + 1")
 
@@ -314,17 +309,16 @@ def test_a_function_the_context_does_not_know_is_left_alone():
 
 
 def test_the_variable_a_sum_names_is_not_substituted_for():
-    # `SUM(25, 5, 1, 3)` is not a sum over anything, and it is what writing an
-    # assigned value into every position would produce. Over a symbolic range the
-    # sum stands; over a counted one it is 1 + 4 + 9 and not 75.
+    # Substituting everywhere would give the meaningless `SUM(25, 5, 1, 3)`. Over a
+    # symbolic range the sum stands; over a numeric one it is 1 + 4 + 9, not 75.
     context = Context(assignments={"x": parse("5")})
     assert written("SUM(x^2, x, 1, n)", context) == same_as("SUM(x^2, x, 1, n)")
     assert written("SUM(x^2, x, 1, 3)", context) == 14
 
 
 def test_an_argument_after_the_bound_variable_is_read_outside_the_binding():
-    # `ITERATES(TAN(x), x, x, -1)` is from the manual: the third argument is the
-    # starting value, and the `x` in it is whatever `x` means outside.
+    # As in the manual's `ITERATES(TAN(x), x, x, -1)`, where the third argument is the
+    # starting value and its `x` is the outer `x`.
     context = Context(assignments={"x": parse("5")})
     assert written("SUM(x^2, x, 1, x)", context) == 1 + 4 + 9 + 16 + 25
 
@@ -343,8 +337,8 @@ def test_a_binding_function_given_no_variable_binds_nothing():
 
 
 def test_a_vector_of_names_binds_every_one_of_them():
-    # An iterated limit ranges over each of them, so an assigned `x` reaches
-    # neither the vector nor the expression under it.
+    # An iterated limit binds each name, so an assigned `x` is substituted in neither
+    # the vector nor the expression.
     context = Context(assignments={"x": parse("5")})
     assert written("LIM(x + y, [x, y], [1, 2])", context) == same_as(
         "LIM(x + y, [x, y], [1, 2])"
@@ -352,10 +346,10 @@ def test_a_vector_of_names_binds_every_one_of_them():
 
 
 def test_a_parameter_supplied_with_a_vector_of_names_is_written_in():
-    # SOLVE.MTH's `NEWTON_AUX(a, x, x0, n)` limits over its parameter `x`, and
-    # `NEWTONS` calls it with the vector of variables to solve for. Left
-    # standing, the limit would be taken in a variable nobody named. The body
-    # takes the vector too, a definition being textual substitution throughout.
+    # SOLVE.MTH's `NEWTON_AUX(a, x, x0, n)` takes a limit over its parameter `x`, and
+    # `NEWTONS` passes it a vector of variables. Definitions are textual substitution,
+    # so the vector replaces `x` in the limit variable too; otherwise the limit would be
+    # over a variable nobody named.
     context = Context(functions={"F": (("x",), parse("LIM(x*y, x, 1)"))})
     assert written("F([u, v])", context, declaring("F")) == same_as(
         "LIM([u, v]*y, [u, v], 1)"

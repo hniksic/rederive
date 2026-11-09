@@ -1,66 +1,42 @@
-"""The app side of the engine in a browser: five calls, one Web Worker, no threads.
+"""The app side of the engine in a browser: one Web Worker, no threads.
 
-`WebEngine` is the third implementation of the session's `Runner`, beside the
-one that computes in this process and the one that talks to a child process
-down a pipe, and it is the shape the async seam was made for. There is no
-thread here for a call to block in and no pipe to block on: a request is
-`postMessage`, the answer arrives later on `onmessage`, and what joins the two
-is a future the message resolves. Nothing suspends but the coroutine that asked.
+`WebEngine` is the third implementation of the session's `Runner`, alongside the
+in-process one and the one that talks to a child process over a pipe. A request is a
+`postMessage`, the answer arrives later on `onmessage`, and a future joins the two, so
+only the awaiting coroutine is suspended.
 
-What it borrows is everything that is not transport. The exceptions are
-`engine.client`'s, so the app's reporting reads a browser death exactly as it
-reads a desktop one; the recovery is `engine.policy`'s, three-strikes rule
-included. What is written here is the half that cannot travel: making a worker,
-killing one, and turning a message into an answer.
+Everything but transport is shared: the exceptions come from `engine.client`, so the app
+reports a browser worker's death the same way as a desktop one, and recovery (including
+the three-strikes rule) comes from `engine.policy`. This module only creates and kills
+workers and turns messages into answers.
 
-Killing is the whole reason for the worker. `terminate()` is the browser's
-SIGKILL - immediate, uncooperative, and the only way to stop sympy in the
-middle of a computation - and it is affordable for the same reason it is on the
-desktop: the worker is stateless, so the replacement knows everything the dead
-one knew. It costs a fresh Pyodide and a fresh sympy import, which stage 0
-measured at about two thirds of a second on the precompiled channel. That is a
-pause and not a hang, and it is why nothing here keeps a standby worker warm.
+`terminate()` is the browser's SIGKILL and the only way to stop sympy mid-computation.
+It's affordable because the worker is stateless. A replacement costs a fresh Pyodide and
+sympy import, about two thirds of a second with precompiled packages, so no standby
+worker is kept.
 
-Two desktop things have no browser equivalent and are deliberately absent. There
-is no memory cap and no watchdog, because a tab cannot read a worker's heap -
-`platform.web` says so, and an allocation that goes too far arrives here as a
-death like any other. And there is no log file: what a dying worker printed is
-in the page's console, which is where the message sends a reader.
+There is no memory cap or watchdog, since a tab can't read a worker's heap (see
+`platform.web`); running out of memory arrives as an ordinary death. There is no log
+file either: a dying worker's output is in the browser console, and error messages
+point there.
 
-Requests and answers cross as pickles. It is the same vocabulary the pipe
-carries - a tree, a `Context`, a `ParseState`, a `Result` - and the same
-serialisation, since both ends are the same Python running the same package;
-`postMessage` carries the bytes as a `Uint8Array`, which is a copy and nothing
-more.
+Requests and answers are pickled, as over the pipe (trees, `Context`, `ParseState`,
+`Result`), and `postMessage` copies the bytes as a `Uint8Array`.
 
-There is a second family of requests on the same worker, and it is the plot
-sampling. It goes out through `ask` rather than through the five calls, and the
-difference is where its answer goes: a sampling answers in arrays, and arrays
-belong on the page where they are drawn rather than in the interpreter that
-routes them. So `ask` numbers a request, posts it, and expects nothing back -
-the page hears the answer, draws it, and says so to the plot session. That is
-also why `ask` takes no lock. The lock guards the one pending slot the five calls
-share, and a request with no answer to this side needs no slot; what actually
-orders a sampling against a Simplify is the worker, which is one thread of one
-interpreter and takes its messages as they come.
+Plot sampling uses the same worker but goes through `ask`. Its answers are arrays that
+go straight to the page for drawing, so `ask` posts the request and expects nothing
+back; the page draws the answer and notifies the plot session. `ask` takes no lock,
+because the lock guards the single pending-answer slot. The worker itself, being single
+threaded, orders sampling against engine calls. `value` is the exception: its answer is
+four floats needed on this side, so it uses the pending slot like an engine call.
 
-One member of that family answers here rather than there, and `value` is it:
-what four typed bounds are worth is four floats, which nothing draws. It rides
-the pending slot like a Simplify, because that is what a request with an answer
-to this side is.
+The worker also sends unprompted heap-size messages, after each answer and during long
+computations. They are fed to the memory gauge and nothing waits on them.
 
-One message the worker sends was never asked for at all: how far its heap has
-grown, which is the half of the status line's memory gauge nothing on this side
-can measure. It arrives after each answer and during long ones too, so the
-gauge moves while a computation is still running. Nothing waits on it and
-nothing is owed for it - it is read where it lands and put in the gauge.
-
-The price of sharing is worth naming. A drag posted behind an integral waits for
-the integral, and a Simplify pressed mid-drag waits for the one sampling in
-flight - bounded, since sampling is depth- and size-capped, but real. And Esc
-terminates the worker under both families at once, which is why `lost` is here:
-the side waiting for a sampling that will never arrive has to be told, or its
-queue stops moving.
+Sharing the worker has costs: a drag queued behind an integral waits for it, and a
+Simplify during a drag waits for the sampling in flight (which is bounded). Esc
+terminates the worker for both kinds of request, so `lost` tells the plot side that its
+pending sampling will never arrive.
 """
 
 from __future__ import annotations
@@ -88,26 +64,21 @@ from rederive.syntax.state import ParseState
 
 __all__ = ["READY_TIMEOUT", "WebEngine"]
 
-#: How long a freshly made worker has to boot Pyodide, install the package and
-#: import the engine before it is given up on. Generous: it is a download on a
-#: cold cache, and the wait is abortable anyway.
+#: How long a new worker gets to boot Pyodide, install the package and import the engine.
+#: Generous because a cold cache means a download, and the wait can be aborted anyway.
 READY_TIMEOUT = 120.0
 
-#: What a worker that never came up is reported as. The browser tells a page
-#: almost nothing about why a worker failed, so the console is where the rest
-#: of it is, and the message says so rather than pretending to know.
+#: Where error messages send the user for details. The browser tells the page almost
+#: nothing about why a worker failed; the console has the rest.
 CONSOLE = "the browser console"
 
 
 class WebEngine:
-    """The five engine calls, answered by a Web Worker that can be terminated.
+    """The engine calls, answered by a terminable Web Worker.
 
-    One request is in flight at a time, which is what the lock is for: the
-    session is single-threaded, the worker holds nothing between requests, and
-    there is nothing a second concurrent request could be about. `abort` is the
-    exception - it is called from the event loop while a call is awaiting its
-    answer, and it takes no lock, since a busy worker's cooperation is exactly
-    what it cannot have.
+    The lock keeps one request in flight at a time. `abort` takes no lock: it's called
+    from the event loop while a call awaits its answer, and kills the worker without
+    needing its cooperation.
     """
 
     def __init__(
@@ -115,38 +86,30 @@ class WebEngine:
         spawn: Callable[[], Any],
         ready_timeout: float = READY_TIMEOUT,
     ) -> None:
-        #: What the page does to make a worker: a JS function answering with a
-        #: fresh one, already loading its runtime. Making it is the page's
-        #: business because the URL and the module type are the page's.
+        #: JS function returning a new worker that is already loading its runtime. The
+        #: page creates it because the page knows the URL and module type.
         self._spawn = spawn
         self._ready_timeout = ready_timeout
         self._call = asyncio.Lock()
         self._worker: Any = None
-        #: The proxies JS holds for as long as this worker lives, and which
-        #: are destroyed with it.
+        #: Proxies held by JS for this worker's lifetime, destroyed with it.
         self._proxies: list[Any] = []
-        #: Resolved when the worker has answered its handshake, and failed
-        #: with the death of a worker that never did.
+        #: Resolved on the worker's handshake, or failed if it dies first.
         self._starting: asyncio.Future[None] | None = None
         self._ready = False
-        #: The request waiting for an answer, as its number and its future.
+        #: Number and future of the request awaiting an answer.
         self._pending: tuple[int, asyncio.Future[Any]] | None = None
-        #: The three-strikes rule and what put the engine down, which are the
-        #: parts of dying that have nothing to do with a Web Worker.
+        #: The three-strikes rule and the reason the engine went down.
         self._deaths = Deaths()
-        #: How many aborts have been asked for. A call reads it before it
-        #: starts and gives up if it has moved: an Esc pressed while the call
-        #: is still waiting for a worker to boot is as much an abort as one
-        #: pressed while sympy is grinding.
+        #: Abort counter. A call notes it at the start and gives up if it changes, so
+        #: Esc also cancels a call still waiting for the worker to boot.
         self._aborts = 0
         self._stopped = False
         self._number = 0
-        #: Told when a worker dies, so that whoever was waiting on an answer
-        #: this side will never see - the plot sampling, whose answers go to
-        #: the page - can stop waiting. Assigned rather than required.
+        #: Optional callback invoked when a worker dies, so plot sampling (whose answers
+        #: go to the page) can stop waiting.
         self.lost: Callable[[str], None] | None = None
-        #: How many workers have been made. Nothing reads it but the tests,
-        #: which is where respawn policy is worth asserting about.
+        #: Number of workers created, used by tests to check respawn policy.
         self.starts = 0
 
     # -- the engine interface ----------------------------------------------
@@ -202,31 +165,28 @@ class WebEngine:
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
-        """Put a worker up, and let it boot while the user reads the menu.
+        """Create a worker and let it boot in the background.
 
-        Returns as soon as the worker exists. Everything expensive about it -
-        the runtime, the package, the sympy import - happens on the worker's
-        own thread, so the first command usually finds one that has already
-        paid for its imports.
+        Returns immediately. Loading the runtime, the package and sympy happens on the
+        worker's thread, so the first command usually finds it ready.
         """
         self._stopped = False
         if self._worker is None:
             self._new()
 
     def abort(self) -> None:
-        """Take the computation away, there being no way to ask it to stop.
+        """Abort the computation by terminating the worker.
 
-        Called from the event loop while a call awaits its answer. Nothing
-        comes back from a terminated worker - not even an end of stream - so
-        the death is worked out here rather than noticed, which is the one
-        place the browser needs more code than the pipe does.
+        Called from the event loop while a call awaits its answer. A terminated worker
+        sends nothing, not even an end of stream, so the death is handled here directly
+        rather than detected.
         """
         self._aborts += 1
         if self._worker is not None:
             self._collapse(EngineAborted("Aborted"))
 
     def shutdown(self) -> None:
-        """End the worker for good, which is what leaving the page comes to."""
+        """Stop the worker permanently, when the user leaves the page."""
         self._stopped = True
         self._release()
         starting, self._starting = self._starting, None
@@ -240,12 +200,10 @@ class WebEngine:
     # -- one request -------------------------------------------------------
 
     async def _await(self, method: str, args: tuple[Any, ...]) -> Any:
-        """Send one request and await its answer, whatever becomes of it.
+        """Send one request and await its answer.
 
-        The abort count is read before the queueing starts, so that an Esc
-        pressed while this call is still waiting - for the lock, or for a
-        worker to finish booting - stops it as surely as one pressed while the
-        answer is being computed.
+        The abort count is read before waiting for the lock, so Esc pressed while this
+        call waits for the lock or for the worker to boot also aborts it.
         """
         aborts = self._aborts
         async with self._call:
@@ -262,38 +220,32 @@ class WebEngine:
                 raise self._collapse(EngineDied(f"The engine stopped: {error}")) from None
             return await answer
 
-    # -- the second family -------------------------------------------------
+    # -- plot requests -----------------------------------------------------
 
     def numbered(self) -> int:
-        """The number the next request will travel under.
+        """Allocate the number for the next request.
 
-        Taken before the sending rather than during it, because the sending is
-        a coroutine and the side that asked has to know what it is waiting for
-        the moment it asks. One sequence for both families, so that an answer
-        never wears a number two requests could claim.
+        Allocated before sending, because sending is a coroutine and the caller needs the
+        number immediately. Engine and plot requests share one sequence, so numbers are
+        unique.
         """
         self._number += 1
         return self._number
 
     async def value(self, method: str, args: tuple[Any, ...]) -> Any:
-        """Send one plot request whose answer is a value rather than a picture.
+        """Send a plot request whose answer is a value for Python rather than a picture.
 
-        What four typed bounds are worth is four floats, and floats belong to
-        the side that asked rather than to the side that draws - so this one
-        takes the pending slot and the lock the five calls take, and answers the
-        way they answer. It is on the second family's road only because the
-        worker's method is a plot method.
+        Evaluating four typed bounds yields four floats, so this uses the lock and pending
+        slot like the engine calls.
         """
         return await self._await(method, args)
 
     async def ask(self, number: int, method: str, args: tuple[Any, ...]) -> None:
-        """Send one request whose answer is the page's rather than Python's.
+        """Send a plot sampling request, whose answer goes to the page, not to Python.
 
-        The plot sampling, and nothing else. No lock, because there is nothing
-        here for a second request to collide with: what the lock protects is the
-        pending slot the five calls share, and this request has no answer to put
-        in one. What it does share is the worker, and the worker orders the two
-        families itself by taking its messages in the order they arrive.
+        No lock is needed because the lock guards the pending slot, and this request has
+        no answer to put there. The worker orders it against other requests by handling
+        messages in arrival order.
         """
         await self._require()
         try:
@@ -302,16 +254,15 @@ class WebEngine:
             raise self._collapse(EngineDied(f"The engine stopped: {error}")) from None
 
     def _abandoned(self, aborts: int) -> None:
-        """Give up where an abort has arrived since this call started."""
+        """Raise `EngineAborted` if an abort arrived since this call started."""
         if self._aborts != aborts:
             raise EngineAborted("Aborted")
 
     async def _require(self) -> None:
-        """See that there is a worker to ask, or say why there will not be one.
+        """Ensure there is a ready worker, or raise explaining why there isn't.
 
-        An engine that has gone down is retried exactly once here, which is the
-        whole of the retry policy: the user pressing a command key is the
-        clock, and nothing spins behind their back.
+        An engine that went down is retried once per command; nothing retries in the
+        background.
         """
         if self._stopped:
             raise EngineDown("The engine has been shut down")
@@ -329,14 +280,13 @@ class WebEngine:
             died = EngineDied("The engine did not start in time", CONSOLE)
             raise self._collapse(died) from None
 
-    # -- what the worker says ----------------------------------------------
+    # -- worker messages ---------------------------------------------------
 
     def _message(self, event: Any) -> None:
-        """One message off the worker, and a death where it will not be read.
+        """Handle a worker message, treating any failure as the worker's death.
 
-        The callback is JS's, so an exception raised under it lands nowhere a
-        user would look and leaves the waiting call waiting forever. A message
-        that will not unpickle is a dead worker like any other.
+        An exception escaping this JS callback would go unseen and leave the waiting call
+        hanging, so a message that can't be decoded counts as a dead worker.
         """
         try:
             self._heard(event.data)
@@ -344,28 +294,22 @@ class WebEngine:
             self._collapse(EngineDied(f"The engine answered with nonsense: {error}"))
 
     def _heard(self, data: Any) -> None:
-        """The handshake, an answer, or the page saying it has no worker.
+        """Dispatch a handshake, an answer, or a page report that the worker failed.
 
-        Everything Python sends is a pickle. A string is the page's own way of
-        saying that the worker could not be built at all - a runtime that would
-        not load, a package that would not install - which is a death before
-        the handshake and counts as one.
+        Python always sends pickles. A string comes from the page and means the worker
+        couldn't be built (the runtime didn't load or the package didn't install), which
+        counts as a death.
         """
         if isinstance(data, str):
             self._collapse(EngineDied(data, CONSOLE))
             return
         if getattr(data, "pane", None) is not None:
-            # A sampling answer, which is the page's traffic and not this
-            # side's: the arrays in it are drawn by whoever is listening for
-            # them in JavaScript, and are never read here. Recognized by a
-            # field rather than by a type, because what a pickle arrives as is
-            # a typed array and so is half of what a sampling answers with.
+            # A sampling answer, handled by the page's JavaScript. Recognized by a field
+            # rather than by type, since pickles also arrive as typed arrays.
             return
         held = getattr(data, "heap", None)
         if held is not None:
-            # The worker saying how far its heap has grown, which is the half
-            # of the memory gauge nothing on this side can measure. Recognized
-            # the same way and answered the same way: nothing waits on it.
+            # A heap-size report from the worker, for the memory gauge.
             memory.worker_holds(int(held))
             return
         message = pickle.loads(_bytes(data))
@@ -375,12 +319,12 @@ class WebEngine:
         self._answered(message)
 
     def _failed(self, event: Any) -> None:
-        """The worker raised where nothing was there to catch it, and is gone."""
+        """Handle an uncaught error in the worker, which kills it."""
         message = getattr(event, "message", "") or "The engine stopped"
         self._collapse(EngineDied(str(message), CONSOLE))
 
     def _greeted(self) -> None:
-        """The worker has said it is up, which is what a pending call waits for."""
+        """Handle the worker's handshake, releasing calls waiting for it to start."""
         self._ready = True
         self._deaths.ready()
         starting = self._starting
@@ -388,11 +332,11 @@ class WebEngine:
             starting.set_result(None)
 
     def _answered(self, message: tuple[Any, ...]) -> None:
-        """What one answer means: a value, a survivable bug, or a death.
+        """Handle an answer: a value, a survivable bug, or a death.
 
-        An answer wearing another number belongs to a request that was
-        abandoned. It cannot happen while an aborted worker is always
-        terminated rather than reused, and it is cheap insurance.
+        An answer with a different number belongs to an abandoned request and is
+        ignored. That can't happen while aborted workers are always terminated, but it's
+        cheap insurance.
         """
         pending = self._pending
         if pending is None or pending[0] != message[0]:
@@ -404,23 +348,21 @@ class WebEngine:
             return
         _, _, kind, said, traceback_text = message
         if kind == worker.MEMORY:
-            # The worker stops after saying this, so the death path runs now
-            # rather than surprising the next command.
+            # The worker closes after sending this, so handle the death now rather than
+            # on the next command.
             self._collapse(EngineMemoryExceeded("The engine ran out of memory"))
             return
         self._pending = None
         answer.set_exception(EngineBug(said, traceback_text))
 
-    # -- the one death path ------------------------------------------------
+    # -- worker death ------------------------------------------------------
 
     def _collapse(self, reason: EngineError) -> EngineError:
-        """A worker is gone: fail what it owed, clear it away, put another up.
+        """Handle a dead worker: fail its pending futures, discard it, start another.
 
-        Every cause arrives here - an abort, a worker that would not start, one
-        the browser took away, one that ran out of memory - which is what makes
-        the recovery one piece of code. How many failures in a row are too many
-        is `policy`'s to say. The exception is returned as well as delivered so
-        that a caller can raise it from where its own error handling reads best.
+        Every cause of death ends up here: abort, failure to start, termination by the
+        browser, or running out of memory. `policy` decides when too many failures in a
+        row stop respawning. The exception is also returned so the caller can raise it.
         """
         self._release()
         ready, self._ready = self._ready, False
@@ -430,21 +372,19 @@ class WebEngine:
         if pending is not None:
             _fail(pending[1], reason)
         if self.lost is not None:
-            # The second family has no future to fail: its answers go to the
-            # page, so the only way to tell it that one is never coming is to
-            # say so.
+            # Plot sampling has no future to fail, since its answers go to the page, so it
+            # must be told explicitly.
             self.lost(str(reason))
         respawn = self._deaths.died(reason, ready)
         if not self._stopped and respawn:
             self._new()
         return reason
 
-    # -- the worker itself -------------------------------------------------
+    # -- worker lifecycle --------------------------------------------------
 
     def _new(self) -> None:
-        """Make a worker, and listen to it. Raises nothing: the page's job is
-        to answer with an object, and a worker that will not boot says so in a
-        message like any other death."""
+        """Create a worker and subscribe to its messages. Doesn't raise: a worker that
+        fails to boot reports it in a message, like any other death."""
         from pyodide.ffi import create_proxy
 
         made = self._spawn()
@@ -459,21 +399,19 @@ class WebEngine:
         self.starts += 1
 
     def _release(self) -> None:
-        """Terminate the worker and give the page back the proxies it holds."""
+        """Terminate the worker and destroy the proxies JS holds for it."""
         made, self._worker = self._worker, None
         proxies, self._proxies = self._proxies, []
         if made is not None:
             made.terminate()
         for proxy in proxies:
             proxy.destroy()
-        # Whatever the gauge was carrying for it goes with it. A terminated
-        # worker's heap went back to the browser, and a figure kept after that
-        # would be the program reporting memory nothing is holding.
+        # A terminated worker's heap is freed, so clear its figure from the gauge.
         memory.worker_holds(None)
 
 
 def _post(made: Any, payload: bytes) -> None:
-    """Hand one pickle to the worker, as the bytes a structured clone can carry."""
+    """Send a pickle to the worker as a `Uint8Array`."""
     import js
 
     buffer = js.Uint8Array.new(len(payload))
@@ -482,17 +420,16 @@ def _post(made: Any, payload: bytes) -> None:
 
 
 def _bytes(data: Any) -> bytes:
-    """The pickle inside a `Uint8Array`, copied out of the page's memory."""
+    """Copy the pickle out of a `Uint8Array`."""
     return bytes(data.to_py())
 
 
 def _fail(future: asyncio.Future[Any] | None, reason: EngineError) -> None:
-    """Fail one future, where there is one and it is still waiting.
+    """Fail a future, if there is one and it isn't done.
 
-    The exception is read straight back out because there may be nobody
-    awaiting this future - a worker can die between commands - and an exception
-    a future was never asked for is one the loop reports to the console as
-    though something had gone unnoticed.
+    The exception is immediately retrieved because nobody may be awaiting the future (a
+    worker can die between commands), and the loop would otherwise log it as
+    unretrieved.
     """
     if future is None or future.done():
         return

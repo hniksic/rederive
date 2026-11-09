@@ -1,8 +1,8 @@
-"""A rewrite offered, and whether it is kept.
+"""Applying rewrites and deciding whether to keep them.
 
-Every rewrite Simplify offers is offered inside a `try`, and a rewrite that raises is
-one that was not worth having: `attempt` is that. `forced` keeps what a rewrite gives
-whatever it costs, and `pays` is the gate a rewrite offered as an option has to pass.
+Simplify tries every rewrite with `attempt`, which treats a rewrite that raises as not
+applicable. `forced` keeps a rewrite's result regardless of cost, and `pays` decides
+whether an optional rewrite is worth keeping.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ Rewrite = Callable[[sp.Basic], sp.Basic]
 
 
 def forced(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
-    """`rewrite`, whatever it costs: a direction asked for, a fact, or a spelling."""
+    """Apply `rewrite` regardless of cost (for a requested direction, a fact, or a
+    spelling), keeping `expression` if it fails."""
     candidate = attempt(expression, rewrite)
     return expression if candidate is None else candidate
 
@@ -32,13 +33,11 @@ def attempt(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic | None:
 
 
 def pays(candidate: sp.Basic, previous: sp.Basic) -> bool:
-    """Whether a rewrite earned its keep.
+    """Whether a rewrite is worth keeping.
 
-    One variable fewer always counts, however long the answer: a superfluous
-    variable is the first thing the manual says a simplified expression does
-    not have. One denominator fewer under another counts the same way, being
-    the other thing a simplified expression does not have. Failing both, the
-    rewrite has to be shorter.
+    Losing a variable always pays, however long the result, since the manual says a
+    simplified expression has no superfluous variables. Likewise for removing a nested
+    denominator. Otherwise the rewrite must be shorter.
     """
     try:
         if candidate == previous:
@@ -55,14 +54,12 @@ def pays(candidate: sp.Basic, previous: sp.Basic) -> bool:
 def _compound(expression: sp.Basic) -> bool:
     """Whether a denominator in `expression` has a denominator of its own.
 
-    Which is the one thing Derive never leaves standing whatever it costs:
-    `DIF(ATAN(x/a), x)` is `1/(a + x^2/a)` to sympy and `a/(a^2 + x^2)` to the
-    original, and the two are the same length, so nothing that counts
-    operations can tell them apart.
+    Derive always removes these: `DIF(ATAN(x/a), x)` is `1/(a + x^2/a)` to sympy and
+    `a/(a^2 + x^2)` to Derive. Both have the same length, so counting operations can't
+    tell them apart.
 
-    A number underneath is not a denominator of this kind. `x + 1/2` is a sum
-    of a variable and a number wherever it stands, and putting it over two is
-    the longer way to write it.
+    Numeric inner denominators don't count: `x + 1/2` is shorter than putting it over
+    two.
     """
     for power in expression.atoms(sp.Pow):
         if not power.exp.is_negative:

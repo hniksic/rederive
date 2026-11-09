@@ -1,46 +1,35 @@
 """Writing an expression as a sum: the rewrites, and nothing else.
 
-This is the mathematics of Derive's Expand with no command around it. It takes
-a sympy expression and gives one back, so it sits below `pipeline` and can be
-used by it: the `EXPAND` head an authored line may carry is evaluated during
-Simplify, and the Expand command is `expand.py` on top of both.
+The mathematics of Derive's Expand, sympy expression in and out. It sits below
+`pipeline`, which uses it to evaluate an authored `EXPAND`; the Expand command is
+`expand.py` on top of both.
 
-Simplify's normal form does the same thing about one generator at a time, in
-`normal`, which is why the rule that everything free of the variables is one
-opaque quantity shows up in both commands' answers.
+Simplify's normal form (in `normal`) does the same about one generator at a time, so
+both commands treat everything free of the variables as one opaque quantity.
 
-The manual states the goal as maximizing the number of terms that are
-algebraically independent with respect to the *expansion variables*, and the
-whole of this file follows from taking that literally. Everything free of
-those variables is one opaque quantity, so nothing about it is expanded and
-nothing about it is multiplied out; what is left is expanded as far as it
-goes, and terms carrying the same powers of the expansion variables are
-collected back together. That is why `(x + 2*y + 1)^3` about `x` alone comes
-out as powers of `2*y + 1` rather than as a polynomial in `y`, and why
-`3*a^2*x^2*y^3 + 7*(b + 1)^2*x^2*y^3` about `x` and `y` collects into
-`x^2*y^3*(3*a^2 + 7*(b + 1)^2)` with the `(b + 1)^2` still standing.
+The manual defines the goal as maximizing the number of terms algebraically
+independent with respect to the *expansion variables*, and this module takes that
+literally. Everything free of those variables is opaque and not expanded; the rest is
+fully expanded, and terms with the same powers of the expansion variables are
+collected. So `(x + 2*y + 1)^3` about `x` gives powers of `2*y + 1`, not a polynomial in
+`y`, and `3*a^2*x^2*y^3 + 7*(b + 1)^2*x^2*y^3` about `x` and `y` collects into
+`x^2*y^3*(3*a^2 + 7*(b + 1)^2)`, keeping `(b + 1)^2`.
 
-A ratio whose denominator holds an expansion variable is a different
-operation under the same name: partial fraction expansion. Long division
-first, if the numerator has the degree for it; then the denominator is
-factored - by an *amount*, which is `factoring`'s dial and the reason Expand
-asks for one at all - and the proper part is split over those factors by
-undetermined coefficients. Undetermined coefficients rather than sympy's
-`apart` because the factors may be radical: `1/(x^2 - 2)` splits over
-`x - SQRT(2)` and `x + SQRT(2)` when raDical was asked for, which no
-decomposition over the rationals reaches.
+A ratio whose denominator contains an expansion variable gets partial fraction
+expansion instead: long division if the numerator's degree allows, then factoring the
+denominator by the *amount* (the only reason Expand asks for one), then splitting the
+proper part over the factors by undetermined coefficients. Sympy's `apart` isn't used
+because the factors may be radical: under raDical, `1/(x^2 - 2)` splits over `x -
+SQRT(2)` and `x + SQRT(2)`, which no decomposition over the rationals reaches.
 
-`Complex` is missing from the amounts here, and that is the original's doing:
-Expand's amount menu lists four where Factor's lists five.
+There is no `Complex` amount, since Derive's Expand menu lists only four.
 
-Exponents are left alone throughout. `2^(x + 1)` is not `2*2^x` to Derive, and
-neither trigonometric nor exponential nor logarithmic expansion is Expand's
-business - the manual sends those to the Trigonometry and Exponential options
-instead.
+Exponents are never expanded: `2^(x + 1)` is not `2*2^x` to Derive. Trigonometric,
+exponential and logarithmic expansion belong to the Trigonometry and Exponential
+options, per the manual.
 
-Every transformation is offered inside a `try` and a failure leaves the
-previous form standing, so this is as total as Simplify is: nothing sympy does
-can turn a valid entry into an error.
+Every transformation runs inside a `try` and a failure keeps the previous form, so
+like Simplify this never turns a valid entry into an error.
 """
 
 from __future__ import annotations
@@ -70,19 +59,14 @@ def expanded_expression(
 ) -> sp.Basic:
     """`expression` written as a sum, about `variables`.
 
-    `variables` names the expansion variables in the order they were chosen,
-    empty meaning all of them - which is the opposite of what empty means to
-    `factoring`, where sympy is left to pick its own generators. Expand has
-    nowhere to leave the choice: the manual says expansion is with respect to
-    all the variables in the expression when none are named. `order` is the
-    session's variable order list, which is what "all of them" is ordered by.
+    `variables` names the expansion variables in the order chosen. Empty means all of
+    them, per the manual, unlike in `factoring`, where empty lets sympy pick. `order`
+    is the session's order list, used to order "all of them".
 
-    Every scalar the expression is built out of is expanded and then passed
-    through `finish`, so a caller that rounds can round the terms rather than
-    what they were expanded from.
+    Each scalar in the expression is expanded and then passed through `finish`, so
+    rounding applies to the terms rather than to the original.
 
-    Total: a rewrite that fails is a rewrite not taken, and nothing here
-    raises on anything the conversion layer produced.
+    Never raises on output of the conversion layer; a failed rewrite is skipped.
     """
     request = _Request(amount, tuple(variables), finish, tuple(order))
     return distributed(expression, lambda scalar: _leaf(scalar, request))
@@ -90,7 +74,7 @@ def expanded_expression(
 
 @dataclass(frozen=True)
 class _Request:
-    """What was asked for, carried down to every scalar it reaches."""
+    """The expansion parameters, passed down to each scalar."""
 
     amount: Amount
     variables: tuple[str, ...]
@@ -99,7 +83,7 @@ class _Request:
 
 
 def _leaf(expression: sp.Basic, request: _Request) -> sp.Basic:
-    """One scalar, expanded about whichever of its variables were chosen."""
+    """One scalar, expanded about the chosen variables it contains."""
     if not isinstance(expression, sp.Expr):
         return expression
     variables = _generators(expression, request.variables, request.order)
@@ -113,19 +97,17 @@ def _leaf(expression: sp.Basic, request: _Request) -> sp.Basic:
 def _generators(
     expression: sp.Expr, variables: Sequence[str], order: Sequence[str]
 ) -> tuple[sp.Symbol, ...]:
-    """The expansion variables, as the symbols this expression holds.
+    """The expansion variables, as the symbols in this expression.
 
-    Named by the caller as text, because that is what a prompt collects, and
-    resolved against the expression so that the symbol carries whatever a
-    declared domain told the conversion layer about it. A name the expression
-    does not hold drops out, which is what leaves `(x + 1)^2` alone when `y`
-    was the variable asked for.
+    The caller names them as text (from a prompt); resolving them against the
+    expression gets symbols carrying their declared domain assumptions. Names not in
+    the expression are dropped, so `(x + 1)^2` is left alone when expanding about `y`.
 
-    Empty means all of them, most main first, so that the primary expansion
-    variable is the one Derive would have made primary anyway.
+    Empty means all variables, most main first, so the primary variable is the one
+    Derive would choose.
     """
-    # `type is` rather than `isinstance`: a string literal is a `Symbol`
-    # subclass, and a string is data rather than a variable to expand about.
+    # `type is` rather than `isinstance`: string literals are a `Symbol` subclass, and
+    # aren't variables.
     free = {
         symbol.name: symbol
         for symbol in expression.free_symbols
@@ -138,12 +120,11 @@ def _generators(
 def _expanded(
     expression: sp.Expr, variables: tuple[sp.Symbol, ...], amount: Amount
 ) -> sp.Expr:
-    """One scalar, by whichever of the two expansions applies to it.
+    """One scalar, by whichever of the two expansions applies.
 
-    A ratio is a partial fraction expansion only where an expansion variable
-    is in its denominator - `x/(a^2 - 1)` about `x` alone has nothing to split
-    over - and only where the split succeeds. Everything else, and anything
-    that did not, is a polynomial expansion.
+    Partial fractions are used only if an expansion variable is in the denominator
+    (`x/(a^2 - 1)` about `x` has nothing to split over) and the split succeeds.
+    Otherwise it is a polynomial expansion.
     """
     _, denominator = sp.fraction(expression)
     if denominator.free_symbols & set(variables):
@@ -159,22 +140,19 @@ def _expanded(
 def held_about(
     expression: sp.Expr, variable: sp.Symbol
 ) -> tuple[sp.Expr, dict[sp.Dummy, sp.Expr]]:
-    """`expression` with everything free of `variable` stood in for, and the map back.
+    """`expression` with everything free of `variable` replaced by placeholders, and
+    the map back.
 
-    Public so that the promise below can be checked on its own. `xreplace`
-    with the map puts the placeholders back.
+    Public so the reversibility guarantee can be tested. `xreplace` with the map
+    restores the placeholders.
 
-    Freezing has one thing to promise, and it is checked here rather than
-    trusted: putting the placeholders back has to give the expression it started
-    from. `_frozen` rebuilds a head it does not know from arguments it has
-    rewritten, and a head that will not survive that loses whatever it was
-    carrying - a `RootSum` rebuilt this way came back without its sum at all,
-    and what was written afterwards was an antiderivative missing half of
-    itself. `_BOUND` names the heads known to need standing in for whole, but
-    the check is what makes the next one an expression that does not change
-    rather than an answer that is wrong. Where it fails the whole expression is
-    stood in for as one placeholder, which leaves the normal form nothing to do
-    and is always the safe reading of a sum nobody can take apart.
+    Restoring must give back the original expression, and this is checked rather
+    than trusted. `_frozen` rebuilds unknown heads from rewritten arguments, and a
+    head that doesn't survive that loses content: a `RootSum` once came back without
+    its sum, yielding an antiderivative missing half of itself. `_BOUND` lists the
+    known cases, but the check makes an unknown one leave the expression unchanged
+    rather than produce a wrong answer. On failure the whole expression becomes one
+    placeholder, leaving the normal form nothing to do.
     """
     held: dict[sp.Dummy, sp.Expr] = {}
     frozen = _frozen(expression, {variable}, held)
@@ -189,11 +167,10 @@ def held_about(
 
 
 def _polynomial(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Expr:
-    """Multiplied out about `variables`, and collected back by their powers."""
+    """Multiplied out about `variables`, then collected by their powers."""
     held: dict[sp.Dummy, sp.Expr] = {}
     frozen = _frozen(expression, set(variables), held)
-    # The two rewrites that take a power apart are off, neither being anything
-    # Expand does: `x^(a + b)` is not `x^a*x^b` and `(x*y)^n` is not `x^n*y^n`.
+    # Expand doesn't split powers: `x^(a + b)` stays, as does `(x*y)^n`.
     multiplied = sp.expand(frozen, power_exp=False, power_base=False)
     return _collected(multiplied, variables).xreplace(held)
 
@@ -201,21 +178,18 @@ def _polynomial(expression: sp.Expr, variables: tuple[sp.Symbol, ...]) -> sp.Exp
 def _frozen(
     expression: sp.Expr, variables: set[sp.Symbol], held: dict[sp.Dummy, sp.Expr]
 ) -> sp.Expr:
-    """`expression` with everything free of `variables` stood in for.
+    """`expression` with everything free of `variables` replaced by placeholders.
 
-    A placeholder is what makes an expansion variable's coefficient opaque, so
-    that multiplying out cannot reach inside it. The sum and the product take
-    all their parts that are free of the variables *together*, as one
-    placeholder rather than one each: that is what leaves `x + 2*y + 1` as
-    `x + d`, and so leaves `(x + 2*y + 1)^3` about `x` written in powers of
+    Placeholders make coefficients opaque so multiplying out can't reach inside. In a
+    sum or product, all parts free of the variables share *one* placeholder, so `x +
+    2*y + 1` becomes `x + d` and `(x + 2*y + 1)^3` about `x` is written in powers of
     `2*y + 1`.
 
-    A product's numeric factor stays outside the placeholder, and a sum's
-    numeric term does not. In a product the number is the coefficient the
-    collecting is meant to find in common, and a `2*x*(a + b)` frozen again
-    with the `2` inside comes back `x*(2*a + 2*b)`; in a sum it is part of the
-    one opaque quantity, and without it `2*y` and `1` would be multiplied out
-    separately and `3*x*(2*y + 1)^2` would come out `3*x*(4*y^2 + 4*y + 1)`.
+    A product's numeric factor stays outside the placeholder, but a sum's numeric term
+    goes inside. In a product the number is a coefficient for collecting to find, and
+    with the `2` inside, `2*x*(a + b)` would become `x*(2*a + 2*b)`. In a sum it is
+    part of the opaque quantity; otherwise `3*x*(2*y + 1)^2` would become `3*x*(4*y^2
+    + 4*y + 1)`.
     """
     if not (expression.free_symbols & variables):
         return _held(expression, held)
@@ -231,10 +205,9 @@ def _frozen(
             parts.append(_held(expression.func(*free), held))
         return expression.func(*parts)
     if isinstance(expression, sp.Pow):
-        # What is expanded is the base. An exponent that is not a number is
-        # stood in for as well, because sympy reads `2^(x + 1)` as a power of
-        # a sum and would multiply it out into `2*2^x`, which is not something
-        # Derive's Expand does.
+        # Only the base is expanded. A non-numeric exponent gets a placeholder too,
+        # since sympy would otherwise turn `2^(x + 1)` into `2*2^x`, which Derive's
+        # Expand doesn't do.
         base, exponent = expression.args
         if not exponent.is_Number:
             exponent = _held(exponent, held)
@@ -248,22 +221,17 @@ def _frozen(
     return expression
 
 
-#: The heads that bind a variable of their own. Each is stood in for whole,
+#: Heads that bind their own variable. Each is replaced whole by a placeholder,
 #: expansion variables and all, for two reasons.
 #:
-#: Not every argument of one is an operand: a derivative carries the variable it
-#: is taken over and how many times, a substitution the variables it binds and
-#: the points they take, a root sum the polynomial whose roots it runs over and
-#: the generator that polynomial and its summand share. Those travel as tuples,
-#: lambdas and dummies, and rebuilding the head from rewritten arguments reads
-#: them as something else - `DIF(u, xi)` comes back `DIF(u, [xi, 1])`,
-#: `SUBS(u, [xi], [y])` comes back `SUBS(u, [[xi]], [y])`, and a root sum does
-#: not come back at all: it rebuilds into nothing and the term is lost.
+#: Not all their arguments are operands: a derivative carries its variable and
+#: order, a substitution its bound variables and points, a root sum its polynomial
+#: and shared generator. These are tuples, lambdas and dummies, and rebuilding from
+#: rewritten arguments misreads them: `DIF(u, xi)` becomes `DIF(u, [xi, 1])`,
+#: `SUBS(u, [xi], [y])` becomes `SUBS(u, [[xi]], [y])`, and a root sum vanishes.
 #:
-#: And what is inside one is not being expanded anyway. `sp.expand` goes deep,
-#: so an integrand would be multiplied out where nobody asked - which splits the
-#: integral into one per term, and an integral that had no answer can end up
-#: beside one that does.
+#: Also, their contents shouldn't be expanded anyway. `sp.expand` is deep, so it
+#: would multiply out an integrand, splitting the integral into one per term.
 _BOUND = (
     sp.Derivative,
     sp.Integral,
@@ -276,10 +244,9 @@ _BOUND = (
 
 
 def _held(expression: sp.Expr, held: dict[sp.Dummy, sp.Expr]) -> sp.Expr:
-    """A placeholder standing in for `expression`, or the number itself.
+    """A placeholder for `expression`, or the expression itself if it is a number.
 
-    A number is not stood in for: `(2 + 3)^2` is 25 whatever was asked for,
-    and holding it back would leave the arithmetic undone.
+    Numbers aren't held, so arithmetic like `(2 + 3)^2` still evaluates to 25.
     """
     if expression.is_number:
         return expression
@@ -292,18 +259,14 @@ def _collected(
     expression: sp.Expr,
     variables: tuple[sp.Symbol, ...],
 ) -> sp.Expr:
-    """Terms carrying the same powers of every expansion variable, put together.
+    """`expression` with terms of equal powers of the expansion variables collected.
 
-    Which is the manual's rule that terms of equal degree in the expansion
-    variables are collected: `a*(x + 1)^2 + b*(x + 1)^2` about `x` is
-    `x^2*(a + b) + 2*x*(a + b) + a + b`, not six terms.
+    Per the manual, `a*(x + 1)^2 + b*(x + 1)^2` about `x` is `x^2*(a + b) + 2*x*(a +
+    b) + a + b`, not six terms.
 
-    A coefficient that several terms went into keeps whatever it has in
-    common outside: `2*x*(a + b)` rather than `x*(2*a + 2*b)`, which is the
-    same rule that leaves a non-expansion variable unexpanded, and which the
-    manual's own expansion about `y` alone shows in `12*y^2*(x + 1)`. The
-    normal form collects the other way round, keeping a coefficient's numeric
-    content inside.
+    A collected coefficient keeps its common factor outside: `2*x*(a + b)` rather than
+    `x*(2*a + 2*b)`, as in the manual's expansion about `y` giving `12*y^2*(x + 1)`.
+    The normal form does the opposite, keeping numeric content inside.
     """
     if not isinstance(expression, sp.Add):
         return expression
@@ -321,16 +284,12 @@ def _collected(
 
 
 def _coefficient(terms: list[sp.Expr], degrees: tuple[sp.Expr, ...]) -> sp.Expr:
-    """What the terms of one degree carry, with any common factor outside.
+    """The sum of the coefficients of one degree, with any common factor outside.
 
-    Only where there is a degree for them to be the coefficient of. The group
-    at degree zero is everything the expansion variables did not reach, and
-    that is the whole expression when they reach nothing - taking a common
-    factor out of it is not collecting a coefficient, it is factoring, which is
-    the opposite of what this command does. `2*SIN(x) + 2*COS(x)` is left as it
-    stands rather than collected, and `LN(x^2 - x) - LN(x)` is left alone
-    rather than written `LN(x*(x - 1)) - LN(x)`, which is `factor_terms`
-    reaching inside a logarithm to factor its argument.
+    Not done at degree zero, which holds everything free of the expansion variables
+    (possibly the whole expression); pulling out a factor there would be factoring.
+    So `2*SIN(x) + 2*COS(x)` is left as is, and `LN(x^2 - x) - LN(x)` isn't turned
+    into `LN(x*(x - 1)) - LN(x)` by `factor_terms` reaching inside the logarithm.
     """
     if len(terms) == 1 or not any(degrees):
         return sp.Add(*terms)
@@ -361,14 +320,12 @@ def _partial_fractions(
 ) -> sp.Expr | None:
     """`expression` as a polynomial plus a sum of super-proper ratios.
 
-    None where the decomposition does not come out - a numerator that is no
-    polynomial in the primary variable, a system with no solution - and the
-    caller expands the expression as a polynomial instead.
+    None if the decomposition fails (e.g. the numerator isn't a polynomial in the
+    primary variable, or the system has no solution); the caller then expands it as a
+    polynomial.
 
-    The primary variable is the most main expansion variable that the
-    denominator actually holds, which need not be the first one chosen:
-    `x/(a^2 - 1)` about `x` and `a` splits over `a`, there being no `x` in the
-    denominator to split over.
+    The primary variable is the most main expansion variable in the denominator, not
+    necessarily the first chosen: `x/(a^2 - 1)` about `x` and `a` splits over `a`.
     """
     numerator, denominator = sp.fraction(expression)
     primary = next(
@@ -396,15 +353,13 @@ def _denominator_factors(
     variables: tuple[sp.Symbol, ...],
     amount: Amount,
 ) -> tuple[sp.Expr, list[tuple[sp.Expr, int]]] | None:
-    """The denominator as a content times factors that hold the primary variable.
+    """The denominator as content times factors containing the primary variable.
 
-    Factored by the amount asked for, which is the whole of what the amount
-    decides: Trivial leaves `x^2 - 1` whole and the expansion with it, while
-    raDical splits `x^2 - 2` and lets the expansion reach `SQRT(2)`.
+    This is all the amount controls: Trivial leaves `x^2 - 1` whole and hence
+    unexpanded, while raDical splits `x^2 - 2` over `SQRT(2)`.
 
-    None where nothing came apart into a factor holding the primary variable,
-    or where the factors do not multiply back to what they were factored from
-    - there is nothing to decompose over in either case.
+    None if no factor contains the primary variable or the factors don't multiply
+    back to the denominator.
     """
     factored = factored_expression(denominator, amount, [v.name for v in variables])
     content = sp.S.One
@@ -431,20 +386,17 @@ def _undetermined(
 ) -> list[sp.Expr] | None:
     """The proper part split over the denominator's factors.
 
-    Each factor to each power up to its own gets a numerator of lower degree
-    in the primary variable than the factor's base has - which is what the
-    manual calls super-proper - written with unknown coefficients. Multiplying
-    the whole sum back up by the denominator gives one polynomial identity in
-    the primary variable, and its coefficients are a linear system in the
-    unknowns.
+    Each factor, at each power up to its multiplicity, gets a numerator with unknown
+    coefficients and lower degree in the primary variable than the factor's base
+    (what the manual calls super-proper). Multiplying by the denominator gives a
+    polynomial identity whose coefficients form a linear system in the unknowns.
 
-    Each term is multiplied by the product of the *other* factors rather than
-    by the denominator divided by its own, because dividing means cancelling
-    and sympy cancels over the rationals: `(x^2 - 2)/(x - SQRT(2))` comes back
-    uncancelled, and the identity would not be a polynomial at all.
+    Each term is multiplied by the product of the *other* factors rather than the
+    denominator divided by its own, because sympy cancels only over the rationals:
+    `(x^2 - 2)/(x - SQRT(2))` stays uncancelled, and the identity wouldn't be a
+    polynomial.
 
-    None if the system will not solve, which leaves the ratio unsplit rather
-    than half-split.
+    None if the system has no solution, leaving the ratio unsplit.
     """
     content, factors = split
     unknowns: list[sp.Dummy] = []
@@ -484,14 +436,12 @@ def _without(
 def _over(
     top: sp.Expr, base: sp.Expr, variables: tuple[sp.Symbol, ...]
 ) -> sp.Expr:
-    """One super-proper term, with its denominator distributed where it should be.
+    """One super-proper term, with its denominator distributed where appropriate.
 
-    The manual's last rule: a numerator that is a sum containing expansion
-    variables has the denominator distributed over it, so `(x + 1)/(x^2 + 1)`
-    becomes two terms. A numerator free of them is left as one - the manual's
-    own `81*(a + 1)/(x - 3)` is not split into two terms in `a` - and is
-    collected rather than left multiplied out, since nothing about a
-    non-expansion variable is expanded unnecessarily.
+    Per the manual, a numerator that is a sum containing expansion variables has the
+    denominator distributed over it, so `(x + 1)/(x^2 + 1)` becomes two terms. A
+    numerator free of them stays one term (the manual's `81*(a + 1)/(x - 3)` isn't
+    split) and is collected rather than multiplied out.
     """
     if isinstance(top, sp.Add) and top.free_symbols & set(variables):
         return sp.Add(*(term / base for term in top.args))

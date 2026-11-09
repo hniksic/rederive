@@ -1,46 +1,33 @@
-"""Simplify: the first command built on the engine's two doors.
+"""Simplify: the first command built on the engine.
 
-Derive's Simplify has two goals at once. Reach a form that is *sufficiently
-simple* - no superfluous variables, roots, functions or reducible degrees - and
-put it in a normal form, so that two ways of writing one thing come back the
-same way. Between the two it transforms as little as it can, which is why this
-is a deliberate sequence of named rewrites and not a call to `sympy.simplify`:
-a wholesale simplifier decides for itself what a nicer expression is, and
-Derive does not want a nicer expression, it wants the same expression with the
-slack taken out.
+Derive's Simplify aims for a *sufficiently simple* form (no superfluous variables,
+roots, functions or reducible degrees) in a normal form, so that two ways of writing the
+same thing come back the same. It changes as little as possible, so this is a sequence
+of named rewrites rather than a call to `sympy.simplify`, which would pick its own idea
+of a nicer expression.
 
-The sequence is:
+The steps:
 
-1. Evaluate the tree, innermost first, which is `evaluate`'s business: names
-   replaced by what they stand for, calls of defined functions worked out over
-   their arguments, and the test of every `IF` decided before a branch is
-   chosen. Sympy's automatic evaluation does most of what the manual lists as
-   Simplify's basic work on the way: combining numbers, collecting like
-   factors and terms, the identities for zero and one, distributing integer
-   powers over products.
-2. On the way, as each is made, the calculus heads are worked out by
-   `_evaluate`, and the `FACTOR`, `EXPAND`, `SOLVE` and `RATE` heads are run by
-   `_commanded`. A calculus head that will not evaluate survives to the output
-   as itself, which is how `INT(#e^(x^2), x)` comes back an integral rather than
-   an error.
-3. Reduce the kernels, over the vocabulary the answer is written in: offer
-   each identity in turn and keep it only if it pays - fewer operations, or
-   one variable fewer - and apply the rules a mode set to Collect or Expand
-   asks for, that being an instruction rather than an option. The tables at
-   the end of this module are the whole of it.
-4. Write every sum and quotient in the normal form `normal_form` is about: a
-   sum as a rational function of the most main generator it holds, a product
-   cancelled and never distributed. This one is not gated on anything - it is
-   what a normal form means - and it is where `(x + 1)^9 + y` becomes a
-   ninth-degree polynomial while `(y + 1)^9 + x` does not, and where
-   `(x^2 + 2*x*y + y^2)/(x^2 - y^2)` comes back `(x + y)/(x - y)`.
-5. Spell the answer the way Derive does where that is a convention and not an
-   economy: `1/COS(x)^2` as `TAN(x)^2 + 1`, `LN(256)` as `8*LN(2)`.
+1. Evaluate the tree innermost first (`evaluate`): substitute names, apply defined
+   functions, and decide each `IF` test before choosing a branch. Sympy's automatic
+   evaluation does most of Simplify's basic work along the way.
+2. During evaluation, `_evaluate` works out calculus heads, and `_commanded` runs
+   `FACTOR`, `EXPAND`, `SOLVE` and `RATE`. A calculus head that won't evaluate is kept,
+   so `INT(#e^(x^2), x)` comes back as an integral rather than an error.
+3. Reduce the kernels: try each identity and keep it only if it pays (fewer operations
+   or one variable fewer), and apply the rules a Collect or Expand mode requires. The
+   tables at the end of this module list them all.
+4. Put every sum and quotient in normal form (`normal_form`): a sum as a rational
+   function of its main generator, a product cancelled but not distributed. This
+   always applies; it is why `(x + 1)^9 + y` expands to a polynomial while
+   `(y + 1)^9 + x` does not, and why `(x^2 + 2*x*y + y^2)/(x^2 - y^2)` becomes
+   `(x + y)/(x - y)`.
+5. Follow Derive's spelling conventions: `1/COS(x)^2` as `TAN(x)^2 + 1`, `LN(256)` as
+   `8*LN(2)`.
 6. Approximate, if the precision mode asks for it.
 
-Every rewrite is offered inside a `try`, and a rewrite that raises is a rewrite
-that was not worth having: the previous form stands. That is what makes the
-command total. Nothing sympy does can turn a valid entry into an error.
+Every rewrite runs inside a `try`, and one that raises is discarded, keeping the
+previous form. Nothing sympy does can turn a valid entry into an error.
 """
 
 from __future__ import annotations
@@ -105,25 +92,19 @@ from rederive.syntax.state import ParseState
 __all__ = ["approx", "approximated", "simplified", "simplify"]
 
 
-#: What `combsimp` is for. It is offered only where one of these appears,
-#: because on an ordinary polynomial it factors - `x^2 + 2*x` becomes
-#: `x*(x + 2)` - and factoring is the Factor command's business, not Simplify's.
+#: `combsimp` is tried only where one of these appears, because on an ordinary
+#: polynomial it factors (`x^2 + 2*x` becomes `x*(x + 2)`), which is Factor's job.
 _COMBINATORIAL = (sp.factorial, sp.factorial2, sp.binomial, sp.gamma, sp.ff, sp.rf)
 
-#: And only on an expression this size or under. `combsimp` compares every pair
-#: of factorials it can see, and over Derive's own `F_0M` - a hundred and two
-#: operations, half of them factorials of symbolic arguments - it takes
-#: twenty-three seconds. Measured over every combinatorial expression in the
-#: corpus: at this size and below, none costs more than a fifth of a second.
+#: Maximum expression size for `combsimp`, which compares every pair of factorials.
+#: On Derive's `F_0M` (102 operations, half of them symbolic factorials) it takes 23
+#: seconds; at this size and below, no corpus expression takes over 0.2 seconds.
 _COMBSIMP = 60
 
-#: How many truths a boolean expression may be about before the algebra is
-#: left undone. Both normal forms are read off a truth table, so the work and
-#: the answer alike double with every variable added: a chain of six `XOR`s
-#: comes back as a hundred and twenty-nine operations, which is a longer
-#: expression than the one asked about and no simplification of it. Sympy has
-#: a limit of its own at eight, and eight is already past the point where the
-#: answer stops being worth having.
+#: Maximum number of variables for boolean simplification. Both normal forms come from
+#: a truth table, so work and result size double with each variable: six chained
+#: `XOR`s give 129 operations, longer than the input. Sympy's own limit of eight is
+#: already too high to be useful.
 _BOOLEAN_VARIABLES = 5
 
 
@@ -133,14 +114,12 @@ def simplify(
 ) -> Result:
     """Derive's Simplify: `node` in its sufficiently simple form.
 
-    Works on any subtree, not only on a whole authored entry, so that the
-    session can simplify a highlighted subexpression and splice the answer
-    back. `state` is the symbol table the answer is reparsed with; a session
-    working in a non-default input or case mode must pass its own.
+    Works on any subtree, so the session can simplify a highlighted subexpression and
+    splice the answer back. `state` is the symbol table used to reparse the answer; a
+    session in a non-default input or case mode must pass its own.
 
-    The conditionals the author wrote are collected before anything is done to
-    them and given to the printer, an undecidable one being shown as written
-    and not as converted. `authored_conditionals` is what that means.
+    The author's conditionals are collected up front and passed to the printer, so an
+    undecidable one is shown as written (see `authored_conditionals`).
     """
     context = context or Context()
     node = named_as_declared(node, state)
@@ -164,10 +143,8 @@ def approx(
 ) -> Result:
     """Simplify with the precision mode set to Approximate.
 
-    Not a second evaluator. The only difference from `simplify` is the precision
-    the same pipeline runs at, which is what the manual says approX is. It is what
-    an expression that is an `APPROX` call simplifies to, and so what the approX
-    command, which simplifies `APPROX` of what it is given, comes to.
+    This is the same pipeline as `simplify` at a different precision, as the manual
+    describes approX. It is also what an `APPROX` call simplifies to.
     """
     context = context or Context()
     approximate = context.with_precision(Precision.APPROXIMATE, digits)
@@ -179,15 +156,12 @@ def _whole_approximation(
 ) -> tuple[Node, int | None] | None:
     """The operand and digit count of an expression that is an `APPROX` call.
 
-    Simplifying such an expression is approX of the operand at the call's digit
-    count, its answer written as approximate: the original simplifies
-    `APPROX(1/2)` to 0.5 and `APPROX(1/3, 3)` to 0.333. Anywhere further in, the
-    call is worth the rational it rounds to and nothing marks it approximate:
-    `APPROX(1/2) + 1/3` is 5/6 there.
+    Such an expression simplifies to approX of the operand at the given digit count:
+    `APPROX(1/2)` gives 0.5 and `APPROX(1/3, 3)` gives 0.333. Nested deeper, the call is
+    just the rational it rounds to, so `APPROX(1/2) + 1/3` is 5/6.
 
-    A reference to an entry is followed, since the original reads `#1` as the
-    expression it names. None where the expression is not such a call, or where
-    its count is no workable number, which is ordinary Simplify's to handle.
+    Entry references like `#1` are followed. Returns None if the expression isn't such a
+    call or the digit count is unusable, leaving it to ordinary Simplify.
     """
     while node.kind is Kind.LABEL and str(node.value).isdigit():
         labelled = context.labels.get(int(node.value))
@@ -208,22 +182,17 @@ def _whole_approximation(
 def simplified(
     node: Node, context: Context | None = None, decide: bool = True
 ) -> sp.Basic:
-    """The simplified expression, before it is written back out.
+    """The simplified expression as sympy, before conversion back to a node.
 
-    The sympy-level entry point. `simplify` is this plus `from_sympy`; a later
-    command that wants to keep computing has no reason to print and reparse in
-    between.
+    `simplify` is this plus `from_sympy`; commands that keep computing can use this to
+    avoid printing and reparsing.
 
-    `decide` is what makes a relation that holds come back as `true`, and soLve
-    is the one caller that turns it off. Its pipeline runs to prepare an
-    equation for solving, not to answer it, and `x = x` decided to `true` on
-    the way in is an equation with nothing left to solve for - where the answer
-    it has to reach is `x = @1`, every value there is.
+    `decide` makes a relation that holds come back as `true`. soLve turns it off: it
+    only prepares the equation, and `x = x` decided to `true` would leave nothing to
+    solve, where the answer should be `x = @1`.
 
-    A conditional nothing could decide is suspended by the evaluation and stays
-    so through every step here, which is what leaves its branches as they were
-    written; it is shown as the conditional it is only once all of them are
-    done.
+    An undecidable conditional stays suspended through all steps, keeping its branches
+    as written, and is released as a conditional only at the end.
     """
     context = context or Context()
     environment = Environment(
@@ -238,8 +207,7 @@ def simplified(
     try:
         result = _transform(expression, context, decide)
     except Exception:
-        # Whatever went wrong, the evaluated input is still a correct answer to
-        # "simplify this".
+        # The evaluated input is still a correct answer.
         result = expression
     return released(result)
 
@@ -269,28 +237,23 @@ def _transform(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic
 
 
 def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basic:
-    """The two sides simplified apart, and the relation answered if it decides.
+    """Simplify both sides, and decide the relation if possible.
 
-    `2 = 2` is `true` and `1 = 2` is `false`, which is what the original
-    answers: a relation is a statement, and simplifying a statement that says
-    something definite means saying it. The judgement is three-valued, so a
-    relation that settles nothing - `x = 2`, or `ABS(x) < 1` under no
-    declaration - comes back exactly as it was authored rather than as a guess.
+    As in the original, `2 = 2` gives `true` and `1 = 2` gives `false`. The decision is
+    three-valued, so a relation that settles nothing (`x = 2`, or `ABS(x) < 1` with no
+    declaration) is returned as authored.
 
-    An ordering is asked only of sides that are real, because that is the only
-    domain it means anything over: `x < x + 1` holds for a real `x` and says
-    nothing about a complex one, where sympy's own comparison declines. It is
-    asked the way the test of an `IF` is, declared domains and all. An equation
-    is asked of the arithmetic only, which is `_equated`.
+    An ordering is decided only for real sides, since `x < x + 1` means nothing for
+    complex `x`. It is decided like an `IF` test, using declared domains. An equation
+    is decided by arithmetic only (`_equated`).
 
-    `decide` off is soLve's pipeline, which wants the sides simplified and the
-    relation left standing to be solved.
+    With `decide` off (soLve's pipeline), the sides are simplified and the relation left
+    for solving.
 
-    Two matrices of one shape are related element by element, which is what
-    section 8.5 reads a solved system off: `[[x], [y], [z]] = A^-1 . b` comes
-    back as the three equations it stands for. An equation or an inequation of two
-    matrices is still one statement about them, and where the elements decide it
-    the answer is that one truth value; see `_whole`.
+    Two matrices of the same shape are related element by element, as section 8.5 uses
+    to read off a solved system: `[[x], [y], [z]] = A^-1 . b` gives three equations. If
+    the elements decide a matrix (in)equation, the answer is one truth value; see
+    `_whole`.
     """
     left = _transform(expression.lhs, context, decide)
     right = _transform(expression.rhs, context, decide)
@@ -303,13 +266,12 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
 
 
 def _whole(func, spread: sp.Basic, left: sp.Basic, right: sp.Basic) -> sp.Basic:
-    """An equation or inequation of two matrices, from what each pair of elements says.
+    """Decide a matrix equation or inequation from its element-wise relations.
 
-    Two matrices are equal when every pair of elements is and different when any
-    pair is, so `[1, 2] = [1, 3]` is `false` and `[1, 2] /= [1, 3]` is `true`. An
-    equation not yet decided is the equations of its elements, to be solved as a
-    system; an inequation not yet decided says that some pair differs, which no
-    one of its elements says, and it stands as written.
+    Matrices are equal when all element pairs are and different when any pair is, so
+    `[1, 2] = [1, 3]` is `false` and `[1, 2] /= [1, 3]` is `true`. An undecided
+    equation becomes the system of element equations; an undecided inequation stays as
+    written, since no single element relation expresses it.
     """
     verdicts = _elements_of_spread(spread)
     equal = func is sp.Eq
@@ -329,12 +291,10 @@ def _elements_of_spread(spread: sp.Basic) -> list[sp.Basic]:
 def _spread(
     func, left: sp.Basic, right: sp.Basic, context: Context, decide: bool
 ) -> sp.Basic | None:
-    """A relation between two matrices, stated of each pair of elements.
+    """A relation between two matrices, applied element by element.
 
-    None where the sides are not two matrices of one shape, which is a
-    statement about the matrices themselves and is decided whole. The answer
-    keeps the shape it was made from, a row of them being written flat as any
-    one-row matrix is.
+    Returns None unless both sides are matrices of the same shape. The result keeps
+    that shape, with a single row written flat like any one-row matrix.
     """
     if not isinstance(left, sp.MatrixBase) or not isinstance(right, sp.MatrixBase):
         return None
@@ -355,7 +315,7 @@ def _spread(
 def _stated(
     func, left: sp.Basic, right: sp.Basic, context: Context, decide: bool
 ) -> sp.Basic:
-    """One relation over two sides already simplified, answered where it decides."""
+    """Build a relation of two simplified sides, decided where possible."""
     try:
         relation = func(left, right, evaluate=False)
     except Exception:
@@ -369,12 +329,11 @@ def _stated(
 
 
 def _answered(relation: Relational, context: Context) -> bool | None:
-    """Whether a relation standing on its own says something definite.
+    """Whether a relation is definitely true or false, or None if undecided.
 
-    An equation is answered by arithmetic alone, which is `_equated`. An
-    ordering is put the question the test of an `IF` is put, the declared
-    domains included, since what an ordering says is about where on the line a
-    value falls and that is what a domain is about.
+    Equations are decided by arithmetic alone (`_equated`). Orderings are decided like
+    an `IF` test, including declared domains, since domains are about where on the line
+    a value lies.
     """
     if isinstance(relation, (sp.Equality, sp.Unequality)):
         return _equated(relation, context)
@@ -382,27 +341,18 @@ def _answered(relation: Relational, context: Context) -> bool | None:
 
 
 def _equated(relation: Relational, context: Context) -> bool | None:
-    """Whether the two sides of an equation are one value, by arithmetic alone.
+    """Whether the two sides of an equation are equal, by arithmetic alone.
 
-    The original does not put an equation to the domains. `x = #i` is where a
-    quadratic with a negative discriminant lands, and it stands as written
-    whether `x` was declared real, declared complex or declared nothing at all;
-    so does `ABS(x) + 1 = 0`, which no real satisfies and which is still an
-    equation somebody may have meant to write. An equation is a question about
-    a value, not a claim to be refuted from what the value is known to be.
+    Like the original, this ignores declared domains. `x = #i` (from a quadratic with a
+    negative discriminant) stands whatever `x` is declared as, and so does
+    `ABS(x) + 1 = 0`, which no real satisfies.
 
-    What answers one is the difference of the two sides coming out a number:
-    zero and the sides are the same value, a nonzero real and they are not.
+    The equation is decided when the difference of the sides is a number: zero means
+    equal, a nonzero real means not. A non-real difference decides nothing, as in the
+    original: `#i = 1` and `2*#i = #i` both stand.
 
-    A difference that is a number and not real answers nothing, which is the
-    answer the original gives: `#i = 1` and `2*#i = #i` both stand. Only the
-    reals are ordered, and off the line the one thing a difference settles is
-    being zero.
-
-    Matrices have no difference to take where the shapes do not fit, and the
-    two written values are then all there is to compare: `[1, 2] = [1, 2, 3]`
-    is false, while `[x, y] = [1, 2, 3]` says something about `x` and `y` and
-    stands.
+    Matrices of mismatched shapes have no difference, so the written values are
+    compared: `[1, 2] = [1, 2, 3]` is false, while `[x, y] = [1, 2, 3]` stands.
     """
     if any(isinstance(side, sp.MatrixBase) for side in relation.args):
         if relation.free_symbols:
@@ -417,10 +367,9 @@ def _equated(relation: Relational, context: Context) -> bool | None:
 def _one_value(relation: Relational, context: Context) -> bool | None:
     """Whether the two sides of an equation are the same value.
 
-    Two sides that came out written the same are, whatever they are written
-    out of: `inf = inf` and `true = true` hold, and neither has a difference to
-    take. Everything else is the difference, taken over the rewrites the rest
-    of the pipeline uses so that `SIN(x)^2 + COS(x)^2 = 1` is answered too.
+    Identical sides are equal even without a difference to take (`inf = inf`,
+    `true = true`). Otherwise the difference is simplified with the pipeline's rewrites,
+    so that `SIN(x)^2 + COS(x)^2 = 1` is decided too.
     """
     if relation.lhs == relation.rhs:
         return True
@@ -435,17 +384,13 @@ def _one_value(relation: Relational, context: Context) -> bool | None:
 
 
 def _comparable(relation: Relational) -> bool:
-    """Whether this relation is one that can be given an answer at all.
+    """Whether this relation can be decided at all.
 
-    A side holding `?` is a side whose value nobody knows, and nothing is
-    decidably equal to an unknown - sympy compares the two `?` it can see and
-    finds them the same object, which is a fact about the notation and not
-    about the values it stands for.
+    A side containing `?` is unknown, so nothing can be decided about it, even though
+    sympy would find two `?` to be the same object.
 
-    `<` and its three companions order their sides, and only the reals are
-    ordered, so a side not known to be real is one an ordering has no answer
-    about however the arithmetic on the two happens to come out. Equality needs
-    no such condition: every value is equal to itself or is not.
+    Orderings need both sides known to be real, since only the reals are ordered.
+    Equality has no such condition.
     """
     if relation.has(sp.nan):
         return False
@@ -455,11 +400,10 @@ def _comparable(relation: Relational) -> bool:
 
 
 def _definition(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
-    """An assignment or a function definition: its value, and its own shape.
+    """Simplify the value of an assignment or function definition.
 
-    The first two arguments are the name being defined and the operator that
-    defines it, which is exactly what must survive untouched so that the line
-    still reads as a definition.
+    The first two arguments, the name and the defining operator, are left untouched so
+    the line still reads as a definition.
     """
     head, operator, *value = expression.args
     return expression.func(
@@ -468,24 +412,21 @@ def _definition(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
 
 
 def _boolean(expression: Boolean, context: Context, decide: bool) -> sp.Basic:
-    """Relations joined by boolean operators, solved and simplified.
+    """Simplify relations joined by boolean operators.
 
-    `6 >= -2*x AND 3*x /= -9` is a statement about one variable, and its
-    simplest form is the range it describes. Where that does not work - more
-    than one variable, an operand that is no relation - the boolean algebra
-    runs instead: `p XOR q` is written out of the three operators that are
-    left, `p OR NOT p` is `true`, and a conjunct standing in every disjunct is
-    taken out. Whatever survives that keeps its shape, with its operands
-    simplified.
+    `6 >= -2*x AND 3*x /= -9` involves one variable, so its simplest form is the range
+    it describes. Otherwise (several variables, or non-relation operands) boolean
+    algebra runs: `p XOR q` is rewritten in the other operators, `p OR NOT p` becomes
+    `true`, and a conjunct common to every disjunct is factored out. The result keeps
+    its shape, with its operands simplified.
     """
     solved = _reduced(expression)
     if solved is not None:
         return solved
     expression = _algebra(expression)
     if not isinstance(expression, Boolean) or not expression.args:
-        # `p OR NOT p` is `true` and `p AND (p OR q)` is `p`: an atom is the
-        # whole answer, and there is nothing left to simplify inside it.
-        # Handing it back to `_transform` would only arrive here again.
+        # An atom (`p OR NOT p` -> `true`, `p AND (p OR q)` -> `p`) has nothing left
+        # to simplify, and passing it to `_transform` would just loop back here.
         return expression
     try:
         return expression.func(
@@ -496,24 +437,19 @@ def _boolean(expression: Boolean, context: Context, decide: bool) -> sp.Basic:
 
 
 def _algebra(expression: Boolean) -> sp.Basic:
-    """`expression` in the shorter of the two normal forms boolean algebra has.
+    """`expression` in the shorter of its two boolean normal forms.
 
-    A sum of products and a product of sums are computed both, and the shorter
-    of the two is the answer - which is the preference the manual states, and
-    what leaves `p AND (q OR r)` alone where a simplifier committed to sums of
-    products would multiply it out. `NOT` is driven inward on the way, `XOR`
-    and `IMP` are written out of the operators that remain, and a conjunct
-    every disjunct holds is taken outside. A tie goes to the form asked for
-    first, which is how `p XOR q` comes back as a sum of products.
+    Both the sum of products and the product of sums are computed and the shorter wins,
+    as the manual prefers; this leaves `p AND (q OR r)` alone instead of multiplying it
+    out. Along the way `NOT` is pushed inward, `XOR` and `IMP` are rewritten, and a
+    conjunct common to every disjunct is factored out. Ties go to the earlier form, so
+    `p XOR q` comes back as a sum of products.
 
-    Relations are opaque to it: each one stands for a variable of its own, and
-    what is inside is the business of the operand's own simplification.
+    Relations are treated as opaque variables; their insides are simplified separately.
 
-    Three forms are asked for and not two. Sympy answers a request for a named
-    form that the expression is already written in with the expression itself,
-    so `p OR NOT p` asked for as a sum of products comes back as it went in;
-    the unnamed request is the one that always does the algebra, and it leads
-    the list so that it also settles a tie.
+    Three forms are requested, not two, because sympy returns an expression already in
+    the named form unchanged (`p OR NOT p` as DNF comes back as is). The unnamed request
+    always does the algebra, and it comes first so it also wins ties.
     """
     if _predicates(expression) > _BOOLEAN_VARIABLES:
         return expression
@@ -529,10 +465,10 @@ def _algebra(expression: Boolean) -> sp.Basic:
 
 
 def _predicates(expression: Boolean) -> int:
-    """How many independent truths the expression is a statement about.
+    """The number of independent truth values the expression depends on.
 
-    A relation is one of them however many variables it names, `x > 1 AND
-    x < 2` being two statements and not one.
+    Each relation counts as one, however many variables it names, so `x > 1 AND x < 2`
+    counts as two.
     """
     relations = expression.atoms(Relational)
     inside = {symbol for relation in relations for symbol in relation.free_symbols}
@@ -549,8 +485,7 @@ def _reduced(expression: Boolean) -> sp.Basic | None:
     variables = expression.free_symbols
     if len(variables) != 1:
         return None
-    # The relations were assembled undecided; `reduce_inequalities` needs them
-    # in the evaluated form it builds its own answers from.
+    # The relations were built unevaluated; `reduce_inequalities` needs them evaluated.
     try:
         evaluated = [part.func(part.lhs, part.rhs) for part in parts]
         solved = sp.reduce_inequalities(evaluated, *variables)
@@ -565,20 +500,17 @@ def _reduced(expression: Boolean) -> sp.Basic | None:
 
 
 def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
-    """An ordinary expression, through the whole sequence.
+    """Run an ordinary expression through the whole sequence.
 
-    What a `FACTOR`, `EXPAND` or `SOLVE` head answered is the form the author
-    asked for, and every step here would take it apart - the gated rewrites ask
-    whether a candidate is shorter, and a factorization is routinely longer, and
-    the normal form would multiply a prime decomposition back into the integer
-    it decomposes. So each such answer is stood in for by a symbol of its own
-    while the steps run, and put back for the approximation alone.
+    The answer of a `FACTOR`, `EXPAND` or `SOLVE` head is the form the author asked for,
+    and the steps here would undo it: gated rewrites prefer shorter forms (a
+    factorization is often longer), and the normal form would multiply a prime
+    decomposition back out. So each such answer is replaced by a placeholder symbol
+    during the steps and restored before approximation.
 
-    Not inside a sum, though, unless it is a number. A sum is written in the
-    normal form whatever its terms were asked to look like, so
-    `FACTOR(x^2 - 1) + x^3` is `x^3 + x^2 - 1` and `x*FACTOR(x^2 - 1) + 1` is
-    `x^3 - x + 1`, while `FACTOR(12) + 1` keeps its `2^2*3`, a prime
-    decomposition being no polynomial to expand.
+    Inside a sum this applies only to numeric answers, since a sum is put in normal
+    form regardless: `FACTOR(x^2 - 1) + x^3` is `x^3 + x^2 - 1`, while
+    `FACTOR(12) + 1` keeps its `2^2*3`.
     """
     expression = _summed(expression)
     held = {found: sp.Dummy("answer") for found in _commands(expression)}
@@ -586,22 +518,19 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
         expression = expression.xreplace(held)
     expression = _numeric(expression)
     expression = forced(expression, _spliced_cases)
-    # A root of a perfect power is taken ahead of the intervals, which settle the
-    # absolute value it leaves: `SQRT(x^2 + 2*x + 1)` is `-x - 1` below -1.
+    # Roots of perfect powers go before the intervals, which then settle the absolute
+    # value left behind: `SQRT(x^2 + 2*x + 1)` is `-x - 1` below -1.
     expression = forced(expression, _perfect_powers)
-    # Before the rewrites rather than after, so that what the declared
-    # intervals settle is settled for them too: `ABS(x) + ABS(x - 1)` over
-    # `(0, 1)` is a sum that cancels, and only once both bars are off.
+    # Before the rewrites, so they see what the intervals settle: `ABS(x) + ABS(x - 1)`
+    # over `(0, 1)` cancels only once both bars are removed.
     expression = settled(expression, context)
     expression = _divergent(expression, context)
     expression = _rewritten_beside_standing(expression, context)
     expression = _factorials(expression)
-    # The normal form, and the one step that is not gated on getting shorter:
-    # a sum is written about its primary variable whether or not that pays.
+    # The normal form is not gated on getting shorter.
     #
-    # `over_numbers` off: nothing here divided, so a number several terms carry
-    # underneath is their own coefficient and not a denominator the sum is
-    # written over. `x^2/6 + x/2` is what was authored and what comes back.
+    # `over_numbers` is off so numeric denominators stay with their terms instead of
+    # becoming a common denominator: `x^2/6 + x/2` comes back as authored.
     expression = normal_form(expression, context.order, over_numbers=False)
     expression = _spelled(expression, context)
     if held:
@@ -612,15 +541,12 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
 
 
 def _spliced_cases(expression: sp.Basic) -> sp.Basic:
-    """Every conditional whose else case is a conditional, as one with the cases of
-    both, each condition asked once.
+    """Merge each conditional whose else case is a conditional into one.
 
-    A closed form that holds under a condition comes with the head itself as the
-    else case, and that head worked out again comes with the same condition: a
-    sum of `y*x^k` is `y` times a conditional whose else case is the sum of `x^k`,
-    which is the conditional on `ABS(x) < 1` once more. Where the first condition
-    fails the second does too, so the inner case is dead and only its own else case
-    is left.
+    A conditional closed form has the head itself as its else case, and evaluating that
+    head again yields the same condition: the sum of `y*x^k` is `y` times a conditional
+    on `ABS(x) < 1` whose else case is the sum of `x^k`, which is again conditional on
+    `ABS(x) < 1`. The inner case is unreachable, so only its else case is kept.
     """
 
     def spliced(cases: sp.Piecewise) -> sp.Basic:
@@ -635,16 +561,14 @@ def _spliced_cases(expression: sp.Basic) -> sp.Basic:
 
 
 def _divergent(expression: sp.Basic, context: Context) -> sp.Basic:
-    """Each standing series over a declared variable that diverges, as the infinity
-    it goes to.
+    """Replace each unevaluated divergent series over a declared variable with its
+    infinity.
 
-    A series whose terms tend to a limit other than zero diverges, to `inf` where
-    that limit is positive or `inf` and to `-inf` where it is negative or `-inf`.
-    Sympy finds the limit of `h^k` only knowing which side of one `h` is on, so the
-    limit is taken over what the declaration allows `h`, written in a positive
-    variable that sympy can be told about (see `covering`): `SUM(h^k, k, 0, inf)`
-    is `inf` where `h` was declared above one, being the else case of the
-    conditional the closed form comes with.
+    A series whose terms tend to a nonzero limit diverges to `inf` or `-inf` by the
+    limit's sign. Sympy finds the limit of `h^k` only when it knows which side of one
+    `h` lies, so the limit is taken over the declared range of `h`, expressed through a
+    positive variable (see `covering`). `SUM(h^k, k, 0, inf)` is thus `inf` for `h`
+    declared above one, the else case of the closed form's conditional.
     """
 
     def diverged(series: sp.Sum) -> sp.Basic:
@@ -680,8 +604,8 @@ def _divergent(expression: sp.Basic, context: Context) -> sp.Basic:
 
 
 def _infinity_of(limit: sp.Basic) -> sp.Basic | None:
-    """The infinity a series diverges to whose terms tend to `limit`, or None where
-    `limit` does not say that it diverges."""
+    """The infinity a series diverges to if its terms tend to `limit`, or None if that
+    doesn't show divergence."""
     if limit is sp.oo or (limit.is_finite and limit.is_positive):
         return sp.oo
     if limit is sp.S.NegativeInfinity or (limit.is_finite and limit.is_negative):
@@ -690,8 +614,7 @@ def _infinity_of(limit: sp.Basic) -> sp.Basic | None:
 
 
 def _summed(expression: sp.Basic) -> sp.Basic:
-    """`expression` with each command's answer within a sum taken for its value,
-    where the answer is not a number."""
+    """Unwrap non-numeric command answers inside sums, so they are treated as values."""
 
     def valued(total: sp.Basic) -> sp.Basic:
         return total.xreplace(
@@ -721,17 +644,14 @@ def _commands(expression: sp.Basic) -> set[sp.Basic]:
 
 
 def _decide(test: sp.Basic, context: Context) -> bool | None:
-    """Whether `test` holds, or None when nothing available settles it.
+    """Whether `test` holds, or None if it can't be settled.
 
-    What the evaluation asks of the test of every `IF` it meets, before it
-    chooses a branch. A relation reaches here undecided, so it is offered again
-    evaluated - which is where the declared domains do their work - and then with
-    its two sides brought together by the same rewrites the rest of the pipeline
-    uses. What none of those settles is put to the declared intervals, which are
-    the one thing a symbol could not carry into the evaluation itself.
+    Used for every `IF` test before choosing a branch. A relation arrives unevaluated,
+    so it is tried evaluated (where declared domains apply), then as the difference of
+    its sides under the pipeline's rewrites. Failing those, the declared intervals are
+    consulted, since symbols can't carry them into evaluation.
 
-    A test that is no relation at all is a comparison with zero written short,
-    the same reading the conversion gives one.
+    A test that isn't a relation is read as a comparison with zero, as in conversion.
     """
     test = as_condition(test)
     for candidate in _truths(test, context):
@@ -743,14 +663,12 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
 
 
 def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
-    """Whether the test of an `IF` holds, by everything Simplify would make of it.
+    """Whether an `IF` test holds, using full simplification if necessary.
 
-    What `_decide` settles is asked first, being quicker. A test it leaves open is
-    simplified whole, as the same test standing on a line of its own would be, and
-    decides where that comes out `true` or `false`: `x < 1 AND x > 3` is a range
-    that is empty, and `(x^2 + x^2*y^2)/(x^2*y) = (1 + y^2)/y` an equation whose
-    sides cancel to one value. ODE1.MTH's `HOMOGENEOUS` asks whether a derivative
-    is zero, and the derivative is zero only once it is simplified.
+    The quicker `_decide` is tried first. If it is undecided, the test is simplified as
+    if it stood alone, which decides e.g. `x < 1 AND x > 3` (an empty range) and
+    `(x^2 + x^2*y^2)/(x^2*y) = (1 + y^2)/y`. ODE1.MTH's `HOMOGENEOUS` needs this to see
+    that a derivative is zero.
     """
     verdict = _decide(test, context)
     if verdict is not None:
@@ -767,7 +685,7 @@ def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
 
 
 def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
-    """Every reading of `test` worth asking, easiest first."""
+    """Forms of `test` worth checking, easiest first."""
     if not isinstance(test, Relational):
         return [test]
     readings = [test, attempt(test, lambda t: t.func(t.lhs, t.rhs))]
@@ -781,21 +699,18 @@ def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
 
 
 def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
-    """One calculus head evaluated, or the head itself if it will not evaluate.
+    """Evaluate one calculus head, or return it unchanged if it won't evaluate.
 
-    What the evaluation asks of each head as it is made, its operands being
-    values already. A head standing unevaluated decides nothing, and this is
-    what lets a test hold one: `DIF(u, x)` is how ODE1.MTH asks whether `u`
-    depends on `x`, and the answer is the derivative and not the `Derivative`.
+    Called on each head as it is built, with operands already evaluated. This lets an
+    `IF` test contain one: ODE1.MTH uses `DIF(u, x)` to ask whether `u` depends on `x`,
+    and needs the derivative, not a `Derivative`.
 
-    A head that stands is asked once more over its operands spelled the way an
-    answer spells them, where that is another spelling: a `COSH` is never
-    written in an answer, and Derive works an integral out over the
-    exponentials the hyperbolic function stands for. BESSEL.MTH's
-    `INT(#e^(-z*COSH(t))*COSH(n*t), t, 0, inf)` is two integrals that way, each
-    of an exponential, which is what Derive prints; left over the `COSH` the
-    integral would stand, and the rewrites after the evaluation would change its
-    integrand under it.
+    A head that doesn't evaluate is retried with its operands spelled as an answer would
+    spell them. A `COSH` never appears in an answer, and Derive integrates over the
+    exponentials it stands for: BESSEL.MTH's
+    `INT(#e^(-z*COSH(t))*COSH(n*t), t, 0, inf)` becomes two integrals of exponentials,
+    as Derive prints. Left as `COSH`, the integral would stand and later rewrites would
+    change its integrand.
     """
     value = _answer_in_words(head, context)
     if value is not None:
@@ -808,15 +723,12 @@ def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
 
 
 def _answer_in_words(head: sp.Basic, context: Context) -> sp.Basic | None:
-    """What `head` works out to, in the notation's own functions, or None if it stands.
+    """The value of `head` in Derive's own functions, or None if it doesn't evaluate.
 
-    An answer sympy can give only in a function the notation has no name for is no
-    answer here. `INT(1/SQRT(1 - x^4), x)` is a hypergeometric function to sympy and
-    an integral Derive cannot do, and the integral is what is shown: the same
-    head left standing as for an integral sympy itself declines, which the next
-    command can still work on. A sympy head that is a spelling of functions the
-    notation has is written in them first, by `in_vocabulary`, and only what is
-    left after that decides.
+    An answer that needs a function Derive has no name for is rejected:
+    `INT(1/SQRT(1 - x^4), x)` is hypergeometric to sympy, and Derive can't do it, so the
+    integral stands, just as if sympy had declined. Sympy functions expressible in
+    Derive's are first rewritten by `in_vocabulary`.
     """
     value = _worked_out(head, context)
     if value == head:
@@ -826,7 +738,7 @@ def _answer_in_words(head: sp.Basic, context: Context) -> sp.Basic | None:
 
 
 def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
-    """One head by the rule its kind is worked out by."""
+    """Evaluate one head by the rule for its kind."""
     if _unfinished(head, context):
         return head
     if isinstance(head, Approx):
@@ -856,20 +768,18 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
     return value
 
 
-#: The functions that are constant between their jumps, whose derivative is zero
-#: wherever there is one.
+#: Functions that are constant between jumps, so their derivative is zero wherever it
+#: exists.
 _PIECEWISE_CONSTANT = (sp.floor, sp.ceiling, sp.sign, sp.Heaviside)
 
 
 def _flat_between_jumps(derivative: sp.Basic) -> sp.Basic:
     """A derivative with the derivative of every step function taken as zero.
 
-    A floor, sign or unit step is constant between its jumps and has no derivative
-    at them, so its derivative is 0 wherever it exists, the convention a derivative
-    of a step function is written in: `DIF(FLOOR(x)^2, x)` is 0 and `DIF(x*SIGN(x),
-    x)` is `SIGN(x)`. Sympy writes the derivative at a jump as a `DiracDelta`, which
-    is no function, and leaves one of a floor standing, perhaps under a `Subs` of
-    the floor's argument; all of them are that zero.
+    Floor, sign and unit step are constant between jumps, so by convention their
+    derivative is 0: `DIF(FLOOR(x)^2, x)` is 0 and `DIF(x*SIGN(x), x)` is `SIGN(x)`.
+    Sympy instead produces `DiracDelta` or leaves an unevaluated derivative of a floor
+    (possibly under a `Subs`); all of these become zero.
     """
 
     def is_flat(expression: sp.Basic) -> bool:
@@ -886,12 +796,11 @@ def _flat_between_jumps(derivative: sp.Basic) -> sp.Basic:
 
 
 def _unfinished(head: sp.Basic, context: Context) -> bool:
-    """Whether a call of a defined function stands unworked under `head`.
+    """Whether `head` contains an unexpanded call of a defined function.
 
-    The evaluation enters every such call, so one is left only where a recursion
-    reached the nesting bound without arriving - `F(n) := DIF(F(n + 1), x)` - and
-    what stands there is no constant: it mentions no `x` only because its body was
-    never written in. Differentiating it would answer zero, so the head waits.
+    Such a call remains only when recursion hit the nesting limit, as with
+    `F(n) := DIF(F(n + 1), x)`. It isn't a constant; it lacks `x` only because its body
+    was never substituted. Differentiating would wrongly give zero, so the head waits.
     """
     if not context.functions:
         return False
@@ -903,17 +812,13 @@ def _unfinished(head: sp.Basic, context: Context) -> bool:
 
 
 def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
-    """`APPROX(u, n)`: `u` as approximate arithmetic at `n` digits leaves it.
+    """`APPROX(u, n)`: `u` approximated to `n` digits.
 
-    Exactly what the approX command does to a whole entry, at the digit count
-    the call asked for rather than the one the session is set to, and whatever
-    precision that is. So the same rules hold inside a call as outside one: a
-    number that needs no digits gets none, and `APPROX(2 + 3)` is 5.
+    This is what approX does to a whole entry, but at the call's digit count rather
+    than the session's. The same rules apply as outside a call, so `APPROX(2 + 3)` is 5.
 
-    A count that is still no number is one nothing can round to, and the head
-    waits for it the way it waits for the value: `PARTS(i_)` asks for a count
-    written in the index of the sum it stands in, which is a number once that
-    sum has been written out.
+    If the count isn't a number yet, the head waits: `PARTS(i_)` gives a count in terms
+    of an enclosing sum's index, which becomes a number once the sum is expanded.
     """
     value, digits = head.args
     count = digit_count(digits)
@@ -924,31 +829,21 @@ def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
 
 
 def _summation(head: sp.Sum) -> sp.Basic:
-    """A sum, with a closed form that is a polynomial written factored.
+    """A sum, with a polynomial closed form written factored.
 
-    Derive's summation formulas are factored and stay that way: `SUM(k, k, 0,
-    n)` is `n*(n + 1)/2`, `SUM(k^2, k, 1, n)` is `n*(n + 1)*(2*n + 1)/6` and
-    `SUM(k^3, k, 0, n)` is `n^2*(n + 1)^2/4`, none of which Simplify then
-    multiplies out. Sympy answers with Faulhaber's polynomial expanded, so the
-    factoring is done here, where the closed form arrives.
+    Derive's summation formulas are factored and stay that way: `SUM(k, k, 0, n)` is
+    `n*(n + 1)/2` and `SUM(k^2, k, 1, n)` is `n*(n + 1)*(2*n + 1)/6`. Sympy gives
+    Faulhaber's polynomial expanded, so it is factored here.
 
-    Here and not in the pipeline, because the pipeline factors nothing and the
-    original does not either: `n^2/2 + n/2` authored as it stands is what
-    Derive prints back, and turning that into a product is the Factor command's
-    business. What is kept is the shape the formula came in, which is a
-    property of this answer rather than of every expression equal to it.
+    This is done here rather than in the pipeline, which never factors: authored
+    `n^2/2 + n/2` prints back unchanged in Derive. It isn't gated on length either:
+    Derive prints `SUM(k^4, k, 1, n)` as `n*(n + 1)*(6*n^3 + 9*n^2 + n - 1)/30` even
+    though that is longer. The normal form never distributes products, so nothing later
+    undoes it.
 
-    Not gated on getting shorter, because the original does not gate it
-    either: `SUM(k^4, k, 1, n)` is longer factored than expanded and Derive
-    prints `n*(n + 1)*(6*n^3 + 9*n^2 + n - 1)/30` all the same. Nothing
-    after this takes it back apart, because the normal form never distributes
-    a product.
-
-    A formula is what a range of unknown length is answered by, and only that.
-    A range of known length is added up term by term, and the total is a sum
-    like any other: `SOLVE.MTH`'s Lagrange expansion over three terms is
-    `3*y^3/2 - y^2 + y` in the manual (9.1, p.230), not that polynomial's
-    factorization.
+    Only ranges of unknown length get a formula. A range of known length is added up
+    term by term like any other sum: `SOLVE.MTH`'s three-term Lagrange expansion is
+    `3*y^3/2 - y^2 + y` in the manual (9.1, p.230), not factored.
     """
     value = attempt(head, lambda s: s.doit(deep=False))
     if value is None:
@@ -957,50 +852,45 @@ def _summation(head: sp.Sum) -> sp.Basic:
         return value
     value = _over_the_counts(head, value)
     if isinstance(value, sp.MatrixBase):
-        # A sum of vectors is summed element by element, and each element is a
-        # closed form of its own: `SUM([k, k^2], k, 0, n)` is a vector of the
-        # two formulas and not of Faulhaber's two polynomials.
+        # Each element of a vector sum is its own closed form: `SUM([k, k^2], k, 0, n)`
+        # is a vector of the two factored formulas.
         entries = attempt(value, lambda m: m.applyfunc(_factored))
         return value if entries is None else entries
     return _factored(value)
 
 
 def _counted(head: sp.Sum | sp.Product) -> bool:
-    """Whether every range of `head` holds a known number of terms.
+    """Whether every range of `head` has a known number of terms.
 
-    Which is what tells a sum that was added up from one a formula answered.
-    A bound that is a symbol makes the count unknown, and so does an infinite
-    one: neither `SUM(k, k, 1, n)` nor `SUM(2^-k, k, 0, inf)` is a row of terms.
+    This distinguishes a sum added up term by term from one given by a formula. A
+    symbolic or infinite bound makes the count unknown, as in `SUM(k, k, 1, n)` or
+    `SUM(2^-k, k, 0, inf)`.
     """
     return all(
         len(limit) == 3 and (limit[2] - limit[1]).is_Integer for limit in head.limits
     )
 
 
-#: How many counts of terms a closed form is checked at before it answers for all.
+#: How many term counts a closed form is checked against before it is trusted.
 _COUNTS_CHECKED = 6
 
 
 def _over_the_counts(head: sp.Sum, value: sp.Basic) -> sp.Basic:
-    """The closed form of a sum whose summand involves its own upper limit, held
-    to the integer counts of terms the sum is written for.
+    """The closed form of a sum whose summand involves its upper limit, valid for
+    integer term counts.
 
-    Sympy sums `SUM(COMB(n, k), k, 0, n)` as the hypergeometric series it would be
-    over every `k`, and states where that series converges, over a real `n` and over
-    any other variable: `2^n` where `n > -1`, `(x + 1)^n` under a condition on
-    `ABS(x)` as well. But the sum has a number of terms only for an integer `n`, and
-    there the series stops at `n` by itself, so the convergence condition does not
-    describe the sum at all: `(x + 1)^n` is the sum for every `x`, which is the
-    binomial theorem. Its condition is dropped where the closed form agrees with the
-    terms added up for the first several counts. Each of those ranges holds at least
-    one term, which is what a formula is written for: `SUM(COMB(n, k), k, 0, n)` at
-    `n = -1` is no sum of binomial coefficients but an empty range.
+    Sympy treats `SUM(COMB(n, k), k, 0, n)` as a hypergeometric series over all `k` and
+    attaches a convergence condition for real `n`: `2^n` where `n > -1`, or
+    `(x + 1)^n` with a condition on `ABS(x)`. But the sum only makes sense for integer
+    `n`, where the series terminates at `n` on its own, so the condition is irrelevant:
+    `(x + 1)^n` holds for every `x` (the binomial theorem). The condition is dropped if
+    the closed form matches the explicit sum for the first few counts. Each checked
+    range has at least one term; at `n = -1` the range is empty.
 
-    The same check is made of a closed form sympy gives with no condition at all,
-    because the symbolic shortcuts it tries first can be wrong at the smallest
-    counts: it answers `SUM((-1)^k*COMB(n, k), k, 0, n)` with 0, where the sum is
-    1 at `n = 0`. Such an answer is replaced with the hypergeometric one, `0^n`,
-    where that one holds, and the sum stands where nothing does.
+    Unconditional closed forms are checked too, since sympy's shortcuts can be wrong at
+    small counts: it gives 0 for `SUM((-1)^k*COMB(n, k), k, 0, n)`, which is 1 at
+    `n = 0`. Such an answer is replaced by the hypergeometric one (`0^n`) if that
+    checks out, and otherwise the sum stands.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 3:
         return value
@@ -1038,8 +928,8 @@ def _over_the_counts(head: sp.Sum, value: sp.Basic) -> sp.Basic:
 
 
 def _holds_at_the_counts(candidate: sp.Basic, head: sp.Sum, bound: sp.Symbol) -> bool:
-    """Whether `candidate` is the sum `head` for the first `_COUNTS_CHECKED` values
-    of `bound` that give its range at least one term, whatever the other variables."""
+    """Whether `candidate` equals the sum `head` for the first `_COUNTS_CHECKED` values
+    of `bound` that give a nonempty range, for any values of the other variables."""
     index, low, high = head.limits[0]
     reduced = attempt(candidate, sp.gammasimp)
     if reduced is None:
@@ -1068,14 +958,13 @@ def _holds_at_the_counts(candidate: sp.Basic, head: sp.Sum, bound: sp.Symbol) ->
 
 
 def _closed_by_rule(head: sp.Sum | sp.Product, context: Context) -> sp.Basic | None:
-    """A sum or product sympy does not do, by the rule its summand's shape answers
-    to, or None where none does.
+    """A closed form for a sum or product sympy can't do, by a rule for its summand's
+    shape, or None.
 
-    A sum of sines or cosines of the index, a product of exponentials and a sum of
-    logarithms each have a closed form that follows from one identity, where sympy
-    either leaves them standing or never comes back from the search: see
-    `_sum_of_waves`, `_product_of_powers` and `_sum_of_logarithms`. A range of known
-    length is added up term by term instead.
+    Sums of sines or cosines of the index, products of exponentials and sums of
+    logarithms each follow from one identity, while sympy either leaves them or never
+    returns: see `_sum_of_waves`, `_product_of_powers` and `_sum_of_logarithms`. Ranges
+    of known length are added up term by term instead.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 3 or _counted(head):
         return None
@@ -1088,29 +977,25 @@ def _closed_by_rule(head: sp.Sum | sp.Product, context: Context) -> sp.Basic | N
 
 
 def _sum_of_waves(head: sp.Sum, context: Context) -> sp.Basic | None:
-    """A sum of sines and cosines of a linear function of the index, in closed form.
+    """Closed form of a sum of sines and cosines of a linear function of the index.
 
-    The terms `SIN(a*k + b)` for `k` from `p` to `q` are `N = q - p + 1` points
-    equally spaced around a circle, and their sum is the imaginary part of a
-    geometric sum of `#e^(#i*(a*k + b))`, which is
+    The terms `SIN(a*k + b)` for `k` from `p` to `q` are `N = q - p + 1` equally spaced
+    points on a circle, and their sum is the imaginary part of a geometric sum of
+    `#e^(#i*(a*k + b))`:
 
         SIN(N*a/2)/SIN(a/2) * SIN(a*(p + q)/2 + b),
 
-    and the cosine likewise with `COS` of the middle angle: `SUM(SIN(k), k, 1, n)` is
-    `SIN(n/2)*SIN((n + 1)/2)/SIN(1/2)`. Where the step `a` is a multiple of `2*pi`
-    every term is the same, and the sum is `N*SIN(b)`, the value the formula tends to
-    there; where the step is a variable that may be such a multiple the answer is an
-    `IF` on it, as the geometric sum `SUM(x^k, k, 0, n)` is one on `x = 1`.
+    and likewise for cosine: `SUM(SIN(k), k, 1, n)` is
+    `SIN(n/2)*SIN((n + 1)/2)/SIN(1/2)`. If the step `a` is a multiple of `2*pi`, every
+    term is equal and the sum is `N*SIN(b)`; if it may be one, the answer is an `IF`,
+    just as `SUM(x^k, k, 0, n)` has one on `x = 1`.
 
-    A pair of waves that are each other's negation shifted along the index is left
-    to sympy, which telescopes it to the two ends: `SUM(SIN(k + 1) - SIN(k), k, 1,
-    n)` is `SIN(n + 1) - SIN(1)`, shorter than the difference of two such products.
+    A telescoping pair is left to sympy: `SUM(SIN(k + 1) - SIN(k), k, 1, n)` gives
+    `SIN(n + 1) - SIN(1)`, shorter than this formula.
 
-    Terms with the same step and phase are gathered first, and a term that holds no
-    trigonometric function of the index is summed as a sum of its own. A product of
-    waves, or a wave whose amplitude depends on the index, is no such sum, and is
-    left to `_searchable`: sympy has no way of summing it and may not come back from
-    looking.
+    Terms with equal step and phase are combined, and non-trigonometric terms are summed
+    separately. Products of waves, or waves with index-dependent amplitude, are left to
+    `_searchable`, since sympy can't sum them and may never return.
     """
     index, low, high = head.limits[0]
     if low.has(sp.oo, -sp.oo) or high.has(sp.oo, -sp.oo):
@@ -1169,14 +1054,13 @@ def _linear(argument: sp.Basic, index: sp.Basic) -> tuple[sp.Basic, sp.Basic] | 
 
 
 def _product_of_powers(head: sp.Product, context: Context) -> sp.Basic | None:
-    """A product of powers of one positive base, as that base to the sum of the
-    exponents: `PRODUCT(#e^k, k, 1, n)` is `#e^(n*(n + 1)/2)` and `PRODUCT(#e^(1/k^2),
-    k, 1, inf)` is `#e^(pi^2/6)`.
+    """A product of powers of one positive base, as the base to the sum of exponents:
+    `PRODUCT(#e^k, k, 1, n)` is `#e^(n*(n + 1)/2)` and `PRODUCT(#e^(1/k^2), k, 1, inf)`
+    is `#e^(pi^2/6)`.
 
-    The exponential is continuous, so an infinite product is the base to the
-    infinite sum, and to a sum that diverges it is `inf` or 0. Where the sum has no
-    closed form the product has none either and stands: `PRODUCT(#e^(1/k), k, 1, n)`
-    is the base to a harmonic number.
+    By continuity this holds for infinite products too, giving `inf` or 0 for a
+    divergent sum. If the sum has no closed form, the product stands:
+    `PRODUCT(#e^(1/k), k, 1, n)` would need a harmonic number.
     """
     index = head.limits[0][0]
     function = head.function
@@ -1195,14 +1079,12 @@ def _product_of_powers(head: sp.Product, context: Context) -> sp.Basic | None:
 
 
 def _sum_of_logarithms(head: sp.Sum, context: Context) -> sp.Basic | None:
-    """A sum of logarithms, as the logarithm of the product of their arguments where
-    that has a closed form: `SUM(LN(k), k, 1, n)` is `LN(n!)` and `SUM(LN(1 + 1/k), k,
-    1, n)`, the product telescoping, is `LN(n + 1)`.
+    """A sum of logarithms, as the logarithm of the product of their arguments if that
+    has a closed form: `SUM(LN(k), k, 1, n)` is `LN(n!)` and `SUM(LN(1 + 1/k), k, 1, n)`
+    telescopes to `LN(n + 1)`.
 
-    The logarithm of a product is the sum of the logarithms only of positive
-    factors, so every term the range reaches has to be known positive; and the
-    logarithm is continuous on them, so an infinite sum is the logarithm of the
-    infinite product.
+    This needs every argument in the range to be known positive. By continuity it also
+    holds for infinite sums.
     """
     index, low, high = head.limits[0]
     if not isinstance(head.function, sp.log):
@@ -1219,10 +1101,7 @@ def _sum_of_logarithms(head: sp.Sum, context: Context) -> sp.Basic | None:
 
 
 def _factored(value: sp.Basic) -> sp.Basic:
-    """One closed form, factored where there is a polynomial to factor.
-
-    A sum sympy could not do is not a closed form and has nothing to factor.
-    """
+    """Factor a closed form if it is a polynomial; unevaluated sums are left alone."""
     if value.has(sp.Sum) or not _polynomial(value):
         return value
     factored = attempt(value, sp.factor)
@@ -1232,14 +1111,11 @@ def _factored(value: sp.Basic) -> sp.Basic:
 
 
 def _polynomial(value: sp.Basic) -> bool:
-    """Whether `value` is a polynomial, and one with a variable in it.
+    """Whether `value` is a polynomial with at least one variable.
 
-    A number has nothing to factor and `factor` would rewrite it anyway - it
-    writes 12 as `2^2*3` - so `SUM(k, k, 1, 5)` stays 15.
-
-    Asked of whatever a head evaluated to, which need not be an expression at
-    all: a sum of truth values is a truth value, and that is not a polynomial
-    however the question is answered.
+    Numbers are excluded because `factor` would write 12 as `2^2*3`; `SUM(k, k, 1, 5)`
+    should stay 15. `value` need not be an expression (a sum of truth values is a truth
+    value), so failures count as no.
     """
     try:
         return bool(value.free_symbols) and value.is_polynomial() is True
@@ -1248,13 +1124,11 @@ def _polynomial(value: sp.Basic) -> bool:
 
 
 def _product(head: sp.Product) -> sp.Basic:
-    """A product, by sympy first and then by its own definition.
+    """A product, by sympy first and then by definition.
 
-    Sympy has no routine for an infinite product, so `PRODUCT(1 - 1/k^2, k, 2,
-    inf)` comes back as it went in. What it does have is the definition: the
-    infinite product is the limit of the partial products, and both halves of
-    that it can do. So a product over an endless range that sympy leaves
-    standing is asked again as `_partial_products`.
+    Sympy can't do infinite products like `PRODUCT(1 - 1/k^2, k, 2, inf)` directly, but
+    it can take the limit of the partial products, which is the definition. So an
+    infinite product sympy leaves standing goes to `_partial_products`.
     """
     value = attempt(head, lambda p: p.doit(deep=False))
     if value is None:
@@ -1268,38 +1142,29 @@ def _product(head: sp.Product) -> sp.Basic:
 def _partial_products(head: sp.Product) -> sp.Basic | None:
     """An infinite product as the limit of the products up to `n`, or None.
 
-    This is sympy's own documented way around the gap, and it is the
-    definition rather than a trick: the product to `n` is a closed form in `n`
-    wherever the body is hypergeometric, and where the limit of that closed
-    form exists it is what the infinite product means. `PRODUCT(1 - 1/k^2, k,
-    2, inf)` telescopes to a ratio of rising factorials and the limit of that
-    is 1/2, which is Derive's answer; Wallis' product comes out `pi/2` the same
-    way, and `PRODUCT(k/(k + 1), k, 1, inf)` comes out 0.
+    This is sympy's documented workaround and simply the definition: for a
+    hypergeometric body the partial product has a closed form in `n`, and its limit is
+    the infinite product. `PRODUCT(1 - 1/k^2, k, 2, inf)` telescopes to a ratio of
+    rising factorials with limit 1/2, as in Derive; Wallis' product gives `pi/2`, and
+    `PRODUCT(k/(k + 1), k, 1, inf)` gives 0.
 
-    None wherever either half declines - `PRODUCT(COS(pi/2^k), k, 1, inf)` has
-    no closed form to take a limit of, and `PRODUCT(1 - x/k, k, 1, inf)`
-    depends on the sign of an `x` nothing knows - and the product then stands
-    unevaluated, which is the honest answer and the one Derive gives.
+    Returns None if either step fails (`PRODUCT(COS(pi/2^k), k, 1, inf)` has no closed
+    form; `PRODUCT(1 - x/k, k, 1, inf)` depends on the unknown sign of `x`), leaving the
+    product unevaluated, as Derive does.
 
-    A lower end that is not known finite is refused, which leaves the range
-    running from somewhere to infinity and the limit meaning nothing. A
-    declared variable is known finite and is allowed: `PRODUCT(1 - 1/k^2, k,
-    m, inf)` is `(m - 1)/m`, the same telescoping one step short of the whole.
+    The lower bound must be known finite, though a declared variable is fine:
+    `PRODUCT(1 - 1/k^2, k, m, inf)` is `(m - 1)/m`.
 
-    An oscillating product is left standing rather than answered. Sympy's
-    limit of `(-1)^n` is `nan` and of `(-2)^n` is complex infinity, and
-    neither is a value: `PRODUCT(-1, k, 1, inf)` has none, and saying it is
-    undefined is a stronger claim than the head makes. That is what the
-    matching sums do - `SUM((-1)^k, k, 1, inf)` stands unevaluated - and
-    divergence to infinity is a value in the same house style, so
-    `PRODUCT((k + 1)/k, k, 1, inf)` is `inf`.
+    Oscillating products are left standing: sympy's limits of `(-1)^n` and `(-2)^n` are
+    `nan` and complex infinity, and calling `PRODUCT(-1, k, 1, inf)` undefined would
+    claim more than the head does. This matches `SUM((-1)^k, k, 1, inf)` standing
+    unevaluated. Divergence to infinity is a value, so `PRODUCT((k + 1)/k, k, 1, inf)`
+    is `inf`.
 
-    The closed form is written in gammas, and the limit of it in gammas of
-    complex argument, which the reflection formula turns back into a real
-    hyperbolic: `PRODUCT(1 + 1/k^2, k, 1, inf)` is `SINH(pi)/pi` and not
-    `1/(GAMMA(1 - #i)*GAMMA(1 + #i))`. `simplify` rather than `gammasimp`
-    because only the former also cancels what the formula leaves behind, and
-    the expression it is asked about is a constant.
+    The limit may come out in gammas of complex argument, which the reflection formula
+    turns into a real hyperbolic: `PRODUCT(1 + 1/k^2, k, 1, inf)` is `SINH(pi)/pi`, not
+    `1/(GAMMA(1 - #i)*GAMMA(1 + #i))`. `simplify` is used rather than `gammasimp`
+    because only it also cancels the leftovers, and the expression is a constant anyway.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 3:
         return None
@@ -1320,28 +1185,27 @@ def _partial_products(head: sp.Product) -> sp.Basic | None:
     return value if reduced is None else reduced
 
 
-#: The heads a closed form is searched for through: sympy recognises a
-#: hypergeometric term by their ratios, and that is the search that costs.
+#: Heads that trigger sympy's costly hypergeometric search, which recognizes such
+#: terms by their ratios.
 _TERMS = (sp.factorial, sp.factorial2, sp.gamma, sp.rf, sp.ff)
 
 
 def _searchable(head: sp.Basic) -> bool:
-    """Whether looking for a closed form of this sum is known to come back.
+    """Whether searching for a closed form of this sum is known to terminate.
 
-    A limit that is not a number sends sympy looking for one by Gosper's
-    algorithm. Over a summand carrying a factorial of the index scaled by more
-    than one - `(n - 2*k)!`, which is how every classical polynomial family is
-    written - that search does not come back at all: `SUM((-1)^k*(n - k)!/(k!*
-    (n - 2*k)!)*(2*x)^(n - 2*k), k, 0, n/2)` is Chebyshev's, out of Derive's
-    own utility library, and it was still running after forty minutes. There is
-    no closed form to be had there, and the sum written out is the answer.
+    A symbolic limit sends sympy into Gosper's algorithm, which never returns for a
+    summand with a factorial of the index scaled by more than one, like `(n - 2*k)!`
+    (how the classical polynomial families are written). Chebyshev's
+    `SUM((-1)^k*(n - k)!/(k!*(n - 2*k)!)*(2*x)^(n - 2*k), k, 0, n/2)`, from Derive's
+    utility library, was still running after forty minutes. There's no closed form
+    anyway, so the sum stands.
 
-    Narrow on purpose. `SUM(COMB(n, k), k, 0, n)` is `2^n` and `SUM((-1)^k*
-    COMB(n, k)*COMB(2*n - 2*k, n)*x^(n - 2*k), k, 0, n/2)` is Legendre's, which
-    sympy answers in half a second; neither is refused.
+    This is deliberately narrow: `SUM(COMB(n, k), k, 0, n)` (`2^n`) and Legendre's
+    `SUM((-1)^k*COMB(n, k)*COMB(2*n - 2*k, n)*x^(n - 2*k), k, 0, n/2)` take half a
+    second and are allowed.
 
-    The other search that does not come back is for a telescoping pair of
-    trigonometric terms, which `_trigonometric_terms` is the measured rule for.
+    The other non-terminating search, for telescoping trigonometric pairs, is handled by
+    `_trigonometric_terms`.
     """
     for limit in head.limits:
         if len(limit) < 3 or all(bound.is_number for bound in limit[1:]):
@@ -1354,28 +1218,22 @@ def _searchable(head: sp.Basic) -> bool:
 
 
 def _trigonometric_terms(function: sp.Basic, index: sp.Basic) -> bool:
-    """Whether two terms of the summand carry trigonometric functions of the index
-    without being each other's shift, which is what sympy's telescoping check
-    does not come back from.
+    """Whether two summand terms have trigonometric functions of the index without
+    being shifts of each other, which hangs sympy's telescoping check.
 
-    Before anything else, sympy asks of a two-term summand whether one term is the
-    other's negation shifted along the index, first by matching and then, where the
-    match fails, by solving `L(k + m) + R(k) = 0` for `m`. Over trigonometric
-    functions that solve rewrites everything as exponentials and builds
-    polynomials in them. `SUM(SIN(a*k) - SIN(b*k), k, 1, n)` takes four seconds
-    that way, the four sines the Fourier series of Derive's own `INTEGRAL.MTH`
-    comes to once its coefficients are integrated take ninety, and a product on
-    each side - `SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k), k, 1, n)` - never
-    finishes at all, whatever the frequencies. A third term is no protection,
-    since the pairs are tried in turn.
+    For a two-term summand, sympy first checks whether one term is the other's negation
+    shifted along the index, by matching and then by solving `L(k + m) + R(k) = 0` for
+    `m`. With trigonometric functions, the solve rewrites everything as exponentials
+    and builds polynomials in them. `SUM(SIN(a*k) - SIN(b*k), k, 1, n)` takes four
+    seconds, the four sines of the Fourier series in Derive's `INTEGRAL.MTH` take
+    ninety, and `SUM(SIN(k)*COS(2*k) - SIN(3*k)*COS(5*k), k, 1, n)` never finishes. A
+    third term doesn't help, since pairs are tried in turn.
 
-    Nothing is given up: once that search fails, sympy has no way of summing a
-    trigonometric term and the sum comes back as written anyway. Except the one
-    pair the match settles - `SIN(k + 1)*COS(k + 1) - SIN(k)*COS(k)` telescopes
-    to `SIN(n)*COS(n + 2)` without the solve ever being reached - so the same
-    match is made here first, and that pair is let through. Hyperbolic terms
-    are not trigonometric to this rule: sympy sums them as the exponentials they
-    are, and comes back.
+    Nothing is lost by refusing: if that search fails, sympy can't sum the terms anyway.
+    The exception is a pair the match alone settles, such as
+    `SIN(k + 1)*COS(k + 1) - SIN(k)*COS(k)`, which telescopes to `SIN(n)*COS(n + 2)`, so
+    the same match is tried here first. Hyperbolic terms are excluded; sympy sums them
+    as exponentials quickly.
     """
     expanded = attempt(function, sp.expand)
     if expanded is None:
@@ -1389,8 +1247,8 @@ def _trigonometric_terms(function: sp.Basic, index: sp.Basic) -> bool:
 
 
 def _telescoping(expanded: sp.Basic, index: sp.Basic) -> bool:
-    """Whether the terms of `expanded` holding trigonometric functions of the index
-    are a pair sympy telescopes, see `_trigonometric_terms`."""
+    """Whether the trigonometric terms of `expanded` are a pair sympy telescopes; see
+    `_trigonometric_terms`."""
     waves = [
         term
         for term in sp.Add.make_args(expanded)
@@ -1400,8 +1258,8 @@ def _telescoping(expanded: sp.Basic, index: sp.Basic) -> bool:
 
 
 def _shifted(left: sp.Basic, right: sp.Basic, index: sp.Basic) -> bool:
-    """Whether `right` is `-left` with the index moved by an integer, the way
-    sympy's telescoping asks it: by matching, with `left` the term it shifts."""
+    """Whether `right` is `-left` shifted by an integer, matched the way sympy's
+    telescoping check does it, with `left` the shifted term."""
     shift = sp.Wild("shift")
     match = (-right).match(left.subs(index, index + shift))
     if match is None or shift not in match or not match[shift].is_Integer:
@@ -1420,19 +1278,17 @@ def _scaled_term(function: sp.Basic, index: sp.Basic) -> bool:
 
 
 def _limit(head: sp.Limit) -> sp.Basic:
-    """A limit, taken of the closed forms of the sums and products under it.
+    """A limit, taken over the closed forms of the sums and products inside it.
 
-    A sum or product under the limit that stands unevaluated stands because its
-    closed form is written in a function the notation has no name for, and the
-    limit cannot be taken of the head itself. `SUM(1/k^2, k, 1, n)` is a
-    generalized harmonic number, which is no answer, but its limit `pi^2/6` is.
-    So the limit is taken of the closed forms, and only what it comes to is held
-    to the vocabulary.
+    Sums and products under a limit stand when their closed form needs a function
+    Derive lacks, and the limit can't be taken of the unevaluated head.
+    `SUM(1/k^2, k, 1, n)` is a generalized harmonic number, not an acceptable answer,
+    but its limit `pi^2/6` is. So the limit is taken of the closed forms, and only the
+    result must be in Derive's vocabulary.
 
-    A constant factor is taken outside the limit before it is asked for, as the
-    limit laws allow. Sympy's series machinery can lose such a factor when it is a
-    product of gammas of complex arguments, and would answer the limit of the
-    partial products of `1 + 1/k^2`, which is `SINH(pi)/pi`, with 1.
+    A constant factor is pulled out first, since sympy's series code can lose a product
+    of gammas of complex arguments and would give 1 for the limit of the partial
+    products of `1 + 1/k^2`, instead of `SINH(pi)/pi`.
     """
     expression, variable, point, direction = head.args
     closed = _closed_forms(expression)
@@ -1444,8 +1300,8 @@ def _limit(head: sp.Limit) -> sp.Basic:
     if factor != 1 and _finite_nonzero(factor):
         constant, varying = factor, rest
     if point is sp.S.NegativeInfinity:
-        # Taken as the limit at `inf` of the reflection, which is the same limit:
-        # sympy's own way to `-inf` has `2^x` go to `inf` there.
+        # Take the limit of the reflection at `inf` instead; sympy's limit at `-inf`
+        # wrongly sends `2^x` to `inf`.
         varying, point, direction = varying.subs(variable, -variable), sp.oo, "-"
     asked = sp.Limit(varying, variable, point, dir=direction)
     try:
@@ -1467,15 +1323,13 @@ def _limit(head: sp.Limit) -> sp.Basic:
 
 
 def _split_on_a_sign(value: sp.Basic, head: sp.Limit) -> sp.Basic | None:
-    """A limit that turns on the sign of a function of its one parameter, as the
-    conditional on where that function is positive and where negative.
+    """Rewrite a limit that depends on the sign of a function of its one parameter as a
+    conditional on that sign.
 
-    `LIM(a^x, x, inf)` is `#e^(inf*SIGN(LN(a)))` to sympy: `inf` where `a > 1`, 0
-    where `0 < a < 1`, and nothing that says so. Each side is the answer with the
-    sign written in, and what is on neither - `a = 1`, and an `a` the logarithm is
-    not real at - is the limit itself, still to be taken. A sign of the bare
-    parameter is left as it is, `inf*SIGN(a)` saying it as plainly as a conditional
-    would.
+    Sympy gives `LIM(a^x, x, inf)` as `#e^(inf*SIGN(LN(a)))`, meaning `inf` for `a > 1`
+    and 0 for `0 < a < 1`. Each case gets the sign substituted, and the remaining cases
+    (`a = 1`, or where the logarithm isn't real) keep the unevaluated limit. The sign of
+    a bare parameter is left alone, since `inf*SIGN(a)` is as clear as a conditional.
     """
     value = _signs_of_reciprocals(value)
     signs = [
@@ -1508,15 +1362,13 @@ def _split_on_a_sign(value: sp.Basic, head: sp.Limit) -> sp.Basic | None:
 
 
 def _limit_by_the_sign_of_a_parameter(asked: sp.Limit) -> sp.Basic | None:
-    """A limit over a real parameter, from its values where the parameter is positive
-    and where it is negative.
+    """A limit with a real parameter, combined from the cases where the parameter is
+    positive and negative.
 
-    Not told the sign of `a`, sympy takes `LIM(ATAN(x/a), x, inf)` to `ATAN(±inf/a)`,
-    an infinity of no sign inside the arc tangent, and refuses `LIM(TANH(a*x), x,
-    inf)` altogether. Told it, sympy answers `pi/2` and `-pi/2`, or 1 and -1. Where
-    one expression in the absolute value of the parameter, or that times its sign,
-    is both answers, it is the limit for every value but zero, the one value at
-    which the expression is a different function of the variable altogether.
+    Without the sign of `a`, sympy gives `ATAN(±inf/a)` for `LIM(ATAN(x/a), x, inf)` and
+    fails on `LIM(TANH(a*x), x, inf)`. With it, sympy answers `pi/2` and `-pi/2`, or 1
+    and -1. If one expression in `ABS(a)`, or that times `SIGN(a)`, matches both, it is
+    the limit for all nonzero `a` (at zero the expression is a different function).
     """
     expression, variable, point = asked.args[:3]
     parameters = asked.free_symbols
@@ -1541,11 +1393,10 @@ def _limit_by_the_sign_of_a_parameter(asked: sp.Limit) -> sp.Basic | None:
 
 
 def _finite_nonzero(constant: sp.Basic) -> bool:
-    """Whether `constant` is a number proved finite and not zero: by the assumptions,
-    or where they do not settle it, as for `GAMMA(1 + #i)`, by its structure. A product
-    of such numbers is one, and so is a power of one to a finite exponent, an
-    exponential of a finite number, and a gamma function off its poles, which has no
-    zeros."""
+    """Whether `constant` is a number proved finite and nonzero, by the assumptions or,
+    where those fail (as for `GAMMA(1 + #i)`), by structure: products of such numbers,
+    their powers to finite exponents, exponentials of finite numbers, and gamma off its
+    poles (it has no zeros)."""
     if not constant.is_number:
         return False
     if constant.is_finite and constant.is_zero is False:
@@ -1565,8 +1416,8 @@ def _finite_nonzero(constant: sp.Basic) -> bool:
 
 
 def _closed_forms(expression: sp.Basic) -> sp.Basic:
-    """`expression` with each sum and product in it replaced by its closed form,
-    whatever functions that is written in, where sympy has one."""
+    """`expression` with each sum and product replaced by sympy's closed form, in
+    whatever functions, where it has one."""
 
     def closed(head: sp.Basic) -> sp.Basic:
         if not _searchable(head):
@@ -1583,15 +1434,13 @@ def _closed_forms(expression: sp.Basic) -> sp.Basic:
 
 
 def _bounds_settled(expression: sp.Basic) -> sp.Basic:
-    """`expression` with the sign and absolute value of an `INTERVAL` worked out.
+    """`expression` with sign and absolute value of an `INTERVAL` evaluated.
 
-    Both are monotone on either side of zero, so each maps bounds to bounds:
+    Both are monotone on each side of zero, so they map bounds to bounds:
     `SIGN(INTERVAL(-1, 1))` is `INTERVAL(-1, 1)` and `ABS(INTERVAL(-2, 1))` is
-    `INTERVAL(0, 2)`. Sympy leaves both standing, and its limits produce the
-    first: `LIM(x*SIN(x), x, inf)` comes back as `inf` times the sign of the
-    bounds of `SIN(x)`, which once worked out is `INTERVAL(-inf, inf)`, the values
-    `x*SIN(x)` keeps coming back to. Bounds that are not numbers are left alone,
-    there being no deciding which side of zero they lie on.
+    `INTERVAL(0, 2)`. Sympy leaves them unevaluated, and its limits produce them:
+    `LIM(x*SIN(x), x, inf)` comes back as `inf` times the sign of `SIN(x)`'s bounds,
+    which works out to `INTERVAL(-inf, inf)`. Non-numeric bounds are left alone.
     """
 
     def numeric(bounds: sp.Basic) -> bool:
@@ -1625,13 +1474,12 @@ def _bounds_settled(expression: sp.Basic) -> sp.Basic:
 
 
 def _undecided(head: sp.Basic) -> sp.Basic:
-    """What a head that raised is worth.
+    """The value of a head whose evaluation raised.
 
-    Only the two-sided limit has an answer here: sympy refuses one whose sides
-    disagree, and when they are each other's negation the ambiguity is exactly
-    what `±` says. Sides that agree are the limit: `SIN(1/x)/x` reaches
-    `INTERVAL(-inf, inf)` from both. A side sympy cannot take leaves the limit
-    as it was written, and so does anything else.
+    Only two-sided limits get an answer: sympy refuses one whose sides disagree, and
+    sides that are negations of each other are exactly what `±` expresses. Sides that
+    agree are the limit (`SIN(1/x)/x` gives `INTERVAL(-inf, inf)` from both). Anything
+    else is returned as written.
     """
     if not (isinstance(head, sp.Limit) and str(head.args[3]) == "+-"):
         return head
@@ -1650,8 +1498,7 @@ def _undecided(head: sp.Basic) -> sp.Basic:
         return right
     if right != -left:
         return sp.nan
-    # Two infinite sides that are each other's negation are unsigned infinity,
-    # which sympy has an object of its own for and the notation writes `±inf`.
+    # Opposite infinite sides make unsigned infinity, which Derive writes `±inf`.
     return sp.zoo if right in (sp.oo, -sp.oo) else PlusMinus(right)
 
 
@@ -1661,24 +1508,19 @@ def _undecided(head: sp.Basic) -> sp.Basic:
 def _commanded(
     name: str, values: list, divisors: list, context: Context
 ) -> sp.Basic:
-    """`FACTOR`, `EXPAND`, `SOLVE` or `RATE` run over its evaluated arguments.
+    """Run `FACTOR`, `EXPAND`, `SOLVE` or `RATE` on its evaluated arguments.
 
-    `FACTOR(u, amount, x, y, ...)`, `EXPAND(u, amount, x, y, ...)` and
-    `SOLVE(u, x)` are the author-line spellings of three of the commands, so
-    simplifying a line that carries one runs it - which is what the original
-    does, and what makes the functions worth having rather than inert heads
-    that print back as themselves.
+    `FACTOR(u, amount, x, y, ...)`, `EXPAND(u, amount, x, y, ...)` and `SOLVE(u, x)`
+    are the in-expression forms of those commands, so simplifying them runs the
+    command, as in the original.
 
-    What a command works on is a simplified operand, exactly as the command
-    itself would have it, and rounding is the last thing done to its answer and
-    not the first thing done to its question: the operand is simplified at the
-    exact precision. A factorization, an expansion or a solution is then held
-    as `Commanded`, which is what keeps everything after the evaluation from
-    rewriting it; a call over one - `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` - takes it
-    as the value it is.
+    The operand is simplified at exact precision, as the command itself would do;
+    rounding comes only at the end. The result is wrapped in `Commanded` so later steps
+    don't rewrite it, while an enclosing call like `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))`
+    sees its value.
 
-    `divisors` are what a `SOLVE`'s equation divides by as written, which its
-    simplified operand may no longer show.
+    `divisors` are what the `SOLVE` equation divides by as written, which the simplified
+    operand may no longer show.
     """
     exact = context.with_precision(Precision.EXACT)
     args = [
@@ -1695,14 +1537,12 @@ def _commanded(
 
 
 def _factor_head(name: str, args: list, context: Context) -> sp.Basic:
-    """One head, read as its target, its amount and its variables.
+    """Run a `FACTOR` or `EXPAND` head, parsing its target, amount and variables.
 
-    The arguments after the first are a word naming the amount, a list of
-    variables, or both in that order; the manual allows any of them to be left
-    out. A word that names no amount is read as a variable, which is what
-    keeps a call nobody can make sense of - a Derive 6 `FACTOR(u, Turing)` -
-    an expression rather than an error. `EXPAND(u, Complex)` is such a call:
-    Complex is an amount Factor offers and Expand does not.
+    After the target come an optional amount word and optional variables, in that order.
+    A word that names no valid amount is read as a variable, so a meaningless call like
+    Derive 6's `FACTOR(u, Turing)` stays an expression rather than an error. The same
+    applies to `EXPAND(u, Complex)`, since Complex is an amount only Factor offers.
     """
     expanding = name == "EXPAND"
     amounts = EXPAND_AMOUNTS if expanding else tuple(Amount)
@@ -1721,32 +1561,26 @@ def _factor_head(name: str, args: list, context: Context) -> sp.Basic:
 
 
 def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic | None:
-    """`SOLVE(u, x)` and its longer forms, as the vector of what they solve to.
+    """`SOLVE(u, x)` and its longer forms, as a vector of solutions.
 
-    This is the 3.x and 4.x shape and it is the one worth having: the answer is
-    a *vector* of relations, which `DIMENSION` counts and `RHS` distributes
-    over, and which the shipped libraries are written against. Derive 5 turned
-    it into a disjunction of equations; that form says the same thing and no
-    Derive 4 worksheet can read it.
+    This follows Derive 3.x and 4.x: the answer is a *vector* of relations, which
+    `DIMENSION` counts, `RHS` distributes over, and the shipped libraries rely on.
+    Derive 5's disjunction of equations means the same but breaks Derive 4 worksheets.
 
-    Each element is one of the entries the command would have appended, in the
-    same order - so a system contributes one inner vector per solution, and an
-    equation with no solutions gives the empty vector.
+    Elements are the entries the command would append, in order: a system gives one
+    inner vector per solution, and no solutions give the empty vector.
 
-    `SOLVE(u = v, x, a, b)` searches `[a, b]` numerically. It does so in every
-    precision mode: the original's help says "if in approximate mode", the shipped
-    files use it as though it always applied, and always-numeric is both the
-    more useful reading and the one that makes the call mean one thing.
+    `SOLVE(u = v, x, a, b)` searches `[a, b]` numerically in every precision mode. The
+    original's help says "if in approximate mode", but the shipped files assume it
+    always applies, which is also more useful and less ambiguous.
 
-    `SOLVE(u, x, Real)` keeps only the solutions not having an imaginary component,
-    which is Derive 6's third argument and the only one it documents. `SOLVE(u, x,
-    Complex)` is the same as `SOLVE(u, x)`: Complex is the solve dialog's default
-    domain, and the function form accepts the word for it.
+    `SOLVE(u, x, Real)` keeps only solutions without an imaginary part (Derive 6's
+    documented third argument). `SOLVE(u, x, Complex)` equals `SOLVE(u, x)`, Complex
+    being the solve dialog's default domain.
 
-    None where the call is none of these forms, which leaves it standing as written:
-    a third argument that is neither word, more than four arguments, or a domain word
-    where the variable belongs. A misspelled `Reals` answered as though it were
-    absent would answer a different question from the one asked.
+    Returns None for any other form, leaving the call as written: an unknown third
+    argument, more than four arguments, or a domain word in the variable's place. A
+    misspelled `Reals` shouldn't be silently ignored.
     """
     target, *rest = args
     if len(rest) > 3 or (rest and _domain_word(rest[0]) is not None):
@@ -1765,24 +1599,21 @@ def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic | None
     return InertVector(*answers)
 
 
-#: The name the rate is searched for under. Nothing can collide with it: the
-#: search is only run over a contract whose every argument is a number, so the
-#: equation holds no other name at all.
+#: The variable the rate is solved for. It can't collide with anything, since the
+#: search only runs when every argument is a number.
 _RATE = "i"
 
 
 def _rate_head(args: list, context: Context) -> sp.Basic:
-    """`RATE(n, p, v, f, t, a, b)`: the rate between `a` and `b` the contract implies.
+    """`RATE(n, p, v, f, t, a, b)`: the contract's rate between `a` and `b`.
 
-    The one financial function that is no closed form, and so the one done
-    here rather than in the conversion: it is the bounded `SOLVE` above,
-    applied to the annuity `PVAL` and the rest are read off, and it inherits
-    that search whole - the interval decides which rate is found, and a
-    contract of symbols is one no search can start on.
+    The only financial function without a closed form, so it is done here rather than
+    in conversion, as a bounded `SOLVE` on the annuity equation behind `PVAL` and the
+    others. The interval picks which rate is found, and symbolic arguments can't be
+    searched.
 
-    Where the interval holds no rate the call stays as it stands, which is
-    what the original leaves behind: `RATE(36, -300, 9000, 0, 0, 0.5, 1)` is
-    worth nothing better than itself.
+    If the interval holds no rate, the call stays as is, like in the original:
+    `RATE(36, -300, 9000, 0, 0, 0.5, 1)`.
     """
     if len(args) != 7 or not all(argument.is_number for argument in args):
         return _command_head("RATE", args)
@@ -1796,7 +1627,7 @@ def _rate_head(args: list, context: Context) -> sp.Basic:
 
 
 def _command_head(name: str, args: list) -> sp.Basic:
-    """The call itself, standing, where a command has no answer to give."""
+    """The unevaluated call, for when a command has no answer."""
     return sp.Function(name)(*args)
 
 
@@ -1805,7 +1636,7 @@ _DOMAIN_WORDS = ("Real", "Complex")
 
 
 def _domain_word(argument: sp.Basic) -> str | None:
-    """The solution domain `argument` names, or None where it is no such word."""
+    """The solution domain `argument` names, or None."""
     if isinstance(argument, sp.Symbol) and argument.name in _DOMAIN_WORDS:
         return argument.name
     return None
@@ -1828,14 +1659,12 @@ def _solved_for(argument: sp.Basic) -> tuple[str, ...]:
 
 
 def _numeric(expression: sp.Basic) -> sp.Basic:
-    """Finish off the constants sympy leaves standing.
+    """Evaluate constants sympy leaves unevaluated.
 
-    A factorial of a fraction is one: `(3/2)!` is a number, and a number that
-    is still written as a call has not been simplified. Sympy will evaluate it
-    as a gamma, so that is what it becomes. This is not gated on getting
-    shorter - evaluating a constant is a simplification whatever it costs to
-    write down. So is the sign or absolute value of an `INTERVAL`, which is an
-    `INTERVAL` again.
+    `(3/2)!` is a number, which sympy evaluates when written as a gamma, so it is
+    rewritten that way. The sign or absolute value of an `INTERVAL` is evaluated too.
+    Neither is gated on length, since evaluating a constant always counts as
+    simplifying.
     """
     expression = _bounds_settled(expression)
     try:
@@ -1863,8 +1692,8 @@ def _as_falling(whole: sp.Basic, part: sp.Basic) -> sp.Basic:
     return sp.factorial(whole) / sp.factorial(whole - part)
 
 
-#: The two heads section 6.9 writes as a ratio of factorials: `COMB(z, w)` is
-#: `z!/(w!*(z - w)!)` and `PERM(z, w)` is `z!/(z - w)!`.
+#: Heads section 6.9 defines as factorial ratios: `COMB(z, w)` is `z!/(w!*(z - w)!)`
+#: and `PERM(z, w)` is `z!/(z - w)!`.
 _AS_FACTORIALS: dict[type, Callable[..., sp.Basic]] = {
     sp.binomial: _as_binomial,
     sp.ff: _as_falling,
@@ -1872,14 +1701,12 @@ _AS_FACTORIALS: dict[type, Callable[..., sp.Basic]] = {
 
 
 def _ratios(expression: sp.Basic) -> sp.Basic:
-    """`_AS_FACTORIALS` written out, everywhere but under a calculus head.
+    """Expand `_AS_FACTORIALS`, except under a calculus head.
 
-    A `COMB` inside a sum that has already declined to evaluate is left as it
-    is. Written out it makes a summand nobody has offered to sympy, and the
-    answer's own Simplify would offer it - and over a ratio of factorials of the
-    index that search does not come back: `SUM(COMB(n, k), k, 0, n)` is `2^n`
-    above zero and the sum itself elsewhere, and the sum it is left with would
-    be searched forever. That is `_searchable`'s point, one head further out.
+    A `COMB` in an unevaluated sum is left alone: written out, it would give a new
+    summand that the next Simplify would hand to sympy, and that search over a ratio of
+    factorials of the index never returns. For example, `SUM(COMB(n, k), k, 0, n)` is
+    `2^n` above zero and the unevaluated sum elsewhere. Compare `_searchable`.
     """
     written = _AS_FACTORIALS.get(type(expression))
     if written is not None:
@@ -1888,29 +1715,23 @@ def _ratios(expression: sp.Basic) -> sp.Basic:
         return expression
     arguments = [_ratios(argument) for argument in expression.args]
     if all(written is argument for written, argument in zip(arguments, expression.args)):
-        # The expression itself, and not a rebuild of it: rebuilding is what
-        # `replace` does too, and it is a normalization of everything it walks
-        # through - a matrix inverse comes back a power of a matrix - so
-        # nothing that holds none of these heads is put through it.
+        # Return the original rather than a rebuild: rebuilding normalizes (a matrix
+        # inverse becomes a matrix power), so unaffected subtrees are not rebuilt.
         return expression
     return expression.func(*arguments)
 
 
 def _factorials(expression: sp.Basic) -> sp.Basic:
-    """The heads section 6.9 writes as factorials, written as factorials.
+    """Write the heads section 6.9 defines by factorials as factorials.
 
-    `GAMMA(z)` is `(z - 1)!`, and the two of `_AS_FACTORIALS` are ratios. The
-    factorial is the notation's own spelling and these are the ones it falls
-    back on, so an answer that reached one of them has not been written yet.
-    Not gated on getting shorter - every one of the three is longer written
-    out, and is still the form asked for.
+    `GAMMA(z)` becomes `(z - 1)!`, and the `_AS_FACTORIALS` heads become ratios.
+    Factorials are Derive's preferred spelling, so this isn't gated on length even
+    though all three get longer.
 
-    After the rewrites, because `combsimp` is where most of the gammas come
-    from and where the other two come back: a ratio of three factorials is a
-    binomial to it, and a shorter expression than the ratio. The ratios are
-    written out before it as well, in `_by_definition`, so that one it can
-    shorten is shortened - `COMB(x, 2)` is `x*(x - 1)/2` and not a ratio of
-    factorials that only the next Simplify would reduce.
+    This runs after the rewrites because `combsimp` produces most gammas and turns
+    ratios of three factorials back into binomials. The ratios are also written out
+    before `combsimp`, in `_by_definition`, so it can shorten them: `COMB(x, 2)` becomes
+    `x*(x - 1)/2` rather than a ratio only the next Simplify would reduce.
     """
     try:
         if expression.has(*_AS_FACTORIALS):
@@ -1926,25 +1747,21 @@ def _as_factorial(argument: sp.Basic) -> sp.Basic:
 
 # -- the kernel rules --------------------------------------------------------
 #
-# Each rewrite from here on is one rule about kernels. Which of them is offered, in
-# which mode, and whether it has to pay, is the business of the three tables at the
-# end of the module.
+# Each rewrite below is one kernel rule. The three tables at the end of the module
+# decide which are tried, in which mode, and whether they must pay.
 
 
 def _distributed(expression: sp.Basic) -> sp.Basic:
-    """Every matrix product multiplied over the sums inside it.
+    """Distribute every matrix product over the sums inside it.
 
-    `a . (b + c)` is `a . b + a . c` and `(b + c) . a` is `b . a + c . a`,
-    which section 8.8 states as rules and not as economies: distributing adds
-    an operation, so the gate would decline both, and the manual asks for them
-    anyway. `_complementary_arcs` is forced for the same reason.
+    `a . (b + c)` becomes `a . b + a . c`, and `(b + c) . a` becomes `b . a + c . a`.
+    Section 8.8 states these as rules, so they are forced even though they add an
+    operation (like `_complementary_arcs`).
 
-    This is the whole of the rewrite stage for an expression holding a matrix,
-    and deliberately so. The rest of it is written for scalars and mangles a
-    matrix rather than simplifying it - `radsimp` hands back a plain product of
-    two matrices, which is no expression sympy can go on working with - and
-    what the rules of section 8.8 do is done by sympy's own construction long
-    before anything here is offered.
+    This is deliberately the only rewrite applied to expressions containing a matrix.
+    The others are written for scalars and mangle matrices (`radsimp` returns a plain
+    product of two matrices sympy can't work with), and sympy's construction already
+    applies the other rules of section 8.8.
     """
     return expression.replace(
         _is_matrix_product, lambda product: product.expand(), simultaneous=False
@@ -1957,23 +1774,20 @@ def _is_matrix_product(expression: sp.Basic) -> bool:
     )
 
 
-#: The hyperbolics, which are exponentials by 6.5 the way their inverses are
-#: logarithms by 6.6.
+#: The hyperbolic functions, defined by exponentials in 6.5 (their inverses by
+#: logarithms in 6.6).
 _HYPERBOLIC = (sp.sinh, sp.cosh, sp.tanh, sp.coth, sp.sech, sp.csch)
 
 def _as_arc_cosh(argument: sp.Basic) -> sp.Basic:
-    """`ACOSH(z)` as `2*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)`, which 6.6 says.
+    """`ACOSH(z)` as `2*LN(SQRT(z + 1) + SQRT(z - 1)) - LN(2)`, per section 6.6.
 
-    Sympy's own rewrite reaches `LN(SQRT(z - 1)*SQRT(z + 1) + z)` - the same
-    value in an uncollected form, and nothing downstream collects it. The two
-    agree over the whole plane: `(SQRT(z + 1) + SQRT(z - 1))^2` is
-    `2*(z + SQRT(z - 1)*SQRT(z + 1))`, and each root has an argument in
-    `(-pi/2, pi/2]`, so their sum does too and doubling its logarithm crosses
-    no cut.
+    Sympy's rewrite gives `LN(SQRT(z - 1)*SQRT(z + 1) + z)`, the same value in a form
+    nothing downstream collects. They agree on the whole plane:
+    `(SQRT(z + 1) + SQRT(z - 1))^2` is `2*(z + SQRT(z - 1)*SQRT(z + 1))`, and both roots
+    have arguments in `(-pi/2, pi/2]`, so doubling the logarithm crosses no cut.
 
-    A number is left to sympy, which works the roots out and reaches the
-    shorter answer for it: `ACOSH(2)` is `LN(SQRT(3) + 2)` there and
-    `LN((SQRT(3) + 1)^2/2)` here, the same number written longer.
+    Numbers are left to sympy, which gets a shorter answer: `ACOSH(2)` is
+    `LN(SQRT(3) + 2)` rather than `LN((SQRT(3) + 1)^2/2)`.
     """
     if argument.is_number:
         return sp.acosh(argument)
@@ -1981,29 +1795,27 @@ def _as_arc_cosh(argument: sp.Basic) -> sp.Basic:
 
 
 def _as_arc_coth(argument: sp.Basic) -> sp.Basic:
-    """`ACOTH(z)` as `LN((z + 1)/(z - 1))/2`, which section 6.6 says it is.
+    """`ACOTH(z)` as `LN((z + 1)/(z - 1))/2`, per section 6.6.
 
-    Sympy's own rewrite reaches `LN(1 + 1/z)/2 - LN(1 - 1/z)/2`, which is one
-    logarithm short of it and nothing downstream collects either. The quotient
-    `(1 + 1/z)/(1 - 1/z)` is `(z + 1)/(z - 1)` wherever either side is written.
+    Sympy's rewrite gives `LN(1 + 1/z)/2 - LN(1 - 1/z)/2`, which nothing downstream
+    collects into one logarithm. The two agree wherever either is defined.
     """
     return sp.log((argument + 1) / (argument - 1)) / 2
 
 
-#: The heads written out here rather than left to sympy's own `rewrite`, which
-#: reaches the right value in a form the manual does not print.
+#: Heads rewritten here rather than by sympy's `rewrite`, which gives the right value
+#: in a form the manual doesn't use.
 _WRITTEN_AS: dict[type, Callable[..., sp.Basic]] = {
     sp.acosh: _as_arc_cosh,
     sp.acoth: _as_arc_coth,
 }
 
-#: What each function that Derive keeps no answer in is written over. `SEC` and
-#: `CSC` are the reciprocals 6.4 names them for and `ASEC` and `ACSC` the arcs
-#: of those reciprocals, the twelve hyperbolics are the exponentials and
-#: logarithms of 6.5 and 6.6, and `ERFC` is the complement 6.11 names it for.
-#: `STEP`, `MIN` and `MAX` are the closed forms of 6.7, where a step is half a
-#: sign away from a half and the two extremes are the midpoint of a pair give
-#: or take half the distance between them.
+#: For each function Derive never leaves in an answer, the function it is rewritten
+#: in. `SEC`, `CSC`, `ASEC` and `ACSC` are reciprocals and their arcs (6.4), the
+#: hyperbolics and their inverses are exponentials and logarithms (6.5, 6.6), and
+#: `ERFC` is the complement of `ERF` (6.11). `STEP`, `MIN` and `MAX` use the closed
+#: forms of 6.7: a step is a half plus half a sign, and min and max are the midpoint
+#: minus or plus half the distance.
 _DEFINED_OVER: dict[type, type] = {
     sp.sec: sp.cos,
     sp.csc: sp.sin,
@@ -2019,22 +1831,18 @@ _DEFINED_OVER: dict[type, type] = {
 
 
 def _by_definition(expression: sp.Basic) -> sp.Basic:
-    """The functions that are spellings for something else, spelled out.
+    """Expand functions that are just alternative spellings by their definitions.
 
-    None of these is a direction to rewrite in, so none is gated or offered as
-    a setting: an answer holding a `SECH` is one Derive never writes, and
-    neither is one holding an `ERFC` or a `MAX`. Several of them lengthen what
-    they replace - `MIN(x, y)` is two operations and its answer is seven - and
-    the gate would decline every one of those.
+    These are not optional rewrites, so none is gated or offered as a setting: Derive
+    never writes an answer with `SECH`, `ERFC` or `MAX`. Several make the expression
+    longer (`MIN(x, y)` goes from two operations to seven), which the gate would reject.
 
-    What a head turns into is left to sympy wherever sympy's form is the
-    manual's - `TANH(z)` is `(#e^(2*z) - 1)/(#e^(2*z) + 1)` in both - and
-    written out by `_WRITTEN_AS` where it is not. The factorial ratios are
-    written out here as well as in `_factorials`, before `combsimp` rather than
-    after, so that one it can shorten is shortened.
+    Sympy's rewrite is used where its form matches the manual's (`TANH(z)` is
+    `(#e^(2*z) - 1)/(#e^(2*z) + 1)` in both), and `_WRITTEN_AS` otherwise. The factorial
+    ratios are also written out here, before `combsimp`, so it can shorten them.
 
-    The sympy heads the notation has no name for are spelled first, by
-    `in_vocabulary`, so that what they are written in is spelled with the rest.
+    Sympy heads Derive has no name for are first rewritten by `in_vocabulary`, so their
+    replacements get expanded with the rest.
     """
     expression = forced(expression, in_vocabulary)
     for head, written in _WRITTEN_AS.items():
@@ -2051,11 +1859,10 @@ def _by_definition(expression: sp.Basic) -> sp.Basic:
 
 
 def _defined(expression: sp.Basic, head: type, over: type) -> sp.Basic:
-    """Every `head` in `expression` written over `over`, and nothing else.
+    """Rewrite every `head` in `expression` in terms of `over`, and nothing else.
 
-    Head by head rather than over the whole expression, because `rewrite` takes
-    everything it can reach with it: a `SIN` beside a `SINH` would go to
-    exponentials too, and one asked for in `#e` is not one asked for in `#i`.
+    `rewrite` on the whole expression would also convert other functions: a `SIN` next
+    to a `SINH` would become exponentials too.
     """
     return expression.replace(head, lambda *args: head(*args).rewrite(over))
 
@@ -2069,12 +1876,11 @@ def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
 
 
 def _unnested(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
-    """`rewrite`, if the result is simpler or has radicals nested less deep.
+    """`rewrite`, if the result is simpler or has less deeply nested radicals.
 
-    A root taken out of a root is a simplification on its own, even where the
-    terms it leaves are more: `SQRT(2 + SQRT(3))` is `SQRT(6)/2 + SQRT(2)/2` and
-    `(2 + SQRT(5))^(1/3)` is `SQRT(5)/2 + 1/2`. Not past twice the length, though,
-    which is no longer a spelling anyone would prefer.
+    Denesting counts as simplification even if it adds terms: `SQRT(2 + SQRT(3))` is
+    `SQRT(6)/2 + SQRT(2)/2` and `(2 + SQRT(5))^(1/3)` is `SQRT(5)/2 + 1/2`. But not if
+    the result more than doubles in length.
     """
     candidate = attempt(expression, rewrite)
     if candidate is None:
@@ -2090,12 +1896,11 @@ def _unnested(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
 
 
 def _cancelled(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
-    """`rewrite`, if the result is simpler or has no call left in a denominator.
+    """`rewrite`, if the result is simpler or clears calls from the denominator.
 
-    A quotient of calls that cancels to a polynomial in them is simplified whether
-    or not it is shorter, the way `(x^3 - 1)/(x - 1)` is: `SIN(3*x)/SIN(x)` is
-    `2*COS(2*x) + 1`, which is no fewer operations. Not past twice the length,
-    though, as with `_unnested`.
+    A quotient of calls that cancels to a polynomial in them counts as simpler even if
+    it isn't shorter, just like `(x^3 - 1)/(x - 1)`: `SIN(3*x)/SIN(x)` becomes
+    `2*COS(2*x) + 1`. As with `_unnested`, not if the result more than doubles.
     """
     candidate = attempt(expression, rewrite)
     if candidate is None:
@@ -2130,12 +1935,11 @@ def _nesting(expression: sp.Basic) -> int:
 
 
 def _signs_of_reciprocals(expression: sp.Basic) -> sp.Basic:
-    """Every `SIGN` of a power to a negative exponent, written without the division.
+    """Remove the division from every `SIGN` of a negative power.
 
-    `SIGN(1/u)` is `SIGN(u)` and `SIGN(1/u^2)` is 1 for a real `u`, and `SIGN(1/ABS(u))`
-    is 1 for any: where `u` is zero the reciprocal is undefined, and everywhere else
-    the two have the same sign. A limit that grows like `x^2/a` comes back as
-    `inf*SIGN(1/a)`, which is `inf*SIGN(a)`.
+    For real `u`, `SIGN(1/u)` is `SIGN(u)` and `SIGN(1/u^2)` is 1; `SIGN(1/ABS(u))` is 1
+    for any `u` (at zero the reciprocal is undefined anyway). A limit growing like
+    `x^2/a` comes back as `inf*SIGN(1/a)`, which becomes `inf*SIGN(a)`.
     """
 
     def unsigned(head: sp.sign) -> sp.Basic:
@@ -2155,30 +1959,27 @@ def _signs_of_reciprocals(expression: sp.Basic) -> sp.Basic:
     )
 
 
-#: Functions that are odd and increasing over the whole real line, so that for a real
-#: `u` the sign of `f(u)` is the sign of `u`.
+#: Odd functions increasing on the whole real line, so `SIGN(f(u))` is `SIGN(u)` for
+#: real `u`.
 _SIGN_KEEPING = (sp.atan, sp.asinh, sp.sinh, sp.tanh, sp.erf)
 
-#: Functions that are even, so that for a real `u` they are the same of `ABS(u)` as
-#: of `u`.
+#: Even functions, so `f(ABS(u))` is `f(u)` for real `u`.
 _EVEN = (sp.cos, sp.sec, sp.cosh, sp.sech)
 
 
 def _symmetries(expression: sp.Basic) -> sp.Basic:
-    """Every `SIGN` of an odd function and every even function of an `ABS`, undone.
+    """Simplify `SIGN` of odd functions and even functions of `ABS`.
 
-    For a real `u`, `SIGN(ATAN(u))` is `SIGN(u)` and so is `SIGN(u^3)`, and
-    `COS(ABS(u))` is `COS(u)`. Ahead of the definitions, which write the hyperbolic
-    functions over exponentials where neither symmetry can be seen any more. Off the
-    real line neither holds, so an argument nothing declares real is left alone.
+    For real `u`, `SIGN(ATAN(u))` and `SIGN(u^3)` are `SIGN(u)`, and `COS(ABS(u))` is
+    `COS(u)`. This must run before the definitions turn hyperbolics into exponentials,
+    hiding the symmetry. Arguments not known to be real are left alone.
     """
 
     def signed(head: sp.sign) -> sp.Basic:
         inner = head.args[0]
         if isinstance(inner, _SIGN_KEEPING) and inner.args[0].is_extended_real:
             return sp.sign(inner.args[0])
-        # A negative exponent is `_signs_of_reciprocals`' business, which knows that
-        # `SIGN(1/ABS(u))` is 1.
+        # Negative exponents are handled by `_signs_of_reciprocals`.
         if isinstance(inner, sp.Pow) and inner.exp.is_positive:
             base, exponent = inner.args
             if base.is_extended_real and exponent.is_integer and exponent.is_odd:
@@ -2191,8 +1992,8 @@ def _symmetries(expression: sp.Basic) -> sp.Basic:
             return call.func(inner.args[0])
         return call
 
-    # Until nothing changes, since what one unwrapping exposes can be another:
-    # `SIGN(ATAN(x)^3)` is `SIGN(ATAN(x))` before it is `SIGN(x)`.
+    # Repeat until stable, since one unwrapping can expose another:
+    # `SIGN(ATAN(x)^3)` -> `SIGN(ATAN(x))` -> `SIGN(x)`.
     for _ in range(8):
         rewritten = expression.replace(lambda e: isinstance(e, sp.sign), signed)
         rewritten = rewritten.replace(lambda e: isinstance(e, _EVEN), even)
@@ -2203,11 +2004,10 @@ def _symmetries(expression: sp.Basic) -> sp.Basic:
 
 
 def _conjugate_pairs(expression: sp.Basic) -> sp.Basic:
-    """Every product of a complex quantity and its conjugate, as its squared modulus.
+    """Replace each product of a quantity and its conjugate with its squared modulus.
 
-    `CONJ(z)*z` is `ABS(z)^2`, and so is each pair of factors in a product of
-    powers of the two to whole exponents of one sign: `z^2*CONJ(z)` is
-    `z*ABS(z)^2`, and `1/(z*CONJ(z))` is `1/ABS(z)^2`.
+    `CONJ(z)*z` is `ABS(z)^2`, and likewise for each pair in integer powers of the same
+    sign: `z^2*CONJ(z)` is `z*ABS(z)^2`, and `1/(z*CONJ(z))` is `1/ABS(z)^2`.
     """
 
     def paired(product: sp.Mul) -> sp.Basic:
@@ -2241,16 +2041,14 @@ def _conjugate_pairs(expression: sp.Basic) -> sp.Basic:
 
 
 def _denested(expression: sp.Basic) -> sp.Basic:
-    """Every radical denested on its own.
+    """Denest each radical separately.
 
-    One radical at a time rather than the whole expression at once, because
-    `sqrtdenest` gives up on a sum of nested roots and gets each of them
-    separately: `SQRT(5 + SQRT(24)) + SQRT(5 - SQRT(24))` is `2*SQRT(3)` only
-    if the two terms are denested apart.
+    `sqrtdenest` gives up on a sum of nested roots but handles each one alone:
+    `SQRT(5 + SQRT(24)) + SQRT(5 - SQRT(24))` becomes `2*SQRT(3)` only if the terms are
+    denested separately.
 
-    `sqrtdenest` is a square root's rule and the whole of what sympy offers.
-    Section 3.8's other example is a cube root of a sum of surds, which is
-    `_flat_root`'s.
+    `sqrtdenest` only handles square roots. Section 3.8's other example, a cube root of
+    a sum of surds, is handled by `_flat_root`.
     """
     return expression.replace(
         lambda e: isinstance(e, sp.Pow) and e.exp.is_Rational and e.exp.q > 1,
@@ -2259,13 +2057,11 @@ def _denested(expression: sp.Basic) -> sp.Basic:
     )
 
 
-#: How big a polynomial denesting a root of surds may work in. An nth root of
-#: a number written over k square roots satisfies one of degree n*2^k at worst,
-#: which is twelve for 3.8's own `(243*SQRT(5) - 294*SQRT(3))^(1/3)` and four
-#: as it turns out. The bound is read off the radical before any polynomial is
-#: built, so a taller tower of roots costs nothing to decline: what it would
-#: cost is the point, a minimal polynomial of a few hundred terms being
-#: minutes of work to prove a root nobody expected does not exist.
+#: Maximum polynomial degree for denesting a root of surds. An nth root of a number
+#: over k square roots satisfies a polynomial of degree at most n*2^k: twelve for
+#: 3.8's `(243*SQRT(5) - 294*SQRT(3))^(1/3)` (four in practice). The bound is computed
+#: before building any polynomial, so taller towers are refused cheaply instead of
+#: spending minutes on a minimal polynomial of hundreds of terms.
 _DENESTING_DEGREE = 12
 
 #: The variable the minimal polynomial of a radical is written in.
@@ -2273,20 +2069,16 @@ _ROOT = sp.Dummy("root")
 
 
 def _flat_root(power: sp.Pow) -> sp.Basic:
-    """A root of a sum of surds written without the outer root, where it can be.
+    """Remove the outer root from a root of a sum of surds, if possible.
 
-    `(243*SQRT(5) - 294*SQRT(3))^(1/3)` is `3*SQRT(5) - 2*SQRT(3)`: the cube
-    root is a number of the very field the radicand is written in, so it has a
-    spelling with one root fewer. Whether it does is a question about the
-    minimal polynomial - the root denests exactly when that polynomial has a
-    linear factor over the field the surds generate - and factoring over an
-    extension is what answers it.
+    `(243*SQRT(5) - 294*SQRT(3))^(1/3)` is `3*SQRT(5) - 2*SQRT(3)`, since the cube root
+    lies in the field of the radicand's surds. It denests exactly when its minimal
+    polynomial has a linear factor over that field, which factoring over the extension
+    reveals.
 
-    The linear factor is the candidate and not the answer: a quartic over the
-    field offers four of them, one per branch, and only one is the value of the
-    principal root the radicand was written with. So a candidate is kept only
-    once raising it back is the radicand again and it is proved the radical itself,
-    as `proved_zero` proves the difference zero.
+    Each linear factor is only a candidate: a quartic gives four, one per branch, and
+    only one is the principal root. A candidate is kept only if raising it back gives
+    the radicand and `proved_zero` proves it equal to the radical.
     """
     exponent = power.exp
     if exponent.p != 1 or not power.base.is_number or power.base.is_Rational:
@@ -2311,14 +2103,11 @@ def _flat_root(power: sp.Pow) -> sp.Basic:
 
 
 def _surd_field(radicand: sp.Basic) -> tuple[sp.Basic, ...] | None:
-    """The square roots `radicand` is written over, or None if it is not written
-    over square roots.
+    """The square roots `radicand` is built from, or None if it isn't a sum of
+    rational multiples of square roots of rationals.
 
-    A sum of rational multiples of square roots of rationals is what denesting
-    has a field for, and the degree of that field is what the bound above is
-    read from. Anything else - a transcendental, a nested root, a cube root
-    among the terms - is left alone rather than handed to a factoring that
-    would have to build the field first.
+    The field's degree sets the bound above. Anything else (a transcendental, a nested
+    root, a cube root) is refused rather than handed to an expensive factoring.
     """
     surds = set()
     for term in sp.Add.make_args(radicand):
@@ -2344,7 +2133,7 @@ def _rational_square_root(factor: sp.Basic) -> sp.Basic | None:
 
 
 def _linear_root(factor: sp.Basic) -> sp.Basic | None:
-    """The root of `factor`, if it is linear in the variable it is written in."""
+    """The root of `factor`, if it is linear in `_ROOT`."""
     try:
         polynomial = sp.Poly(factor, _ROOT)
     except sp.PolynomialError:
@@ -2356,23 +2145,16 @@ def _linear_root(factor: sp.Basic) -> sp.Basic | None:
 
 
 def _flattened(expression: sp.Basic) -> sp.Basic:
-    """Every constant written over a nested radical reduced to the field its own
-    surds generate.
+    """Reduce every constant containing nested radicals to the field of its surds.
 
-    `_denested` works one radical at a time, which is as far as a radical's own
-    rule reaches: 3.8 p.47's
-    `(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)` is 1/2,
-    and no one of its four roots is anything simpler on its own. What makes it
-    a half is the whole quotient at once - the numerator is `(SQRT(3) + 1)^(3/2)`
-    and the denominator twice that - so the question `_flat_root` asks of a root
-    is asked here of a sum or a product: whether its value has a spelling in the
-    field the surds it is written over generate.
+    `_denested` works one radical at a time, which misses 3.8 p.47's
+    `(SQRT(SQRT(3) + 1) + SQRT(3*SQRT(3) + 3))/SQRT(24*SQRT(3) + 40)`, equal to 1/2
+    although none of its four roots simplifies alone (the numerator is
+    `(SQRT(3) + 1)^(3/2)` and the denominator twice that). So the `_flat_root` question
+    is asked of whole sums and products: does the value lie in the field of its surds?
 
-    Only a constant holding a root of something irrational is asked. Roots of
-    rationals are combined by sympy's own arithmetic as they are built, so a
-    constant with none of the nesting has already had every reduction of this
-    kind that there is to have, and the minimal polynomial would only confirm it
-    at a price.
+    Only constants with nested roots are tried. Sympy already combines roots of
+    rationals, so the minimal polynomial would only confirm that at a cost.
     """
     return expression.replace(
         lambda part: isinstance(part, sp.Add | sp.Mul), _flat_part, simultaneous=False
@@ -2380,12 +2162,11 @@ def _flattened(expression: sp.Basic) -> sp.Basic:
 
 
 def _flat_part(part: sp.Add | sp.Mul) -> sp.Basic:
-    """`part` with the number in it flattened.
+    """`part` with its constant flattened.
 
-    A sum keeps every constant term of it as a term of its own, so a sum is
-    reached by the walk that finds it. A product does not: `x` times the
-    quotient of 3.8 is one product of five factors, and the number the walk
-    should be asking about has to be gathered back out of it first.
+    The tree walk reaches constant terms of a sum directly, but not the constant part of
+    a product: `x` times the quotient from 3.8 is one product of five factors, so the
+    numeric factors must be gathered first.
     """
     if part.is_number:
         return _flat_value(part)
@@ -2401,23 +2182,20 @@ def _flat_part(part: sp.Add | sp.Mul) -> sp.Basic:
     return flat * sp.Mul(*[factor for factor in part.args if not factor.is_number])
 
 
-#: How big a field the value of a constant is looked for in, read off the
-#: radicals written in it the way `_DENESTING_DEGREE` is read off one radical:
-#: the product of their orders, which is sixteen for the quotient of 3.8 and
-#: four as it turns out. The cost of being generous is what sets it - a tower
-#: two roots taller is a minimal polynomial of degree sixty-four, minutes of
-#: work to prove that a value nobody expected to be simpler is not.
+#: Maximum field degree for flattening a constant, computed like `_DENESTING_DEGREE`
+#: as the product of its root orders: sixteen for the quotient of 3.8 (four in
+#: practice). Two more roots would mean a degree-64 minimal polynomial and minutes of
+#: work, usually for nothing.
 _FLATTENING_DEGREE = 16
 
 
 def _flat_value(constant: sp.Basic) -> sp.Basic:
-    """`constant` written over one field fewer, where its value lies in one.
+    """`constant` written in the field of its surds, if its value lies there.
 
-    The same three steps as `_flat_root`: the minimal polynomial says what the
-    value is a root of, factoring that over the field the surds generate offers
-    a linear factor per branch, and only the branch proved to be this very number,
-    as `proved_zero` proves their difference zero, is kept, since a shorter
-    spelling that is a different number is the one mistake this can make.
+    The same steps as `_flat_root`: take the minimal polynomial, factor it over the
+    field to get a linear factor per branch, and keep only a candidate `proved_zero`
+    proves equal to the constant, since a shorter but different number is the one
+    mistake to avoid.
     """
     field, degree = _radical_field(constant)
     if field is None or degree > _FLATTENING_DEGREE:
@@ -2437,16 +2215,13 @@ def _flat_value(constant: sp.Basic) -> sp.Basic:
 
 
 def _radical_field(constant: sp.Basic) -> tuple[tuple[sp.Basic, ...] | None, int]:
-    """The roots of rationals `constant` is written over and the degree they
-    bound, or None where it is not a nested radical of them.
+    """The roots of rationals in `constant` and a degree bound, or None if it isn't a
+    nested radical over them.
 
-    The generators are the roots whose radicand is a rational, which are the
-    ones a field can be built from; the degree is the product of the orders of
-    every root in the constant, an upper bound on the field it all lives in.
-    Anything but rational arithmetic over such roots - a transcendental, a
-    variable, a root of a negative - is nothing to ask a minimal polynomial
-    about, and neither is a constant whose roots are all roots of rationals,
-    which is already as flat as it gets.
+    The generators are the roots with rational radicands. The degree is the product of
+    the orders of all roots, an upper bound on the field's degree. Anything other than
+    rational arithmetic over such roots (a transcendental, a variable, a root of a
+    negative) is refused, as is a constant with no nesting, which is already flat.
     """
     generators: set[sp.Basic] = set()
     orders: dict[sp.Pow, int] = {}
@@ -2464,7 +2239,7 @@ def _over_radicals(
     part: sp.Basic, generators: set[sp.Basic], orders: dict[sp.Pow, int]
 ) -> bool:
     """Whether `part` is rational arithmetic over roots of positive rationals,
-    collecting those roots and the order of every root on the way."""
+    collecting the generators and the order of every root."""
     if part.is_Rational:
         return True
     if isinstance(part, sp.Add | sp.Mul):
@@ -2478,36 +2253,31 @@ def _over_radicals(
         if part.base.is_Rational:
             if not part.base.is_positive:
                 return False
-            # The qth root itself and not the power of it that is written: the
-            # two generate one field, and the root is the shorter way to say so.
+            # Use the plain qth root; it generates the same field as its powers.
             generators.add(sp.Pow(part.base, sp.Rational(1, part.exp.q)))
     return True
 
 
-#: How large a field the values of the trigonometric constants are sought in: the
-#: degree of the cyclotomic field their angles lie in, times the orders of the roots
-#: beside them, a bound on how long the minimal polynomial takes. Sympy writes a
-#: cosine past a quarter turn as the sine of an angle with twice the denominator, so
-#: an eleventh of pi becomes a twenty-second, and the degree that covers it is 20.
+#: Maximum field degree for evaluating trigonometric constants: the degree of the
+#: cyclotomic field of their angles times the orders of accompanying roots, which
+#: bounds the minimal polynomial's cost. Sympy writes a cosine past a quarter turn as a
+#: sine with twice the denominator, so pi/11 becomes pi/22, needing degree 20.
 _TRIGONOMETRIC_DEGREE = 24
 _TRIGONOMETRIC_SIZE = 10**12
 
 
 def _trigonometric_constants(expression: sp.Basic) -> sp.Basic:
-    """Every sum or product of trigonometric values of rational multiples of pi
-    that is a rational number or a quadratic surd, written as one.
+    """Write sums and products of trigonometric values at rational multiples of pi as
+    rationals or quadratic surds, where they are.
 
     `COS(pi/7) - COS(2*pi/7) + COS(3*pi/7)` is 1/2 and
-    `SIN(pi/7)*SIN(2*pi/7)*SIN(3*pi/7)` is `SQRT(7)/8`, though no one of their
-    calls is anything simpler. Each such value is an algebraic number, the minimal
-    polynomial of the whole says which, and a polynomial of degree one or two is
-    solved for its roots. That the value is a root of it is then proved exactly, as
-    `_cyclotomic_root` proves it, and of two roots the one of the value's sign is
-    kept, where they differ in sign and the value's is known, as `_known_sign` knows
-    it.
+    `SIN(pi/7)*SIN(2*pi/7)*SIN(3*pi/7)` is `SQRT(7)/8`, though no single call
+    simplifies. Each value is algebraic; if its minimal polynomial has degree one or
+    two, it is solved. `_cyclotomic_root` proves the value is a root exactly, and when
+    there are two roots of different sign, the one matching `_known_sign` is kept.
 
-    A call alone is not asked about: sympy writes the values it has a spelling for
-    as it builds the call, and the rest have none of degree two.
+    Single calls are skipped: sympy already evaluates those it can, and the rest have no
+    degree-two form.
     """
     return expression.replace(
         lambda part: isinstance(part, sp.Add | sp.Mul),
@@ -2517,8 +2287,8 @@ def _trigonometric_constants(expression: sp.Basic) -> sp.Basic:
 
 
 def _trigonometric_part(part: sp.Add | sp.Mul) -> sp.Basic:
-    """`part` with its trigonometric constant written as a number, gathered out of
-    a product the way `_flat_part` gathers its constant."""
+    """`part` with its trigonometric constant evaluated, gathering it from a product
+    as `_flat_part` does."""
     if part.is_number:
         return _trigonometric_value(part)
     if not isinstance(part, sp.Mul):
@@ -2561,16 +2331,15 @@ def _trigonometric_value(part: sp.Basic) -> sp.Basic:
 
 
 def _cyclotomic_root(part: sp.Basic, polynomial: sp.Poly) -> bool:
-    """Whether a constant of trigonometric values of rational multiples of pi is proved
+    """Whether a constant of trigonometric values at rational multiples of pi is proved
     a root of the polynomial.
 
-    With `z` a primitive `M`-th root of unity, `#e^(#i*pi*p/q)` is a power of `z`
-    wherever `M` is a multiple of `2*q`, and so is `#i` where it is a multiple of 4.
-    Every sine, cosine and tangent of the constant is then a rational function of `z`
-    with rational coefficients, and so is the polynomial at the constant; it is zero
-    exactly where its numerator is a multiple of the cyclotomic polynomial of order
-    `M`, the minimal polynomial of `z`. A constant with anything else in it, roots of
-    rationals among them, is not proved anything.
+    With `z` a primitive `M`-th root of unity, `#e^(#i*pi*p/q)` is a power of `z` when
+    `M` is a multiple of `2*q`, and so is `#i` when `M` is a multiple of 4. Each
+    trigonometric value is then a rational function of `z`, and so is the polynomial
+    evaluated at the constant. It is zero exactly when its numerator is divisible by
+    the order-`M` cyclotomic polynomial, the minimal polynomial of `z`. Constants with
+    anything else in them, including roots of rationals, are not proved.
     """
     calls = part.atoms(TrigonometricFunction)
     turns = [call.args[0] / sp.pi for call in calls]
@@ -2609,11 +2378,12 @@ def _cyclotomic_root(part: sp.Basic, polynomial: sp.Poly) -> bool:
 
 
 def _known_sign(constant: sp.Basic) -> int | None:
-    """The sign of a constant built of rationals, roots of positive rationals and
-    trigonometric values of rational multiples of pi, where its structure says it:
-    each value's sign is read off where its angle falls in the period, and a product
-    or a sum of terms of one sign has the sign they give it. None where it does not
-    say."""
+    """The sign of a constant built from rationals, roots of positive rationals and
+    trigonometric values at rational multiples of pi, determined from structure, or
+    None.
+
+    A trigonometric value's sign comes from where its angle falls in the period;
+    products multiply signs, and a sum of terms with one sign has that sign."""
     if constant.is_Rational:
         return _sign(constant.p)
     if isinstance(constant, sp.Mul):
@@ -2646,10 +2416,10 @@ def _known_sign(constant: sp.Basic) -> int | None:
 
 
 def _bounded_sign(constant: sp.Add) -> int | None:
-    """The sign of `r + c*t`, `r` and `c` rational and `t` a trigonometric value of a
-    rational multiple of pi, where the bounds of `t` decide it: a sine or cosine is
-    inside -1 to 1 and a secant or cosecant outside it, sympy having written the
-    values on the bounds as the numbers they are."""
+    """The sign of `r + c*t`, for rational `r` and `c` and a trigonometric value `t` at
+    a rational multiple of pi, if the range of `t` decides it. Sine and cosine lie in
+    [-1, 1] and secant and cosecant outside it (sympy has already evaluated values at
+    the endpoints)."""
     rational, rest = constant.as_coeff_Add()
     coefficient, call = rest.as_coeff_Mul()
     if not (rational.is_Rational and coefficient.is_Rational and coefficient != 0):
@@ -2680,8 +2450,7 @@ def _half_turn_sign(turn: sp.Rational) -> int:
 
 def _surd_sign(number: sp.Basic) -> int | None:
     """The sign of a rational, or of a rational plus a rational multiple of the square
-    root of a positive rational, decided by comparing squares, or None for anything
-    else."""
+    root of a positive rational (by comparing squares), or None."""
     rational, rest = number.as_coeff_Add()
     if not rest:
         return _sign(rational.p) if rational.is_Rational else None
@@ -2703,9 +2472,9 @@ def _surd_sign(number: sp.Basic) -> int | None:
 
 
 def _cyclotomic_degree(constant: sp.Basic) -> int | None:
-    """A bound on the degree of the field `constant` lies in, or None where it is
-    not rational arithmetic over trigonometric values of rational multiples of pi
-    and roots of positive rationals."""
+    """A bound on the degree of the field containing `constant`, or None if it isn't
+    rational arithmetic over trigonometric values at rational multiples of pi and roots
+    of positive rationals."""
     denominator, orders = 1, 1
     for part in sp.preorder_traversal(constant):
         if isinstance(part, TrigonometricFunction):
@@ -2731,23 +2500,18 @@ def _cyclotomic_degree(constant: sp.Basic) -> int | None:
 
 
 def _tangent_squares(expression: sp.Basic) -> sp.Basic:
-    """An even reciprocal power of a cosine, written over the tangent instead.
+    """Rewrite even negative powers of a cosine in terms of the tangent.
 
-    Derive has no secant of its own to write `1/COS(x)^2` as, and does not leave
-    it standing either: it answers `DIF(LN(COS(x)), x, 2)` with `-TAN(x)^2 - 1`,
-    and writes `TAN(x)^2 + 1` wherever else that power stands. Only an even
-    power, and only a negative one - `1/COS(x)^3` and `COS(x)^2` are both left
-    as they are, neither being a power of the identity.
+    Derive writes `1/COS(x)^2` as `TAN(x)^2 + 1`: `DIF(LN(COS(x)), x, 2)` gives
+    `-TAN(x)^2 - 1`. Only even negative powers qualify; `1/COS(x)^3` and `COS(x)^2` are
+    left alone.
 
-    The cosine has to be the whole of what the number in front multiplies, so
-    that only a quotient of a number by a squared cosine is rewritten:
-    `SIN(x)/COS(x)^2` keeps its cosine, there being no tangent identity for a
-    sine over one. That is why this walks the terms rather than the powers -
-    a power knows nothing about what stands beside it.
+    Only a number divided by a cosine power is rewritten; `SIN(x)/COS(x)^2` keeps its
+    cosine. That is why this walks terms rather than powers.
 
-    Forced rather than gated: `TAN(x)^2 + 1` is the longer of the two, and the
-    original writes it anyway. Left out of both Trigpower directions, each of
-    which is asking for the powers in one named function.
+    Forced rather than gated, since `TAN(x)^2 + 1` is longer but is what the original
+    writes. Not used in either Trigpower direction, which ask for powers of one specific
+    function.
     """
     if isinstance(expression, sp.Add):
         return sp.Add(*(_tangent_squares(term) for term in expression.args))
@@ -2761,11 +2525,10 @@ def _tangent_squares(expression: sp.Basic) -> sp.Basic:
     return coefficient * (sp.tan(base.args[0]) ** 2 + 1) ** half
 
 
-#: The inverse functions that pair off, each with the one it complements.
-#: `ASIN(u) + ACOS(u)` is a right angle wherever both are defined; the tangent
-#: pair is a right angle turned the way its argument is signed. The secant pair
-#: is here by way of the first: `ASEC` and `ACSC` are written over `ACOS` and
-#: `ASIN` before any of this is offered, and add up through them.
+#: Each inverse function and its complement. `ASIN(u) + ACOS(u)` is a right angle
+#: wherever defined; the tangent pair is a right angle with the sign of its argument.
+#: `ASEC` and `ACSC` are covered because they are rewritten as `ACOS` and `ASIN`
+#: first.
 _COMPLEMENT = {
     sp.asin: sp.acos,
     sp.acos: sp.asin,
@@ -2775,7 +2538,7 @@ _COMPLEMENT = {
 
 
 def _complementary_arcs(expression: sp.Basic) -> sp.Basic:
-    """Two complementary arcs of one argument, added up, wherever they occur."""
+    """Combine pairs of complementary arcs of the same argument."""
     return expression.replace(
         lambda e: _right_angle(e) is not None,
         lambda e: _right_angle(e),
@@ -2784,11 +2547,10 @@ def _complementary_arcs(expression: sp.Basic) -> sp.Basic:
 
 
 def _right_angle(expression: sp.Basic) -> sp.Basic | None:
-    """This sum with a complementary pair of arcs replaced by what it is.
+    """This sum with a complementary pair of arcs replaced by its value, or None.
 
-    The pair has to carry the same coefficient as well as the same argument,
-    which is what lets the rule hold in degree measure: there each arc comes
-    out multiplied by `180/pi`, and the two of them add to `90`.
+    The pair must share both argument and coefficient, which makes the rule work in
+    degree mode too, where each arc is multiplied by `180/pi` and the pair adds to `90`.
     """
     if not isinstance(expression, sp.Add):
         return None
@@ -2798,8 +2560,7 @@ def _right_angle(expression: sp.Basic) -> sp.Basic | None:
         if arc is None:
             continue
         arcs[(type(arc), coefficient, arc.args[0])] = index
-        # `ATAN(1/u)` is `ACOT(u)` for every real `u` but zero, where the first is
-        # not defined, so it pairs with `ATAN(u)` the way `ACOT(u)` does.
+        # `ATAN(1/u)` is `ACOT(u)` for real nonzero `u`, so it pairs with `ATAN(u)`.
         if isinstance(arc, sp.atan) and not arc.args[0].is_number:
             arcs.setdefault((sp.acot, coefficient, 1 / arc.args[0]), index)
     for (func, coefficient, argument), index in arcs.items():
@@ -2808,8 +2569,8 @@ def _right_angle(expression: sp.Basic) -> sp.Basic | None:
             continue
         pair = {type(_arc(expression.args[i])[0]) for i in (index, other)}
         if pair == {sp.atan}:
-            # The pair is `ATAN(u) + ATAN(1/u)`, whose turn either argument tells:
-            # the shorter is the one to write it about.
+            # For `ATAN(u) + ATAN(1/u)`, either argument gives the sign; use the
+            # shorter.
             func, argument = sp.atan, min(argument, 1 / argument, key=sp.count_ops)
         angle = _quarter_turn(func, argument)
         if angle is None:
@@ -2820,7 +2581,7 @@ def _right_angle(expression: sp.Basic) -> sp.Basic | None:
 
 
 def _arc(term: sp.Basic) -> tuple[sp.Basic | None, sp.Basic]:
-    """The one complementable arc in `term`, and what multiplies it."""
+    """The complementable arc in `term`, and its coefficient."""
     arc, others = None, []
     for factor in sp.Mul.make_args(term):
         if arc is None and type(factor) in _COMPLEMENT:
@@ -2831,23 +2592,17 @@ def _arc(term: sp.Basic) -> tuple[sp.Basic | None, sp.Basic]:
 
 
 def _quarter_turn(func: type, argument: sp.Basic) -> sp.Basic | None:
-    """What the pair adds to, or None where it is no right angle at all.
+    """What the pair adds up to, or None.
 
-    The tangent pair is the one that turns: `ATAN(t) + ACOT(t)` is `pi/2` above
-    zero and `-pi/2` below, which is `pi*SIGN(t)/2`. That is an answer rather
-    than a guess - both halves are written down, and neither is assumed - where
-    Derive answers `pi/2` regardless and is wrong for the negative half.
+    `ATAN(t) + ACOT(t)` is `pi/2` for positive `t` and `-pi/2` for negative, i.e.
+    `pi*SIGN(t)/2`. Derive answers `pi/2` regardless, which is wrong for negative `t`.
 
-    Zero is the one point the turn cannot speak for. `ACOT(0)` is `pi/2` by the
-    convention sympy and Derive share, so the sum there is `pi/2` where `SIGN`
-    would say nothing at all. An argument that cannot be negative is therefore
-    answered `pi/2` outright, which is exact over the whole of it; what is left
-    over disagrees at the single point its `ACOT` jumps over, and agrees
-    everywhere else.
+    At zero, `ACOT(0)` is `pi/2` by the convention sympy and Derive share, so the sum is
+    `pi/2` while `SIGN` gives 0. A nonnegative argument therefore gets `pi/2`, exact
+    everywhere; the general answer is off only at the single point where `ACOT` jumps.
 
-    Complex arguments are no part of this: `SIGN(z)` is `z/|z|` off the real
-    line, and the identity does not hold there anyway - at `#i/2` the sum is
-    `-pi/2`. A pair nothing declares real stays as it was written.
+    The identity fails for complex arguments (at `#i/2` the sum is `-pi/2`), so a pair
+    not known to be real is left as written.
     """
     if func in (sp.atan, sp.acot):
         if not _real_where_defined(argument):
@@ -2860,17 +2615,15 @@ def _quarter_turn(func: type, argument: sp.Basic) -> sp.Basic | None:
     return sp.pi / 2
 
 
-#: How large a sum of arctangents of numbers is combined: the terms it may hold, the
-#: whole multiple each may carry, and how many bits the Gaussian integers multiplied
-#: for it may grow to.
+#: Limits for combining arctangents of numbers: the number of terms, the integer
+#: multiple each may carry, and the bit size the Gaussian integer products may reach.
 _ARCTANGENTS = 8
 _ARCTANGENT_MULTIPLE = 12
 _ARCTANGENT_BITS = 4096
 
 
 def _arc_tangent_sums(expression: sp.Basic) -> sp.Basic:
-    """Arctangents of rational numbers added up, wherever they add to something
-    simpler."""
+    """Combine sums of arctangents of rationals where the result is simpler."""
     return expression.replace(
         lambda e: isinstance(e, sp.Add) and e.has(sp.atan),
         _arc_tangent_sum,
@@ -2881,23 +2634,19 @@ def _arc_tangent_sums(expression: sp.Basic) -> sp.Basic:
 def _arc_tangent_sum(expression: sp.Add) -> sp.Basic:
     """This sum with its arctangents of rationals combined.
 
-    `ATAN(p/q)` with `q > 0` is the argument of the Gaussian integer `q + p*#i`, so a
-    whole combination of them is the argument of a product of such integers, each
-    raised to its multiple, up to a whole number of turns. The argument of a
-    Gaussian integer is a rational multiple of pi exactly when the integer lies on
-    an axis or a diagonal, and then the combination is that multiple: which is
-    Machin's `4*ATAN(1/5) - ATAN(1/239) = pi/4`, and `ATAN(2) + ATAN(3) = 3*pi/4`.
-    The whole turns are counted as the product is built, each factor turning it by
-    less than a right angle.
+    `ATAN(p/q)` with `q > 0` is the argument of the Gaussian integer `q + p*#i`, so an
+    integer combination of them is the argument of a product of such integers, up to
+    whole turns. That argument is a rational multiple of pi exactly when the product
+    lies on an axis or diagonal, giving Machin's `4*ATAN(1/5) - ATAN(1/239) = pi/4` and
+    `ATAN(2) + ATAN(3) = 3*pi/4`. Whole turns are counted while building the product,
+    since each factor turns it by less than a right angle.
 
-    Where no part of the sum lies on such a line, its arctangents are combined into
-    one only where they are a plain sum and the one argument is no larger than
-    those it replaces: `ATAN(1/3) + ATAN(1/7)` is `ATAN(1/2)`, while
-    `ATAN(1/2) + ATAN(1/4)` stays rather than become `ATAN(6/7)`.
+    Otherwise, arctangents are merged into one only if they form a plain sum and the new
+    argument is no larger than the old ones: `ATAN(1/3) + ATAN(1/7)` becomes
+    `ATAN(1/2)`, but `ATAN(1/2) + ATAN(1/4)` doesn't become `ATAN(6/7)`.
 
-    The terms are grouped by what multiplies their whole coefficient, so the rule
-    holds in degree measure too, where each arc comes multiplied by `180/pi`, and
-    for `y*ATAN(1/2) + y*ATAN(1/3)`.
+    Terms are grouped by their non-rational coefficient, so this works in degree mode
+    (where each arc has a factor of `180/pi`) and for `y*ATAN(1/2) + y*ATAN(1/3)`.
     """
     groups: dict[sp.Basic, list[tuple[sp.Rational, sp.Rational]]] = {}
     rest = []
@@ -2912,8 +2661,7 @@ def _arc_tangent_sum(expression: sp.Add) -> sp.Basic:
         return expression
     terms = list(rest)
     for scale, arcs in groups.items():
-        # The coefficients over their common measure, which leaves the whole
-        # multiples the Gaussian integers are raised to.
+        # Divide out the common measure to get the integer multiples.
         measure = reduce(sp.gcd, [coefficient for coefficient, _ in arcs])
         multiples = [(int(coefficient / measure), r) for coefficient, r in arcs]
         if any(abs(multiple) > _ARCTANGENT_MULTIPLE for multiple, _ in multiples):
@@ -2937,7 +2685,8 @@ def _rational_arc(
 
 
 def _combined_arcs(arcs: list[tuple[int, sp.Rational]]) -> list[sp.Basic]:
-    """The terms `k*ATAN(r)` add up to, each part on an axis or diagonal combined."""
+    """Combine terms `k*ATAN(r)`, merging each subset that lands on an axis or
+    diagonal."""
     bits = sum(
         abs(multiple) * (max(abs(r.p), r.q).bit_length() + 1) for multiple, r in arcs
     )
@@ -2965,14 +2714,13 @@ def _combined_arcs(arcs: list[tuple[int, sp.Rational]]) -> list[sp.Basic]:
 
 
 def _gaussian(arcs: list[tuple[int, sp.Rational]]) -> tuple[int, int, int]:
-    """The Gaussian integer whose argument is `sum(k*ATAN(r))` up to whole turns, and
-    the number of those turns: the sum is the principal argument of the integer, in
-    `(-pi, pi]`, plus that many times `2*pi`.
+    """The Gaussian integer whose argument is `sum(k*ATAN(r))` modulo whole turns, and
+    the number of turns: the sum equals the principal argument in `(-pi, pi]` plus
+    `2*pi` times the turns.
 
-    A negative multiple takes the conjugate, which has the opposite argument and is
-    the reciprocal over a positive real. Each factor turns the product by less than a
-    right angle, so the product has gone once round where its principal argument
-    moved against the factor's turn, which is read off the signs of integers alone.
+    A negative multiple uses the conjugate, which has the opposite argument. Each factor
+    turns the product by less than a right angle, so a full turn is detected when the
+    principal argument moves against the factor's direction, using only integer signs.
     """
     real, imaginary, turns = 1, 0, 0
     for multiple, r in arcs:
@@ -2988,9 +2736,9 @@ def _gaussian(arcs: list[tuple[int, sp.Rational]]) -> tuple[int, int, int]:
 
 
 def _argument_below(first: tuple[int, int], second: tuple[int, int]) -> bool:
-    """Whether the principal argument of the first nonzero Gaussian integer is below
-    that of the second: by the half plane each is in, `(-pi, 0]` below `(0, pi]`, and
-    within one half plane by the sign of their cross product."""
+    """Whether the first nonzero Gaussian integer has a smaller principal argument than
+    the second: compare half planes (`(-pi, 0]` below `(0, pi]`), then the sign of the
+    cross product."""
 
     def upper(z: tuple[int, int]) -> bool:
         return z[1] > 0 or (z[1] == 0 and z[0] < 0)
@@ -3000,8 +2748,8 @@ def _argument_below(first: tuple[int, int], second: tuple[int, int]) -> bool:
     return first[0] * second[1] - first[1] * second[0] > 0
 
 
-#: The principal argument of a Gaussian integer on an axis or a diagonal, in eighths
-#: of a turn, by the signs of its real and imaginary parts.
+#: Principal argument, in eighths of a turn, of a Gaussian integer on an axis or
+#: diagonal, keyed by the signs of its real and imaginary parts.
 _DIRECTIONS = {
     (1, 0): 0, (1, 1): 1, (0, 1): 2, (-1, 1): 3,
     (-1, 0): 4, (-1, -1): -3, (0, -1): -2, (1, -1): -1,
@@ -3013,7 +2761,7 @@ def _sign(number: int) -> int:
 
 
 def _straight_angle(arcs: list[tuple[int, sp.Rational]]) -> sp.Basic | None:
-    """The rational multiple of pi these arcs add to, or None where it is none."""
+    """The rational multiple of pi these arcs add up to, or None."""
     real, imaginary, turns = _gaussian(arcs)
     if real != 0 and imaginary != 0 and abs(real) != abs(imaginary):
         return None
@@ -3022,9 +2770,9 @@ def _straight_angle(arcs: list[tuple[int, sp.Rational]]) -> sp.Basic | None:
 
 
 def _single_arc(arcs: list[tuple[int, sp.Rational]]) -> sp.Basic | None:
-    """These arcs as one arctangent, if it is that and no larger than they are: where
-    their sum is the argument of a Gaussian integer right of the imaginary axis, and
-    so inside the range of the arctangent."""
+    """These arcs as one arctangent, if its argument is no larger than theirs and the
+    sum lies within the arctangent's range (the product is right of the imaginary
+    axis)."""
     real, imaginary, turns = _gaussian(arcs)
     if real <= 0 or turns != 0:
         return None
@@ -3037,9 +2785,9 @@ def _single_arc(arcs: list[tuple[int, sp.Rational]]) -> sp.Basic | None:
 def _real_where_defined(argument: sp.Basic) -> bool:
     """Whether `argument` is real wherever it is defined.
 
-    Sympy will not say so of `1/x` or `x/y`, which are infinite where a denominator
-    vanishes, but neither arc of such an argument is defined there either, so a
-    rational function of real variables over real numbers counts.
+    Sympy won't say so of `1/x` or `x/y`, which are infinite where the denominator
+    vanishes, but the arcs are undefined there anyway, so any rational function of real
+    variables with real coefficients counts.
     """
     if argument.is_extended_real:
         return True
@@ -3051,7 +2799,7 @@ def _real_where_defined(argument: sp.Basic) -> bool:
 
 
 def _simpler_arcs(expression: sp.Basic) -> sp.Basic:
-    """Every arc rewritten about a shorter argument, wherever one is there."""
+    """Rewrite arcs in terms of a shorter argument where possible."""
     return expression.replace(
         lambda e: _shorter_arc(e) is not None,
         lambda e: _shorter_arc(e),
@@ -3060,17 +2808,14 @@ def _simpler_arcs(expression: sp.Basic) -> sp.Basic:
 
 
 def _shorter_arc(expression: sp.Basic) -> sp.Basic | None:
-    """This arc as the arc of one side of the triangle it describes.
+    """This arc rewritten using a simpler side of its triangle, or None.
 
     A right triangle with legs `u` and `1` has hypotenuse `SQRT(u^2 + 1)`, so
-    the angle whose sine is `u/SQRT(u^2 + 1)` is the angle whose tangent is
-    `u`; the same triangle read off the other way makes the angle whose tangent
-    is `u/SQRT(1 - u^2)` the angle whose sine is `u`. Either way the ratio is a
-    longer way of writing an argument the triangle already holds.
+    `ASIN(u/SQRT(u^2 + 1))` is `ATAN(u)`, and likewise `ATAN(u/SQRT(1 - u^2))` is
+    `ASIN(u)`.
 
-    Both hold for a real `u` alone - the root has a branch cut a complex
-    argument crosses, and the two sides then disagree by a period - so an
-    argument nothing declares real is left as it stands.
+    Both hold only for real `u` (for complex `u` the root's branch cut makes them
+    differ by a period), so arguments not known to be real are left alone.
     """
     if not isinstance(expression, (sp.asin, sp.atan)):
         return None
@@ -3096,31 +2841,27 @@ def _over_a_root(argument: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
 
 
 def _vanishes(difference: sp.Basic) -> bool:
-    """Whether this difference is zero once it has been multiplied out.
+    """Whether this difference expands to zero.
 
-    The hypotenuse is written however the author wrote it, so recognising the
-    triangle behind `(x + 1)/SQRT(x^2 + 2*x + 2)` means expanding the square
-    rather than comparing two trees.
+    Recognizing the triangle in `(x + 1)/SQRT(x^2 + 2*x + 2)` requires expanding rather
+    than comparing trees.
     """
     return bool(sp.expand(difference).is_zero)
 
 
-#: The arcs a sine or cosine of a multiple of one is written out about, and the
-#: largest multiple. `TAN` is written out about the arctangent alone, the one arc
-#: whose double tangent is a rational function.
+#: Arcs whose small multiples under a sine or cosine are expanded, and the largest
+#: multiple. `TAN` is expanded only over the arctangent, the one arc whose multiple
+#: tangent is a rational function.
 _ARCS = (sp.asin, sp.acos, sp.atan)
 _ARC_MULTIPLE = 4
 
 
 def _arc_multiples(expression: sp.Basic) -> sp.Basic:
-    """A sine, cosine or tangent of a small multiple of an arc, as the algebraic
-    function it is.
+    """Expand a sine, cosine or tangent of a small multiple of an arc algebraically.
 
-    Sympy writes `SIN(ACOS(x))` as `SQRT(1 - x^2)` as it is built, and the
-    multiple-angle formulas carry that to `SIN(2*ACOS(x))`, which is
-    `2*x*SQRT(1 - x^2)`. Over the whole plane, as the single angle is: the
-    formulas are identities, and the calls of the arc are the principal values
-    they are on either side.
+    Sympy writes `SIN(ACOS(x))` as `SQRT(1 - x^2)`, and the multiple-angle formulas
+    extend that to `SIN(2*ACOS(x))` = `2*x*SQRT(1 - x^2)`. This holds on the whole
+    plane, since the formulas are identities.
     """
     return expression.replace(_is_arc_multiple, sp.expand_trig, simultaneous=False)
 
@@ -3137,16 +2878,13 @@ def _is_arc_multiple(expression: sp.Basic) -> bool:
 
 
 def _half_angles(expression: sp.Basic) -> sp.Basic:
-    """Every trigonometric call rewritten about the one angle they all share.
+    """Rewrite every trigonometric call in terms of the angle they all share.
 
-    `1/(1 + TAN(a)*TAN(a/2))` is `COS(a)`, and no rule that looks at one call
-    at a time can see it: what cancels here is the relation between the two
-    arguments, and sympy's rules each rewrite a call by itself. Written about
-    the half angle both are multiples of, the tangents cancel and what is left
-    is a cosine.
+    `1/(1 + TAN(a)*TAN(a/2))` is `COS(a)`, which no rule working on one call at a time
+    can see. Written over the half angle, the tangents cancel.
 
-    The angle is the greatest common measure of the arguments, so nothing is
-    expanded further than it has to be.
+    The angle used is the greatest common measure of the arguments, so nothing is
+    expanded more than necessary.
     """
     measure = _common_angle(expression)
     if measure is None:
@@ -3157,11 +2895,9 @@ def _half_angles(expression: sp.Basic) -> sp.Basic:
 def _common_angle(expression: sp.Basic) -> sp.Basic | None:
     """The greatest angle every trigonometric argument is a multiple of.
 
-    None where there is no such angle - arguments built on different things, or
-    one that is no rational multiple of anything - and none where every
-    argument is a whole multiple of it. That last case is the multiple-angle
-    expansion `trigsimp` already offers, and this rule has nothing to add to
-    it; a fractional multiple is what nothing else handles.
+    None if there is no such angle, or if every argument is an integer multiple of it;
+    that case is the multiple-angle expansion `trigsimp` already does. Only fractional
+    multiples are handled here.
     """
     calls = expression.atoms(TrigonometricFunction)
     if not calls:
@@ -3179,10 +2915,9 @@ def _common_angle(expression: sp.Basic) -> sp.Basic | None:
 
 
 def _phase_angles(expression: sp.Basic) -> sp.Basic:
-    """`a*SIN(z) + b*COS(z)` as a single sine, wherever it occurs.
+    """Rewrite `a*SIN(z) + b*COS(z)` as a single sine.
 
-    Ours rather than fu's: `TR10i` collects a sine and a cosine of the same
-    angle only when their coefficients match, and the rule holds for any two.
+    fu's `TR10i` does this only when the coefficients match, but the rule holds for any.
     """
     return expression.replace(
         lambda e: _phase_angle(e) is not None,
@@ -3209,32 +2944,26 @@ def _phase_angle(expression: sp.Basic) -> sp.Basic | None:
     return sp.sqrt(a**2 + b**2) * sp.sin(angle + sp.atan2(b, a))
 
 
-#: How far `_multiple_angles` writes calls out over their single angle: the largest
-#: degree over it, a call's multiple times the power it is raised to, and how many
-#: operations the expression may hold. A sine of twelve times an angle is a
-#: polynomial of degree twelve, which is as far as any identity a worksheet states
-#: will go.
+#: Limits for `_multiple_angles`: the largest degree in the single angle (a call's
+#: multiple times its power) and the expression's operation count. Degree twelve covers
+#: any identity a worksheet states.
 _MULTIPLE_ANGLE = 12
 _MULTIPLE_OPERATIONS = 60
 _DEGREE = 4 * _MULTIPLE_ANGLE
 
 
 def _multiple_angles(expression: sp.Basic) -> sp.Basic:
-    """Sines and cosines of whole multiples of one angle reduced together.
+    """Reduce sines and cosines of integer multiples of one angle together.
 
-    `trigsimp` rewrites a sum from the bottom up, each term in its own way, and a
-    sum whose terms cancel only together is left half rewritten:
-    `SIN(x)^6 + COS(x)^6 + 3*SIN(x)^2*COS(x)^2` is 1, and `trigsimp` turns its last
-    term into `3/8 - 3*COS(4*x)/8` and stops there. Neither does it cancel
-    `SIN(3*x)/SIN(x)`, whose quotient is a polynomial only once both calls are
-    written over the one angle.
+    `trigsimp` rewrites each term of a sum separately, so terms that cancel only
+    together are left half done: `SIN(x)^6 + COS(x)^6 + 3*SIN(x)^2*COS(x)^2` is 1, but
+    `trigsimp` stops at rewriting the last term as `3/8 - 3*COS(4*x)/8`. Nor does it
+    cancel `SIN(3*x)/SIN(x)`, which needs both calls over the same angle.
 
-    Written over the single angle and cancelled, a polynomial in its sine and
-    cosine has two spellings that are unique: the sum of sines and cosines of its
-    multiples, which is how `trigsimp` writes `SIN(x)^2*COS(x)^2`, and the
-    polynomial in one of the two functions alone, the other's square being one
-    less the first's. The shortest of these is what is offered, the sum of
-    multiples where they tie, so `SIN(3*x)/SIN(x)` is `2*COS(2*x) + 1`.
+    Over the single angle, a polynomial in sine and cosine has unique forms: a sum of
+    sines and cosines of multiples (as `trigsimp` writes `SIN(x)^2*COS(x)^2`), or a
+    polynomial in just one of the two functions. The shortest is chosen, preferring the
+    sum of multiples on ties, so `SIN(3*x)/SIN(x)` is `2*COS(2*x) + 1`.
     """
     angle = _whole_angle(expression)
     if angle is None:
@@ -3242,8 +2971,8 @@ def _multiple_angles(expression: sp.Basic) -> sp.Basic:
     single = sp.cancel(sp.expand_trig(expression))
     sine, cosine = sp.sin(angle), sp.cos(angle)
     candidates = []
-    # A quotient left over may cancel further once a square of one function is
-    # written over the other: `SIN(x)^3/(COS(x)^2 - 1)` is `-SIN(x)`.
+    # A quotient may cancel further after rewriting squares of one function in the
+    # other: `SIN(x)^3/(COS(x)^2 - 1)` is `-SIN(x)`.
     for form in (
         single,
         sp.cancel(sp.expand(TR5(single, max=_DEGREE))),
@@ -3262,12 +2991,10 @@ def _multiple_angles(expression: sp.Basic) -> sp.Basic:
 
 
 def _whole_angle(expression: sp.Basic) -> sp.Basic | None:
-    """The angle every sine and cosine in `expression` is a whole multiple of.
+    """The angle every sine and cosine in `expression` is an integer multiple of.
 
-    None unless at least two different multiples of it are there, which is what
-    makes writing them over one angle a step `trigsimp` does not take; and none
-    where another trigonometric call stands beside them, or the expression is too
-    large to expand.
+    None unless at least two different multiples occur (otherwise `trigsimp` suffices),
+    if other trigonometric functions appear, or if the expression is too large.
     """
     calls = expression.atoms(TrigonometricFunction)
     if not calls or any(not isinstance(call, (sp.sin, sp.cos)) for call in calls):
@@ -3279,7 +3006,7 @@ def _whole_angle(expression: sp.Basic) -> sp.Basic | None:
             return None
         angles.add(angle)
         multiples.add(abs(multiple))
-    # The degree over the single angle: a power of a call multiplies its multiple.
+    # A power of a call multiplies its degree in the single angle.
     for power in expression.atoms(sp.Pow):
         if isinstance(power.base, (sp.sin, sp.cos)):
             multiple = power.base.args[0].as_coeff_Mul()[0]
@@ -3302,11 +3029,10 @@ def _trigonometric_polynomial(
 
 
 def _sum_of_multiples(polynomial: sp.Basic) -> sp.Basic:
-    """A polynomial in sines and cosines as a sum of the calls of multiple angles.
+    """A polynomial in sines and cosines as a sum of calls of multiple angles.
 
-    Each round of `TR8` writes the products it finds as sums, which may leave
-    squares of the calls it wrote, so the rounds go on until nothing changes; the
-    degree bounds how many there can be.
+    Each `TR8` round turns products into sums but may leave new squares, so it repeats
+    until stable; the degree bounds the number of rounds.
     """
     for _ in range(2 * _MULTIPLE_ANGLE):
         written = sp.expand(TR8(polynomial))
@@ -3317,18 +3043,15 @@ def _sum_of_multiples(polynomial: sp.Basic) -> sp.Basic:
 
 
 def _nonnegatively(rewrite: Rewrite) -> Rewrite:
-    """`rewrite` run with every nonnegative variable standing up as a positive one.
+    """Run `rewrite` with every nonnegative variable treated as positive.
 
-    6.2 states the logarithm rules for a nonnegative argument, and sympy's
-    carry a strictly positive one: `logcombine` and `expand_log` ask whether an
-    argument `is_positive`, so a variable declared `[0, inf)` is one they pass
-    over. Between the two conditions lies the single point zero, where both
-    sides of every rule are the same infinity, so the manual's condition is the
-    one to work under.
+    Section 6.2 states the logarithm rules for nonnegative arguments, but sympy's
+    `logcombine` and `expand_log` require `is_positive`, skipping a variable declared
+    `[0, inf)`. The only difference is zero, where both sides of every rule are the same
+    infinity, so the manual's condition is safe.
 
-    A declared variable only. An undeclared one is neither, and `LN(x^2 - x) -
-    LN(x)` stays apart under it, which is the whole of what the rules are gated
-    on.
+    Only declared variables are affected; for an undeclared `x`, `LN(x^2 - x) - LN(x)`
+    stays as is.
     """
 
     def run(expression: sp.Basic) -> sp.Basic:
@@ -3347,12 +3070,11 @@ def _nonnegatively(rewrite: Rewrite) -> Rewrite:
 
 
 def _logarithmic_powers(expression: sp.Basic) -> sp.Basic:
-    """`b^LN(a)` written as `a^LN(b)` for positive rationals `a < b`.
+    """Rewrite `b^LN(a)` as `a^LN(b)` for positive rationals `a < b`.
 
-    Both are `#e^(LN(a)*LN(b))`, so `2^LN(3) - 3^LN(2)` is 0, and nothing that
-    compares the two terms can see it until they are written over one base. The
-    smaller base is the one kept, which is how the exponential of a product of two
-    logarithms is written too: `#e^(LN(2)*LN(3))` is `2^LN(3)`.
+    Both equal `#e^(LN(a)*LN(b))`, so `2^LN(3) - 3^LN(2)` is 0, but that is only visible
+    with a common base. The smaller base is used, also for an exponential of a product
+    of two logarithms: `#e^(LN(2)*LN(3))` becomes `2^LN(3)`.
     """
     return expression.replace(
         lambda e: _over_the_smaller_base(e) is not None,
@@ -3399,7 +3121,7 @@ def _positive_rational(number: sp.Basic) -> bool:
 
 
 def _extracted_powers(expression: sp.Basic, even: bool = False) -> sp.Basic:
-    """`LN(z^k)` written as `k*LN(z)`, everywhere the rule holds."""
+    """Rewrite `LN(z^k)` as `k*LN(z)` wherever the rule holds."""
     return expression.replace(
         lambda e: _extracted_power(e, even) is not None,
         lambda e: _extracted_power(e, even),
@@ -3408,19 +3130,18 @@ def _extracted_powers(expression: sp.Basic, even: bool = False) -> sp.Basic:
 
 
 def _expanded_powers(expression: sp.Basic) -> sp.Basic:
-    """`LN(z^k)` written as `k*LN(z)`, and an even power of a real `z` as
-    `k*LN(ABS(z))`."""
+    """Rewrite `LN(z^k)` as `k*LN(z)`, and as `k*LN(ABS(z))` for even powers of real
+    `z`."""
     return _extracted_powers(expression, even=True)
 
 
 def _extracted_power(expression: sp.Basic, even: bool = False) -> sp.Basic | None:
-    """`k*LN(z)`, if `expression` is a logarithm of `z^k` that may be taken apart.
+    """`k*LN(z)`, if `expression` is a logarithm of `z^k` that may be split.
 
-    6.2 gives the rule as `k*LN(x) <-> LN(x^k)` for a rational `k` where `x` is
-    nonnegative, and for any `x` where `-1 < k <= 1`. With `even`, an even power of
-    a real `x` is taken apart as well, being the same power of `ABS(x)`: `LN(x^2)`
-    is `2*LN(ABS(x))`. That is a direction Logarithm Expand asks for, and longer
-    than what it replaces, so Auto keeps `LN(x^2)`.
+    Section 6.2 gives `k*LN(x) <-> LN(x^k)` for rational `k` when `x` is nonnegative,
+    and for any `x` when `-1 < k <= 1`. With `even`, even powers of real `x` are split
+    too: `LN(x^2)` is `2*LN(ABS(x))`. That is longer, so only Logarithm Expand does it;
+    Auto keeps `LN(x^2)`.
     """
     if not isinstance(expression, sp.log) or len(expression.args) != 1:
         return None
@@ -3441,11 +3162,10 @@ def _extracted_power(expression: sp.Basic, even: bool = False) -> sp.Basic | Non
 
 
 def _perfect_power(number: sp.Rational) -> tuple[sp.Rational, sp.Integer] | None:
-    """`(z, k)` where `number` is `z^k`, for the largest whole `k` above one.
+    """`(z, k)` where `number` is `z^k`, for the largest integer `k` above one.
 
-    A positive rational is a power of itself whenever its numerator and its
-    denominator are powers to a common exponent: 256 is 2^8 and 4/9 is (2/3)^2,
-    while 12 and 4/3 are powers of nothing but themselves.
+    The numerator and denominator must be powers with a common exponent: 256 is 2^8 and
+    4/9 is (2/3)^2, while 12 and 4/3 aren't perfect powers.
     """
     parts = [sp.perfect_power(whole) or (whole, 1) for whole in (number.p, number.q)]
     exponents = [exponent for base, exponent in parts if base > 1]
@@ -3460,37 +3180,34 @@ def _perfect_power(number: sp.Rational) -> tuple[sp.Rational, sp.Integer] | None
 
 
 def _collected_powers(expression: sp.Basic) -> sp.Basic:
-    """Powers of one base in a product added, and nothing else.
+    """Combine powers of the same base in a product, and nothing else.
 
-    Not an economy but Derive's spelling: `DIF(x^n, x)` is `n*x^n/x` to sympy and
-    `n*x^(n - 1)` to the original, and the two are the same length, so a gate that
-    counts operations would keep the first. Exponential Expand is the setting that
-    asks for powers apart, and under it Derive answers `n*x^n/x`.
+    This follows Derive's spelling rather than saving length: sympy gives `DIF(x^n, x)`
+    as `n*x^n/x` and the original as `n*x^(n - 1)`, the same length, so a gate would
+    keep sympy's. Under Exponential Expand, Derive does answer `n*x^n/x`.
 
-    `combine="exp"` is the exponent rule on its own: it leaves two bases under
-    one exponent alone, which is the part of `powsimp` that is a direction to
-    rewrite in rather than a normal form.
+    `combine="exp"` applies only the exponent rule, leaving different bases under one
+    exponent alone, since that part of `powsimp` is a rewriting direction rather than a
+    normal form.
     """
     return sp.powsimp(expression, combine="exp")
 
 
-#: How large a radicand may be for its square-free factorization to be asked for: the
-#: terms it has and its total degree. Squares a worksheet writes are a few terms of
-#: low degree, and the factorization of anything larger is the cost of a question
-#: nobody asked.
+#: Maximum terms and total degree of a radicand for trying square-free factorization.
+#: Perfect squares in worksheets are small, and factoring larger radicands is wasted
+#: effort.
 _PERFECT_TERMS = 24
 _PERFECT_DEGREE = 12
 
 
 def _perfect_powers(expression: sp.Basic) -> sp.Basic:
-    """A root of a polynomial that is a perfect power taken.
+    """Take roots of polynomials that are perfect powers.
 
-    `SQRT(x^2 + 2*x + 1)` is `ABS(x + 1)` for a real `x`, the way `SQRT((x + 1)^2)`
-    is, and `(x^2 + 2*x + 1)^(3/2)` is `(x + 1)^2*ABS(x + 1)`. The radicand is a
-    positive rational times a power of a polynomial, and the root of that power is
-    sympy's, which knows what the variables are declared to be: there are no bars
-    where the base is provably nonnegative, `SQRT(x^4 + 2*x^2 + 1)` being `x^2 + 1`, and a
-    complex variable keeps its root, there being no real absolute value to write.
+    For real `x`, `SQRT(x^2 + 2*x + 1)` is `ABS(x + 1)`, just like `SQRT((x + 1)^2)`, and
+    `(x^2 + 2*x + 1)^(3/2)` is `(x + 1)^2*ABS(x + 1)`. The radicand must be a positive
+    rational times a power of a polynomial, and sympy takes the root using declared
+    domains: no bars when the base is provably nonnegative (`SQRT(x^4 + 2*x^2 + 1)` is
+    `x^2 + 1`), and a complex variable keeps its root.
     """
     return expression.replace(_is_polynomial_root, _perfect_root, simultaneous=False)
 
@@ -3529,11 +3246,10 @@ def _perfect_root(power: sp.Pow) -> sp.Basic:
 
 
 def _real_roots(expression: sp.Basic) -> sp.Basic:
-    """An odd root of a negative number, taken real.
+    """Take odd roots of negative numbers as real.
 
-    Sympy has already pulled the sign out - `(-8)^(1/3)` is `2*(-1)^(1/3)` -
-    so the rule to apply is about that leftover factor, and an odd denominator
-    is exactly when the real root exists.
+    Sympy has already pulled out the sign (`(-8)^(1/3)` is `2*(-1)^(1/3)`), so this acts
+    on the leftover `(-1)^(p/q)`, which has a real root exactly when `q` is odd.
     """
     return expression.replace(_is_odd_root_of_minus_one, _real_sign, simultaneous=False)
 
@@ -3552,20 +3268,16 @@ def _real_sign(expression: sp.Basic) -> sp.Basic:
 
 
 def _rectangular(expression: sp.Basic) -> sp.Basic:
-    """A numeric power that is not real, written as real part plus imaginary.
+    """Write a non-real numeric power in rectangular form.
 
-    Section 4.5's promise: a complex result comes out in rectangular form.
-    `(1 + #i)^3` is `-2 + 2*#i` and the principal `(-8)^(1/3)` is
-    `1 + SQRT(3)*#i`, neither of which sympy reaches on its own - it leaves a
-    power of a sum folded and pulls the sign of a negative base out as
-    `2*(-1)^(1/3)`.
+    Section 4.5 says complex results come out in rectangular form: `(1 + #i)^3` is
+    `-2 + 2*#i` and the principal `(-8)^(1/3)` is `1 + SQRT(3)*#i`. Sympy reaches
+    neither on its own.
 
-    Only a power, and only one whose base and exponent are both numbers: what
-    `(-x)^(1/3)` is depends on `x`, and there is no rectangle to write until
-    something says. And only where the two parts come out plainly written -
-    the seventh root of -1 is `COS(pi/7) + #i*SIN(pi/7)`, which is the polar
-    form the promise was about avoiding, and the fifth root buys its rectangle
-    with a radical inside a radical. Both are left as they stand.
+    Only powers with numeric base and exponent qualify, since `(-x)^(1/3)` depends on
+    `x`. And only when both parts come out plainly written: the seventh root of -1
+    would be `COS(pi/7) + #i*SIN(pi/7)`, polar form in disguise, and the fifth root
+    needs nested radicals, so both are left alone.
     """
     return expression.replace(_is_complex_power, _in_rectangular, simultaneous=False)
 
@@ -3587,7 +3299,7 @@ def _in_rectangular(expression: sp.Basic) -> sp.Basic:
 
 
 def _plainly_written(value: sp.Basic) -> bool:
-    """Whether `value` is arithmetic and roots of whole numbers, and no more."""
+    """Whether `value` uses only arithmetic and roots of rationals."""
     return not value.atoms(sp.Function) and all(
         bool(power.base.is_Rational)
         for power in value.atoms(sp.Pow)
@@ -3596,14 +3308,12 @@ def _plainly_written(value: sp.Basic) -> bool:
 
 
 def _parts_of_powers(expression: sp.Basic) -> sp.Basic:
-    """`RE(a^z)` and `IM(a^z)` worked out, for a positive `a` and a `z` not known real.
+    """Evaluate `RE(a^z)` and `IM(a^z)` for positive `a` and `z` not known to be real.
 
-    Sympy splits an exponential into its parts, `IM(#e^(#i*y))` being `SIN(y)`, and
-    leaves a power standing, so that `IM(2^(x + #i*y))` is `2^x*IM(2^(#i*y))`. For a
-    positive base the power is the exponential `#e^(z*LN(a))`, and is written so
-    under `RE` and `IM`, which then split it: `2^x*SIN(y*LN(2))`. The exponential is
-    written back as a power by the spelling rules, where the part it ends in is
-    real.
+    Sympy splits an exponential (`IM(#e^(#i*y))` is `SIN(y)`) but not a power, giving
+    `IM(2^(x + #i*y))` as `2^x*IM(2^(#i*y))`. So under `RE` and `IM`, a positive-base
+    power is rewritten as `#e^(z*LN(a))`, which sympy then splits into
+    `2^x*SIN(y*LN(2))`. The spelling rules turn real exponentials back into powers.
     """
     return expression.replace(
         lambda e: isinstance(e, (sp.re, sp.im)) and _has_complex_power(e.args[0]),
@@ -3629,10 +3339,9 @@ def _as_exponential(power: sp.Pow) -> sp.Basic:
 
 
 def _imaginary_phases(expression: sp.Basic) -> sp.Basic:
-    """`PHASE(#i*u)` as `pi*SIGN(u)/2`, for a real `u`.
+    """Rewrite `PHASE(#i*u)` as `pi*SIGN(u)/2` for real `u`.
 
-    An imaginary number points up or down the imaginary axis as its coefficient is
-    signed. At zero, where `PHASE` has no value, the answer is 0.
+    At zero, where `PHASE` is undefined, this gives 0.
     """
     return expression.replace(
         lambda e: _imaginary_phase(e) is not None,
@@ -3655,12 +3364,12 @@ def _imaginary_phase(expression: sp.Basic) -> sp.Basic | None:
 
 
 def _arcs_off_the_line(expression: sp.Basic) -> sp.Basic:
-    """An arcsine or arccosine of a real number past 1 in size, in rectangular form.
+    """Write the arcsine or arccosine of a real number beyond [-1, 1] in rectangular
+    form.
 
-    Their values there are complex, and a complex constant is written as real part
-    plus imaginary, the way `ACOSH(1/2)` is `#i*pi/3` and `ATANH(2)` is
-    `LN(3)/2 - #i*pi/2`: `ASIN(2)` is `pi/2 - #i*LN(SQRT(3) + 2)`. The principal
-    values are those of `-#i*LN(#i*z + SQRT(1 - z^2))` and `pi/2 - ASIN(z)`.
+    The values are complex, so like `ACOSH(1/2)` (`#i*pi/3`) and `ATANH(2)`
+    (`LN(3)/2 - #i*pi/2`), `ASIN(2)` becomes `pi/2 - #i*LN(SQRT(3) + 2)`. Principal
+    values follow `-#i*LN(#i*z + SQRT(1 - z^2))` and `pi/2 - ASIN(z)`.
     """
     return expression.replace(_is_arc_off_the_line, _arc_rectangle, simultaneous=False)
 
@@ -3688,18 +3397,17 @@ def _arc_rectangle(expression: sp.asin | sp.acos) -> sp.Basic:
 
 
 def _complex_constants(expression: sp.Basic) -> sp.Basic:
-    """Every numeric power with a complex exponent written over its principal value.
+    """Write numeric powers with complex exponents as their principal values.
 
     `b^z` is `#e^(z*LN(b))` with the principal logarithm, so `#i^#i` is `#e^(-pi/2)`,
     `(-1)^#i` is `#e^(-pi)` and `(2*#i)^#i` is `#e^(#i*LN(2) - pi/2)`. A positive base
-    keeps its power, which is the shorter way to write the same exponential: `2^#i`
-    stands. An exponential whose imaginary part is a rational multiple of pi is then
-    real part plus imaginary where the cosine and the sine are plainly written, as
-    `_rectangular` has it for roots of -1: `#e^(#i*pi/3)` is `1/2 + SQRT(3)*#i/2`, and
-    `#e^(#i*pi/5)` stands. A cosine or a sine of a complex number is taken apart the
-    same way, `COS(pi/3 + #i)` being `COS(pi/3)*COSH(1) - #i*SIN(pi/3)*SINH(1)`.
+    keeps its shorter power form: `2^#i` stands. An exponential whose imaginary part is a
+    rational multiple of pi becomes rectangular when cosine and sine are plainly written,
+    as in `_rectangular`: `#e^(#i*pi/3)` is `1/2 + SQRT(3)*#i/2`, while `#e^(#i*pi/5)`
+    stands. Sine and cosine of complex numbers are split likewise: `COS(pi/3 + #i)` is
+    `COS(pi/3)*COSH(1) - #i*SIN(pi/3)*SINH(1)`.
 
-    Bottom up, so that what holds such a constant is built again around its value:
+    This works bottom up, so enclosing expressions are rebuilt around the value:
     `LN(#i^#i)` is `-pi/2`.
     """
     return expression.replace(_is_complex_constant, _principal_value, simultaneous=False)
@@ -3741,7 +3449,7 @@ def _principal_value(expression: sp.Basic) -> sp.Basic:
 
 
 def _rectangular_exponential(power: sp.Basic) -> sp.Basic:
-    """`#e^(a + b*#i)` as `#e^a*(COS(b) + #i*SIN(b))`, where those are plainly written."""
+    """`#e^(a + b*#i)` as `#e^a*(COS(b) + #i*SIN(b))`, if those are plainly written."""
     if not isinstance(power, sp.exp):
         return power
     real, imaginary = power.args[0].as_real_imag()
@@ -3753,8 +3461,8 @@ def _rectangular_exponential(power: sp.Basic) -> sp.Basic:
 
 
 def _plain_angle(angle: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
-    """The cosine and the sine of a rational multiple of pi, where both are plainly
-    written, and None otherwise."""
+    """The cosine and sine of a rational multiple of pi if both are plainly written,
+    else None."""
     if not (angle / sp.pi).is_Rational:
         return None
     cosine, sine = sp.cos(angle), sp.sin(angle)
@@ -3765,24 +3473,23 @@ def _plain_angle(angle: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
 
 # -- the kernel layer --------------------------------------------------------
 #
-# Every rewrite above is a rule about kernels - the trigonometric, logarithmic,
-# exponential, sign, arc and radical calls an expression is a rational function of -
-# and what follows is the whole of where each is offered. Three tables, applied by one
-# driver: the identities offered in every mode, kept where they pay; the directions
-# the mode settings ask for; and the spelling conventions an answer is written in,
-# applied once the normal form has written its sums. The output vocabulary is the one
-# spelling applied first rather than last: it is the language the identities are
-# stated in, and `TANH(z)` reaches `(#e^(2*z) - 1)/(#e^(2*z) + 1)` only by being
-# written over exponentials before the denominators are cleared.
+# Every rewrite above is a rule about kernels: the trigonometric, logarithmic,
+# exponential, sign, arc and radical calls an expression is a rational function of.
+# Three tables, applied by one driver, decide where each is used: identities tried in
+# every mode and kept if they pay; directions requested by mode settings; and spelling
+# conventions applied after the normal form. The output vocabulary is the one spelling
+# applied first, because the identities are stated in it: `TANH(z)` becomes
+# `(#e^(2*z) - 1)/(#e^(2*z) + 1)` only if written as exponentials before denominators
+# are cleared.
 
 
 class _Rule(NamedTuple):
-    """One rewrite of the kernel layer, with what it is called and why it is there.
+    """One kernel-layer rewrite, with its name and the reason for it.
 
-    `kept` is how an answer is taken: `_gated` keeps one that pays, `forced` keeps
-    any. `yields_to` names a mode setting the rule is the Auto behavior of: a spelling
-    the user has asked away from is not one to impose, so `TAN(x)^2 + 1` is written
-    for `1/COS(x)^2` only while Trigpower is Auto, Cosines asking for the cosine.
+    `kept` decides whether to take the result: `_gated` keeps it if it pays, `forced`
+    always. `yields_to` names a mode setting for which this rule is the Auto behavior,
+    so it is skipped when that setting isn't Auto: `1/COS(x)^2` becomes `TAN(x)^2 + 1`
+    only while Trigpower is Auto, not under Cosines.
     """
 
     name: str
@@ -3793,15 +3500,15 @@ class _Rule(NamedTuple):
 
 
 def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
-    """The kernels reduced: every identity that pays, then every direction asked for.
+    """Reduce the kernels: apply every identity that pays, then every requested
+    direction.
 
-    Over the vocabulary `_by_definition` writes, and before the normal form, which is
-    what writes the sums the rules leave behind.
+    Works on the vocabulary `_by_definition` produces, and runs before the normal form,
+    which tidies up the sums the rules leave.
     """
     if expression.has(sp.MatrixExpr):
         return forced(expression, _distributed)
-    # Ahead of the definitions, which write the hyperbolic parts it leaves over
-    # exponentials.
+    # Before the definitions, which turn its hyperbolic leftovers into exponentials.
     expression = forced(expression, _complex_constants)
     expression = forced(expression, _symmetries)
     expression = _by_definition(expression)
@@ -3812,18 +3519,17 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     return expression
 
 
-#: The heads that stand in an answer as integrals, sums and products not done.
+#: Heads that remain in an answer as unevaluated integrals, sums and products.
 _STANDING = (sp.Integral, sp.Sum, sp.Product)
 
 
 def _rewritten_beside_standing(expression: sp.Basic, context: Context) -> sp.Basic:
-    """`_rewritten`, with the terms of a sum that are integrals, sums or products left
-    standing rewritten apart from the rest.
+    """`_rewritten`, but rewriting unevaluated integrals, sums and products in a sum
+    separately from the other terms.
 
-    A standing integral is a term of its own, as in `INT(x/SIN(a*x), x)` plus an
-    antiderivative. Rewritten together, the rest of the sum is put over a common
-    denominator wherever that is shorter, and the integral is taken under it,
-    multiplied out by the denominator and printed twice.
+    An unevaluated integral is a separate term, as in `INT(x/SIN(a*x), x)` plus an
+    antiderivative. Rewritten together, the sum may be put over a common denominator,
+    pulling the integral under it and printing it twice.
     """
     if not isinstance(expression, sp.Add):
         return _rewritten(expression, context)
@@ -3837,11 +3543,10 @@ def _rewritten_beside_standing(expression: sp.Basic, context: Context) -> sp.Bas
 
 
 def _spelled(expression: sp.Basic, context: Context) -> sp.Basic:
-    """The answer with Derive's spelling conventions, once its sums are written.
+    """Apply Derive's spelling conventions after the normal form.
 
-    After the normal form, so that nothing after them rewrites what they write. Each
-    is the form Derive prints whether or not it is the shorter one: `1/COS(x)^2` is
-    `TAN(x)^2 + 1`, and `LN(256)` is `8*LN(2)`.
+    Running last means nothing rewrites them afterwards. Each is the form Derive prints,
+    shorter or not: `1/COS(x)^2` is `TAN(x)^2 + 1`, and `LN(256)` is `8*LN(2)`.
     """
     if expression.has(sp.MatrixExpr):
         return expression
@@ -3859,20 +3564,19 @@ def _applied(
 
 
 def _combinatorial(expression: sp.Basic) -> sp.Basic:
-    """`combsimp`, where there is something combinatorial and it is affordable."""
+    """`combsimp`, if the expression is combinatorial and small enough."""
     if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
         return sp.combsimp(expression)
     return expression
 
 
 def _on_powers(rewrite: Rewrite) -> Rewrite:
-    """`rewrite`, where what it changed is a power.
+    """`rewrite`, but only if it changed some power.
 
-    The power rules rebuild every product they pass through, and sympy's product
-    distributes a number over a sum as it is built: `powsimp` hands
-    `3*x^2*(2*y + 1)` back as `x^2*(6*y + 3)` having collected nothing. Derive keeps
-    the first, and an answer that holds the same powers it was given is the same
-    answer, so that is the one kept.
+    The power rules rebuild every product, and sympy distributes numbers over sums on
+    construction: `powsimp` turns `3*x^2*(2*y + 1)` into `x^2*(6*y + 3)` without
+    collecting anything. Derive keeps the original, so if the powers are unchanged, so
+    is the expression.
     """
 
     def run(expression: sp.Basic) -> sp.Basic:
@@ -3884,9 +3588,9 @@ def _on_powers(rewrite: Rewrite) -> Rewrite:
     return run
 
 
-#: The identities, offered in every mode. Gated ones are economies, kept where
-#: `pays` says the answer is simpler; forced ones are facts about the kernels they
-#: relate, where gating would keep the longer side for being no longer.
+#: Identities tried in every mode. Gated ones are kept when `pays` says the result is
+#: simpler; forced ones always apply, since gating would keep a side that is merely no
+#: longer.
 _IDENTITIES = (
     _Rule("arcs off the line", _arcs_off_the_line, forced,
           "ASIN(2) is pi/2 - #i*LN(SQRT(3) + 2): a complex value in rectangular form"),
@@ -3902,9 +3606,8 @@ _IDENTITIES = (
           "CONJ(z)*z is ABS(z)^2"),
     _Rule("combinatorial", _combinatorial, _gated,
           "a ratio of factorials is a binomial or a polynomial when it is shorter"),
-    # The arcs and angles are ours rather than sympy's, which collects neither these
-    # arcs nor their tangents, writes none of them about a shorter argument, and has
-    # no rule that spans two angles at once.
+    # The arc and angle rules are our own: sympy doesn't collect these arcs, shorten
+    # their arguments, or have rules spanning two angles.
     _Rule("simpler arcs", _simpler_arcs, _gated,
           "ASIN(u/SQRT(u^2 + 1)) is ATAN(u): an arc about the shorter argument"),
     _Rule("complementary arcs", _complementary_arcs, forced,
@@ -3927,16 +3630,14 @@ _IDENTITIES = (
           "a denominator under a denominator is cleared, #e^(-z) put over #e^z"),
 )
 
-#: The directions, keyed by the setting that asks for them and its value. Auto, where
-#: it has rules here, means "only where it cancels", and those are gated; Collect and
-#: Expand are instructions rather than options, and forced. No rule is ever forced
-#: past a domain: the logarithm rules are sympy's without `force`, run over
-#: `_nonnegatively`'s reading of the declarations, and the power rules carry sympy's
-#: own validity gate for `(#e^z)^k -> #e^(k*z)`, so the direction is all that is
-#: chosen here.
+#: Directions, keyed by mode setting and value. Auto rules mean "only where it
+#: cancels" and are gated; Collect and Expand are instructions and forced. No rule
+#: ignores domains: the logarithm rules are sympy's without `force`, run under
+#: `_nonnegatively`, and the power rules keep sympy's validity check for
+#: `(#e^z)^k -> #e^(k*z)`. Only the direction is chosen here.
 _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
-    # Principal is sympy's own convention; Real takes `(-8)^(1/3)` to be -2, and Any
-    # lifts the domain proof off the power rules, so `SQRT(x^2)` is `x`.
+    # Principal is sympy's convention; Real makes `(-8)^(1/3)` -2, and Any drops the
+    # domain checks from the power rules, so `SQRT(x^2)` is `x`.
     "branch": {
         Branch.REAL: (
             _Rule("real roots", _real_roots, forced,
@@ -3977,11 +3678,10 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
             _Rule("TR5", TR5, forced, "even powers of sines written over cosines"),
         ),
     },
-    # Auto is the mixed direction 6.2 describes: the sum rule rightward here, so
-    # `3*LN(2) + LN(5)` is `LN(40)`, and the power rule leftward in `_SPELLINGS`, so
-    # `LN(256)` is `8*LN(2)` the way `SQRT(12)` is `2*SQRT(3)`, shorter or not.
-    # `LN(x^2 - x) - LN(x)` collects only once `x` is declared away from the values
-    # that would make it false.
+    # Auto is the mixed direction of 6.2: the sum rule combines here, so
+    # `3*LN(2) + LN(5)` is `LN(40)`, and the power rule extracts in `_SPELLINGS`, so
+    # `LN(256)` is `8*LN(2)`, like `SQRT(12)` is `2*SQRT(3)`. `LN(x^2 - x) - LN(x)`
+    # combines only if `x` is declared to exclude values where that is false.
     "logarithm": {
         Direction.AUTO: (
             _Rule("logcombine", _nonnegatively(sp.logcombine), _gated,
@@ -4019,12 +3719,11 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
     },
 }
 
-#: The spelling conventions, applied after the normal form. None is an economy and
-#: none is gated: several lengthen what they replace, and are still the only way
-#: Derive writes the answer.
+#: Spelling conventions, applied after the normal form. None is gated: several make the
+#: expression longer, but they are how Derive writes the answer.
 _SPELLINGS = (
-    # After the branch, which is what settles how many values a root has: with Real
-    # asked for, `(-8)^(1/3)` is `-2` and there is no rectangle to write.
+    # After the branch rules, which decide a root's value: under Real, `(-8)^(1/3)` is
+    # already `-2`.
     _Rule("rectangular", _rectangular, forced,
           "a numeric complex power is real part plus imaginary part"),
     _Rule("tangent squares", _tangent_squares, forced,

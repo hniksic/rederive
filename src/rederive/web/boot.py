@@ -1,36 +1,24 @@
-"""What the page runs: build the program on what a browser answers with, and start.
+"""Browser entry point: build the program from browser parts and start it.
 
-`start` is the whole of the browser's entry point, and it is `__main__.main` with
-each of its three machines swapped for the thing a tab has instead. The engine
-worker is a Web Worker rather than a child process; the environment is
-`platform.web` rather than a desktop; the plot host is a plot session in this
-very interpreter, opening panes in the page rather than windows on a desktop;
-and the screen is xterm.js, reached through a Textual driver. Nothing else about
-the program changes, and nothing else in the program knows any of it.
+`start` mirrors `__main__.main`, with browser substitutes: a Web Worker instead of the
+engine child process, `platform.web` as the environment, an in-process plot session
+drawing panes in the page instead of a plot host, and xterm.js as the screen via a
+Textual driver. The rest of the program is unchanged and unaware of the difference.
 
-What `__main__` does with the command line, `web.files` does with the address
-and the store: a tab has no shell to have been started from, so what it opens on
-is a worksheet carried in a link and the settings it was last left with, both
-read before the app is built.
+Where `__main__` reads the command line, `web.files` reads the page address and storage:
+a worksheet carried in the link and the saved settings, both applied before the app is
+built.
 
-Two of the swaps have to happen before anything is built, which is why they are
-the first lines. `platform.use` has to be in force before the first thing asks
-for a clipboard or a memory reading, and the environment variables have to be
-set before Textual builds its Console: Rich decides how many colours it may use
-by reading `COLORTERM`, and a page that leaves it unset gets eight of them and a
-display that looks nothing like the program.
+`platform.use` and the environment variables come first: the platform must be in place
+before anything asks for a clipboard or memory reading, and Rich reads `COLORTERM` when
+Textual builds its Console. Without it Rich falls back to eight colors.
 
-The driver is the third, and it is not a swap so much as the removal of an
-alternative. `termios` and `tty` import cleanly under Pyodide, so Textual's
-Linux driver is a working import here and its automatic choice would be taken in
-silence, to break much later on a thread it cannot start. `get_driver_class` is
-where that choice is made, so it is overridden rather than overruled: the page's
-app has one driver and no fallback behind it.
+`get_driver_class` is overridden because `termios` and `tty` import fine under Pyodide,
+so Textual would silently choose its Linux driver, which later fails when it can't start
+a thread.
 
-The app is never run with `App.run`. There is one thread and the loop is the
-browser's, so the entry has to be `run_async` under `runPythonAsync` - and this
-coroutine ends when the user leaves the program, which is when the page has
-nothing left to show.
+The app runs via `run_async` under `runPythonAsync` rather than `App.run`, since there's
+one thread and the browser owns the event loop. The coroutine ends when the user quits.
 """
 
 from __future__ import annotations
@@ -54,24 +42,21 @@ from rederive.web.plots import WebPlots
 
 __all__ = ["start"]
 
-#: What the page tells Rich about itself. `force_terminal` already makes Rich
-#: write escapes; what these decide is which escapes - a truecolor terminal, as
-#: xterm.js is - and neither has anywhere else to come from in a tab.
+#: Tells Rich that xterm.js is a truecolor terminal. `force_terminal` already makes Rich
+#: emit escapes; these select which ones, and a tab has no other source for them.
 TERMINAL = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 
 
 class PageApp(RederiveApp):
-    """The program, on the terminal this page drew.
+    """The app running on the page's xterm.js terminal.
 
-    The stylesheet is named absolutely because Textual resolves `CSS_PATH`
-    against the file the class was defined in, and this class is not defined in
-    that file. One stylesheet still, and one place that reads it.
+    `CSS_PATH` is absolute because Textual resolves it relative to the file defining
+    the class, and this subclass lives elsewhere than the stylesheet.
     """
 
     CSS_PATH = str(Path(ui.__file__).parent / RederiveApp.CSS_PATH)
-    #: The opening notice's last line, minus the demonstrations: the page has a
-    #: button that offers them by name, so pointing at the keystrokes that
-    #: reach the same menu would be pointing away from what is on the screen.
+    #: The greeting's last line, without the demonstrations hint: the page has its own
+    #: button for them.
     GREETING_LINE = ui.GREETING_HELP
 
     def __init__(
@@ -82,27 +67,26 @@ class PageApp(RederiveApp):
         opening: str = "",
         keyboard: Callable[[bool], None] | None = None,
     ) -> None:
-        # Before the base class, which asks for the driver as it starts.
+        # Set before the base class init, which asks for the driver.
         self._terminal = terminal
         self._keyboard = keyboard
-        #: What the page was last told, so that it is told only of a change.
+        #: Last typing state sent to the page, so only changes are reported.
         self._typing: bool | None = None
         super().__init__(session, plotter=plots, opening=opening)
 
     def get_driver_class(self) -> Any:
-        """This page's terminal, and nothing behind it to fall back to."""
+        """Always the browser driver, with no fallback."""
         return BrowserDriver.on(self._terminal)
 
-    # -- the keyboard a touch screen draws ---------------------------------
+    # -- touch-screen keyboard ---------------------------------------------
     #
-    # A phone's keyboard is up for as long as the terminal has the page's focus,
-    # and only the program knows when it is waiting for text. So the page is
-    # told whenever that changes, and it is the page that decides what a
-    # keyboard of its own has to do about it.
+    # A phone shows its keyboard while the terminal has focus, but only the program
+    # knows when it's waiting for text. So the page is told whenever that changes and
+    # decides what to do with its keyboard.
     #
-    # Two places hear the change between them. A redraw follows every change of
-    # mode, and a change of focus is how the prompt line comes and goes - which
-    # Textual applies a beat after the redraw that asked for it.
+    # Changes are caught in two places: a redraw follows every mode change, and the
+    # prompt line appears and disappears through focus changes, which Textual applies
+    # shortly after the redraw.
 
     def refresh_screen(self) -> None:
         super().refresh_screen()
@@ -133,19 +117,13 @@ async def start(
 ) -> None:
     """Run Rederive on this page until the user leaves it.
 
-    Seven things the page owns and this side cannot make: the xterm.js the
-    program draws on, what makes an engine worker, the two modules that open a
-    plot pane - one for a flat picture and one for a solid, which share no
-    drawing at all - the file gestures, which are a download, a picker and an
-    address, the menu that downloads a demonstration, and what a touch screen
-    does with its keyboard when the program starts or stops waiting for text.
-    All of them are DOM elements, script URLs and canvases, and none of them is
-    anything Python could have built.
+    The arguments are page objects Python can't create: the xterm.js terminal, a
+    factory for the engine worker, the 2D and 3D plot modules (which share no drawing
+    code), the file operations (download, picker and address), the demonstrations menu,
+    and a callback that shows or hides a touch-screen keyboard.
 
-    What happens between the session and the app is what a tab has instead of a
-    command line: the settings this page was last left with are applied, and a
-    worksheet carried in the address is read, both before there is a screen, so
-    that what the user is first shown is already what the link asked for.
+    Saved settings and any worksheet in the address are loaded before the screen
+    appears, so the user first sees what the link asked for.
     """
     _naming_tasks()
     os.environ.update(TERMINAL)
@@ -163,13 +141,12 @@ async def start(
         keyboard,
     )
     files.attend()
-    # Held for as long as the program runs: the proxies the menu is wired with
-    # live inside it, and JS would be left pointing at freed callbacks.
+    # Kept alive while the program runs, since it holds the proxies the menu calls;
+    # otherwise JS would call freed callbacks.
     demonstrations = Demos(demos, app, platform.current().storage())
     demonstrations.attend()
-    # And the command that offers the same nine downloads the same way. What
-    # the app has instead is `urlopen` on a thread, which is two things a tab
-    # has not got.
+    # The demo-download command uses the same fetcher, since the app's default (`urlopen`
+    # on a thread) doesn't work in a tab.
     app.fetcher = demonstrations.brought
     try:
         await app.run_async()
@@ -181,17 +158,13 @@ async def start(
 def _naming_tasks() -> None:
     """Put back the private asyncio helper Pyodide's event loop still calls.
 
-    `WebLoop.create_task` is a copy of CPython's `BaseEventLoop.create_task`,
-    call to `asyncio.tasks._set_task_name` and all - and Python 3.14, which
-    Pyodide 314 carries, no longer has that function. The call is on the branch
-    a loop with a task factory takes, and Textual installs one on the first
-    line of `run_async`, so without this every task the app creates raises an
-    AttributeError from inside the loop.
+    `WebLoop.create_task` copies CPython's `BaseEventLoop.create_task`, including the
+    call to `asyncio.tasks._set_task_name`, which Python 3.14 (used by Pyodide 314) no
+    longer has. The call is on the task-factory branch, and Textual installs a factory
+    at the start of `run_async`, so without this every task raises AttributeError.
 
-    Naming a task is the whole of what the helper did, and `Task.set_name` is
-    what it did it with. The repair belongs here rather than anywhere the
-    program is read on a desktop: it is a browser runtime's bug and nothing
-    else's.
+    The helper only called `Task.set_name`. The fix lives here because it's a bug in the
+    browser runtime only.
     """
     if hasattr(asyncio.tasks, "_set_task_name"):
         return

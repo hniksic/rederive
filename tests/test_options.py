@@ -1,7 +1,7 @@
-"""The Options command, driven through the app the way a user drives it.
+"""The Options command, driven through the app with keystrokes.
 
-The expected band text is what the original puts on the same screen, minus the
-leading blank the pane indents by.
+Expected band text is what the original shows on the same screen, minus the leading
+blank the pane indents by.
 """
 
 import pytest
@@ -18,7 +18,7 @@ def app():
 
 
 async def options(pilot, *keys):
-    """Open the Options menu and press on."""
+    """Open the Options menu and press the given keys."""
     await pilot.press("o", *keys)
 
 
@@ -120,7 +120,7 @@ async def test_committing_records_one_expression_per_changed_field(app):
         assert app.settings["Precision"] == "Approximate"
         assert app.settings["PrecisionDigits"] == 9
         assert entries(app) == ["Precision := Approximate", "PrecisionDigits := 9"]
-        # And the last of them is what the highlight is left on.
+        # The highlight is left on the last one.
         assert app.session.selected == 1
 
 
@@ -142,10 +142,10 @@ async def test_mute_and_color_are_remembered_but_not_recorded(app):
 
 async def test_records_are_written_in_the_notation_they_select(app):
     async with app.run_test() as pilot:
-        # Compressed format reaches the spacing of its own record.
+        # Compressed format already applies to its own record's spacing.
         await options(pilot, "o", "c", "enter")
         assert entries(app) == ["DisplayFormat:=Compressed"]
-        # And an octal output base reaches the digits of the next one.
+        # An octal output base applies to the digits of the next record.
         await options(pilot, "r", "tab", "o", "enter")
         await options(pilot, "n", "tab", "1", "2", "enter")
         assert entries(app)[1:] == ["OutputBase:=Octal", "NotationDigits:=14"]
@@ -157,7 +157,7 @@ async def test_backspace_steps_a_field_back_through_its_choices(app):
         assert highlighted(app) == "Hexadecimal"
         await pilot.press("backspace")
         assert highlighted(app) == "Decimal"
-        # And it wraps around the end rather than leaving the field.
+        # It wraps around rather than leaving the field.
         await pilot.press("backspace", "backspace", "backspace")
         assert highlighted(app) == "Other"
         assert message(app) == "Select number system"
@@ -170,8 +170,8 @@ async def test_radix_other_asks_for_a_base(app):
         await pilot.press("enter")
         assert band(app) == [" OPTIONS RADIX: Input: 10"]
         assert message(app) == "Enter radix base"
-        # The field overwrites as it is typed, so 10 becomes 70 - a base Derive
-        # will not take - until the leftover digit is deleted.
+        # Typing overwrites, so 10 becomes 70 - an invalid base - until the leftover
+        # digit is deleted.
         await pilot.press("7")
         assert band(app) == [" OPTIONS RADIX: Input: 70"]
         await pilot.press("enter")
@@ -204,14 +204,14 @@ async def test_a_color_reaches_the_screen_when_the_dialog_commits(app):
             "                     Background: Black  Border: Black",
         ]
         assert message(app) == "Select frame color (press Space for the list)"
-        # The list is a submenu, opening on the color the slot already has.
+        # The list is a submenu, opening on the slot's current color.
         await pilot.press("space")
         assert band(app) == [
             " COLOR: Black blUe Green Cyan Red Magenta brOwn grAy",
             "        Darkgray Skyblue Lime aQua Pink Violet Yellow White",
         ]
         assert highlighted(app) == "Red"
-        # Picking one returns to the dialog, on the next slot along.
+        # Picking one returns to the dialog, on the next slot.
         await pilot.press("s")
         assert app.palette.styles["option"] == before
         assert message(app) == "Select option color (press Space for the list)"

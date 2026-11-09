@@ -1,30 +1,23 @@
-"""The windows the `Window` command makes, and where each one lands.
+"""Windows created by the `Window` command, and their layout.
 
-Pure Python, as the session is: no Textual, no key names. The UI asks for the
-tree to be split or closed and then asks where everything goes.
+Like the session, this is UI-independent: the UI asks for splits and closes, then
+asks for the layout.
 
-A window is a leaf of a binary tree of splits. Each leaf carries a stack of
-overlays, one deep unless `Window Open` has pushed another on: overlays share
-their window's number and its rectangle, and only the top one is on screen.
-Every overlay owns a whole `Session`, which is what makes two algebra windows
-two derivations rather than two views of one - splitting copies the worksheet
-and the copies go their own ways from there.
+Windows are leaves of a binary tree of splits. Each leaf holds a stack of
+overlays (more than one only after `Window Open`) that share its number and
+rectangle; only the top one is shown. Each overlay owns its own `Session`, so a
+split copies the worksheet and the two windows then diverge.
 
-Windows are numbered by where they are and not by when they were made: the
-numbers are a walk of the tree, first child before second, recomputed after
-every split and close. So closing a window in the middle renumbers the ones
-after it, exactly as the original does.
+Windows are numbered in tree order, so closing one renumbers those after it, as
+in the original.
 
-Geometry is in cells of the work area, and a window owns its own top border
-row and left border column. `Area` is that pair of edges plus the two that
-close it, which the next window along owns; a divider is therefore one row or
-column shared by the two windows it separates. The area below the work area -
-the rule the menu sits under - is the bottom border, which is why `bottom` is
-one past the last work row.
+Geometry is in work-area cells. A window owns its top border row and left border
+column; `Area` adds the bottom and right edges, owned by the next window, so a
+divider is shared by the windows it separates. The rule under which the menu sits
+is the bottom border, so `bottom` is one past the last work row.
 
-The sole window of an unsplit screen is drawn without any border at all, and
-takes those four edge cells for itself. That is the original's screen, and it
-is why `interior` needs to be told whether a frame is being drawn.
+An unsplit screen's sole window has no border and uses the edge cells too, as in
+the original; hence `interior` needs to know whether a frame is drawn.
 """
 
 from __future__ import annotations
@@ -34,25 +27,20 @@ from dataclasses import dataclass, replace
 
 from rederive.model.session import Session
 
-#: The one kind of window this tree holds. The original had three - two of them
-#: plot windows - and chose between them with `Window Designate`; here a plot
-#: window is a window of the desktop rather than a leaf of this tree, so there
-#: is nothing left to choose between and the kind is carried only because a
-#: second kind would want it back.
+#: The only window kind in the tree. The original also had two plot window kinds,
+#: chosen with `Window Designate`; here plots are desktop windows outside the tree.
+#: The kind is kept in case another one is added.
 ALGEBRA = "Algebra"
 
-#: How near an edge a split may fall, as the original allows it: a line no
-#: closer than two rows to the top of the window and two to the bottom, a
-#: column no closer than seven to the left and six to the right. The two are
-#: not the same because a column of expressions is worth less narrow than a
-#: page of them is short.
+#: How close to the window's edges a split may fall, as in the original: at least
+#: two rows from top and bottom, and seven columns from the left and six from the
+#: right.
 LINE_MARGIN = 2
 COLUMN_MARGIN_LEFT = 7
 COLUMN_MARGIN_RIGHT = 6
 
-#: Where the pieces of a border meet, keyed by the directions a line runs in
-#: from that cell. Horizontals are doubled and verticals are single, which is
-#: the original's set.
+#: Border characters keyed by the directions lines leave the cell. As in the
+#: original, horizontals are double and verticals single.
 _UP, _DOWN, _LEFT, _RIGHT = 1, 2, 4, 8
 _PIECES = {
     _LEFT: "═",
@@ -75,18 +63,17 @@ _PIECES = {
 
 @dataclass
 class Overlay:
-    """One window's worth of state, and what kind of window it is."""
+    """One window's state and kind."""
 
     kind: str
     session: Session
 
 
 class Window:
-    """A leaf of the tree: a stack of overlays, the first of them on top.
+    """A leaf of the tree: a stack of overlays, the first one on top.
 
-    It is a class rather than a dataclass because its identity is what the app
-    keys a pane widget by, and two windows holding equal state are still two
-    windows.
+    Not a dataclass because the app keys pane widgets by identity, and windows
+    with equal state are still distinct.
     """
 
     def __init__(self, overlays: list[Overlay]) -> None:
@@ -102,14 +89,13 @@ class Window:
 
     @property
     def stacked(self) -> bool:
-        """Whether `Window Open` has put something under what is showing."""
+        """Whether there are overlays below the visible one."""
         return len(self.overlays) > 1
 
     def flip(self, step: int = 1) -> bool:
         """Bring the next overlay to the top, as F2 does.
 
-        False when there is only one, which is a key with nothing to do rather
-        than an error: the original flips a lone window to itself in silence.
+        Return False if there's only one; the original silently does nothing.
         """
         if not self.stacked:
             return False
@@ -124,8 +110,8 @@ class Window:
 class Split:
     """Two windows side by side or one above the other.
 
-    `at` is where the divider falls, counted from the node's own top left
-    corner, so that a subtree can be laid out without knowing where it sits.
+    `at` is the divider position relative to the node's top left corner, so a
+    subtree can be laid out independently of its position.
     """
 
     vertical: bool
@@ -139,11 +125,10 @@ Node = Window | Split
 
 @dataclass(frozen=True)
 class Area:
-    """The cells a node owns: its own two edges, and the two that close it.
+    """A node's cells, bounded by its own edges and the ones that close it.
 
-    `top` and `left` are the window's border row and column. `bottom` and
-    `right` belong to whatever is beyond it - the next window's border, or the
-    screen's - and are shared with it.
+    `top` and `left` are the window's border row and column. `bottom` and `right`
+    are shared with the next window's border or the screen's.
     """
 
     top: int
@@ -154,7 +139,7 @@ class Area:
 
 @dataclass(frozen=True)
 class Rect:
-    """Where a window's contents go, in cells of the work area."""
+    """The area of a window's contents, in work-area cells."""
 
     top: int
     left: int
@@ -166,22 +151,20 @@ class Rect:
 class Drawing:
     """The border as characters, plus where each window number is written.
 
-    `rows` is one row longer than the work area: the last of them is the rule
-    the menu sits under, which is the frame's bottom edge.
+    `rows` has one row more than the work area: the last is the frame's bottom
+    edge, the rule under which the menu sits.
     """
 
     rows: tuple[str, ...]
     numbers: tuple[tuple[int, int, int], ...]
-    """Each window's number, as row, column and width, in numbering order."""
+    """Row, column and width of each window number, in numbering order."""
 
 
 def interior(area: Area, framed: bool) -> Rect:
     """Where a window in `area` draws its expressions.
 
-    A framed window keeps off its own borders. The sole window of an unsplit
-    screen has none, so it takes those rows and columns too - which is what
-    makes the original's opening screen a full 80 by 20 rather than one inset
-    by a frame nobody asked for.
+    A framed window excludes its borders. An unframed one (the sole window) uses
+    them too, giving the original's full 80 by 20 opening screen.
     """
     if not framed:
         return Rect(
@@ -199,15 +182,14 @@ def interior(area: Area, framed: bool) -> Rect:
 
 
 def split_default(size: int) -> int:
-    """The line or column a split is offered at: the window cut in half."""
+    """The default split line or column, halving the window."""
     return (size + 1) // 2
 
 
 def split_range(vertical: bool, size: int) -> tuple[int, int]:
-    """The lines or columns a split of a window `size` across may fall on.
+    """The range of lines or columns where a window `size` across may be split.
 
-    An empty range - a high below the low - means the window is too small to
-    split at all, which is how the original runs out of screen.
+    An empty range (high below low) means the window is too small to split.
     """
     if vertical:
         return COLUMN_MARGIN_LEFT, size - COLUMN_MARGIN_RIGHT
@@ -215,17 +197,16 @@ def split_range(vertical: bool, size: int) -> tuple[int, int]:
 
 
 def split_offset(vertical: bool, at: int) -> int:
-    """Where the divider goes for an answer of `at`.
+    """The divider position for a requested split at `at`.
 
-    A vertical divider is rounded down onto an even column, as the original
-    rounds it: 39 and 38 both split at 38. A horizontal one falls where it was
-    asked for.
+    As in the original, vertical dividers round down to an even column, so 39
+    and 38 both split at 38.
     """
     return 2 * (at // 2) if vertical else at
 
 
 class Windows:
-    """Every window there is, and which of them is active."""
+    """All windows, and which one is active."""
 
     def __init__(self, session: Session, kind: str = ALGEBRA) -> None:
         self.root: Node = Window([Overlay(kind, session)])
@@ -242,12 +223,12 @@ class Windows:
 
     @property
     def number(self) -> int:
-        """The active window's number, which is its place in that order."""
+        """The active window's number (its position in `windows`)."""
         return self.windows.index(self.active) + 1
 
     @property
     def framed(self) -> bool:
-        """Whether borders are drawn, which they are as soon as there are two."""
+        """Whether borders are drawn, i.e. there is more than one window."""
         return isinstance(self.root, Split)
 
     @property
@@ -263,7 +244,7 @@ class Windows:
         return found[number - 1] if 1 <= number <= len(found) else None
 
     def sessions(self) -> list[Session]:
-        """Every session there is, overlaid ones included."""
+        """All sessions, including overlaid ones."""
         return [
             overlay.session for window in self.windows for overlay in window.overlays
         ]
@@ -278,18 +259,17 @@ class Windows:
         return True
 
     def step(self, direction: int) -> None:
-        """Make the next or the previous window active, wrapping round the ends."""
+        """Activate the next or previous window, wrapping around."""
         found = self.windows
         self.active = found[(found.index(self.active) + direction) % len(found)]
 
     # -- changing what there is --------------------------------------------
 
     def split(self, vertical: bool, at: int, session: Session) -> Window:
-        """Cut the active window in two, `session` filling the new half.
+        """Split the active window in two, with `session` in the new half.
 
-        The active window stays active and becomes the top or left half, which
-        is where the original leaves it: an expression authored straight after
-        a split lands in the window the split was issued from.
+        As in the original, the active window stays active as the top or left
+        half.
         """
         made = Window([Overlay(self.active.kind, session)])
         split = Split(vertical, split_offset(vertical, at), self.active, made)
@@ -301,11 +281,10 @@ class Windows:
         self.active.overlays.insert(0, Overlay(kind, session))
 
     def close(self, window: Window) -> list[Session]:
-        """Close what `window` is showing, and the window with its last overlay.
+        """Close `window`'s top overlay, and the window itself if it was the last.
 
-        The space a closed window leaves goes to the window it was split from,
-        and the numbers of everything after it move up. Closing the active one
-        leaves the first window of that space active.
+        The freed space goes to the sibling, and later windows are renumbered.
+        Closing the active window activates the first window of that space.
         """
         if window.stacked:
             return [window.overlays.pop(0).session]
@@ -319,26 +298,23 @@ class Windows:
     # -- where everything goes ---------------------------------------------
 
     def areas(self, height: int, width: int) -> dict[Window, Area]:
-        """The cells each window owns, over a work area `height` by `width`.
+        """The cells each window owns, in a work area `height` by `width`.
 
-        The row below the work area is the frame's bottom edge, which is why
-        `bottom` is `height` and not one less: the rule the menu sits under is
-        that edge, drawn by whoever draws the rule.
+        `bottom` is `height` rather than one less because the frame's bottom edge
+        is the rule below the work area.
         """
         found: dict[Window, Area] = {}
         _place(self.root, Area(0, 0, height, max(0, width - 1)), found)
         return found
 
     def interior(self, window: Window, height: int, width: int) -> Rect:
-        """Where `window` draws its expressions, over that same work area."""
+        """Where `window` draws its expressions, in the same work area."""
         return interior(self.areas(height, width)[window], self.framed)
 
     def frame(self, height: int, width: int) -> Drawing:
         """The border around and between the windows.
 
-        One window is drawn without a border, so all that is left of the frame
-        is its bottom edge - which is the plain rule the unsplit screen has
-        always had.
+        A single window has no border, so only the bottom rule is drawn.
         """
         rule = "═" * width
         if not self.framed or height <= 0 or width <= 0:
@@ -358,7 +334,7 @@ def _collect(node: Node, found: list[Window]) -> None:
 
 
 def _first(node: Node) -> Window:
-    """The first window of a subtree, which is the lowest numbered of them."""
+    """The first (lowest-numbered) window of a subtree."""
     while isinstance(node, Split):
         node = node.first
     return node
@@ -375,7 +351,7 @@ def _replaced(node: Node, target: Window, replacement: Node) -> Node:
 
 
 def _sibling(node: Node, target: Window) -> Node | None:
-    """What `target` was split from, and so what takes its space back."""
+    """The sibling of `target`, which takes its space when it closes."""
     if isinstance(node, Split):
         if node.first is target:
             return node.second
@@ -386,7 +362,7 @@ def _sibling(node: Node, target: Window) -> Node | None:
 
 
 def _without(node: Node, target: Window) -> Node:
-    """`node` with `target` gone, the split that held it gone with it."""
+    """`node` with `target` and its parent split removed."""
     if isinstance(node, Split):
         if node.first is target:
             return node.second
@@ -417,11 +393,10 @@ def _place(node: Node, area: Area, found: dict[Window, Area]) -> None:
 def _drawn(
     areas: dict[Window, Area], order: list[Window], height: int, width: int
 ) -> Drawing:
-    """Every border line, resolved into the characters where they cross.
+    """All border lines, with proper junction characters where they meet.
 
-    Each cell remembers which ways a line leaves it, so a divider running into
-    another one picks the piece with those arms and no rule has to know which
-    junction it is making.
+    Each cell records the directions lines leave it in, which picks the right
+    junction character without special cases.
     """
     arms: dict[tuple[int, int], int] = {}
     for area in _edges(areas.values(), height, width):
@@ -435,8 +410,8 @@ def _drawn(
         area = areas[window]
         text = str(index + 1)[: max(0, width - area.left)]
         numbers.append((area.top, area.left, len(text)))
-        # A screen too small to hold the windows it has can put a corner off
-        # the bottom of it, and a number off the screen is simply not drawn.
+        # On a screen too small for its windows, a number may fall off the
+        # bottom; skip it.
         if 0 <= area.top < len(rows):
             line = rows[area.top]
             rows[area.top] = line[: area.left] + text + line[area.left + len(text) :]
@@ -446,11 +421,10 @@ def _drawn(
 def _edges(
     areas: Iterable[Area], height: int, width: int
 ) -> list[tuple[str, int, int, int]]:
-    """Every line to draw, as a direction, a row or column, and its two ends.
+    """All lines to draw, as direction, row or column, and the two ends.
 
-    A window contributes its own two edges; the two that close it belong to
-    whatever is beyond, and the screen's own right and bottom edges are what
-    close the last of them.
+    Each window contributes its top and left edges; the screen's right and bottom
+    edges close the rest.
     """
     lines = [
         ("-", height, 0, width - 1),

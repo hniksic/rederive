@@ -1,44 +1,30 @@
-"""The half of the engine the app may hold: everything that costs nothing to import.
+"""The half of the engine the app may hold: everything that is cheap to import.
 
-The engine has two halves and one rule between them.
+The worker half is the mathematics (`pipeline`, `to_sympy`, `from_sympy`, `factor`,
+`expand`, `solve` and their dependencies). It imports sympy and runs in the worker,
+loaded by `worker.serve`. The app process never imports it: it sends a tree and gets a
+`Result` back.
 
-The worker half is the mathematics - `pipeline`, `to_sympy`, `from_sympy`, `factor`,
-`expand`, `solve` and what they stand on. It imports sympy, it runs in the worker,
-and `worker.serve` is what imports it there. The app process never does: a client
-ships a tree across and a `Result` comes back, and a proxy needs none of the
-mathematics it is a proxy for.
+This module must not import sympy, directly or indirectly. Sympy is some four hundred
+modules, a third of a second and thirty-odd megabytes, and the worker loads its own copy
+anyway. Without it the app can still author, draw, navigate and save a worksheet, so a
+session keeps working while the engine is down.
 
-The client half is this module, and its rule is that it imports no sympy, directly or
-through anything else. That is not tidiness. Sympy is some four hundred modules, a
-third of a second and thirty-odd megabytes, and the app paying that buys nothing:
-whatever it loaded, the worker loads its own copy where the computing happens. What
-is left when it is gone is enough to author, draw, navigate and save a worksheet - so
-a session whose engine is down goes on working, which is the property every engine
-client is built around.
+The worker-death exceptions live here rather than in `remote` because other transports
+(e.g. a browser port) need them too; recovery lives in `policy` for the same reason.
+`remote` keeps only the child-process machinery.
 
-The rule has a second edge, and it is what the exceptions are doing here. A client
-is written against a transport - `remote` spawns a child process and talks down a
-pipe - and a port has another one. So the vocabulary a dead worker raises lives here,
-where anyone may hold it, rather than beside the machinery of any one transport; the
-recovery every death funnels into is in `policy` beside it, for the same reason. What
-is left in `remote` is the child process itself, which is the only part a browser
-cannot use.
-
-What the client half offers:
+This module offers:
 
 * The exceptions a dead worker raises.
-* The vocabulary that crosses to the worker, from `boundary`: `Amount` and `Result`.
-* The session's own state - `Context` and the settings in it - since a context is
-  data the app edits and the worker only reads.
-* `replace` and `main_order`, the two things a command asks for that are answered by
-  reading the tree rather than by computing with it.
-* The questions the menus have to answer before they can put a question of their own.
-  Each is syntactic on purpose, which is what makes it answerable here: Derive asks
-  for a factoring amount based on how an expression is *written*, not on what it is
-  worth, so the answer is a walk over the tree and not a computation.
+* `Amount` and `Result` from `boundary`.
+* `Context` and its settings, which the app edits and the worker only reads.
+* `replace` and `main_order`, which read the tree rather than compute with it.
+* The questions menus ask before prompting the user. They are syntactic on purpose:
+  Derive decides whether to ask for a factoring amount from how an expression is
+  *written*, not its value, so a tree walk suffices.
 
-`tests/test_packages.py` holds the rule to it. Anything imported here that reaches
-sympy fails that test, whatever else it does.
+`tests/test_packages.py` fails if anything imported here reaches sympy.
 """
 
 from __future__ import annotations
@@ -90,9 +76,9 @@ __all__ = [
 
 
 class EngineError(Exception):
-    """What every engine call can fail with, the worker being mortal."""
+    """Base class for failures of an engine call due to the worker."""
 
-    #: Where the dead worker's output went, where there is a file to read.
+    #: Path of the file holding the dead worker's output, if any.
     log: str = ""
 
 
@@ -123,8 +109,7 @@ class EngineDown(EngineError):
 class EngineBug(EngineError):
     """The engine raised, which it promises never to do on parser output.
 
-    The worker survives it - one bad answer is not worth a process - so this is
-    the one engine failure that costs nothing but the command.
+    The worker survives this, so only the command is lost.
     """
 
     def __init__(self, message: str, traceback_text: str = "") -> None:
@@ -133,17 +118,11 @@ class EngineBug(EngineError):
 
 
 def decomposes(node: Node) -> bool:
-    """Whether `node` is written as a rational number, and nothing else.
+    """Whether `node` is written as a rational number.
 
-    Which is the question the original asks before it asks anything else: a
-    number has a prime decomposition and no amount to choose, so the amount
-    menu never comes up for one. The test is on how the expression is written
-    rather than on what it is worth. `1234567890/49` is a rational number, and
-    `10!` is a factorial that has one for a value - the original asks for an
-    amount for the second and not the first.
-
-    An amount would change nothing either way, since a number is decomposed
-    whatever was asked for. What it changes is how many questions are put.
+    Derive doesn't ask for a factoring amount for a number, since it is decomposed into
+    primes regardless. The test is on how the expression is written, not its value:
+    `1234567890/49` qualifies, but `10!` doesn't, and Derive asks for an amount for it.
     """
     if node.kind is Kind.NUMBER:
         return True
@@ -157,28 +136,20 @@ def decomposes(node: Node) -> bool:
 def written_as_ratio(node: Node) -> bool:
     """Whether `node` is written as a quotient, and so has a denominator to factor.
 
-    Which is the question the original asks before it asks for an amount: only
-    a ratio can become partial fractions, and only partial fractions need a
-    denominator factored. The test is on how the expression is written and not
-    on what it is worth, which is the original's own rule and an unforgiving
-    one - it asks for an amount for `x^2/x`, whose value has no denominator at
-    all, and asks for none for `2/x + 1/x`, whose value does. `x^-1` is a
-    power and not a quotient, so it is not asked about either.
-
-    An amount changes nothing where there is no denominator to factor. What it
-    changes is how many questions are put.
+    Expand asks for an amount only in this case, since only a ratio becomes partial
+    fractions. Like Derive, the test is purely syntactic: it asks for `x^2/x`, whose
+    value has no denominator, but not for `2/x + 1/x`, whose value does. `x^-1` is a
+    power, not a quotient.
     """
     return node.kind is Kind.BINOP and node.value == "/"
 
 
 def equations_in(node: Node) -> int:
-    """How many equations `node` is a system of, zero where it is no system.
+    """How many equations `node` is a system of, or zero if it isn't one.
 
-    Which is the question the UI has to answer before it can ask anything: a
-    system of E equations in more than E variables is asked about E times, and
-    a scalar equation at most once. Syntactic, like `decomposes`: a system is a
-    vector of relations or expressions as it was written, and reading that off the
-    tree costs nothing.
+    The UI needs this before prompting: a system of E equations in more than E variables
+    asks for variables E times, a scalar equation at most once. Like `decomposes` it is
+    syntactic: a system is a vector of relations or expressions as written.
     """
     if node.kind is not Kind.VECTOR or not node.children:
         return 0
@@ -187,8 +158,8 @@ def equations_in(node: Node) -> int:
     return len(node.children)
 
 
-#: What a vector element can be that is no equation of a system, as `equations_of`
-#: reads one: any other element is a relation or the expression `u` of `u = 0`.
+#: Vector element kinds that can't be an equation of a system. Any other element is a
+#: relation, or an expression `u` read as `u = 0` by `equations_of`.
 _NO_EQUATION = frozenset(
     {
         Kind.VECTOR,

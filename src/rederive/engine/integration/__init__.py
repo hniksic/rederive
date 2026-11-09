@@ -1,10 +1,9 @@
-"""Integration: what Simplify makes of an `INT` head.
+"""Integration: how Simplify evaluates an `INT` head.
 
-`integral` is the one way in, and its answer is a function of the head alone. The
-work is split four ways: `indefinite` dispatches an integral over the methods that
-may answer it, `definite` puts right what sympy gets wrong between limits, `proof`
-is what an answer has to pass before it is taken, and `form` chooses which
-antiderivative is the one printed.
+`integral` is the entry point; its answer depends only on the head. `indefinite` tries
+each integration method in turn, `definite` corrects what sympy gets wrong between
+limits, `proof` checks an answer before it is accepted, and `form` chooses which
+antiderivative is printed.
 """
 
 from __future__ import annotations
