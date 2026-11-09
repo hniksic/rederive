@@ -96,15 +96,14 @@
   /* A menu, under the button that opens it: the corner of the button it hangs
      from, since it is a child of that button's control. Inside `#chrome` so that
      a pointer on the menu is a pointer on the controls and none of it fades
-     while it is being read. It hangs from the button's right corner, since the
-     controls sit in the right corner of the screen and a menu hung from the left
-     would run off it. */
+     while it is being read. It is as wide as its items, so that it reads as
+     belonging to its button. The rightmost control's menu hangs from its right
+     corner instead, so that it stays on the screen. */
   .menu {
     position: absolute;
     top: 100%;
-    right: 0;
+    left: 0;
     margin-top: 6px;
-    min-width: 15em;
     display: flex;
     flex-direction: column;
     padding: 4px;
@@ -114,6 +113,7 @@
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
   }
   .menu[hidden] { display: none; }
+  .control:last-child .menu { left: auto; right: 0; }
   .gallery-heading {
     padding: 6px 8px 3px;
     color: #6f7684;
