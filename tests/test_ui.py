@@ -1,6 +1,7 @@
 """Smoke tests driving the real app through Textual's pilot."""
 
 import pytest
+from textual import events
 from screen import (
     annotation,
     band,
@@ -1889,6 +1890,25 @@ async def test_a_headless_copy_keeps_off_the_desktop_clipboard(app, monkeypatch)
         assert touched == []
 
 
+async def test_ctrl_v_pastes_the_system_clipboard_where_it_is_read(app, monkeypatch):
+    # Outside a test Ctrl-V reads the desktop's clipboard, and falls back on
+    # the copy kept here where nothing is read. The run stands in for one that
+    # is not headless, with a clipboard of its own in place of the desktop's.
+    held = ["a + b\nsecond line"]
+    environment = type(platform.current())
+    monkeypatch.setattr(environment, "paste", lambda self: held[0])
+    monkeypatch.setattr(RederiveApp, "is_headless", property(lambda self: False))
+    monkeypatch.setattr(environment, "copy", lambda self, text, refused=None: None)
+    async with app.run_test() as pilot:
+        authored(app, "y")
+        await pilot.press("ctrl+c")
+        await pilot.press("a", "ctrl+v")
+        assert prompt(app)[1] == "a + b"
+        held[0] = None
+        await pilot.press("ctrl+v")
+        assert prompt(app)[1] == "a + by"
+
+
 async def test_ctrl_c_copies_only_the_highlighted_part(app):
     async with app.run_test() as pilot:
         authored(app, "x (x + 1)")
@@ -1931,6 +1951,19 @@ async def test_pasting_takes_the_offered_label_hash_and_all(app):
         # in front of one says nothing.
         await pilot.press("ctrl+v")
         assert prompt(app)[1] == "y"
+
+
+async def test_a_terminal_paste_takes_the_offered_label_too(app):
+    # What the terminal's own paste key sends, and what the browser's Ctrl-V
+    # becomes: a paste event rather than a key. It lands as Ctrl-V's does.
+    async with app.run_test() as pilot:
+        authored(app, "x", "y")
+        await pilot.press("s")
+        assert prompt(app) == ("SIMPLIFY expression:", "#2")
+        line = app.query_one("#prompt-input")
+        line.post_message(events.Paste("a + b\nsecond line"))
+        await pilot.pause()
+        assert prompt(app)[1] == "a + b"
 
 
 async def test_ctrl_v_pastes_onto_any_line_but_not_at_the_menu(app):

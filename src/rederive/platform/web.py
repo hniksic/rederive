@@ -263,6 +263,14 @@ class Web:
         if catch is not None:
             catch(lambda _error: _say(refused, CLIPBOARD_REFUSED))
 
+    def paste(self) -> str | None:
+        """Nothing: the page hands Ctrl-V to the browser, which pastes by itself.
+
+        Reading `navigator.clipboard` from here would be a permission to ask
+        for, where the browser's own paste needs none.
+        """
+        return None
+
     # -- files -------------------------------------------------------------
 
     def storage(self) -> WebStorage:

@@ -77,6 +77,15 @@ class Platform(Protocol):
         not a return value.
         """
 
+    def paste(self) -> str | None:
+        """The text on whatever clipboard there is, or None where none will be read.
+
+        None is the answer that sends Ctrl-V back to the copy the program keeps
+        itself, and it covers a machine with no clipboard tool as well as a page,
+        which reads its clipboard by a road of its own: the key never reaches
+        the program there, the page leaving it to the browser to paste.
+        """
+
     def storage(self) -> Storage:
         """The files this environment keeps worksheets in."""
 

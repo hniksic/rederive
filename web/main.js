@@ -287,9 +287,16 @@ function terminal() {
   // to expect. Declining the key leaves the browser to fire its copy event, which
   // xterm.js answers with the selection; with nothing selected the key goes to
   // the program as before. Any key or click sent on clears the selection.
-  term.attachCustomKeyEventHandler((event) => !(
-    event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
-    && event.key.toLowerCase() === 'c' && term.hasSelection()));
+  //
+  // Ctrl-V is declined always, for the same reason: the browser then fires its
+  // paste event, which xterm.js sends on as a paste, the way Ctrl-Shift-V
+  // arrives. Reading the clipboard from the program instead would be a
+  // permission to ask for, where the browser's own paste needs none.
+  term.attachCustomKeyEventHandler((event) => {
+    const ctrl = event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
+    const key = event.key.toLowerCase();
+    return !(ctrl && (key === 'v' || (key === 'c' && term.hasSelection())));
+  });
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   const fit = new FitAddon.FitAddon();

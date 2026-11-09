@@ -87,6 +87,19 @@ class Desktop:
         except pyperclip.PyperclipException:
             pass
 
+    def paste(self) -> str | None:
+        """The text on the desktop's own clipboard, through the same tool as `copy`.
+
+        None where there is no tool to read it with, which across ssh is the
+        usual answer: the terminal's own paste key is the road there.
+        """
+        if pyperclip is None:
+            return None
+        try:
+            return pyperclip.paste()
+        except pyperclip.PyperclipException:
+            return None
+
     # -- files -------------------------------------------------------------
 
     def storage(self) -> DesktopStorage:

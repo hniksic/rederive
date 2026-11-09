@@ -19,6 +19,7 @@ from textual import events
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.geometry import Offset, Region, Size
+from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -622,6 +623,24 @@ class PromptLine(Input):
         #: the line it left behind. Alt-Y needs all three, to tell a yank
         #: still standing as it landed from one since typed over.
         self._yanked: tuple[int, int, int, str] | None = None
+
+    class Pasted(Message):
+        """Text the terminal or the browser pasted, for the app to write."""
+
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+    def _on_paste(self, event: events.Paste) -> None:
+        """A paste from the terminal or the browser goes on to the app.
+
+        The base class would write it over the selection, which on a line
+        offering a label leaves the `#` in front of what was pasted. The app
+        writes it as Ctrl-V does, `#` and all, so it is handed on there instead.
+        """
+        event.prevent_default()
+        event.stop()
+        self.post_message(self.Pasted(event.text))
 
     async def _on_key(self, event: events.Key) -> None:
         if not (self.overwrite and event.is_printable and self.selection.is_empty):

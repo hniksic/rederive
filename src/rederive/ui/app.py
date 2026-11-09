@@ -51,15 +51,16 @@ that tells the two apart.
 
 An expression moves by way of the clipboard: Ctrl-C puts what is highlighted on
 the system clipboard, both through the terminal and past it by the desktop's
-own tools, and Ctrl-V writes the copy kept here onto the line being typed. Where
-a stretch of the line is marked out, that is what Ctrl-C copies instead, a
-selection being the plainest way of saying what a key is to act on, and Ctrl-X is
-the same for the line with the stretch taken off it.
-Text copied in another program comes the other way by the terminal's own paste
-key, arriving as if it had been typed: a terminal hands over the clipboard when
-its user asks and not when a program does. The original's F3 and F4, which write
-the highlight onto the line directly, still work; the help offers copy and paste
-instead.
+own tools, and Ctrl-V writes what is on the system clipboard onto the line being
+typed. Where a stretch of the line is marked out, that is what Ctrl-C copies
+instead, a selection being the plainest way of saying what a key is to act on,
+and Ctrl-X is the same for the line with the stretch taken off it.
+Ctrl-V reads the clipboard by the desktop's tools, and falls back on the copy
+kept here where there are none, as across ssh; the terminal's own paste key
+still works everywhere, the text arriving as if it had been typed. In a browser
+the page hands Ctrl-V to the browser, which pastes as the terminal's key does.
+The original's F3 and F4, which write the highlight onto the line directly,
+still work; the help offers copy and paste instead.
 
 A line that names a file completes what is typed on it, and opens a list of the
 names on offer to look through. The first name the letters so far could grow
@@ -1207,10 +1208,10 @@ class RederiveApp(App[None]):
             priority=True,
             show=False,
         ),
-        # Ctrl-C takes a copy of the highlighted expression and Ctrl-V puts it
-        # back on the line being typed, which is how a new expression is built
-        # out of ones already on the worksheet without any of it being typed
-        # again. The arrows still walk the highlight with a line up, which is
+        # Ctrl-C takes a copy of the highlighted expression and Ctrl-V puts it,
+        # or whatever else is on the clipboard, on the line being typed, which
+        # is how a new expression is built out of ones already on the worksheet
+        # without any of it being typed again. The arrows still walk the highlight with a line up, which is
         # what makes the pair worth having: move onto what is wanted, copy it,
         # and paste it where it is going.
         Binding("ctrl+c", "copy_highlighted", "Copy", priority=True, show=False),
@@ -2650,24 +2651,46 @@ class RederiveApp(App[None]):
         self._set_message(CUT_TEXT)
 
     def action_paste_clipboard(self) -> None:
-        """Ctrl-V: put the copy back on the line being typed.
+        """Ctrl-V: put what is on the clipboard on the line being typed.
 
         In at the cursor, over whatever is selected, with the cursor left after
         it, as everything else that writes on the line does. A line offering a
         label gives up its `#` as well: what is pasted stands where an
         expression goes, and a `#` in front of one says nothing.
 
-        What comes back is the copy this program holds. Text copied in another
-        program arrives instead by the terminal's own paste key, as if it had
-        been typed: a terminal hands over the clipboard when its user asks and
-        not when a program does.
+        What comes back is the system clipboard where the environment will read
+        it, so that text copied in another program pastes as readily as a copy
+        taken here, and the copy this program holds where it will not. A
+        headless run keeps to the copy held here, for the reason
+        `copy_to_clipboard` gives.
         """
-        text = self.clipboard
+        text = None if self.is_headless else platform.current().paste()
+        if not text:
+            text = self.clipboard
         if not text:
             self._beep()
             return
+        self._paste_on_line(text)
+
+    def on_prompt_line_pasted(self, event: PromptLine.Pasted) -> None:
+        """A paste from the terminal's own key, or from the browser's Ctrl-V.
+
+        It lands as Ctrl-V's does, so the `#` of an offered label goes with it
+        whichever key brought it. Away from a line there is nothing to paste on.
+        """
+        if self.mode in PROMPT_MODES and event.text:
+            self._paste_on_line(event.text)
+
+    def _paste_on_line(self, text: str) -> None:
+        """Write the first line of `text` on the line, over an offered label too.
+
+        Only the first, the line being one line.
+        """
+        lines = text.splitlines()
+        if not lines or not lines[0]:
+            return
         self._take_offered_label()
-        self._write_on_line(text)
+        self._write_on_line(lines[0])
 
     def action_insert_highlighted(self, fenced: int) -> None:
         """F3 and F4: write the highlighted expression onto the author line.

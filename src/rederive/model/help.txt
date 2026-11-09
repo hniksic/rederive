@@ -91,7 +91,7 @@ Special key commands:
                highlight; only on lines that take an expression
   Ctrl-C       copy what is selected, or the highlighted expression
   Ctrl-X       cut what is selected on the line
-  Ctrl-V       paste what was copied onto the line
+  Ctrl-V       paste the clipboard onto the line
   Ins          switch between inserting characters and typing over them
   Tab          on a line naming a file, complete the name and list the matches
   Enter        accept the line
@@ -464,7 +464,7 @@ Algebra window key commands:
                highlight
   Ctrl-C       copy what is selected, or the highlighted expression
   Ctrl-X       cut what is selected on the line being typed
-  Ctrl-V       paste what was copied onto the line being typed
+  Ctrl-V       paste the clipboard onto the line being typed
   Esc          abandon the question being asked; stop a running computation
 
 A long computation shows on the message line how long it has been running.
