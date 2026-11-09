@@ -626,6 +626,9 @@ def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
     coefficients are rational term by term: Derive's answer to the manual's difference
     equation is `(m^2/2 + m/2 + 1)*(m - 1)!`. In front where the fraction would land
     under every term - `x*(x - 1)/2` is that one, a denominator the whole sum shares.
+    In front as well wherever the product has a denominator that is not a number: the
+    number then stands under the line beside it, and the sum over the line keeps whole
+    coefficients, `(4*x + 3)/(2*(x + 1)^2)` and not `(2*x + 3/2)/(x + 1)^2`.
 
     Decided from the product and not from how it was written: what the sum's terms
     have under them in common is taken out first, so `x*(x/2 - 1/2)` is `x*(x - 1)/2`
@@ -651,21 +654,41 @@ def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
     if shared != 1:
         terms = [shared * term for term in terms]
         coefficient = coefficient / shared
+    under = any(map(_under_the_line, others))
+    if under:
+        # A number the sum's terms have in common with the number under the line is
+        # cancelled from both: `(4*x + 6)/(4*y)` is `(2*x + 3)/(2*y)`. A term's number
+        # is the whole of what it carries, the one in a bracket or a denominator of its
+        # own included: `(2*b - 2*c)*u` carries a 2, and `4/(2*v + 2)` is `2/(v + 1)`.
+        contents = [term.as_content_primitive() for term in terms]
+        if all(content.is_Integer for content, _ in contents):
+            common = reduce(sp.igcd, (content for content, _ in contents), coefficient.q)
+            if common != 1 or shared != 1:
+                terms = [content / common * rest for content, rest in contents]
+                coefficient = coefficient * common
+    rewritten = terms != list(sums[0].args)
     if coefficient.q == 1:
         if all(sp.fraction(other)[0] == 1 for other in others):
             # A whole number with nothing but a denominator beside it goes into the
             # sum, which is how `_quotient` writes it and how it reads back.
-            if shared == 1 and coefficient == 1:
+            if not rewritten and coefficient == 1:
                 return product
             spread = sp.Add(*(_folded(coefficient * term) for term in terms))
             return sp.Mul(sign, *others, spread)
-        if shared == 1:
+        if not rewritten:
             return product
         return sp.Mul(sign * coefficient, *others, sp.Add(*terms))
     spread = [coefficient * term for term in terms]
-    if any(term.as_coeff_Mul()[0].is_integer for term in spread):
+    if not under and any(term.as_coeff_Mul()[0].is_integer for term in spread):
         return sp.Mul(sign, *others, sp.Add(*spread))
     return sp.Mul(sign * coefficient, *others, sp.Add(*terms))
+
+
+def _under_the_line(factor: sp.Expr) -> bool:
+    """Whether the factor is written under the line, a power with a negative number for
+    its exponent: `y^(-n)` and `#e^(-x)` are written over it."""
+    exponent = factor.as_base_exp()[1]
+    return bool(exponent.is_Number and exponent.is_negative)
 
 
 def _carried(term: sp.Expr) -> tuple[sp.Expr, sp.Expr]:

@@ -159,10 +159,10 @@ def _with_a_factored_rational_part(
     variable times a power of each of the factors `_denominator_factors` finds, by
     dividing them out: nothing is factored that the square-free decomposition or the
     integrand as written did not already split, and `INT(x^2/(x^3 + 1)^2, x)` is over
-    `x^3 + 1`. Where the normal form would take a number in that denominator into the
-    numerator, as `_spread_by_the_normal_form` says, it is left multiplied out, and so
-    it is where the factored part would have the whole answer put over one
-    denominator, as `_merged_only_when_factored` says.
+    `x^3 + 1`. Where the factored quotient reads back multiplied out, as
+    `_multiplied_when_read` says, it is left multiplied out, and so it is where the
+    factored part would have the whole answer put over one denominator, as
+    `_merged_only_when_factored` says.
 
     The rational part `R` and `R - R(0)` are antiderivatives alike, and the second is
     taken where its numerator has fewer terms: `INT(x^4/(1 + x)^6, x)` is
@@ -192,7 +192,7 @@ def _with_a_factored_rational_part(
         if shifted is not None:
             part = shifted
     written = _over_the_factors(part, _denominator_factors(integrand, q, variable))
-    if written is None or _spread_by_the_normal_form(written):
+    if written is None or _multiplied_when_read(written):
         if shifted is None:
             return value
         written = part
@@ -305,25 +305,16 @@ def _merged_only_when_factored(factored: sp.Basic, multiplied: sp.Basic) -> bool
     )
 
 
-def _spread_by_the_normal_form(written: sp.Basic) -> bool:
-    """Whether the normal form would write the quotient with fractions in its
-    numerator.
+def _multiplied_when_read(written: sp.Basic) -> bool:
+    """Whether the quotient is a sum over a number times a single sum, which is read
+    back over that denominator multiplied out.
 
-    The normal form takes a number under the line into the one sum over it wherever
-    that leaves some term of the sum a whole coefficient, `(4*x + 3)/(2*(x + 1)^2)` as
-    `(2*x + 3/2)/(x + 1)^2`. A rational part it would write that way is kept over its
-    denominator multiplied out, where the number stays inside a sum.
+    Sympy multiplies a number into a sum as it builds the product of the two, so
+    `(3 - 4*x)/(2*(x^2 + 1))` reads back as `(3 - 4*x)/(2*x^2 + 2)`, and it is that form
+    that a second Simplify keeps.
     """
-    coefficient, rest = written.as_coeff_Mul()
-    if not coefficient.is_Rational or coefficient.q == 1:
-        return False
-    sums = [factor for factor in sp.Mul.make_args(rest) if factor.is_Add]
-    if len(sums) != 1:
-        return False
-    return any(
-        (coefficient * term.as_coeff_Mul()[0]).is_Integer
-        for term in sp.Add.make_args(sp.expand(sums[0]))
-    )
+    numerator, denominator = sp.fraction(written)
+    return numerator.is_Add and denominator.is_Add
 
 
 def somewhere_only(value: sp.Basic) -> bool:

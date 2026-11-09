@@ -392,8 +392,8 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
         ("INT(1/(1 + x)^2, x)", "-1/(x + 1)"),
         (
             "INT(x^4/(a + b*x)^6, x)",
-            "-(5*b^4*x^4 + 10*a*b^3*x^3 + 10*a^2*b^2*x^2 + 5*a^3*b*x + a^4)/(5*b^10*x^5 "
-            "+ 25*a*b^9*x^4 + 50*a^2*b^8*x^3 + 50*a^3*b^7*x^2 + 25*a^4*b^6*x + 5*a^5*b^5)",
+            "-(5*b^4*x^4 + 10*a*b^3*x^3 + 10*a^2*b^2*x^2 + 5*a^3*b*x + "
+            "a^4)/(5*b^5*(b*x + a)^5)",
         ),
         # Square-free factors are not factored further, but the factors the
         # denominator was written with are kept apart.
@@ -406,13 +406,18 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
             "INT(1/(x^2 + 3*x + 2)^2, x)",
             "-2*LN(x + 1) + 2*LN(x + 2) - (2*x + 3)/(x^2 + 3*x + 2)",
         ),
-        # Where the normal form would take the number under the line into the sum
-        # over it, the denominator stays multiplied out.
-        ("INT(x^2/(1 + x)^3, x)", "LN(x + 1) + (4*x + 3)/(2*x^2 + 4*x + 2)"),
+        # The number under the line stays there beside the factors, and the sum over
+        # it keeps whole coefficients.
+        ("INT(x^2/(1 + x)^3, x)", "LN(x + 1) + (4*x + 3)/(2*(x + 1)^2)"),
         (
             "INT(x^5/(1 + x)^6, x)",
-            "LN(x + 1) + (300*x^4 + 900*x^3 + 1100*x^2 + 625*x + 137)/(60*x^5 + 300*x^4 "
-            "+ 600*x^3 + 600*x^2 + 300*x + 60)",
+            "LN(x + 1) + (300*x^4 + 900*x^3 + 1100*x^2 + 625*x + 137)/(60*(x + 1)^5)",
+        ),
+        # A sum over a number times one factor is over the two multiplied out, which
+        # is how it reads back.
+        (
+            "INT((2*x^2 + 2*x + 13)/((x - 2)*(x^2 + 1)^2), x)",
+            "-4*ATAN(x) + LN(x - 2) - LN(x^2 + 1)/2 + (3 - 4*x)/(2*x^2 + 2)",
         ),
         # The constant that makes the rational part vanish at zero, where that
         # shortens its numerator.
