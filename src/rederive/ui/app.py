@@ -287,8 +287,8 @@ EXPRESSION_LINES = (
 #: table used the IBM PC character set).
 #:
 #: Where Derive's case differs (its `Θ`, `Φ` and `Ω` were the only forms its character
-#: set had), the key inserts what this program prints, so input and output match. `#e`
-#: and `#i` are inserted as names rather than glyphs for the same reason.
+#: set had), the key inserts what this program prints, so input and output match. `ê`
+#: and `î` read as `#e` and `#i`, which can still be typed out.
 #:
 #: Alt-minus needs a terminal with the extended keyboard protocol; otherwise it arrives
 #: as Escape plus hyphen and isn't seen. The letters work either way. Without Alt-minus,
@@ -307,8 +307,8 @@ ALT_GLYPHS = {
     "o": "ω",
     "g": "Γ",
     "q": "√",
-    "e": "#e",
-    "i": "#i",
+    "e": "ê",
+    "i": "î",
     "0": "∞",
     "minus": "±",
     # The subscript operator, a glyph in Derive and a word here, spaced as printed.

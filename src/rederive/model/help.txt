@@ -165,8 +165,8 @@ Entering Greek letters, special constants and operators:
   Alt-H  theta     Alt-M  mu        Alt-P  pi        Alt-S  sigma
   Alt-T  tau       Alt-F  phi       Alt-O  omega     Alt-G  Gamma
   Alt-Q  the square root sign       Alt-0  infinity
-  Alt-E  the base of natural logarithms, #e
-  Alt-I  the square root of -1, #i
+  Alt-E  the base of natural logarithms, ê (#e)
+  Alt-I  the square root of -1, î (#i)
   Alt-minus  the plus-or-minus sign
   Alt-V  the subscript operator, SUB
 

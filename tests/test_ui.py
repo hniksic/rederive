@@ -2180,7 +2180,14 @@ async def test_the_alt_keys_write_glyphs_onto_the_line(app):
     async with app.run_test() as pilot:
         await pilot.press("a")
         await pilot.press("alt+a", "alt+p", "alt+0", "alt+q", "alt+e", "alt+i")
-        assert prompt(app)[1] == "απ∞√#e#i"
+        assert prompt(app)[1] == "απ∞√êî"
+
+
+async def test_alt_e_and_alt_i_enter_the_constants(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", "alt+e", "+", "alt+i", "enter")
+        assert work_area(app) == ["#1:  ê + î"]
+        assert numbered(app)[-1] == "#1: #e+#i"
 
 
 async def test_alt_minus_writes_the_plus_or_minus_operator(app):
