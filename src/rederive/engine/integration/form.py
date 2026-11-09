@@ -157,9 +157,8 @@ def _with_a_factored_rational_part(
     `INT(1/(1 + x)^3, x)` is `-1/(2*(x + 1)^2)`, which says where its pole is, and not
     `-1/(2*x^2 + 4*x + 2)`. So the denominator is written as a factor free of the
     variable times a power of each of the factors `_denominator_factors` finds, by
-    dividing them out: nothing is factored that the square-free decomposition or the
-    integrand as written did not already split, and `INT(x^2/(x^3 + 1)^2, x)` is over
-    `x^3 + 1`. Where the factored quotient reads back multiplied out, as
+    dividing them out: the irreducible factors of `q`, but with a binomial such as
+    `x^3 + 1` kept whole. Where the factored quotient reads back multiplied out, as
     `_multiplied_when_read` says, it is left multiplied out, and so it is where the
     factored part would have the whole answer put over one denominator, as
     `_merged_only_when_factored` says.
@@ -191,7 +190,7 @@ def _with_a_factored_rational_part(
         shifted = _shorter_at_zero(part, variable)
         if shifted is not None:
             part = shifted
-    written = _over_the_factors(part, _denominator_factors(integrand, q, variable))
+    written = _over_the_factors(part, _denominator_factors(q))
     if written is None or _multiplied_when_read(written):
         if shifted is None:
             return value
@@ -219,47 +218,35 @@ def _shorter_at_zero(part: sp.Basic, variable: sp.Basic) -> sp.Basic | None:
     return shifted
 
 
-def _denominator_factors(
-    integrand: sp.Basic, q: sp.Poly, variable: sp.Basic
-) -> list[sp.Poly]:
-    """The factors the rational part's denominator is written over: the square-free
-    factors of the integrand's cancelled denominator `q`, split where the denominator
-    was written with factors of its own, by gcds and never by a factorization.
+def _denominator_factors(q: sp.Poly) -> list[sp.Poly]:
+    """The factors the rational part's denominator is written over, from the
+    integrand's cancelled denominator `q`.
 
-    `1/((x + 1)^2*(x + 2)^2)` has the one square-free factor `x^2 + 3*x + 2`, and the
-    rational part of its integral is over `(x + 1)*(x + 2)`, the factors it was written
-    with, as the normal form keeps the factors a denominator arrives with. Each is
-    taken square-free, and the whole is made pairwise coprime: a factor that shares a
-    divisor with another is replaced by the divisor and what is left of the two.
+    Each square-free factor of `q` is split into the variable, where the variable
+    divides it, and the rest. The rest is factored over the rationals, unless it is a
+    binomial `a*x^n + b`, which is a factor whole: `x^4 + 3*x^2 + 2` gives `x^2 + 1`
+    and `x^2 + 2`, `x^3 - x` gives `x` and `x^2 - 1`, and `x^3 + 1` stays as it is. A
+    factor that cannot be factored is taken whole.
     """
-    written = []
-    for factor in sp.Mul.make_args(sp.denom(integrand)):
-        base, _ = factor.as_base_exp()
-        if base.has(variable) and base.is_polynomial(variable):
-            _, parts = sp.Poly(base, variable).sqf_list()
-            written.extend(part for part, _ in parts)
+    variable = q.gens[0]
+    factors: list[sp.Poly] = []
     _, parts = q.sqf_list()
-    basis: list[sp.Poly] = []
-    for candidate in [*written, *(part for part, _ in parts)]:
-        pending = [candidate]
-        while pending:
-            factor = pending.pop()
-            if factor.degree() <= 0:
-                continue
-            for index, known in enumerate(basis):
-                common = sp.gcd(factor, known)
-                if common.degree() <= 0:
-                    continue
-                if common.degree() == known.degree():
-                    common = known
-                else:
-                    del basis[index]
-                    pending.extend([common, sp.quo(known, common)])
-                pending.append(sp.quo(factor, common))
-                break
-            else:
-                basis.append(factor)
-    return basis
+    for part, _ in parts:
+        (lowest,), _ = part.terms()[-1]
+        if lowest:
+            factors.append(sp.Poly(variable, variable))
+            part = part.exquo(sp.Poly(variable**lowest, variable))
+        if part.degree() <= 0:
+            continue
+        if len(part.terms()) == 2:
+            factors.append(part)
+            continue
+        try:
+            _, irreducible = part.factor_list()
+        except Exception:
+            irreducible = [(part, 1)]
+        factors.extend(factor for factor, _ in irreducible if factor.degree() > 0)
+    return factors
 
 
 def _over_the_factors(part: sp.Basic, bases: list[sp.Poly]) -> sp.Basic | None:

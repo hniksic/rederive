@@ -395,16 +395,40 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
             "-(5*b^4*x^4 + 10*a*b^3*x^3 + 10*a^2*b^2*x^2 + 5*a^3*b*x + "
             "a^4)/(5*b^5*(b*x + a)^5)",
         ),
-        # Square-free factors are not factored further, but the factors the
-        # denominator was written with are kept apart.
-        ("INT(x^2/(x^3 + 1)^2, x)", "-1/(3*(x^3 + 1))"),
+        # The irreducible factors, the variable and binomials whole, however the
+        # denominator is written.
         (
             "INT(1/((x + 1)^2*(x + 2)^2), x)",
             "-2*LN(x + 1) + 2*LN(x + 2) - (2*x + 3)/((x + 1)*(x + 2))",
         ),
         (
             "INT(1/(x^2 + 3*x + 2)^2, x)",
-            "-2*LN(x + 1) + 2*LN(x + 2) - (2*x + 3)/(x^2 + 3*x + 2)",
+            "-2*LN(x + 1) + 2*LN(x + 2) - (2*x + 3)/((x + 1)*(x + 2))",
+        ),
+        (
+            "INT(1/(x^4 + 3*x^2 + 2)^2, x)",
+            "9*SQRT(2)*ATAN(SQRT(2)*x/2)/8 - 3*ATAN(x)/2 + x*(3*x^2 + 5)/(4*(x^2 + "
+            "1)*(x^2 + 2))",
+        ),
+        (
+            "INT(1/(x^3 + 1)^2, x)",
+            "2*SQRT(3)*ATAN(2*SQRT(3)*x/3 - SQRT(3)/3)/9 + 2*LN(x + 1)/9 - LN(x^2 - x + "
+            "1)/9 + x/(3*(x^3 + 1))",
+        ),
+        ("INT(x^2/(x^3 + 1)^2, x)", "-1/(3*(x^3 + 1))"),
+        ("INT(x^2/(x^3 + 1)^3, x)", "-1/(6*(x^3 + 1)^2)"),
+        ("INT(1/(x^2 - 1)^2, x)", "-LN(x - 1)/4 + LN(x + 1)/4 - x/(2*(x^2 - 1))"),
+        (
+            "INT(1/((x - 1)^2*(x + 1)^2), x)",
+            "-LN(x - 1)/4 + LN(x + 1)/4 - x/(2*(x^2 - 1))",
+        ),
+        (
+            "INT(1/(x^4 - 1)^2, x)",
+            "3*ATAN(x)/8 - 3*LN(x - 1)/16 + 3*LN(x + 1)/16 - x/(4*(x^4 - 1))",
+        ),
+        (
+            "INT(1/(x^3 - x)^2, x)",
+            "-3*LN(x - 1)/4 + 3*LN(x + 1)/4 + (2 - 3*x^2)/(2*x*(x^2 - 1))",
         ),
         # The number under the line stays there beside the factors, and the sum over
         # it keeps whole coefficients.
