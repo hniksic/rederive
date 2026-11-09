@@ -328,13 +328,18 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     the casus irreducibilis: three real roots that the radicals can only reach
     through `#i`. `SOLVE(x^3 - 3*x + 1 = 0, x)` is then the original's own
     `2*COS(2*pi/9)` and its two companions, and not three nested radicals over
-    an imaginary unit that cancels.
+    an imaginary unit that cancels. A rational cubic with one real root has its
+    radicals from `_cardano_roots`, which writes them as the original does.
     """
     polynomial = _polynomial(residual, variable)
     if polynomial is not None:
         if polynomial.degree() < 1:
             return sp.S.EmptySet if not polynomial.is_zero else sp.S.Complexes
-        found = _binomial_roots(polynomial) or sp.roots(polynomial, trig=True)
+        found = (
+            _binomial_roots(polynomial)
+            or _cardano_factored(polynomial)
+            or sp.roots(polynomial, trig=True)
+        )
         if not found or sum(found.values()) != polynomial.degree():
             return None
         return sp.FiniteSet(*found)
@@ -430,6 +435,107 @@ def _binomial_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
         return None
     modulus = sp.Abs(value) ** sp.Rational(1, degree)
     return {modulus * root: 1 for root in unity}
+
+
+def _cardano_factored(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
+    """The roots of a rational polynomial with a cubic factor `_cardano_roots`
+    writes, each factor solved on its own, or None for any other polynomial.
+
+    `roots` splits a polynomial into its factors over the rationals too, so solving
+    them one at a time loses nothing; it is done only where a factor is such a cubic,
+    so that every other polynomial is answered as `roots` answers it.
+    """
+    try:
+        if polynomial.degree() < 3 or polynomial.domain not in (sp.ZZ, sp.QQ):
+            return None
+        _, factors = polynomial.factor_list()
+        written = [_cardano_roots(factor) for factor, _ in factors]
+        if not any(written):
+            return None
+        found: dict[sp.Basic, int] = {}
+        for (factor, multiplicity), roots in zip(factors, written):
+            for root, count in (roots or sp.roots(factor, trig=True)).items():
+                found[root] = found.get(root, 0) + count * multiplicity
+        return found
+    except Exception:
+        return None
+
+
+def _cardano_roots(polynomial: sp.Poly) -> dict[sp.Basic, int] | None:
+    """The roots of an irreducible rational cubic with one real root, in Cardano's
+    radicals written as the original writes them, or None for any other polynomial.
+
+    For `t^3 + p*t + q`, the cubic shifted to lose its square term, the real root is
+    `u + v` with `u` and `v` the real cube roots of `-q/2 + SQRT(D)` and
+    `-q/2 - SQRT(D)`, where `D = q^2/4 + p^3/27` is positive exactly when the other
+    two roots are a complex pair; they are `-(u + v)/2 +- SQRT(3)*#i*(u - v)/2`.
+    `roots` writes `u` alone and `v` as `-p/(3*u)`, which is the same number:
+    `x^3 + 3*x + 1` is `3/(27*SQRT(5)/2 + 27/2)^(1/3) - (27*SQRT(5)/2 + 27/2)^(1/3)/3`
+    there and `(4*SQRT(5) - 4)^(1/3)/2 - (4*SQRT(5) + 4)^(1/3)/2` here. Each cube root
+    is written by `_real_cube_root`, so a negative radicand never stands under a
+    root that the engine would take as its principal, complex, branch.
+    """
+    if polynomial.degree() != 3 or polynomial.domain not in (sp.ZZ, sp.QQ):
+        return None
+    if not polynomial.is_irreducible:
+        return None
+    leading, b, c, d = (sp.Rational(k) for k in polynomial.all_coeffs())
+    b, c, d = b / leading, c / leading, d / leading
+    shift = -b / 3
+    p = c - b**2 / 3
+    q = 2 * b**3 / 27 - b * c / 3 + d
+    discriminant = q**2 / 4 + p**3 / 27
+    if not discriminant.is_positive:
+        return None
+    surd = sp.sqrt(discriminant)
+    u = _real_cube_root(-q / 2 + surd)
+    v = _real_cube_root(-q / 2 - surd)
+    if u is None or v is None:
+        return None
+    mean = shift - (u + v) / 2
+    # The imaginary part has the coefficients of `u - v` taken out, which is how it
+    # simplifies again: `SQRT(3)*#i*(U - V)/4` rather than `SQRT(3)*#i*(U/2 - V/2)/2`.
+    terms = sp.Add.make_args(u - v)
+    coefficients = [term.as_coeff_Mul()[0] for term in terms]
+    numerator = math.gcd(0, *(k.p for k in coefficients))
+    content = sp.Rational(numerator, sp.ilcm(1, *(k.q for k in coefficients)))
+    difference = sp.Add(*(term / content for term in terms))
+    spread = content / 2 * sp.sqrt(3) * sp.I * difference
+    return {shift + u + v: 1, mean + spread: 1, mean - spread: 1}
+
+
+def _real_cube_root(value: sp.Basic) -> sp.Basic | None:
+    """The real cube root of `alpha + beta*SQRT(m)`, for rational `alpha` and `beta`,
+    as a person writes it, or None for a value of any other shape.
+
+    A negative value's root is the negation of its negation's, and the value's
+    denominator comes out of the root with integer coefficients left inside it:
+    `(-SQRT(5) - 1)/2` has the root `-(4*SQRT(5) + 4)^(1/3)/2`. A cube that divides
+    every coefficient inside comes out too, `(16*SQRT(5) + 16)^(1/3)` being
+    `2*(2*SQRT(5) + 2)^(1/3)`.
+    """
+    alpha, surd = value.as_coeff_Add()
+    beta, radical = surd.as_coeff_Mul()
+    if not (alpha.is_Rational and beta.is_Rational):
+        return None
+    if radical != 1 and not (
+        radical.is_Pow and radical.exp == sp.S.Half and radical.base.is_Integer
+    ):
+        return None
+    if value.is_zero:
+        return sp.S.Zero
+    sign = 1 if value.is_positive else -1 if value.is_negative else None
+    if sign is None:
+        return None
+    denominator = sp.ilcm(alpha.q, beta.q)
+    scale = sign * denominator**3
+    alpha, beta = int(alpha * scale), int(beta * scale)
+    content = math.gcd(alpha, beta)
+    cube = 1
+    for prime, power in sp.factorint(content).items():
+        cube *= prime ** (power // 3)
+    inside = sp.Integer(alpha // cube**3) + sp.Integer(beta // cube**3) * radical
+    return sign * sp.Integer(cube) * sp.Pow(inside, sp.Rational(1, 3)) / denominator
 
 
 def _inverted(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:

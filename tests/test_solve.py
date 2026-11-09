@@ -241,6 +241,71 @@ def test_three_real_roots_are_written_without_an_imaginary_unit():
     ]
 
 
+def test_one_real_root_is_written_in_two_real_cube_roots():
+    """Cardano's formula as the original writes it: the real root is `u + v`, a sum
+    of real cube roots, each radicand's denominator brought out of the root and a
+    negative radicand's sign written in front of it. The complex pair is built from
+    the same two roots."""
+    assert sol("x^3 + 3*x + 1 = 0") == [
+        "x = (4*SQRT(5) - 4)^(1/3)/2 - (4*SQRT(5) + 4)^(1/3)/2",
+        "x = (4*SQRT(5) + 4)^(1/3)/4 - (4*SQRT(5) - 4)^(1/3)/4"
+        " + SQRT(3)*#i*((4*SQRT(5) + 4)^(1/3) + (4*SQRT(5) - 4)^(1/3))/4",
+        "x = (4*SQRT(5) + 4)^(1/3)/4 - (4*SQRT(5) - 4)^(1/3)/4"
+        " - SQRT(3)*#i*((4*SQRT(5) + 4)^(1/3) + (4*SQRT(5) - 4)^(1/3))/4",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "real"),
+    [
+        # Both radicands negative, and `SQRT(D)` rational.
+        ("x^3 - 6*x + 6 = 0", "x = -2^(1/3) - 2^(2/3)"),
+        ("x^3 - 6*x - 6 = 0", "x = 2^(2/3) + 2^(1/3)"),
+        # Both radicands negative, `SQRT(D)` irrational.
+        ("x^3 - 3*x + 3 = 0", "x = -(12 - 4*SQRT(5))^(1/3)/2 - (4*SQRT(5) + 12)^(1/3)/2"),
+        # A cube comes out of the radicand.
+        ("x^3 + 48*x + 64 = 0", "x = 2*(4*SQRT(5) - 4)^(1/3) - 2*(4*SQRT(5) + 4)^(1/3)"),
+        # A leading coefficient, and a rational `SQRT(D)`.
+        ("2*x^3 + 6*x + 3 = 0", "x = 2^(2/3)/2 - 2^(1/3)"),
+        # A square term: the shift stands after the cube roots.
+        (
+            "x^3 + x^2 + 1 = 0",
+            "x = -(116 - 12*SQRT(93))^(1/3)/6 - (12*SQRT(93) + 116)^(1/3)/6 - 1/3",
+        ),
+        (
+            "2*x^3 - 3*x^2 + 5*x + 7 = 0",
+            "x = (3*SQRT(27273) - 486)^(1/3)/6 - (3*SQRT(27273) + 486)^(1/3)/6 + 1/2",
+        ),
+        # A cube once shifted, with one radicand zero.
+        ("x^3 + 3*x^2 + 3*x - 1 = 0", "x = 2^(1/3) - 1"),
+    ],
+    ids=str,
+)
+def test_each_root_of_a_cubic_with_one_real_root_solves_it(text, real):
+    """The real root is pinned and the pair is checked: every one of the three
+    satisfies the equation, the real one is the only real one, and each is written
+    as it simplifies again."""
+    answers = solve(parse(text), EXACT, ("x",))
+    assert [answer.text for answer in answers][0] == real
+    assert len(answers) == 3
+    equation = to_sympy(parse(text), EXACT)
+    residual = equation.lhs - equation.rhs
+    (x,) = residual.free_symbols
+    for answer in answers:
+        root = to_sympy(answer.node, EXACT).rhs
+        value = complex(residual.subs(x, root).evalf(30))
+        assert abs(value) < 1e-20
+        assert simplify(answer.node, EXACT).text == answer.text
+    assert simplify(parse(f"SOLVE({text}, x, Real)"), EXACT).text == f"[{real}]"
+
+
+def test_a_cubic_factor_is_written_as_the_cubic_is():
+    assert sol("(x - 2)*(x^3 + 3*x + 1) = 0")[:2] == [
+        "x = (4*SQRT(5) - 4)^(1/3)/2 - (4*SQRT(5) + 4)^(1/3)/2",
+        "x = 2",
+    ]
+
+
 def test_the_order_of_several_solutions_is_ours_and_not_the_originals():
     """Reals ascending, then the complex ones. Derive's order is its solver's:
     `x^2 - 5*x + 6` comes out `2, 3` there and `x^2 - 4` comes out `2, -2`, so
@@ -786,7 +851,7 @@ REAL = [
     ("SOLVE(x^3 + x^2 + x + 1, x, Real)", "[x = -1]"),
     (
         "SOLVE(x^3 + 3*x + 1 = 0, x, Real)",
-        "[x = 3/(27*SQRT(5)/2 + 27/2)^(1/3) - (27*SQRT(5)/2 + 27/2)^(1/3)/3]",
+        "[x = (4*SQRT(5) - 4)^(1/3)/2 - (4*SQRT(5) + 4)^(1/3)/2]",
     ),
     # Real roots all stay.
     ("SOLVE(x^2 - 4, x, Real)", "[x = -2, x = 2]"),
