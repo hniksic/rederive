@@ -1687,7 +1687,8 @@ def _commanded(
     ]
     match name:
         case "SOLVE":
-            return Commanded(_solve_head(args, divisors, context))
+            solved = _solve_head(args, divisors, context)
+            return Commanded(_command_head(name, args) if solved is None else solved)
         case "RATE":
             return _rate_head(args, context)
     return Commanded(_factor_head(name, args, context))
@@ -1719,7 +1720,7 @@ def _factor_head(name: str, args: list, context: Context) -> sp.Basic:
     return factored_expression(target, amount, variables)
 
 
-def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic:
+def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic | None:
     """`SOLVE(u, x)` and its longer forms, as the vector of what they solve to.
 
     This is the 3.x and 4.x shape and it is the one worth having: the answer is
@@ -1736,11 +1737,29 @@ def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic:
     precision mode: the original's help says "if in approximate mode", the shipped
     files use it as though it always applied, and always-numeric is both the
     more useful reading and the one that makes the call mean one thing.
+
+    `SOLVE(u, x, Real)` keeps only the solutions not having an imaginary component,
+    which is Derive 6's third argument and the only one it documents. `SOLVE(u, x,
+    Complex)` is the same as `SOLVE(u, x)`: Complex is the solve dialog's default
+    domain, and the function form accepts the word for it.
+
+    None where the call is none of these forms, which leaves it standing as written:
+    a third argument that is neither word, more than four arguments, or a domain word
+    where the variable belongs. A misspelled `Reals` answered as though it were
+    absent would answer a different question from the one asked.
     """
     target, *rest = args
+    if len(rest) > 3 or (rest and _domain_word(rest[0]) is not None):
+        return None
     variables = _solved_for(rest[0]) if rest else ()
-    bounds = (rest[1], rest[2]) if len(rest) >= 3 else None
-    answers = solutions(target, context, variables, bounds, divisors)
+    bounds = (rest[1], rest[2]) if len(rest) == 3 else None
+    real = False
+    if len(rest) == 2:
+        domain = _domain_word(rest[1])
+        if domain is None:
+            return None
+        real = domain == "Real"
+    answers = solutions(target, context, variables, bounds, divisors, real)
     if not answers:
         return sp.Matrix(0, 0, [])
     return InertVector(*answers)
@@ -1779,6 +1798,17 @@ def _rate_head(args: list, context: Context) -> sp.Basic:
 def _command_head(name: str, args: list) -> sp.Basic:
     """The call itself, standing, where a command has no answer to give."""
     return sp.Function(name)(*args)
+
+
+#: The solution domains a `SOLVE` head's third argument may name.
+_DOMAIN_WORDS = ("Real", "Complex")
+
+
+def _domain_word(argument: sp.Basic) -> str | None:
+    """The solution domain `argument` names, or None where it is no such word."""
+    if isinstance(argument, sp.Symbol) and argument.name in _DOMAIN_WORDS:
+        return argument.name
+    return None
 
 
 def _solved_for(argument: sp.Basic) -> tuple[str, ...]:

@@ -41,6 +41,13 @@ of the answers are wanted. Solutions are sought over the complexes whatever a
 variable was declared, with one exception: an equation in the `ABS` of a real
 variable, undeclared ones included, is solved over the reals, since over the
 complexes its solutions are curves no list of relations describes.
+
+What does filter them is asking for it: `SOLVE(u, x, Real)` keeps only the solutions
+not having an imaginary component (manual 6.1), which is `real` here. A solution is
+dropped only where it is known to have one - a number whose imaginary part is more
+than evaluation noise, or a value sympy proves non-real - so `x = SQRT(a)` stands,
+as do an arbitrary value, a range, and the residual equation of what nothing here
+could solve. A system's solution vector goes where any of its values would.
 """
 
 from __future__ import annotations
@@ -92,6 +99,7 @@ def solutions(
     variables: Sequence[str] = (),
     bounds: tuple[sp.Basic, sp.Basic] | None = None,
     divisors: Sequence[sp.Basic] = (),
+    real: bool = False,
 ) -> tuple[sp.Basic, ...]:
     """The entries `expression` solves to, one per worksheet line.
 
@@ -101,7 +109,8 @@ def solutions(
     to, and is what Approximate precision asks the user for; None leaves the
     precision mode to decide, which is exact everywhere but Mixed. `divisors` are
     what the equation divides by as it was written, before Simplify cancelled
-    anything: a value that provably makes one of them zero is no solution.
+    anything: a value that provably makes one of them zero is no solution. `real`
+    leaves out the solutions known to have an imaginary component.
     """
     context = context or Context()
     constants = _Constants(context.arbitrary_index)
@@ -113,7 +122,13 @@ def solutions(
         variables = main_order(divided, context.order)[:1]
     try:
         return _solutions(
-            expression, context, tuple(variables), bounds, tuple(divisors), constants
+            expression,
+            context,
+            tuple(variables),
+            bounds,
+            tuple(divisors),
+            constants,
+            real,
         )
     except Exception:
         # The engine never raises on parser output, and "I could not solve
@@ -187,11 +202,12 @@ def _solutions(
     bounds: tuple[sp.Basic, sp.Basic] | None,
     divisors: tuple[sp.Basic, ...],
     constants: _Constants,
+    real: bool,
 ) -> tuple[sp.Basic, ...]:
     equations = equations_of(expression)
     if equations is not None:
-        return _system(equations, context, variables, constants)
-    return _scalar(expression, context, variables, bounds, divisors, constants)
+        return _system(equations, context, variables, constants, real)
+    return _scalar(expression, context, variables, bounds, divisors, constants, real)
 
 
 def _scalar(
@@ -201,8 +217,13 @@ def _scalar(
     bounds: tuple[sp.Basic, sp.Basic] | None,
     divisors: tuple[sp.Basic, ...],
     constants: _Constants,
+    real: bool,
 ) -> tuple[sp.Basic, ...]:
-    """One equation or inequality, solved for one variable."""
+    """One equation or inequality, solved for one variable.
+
+    An inequality is solved over the reals already, so `real` asks nothing more of
+    one.
+    """
     chosen = _chosen(expression, context, variables, 1)
     if not chosen:
         return _unsolvable(expression, context)
@@ -210,7 +231,7 @@ def _scalar(
     if isinstance(expression, Relational) and not isinstance(expression, sp.Equality):
         return _inequality(expression, variable, context, constants)
     return _equation(
-        _residual(expression), variable, context, bounds, divisors, constants
+        _residual(expression), variable, context, bounds, divisors, constants, real
     )
 
 
@@ -248,6 +269,7 @@ def _equation(
     bounds: tuple[sp.Basic, sp.Basic] | None,
     divisors: tuple[sp.Basic, ...],
     constants: _Constants,
+    real: bool,
 ) -> tuple[sp.Basic, ...]:
     """`residual = 0` solved for `variable`, by whatever the precision allows.
 
@@ -258,7 +280,11 @@ def _equation(
     An exact candidate is kept unless it is provably no solution: one that makes a
     divisor of the equation as written zero is not (`_divides_by_zero`), and nor is
     one a solver found for an equation it rewrote first, where putting it back
-    shows it does not hold (`_fails`).
+    shows it does not hold (`_fails`). With `real`, nor is one known to have an
+    imaginary component (`_imaginary`); a periodic family is judged by the
+    representative it is written as. Where that leaves nothing the answer is "no
+    solutions found", the same as for an equation that has none. A numeric search
+    only ever finds real roots.
     """
     if bounds is not None:
         return _numeric(residual, variable, bounds[0], bounds[1], context)
@@ -270,6 +296,8 @@ def _equation(
 
         def admissible(value: sp.Basic) -> bool:
             if _divides_by_zero(divisors, variable, value):
+                return False
+            if real and _imaginary(value):
                 return False
             return polynomial or not _fails(residual, variable, value)
 
@@ -858,13 +886,16 @@ def _system(
     context: Context,
     variables: tuple[str, ...],
     constants: _Constants,
+    real: bool,
 ) -> tuple[sp.Basic, ...]:
     """A vector of equations, solved for as many variables as there are of them.
 
     One entry comes of it whatever the count, and that entry is the solution
     vector: `[x + y = 3, x - y = 1]` answers `[x = 2, y = 1]`. Variables the
     user did not choose stay as themselves on the right, which is what makes
-    `[x + y + z = 1, x - y = 0]` solvable for `x` and `y` alone.
+    `[x + y + z = 1, x - y = 0]` solvable for `x` and `y` alone. With `real`, a
+    solution any of whose values is known to have an imaginary component is left
+    out.
     """
     joined = InertVector(*equations)
     chosen = _chosen(joined, context, variables, len(equations))
@@ -876,6 +907,12 @@ def _system(
         solved = _nonlinear(residuals, chosen)
     if solved is None:
         return _unsolvable(joined, context)
+    if real:
+        solved = [
+            mapping
+            for mapping in solved
+            if not any(_imaginary(value) for value in mapping.values())
+        ]
     return tuple(
         InertVector(
             *(
@@ -1256,6 +1293,32 @@ def _rank(value: sp.Basic) -> tuple[int, float, float, object]:
     # differ in the last bit of their evaluation still sorts as a pair.
     angle = round(abs(cmath.phase(number)), 9)
     return (1, angle, 0.0 if number.imag > 0 else 1.0, (abs(number),))
+
+
+#: How small an imaginary part is, relative to the number's magnitude, for it to be
+#: taken for evaluation noise. A real root that sympy writes through `#i` terms that
+#: cancel evaluates with an imaginary residue some twenty digits down; one that is
+#: genuinely complex has an imaginary part nowhere near this small.
+_NOISE = 1e-9
+
+
+def _imaginary(value: sp.Basic) -> bool:
+    """Whether `value` is known to have an imaginary component.
+
+    A number is evaluated, and has one where its imaginary part is more than
+    `_NOISE` of its size. A value with a parameter in it has one only where sympy
+    proves it not real: `SQRT(a)` is real for some `a`, and is no known non-real
+    solution.
+    """
+    try:
+        if not value.free_symbols:
+            number = _complex(value)
+            if number is None or not cmath.isfinite(number):
+                return False
+            return abs(number.imag) > _NOISE * abs(number)
+        return value.is_extended_real is False
+    except Exception:
+        return False
 
 
 def _complex(value: sp.Basic) -> complex | None:

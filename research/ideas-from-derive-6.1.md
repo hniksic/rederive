@@ -207,11 +207,16 @@ SOLVE(x^3 + x^2 + x + 1, x)          x = -î ∨ x = î ∨ x = -1
 SOLVE(x^3 + x^2 + x + 1, x, Real)    x = -1
 ```
 
-Rederive: drops the third argument; `SOLVE(x^2 + 1 = 0, x, Real)` gives
-`[x = #i, x = -#i]`. Solutions are not filtered by declared domain either, so there is
-no way to ask for real solutions only.
+Rederive: `SOLVE(u, x, Real)` leaves out the solutions known to have an imaginary
+component, so `SOLVE(x^2 + 1 = 0, x, Real)` gives `[]`. A solution whose realness
+depends on a parameter stays: `SOLVE(x^2 = a, x, Real)` is `[x = -SQRT(a), x =
+SQRT(a)]`. `Complex`, the solve dialog's default domain, is accepted as the third
+argument too and filters nothing; any other third argument leaves the call standing as
+written, as does a domain word in place of the variable. Solutions are not filtered by
+declared domain. SOLUTIONS, NSOLVE and NSOLUTIONS do not exist, and the soLve command
+has no way to ask for real solutions only.
 
-Suggestion: adopt.
+Suggestion: adopted for SOLVE.
 
 ### Solving a conjunction
 

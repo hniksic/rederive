@@ -30,6 +30,7 @@ from rederive.engine.computing import (
 from rederive.engine.context import Angle, Precision
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, parse_expression
+from rederive.syntax.state import InputMode
 
 EXACT = Context()
 APPROXIMATE = Context().with_precision(Precision.APPROXIMATE)
@@ -671,6 +672,9 @@ TOTAL = [
     "LIM(SIN(x)/x, x, 0)",
     "SUM(k^2, k, 1, n)",
     "SOLVE(x^2 = 2, x)",
+    "SOLVE(x^2 + 1 = 0, x, Real)",
+    "SOLVE(x^2 + 1 = 0, Real)",
+    "SOLVE(x^2 + 1 = 0, x, Reals)",
     "IF(x > 0, x, -x)",
     "x :epsilon Real [0, inf)",
     "F(y) := y^2 - 1",
@@ -770,3 +774,136 @@ def test_one_solution_can_be_read_out_of_the_vector():
     first solution, so a subscript has to reach through the vector too."""
     assert simplify(parse("(SOLVE(x^2 - 4, x)) SUB 1"), EXACT).text == "x = -2"
     assert simplify(parse("RHS((SOLVE(x^2 - 4, x)) SUB 1)"), EXACT).text == "-2"
+
+
+# -- real solutions only ------------------------------------------------------
+#
+# `SOLVE(u, x, Real)` keeps the solutions not having an imaginary component, which
+# is Derive 6's third argument. Only a solution known to have one is left out.
+
+REAL = [
+    # The 6.1 manual's own example.
+    ("SOLVE(x^3 + x^2 + x + 1, x, Real)", "[x = -1]"),
+    (
+        "SOLVE(x^3 + 3*x + 1 = 0, x, Real)",
+        "[x = 3/(27*SQRT(5)/2 + 27/2)^(1/3) - (27*SQRT(5)/2 + 27/2)^(1/3)/3]",
+    ),
+    # Real roots all stay.
+    ("SOLVE(x^2 - 4, x, Real)", "[x = -2, x = 2]"),
+    # Every solution non-real is no solution at all, as for an equation with none.
+    ("SOLVE(x^2 + 1 = 0, x, Real)", "[]"),
+    # A periodic family whose members are all complex goes, and one with a real
+    # representative stays.
+    ("SOLVE(EXP(x) = -2, x, Real)", "[]"),
+    ("SOLVE(EXP(x) = 2, x, Real)", "[x = LN(2)]"),
+    # A value with a parameter in it is real for some values of the parameter,
+    # and stands.
+    ("SOLVE(x^2 = a, x, Real)", "[x = -SQRT(a), x = SQRT(a)]"),
+    # What is not a list of values is not filtered: an identity, a range, and the
+    # residual equation of what could not be solved.
+    ("SOLVE(x = x, x, Real)", "[x = @1]"),
+    ("SOLVE(x^2 < 4, x, Real)", "[-2 < x < 2]"),
+    ("SOLVE(COS(x) = x, x, Real)", "[COS(x) - x = 0]"),
+    # A system's solution vector goes where one of its values would.
+    (
+        "SOLVE([x^2 + y^2 = 2, x - y = 0], [x, y], Real)",
+        "[[x = -1, y = -1], [x = 1, y = 1]]",
+    ),
+    ("SOLVE([x + y = #i, x - y = 0], [x, y], Real)", "[]"),
+    # Complex names the default domain, and filters nothing.
+    ("SOLVE(x^2 + 1 = 0, x, Complex)", "[x = #i, x = -#i]"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), REAL, ids=str)
+def test_real_asks_for_the_solutions_without_an_imaginary_component(text, expected):
+    assert simplify(parse(text), EXACT).text == expected
+
+
+def word_mode():
+    state = ParseState()
+    state.input_mode = InputMode.WORD
+    return state
+
+
+# A call that is none of SOLVE's forms is not answered, and stands as written: a
+# misspelled domain answered as though it were absent would answer another question.
+STANDING = [
+    # A third argument that names no domain.
+    "SOLVE(x^2 = 1, x, reals)",
+    "SOLVE(x^2 = 1, x, imaginary)",
+    "SOLVE(x^2 = 1, x, 5)",
+    "SOLVE(x^2 = -1, x, y)",
+    # More than four arguments.
+    "SOLVE(x^2 = 1, x, -2, 2, 3)",
+    # A domain word where the variable belongs.
+    "SOLVE(x^2 = 1, Real)",
+    "SOLVE(x^2 = 1, Complex)",
+]
+
+
+@pytest.mark.parametrize("text", STANDING, ids=str)
+@pytest.mark.parametrize(
+    "context", [EXACT, APPROXIMATE, MIXED], ids=lambda c: str(c.precision)
+)
+def test_a_solve_head_of_no_form_stands_as_written(text, context):
+    state = word_mode()
+    answer = simplify(parse(text, state), context).text
+    assert answer == text
+    assert simplify(parse(answer, state), context).text == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("DIMENSION(SOLVE(x^2 = 1, x, Reals))", "DIMENSION(SOLVE(x^2 = 1, x, reals))"),
+        ("RHS(SOLVE(x^2 = 1, x, Reals))", "SOLVE(x^2 = 1, x, reals)"),
+        ("(SOLVE(x^2 = 1, x, Reals)) SUB 1", "(SOLVE(x^2 = 1, x, reals)) SUB 1"),
+    ],
+    ids=str,
+)
+def test_a_standing_solve_head_is_taken_as_the_call_it_is(text, expected):
+    """As a standing `RATE` is: `RHS` of what is no relation is the thing itself."""
+    assert simplify(parse(text, word_mode()), EXACT).text == expected
+
+
+def test_an_assigned_third_argument_is_read_for_its_value():
+    """What reaches the head is the value: a name assigned a number is no domain, and
+    one assigned the word is that word."""
+    state = ParseState()
+    number = Context(assignments={"y": parse("3", state)})
+    assert simplify(parse("SOLVE(x^2 = -1, x, y)", state), number).text == (
+        "SOLVE(x^2 = -1, x, 3)"
+    )
+    word = Context(assignments={"y": parse("Real", state)})
+    assert simplify(parse("SOLVE(x^2 = -1, x, y)", state), word).text == "[]"
+
+
+def test_a_real_root_written_through_the_imaginary_unit_is_kept():
+    """Ferrari's radicals reach the four real roots of this quartic through `#i`
+    terms that cancel, which evaluate to a residue of an imaginary part and not to
+    none; that is no imaginary component."""
+    text = "SOLVE(x^4 - 4*x^2 + x + 1 = 0, x, Real)"
+    answer = simplify(parse(text), EXACT)
+    assert "#i" in answer.text
+    assert simplify(parse(f"DIMENSION({text})"), EXACT).text == "4"
+
+
+def test_real_filters_complex_roots_however_they_are_written():
+    assert simplify(parse("DIMENSION(SOLVE(x^4 + x + 1 = 0, x, Real))"), EXACT).text == (
+        "0"
+    )
+
+
+def test_real_is_answered_in_every_precision_mode():
+    for context in (APPROXIMATE, MIXED):
+        assert simplify(parse("SOLVE(x^3 - x + 5 = 0, x, Real)"), context).text == (
+            "[x = -1.90416]"
+        )
+
+
+def test_real_does_not_make_a_declared_domain_filter():
+    state = ParseState()
+    name, domain = domain_of_node(parse("x :epsilon Real", state))
+    context = Context(domains={name: domain})
+    assert simplify(parse("SOLVE(x^2 + 1, x)"), context).text == "[x = #i, x = -#i]"
