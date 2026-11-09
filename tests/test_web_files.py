@@ -244,7 +244,8 @@ def test_a_tab_that_will_remember_nothing_says_so_before_anything_else(page):
 
     del js.localStorage
     files = Files(page, Session(), WebStorage(page))
-    assert files.opening() == gestures.FORGETFUL
+    assert files.opening() == ""
+    assert files.greeting() == gestures.FORGETFUL
 
 
 def test_a_link_the_clipboard_refuses_still_leaves_the_address(page, storage):
@@ -280,6 +281,7 @@ def test_a_first_visit_has_no_settings_to_read_and_says_nothing_about_it(page, s
     session = Session()
     files = Files(page, session, storage)
     files.settings()
+    files.welcome()
     assert page.notices == []
     assert files.opening() == ""
     assert session.settings["Notation"] == "Rational"
@@ -288,21 +290,24 @@ def test_a_first_visit_has_no_settings_to_read_and_says_nothing_about_it(page, s
 def test_a_visit_that_restores_changed_settings_says_so_as_it_opens(page, storage):
     """Without a notice, a mode switched on in an earlier visit would look like a bug.
 
-    The notice says where the settings came from and how to reset them. Stored settings
-    equal to the defaults produce no notice.
+    The notice says where the settings came from and how to reset them. It goes to the
+    page rather than the message line. Stored settings equal to the defaults produce no
+    notice.
     """
     session = Session()
     Files(page, session, storage).remember()
     files = Files(page, Session(), again(page))
     files.settings()
-    assert files.opening() == ""
+    assert files.greeting() == ""
 
     session = Session()
     session.settings.assign("Angle", "Degree")
     Files(page, session, storage).remember()
     files = Files(page, Session(), again(page))
     files.settings()
-    assert files.opening() == gestures.RESTORED
+    assert files.opening() == ""
+    files.welcome()
+    assert page.notices == [gestures.RESTORED]
     assert "Reset settings" in gestures.RESTORED
 
 
@@ -314,9 +319,8 @@ def test_a_link_and_restored_settings_are_both_said(page, storage):
     fragment = gestures.FIELD + gestures._encoded(text)
     files = Files(page, Session(), again(page, hash=fragment))
     files.settings()
-    opening = files.opening()
-    assert opening.startswith("1 expression from the link")
-    assert opening.endswith(gestures.RESTORED)
+    assert files.opening().startswith("1 expression from the link")
+    assert files.greeting() == gestures.RESTORED
 
 
 def test_the_settings_are_kept_and_not_downloaded(page, storage):

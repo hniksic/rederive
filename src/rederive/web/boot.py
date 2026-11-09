@@ -66,10 +66,13 @@ class PageApp(RederiveApp):
         plots: WebPlots,
         opening: str = "",
         keyboard: Callable[[bool], None] | None = None,
+        welcome: Callable[[], None] | None = None,
     ) -> None:
         # Set before the base class init, which asks for the driver.
         self._terminal = terminal
         self._keyboard = keyboard
+        #: Shows the page's own opening notice once the screen is drawn.
+        self._welcome = welcome
         #: Last typing state sent to the page, so only changes are reported.
         self._typing: bool | None = None
         super().__init__(session, plotter=plots, opening=opening)
@@ -77,6 +80,11 @@ class PageApp(RederiveApp):
     def get_driver_class(self) -> Any:
         """Always the browser driver, with no fallback."""
         return BrowserDriver.on(self._terminal)
+
+    def on_mount(self) -> None:
+        # Textual runs the base class's `on_mount` too, so it isn't called here.
+        if self._welcome is not None:
+            self.call_after_refresh(self._welcome)
 
     # -- touch-screen keyboard ---------------------------------------------
     #
@@ -139,6 +147,7 @@ async def start(
         WebPlots(plots, solids, engine),
         files.opening(),
         keyboard,
+        files.welcome,
     )
     files.attend()
     # Kept alive while the program runs, since it holds the proxies the menu calls;

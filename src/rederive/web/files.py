@@ -11,7 +11,8 @@
 Settings are handled here too. A tab has no home directory for a state file, so the
 settings are written to storage whenever the tab is hidden and read back before the
 screen is built. Because this happens unasked, the page's menu has `reset`, which
-restores the defaults now and for later visits.
+restores the defaults now and for later visits, and `welcome` names it in the page's
+notice rather than on the program's message line.
 
 All DOM calls go through `web/files.js`; this module decides which file goes where and
 what to tell the user.
@@ -48,7 +49,7 @@ STATE = STATE_FILE
 #: get cut when pasted into messages, and such a worksheet can be saved instead.
 LONGEST = 8000
 
-#: Opening message when restored settings differ from the defaults. A mode switched on
+#: Page notice when restored settings differ from the defaults. A mode switched on
 #: months ago could otherwise look like a bug, so it names the menu item that undoes it.
 RESTORED = "Settings restored from your last visit; File > Reset settings forgets them"
 
@@ -77,7 +78,7 @@ UNREADABLE_LINK = "The worksheet in this page's address could not be read"
 #: for a file given on the command line.
 FROM_LINK = "{count} expression{s} from the link in this page's address"
 
-#: Opening message when the browser keeps no site data (e.g. private browsing). Everything
+#: Page notice when the browser keeps no site data (e.g. private browsing). Everything
 #: works, but nothing outlives the tab, which the user couldn't otherwise tell.
 FORGETFUL = "This browser keeps no site data: files and settings go with the tab"
 
@@ -106,7 +107,7 @@ class Files:
 
         This is silent: unlike on the desktop, the user didn't ask for it, so skipped
         lines aren't reported, and a missing file just means a first visit. It records
-        whether anything changed for `opening` to mention.
+        whether anything changed for `welcome` to mention.
         """
         state = Path(STATE)
         if not self._storage.exists(state):
@@ -119,19 +120,28 @@ class Files:
         self._restored = self._session.state_written() != before
 
     def opening(self) -> str:
-        """Return the opening message line.
+        """Return the opening message line, which reports a worksheet from the link.
 
-        Reports a worksheet loaded from the link and restored non-default settings, or
-        both. Otherwise warns if the browser keeps no data, and is empty on an ordinary
-        first visit.
+        It's empty without one. What concerns the page rather than the worksheet goes
+        to `welcome`.
         """
-        said = [self.shared()]
+        return self.shared()
+
+    def greeting(self) -> str:
+        """Return the page's opening notice, or an empty string if there is none.
+
+        It mentions restored non-default settings, or warns that the browser keeps no
+        data.
+        """
         if self._restored:
-            said.append(RESTORED)
-        said = [part for part in said if part]
-        if said:
-            return "; ".join(said)
+            return RESTORED
         return "" if self._storage.remembers else FORGETFUL
+
+    def welcome(self) -> None:
+        """Show `greeting` in the page's notice, once the screen is up."""
+        greeting = self.greeting()
+        if greeting:
+            self._page.said(greeting)
 
     def shared(self) -> str:
         """Load the worksheet from the address and return a message about it.
