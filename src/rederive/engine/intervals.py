@@ -21,15 +21,19 @@ How the question is asked:
   It loses none that matter, since what integrality alone settles is settled earlier.
 
 * Only when a bound says something the symbol can't. A zero bound is already the
-  symbol's sign and an infinite one bounds nothing, so such declarations never build
-  a box or cost an `ask`.
+  symbol's sign and an infinite one bounds nothing, so such declarations never cost
+  an `ask`.
 
 Sympy's reasoning is tried first, which handles roughly linear bounds, then interval
 arithmetic, which handles powers, absolute values and monotone functions: `x^2 - 1`
 and `LN(x)` are both negative over `(0, 1)`. Interval arithmetic treats each
 occurrence of a variable independently, so `x - x^2` over `(0, 1)` is put in `(-1,
-1)` with unknown sign. An undecided question leaves the expression alone, as for an
-undeclared variable.
+1)` with unknown sign. Last, a polynomial is checked for keeping its sign over the
+whole real line: `x^2 + x + 1` has no real root. An undecided question leaves the
+expression alone.
+
+Without any declared interval only the last two apply, over the ranges the symbols'
+own assumptions give: `ABS(COS(x) + 1)` is `COS(x) + 1` for any real `x`.
 
 Ranges also settle a `FLOOR` constant over them, an `ASIN(SIN(t))` whose angle stays on
 one branch, and the cases of a conditional.
@@ -69,9 +73,7 @@ def settled(expression: sp.Basic, context: Context) -> sp.Basic:
     conditional that the declared intervals settle resolved."""
     if not expression.has(*_SETTLED):
         return expression
-    box = _box(expression, context)
-    if box is None:
-        return expression
+    box = _box(expression, context) or _UNDECLARED
     try:
         return expression.replace(
             lambda e: isinstance(e, _SETTLED),
@@ -195,10 +197,15 @@ class _Box:
         `ABS(x) < 1` over `(-1, 1)`, and `LN(x) < 0` over `(0, 1)`.
         """
         relaxed = expression.xreplace(self.standing_in)
-        if _attempt(lambda: sp.ask(predicate(relaxed), self.facts)) is True:
-            return True
+        # Without facts `ask` knows only the symbols' assumptions, which sympy has
+        # already used in building the expression.
+        if self.facts is not sp.true:
+            if _attempt(lambda: sp.ask(predicate(relaxed), self.facts)) is True:
+                return True
         reach = _attempt(lambda: _range(relaxed, self.ranges))
-        return reach is not None and _holds(predicate, reach)
+        if reach is not None and _holds(predicate, reach):
+            return True
+        return _attempt(lambda: _polynomial_holds(predicate, relaxed)) is True
 
     def range_of(self, expression: sp.Basic) -> _Range | None:
         """The values `expression` takes over the box, or None if unknown."""
@@ -257,6 +264,12 @@ def _predicate(
     if above:
         return Q.ge(about, value) if closed else Q.gt(about, value)
     return Q.le(about, value) if closed else Q.lt(about, value)
+
+
+#: The box of an expression none of whose variables has a declared interval. Interval
+#: arithmetic still settles what is bounded by nature: `ABS(COS(x) + 1)` is `COS(x) +
+#: 1` and `MAX(COS(x), 2)` is 2 for any real `x`.
+_UNDECLARED = _Box(sp.true, {}, {})
 
 
 def _bound(node: Node | None) -> sp.Basic | None:
@@ -355,6 +368,11 @@ def _range(expression: sp.Basic, ranges: dict[sp.Symbol, _Range]) -> _Range | No
         if _range(expression.args[0], ranges) is None:
             return None
         return _Range(sp.S.NegativeOne, sp.S.One, False, False)
+    if isinstance(expression, sp.cosh):
+        # Even, and increasing in the size of its argument.
+        inner = _range(expression.args[0], ranges)
+        size = None if inner is None else _magnitude(inner)
+        return None if size is None else _image(size, sp.cosh, increasing=True)
     rule = _MONOTONE.get(type(expression))
     if rule is None or len(expression.args) != 1:
         return None
@@ -572,6 +590,66 @@ _MONOTONE: dict[type, Callable[[_Range], _Range | None]] = {
     sp.asin: _within(sp.S.NegativeOne, sp.S.One, sp.asin, increasing=True),
     sp.acos: _within(sp.S.NegativeOne, sp.S.One, sp.acos, increasing=False),
 }
+
+
+# -- polynomials that keep their sign ----------------------------------------
+
+#: The highest degree of a polynomial whose real roots are counted.
+_ROOT_COUNTING = 12
+
+
+def _polynomial_holds(predicate: Predicate, expression: sp.Basic) -> bool:
+    """Whether `predicate` holds of a polynomial for all real values of its variables.
+
+    A polynomial keeps its sign if each factor of odd multiplicity does, and a factor
+    in one variable does if it has no real root: `x^2 + x + 1` is positive, `x^2 - 2*x
+    + 1` and `x^2 - 2*x*y + y^2` are squares and so nonnegative. Interval arithmetic
+    misses these because it treats each occurrence of `x` separately.
+    """
+    if predicate not in (Q.positive, Q.negative, Q.nonnegative, Q.nonpositive):
+        return False
+    verdict = _polynomial_sign(expression)
+    if verdict is None:
+        return False
+    sign, strict = verdict
+    wanted = 1 if predicate in (Q.positive, Q.nonnegative) else -1
+    return sign == wanted and (strict or predicate in (Q.nonnegative, Q.nonpositive))
+
+
+def _polynomial_sign(expression: sp.Basic) -> tuple[int, bool] | None:
+    """The sign a polynomial keeps over the reals and whether it excludes zero, or
+    None if it isn't a polynomial with rational coefficients or its sign is unknown."""
+    symbols = expression.free_symbols
+    if not (isinstance(expression, sp.Add) and symbols):
+        return None
+    if not all(symbol.is_extended_real for symbol in symbols):
+        return None
+    if not expression.is_polynomial(*symbols):
+        return None
+    polynomial = sp.Poly(expression, *symbols)
+    if not polynomial.domain.is_QQ and not polynomial.domain.is_ZZ:
+        return None
+    if polynomial.total_degree() > _ROOT_COUNTING:
+        return None
+    leading, factors = polynomial.sqf_list()
+    sign, strict = (1 if leading > 0 else -1), True
+    for factor, multiplicity in factors:
+        rootless = _rootless_sign(factor)
+        if rootless is not None:
+            sign *= rootless**multiplicity
+        elif multiplicity % 2 == 0:
+            strict = False
+        else:
+            return None
+    return sign, strict
+
+
+def _rootless_sign(factor: sp.Poly) -> int | None:
+    """The sign of a polynomial that is never zero over the reals, or None if it may
+    be zero. Only polynomials in one variable are decided, by counting real roots."""
+    if not factor.is_univariate or factor.count_roots() != 0:
+        return None
+    return 1 if factor.LC() > 0 else -1
 
 
 # -- what a sign settles -----------------------------------------------------

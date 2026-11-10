@@ -506,12 +506,56 @@ def test_two_declared_intervals_are_asked_together():
     assert simp("x*y < 2", box) == "x*y < 2"
 
 
-def test_an_interval_costs_nothing_where_nothing_is_declared():
-    # Intervals are used only when a bound says more than the symbol's assumptions,
-    # so undeclared variables skip this machinery entirely.
+def test_nothing_is_settled_where_nothing_is_declared_or_bounded():
+    # Without a declaration there is only the whole real line to go by, which
+    # settles nothing about an unbounded argument.
     assert simp("ABS(x - 1)") == "ABS(x - 1)"
     assert simp("MAX(x, 1)") == "ABS(x - 1)/2 + x/2 + 1/2"
     assert simp("IF(x < 1, a, b)") == "IF(x < 1, a, b)"
+
+
+BOUNDED = [
+    # A sum bounded by nature keeps its sign for any real variable.
+    ("ABS(1 + COS(x))", "COS(x) + 1"),
+    ("ABS(COS(x) - 1)", "1 - COS(x)"),
+    ("ABS(COS(x) - 2)", "2 - COS(x)"),
+    ("ABS(SIN(x) + COS(x) - 2)", "-COS(x) - SIN(x) + 2"),
+    ("ABS(1 + SIN(x)*COS(y))", "SIN(x)*COS(y) + 1"),
+    ("ABS(ATAN(x) - 2)", "2 - ATAN(x)"),
+    ("ABS(pi/2 - ATAN(x))", "pi/2 - ATAN(x)"),
+    ("ABS(COSH(x) - 1)", "#e^x/2 + #e^(-x)/2 - 1"),
+    ("SQRT((1 + COS(x))^2)", "COS(x) + 1"),
+    ("MAX(COS(x), 2)", "2"),
+    ("MIN(SIN(x), -1)", "-1"),
+    ("SIGN(2 + COS(x))", "1"),
+    # `SIGN` needs zero excluded, and `1 + COS(x)` reaches it.
+    ("SIGN(1 + COS(x))", "SIGN(COS(x) + 1)"),
+    # Not bounded on one side of zero.
+    ("ABS(COS(x) + 1/2)", "ABS(COS(x) + 1/2)"),
+    ("ABS(x*ATAN(x) + 1)", "ABS(x*ATAN(x) + 1)"),
+    # A polynomial keeps its sign if its factors of odd multiplicity have no real
+    # root. A square can be zero, so it settles `ABS` but not `SIGN`.
+    ("ABS(x^2 + x + 1)", "x^2 + x + 1"),
+    ("ABS(-x^2 + 2*x - 3)", "x^2 - 2*x + 3"),
+    ("ABS(x^2 - 2*x + 1)", "x^2 - 2*x + 1"),
+    ("ABS(x^2 - 2*x*y + y^2)", "x^2 - 2*x*y + y^2"),
+    ("SIGN(x^2 + x + 1)", "1"),
+    ("SIGN(x^2 - 2*x + 1)", "SIGN(x^2 - 2*x + 1)"),
+    ("MAX(x^2 + 1, x)", "x^2 + 1"),
+    ("ABS(x^2 + x - 1)", "ABS(x^2 + x - 1)"),
+    ("ABS(x^3 + 1)", "ABS(x^3 + 1)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), BOUNDED, ids=str)
+def test_a_sign_kept_over_the_whole_real_line_needs_no_declaration(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_complex_variable_has_no_range():
+    context = declared("z :epsilon Complex")
+    assert simp("ABS(1 + COS(z))", context) == "ABS(COS(z) + 1)"
+    assert simp("ABS(z^2 + z + 1)", context) == "ABS(z^2 + z + 1)"
 
 
 @pytest.mark.parametrize(("text", "expected", "context"), DOMAINS, ids=str)
@@ -675,6 +719,35 @@ SIGNED = [
     ("SIGN(LN(x + 1))", "SIGN(LN(x + 1))", None),
     ("SIGN(LN(COS(x)))", "SIGN(LN(COS(x)))", None),
     ("SIGN(LN(COS(x) + 1/2))", "SIGN(LN(COS(x) + 1/2))", None),
+    # An exponential crosses 1 at zero.
+    ("SIGN(#e^x - 1)", "SIGN(x)", None),
+    ("SIGN(1 - #e^x)", "-SIGN(x)", None),
+    ("SIGN(#e^z - 1)", "SIGN(#e^z - 1)", declared("z :epsilon Complex")),
+    # Factors with the same sign need no bars between them, in one `ABS` or several.
+    # The odd one out and unrelated factors keep theirs.
+    ("ABS(x*ATAN(x))", "x*ATAN(x)", None),
+    ("ABS(x^3*ATAN(x))", "x^3*ATAN(x)", None),
+    ("ABS(x*ATAN(x^3))", "x*ATAN(x^3)", None),
+    ("ABS(ATAN(x)/x)", "ATAN(x)/x", None),
+    ("ABS(x)*ABS(ATAN(x))", "x*ATAN(x)", None),
+    ("SQRT(x^2*ATAN(x)^2)", "x*ATAN(x)", None),
+    ("ABS(x*ABS(x))", "x^2", None),
+    ("ABS(x*ERF(x))", "x*ERF(x)", None),
+    ("ABS(x*SINH(x))", "x*(#e^x - #e^(-x))/2", None),
+    ("ABS(x*(#e^x - 1))", "x*(#e^x - 1)", None),
+    ("ABS(x*(1 - #e^x))", "x*(#e^x - 1)", None),
+    ("ABS(x*y*ATAN(x))", "x*ATAN(x)*ABS(y)", None),
+    ("ABS(x*SIN(x))*ABS(SIN(x))", "SIN(x)^2*ABS(x)", None),
+    ("ABS(x*ATAN(x)*ERF(x))", "ERF(x)*ATAN(x)*ABS(x)", None),
+    # A factor that can't be negative comes out too.
+    ("ABS(x*(1 + COS(x)))", "(COS(x) + 1)*ABS(x)", None),
+    ("ABS(x*ATAN(x)*(1 + COS(x)))", "x*(COS(x) + 1)*ATAN(x)", None),
+    # Unrelated signs stay together, and `ASIN` is complex off `[-1, 1]`.
+    ("ABS(x*ATAN(y))", "ABS(x*ATAN(y))", None),
+    ("ABS(x*SIN(x))", "ABS(x*SIN(x))", None),
+    ("ABS(x*ASIN(x))", "ABS(x*ASIN(x))", None),
+    ("ABS(ATAN(x))", "ABS(ATAN(x))", None),
+    ("ABS(z*ATAN(z))", "ABS(z*ATAN(z))", declared("z :epsilon Complex")),
     ("COS(ABS(x))", "COS(x)", None),
     ("SIGN(ATAN(z))", "SIGN(ATAN(z))", declared("z :epsilon Complex")),
     ("COS(ABS(z))", "COS(ABS(z))", declared("z :epsilon Complex")),

@@ -1969,29 +1969,17 @@ _EVEN = (sp.cos, sp.sec, sp.cosh, sp.sech)
 
 
 def _symmetries(expression: sp.Basic) -> sp.Basic:
-    """Simplify `SIGN` of odd functions and logarithms, and even functions of `ABS`.
+    """Simplify `SIGN` of odd functions and logarithms, even functions of `ABS`, and
+    `ABS` of products whose signs cancel.
 
     For real `u`, `SIGN(ATAN(u))` and `SIGN(u^3)` are `SIGN(u)`, and `COS(ABS(u))` is
     `COS(u)`. This must run before the definitions turn hyperbolics into exponentials,
     hiding the symmetry. Arguments not known to be real are left alone.
-
-    A logarithm is increasing and crosses zero at 1, so `SIGN(LN(u))` is `SIGN(u - 1)`
-    where `u` can't be negative: `SIGN(LN(1 + COS(x)))` is `SIGN(COS(x))`. A logarithm
-    of a negative number is complex, so `SIGN(LN(x))` stays.
     """
 
     def signed(head: sp.sign) -> sp.Basic:
-        inner = head.args[0]
-        if isinstance(inner, _SIGN_KEEPING) and inner.args[0].is_extended_real:
-            return sp.sign(inner.args[0])
-        if isinstance(inner, sp.log) and never_negative(inner.args[0]):
-            return sp.sign(inner.args[0] - 1)
-        # Negative exponents are handled by `_signs_of_reciprocals`.
-        if isinstance(inner, sp.Pow) and inner.exp.is_positive:
-            base, exponent = inner.args
-            if base.is_extended_real and exponent.is_integer and exponent.is_odd:
-                return sp.sign(base)
-        return head
+        simpler = _same_sign(head.args[0])
+        return head if simpler is None else sp.sign(simpler)
 
     def even(call: sp.Basic) -> sp.Basic:
         inner = call.args[0]
@@ -2007,7 +1995,120 @@ def _symmetries(expression: sp.Basic) -> sp.Basic:
         if rewritten == expression:
             break
         expression = rewritten
-    return expression
+    return _paired_signs(expression)
+
+
+def _same_sign(inner: sp.Basic) -> sp.Basic | None:
+    """A simpler expression that has the sign of `inner` everywhere, or None.
+
+    An odd increasing function has the sign of its argument, as does an odd positive
+    power of its base. A logarithm is increasing and crosses zero at 1, so `LN(u)` has
+    the sign of `u - 1` where `u` can't be negative: `SIGN(LN(1 + COS(x)))` is
+    `SIGN(COS(x))`. A logarithm of a negative number is complex, so `SIGN(LN(x))`
+    stays. Likewise an exponential crosses 1 at zero, so `#e^u - 1` has the sign of
+    `u` and `1 - #e^u` that of `-u`.
+    """
+    if isinstance(inner, _SIGN_KEEPING) and inner.args[0].is_extended_real:
+        return inner.args[0]
+    if isinstance(inner, sp.log) and never_negative(inner.args[0]):
+        return inner.args[0] - 1
+    # Negative exponents are handled by `_signs_of_reciprocals`.
+    if isinstance(inner, sp.Pow) and inner.exp.is_positive:
+        base, exponent = inner.args
+        if base.is_extended_real and exponent.is_integer and exponent.is_odd:
+            return base
+    if isinstance(inner, sp.Add) and len(inner.args) == 2:
+        for constant, other, sign in (
+            (sp.S.NegativeOne, inner - sp.S.NegativeOne, 1),
+            (sp.S.One, sp.S.One - inner, -1),
+        ):
+            if constant not in inner.args:
+                continue
+            if isinstance(other, sp.exp) and other.args[0].is_extended_real:
+                return sign * other.args[0]
+    return None
+
+
+def _sign_kernel(factor: sp.Basic) -> tuple[sp.Basic, int]:
+    """The simplest expression known to have the sign of `factor` or the opposite one,
+    and 1 or -1 to say which.
+
+    `ATAN(x)`, `SINH(2*x^3)` and `1/x` all reduce to `x`, and `1 - #e^x` to `x` with
+    the opposite sign, so factors with the same kernel differ in sign by a constant.
+    """
+    sign = 1
+    for _ in range(8):
+        coefficient, factor = factor.as_coeff_Mul()
+        if coefficient.is_negative:
+            sign = -sign
+        if isinstance(factor, sp.Add) and factor.could_extract_minus_sign():
+            factor, sign = -factor, -sign
+        if isinstance(factor, sp.Pow) and factor.exp.is_Integer and factor.exp.is_odd:
+            simpler = factor.base
+        else:
+            simpler = _same_sign(factor)
+        if simpler is None:
+            break
+        factor = simpler
+    return factor, sign
+
+
+def _paired_signs(expression: sp.Basic) -> sp.Basic:
+    """Take out of each `ABS` the factors whose signs cancel or can't be negative.
+
+    `ABS(x*ATAN(x))` is `x*ATAN(x)`, since both factors have the sign of `x`, and
+    likewise `ABS(x)*ABS(SINH(x))` and `ABS(ATAN(x)/x)`. Factors are paired by their
+    sign kernel; the odd one out of a group stays inside, as does anything unpaired:
+    `ABS(x*y*ATAN(x))` is `x*ATAN(x)*ABS(y)`. A factor that can't be negative comes
+    out too: `ABS(x*(COS(x) + 1))` is `(COS(x) + 1)*ABS(x)`.
+    """
+
+    def paired(product: sp.Basic) -> sp.Basic:
+        inside: list[sp.Basic] = []
+        outside: list[sp.Basic] = []
+        for factor in sp.Mul.make_args(product):
+            base, exponent = factor.as_base_exp()
+            if isinstance(base, sp.Abs) and exponent in (1, -1):
+                inside.extend(
+                    part**exponent for part in sp.Mul.make_args(base.args[0])
+                )
+            else:
+                outside.append(factor)
+        # A reciprocal isn't known real, being undefined at zero, but its base is.
+        if not all(part.as_base_exp()[0].is_extended_real for part in inside):
+            return product
+        if not all(
+            part.is_extended_real or part.as_base_exp()[1].is_Integer
+            for part in inside
+        ):
+            return product
+        if any(part.has(sp.AccumBounds) for part in inside):
+            return product
+        groups: dict[sp.Basic, list[tuple[sp.Basic, int]]] = {}
+        freed: list[sp.Basic] = []
+        for part in inside:
+            if never_negative(part):
+                freed.append(part)
+                continue
+            kernel, sign = _sign_kernel(part)
+            groups.setdefault(kernel, []).append((part, sign))
+        staying: list[sp.Basic] = []
+        for members in groups.values():
+            if len(members) % 2:
+                # The odd one out; the simplest, so the bars enclose the least.
+                odd = min(members, key=lambda member: sp.count_ops(member[0]))
+                members.remove(odd)
+                staying.append(odd[0])
+            freed.extend(sign * part for part, sign in members)
+        if not freed:
+            return product
+        return sp.Mul(*outside, *freed, sp.Abs(sp.Mul(*staying)))
+
+    if not expression.has(sp.Abs):
+        return expression
+    return expression.replace(
+        lambda e: isinstance(e, (sp.Abs, sp.Mul)) and e.has(sp.Abs), paired
+    )
 
 
 def _conjugate_pairs(expression: sp.Basic) -> sp.Basic:
@@ -3721,6 +3822,8 @@ _IDENTITIES = (
           "ABS(u)*SIGN(u) is u and u/ABS(u) is SIGN(u), for a real u"),
     _Rule("signs of reciprocals", _signs_of_reciprocals, forced,
           "SIGN(1/u) is SIGN(u), and SIGN(1/ABS(u)) is 1 wherever it is defined"),
+    _Rule("paired signs", _paired_signs, forced,
+          "ABS(x*ATAN(x)) is x*ATAN(x): factors whose signs cancel need no bars"),
     _Rule("conjugate pairs", _conjugate_pairs, forced,
           "CONJ(z)*z is ABS(z)^2"),
     _Rule("combinatorial", _combinatorial, _gated,
