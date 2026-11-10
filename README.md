@@ -28,15 +28,16 @@ more advanced programs. Derive was discontinued in 2007 after having been acquir
 Texas Instruments.
 
 Rederive aims to bring the experience back on modern foundations. The important pieces
-have long existed - Python as the lingua franca of math and science,
-[SymPy](https://www.sympy.org/en/index.html) for symbolic math,
-[Textual](https://textual.textualize.io/) for TUIs. What remained is assembling them into
-a user-friendly CAS.
+have long existed, most notably Python with its built-in infinite-precision arithmetic and
+a rich scientific ecosystem that includes [SymPy](https://www.sympy.org/en/index.html) for
+symbolic math. Rederive assembles these foundations into a user-friendly CAS, using Derive
+as inspiration.
 
-Much like Derive, Rederive runs in a terminal. It follows the look&feel of the original,
-but adopts certain 21st century idioms. The display assumes a modern Unicode terminal, the
-mouse and scroll wheel work, plots use OpenGL, it uses the system clipboard, file names
-tab-complete, and the line editor follows Emacs conventions.
+Much like the original Derive, Rederive runs in a text-mode terminal. It follows the
+look&feel of the original, but adopts many 21st century idioms. For example, the display
+assumes a modern Unicode terminal, the mouse and scroll wheel work, plots use OpenGL, it
+uses the system clipboard, file names tab-complete, and the line editor follows Emacs
+conventions.
 
 ## Installing
 
@@ -107,16 +108,10 @@ Pressing <kbd>s</kbd> answers:
 Highlight an expression, press <kbd>p</kbd> for Plot and <kbd>p</kbd> again, and it is
 drawn in a plot window.
 
-Rederive works out what an expression is a plot of and draws it accordingly:
-
-* a curve for `SIN(x)/x`, 
-* one curve per element of a vector like `[x, x^2, x^3]`,
-* a parametric curve for `[3SIN(3t), 3SIN(4t)]`,
-* a polar curve for `r = f(θ)` in a window switched to polar,
-* the zero contour for an equation like `x^2 + y^2 = 9`,
-* a shaded area for an inequality, 
-* points for a matrix of numbers, and
-* a shaded surface for anything in two variables. 
+Rederive works out what an expression is a plot of and draws it accordingly. `SIN(x)/x`
+is a curve, but `x^2 + y^2 = 9` is a circle, `x^2 + y^2 < 9` is the disc inside it, and
+`x^2 - y^2` is a shaded surface. A vector such as `[3SIN(3t), 3SIN(4t)]` is drawn as a
+parametric curve.
 
 ## For the math nerds
 
@@ -163,21 +158,21 @@ especially in the classroom.
 
 ## How Rederive was built
 
-Rederive is largely AI-coded. I directed the implementation, following the UI and
+Rederive is mostly AI-coded. I directed the implementation, following the UI and
 mathematics of the original, and diverging where it made sense to do so. A from-scratch
 reimplementation of a commercial CAS is not a weekend project, and AI assistance is what
 finally made it feasible for one person, decades after I first wished for it.
 
-Note, however, that the *mathematics* is not AI-written. Underlying computation is
-entrusted to [SymPy](https://www.sympy.org/en/index.html), a symbolic mathematics library
-developed by humans for two decades. Rederive provides the user interface and the layer
-deciding which SymPy machinery to invoke and how to present the results. That layer is
-tested by an extensive test suite checking behavior against the responses from the
-original Derive recorded in preserved manuals and other sources.
+Note, however, that the *mathematics* is not AI-written. Most symbolic computation is
+entrusted to [SymPy](https://www.sympy.org/en/index.html), a library developed by humans
+for two decades. Rederive provides the user interface and the layer deciding which SymPy
+machinery to invoke and how to present the results. That layer is verified by an extensive
+test suite checking behavior against the responses from the original Derive recorded in
+preserved manuals and other sources.
 
 If AI provenance bothers you, that is a reasonable position. But this is not a demo
-one-shotted in an afternoon: it is used and maintained by its author, and bug reports are
-welcome.
+one-shotted in an afternoon: it is used and maintained by its human author, who welcomes
+bug reports and ideas for improvement.
 
 ## License
 
