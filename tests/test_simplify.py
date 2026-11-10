@@ -387,12 +387,10 @@ DOMAINS = [
     # `LN(x) + LN(x - 1)`. Term order is the engine's.
     ("LN(x^2 - x) - LN(x)", "LN(x^2 - x) - LN(x)", None),
     ("LN(x^2 - x) - LN(x)", "LN(x - 1)", POSITIVE_X),
-    ("LN(x^2)", "LN(x^2)", None),
-    (
-        "LN(x^2)",
-        "2*LN(x)",
-        declared("x :epsilon Real (0, inf)", logarithm=Direction.EXPAND),
-    ),
+    ("LN(x^2)", "2*LN(ABS(x))", None),
+    ("LN(x^2)", "2*LN(x)", POSITIVE_X),
+    ("LN(x^3)", "LN(x^3)", None),
+    ("LN(x^3)", "3*LN(x)", POSITIVE_X),
     ("SQRT(x)*SQRT(y)", "SQRT(x)*SQRT(y)", None),
     ("(-1)^(2*n)", "1", declared("n :epsilon Integer")),
     ("(-1)^(2*n)", "(-1)^(2*n)", None),
@@ -953,9 +951,37 @@ LOGARITHMS = [
     ("LN(12)", "LN(12)", None),
     ("3*LN(2) + LN(5)", "LN(40)", None),
     # The rule requires a nonnegative base, or an exponent with magnitude below one.
-    ("LN(x^8)", "LN(x^8)", None),
+    ("LN(x^3)", "LN(x^3)", None),
+    ("LN(x^8)", "8*LN(ABS(x))", None),
     ("LN(x^8)", "8*LN(x)", declared("x :epsilon Real [0, inf)")),
     ("LN(SQRT(z))", "LN(z)/2", None),
+    # An even power of a real argument is that power of its absolute value, so it
+    # splits as well; an odd power and a complex argument stay.
+    ("LN(x^(-2))", "-2*LN(ABS(x))", None),
+    ("LN(x^(-3))", "LN(1/x^3)", None),
+    ("LN(x^2) + LN(x^4)", "6*LN(ABS(x))", None),
+    ("LN((x^2 + 1)^2)", "2*LN(x^2 + 1)", None),
+    ("LN(x^2)/LN(x^(-2))", "-1", None),
+    # A product that is a power as a whole splits the same way, and so does a
+    # polynomial that factors into one. `2*x^2` and `x^2*y` aren't powers.
+    ("LN(4*x^2)", "2*LN(2*ABS(x))", None),
+    ("LN(x^2/4)", "2*LN(ABS(x)/2)", None),
+    ("LN(x^2*y^2)", "2*LN(ABS(x*y))", None),
+    ("LN((x/y)^2)", "2*LN(ABS(x/y))", None),
+    ("LN((x/y)^2)", "2*LN(x/ABS(y))", POSITIVE_X),
+    ("LN(1/(x^2*y^2))", "-2*LN(ABS(x*y))", None),
+    ("LN(x^4*y^2)", "2*LN(x^2*ABS(y))", None),
+    ("LN(8*x^3)", "LN(8*x^3)", None),
+    ("LN(8*x^3)", "3*LN(2*x)", POSITIVE_X),
+    ("LN(2*x^2)", "LN(2*x^2)", None),
+    ("LN(x^2*y)", "LN(x^2*y)", None),
+    ("LN(x^2 + 2*x + 1)", "2*LN(ABS(x + 1))", None),
+    ("LN(x^4 + 2*x^2 + 1)", "2*LN(x^2 + 1)", None),
+    ("LN(x^2 - 1)", "LN(x^2 - 1)", None),
+    ("LN(4*x^2)", "LN(4*x^2)", COMPLEX_X),
+    ("LN(x^2 + 2*x + 1)", "LN(x^2 + 2*x + 1)", COMPLEX_X),
+    ("LN(1/x)", "LN(1/x)", None),
+    ("LN(x^(-2))", "LN(1/x^2)", COMPLEX_X),
     ("LN(x*y)", "LN(x*y)", Context(logarithm=Direction.EXPAND)),
     (
         "LN(x*y)",
@@ -991,9 +1017,8 @@ LOGARITHMS = [
     ("#e^(LN(2)*LN(3))", "2^LN(3)", None),
     ("5^LN(2)/2^LN(5)", "1", None),
     ("x^LN(2)", "x^LN(2)", None),
-    # An even power of a real argument equals that power of its absolute value, so
-    # Expand splits the logarithm through it. Auto keeps the shorter `LN(x^2)` since
-    # 6.2's rule doesn't apply, as does a complex argument.
+    # Expand splits an even power of a real argument too, also inside a product. An
+    # odd power and a complex argument stay.
     ("LN(x^2)", "2*LN(ABS(x))", Context(logarithm=Direction.EXPAND)),
     ("LN(4*x^2)", "2*LN(ABS(x)) + 2*LN(2)", Context(logarithm=Direction.EXPAND)),
     ("LN(x^3)", "LN(x^3)", Context(logarithm=Direction.EXPAND)),

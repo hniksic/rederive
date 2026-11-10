@@ -615,7 +615,7 @@ def test_a_pole_the_integrand_owns_is_left_in_the_antiderivative(text, expected)
     [
         ("INT(SIN(a*x)^2/x, x)", "LN(2*a*x)/2 - CI(2*a*x)/2"),
         ("INT((COS(a*x) - COS(b*x))/x, x)", "-LN(a*x) + LN(b*x) + CI(a*x) - CI(b*x)"),
-        ("INT((#e^(a*x) - 1)/x, x)", "EI(a*x) - LN(a^2*x^2)/2"),
+        ("INT((#e^(a*x) - 1)/x, x)", "EI(a*x) - LN(ABS(a*x))"),
     ],
 )
 def test_an_antiderivative_is_continuous_where_the_integrand_is_regular(text, expected):

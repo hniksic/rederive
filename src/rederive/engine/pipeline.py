@@ -3120,28 +3120,25 @@ def _positive_rational(number: sp.Basic) -> bool:
     return bool(number.is_Rational and number.is_positive and number != 1)
 
 
-def _extracted_powers(expression: sp.Basic, even: bool = False) -> sp.Basic:
+def _extracted_powers(expression: sp.Basic) -> sp.Basic:
     """Rewrite `LN(z^k)` as `k*LN(z)` wherever the rule holds."""
     return expression.replace(
-        lambda e: _extracted_power(e, even) is not None,
-        lambda e: _extracted_power(e, even),
+        lambda e: _extracted_power(e) is not None,
+        lambda e: _extracted_power(e),
         simultaneous=False,
     )
 
 
-def _expanded_powers(expression: sp.Basic) -> sp.Basic:
-    """Rewrite `LN(z^k)` as `k*LN(z)`, and as `k*LN(ABS(z))` for even powers of real
-    `z`."""
-    return _extracted_powers(expression, even=True)
-
-
-def _extracted_power(expression: sp.Basic, even: bool = False) -> sp.Basic | None:
+def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
     """`k*LN(z)`, if `expression` is a logarithm of `z^k` that may be split.
 
     Section 6.2 gives `k*LN(x) <-> LN(x^k)` for rational `k` when `x` is nonnegative,
-    and for any `x` when `-1 < k <= 1`. With `even`, even powers of real `x` are split
-    too: `LN(x^2)` is `2*LN(ABS(x))`. That is longer, so only Logarithm Expand does it;
-    Auto keeps `LN(x^2)`.
+    and for any `x` when `-1 < k <= 1`. An even power of a real `x` equals that power of
+    its absolute value, so it is split too: `LN(x^2)` is `2*LN(ABS(x))` and `LN(x^(-2))`
+    is `-2*LN(ABS(x))`, following the original.
+
+    A product or a polynomial that is a power as a whole counts as one: `LN(4*x^2)` is
+    `2*LN(2*ABS(x))` and `LN(x^2 + 2*x + 1)` is `2*LN(ABS(x + 1))`.
     """
     if not isinstance(expression, sp.log) or len(expression.args) != 1:
         return None
@@ -3149,16 +3146,66 @@ def _extracted_power(expression: sp.Basic, even: bool = False) -> sp.Basic | Non
     if argument.is_Rational and argument.is_positive:
         power = _perfect_power(argument)
         return None if power is None else power[1] * sp.log(power[0])
-    if not argument.is_Pow:
+    if argument.is_Add and argument.is_polynomial():
+        argument = sp.factor(argument)
+    if argument.is_Mul:
+        power = _whole_power(argument)
+        if power is None:
+            return None
+        base, exponent = power
+    elif argument.is_Pow:
+        base, exponent = argument.args
+    else:
         return None
-    base, exponent = argument.args
     if not exponent.is_Rational:
         return None
     if base.is_nonnegative or bool(-1 < exponent <= 1):
         return exponent * sp.log(base)
-    if even and exponent.is_Integer and exponent.is_even and _real_where_defined(base):
-        return exponent * sp.log(sp.Abs(base))
+    if exponent.is_Integer and exponent.is_even and _real_where_defined(base):
+        return exponent * sp.log(_magnitude(base))
     return None
+
+
+def _magnitude(expression: sp.Basic) -> sp.Basic:
+    """`ABS(expression)`, with the reciprocal outside: `x/ABS(y)`, where sympy answers
+    `x*ABS(1/y)` for a positive `x`."""
+    return sp.Abs(expression).replace(
+        lambda e: isinstance(e, sp.Abs) and e.args[0].is_Pow and e.args[0].exp.is_Integer,
+        lambda e: sp.Abs(e.args[0].base) ** e.args[0].exp,
+    )
+
+
+def _whole_power(product: sp.Mul) -> tuple[sp.Basic, sp.Integer] | None:
+    """`(z, k)` where `product` is `z^k`, for the largest integer `k` above one.
+
+    Every factor must be an integer power and a numeric coefficient a perfect power:
+    `4*x^2` is `(2*x)^2` and `x^4*y^2` is `(x^2*y)^2`, while `2*x^2` and `x^2*y` aren't
+    powers. `k` is negative if every exponent is: `1/(x^2*y^2)` is `(x*y)^(-2)`.
+    """
+    coefficient, rest = product.as_coeff_Mul()
+    powers = [factor.as_base_exp() for factor in sp.Mul.make_args(rest)]
+    if not all(exponent.is_Integer for _, exponent in powers):
+        return None
+    exponents = [exponent for _, exponent in powers]
+    root = sp.S.One
+    if coefficient != 1:
+        if not (coefficient.is_Rational and coefficient.is_positive):
+            return None
+        perfect = _perfect_power(coefficient)
+        if perfect is None:
+            return None
+        root, exponent = perfect
+        exponents.append(exponent)
+    k = sp.Integer(sp.igcd(*exponents))
+    if k < 2:
+        return None
+    if all(exponent < 0 for _, exponent in powers):
+        k = -k
+    if coefficient != 1:
+        root = root ** (exponents[-1] / abs(k))
+        if k < 0:
+            root = 1 / root
+    return root * sp.Mul(*(base ** (exponent / k) for base, exponent in powers)), k
 
 
 def _perfect_power(number: sp.Rational) -> tuple[sp.Rational, sp.Integer] | None:
@@ -3694,7 +3741,7 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
         Direction.EXPAND: (
             _Rule("expand_log", _nonnegatively(sp.expand_log), forced,
                   "a logarithm of a product taken apart"),
-            _Rule("expanded powers", _expanded_powers, forced,
+            _Rule("extracted powers", _extracted_powers, forced,
                   "LN(x^2) is 2*LN(ABS(x)): a logarithm of a power taken apart"),
         ),
     },
