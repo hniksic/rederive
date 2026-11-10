@@ -53,24 +53,39 @@ for running from source.
 
 ## Usage
 
-Press enter to input an expression, and then <kbd>s</kbd> to Simplify it, <kbd>l</kbd>
-to soLve it, etc. For example typing in the expression:
+Move between menu items with <kbd>Tab</kbd> and <kbd>Shift-Tab</kbd> (or <kbd>Space</kbd>
+and <kbd>Backspace</kbd>). Press <kbd>Enter</kbd> over "Author" to input an expression,
+and then <kbd>s</kbd> to Simplify it, <kbd>l</kbd> to soLve it, etc. For example, typing
+in the expression:
 
 ```
-((ax+b)^2 - (ax-b)^2) / ((cx+d)^2 - (cx-d)^2)
+1/2 + 2/3
 ```
 
 displays it as:
 
 ```
-         2            2
-(a·x + b)  - (a·x - b)
-─────────────────────────
-         2            2
-(c·x + d)  - (c·x - d)
+ 1     2
+─── + ───
+ 2     3
 ```
 
-and pressing <kbd>s</kbd> simplifies it to:
+An expression stays unevaluated until you simplify it. Pressing <kbd>s</kbd> simplifies
+the above to:
+
+```
+ 7
+───
+ 6
+```
+
+A more complex expression, such as:
+
+```
+((ax+b)^2 - (ax-b)^2) / ((cx+d)^2 - (cx-d)^2)
+```
+
+simplifies to:
 
 ```
  a·b
@@ -78,9 +93,8 @@ and pressing <kbd>s</kbd> simplifies it to:
  c·d
 ```
 
-An expression stays unevaluated until you simplify it. Simplify works it out as needed,
-which includes doing the arithmetic, canceling superfluous terms, evaluating integrals,
-and so on.
+Simplify will work out what needs to be done with an expression, which includes doing the
+arithmetic, canceling terms, evaluating integrals, and so on.
 
 Calculus goes through a small menu. Author `#e^(-x^2)`, press <kbd>c</kbd> for Calculus
 and <kbd>i</kbd> for Integrate, and enter the limits `0` and `inf`:
