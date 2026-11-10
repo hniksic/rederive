@@ -52,7 +52,7 @@ from rederive.model.expr import Node
 
 Answer = TypeVar("Answer")
 
-__all__ = ["covering", "decided", "settled"]
+__all__ = ["covering", "decided", "never_negative", "settled"]
 
 #: Heads settled by knowing the sign of an argument.
 _SIGNED = (sp.Abs, sp.sign, sp.Max, sp.Min)
@@ -102,6 +102,18 @@ def decided(test: sp.Basic, context: Context) -> bool | None:
         if box.asks(predicate, difference):
             return holds
     return None
+
+
+def never_negative(expression: sp.Basic) -> bool:
+    """Whether `expression` is provably real and not below zero, whatever its variables.
+
+    Goes by the symbols' own assumptions, with interval arithmetic for what sympy
+    doesn't see: `1 + COS(x)`, `ABS(x)` and `x^2` all qualify for real `x`.
+    """
+    if expression.is_nonnegative:
+        return True
+    reach = _attempt(lambda: _range(expression, {}))
+    return reach is not None and _holds(Q.nonnegative, reach)
 
 
 def _connected(test: sp.Basic, context: Context) -> bool | None:

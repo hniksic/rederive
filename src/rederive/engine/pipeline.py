@@ -65,7 +65,7 @@ from rederive.engine.expanding import EXPAND_AMOUNTS, expanded_expression
 from rederive.engine.factoring import amount_named, factored_expression
 from rederive.engine.from_sympy import from_sympy
 from rederive.engine.integration import agrees, integral, proved_zero
-from rederive.engine.intervals import covering, decided, settled
+from rederive.engine.intervals import covering, decided, never_negative, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.printer import is_written
 from rederive.engine.rewriting import Rewrite, attempt, forced, pays
@@ -1968,17 +1968,23 @@ _EVEN = (sp.cos, sp.sec, sp.cosh, sp.sech)
 
 
 def _symmetries(expression: sp.Basic) -> sp.Basic:
-    """Simplify `SIGN` of odd functions and even functions of `ABS`.
+    """Simplify `SIGN` of odd functions and logarithms, and even functions of `ABS`.
 
     For real `u`, `SIGN(ATAN(u))` and `SIGN(u^3)` are `SIGN(u)`, and `COS(ABS(u))` is
     `COS(u)`. This must run before the definitions turn hyperbolics into exponentials,
     hiding the symmetry. Arguments not known to be real are left alone.
+
+    A logarithm is increasing and crosses zero at 1, so `SIGN(LN(u))` is `SIGN(u - 1)`
+    where `u` can't be negative: `SIGN(LN(1 + COS(x)))` is `SIGN(COS(x))`. A logarithm
+    of a negative number is complex, so `SIGN(LN(x))` stays.
     """
 
     def signed(head: sp.sign) -> sp.Basic:
         inner = head.args[0]
         if isinstance(inner, _SIGN_KEEPING) and inner.args[0].is_extended_real:
             return sp.sign(inner.args[0])
+        if isinstance(inner, sp.log) and never_negative(inner.args[0]):
+            return sp.sign(inner.args[0] - 1)
         # Negative exponents are handled by `_signs_of_reciprocals`.
         if isinstance(inner, sp.Pow) and inner.exp.is_positive:
             base, exponent = inner.args
