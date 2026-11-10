@@ -407,10 +407,6 @@ DOMAINS = [
         "INT(SIN(2*x)*SIN(m*x), x, 0, pi)",
         declared("m :epsilon Integer"),
     ),
-    # `#e^(k*LN(y))` is `y^k` only for positive `y`. Derive rewrites it regardless;
-    # here an undeclared `y` leaves it unchanged.
-    ("#e^(3*x*LN(y))", "#e^(3*x*LN(y))", None),
-    ("#e^(3*x*LN(y))", "y^(3*x)", declared("y :epsilon Real (0, inf)")),
     # The tangent pair sums to a right angle with the sign of its argument, which
     # covers both cases and so is not a guess. For complex arguments the identity
     # doesn't hold (`SIGN` is no longer `±1`), so the pair stays.
@@ -1079,6 +1075,53 @@ def test_which_root_an_expression_may_mean(text, expected, branch):
     assert simp(text, Context(branch=branch)) == expected
 
 
+#: `#e^(u*LN(b))` is `b^u`, following the original: term by term through a sum in the
+#: exponent, with the terms that have no logarithm left over `#e`. Of two logarithms in a
+#: term, the one whose argument has the most main variable gives the base. The
+#: exponential stays under Exponential Collect.
+POWERS_OF_LOGARITHMS = [
+    ("#e^(3*x*LN(y))", "y^(3*x)", None),
+    ("#e^(x*LN(2))", "2^x", None),
+    ("#e^(x*LN(y + 1))", "(y + 1)^x", None),
+    ("#e^(-x*LN(y)/2)", "y^(-x/2)", None),
+    ("#e^(#i*x*LN(y))", "y^(#i*x)", None),
+    ("#e^(3*x*LN(y) + 2)", "#e^2*y^(3*x)", None),
+    ("#e^(x + x*LN(y))", "y^x*#e^x", None),
+    ("#e^(x*LN(y) + x*LN(z))", "y^x*z^x", None),
+    ("#e^(x*(LN(y) + LN(z)))", "y^x*z^x", None),
+    ("#e^(x*y*LN(z) + 3*LN(w))", "w^3*z^(x*y)", None),
+    ("#e^(LN(x)*LN(y))", "x^LN(y)", None),
+    ("#e^(LN(y)*LN(x))", "x^LN(y)", None),
+    ("#e^(LN(x)*LN(y))", "y^LN(x)", Context(order=("y", "x", "z"))),
+    ("#e^(2*LN(x)*LN(y))", "x^(2*LN(y))", None),
+    ("#e^(x*LN(y)*LN(z))", "y^(x*LN(z))", None),
+    ("#e^(x*LN(y)*LN(2))", "y^(LN(2)*x)", None),
+    ("#e^(LN(x + 1)*LN(y))", "(x + 1)^LN(y)", None),
+    ("#e^(LN(z)*LN(y + 1))", "(y + 1)^LN(z)", None),
+    ("#e^(LN(x*y)*LN(z))", "(x*y)^LN(z)", None),
+    ("#e^(LN(y)^2)", "#e^(LN(y)^2)", None),
+    # A complex number in the exponent stays there, following the original.
+    ("#e^(#i*LN(2))", "#e^(#i*LN(2))", None),
+    ("#e^(-pi/2 + #i*LN(2))", "#e^(-pi/2 + #i*LN(2))", None),
+    ("#e^(pi*LN(2))", "2^pi", None),
+    ("SINH(x*LN(y))", "y^x/2 - y^(-x)/2", None),
+    ("#e^(3*x*LN(y))", "y^(3*x)", Context(exponential=Direction.EXPAND)),
+    ("#e^(3*x*LN(y))", "#e^(3*x*LN(y))", Context(exponential=Direction.COLLECT)),
+    (
+        "#e^(3*x*LN(y) + 2)",
+        "#e^(3*x*LN(y) + 2)",
+        Context(exponential=Direction.COLLECT),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "context"), POWERS_OF_LOGARITHMS, ids=str
+)
+def test_an_exponential_of_a_logarithm_is_a_power(text, expected, context):
+    assert simp(text, context) == expected
+
+
 #: Section 4.5's rectangular form, and three cases it doesn't cover: a symbolic base;
 #: a fifth root, which would need nested radicals; and a seventh, which would need a
 #: cosine, i.e. the polar form the rule avoids.
@@ -1614,6 +1657,7 @@ EVERY_CASE = [
     *((text, context) for text, _, context in DOMAINS if text not in SLOW_TO_STAND),
     *((text, context) for text, _, context in TRIGONOMETRY),
     *((text, context) for text, _, context in LOGARITHMS),
+    *((text, context) for text, _, context in POWERS_OF_LOGARITHMS),
     *(
         (text, None)
         for text, _ in CALCULUS

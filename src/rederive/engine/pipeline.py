@@ -32,7 +32,7 @@ previous form. Nothing sympy does can turn a valid entry into an error.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import reduce
 from itertools import combinations
 from math import gcd
@@ -67,6 +67,7 @@ from rederive.engine.from_sympy import from_sympy
 from rederive.engine.integration import agrees, integral, proved_zero
 from rederive.engine.intervals import covering, decided, never_negative, settled
 from rederive.engine.normal import normal_form
+from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written
 from rederive.engine.rewriting import Rewrite, attempt, forced, pays
 from rederive.engine.signs import folded_signs
@@ -3126,6 +3127,51 @@ def _positive_rational(number: sp.Basic) -> bool:
     return bool(number.is_Rational and number.is_positive and number != 1)
 
 
+def _powers_of_logarithms(expression: sp.Basic, order: Sequence[str]) -> sp.Basic:
+    """Rewrite `#e^(u*LN(b))` as `b^u`, which is what the power means.
+
+    Each term of the exponent with a logarithm among its factors becomes a power, and
+    the terms without one stay over `#e`: `#e^(3*x*LN(y) + 2)` is `#e^2*y^(3*x)` and
+    `#e^(x*LN(y) + x*LN(z))` is `y^x*z^x`. A power of a logarithm is not such a factor,
+    so `#e^(LN(y)^2)` stands, and so does a complex number: `#e^(#i*LN(2))` is how a
+    principal value is written.
+
+    Of several logarithms in one term, the one whose argument has the most main variable
+    gives the base, and the others stay in the exponent: `#e^(LN(x)*LN(y))` is
+    `x^LN(y)`, and `#e^(x*LN(2)*LN(y))` is `y^(x*LN(2))`.
+    """
+    return expression.replace(
+        lambda e: isinstance(e, sp.exp) and e.args[0].has(sp.log),
+        lambda e: _power_of_logarithms(e, order),
+        simultaneous=False,
+    )
+
+
+def _power_of_logarithms(exponential: sp.Basic, order: Sequence[str]) -> sp.Basic:
+    powers, standing = [], []
+    for term in sp.Add.make_args(sp.expand_mul(exponential.args[0])):
+        logarithms = [
+            factor for factor in sp.Mul.make_args(term) if isinstance(factor, sp.log)
+        ]
+        if not logarithms or (term.is_number and term.is_real is not True):
+            standing.append(term)
+            continue
+        base = min(logarithms, key=lambda log: _mainness(log.args[0], order))
+        powers.append(sp.Pow(base.args[0], term / base))
+    if not powers:
+        return exponential
+    return sp.Mul(*powers) * sp.exp(sp.Add(*standing))
+
+
+def _mainness(argument: sp.Basic, order: Sequence[str]) -> tuple[int, int]:
+    """A sort key that puts the argument with the most main variable first, and numbers
+    last."""
+    names = {symbol.name for symbol in argument.free_symbols}
+    if not names:
+        return (1, 0)
+    return (0, main_order({*names, *order}, order).index(main_order(names, order)[0]))
+
+
 def _extracted_powers(expression: sp.Basic) -> sp.Basic:
     """Rewrite `LN(z^k)` as `k*LN(z)` wherever the rule holds."""
     return expression.replace(
@@ -3583,6 +3629,12 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     for setting, directions in _DIRECTED.items():
         rules = directions.get(getattr(context, setting), ())
         expression = _applied(expression, rules, context)
+    # Not in the tables, whose rules don't see the order list. Following the original,
+    # the exponential stays under Collect.
+    if context.exponential != Direction.COLLECT:
+        expression = forced(
+            expression, lambda e: _powers_of_logarithms(e, context.order)
+        )
     return expression
 
 
