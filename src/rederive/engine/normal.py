@@ -890,9 +890,25 @@ def _positive_powers(term: sp.Basic) -> dict[sp.Basic, sp.Basic]:
 def _expanded(expression: sp.Basic) -> sp.Basic:
     """Multiplied out, without splitting powers.
 
-    Derive keeps `x^(a + b)` and `(x*y)^n` as they are.
+    Derive keeps `x^(a + b)` and `(x*y)^n` as they are. A logarithm sheds a positive
+    factor only where a variable multiplies it: `x*LN(2*x)` is `x*LN(x) + x*LN(2)`, whose
+    second term collects with others in `x`, while `LN(2*x) + x` stays.
     """
-    return sp.expand(expression, power_exp=False, power_base=False)
+    expanded = sp.expand(expression, power_exp=False, power_base=False, log=False)
+    return sp.Add(
+        *(
+            term
+            if _lone_logarithm(term)
+            else sp.expand(term, power_exp=False, power_base=False)
+            for term in sp.Add.make_args(expanded)
+        )
+    )
+
+
+def _lone_logarithm(term: sp.Basic) -> bool:
+    """Whether `term` is a constant multiple of one logarithm of a variable argument."""
+    variable = [factor for factor in sp.Mul.make_args(term) if factor.free_symbols]
+    return len(variable) == 1 and isinstance(variable[0], sp.log)
 
 
 def _roots_of_quotients_hidden(

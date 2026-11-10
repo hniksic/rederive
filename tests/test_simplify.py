@@ -982,6 +982,16 @@ LOGARITHMS = [
     ("LN(x^2 + 2*x + 1)", "LN(x^2 + 2*x + 1)", COMPLEX_X),
     ("LN(1/x)", "LN(1/x)", None),
     ("LN(x^(-2))", "LN(1/x^2)", COMPLEX_X),
+    # A real power of `#e` is a positive factor, so it leaves the logarithm, following
+    # the original. The rest of the argument stays whole, also beside a term in its
+    # variable.
+    ("LN(2*x^3*EXP(x))", "LN(2*x^3) + x", None),
+    ("LN(x/EXP(y))", "LN(x) - y", None),
+    ("LN(2*EXP(x))", "x + LN(2)", None),
+    ("LN(4*x^2*EXP(x))", "2*LN(2*ABS(x)) + x", None),
+    ("LN(x*EXP(x))", "LN(x*#e^x)", COMPLEX_X),
+    ("LN(x*EXP(#i*y))", "LN(x*#e^(#i*y))", None),
+    ("LN(2*x) + x", "LN(2*x) + x", None),
     ("LN(x*y)", "LN(x*y)", Context(logarithm=Direction.EXPAND)),
     (
         "LN(x*y)",

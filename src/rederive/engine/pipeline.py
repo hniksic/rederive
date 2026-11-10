@@ -3139,6 +3139,9 @@ def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
 
     A product or a polynomial that is a power as a whole counts as one: `LN(4*x^2)` is
     `2*LN(2*ABS(x))` and `LN(x^2 + 2*x + 1)` is `2*LN(ABS(x + 1))`.
+
+    A factor `#e^u` with real `u` is positive, so its logarithm leaves whatever it
+    multiplies: `LN(2*x^3*#e^x)` is `LN(2*x^3) + x`.
     """
     if not isinstance(expression, sp.log) or len(expression.args) != 1:
         return None
@@ -3146,6 +3149,17 @@ def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
     if argument.is_Rational and argument.is_positive:
         power = _perfect_power(argument)
         return None if power is None else power[1] * sp.log(power[0])
+    if argument.is_Mul:
+        exponentials, rest = sp.sift(
+            argument.args,
+            lambda factor: isinstance(factor, sp.exp) and factor.args[0].is_real is True,
+            binary=True,
+        )
+        if exponentials:
+            remaining = sp.log(sp.Mul(*rest))
+            split = _extracted_power(remaining)
+            exponents = sp.Add(*(factor.args[0] for factor in exponentials))
+            return (remaining if split is None else split) + exponents
     if argument.is_Add and argument.is_polynomial():
         argument = sp.factor(argument)
     if argument.is_Mul:
