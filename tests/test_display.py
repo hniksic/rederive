@@ -1510,3 +1510,144 @@ def test_every_name_the_lexer_knows_has_an_output_spelling() -> None:
         assert name in glyphs.NAMES, name
     for name in names.CONSTANTS:
         assert name in glyphs.NAMES, name
+
+
+# -- matrices beside other things, following the original ---------------------
+
+# Each block follows the original's layout of the same expression.
+
+
+def test_a_subscript_goes_on_its_own_row_below_a_tall_base() -> None:
+    check(
+        "[[a,b,c],[1,2,3]]` SUB 3",
+        """
+        ┌ a  b  c ┐
+        │         │`
+        └ 1  2  3 ┘
+                    3
+        """,
+    )
+    check(
+        "(a/b) SUB (c/d) + 1",
+        """
+        ┌ a ┐
+        │───│    + 1
+        └ b ┘
+             c/d
+        """,
+    )
+
+
+def test_merged_subscripts_share_the_row_below_a_tall_base() -> None:
+    check(
+        "x + [[a,b],[c,d]] SUB 1 SUB 2 + y",
+        """
+            ┌ a  b ┐
+        x + │      │    + y
+            └ c  d ┘
+                    1,2
+        """,
+    )
+
+
+def test_an_exponent_follows_the_subscript_of_a_tall_base() -> None:
+    check(
+        "([[a,b],[c,d]] SUB 1)^2 + 1",
+        """
+        ┌ a  b ┐ 2
+        │      │   + 1
+        └ c  d ┘
+                1
+        """,
+    )
+
+
+def test_a_call_on_one_built_up_matrix_drops_its_parentheses() -> None:
+    check(
+        "x*DET([[2,3],[a,b]])*y",
+        """
+              ┌ 2  3 ┐
+        x·DET │      │·y
+              └ a  b ┘
+        """,
+    )
+    check(
+        "DET([a/b,c])",
+        """
+            ┌ a    ┐
+        DET │───, c│
+            └ b    ┘
+        """,
+    )
+
+
+def test_a_call_keeps_parentheses_that_would_be_one_cell_tall() -> None:
+    check(
+        "DIV([1,2*y,3*z^2])",
+        """
+            ┌           2┐
+        DIV(└1, 2·y, 3·z ┘)
+        """,
+    )
+    assert rendered("DET([[a,b]])") == ["DET([ a  b ])"]
+    assert rendered("2^DET([[a,b],[c,d]])")[0].strip() == "DET([[a, b], [c, d]])"
+
+
+def test_a_call_keeps_its_parentheses_around_anything_but_a_lone_matrix() -> None:
+    check(
+        "DET([[a,b],[c,d]]+1)",
+        """
+           ┌┌ a  b ┐    ┐
+        DET││      │ + 1│
+           └└ c  d ┘    ┘
+        """,
+    )
+    check(
+        "CHARPOLY([[a,b],[c,d]],x)",
+        """
+                ┌┌ a  b ┐   ┐
+        CHARPOLY││      │, x│
+                └└ c  d ┘   ┘
+        """,
+    )
+
+
+def test_a_subscripted_call_without_parentheses_is_fenced_whole() -> None:
+    check(
+        "LN([[a,b],[c,d]]) SUB 1",
+        """
+        ┌   ┌ a  b ┐┐
+        │LN │      ││
+        └   └ c  d ┘┘
+                     1
+        """,
+    )
+
+
+def test_a_matrix_cell_centers_its_middle_column_on_the_columns() -> None:
+    check(
+        "[[12345,1],[12,123],[1234,1]]",
+        """
+        ┌ 12345   1  ┐
+        │            │
+        │  12    123 │
+        │            │
+        └ 1234    1  ┘
+        """,
+    )
+
+
+@pytest.mark.parametrize(
+    ("script", "lowered"),
+    [
+        ("y^z", "y^z"),
+        ("y SUB z", "y↓z"),
+        ("y SUB z SUB w", "y↓z↓w"),
+        ("y SUB (z SUB w)", "y↓(z↓w)"),
+        ("y^(z SUB w)", "y^z↓w"),
+        ("y*z SUB w", "y·z↓w"),
+    ],
+)
+def test_a_lowered_script_is_written_flat(script: str, lowered: str) -> None:
+    gap = " " * len(lowered)
+    assert rendered(f"x SUB ({script}) + 1") == [f"x{gap} + 1", f" {lowered}"]

@@ -44,6 +44,9 @@ _WORD_OPERATORS = {
 #: Beyond this level a script is written flat, `^` as `a^b` and `SUB` as `a↓b`.
 _LINEAR_SCRIPTS = 2
 
+#: The tallest box whose parentheses are still single characters, `fenced`'s default.
+_SHORT_FENCE = 2
+
 #: `after` for an operand with nothing drawn to its right. Lower than every precedence on
 #: the ladder.
 ALONE = -1
@@ -350,18 +353,31 @@ class Engine:
             # Flat `a↓b`: the arrow replaces lowering, just as `a^b` replaces raising.
             flat = self.operand(base, level, budget, forms.POSTFIX, forms.POSTFIX)
             deeper = self.operand(script, level, budget, forms.SCRIPT)
+            if script.kind is Kind.SUB:
+                # `a↓b↓c` reads as the chain `a SUB b SUB c`.
+                deeper = self.fence(deeper)
             return row(
                 [flat, text(glyphs.LOWERED), deeper], node, (flat, deeper)
             )
-        lowered = self.box(script, level + 1, budget)
+        # A lowered script is written flat, whatever it holds: `x SUB (y^z)` lowers
+        # `y^z`, and `x SUB (y SUB z)` lowers `y↓z`.
+        lowered = self.box(script, _LINEAR_SCRIPTS, budget)
         under = self.operand(base, level, budget, forms.POSTFIX, forms.POSTFIX)
-        dy = 1 + lowered.above
+        if self._bare_call(base, level, budget):
+            # Without its parentheses the call would seem to subscript its argument.
+            under = self.fence(under)
         parts = [Placed(under, 0, 0)]
         dx = under.width
         if base.kind is Kind.SUB:
-            # Nested subscripts merge: `v SUB 1 SUB 2` draws `v` with subscript `1,2`.
+            # Nested subscripts merge: `v SUB 1 SUB 2` draws `v` with subscript `1,2`,
+            # on the row the first subscript already occupies.
+            dy = under.below + lowered.above
             parts.append(Placed(text(","), dx, dy))
             dx += 1
+        else:
+            # The script goes on a row of its own below the base, however tall the base
+            # is: a matrix's subscript sits under its bottom corner.
+            dy = under.below + 1 + lowered.above
         parts.append(Placed(lowered, dx, dy))
         return Box(
             max(under.width, dx + lowered.width),
@@ -408,8 +424,26 @@ class Engine:
             return form(self, owner, arguments, level, budget)
         # Arguments never need fences inside the call's parentheses. The name has no
         # node, so it is never selectable.
-        listed = fenced(self._joined(arguments, level, budget), glyphs.PARENS)
+        joined = self._joined(arguments, level, budget)
+        if self._bare_call(node, level, budget):
+            return row([text(f"{name.value} "), joined], owner, (joined,))
+        listed = fenced(joined, glyphs.PARENS)
         return row([text(str(name.value)), listed], owner, (listed,))
+
+    def _bare_call(self, node: Node, level: int, budget: int | None) -> bool:
+        """Whether `node` is a call drawn without parentheses, as `DET [...]`.
+
+        Following the original, they are dropped when the only argument is a vector or
+        matrix tall enough that the parentheses would be built up too: the brackets
+        delimit the argument on their own, and a space follows the name instead. A
+        two-row vector keeps its one-cell parentheses, as in `DIV([1, 2·y, 3·z^2])`.
+        """
+        if node.kind not in forms.APPLICATIONS or forms.special(node) is not None:
+            return False
+        _, arguments = forms.application(node)
+        if len(arguments) != 1 or arguments[0].kind is not Kind.VECTOR:
+            return False
+        return self.box(arguments[0], level, budget).height > _SHORT_FENCE
 
     def _joined(
         self,
@@ -460,7 +494,9 @@ class Engine:
             parts = []
             offset = 0
             for column, cell in enumerate(line):
-                dx = offset + centered(widths[column], cell.width)
+                # A cell's middle column goes on the column's middle column, so an
+                # even-width cell in an odd-width column leans left: `27` over `125`.
+                dx = offset + widths[column] // 2 - cell.width // 2
                 parts.append(Placed(cell, dx, 0))
                 offset += widths[column] + 2
             lines.append(

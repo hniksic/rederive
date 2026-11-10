@@ -63,7 +63,7 @@ _BODY_PRECEDENCE: dict[str, int] = {
     "DIF": MUL,
 }
 
-_APPLICATIONS = (Kind.CALL, Kind.APPLY, Kind.FUNCPOW)
+APPLICATIONS = (Kind.CALL, Kind.APPLY, Kind.FUNCPOW)
 
 
 def application(node: Node) -> tuple[Node, tuple[Node, ...]]:
@@ -99,7 +99,7 @@ def side_of(node: Node) -> str | None:
 
 def special(node: Node) -> Callable[..., Box] | None:
     """The form `node` renders as, or None if it prints as an ordinary call."""
-    if node.kind not in _APPLICATIONS:
+    if node.kind not in APPLICATIONS:
         return None
     name, arguments = application(node)
     key = (str(name.value), len(arguments))
