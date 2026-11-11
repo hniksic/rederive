@@ -1183,6 +1183,34 @@ def test_a_definite_integral_with_no_antiderivative_in_reach_stands(text, expect
     assert simp(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(COS(x)*(SIN(x) + 2)^12, x, 0, pi)", "0"),
+        ("INT(COS(x)*(SIN(x) + 2)^12, x, 0, pi/2)", "1586131/13"),
+        ("INT((2*x + 1)*(x^2 + x + 1)^12, x, 0, 1)", "1594322/13"),
+        ("INT(#e^x*(#e^x + 1)^12, x, 0, 1)", "(#e + 1)^13/13 - 8192/13"),
+        ("INT(#e^(-x)*(#e^(-x) + 1)^12, x, 0, inf)", "8191/13"),
+        ("INT((3*x^2 + 10*x^27)^12, x, 0, 1)", "30287510499793/325"),
+        # Limits of unknown order, with an antiderivative continuous everywhere.
+        (
+            "INT(COS(x)*(SIN(x) + 2)^12, x, 0, a)",
+            "SIN(a)^13/13 + 2*SIN(a)^12 + 24*SIN(a)^11 + 176*SIN(a)^10 + 880*SIN(a)^9 "
+            "+ 3168*SIN(a)^8 + 8448*SIN(a)^7 + 16896*SIN(a)^6 + 25344*SIN(a)^5 "
+            "+ 28160*SIN(a)^4 + 22528*SIN(a)^3 + 12288*SIN(a)^2 + 4096*SIN(a)",
+        ),
+        ("INT(COS(x)/(SIN(x) + 2)^2, x, 0, a)", "1/2 - 1/(SIN(a) + 2)"),
+        # A singularity inside the interval is still found first.
+        ("INT(2*x/(x^2 - 1)^2, x, 0, 2)", "inf"),
+    ],
+)
+def test_a_definite_integral_of_a_power_uses_its_antiderivative(text, expected):
+    """The antiderivative `_of_a_binomial_power` or `_of_a_power_times_its_derivative`
+    finds is evaluated between the ends, where sympy's definite integrators take
+    minutes."""
+    assert simp(text) == expected
+
+
 _T, _A = sp.symbols("t a", real=True)
 
 

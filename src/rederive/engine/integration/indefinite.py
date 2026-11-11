@@ -36,6 +36,7 @@ from rederive.engine.integration.definite import (
     VERDICTS,
     across_the_steps,
     at_the_singularities,
+    between_the_ends,
     between_the_steps,
     beyond_convergence,
     by_the_antiderivative,
@@ -356,6 +357,27 @@ def _of_a_power_times_its_derivative(head: sp.Basic) -> Candidate | None:
         if n < 0 and sp.denom(k).free_symbols:
             continue
         return Candidate(coefficient * k * f ** (n + 1) / (n + 1), formed=True)
+    return None
+
+
+def _between_the_ends_of_a_power(head: sp.Basic) -> Candidate | None:
+    """A definite integral as the endpoint difference of the antiderivative
+    `_of_a_binomial_power` or `_of_a_power_times_its_derivative` finds, or None.
+
+    `INT(COS(x)*(SIN(x) + 2)^12, x, 0, pi)` is 0 at once, where sympy's definite
+    integrators expand the power and take minutes. `between_the_ends` checks that the
+    antiderivative is continuous on the interval, and the checks in `_integral_through`
+    still apply to the value.
+    """
+    if not definite(head):
+        return None
+    variable = head.limits[0][0]
+    indefinite = sp.Integral(head.function, variable)
+    for method in (_of_a_binomial_power, _of_a_power_times_its_derivative):
+        candidate = method(indefinite)
+        if candidate is not None:
+            value = between_the_ends(head, candidate.value)
+            return None if value is None else Candidate(value, formed=True)
     return None
 
 
@@ -1306,6 +1328,7 @@ _RETRIES: tuple[Method, ...] = (_by_the_manual_rules, _over_any_variable)
 #: The integration methods, in the order tried. Each takes the head and returns a
 #: `Candidate` or None, and sets its `trusted`, `formed` and `retries` fields.
 _METHODS: tuple[Method, ...] = (
+    _between_the_ends_of_a_power,
     _of_a_binomial_power,
     _of_a_power_times_its_derivative,
     _of_a_rational_function,

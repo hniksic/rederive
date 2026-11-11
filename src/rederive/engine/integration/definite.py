@@ -34,6 +34,7 @@ __all__ = [
     "VERDICTS",
     "across_the_steps",
     "at_the_singularities",
+    "between_the_ends",
     "between_the_steps",
     "beyond_convergence",
     "by_the_antiderivative",
@@ -116,12 +117,37 @@ def by_the_antiderivative(head: sp.Basic) -> sp.Basic | None:
     if head.function.has(sp.Piecewise) or indefinite.within_reach(head):
         return None
     variable, low, high = head.limits[0]
-    orientation = _orientation(low, high)
-    if orientation is None:
+    if _orientation(low, high) is None:
         return None
     antiderivative = indefinite.integral(sp.Integral(head.function, variable))
+    return between_the_ends(head, antiderivative)
+
+
+def between_the_ends(head: sp.Basic, antiderivative: sp.Basic) -> sp.Basic | None:
+    """A definite integral as the endpoint difference of an antiderivative of its
+    integrand if `unbroken` proves that correct, or None; see `by_the_antiderivative`.
+
+    Limits whose order isn't known, as in `INT(COS(x)*(SIN(x) + 2)^12, x, 0, a)`, are
+    taken only for an antiderivative continuous on the whole real line and without a
+    parameter in a divisor, and the ends are then substituted.
+    """
     if antiderivative.has(sp.Integral, sp.Piecewise):
         return None
+    variable, low, high = head.limits[0]
+    orientation = _orientation(low, high)
+    if orientation is None:
+        if parametric_divisors(antiderivative, variable) or not unbroken(
+            antiderivative, variable, -sp.oo, sp.oo
+        ):
+            return None
+        at_ends = [
+            attempt(antiderivative, lambda a: a.subs(variable, end))
+            for end in (high, low)
+        ]
+        if None in at_ends:
+            return None
+        value = at_ends[0] - at_ends[1]
+        return None if value.has(sp.nan, sp.zoo, sp.oo, -sp.oo) else value
     bounds = (low, high) if orientation > 0 else (high, low)
     if not unbroken(antiderivative, variable, *bounds):
         return None
