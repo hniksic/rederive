@@ -255,6 +255,63 @@ def test_a_power_of_a_binomial_is_integrated_as_a_power_of_the_binomial(text, ex
 @pytest.mark.parametrize(
     "text, expected",
     [
+        ("INT((3*x + 2)^12, x)", "(3*x + 2)^13/39"),
+        ("INT((3*x + a + 2)^12, x)", "(3*x + a + 2)^13/39"),
+        ("INT((2*x + 1)*(x^2 + x + 1)^12, x)", "(x^2 + x + 1)^13/13"),
+        ("INT((x + 1)*(x^2 + 2*x + 5)^(1/3), x)", "3*(x^2 + 2*x + 5)^(4/3)/8"),
+        ("INT((x + 1)*SQRT(x^2 + 2*x - 3), x)", "(x^2 + 2*x - 3)^(3/2)/3"),
+        ("INT(COS(x)*(SIN(x) + 2)^12, x)", "(SIN(x) + 2)^13/13"),
+        ("INT(#e^x*(#e^x + 1)^12, x)", "(#e^x + 1)^13/13"),
+        ("INT((LN(x) + 1)^3/x, x)", "(LN(x) + 1)^4/4"),
+        ("INT(ATAN(x)^2/(1 + x^2), x)", "ATAN(x)^3/3"),
+        # Negative powers.
+        ("INT(COS(x)/SIN(x)^3, x)", "-1/(2*SIN(x)^2)"),
+        ("INT((2*x + 1)/(x^2 + x + 1)^3, x)", "-1/(2*(x^2 + x + 1)^2)"),
+        ("INT(#e^x/(#e^x + 1)^3, x)", "-1/(2*(#e^x + 1)^2)"),
+        ("INT((2*x + 1)/(x^2 + x + 1)^(3/2), x)", "-2/SQRT(x^2 + x + 1)"),
+        ("INT(SIN(x)/SQRT(COS(x) + 2), x)", "-2*SQRT(COS(x) + 2)"),
+        # A parameter that makes the derivative vanish is taken as generic, except
+        # under a negative power, whose answer is written continuous in it.
+        ("INT(COS(a*x)*(SIN(a*x) + 2)^3, x)", "(SIN(a*x) + 2)^4/(4*a)"),
+        ("INT((x + 1)*(a*x^2 + 2*a*x + c)^3, x)", "(a*x^2 + 2*a*x + c)^4/(8*a)"),
+        ("INT(SIN(a*x)/COS(a*x)^4, x)", "(1/COS(a*x)^3 - 1)/(3*a)"),
+        # A logarithm is left to the other methods.
+        ("INT((2*x + 1)/(x^2 + x + 1), x)", "LN(x^2 + x + 1)"),
+    ],
+)
+def test_a_power_times_its_bases_derivative_is_integrated_as_a_power(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Other factors, a missing derivative, or a ratio to the derivative that
+        # depends on the variable.
+        (
+            "INT(x*(x^2 + 1)^3*SIN(x), x)",
+            "-x^7*COS(x) + 39*x^5*COS(x) - 783*x^3*COS(x) + 4697*x*COS(x) "
+            "+ 7*x^6*SIN(x) - 195*x^4*SIN(x) + 2349*x^2*SIN(x) - 4697*SIN(x)",
+        ),
+        (
+            "INT((x^2 + x + 1)^3, x)",
+            "x^7/7 + x^6/2 + 6*x^5/5 + 7*x^4/4 + 2*x^3 + 3*x^2/2 + x",
+        ),
+        (
+            "INT(x*(x^2 + x + 1)^3, x)",
+            "x^8/8 + 3*x^7/7 + x^6 + 7*x^5/5 + 3*x^4/2 + x^3 + x^2/2",
+        ),
+    ],
+)
+def test_a_power_without_its_bases_derivative_is_not_integrated_as_a_power(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
         ("INT(ASIN(2*x + 1)/x^2, x)", "(2*SQRT(-x^2 - x) - ASIN(2*x + 1))/x"),
         (
             "INT(LN(x + SQRT(x^2 + 1))/x^2, x)",

@@ -4,7 +4,7 @@ Every integral enters through `integral`. `_METHODS`, at the end of the module, 
 the methods in order, and `_accepted` decides whether a method's answer is taken.
 Definite-integral fixes live in `definite`, and the printed form of answers in `form`.
 
-Methods correct by construction come first: a power of a binomial times its inside's
+Methods correct by construction come first: a power times a multiple of its base's
 derivative, our own rational, trigonometric, radical and exponential integrators, then
 textbook rules (substitution, products as sums, integration by parts, a positive
 variable, substituting a square root). They write answers as the integral tables do,
@@ -316,6 +316,47 @@ def _of_a_binomial_power(head: sp.Basic) -> Candidate | None:
 #: The largest `j = (m + n*p + 1)/k` for which `_of_a_binomial_power` writes the
 #: antiderivative as a power of the binomial times a polynomial of degree `j - 1`.
 _SPAN = 4
+
+
+def _of_a_power_times_its_derivative(head: sp.Basic) -> Candidate | None:
+    """An antiderivative of `c*g(x)*f(x)^n` as `k*f(x)^(n + 1)/(n + 1)`, where `g/f'` is
+    a constant `k`, or None.
+
+    `INT((2*x + 1)*(x^2 + x + 1)^12, x)` is `(x^2 + x + 1)^13/13`, and
+    `INT(COS(x)*(SIN(x) + 2)^12, x)` is `(SIN(x) + 2)^13/13`, where sympy and the
+    rational and trigonometric integrators expand the power or take minutes. Candidates
+    for `f` are the bases of factors that are powers with a rational exponent `n` other
+    than -1, so an integrand without one is rejected without work, and each costs one
+    cancellation of `g/f'`. A power of the variable itself is left to the other
+    methods, as is a logarithm.
+
+    A parameter in the denominator of `k` makes `f'` vanish for some value of it, where
+    the answer is undefined. For `n > -1` it is taken as generic, as the tables and
+    `_of_a_binomial_power` take it, since an answer continuous there is the expanded
+    power for an integer `n`. A negative `n` is left to the other integrators, which
+    write such answers as short and continuous, as `(1/COS(a*x) - 1)/a` for
+    `INT(SIN(a*x)/COS(a*x)^2, x)`. The answer is `formed`, since `antiderivative` would
+    expand it for continuity.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    coefficient, rest = integrand.as_independent(variable, as_Add=False)
+    factors = sp.Mul.make_args(rest)
+    for index, factor in enumerate(factors):
+        if not factor.is_Pow or factor.base == variable:
+            continue
+        f, n = factor.args
+        if not n.is_Rational or n == -1 or not f.has(variable):
+            continue
+        outside = sp.Mul(*factors[:index], *factors[index + 1 :])
+        k = attempt(outside / sp.diff(f, variable), sp.cancel)
+        if k is None or k.has(variable):
+            continue
+        if n < 0 and sp.denom(k).free_symbols:
+            continue
+        return Candidate(coefficient * k * f ** (n + 1) / (n + 1), formed=True)
+    return None
 
 
 def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
@@ -1266,6 +1307,7 @@ _RETRIES: tuple[Method, ...] = (_by_the_manual_rules, _over_any_variable)
 #: `Candidate` or None, and sets its `trusted`, `formed` and `retries` fields.
 _METHODS: tuple[Method, ...] = (
     _of_a_binomial_power,
+    _of_a_power_times_its_derivative,
     _of_a_rational_function,
     _of_a_trigonometric_function,
     _of_a_radical,
