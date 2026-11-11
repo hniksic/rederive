@@ -834,11 +834,14 @@ TRIGONOMETRY = [
     ("SIN(x)*COS(x)", "SIN(2*x)/2", Context(trigonometry=Direction.COLLECT)),
     ("COS(x)^2", "1 - SIN(x)^2", Context(trigpower=TrigPower.SINES)),
     ("SIN(x)^2", "1 - COS(x)^2", Context(trigpower=TrigPower.COSINES)),
-    # The original has no secant and writes an even reciprocal power of a cosine in
-    # terms of the tangent: `DIF(LN(COS(x)), x, 2)` is `- TAN(x)^2 - 1` there. This
-    # applies only to an even power that is the whole term.
+    # The original has no secant and writes a reciprocal squared cosine in terms of
+    # the tangent: `DIF(LN(COS(x)), x, 2)` is `- TAN(x)^2 - 1` there. This applies
+    # only to the square, and only where it is the whole term; a higher power would
+    # only grow.
     ("1/COS(x)^2", "TAN(x)^2 + 1", None),
-    ("1/COS(x)^4", "(TAN(x)^2 + 1)^2", None),
+    ("1/COS(x)^4", "1/COS(x)^4", None),
+    ("1/(4*COS(x)^4)", "1/(4*COS(x)^4)", None),
+    ("COS(x)^-6", "1/COS(x)^6", None),
     ("SEC(x)^2", "TAN(x)^2 + 1", None),
     ("1/COS(x)^3", "1/COS(x)^3", None),
     ("SIN(x)/COS(x)^2", "SIN(x)/COS(x)^2", None),

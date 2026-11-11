@@ -83,6 +83,8 @@ def test_a_rational_function_of_a_parametric_sine_is_integrated(text, expected):
     [
         # Odd in the sine: t = COS(x).
         ("INT(SIN(x)/(2 + COS(x))^2, x)", "1/(COS(x) + 2)"),
+        # An even reciprocal power of the cosine above the square keeps its cosine.
+        ("INT(SIN(x)/COS(x)^5, x)", "1/(4*COS(x)^4)"),
         # The half-angle substitution, with the logarithms rewritten in the whole angle.
         (
             "INT(1/(3 + 5*COS(x)), x)",
