@@ -214,6 +214,47 @@ def test_a_symbolic_power_is_integrated_where_its_derivative_divides(text, expec
 @pytest.mark.parametrize(
     "text, expected",
     [
+        # The power of `x` common to both terms is factored out, leaving the
+        # derivative of the inside.
+        ("INT((3*x^2 + 10*x^27)^12, x)", "(10*x^25 + 3)^13/3250"),
+        ("INT(x^24*(3 + 10*x^25)^12, x)", "(10*x^25 + 3)^13/3250"),
+        ("INT((a*x^2 + b*x^27)^12, x)", "(b*x^25 + a)^13/(325*b)"),
+        ("INT((2*x + 3)^7, x)", "(2*x + 3)^8/16"),
+        ("INT(x*(x^2 + a)^3, x)", "(x^2 + a)^4/8"),
+        ("INT(x^(n - 1)*(a + b*x^n)^3, x)", "(b*x^n + a)^4/(4*b*n)"),
+        ("INT(x^(1 - 3*n)*(x^n + 2*x^(n + 2))^3, x)", "(2*x^2 + 1)^4/16"),
+        # Negative and fractional powers.
+        ("INT(x^24/(3 + 10*x^25)^5, x)", "-1/(1000*(10*x^25 + 3)^4)"),
+        ("INT(x^4*SQRT(3 + 10*x^5), x)", "(10*x^5 + 3)^(3/2)/75"),
+        # A multiple of the derivative times a power of the inside leaves a short
+        # polynomial factor.
+        ("INT(x^49*(3 + 10*x^25)^12, x)", "(130*x^25 - 3)*(10*x^25 + 3)^13/455000"),
+        ("INT(x^5*(a + b*x^3)^7, x)", "(8*b*x^3 - a)*(b*x^3 + a)^8/(216*b^2)"),
+        ("INT(x^5/SQRT(1 + x^3), x)", "2*SQRT(x^3 + 1)*(x^3 - 2)/9"),
+        # A logarithm is left to the rational integrator, as is a quotient whose
+        # numerator can vanish at zero.
+        ("INT(x^5/(1 + x^3)^3, x)", "x^6/(6*(x^3 + 1)^2)"),
+        ("INT(x^24/(3 + 10*x^25), x)", "LN(10*x^25 + 3)/250"),
+        # Exponents that don't line up are expanded, as is a binomial to a power lower
+        # than the polynomial factor's degree would be.
+        ("INT(x*(x^2 + x^4)^3, x)", "x^14/14 + x^12/4 + 3*x^10/10 + x^8/8"),
+        ("INT((x^2 + x^5)^3, x)", "x^16/16 + 3*x^13/13 + 3*x^10/10 + x^7/7"),
+        ("INT(x^5*(1 + x^3), x)", "x^9/9 + x^6/6"),
+        ("INT(x^8*(1 + x^3)^2, x)", "x^15/15 + x^12/6 + x^9/9"),
+        # A symbolic power is made continuous at -1.
+        (
+            "INT(x^(n - 1)*(a + b*x^n)^p, x)",
+            "((b*x^n + a)^(p + 1) - (a + b)^(p + 1))/(b*n*(p + 1))",
+        ),
+    ],
+)
+def test_a_power_of_a_binomial_is_integrated_as_a_power_of_the_binomial(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
         ("INT(ASIN(2*x + 1)/x^2, x)", "(2*SQRT(-x^2 - x) - ASIN(2*x + 1))/x"),
         (
             "INT(LN(x + SQRT(x^2 + 1))/x^2, x)",

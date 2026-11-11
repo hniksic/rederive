@@ -4,13 +4,14 @@ Every integral enters through `integral`. `_METHODS`, at the end of the module, 
 the methods in order, and `_accepted` decides whether a method's answer is taken.
 Definite-integral fixes live in `definite`, and the printed form of answers in `form`.
 
-Methods correct by construction come first: our own rational, trigonometric, radical
-and exponential integrators, then textbook rules (substitution, products as sums,
-integration by parts, a positive variable, substituting a square root). They write
-answers as the integral tables do, without parameter splits. Sympy's general
-integrators come next, mainly for answers in special functions; they are slower, split
-more and are sometimes wrong, so their answers are taken only if proved to
-differentiate back and expressible in the notation.
+Methods correct by construction come first: a power of a binomial times its inside's
+derivative, our own rational, trigonometric, radical and exponential integrators, then
+textbook rules (substitution, products as sums, integration by parts, a positive
+variable, substituting a square root). They write answers as the integral tables do,
+without parameter splits. Sympy's general integrators come next, mainly for answers in
+special functions; they are slower, split more and are sometimes wrong, so their
+answers are taken only if proved to differentiate back and expressible in the
+notation.
 
 The manual rules alone and the integral over an unassumed variable are retries, tried
 only after a sympy answer is refused, since where sympy found nothing they find nothing
@@ -223,6 +224,98 @@ def by_sympy(head: sp.Basic) -> sp.Basic:
     """
     value = _answered(head, _SYMPY)
     return head if value is None else value
+
+
+def _of_a_binomial_power(head: sp.Basic) -> Candidate | None:
+    """An antiderivative of `c*x^m*(a*x^p + b*x^q)^n` as a power of the binomial, where
+    the power of `x` outside is a multiple of the derivative of the binomial's inside,
+    or None.
+
+    With `k = q - p`, the integrand is `c*x^(m + n*p)*(a + b*x^k)^n` (Rubi's rule 1607).
+    If `m + n*p = k - 1`, its antiderivative is `c*(a + b*x^k)^(n + 1)/(b*k*(n + 1))`
+    (rule 267), so `INT((3*x^2 + 10*x^27)^12, x)` is `(10*x^25 + 3)^13/3250`, where
+    sympy and the rational integrator expand thirteen terms. More generally, if `m + n*p
+    = k*j - 1` for an integer `j` up to `_SPAN`, it is the binomial to the `n + 1` times
+    a polynomial of degree `j - 1` in `x^k`, as `INT(x^5*(a + b*x^3)^7, x)` is `(8*b*x^3
+    - a)*(b*x^3 + a)^8/(216*b^2)`. Either term of the binomial may be the one factored
+    out, unless one is constant: factoring `x` out of `a + b*x` would give `1/a` in the
+    answer where the integrand has no pole at `a = 0`.
+
+    `n` must be a number other than -1, 0 and 1, and an integer unless `p = 0`, since
+    otherwise `x^(n*p)` can't be factored out. A symbolic `n` is left to
+    `_by_derivative_divides`, which makes the split at `n = -1` continuous, and a
+    logarithm, where `n + i + 1 = 0` for some `i < j`, to the other methods. For `j >
+    1`, a positive integer `n` must be at least `2*j - 1`, else the expanded polynomial
+    is shorter, and a negative integer `n` is left to the rational integrator, whose
+    numerator vanishes at zero, as in `x^2/(2*(x + 1)^2)`.
+
+    `a`, `b` and the exponents of `x` may be symbolic, and are taken as generic, as the
+    tables take them. The answer is `formed`: choosing the constant so that it is
+    continuous at `b = 0` or `k = 0`, as `antiderivative` would, gives back the expanded
+    polynomial for an integer `n`.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    coefficient, rest = integrand.as_independent(variable, as_Add=False)
+    outside, binomial = sp.S.Zero, None
+    for factor in sp.Mul.make_args(rest):
+        base, exponent = factor.as_base_exp()
+        if exponent.has(variable):
+            return None
+        if base == variable:
+            outside += exponent
+        elif binomial is None and isinstance(base, sp.Add) and len(base.args) == 2:
+            binomial = base, exponent
+        else:
+            return None
+    if binomial is None:
+        return None
+    base, n = binomial
+    if not n.is_Rational or n in (-1, 0, 1):
+        return None
+    monomials = []
+    for term in base.args:
+        scale, power = term.as_independent(variable, as_Add=False)
+        if power == 1:
+            monomials.append((scale, sp.S.Zero))
+            continue
+        bare, exponent = power.as_base_exp()
+        if bare != variable or exponent.has(variable):
+            return None
+        monomials.append((scale, exponent))
+    constant = any(exponent == 0 for _, exponent in monomials)
+    for (a, p), (b, q) in (monomials, monomials[::-1]):
+        k = q - p
+        if (p != 0 and (constant or not n.is_Integer)) or k == 0:
+            continue
+        # `x^(m + n*p)` is `x^(k*j - 1)`, which is `u^(j - 1)*x^(k - 1)` for `u = x^k`.
+        j = attempt(outside + n * p + 1, lambda e: sp.cancel(e / k))
+        if j is None or not j.is_Integer or not 1 <= j <= _SPAN:
+            continue
+        if j > 1 and n.is_Integer and (n < 0 or 2 * j > n + 1):
+            continue
+        if any(n + i == 0 for i in range(1, j + 1)):
+            continue
+        inner = a + b * variable**k
+        # `INT(v^n*(v - a)^(j - 1), v)/v^(n + 1)`, at `v = a + b*u`.
+        v = sp.Dummy("v")
+        factor = sum(
+            (
+                sp.binomial(j - 1, i) * (-a) ** (j - 1 - i) * v**i / (n + i + 1)
+                for i in range(j)
+            ),
+            sp.S.Zero,
+        )
+        factor = sp.together(sp.expand(factor.subs(v, inner)))
+        value = coefficient * inner ** (n + 1) * factor / (k * b**j)
+        return Candidate(value, formed=True)
+    return None
+
+
+#: The largest `j = (m + n*p + 1)/k` for which `_of_a_binomial_power` writes the
+#: antiderivative as a power of the binomial times a polynomial of degree `j - 1`.
+_SPAN = 4
 
 
 def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
@@ -1172,6 +1265,7 @@ _RETRIES: tuple[Method, ...] = (_by_the_manual_rules, _over_any_variable)
 #: The integration methods, in the order tried. Each takes the head and returns a
 #: `Candidate` or None, and sets its `trusted`, `formed` and `retries` fields.
 _METHODS: tuple[Method, ...] = (
+    _of_a_binomial_power,
     _of_a_rational_function,
     _of_a_trigonometric_function,
     _of_a_radical,
