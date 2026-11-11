@@ -17,7 +17,8 @@ COVARIANT_METRIC_TENSOR entry on p.238 (the program prints `v^2 + w^2`), ACOSH's
 radicals in 6.6 (`SQRT(z - 1)` leads), SIGN(3 + 4*#i) in 6.8 (the fraction is under the
 #i), and TAYLOR_INVERSE's example in 9.1, which passes four arguments to a
 five-parameter function; the manual's answer, in y, shows the five-argument call was
-meant.
+meant. One case follows Derive 4.11 where it differs from 3.14: the second derivative
+of LN(COS(x)) in 7.2.
 
 Some expectations follow ordering rules that only the program reveals. From the
 original: Simplify orders a sum by descending kernel order, function terms first
@@ -803,7 +804,9 @@ def test_substituting_the_limit_point_gives_the_ambiguity_the_limit_resolves():
 
 DERIVATIVES = [
     ("DIF(SIN(a*x^2), x)", "2*a*x*COS(a*x^2)"),
-    ("DIF(LN(COS(x)), x, 2)", "-TAN(x)^2 - 1"),
+    # 7.2 p.173 shows `-TAN(x)^2 - 1`, since 3.14 differentiates TAN(x) as
+    # `TAN(x)^2 + 1`. Derive 4.11 gives `-1/COS(x)^2`, which is followed here.
+    ("DIF(LN(COS(x)), x, 2)", "-1/COS(x)^2"),
     ("DIF(DIF((a*x + b*y)^3, x), y)", "6*a*b*(a*x + b*y)"),
     # 7.2 p.173: the expression doesn't contain the variable.
     ("DIF(a, x)", "0"),

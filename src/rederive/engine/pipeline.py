@@ -2607,30 +2607,6 @@ def _cyclotomic_degree(constant: sp.Basic) -> int | None:
 # -- the trigonometric, logarithmic and power rules --------------------------
 
 
-def _tangent_squares(expression: sp.Basic) -> sp.Basic:
-    """Rewrite a reciprocal squared cosine in terms of the tangent.
-
-    Derive writes `1/COS(x)^2` as `TAN(x)^2 + 1`: `DIF(LN(COS(x)), x, 2)` gives
-    `-TAN(x)^2 - 1`. Only the square qualifies; `1/COS(x)^3` and `COS(x)^2` are left
-    alone, and so is `1/COS(x)^4`, which as `(TAN(x)^2 + 1)^2` would only grow without
-    the manual's say-so.
-
-    Only a number divided by a squared cosine is rewritten; `SIN(x)/COS(x)^2` keeps its
-    cosine. That is why this walks terms rather than powers.
-
-    Forced rather than gated, since `TAN(x)^2 + 1` is longer but is what the original
-    writes. Not used in either Trigpower direction, which ask for powers of one specific
-    function.
-    """
-    if isinstance(expression, sp.Add):
-        return sp.Add(*(_tangent_squares(term) for term in expression.args))
-    coefficient, rest = expression.as_coeff_Mul()
-    base, exponent = rest.as_base_exp()
-    if not (isinstance(base, sp.cos) and exponent == -2):
-        return expression
-    return coefficient * (sp.tan(base.args[0]) ** 2 + 1)
-
-
 #: Each inverse function and its complement. `ASIN(u) + ACOS(u)` is a right angle
 #: wherever defined; the tangent pair is a right angle with the sign of its argument.
 #: `ASEC` and `ACSC` are covered because they are rewritten as `ACOS` and `ASIN`
@@ -3946,8 +3922,6 @@ _SPELLINGS = (
     # already `-2`.
     _Rule("rectangular", _rectangular, forced,
           "a numeric complex power is real part plus imaginary part"),
-    _Rule("tangent squares", _tangent_squares, forced,
-          "1/COS(u)^2 is TAN(u)^2 + 1", yields_to="trigpower"),
     _Rule("extracted powers", _extracted_powers, forced,
           "LN(b^k) is k*LN(b) where 6.2 allows it", yields_to="logarithm"),
     _Rule("collected powers", _collected_powers, forced,

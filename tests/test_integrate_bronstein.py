@@ -127,7 +127,7 @@ CASES = [
         "INT(SIN(x)^2*COS(x)^4, x)",
         "-SIN(x)*COS(x)^5/6 + SIN(x)*COS(x)^3/24 + SIN(x)*COS(x)/16 + x/16",
     ),
-    ("p400.2@n=3", "INT(TAN(x)^3, x)", "TAN(x)^2/2 + LN(COS(x)) + 1/2"),
+    ("p400.2@n=3", "INT(TAN(x)^3, x)", "LN(COS(x)) + 1/(2*COS(x)^2)"),
     ("p400.3", "INT(TAN(x), x)", "-LN(COS(x))"),
     # -- Integrals with ax + b -----------------------------------------------------------
     ("1", "INT((a*x + b)^n, x)", "((a*x + b)^(n + 1) - b^(n + 1))/(a*(n + 1))"),
