@@ -96,6 +96,10 @@ CALCULUS = [
     ("INT(y = x, x)", "INT(y = x, x)"),
     ("DIF(y = x, x, -1)", "DIF(y = x, x, -1)"),
     ("LIM(SIN(x)/x, x, 0)", "1"),
+    # An omitted point is zero, for every variable of a vector.
+    ("LIM(SIN(x)/x, x)", "1"),
+    ("LIM(x + 1, x)", "1"),
+    ("LIM(SIN(x)/x + y + 2, [x, y])", "3"),
     ("LIM(SIGN(x), x, 0, 1)", "1"),
     ("LIM(SIGN(x), x, 0, -1)", "-1"),
     # Toward `-inf`, an exponential with base above one vanishes, below one it grows.

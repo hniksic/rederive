@@ -2497,7 +2497,18 @@ def _limit(conv: Converter, args: list) -> sp.Basic:
 
     A point mentioning the variable is a substitution (`MovingLimit`), and any side
     argument is ignored.
+
+    An omitted point is zero, for each variable of a vector: PSERIES.MTH writes
+    `LIM(P, x)` for the value of `P` at zero.
     """
+    if len(args) == 2:
+        variables = args[1]
+        point = (
+            sp.zeros(*variables.shape)
+            if isinstance(variables, sp.MatrixBase)
+            else sp.Integer(0)
+        )
+        args = [*args, point]
     if isinstance(args[1], sp.MatrixBase):
         return _iterated_limit(args)
     if len(args) == 3:
