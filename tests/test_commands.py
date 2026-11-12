@@ -181,16 +181,17 @@ async def test_a_function_definition_reaches_the_next_command(session):
     assert (await session.simplify("#2")).text == "8"
 
 
-async def test_a_parameter_is_not_a_variable_the_session_gains(session):
-    """A parameter belongs to its definition, not to the session.
+async def test_a_parameter_leaves_a_function_of_its_name_alone(session):
+    """A parameter doesn't turn a function into a variable.
 
-    A name is either a function or a variable, so a leftover parameter would change how
-    later lines parse: a metric's scale factor `A(t)` would silently become `a*t` because
-    some later definition had a parameter `a`.
+    A name is either a function or a variable. A parameter only becomes a session name
+    if it wasn't one already, so a metric's scale factor `A(t)` stays a call after some
+    later definition has a parameter `a`, as in the original.
     """
     session.author("A(t) :=")
     session.author("FF(a) := a^2")
-    assert session.state.variables == {}
+    assert "a" not in session.state.variables
+    assert session.state.is_function("A")
     assert (await session.simplify("DIF(A(t), t)")).text == "A'(t)"
     assert (await session.simplify("FF(3)")).text == "9"
 
@@ -216,18 +217,43 @@ async def test_a_parameter_leaves_a_shadowed_domain_in_force(session):
     assert (await session.simplify("SQRT(z^2)")).text == "z"
 
 
-async def test_no_parameter_of_a_definition_is_left_behind(session):
+async def test_the_parameters_of_a_definition_become_known_names(session):
     """Several parameters at once, and a body that defines a function of its own.
 
-    This is the general relativity case: Christoffel symbols `CHR(a, b, c)` alongside a
-    later `A(t)`.
+    As in the original, a parameter that wasn't a known name stays one once the line is
+    entered, as a variable with no value, so a later `uu` reads whole in Character mode.
+    That is what lets ODE.MTH's demonstration write `y1` for the parameter of its
+    functions. A sum's index is not a parameter, and names the body only mentions are
+    not declared at all.
     """
     session.author("CHR(a, b, c) := a + b + c")
     session.author("OUTER(uu) := INNER(vv) := vv + uu")
     session.author("SS(uu) := SUM(uu k, k, 1, 4)")
-    assert session.state.variables == {}
+    session.author("InputMode := Word")
+    session.author("PP(w) := w + qq")
+    session.author("InputMode := Character")
+    assert set(session.state.variables) == {"a", "b", "c", "uu", "vv", "w"}
+    assert not any(info.has_value for info in session.state.variables.values())
+    assert session.author("uu + vv + qq").text == "uu+vv+q*q"
     assert (await session.simplify("CHR(1, 2, 3)")).text == "6"
     assert (await session.simplify("SS(2)")).text == "20"
+
+
+def test_a_line_only_parsed_declares_no_parameter(session):
+    """Parameters become known when a line is entered, not whenever it is parsed."""
+    session.reads("FF(mx) := mx^2")
+    assert session.state.variables == {}
+
+
+def test_clearing_variables_forgets_the_parameters_and_clearing_functions_does_not(
+    session,
+):
+    """As in the original: a parameter is a variable, so only Clear Variables drops it."""
+    session.author("J(mx) := mx + 1")
+    session.clear_functions()
+    assert session.author("mx").text == "mx"
+    session.clear_variables()
+    assert session.author("mx").text == "m*x"
 
 
 async def test_a_parameter_names_the_variable_a_sum_ranges_over(session):

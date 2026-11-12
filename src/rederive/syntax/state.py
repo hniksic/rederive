@@ -228,6 +228,12 @@ class ParseState:
             or _PREDECLARED_FOLDED.get(folded)
         )
 
+    def same_name(self, one: str, other: str) -> bool:
+        """Whether two spellings name the same thing under the current case mode."""
+        if self.case_mode == CaseMode.SENSITIVE:
+            return normalize(one) == normalize(other)
+        return fold(one) == fold(other)
+
     def lookup(self, spelling: str) -> str | None:
         """Canonical name for a spelling, or None if unknown."""
         found = self.resolve(spelling)

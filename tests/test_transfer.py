@@ -276,6 +276,36 @@ def test_a_setting_a_loaded_line_assigns_takes_effect(session, file):
     assert other.settings["Notation"] == "Mixed"
 
 
+def test_a_file_is_read_in_word_mode(session, file):
+    """As in the original, whatever the session's mode: `ab` is one name in a file.
+
+    The session stays in Character mode, so the same text typed afterwards splits.
+    """
+    file.write_text("ab + y1\n")
+    session.load(file)
+    session.merge(file)
+    assert texts(session) == ["ab+y1", "ab+y1"]
+    assert session.author("ab + y1").text == "a*b+y*1"
+
+
+def test_a_file_that_sets_the_input_mode_reads_the_rest_in_it(session, file):
+    """The setting applies from its line on, and is still in force after the load."""
+    file.write_text("ab\nInputMode := Character\nab\n")
+    session.load(file)
+    assert texts(session) == ["ab", "InputMode:=Character", "a*b"]
+    session.settings.assign("InputMode", "Character")
+    file.write_text("InputMode := Word\n")
+    session.load_utility(file)
+    assert session.author("ab").text == "ab"
+
+
+def test_a_parameter_from_a_utility_file_reads_whole_afterwards(session, file):
+    """ODE.MTH's functions take `y1` as a parameter, and its demonstration types `y1`."""
+    file.write_text("ODE(y1, u) := y1 + u + qq7\n")
+    session.load_utility(file)
+    assert session.author("y1 + u + qq7").text == "y1+u+q*q*7"
+
+
 def test_blank_lines_separate_nothing(session, file):
     """There is one expression per line; blank lines are only spacing."""
     file.write_text("x+1\ny+2\nz+3\n")
@@ -293,11 +323,11 @@ def test_the_conventions_of_a_file_the_original_wrote_are_read(session, file):
 
 def test_a_file_written_in_code_page_437_reads(session, file):
     """Rederive writes UTF-8, but the original wrote code page 437, where 0xE9 is the
-    capital theta used as a variable in its GRAPHICS.MTH. The entry spells it as the
-    symbol table does: lower case in the default case-insensitive mode."""
+    capital theta in the name `Θn` that its GRAPHICS.MTH uses. A file is read in Word
+    mode, so `Θn` is one name, shown as the original shows it."""
     file.write_bytes(b"\xe9n + 1\r\n\x1a")
     assert session.load(file) == 0
-    assert texts(session) == ["θ*n+1"]
+    assert texts(session) == ["Θn+1"]
 
 
 def test_a_line_that_does_not_parse_is_left_out_and_counted(session, file):
@@ -1226,6 +1256,17 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
         await pilot.press("space")
         assert band(app)[0].startswith(" COMMAND:")
         assert message(app) == "Enter option"
+
+
+async def test_a_demonstration_step_is_read_in_word_mode(app, tmp_path):
+    """Like any line read from a file, while the Author line stays in Character mode."""
+    path = tmp_path / "words.dmo"
+    path.write_text("; one name\nab + 1\n")
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "o", *path.name, "enter")
+        assert entries(app) == ["ab+1", "ab + 1"]
+        await pilot.press("space")
+    assert app.session.author("ab").text == "a*b"
 
 
 async def test_escape_suspends_a_demonstration_where_it_stands(app, demo):

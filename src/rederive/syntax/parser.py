@@ -528,10 +528,13 @@ class Parser:
     def function_definition(self, name: Token) -> _Parsed:
         """`F(x,y) := body`, or `F(x,y):=` for an arbitrary function.
 
-        Parameters are registered as variables only while the body is parsed. They must
-        be registered, because in Character mode `F(mx,mf) := mx+mf` would otherwise lex
-        `mx` as `m*x`. They must not persist, or after `FF(a):=a^2` a later `A(t)` would
-        read as the product `a*t` instead of a call.
+        Parameters are registered as variables while the body is parsed, because in
+        Character mode `F(mx,mf) := mx+mf` would otherwise lex `mx` as `m*x`. Afterwards,
+        as in the original, a parameter that was not a known name stays one: it is
+        reported as a variable declaration, so once the line is entered, a later `mx`
+        reads whole. A name that was already known keeps what it was, so after `A(t):=`
+        and `FF(a):=a^2`, `A(t)` is still a call, and a parameter named like a valued
+        or declared variable leaves its value and domain alone.
         """
         self.advance()
         self.expect("(", "'('")
@@ -575,9 +578,9 @@ class Parser:
     def parameter(self, shadowed: list[NameBinding]) -> Node:
         """One parameter, declared while the body is parsed.
 
-        It's declared in the caller's state but not added to `declarations`, since the
-        user didn't declare it. `shadowed` collects each name's previous binding, so
-        `_release` can restore a session variable of the same name.
+        It's declared in the caller's state directly, so the body can use it; whether it
+        is reported in `declarations` is up to `_release`. `shadowed` collects each name's
+        previous binding, so `_release` can restore a session variable of the same name.
         """
         token = self.lexer.name_run_at(self.pos)
         self.pos = token.end
@@ -587,15 +590,24 @@ class Parser:
         return Node(Kind.NAME, token.start, token.end, (), canonical, _surface(token))
 
     def _release(self, shadowed: list[NameBinding], defined: str) -> None:
-        """Undo the parameter declarations, latest first.
+        """Undo the parameter declarations, latest first, and report the new names.
 
         The order matters for a repeated parameter, whose second binding shadows its
         first. A parameter named like the function being defined is left alone, since the
         name now belongs to the function.
+
+        A parameter that was not a known name is reported as a variable declaration, which
+        the session applies when the line is entered: the parameter outlives the
+        definition as a plain variable. Undoing it here first keeps a line that is only
+        parsed, never entered, from changing the state.
         """
+        state = self.lexer.state
         for binding in reversed(shadowed):
-            if binding.name != defined:
-                self.lexer.state.rebind(binding)
+            if state.same_name(binding.name, defined):
+                continue
+            state.rebind(binding)
+            if binding.variable is None and binding.function is None:
+                self.declarations.append(VariableDeclaration(binding.name))
 
     def domain_declaration(self, name: Token) -> _Parsed:
         """`x :ε Real [0, inf)`.

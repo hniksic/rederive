@@ -4171,6 +4171,9 @@ class RederiveApp(App[None]):
         Unparsable steps are skipped rather than stopping the demo, since there's no
         line to correct. The computation is dispatched, so it can be aborted like any
         other; `_demo_ready` handles the result.
+
+        A step is read in Word input mode, like every line the original reads from a
+        file.
         """
         demo = self.demo
         assert demo is not None
@@ -4180,7 +4183,8 @@ class RederiveApp(App[None]):
             _, text = demo.steps[demo.at]
             demo.at += 1
             try:
-                self.session.author(text)
+                with self.session.reading_file():
+                    self.session.author(text)
             except DeriveSyntaxError:
                 continue
             request = f"#{self.session.entries[-1].number}"

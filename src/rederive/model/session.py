@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -599,10 +600,14 @@ class Session:
         """Apply one declaration: a setting to the settings, the rest to the state.
 
         A setting goes to the settings, which mirror it back to the parse state, so an
-        invalid value can't leave the two disagreeing about, say, the input base.
+        invalid value can't leave the two disagreeing about, say, the input base. The
+        mirroring is repeated here because the settings report only changes: a file read
+        in Word mode that assigns `InputMode := Character` must switch the parse state
+        even though the setting already says Character.
         """
         if isinstance(declaration, SettingDeclaration):
             self.settings.assign(declaration.setting, declaration.value)
+            self._settings_changed(frozenset({declaration.setting}))
             return
         self.state.declare(declaration)
 
@@ -1571,18 +1576,13 @@ class Session:
         appear on screen. Nothing is appended, numbering is unchanged, and `file` keeps
         naming the current worksheet.
 
-        Libraries are read in Word input mode regardless of the session's mode, because
-        they were written that way: SOLVE.MTH uses `xk` as one variable, not `x*k`.
-        Character mode applies only to the Author line. Afterwards the mode is restored
-        from the settings, so a file that assigns `InputMode` still changes it, like any
-        setting assignment.
+        The file is read in Word input mode; see `reading_file`.
 
         Returns how many of the file's expressions did not parse.
         """
         source = Source.from_file(worksheet.text_of(path), str(path))
         skipped = 0
-        self.state.declare(SettingDeclaration("InputMode", str(InputMode.WORD)))
-        try:
+        with self.reading_file():
             for start, stop in source_lines(source):
                 try:
                     line = source.text[start:stop].strip()
@@ -1593,11 +1593,26 @@ class Session:
                 for declaration in result.declarations:
                     self.declare(declaration)
                 self._define(result.node, result.declarations)
+        return skipped
+
+    @contextmanager
+    def reading_file(self) -> Iterator[None]:
+        """Read what happens inside in Word input mode, as the original reads files.
+
+        Every file the original reads (a utility file, a worksheet, a demo's steps) is
+        read in Word mode whatever the session's mode: SOLVE.MTH uses `xk` as one
+        variable, not `x*k`. Character mode applies only to the Author line. Afterwards
+        the mode is restored from the settings, so a file that assigns `InputMode`
+        changes it for the rest of the file and keeps it changed, like any setting
+        assignment.
+        """
+        self.state.declare(SettingDeclaration("InputMode", str(InputMode.WORD)))
+        try:
+            yield
         finally:
             self.state.declare(
                 SettingDeclaration("InputMode", str(self.settings["InputMode"]))
             )
-        return skipped
 
     def load_data(self, path: Path) -> int:
         """Append the matrices in `path`, and say how many blocks would not read.
@@ -1618,18 +1633,20 @@ class Session:
         """Append what `path` holds, and say how many lines would not parse.
 
         As in the original, a line that doesn't parse is skipped and the rest is read, so
-        one bad line doesn't lose the whole file.
+        one bad line doesn't lose the whole file. The file is read in Word input mode;
+        see `reading_file`.
         """
         source = Source.from_file(text, str(path))
         annotations = worksheet.annotations_of(text)
         offset = self._next_number - 1
         skipped = 0
-        for start, stop in source_lines(source):
-            annotation = annotations.get(source.locate(start)[0], AUTHORED)
-            try:
-                self._entered(source.text[start:stop].strip(), annotation, offset)
-            except DeriveSyntaxError:
-                skipped += 1
+        with self.reading_file():
+            for start, stop in source_lines(source):
+                annotation = annotations.get(source.locate(start)[0], AUTHORED)
+                try:
+                    self._entered(source.text[start:stop].strip(), annotation, offset)
+                except DeriveSyntaxError:
+                    skipped += 1
         self.file = path
         return skipped
 

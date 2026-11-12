@@ -107,14 +107,14 @@ async def test_the_definitions_own_variables_become_the_parameters(session):
     assert (await session.simplify("#2")).text == "5"
 
 
-def test_the_parameters_are_not_variables_of_the_session(session):
-    """The command declares only the function.
+def test_the_parameters_become_variables_without_values(session):
+    """The parameters become session variables, as for an authored definition.
 
-    Parameters are known only while the body is parsed and do not become session
-    variables.
+    They have no value or domain, and stay declarable.
     """
     session.declare_function("hyp", "sqrt(a^2 + b^2)")
-    assert session.state.variables == {}
+    assert set(session.state.variables) == {"a", "b"}
+    assert not any(info.has_value for info in session.state.variables.values())
     assert session.declarable("a")
 
 

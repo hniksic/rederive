@@ -206,13 +206,27 @@ def test_an_empty_right_hand_side_declares_a_variable_without_a_value():
     assert declarations == (VariableDeclaration("meter", has_value=False),)
 
 
-def test_a_definition_declares_the_function_and_not_its_parameters():
-    # Parameters are known only while the body is parsed, so only the function is
-    # declared.
+def test_a_definition_reports_its_new_parameters_as_variables():
+    # The function is declared, and each parameter that wasn't a known name is reported
+    # as a variable with no value, for the session to apply when the line is entered.
     result = parse("LINE(x,y,m,t):=y+m*(t-x)")
     assert result.declarations[-1] == FunctionDeclaration(
         "LINE", ("x", "y", "m", "t"), has_body=True
     )
+    variables = {
+        declaration
+        for declaration in result.declarations
+        if isinstance(declaration, VariableDeclaration)
+    }
+    assert variables == {VariableDeclaration(name) for name in "xymt"}
+
+
+def test_a_parameter_that_was_known_is_not_reported():
+    # A valued variable keeps its value, and a function its meaning.
+    state = ParseState()
+    state.declare(VariableDeclaration("v", has_value=True))
+    state.declare(FunctionDeclaration("A", ("t",)))
+    result = parse("FF(v,a):=v+a", state)
     assert not any(
         isinstance(declaration, VariableDeclaration)
         for declaration in result.declarations
@@ -267,9 +281,10 @@ def test_a_builtin_an_older_utility_file_defines_can_be_defined(text):
     assert sexpr(text).startswith("(fundef ")
 
 
-def test_the_parameters_of_a_definition_do_not_outlive_it():
+def test_parsing_a_definition_leaves_its_parameters_undeclared():
     # `mx` is one name inside the body of `FIT3(mx,mf):=mx+mf`, but reverts to `m*x`
-    # afterwards: parameters don't become session names.
+    # afterwards: parsing alone declares nothing. The session declares the parameters
+    # when the line is entered.
     state = ParseState()
     parse("FIT3(mx,mf):=mx+mf", state)
     assert sexpr("mx+mf", state) == "(+ (juxt m x) (juxt m f))"
