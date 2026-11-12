@@ -5,8 +5,8 @@ system. Written on top of [SymPy](https://www.sympy.org/en/index.html), it simpl
 solves, expands and plots a wide range of mathematical expressions and equations, both
 symbolically and numerically, through an interactive menu-driven interface. What sets it
 apart from SymPy in a Jupyter notebook is how it treats the user: Rederive reads `ax+b` or
-`sinx` the way a mathematician would, and displays every result nicely typeset right in
-the terminal. The UI, inherited from Derive, is tiny and opinionated, but discoverable and
+`sin^2x` the way a mathematician would, and displays every result nicely typeset right in
+the terminal. The UI, inspired by Derive, is tiny and opinionated, but discoverable and
 user-friendly.
 
 <h3 align="center"><a href="https://hniksic.github.io/rederive/">Try it live in your browser</a></h3>
