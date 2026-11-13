@@ -51,7 +51,8 @@ from functools import cached_property
 import sympy as sp
 from sympy.core.function import AppliedUndef, UndefinedFunction
 
-from rederive.engine.context import Context
+from rederive.engine.approximation import carried
+from rederive.engine.context import Context, Precision
 from rederive.engine.intervals import decided
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
@@ -62,6 +63,7 @@ from rederive.engine.to_sympy import (
     InertVector,
     as_condition,
     chosen_from,
+    digit_count,
     is_conditional,
     iterated,
     steps,
@@ -84,7 +86,7 @@ __all__ = [
 
 Decider = Callable[[sp.Basic], bool | None]
 WorkOut = Callable[[sp.Basic], sp.Basic]
-Command = Callable[[str, list, list], sp.Basic]
+Command = Callable[[str, list, list, Context], sp.Basic]
 
 
 @dataclass(frozen=True)
@@ -110,7 +112,8 @@ class Environment:
 
     `work_out` computes calculus heads, and `command` runs `FACTOR`, `EXPAND`, `SOLVE`
     or `RATE` on evaluated arguments (and, for `SOLVE`, the divisors of the equation
-    as written; see `divisors`). Simplify supplies both. Without them these heads are
+    as written; see `divisors`), at the precision of the point of call, which inside
+    `APPROX` is Approximate. Simplify supplies both. Without them these heads are
     left as is, which suits callers that only want an expression's variables.
 
     `writing` means only substitute names, used to display an undecidable
@@ -384,7 +387,10 @@ class _Evaluator(Converter):
             return self._binding(name, arguments)
         if name == "IF" and 1 <= len(arguments) <= 4 and not self.env.writing:
             return self._conditional(node, arguments)
-        values = [_value_of(self.convert(argument)) for argument in arguments]
+        if name == "APPROX" and 1 <= len(arguments) <= 2 and not self.env.writing:
+            values = self._approximating(arguments)
+        else:
+            values = [_value_of(self.convert(argument)) for argument in arguments]
         if name == "SUBS" and not self.env.writing:
             return self._substitution(values)
         derived = self._derived(name, values)
@@ -399,9 +405,24 @@ class _Evaluator(Converter):
         if name in COMMAND_HEADS and _is_call_of(made, name):
             if self.env.command is not None and not self.env.writing:
                 return self.env.command(
-                    name, list(made.args), self._divisors(name, arguments)
+                    name, list(made.args), self._divisors(name, arguments), self.context
                 )
         return self._worked(made, values)
+
+    def _approximating(self, arguments: Sequence[Node]) -> list[sp.Basic]:
+        """The arguments of `APPROX(u, n)`, with `u` evaluated under Approximate.
+
+        So `u` is computed as approX computes a whole entry, carrying each step's value
+        numerically (see `carried`), rather than exactly and rounded only at the end.
+        The digit count is evaluated first, in the enclosing scope; if it isn't a count
+        yet, `u` is evaluated at the session's digits.
+        """
+        operand, *rest = arguments
+        digits = [_value_of(self.convert(argument)) for argument in rest]
+        count = digit_count(digits[0]) if digits else None
+        approximate = self.context.with_precision(Precision.APPROXIMATE, count)
+        inner = self.within(replace(self.env, context=approximate))
+        return [_value_of(inner.convert(operand)), *digits]
 
     def _divisors(self, name: str, arguments: Sequence[Node]) -> list[sp.Basic]:
         """The divisors of a `SOLVE` equation as written, evaluated here."""
@@ -469,7 +490,7 @@ class _Evaluator(Converter):
             parameters=frozenset(),
             depth=self.env.depth + 1,
         )
-        return _Evaluator(inner).convert(body)
+        return carried(_Evaluator(inner).convert(body), self.context)
 
     def _derived(self, name: str, values: list) -> sp.Basic | None:
         """`F'(a)` for a defined `F`: its body differentiated and evaluated at `a`.
@@ -653,7 +674,7 @@ class _Evaluator(Converter):
             if type(index) is not sp.Symbol:
                 return None
             if name in ("SUM", "PRODUCT"):
-                return _total(name, limits, at)
+                return _total(name, limits, at, self.context)
             if name == "VECTOR":
                 return vector_of([at(value) for value in steps(limits)])
             return chosen_from(steps(limits), lambda value: _value_of(at(value)))
@@ -852,9 +873,14 @@ _WRITTEN_OUT = 1000
 
 
 def _total(
-    name: str, limits: list[sp.Basic], at: Callable[[sp.Basic], sp.Basic]
+    name: str,
+    limits: list[sp.Basic],
+    at: Callable[[sp.Basic], sp.Basic],
+    context: Context,
 ) -> sp.Basic | None:
     """A counted `SUM` or `PRODUCT`: the terms at each value, added or multiplied.
+
+    Each running total is `carried`, so under Approximate a long sum stays numeric.
 
     The values are a vector, or a range (from 1 if only one end is given). None if
     neither, or if a term isn't an expression, leaving the sum to sympy. A backwards
@@ -874,11 +900,16 @@ def _total(
     terms = [at(value) for value in values]
     if not all(isinstance(term, sp.Expr) for term in terms):
         return None
+    combine = sp.Add if name == "SUM" else sp.Mul
+    if context.precision is Precision.APPROXIMATE:
+        total = combine()
+        for term in terms:
+            total = carried(combine(total, term), context)
+    else:
+        total = combine(*terms)
     if name == "SUM":
-        total = sp.Add(*terms)
         return -total if backwards else total
-    product = sp.Mul(*terms)
-    return 1 / product if backwards else product
+    return 1 / total if backwards else total
 
 
 def _run_of(low: sp.Basic, high: sp.Basic) -> tuple[list[sp.Basic], bool] | None:

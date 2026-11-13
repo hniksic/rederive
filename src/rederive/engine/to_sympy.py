@@ -1411,15 +1411,36 @@ def _trig(func: Callable[..., sp.Basic]) -> Handler:
     def handler(conv: Converter, args: list) -> sp.Basic:
         argument = conv.angle_in(_one(args))
         halved = _halved_angle(func, argument)
-        return func(argument) if halved is None else halved
+        return _within_an_octant(func(argument)) if halved is None else halved
 
     return handler
+
+
+def _within_an_octant(value: sp.Basic) -> sp.Basic:
+    """A sine or cosine of a rational multiple of pi, at an angle of at most `pi/4`.
+
+    Sympy brings the angle into the first quadrant; past `pi/4` it is the cofunction
+    of the complement, as Derive writes it: `COS(204285811*pi/536870912)` is
+    `SIN(64149645*pi/536870912)`, and `SIN(3*pi/7)` is `COS(pi/14)`.
+    """
+    sign, call = (-1, -value) if value.could_extract_minus_sign() else (1, value)
+    cofunction = {sp.sin: sp.cos, sp.cos: sp.sin}.get(type(call))
+    if cofunction is None:
+        return value
+    turns = call.args[0] / sp.pi
+    if not turns.is_Rational or not sp.Rational(1, 4) < turns < sp.Rational(1, 2):
+        return value
+    return sign * cofunction(sp.pi * (sp.Rational(1, 2) - turns))
 
 
 #: Odd parts of `n` for which `pi/n` has trigonometric values in radicals (section
 #: 6.3 p.104): `n` must be a power of two times 1, 3, 5 or 15. Others, like `pi/7` or
 #: `pi/56`, stay as written.
 _ALGEBRAIC_PARTS = frozenset({1, 3, 5, 15})
+
+#: The largest power of two in a denominator whose sine and cosine are written in
+#: radicals by `_halved_angle`.
+_MOST_HALVED = 64
 
 
 def _halved_angle(func: Callable[..., sp.Basic], argument: sp.Basic) -> sp.Basic | None:
@@ -1434,6 +1455,11 @@ def _halved_angle(func: Callable[..., sp.Basic], argument: sp.Basic) -> sp.Basic
     `4*m`, sympy already has flat values like `SQRT(2)/2` or `SQRT(6)/4 - SQRT(2)/4`,
     and halving would introduce nesting neither writes.
 
+    Each further factor of two nests one more root, so only denominators with at most
+    `_MOST_HALVED` as their power of two are written in radicals; beyond it the value
+    stays a call. RANDOM_NORMAL in MISC.MTH takes the cosine of `2*pi*RANDOM(1)`,
+    a multiple of `pi/2^29`, which written out would be 27 roots deep.
+
     The sign of the root comes from where the angle falls in the period: sine is
     positive between 0 and pi (mod 2*pi), and cosine is the sine a quarter turn on. The
     value is never zero, which would need a denominator of 1 or 2.
@@ -1443,7 +1469,8 @@ def _halved_angle(func: Callable[..., sp.Basic], argument: sp.Basic) -> sp.Basic
     turns = argument / sp.pi
     if not turns.is_Rational or turns.q % 8:
         return None
-    if turns.q // (turns.q & -turns.q) not in _ALGEBRAIC_PARTS:
+    twos = turns.q & -turns.q
+    if turns.q // twos not in _ALGEBRAIC_PARTS or twos > _MOST_HALVED:
         return None
     doubled = 2 * argument
     cosine = _halved_angle(sp.cos, doubled)
@@ -1932,6 +1959,10 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
     becomes one equation of a linear system solved by least squares, exactly when rows
     equal parameters.
 
+    In Approximate mode the data and the system are evaluated numerically first, as
+    for `ROW_REDUCE`: data written as `TAN(0.1)` would otherwise be solved for exactly,
+    in a field of sixteen tangents.
+
     Degenerate cases raise, leaving the call inert: no parameters, rows of the wrong
     width, too few rows, or a rank-deficient design matrix.
     """
@@ -1944,7 +1975,7 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
         raise TypeError("not data variables")
     if len(set(variables)) != len(variables):
         raise ValueError("a data variable twice")
-    data = _matrix(data)
+    data = _worked_out(_matrix(data), conv.context)
     if data.cols != len(variables) + 1:
         raise ValueError("data of the wrong width")
     parameters = sorted(
@@ -1961,7 +1992,9 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
             raise ValueError("not linear in the parameters")
         design.append(coefficients)
         targets.append(row[-1] - here.subs(dict.fromkeys(parameters, 0)))
-    solution = sp.Matrix(design).solve_least_squares(sp.Matrix(targets))
+    design = _worked_out(sp.Matrix(design), conv.context)
+    targets = _worked_out(sp.Matrix(targets), conv.context)
+    solution = design.solve_least_squares(targets)
     return expression.subs(dict(zip(parameters, solution)))
 
 

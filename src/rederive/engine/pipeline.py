@@ -201,9 +201,7 @@ def simplified(
         context,
         decide=lambda test: _decide_simplified(test, context),
         work_out=lambda head: _evaluate(head, context),
-        command=lambda name, values, divisors: _commanded(
-            name, values, divisors, context
-        ),
+        command=_commanded,
     )
     expression = evaluate(node, environment)
     try:

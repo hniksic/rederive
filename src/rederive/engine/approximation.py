@@ -17,6 +17,10 @@ Consequences:
   written in radicals is 12, not `11.9994`, and `SQRT(10^200 + 1) - 10^100` is
   `5.00000*10^-101`, not 0. Here we deliberately deviate from Derive, which rounds the
   pieces and answers `12 - 0.000430980*#i` and 0.
+* That holds within one step of a computation. Between steps (iterates, the running
+  total of a sum, the value a defined function returns) values are rounded to
+  working precision, as Derive's floating point does, so iterations stay numeric;
+  see `carried`.
 
 Deviation from the manual: 3.8 p.46 relies on the two fractions in `SQRT(3422357/2313
 - 1140443/771)` being rounded before subtraction, so Approximate mode falls short of
@@ -63,6 +67,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import ParamSpec, TypeVar
 
+import mpmath
 import sympy as sp
 from sympy.core.relational import Relational
 
@@ -72,6 +77,7 @@ from rederive.engine.notation import exponent
 __all__ = [
     "GUARD",
     "approximated",
+    "carried",
     "is_approximation",
     "noting_approximations",
     "reapproximated",
@@ -158,7 +164,8 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
     and only then rounds, so radical factoring reaches `SQRT(2)` before it is shown as
     `1.41421`.
 
-    Iterations also apply it to each iterate before the next step.
+    Under Approximate it is also applied, at working precision, to each value carried
+    from one step of a computation to the next; see `carried`.
     """
     digits = context.precision_digits
     noted = _noted.get()
@@ -184,6 +191,47 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
                 noted.update(_fraction(n) for n in approximate if n.is_Rational)
             return result
     return expression
+
+
+def carried(value: sp.Basic, context: Context) -> sp.Basic:
+    """`value` as handed from one step of a computation to the next.
+
+    Exact-first applies within a step, not across steps. Under Approximate, where
+    Derive works in floating point, a value is rounded as it is carried on:
+
+    * each iterate of `ITERATE` and `ITERATES`;
+    * each running total of a `SUM` or `PRODUCT` written out term by term;
+    * the value a defined function returns, which makes a recursion, and a function
+      built from others (an AGM step, a Runge-Kutta stage, a Bessel recurrence),
+      numeric step by step.
+
+    The arithmetic inside one step (one function body, one summand, one update) is
+    still exact and rounded only at its end, so `SQRT(10001) - 100` keeps every digit,
+    and so does a defined function computing it. Left exact across steps, each one
+    nests the previous one: an iterated mean builds a tower of radicals that doubles
+    with every step and never reduces to the six digits it is printed with.
+
+    Rounding is to working precision, `GUARD` digits past the requested ones, so the
+    errors of many steps stay below the digits shown. Only numbers are rounded, and the
+    numbers in a vector or matrix: a value with a variable in it stays exact, since it
+    is still to be worked on symbolically. Exact and Mixed modes carry every value
+    exactly, however large it grows.
+    """
+    if context.precision is not Precision.APPROXIMATE:
+        return value
+    working = context.with_precision(
+        Precision.APPROXIMATE, context.precision_digits + GUARD
+    )
+    return _numbers_carried(value, working)
+
+
+def _numbers_carried(value: sp.Basic, working: Context) -> sp.Basic:
+    contained = _elementwise(value, lambda e: _numbers_carried(e, working))
+    if contained is not None:
+        return contained
+    if not isinstance(value, sp.Expr) or not value.is_number:
+        return value
+    return approximated(value, working)
 
 
 def reapproximated(number: sp.Basic, context: Context) -> sp.Basic:
@@ -275,6 +323,11 @@ def _rounded(
 
     Numbers in `approximate` have already been rounded and are left alone.
     """
+    contained = _elementwise(
+        expression, lambda element: _rounded(element, digits, approximate)
+    )
+    if contained is not None:
+        return contained
     try:
         return expression.replace(
             lambda part: isinstance(part, sp.Rational | sp.Float)
@@ -284,6 +337,20 @@ def _rounded(
         )
     except Exception:
         return expression
+
+
+def _elementwise(
+    container: object, each: Callable[[sp.Basic], sp.Basic]
+) -> sp.Basic | None:
+    """`container` with `each` applied to its elements, or None if it isn't one.
+
+    This is the one place that knows how containers are held. A sympy matrix isn't a
+    `sp.Basic` and has no `args` to walk, so its numbers are reached only from here;
+    an `InertVector` is an ordinary function head and needs no special case.
+    """
+    if isinstance(container, sp.MatrixBase):
+        return container.applyfunc(each)
+    return None
 
 
 def simplest_rational(number: sp.Basic, digits: int, cut: bool = True) -> sp.Rational:
@@ -356,6 +423,9 @@ def _approximated(
         return value
 
     def walk(node: sp.Basic) -> sp.Basic:
+        contained = _elementwise(node, walk)
+        if contained is not None:
+            return contained
         if _needs_digits(node):
             return approximation(node)
         if not isinstance(node, sp.Basic) or not node.args:
@@ -432,6 +502,7 @@ def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
     `(12^(1/1000)*w)^1000` 12 rather than `12 + 5.06*10^-17*#i`. Otherwise the value
     is re-evaluated with enough extra digits for that part to be correct as well.
     """
+    part = _with_infinite_ranges_integrated(part, digits)
     value = _evalf(part, digits)
     parts = _parts(value)
     if parts is None:
@@ -447,6 +518,70 @@ def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
         if extra > 0:
             parts = _parts(_evalf(part, digits + extra)) or parts
     return parts
+
+
+#: Below this, an exponent is taken to give 0 when integrating over an infinite range.
+#: Far smaller than any digit an answer shows, and still cheap to compute: `#e^-x` for
+#: `x` of `10^434` takes milliseconds, while `10^43429` takes minutes.
+_VANISHING = -(10**6)
+
+
+def _with_infinite_ranges_integrated(part: sp.Basic, digits: int) -> sp.Basic:
+    """`part` with each integral over an infinite range replaced by its value.
+
+    Quadrature over an infinite range samples the integrand far out, and for
+    BESSEL.MTH's `INT(#e^(-z*COSH(t))*COSH(n*t), t, 0, inf)` that means `#e^-x` for `x`
+    so large that computing it (to a precision that grows with `x`) never ends, though
+    the value is far below any digit shown. Such an integral is computed here with an
+    exponential that gives 0 past `_VANISHING`. An integral whose error estimate is
+    not within the digits asked for is left to sympy.
+    """
+
+    def infinite(found: sp.Basic) -> bool:
+        if not isinstance(found, sp.Integral) or len(found.limits) != 1:
+            return False
+        limit = found.limits[0]
+        return (
+            len(limit) == 3
+            and any(end.is_infinite for end in limit[1:])
+            and found.is_number
+        )
+
+    try:
+        if not part.has(sp.Integral):
+            return part
+        return part.replace(
+            infinite, lambda found: _quadrature(found, digits), simultaneous=False
+        )
+    except Exception:
+        return part
+
+
+def _quadrature(integral: sp.Integral, digits: int) -> sp.Basic:
+    def end(value: sp.Basic) -> mpmath.mpf:
+        if value.is_infinite:
+            return mpmath.inf if value.is_extended_positive else -mpmath.inf
+        return mpmath.mpf(str(value.evalf(digits + 2 * GUARD)))
+
+    def exp(x):
+        return mpmath.mpf(0) if mpmath.re(x) < _VANISHING else mpmath.exp(x)
+
+    variable, low, high = integral.limits[0]
+    try:
+        integrand = sp.lambdify(
+            variable, integral.function, modules=[{"exp": exp}, "mpmath"]
+        )
+        with mpmath.workdps(digits + GUARD):
+            value, error = mpmath.quad(integrand, [end(low), end(high)], error=True)
+            if not mpmath.isfinite(value) or error > abs(value) * mpmath.mpf(10) ** (
+                -digits
+            ):
+                return integral
+            real, imaginary = mpmath.re(value), mpmath.im(value)
+        number = sp.Float(real, digits)
+        return number + sp.Float(imaginary, digits) * sp.I if imaginary else number
+    except Exception:
+        return integral
 
 
 def _parts(value: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:

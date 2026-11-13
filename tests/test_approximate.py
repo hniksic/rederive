@@ -14,8 +14,10 @@ import math
 from dataclasses import replace
 
 import pytest
-from simplifying import parse, simp
+import sympy as sp
+from simplifying import declaring, parse, simp
 
+from rederive.engine.approximation import approximated
 from rederive.engine.computing import Context, approx
 from rederive.engine.context import Notation, Precision
 from rederive.syntax import ParseState
@@ -397,3 +399,91 @@ def test_an_approximation_is_read_from_its_decimal_digits(context):
 def test_numerals_come_back_in_the_input_base():
     state = ParseState(input_base=16)
     assert simp("0FF + 1", Context(input_base=16), state) == "100"
+
+
+# -- values carried from step to step -----------------------------------------
+
+
+def defining(context, **definitions):
+    """`context` with functions defined, each given as `(parameters, body)`."""
+    state = declaring(*definitions)
+    functions = {
+        name: (tuple(parameters.split(",")), parse(body, state))
+        for name, (parameters, body) in definitions.items()
+    }
+    return replace(context, functions={**context.functions, **functions})
+
+
+def test_every_number_in_a_matrix_is_approximated():
+    assert simp("[[SQRT(2), 1], [pi, 1/3]]", APPROXIMATE) == (
+        "[[1.41421, 1], [3.14159, 0.333333]]"
+    )
+
+
+def test_a_system_iterates_numerically_in_approximate_mode():
+    # Newton's method on the first component; left exact, each iterate nests the last
+    # one inside its sine and cosine.
+    text = "ITERATES([x - (x - COS(x))/(1 + SIN(x)), y], [x, y], [1, 0], 3)"
+    assert simp(text, APPROXIMATE) == (
+        "[[1, 0], [0.750363, 0], [0.739112, 0], [0.739085, 0]]"
+    )
+
+
+def test_a_recursion_goes_numeric_step_by_step():
+    # The arithmetic-geometric mean of 1 and 2 is 1.4567910310...; computed exactly,
+    # each level nests the square roots of the last.
+    context = defining(
+        APPROXIMATE, AGM=("a,b,n", "IF(n = 0, a, AGM((a + b)/2, SQRT(a*b), n - 1))")
+    )
+    assert simp("AGM(1, 2, 8)", context) == "1.45679"
+
+
+def test_a_function_computes_its_own_value_exactly():
+    # Only the value a call returns is rounded, so the cancellation inside the body
+    # keeps its digits: the value is 0.0049998750...
+    context = defining(APPROXIMATE, F=("x", "SQRT(x) - 100"))
+    assert simp("F(10001)", context) == "0.00499987"
+
+
+def test_a_value_with_a_variable_is_carried_exactly():
+    context = defining(APPROXIMATE, F=("x", "x/3 + SQRT(2)"))
+    assert simp("3*F(y)", context) == "y + 4.24264"
+
+
+def test_a_long_sum_is_totalled_numerically():
+    # The harmonic number H(100) is 5.1873775176...
+    assert simp("SUM(1/k, k, 1, 100)", APPROXIMATE) == "5.18737"
+
+
+def test_an_iteration_inside_approx_goes_numeric_in_an_exact_line():
+    # The same mean by ITERATE on a pair. Inside APPROX it is carried numerically,
+    # where an exact line would build a tower of radicals.
+    text = "1 + APPROX(ITERATE([(a + b)/2, SQRT(a*b)], [a, b], [1, 2], 8) SUB 1)"
+    assert simp(text, DECIMAL) == "2.45679"
+
+
+def test_fitted_data_is_approximated_before_solving():
+    # The least squares line through (0.1, TAN(0.1)) ... (0.4, TAN(0.4)).
+    data = "VECTOR([x, TAN(x)], x, 0.1, 0.4, 0.1)"
+    assert simp(f"FIT([x, a*x + b], {data})", APPROXIMATE) == "1.07400*x - 0.00970691"
+
+
+def test_solve_searches_numerically_in_approximate_mode():
+    # As in Mixed mode, an equation with no closed form is searched for a root.
+    assert simp("SOLVE(ERF(x) + x = 1, x)", APPROXIMATE) == "[x = 0.489116]"
+
+
+def test_solve_inside_approx_searches_numerically():
+    text = "1 + APPROX(RHS(SOLVE(ERF(x) + x = 1, x) SUB 1))"
+    assert simp(text, DECIMAL) == "1.48911"
+
+
+def test_an_integral_over_an_infinite_range_of_a_vanishing_integrand():
+    # BESSEL.MTH's integral for BESSEL_K(1, 1.3), which is 0.3725474956... Quadrature
+    # samples the integrand so far out that `#e^-x` there can't be computed. The
+    # simplest rational within tolerance is 4690/12589, shown as 0.372547.
+    t = sp.Symbol("t")
+    integral = sp.Integral(
+        sp.exp(-sp.Rational(13, 10) * sp.cosh(t)) * sp.cosh(t), (t, 0, sp.oo)
+    )
+    assert approximated(integral, APPROXIMATE) == sp.Rational(4690, 12589)

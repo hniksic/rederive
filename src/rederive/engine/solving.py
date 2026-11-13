@@ -221,8 +221,9 @@ def _equation(
 ) -> tuple[sp.Basic, ...]:
     """`residual = 0` solved for `variable`, by whatever the precision allows.
 
-    Bounds mean a numeric search (Approximate). Exact and Mixed try an exact solution
-    first, and Mixed then searches for a real root over a widening interval.
+    Bounds mean a numeric search (Approximate). Otherwise an exact solution is tried
+    first, and Mixed and Approximate then search for a real root over a widening
+    interval: under Approximate, `SOLVE(ERF(x) + x = 1, x)` is `[x = 0.489116]`.
 
     A candidate is dropped only if provably not a solution: it zeros a divisor of the
     original equation (`_divides_by_zero`), substituting it back fails (`_fails`), or,
@@ -247,7 +248,7 @@ def _equation(
         entries = _entries(found, variable, context, constants, admissible)
         if entries is not None:
             return entries
-    if context.precision is Precision.MIXED:
+    if context.precision is not Precision.EXACT:
         searched = _searched(residual, variable, context)
         if searched is not None:
             return searched
@@ -1093,8 +1094,8 @@ def _bisect(
 def _searched(
     residual: sp.Basic, variable: sp.Symbol, context: Context
 ) -> tuple[sp.Basic, ...] | None:
-    """Mixed mode's last resort: search `[-10, 10]` and double until a real root turns up,
-    as the manual describes. The cap is ours.
+    """The last resort of Mixed and Approximate modes: search `[-10, 10]` and double until
+    a real root turns up, as the manual describes for Mixed. The cap is ours.
     """
     reach = _REACH
     while reach <= _REACH_CAP:

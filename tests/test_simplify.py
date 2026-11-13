@@ -968,7 +968,7 @@ TRIGONOMETRIC_CONSTANTS = [
     ("x + COS(pi/9)*COS(2*pi/9)*COS(4*pi/9)", "x + 1/8"),
     ("x*COS(pi/9)*COS(2*pi/9)*COS(4*pi/9)", "x/8"),
     # A value of higher degree is no simpler, and stays.
-    ("SIN(pi/7) + SIN(2*pi/7)", "SIN(2*pi/7) + SIN(pi/7)"),
+    ("SIN(pi/7) + SIN(2*pi/7)", "COS(3*pi/14) + SIN(pi/7)"),
     ("2*COS(pi/7)", "2*COS(pi/7)"),
     ("SIN(1)*COS(2)", "SIN(1)*COS(2)"),
 ]
@@ -976,6 +976,24 @@ TRIGONOMETRIC_CONSTANTS = [
 
 @pytest.mark.parametrize(("text", "expected"), TRIGONOMETRIC_CONSTANTS, ids=str)
 def test_a_trigonometric_constant_is_written_as_the_number_it_is(text, expected):
+    assert simp(text) == expected
+
+
+#: A sine or cosine at a rational multiple of pi past the first octant is the cofunction
+#: of the complement, and a denominator with many factors of two isn't expanded into
+#: nested roots. RANDOM_NORMAL in MISC.MTH takes such cosines of `2*pi*RANDOM(1)`.
+OCTANT_ANGLES = [
+    ("COS(pi*204285811/536870912)", "SIN(64149645*pi/536870912)"),
+    ("SIN(pi*204285811/536870912)", "COS(64149645*pi/536870912)"),
+    ("TAN(pi*204285811/536870912)", "TAN(204285811*pi/536870912)"),
+    ("-COS(5*pi/14)", "-SIN(pi/7)"),
+    ("COS(pi/128)", "COS(pi/128)"),
+    ("COS(pi/8)", "SQRT(SQRT(2) + 2)/2"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), OCTANT_ANGLES, ids=str)
+def test_a_trigonometric_value_is_written_within_the_first_octant(text, expected):
     assert simp(text) == expected
 
 

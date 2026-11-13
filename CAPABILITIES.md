@@ -137,6 +137,17 @@ SQRT(10001) - 100              0.00499987          Derive: 0.00499722
 SQRT(10^200 + 1) - 10^100      5.00000*10^-101     Derive: 0
 ```
 
+This holds within one step of a computation, not across steps. A value carried from one
+step to the next is rounded to working precision (five digits past those asked for) as
+it is handed on: each iterate of `ITERATE` and `ITERATES`, each running total of a `SUM`
+or `PRODUCT` taken term by term, and the number a defined function returns. So an
+iteration, a recursion or a chain of functions (an AGM, a Runge-Kutta step, a Bessel
+recurrence) goes numeric step by step under `Precision := Approximate` and inside
+`APPROX`, as in Derive, instead of building an exact tower of nested radicals that
+never reduces to the digits shown. A function's own body is still computed exactly, so
+`F(x) := SQRT(x) - 100` gives the same 0.00499987 for `F(10001)`. Values that still
+contain a variable are carried exactly.
+
 **Integrals through a pole.** A definite integral through a pole inside the interval is
 `inf` or `?` rather than the difference of the antiderivative's values at the ends:
 `INT(1/x^2, x, -1, 1)` is `inf`, not `-2`.
