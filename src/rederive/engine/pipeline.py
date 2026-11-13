@@ -58,6 +58,7 @@ from rederive.engine.evaluate import (
     Commanded,
     Environment,
     evaluate,
+    limit_by_substitution,
     named_as_declared,
     released,
 )
@@ -1327,8 +1328,17 @@ def _limit(head: sp.Limit) -> sp.Basic:
     A constant factor is pulled out first, since sympy's series code can lose a product
     of gammas of complex arguments and would give 1 for the limit of the partial
     products of `1 + 1/k^2`, instead of `SINH(pi)/pi`.
+
+    Where the expression is continuous at the point, its value there is the limit, and
+    is found by substituting (see `limit_by_substitution`). Evaluation does this for a
+    written `LIM`; this covers the rest, such as a prime at a point and limits sympy
+    leaves in its answers, and spares sympy's series code, which may spend minutes on
+    an integral it can't do.
     """
     expression, variable, point, direction = head.args
+    substituted = limit_by_substitution(expression, variable, point)
+    if substituted is not None:
+        return substituted
     closed = _closed_forms(expression)
     constant, varying = sp.S.One, closed
     try:

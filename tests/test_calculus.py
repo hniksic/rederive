@@ -801,6 +801,58 @@ def test_a_limit_towards_a_moving_point_is_the_substitution_it_means():
     )
 
 
+LIMITS_BY_SUBSTITUTION = [
+    # Where the expression is continuous at the point, the limit is the expression
+    # there, with everything in it evaluated again: utility files use LIM to
+    # substitute (D).
+    ("LIM(VECTOR(k, k, n), n, 3)", "[1, 2, 3]"),
+    ("LIM(IF(a > 0, a, 0), a, 2)", "2"),
+    ("LIM(INT(#e^(-a*t), t, 1, inf), a, 2)", "#e^(-2)/2"),
+    ("LIM(x SUB 2, x, [3, 4])", "4"),
+    ("LIM(2*true + false, [true, false], [1, 0])", "2"),
+    ("LIM(COS(3*ACOS(t)/2), t, j)", "COS(3*ACOS(j)/2)"),
+    ("LIM(y + (1 + x^2/y^2)/(-x^2/y^3 - 1/y), y, 1)", "0"),
+    (
+        "LIM(DIF((z^2 - 1)^2*LN((z + 1)/(1 - z)), z, 2), z, COS(1/5))",
+        "4*(3*COS(1/5)^2 - 1)*LN(-(COS(1/5) + 1)/(COS(1/5) - 1)) - 12*COS(1/5)",
+    ),
+    # At a jump, or where the value is undefined, the limit is taken.
+    ("LIM(SIGN(x), x, 0)", "±1"),
+    ("LIM(FLOOR(x), x, 1, -1)", "0"),
+    ("LIM(DIF(ABS(x), x), x, 0)", "±1"),
+    ("LIM(x/x^3, x, 0)", "inf"),
+    # Derive takes no limit of an equation (D).
+    ("LIM(x + 1 = y, x, 2)", "LIM(x + 1 = y, x, 2)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), LIMITS_BY_SUBSTITUTION, ids=str)
+def test_a_limit_where_the_expression_is_continuous_is_its_value_there(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_limit_of_an_undefined_function_is_its_value_at_the_point():
+    assert simp("LIM(F(t), t, c)", state=declaring("F")) == "F(c)"
+
+
+def test_a_limit_substitutes_into_the_value_where_a_call_binds_its_variable():
+    # FUN.MTH's Qmu takes the limit of a function that differentiates in the parameter
+    # the limit's variable is supplied for. Written as a number, that parameter is no
+    # variable, so the point goes into the derivative's value.
+    body = parse("DIF((z^2-1)^2*LN((z+1)/(1-z)),z,2)")
+    context = Context(functions={"G": (("z",), body)})
+    assert simp("LIM(G(k), k, COS(1/5))", context) == (
+        "4*(3*COS(1/5)^2 - 1)*LN(-(COS(1/5) + 1)/(COS(1/5) - 1)) - 12*COS(1/5)"
+    )
+
+
+def test_the_utility_files_limit_of_a_generated_tensor():
+    # TENSOR.MTH's EPS is a LIM of vectors generated over a symbolic dimension.
+    body = parse("LIM(VECTOR(VECTOR(j-i,j,1,m),i,1,m),m,n)")
+    context = Context(functions={"S": (("n",), body)})
+    assert simp("S(3)", context) == "[[0, 1, 2], [-1, 0, 1], [-2, -1, 0]]"
+
+
 def test_a_calculus_head_waits_for_the_body_of_the_call_under_it():
     """A call whose definition isn't expanded yet is not a constant.
 

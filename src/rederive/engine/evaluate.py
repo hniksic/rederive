@@ -51,6 +51,7 @@ from functools import cached_property
 
 import sympy as sp
 from sympy.core.function import AppliedUndef, UndefinedFunction
+from sympy.core.relational import Relational
 
 from rederive.engine.approximation import carried
 from rederive.engine.context import Context, Precision
@@ -59,6 +60,7 @@ from rederive.engine.intervals import decided
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
     COMMAND_HEADS,
+    CONSTANTS,
     Assign,
     Converter,
     FunDef,
@@ -92,6 +94,7 @@ __all__ = [
     "divisors",
     "evaluate",
     "evaluated",
+    "limit_by_substitution",
     "named_as_declared",
     "released",
 ]
@@ -694,8 +697,63 @@ class _Evaluator(Converter):
             counted = self._counted(name, body, index, inner, limits)
             if counted is not None:
                 return _over(counted, taken)
+        if name == "LIM" and not self.env.writing:
+            value = self._substituted_limit(body, index, limits, inner)
+            if value is not None:
+                return _over(value, taken)
         values = [_value_of(evaluator.convert(body)), index, *limits]
         return _over(self._worked(self.call(name, values), values), taken)
+
+    def _substituted_limit(
+        self, body: Node, index: sp.Basic, limits: list[sp.Basic], inner: Environment
+    ) -> sp.Basic | None:
+        """`LIM(u, x, a)` as the value of `u` at `x = a`, where that is the limit.
+
+        Derive's own files use `LIM` to substitute and evaluate: TENSOR.MTH's `EPS`
+        takes a `LIM(VECTOR(...), dIm, n)`, FUN.MTH's `KN` a limit of an integral at a
+        number, NUMBER.MTH's `BERNOULLI_POLY` a limit of a sum up to `x_ - 1` at `x`.
+        As in Derive, `u` is simplified first, with `x` a variable, and the point is
+        substituted into that value, which is then evaluated again: so the sum is
+        summed in closed form before `x` is substituted (summed up to a number, it
+        would be counted term by term), while a `VECTOR` over a symbolic count is
+        generated, an `IF` decided and an element selected once the point is in.
+
+        That is the limit wherever the value is continuous at the point (see
+        `substitutable`); elsewhere, and where the value there is undefined (see
+        `defined`), None is returned and the limit is taken.
+
+        An integral in `u` is not worked out with `x` a variable, only at the point:
+        in general it has no closed form, which sympy may take minutes to find out.
+        INT_APPS.MTH's `SURFACE_AREA` integrates the limit of an integral. Only
+        Simplify takes limits, so without `Environment.work_out` this isn't tried.
+
+        A vector of variables takes a vector of points, all substituted at once. The
+        name of a constant stands for the constant, so `LIM(2*true + false, [true,
+        false], [1, 0])` is 2. A point at infinity, or one mentioning a variable (see
+        `MovingLimit`), is left to the limit.
+        """
+        written = _limit_point(index, limits)
+        work_out = self.env.work_out
+        if written is None or work_out is None:
+            return None
+
+        def all_but_integrals(head: sp.Basic) -> sp.Basic:
+            return head if isinstance(head, sp.Integral) else work_out(head)
+
+        try:
+            simplified = replace(inner, work_out=all_but_integrals, suspended={})
+            form = _value_of(self.within(simplified).convert(body))
+            if not substitutable(form, written):
+                return None
+            node = from_sympy(released(form), self.context).exact
+            names = frozenset(_symbol_names(form))
+            plain = replace(
+                self.env, bindings={}, supplied={}, bound=self.env.bound | names
+            )
+            at = _value_of(self.within(_at(plain, written)).convert(node))
+        except Exception:
+            return None
+        return at if defined(at) else None
 
     def _pending(self, index: Node) -> bool:
         """Whether `index` is a parameter supplied with an element not yet known."""
@@ -1146,6 +1204,146 @@ def _decomposed(values: Sequence[sp.Basic], made: sp.Basic) -> bool:
         and isinstance(values[0], sp.UnevaluatedExpr)
         and isinstance(made, Vector)
     )
+
+
+def _limit_point(
+    index: sp.Basic, limits: list[sp.Basic]
+) -> dict[sp.Basic, sp.Basic] | None:
+    """The values `LIM(u, index, *limits)` substitutes for its variables, or None if
+    they don't match. An omitted point is zero."""
+    if len(limits) > 2:
+        return None
+    variables = [
+        CONSTANTS.get(name.name, name) if type(name) is sp.Symbol else name
+        for name in (index.args if isinstance(index, Vector) else [index])
+    ]
+    if not limits:
+        points = [sp.Integer(0)] * len(variables)
+    elif not isinstance(index, Vector):
+        points = [limits[0]]
+    elif isinstance(limits[0], Vector):
+        points = list(limits[0].args)
+    else:
+        return None
+    if len(points) != len(variables):
+        return None
+    return dict(zip(variables, points, strict=True))
+
+
+def limit_by_substitution(
+    expression: sp.Basic, variable: sp.Basic, point: sp.Basic
+) -> sp.Basic | None:
+    """The limit of `expression` as `variable` approaches `point`, by substituting the
+    point, or None if substitution can't be trusted to give it.
+
+    See `substitutable` and `defined`.
+    """
+    written = {variable: point}
+    if not substitutable(expression, written):
+        return None
+    try:
+        value = settled(expression.subs(written))
+    except Exception:
+        return None
+    return value if defined(value) else None
+
+
+def substitutable(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> bool:
+    """Whether substituting `written` into `value` gives its limit there, as far as
+    the form of `value` shows.
+
+    The points must be finite and free of the variables. `value` must not be a
+    relation: Derive takes no limit of an equation, so `LIM(x + 1 = y, x, 2)` isn't
+    `3 = y`. And it must be continuous at the point: every function with a jump
+    (`SIGN`, `FLOOR`, a conditional's test, ...) must have its argument away from the
+    jump there, and a power of a base going to zero must have a constant exponent,
+    since `x^x` is 1 at zero only by convention. A symbolic point is taken to be away
+    from every jump, as Derive takes `LIM(F(x), x, a)` to be `F(a)`. A numeric point
+    must be shown away, so a jump is assumed where that can't be decided. A vector
+    substituted for a variable selects or combines elements and is taken as it is.
+    """
+    variables = set(written)
+    points = list(written.values())
+    try:
+        if any(point.free_symbols & variables for point in points):
+            return False
+        if any(point.has(sp.oo, -sp.oo, sp.zoo, sp.nan) for point in points):
+            return False
+        if _relation(value):
+            return False
+        if any(isinstance(point, Vector) for point in points):
+            return True
+        return all(
+            _away(jump.subs(written), integer)
+            for jump, integer in _jumps(value, variables)
+        )
+    except Exception:
+        return False
+
+
+def defined(value: sp.Basic) -> bool:
+    """Whether `value`, found by substituting a point, is a value there: nothing in it
+    undefined (as `0/0` and `1/0` are), and no deferred substitution into a derivative,
+    which stays a limit, as Derive writes a derivative it can't take at a point.
+
+    A signed infinity is a value: an integral may run to one, and a conditional may
+    give one.
+    """
+    try:
+        return not value.has(sp.nan, sp.zoo, sp.AccumBounds, sp.Subs)
+    except Exception:
+        return False
+
+
+def _relation(value: sp.Basic) -> bool:
+    """Whether `value` is a relation or truth value, or a vector holding one."""
+    if isinstance(value, Vector):
+        return any(_relation(element) for element in value.args)
+    return isinstance(value, sp.logic.boolalg.Boolean) and not isinstance(
+        value, (sp.Expr, sp.logic.boolalg.BooleanAtom)
+    )
+
+
+def _jumps(
+    value: sp.Basic, variables: set[sp.Basic]
+) -> Iterator[tuple[sp.Basic, bool]]:
+    """Where `value` may jump, as expressions in `variables`: each is a jump where it
+    is zero, or, with True, where it is an integer."""
+    for found in sp.preorder_traversal(value):
+        if not (isinstance(found, sp.Basic) and found.free_symbols & variables):
+            continue
+        if isinstance(found, (sp.sign, sp.Heaviside)):
+            yield found.args[0], False
+        elif isinstance(found, (sp.floor, sp.ceiling, sp.frac)):
+            yield found.args[0], True
+        elif isinstance(found, sp.Mod):
+            yield found.args[0] / found.args[1], True
+        elif isinstance(found, sp.Pow) and found.exp.free_symbols & variables:
+            yield found.base, False
+        elif isinstance(found, (sp.Piecewise, Suspended)):
+            tests = (
+                type(found).display if isinstance(found, Suspended) else found
+            ).atoms(Relational)
+            for test in tests:
+                yield test.lhs - test.rhs, False
+
+
+def _away(jump: sp.Basic, integer: bool) -> bool:
+    """Whether `jump`, at the point, is shown away from a jump: nonzero, or not an
+    integer. A symbolic one is taken to be."""
+    if not jump.is_number:
+        return True
+    if integer:
+        if jump.is_integer is not None:
+            return not jump.is_integer
+    elif jump.is_zero is not None:
+        return not jump.is_zero
+    try:
+        number = complex(jump.evalf(30))
+    except Exception:
+        return False
+    nearest = round(number.real) if integer else 0
+    return abs(number - nearest) > 1e-12
 
 
 def _value_of(value: sp.Basic) -> sp.Basic:
