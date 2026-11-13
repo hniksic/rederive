@@ -418,6 +418,19 @@ def test_the_order_list_decides_what_gets_multiplied_out():
     assert simp("(x + 1)^9 + y", Context(order=("y", "x", "z"))) == "y + (x + 1)^9"
 
 
+#: A quotient in variables and their roots cancels, each root taken for a variable
+#: whose power the variable is.
+OVER_ROOTS = [
+    ("x*(-(x + SQRT(y))/y - x/y)/(y*(x*(x + SQRT(y))/y^2 - x/(2*y^(3/2))))", "-2"),
+    ("(x*SQRT(y) + y)/(x + SQRT(y))", "SQRT(y)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), OVER_ROOTS, ids=str)
+def test_a_quotient_in_roots_of_its_variables_cancels(text, expected):
+    assert simp(text) == expected
+
+
 #: The power of a variable every term of a numerator sum has cancels against the
 #: denominator's where an exponent is a fraction or a symbol, which the gcd doesn't see.
 #: ODE.MTH's canonic forms read the denominator: `4*x^(18/7) - 3*x^2` over `4*x^4`
@@ -438,7 +451,7 @@ def test_a_symbolic_power_common_to_numerator_terms_cancels():
     # ODE.MTH's CANONIC_3 for the Bessel equation in `(x - r)^(2*k + 2)*y''`.
     context = declared("k :epsilon Real (0, inf)")
     text = "x^2*x^(-4*k - 4)*(x^(2*k + 2)*(z^2 - v^2*x^(2*k)) + x^(4*k + 2)/4)"
-    assert simp(text, context) == "x^(-2*k)*(-v^2*x^(2*k) + x^(2*k)/4 + z^2)"
+    assert simp(text, context) == "x^(-2*k)*z^2 - v^2 + 1/4"
 
 
 def test_an_exponential_common_to_the_terms_is_taken_out_once():

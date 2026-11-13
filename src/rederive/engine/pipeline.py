@@ -57,6 +57,7 @@ from rederive.engine.context import (
 from rederive.engine.evaluate import (
     Commanded,
     Environment,
+    cancelled_over_roots,
     evaluate,
     limit_by_substitution,
     named_as_declared,
@@ -81,6 +82,7 @@ from rederive.engine.to_sympy import (
     Declare,
     FunDef,
     Logical,
+    MovingLimit,
     PlusMinus,
     ambiguous_products,
     Vector,
@@ -205,7 +207,7 @@ def simplified(
         decide=lambda test: _decide_simplified(test, context),
         work_out=lambda head: _evaluate(head, context),
         command=_commanded,
-        simplify=lambda value, context: _transform(value, context, True),
+        simplify=_argument,
     )
     expression = evaluate(node, environment)
     try:
@@ -214,6 +216,33 @@ def simplified(
         # The evaluated input is still a correct answer.
         result = expression
     return released(result)
+
+
+def _argument(value: sp.Basic, context: Context) -> sp.Basic:
+    """`value` simplified as the argument of a built-in that reads its form, as
+    Derive simplifies it first: `VARIABLES((a^2*y^2 + a^2*y*z)/(y^2 + y*z))` is `[a]`.
+
+    A calculus head still standing in `value` was tried when it was built, and stays
+    as it is: it is held out while the rest is simplified, since simplifying would try
+    each integral again and prove each answer by differentiating it back. ODE.MTH
+    passes large equations with integrals in them to `FREE`, whose `VARIABLES` call
+    took minutes over them.
+    """
+    try:
+        heads = value.atoms(*_HELD)
+    except Exception:
+        heads = set()
+    held = {head: sp.Dummy("held") for head in heads}
+    if held:
+        value = value.xreplace(held)
+    simplified = _transform(value, context, True)
+    if held:
+        simplified = simplified.xreplace({dummy: head for head, dummy in held.items()})
+    return simplified
+
+
+#: Calculus heads `_argument` leaves standing.
+_HELD = (sp.Integral, sp.Sum, sp.Product, sp.Limit, sp.Derivative, MovingLimit)
 
 
 # -- by shape ----------------------------------------------------------------
@@ -2097,6 +2126,27 @@ def _defined(expression: sp.Basic, head: type, over: type) -> sp.Basic:
         return written.xreplace(dict(zip(standing, args)))
 
     return expression.replace(head, defined)
+
+
+def _over_roots(expression: sp.Basic) -> sp.Basic:
+    """A quotient with roots of its variables cancelled (see `cancelled_over_roots`),
+    which the normal form, taking `SQRT(y)` and `y` for unrelated, does not see. A sum
+    stays a sum: `1/SQRT(x) + 1/x` is not put over `x`."""
+    if not isinstance(expression, sp.Expr) or expression.is_Add or not any(
+        power.base.is_Symbol and power.exp.is_Rational and not power.exp.is_Integer
+        for power in expression.atoms(sp.Pow)
+    ):
+        return expression
+    if sp.count_ops(expression) > _OVER_ROOTS_SIZE or not sp.fraction(
+        sp.together(expression)
+    )[1].free_symbols:
+        return expression
+    cancelled = cancelled_over_roots(expression)
+    return expression if cancelled is None else cancelled
+
+
+#: The largest expression, in operations, `_over_roots` cancels.
+_OVER_ROOTS_SIZE = 200
 
 
 def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
@@ -4572,6 +4622,8 @@ _IDENTITIES = (
           "a constant over nested radicals reduced in the field its surds span"),
     _Rule("trigonometric constants", _trigonometric_constants, _gated,
           "COS(pi/9)*COS(2*pi/9)*COS(4*pi/9) is 1/8: values of rational angles"),
+    _Rule("over roots", _over_roots, _gated,
+          "a quotient in x and SQRT(y) cancels: (x*SQRT(y) + y)/(x + SQRT(y)) is SQRT(y)"),
     _Rule("one denominator", _one_denominator, _gated,
           "a denominator under a denominator is cleared, #e^(-z) put over #e^z"),
 )

@@ -2312,17 +2312,22 @@ def _denominator(conv: Converter, args: list) -> sp.Basic:
 
 
 def _fraction_of(conv: Converter, value: sp.Basic) -> tuple[sp.Basic, sp.Basic]:
-    """The numerator and denominator of `value` over one denominator.
+    """The numerator and denominator of `value`, as Derive reads them off its
+    simplified argument: the factors with negative exponents and the denominator of
+    the numeric coefficient are the denominator, the rest the numerator.
+
+    Nothing is put over a common denominator, so a sum is its own numerator:
+    `DENOMINATOR(1/x + 1/y)` and `DENOMINATOR(x/4 + 1/3)` are 1, while
+    `DENOMINATOR((x + 1)/(x*y))` is `x*y` and `DENOMINATOR(x^(-k))` is `x^k`.
 
     In Approximate mode a quotient of approximate numbers is first written at the
     scale of its value, as it is displayed (see `approximation.rescaled`), so
     `DENOMINATOR` of a fitted `(a*x^2 + b*x + c)/(x + d)` is `x + d` as shown, not
     that times a long integer.
     """
-    together = sp.together(value)
     if conv.context.precision is Precision.APPROXIMATE:
-        together = rescaled(together, conv.context.precision_digits)
-    return sp.fraction(together)
+        value = rescaled(value, conv.context.precision_digits)
+    return sp.fraction(value)
 
 
 def _terms(conv: Converter, args: list) -> sp.Basic:

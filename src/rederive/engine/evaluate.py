@@ -111,7 +111,7 @@ Simplifier = Callable[[sp.Basic, Context], sp.Basic]
 #: simplifies first: `VARIABLES((a^2*y^2 + a^2*y*z)/(y^2 + y*z))` is `[a]`, since the
 #: argument cancels to `a^2`. ODE.MTH's `SYMMETRIC_TEST` relies on this, and its `FREE`
 #: tests, which decide which method solves an equation, on the full simplification.
-_SIMPLIFIED_ARGUMENTS = frozenset({"VARIABLES"})
+_SIMPLIFIED_ARGUMENTS = frozenset({"VARIABLES", "NUMERATOR", "DENOMINATOR"})
 
 
 @dataclass(frozen=True)

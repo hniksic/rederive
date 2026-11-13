@@ -2491,7 +2491,12 @@ CASES = [
         "x^3*LN(x)^3/3 - x^3*LN(x)^2/3 + 2*x^3*LN(x)/9 - 2*x^3/27",
     ),
     ("473", "INT(LN(x)^n/x, x)", "(LN(x)^(n + 1) - 1)/(n + 1)"),
-    ("474", "INT(LN(x)/x^m, x)", "x^(-m)*(x*(1 - m)*LN(x) - x + x^m)/(m^2 - 2*m + 1)"),
+    # A reciprocal symbolic power goes into the sum it cancels in.
+    (
+        "474",
+        "INT(LN(x)/x^m, x)",
+        "(x^(1 - m)*(1 - m)*LN(x) - x^(1 - m) + 1)/(m^2 - 2*m + 1)",
+    ),
     ("475@n=3,m=2", "INT(LN(x)^3/x^2, x)", "-(LN(x)^3 + 3*LN(x)^2 + 6*LN(x) + 6)/x"),
     ("476", "INT(x^m/LN(x), x)", "EI((m + 1)*LN(x))"),
     (

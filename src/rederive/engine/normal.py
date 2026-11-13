@@ -181,6 +181,7 @@ class _Writer:
         tops, bottoms = _fraction(product)
         tops, bottoms = _constants_cancelled(tops, bottoms)
         tops, bottoms = _shared_powers_cancelled(tops, bottoms)
+        tops, bottoms = _symbolic_powers_multiplied_in(tops, bottoms)
         if not all(bottom.is_Number for bottom in bottoms):
             cancelled = _cancelled(tops, bottoms)
             if cancelled is not None:
@@ -531,6 +532,30 @@ def _shared_powers_cancelled(
             )
         tops[place] = top
     return tops, [bottom for bottom in bottoms if bottom != 1]
+
+
+def _symbolic_powers_multiplied_in(
+    tops: list[sp.Expr], bottoms: list[sp.Expr]
+) -> tuple[list[sp.Expr], list[sp.Expr]]:
+    """The factors with a reciprocal power of a variable to a symbolic exponent
+    multiplied into a numerator sum that has a term in that power, as Derive writes
+    it: `x^(-2*k)*(x^(2*k)*(1 - 4*v^2)/4 + z^2)` is `z^2*x^(-2*k) - v^2 + 1/4`. A
+    numeric power stays a denominator: `(x^2 + z)/x^2`.
+    """
+    tops, bottoms = list(tops), list(bottoms)
+    for bottom in list(bottoms):
+        base, exponent = bottom.as_base_exp()
+        if not base.is_Symbol or exponent.is_Number:
+            continue
+        for place, top in enumerate(tops):
+            if top.is_Add and any(
+                (term.as_powers_dict().get(base, sp.S.Zero) - exponent).is_Number
+                for term in top.args
+            ):
+                tops[place] = sp.Add(*(term / bottom for term in top.args))
+                bottoms.remove(bottom)
+                break
+    return tops, bottoms
 
 
 def _lowered(term: sp.Expr, variable: sp.Symbol, shared: sp.Expr) -> sp.Expr:

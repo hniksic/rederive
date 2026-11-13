@@ -662,6 +662,12 @@ STRUCTURE = [
     # The argument is simplified first, as in Derive: this one cancels to `a^2`.
     # ODE.MTH's SYMMETRIC_TEST relies on this.
     ("VARIABLES((a^2*y^2 + a^2*y*z)/(y^2 + y*z))", "[a]"),
+    # A quotient in `x` and `SQRT(y)` cancels; ODE.MTH's HOMOGENEOUS_4 asks whether
+    # this exponent is free of `x` and `y`. A standing integral is held as it is.
+    ("VARIABLES(x*(-(x + SQRT(y))/y - x/y)/(y*(x*(x + SQRT(y))/y^2 - x/(2*y^(3/2)))))",
+     "[]"),
+    ("VARIABLES(SIN(x)^2 + COS(x)^2 + y)", "[y]"),
+    ("VARIABLES(INT(SIN(x^3)/LN(x), x) + (a*y + y)/(a + 1))", "[x, y]"),
     # NUMBER is a predicate and always answers a truth value. The manual's example is
     # the second pair: true exactly when the sum of two squares is a perfect square.
     ("NUMBER(2/3)", "true"),
@@ -938,6 +944,15 @@ def test_the_utility_files_inverse_takes_the_principal_branch(text, expected):
     # MISC.MTH's `INVERSE(u, x) := ITERATE(u, x, x, -1)`.
     context = Context(functions={"INVERSE": (("u", "x"), parse("ITERATE(u,x,x,-1)"))})
     assert simp(text, context) == expected
+
+
+def test_an_argument_that_cancels_to_a_constant_is_passed_as_the_constant():
+    # Derive simplifies an argument before the call. ODE.MTH's HOMOGENEOUS_4 computes a
+    # scaling exponent that is -2, a quotient in `x` and `SQRT(y)`, and its body tests
+    # it and raises `x` to it.
+    context = Context(functions={"F": (("n",), parse("IF(n=-2,x^n,0)"))})
+    text = "F(x*(-(x + SQRT(y))/y - x/y)/(y*(x*(x + SQRT(y))/y^2 - x/(2*y^(3/2)))))"
+    assert simp(text, context) == "1/x^2"
 
 
 def test_the_demos_matrix_generator():

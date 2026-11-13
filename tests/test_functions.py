@@ -401,3 +401,48 @@ def test_plus_or_minus_simplifies_its_argument_and_seals_it_in():
     # Arithmetic doesn't propagate the ambiguity (out of scope); the head stays inert
     # instead of guessing a sign.
     assert simp("±1 + 1") == "±1 + 1"
+
+
+# -- numerator and denominator -------------------------------------------------
+
+#: Derive reads both off the simplified argument's product structure: factors with
+#: negative exponents and the denominator of the numeric coefficient are below the
+#: line, and a sum, not put over a common denominator, is its own numerator (D).
+#: ODE.MTH's PARTS splits a canonic form so; FIT_.MTH reweights a rational fit by its
+#: denominator (see `test_approximate.py`).
+PARTS = [
+    ("DENOMINATOR(1/x + 1/y)", "1"),
+    ("NUMERATOR(1/x + 1/y)", "1/x + 1/y"),
+    ("DENOMINATOR(x^(-2) + 1/4)", "1"),
+    ("DENOMINATOR(x/4 + 1/3)", "1"),
+    ("NUMERATOR(x/4 + 1/3)", "x/4 + 1/3"),
+    ("DENOMINATOR(1/x + 1)", "1"),
+    ("DENOMINATOR((x + 1)/(x*y))", "x*y"),
+    ("NUMERATOR((x + 1)/(x*y))", "x + 1"),
+    ("DENOMINATOR(3/4)", "4"),
+    ("DENOMINATOR(x/4)", "4"),
+    ("DENOMINATOR(x^(-2))", "x^2"),
+    ("DENOMINATOR(x^(-k))", "x^k"),
+    # The argument is simplified first.
+    ("DENOMINATOR((x^2 - 1)/(x - 1))", "1"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), PARTS, ids=str)
+def test_numerator_and_denominator_read_the_simplified_product(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_factored_argument_is_simplified_before_its_denominator_is_read():
+    # ODE.MTH's PARTS for the Bessel equation in `(x - r)^(2*k + 2)*y''` (D): the
+    # factored form simplifies to a sum, whose denominator is 1.
+    context = declared("k :epsilon Real (0, inf)")
+    factored = "FACTOR(z^2*x^(-2*k) + 1/4 - v^2, Trivial)"
+    assert simp(f"DENOMINATOR({factored})", context) == "1"
+    assert simp(f"NUMERATOR({factored})", context) == "x^(-2*k)*z^2 - v^2 + 1/4"
+
+
+def test_a_reciprocal_symbolic_power_is_multiplied_into_a_sum_it_cancels_in():
+    context = declared("k :epsilon Real (0, inf)")
+    assert simp("x^(-k)*(x^k + z)", context) == "x^(-k)*z + 1"
+    assert simp("x^(-2)*(x^2 + z)") == "(x^2 + z)/x^2"
