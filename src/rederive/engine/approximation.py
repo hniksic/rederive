@@ -81,6 +81,7 @@ __all__ = [
     "is_approximation",
     "noting_approximations",
     "reapproximated",
+    "rescaled",
     "simplest",
     "simplest_rational",
 ]
@@ -178,6 +179,7 @@ def approximated(expression: sp.Basic, context: Context) -> sp.Basic:
             # idempotent: the tolerance is measured from the new value, so it could
             # reach a simpler rational a whole tolerance away and lose a digit.
             approximate: set[sp.Rational] = set()
+            expression = rescaled(expression, digits)
             result = _rounded(
                 _approximated(expression, digits, approximate), digits, approximate
             )
@@ -232,6 +234,86 @@ def _numbers_carried(value: sp.Basic, working: Context) -> sp.Basic:
     if not isinstance(value, sp.Expr) or not value.is_number:
         return value
     return approximated(value, working)
+
+
+def rescaled(expression: sp.Basic, digits: int) -> sp.Basic:
+    """`expression` with each product written at the scale of its value, if it isn't.
+
+    The normal form clears the denominators of a sum below the line and takes the
+    content of a sum out (see `normal`), and Derive's display of an approximate answer
+    is the same form: CURV_FIT.DOC's `3655.76/(9783*t - 11564)`. When the numbers are
+    ratios of small integers, as there, that is what an approximate answer shows. When
+    they are themselves approximations (a fit to `TAN` data, `PADE(TAN(x), x, 1, 2,
+    2)`), each has a long denominator, and clearing them multiplies those together: the
+    form is exact, but written to six digits it is `6.27810*10^-12*(-1.44677*10^42*x^2
+    + ...)/(-5.83213*10^30*x^2 + ...)`, a scale that cancels between its parts and
+    hides the coefficients.
+
+    So a product is rescaled when at least two of its numeric coefficient, a sum above
+    the line and a sum below have numbers longer than working precision (see `_long`),
+    or a sum above the line does and there is a sum below. Rescaling is exact: each
+    long sum above the line, and each sum below, is divided by the coefficient of its
+    leading term (making a denominator monic), the coefficient takes the difference,
+    and a lone long sum above the line takes the coefficient in. A fit of `(a*x^2 +
+    b*x + c)/(x + d)` comes out in that shape, with its four numbers. Short numbers
+    keep the normal form, CURV_FIT's included, and so does a single long number:
+    `1/(123456789012345*x + 1)` keeps its denominator. Only the form changes, so the
+    numbers are still approximated from the exact value.
+    """
+
+    def rescale(product: sp.Mul) -> sp.Basic:
+        coefficient, rest = product.as_coeff_Mul()
+        if not coefficient.is_Rational:
+            return product
+        factors = list(sp.Mul.make_args(rest))
+        above, below = [], []
+        for index, factor in enumerate(factors):
+            base, exponent = factor.as_base_exp()
+            if base.is_Add and exponent.is_Integer:
+                (above if exponent > 0 else below).append(index)
+        long_above = [i for i in above if _long_sum(factors[i], digits)]
+        long_below = [i for i in below if _long_sum(factors[i], digits)]
+        longs = _long(coefficient, digits) + bool(long_above) + bool(long_below)
+        if longs < 2 and not (long_above and below):
+            return product
+        for index in long_above + below:
+            base, exponent = factors[index].as_base_exp()
+            lead = base.as_ordered_terms(order="grlex")[0].as_coeff_Mul()[0]
+            if not lead.is_Rational or not lead:
+                continue
+            factors[index] = sp.Add(*(term / lead for term in base.args)) ** exponent
+            coefficient *= lead**exponent
+        if coefficient != 1 and len(long_above) == 1 == len(above):
+            base = factors[above[0]]
+            if base.is_Add:
+                factors[above[0]] = sp.Add(*(coefficient * term for term in base.args))
+                coefficient = sp.S.One
+        return sp.Mul(coefficient, *factors)
+
+    try:
+        return expression.replace(lambda part: isinstance(part, sp.Mul), rescale)
+    except Exception:
+        return expression
+
+
+def _long(number: sp.Basic, digits: int) -> bool:
+    """Whether `number` is a ratio of integers with more digits than working precision.
+
+    Trailing zeros don't count, so a power of ten is short.
+    """
+    if not isinstance(number, sp.Rational):
+        return False
+
+    def length(integer: int) -> int:
+        return len(str(abs(integer)).rstrip("0"))
+
+    return length(number.p) + length(number.q) > digits + GUARD
+
+
+def _long_sum(power: sp.Expr, digits: int) -> bool:
+    """Whether the sum `power` raises has a long number as a term's coefficient."""
+    total = power.as_base_exp()[0]
+    return any(_long(term.as_coeff_Mul()[0], digits) for term in total.args)
 
 
 def reapproximated(number: sp.Basic, context: Context) -> sp.Basic:

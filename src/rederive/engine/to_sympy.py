@@ -30,7 +30,7 @@ from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean, BooleanFunction
 
-from rederive.engine.approximation import GUARD, approximated, simplest
+from rederive.engine.approximation import GUARD, approximated, rescaled, simplest
 from rederive.engine.context import (
     Angle,
     Context,
@@ -2097,7 +2097,12 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
 
     In Approximate mode the data and the system are evaluated numerically first, as
     for `ROW_REDUCE`: data written as `TAN(0.1)` would otherwise be solved for exactly,
-    in a field of sixteen tangents.
+    in a field of sixteen tangents. The solution is then rounded to working precision,
+    as a value handed on to the next step (see `approximation.carried`): solved from
+    approximate data it is exact only in name, a ratio of integers hundreds of digits
+    long, and FIT_.MTH fits again with weights computed from it. Exact data still give
+    their exact solution, which the rounding keeps, since the simplest rational within
+    the tolerance of a ratio of small integers is that ratio.
 
     With one argument, the label vector is the matrix's first row and the data its
     other rows: `FIT([[x, a*x + b], [0, 1], [1, 3]])` is `2*x + 1`, as in Derive.
@@ -2142,7 +2147,7 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
         targets.append(row[-1] - here.subs(dict.fromkeys(parameters, 0)))
     design = _worked_out(sp.Matrix(design), conv.context)
     targets = _worked_out(sp.Matrix(targets), conv.context)
-    solution = design.solve_least_squares(targets)
+    solution = _worked_out(design.solve_least_squares(targets), conv.context)
     return expression.subs(dict(zip(parameters, solution)))
 
 
@@ -2188,11 +2193,25 @@ def _next_prime(conv: Converter, args: list) -> sp.Basic:
 
 
 def _numerator(conv: Converter, args: list) -> sp.Basic:
-    return sp.fraction(sp.together(_one(args)))[0]
+    return _fraction_of(conv, _one(args))[0]
 
 
 def _denominator(conv: Converter, args: list) -> sp.Basic:
-    return sp.fraction(sp.together(_one(args)))[1]
+    return _fraction_of(conv, _one(args))[1]
+
+
+def _fraction_of(conv: Converter, value: sp.Basic) -> tuple[sp.Basic, sp.Basic]:
+    """The numerator and denominator of `value` over one denominator.
+
+    In Approximate mode a quotient of approximate numbers is first written at the
+    scale of its value, as it is displayed (see `approximation.rescaled`), so
+    `DENOMINATOR` of a fitted `(a*x^2 + b*x + c)/(x + d)` is `x + d` as shown, not
+    that times a long integer.
+    """
+    together = sp.together(value)
+    if conv.context.precision is Precision.APPROXIMATE:
+        together = rescaled(together, conv.context.precision_digits)
+    return sp.fraction(together)
 
 
 def _terms(conv: Converter, args: list) -> sp.Basic:

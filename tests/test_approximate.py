@@ -468,6 +468,98 @@ def test_fitted_data_is_approximated_before_solving():
     assert simp(f"FIT([x, a*x + b], {data})", APPROXIMATE) == "1.07400*x - 0.00970691"
 
 
+def test_a_fit_to_approximate_data_has_coefficients_at_their_own_scale():
+    # FIT_.DMO's weighted linearization of a rational fit; numpy's least squares gives
+    # 0.675509, -1.365447, -0.003606 and 1.444968. Solved exactly, the coefficients
+    # are ratios of integers hundreds of digits long, shown as `1.42469*10^-230*w*(...)`.
+    data = (
+        "VECTOR([t, TAN(t), 1/ABS(t - 1.56725), t*TAN(t)/ABS(t - 1.56725)], t, 0, 1, 0.1)"
+    )
+    assert simp(f"FIT([x, y, w, w*(a*x^2 + b*x + c - d*y)], {data})", APPROXIMATE) == (
+        "w*(0.675508*x^2 - 1.36544*x + 1.44496*y - 0.00360591)"
+    )
+
+
+#: FIT_.MTH's rational fit: the numerator minus `y` times the denominator is fitted to
+#: zero, and the fitted function is that solved for `y`.
+_RATIONAL = ("f", "LIM(f, y, 0)/(-DIF(f, y))")
+_LINEARIZED = "FIT([x, y, a*x^2 + b*x + c - d*y - x*y], VECTOR([t, TAN(t), 0], t, 0, {}, 0.1))"
+
+
+def test_a_rational_fit_is_written_with_its_fitted_coefficients():
+    # numpy: 0.907135, -0.897811, -0.0000577 and -0.906611 (the digits here are cut,
+    # not rounded). The denominator is the template's `x + d`, as NUMERATOR and
+    # DENOMINATOR, which FIT_ reweights with, also give it.
+    context = defining(APPROXIMATE, G=_RATIONAL)
+    fitted = f"G({_LINEARIZED.format(0.5)})"
+    assert simp(fitted, context) == (
+        "(0.907134*x^2 - 0.897811*x - 5.76814*10^-5)/(x - 0.906610)"
+    )
+    assert simp(f"DENOMINATOR({fitted})", context) == "x - 0.906610"
+    assert simp(f"NUMERATOR({fitted})", context) == (
+        "0.907134*x^2 - 0.897811*x - 5.76814*10^-5"
+    )
+
+
+def test_a_reweighted_rational_fit_stays_numeric():
+    # FIT_'s one default iteration on FIT_.DMO's sixteen points, reweighted by the
+    # reciprocal of the first fit's denominator. numpy: 0.452405, -1.313302, -0.029738
+    # and -1.569618. With the fit solved exactly, this took minutes.
+    weighted = (
+        "G(FIT([x, y, w, w*(a*x^2 + b*x + c - d*y - x*y)], "
+        "VECTOR([t, TAN(t), ABS(LIM(1/DENOMINATOR(u), x, t)), 0], t, 0, 1.5, 0.1)))"
+    )
+    context = defining(APPROXIMATE, G=_RATIONAL, H=("u", weighted))
+    first = f"G({_LINEARIZED.format(1.5)})"
+    assert simp(f"ITERATE(H(u), u, {first}, 1)", context) == (
+        "(0.452405*x^2 - 1.31330*x - 0.0297376)/(x - 1.56961)"
+    )
+
+
+#: APPROX.MTH's Pade approximant, which FIT_.DMO plots beside its fits.
+_PADE = {
+    "CF": ("a,m,n", "VECTOR(VECTOR(a SUB (m-n+i+j),j,1,n+1),i,1,n)"),
+    "DV": ("a,m,n", "ELEMENT(ROW_REDUCE(CF(a,m,n))`,n+1)"),
+    "NV": (
+        "a,u,m,n",
+        "VECTOR(a SUB (k+1)-SUM(u SUB (n+1-i)*a SUB (k+1-i),i,1,k),k,1,MIN(m,n))",
+    ),
+    "P3": (
+        "a,v,u,x,c,m,n",
+        "(a SUB 1+SUM(v SUB k*(x-c)^k,k,1,m))/(1-SUM(u SUB (n+1-k)*(x-c)^k,k,1,n))",
+    ),
+    "P2": ("a,u,x,c,m,n", "P3(a,NV(a,u,m,n),u,x,c,m,n)"),
+    "P1": ("a,x,c,m,n", "P2(a,DV(a,m,n),x,c,m,n)"),
+    "PADE": ("y,x,p,n,d", "P1(VECTOR(LIM(DIF(y,x,m_),x,p)/m_!,m_,0,n+d+1),x,p,n,d)"),
+}
+
+
+def test_an_approximate_rational_function_is_written_at_the_scale_of_its_value():
+    # The coefficients carried between PADE's functions are long ratios. Cleared out
+    # of the denominator, as the normal form does, they showed as `6.27810*10^-12*
+    # (-1.44677*10^42*x^2 + ...)/(-5.83213*10^30*x^2 + ...)`. At x = 1 the value is
+    # TAN(1), 1.55740.
+    context = defining(APPROXIMATE, **_PADE)
+    pade = "PADE(TAN(x), x, 1, 2, 2)"
+    assert simp(pade, context) == (
+        "(1.55740*x^2 - 6.11481*x - 0.114815)/(x^2 + 2.67222*x - 6.67222)"
+    )
+    assert simp(f"DENOMINATOR({pade})", context) == "x^2 + 2.67222*x - 6.67222"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Ratios of short integers keep the normal form, as in CURV_FIT.DOC.
+        ("3655.76/(9783*t - 11564)", "3655.76/(9783*t - 1.1564*10^4)"),
+        # So does a single long number.
+        ("1/(123456789012345*x + 1)", "1/(1.23456*10^14*x + 1)"),
+    ],
+)
+def test_an_approximate_quotient_of_short_numbers_keeps_the_normal_form(text, expected):
+    assert simp(text, APPROXIMATE) == expected
+
+
 def test_solve_searches_numerically_in_approximate_mode():
     # As in Mixed mode, an equation with no closed form is searched for a root.
     assert simp("SOLVE(ERF(x) + x = 1, x)", APPROXIMATE) == "[x = 0.489116]"

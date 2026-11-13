@@ -159,7 +159,16 @@ recurrence) goes numeric step by step under `Precision := Approximate` and insid
 `APPROX`, as in Derive, instead of building an exact tower of nested radicals that
 never reduces to the digits shown. A function's own body is still computed exactly, so
 `F(x) := SQRT(x) - 100` gives the same 0.00499987 for `F(10001)`. Values that still
-contain a variable are carried exactly.
+contain a variable are carried exactly. A least-squares `FIT` is one such step: its
+coefficients are rounded to working precision, so FIT_.MTH's reweighted rational fits
+stay quick, while exact data still give their exact fit.
+
+An approximate quotient is shown in Derive's normal form, its denominator cleared of
+fractions, as long as its numbers are short: CURV_FIT.DOC's `3655.76/(9783*t -
+11564)`. Where clearing approximate coefficients would show a scale that cancels
+between numerator and denominator, the denominator is made monic instead, so
+`PADE(TAN(x), x, 1, 2, 2)` is `(1.55740*x^2 - 6.11481*x - 0.114815)/(x^2 + 2.67222*x
+- 6.67222)`, and `NUMERATOR` and `DENOMINATOR` agree with what is shown.
 
 A definite integral that is a number is likewise worked out exactly first under
 `Precision := Approximate` and inside `APPROX`, but without the slow heuristic search
