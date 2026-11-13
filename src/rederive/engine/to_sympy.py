@@ -17,6 +17,7 @@ and leaves every other name a variable.
 
 from __future__ import annotations
 
+import functools
 import random
 import time
 from collections.abc import Callable, Sequence
@@ -3337,23 +3338,67 @@ def _sort(conv: Converter, args: list) -> sp.Basic:
     comes between 1 and 2; variables follow the numbers, in alphabetical order; and
     vectors go by their first elements, ties broken on the second, and so on. Equal
     elements are all kept. Anything else, such as `x + 1`, leaves the call as written.
+
+    Numbers are compared exactly: rationals directly, other constants by the sign of
+    their difference, decided symbolically. A comparison that can't be decided that way
+    leaves the call as written too.
+
+    In Approximate mode, including inside `APPROX`, the elements are evaluated
+    numerically first, so every comparison is of plain numbers and the order agrees
+    with the values shown. Elements equal at working precision keep their order.
     """
-    elements = _elements(_one(args))
-    return Vector(*sorted(elements, key=_sorting_key))
+    elements = _elements(_worked_out(_one(args), conv.context))
+    for element in elements:
+        _sorting_rank(element)
+    return Vector(*sorted(elements, key=functools.cmp_to_key(_sorting_order)))
 
 
-def _sorting_key(element: sp.Basic) -> tuple:
-    """Where `element` goes in `SORT`'s order; raises if it has no place in it."""
+def _sorting_order(a: sp.Basic, b: sp.Basic) -> int:
+    """-1, 0 or 1 as `a` goes before, with or after `b` in `SORT`'s order; raises if
+    either has no place in it or the order of two numbers can't be decided exactly."""
+    rank_a, rank_b = _sorting_rank(a), _sorting_rank(b)
+    if rank_a != rank_b:
+        return -1 if rank_a < rank_b else 1
+    if rank_a == 0:
+        real_a, imaginary_a = a.as_real_imag()
+        real_b, imaginary_b = b.as_real_imag()
+        return _real_order(real_a, real_b) or _real_order(imaginary_a, imaginary_b)
+    if rank_a == 1:
+        return (a.name > b.name) - (a.name < b.name)
+    for part_a, part_b in zip(a.args, b.args):
+        if order := _sorting_order(part_a, part_b):
+            return order
+    return (len(a.args) > len(b.args)) - (len(a.args) < len(b.args))
+
+
+def _sorting_rank(element: sp.Basic) -> int:
+    """`SORT`'s group of `element`: numbers, then variables, then vectors; raises if it
+    has no place in the order."""
     if isinstance(element, Vector):
-        return (2, tuple(_sorting_key(part) for part in element.args))
+        for part in element.args:
+            _sorting_rank(part)
+        return 2
     if type(element) is sp.Symbol:
-        return (1, element.name)
+        return 1
     if isinstance(element, sp.Expr) and element.is_number:
-        value = sp.N(element, 30)
-        real, imaginary = value.as_real_imag()
-        if real.is_Number and imaginary.is_Number:
-            return (0, sp.Rational(real), sp.Rational(imaginary))
+        return 0
     raise TypeError("nothing to sort by")
+
+
+def _real_order(a: sp.Expr, b: sp.Expr) -> int:
+    """-1, 0 or 1 as the real constant `a` is less than, equal to or greater than `b`,
+    decided exactly; raises if it can't be."""
+    if isinstance(a, sp.Rational) and isinstance(b, sp.Rational):
+        return bool(a > b) - bool(a < b)
+    difference = a - b
+    if difference.is_zero:
+        return 0
+    if difference.is_extended_real:
+        if difference.is_extended_positive:
+            return 1
+        if difference.is_extended_negative:
+            return -1
+    raise TypeError("order undecided")
 
 
 def _appended(conv: Converter, args: list) -> sp.Basic:

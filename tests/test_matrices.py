@@ -708,8 +708,34 @@ STRUCTURE = [
     ("SORT([[2, 3], [3, 1], [2, 1], [1, 5]])", "[[1, 5], [2, 1], [2, 3], [3, 1]]"),
     ("SORT([#i, 1, -#i, 0])", "[-#i, 0, #i, 1]"),
     ("SORT([])", "[]"),
-    # An element with no place in the order leaves the call as written.
+    # Numbers compare exactly, however close: fractions directly, other constants by the
+    # sign of their difference.
+    ("SORT([1/2, -3/4, 1/3, 2/5, 1/3])", "[-3/4, 1/3, 1/3, 2/5, 1/2]"),
+    (
+        "SORT([10^40 + 1, 10^40, 10^40 - 1])",
+        "[9999999999999999999999999999999999999999, "
+        "10000000000000000000000000000000000000000, "
+        "10000000000000000000000000000000000000001]",
+    ),
+    (
+        "SORT([1/3 + 10^-40, 1/3, 1/3 - 10^-40])",
+        "[9999999999999999999999999999999999999997"
+        "/30000000000000000000000000000000000000000, 1/3, "
+        "10000000000000000000000000000000000000003"
+        "/30000000000000000000000000000000000000000]",
+    ),
+    ("SORT([pi + 10^-40, pi])", "[pi, pi + 1/10000000000000000000000000000000000000000]"),
+    (
+        "SORT([pi, 22/7, 355/113, SQRT(10), #e^2/SQRT(5), LN(23)])",
+        "[LN(23), pi, 355/113, 22/7, SQRT(10), SQRT(5)*#e^2/5]",
+    ),
+    ("SORT([SQRT(2)*SQRT(3), SQRT(6), 2])", "[2, SQRT(6), SQRT(6)]"),
+    ("SORT([1 + SQRT(2)*#i, 1 + #i, #i])", "[#i, 1 + #i, 1 + SQRT(2)*#i]"),
+    ("SORT([[2, pi], [2, 3], [1]])", "[[1], [2, 3], [2, pi]]"),
+    # An element with no place in the order leaves the call as written, and so does a
+    # pair of numbers whose order can't be decided exactly (these two are equal).
     ("SORT([x + 1, 2])", "SORT([x + 1, 2])"),
+    ("SORT([ATAN(1/2) + ATAN(1/3), pi/4])", "SORT([ATAN(1/2) + ATAN(1/3), pi/4])"),
     # Concatenation. Matrices stack by rows, except that a single matrix is flattened,
     # as the manual specifies.
     ("APPEND([a, b], [c, d], [e, f])", "[a, b, c, d, e, f]"),

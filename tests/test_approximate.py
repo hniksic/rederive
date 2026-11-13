@@ -125,6 +125,24 @@ def test_what_the_approx_function_leaves_shows_its_digits(text, expected):
     assert simp(text, DECIMAL) == expected
 
 
+#: `ATAN(1/2) + ATAN(1/3)` is `pi/4`, which exact comparison can't establish, so exact
+#: SORT leaves this list unsorted.
+_UNDECIDED = "[pi/4, 1/2, ATAN(1/2) + ATAN(1/3)]"
+
+
+def test_sort_compares_approximated_elements():
+    """Under Approximate, SORT sorts the approximated elements, so the order agrees with
+    the values shown and is always decided. Elements equal at working precision keep
+    their order. Anything other than a number or a variable still has no place."""
+    line = "SORT([3, y, pi, #e, SQRT(2), x, 1/3, -3])"
+    assert simp(line, APPROXIMATE) == "[-3, 0.333333, 1.41421, 2.71828, 3, 3.14159, x, y]"
+    assert simp(f"SORT({_UNDECIDED})") == f"SORT({_UNDECIDED})"
+    sorted_ = "[0.5, 0.785398, 0.785398]"
+    assert simp(f"SORT({_UNDECIDED})", APPROXIMATE) == sorted_
+    assert simp(f"APPROX(SORT({_UNDECIDED}))") == sorted_
+    assert simp("SORT([x + 1, 2])", APPROXIMATE) == "SORT([x + 1, 2])"
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
