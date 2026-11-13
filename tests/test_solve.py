@@ -196,6 +196,13 @@ def test_a_solution_is_written_in_its_plainer_spelling():
     ]
 
 
+def test_a_logarithm_comes_back_whole():
+    """Derive 4.11: `[y=LN(x)]`. Sympy writes the solution as `LN(ABS(x)) +
+    #i*PHASE(x)`, the same for nonzero `x`, which then defeats integration."""
+    assert sol("#e^y = x", ("y",)) == ["y = LN(x)"]
+    assert simplify(parse("SOLVE(#e^y = x, y)"), EXACT).text == "[y = LN(x)]"
+
+
 def test_a_solution_in_a_function_with_no_name_leaves_the_equation_unsolved():
     # Sympy's inverse error function can't be typed back; the equation stands instead.
     assert sol("ERF(x) = y", ("x",)) == ["ERF(x) - y = 0"]
@@ -665,6 +672,41 @@ def test_mixed_precision_searches_without_being_told_where():
     # -0.68602672..., which is `-0.686027` to six significant digits.
     assert sol("3^x = x^2", context=MIXED) == ["x = -0.686026"]
     assert sol("COS(x) = x", context=MIXED) == ["x = 0.739085"]
+
+
+def test_approximate_precision_searches_where_a_solution_has_no_name():
+    """Derive 4.11: `[z=0.272462]`. The exact solution is in sympy's inverse error
+    function, which can't be written; under Approximate the search finds the number. This
+    is CALLOPTN.MTH's `STD_DEV`, a SOLVE for the volatility in a Black-Scholes price."""
+    assert sol("ERF(z) = 0.3", context=APPROXIMATE) == ["z = 0.272462"]
+    assert sol("NORMAL(z) = 0.6", context=APPROXIMATE) == ["z = 0.253347"]
+    assert sol(
+        "47.5614*ERF(0.353553*z - 0.0353553/z) + 50*ERF(0.353553*z + 0.0353553/z)"
+        " = 8.01207",
+        context=APPROXIMATE,
+    ) == ["z = 0.200000"]
+    assert sol("ERF(z) = 0.3") == ["ERF(z) - 3/10 = 0"]
+
+
+POLES = [
+    # Derive 4.11: `[z=0.284708]`. Each is undefined at 0, a point of the scan, and has
+    # its root between 0 and the next point.
+    ("ATAN(z - 0.1/z) + ATAN(z + 0.1/z) = 0.5", ["z = 0.284707"]),
+    (
+        "47.5614*ERF(0.353553*z - 0.0353553/z) + 50*ERF(0.353553*z + 0.0353553/z)"
+        " - 8.01207 = 0",
+        ["z = 0.200000"],
+    ),
+    # `ATAN(z) + ATAN(1/z)` is `pi/2` or `-pi/2`.
+    ("ATAN(z) + ATAN(1/z) = 1", []),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), POLES, ids=str)
+def test_a_root_beside_a_discontinuity_is_found(text, expected):
+    """The manual: "Even if the equation is discontinuous in the interval [...] the soLve
+    command usually finds a solution if one exists in the interval"."""
+    assert sol(text, ("z",), APPROXIMATE, ("-10", "10")) == expected
 
 
 def test_mixed_precision_solves_exactly_where_it_can():

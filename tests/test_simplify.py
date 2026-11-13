@@ -741,6 +741,22 @@ def test_a_conjugate_pair_is_a_squared_modulus(text, expected):
     assert simp(text, declared("z :epsilon Complex")) == expected
 
 
+#: A logarithm's modulus and phase parts join into the principal logarithm, which they
+#: define for every nonzero argument.
+POLAR_LOGARITHMS = [
+    ("LN(ABS(x)) + #i*PHASE(x)", "LN(x)", None),
+    ("2*LN(ABS(x)) + 2*#i*PHASE(x)", "2*LN(x)", None),
+    ("LN(ABS(z)) + #i*PHASE(z) + 1", "LN(z) + 1", declared("z :epsilon Complex")),
+    # The conjugate's logarithm is no logarithm of `x`.
+    ("LN(ABS(x)) - #i*PHASE(x)", "LN(ABS(x)) - #i*PHASE(x)", None),
+]
+
+
+@pytest.mark.parametrize(("text", "expected", "context"), POLAR_LOGARITHMS, ids=str)
+def test_a_logarithm_in_polar_parts_is_joined(text, expected, context):
+    assert simp(text, context) == expected
+
+
 # -- absolute values and signs ------------------------------------------------
 
 #: `ABS(u)`, `SIGN(u)` and `u` are related, so a product of two of them reduces to

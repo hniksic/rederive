@@ -1,14 +1,15 @@
 """Simplifying products of a real argument with its absolute value and sign.
 
 For real `u`, `ABS(u)`, `SIGN(u)` and `u` are related, and `folded_signs` writes a
-product containing more than one of them in the shortest way.
+product containing more than one of them in the shortest way. For any `z`, the modulus
+and phase are the parts of a logarithm, which `polar_logarithms` joins.
 """
 
 from __future__ import annotations
 
 import sympy as sp
 
-__all__ = ["folded_signs"]
+__all__ = ["folded_signs", "polar_logarithms"]
 
 
 #: Indices of the `ABS(u)`, `SIGN(u)` and `u` exponents in a group. Since `ABS(u) =
@@ -118,3 +119,38 @@ def _shortest_spelling(
         for count in sorted({0, 1, absolute, total})
     ]
     return min(spellings, key=sp.count_ops)
+
+
+def polar_logarithms(expression: sp.Basic) -> sp.Basic:
+    """Join the parts of a logarithm: `LN(ABS(z)) + #i*PHASE(z)` is `LN(z)`.
+
+    This is the principal logarithm's definition, so it holds for every nonzero `z`, and
+    with any common factor: `c*LN(ABS(z)) + c*#i*PHASE(z)` is `c*LN(z)`. Sympy's
+    `solveset` writes the logarithm in the split form, as in the solution of `#e^y = x`.
+    """
+
+    def joined(total: sp.Add) -> sp.Basic:
+        terms = list(total.args)
+        changed = False
+        for term in total.args:
+            if term not in terms:
+                continue
+            for factor in sp.Mul.make_args(term):
+                if not isinstance(factor, sp.log) or not isinstance(
+                    factor.args[0], sp.Abs
+                ):
+                    continue
+                argument = factor.args[0].args[0]
+                coefficient = term / factor
+                partner = sp.I * coefficient * sp.arg(argument)
+                if partner in terms:
+                    terms.remove(term)
+                    terms.remove(partner)
+                    terms.append(coefficient * sp.log(argument))
+                    changed = True
+                    break
+        return sp.Add(*terms) if changed else total
+
+    if not (expression.has(sp.arg) and expression.has(sp.Abs)):
+        return expression
+    return expression.replace(lambda e: isinstance(e, sp.Add), joined)

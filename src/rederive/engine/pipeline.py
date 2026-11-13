@@ -73,7 +73,7 @@ from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, shadowing_built_ins
 from rederive.engine.rewriting import Rewrite, attempt, forced, pays
-from rederive.engine.signs import folded_signs
+from rederive.engine.signs import folded_signs, polar_logarithms
 from rederive.engine.solving import oriented, solutions
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
@@ -4764,6 +4764,8 @@ _IDENTITIES = (
           "ABS(x*ATAN(x)) is x*ATAN(x): factors whose signs cancel need no bars"),
     _Rule("conjugate pairs", _conjugate_pairs, forced,
           "CONJ(z)*z is ABS(z)^2"),
+    _Rule("polar logarithms", polar_logarithms, forced,
+          "LN(ABS(z)) + #i*PHASE(z) is LN(z): a logarithm's parts joined"),
     _Rule("combinatorial", _combinatorial, _gated,
           "a ratio of factorials is a binomial or a polynomial when it is shorter"),
     # The arc and angle rules are our own: sympy doesn't collect these arcs, shorten

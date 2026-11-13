@@ -34,6 +34,7 @@ from rederive.engine.context import Branch, Context, Precision
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, spelling
+from rederive.engine.signs import polar_logarithms
 from rederive.engine.to_sympy import Vector
 
 __all__ = ["equations_of", "oriented", "solutions", "solution_variables"]
@@ -41,6 +42,10 @@ __all__ = ["equations_of", "oriented", "solutions", "solution_variables"]
 #: The number of pieces a bracketing scan cuts an interval into before bisecting:
 #: fine enough to separate roots in ordinary worksheets, coarse enough to be cheap.
 _SCAN = 64
+
+#: How many times a piece of the scan next to a point where the equation is undefined is
+#: scanned again, more finely, for a root beside that point.
+_RESCANS = 2
 
 #: The starting half-width of Mixed mode's search, and the limit on doubling before
 #: it gives up and returns the residual equation. The manual documents the doubling
@@ -235,6 +240,9 @@ def _equation(
     first, and Mixed and Approximate then search for a real root over a widening
     interval: under Approximate, `SOLVE(ERF(x) + x = 1, x)` is `[x = 0.489116]`.
 
+    A solution written with a function the notation has no name for is no answer (see
+    `solutions`), so under Approximate `SOLVE(ERF(x) = 0.3, x)` is searched for too.
+
     A candidate is dropped only if provably not a solution: it zeros a divisor of the
     original equation (`_divides_by_zero`), substituting it back fails (`_fails`), or,
     with `real`, it is known to be non-real (`_imaginary`). If nothing remains, the
@@ -258,7 +266,7 @@ def _equation(
             return polynomial or not _fails(residual, variable, value)
 
         entries = _entries(found, variable, context, constants, admissible)
-        if entries is not None:
+        if entries is not None and not any(_unnamed(entry) for entry in entries):
             return entries
     if context.precision is not Precision.EXACT:
         searched = _searched(residual, variable, context)
@@ -1102,24 +1110,57 @@ def _bracketed(
     first, last = _number(low), _number(high)
     if first is None or last is None or not first < last:
         return None
+    return _scanned(residual, variable, first, last, context, _RESCANS)
+
+
+def _scanned(
+    residual: sp.Basic,
+    variable: sp.Symbol,
+    first: float,
+    last: float,
+    context: Context,
+    depth: int,
+) -> sp.Basic | None:
+    """One root in `[first, last]` by a scan of `_SCAN` pieces, or None.
+
+    A point where the residual is undefined tells nothing about the sign beside it, so
+    a root next to it is missed: `ATAN(z - 0.1/z) + ATAN(z + 0.1/z) = 0.5` is undefined
+    at 0 and has its root at 0.28, short of the next point. Once the whole interval is
+    scanned, a piece with one end undefined is scanned again, `depth` levels deep. A
+    piece undefined at both ends is not, nor one whose sign change bisects to no root:
+    rescanning every pole of `1/SIN(x)` makes the widening search far too slow.
+    """
     step = (last - first) / _SCAN
-    previous = None
+    suspect: list[tuple[float, float]] = []
+    previous: float | None = None
+    # Whether the previous point was defined; a piece undefined at both ends, as `LN(x)`
+    # is to the left of 0 over the reals, is not rescanned.
+    defined = False
     for index in range(_SCAN + 1):
         point = first + index * step
         evaluated = residual.subs(variable, sp.Float(point))
         value = _number(evaluated)
         if value is None:
-            previous = None
+            if defined:
+                suspect.append((point - step, point))
+            previous, defined = None, False
             continue
         # A value too small for a float is 0.0 without being zero: `#e^x` far to
         # the left is not a root.
         if value == 0.0 and _vanishes(evaluated):
             return _approximate(sp.Float(point), context)
-        if previous is not None and (previous < 0) != (value < 0):
+        if index and not defined:
+            suspect.append((point - step, point))
+        elif previous is not None and (previous < 0) != (value < 0):
             found = _bisect(residual, variable, point - step, point, context)
             if found is not None:
                 return found
-        previous = value
+        previous, defined = value, True
+    if depth:
+        for start, end in suspect:
+            found = _scanned(residual, variable, start, end, context, depth - 1)
+            if found is not None:
+                return found
     return None
 
 
@@ -1189,10 +1230,12 @@ def _answers(
 
 
 def _tidied(value: sp.Basic) -> sp.Basic:
-    """`value` in the plainer of two forms a solver may produce: `SQRT(r^2 - x^2)` for
-    `SQRT(-(x + r)*(x - r))`, and `LN(3)/(LN(3) - LN(2))` for `-LN(3)/(LN(2) - LN(3))`.
+    """`value` in the plainer of the forms a solver may produce: `SQRT(r^2 - x^2)` for
+    `SQRT(-(x + r)*(x - r))`, `LN(3)/(LN(3) - LN(2))` for `-LN(3)/(LN(2) - LN(3))`, and
+    `LN(x)` for `LN(ABS(x)) + #i*PHASE(x)`.
     """
     try:
+        value = polar_logarithms(value)
         value = value.replace(_factored_radicand, _expanded_radicand)
         return _unnegated(value)
     except Exception:
