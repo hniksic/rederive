@@ -28,6 +28,7 @@ import warnings
 from dataclasses import replace
 
 import pytest
+import sympy as sp
 from sexpr import to_sexpr
 from simplifying import COMPLEX_X, POSITIVE_X, declared, declaring, parse, simp
 from test_approximate import APPROXIMATED
@@ -49,6 +50,7 @@ from test_matrices import (
 
 from rederive.engine.computing import Context, from_sympy, simplify, to_sympy
 from rederive.engine.context import Angle, Branch, Direction, Precision, TrigPower
+from rederive.engine.normal import normal_form
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, VariableDeclaration, parse_expression
 from rederive.syntax.names import BUILTIN_FUNCTIONS
@@ -414,6 +416,39 @@ def test_the_order_list_decides_what_gets_multiplied_out():
     stays as written under another, because the list picks the primary variable."""
     assert simp("(x + 1)^9 + y", Context(order=("x", "y", "z"))).startswith("x^9")
     assert simp("(x + 1)^9 + y", Context(order=("y", "x", "z"))) == "y + (x + 1)^9"
+
+
+#: The power of a variable every term of a numerator sum has cancels against the
+#: denominator's where an exponent is a fraction or a symbol, which the gcd doesn't see.
+#: ODE.MTH's canonic forms read the denominator: `4*x^(18/7) - 3*x^2` over `4*x^4`
+#: is the Bessel equation's `(4*x^(4/7) - 3)/(4*x^2)`. A fractional remainder stays.
+CANCELLED_POWERS = [
+    ("(4*x^(18/7) - 3*x^2)/(4*x^4)", "(4*x^(4/7) - 3)/(4*x^2)"),
+    ("(x^(5/2) + x^3)/x^2", "x + SQRT(x)"),
+    ("(SQRT(x) + x)/x^2", "(x + SQRT(x))/x^2"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), CANCELLED_POWERS, ids=str)
+def test_a_power_common_to_numerator_terms_cancels(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_symbolic_power_common_to_numerator_terms_cancels():
+    # ODE.MTH's CANONIC_3 for the Bessel equation in `(x - r)^(2*k + 2)*y''`.
+    context = declared("k :epsilon Real (0, inf)")
+    text = "x^2*x^(-4*k - 4)*(x^(2*k + 2)*(z^2 - v^2*x^(2*k)) + x^(4*k + 2)/4)"
+    assert simp(text, context) == "x^(-2*k)*(-v^2*x^(2*k) + x^(2*k)/4 + z^2)"
+
+
+def test_an_exponential_common_to_the_terms_is_taken_out_once():
+    # ODE.MTH's SYMMETRIC_G_1 transforms `y*y'' - (a + 1)*y'^2` into this. The normal
+    # form writes `-2*t` in the exponent as `(-1)*2*t`, which sympy does not cancel
+    # against the factor's `-2*t`, so taking the factor out was repeated without end.
+    a, t, y1, y2 = sp.symbols("a t y1 y2")
+    power = sp.exp(-2 * t + 2 * sp.Symbol("u"))
+    written = normal_form(-a * y1**2 * power - y1 * power + y2 * power)
+    assert sp.expand(written - (y2 - y1 - a * y1**2) * power) == 0
 
 
 # -- domains: the whole of "don't guess" --------------------------------------

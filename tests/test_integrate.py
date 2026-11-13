@@ -351,6 +351,14 @@ def test_an_even_integrand_over_a_positive_variable_is_kept_where_proved_odd():
     assert by_a_positive_substitution(1 / sp.sqrt(1 - x**4), x) is None
 
 
+def test_an_integrand_much_smaller_over_one_denominator_is_integrated_so():
+    # ODE.MTH's LAGRANGE_B integrates `DIF(g, d)/(d + g)` as evaluated, on which the
+    # manual rules search for half a minute and fail.
+    g = "(SQRT(d^2 + 1) - 1)/(-d - SQRT(d^2 + 1))"
+    text = f"INT(DIF({g}, d)/(d + {g}), d)"
+    assert simp(text) == "LN(d^2 + 1)/2 - LN(SQRT(d^2 + 1) + d)"
+
+
 def test_an_integral_a_rewrite_leaves_behind_is_evaluated_too():
     # Cancelling splits the integrand in two, and the `INT(x, x)` part must be
     # evaluated too.

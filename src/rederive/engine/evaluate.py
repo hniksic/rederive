@@ -43,6 +43,7 @@ Everything else is handled by the converter.
 from __future__ import annotations
 
 import itertools
+import math
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -64,6 +65,7 @@ from rederive.engine.to_sympy import (
     Assign,
     Converter,
     FunDef,
+    MovingLimit,
     Vector,
     added,
     as_condition,
@@ -788,7 +790,9 @@ class _Evaluator(Converter):
 
         try:
             simplified = replace(inner, work_out=all_but_integrals, suspended={})
-            form = _value_of(self.within(simplified).convert(body))
+            form = _renamed_integrals(
+                _value_of(self.within(simplified).convert(body)), written
+            )
             if not substitutable(form, written):
                 return None
             node = from_sympy(released(form), self.context).exact
@@ -1264,26 +1268,65 @@ def _digits_setting(name: str, context: Context) -> sp.Integer | None:
 
 def _cancelled(value: sp.Basic) -> sp.Basic:
     """`value` as a function's argument: cancelled if it is a quotient of polynomials
-    that cancels to fewer variables, and otherwise as it is.
+    in its variables and their roots that cancels to fewer variables, and otherwise as
+    it is.
 
     Derive simplifies an argument before the body sees it. Rederive leaves that to the
     end, except here, where the form as evaluated would mislead the body about what
     the value depends on: ODE.MTH's `SYMMETRIC_N_4` computes a scaling exponent as a
     ratio of two dot products that cancels to 1, then transforms the equation by
-    `#e^(n*x)`, which with the ratio uncancelled runs away.
+    `#e^(n*x)`, which with the ratio uncancelled runs away. Its `HOMOGENEOUS_4`
+    computes one for `y' - SQRT(y) - x` that is a quotient in `x` and `SQRT(y)` and
+    cancels to -2.
     """
     if isinstance(value, Vector) or not isinstance(value, sp.Expr):
         return value
     try:
         denominator = sp.fraction(value)[1]
-        if not denominator.free_symbols or not value.is_rational_function():
+        if not denominator.free_symbols or sp.count_ops(value) > _CANCELLED_SIZE:
             return value
-        cancelled = sp.cancel(value)
-        if cancelled.free_symbols < value.free_symbols:
+        cancelled = cancelled_over_roots(value)
+        if cancelled is not None and cancelled.free_symbols < value.free_symbols:
             return cancelled
     except Exception:
         pass
     return value
+
+
+#: The largest argument, in operations, that `_cancelled` cancels.
+_CANCELLED_SIZE = 200
+
+
+def cancelled_over_roots(value: sp.Expr) -> sp.Expr | None:
+    """`value` cancelled as a quotient of polynomials in its variables, their
+    rational powers and the calls in it, each call taken for a variable of its own.
+
+    Each variable raised to fractions with least common denominator `q` is written as
+    the `q`-th power of a new variable `t` standing for its principal `q`-th root, of
+    which each of those powers is a whole power: `y^(3/2)` is `t^3` for `t =
+    SQRT(y)`. That holds whatever `y` is, so the cancelled quotient, with `t` put
+    back, is equal to `value`: `x*(-(x + SQRT(y))/y - x/y)/(y*(x*(x + SQRT(y))/y^2 -
+    x/(2*y^(3/2))))` is -2.
+    """
+    roots: dict[sp.Basic, int] = {}
+    for found in value.atoms(sp.Pow):
+        base, exponent = found.args
+        if base.is_Symbol and exponent.is_Rational and not exponent.is_Integer:
+            roots[base] = math.lcm(roots.get(base, 1), int(exponent.q))
+    if not roots:
+        return sp.cancel(value)
+    standing = {base: sp.Dummy(base.name) for base in roots}
+    written = value.replace(
+        lambda e: e.is_Pow and e.base in roots and e.exp.is_Rational,
+        lambda e: standing[e.base] ** int(e.exp * roots[e.base]),
+    )
+    written = written.xreplace(
+        {base: standing[base] ** roots[base] for base in roots}
+    )
+    cancelled = sp.cancel(written)
+    return cancelled.xreplace(
+        {root: base ** sp.Rational(1, roots[base]) for base, root in standing.items()}
+    )
 
 
 def _decomposed(values: Sequence[sp.Basic], made: sp.Basic) -> bool:
@@ -1334,6 +1377,7 @@ def limit_by_substitution(
     See `substitutable` and `defined`.
     """
     written = {variable: point}
+    expression = _renamed_integrals(expression, written)
     if not substitutable(expression, written):
         return None
     # A conditional's `?` case is a value it gives, not one the substitution makes.
@@ -1376,13 +1420,15 @@ def substitutable(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> bool
     y, x, 2)` is `3 = y`.
 
     An indefinite integral in a variable has no value at a point until it is worked
-    out: substituted into, it would integrate in the point.
+    out: substituted into, it would integrate in the point (but see
+    `_renamed_integrals`). One in a substitution still waiting for the variable is
+    bound there, and the point goes into the substitution's own point.
     """
     variables = set(written)
     try:
         if any(point.has(*variables) for point in written.values()):
             return False
-        for integral in value.atoms(sp.Integral):
+        for integral in _unbound_integrals(value, variables):
             if any(len(limit) == 1 and limit[0] in variables for limit in integral.limits):
                 return False
         if any(point.has(sp.oo, -sp.oo, sp.zoo, sp.nan) for point in written.values()):
@@ -1396,6 +1442,51 @@ def substitutable(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> bool
         )
     except Exception:
         return False
+
+
+def _unbound_integrals(value: sp.Basic, variables: set[sp.Basic]) -> list[sp.Basic]:
+    """The integrals in `value`, except those in the operand of a substitution still
+    waiting for one of `variables`, where that variable is bound."""
+    if isinstance(value, sp.Integral):
+        return [value, *_unbound_integrals(value.function, variables)]
+    if isinstance(value, MovingLimit) and value.args[1] in variables:
+        return _unbound_integrals(value.args[2], variables)
+    return [
+        found for argument in value.args for found in _unbound_integrals(argument, variables)
+    ]
+
+
+def _renamed_integrals(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> sp.Basic:
+    """`value` with each indefinite integral over a variable of `written` whose point is
+    another variable, absent from `value`, taken over that variable instead.
+
+    Such a point only renames the integral's variable: ODE.MTH's `MISSING_Y_1` takes
+    `LIM(t + INT(1/(u^2 - u - PHI(u)), u), u, y1)`, which is `t + INT(1/(y1^2 - y1 -
+    PHI(y1)), y1)`.
+    """
+    try:
+        # A substitution still waiting binds its variable, in an integral too.
+        waiting = {head.args[1] for head in value.atoms(MovingLimit)}
+        renaming = {
+            variable: point
+            for variable, point in written.items()
+            if type(point) is sp.Symbol
+            and point not in value.free_symbols
+            and variable not in waiting
+        }
+        if not renaming or not value.has(sp.Integral):
+            return value
+        return value.replace(
+            lambda e: (
+                isinstance(e, sp.Integral)
+                and len(e.limits) == 1
+                and len(e.limits[0]) == 1
+                and e.limits[0][0] in renaming
+            ),
+            lambda e: e.xreplace({e.limits[0][0]: renaming[e.limits[0][0]]}),
+        )
+    except Exception:
+        return value
 
 
 def defined(value: sp.Basic) -> bool:
@@ -1438,20 +1529,20 @@ def _jumps(
 
 def _away(jump: sp.Basic, integer: bool) -> bool:
     """Whether `jump`, at the point, is shown away from a jump: nonzero, or not an
-    integer. A symbolic one is taken to be."""
+    integer. A symbolic one is taken to be. A number is decided exactly, by its value
+    as a rational or by what is known of it, and taken to be at a jump where that
+    can't be decided."""
     if not jump.is_number:
         return True
-    if integer:
-        if jump.is_integer is not None:
-            return not jump.is_integer
-    elif jump.is_zero is not None:
-        return not jump.is_zero
-    try:
-        number = complex(jump.evalf(30))
-    except Exception:
-        return False
-    nearest = round(number.real) if integer else 0
-    return abs(number - nearest) > 1e-12
+    decided = jump.is_integer if integer else jump.is_zero
+    if decided is None:
+        # Written another way, a sum of roots may cancel: `SQRT(2)*SQRT(8) - 4`.
+        try:
+            other = sp.radsimp(sp.expand(jump))
+        except Exception:
+            return False
+        decided = other.is_integer if integer else other.is_zero
+    return decided is False
 
 
 def _value_of(value: sp.Basic) -> sp.Basic:

@@ -103,6 +103,10 @@ def integral(head: sp.Basic) -> sp.Basic:
 def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Basic:
     """`integral`, with `shadowed` the built-ins the answer may not use, and `numeric`
     whether it is within `numerically`."""
+    tidied = _with_integrand_tidied(head)
+    if tidied is not None:
+        found = integral(tidied)
+        return head if found.has(sp.Integral) else found
     combined = _with_exponentials_combined(head)
     if combined != head:
         return integral(combined)
@@ -130,6 +134,56 @@ def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Bas
             if not again.has(sp.Integral):
                 return again
     return value
+
+
+#: How much smaller a tidied integrand must be, in operations, to replace the integrand,
+#: and the largest integrand that is tidied.
+_TIDIER = sp.Rational(2, 3)
+_TIDIED_SIZE = 300
+
+
+def _with_integrand_tidied(head: sp.Basic) -> sp.Basic | None:
+    """`head` with its integrand much smaller over one denominator, cancelled, or with
+    the square roots of its denominator sums moved to the numerator, or None.
+
+    An integrand as evaluated may be a quotient of quotients that Derive would have
+    simplified first, and on such a form sympy's manual rules can search for half a
+    minute and fail, where the smaller form integrates at once. ODE.MTH's `LAGRANGE_B`
+    integrates `DIF(g, d)/(d + g)` for `g = (SQRT(d^2 + 1) - 1)/(-d - SQRT(d^2 +
+    1))`, which is `(-d^2 + d*SQRT(d^2 + 1) - 1)/((d^2 + 1)*SQRT(d^2 + 1))`, and its
+    `CANONIC_8` divides by an unsimplified Wronskian. Only the smaller form is tried.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    try:
+        size = sp.count_ops(integrand)
+        if size > _TIDIED_SIZE or not integrand.has(sp.Pow):
+            return None
+        candidates = [sp.cancel(integrand)]
+        denominator = sp.fraction(sp.together(integrand))[1]
+        if any(
+            isinstance(part, sp.Add)
+            and any(_is_square_root(power, variable) for power in part.atoms(sp.Pow))
+            for part in sp.Mul.make_args(denominator)
+        ):
+            top, bottom = sp.fraction(sp.radsimp(sp.together(integrand)))
+            candidates.append(sp.cancel(sp.expand(top) / sp.expand(bottom)))
+        best = min(candidates, key=sp.count_ops)
+        if sp.count_ops(best) > _TIDIER * size:
+            return None
+    except Exception:
+        return None
+    return head.func(best, *head.limits)
+
+
+def _is_square_root(power: sp.Pow, variable: sp.Basic) -> bool:
+    return (
+        power.exp.is_Rational
+        and power.exp.q == 2
+        and power.base.has(variable)
+        and bool(power.base.is_polynomial(variable))
+    )
 
 
 #: Whether the integral being computed is a number that is going to be approximated.

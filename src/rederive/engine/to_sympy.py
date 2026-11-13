@@ -447,6 +447,20 @@ class MovingLimit(sp.Function):
 
     nargs = 3
 
+    @property
+    def free_symbols(self) -> set[sp.Basic]:
+        """The variable is bound in the operand, which it is substituted out of."""
+        expression, variable, point = self.args
+        return (expression.free_symbols - {variable}) | point.free_symbols
+
+    def _eval_subs(self, old: sp.Basic, new: sp.Basic) -> sp.Basic | None:
+        """Substituting for the variable substitutes into the point only: with `y`
+        bound in the operand, `LIM(F(y), y, x*y)` at `y = w` is `LIM(F(y), y, x*w)`."""
+        expression, variable, point = self.args
+        if old == variable:
+            return self.func(expression, variable, point._subs(old, new))
+        return None
+
     def doit(self, deep: bool = False, **hints) -> sp.Basic:
         """The substitution, or this head if it fails."""
         expression, variable, point = self.args
@@ -459,7 +473,8 @@ class MovingLimit(sp.Function):
             if not indefinite:
                 return expression.subs(variable, point)
             factor = sp.cancel(point / variable)
-            if factor.has(variable) or factor.is_zero is not False:
+            # A symbolic factor is taken to be nonzero, as `SQRT(t)` for real `t`.
+            if factor.has(variable) or factor.is_zero or factor == 0:
                 return self
             held = {found: sp.Dummy() for found in indefinite}
             rest = expression.xreplace(held)
@@ -3638,6 +3653,10 @@ def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None
     the reciprocal power, as in `INT_SUBST(t*SIN(t^2), t, t^2)`, which substitutes the
     manual's `SQRT(t)` (9.21, p.285).
 
+    Of several solutions, the only one written without a sign or an added constant is
+    principal: `INVERSE(LN(1 - COS(x)) - LN(COS(x) + 1), x)` is `ACOS(-TANH(x/2))`
+    rather than `3*pi/2 - ASIN(TANH(x/2))`.
+
     A sum or product with `name` in one term or factor only is undone by moving the
     rest to the other side, then undoing that term: `INVERSE(x^3 + 1, x)` is
     `(x - 1)^(1/3)`, the principal one of three cube roots.
@@ -3647,6 +3666,9 @@ def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None
     solutions = sp.solve(sp.Eq(body, value), name)
     if len(solutions) == 1:
         return solutions[0]
+    plain = [solution for solution in solutions if _plain_solution(solution)]
+    if len(solutions) > 1 and len(plain) == 1:
+        return plain[0]
     if isinstance(body, sp.Add | sp.Mul):
         inner = [part for part in body.args if part.has(name)]
         if len(inner) != 1:
@@ -3663,6 +3685,13 @@ def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None
     if inverse is None:
         return None
     return _undone(body.args[0], name, inverse(value))
+
+
+def _plain_solution(solution: sp.Basic) -> bool:
+    """Whether `solution` is written without a leading sign or an added constant."""
+    if not isinstance(solution, sp.Expr) or solution.could_extract_minus_sign():
+        return False
+    return not (solution.is_Add and any(not term.free_symbols for term in solution.args))
 
 
 #: Principal inverses of functions that aren't one-to-one, for which sympy gives no

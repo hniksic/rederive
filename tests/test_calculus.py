@@ -918,6 +918,33 @@ def test_a_limit_infinite_with_a_parameters_sign_is_plus_or_minus_infinity():
     assert simp("S(L(x/y, x, y, 0, 0), 0, 0, 1/4, 1/4)", context) == "?"
 
 
+def test_a_limit_toward_a_symbolic_multiple_and_then_another_variable():
+    # ODE.MTH's MISSING_Y substitutes `SQRT(t)*y` into an integral in `y` and then, one
+    # variable after another, `[y, x]` by `[y1, y]`. The symbolic factor is taken to be
+    # nonzero, and the inner substitution binds its variable: the later points go into
+    # its point, not its operand.
+    state = declaring("F")
+    assert simp("LIM(INT(F(y), y), y, SQRT(t)*y)", state=state) == (
+        "SQRT(t)*INT(F(SQRT(t)*y), y)"
+    )
+    assert simp("LIM(LIM(INT(F(y), y), y, x*y), [y, x], [w, y])", state=state) == (
+        "y*INT(F(w*y), w)"
+    )
+    assert simp("LIM(INT(1/(y*(1/2 - y^2)), y), y, SQRT(t)*y)") == (
+        "2*LN(SQRT(t)*y) - LN(2*t*y^2 - 1)"
+    )
+
+
+def test_a_limit_toward_another_variable_renames_an_integrals_variable():
+    # ODE.MTH's MISSING_Y_1 takes the integral in `u` at `y1`; taken as a limit, it
+    # runs away.
+    state = declaring("F")
+    assert simp("LIM(t + INT(1/(u^2 - u - F(u)), u), u, w)", state=state) == (
+        "INT(1/(-F(w) + w^2 - w), w) + t"
+    )
+    assert simp("LIM(INT(u^2, u), u, 3)") == "9"
+
+
 def test_a_limit_toward_a_multiple_of_its_variable_changes_an_integrals_variable():
     """An indefinite integral `G(y)` of `F(y)` at `c*y` is the integral of `c*F(c*y)`,
     as Derive writes it; ODE1.MTH's HOMOGENEOUS_GEN substitutes `y/x` into one. Any

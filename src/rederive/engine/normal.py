@@ -180,6 +180,7 @@ class _Writer:
             return product
         tops, bottoms = _fraction(product)
         tops, bottoms = _constants_cancelled(tops, bottoms)
+        tops, bottoms = _shared_powers_cancelled(tops, bottoms)
         if not all(bottom.is_Number for bottom in bottoms):
             cancelled = _cancelled(tops, bottoms)
             if cancelled is not None:
@@ -276,7 +277,15 @@ class _Writer:
         if not common:
             return None
         factor = sp.Mul(*(base**exponent for base, exponent in common.items()))
-        rest = self.written(sp.Add(*(term / factor for term in total.args)))
+        quotients = [term / factor for term in total.args]
+        if not _divided_out(quotients, shares, common):
+            quotients = [_without(term, common) for term in total.args]
+        if not _divided_out(quotients, shares, common):
+            # The factor didn't divide out, as when the exponent of an exponential is
+            # written in a form sympy doesn't cancel against its negation: taking it
+            # out again and again would never end.
+            return None
+        rest = self.written(sp.Add(*quotients))
         return self._step(sp.Mul(factor, rest))
 
     def _shared(self, total: sp.Basic) -> sp.Basic:
@@ -476,6 +485,67 @@ def _cancelled(
     if not changed:
         return None
     return _powers(highs), _powers(lows)
+
+
+def _shared_powers_cancelled(
+    tops: list[sp.Expr], bottoms: list[sp.Expr]
+) -> tuple[list[sp.Expr], list[sp.Expr]]:
+    """The factors with the power of a variable that every term of a numerator sum has
+    cancelled against its power in the denominator, where an exponent is not an integer.
+
+    The gcd takes `x^(18/7)` for a generator apart from `x`, and knows nothing of
+    symbolic exponents, so it finds nothing common to `4*x^(18/7) - 3*x^2` and `x^2`,
+    where the quotient is `x^(4/7) - 3/4`, or to `x^(2*k + 3) + x^(4*k + 3)` and
+    `x^(4*k + 3)`, where for positive `k` it is `x^(-2*k) + 1`. A number of the power
+    is cancelled only in whole: `(x + SQRT(x))/x^2` stays.
+    """
+    lows = {}
+    for index, bottom in enumerate(bottoms):
+        base, exponent = bottom.as_base_exp()
+        if base.is_Symbol and base not in lows:
+            lows[base] = index
+    if not lows:
+        return tops, bottoms
+    tops, bottoms = list(tops), list(bottoms)
+    for place, top in enumerate(tops):
+        if not top.is_Add:
+            continue
+        for variable, index in lows.items():
+            low = bottoms[index].as_base_exp()[1]
+            exponents = [term.as_powers_dict().get(variable, sp.S.Zero) for term in top.args]
+            if all(exponent.is_Integer for exponent in exponents) and low.is_Integer:
+                continue
+            least = _least(exponents)
+            if least is None:
+                continue
+            if least.is_Number:
+                least = sp.floor(least)
+            if low.is_Number:
+                low = sp.floor(low)
+            shared = _least([least, low])
+            if shared is None or not shared.is_positive:
+                continue
+            top = sp.Add(*(_lowered(term, variable, shared) for term in top.args))
+            bottoms[index] = variable ** sp.expand(
+                bottoms[index].as_base_exp()[1] - shared
+            )
+        tops[place] = top
+    return tops, [bottom for bottom in bottoms if bottom != 1]
+
+
+def _lowered(term: sp.Expr, variable: sp.Symbol, shared: sp.Expr) -> sp.Expr:
+    """`term` with the power of `variable` in it lowered by `shared`."""
+    rest = [f for f in sp.Mul.make_args(term) if f.as_base_exp()[0] != variable]
+    total = term.as_powers_dict().get(variable, sp.S.Zero)
+    return sp.Mul(*rest, variable ** sp.expand(total - shared))
+
+
+def _least(exponents: list[sp.Expr]) -> sp.Expr | None:
+    """The exponent no greater than any other, if that can be told."""
+    for candidate in exponents:
+        if all((exponent - candidate).is_nonnegative for exponent in exponents):
+            return candidate
+    return None
 
 
 def _constants_cancelled(
@@ -988,6 +1058,40 @@ def _positive_powers(term: sp.Basic) -> dict[sp.Basic, sp.Basic]:
         if exponent.is_Rational and exponent > 0:
             powers[base] = powers.get(base, sp.S.Zero) + exponent
     return powers
+
+
+def _divided_out(
+    quotients: list[sp.Basic],
+    shares: list[dict[sp.Basic, sp.Basic]],
+    common: dict[sp.Basic, sp.Basic],
+) -> bool:
+    """Whether each quotient has less of each common factor than its term had."""
+    for quotient, share in zip(quotients, shares, strict=True):
+        left = _positive_powers(quotient)
+        if any(left.get(base, sp.S.Zero) >= share[base] for base in common):
+            return False
+    return True
+
+
+def _without(term: sp.Basic, common: dict[sp.Basic, sp.Basic]) -> sp.Basic:
+    """`term` divided by the product of `common`'s powers, factor by factor as
+    `_positive_powers` takes them apart, so that a factor goes even where its written
+    form isn't the one sympy would cancel: `-2*t` in an exponent may be written
+    `(-1)*2*t`, so that `#e^(-2*t)/#e^(-2*t)` stays."""
+    left = dict(common)
+    factors = []
+    for factor in sp.Mul.make_args(term):
+        base, exponent = factor.as_base_exp()
+        if not exponent.is_Number:
+            base, exponent = factor, sp.S.One
+        taken = left.pop(base, None)
+        if taken is None:
+            factors.append(factor)
+        elif exponent != taken:
+            factors.append(base ** (exponent - taken))
+    if left:
+        return term / sp.Mul(*(base**exponent for base, exponent in left.items()))
+    return sp.Mul(*factors)
 
 
 # -- sizes ---------------------------------------------------------------------

@@ -791,6 +791,8 @@ def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
     `(x^2 + x^2*y^2)/(x^2*y) = (1 + y^2)/y`. ODE1.MTH's `HOMOGENEOUS` needs this to see
     that a derivative is zero.
     """
+    if _against_a_relation(test):
+        return None
     verdict = _decide(test, context)
     if verdict is not None:
         return verdict
@@ -803,6 +805,19 @@ def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
     if simplified is sp.false:
         return False
     return None
+
+
+def _against_a_relation(test: sp.Basic) -> bool:
+    """Whether `test` equates an expression with a relation, which simplifying the
+    relation cannot decide: ODE.MTH's `IF(fail = (local :== ...), ...)` compares the
+    word `fail` with an equation whose sides may be integrals that take minutes to
+    simplify, and gives `local` in both of the other cases."""
+    if not isinstance(test, (sp.Eq, sp.Ne)):
+        return False
+    sides = [isinstance(side, Relational) for side in test.args]
+    return sides[0] != sides[1] and all(
+        isinstance(side, (sp.Expr, Relational)) for side in test.args
+    )
 
 
 def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:

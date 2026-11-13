@@ -36,6 +36,13 @@ def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
     assert simp("x + 2*x = c + x*x") == "3*x = x^2 + c"
 
 
+def test_a_word_compared_with_a_relation_is_left_undecided_at_once():
+    # ODE.MTH's `IF(fail = (local :== ...), ...)` gives `local` in both other cases;
+    # simplifying an equation of integrals to decide it takes minutes.
+    text = "IF(fail = (INT(TAN(x - y + 1)/ABS(TAN(x - y + 1)), x) = c), 1, 2, 2)"
+    assert simp(text) == "2"
+
+
 def test_a_relation_that_holds_for_every_value_is_decided():
     """Each holds for all values of its variables, the last two by their declared
     intervals."""

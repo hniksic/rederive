@@ -543,6 +543,13 @@ ITERATION = [
     # answer: the iteration stays as written, which reads back. ODE.MTH's INVERT
     # relies on this to see that there is no inverse.
     ("ITERATE(ERF(x), x, x, -1)", "ITERATE(ERF(x), x, x, -1)"),
+    # Of several solutions, the one without a sign or an added constant is principal.
+    # ODE.MTH's CHANGE_X inverts this to change the variable of `2*SIN(x)^2*y'' +
+    # SIN(2*x)*y' + 8*y = 0`.
+    (
+        "ITERATE(LN(1 - COS(x)) - LN(COS(x) + 1), x, x, -1)",
+        "ACOS((#e^(-x/2) - #e^(x/2))/(#e^(x/2) + #e^(-x/2)))",
+    ),
     # A count that isn't an integer is truncated toward zero, as in Derive (D).
     # ORTH_POL.MTH counts `n/2` steps, which for an odd order is a half.
     ("ITERATES(x + 1, x, 0, 5/2)", "[0, 1, 2]"),
