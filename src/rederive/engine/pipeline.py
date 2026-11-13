@@ -711,7 +711,10 @@ def _evaluate(head: sp.Basic, context: Context) -> sp.Basic:
     `INT(#e^(-z*COSH(t))*COSH(n*t), t, 0, inf)` becomes two integrals of exponentials,
     as Derive prints. Left as `COSH`, the integral would stand and later rewrites would
     change its integrand.
+
+    Exponents that are constant are made so first; see `_constant_exponents`.
     """
+    head = forced(head, _constant_exponents)
     value = _answer_in_words(head, context)
     if value is not None:
         return value
@@ -766,6 +769,42 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
     if isinstance(head, sp.Derivative):
         return _flat_between_jumps(value)
     return value
+
+
+def _constant_exponents(expression: sp.Basic) -> sp.Basic:
+    """`expression` with every exponent that is a constant rational function replaced by
+    its value.
+
+    Operands reach a calculus head unsimplified, and a function argument can bring an
+    exponent like `4*y/(y - x^8/y) - 4*x^4/(y^2/x^4 - x^4)`, which is 4. Taken as it
+    stands, the operand isn't a rational function of `y`, and the head is computed over
+    a power it can't see through: ODE1.MTH's GEN_HOM_GEN integrates `1/(y^2*x^k - 4*y +
+    1)` with such a `k`.
+    """
+
+    def constant(power: sp.Basic) -> bool:
+        exponent = power.exp
+        return (
+            bool(exponent.free_symbols)
+            and not exponent.is_polynomial()
+            and bool(exponent.is_rational_function())
+            and sp.count_ops(exponent) <= _CONSTANT_EXPONENT
+        )
+
+    def valued(power: sp.Basic) -> sp.Basic:
+        value = sp.cancel(power.exp)
+        return power if value.free_symbols else power.func(power.base, value)
+
+    def exponent_of(power: sp.Basic) -> bool:
+        return isinstance(power, (sp.Pow, sp.exp)) and constant(power)
+
+    if not any(map(exponent_of, expression.atoms(sp.Pow, sp.exp))):
+        return expression
+    return expression.replace(exponent_of, valued)
+
+
+#: The largest exponent `_constant_exponents` tries to reduce, in operations.
+_CONSTANT_EXPONENT = 60
 
 
 #: Functions that are constant between jumps, so their derivative is zero wherever it
@@ -1862,9 +1901,16 @@ def _defined(expression: sp.Basic, head: type, over: type) -> sp.Basic:
     """Rewrite every `head` in `expression` in terms of `over`, and nothing else.
 
     `rewrite` on the whole expression would also convert other functions: a `SIN` next
-    to a `SINH` would become exponentials too.
+    to a `SINH` would become exponentials too. Nor are the arguments rewritten, which
+    are written already: `COSH(1/COS(x))` keeps its cosine.
     """
-    return expression.replace(head, lambda *args: head(*args).rewrite(over))
+
+    def defined(*args: sp.Basic) -> sp.Basic:
+        standing = [sp.Dummy(**_known(arg)) for arg in args]
+        written = head(*standing).rewrite(over)
+        return written.xreplace(dict(zip(standing, args)))
+
+    return expression.replace(head, defined)
 
 
 def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
@@ -3033,6 +3079,75 @@ _MULTIPLE_OPERATIONS = 60
 _DEGREE = 4 * _MULTIPLE_ANGLE
 
 
+def _pythagorean(expression: sp.Basic) -> sp.Basic:
+    """A rational function of sines and cosines reduced by `SIN(z)^2 + COS(z)^2 = 1`.
+
+    The numerator and denominator are multiplied out, and every power of a sine beyond
+    the first is written over the cosine, or every power of a cosine over the sine,
+    whichever is shorter. That is a canonical form for polynomials in the sines and
+    cosines of distinct angles, so a sum that is zero by the identity becomes zero
+    however large, which `trigsimp` doesn't promise: the length of a vector, which
+    TENSOR1.DMO transforms to spherical coordinates and back, keeps `c^2*(COS(theta)^2 +
+    SIN(theta)^2 - 1)`.
+
+    Calls of other functions, and sines and cosines inside them, are opaque
+    coefficients; an expression not rational in the sines and cosines is unchanged.
+    """
+    calls = expression.atoms(sp.sin, sp.cos)
+    angles = {call.args[0] for call in calls}
+    if not angles or sp.count_ops(expression) > _PYTHAGOREAN:
+        return expression
+    sines = {angle: sp.Dummy() for angle in angles}
+    cosines = {angle: sp.Dummy() for angle in angles}
+    standing = {sp.sin(a): s for a, s in sines.items()}
+    standing.update({sp.cos(a): c for a, c in cosines.items()})
+    bare = expression.xreplace(standing)
+    generators = [*sines.values(), *cosines.values()]
+    if bare.has(*calls) or not bare.is_rational_function(*generators):
+        return expression
+    back = {symbol: call for call, symbol in standing.items()}
+    numerator, denominator = sp.fraction(sp.together(bare))
+    candidates = []
+    for squared, other in ((sines, cosines), (cosines, sines)):
+        rules = [(squared[a], 1 - other[a] ** 2) for a in angles]
+        parts = [_squares_reduced(part, rules) for part in (numerator, denominator)]
+        if None in parts:
+            return expression
+        if parts != [sp.expand(numerator), sp.expand(denominator)]:
+            candidates.append((parts[0] / parts[1]).xreplace(back))
+    # Without a square to reduce, the result would only be multiplied out.
+    return min(candidates, key=sp.count_ops) if candidates else expression
+
+
+def _squares_reduced(
+    polynomial: sp.Basic, rules: list[tuple[sp.Basic, sp.Basic]]
+) -> sp.Basic | None:
+    """`polynomial` multiplied out, with each `symbol^2` replaced by its value until
+    every symbol is at most linear in each term; None if too large."""
+    polynomial = sp.expand(polynomial)
+    if len(sp.Add.make_args(polynomial)) > _PYTHAGOREAN_TERMS:
+        return None
+    for symbol, square in rules:
+        if not polynomial.has(symbol):
+            continue
+        polynomial = sp.expand(
+            polynomial.replace(
+                lambda e, s=symbol: e.is_Pow and e.base == s and e.exp.is_Integer
+                and e.exp > 1,
+                lambda e, s=symbol, q=square: s ** (e.exp % 2) * q ** (e.exp // 2),
+            )
+        )
+        if len(sp.Add.make_args(polynomial)) > _PYTHAGOREAN_TERMS:
+            return None
+    return polynomial
+
+
+#: The largest expression `_pythagorean` multiplies out, in operations, and the most
+#: terms it lets the product reach.
+_PYTHAGOREAN = 400
+_PYTHAGOREAN_TERMS = 2000
+
+
 def _multiple_angles(expression: sp.Basic) -> sp.Basic:
     """Reduce sines and cosines of integer multiples of one angle together.
 
@@ -3148,6 +3263,64 @@ def _nonnegatively(rewrite: Rewrite) -> Rewrite:
         return rewrite(expression.xreplace(standing)).xreplace(back)
 
     return run
+
+
+def _known(expression: sp.Basic) -> dict[str, bool]:
+    """What is known of `expression`'s value, as assumptions for a symbol standing for
+    it: definitions such as `STEP(x)` as `SIGN(x)/2 + 1/2` hold only for real `x`."""
+    facts = ("positive", "negative", "zero", "nonnegative", "nonpositive", "nonzero")
+    known = {"integer": True} if expression.is_integer else {}
+    if expression.is_extended_real:
+        known["real" if expression.is_finite else "extended_real"] = True
+    for fact in facts:
+        if getattr(expression, f"is_{fact}"):
+            known[fact] = True
+            break
+    return known
+
+
+def _logs_combined(expression: sp.Basic) -> sp.Basic:
+    """`logcombine` with the power rule `k*LN(a) = LN(a^k)` only for rational `k`.
+
+    That is the manual's condition, while sympy takes any real `k`: `LN(3)*x + LN(5)`
+    stays as written instead of becoming `LN(5*3^x)`. In each product holding one
+    logarithm, every factor but the logarithm and a rational is hidden behind a symbol
+    of unknown sign, which sympy keeps outside; a product of several logarithms is
+    hidden whole. The sum rule is unaffected: `x*LN(2) + x*LN(3)` is `x*LN(6)`.
+    """
+    if not expression.has(sp.log):
+        return expression
+
+    def combined(node: sp.Basic) -> sp.Basic:
+        if node.is_Atom or not node.has(sp.log):
+            return node
+        node = node.func(*map(combined, node.args))
+        if not (node.is_Add or node.is_Mul):
+            return node
+        hidden: dict[sp.Basic, sp.Dummy] = {}
+
+        def hide(term: sp.Basic) -> sp.Basic:
+            if not term.is_Mul:
+                return term
+            logs = [factor for factor in term.args if isinstance(factor, sp.log)]
+            if not logs:
+                return term
+            return sp.Mul(
+                *(
+                    factor
+                    if factor.is_Rational or len(logs) == 1 and factor == logs[0]
+                    else hidden.setdefault(factor, sp.Dummy())
+                    for factor in term.args
+                )
+            )
+
+        prepared = sp.Add(*map(hide, sp.Add.make_args(node)))
+        if not hidden:
+            return sp.logcombine(node)
+        back = {dummy: factor for factor, dummy in hidden.items()}
+        return sp.logcombine(prepared).xreplace(back)
+
+    return combined(expression)
 
 
 def _logarithmic_powers(expression: sp.Basic) -> sp.Basic:
@@ -3892,6 +4065,8 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
     },
     "trigonometry": {
         Direction.AUTO: (
+            _Rule("pythagorean", _pythagorean, _gated,
+                  "SIN(z)^2 + COS(z)^2 is 1, in sums of any size"),
             _Rule("trigsimp", sp.trigsimp, _gated,
                   "trigonometric identities, where they cancel something"),
             _Rule("multiple angles", _multiple_angles, _cancelled,
@@ -3924,11 +4099,11 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
     # combines only if `x` is declared to exclude values where that is false.
     "logarithm": {
         Direction.AUTO: (
-            _Rule("logcombine", _nonnegatively(sp.logcombine), _gated,
+            _Rule("logcombine", _nonnegatively(_logs_combined), _gated,
                   "logarithms added into one, where it is shorter"),
         ),
         Direction.COLLECT: (
-            _Rule("logcombine", _nonnegatively(sp.logcombine), forced,
+            _Rule("logcombine", _nonnegatively(_logs_combined), forced,
                   "logarithms added into one"),
         ),
         Direction.EXPAND: (

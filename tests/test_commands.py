@@ -333,6 +333,20 @@ async def test_a_definition_being_shown_performs_nothing(session):
     assert session.assignments == {}
 
 
+async def test_an_exponent_that_is_constant_is_seen_as_such_by_an_integral(session):
+    """ODE1.MTH's GEN_HOM_GEN passes `k = x*DIF(x*r/y, x)/(y*DIF(x*r/y, y))` on as it
+    stands, and integrates over `y/x^k`. For `r = x^3 + y^2/x^5`, `k` is -4 written as a
+    rational function; taken as such, the integrand isn't rational in `y`, and the
+    answer was a `ROOT_SUM` over powers of `x` to that rational function."""
+    session.author("K(r) := x*DIF(x*r/y, x)/(y*DIF(x*r/y, y))")
+    session.author("S(r, k) := INT(1/(y*(k + LIM(r*x/y, y, y/x^k))), y)")
+    session.author("S(x^3 + y^2/x^5, K(x^3 + y^2/x^5))")
+    answer = (await session.simplify("#3")).text
+    assert "ROOT_SUM" not in answer
+    check = session.author(f"DIF({answer}, y) - 1/(y^2 - 4*y + 1)")
+    assert (await session.simplify(f"#{check.number}")).text == "0"
+
+
 def test_a_setting_is_not_a_variable(session):
     session.author("Notation := Mixed")
     assert session.assignments == {}

@@ -166,7 +166,8 @@ class _Writer:
         Common factors of numerator and denominator are cancelled, so `(x^2 + 2*x*y +
         y^2)/(x^2 - y^2)` becomes `(x + y)/(x - y)`. The denominator keeps its original
         factors minus what cancelled: `1/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y +
-        18))` is not expanded into a quartic.
+        18))` is not expanded into a quartic. A constant other than a number is a
+        factor like any other: `(pi - pi*ERF(z))/pi` is `1 - ERF(z)`.
         """
         if not product.is_Mul:
             return product
@@ -175,7 +176,7 @@ class _Writer:
         if not all(isinstance(factor, sp.Expr) for factor in product.args):
             return product
         tops, bottoms = _fraction(product)
-        if any(bottom.free_symbols for bottom in bottoms):
+        if not all(bottom.is_Number for bottom in bottoms):
             cancelled = _cancelled(tops, bottoms)
             if cancelled is not None:
                 # Factors left after cancelling a gcd are new and must be written.
@@ -460,7 +461,7 @@ def _cancelled(
                     common = sp.gcd(high[0], low[0])
                 except Exception:
                     break
-                if common == 1 or not common.free_symbols:
+                if common.is_Number:
                     break
                 for side, sides in ((high, highs), (low, lows)):
                     rest = sp.quo(side[0], common)
@@ -478,7 +479,7 @@ def _cancellable(factor: list[sp.Basic]) -> bool:
     return (
         bool(exponent.is_Integer)
         and exponent > 0
-        and bool(base.free_symbols)
+        and not base.is_Number
         and _expanded_terms(base) <= _EXPANSION
     )
 
@@ -500,6 +501,7 @@ def _quotient(tops: list[sp.Expr], bottoms: list[sp.Expr]) -> sp.Expr:
     """
     tops, bottoms = _cleared(tops, bottoms)
     if any(bottom.free_symbols for bottom in bottoms):
+        tops, bottoms = _numbers_cancelled(tops, bottoms)
         tops = [part for top in tops for part in sp.Mul.make_args(_content(top))]
     if bottoms and len(tops) == 2 and sum(top.is_Number for top in tops) == 1:
         tops = [sp.Add(*map(_folded, sp.Add.make_args(sp.Mul(*tops))))]
@@ -562,6 +564,47 @@ def _cleared(
         return tops, bottoms
     number = sp.Mul(scale, *(top for top in tops if top.is_Number))
     return [number, *(top for top in tops if not top.is_Number)], cleared
+
+
+def _numbers_cancelled(
+    tops: list[sp.Expr], bottoms: list[sp.Expr]
+) -> tuple[list[sp.Expr], list[sp.Expr]]:
+    """The factors with a number common to the numerator and a denominator sum cancelled.
+
+    `(2*x + 2)/(2*x^2 + 4)` is `(x + 1)/(x^2 + 2)`, as the gcd of the two polynomials
+    over the rationals leaves it. Only what cancels is taken out of a denominator sum,
+    which keeps the rest of its content: `(3 - 4*x)/(2*x^2 + 2)` stays, and
+    `(2*x + 2)/(4*x^2 + 8)` is `(x + 1)/(2*x^2 + 4)`.
+    """
+    contents = [top.as_content_primitive() for top in tops]
+    numerator = sp.Mul(*(content for content, _ in contents))
+    if not (numerator.is_Rational and abs(numerator.p) > 1):
+        return tops, bottoms
+    cancelled = []
+    for bottom in bottoms:
+        base, exponent = bottom.as_base_exp()
+        if base.is_Add and exponent.is_Integer and exponent > 0:
+            content, primitive = base.as_content_primitive()
+            common = _dividing(content, numerator.p, int(exponent))
+            if common > 1:
+                numerator /= sp.Integer(common) ** exponent
+                bottom = (content / common * primitive) ** exponent
+        cancelled.append(bottom)
+    if cancelled == bottoms:
+        return tops, bottoms
+    return [numerator, *(rest for _, rest in contents)], cancelled
+
+
+def _dividing(content: sp.Basic, number: int, exponent: int) -> int:
+    """The largest divisor of `content` whose power `exponent` divides `number`."""
+    if not (content.is_Integer and content > 1):
+        return 1
+    common = sp.igcd(int(content), number)
+    if exponent == 1 or common == 1:
+        return int(common)
+    if common > 10**6:
+        return 1
+    return max(d for d in sp.divisors(common) if number % d**exponent == 0)
 
 
 def _all_negated(factor: sp.Expr) -> bool:

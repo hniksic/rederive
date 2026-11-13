@@ -47,7 +47,7 @@ from test_matrices import (
 )
 
 from rederive.engine.computing import Context, from_sympy, simplify, to_sympy
-from rederive.engine.context import Angle, Branch, Direction, TrigPower
+from rederive.engine.context import Angle, Branch, Direction, Precision, TrigPower
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, VariableDeclaration, parse_expression
 from rederive.syntax.names import BUILTIN_FUNCTIONS
@@ -302,6 +302,27 @@ NUMERATOR_CONTENT = [
 
 @pytest.mark.parametrize(("text", "expected"), NUMERATOR_CONTENT, ids=str)
 def test_a_quotient_carries_its_numerator_s_common_factor_outside(text, expected):
+    assert simp(text) == expected
+
+
+#: A number common to a numerator and a denominator sum cancels, as the gcd over the
+#: rationals leaves it (Derive), and so does a constant such as `pi`. A denominator sum
+#: keeps whatever content doesn't cancel.
+CANCELLED_CONTENT = [
+    ("(2*x + 2)/(2*x^2 + 4)", "(x + 1)/(x^2 + 2)"),
+    ("(2*x + 2)/(4*x^2 + 8)", "(x + 1)/(2*x^2 + 4)"),
+    ("2/(2*x^2 + 4)", "1/(x^2 + 2)"),
+    ("4*x/(2*x + 2)^2", "x/(x + 1)^2"),
+    ("(3 - 4*x)/(2*x^2 + 2)", "(3 - 4*x)/(2*x^2 + 2)"),
+    ("x/(2*x + 2)", "x/(2*x + 2)"),
+    ("(pi - pi*ERF(z))/pi", "1 - ERF(z)"),
+    ("(#e*x + #e)/#e", "x + 1"),
+    ("(x + 1)/pi", "(x + 1)/pi"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), CANCELLED_CONTENT, ids=str)
+def test_a_number_common_to_numerator_and_denominator_cancels(text, expected):
     assert simp(text) == expected
 
 
@@ -850,6 +871,35 @@ def test_trigonometry(text, expected, context):
     assert simp(text, context) == expected
 
 
+def test_a_sum_that_is_zero_by_the_pythagorean_identity_is_zero_however_large():
+    """TENSOR1.DMO: a vector's length is invariant under a change of coordinates.
+
+    `V` is transformed to spherical coordinates both as a covariant vector (by the
+    transposed Jacobian) and as a contravariant one (by its inverse), and the product of
+    the two is the length of `V` again. `trigsimp` leaves
+    `c^2*(COS(t)^2 + SIN(t)^2 - 1)` and other terms; Derive gives 0.
+    """
+    jacobian = (
+        "[[SIN(t)*COS(p), r*COS(t)*COS(p), -r*SIN(t)*SIN(p)],"
+        " [SIN(t)*SIN(p), r*COS(t)*SIN(p), r*SIN(t)*COS(p)], [COS(t), -r*SIN(t), 0]]"
+    )
+    inverse = (
+        "[[SIN(t)*COS(p), SIN(t)*SIN(p), COS(t)],"
+        " [COS(t)*COS(p)/r, COS(t)*SIN(p)/r, -SIN(t)/r],"
+        " [-SIN(p)/(r*SIN(t)), COS(p)/(r*SIN(t)), 0]]"
+    )
+    v = "[a*r*SIN(t)*COS(p), b, c]"
+    assert simp(f"({jacobian}` . {v}) . ({inverse} . {v}) - {v} . {v}") == "0"
+
+
+def test_a_hyperbolic_function_of_a_trigonometric_one_keeps_the_latter():
+    """Only the hyperbolic call is written over exponentials, not its argument."""
+    assert simp("COSH(1/COS(x))") == "(#e^(2/COS(x)) + 1)*#e^(-1/COS(x))/2"
+    assert simp("COSH(TAN(x))") == "#e^TAN(x)/2 + #e^(-TAN(x))/2"
+    assert simp("3*SECH(SEC(x))") == "6*#e^(1/COS(x))/(#e^(2/COS(x)) + 1)"
+    assert simp("STEP(x)") == "SIGN(x)/2 + 1/2"
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -1051,6 +1101,14 @@ LOGARITHMS = [
     # one: Derive answers `LN(40)`.
     ("LN(12)", "LN(12)", None),
     ("3*LN(2) + LN(5)", "LN(40)", None),
+    # The power rule `k*LN(a) = LN(a^k)` is the manual's for rational `k` only, so a
+    # variable coefficient stays outside, in Auto as in Collect (Derive). Terms with
+    # the same coefficient still add up.
+    ("LN(3)*x + LN(5)", "LN(3)*x + LN(5)", None),
+    ("LN(3)*x + LN(5)", "LN(3)*x + LN(5)", Context(logarithm=Direction.COLLECT)),
+    ("pi*LN(2) + LN(3)", "pi*LN(2) + LN(3)", None),
+    ("LN(2)*LN(3) + LN(5)", "LN(5) + LN(2)*LN(3)", None),
+    ("x*LN(2) + x*LN(3)", "LN(6)*x", None),
     # The rule requires a nonnegative base, or an exponent with magnitude below one.
     ("LN(x^3)", "LN(x^3)", None),
     ("LN(x^8)", "8*LN(ABS(x))", None),
@@ -1144,6 +1202,16 @@ LOGARITHMS = [
 @pytest.mark.parametrize(("text", "expected", "context"), LOGARITHMS, ids=str)
 def test_logarithms_and_exponentials(text, expected, context):
     assert simp(text, context) == expected
+
+
+def test_a_line_through_logarithms_stays_a_line_when_approximated():
+    """CURV_FIT.MTH fits a line to the logarithms of data. Combined by the power rule,
+    the line was `LN(2.93615*16^(0.142857*x)*...)`, and on its six data points the fit
+    ran away."""
+    approximate = Context().with_precision(Precision.APPROXIMATE)
+    assert simp("LN(3)*x + LN(5)", approximate) == "1.09861*x + 1.60943"
+    fitted = "FIT([x, a*x + b], [[1, LN(1.5)], [2, LN(0.8)], [3, LN(0.4)]])"
+    assert simp(fitted, approximate) == "1.07709 - 0.660877*x"
 
 
 # -- the branch setting -------------------------------------------------------
