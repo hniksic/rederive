@@ -23,8 +23,15 @@ terminal UIO over over a SymPy-based engine. Python 3.14+, managed with `uv`.
   internal rule or a design decision is not a capability. Edit it only for a new
   built-in or a difference a user would notice and want explained, in a line or two.
 - Don't edit `README.md` unless asked to.
-- Start a new worktree from the current branch's tip (typically local `master`), not
-  from `origin/master`.
+- Worktrees start from the local HEAD, never from a remote ref (local branches have
+  unpushed commits). Don't use the harness's worktree features (`isolation: "worktree"`,
+  `EnterWorktree`, `--worktree`); run `git worktree add <path> -b <name> HEAD` yourself,
+  and check that the worktree's HEAD matches yours before any agent works in it.
+- A test's expected value is not evidence of intent: tests often just record what the
+  code did when they were written. If a change gives a better result than a test
+  expects, update the test. Keep the old expectation only where a comment or docstring
+  gives a well-argued rationale for it; a bare assertion that the result is right is
+  not one.
 - An identity is applied only where it holds for every value the variables may take.
   An undeclared variable is real, so `SQRT(x^2)` is `ABS(x)`, not `x`.
 - Arithmetic is exact: no floating point in computing or representing numbers.
