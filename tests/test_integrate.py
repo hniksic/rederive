@@ -415,11 +415,30 @@ def test_an_integral_is_tried_again_once_its_integrand_simplifies(text, expected
             "(SQRT(13) + 9)*((1 - SQRT(13))*COS(x) + 2*SIN(x))"
             "*#e^((1 - SQRT(13))*x/2)/68",
         ),
+        # A transcendental factor times a sum is integrated term by term.
+        (
+            "INT((2*x^2 - COS(x))*#e^((1 - SQRT(13))*x/2), x)",
+            "((108*SQRT(13) + 54)*COS(x) - (27*SQRT(13) + 243)*SIN(x) - (306*SQRT(13) "
+            "+ 306)*x^2 - (204*SQRT(13) + 1428)*x - 272*SQRT(13) - 680)"
+            "*#e^((1 - SQRT(13))*x/2)/918",
+        ),
         # A root of a reciprocal is the reciprocal of the root where it is real.
         ("INT(SQRT(1/(1 - y^2)), y)", "ASIN(y)"),
+        # A root over a square is the root over the absolute value, for every real
+        # value; the antiderivative is continuous across zero, where it isn't real.
+        ("INT(1/SQRT(c - 1/y^2), y)", "(SQRT(c*y^2 - 1) - #i)*SIGN(y)/c"),
         # `1 + COS(x)` is `2*COS(x/2)^2`, so the root is an absolute value.
         ("INT(SQRT(1 + COS(x)), x, 0, 2*pi)", "4*SQRT(2)"),
         ("INT(SQRT(1 - COS(x)), x, -pi, pi)", "4*SQRT(2)"),
+        # `1 + SINH(x)^2` is `COSH(x)^2`, and `COSH(x)^2 - 1` is `SINH(x)^2`. The first
+        # is INT_APPS.MTH's `ARC_LENGTH(COSH(x), x, 0, 1)`, which otherwise takes a
+        # minute.
+        ("INT(SQRT(1 + SINH(x)^2), x, 0, 1)", "(#e^2 - 1)*#e^(-1)/2"),
+        ("INT(SQRT(1 + SINH(x)^2), x)", "#e^x/2 - #e^(-x)/2"),
+        (
+            "INT(SQRT(COSH(x)^2 - 1), x, -1, 2)",
+            "((#e^2 + #e)*#e^3 + #e^2 + #e)*#e^(-3)/2 - 2",
+        ),
         # `u = COS(t)`, with the cosine inside another function. Half-integer BESSEL_J
         # in BESSEL.MTH needs this one.
         ("INT(SIN(t)^3*COS(2*COS(t)), t, 0, pi)", "SIN(2)/2 - COS(2)"),
@@ -432,6 +451,14 @@ def test_an_integral_is_tried_again_once_its_integrand_simplifies(text, expected
 )
 def test_an_integrand_is_rewritten_into_one_the_methods_can_do(text, expected):
     assert simp(text) == expected
+
+
+def test_an_integral_sympy_returns_with_its_root_split_stands():
+    """FUN.MTH's `JN(2/3, 2)` has no closed form. Sympy returns the integral over
+    `(1 - a)^(1/6)*(a + 1)^(1/6)*COS(2*a)`, which is the same integral, and searching
+    again on that form took minutes."""
+    text = "INT((1 - a^2)^(1/6)*COS(2*a), a, 0, 1)"
+    assert simp(text) == text
 
 
 def test_an_elliptic_integral_is_left_without_a_search():
@@ -474,19 +501,31 @@ def test_a_hemisphere_of_positive_radius():
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # ELLIPTIC.MTH's `ELLIPTIC_E(phi, 1)`, valid across every jump of the sign.
+        # ELLIPTIC.MTH's `ELLIPTIC_E(phi, 1)`, valid across every jump of the sign and
+        # at the jumps too, where `SIGN(COS(phi))` would be `+-1`.
         (
             "INT(ABS(COS(t)), t, 0, phi)",
-            "SIGN(COS(phi))*SIN(phi) + 2*FLOOR(phi/pi + 1/2)",
+            "(-1)^FLOOR(phi/pi + 1/2)*SIN(phi) + 2*FLOOR(phi/pi + 1/2)",
         ),
         # At a jump the steps are read on either side of the end.
-        ("INT(ABS(SIN(t)), t, 0, b)", "-SIGN(SIN(b))*COS(b) + 2*FLOOR(b/pi) + 1"),
+        (
+            "INT(ABS(SIN(t)), t, 0, b)",
+            "(-1)^(FLOOR(b/pi) + 1)*COS(b) + 2*FLOOR(b/pi) + 1",
+        ),
         # `ELLIPTIC_F(phi, 1)` diverges past `pi/2`, and the steps can't be crossed.
         ("INT(1/ABS(COS(t)), t, 0, phi)", "INT(1/ABS(COS(t)), t, 0, phi)"),
     ],
 )
 def test_a_step_function_is_integrated_up_to_a_symbolic_limit(text, expected):
     assert simp(text) == expected
+
+
+@pytest.mark.parametrize(("end", "expected"), [("pi/2", "1"), ("3*pi/2", "3")])
+def test_a_step_integral_to_a_symbolic_limit_is_one_value_at_a_jump(end, expected):
+    """The integral is continuous in its limit, so at a jump it has the value both sides
+    tend to, not a `+-1` from a sign of zero."""
+    value = simp("INT(ABS(COS(t)), t, 0, phi)")
+    assert simp(re.sub(r"\bphi\b", f"({end})", value)) == expected
 
 
 # -- the gate ----------------------------------------------------------------------------
@@ -1304,6 +1343,54 @@ def test_a_parametric_integral_is_worked_out_on_each_side_of_a_sign(text, expect
 @pytest.mark.parametrize(
     "text, expected",
     [
+        # INT_APPS.MTH's `LAPLACE(t^n, t, s)`: sympy's answer is unconditional, though
+        # the integral diverges at 0 for `n <= -1`.
+        ("INT(t^n*#e^(-s*t), t, 0, inf)", "IF(n > -1, s^(-n)*n!/s, inf)"),
+        ("INT(t^(p - 1)*#e^(-s*t), t, 0, inf)", "s^(-p)*(p - 1)!"),
+        # With two parameters of unknown sign there is no split, and no answer.
+        ("INT(t^n*#e^(-a*t), t, 0, inf)", "INT(t^n*#e^(-a*t), t, 0, inf)"),
+    ],
+)
+def test_a_parameter_of_known_sign_leaves_the_split_to_the_other(text, expected):
+    context = declared("s :epsilon Real (0, inf)", "p :epsilon Real (0, inf)")
+    assert simp(text, context) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Sympy's condition is `ABS(PHASE(1 - a) + pi) < pi/2`, on a polar argument of
+        # `1 - a`, which on the principal branch is never true.
+        ("INT(#e^(t*(1 - a)), t, 0, inf)", "IF(a > 1, -1/(1 - a), inf)"),
+        ("INT(#e^(-t*(b - 2)), t, 0, inf)", "IF(b > 2, 1/(b - 2), inf)"),
+    ],
+)
+def test_a_condition_on_a_polar_argument_is_one_on_the_real_part(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "declaration, text, expected",
+    [
+        ("s :epsilon Real (1, inf)", "INT(#e^(t*(1 - s)), t, 0, inf)", "-1/(1 - s)"),
+        (
+            "s :epsilon Real (1, inf)",
+            "INT(#e^(t*(1 - s))*SIN(t), t, 0, inf)",
+            "1/(s^2 - 2*s + 2)",
+        ),
+        # Divergent throughout the declared interval.
+        ("w :epsilon Real (-2, -1)", "INT(t^w*#e^(-t), t, 0, inf)", "inf"),
+    ],
+)
+def test_a_convergence_condition_is_settled_by_the_declared_interval(
+    declaration, text, expected
+):
+    assert simp(text, declared(declaration)) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
         ("INT(LN(1 + x)/(x^2 + 1), x, 0, 1)", "INT(LN(x + 1)/(x^2 + 1), x, 0, 1)"),
         ("INT(LN(1 + x)/(x^2 + 1), x, 1, 2)", "INT(LN(x + 1)/(x^2 + 1), x, 1, 2)"),
         ("INT(LN(x)*LN(1 - x), x, 0, 1)", "INT(LN(x)*LN(1 - x), x, 0, 1)"),
@@ -1461,9 +1548,40 @@ def test_a_step_function_is_integrated_across_all_its_jumps(text, expected):
     assert simp(text) == expected
 
 
+KINKED_ANTIDERIVATIVES = [
+    # A sign of a linear argument jumps once: each side is integrated alone, and the
+    # two antiderivatives are joined continuously at the jump.
+    ("INT(ABS(x), x)", "x*ABS(x)/2"),
+    ("INT(SIGN(x)*x^2, x)", "x^2*ABS(x)/3"),
+    ("INT(SIGN(x)*#e^ABS(x), x)", "#e^ABS(x)"),
+    ("INT(#e^ABS(x), x)", "(#e^ABS(x) - 1)*SIGN(x)"),
+    ("INT(2*x*#e^ABS(x)/ABS(x), x)", "2*#e^ABS(x)"),
+    ("INT(x*ABS(2*x - 3), x)", "(2*x - 3)*(4*x + 3)*ABS(2*x - 3)/24"),
+    ("INT(ABS(x - a), x)", "-(x - a)^2*SIGN(a - x)/2"),
+    # Each side's antiderivative is written over the argument's absolute value, so
+    # that it is real on its own side.
+    ("INT(1/ABS(x), x)", "SIGN(x)*LN(ABS(x))"),
+    ("INT(SIGN(x)/SQRT(ABS(x)), x)", "2*SQRT(ABS(x))"),
+    # Terms with different jumps are integrated apart.
+    (
+        "INT(ABS(x - 1) + ABS(x + 1), x)",
+        "x*ABS(x - 1)/2 + x*ABS(x + 1)/2 - ABS(x - 1)/2 + ABS(x + 1)/2",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), KINKED_ANTIDERIVATIVES, ids=str)
+def test_a_sign_of_a_linear_argument_is_integrated_on_each_side(text, expected):
+    assert simp(text) == expected
+
+
 @pytest.mark.parametrize(
     ("integrand", "low", "high"),
     [
+        ("#e^ABS(x)", "-2", "3"),
+        ("x^2*SIGN(3 - x)", "-1", "5"),
+        ("ABS(x)*ABS(x - 1)", "-2", "3"),
+        ("ABS(x)*SIN(x)", "-2", "3"),
         ("ABS(SIN(x))", "-20", "20"),
         ("ABS(COS(x))", "31/3", "113/3"),
         ("SIGN(SIN(x))", "-41/3", "-1/7"),
@@ -1504,3 +1622,9 @@ def test_an_integral_beside_a_composition_fails_fast_and_stays_whole():
         "INT((y^2 + y + 1)/((y^2 + y + 1)*SIN(1/y) - y^3 - y^2), y)"
     )
     assert simp("INT((3*y^2-COS(1/y)/y^2)/(SIN(1/y)+y^3),y)") == "LN(SIN(1/y) + y^3)"
+
+
+def test_a_real_integral_to_a_symbolic_limit_is_real():
+    """With the limit's sign unknown, the integrand is real on the whole line, so an
+    answer with `#i` must be proved real. Sympy's is right only for positive `z`."""
+    assert simp("INT((1 - #e^(-u))/u, u, 0, z)") == "INT((1 - #e^(-u))/u, u, 0, z)"

@@ -47,6 +47,7 @@ from rederive.engine.integration.definite import (
     definite,
     ends,
     odd_about_the_middle,
+    off_the_polar_plane,
     past_a_singular_end,
     real_where_real,
     unresolved,
@@ -70,11 +71,11 @@ from rederive.engine.printer import shadowed_names
 from rederive.engine.radical import radical_antiderivative
 from rederive.engine.rational import rational_antiderivative
 from rederive.engine.rewriting import attempt, forced
+from rederive.engine.signs import folded_signs
 from rederive.engine.trigonometric import trigonometric_antiderivative
 
 __all__ = [
     "by_a_positive_substitution",
-    "by_sympy",
     "integral",
     "numerically",
     "within_reach",
@@ -113,6 +114,11 @@ def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Bas
     over_one = _with_radicands_combined(head)
     if over_one is not None:
         found = integral(over_one)
+        if not found.has(sp.Integral):
+            return found
+    hyperbolic = _with_hyperbolic_squares(head)
+    if hyperbolic is not None:
+        found = integral(hyperbolic)
         if not found.has(sp.Integral):
             return found
     stepped = between_the_steps(head)
@@ -190,6 +196,18 @@ def _is_square_root(power: sp.Pow, variable: sp.Basic) -> bool:
 _numerically: ContextVar[bool] = ContextVar("_numerically", default=False)
 
 
+def _by_quadrature(head: sp.Basic) -> bool:
+    """Whether an integral is part of one going to be approximated, and is either an
+    antiderivative or over a finite interval, so that sympy's general methods are not
+    run on it; see `numerically`."""
+    if not _numerically.get():
+        return False
+    if not definite(head):
+        return True
+    _, low, high = head.limits[0]
+    return low.is_finite is True and high.is_finite is True
+
+
 @contextmanager
 def numerically() -> Iterator[None]:
     """Compute integrals that are going to be approximated: without heuristic Risch.
@@ -198,9 +216,15 @@ def numerically() -> Iterator[None]:
     computed exactly first and approximated after, but where no closed form comes
     quickly, quadrature gives the digits at once, as it does in Derive. Heuristic Risch
     is the search that doesn't come quickly: on `INT(#e^(1.3*COS(t))*COS(t), t, 0, pi)`
-    it takes a minute to fail, and BESSEL.MTH's BESSEL_I is that integral. The other
-    methods still run, and so does the examination of singularities, so that
-    `INT(1/x^2, x, -1, 1)` is still `inf` rather than a number.
+    it takes a minute to fail, and BESSEL.MTH's BESSEL_I is that integral.
+
+    Sympy's own definite integration is the other: over a finite interval it searches
+    for minutes on HYPERGEO.MTH's `KUMMER` integrand `t^2*(#e^(2*t)*(1 - t)^(-5/2) -
+    1)` from 0 to 1/2, where quadrature, which a finite interval suits, gives the
+    digits at once. So there sympy's general methods are not run on the definite
+    integral, nor on the antiderivatives taken for it (see `_by_quadrature`), and its
+    value comes from our own methods. The examination of singularities still runs, so
+    that `INT(1/x^2, x, -1, 1)` is still `inf` rather than a number.
     """
     token = _numerically.set(True)
     try:
@@ -241,6 +265,9 @@ def _with_radicands_combined(head: sp.Basic) -> sp.Basic | None:
     numerator out changes the root only where the denominator is negative and the
     integrand isn't real, as in `_with_radicals_resolved`. The integral is used only
     if this form answers it.
+
+    A square root over a square `E^2` is instead written as `SQRT(N)/ABS(E)`, which
+    holds for all real `N` and `E`: `1/SQRT(c - 1/y^2)` is `ABS(y)/SQRT(c*y^2 - 1)`.
     """
     variables = [limit[0] for limit in head.limits]
 
@@ -256,6 +283,15 @@ def _with_radicands_combined(head: sp.Basic) -> sp.Basic | None:
     def combined(power: sp.Basic) -> sp.Basic:
         base, exponent = power.args
         numerator, denominator = sp.fraction(sp.cancel(sp.together(base)))
+        root = _square_root(denominator)
+        if (
+            exponent.q == 2
+            and root is not None
+            and root.has(*variables)
+            and numerator.is_extended_real
+            and root.is_extended_real
+        ):
+            return numerator**exponent / sp.Abs(root) ** (2 * exponent)
         if numerator.is_negative:
             numerator, denominator = -numerator, sp.expand(-denominator)
         if numerator.has(*variables) or numerator.is_nonnegative is not True:
@@ -270,6 +306,80 @@ def _with_radicands_combined(head: sp.Basic) -> sp.Basic | None:
     if function is None or function == head.function:
         return None
     return head.func(function, *head.limits)
+
+
+def _square_root(expression: sp.Basic) -> sp.Basic | None:
+    """A polynomial whose square is the expression, or None if its factors aren't all
+    squares or its constant factor isn't positive."""
+    try:
+        coefficient, factors = sp.factor_list(expression)
+    except Exception:
+        return None
+    if not coefficient.is_positive or any(m % 2 for _, m in factors):
+        return None
+    return sp.sqrt(coefficient) * sp.Mul(*(f ** (m // 2) for f, m in factors))
+
+
+def _with_hyperbolic_squares(head: sp.Basic) -> sp.Basic | None:
+    """The integral with each square root of a multiple of a squared hyperbolic sine or
+    cosine taken, or None if there is none.
+
+    For real `x`, `SQRT(1 + SINH(x)^2)` is `COSH(x)` and `SQRT(COSH(x)^2 - 1)` is
+    `ABS(SINH(x))`. Sympy sees neither, and on the first the methods search for a
+    minute before the integral, spelled in exponentials, comes out: INT_APPS.MTH's
+    `ARC_LENGTH(COSH(x), x, 0, 1)` integrates it. The integral is used only if this
+    form answers it.
+    """
+    variables = [limit[0] for limit in head.limits]
+    if not all(variable.is_real for variable in variables):
+        return None
+
+    def radical(e: sp.Basic) -> bool:
+        return (
+            e.is_Pow
+            and e.exp.is_Rational
+            and e.exp.q == 2
+            and e.base.has(*variables)
+            and e.base.has(sp.sinh, sp.cosh)
+        )
+
+    def resolved(power: sp.Basic) -> sp.Basic:
+        square = _hyperbolic_square(power.base)
+        return power if square is None else square**power.exp
+
+    function = attempt(head.function, lambda f: f.replace(radical, resolved))
+    if function is None or function == head.function:
+        return None
+    return head.func(function, *head.limits)
+
+
+def _hyperbolic_square(base: sp.Basic) -> sp.Basic | None:
+    """`base` as `c*COSH(u)^2` or `c*SINH(u)^2` with a positive `c` and a real `u`, by
+    `COSH(u)^2 - SINH(u)^2 = 1`, or None."""
+    arguments = {call.args[0] for call in base.atoms(sp.sinh, sp.cosh)}
+    if len(arguments) != 1:
+        return None
+    (argument,) = arguments
+    if argument.is_extended_real is not True:
+        return None
+    expanded = sp.expand(base)
+    sine, cosine = sp.sinh(argument), sp.cosh(argument)
+    for square, other, swapped in (
+        (cosine**2, sine, cosine**2 - 1),
+        (sine**2, cosine, sine**2 + 1),
+    ):
+        written = expanded.replace(
+            lambda e: e.is_Pow and e.base == other and e.exp.is_even and e.exp > 0,
+            lambda e: swapped ** (e.exp // 2),
+        )
+        if written.has(other):
+            continue
+        factor = attempt(written, lambda w: sp.cancel(sp.expand(w) / square))
+        if factor is None or factor.has(*argument.free_symbols, sine, cosine):
+            continue
+        if factor.is_positive:
+            return factor * square
+    return None
 
 
 def _with_radicals_resolved(head: sp.Basic) -> sp.Basic | None:
@@ -357,6 +467,7 @@ def _integral_through(head: sp.Basic) -> sp.Basic:
         infinite = value.has(sp.nan, sp.zoo) or value.is_finite is False
         if verdict is not None and infinite:
             value = head
+    value = off_the_polar_plane(head, value)
     past = past_a_singular_end(head, value)
     if past is not None:
         return past
@@ -462,14 +573,6 @@ def _accepted(head: sp.Basic, candidate: Candidate) -> sp.Basic | None:
     if narrowed == value or unwritable(narrowed, variable):
         return None
     return narrowed
-
-
-def by_sympy(head: sp.Basic) -> sp.Basic:
-    """An integral evaluated by sympy's methods alone, as `integral` runs them. `definite`
-    uses this for the auxiliary integrals it builds.
-    """
-    value = _answered(head, _SYMPY)
-    return head if value is None else value
 
 
 def _of_a_binomial_power(head: sp.Basic) -> Candidate | None:
@@ -877,6 +980,131 @@ def _of_an_exponential_times_a_wave(head: sp.Basic) -> Candidate | None:
     return Candidate(value, trusted=True, tabled=True)
 
 
+def _on_each_side_of_a_kink(head: sp.Basic) -> Candidate | None:
+    """An antiderivative of an integrand with `ABS(u)` or `SIGN(u)`, where `u = a*x + b`
+    with a numeric `a`, or None.
+
+    On each side of `u = 0` the integrand is an ordinary function, `ABS(u)` being `u`
+    or `-u` and `SIGN(u)` being 1 or -1. Each side is integrated over the positive `t =
+    ABS(u)`, giving `P(t)` for `u > 0` and `M(t)` for `u < 0`, so the antiderivative is
+    `(P + M)/2 + SIGN(u)*(P - M)/2` everywhere: `x*ABS(x)/2` for `ABS(x)`, and
+    `SIGN(x)*LN(ABS(x))` for `1/ABS(x)`. `M` is first shifted by a constant so the two
+    meet where both have a finite limit at `u = 0`, which keeps the antiderivative
+    continuous. Steps of other arguments are left to the integrals on each side, except
+    in a sum, whose terms are integrated apart, each with the jumps of its own steps.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    if variable.is_real is not True:
+        return None
+    arguments = sorted(
+        {
+            step.args[0]
+            for step in integrand.atoms(sp.Abs, sp.sign)
+            if step.has(variable)
+        },
+        key=sp.default_sort_key,
+    )
+    if len(arguments) > 1 and isinstance(integrand, sp.Add):
+        # Terms with the steps of fewer arguments are shorter integrated apart.
+        parts = [integral(sp.Integral(term, variable)) for term in integrand.args]
+        if any(part.has(sp.Integral) for part in parts):
+            return None
+        return Candidate(sp.Add(*parts), formed=True)
+    for argument in arguments:
+        polynomial = attempt(argument, lambda a: sp.Poly(a, variable))
+        if polynomial is None or polynomial.degree() != 1:
+            continue
+        slope, offset = polynomial.all_coeffs()
+        if not slope.is_Rational:
+            continue
+        found = _either_side(integrand, variable, argument, slope, offset)
+        if found is not None:
+            return Candidate(found, trusted=True, tabled=True)
+    return None
+
+
+def _either_side(
+    integrand: sp.Basic,
+    variable: sp.Basic,
+    argument: sp.Basic,
+    slope: sp.Basic,
+    offset: sp.Basic,
+) -> sp.Basic | None:
+    """The antiderivative `_on_each_side_of_a_kink` builds at the zero of `argument`, or
+    None."""
+    size = sp.Dummy("t", positive=True)
+    sides = []
+    for side in (1, -1):
+        # A step of a multiple `k*u` of the argument is `ABS(k)*t` or `SIGN(k)*side`
+        # on this side, where `t = side*u` is positive and `x = (side*t - b)/a`.
+        held = {}
+        for step in integrand.atoms(sp.Abs, sp.sign):
+            ratio = attempt(step.args[0], lambda a: sp.cancel(a / argument))
+            if ratio is None or not ratio.is_Rational or ratio == 0:
+                continue
+            if isinstance(step, sp.Abs):
+                held[step] = abs(ratio) * size
+            else:
+                held[step] = sp.sign(ratio) * side
+        written = attempt(
+            integrand.xreplace(held),
+            lambda f: f.subs(variable, (side * size - offset) / slope) * side / slope,
+        )
+        if written is None or written.has(variable):
+            return None
+        piece = integral(sp.Integral(written, size))
+        if piece.has(sp.Integral):
+            return None
+        sides.append(piece)
+    plus, minus = sides
+    near = [attempt(value, lambda v: sp.limit(v, size, 0, "+")) for value in sides]
+    if any(value is None or value.has(sp.nan, sp.Limit) for value in near):
+        return None
+    # A parameter is taken as generic, as in `c/a`, which is finite.
+    if not any(value.has(sp.oo, -sp.oo, sp.zoo) for value in near):
+        minus += near[0] - near[1]
+    spellings = []
+    for above in _side_sizes(plus, size, argument):
+        for below in _side_sizes(minus, size, -argument):
+            upper, lower = plus.subs(size, above), minus.subs(size, below)
+            total, difference = (upper + lower) / 2, (upper - lower) / 2
+            constant = attempt(
+                total + difference * sp.sign(argument),
+                lambda v: sp.expand(v).as_independent(variable, as_Add=True)[0],
+            )
+            if constant is None:
+                continue
+            total -= constant
+            for spell in (sp.factor, sp.expand):
+                spellings.append(
+                    attempt(
+                        spell,
+                        lambda s: folded_signs(
+                            s(s(total) + s(difference) * sp.sign(argument))
+                        ),
+                    )
+                )
+    return min(
+        (spelling for spelling in spellings if spelling is not None),
+        key=sp.count_ops,
+        default=None,
+    )
+
+
+def _side_sizes(piece: sp.Basic, size: sp.Basic, argument: sp.Basic) -> list[sp.Basic]:
+    """What `t` may be written as in an antiderivative over `t` from `_either_side`, on
+    the side where `argument` is positive: `ABS(argument)`, as in `LN(ABS(x))`, and
+    `argument` itself where the antiderivative is a polynomial in `t` and in steps of
+    `t`, so it is real on the other side too."""
+    sizes = [sp.Abs(argument)]
+    steps = {step: sp.Dummy() for step in piece.atoms(sp.Abs, sp.sign) if step.has(size)}
+    if piece.xreplace(steps).is_polynomial(size):
+        sizes.append(argument)
+    return sizes
+
+
 def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
     """An antiderivative by `u = g(x)`, where the integrand is `h(g(x))*g'(x)` and
     contains a power with a symbolic exponent, or None.
@@ -1178,9 +1406,45 @@ def _derivatives(function: sp.Basic, variable: sp.Basic) -> list[sp.Basic]:
     return [*written, sp.diff(function, variable)]
 
 
+def _term_by_term(head: sp.Basic) -> Candidate | None:
+    """An antiderivative of a product of a transcendental factor and a sum, as the sum
+    of the antiderivatives of the distributed terms, or None unless each term is
+    integrated.
+
+    `INT(x^2*#e^(k*x), x)` and `INT(COS(x)*#e^(k*x), x)` are each found at once for an
+    irrational `k`, while sympy searches `INT((2*x^2 - COS(x))*#e^(k*x), x)` for
+    seconds and gives up. Only a factor that is an exponential, a sine or a cosine
+    (circular or hyperbolic) or a logarithm counts as transcendental; products of
+    algebraic factors are left to the integrators of rational functions and radicals.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    if not isinstance(integrand, sp.Mul):
+        return None
+    factors = [factor for factor in integrand.args if factor.has(variable)]
+    if not any(isinstance(factor, sp.Add) for factor in factors) or not any(
+        isinstance(factor.as_base_exp()[0], (sp.exp, sp.log, *_PERIODIC))
+        or isinstance(factor, sp.exp)
+        for factor in factors
+    ):
+        return None
+    expanded = attempt(integrand, sp.expand_mul)
+    if expanded is None or not isinstance(expanded, sp.Add):
+        return None
+    terms = expanded.args
+    total = sp.S.Zero
+    for term in terms:
+        value = integral(sp.Integral(term, variable))
+        if value.has(sp.Integral):
+            return None
+        total += value
+    return Candidate(total, formed=True)
+
+
 def _by_linearity(head: sp.Basic) -> sp.Basic:
     """An integral sympy left unevaluated, as a sum of integrals where its integrand is a
-    disguised sum.
+    disguised sum, each evaluated where it can be.
 
     Sympy integrates a literal sum term by term, but one non-integrable term sinks a
     quotient like `(x*G(x) + F(x))/G(x)`, which Derive splits. So a quotient with a sum
@@ -1212,7 +1476,7 @@ def _by_linearity(head: sp.Basic) -> sp.Basic:
         if not value.has(sp.Integral)
     ):
         return head
-    return sp.Add(*pieces)
+    return sp.Add(*values)
 
 
 def _partial_fractions(head: sp.Basic, denominator: sp.Basic) -> list[sp.Basic]:
@@ -1258,6 +1522,8 @@ def _by_a_radical(head: sp.Basic) -> Candidate | None:
         )
         if transformed is None:
             continue
+        if _numerically.get() and _non_elementary(transformed):
+            continue
         found = attempt(transformed, lambda h: h.doit(deep=False, **BOUNDED))
         if found is None or found.has(sp.Integral, sp.Piecewise):
             continue
@@ -1267,6 +1533,23 @@ def _by_a_radical(head: sp.Basic) -> Candidate | None:
     return None
 
 
+def _non_elementary(head: sp.Basic) -> bool:
+    """Whether Risch proves part of an indefinite integral non-elementary.
+
+    Sympy then integrates that part again without the caller's hints, so heuristic
+    Risch runs even under `BOUNDED`: on `_by_a_radical`'s substituted form of
+    HYPERGEO.MTH's `INT(t^2*(#e^(2*t)*(1 - t)^(-5/2) - 1), t)` for most of a minute.
+    """
+    (variable,) = head.limits[0]
+    try:
+        _, nonelementary = risch_integrate(
+            head.function, variable, separate_integral=True
+        )
+    except Exception:
+        return False
+    return nonelementary != 0
+
+
 def _by_the_bounded_methods(head: sp.Basic) -> Candidate | None:
     """An integral by sympy's bounded-cost methods, `BOUNDED`, or None.
 
@@ -1274,7 +1557,11 @@ def _by_the_bounded_methods(head: sp.Basic) -> Candidate | None:
     methods are unaffordable. For a definite integral left unevaluated or depending on
     an unknown sign, the Meijer G route is also tried.
     """
-    if _an_arc_over_its_variable(head) or _beside_a_composition(head):
+    if (
+        _an_arc_over_its_variable(head)
+        or _beside_a_composition(head)
+        or _by_quadrature(head)
+    ):
         return None
     hints = within_reach(head)
     found = _standing(
@@ -1293,14 +1580,22 @@ def _by_the_bounded_methods(head: sp.Basic) -> Candidate | None:
 
 
 def _by_meijer_g(head: sp.Basic) -> sp.Basic | None:
-    """A definite integral with at most one parameter, by Meijer G functions, or None.
+    """A definite integral with at most one parameter of unknown sign, by Meijer G
+    functions, or None.
 
     This answers integrals like `INT(COS(a*x)*#e^(-x^2), x, -inf, inf)` that the
-    bounded methods leave. With more parameters the search grows too much. An answer
-    that still depends on an unknown sign gives None.
+    bounded methods leave, and `INT(t^(p - 1)*#e^(-s*t), t, 0, inf)` for positive `p`
+    and `s`, where they take the antiderivative's value at 0 as a product of powers of
+    zero. With more parameters of unknown sign the search splits on each and grows too
+    much. An answer that still depends on an unknown sign gives None.
     """
     variables = {limit[0] for limit in head.limits}
-    if len(head.function.free_symbols - variables) > 1:
+    unsigned = [
+        symbol
+        for symbol in head.function.free_symbols - variables
+        if not (symbol.is_positive or symbol.is_negative)
+    ]
+    if len(unsigned) > 1:
         return None
     hints = {"heurisch": False, **within_reach(head)}
     tabled = _standing(head, attempt(head, lambda h: h.doit(deep=False, **hints)))
@@ -1324,6 +1619,7 @@ def _by_the_full_methods(head: sp.Basic) -> Candidate | None:
         or _beside_a_composition(head)
         or _unaffordable(head)
         or _elliptic(head)
+        or _by_quadrature(head)
     ):
         return None
     hints = within_reach(head)
@@ -1574,8 +1870,11 @@ def _standing(head: sp.Basic, value: sp.Basic | None) -> sp.Basic | None:
     """`value`, or the head itself if `value` is the same integral in another guise.
 
     Sympy returns a proved non-elementary integral as a `NonElementaryIntegral`, or an
-    integral over a merely factored integrand. Neither compares equal to the head, so
-    it would be mistaken for an answer.
+    integral over a merely factored integrand, with a root of a product possibly split
+    into roots of the factors: `(1 - a^2)^(1/6)` as `(1 - a)^(1/6)*(a + 1)^(1/6)`.
+    Neither compares equal to the head, so it would be mistaken for an answer, and
+    integrated again. The roots are joined to compare, which at worst takes a different
+    integral for the head, and leaves it unevaluated.
     """
     if not isinstance(value, sp.Integral):
         return value
@@ -1584,13 +1883,22 @@ def _standing(head: sp.Basic, value: sp.Basic | None) -> sp.Basic | None:
     if value.limits == head.limits:
         if value.function == forced(head.function, sp.factor):
             return head
+        joined = [
+            forced(function, lambda f: sp.factor(sp.powsimp(f, force=True)))
+            for function in (value.function, head.function)
+        ]
+        if joined[0] == joined[1]:
+            return head
     return value
 
 
 def _over_a_positive_variable(head: sp.Basic) -> Candidate | None:
     """An antiderivative by `by_a_positive_substitution`, or None. An `_elliptic`
-    integrand is skipped, since sympy's search for it doesn't end."""
+    integrand is skipped, since sympy's search for it doesn't end, and so is one
+    `_by_quadrature`, since for an even integrand that runs sympy's general methods."""
     if len(head.limits) != 1 or len(head.limits[0]) != 1 or _elliptic(head):
+        return None
+    if _by_quadrature(head):
         return None
     value = by_a_positive_substitution(head.function, head.limits[0][0])
     return None if value is None else Candidate(value, trusted=True, tabled=True)
@@ -1761,15 +2069,14 @@ _METHODS: tuple[Method, ...] = (
     _of_a_radical,
     _over_an_exponential,
     _of_an_exponential_times_a_wave,
+    _on_each_side_of_a_kink,
     _by_derivative_divides,
     _by_products_as_sums,
     _by_parts_over_a_polynomial,
+    _term_by_term,
     _over_a_positive_variable,
     _by_a_radical,
     _by_the_bounded_methods,
     _by_the_full_methods,
     _by_parts,
 )
-
-#: Sympy's methods, in `_METHODS` order, none of them trusted.
-_SYMPY: tuple[Method, ...] = (_by_the_bounded_methods, _by_the_full_methods)

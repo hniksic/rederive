@@ -42,6 +42,7 @@ __all__ = [
     "definite",
     "ends",
     "odd_about_the_middle",
+    "off_the_polar_plane",
     "past_a_singular_end",
     "real_where_real",
     "unresolved",
@@ -61,14 +62,20 @@ def real_where_real(head: sp.Basic, value: sp.Basic) -> sp.Basic:
     and is otherwise replaced by `by_the_antiderivative` or left unevaluated. A value
     with an infinite or unevaluated imaginary part is rejected too, since evaluating it
     can take minutes.
+
+    Real limits whose order isn't known, as in `INT((1 - #e^(-u))/u, u, 0, z)`, may lie
+    anywhere on the real line, so there the integrand must be real on all of it.
     """
     if not definite(head) or value == head or not value.has(sp.I):
         return value
     variable, low, high = head.limits[0]
-    orientation = _orientation(low, high)
-    if orientation is None or not (low.is_extended_real and high.is_extended_real):
+    if not (low.is_extended_real and high.is_extended_real):
         return value
-    bounds = (low, high) if orientation > 0 else (high, low)
+    orientation = _orientation(low, high)
+    if orientation is None:
+        bounds = (sp.S.NegativeInfinity, sp.S.Infinity)
+    else:
+        bounds = (low, high) if orientation > 0 else (high, low)
     if not Stretch(variable, *bounds).real(head.function):
         return value
     if isinstance(value, sp.Piecewise) and _real_in_each_case(value):
@@ -343,6 +350,89 @@ def past_a_singular_end(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
     return beyond if beyond == before else head
 
 
+def off_the_polar_plane(head: sp.Basic, value: sp.Basic) -> sp.Basic:
+    """A definite integral's case split with conditions on a polar argument rewritten as
+    conditions on the real part.
+
+    Sympy's Meijer G route states conditions on the argument of a number on the
+    Riemann surface of the logarithm, where `-1` may have argument `-pi`, and its
+    answer for `INT(#e^(t*(1 - s)), t, 0, inf)` holds where `ABS(PHASE(1 - s) + pi) <
+    pi/2`. With `PHASE` taken on the principal branch that is never true for real `s`.
+    On the surface, `ABS(arg(X) + k*pi) < pi/2` says that some argument of `X` is
+    within `pi/2` of `-k*pi`, which is `(-1)^k*RE(X) > 0`. That reading holds where
+    the integrand and the case are single-valued in the parameters, since then neither
+    depends on which argument `X` is given. For `k = 0` both readings agree.
+    """
+    if not definite(head) or not value.has(sp.Piecewise):
+        return value
+    parameters = head.free_symbols
+    single = _single_valued(head.function, parameters)
+
+    def rewritten(condition: sp.Basic, anywhere: bool) -> sp.Basic:
+        if not isinstance(condition, sp.StrictLessThan):
+            return condition
+        if not isinstance(condition.lhs, sp.Abs):
+            return condition
+        quarters = condition.rhs / (sp.pi / 2)
+        if not (quarters.is_Rational and quarters.is_positive):
+            return condition
+        turn = _turn(sp.expand(condition.lhs.args[0] / quarters))
+        if turn is None or turn[1] != 0 and not anywhere:
+            return condition
+        argument, turns = turn
+        return sp.StrictGreaterThan((-1) ** turns * sp.re(argument), 0)
+
+    def cases(piecewise: sp.Piecewise) -> sp.Piecewise:
+        found = []
+        for case, condition in piecewise.args:
+            anywhere = single and _single_valued(case, parameters)
+            condition = condition.replace(
+                lambda e: isinstance(e, sp.StrictLessThan),
+                lambda e: rewritten(e, anywhere),
+            )
+            found.append((case, condition))
+        return sp.Piecewise(*found)
+
+    found = attempt(
+        value, lambda v: v.replace(lambda e: isinstance(e, sp.Piecewise), cases)
+    )
+    return value if found is None else found
+
+
+def _turn(angle: sp.Basic) -> tuple[sp.Basic, int] | None:
+    """`(X, k)` for an angle `arg(X) + k*pi` with integer `k`, or None."""
+    turns, rest = angle.as_independent(sp.arg, as_Add=True)
+    if not isinstance(rest, sp.arg):
+        return None
+    count = turns / sp.pi
+    if not count.is_Integer:
+        return None
+    return rest.args[0], int(count)
+
+
+#: The functions single-valued in their argument, for `_single_valued`.
+_SINGLE_VALUED = (
+    sp.exp, sp.sin, sp.cos, sp.tan, sp.sinh, sp.cosh, sp.tanh, sp.gamma, sp.factorial,
+)
+
+
+def _single_valued(expression: sp.Basic, parameters: set) -> bool:
+    """Whether an expression is built from the parameters by arithmetic, integer powers
+    and functions in `_SINGLE_VALUED`, so that it has one value for each value of
+    them."""
+    for node in sp.preorder_traversal(expression):
+        if not node.has(*parameters) or node.is_Symbol:
+            continue
+        if node.is_Add or node.is_Mul or isinstance(node, _SINGLE_VALUED):
+            continue
+        if node.is_Pow and (
+            node.exp.is_Integer or (not node.base.has(*parameters) and node.base.is_positive)
+        ):
+            continue
+        return False
+    return True
+
+
 def beyond_convergence(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
     """A definite integral with its divergent case evaluated, if it diverges to a signed
     infinity.
@@ -364,7 +454,7 @@ def beyond_convergence(head: sp.Basic, value: sp.Basic) -> sp.Basic | None:
         return None
     outcomes = set()
     for parameter, point in _complement(condition):
-        found = attempt(head, lambda h: indefinite.by_sympy(h.subs(parameter, point)))
+        found = attempt(head, lambda h: indefinite.integral(h.subs(parameter, point)))
         if found is None or not found.is_infinite or found.is_extended_real is not True:
             return None
         outcomes.add(found)
@@ -953,11 +1043,24 @@ def _at(antiderivative: sp.Basic, variable: sp.Basic, end: sp.Basic) -> sp.Basic
     step is replaced by what it holds just above the end, and just below, and the two
     must agree: `INT(ABS(SIN(t)), t, 0, b)` needs `-1` at 0, where `-SIGN(SIN(t))*COS(t)
     + 2*FLOOR(t/pi)` is 0. The steps' jumps are a lattice spaced far wider than
-    `_BESIDE`. A symbolic end is taken to be away from the jumps, as the formula is for
-    every other value.
+    `_BESIDE`.
+
+    A symbolic end may fall on a jump, where a `SIGN` is `+-1`, so there each sign is
+    written as its value just above, `(-1)^k` times its first value with `k` the floor
+    counting the jumps: `INT(ABS(COS(t)), t, 0, u)` is `(-1)^FLOOR(u/pi + 1/2)*SIN(u) +
+    2*FLOOR(u/pi + 1/2)`, which is 1 at `u = pi/2`. The floors are already the values
+    just above, and the antiderivative is continuous, so that is its value at a jump.
     """
     if end.free_symbols:
-        return attempt(antiderivative, lambda a: a.subs(variable, end))
+        above = {}
+        for step in antiderivative.atoms(sp.sign):
+            if not step.has(variable):
+                continue
+            lattice = _lattice(step, variable)
+            if lattice is None or not lattice.alternating:
+                return None
+            above[step] = lattice.values(lattice.count)
+        return attempt(antiderivative, lambda a: a.xreplace(above).subs(variable, end))
     steps = [step for step in antiderivative.atoms(*_STEPS) if step.has(variable)]
     sides = []
     for near in (end + _BESIDE, end - _BESIDE):
@@ -1203,24 +1306,58 @@ def by_the_sign_of_a_parameter(head: sp.Basic, value: sp.Basic) -> sp.Basic | No
 
     An integral sympy couldn't do at all isn't retried, since without the sign it could
     still have answered under a condition.
+
+    Other parameters may take part if their signs are known. An unconditional answer
+    for a power of the variable with a parameter of unknown sign in its exponent, from
+    zero, is split too, at the exponent's threshold only, and left unevaluated if it
+    can't be: with `s` positive, sympy gives `INT(t^n*#e^(-s*t), t, 0, inf)` as
+    `s^(-n - 1)*n!`, which is right only for `n > -1`, as it takes the incomplete gamma
+    function at 0 to be the complete one.
     """
-    if not definite(head) or not unresolved(head, value):
+    if not definite(head):
+        return None
+    hidden = not unresolved(head, value)
+    if hidden and not _at_zero_unconditionally(head, value):
         return None
     variable = head.limits[0][0]
-    parameters = head.free_symbols
-    if len(parameters) != 1:
-        return None
+    parameters = {p for p in head.free_symbols if not _signed(p)}
+    if len(parameters) != 1 or not all(map(_signed, head.free_symbols - parameters)):
+        return head if hidden else None
     (parameter,) = parameters
-    if not (parameter.is_extended_real and parameter.is_positive is None):
-        return None
-    if parameter.is_negative is not None or parameter.is_zero is not None:
-        return None
-    for threshold in _thresholds(head, value, parameter, variable)[:_THRESHOLDS]:
+    if not parameter.is_extended_real or parameter.is_zero is not None:
+        return head if hidden else None
+    if parameter.is_positive is not None or parameter.is_negative is not None:
+        return head if hidden else None
+    # The exponent's threshold comes first for an unconditional answer, and is the only
+    # one it can depend on.
+    count = 1 if hidden else _THRESHOLDS
+    for threshold in _thresholds(head, value, parameter, variable)[:count]:
         found = _on_each_side(head, parameter, threshold)
         if found is not None:
             return found
+    if hidden:
+        return head
     signed = attempt(value, lambda v: _with_signed_conditions(v, parameter))
     return None if signed is None or signed == value else signed
+
+
+def _signed(parameter: sp.Basic) -> bool:
+    """Whether a parameter is known to be positive, or known to be negative."""
+    return bool(parameter.is_positive or parameter.is_negative)
+
+
+def _at_zero_unconditionally(head: sp.Basic, value: sp.Basic) -> bool:
+    """Whether an answer has no conditions, though the integral starts or ends at zero
+    and its integrand has a power of the variable whose exponent has a parameter of
+    unknown sign, on which convergence at zero depends."""
+    variable, low, high = head.limits[0]
+    if sp.S.Zero not in (low, high) or value.has(sp.Piecewise, sp.Integral):
+        return False
+    return any(
+        power.base == variable
+        and any(not _signed(p) for p in power.exp.free_symbols - {variable})
+        for power in head.function.atoms(sp.Pow)
+    )
 
 
 def _with_signed_conditions(value: sp.Basic, parameter: sp.Basic) -> sp.Basic:

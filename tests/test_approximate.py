@@ -650,6 +650,11 @@ def test_curv_fit_s_exponential_and_power_fits_come_out_as_documented():
         ("INT(LN(t)/(1 - t), t, 1, -1)", "2.46740 - 2.17758*#i"),
         # `DILOG(2)`, Li2(-1) = -pi^2/12.
         ("INT(LN(t)/(1 - t), t, 1, 2)", "-0.822467"),
+        # HYPERGEO.MTH's `KUMMER` integrand, on which sympy's definite integration
+        # searches for minutes, and FUN.MTH's `JN(2/3, 2)`, with no closed form.
+        ("INT(t^2*(#e^(2*t)*(1 - t)^(-2.5) - 1), t, 0, 1/2)", "0.295764"),
+        ("INT(t^2*#e^(2*t)*(1 - t)^(-5/2), t, 0, 1/2)", "0.337431"),
+        ("INT((1 - a^2)^(1/6)*COS(2*a), a, 0, 1)", "0.457923"),
     ],
 )
 def test_a_numeric_integral_is_approximated_by_quadrature(text, expected):
