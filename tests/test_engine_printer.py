@@ -21,12 +21,12 @@ from rederive.engine.to_sympy import (
     Declare,
     Dot,
     FunDef,
-    InertVector,
     Logical,
     PlusMinus,
     StringLiteral,
     Subscript,
     Transposed,
+    Vector,
 )
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, parse_expression
@@ -87,9 +87,13 @@ def reread(expression, context=None):
         (sp.asinh(x), "ASINH(x)"),
         (sp.Symbol("alpha"), "alpha"),
         (sp.Symbol("α"), "alpha"),
-        (sp.Matrix(1, 3, [1, 2, 3]), "[1, 2, 3]"),
-        (sp.Matrix([[1, 2], [3, 4]]), "[[1, 2], [3, 4]]"),
-        (sp.Matrix(0, 0, []), "[]"),
+        (Vector(1, 2, 3), "[1, 2, 3]"),
+        (Vector(Vector(1, 2), Vector(3, 4)), "[[1, 2], [3, 4]]"),
+        (Vector(Vector(1, 2)), "[[1, 2]]"),
+        (Vector(), "[]"),
+        # A sympy matrix, which only a product with a symbolic matrix holds, is
+        # written as rows even if it has only one.
+        (sp.ImmutableMatrix([[1, 2]]), "[[1, 2]]"),
         (sp.Eq(x, 1, evaluate=False), "x = 1"),
         (sp.Ne(x, 1, evaluate=False), "x /= 1"),
         (sp.Le(x, 1, evaluate=False), "x <= 1"),
@@ -334,8 +338,9 @@ REREAD = [
     sp.factorial(sp.Rational(3, 2)),
     sp.Abs(x - y),
     sp.sin(x) ** 2 + sp.cos(x) ** 2,
-    sp.Matrix(1, 2, [x, -y]),
-    sp.Matrix([[x, 1], [0, y]]),
+    Vector(x, -y),
+    Vector(Vector(x, 1), Vector(0, y)),
+    Vector(Vector(x, 1)),
     sp.Eq(x**2, y, evaluate=False),
     sp.Integral(sp.sin(x) / x, (x, 0, sp.oo)),
     sp.Derivative(F(x), (x, 3), evaluate=False),
@@ -358,7 +363,7 @@ INERT = [
     # inert head only remains around a non-expression.
     Transposed(sp.Eq(x, 1)),
     Dot(sp.Symbol("a", real=True), sp.Symbol("b", real=True)),
-    InertVector(sp.Matrix(1, 2, [1, 2]), sp.Matrix(1, 1, [3])),
+    Vector(Vector(1, 2), Vector(3)),
     Logical(sp.Symbol("AND"), sp.Integer(3), sp.Symbol("p", real=True)),
     Assign(sp.Symbol("u", real=True), sp.Symbol(":="), sp.Integer(5)),
     Assign(sp.Symbol("u", real=True), sp.Symbol(":==")),
@@ -562,9 +567,8 @@ def test_a_dot_product_keeps_its_parentheses_inside_a_negated_product():
     assert written(x * Dot(a, b)) == "x*(a . b)"
 
 
-def test_a_power_of_a_matrix_is_written_in_author_notation():
-    # Sympy prints this as `Matrix(...)**(1/2)`, and `**` is not an operator here.
-    assert written(sp.sqrt(sp.Matrix(1, 1, [sp.Rational(1, 12)]))) == "SQRT([1/12])"
+def test_a_power_of_a_vector_is_written_in_author_notation():
+    assert written(sp.sqrt(Vector(sp.Rational(1, 12)))) == "SQRT([1/12])"
 
 
 def test_an_inert_head_is_parenthesised_by_what_it_is_written_as():

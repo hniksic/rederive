@@ -344,9 +344,11 @@ def _elementwise(
 ) -> sp.Basic | None:
     """`container` with `each` applied to its elements, or None if it isn't one.
 
-    This is the one place that knows how containers are held. A sympy matrix isn't a
-    `sp.Basic` and has no `args` to walk, so its numbers are reached only from here;
-    an `InertVector` is an ordinary function head and needs no special case.
+    This is the one place that knows how containers are held. A sympy matrix, which
+    appears only in linear algebra on the way to an answer, isn't a `sp.Basic` and has
+    no `args` to walk, so its numbers are reached only from here; a `Vector`, which is
+    how vectors and matrices are held otherwise, is an ordinary function head and needs
+    no special case.
     """
     if isinstance(container, sp.MatrixBase):
         return container.applyfunc(each)

@@ -174,12 +174,13 @@ def pair(
     node: Node, context: Context, variables: Sequence[str] = ()
 ) -> tuple[Callable[..., np.ndarray], Callable[..., np.ndarray]]:
     """The two closures of a parametric pair `[x(t), y(t)]`, converted together once."""
+    from rederive.engine.vectors import Vector
+
     expression = _converted(node, context)
-    try:
-        elements = list(expression)
-    except TypeError:
-        raise Unplottable("a parametric plot needs two expressions") from None
-    if len(elements) != 2:
+    if not isinstance(expression, Vector):
+        raise Unplottable("a parametric plot needs two expressions")
+    elements = list(expression.args)
+    if len(elements) != 2 or any(isinstance(e, Vector) for e in elements):
         raise Unplottable("a parametric plot needs two expressions")
     return (
         _lambdified(elements[0], variables),
@@ -211,11 +212,16 @@ def points(node: Node, context: Context) -> tuple[np.ndarray, np.ndarray]:
 
     A single point like `[1, 2]` is read as a one-row matrix.
     """
-    import sympy as sp
+    from rederive.engine.vectors import Vector, is_matrix, matrix_of
 
     expression = _converted(node, context)
+    if isinstance(expression, Vector) and not is_matrix(expression):
+        expression = Vector(expression)
+    matrix = matrix_of(expression)
+    if matrix is None:
+        raise Unplottable("a data plot needs a matrix of two columns")
     try:
-        rows = np.array(sp.Matrix(expression).evalf().tolist(), dtype=np.complex128)
+        rows = np.array(matrix.evalf().tolist(), dtype=np.complex128)
     except Exception as error:
         raise Unplottable(_said(error)) from None
     if rows.ndim != 2 or rows.shape[1] != 2:

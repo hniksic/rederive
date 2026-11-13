@@ -79,9 +79,9 @@ from rederive.engine.to_sympy import (
     annuity,
     Declare,
     FunDef,
-    InertVector,
     Logical,
     PlusMinus,
+    Vector,
     as_condition,
     authored_conditionals,
     digit_count,
@@ -223,11 +223,7 @@ def _transform(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic
         return expression
     if isinstance(expression, (Assign, FunDef)):
         return _definition(expression, context, decide)
-    if isinstance(expression, sp.MatrixBase):
-        return expression.applyfunc(
-            lambda element: _transform(element, context, decide)
-        )
-    if isinstance(expression, (InertVector, Logical)):
+    if isinstance(expression, (Vector, Logical)):
         return expression.func(
             *(_transform(a, context, decide) for a in expression.args)
         )
@@ -250,9 +246,9 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
     With `decide` off (soLve's pipeline), the sides are simplified and the relation left
     for solving.
 
-    Two matrices of the same shape are related element by element, as section 8.5 uses
+    Two vectors of the same length are related element by element, as section 8.5 uses
     to read off a solved system: `[[x], [y], [z]] = A^-1 . b` gives three equations. If
-    the elements decide a matrix (in)equation, the answer is one truth value; see
+    the elements decide a vector (in)equation, the answer is one truth value; see
     `_whole`.
     """
     left = _transform(expression.lhs, context, decide)
@@ -266,9 +262,9 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
 
 
 def _whole(func, spread: sp.Basic, left: sp.Basic, right: sp.Basic) -> sp.Basic:
-    """Decide a matrix equation or inequation from its element-wise relations.
+    """Decide a vector equation or inequation from its element-wise relations.
 
-    Matrices are equal when all element pairs are and different when any pair is, so
+    Vectors are equal when all element pairs are and different when any pair is, so
     `[1, 2] = [1, 3]` is `false` and `[1, 2] /= [1, 3]` is `true`. An undecided
     equation becomes the system of element equations; an undecided inequation stays as
     written, since no single element relation expresses it.
@@ -283,7 +279,7 @@ def _whole(func, spread: sp.Basic, left: sp.Basic, right: sp.Basic) -> sp.Basic:
 
 
 def _elements_of_spread(spread: sp.Basic) -> list[sp.Basic]:
-    if isinstance(spread, InertVector):
+    if isinstance(spread, Vector):
         return [leaf for row in spread.args for leaf in _elements_of_spread(row)]
     return [spread]
 
@@ -291,25 +287,26 @@ def _elements_of_spread(spread: sp.Basic) -> list[sp.Basic]:
 def _spread(
     func, left: sp.Basic, right: sp.Basic, context: Context, decide: bool
 ) -> sp.Basic | None:
-    """A relation between two matrices, applied element by element.
+    """A relation between two vectors, applied element by element.
 
-    Returns None unless both sides are matrices of the same shape. The result keeps
-    that shape, with a single row written flat like any one-row matrix.
+    Returns None unless both sides are nonempty vectors of the same length, of
+    expressions rather than relations or truth values. Elements that are vectors on
+    both sides are related the same way, if they can be, so the result keeps the sides'
+    shape.
     """
-    if not isinstance(left, sp.MatrixBase) or not isinstance(right, sp.MatrixBase):
+    if not isinstance(left, Vector) or not isinstance(right, Vector):
         return None
-    if left.shape != right.shape or not left.rows or not left.cols:
+    if len(left.args) != len(right.args) or not left.args:
         return None
-    rows = [
-        InertVector(
-            *(
-                _stated(func, left[row, col], right[row, col], context, decide)
-                for col in range(left.cols)
-            )
+    if not all(isinstance(e, sp.Expr) for e in (*left.args, *right.args)):
+        return None
+    related = []
+    for one, other in zip(left.args, right.args, strict=True):
+        spread = _spread(func, one, other, context, decide)
+        related.append(
+            _stated(func, one, other, context, decide) if spread is None else spread
         )
-        for row in range(left.rows)
-    ]
-    return rows[0] if left.rows == 1 else InertVector(*rows)
+    return Vector(*related)
 
 
 def _stated(
@@ -351,13 +348,15 @@ def _equated(relation: Relational, context: Context) -> bool | None:
     equal, a nonzero real means not. A non-real difference decides nothing, as in the
     original: `#i = 1` and `2*#i = #i` both stand.
 
-    Matrices of mismatched shapes have no difference, so the written values are
-    compared: `[1, 2] = [1, 2, 3]` is false, while `[x, y] = [1, 2, 3]` stands.
+    Vectors of mismatched shapes, or a vector and a scalar, have no difference. Here
+    they are different values once they hold no variables: `[1, 2] = [1, 2, 3]` is
+    false, while `[x, y] = [1, 2, 3]` stands.
     """
-    if any(isinstance(side, sp.MatrixBase) for side in relation.args):
+    if any(isinstance(side, Vector) for side in relation.args):
         if relation.free_symbols:
             return None
-        return _decide(relation, context)
+        same = relation.lhs == relation.rhs
+        return same is isinstance(relation, sp.Equality)
     same = _one_value(relation, context)
     if same is None:
         return None
@@ -890,10 +889,10 @@ def _summation(head: sp.Sum) -> sp.Basic:
     if _counted(head):
         return value
     value = _over_the_counts(head, value)
-    if isinstance(value, sp.MatrixBase):
+    if isinstance(value, Vector):
         # Each element of a vector sum is its own closed form: `SUM([k, k^2], k, 0, n)`
         # is a vector of the two factored formulas.
-        entries = attempt(value, lambda m: m.applyfunc(_factored))
+        entries = attempt(value, lambda v: v.func(*map(_factored, v.args)))
         return value if entries is None else entries
     return _factored(value)
 
@@ -1633,9 +1632,7 @@ def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic | None
             return None
         real = domain == "Real"
     answers = solutions(target, context, variables, bounds, divisors, real)
-    if not answers:
-        return sp.Matrix(0, 0, [])
-    return InertVector(*answers)
+    return Vector(*answers)
 
 
 #: The variable the rate is solved for. It can't collide with anything, since the
@@ -1685,12 +1682,9 @@ def _solved_for(argument: sp.Basic) -> tuple[str, ...]:
     """The variables a `SOLVE` head names: one, or a vector of them."""
     if isinstance(argument, sp.Symbol):
         return (argument.name,)
-    if isinstance(argument, sp.MatrixBase):
-        elements = list(argument)
-    elif isinstance(argument, InertVector):
-        elements = list(argument.args)
-    else:
+    if not isinstance(argument, Vector):
         return ()
+    elements = list(argument.args)
     return tuple(e.name for e in elements if isinstance(e, sp.Symbol))
 
 
@@ -3866,7 +3860,7 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     Works on the vocabulary `_by_definition` produces, and runs before the normal form,
     which tidies up the sums the rules leave.
     """
-    if expression.has(sp.MatrixExpr):
+    if expression.has(sp.MatrixExpr, Vector):
         return forced(expression, _distributed)
     # Before the definitions, which turn its hyperbolic leftovers into exponentials.
     expression = forced(expression, _complex_constants)
@@ -3959,7 +3953,7 @@ def _spelled(expression: sp.Basic, context: Context) -> sp.Basic:
     Running last means nothing rewrites them afterwards. Each is the form Derive prints,
     shorter or not: `1/COS(x)^2` is `TAN(x)^2 + 1`, and `LN(256)` is `8*LN(2)`.
     """
-    if expression.has(sp.MatrixExpr):
+    if expression.has(sp.MatrixExpr, Vector):
         return expression
     return _applied(expression, _SPELLINGS, context)
 

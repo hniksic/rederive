@@ -62,14 +62,18 @@ from rederive.engine.to_sympy import (
     Assign,
     Converter,
     FunDef,
-    InertVector,
+    Vector,
+    added,
     as_condition,
     chosen_from,
     digit_count,
+    divided,
     is_conditional,
     iterated,
+    multiplied,
+    negated,
+    settled,
     steps,
-    vector_of,
 )
 from rederive.model.expr import Kind, Node
 from rederive.syntax import ParseState
@@ -329,23 +333,6 @@ class _Evaluator(Converter):
         deeper = replace(self.env, bindings={}, labels=self.env.labels | {number})
         return self.within(deeper).convert(target)
 
-    def _vector(self, node: Node) -> sp.Basic:
-        """A vector, whose elements may be names whose values are vectors.
-
-        `[w]` for vector `w` is a one-row matrix, just like `[[2, 3, 4]]`. VECTOR.MTH's
-        `OUTER(v, w) := VECTOR([v SUB n_], n_, DIMENSION(v)) . [w]` relies on this.
-        """
-        if not node.children:
-            return sp.Matrix(0, 0, [])
-        elements = self._children(node)
-        if any(
-            child.kind in (Kind.NAME, Kind.LABEL)
-            and isinstance(element, (sp.MatrixBase, InertVector))
-            for child, element in zip(node.children, elements, strict=True)
-        ):
-            return vector_of(elements)
-        return self.vector_over(node.children, elements)
-
     # -- definitions --------------------------------------------------------
 
     def performs(self) -> bool:
@@ -543,11 +530,13 @@ class _Evaluator(Converter):
                 return made
             standing = set()
             for value in values:
-                if isinstance(value, sp.Basic | sp.MatrixBase):
+                if isinstance(value, sp.Basic):
                     standing |= value.atoms(*CALCULUS_HEADS)
         except Exception:
             return made
-        return _worked_out(made, standing, work_out)
+        # Sympy computes with a vector as if it were a scalar, so its answer may need
+        # the vector arithmetic done: an antidifference of a vector is `x` times it.
+        return settled(_worked_out(made, standing, work_out))
 
     def _entered(
         self,
@@ -745,7 +734,7 @@ class _Evaluator(Converter):
         """
 
         def at(*values: sp.Basic) -> sp.Basic:
-            variables = list(index) if isinstance(index, sp.MatrixBase) else [index]
+            variables = list(index.args) if isinstance(index, Vector) else [index]
             written = dict(zip(variables, values, strict=True))
             return self.within(_at(inner, written)).convert(body)
 
@@ -767,7 +756,7 @@ class _Evaluator(Converter):
             if name in ("SUM", "PRODUCT"):
                 return _total(name, limits, at, self.context)
             if name == "VECTOR":
-                return vector_of([at(value) for value in steps(limits)])
+                return Vector(*(at(value) for value in steps(limits)))
             return chosen_from(steps(limits), lambda value: _value_of(at(value)))
         except Exception:
             return None
@@ -793,7 +782,7 @@ class _Evaluator(Converter):
             values.append(value)
             names |= named
             shadowed |= hidden
-        return vector_of(values), names, shadowed
+        return Vector(*values), names, shadowed
 
     # -- IF -----------------------------------------------------------------
 
@@ -950,7 +939,7 @@ def _over(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> sp.Basic:
     try:
         if not any(symbol in value.free_symbols for symbol in written):
             return value
-        return value.subs(written, simultaneous=True)
+        return settled(value.subs(written, simultaneous=True))
     except Exception:
         return value
 
@@ -979,7 +968,7 @@ def _total(
     over.
     """
     backwards = False
-    if len(limits) == 1 and isinstance(limits[0], sp.MatrixBase):
+    if len(limits) == 1 and isinstance(limits[0], Vector):
         values = steps(limits)
     elif len(limits) in (1, 2):
         run = _run_of(*limits) if len(limits) == 2 else _run_of(sp.Integer(1), *limits)
@@ -991,7 +980,11 @@ def _total(
     terms = [at(value) for value in values]
     if not all(isinstance(term, sp.Expr) for term in terms):
         return None
-    combine = sp.Add if name == "SUM" else sp.Mul
+    def combine(*parts: sp.Basic) -> sp.Basic:
+        if name == "SUM":
+            return added(list(parts))
+        return multiplied(list(parts)) if parts else sp.Integer(1)
+
     if context.precision is Precision.APPROXIMATE:
         total = combine()
         for term in terms:
@@ -999,8 +992,8 @@ def _total(
     else:
         total = combine(*terms)
     if name == "SUM":
-        return -total if backwards else total
-    return 1 / total if backwards else total
+        return negated(total) if backwards else total
+    return divided(sp.Integer(1), total) if backwards else total
 
 
 def _run_of(low: sp.Basic, high: sp.Basic) -> tuple[list[sp.Basic], bool] | None:
@@ -1130,15 +1123,16 @@ def released(value: sp.Basic) -> sp.Basic:
 
     A suspended conditional is shown as originally written, with its variables'
     current values substituted, so an untouched one prints as the author typed it. A
-    command's answer is shown in the command's form.
+    command's answer is shown in the command's form. One that is a vector takes part
+    in the arithmetic around it only now: `2*SOLVE(x = 1, x)` is `[2*x = 2]`.
     """
     try:
         if not value.atoms(Suspended, Commanded):
-            return value
+            return settled(value)
     except Exception:
         return value
     try:
-        return _released(value)
+        return settled(_released(value))
     except Exception:
         pass
     # Rebuilding the parents of what was released can fail where the display is
@@ -1213,11 +1207,7 @@ def _names_in(value: sp.Basic) -> frozenset[str] | None:
     """The variables a supplied argument names, or None if it isn't names."""
     if type(value) is sp.Symbol:
         return frozenset({value.name})
-    elements: list = []
-    if isinstance(value, sp.MatrixBase) and value.rows == 1 and value.cols:
-        elements = list(value)
-    elif isinstance(value, InertVector) and value.args:
-        elements = list(value.args)
+    elements = list(value.args) if isinstance(value, Vector) else []
     if not elements or any(type(element) is not sp.Symbol for element in elements):
         return None
     return frozenset(element.name for element in elements)

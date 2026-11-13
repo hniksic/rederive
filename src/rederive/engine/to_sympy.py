@@ -41,6 +41,15 @@ from rederive.engine.context import (
 )
 from rederive.engine.integration import integral
 from rederive.engine.ordering import main_order
+from rederive.engine.vectors import (
+    Vector,
+    column,
+    from_matrix,
+    is_matrix,
+    mapped,
+    matrix_of,
+    transposed,
+)
 from rederive.model.expr import Kind, Node
 from rederive.syntax.names import BINDING_FUNCTIONS, PRIME_MARK
 from rederive.syntax.writer import write_expression
@@ -58,7 +67,6 @@ __all__ = [
     "Added",
     "Dot",
     "FunDef",
-    "InertVector",
     "Logical",
     "MovingLimit",
     "PlusMinus",
@@ -68,14 +76,21 @@ __all__ = [
     "Subscript",
     "Taylor",
     "Transposed",
+    "Vector",
+    "added",
     "as_condition",
     "authored_conditionals",
     "chosen_from",
+    "divided",
+    "dotted",
     "is_conditional",
     "iterated",
+    "multiplied",
+    "negated",
+    "power",
+    "settled",
     "steps",
     "to_sympy",
-    "vector_of",
 ]
 
 #: Heads left for a command to evaluate: the in-expression forms of Factor, Expand and
@@ -219,10 +234,6 @@ class Truth(sp.Function):
     """
 
     nargs = 1
-
-
-class InertVector(sp.Function):
-    """A vector sympy can't hold as a matrix, typically a ragged one."""
 
 
 class Logical(sp.Function):
@@ -770,52 +781,21 @@ class Converter:
         """A sequence of terms, with one operator between each pair."""
         operators = str(node.value)
 
-        def added(terms: list[sp.Basic]) -> sp.Basic:
-            signed = [terms[0]]
+        def signed(terms: list[sp.Basic]) -> sp.Basic:
+            signs = [terms[0]]
             for index, term in enumerate(terms[1:]):
-                signed.append(-term if operators[index] == "-" else term)
-            if len(_added_terms(signed)) > len(signed):
-                return _unconformable_sum(signed)
-            try:
-                return sp.Add(*signed)
-            except sp.ShapeError:
-                return _unconformable_sum(signed)
+                signs.append(negated(term) if operators[index] == "-" else term)
+            return added(signs)
 
         terms = self._operands(node)
-        mapped = self.over_equations(added, terms)
-        return added(terms) if mapped is None else mapped
+        mapped = self.over_equations(signed, terms)
+        return signed(terms) if mapped is None else mapped
 
     def _product(self, node: Node) -> sp.Basic:
-        """A sequence of factors.
-
-        Multiplying two vectors means the dot product when the shapes allow nothing
-        else, so a product sympy refuses is folded factor by factor.
-
-        A product containing a declared nonscalar is folded that way from the start,
-        since section 8.4 makes `a*b` the matrix product for matrices, built in `_dot`.
-        """
+        """A sequence of factors; see `multiplied`."""
         factors = self._operands(node)
-        mapped = self.over_equations(self._multiplied, factors)
-        return self._multiplied(factors) if mapped is None else mapped
-
-    def _multiplied(self, factors: list[sp.Basic]) -> sp.Basic:
-        if not any(_symbolic_matrix(factor) for factor in factors):
-            try:
-                return sp.Mul(*factors)
-            except Exception:
-                pass
-        result = factors[0]
-        for factor in factors[1:]:
-            result = self._times(result, factor)
-        return result
-
-    def _times(self, left: sp.Basic, right: sp.Basic) -> sp.Basic:
-        if _symbolic_matrix(left) or _symbolic_matrix(right):
-            return self._dot(left, right)
-        try:
-            return left * right
-        except Exception:
-            return self._dot(left, right)
+        mapped = self.over_equations(multiplied, factors)
+        return multiplied(factors) if mapped is None else mapped
 
     def _binop(self, node: Node) -> sp.Basic:
         operands = self._operands(node)
@@ -830,65 +810,10 @@ class Converter:
     def _operated(self, operator: str, left: sp.Basic, right: sp.Basic) -> sp.Basic:
         match operator:
             case "/":
-                # Dividing by a matrix means multiplying by its inverse; sympy refuses
-                # the division itself.
-                if _symbolic_matrix(right):
-                    return self._times(left, _matrix_power(right, sp.Integer(-1)))
-                if isinstance(right, sp.MatrixBase):
-                    if not right.is_square:
-                        return Quotient(left, right)
-                    return self._times(left, self._operated("^", right, sp.Integer(-1)))
-                try:
-                    return left / right
-                except Exception:
-                    return sp.Mul(left, sp.Pow(right, -1, evaluate=False))
+                return divided(left, right)
             case "^":
-                if _explodes(left, right):
-                    return Power(left, right)
-                if _symbolic_matrix(left):
-                    return _matrix_power(left, right)
-                if isinstance(left, sp.MatrixBase) and not left.is_square:
-                    # Only square matrices have powers; a vector's power isn't
-                    # elementwise either, so it stands.
-                    return Power(left, right)
-                try:
-                    return left**right
-                except Exception:
-                    # An explicit matrix power sympy refuses is a singular matrix's
-                    # inverse. Use the same unevaluated head as for symbolic matrices,
-                    # which prints as `u^-1`.
-                    if isinstance(left, sp.MatrixBase):
-                        return sp.MatPow(left, right)
-                    return sp.Pow(left, right, evaluate=False)
-        return self._dot(left, right)
-
-    def _dot(self, left: sp.Basic, right: sp.Basic) -> sp.Basic:
-        """`u . v`: the matrix product, with the dot product as a special case.
-
-        Two flat vectors give a number (`[2, 3] . [4, 5]`), not a 1x1 matrix. Otherwise
-        `n` by `m` times `m` by `p` is the matrix product, and nonconforming shapes keep
-        the operator unevaluated.
-
-        A flat vector right of a matrix is treated as a column, and the result is flat
-        again: each row dotted with the vector. An explicit column like `[[2], [3]]` is
-        a matrix and keeps its shape.
-
-        Declared nonscalars are matrices with unknown elements, so their product is
-        symbolic, which sympy rewrites by the rules of section 8.8.
-        """
-        if _symbolic_matrix(left) or _symbolic_matrix(right):
-            return _symbolic_product(left, right)
-        if isinstance(left, sp.MatrixBase) and isinstance(right, sp.MatrixBase):
-            try:
-                if left.rows == 1 and right.rows == 1:
-                    return left.dot(right)
-                if left.cols == right.rows:
-                    return left * right
-                if right.rows == 1 and left.cols == right.cols:
-                    return (left * right.T).T
-            except Exception:
-                pass
-        return Dot(left, right)
+                return power(left, right)
+        return dotted(left, right)
 
     def _unop(self, node: Node) -> sp.Basic:
         operator = str(node.value)
@@ -903,7 +828,7 @@ class Converter:
     def _prefixed(self, operator: str, operand: sp.Basic) -> sp.Basic:
         match operator:
             case "-":
-                return -operand
+                return negated(operand)
             case "+-":
                 # `±inf` is unsigned infinity, which is how the printer writes `zoo`.
                 if operand in (sp.oo, -sp.oo):
@@ -915,8 +840,9 @@ class Converter:
         """`u!`, `u%` and ``u` ``.
 
         Per section 8.5, the transpose of a scalar is the scalar, so ``x` `` is `x`
-        unless `x` is declared nonscalar. Matrices are transposed by sympy. Anything
-        else, such as an inert head or a relation, keeps the operator.
+        unless `x` is declared nonscalar. A vector is transposed as `transposed` says;
+        one without a transpose keeps the operator, as does anything else that isn't a
+        scalar, such as an inert head or a relation.
         """
         operand = self.convert(node.children[0])
         match str(node.value):
@@ -924,8 +850,9 @@ class Converter:
                 return sp.factorial(operand)
             case "%":
                 return operand / 100
-        if isinstance(operand, sp.MatrixBase):
-            return operand.T
+        if isinstance(operand, Vector):
+            flipped = transposed(operand)
+            return Transposed(operand) if flipped is None else flipped
         if _symbolic_matrix(operand):
             return sp.Transpose(operand).doit()
         collapsed = _transposed_scalar(operand)
@@ -934,16 +861,15 @@ class Converter:
     def _sub(self, node: Node) -> sp.Basic:
         """Element access on a vector, or a subscripted variable otherwise.
 
-        A vector is either a matrix or an inert vector (for anything deeper). Both are
-        indexable, so `SUB` chains across dimensions: `q SUB 2 SUB 1 SUB 2` reads a
-        number from a vector of matrices. A non-vector base gives a subscripted name
-        like `x SUB 1`.
+        Elements may be vectors in turn, so `SUB` chains across dimensions:
+        `q SUB 2 SUB 1 SUB 2` reads a number from a vector of matrices. A non-vector
+        base gives a subscripted name like `x SUB 1`.
 
         A vector index reaches through several dimensions: `m SUB [2, 3]` is
         `m SUB 2 SUB 3`.
         """
         base, index = (self.operand(child) for child in self._children(node))
-        if not isinstance(base, (sp.MatrixBase, InertVector)):
+        if not isinstance(base, Vector):
             return self._subscript(node.children[0], base, index)
         element = _at(base, index)
         if element is None:
@@ -978,41 +904,8 @@ class Converter:
         return applied ** self.convert(exponent)
 
     def _vector(self, node: Node) -> sp.Basic:
-        """A vector of rows is a matrix; a flat vector is a row.
-
-        Matrices have only two dimensions, so a vector of matrices stays a vector.
-        Stacking `[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]` would merge it into a 2x4 and
-        lose a dimension.
-
-        Ragged or mixed vectors stay inert.
-        """
-        if not node.children:
-            return sp.Matrix(0, 0, [])
-        return self.vector_over(node.children, self._children(node))
-
-    def vector_over(self, rows: Sequence[Node], elements: list[sp.Basic]) -> sp.Basic:
-        """The vector for `rows`, built from their converted values."""
-        if all(row.kind is Kind.VECTOR for row in rows):
-            widths = {len(row.children) for row in rows}
-            if (
-                len(widths) == 1
-                and widths != {0}
-                and _all_matrices(elements)
-                and all(element.rows == 1 for element in elements)
-            ):
-                try:
-                    return sp.Matrix([list(row) for row in elements])
-                except Exception:
-                    return InertVector(*elements)
-        if any(row.kind is Kind.VECTOR for row in rows):
-            return InertVector(*elements)
-        # A vector of relations or booleans is just a container, not a matrix.
-        if not all(isinstance(element, sp.Expr) for element in elements):
-            return InertVector(*elements)
-        try:
-            return sp.Matrix(1, len(elements), elements)
-        except Exception:
-            return InertVector(*elements)
+        """The vector of the elements' values, whatever they are (see `vectors`)."""
+        return Vector(*self._children(node))
 
     def _relation(self, node: Node) -> sp.Basic:
         """A relation, built unevaluated; conversion never decides one.
@@ -1075,10 +968,7 @@ class Converter:
         """
         if not self.parameters:
             return False
-        if isinstance(variable, (sp.MatrixBase, InertVector)):
-            variables = list(variable)
-        else:
-            variables = [variable]
+        variables = list(variable.args) if isinstance(variable, Vector) else [variable]
         return any(
             getattr(each, "name", "").split(" SUB ")[0] in self.parameters
             for each in variables
@@ -1207,12 +1097,21 @@ def _symbolic_product(left: sp.Basic, right: sp.Basic) -> sp.Basic:
     Unlike Derive, sympy cancels a matrix against its inverse. The original returns
     `a . a^-1` unchanged, since an identity of unknown dimension can't be written. So
     where factors would cancel, the product is built unevaluated.
+
+    An explicit matrix takes part as a sympy matrix. Anything else that is a vector,
+    such as a flat one, has no place in a product of matrices, which sympy would treat
+    as a scalar, so the operator stays.
     """
-    factors = [*_matrix_factors(left), *_matrix_factors(right)]
+    operands = [
+        matrix_of(side) if isinstance(side, Vector) else side for side in (left, right)
+    ]
+    if any(operand is None for operand in operands):
+        return Dot(left, right)
+    factors = [*_matrix_factors(operands[0]), *_matrix_factors(operands[1])]
     try:
         if _cancelling(factors):
             return sp.MatMul(*factors)
-        return left * right
+        return operands[0] * operands[1]
     except Exception:
         return Dot(left, right)
 
@@ -1260,42 +1159,288 @@ def _truth_value(operand: sp.Basic) -> bool:
     )
 
 
-def _unconformable_sum(terms: list[sp.Basic]) -> sp.Basic:
-    """The sum of `terms` where some are matrices of different shapes.
+# -- vector arithmetic --------------------------------------------------------
+#
+# To sympy a `Vector` is an opaque scalar, so arithmetic on vectors is done here (see
+# `vectors`). Each function returns a settled value, in which no sum, product or power
+# has a vector operand, except one that has no value: an unconformable sum such as
+# `[1, 2] + 2`, or a product or power that stays as written.
 
-    Matrices of each shape are added together, as are the scalars, and the resulting
-    terms are kept in order of first appearance.
+
+def added(terms: list[sp.Basic]) -> sp.Basic:
+    """The sum of `terms`, vectors of one length added element by element.
+
+    As in Derive, only the lengths matter, so the elements' sums follow the same rule:
+    `[[1, 2], [3, 4]] + [1, 2]` is `[[1, 2] + 1, [3, 4] + 2]`. The scalars are added
+    together too. Vectors of different lengths, or a vector and a scalar, have no sum,
+    so a term is kept for each length and one for the scalars: `[1, 2] + 2` stays, as
+    in Derive, and so does `[1, 2] + [1, 2, 3]`. With more than one vector term, they
+    are kept in order of first appearance, after the scalars.
     """
+    terms = _added_terms(terms)
+    if not any(isinstance(term, Vector) for term in terms):
+        return _scalar_sum(terms)
     scalars: list[sp.Basic] = []
-    shapes: dict[tuple[int, int], list[sp.Basic]] = {}
-    for term in _added_terms(terms):
-        if isinstance(term, sp.MatrixBase):
-            shapes.setdefault(term.shape, []).append(term)
+    lengths: dict[int, list[Vector]] = {}
+    for term in terms:
+        if isinstance(term, Vector):
+            lengths.setdefault(len(term.args), []).append(term)
         else:
             scalars.append(term)
-    added = [sp.Add(*group) for group in shapes.values()]
-    if len(added) < 2:
-        return sp.Add(*scalars, *added)
-    scalar = sp.Add(*scalars)
-    return Added(*added) if scalar == 0 else Added(scalar, *added)
+    sums = [_summed(vectors) for vectors in lengths.values()]
+    scalar = _scalar_sum(scalars)
+    if len(sums) == 1:
+        return sums[0] if scalar == 0 else sp.Add(scalar, sums[0])
+    return Added(*sums) if scalar == 0 else Added(scalar, *sums)
+
+
+def _scalar_sum(terms: list[sp.Basic]) -> sp.Basic:
+    """The sum of terms none of which is a vector, such as two vectors' elements."""
+    on_sides = _on_sides(_scalar_sum, terms)
+    if on_sides is not None:
+        return on_sides
+    return sp.Add(*(_arithmetic(term) for term in terms))
+
+
+def _summed(vectors: list[Vector]) -> Vector:
+    """The element-wise sum of vectors of one length."""
+    if len(vectors) == 1:
+        return vectors[0]
+    columns = zip(*(vector.args for vector in vectors), strict=True)
+    return Vector(*(added(list(column)) for column in columns))
 
 
 def _added_terms(terms: list[sp.Basic]) -> list[sp.Basic]:
-    """`terms` with the terms of any nested unconformable sum spliced in."""
+    """`terms` with the terms of any nested sum of a vector spliced in.
+
+    That is an unconformable sum, a number times one, and a vector plus a scalar.
+    """
     spliced = []
     for term in terms:
-        if isinstance(term, Added):
-            spliced.extend(term.args)
+        if isinstance(term, Added) or _vectorial(term):
+            spliced.extend(_added_terms(list(term.args)))
         elif (
             isinstance(term, sp.Mul)
             and len(term.args) == 2
             and term.args[0].is_Number
             and isinstance(term.args[1], Added)
         ):
-            spliced.extend(term.args[0] * part for part in term.args[1].args)
+            spliced.extend(
+                _times(term.args[0], part) for part in _added_terms([term.args[1]])
+            )
         else:
             spliced.append(term)
     return spliced
+
+
+def _vectorial(value: sp.Basic) -> bool:
+    """Whether `value` is the sum of a vector and a scalar, such as `[1, 2] + 2`."""
+    return isinstance(value, sp.Add) and any(
+        isinstance(term, Vector) for term in value.args
+    )
+
+
+def negated(value: sp.Basic) -> sp.Basic:
+    """`-value`, element by element for a vector."""
+    return _times(sp.S.NegativeOne, value)
+
+
+def multiplied(factors: list[sp.Basic]) -> sp.Basic:
+    """The product of `factors`.
+
+    A scalar times a vector multiplies each element. Two vectors multiply as `u . v`
+    (`dotted`), which is their dot product or the matrix product, so `*` and `.` are
+    the same between vectors. The factors are taken from the left, keeping a product
+    of matrices in order.
+
+    A product containing a declared nonscalar is taken the same way, since section 8.4
+    makes `a*b` the matrix product for matrices.
+    """
+    if not any(
+        isinstance(factor, Vector) or _vectorial(factor) or _symbolic_matrix(factor)
+        for factor in factors
+    ):
+        try:
+            return sp.Mul(*factors)
+        except Exception:
+            pass
+    result = factors[0]
+    for factor in factors[1:]:
+        result = _times(result, factor)
+    return result
+
+
+def _times(left: sp.Basic, right: sp.Basic) -> sp.Basic:
+    if _symbolic_matrix(left) or _symbolic_matrix(right):
+        return dotted(left, right)
+    if isinstance(left, Vector) and isinstance(right, Vector):
+        return dotted(left, right)
+    if isinstance(left, Vector):
+        return mapped(left, lambda element: _times(element, right))
+    if isinstance(right, Vector):
+        return mapped(right, lambda element: _times(left, element))
+    if _vectorial(left) or _vectorial(right):
+        # A number distributes over the sum, as sympy distributes it over any sum;
+        # anything else multiplies it as a whole.
+        number, total = (left, right) if _vectorial(right) else (right, left)
+        if number.is_Number:
+            return added([_times(number, term) for term in total.args])
+        return sp.Mul(left, right)
+    on_sides = _on_sides(lambda sides: _times(*sides), [left, right])
+    if on_sides is not None:
+        return on_sides
+    left, right = _arithmetic(left), _arithmetic(right)
+    try:
+        return left * right
+    except Exception:
+        return dotted(left, right)
+
+
+def _on_sides(
+    build: Callable[[list[sp.Basic]], sp.Basic], operands: list[sp.Basic]
+) -> sp.Basic | None:
+    """`build` applied to both sides of whichever `operands` are equations.
+
+    The arithmetic of vector elements, which `Converter.over_equations` does for
+    operands: `x*[y = 1]` is `[x*y = x]`. None if no operand is an equation.
+    """
+    if not any(isinstance(operand, sp.Equality) for operand in operands):
+        return None
+    sides = [
+        [
+            operand.args[index] if isinstance(operand, sp.Equality) else operand
+            for operand in operands
+        ]
+        for index in (0, 1)
+    ]
+    return sp.Eq(build(sides[0]), build(sides[1]), evaluate=False)
+
+
+def _arithmetic(operand: sp.Basic) -> sp.Basic:
+    """`operand` as an arithmetic operand: a truth value is wrapped in `Truth`."""
+    return Truth(operand) if _truth_value(operand) else operand
+
+
+def dotted(left: sp.Basic, right: sp.Basic) -> sp.Basic:
+    """`u . v`: the dot product of vectors, of which the matrix product is a case.
+
+    A vector of non-vectors times a vector of the same length is the sum of the
+    products of their elements, `u1*v1 + u2*v2 + ...`: `[2, 3] . [4, 5]` is 23. The
+    elements of `v` may be vectors, so a vector times a matrix combines its rows:
+    `[2, 3] . [[a, b], [c, d]]` is `[2*a + 3*c, 2*b + 3*d]`. A vector of vectors, a
+    matrix, gives the vector of its rows' products with `v`, so a matrix times a vector
+    takes the vector as a column, `[[a, b], [c, d]] . [2, 3]` being
+    `[2*a + 3*b, 2*c + 3*d]`, and the product of two matrices is the matrix product.
+    The shapes decide everything: `[[1], [2]] . [[3, 4]]` is the outer product
+    `[[3, 4], [6, 8]]`, and the one-row `[[1, 2]] . [3, 4]` is `[11]`.
+
+    Lengths that don't match keep the operator unevaluated, as does a vector with some
+    elements vectors and others not.
+
+    Declared nonscalars are matrices with unknown elements, so their product is
+    symbolic, which sympy rewrites by the rules of section 8.8.
+    """
+    if _symbolic_matrix(left) or _symbolic_matrix(right):
+        return _symbolic_product(left, right)
+    if isinstance(left, Vector) and isinstance(right, Vector):
+        product = _vector_product(left, right)
+        if product is not None:
+            return product
+    return Dot(left, right)
+
+
+def _vector_product(left: Vector, right: Vector) -> sp.Basic | None:
+    """`left . right` as described in `dotted`, or None if the shapes don't conform."""
+    rows = [isinstance(element, Vector) for element in left.args]
+    if left.args and all(rows):
+        products = [_vector_product(row, right) for row in left.args]
+        if any(product is None for product in products):
+            return None
+        return Vector(*products)
+    if any(rows) or len(left.args) != len(right.args):
+        return None
+    total = added(
+        [_times(u, v) for u, v in zip(left.args, right.args, strict=True)]
+    )
+    return None if isinstance(total, Added) or _vectorial(total) else total
+
+
+def divided(left: sp.Basic, right: sp.Basic) -> sp.Basic:
+    """`u/v`.
+
+    Dividing by a matrix means multiplying by its inverse, which only a square matrix
+    has; another vector keeps the quotient. A vector divided by a scalar is divided
+    element by element.
+    """
+    if _symbolic_matrix(right):
+        return _times(left, _matrix_power(right, sp.Integer(-1)))
+    if isinstance(right, Vector):
+        matrix = matrix_of(right)
+        if matrix is None or not matrix.is_square:
+            return Quotient(left, right)
+        return _times(left, power(right, sp.Integer(-1)))
+    if isinstance(left, Vector) or _vectorial(left):
+        return _times(left, power(right, sp.Integer(-1)))
+    try:
+        return left / right
+    except Exception:
+        return sp.Mul(left, sp.Pow(right, -1, evaluate=False))
+
+
+def power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
+    """`u^v`, where for a square matrix that is the matrix power.
+
+    `[[1, 1], [0, 1]]^n` is `[[1, n], [0, 1]]`, and `^-1` is the inverse. A singular
+    matrix's inverse is kept in the head used for symbolic matrices, which prints as
+    `u^-1`. Only square matrices have powers, and a vector's power isn't elementwise
+    either, so any other vector's power stands.
+    """
+    if _explodes(base, exponent):
+        return Power(base, exponent)
+    if _symbolic_matrix(base):
+        return _matrix_power(base, exponent)
+    if isinstance(base, Vector):
+        matrix = matrix_of(base)
+        if matrix is None or not matrix.is_square:
+            return Power(base, exponent)
+        try:
+            raised = matrix**exponent
+        except Exception:
+            return sp.MatPow(matrix, exponent)
+        return from_matrix(raised) if isinstance(raised, sp.MatrixBase) else raised
+    try:
+        return base**exponent
+    except Exception:
+        return sp.Pow(base, exponent, evaluate=False)
+
+
+def settled(value: sp.Basic) -> sp.Basic:
+    """`value` with any vector arithmetic left undone by substitution done.
+
+    Substituting a vector for a variable leaves it an operand of sympy's sum, product
+    or power, which treats it as a scalar: `(x*y).subs(x, [1, 2])` is a product of `y`
+    and a vector rather than `[y, 2*y]`. This redoes such operations as the converter
+    does, innermost first. A product of two vectors may have been reordered by sympy
+    already, which matters for matrices; evaluation avoids the question by
+    evaluating a body at each value instead of substituting into it.
+    """
+    if not isinstance(value, sp.Basic) or not value.has(Vector):
+        return value
+    args = [settled(argument) for argument in value.args]
+    if isinstance(value, sp.Add):
+        return added(args)
+    if isinstance(value, sp.Mul):
+        return multiplied(args)
+    if isinstance(value, sp.Pow):
+        return power(*args)
+    if args == list(value.args):
+        return value
+    try:
+        if isinstance(value, Relational):
+            return value.func(*args, evaluate=False)
+        return value.func(*args)
+    except Exception:
+        return value
 
 
 def _matrix_factors(value: sp.Basic) -> list[sp.Basic]:
@@ -1306,9 +1451,9 @@ def _matrix_factors(value: sp.Basic) -> list[sp.Basic]:
 def _symbolic_matrix(value: sp.Basic) -> bool:
     """Whether `value` is a symbolic matrix rather than one with explicit elements.
 
-    An explicit matrix is a `MatrixBase` (and, when immutable, also a `MatrixExpr`), and
-    is computed with directly. Symbolic ones are declared nonscalars and expressions
-    built from them.
+    Symbolic ones are declared nonscalars and expressions built from them. An explicit
+    matrix is a `Vector`, but becomes a sympy `MatrixBase` (when immutable, also a
+    `MatrixExpr`) inside a product with a symbolic one.
     """
     return isinstance(value, sp.MatrixExpr) and not isinstance(value, sp.MatrixBase)
 
@@ -1359,20 +1504,6 @@ def _nameable(value: sp.Basic) -> bool:
     if type(value) is sp.Symbol:
         return True
     return isinstance(value, sp.Integer) and value >= 0
-
-
-def _all_matrices(elements: list) -> bool:
-    return all(isinstance(element, sp.MatrixBase) for element in elements)
-
-
-def _element(matrix: sp.MatrixBase, index: sp.Basic) -> sp.Basic | None:
-    """`v SUB n`, counting from 1, or None if `n` isn't a valid index."""
-    if not isinstance(index, sp.Integer) or index < 1:
-        return None
-    number = int(index)
-    if matrix.rows == 1:
-        return matrix[0, number - 1] if number <= matrix.cols else None
-    return matrix[number - 1, :] if number <= matrix.rows else None
 
 
 # -- the function table -----------------------------------------------------
@@ -1604,8 +1735,13 @@ def _sign(conv: Converter, args: list) -> sp.Basic:
     Section 6.8 defines the sign of a complex number as `z/|z|`, so `SIGN(3 + 4*#i)` is
     `3/5 + 4*#i/5`. Sympy only does this for pure imaginaries, so other complex numbers
     are divided by their magnitude here. Symbolic arguments stay unevaluated.
+
+    A vector's sign is the unit vector in its direction, the vector divided by its
+    magnitude (`ABS`): `SIGN([3, 4])` is `[3/5, 4/5]`.
     """
     value = _one(args)
+    if isinstance(value, Vector):
+        return divided(value, _absolute(conv, [value]))
     if value.is_zero:
         return PlusMinus(sp.Integer(1))
     if value.is_number and value.is_extended_real is False:
@@ -1840,9 +1976,9 @@ def _absolute(conv: Converter, args: list) -> sp.Basic:
     value = _one(args)
     if _symbolic_matrix(value):
         raise TypeError("not a scalar")
-    if not isinstance(value, sp.MatrixBase):
+    if not isinstance(value, Vector):
         return sp.Abs(value)
-    squares = [_absolute(conv, [element]) ** 2 for element in _elements_of(value)]
+    squares = [_absolute(conv, [element]) ** 2 for element in value.args]
     return sp.sqrt(sp.Add(*squares))
 
 
@@ -1853,8 +1989,8 @@ def _floor(conv: Converter, args: list) -> sp.Basic:
     `CONTINUED_FRACTION(u, n) := FLOOR(ITERATES(1/MOD(x_), x_, u, n))` requires.
     """
     numerator, denominator = _with_unit_default(args)
-    if isinstance(numerator, sp.MatrixBase):
-        return numerator.applyfunc(lambda element: sp.floor(element / denominator))
+    if isinstance(numerator, Vector):
+        return mapped(numerator, lambda element: _floor(conv, [element, denominator]))
     return sp.floor(numerator / denominator)
 
 
@@ -1898,11 +2034,10 @@ def _statistic(over: Callable[[list], sp.Basic]) -> Handler:
             (value,) = args
             if isinstance(value, AppliedUndef):
                 raise TypeError("no sample yet")
-            if isinstance(value, sp.MatrixBase):
-                if value.rows > 1:
-                    rows = [list(value[row, :]) for row in range(value.rows)]
-                    return vector_of([over(row) for row in rows])
-                values = list(value)
+            if is_matrix(value):
+                return mapped(value, lambda row: over(list(row.args)))
+            if isinstance(value, Vector):
+                values = list(value.args)
             else:
                 values = args
         else:
@@ -1967,15 +2102,17 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
     width, too few rows, or a rank-deficient design matrix.
     """
     labels, data = args
-    labels = _matrix(labels)
-    if labels.rows != 1 or labels.cols < 2:
+    labels = _elements(labels)
+    if len(labels) < 2:
         raise TypeError("not a label vector")
-    *variables, expression = list(labels)
+    *variables, expression = labels
     if any(type(variable) is not sp.Symbol for variable in variables):
         raise TypeError("not data variables")
     if len(set(variables)) != len(variables):
         raise ValueError("a data variable twice")
-    data = _worked_out(_matrix(data), conv.context)
+    data = matrix_of(_worked_out(data, conv.context))
+    if data is None:
+        raise TypeError("not a data matrix")
     if data.cols != len(variables) + 1:
         raise ValueError("data of the wrong width")
     parameters = sorted(
@@ -2059,11 +2196,11 @@ def _terms(conv: Converter, args: list) -> sp.Basic:
     matrix if they have equal numbers of terms.
     """
     value = _one(args)
-    if isinstance(value, sp.MatrixBase):
-        return vector_of([_terms(conv, [element]) for element in _elements_of(value)])
+    if isinstance(value, Vector):
+        return mapped(value, lambda element: _terms(conv, [element]))
     if not isinstance(value, sp.Expr):
         raise TypeError("no terms")
-    return vector_of(list(value.as_ordered_terms(order="grlex")))
+    return Vector(*value.as_ordered_terms(order="grlex"))
 
 
 def _factors(conv: Converter, args: list) -> sp.Basic:
@@ -2079,12 +2216,12 @@ def _factors(conv: Converter, args: list) -> sp.Basic:
     A vector distributes, each element giving a row, as with `TERMS`.
     """
     value = _one(args)
-    if isinstance(value, sp.MatrixBase):
-        return vector_of([_factors(conv, [element]) for element in _elements_of(value)])
+    if isinstance(value, Vector):
+        return mapped(value, lambda element: _factors(conv, [element]))
     if not isinstance(value, sp.Expr):
         raise TypeError("no factors")
     factors = value.as_ordered_factors() if value.is_Mul else [value]
-    return vector_of(_by_mainness(factors))
+    return Vector(*_by_mainness(factors))
 
 
 def _by_mainness(pieces: list) -> list:
@@ -2120,11 +2257,8 @@ def _side(index: int) -> Handler:
 
     def handler(conv: Converter, args: list) -> sp.Basic:
         value = _one(args)
-        if isinstance(value, sp.MatrixBase):
-            return vector_of([handler(conv, [e]) for e in _elements_of(value)])
-        if isinstance(value, InertVector):
-            # A vector of relations, which sympy can't hold as a matrix.
-            return vector_of([handler(conv, [e]) for e in value.args])
+        if isinstance(value, Vector):
+            return mapped(value, lambda element: handler(conv, [element]))
         if value.is_Relational:
             return value.args[index]
         return value
@@ -2186,7 +2320,7 @@ def _variables(conv: Converter, args: list) -> sp.Basic:
     """
     found = _one(args).free_symbols
     by_name = {symbol.name: symbol for symbol in found if type(symbol) is sp.Symbol}
-    return vector_of([by_name[name] for name in main_order(by_name)])
+    return Vector(*(by_name[name] for name in main_order(by_name)))
 
 
 def _dif(conv: Converter, args: list) -> sp.Basic:
@@ -2199,8 +2333,8 @@ def _dif(conv: Converter, args: list) -> sp.Basic:
     `DIF([1, 1], x)` is `[0, 0]`, where sympy would give the scalar 0.
     """
     _variable(args[1])
-    if isinstance(args[0], sp.MatrixBase):
-        return args[0].applyfunc(lambda element: _dif(conv, [element, *args[1:]]))
+    if isinstance(args[0], Vector):
+        return mapped(args[0], lambda element: _dif(conv, [element, *args[1:]]))
     if len(args) == 2:
         return sp.Derivative(args[0], args[1], evaluate=False)
     expression, variable, order = args
@@ -2222,8 +2356,8 @@ def _integral(conv: Converter, args: list) -> sp.Basic:
     doesn't, since each side has its own constant, so `INT(y = x, x)` stands.
     """
     _variable(args[1])
-    if isinstance(args[0], sp.MatrixBase):
-        return args[0].applyfunc(lambda element: _integral(conv, [element, *args[1:]]))
+    if isinstance(args[0], Vector):
+        return mapped(args[0], lambda element: _integral(conv, [element, *args[1:]]))
     if len(args) == 2:
         if isinstance(args[0], Relational):
             raise TypeError("no antiderivative of an equation")
@@ -2250,7 +2384,7 @@ def _variable(variable: sp.Basic) -> None:
     stays a call until then, as in Derive. Taken in the unevaluated element it would be
     0.
     """
-    if isinstance(variable, (sp.MatrixBase, InertVector)) or _is_element(variable):
+    if isinstance(variable, Vector) or _is_element(variable):
         raise TypeError("not a variable")
 
 
@@ -2268,12 +2402,12 @@ def _over_vector_limits(
     a vector. Two vector limits are refused.
     """
     expression, variable, low, high = args
-    if isinstance(low, sp.MatrixBase) and isinstance(high, sp.MatrixBase):
+    if isinstance(low, Vector) and isinstance(high, Vector):
         raise TypeError("two vectors of limits")
-    if isinstance(low, sp.MatrixBase):
-        return low.applyfunc(lambda end: build(conv, [expression, variable, end, high]))
-    if isinstance(high, sp.MatrixBase):
-        return high.applyfunc(lambda end: build(conv, [expression, variable, low, end]))
+    if isinstance(low, Vector):
+        return mapped(low, lambda end: build(conv, [expression, variable, end, high]))
+    if isinstance(high, Vector):
+        return mapped(high, lambda end: build(conv, [expression, variable, low, end]))
     return None
 
 
@@ -2286,21 +2420,27 @@ def _summation(conv: Converter, args: list) -> sp.Basic:
 
     An indefinite `SUM(u, k)` is the antidifference of `u`, deferred like the calculus
     heads, and of each element of a vector `u`: `SUM([1, 2], x)` is `[x, 2*x]`.
+
+    Vectors are added as vectors, so the sum of a matrix is the sum of its rows,
+    `SUM([[1, 2], [3, 4]])` being `[4, 6]`, and a vector summed over a range is the
+    vector of its elements' sums.
     """
-    if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
-        return sp.Add(*args[0])
+    if len(args) == 1 and isinstance(args[0], Vector):
+        return added(list(args[0].args))
     _variable(args[1])
-    if len(args) == 2 and isinstance(args[0], sp.MatrixBase):
-        return args[0].applyfunc(lambda element: Antidifference(element, args[1]))
+    if len(args) == 2 and isinstance(args[0], Vector):
+        return mapped(args[0], lambda element: _summation(conv, [element, args[1]]))
     if len(args) == 2:
         return Antidifference(*args)
-    if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
-        return sp.Add(*_over_values(conv, args))
+    if len(args) == 3 and isinstance(args[2], Vector):
+        return added(_over_values(conv, args))
     args = _from_one(args)
     distributed = _over_vector_limits(conv, _summation, args)
     if distributed is not None:
         return distributed
     expression, index, low, high = args
+    if isinstance(expression, Vector):
+        return mapped(expression, lambda e: _summation(conv, [e, index, low, high]))
     return sp.Sum(expression, (index, low, high))
 
 
@@ -2310,13 +2450,14 @@ def _product(conv: Converter, args: list) -> sp.Basic:
     Arguments work as for `SUM`. An indefinite `PRODUCT(u, k)` is the antiquotient of
     `u`.
     """
-    if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
-        return sp.Mul(*args[0])
+    if len(args) == 1 and isinstance(args[0], Vector):
+        return multiplied(list(args[0].args)) if args[0].args else sp.Integer(1)
     _variable(args[1])
     if len(args) == 2:
         return Antiquotient(*args)
-    if len(args) == 3 and isinstance(args[2], sp.MatrixBase):
-        return sp.Mul(*_over_values(conv, args))
+    if len(args) == 3 and isinstance(args[2], Vector):
+        factors = _over_values(conv, args)
+        return multiplied(factors) if factors else sp.Integer(1)
     args = _from_one(args)
     distributed = _over_vector_limits(conv, _product, args)
     if distributed is not None:
@@ -2337,7 +2478,7 @@ def _over_values(conv: Converter, args: list) -> list[sp.Basic]:
     expression, index, values = args
     if type(index) is not sp.Symbol:
         raise TypeError("not a variable")
-    return [expression.subs(index, value) for value in _elements_of(values)]
+    return [settled(expression.subs(index, value)) for value in values.args]
 
 
 def _taylor(conv: Converter, args: list) -> sp.Basic:
@@ -2514,12 +2655,12 @@ def _truth_table(conv: Converter, args: list) -> sp.Basic:
     expressions = args[len(variables) :]
     if not variables:
         raise ValueError("no truth variables")
-    rows = [InertVector(*(_as_written(value) for value in args))]
+    rows = [Vector(*(_as_written(value) for value in args))]
     for assignment in product([sp.true, sp.false], repeat=len(variables)):
         written = dict(zip(variables, assignment, strict=True))
         values = [_decided(expression, written) for expression in expressions]
-        rows.append(InertVector(*assignment, *values))
-    return vector_of(rows)
+        rows.append(Vector(*assignment, *values))
+    return Vector(*rows)
 
 
 #: Each sympy logical head and its operator name, for building inert `Logical`
@@ -2557,7 +2698,7 @@ def _substitution(conv: Converter, args: list) -> sp.Basic:
     inert head that derivative would be evaluated to zero.
     """
     expression, variables, points = args
-    return sp.Subs(expression, tuple(_matrix(variables)), tuple(_matrix(points)))
+    return sp.Subs(expression, tuple(_elements(variables)), tuple(_elements(points)))
 
 
 def _limit(conv: Converter, args: list) -> sp.Basic:
@@ -2580,12 +2721,12 @@ def _limit(conv: Converter, args: list) -> sp.Basic:
     if len(args) == 2:
         variables = args[1]
         point = (
-            sp.zeros(*variables.shape)
-            if isinstance(variables, sp.MatrixBase)
+            mapped(variables, lambda _: sp.Integer(0))
+            if isinstance(variables, Vector)
             else sp.Integer(0)
         )
         args = [*args, point]
-    if isinstance(args[1], sp.MatrixBase):
+    if isinstance(args[1], Vector):
         return _iterated_limit(args)
     if len(args) == 3:
         return _approached(*args, "+-")
@@ -2600,13 +2741,13 @@ def _approached(
 ) -> sp.Basic:
     """One limit as a sympy `Limit`, or a `MovingLimit` substitution.
 
-    Matrices are handled element-wise, since sympy has no matrix limits. SOLVE.MTH's
-    `NEWTON_AUX` relies on this, substituting the current iterate into a whole augmented
-    matrix with `LIM(a, x, xk)`.
+    Vectors are handled element-wise, at any depth, since sympy has no limits of
+    vectors. SOLVE.MTH's `NEWTON_AUX` relies on this, substituting the current iterate
+    into a whole augmented matrix with `LIM(a, x, xk)`.
     """
-    if isinstance(expression, sp.MatrixBase):
-        return expression.applyfunc(
-            lambda element: _approached(element, variable, point, direction)
+    if isinstance(expression, Vector):
+        return mapped(
+            expression, lambda element: _approached(element, variable, point, direction)
         )
     if point.has(variable):
         return MovingLimit(expression, variable, point)
@@ -2620,8 +2761,8 @@ def _iterated_limit(args: list) -> sp.Basic:
     All limits are left for evaluation.
     """
     expression, variables, points = args
-    names = _elements_of(variables)
-    values = _elements_of(points)
+    names = _elements(variables)
+    values = _elements(points)
     if len(names) != len(values):
         raise ValueError("not a point for every variable")
     for name, value in zip(names, values, strict=True):
@@ -2692,27 +2833,31 @@ def _determinant(conv: Converter, args: list) -> sp.Basic:
     value = _one(args)
     if _symbolic_matrix(value):
         return sp.Determinant(value).doit()
-    return _matrix(value).det()
+    return _square(value).det()
 
 
 def _trace(conv: Converter, args: list) -> sp.Basic:
     value = _one(args)
     if _symbolic_matrix(value):
         return sp.Trace(value).doit()
-    return _matrix(value).trace()
+    return _square(value).trace()
+
+
+def _square(value: sp.Basic) -> sp.ImmutableMatrix:
+    """`value` as a square matrix of expressions, for `DET` and `TRACE`."""
+    matrix = _linear(value)
+    if not matrix.is_square:
+        raise TypeError("not a square matrix")
+    return matrix
 
 
 def _dimension(conv: Converter, args: list) -> sp.Basic:
-    """The number of elements in a vector, or rows in a matrix.
+    """The number of elements in a vector, which for a matrix is its rows.
 
-    Vectors of relations count too: the shipped libraries branch on the number of
-    `SOLVE` solutions, and no solutions is an empty vector rather than an error.
+    Vectors of anything count: the shipped libraries branch on the number of `SOLVE`
+    solutions, and no solutions is an empty vector rather than an error.
     """
-    value = _one(args)
-    if isinstance(value, InertVector):
-        return sp.Integer(len(value.args))
-    matrix = _matrix(value)
-    return sp.Integer(matrix.cols if matrix.rows == 1 else matrix.rows)
+    return sp.Integer(len(_elements(_one(args))))
 
 
 def _element_of(conv: Converter, args: list) -> sp.Basic:
@@ -2740,15 +2885,13 @@ def _at(value: sp.Basic, index: sp.Basic) -> sp.Basic | None:
     Returns None if `index` is invalid or `value` isn't a vector, which can happen
     midway through an index vector that reaches a scalar with indices left over.
     """
-    if isinstance(index, sp.MatrixBase):
-        for step in _elements_of(index):
+    if isinstance(index, Vector):
+        for step in index.args:
             value = _at(value, step)
             if value is None:
                 return None
         return value
-    if isinstance(value, sp.MatrixBase):
-        return _element(value, index)
-    if not isinstance(value, InertVector):
+    if not isinstance(value, Vector):
         return None
     if not isinstance(index, sp.Integer):
         return None
@@ -2765,9 +2908,9 @@ def _delete_element(conv: Converter, args: list) -> sp.Basic:
     `n` defaults to 1, as for the other element functions.
     """
     vector, *rest = args
-    elements = _elements_of(_matrix(vector))
+    elements = _elements(vector)
     place = _place(_one(rest) if rest else sp.Integer(1), len(elements))
-    return vector_of(elements[:place] + elements[place + 1 :])
+    return Vector(*elements[:place], *elements[place + 1 :])
 
 
 def _replace_element(conv: Converter, args: list) -> sp.Basic:
@@ -2777,9 +2920,9 @@ def _replace_element(conv: Converter, args: list) -> sp.Basic:
     defaults to 1.
     """
     value, vector, *rest = args
-    elements = _elements_of(_matrix(vector))
+    elements = _elements(vector)
     place = _place(_one(rest) if rest else sp.Integer(1), len(elements))
-    return vector_of(elements[:place] + [value] + elements[place + 1 :])
+    return Vector(*elements[:place], value, *elements[place + 1 :])
 
 
 def _insert_element(conv: Converter, args: list) -> sp.Basic:
@@ -2789,55 +2932,37 @@ def _insert_element(conv: Converter, args: list) -> sp.Basic:
     end is allowed here, to append: `INSERT_ELEMENT(d, [a, b, c], 4)` is `[a, b, c, d]`.
     """
     value, vector, *rest = args
-    elements = _elements_of(_matrix(vector))
+    elements = _elements(vector)
     place = _place(_one(rest) if rest else sp.Integer(1), len(elements) + 1)
-    return vector_of(elements[:place] + [value] + elements[place:])
+    return Vector(*elements[:place], value, *elements[place:])
 
 
 def _reversed_vector(conv: Converter, args: list) -> sp.Basic:
     """`REVERSE_VECTOR(v)`: `v` with its elements reversed (a matrix's rows, for a
     matrix)."""
-    return vector_of(_elements_of(_matrix(_one(args)))[::-1])
+    return Vector(*_elements(_one(args))[::-1])
 
 
 def _appended(conv: Converter, args: list) -> sp.Basic:
     """`APPEND(v, w, ...)`: the elements of each, concatenated into one vector.
 
-    A matrix's elements are its rows, so appending matrices stacks them, as the
-    manual's `APPEND_COLUMNS` exercise uses (transpose, append, transpose back). A
-    single matrix is the documented exception and flattens: `APPEND([[a, b], [c, d]])`
-    is `[a, b, c, d]`.
+    Elements are whatever the vectors hold, so appending matrices stacks their rows, as
+    the manual's `APPEND_COLUMNS` exercise uses (transpose, append, transpose back),
+    and `APPEND([[1, 2]], [[3, 4]])` is `[[1, 2], [3, 4]]`. SOLVE.MTH's `NEWTONS` puts
+    its system under its gradients with `APPEND(GRAD(u, x), [u])`, where `[u]` is the
+    one-row matrix holding the vector `u`.
 
-    A plain vector appended to a matrix of its width becomes one row, as SOLVE.MTH's
-    `NEWTONS` uses to put its system under its gradients. A one-row matrix is the same
-    as a vector here, so the `[u]` in `APPEND(GRAD(u, x), [u])` arrives as `u`. Treating
-    it as a row of matching width gives Derive's matrix instead of a ragged vector.
+    A single vector of vectors appends its elements, which flattens a matrix,
+    `APPEND([[a, b], [c, d]])` being `[a, b, c, d]`, and removes one level of any other
+    vector of vectors. A single vector of anything else is itself.
     """
-    if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
-        return vector_of(list(args[0]))
-    width = _stacked_width(args)
-    elements: list[sp.Basic] = []
-    for vector in args:
-        matrix = _matrix(vector)
-        if width is not None and matrix.rows == 1 and matrix.cols == width:
-            elements.append(matrix)
-        else:
-            elements.extend(_elements_of(matrix))
-    return vector_of(elements)
-
-
-def _stacked_width(args: list) -> int | None:
-    """The common row width of the multi-row matrices in `args`, if any.
-
-    None if there are no multi-row matrices (so `APPEND([a, b], [c, d])` is
-    `[a, b, c, d]`, not a matrix), or if their widths differ.
-    """
-    widths = {
-        argument.cols
-        for argument in args
-        if isinstance(argument, sp.MatrixBase) and argument.rows > 1
-    }
-    return widths.pop() if len(widths) == 1 else None
+    if len(args) == 1:
+        (vector,) = args
+        elements = _elements(vector)
+        if not elements or not all(isinstance(e, Vector) for e in elements):
+            return vector
+        args = elements
+    return Vector(*(element for vector in args for element in _elements(vector)))
 
 
 def _place(index: sp.Basic, count: int) -> int:
@@ -2859,7 +2984,7 @@ def _generated_vector(conv: Converter, args: list) -> sp.Basic:
     body, index, *rest = args
     if type(index) is not sp.Symbol:
         raise TypeError("not a variable")
-    return vector_of([body.subs(index, value) for value in steps(rest)])
+    return Vector(*(settled(body.subs(index, value)) for value in steps(rest)))
 
 
 def steps(rest: list) -> list[sp.Basic]:
@@ -2868,8 +2993,8 @@ def steps(rest: list) -> list[sp.Basic]:
     There are `(n - m)/s + 1` of them, rounded down: one if the step overshoots the
     range, none if the range runs the wrong way.
     """
-    if len(rest) == 1 and isinstance(rest[0], sp.MatrixBase):
-        return _elements_of(rest[0])
+    if len(rest) == 1 and isinstance(rest[0], Vector):
+        return list(rest[0].args)
     if not rest or len(rest) > 3:
         raise ValueError("not a sequence")
     low = sp.Integer(1) if len(rest) == 1 else rest[0]
@@ -2892,7 +3017,7 @@ def _selected(conv: Converter, args: list) -> sp.Basic:
     body, index, *rest = args
     if type(index) is not sp.Symbol:
         raise TypeError("not a variable")
-    return chosen_from(steps(rest), lambda value: body.subs(index, value))
+    return chosen_from(steps(rest), lambda value: settled(body.subs(index, value)))
 
 
 def chosen_from(values: list, test: Callable[[sp.Basic], sp.Basic]) -> sp.Basic:
@@ -2904,7 +3029,7 @@ def chosen_from(values: list, test: Callable[[sp.Basic], sp.Basic]) -> sp.Basic:
             chosen.append(value)
         elif held is not sp.false:
             raise ValueError("undecided")
-    return vector_of(chosen)
+    return Vector(*chosen)
 
 
 def _iterates(conv: Converter, args: list) -> sp.Basic:
@@ -2949,7 +3074,7 @@ def iterated(
     """
     sequence = _sequence(conv, variable, start, rest, step, body)
     if name == "ITERATES":
-        return vector_of(sequence)
+        return Vector(*sequence)
     if rest:
         return sequence[-1]
     came_round = _as_shown(sequence[-1], conv.context) == _as_shown(
@@ -2959,8 +3084,8 @@ def iterated(
 
 
 def _substituted(body: sp.Basic) -> Step:
-    return lambda names, values: body.subs(
-        _bindings(body, names, values), simultaneous=True
+    return lambda names, values: settled(
+        body.subs(_bindings(body, names, values), simultaneous=True)
     )
 
 
@@ -3061,9 +3186,9 @@ def _iterated_over(variable: sp.Basic, start: sp.Basic) -> tuple[list, list]:
     `ITERATE([v SUB 2, v SUB 1 + v SUB 2], v, [0, 1], n)`. That is one name and one
     value here; `_bindings` fills in the subscripts.
     """
-    if isinstance(variable, sp.MatrixBase):
-        names = _elements_of(variable)
-        values = _elements_of(_matrix(start))
+    if isinstance(variable, Vector):
+        names = list(variable.args)
+        values = _elements(start)
         if len(names) != len(values):
             raise ValueError("not that many values")
     else:
@@ -3075,7 +3200,7 @@ def _iterated_over(variable: sp.Basic, start: sp.Basic) -> tuple[list, list]:
 
 def _state(names: list, values: list) -> sp.Basic:
     """One iterate: the single variable's value, or the vector of all values."""
-    return values[0] if len(names) == 1 else vector_of(values)
+    return values[0] if len(names) == 1 else Vector(*values)
 
 
 def _updated(conv: Converter, step: Step, names: list, values: list) -> list:
@@ -3092,7 +3217,7 @@ def _updated(conv: Converter, step: Step, names: list, values: list) -> list:
     written = _worked_out(step(names, values), conv.context)
     if len(names) == 1:
         return [written]
-    elements = _elements_of(_matrix(written))
+    elements = _elements(written)
     if len(elements) != len(names):
         raise ValueError("not that many values")
     return elements
@@ -3132,12 +3257,9 @@ def _bindings(body: sp.Basic, names: list, values: list) -> dict:
     """
     bindings = dict(zip(names, values, strict=True))
     for name, value in zip(names, values, strict=True):
-        if not isinstance(value, (sp.MatrixBase, InertVector)):
+        if not isinstance(value, Vector):
             continue
-        try:
-            elements = _elements_of(_matrix(value))
-        except Exception:
-            continue
+        elements = value.args
         for symbol in body.free_symbols:
             place = _subscripted(symbol, name)
             if place is not None and 1 <= place <= len(elements):
@@ -3219,29 +3341,11 @@ def _inverse_function(body: sp.Basic) -> Callable | None:
         return None
 
 
-def _elements_of(matrix: sp.MatrixBase) -> list[sp.Basic]:
-    """A vector's elements, or a matrix's rows."""
-    if matrix.rows == 1:
-        return list(matrix)
-    return [matrix[row, :] for row in range(matrix.rows)]
-
-
-def vector_of(elements: list) -> sp.Basic:
-    """A vector of computed values, shaped by the values alone.
-
-    Unlike `_vector`, there is no notation to go by: rows of equal width stack into a
-    matrix, plain expressions make one row, and anything else is an `InertVector`.
-    """
-    if not elements:
-        return sp.Matrix(0, 0, [])
-    if _all_matrices(elements):
-        shapes = {element.shape for element in elements}
-        if len(shapes) == 1 and elements[0].rows == 1 and elements[0].cols:
-            return sp.Matrix([list(element) for element in elements])
-        return InertVector(*elements)
-    if not all(isinstance(element, sp.Expr) for element in elements):
-        return InertVector(*elements)
-    return sp.Matrix(1, len(elements), elements)
+def _elements(value: sp.Basic) -> list[sp.Basic]:
+    """A vector's elements, which for a matrix are its rows; anything else raises."""
+    if not isinstance(value, Vector):
+        raise TypeError("not a vector")
+    return list(value.args)
 
 
 def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
@@ -3289,7 +3393,7 @@ def _identity_matrix(conv: Converter, args: list) -> sp.Basic:
     size = _one(args)
     if not isinstance(size, sp.Integer) or size < 1:
         raise ValueError("not a size")
-    return sp.eye(int(size))
+    return from_matrix(sp.eye(int(size)))
 
 
 def _cross(conv: Converter, args: list) -> sp.Basic:
@@ -3298,10 +3402,12 @@ def _cross(conv: Converter, args: list) -> sp.Basic:
     In the plane, the result is the scalar third component of the spatial cross
     product (the other two being zero).
     """
-    left, right = (_matrix(argument) for argument in args)
-    if left.shape == right.shape == (1, 2):
-        return left[0, 0] * right[0, 1] - left[0, 1] * right[0, 0]
-    return left.cross(right)
+    left, right = (_field(argument) for argument in args)
+    if len(left) == len(right) == 2:
+        return left[0] * right[1] - left[1] * right[0]
+    if len(left) != 3 or len(right) != 3:
+        raise ValueError("not plane or space vectors")
+    return Vector(*sp.Matrix(left).cross(sp.Matrix(right)))
 
 
 def _row_reduce(conv: Converter, args: list) -> sp.Basic:
@@ -3311,8 +3417,8 @@ def _row_reduce(conv: Converter, args: list) -> sp.Basic:
     computed by `rref`.
 
     A second matrix is adjoined to the right, solving `A . X = B`: `B`'s columns end up
-    holding `X` if `A` is nonsingular. A vector second argument is a single column, as
-    in `A . X = b`, which VECTOR.MTH's `APPROX_EIGENVECTOR` uses.
+    holding `X` if `A` is nonsingular. A flat vector second argument is a single column,
+    as in `A . X = b`, which VECTOR.MTH's `APPROX_EIGENVECTOR` uses.
 
     In Approximate mode the entries are evaluated numerically first. Pivoting asks
     whether entries are zero, and sympy simplifies undecided ones: for a Newton step
@@ -3321,13 +3427,21 @@ def _row_reduce(conv: Converter, args: list) -> sp.Basic:
     rationals, so zero-testing is trivial.
     """
     matrix, *rest = args
-    matrix = _worked_out(_matrix(matrix), conv.context)
+    matrix = _linear(_worked_out(matrix, conv.context))
     if not rest:
-        return matrix.rref()[0]
-    adjoined = _worked_out(_matrix(_one(rest)), conv.context)
-    if adjoined.rows == 1 and matrix.rows != 1:
-        adjoined = adjoined.T
-    return sp.Matrix.hstack(matrix, adjoined).rref()[0]
+        return from_matrix(matrix.rref()[0])
+    adjoined = _worked_out(_one(rest), conv.context)
+    if isinstance(adjoined, Vector) and not is_matrix(adjoined):
+        adjoined = column(adjoined)
+    return from_matrix(sp.Matrix.hstack(matrix, _linear(adjoined)).rref()[0])
+
+
+def _linear(value: sp.Basic) -> sp.ImmutableMatrix:
+    """`value` as a matrix for linear algebra; see `matrix_of`."""
+    matrix = matrix_of(value)
+    if matrix is None:
+        raise TypeError("not a matrix")
+    return matrix
 
 
 def _characteristic_polynomial(conv: Converter, args: list) -> sp.Basic:
@@ -3368,7 +3482,7 @@ def _eigenvalues(conv: Converter, args: list) -> sp.Basic:
     zeros = sorted(matrix.eigenvals(trig=True), key=sp.default_sort_key)
     if any(zero.has(sp.CRootOf) for zero in zeros):
         raise ValueError("no closed form")
-    return vector_of([sp.Eq(variable, zero, evaluate=False) for zero in zeros])
+    return Vector(*(sp.Eq(variable, zero, evaluate=False) for zero in zeros))
 
 
 def _matrix_and_variable(conv: Converter, args: list) -> tuple[sp.MatrixBase, sp.Basic]:
@@ -3381,7 +3495,7 @@ def _matrix_and_variable(conv: Converter, args: list) -> tuple[sp.MatrixBase, sp
     variable = _one(rest) if rest else conv.symbol("w")
     if type(variable) is not sp.Symbol:
         raise TypeError("not a variable")
-    return _matrix(matrix), variable
+    return _linear(matrix), variable
 
 
 def _gradient(conv: Converter, args: list) -> sp.Basic:
@@ -3406,16 +3520,16 @@ def _gradient(conv: Converter, args: list) -> sp.Basic:
     it again once the index has a value.
     """
     expression, *rest = args
-    if isinstance(expression, sp.MatrixBase):
+    if isinstance(expression, Vector):
         variables, scales = _coordinates(conv, rest)
         columns = [
             _gradient_of(element, variables, scales) for element in _field(expression)
         ]
-        return vector_of([vector_of(list(row)) for row in zip(*columns, strict=True)])
+        return Vector(*(Vector(*row) for row in zip(*columns, strict=True)))
     if _holds_vector(expression):
         raise TypeError("not an expression")
     variables, scales = _coordinates(conv, rest)
-    return vector_of(_gradient_of(expression, variables, scales))
+    return Vector(*_gradient_of(expression, variables, scales))
 
 
 def _divergence(conv: Converter, args: list) -> sp.Basic:
@@ -3437,7 +3551,7 @@ def _laplacian(conv: Converter, args: list) -> sp.Basic:
     factors are handled in one place.
     """
     expression, *rest = args
-    if isinstance(expression, sp.MatrixBase):
+    if isinstance(expression, Vector):
         raise TypeError("not an expression")
     variables, scales = _coordinates(conv, rest)
     gradient = _gradient_of(expression, variables, scales)
@@ -3461,7 +3575,7 @@ def _curl(conv: Converter, args: list) -> sp.Basic:
     if len(elements) == 2:
         return _circulation(elements, variables, scales, 0, 1)
     turns = [_circulation(elements, variables, scales, *pair) for pair in _LOOPS]
-    return vector_of(turns)
+    return Vector(*turns)
 
 
 #: The coordinate pair for each component of a spatial curl: the next two coordinates
@@ -3525,23 +3639,16 @@ def _vector_potential(conv: Converter, args: list) -> sp.Basic:
     first, second, third = elements
     lifted = _leg(h1 * h3 * second, x3, start[2])
     sliced = _leg((h1 * h2 * third).subs(x3, start[2]), x2, start[1])
-    return vector_of(
-        [
-            (lifted - sliced) / h1,
-            -_leg(h2 * h3 * first, x3, start[2]) / h2,
-            sp.Integer(0),
-        ]
+    return Vector(
+        (lifted - sliced) / h1,
+        -_leg(h2 * h3 * first, x3, start[2]) / h2,
+        sp.Integer(0),
     )
 
 
 def _holds_vector(value: sp.Basic) -> bool:
     """Whether `value` contains a vector anywhere."""
-    if isinstance(value, (sp.MatrixBase, InertVector)):
-        return True
-    return any(
-        isinstance(found, (sp.MatrixBase, InertVector))
-        for found in sp.preorder_traversal(value)
-    )
+    return value.has(Vector)
 
 
 def _gradient_of(expression: sp.Basic, variables: list, scales: list) -> list[sp.Basic]:
@@ -3622,11 +3729,12 @@ def _coordinates(
     same goes for a two-element `CURL`, which needs an explicit planar system.
     """
     if rest:
-        given = _matrix(_one(rest))
-        if given.rows == 1:
-            variables, scales = list(given), [sp.Integer(1)] * given.cols
-        elif given.rows == 2:
-            variables, scales = list(given[0, :]), list(given[1, :])
+        system = _one(rest)
+        given = _elements(system)
+        if not is_matrix(system):
+            variables, scales = given, [sp.Integer(1)] * len(given)
+        elif len(given) == 2:
+            variables, scales = list(given[0].args), list(given[1].args)
         else:
             raise ValueError("not a coordinate system")
     else:
@@ -3642,17 +3750,11 @@ def _coordinates(
 
 
 def _field(value: sp.Basic) -> list[sp.Basic]:
-    """A vector field's components; matrices are refused."""
-    matrix = _matrix(value)
-    if matrix.rows != 1 or not matrix.cols:
+    """A vector field's components; vectors of vectors are refused."""
+    elements = _elements(value)
+    if not elements or any(isinstance(element, Vector) for element in elements):
         raise TypeError("not a vector")
-    return list(matrix)
-
-
-def _matrix(value: sp.Basic) -> sp.MatrixBase:
-    if not isinstance(value, sp.MatrixBase):
-        raise TypeError("not a matrix")
-    return value
+    return elements
 
 
 #: Converters for each function name. Other names become inert heads, which keeps user

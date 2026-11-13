@@ -34,7 +34,7 @@ from rederive.engine.context import Context, Precision
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written
-from rederive.engine.to_sympy import InertVector
+from rederive.engine.to_sympy import Vector
 
 __all__ = ["equations_of", "oriented", "solutions", "solution_variables"]
 
@@ -129,9 +129,7 @@ def _equatable(element: sp.Basic) -> bool:
     """Whether a vector element can be one equation of a system."""
     if isinstance(element, Relational):
         return True
-    return isinstance(element, sp.Expr) and not isinstance(
-        element, sp.MatrixBase | InertVector
-    )
+    return isinstance(element, sp.Expr) and not isinstance(element, Vector)
 
 
 def oriented(solved: sp.Basic) -> sp.Basic:
@@ -698,7 +696,7 @@ def _unsolvable(expression: sp.Basic, context: Context) -> tuple[sp.Basic, ...]:
     if equations is None:
         return _unsolved(expression, context)
     residuals = [_unsolved(equation, context)[0] for equation in equations]
-    return (InertVector(*residuals),)
+    return (Vector(*residuals),)
 
 
 # -- inequalities ------------------------------------------------------------
@@ -854,7 +852,7 @@ def _system(
     right, so `[x + y + z = 1, x - y = 0]` can be solved for `x` and `y`. With `real`,
     a solution with any known non-real value is dropped.
     """
-    joined = InertVector(*equations)
+    joined = Vector(*equations)
     chosen = _chosen(joined, context, variables, len(equations))
     if not chosen:
         return _unsolvable(joined, context)
@@ -871,7 +869,7 @@ def _system(
             if not any(_imaginary(value) for value in mapping.values())
         ]
     return tuple(
-        InertVector(
+        Vector(
             *(
                 _equated(variable, mapping.get(variable, variable), context)
                 for variable in chosen
@@ -1244,10 +1242,8 @@ def _complex(value: sp.Basic) -> complex | None:
 
 def _elements(expression: sp.Basic) -> list[sp.Basic]:
     """The elements of a vector, or an empty list if this isn't a vector."""
-    if isinstance(expression, InertVector):
+    if isinstance(expression, Vector):
         return list(expression.args)
-    if isinstance(expression, sp.MatrixBase) and expression.rows == 1:
-        return list(expression)
     return []
 
 

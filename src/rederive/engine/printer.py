@@ -71,6 +71,8 @@ PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 PRECEDENCE_VALUES.setdefault("Power", PRECEDENCE["Pow"])
 PRECEDENCE_VALUES.setdefault("Added", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Quotient", PRECEDENCE["Mul"])
+# A vector is bracketed already.
+PRECEDENCE_VALUES.setdefault("Vector", PRECEDENCE["Atom"])
 # A truth value used as an arithmetic operand binds as tightly as its content.
 PRECEDENCE_FUNCTIONS.setdefault("Truth", lambda expr: precedence(expr.args[0]))
 
@@ -1432,10 +1434,10 @@ class AuthorPrinter(sp.StrPrinter):
     _print_Substitution = _print_Subs
 
     def _print_MatrixBase(self, expr):
-        """A single row is written flat; taller matrices as a vector of rows."""
-        if expr.rows == 1:
-            return self._vector(expr)
-        return self._vector([expr[row, :] for row in range(expr.rows)])
+        """A sympy matrix, met only in a product with a symbolic one, as a vector of
+        rows like any explicit matrix (a `Vector`)."""
+        rows = (self._vector(expr.row(row)) for row in range(expr.rows))
+        return f"[{', '.join(rows)}]"
 
     def _vector(self, elements) -> str:
         return f"[{', '.join(self._print(element) for element in elements)}]"
@@ -1564,7 +1566,7 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Truth(self, expr):
         return self._print(expr.args[0])
 
-    def _print_InertVector(self, expr):
+    def _print_Vector(self, expr):
         return self._vector(expr.args)
 
     def _print_Logical(self, expr):

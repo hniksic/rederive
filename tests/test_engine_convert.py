@@ -27,12 +27,12 @@ from rederive.engine.to_sympy import (
     Assign,
     Declare,
     FunDef,
-    InertVector,
     PlusMinus,
     StringLiteral,
     Subscript,
     Taylor,
     Transposed,
+    Vector,
 )
 from rederive.model.expr import Kind
 from rederive.syntax import (
@@ -196,14 +196,14 @@ def test_a_subscript_on_a_vector_selects_an_element_counting_from_one():
 
 
 def test_a_subscript_on_a_matrix_selects_a_row():
-    assert convert("[[1, 2], [3, 4]] SUB 2") == sp.Matrix(1, 2, [3, 4])
+    assert convert("[[1, 2], [3, 4]] SUB 2") == Vector(3, 4)
 
 
 def test_a_subscript_reaches_through_every_dimension_there_is():
     """`SUB` is another spelling of `ELEMENT`, so it reaches equally deep.
 
-    This includes the inert vector that holds a vector of matrices. Each index in the
-    chain selects from the result of the previous one."""
+    This includes a vector of matrices. Each index in the chain selects from the result
+    of the previous one."""
     assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB 2 SUB 1 SUB 2") == 6
     assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB [2, 1, 2]") == 6
 
@@ -221,7 +221,7 @@ def test_a_subscript_on_a_vector_with_no_index_yet_keeps_the_access():
 def test_a_transpose_of_a_matrix_is_a_matrix_and_of_a_scalar_is_the_scalar():
     # 8.5 p.205: the transpose of a scalar is the scalar, and anything not declared
     # nonscalar is a scalar. A non-expression such as an equation keeps the head.
-    assert convert("[[1, 2], [3, 4]]`") == sp.Matrix([[1, 3], [2, 4]])
+    assert convert("[[1, 2], [3, 4]]`") == Vector(Vector(1, 3), Vector(2, 4))
     assert convert("a`") == sp.Symbol("a", real=True)
     assert convert("a``") == sp.Symbol("a", real=True)
     assert convert("(x = 1)`") == Transposed(sp.Eq(sp.Symbol("x", real=True), 1))
@@ -239,8 +239,10 @@ def test_a_dot_product_of_vectors_is_a_number():
 
 
 def test_a_dot_of_conforming_matrices_is_their_product():
-    assert convert("[[1, 2], [3, 4]] . [[5], [6]]") == sp.Matrix([[17], [39]])
-    assert convert("[[1], [2]] . [[3, 4]]") == sp.Matrix([[3, 4], [6, 8]])
+    assert convert("[[1, 2], [3, 4]] . [[5], [6]]") == Vector(Vector(17), Vector(39))
+    assert convert("[[1], [2]] . [[3, 4]]") == Vector(Vector(3, 4), Vector(6, 8))
+    # A one-row matrix is a matrix, so its product with a vector is a vector.
+    assert convert("[[1, 2]] . [3, 4]") == Vector(11)
 
 
 def test_a_dot_of_shapes_that_will_not_multiply_stays_inert():
@@ -297,27 +299,27 @@ def test_a_boolean_operator_on_integers_is_bitwise(text, expected):
     assert convert(text) == sp.Integer(expected)
 
 
-def test_a_flat_vector_is_a_row_and_a_nested_one_is_a_matrix():
-    assert convert("[1, 2, 3]") == sp.Matrix(1, 3, [1, 2, 3])
-    assert convert("[[1, 2], [3, 4]]") == sp.Matrix([[1, 2], [3, 4]])
+def test_a_vector_is_its_elements_and_a_matrix_a_vector_of_rows():
+    assert convert("[1, 2, 3]") == Vector(1, 2, 3)
+    assert convert("[[1, 2], [3, 4]]") == Vector(Vector(1, 2), Vector(3, 4))
+    # A one-row matrix is not the vector it holds.
+    assert convert("[[1, 2]]") == Vector(Vector(1, 2))
+    assert convert("[]") == Vector()
 
 
-def test_a_vector_of_matrices_keeps_its_elements_whole():
-    """A matrix has only two dimensions, so a deeper vector isn't a matrix.
-
-    Stacking the elements would merge two 2x2 matrices into one 2x4 and lose the third
-    dimension, which tables of Christoffel symbols need."""
+def test_a_vector_of_matrices_keeps_every_dimension():
+    """Tables of Christoffel symbols need the third dimension."""
     vector = convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]")
-    assert isinstance(vector, InertVector)
-    assert vector.args == (sp.Matrix([[1, 2], [3, 4]]), sp.Matrix([[5, 6], [7, 8]]))
+    assert vector.args == (
+        Vector(Vector(1, 2), Vector(3, 4)),
+        Vector(Vector(5, 6), Vector(7, 8)),
+    )
 
 
-def test_a_ragged_vector_stays_inert():
-    assert isinstance(convert("[[1, 2], [3]]"), InertVector)
-
-
-def test_a_vector_of_relations_is_a_container_and_not_a_matrix():
-    assert isinstance(convert("[x = 1, y = 2]"), InertVector)
+def test_a_ragged_vector_or_one_of_relations_is_a_vector_like_any_other():
+    assert convert("[[1, 2], [3]]") == Vector(Vector(1, 2), Vector(3))
+    x, y = sp.symbols("x y", real=True)
+    assert convert("[x = 1, y = 2]") == Vector(sp.Eq(x, 1), sp.Eq(y, 2))
 
 
 # -- definitions -------------------------------------------------------------
@@ -382,8 +384,8 @@ def test_showing_a_value_converts_the_child():
         ("ELEMENT([1, 2, 3], 2)", 2),
         ("ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 3)", 4),
         ("ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 2, 1, 2)", 6),
-        ("IDENTITY_MATRIX(2)", sp.eye(2)),
-        ("CROSS([1, 0, 0], [0, 1, 0])", sp.Matrix(1, 3, [0, 0, 1])),
+        ("IDENTITY_MATRIX(2)", Vector(Vector(1, 0), Vector(0, 1))),
+        ("CROSS([1, 0, 0], [0, 1, 0])", Vector(0, 0, 1)),
     ],
     ids=str,
 )

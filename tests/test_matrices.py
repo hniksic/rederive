@@ -86,17 +86,18 @@ VECTORS = [
     ),
     # Incompatible shapes keep the operator unevaluated rather than guessing a product.
     ("[[1, 2], [3, 4]] . [1, 2, 3]", "[[1, 2], [3, 4]] . [1, 2, 3]"),
-    # Nor do they add. Terms of each shape are summed, and the sum of different shapes
-    # stays. A matrix plus a vector, like a vector plus a scalar, isn't distributed over
-    # the rows.
+    # Nor do they add. Terms of each length are summed, and the sum of different
+    # lengths stays.
     ("[1, 2] + [1, 2, 3]", "[1, 2] + [1, 2, 3]"),
     ("[1, 2] - [1, 2, 3]", "[1, 2] + [-1, -2, -3]"),
     ("[1, 2] + [3, 4] + [1, 2, 3]", "[4, 6] + [1, 2, 3]"),
     ("x + 1 + [1, 2] + [1, 2, 3]", "x + 1 + [1, 2] + [1, 2, 3]"),
-    ("[[1, 2], [3, 4]] + [1, 2]", "[[1, 2], [3, 4]] + [1, 2]"),
+    # Only the outer lengths matter, as in Derive (D): the elements are added by the
+    # same rule, so a row plus a scalar stays, and so do rows of different lengths.
+    ("[[1, 2], [3, 4]] + [1, 2]", "[[1, 2] + 1, [3, 4] + 2]"),
     (
         "[[1, 2], [3, 4]] + [[1, 2, 3], [4, 5, 6]]",
-        "[[1, 2], [3, 4]] + [[1, 2, 3], [4, 5, 6]]",
+        "[[1, 2] + [1, 2, 3], [3, 4] + [4, 5, 6]]",
     ),
     ("x*([1, 2] + [1, 2, 3])", "([1, 2] + [1, 2, 3])*x"),
     ("([1, 2] + [1, 2, 3]) + [1, 1]", "[2, 3] + [1, 2, 3]"),
@@ -125,6 +126,67 @@ VECTORS = [
 @pytest.mark.parametrize(("text", "expected"), VECTORS, ids=str)
 def test_vectors_and_matrices(text, expected):
     assert simp(text) == expected
+
+
+#: A vector's shape is its nesting alone: a one-row matrix is not the vector it holds,
+#: elements can be anything, including vectors of any rank, and nothing depends on
+#: whether an element was written as a vector or computed. Checked in Derive 4.11
+#: where noted (D).
+NESTING = [
+    ("DIMENSION([[1, 2]])", "1"),  # D
+    ("ITERATES(v, v, [1, 2], 0)", "[[1, 2]]"),  # D
+    ("SUM([[1, 2], [3, 4]])", "[4, 6]"),  # D
+    ("SIGN([3, 4])", "[3/5, 4/5]"),  # D
+    ("VECTOR(RHS(e), e, [x = 2, x = -2])", "[2, -2]"),
+    ("ROW_REDUCE([LIM([x, 1], x, 2), [3, 4]])", "[[1, 0], [0, 1]]"),
+    ("[ELEMENT([[0, 1], [2, 3]], 1), [5, 6]]`", "[[0, 5], [1, 6]]"),
+    ("LIM([x, [x, x]], x, 1)", "[1, [1, 1]]"),
+    ("ITERATE([p, m + 1], [p, m], [[1], 1], 2)", "[[1], 3]"),
+    # TENSOR.DOC 3.3: a scalar multiplies every element of a tensor.
+    (
+        "1/2*[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]",
+        "[[[1/2, 1], [3/2, 2]], [[5/2, 3], [7/2, 4]]]",
+    ),
+    # A one-row matrix transposed is a column, and a column times a row their outer
+    # product.
+    ("[[1, 2]]`", "[[1], [2]]"),
+    ("[[1, 2]]`*[VECTOR(k, k, 3)]", "[[1, 2, 3], [2, 4, 6]]"),
+    # A flat vector is its own transpose (D).
+    ("[1, 2]`", "[1, 2]"),
+    ("[[1], [2]]`", "[[1, 2]]"),
+    ("[[1, 2]] . [3, 4]", "[11]"),
+    # Only rows of one length transpose.
+    ("[[1, 2], [3]]`", "[[1, 2], [3]]`"),
+    # Elementary functions and scalar addition don't distribute over a vector (D).
+    ("SIN([1, 2])", "SIN([1, 2])"),
+    ("[1, 2] + 2", "[1, 2] + 2"),
+    # The elements of a vector sum or product are combined as vectors where they are.
+    ("SUM(VECTOR([k, 1], k, 3))", "[6, 3]"),
+    ("PRODUCT([[1, 2], [3, 4]])", "11"),
+    ("SIGN([[3, 4]])", "[[3/5, 4/5]]"),
+    ("[[1, 2], [3, 4]] . [[1], [1]]", "[[3], [7]]"),
+    ("ROW_REDUCE([[1, 2], [3, 4]], [5, 6])", "[[1, 0, -4], [0, 1, 9/2]]"),
+    # Arithmetic on an element that is an equation applies to both sides, as it does
+    # to an equation operand.
+    ("[x = 1] + [y = 2]", "[x + y = 3]"),
+    ("x*[y = 1]", "[x*y = x]"),
+    # Vectors are equal only if their shapes are.
+    ("[[1, 2]] = [[1, 2]]", "true"),
+    ("[[1, 2]] = [1, 2]", "false"),
+    ("[] = []", "true"),
+    # A vector of equations isn't related element by element.
+    ("[x = 1, y = 2] = [1, 2]", "[x = 1, y = 2] = [1, 2]"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), NESTING, ids=str)
+def test_a_vector_is_shaped_by_its_nesting_alone(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_solved_vector_is_a_vector_to_generate_over():
+    # Derive gives `[2, -2]` (D), its solutions coming in the other order.
+    assert simp("VECTOR(RHS(e), e, SOLVE(x^2 = 4, x))") == "[-2, 2]"
 
 
 # -- declared nonscalars ------------------------------------------------------
@@ -607,10 +669,19 @@ STRUCTURE = [
     ("APPEND([[a, b], [c, d], [e, f]])", "[a, b, c, d, e, f]"),
     ("APPEND([[a, b], [c, d]], [[e, f], [g, h]])", "[[a, b], [c, d], [e, f], [g, h]]"),
     ("APPEND([a, b])", "[a, b]"),
-    # A vector as wide as the matrix it's appended to becomes another row. `NEWTONS`
-    # appends its system below its gradients this way.
-    ("APPEND([[a, b], [c, d]], [e, f])", "[[a, b], [c, d], [e, f]]"),
-    ("APPEND([e, f], [[a, b], [c, d]])", "[[e, f], [a, b], [c, d]]"),
+    # Elements are concatenated whatever they are, so a matrix and a vector give a
+    # vector of rows and then elements. A row is appended as a one-row matrix, the way
+    # `NEWTONS` appends its system below its gradients.
+    ("APPEND([[a, b], [c, d]], [e, f])", "[[a, b], [c, d], e, f]"),
+    ("APPEND([[a, b], [c, d]], [[e, f]])", "[[a, b], [c, d], [e, f]]"),
+    ("APPEND([e, f], [[a, b], [c, d]])", "[e, f, [a, b], [c, d]]"),
+    # A one-row matrix is not a vector, and elements needn't be numbers.
+    ("APPEND([[1, 2]], [[3, 4]])", "[[1, 2], [3, 4]]"),
+    ("APPEND([x = 1], [y = 2])", "[x = 1, y = 2]"),
+    ("APPEND([], [[[1, 2, 3] = x]])", "[[[1, 2, 3] = x]]"),
+    ("APPEND([[1, 3], [1, 2]], [VECTOR(k, k, 1, 2)])", "[[1, 3], [1, 2], [1, 2]]"),
+    # A single vector of vectors loses one level, whatever its rank.
+    ("APPEND([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])", "[[1, 2], [3, 4], [5, 6], [7, 8]]"),
 ]
 
 
@@ -708,6 +779,44 @@ def test_the_utility_files_matrix_minor():
     body = parse("DELETE_ELEMENT(DELETE_ELEMENT(a,i)`,j)`")
     context = Context(functions={"MINOR": (("a", "i", "j"), body)})
     assert simp("MINOR([[1,2,3],[4,5,6],[7,8,9]],2,3)", context) == "[[1, 2], [7, 8]]"
+
+
+def test_the_utility_files_trapezoidal_integral_of_data():
+    # NUMERIC.MTH's INT_DATA: the iterates are rows, and the answer is a matrix of the
+    # abscissas beside the running integrals, built by transposing.
+    body = parse(
+        "[ELEMENT(a`,1),ELEMENT(ITERATES([1+ELEMENT(v,1),ELEMENT(v,2)+(ELEMENT(a,"
+        "ELEMENT(v,1),2)+ELEMENT(a,1+ELEMENT(v,1),2))*(ELEMENT(a,1+ELEMENT(v,1),1)"
+        "-ELEMENT(a,ELEMENT(v,1),1))/2],v,[1,0],DIMENSION(a)-1)`,2)]`"
+    )
+    context = Context(functions={"INT_DATA": (("a",), body)})
+    assert simp("INT_DATA([[0,0],[1,1],[2,4],[3,9]])", context) == (
+        "[[0, 0], [1, 1/2], [2, 3], [3, 19/2]]"
+    )
+
+
+def test_the_utility_files_legendre_polynomial():
+    # ORTH_POL.MTH's LEGENDRE_P sums the rows of a matrix of iterates and takes the
+    # first element of that vector.
+    body = parse(
+        "2^(-n)*(SUM(ITERATES([v SUB 1*(2*v SUB 2-n-1)*(2*v SUB 2-n-2)/(2*x^2*v SUB 2*"
+        "(2*v SUB 2-2*n-1)),v SUB 2+1],v,[COMB(2*n,n)*x^n,1],n/2))) SUB 1"
+    )
+    context = Context(functions={"P": (("n", "x"), body)})
+    assert simp("P(4, x)", context) == "35*x^4/8 - 15*x^2/4 + 3/8"
+
+
+def test_the_utility_files_approximate_eigenvector_is_a_unit_vector():
+    # VECTOR.MTH's APPROX_EIGENVECTOR: one step of inverse iteration, normalized by
+    # SIGN. The solution is the last column of the row-reduced augmented matrix.
+    body = parse(
+        "SIGN(ROW_REDUCE(a-u*IDENTITY_MATRIX(DIMENSION(a)),"
+        "VECTOR(3000*COS(pi*m)/m,m,DIMENSION(a)))` SUB (DIMENSION(a)+1))"
+    )
+    context = Context(functions={"E": (("a", "u"), body)})
+    assert simp("E([[2, 0], [0, 3]], 201/100)", context) == (
+        "[198*SQRT(39205)/39205, SQRT(39205)/39205]"
+    )
 
 
 def test_the_demos_matrix_generator():

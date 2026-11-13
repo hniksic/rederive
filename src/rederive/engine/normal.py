@@ -46,6 +46,7 @@ from sympy.core.intfunc import integer_log
 
 from rederive.engine.expanding import _BOUND
 from rederive.engine.ordering import ORDER_LIST
+from rederive.engine.vectors import Vector, mapped
 
 __all__ = ["normal_form"]
 
@@ -94,8 +95,8 @@ class _Writer:
         return answer
 
     def _written(self, expression: sp.Basic) -> sp.Basic:
-        if isinstance(expression, sp.MatrixBase):
-            entries = _attempt(expression, lambda m: m.applyfunc(self.written))
+        if isinstance(expression, Vector):
+            entries = _attempt(expression, lambda v: mapped(v, self.written))
             return expression if entries is None else entries
         if not isinstance(expression, sp.Basic) or expression.is_Atom:
             return expression

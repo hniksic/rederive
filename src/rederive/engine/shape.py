@@ -13,7 +13,7 @@ import sympy as sp
 from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 
-from rederive.engine.to_sympy import Assign, Declare, FunDef, InertVector, Logical
+from rederive.engine.to_sympy import Assign, Declare, FunDef, Logical, Vector
 
 __all__ = ["attempt", "distributed"]
 
@@ -45,9 +45,7 @@ def distributed(expression: sp.Basic, leaf: Leaf) -> sp.Basic:
     if isinstance(expression, (Assign, FunDef)):
         head, operator, *value = expression.args
         return expression.func(head, operator, *(again(part) for part in value))
-    if isinstance(expression, sp.MatrixBase):
-        return expression.applyfunc(again)
-    if isinstance(expression, (InertVector, Logical)):
+    if isinstance(expression, (Vector, Logical)):
         return expression.func(*(again(argument) for argument in expression.args))
     if isinstance(expression, Boolean):
         return expression
