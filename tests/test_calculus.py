@@ -211,6 +211,32 @@ def test_a_range_that_stops_between_two_terms_is_written_out():
     assert simp("SUM(2^-k, k, 0, inf)") == "2"
 
 
+def test_an_antidifference_of_waves_is_the_definite_sum_without_its_constant():
+    """Gosper's algorithm can't sum sines and cosines, but the definite sum from 0 to
+    `x - 1` can, and is an antidifference. RECUREQN.MTH's `LIN2_CCF` needs these."""
+    assert simp("SUM(COS(2*pi*x/3), x)") == "-SQRT(3)*COS(2*pi*x/3 + pi/6)/3"
+    assert simp("SUM(SIN(pi*x/2), x)") == "-SQRT(2)*SIN(pi*x/2 + pi/4)/2"
+    assert simp("SUM(3*COS(2*x + 1) + x, x)") == "3*SIN(2*x)/(2*SIN(1)) + x^2/2 - x/2"
+    assert simp("SUM(COS(2*pi*x), x)") == "x"
+    # The summand is in normal form before it is summed.
+    assert simp("SUM(COS(x)/(SIN(x)^2 + COS(x)^2) - 2^x, x)") == (
+        "SIN(x - 1/2)/(2*SIN(1/2)) - 2^x"
+    )
+    # Undefined at 0 and not hypergeometric: no closed form is tried.
+    assert simp("SUM(1/x, x)") == "SUM(1/x, x)"
+
+
+def test_a_long_range_is_written_out_if_sympy_cannot_see_into_its_summand():
+    """A long range is left to sympy's closed forms, but a summand that only evaluates
+    for a numeric index is written out, as NUMBER.MTH's `PRIMEPI` needs: it adds 1667
+    values of `PRIME` and then counts the `true`s."""
+    assert simp("SUM(PRIME(n), n, 1, 1001)") == "833*false + 168*true"
+    assert simp("SUM(IF(n > 500, true, false), n, 1, 1001)") == "500*false + 501*true"
+    assert simp("SUM(IF(n > 500, 1, 0), n, 1, 1001)") == "501"
+    assert simp("LIM(SUM(PRIME(6*n + 1), n, 0, 3333/2), [true, false], [1, 0])") == "611"
+    assert simp("SUM(k^2, k, 1, 10^9)") == "333333333833333333500000000"
+
+
 def test_a_polynomial_is_not_factored_for_having_a_common_factor():
     # Factoring is the Factor command's job. Summation formulas keep their shape, but
     # Simplify doesn't factor other polynomials.

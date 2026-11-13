@@ -842,9 +842,9 @@ class _Evaluator(Converter):
         and VECTOR.MTH's `NONZERO_ROWS` sums a test over `m SUB n_`, which is a row
         only once `n_` is a number.
 
-        None if the values aren't all known (a symbolic end, or more than
-        `_WRITTEN_OUT`); the call is then made over the body as is, for sympy to
-        handle. Also None if an iteration can't continue. A `SELECT` test that is
+        None if the values aren't all known (a symbolic end, or a range too long to
+        write out, see `_total`); the call is then made over the body as is, for sympy
+        to handle. Also None if an iteration can't continue. A `SELECT` test that is
         still undecided drops its element, as in Derive.
 
         The terms of a `SUM` or `PRODUCT` may be truth values, which add up like
@@ -872,7 +872,13 @@ class _Evaluator(Converter):
             if type(index) is not sp.Symbol:
                 return None
             if name in ("SUM", "PRODUCT"):
-                return _total(name, limits, at, self.context)
+                return _total(
+                    name,
+                    limits,
+                    at,
+                    self.context,
+                    lambda: _opaque(self.within(inner).convert(body)),
+                )
             if name == "VECTOR":
                 return Vector(*(at(value) for value in steps(limits)))
             # A definition being shown keeps a call whose test is undecided: the test
@@ -1084,9 +1090,15 @@ def _over(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> sp.Basic:
 #: Binding calls whose body is evaluated once per value when the range is known.
 _COUNTED = frozenset({"SUM", "PRODUCT", "VECTOR", "SELECT", "ITERATE", "ITERATES"})
 
-#: Maximum number of terms to write out a range as. Longer ranges are left to sympy.
-#: Derive's own utility files use at most four.
+#: Number of terms up to which a sum or product over a range is written out. Longer
+#: ones are left to sympy, which has closed forms (`SUM(k^2, k, 1, 10^9)`), unless the
+#: summand is opaque to it. Derive's own utility files write out at most four.
 _WRITTEN_OUT = 1000
+
+#: Number of terms up to which a sum or product whose summand sympy can't see into is
+#: written out. NUMBER.MTH's `PRIMEPI(10000, 6, 1)` adds 1667 values of `PRIME`. This
+#: bounds the work, as each term is evaluated on its own.
+_WRITTEN_OUT_OPAQUE = 20000
 
 
 def _total(
@@ -1094,6 +1106,7 @@ def _total(
     limits: list[sp.Basic],
     at: Callable[[sp.Basic], sp.Basic],
     context: Context,
+    opaque: Callable[[], bool],
 ) -> sp.Basic | None:
     """A counted `SUM` or `PRODUCT`: the terms at each value, added or multiplied.
 
@@ -1104,12 +1117,19 @@ def _total(
     an unknown, see `added`), leaving the sum to sympy. A backwards
     range gives the negated sum or reciprocal product over the values stepped back
     over.
+
+    A range of more than `_WRITTEN_OUT` values is written out only if the summand is
+    `opaque`, up to `_WRITTEN_OUT_OPAQUE` values: sympy could only write it out too,
+    without evaluating the terms.
     """
     backwards = False
     if len(limits) == 1 and isinstance(limits[0], Vector):
         values = steps(limits)
     elif len(limits) in (1, 2):
-        run = _run_of(*limits) if len(limits) == 2 else _run_of(sp.Integer(1), *limits)
+        low, high = limits if len(limits) == 2 else (sp.Integer(1), *limits)
+        run = _run_of(low, high, _WRITTEN_OUT)
+        if run is None and _run_of(low, high, _WRITTEN_OUT_OPAQUE) and opaque():
+            run = _run_of(low, high, _WRITTEN_OUT_OPAQUE)
         if run is None:
             return None
         values, backwards = run
@@ -1134,7 +1154,21 @@ def _total(
     return divided(sp.Integer(1), total) if backwards else total
 
 
-def _run_of(low: sp.Basic, high: sp.Basic) -> tuple[list[sp.Basic], bool] | None:
+def _opaque(summand: sp.Basic) -> bool:
+    """Whether sympy can't sum `summand`, the body with its index symbolic, other than
+    by writing out its terms.
+
+    True if it contains a call or conditional left standing for a symbolic index, as
+    `PRIME(n)` and `IF(n > 500, 1, 0)` are, or is a truth value.
+    """
+    return isinstance(summand, sp.logic.boolalg.Boolean) or bool(
+        summand.atoms(AppliedUndef)
+    )
+
+
+def _run_of(
+    low: sp.Basic, high: sp.Basic, most: int
+) -> tuple[list[sp.Basic], bool] | None:
     """The values an index takes from `low` to `high`, and whether backwards.
 
     As in Derive, the index starts at `low` and steps by one while not past `high`,
@@ -1147,12 +1181,12 @@ def _run_of(low: sp.Basic, high: sp.Basic) -> tuple[list[sp.Basic], bool] | None
     any order: `SUM(k, k, 5, 3.5)` is -4, and `SUM(k, k, 5.5, 3)` is -8 (from 4.5 and
     3.5).
 
-    Both ends must be numbers and the count at most `_WRITTEN_OUT`.
+    Both ends must be numbers and the count at most `most`.
     """
     if not low.is_number:
         return None
     count = sp.floor(high - low) + 1
-    if not count.is_Integer or abs(count) > _WRITTEN_OUT:
+    if not count.is_Integer or abs(count) > most:
         return None
     if count >= 0:
         return [low + step for step in range(int(count))], False

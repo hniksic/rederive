@@ -77,6 +77,7 @@ from rederive.engine.signs import folded_signs, polar_logarithms
 from rederive.engine.solving import oriented, solutions
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
+    Antidifference,
     Approx,
     Assign,
     annuity,
@@ -996,6 +997,8 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
         return _summation(head)
     if isinstance(head, sp.Limit):
         return _limit(head)
+    if isinstance(head, Antidifference):
+        return _antidifference(head, context)
     try:
         value = head.doit(deep=False)
     except Exception:
@@ -1101,6 +1104,54 @@ def _approximation(head: sp.Basic, context: Context) -> sp.Basic:
         return head
     approximate = context.with_precision(Precision.APPROXIMATE, count)
     return approximated(value, approximate)
+
+
+def _antidifference(head: Antidifference, context: Context) -> sp.Basic:
+    """`SUM(u, n)`: by Gosper's algorithm, or else as the definite sum from 0 to
+    `n - 1`.
+
+    The definite sum `F(n)` satisfies `F(n + 1) - F(n) = u(n)` by construction, so
+    whatever closed forms definite sums have serve here too: sines and cosines of a
+    linear function of the index (see `_sum_of_waves`), which Gosper's algorithm can't
+    do. `SUM(COS(2*pi*x/3), x)` is `-SQRT(3)*COS(2*pi*x/3 + pi/6)/3`.
+
+    Products of sines and cosines are written as sums, and terms free of the index are
+    dropped as the constant of summation. A summand undefined at 0 isn't summed from
+    there; Gosper's algorithm covers the rational ones.
+    """
+    value = attempt(head, lambda h: h.doit(deep=False))
+    if value is None:
+        return _undecided(head)
+    if value != head:
+        return value
+    expression, index = head.args
+    if type(index) is not sp.Symbol:
+        return head
+    start = attempt(expression, lambda e: e.subs(index, 0))
+    if start is None or start.has(sp.nan, sp.zoo, sp.oo, -sp.oo):
+        return head
+    running = sp.Dummy(index.name, integer=True)
+    total = _worked_out(
+        sp.Sum(expression.subs(index, running), (running, 0, index - 1)), context
+    )
+    if total.has(sp.Sum, sp.Product, Antidifference) or not is_written(total):
+        return head
+    return _without_constant(total, index)
+
+
+def _without_constant(total: sp.Basic, index: sp.Symbol) -> sp.Basic:
+    """An antidifference with products of sines and cosines written as sums, and the
+    terms free of `index` dropped, in each branch of a conditional."""
+    if isinstance(total, sp.Piecewise):
+        return sp.Piecewise(
+            *((_without_constant(expr, index), cond) for expr, cond in total.args)
+        )
+    spread = attempt(total, lambda t: sp.expand(TR8(t)))
+    if spread is None:
+        return total
+    terms = sp.Add.make_args(spread)
+    kept = [term for term in terms if term.has(index)]
+    return sp.Add(*kept) if kept else total
 
 
 def _summation(head: sp.Sum) -> sp.Basic:
@@ -4476,9 +4527,15 @@ def _rewritten_beside_standing(expression: sp.Basic, context: Context) -> sp.Bas
     )
 
 
+#: Heads `_retried` tries again after the rewrites.
+_RETRIED = (sp.Integral, Antidifference)
+
+
 def _retried(expression: sp.Basic, context: Context) -> sp.Basic:
-    """The rewritten expression with each unevaluated integral tried again, since the
-    rewrites may have changed its integrand into one that integrates.
+    """The rewritten expression with each unevaluated integral or antidifference tried
+    again, since the rewrites may have changed its integrand into one that integrates.
+    RECUREQN.MTH's `LIN2_CCF` sums a quotient over `SIN(t)^2 + COS(t)^2`, which the
+    rewrites reduce to a sum of cosines.
 
     `INT(SQRT(1 - SIN(t)^2), t, 0, pi/2)` is 1 once its integrand is `ABS(COS(t))`, and
     `INT(SQRT(SIN(x)^2 + COS(x)^2), x)` is `x` once it is 1. The normal form doesn't
@@ -4493,29 +4550,30 @@ def _retried(expression: sp.Basic, context: Context) -> sp.Basic:
     """
 
     def retried(e: sp.Basic) -> sp.Basic:
-        if not e.has(sp.Integral):
+        if not e.has(*_RETRIED):
             return e
         arguments = [retried(argument) for argument in e.args]
         changed = any(new is not old for new, old in zip(arguments, e.args))
         rebuilt = e.func(*arguments) if changed else e
-        if isinstance(e, sp.Integral) or (isinstance(e, sp.Limit) and changed):
+        if isinstance(e, _RETRIED) or (isinstance(e, sp.Limit) and changed):
             return tried(rebuilt)
         return rebuilt
 
     def tried(head: sp.Basic) -> sp.Basic:
         answer = _evaluate(head, context)
-        if answer == head and isinstance(head, sp.Integral):
+        if answer == head and isinstance(head, _RETRIED):
             answer = normalized(head)
         return head if answer.has(head) else answer
 
-    def normalized(head: sp.Integral) -> sp.Basic:
-        function = normal_form(head.function, context.order, over_numbers=False)
-        if function == head.function:
+    def normalized(head: sp.Basic) -> sp.Basic:
+        function, *rest = head.args
+        normal = normal_form(function, context.order, over_numbers=False)
+        if normal == function:
             return head
-        answer = _evaluate(head.func(function, *head.limits), context)
-        return head if answer.has(sp.Integral) else answer
+        answer = _evaluate(head.func(normal, *rest), context)
+        return head if answer.has(type(head)) else answer
 
-    if not expression.has(sp.Integral):
+    if not expression.has(*_RETRIED):
         return expression
     again = forced(expression, retried)
     return expression if again == expression else _rewritten(again, context)
