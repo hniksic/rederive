@@ -60,6 +60,7 @@ from rederive.engine.integration.form import (
     unwritable,
 )
 from rederive.engine.integration.proof import differentiates_back, holds
+from rederive.engine.printer import shadowed_names
 from rederive.engine.radical import radical_antiderivative
 from rederive.engine.rational import rational_antiderivative
 from rederive.engine.rewriting import attempt, forced
@@ -68,15 +69,21 @@ from rederive.engine.trigonometric import trigonometric_antiderivative
 __all__ = ["by_a_positive_substitution", "by_sympy", "integral", "within_reach"]
 
 
-@lru_cache(maxsize=256)
 def integral(head: sp.Basic) -> sp.Basic:
     """Evaluate an integral, correcting what sympy gets wrong about definite integrals.
 
     Definite integrals are first split at step-function jumps and examined at their
     singularities; an answer that depends on a parameter's sign is recomputed for each
     sign. Results are cached, since an unevaluated integral is requested again by
-    simplification and by later commands.
+    simplification and by later commands. The answers that can be written depend on the
+    built-ins the user has redefined, so those are part of the key.
     """
+    return _integral(head, shadowed_names())
+
+
+@lru_cache(maxsize=256)
+def _integral(head: sp.Basic, shadowed: frozenset[str]) -> sp.Basic:
+    """`integral`, with `shadowed` the built-ins the answer may not use."""
     stepped = between_the_steps(head)
     if stepped is not None:
         return stepped

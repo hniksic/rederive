@@ -7,6 +7,7 @@ simplifying part of an entry copies the rest of it along.
 
 import pytest
 
+from rederive.display import render
 from rederive.engine.client import Amount
 from rederive.model import building
 from rederive.model.session import Session
@@ -66,6 +67,15 @@ async def test_a_special_function_typed_in_lower_case_is_a_call(session):
     session.author("erfi(1)")
     assert texts(session) == ["ERFI(1)"]
     assert (await session.approx("#1")).text == "1.65042"
+
+
+async def test_a_greek_letter_is_named_in_the_line_and_its_answer_alike(session):
+    """Like `pi`, a Greek letter is spelled out in the text and drawn as its glyph."""
+    session.author("sigma^2 + θ")
+    await session.simplify("#1")
+    assert texts(session) == ["sigma^2+theta", "theta + sigma^2"]
+    for entry in session.entries:
+        assert "".join(render(entry.node).lines).count("σ") == 1
 
 
 async def test_an_answer_can_be_simplified_again(session):

@@ -25,10 +25,14 @@ import them.
 
 from __future__ import annotations
 
+import functools
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal
 from fractions import Fraction
+from typing import ParamSpec, TypeVar
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
@@ -44,7 +48,12 @@ from rederive.engine import notation
 from rederive.engine.approximation import is_approximation, reapproximated
 from rederive.engine.context import Angle, Context, Notation, Precision
 from rederive.engine.ordering import main_order
-from rederive.syntax.names import BUILTIN_FUNCTIONS, GREEK_GLYPHS, PRIME_MARK
+from rederive.syntax.names import (
+    BUILTIN_FUNCTIONS,
+    EXTENDED_FUNCTIONS,
+    GREEK_GLYPHS,
+    PRIME_MARK,
+)
 
 # Binding strength of the inert heads, at the precedence of the operator each prints
 # as. Without an entry sympy treats a `Function` as tight as `SIN(x)`, printing
@@ -458,14 +467,76 @@ def _magnitude(number: sp.Basic) -> Fraction | float:
         return 0.0
 
 
+P = ParamSpec("P")
+R = TypeVar("R")
+
+#: The added built-ins (`EXTENDED_FUNCTIONS`) whose names the user has taken for a
+#: function or variable of their own, during the command that is running.
+_shadowed: ContextVar[frozenset[str]] = ContextVar("shadowed", default=frozenset())
+
+
+def shadowed(context: Context) -> frozenset[str]:
+    """The added built-ins that a user function or variable in `context` shadows.
+
+    Derive has no such built-ins, so its utility files define functions of the same
+    names, often differently: EXP_INT.MTH's `EI(x, m)` is a series of `m` terms. The
+    user's definition then owns the name, on input and in every answer. An answer can't
+    spell the built-in, since reading it back would call the user's function, so it is
+    left standing as if the engine had no name for it: with EXP_INT.MTH loaded,
+    `INT(#e^(-t)/t, t, 1, inf)` stays an integral rather than becoming `-EI(-1)`.
+    Derive's own built-ins can't be redefined, so they are never shadowed.
+    """
+    taken = frozenset(context.functions) | frozenset(context.assignments)
+    return EXTENDED_FUNCTIONS & taken
+
+
+def shadowed_names() -> frozenset[str]:
+    """The added built-ins shadowed during the running command; see `shadowed`."""
+    return _shadowed.get()
+
+
+@contextmanager
+def shadowing(context: Context) -> Iterator[None]:
+    """Spell no built-in that `context` shadows, while the block runs."""
+    token = _shadowed.set(shadowed(context))
+    try:
+        yield
+    finally:
+        _shadowed.reset(token)
+
+
+def shadowing_built_ins(command: Callable[P, R]) -> Callable[P, R]:
+    """Decorate a command taking `(node, context, ...)` to run under `shadowing` of its
+    context, so neither its answer nor anything it computes on the way spells a built-in
+    the user has redefined."""
+
+    @functools.wraps(command)
+    def running(*args: P.args, **kwargs: P.kwargs) -> R:
+        context = args[1] if len(args) > 1 else kwargs.get("context")
+        if context is None:
+            return command(*args, **kwargs)
+        with shadowing(context):
+            return command(*args, **kwargs)
+
+    return running
+
+
 def spelling(expression: sp.Basic) -> str | None:
     """The author-notation name of a function head, or None if it has none.
 
     Inert heads keep their authored name, and rederive heads use their upper-cased
     class name. Sympy heads use `_FUNCTION_NAMES`, or their upper-cased class name only
     if it is a built-in function, since the notation only has names an author can type
-    back.
+    back. A built-in the user has redefined has no name (see `shadowed`).
     """
+    name = _built_in_spelling(expression)
+    if isinstance(expression, AppliedUndef):
+        return name
+    return None if name in _shadowed.get() else name
+
+
+def _built_in_spelling(expression: sp.Basic) -> str | None:
+    """The spelling of a function head, whatever the user has redefined."""
     name = type(expression).__name__
     if _is_digamma(expression):
         return "DIGAMMA"
@@ -499,6 +570,8 @@ def is_written(expression: sp.Basic) -> bool:
 def _has_word(call: sp.Basic) -> bool:
     if spelling(call) is not None:
         return True
+    if not isinstance(call, AppliedUndef) and _built_in_spelling(call) in _shadowed.get():
+        return False
     return any(f"_print_{kind.__name__}" in vars(AuthorPrinter) for kind in _own(call))
 
 
@@ -511,6 +584,12 @@ def _own(call: sp.Basic) -> list[type]:
             break
         kinds.append(kind)
     return kinds
+
+
+def _is_suspended(expression: sp.Basic) -> bool:
+    """Whether a call is the evaluator's suspended conditional, by class name, as for
+    the other inert heads."""
+    return any(kind.__name__ == "Suspended" for kind in type(expression).__mro__)
 
 
 def _is_digamma(expression: sp.Basic) -> bool:
@@ -1148,12 +1227,31 @@ class AuthorPrinter(sp.StrPrinter):
         """`NAME(u, ...)`, or the call quoted under its sympy name if the notation has no
         name for it.
         """
+        if _is_suspended(expr):
+            return self._print_Suspended(expr)
         name = spelling(expr)
         if name is None:
             if not self._unspelling:
                 return self._unspelled(expr)
             name = type(expr).__name__
         return f"{name}({self.stringify(expr.args, ', ')})"
+
+    def _print_Suspended(self, expr):
+        """A suspended conditional as its display, the conditional as written with its
+        variables' values substituted. `released` normally replaces it before printing;
+        its class name (`IF_2`) is internal and never printed. Sympy prints a subclass
+        of an undefined function as a function, so `_print_Function` calls this.
+        """
+        kind = type(expr)
+        shown = kind.display
+        if expr.args != kind.variables:
+            values = dict(zip(kind.variables, expr.args, strict=True))
+            try:
+                shown = shown.subs(values, simultaneous=True)
+            except Exception:
+                with sp.evaluate(False):
+                    shown = shown.xreplace(values)
+        return self._print(shown)
 
     def _print_polygamma(self, expr):
         """`DIGAMMA(x)` for the order-zero polygamma function, since sympy has no

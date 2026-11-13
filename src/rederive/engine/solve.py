@@ -25,6 +25,7 @@ import sympy as sp
 from rederive.engine.boundary import Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.from_sympy import from_sympy
+from rederive.engine.printer import shadowing_built_ins
 from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.evaluate import divisors
 from rederive.engine.pipeline import simplified
@@ -37,6 +38,7 @@ __all__ = ["solve", "solved"]
 
 
 @noting_approximations
+@shadowing_built_ins
 def solve(
     node: Node,
     context: Context | None = None,

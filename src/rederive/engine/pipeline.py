@@ -68,7 +68,7 @@ from rederive.engine.integration import agrees, integral, proved_zero
 from rederive.engine.intervals import covering, decided, never_negative, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
-from rederive.engine.printer import is_written
+from rederive.engine.printer import is_written, shadowing_built_ins
 from rederive.engine.rewriting import Rewrite, attempt, forced, pays
 from rederive.engine.signs import folded_signs
 from rederive.engine.solving import oriented, solutions
@@ -110,6 +110,7 @@ _BOOLEAN_VARIABLES = 5
 
 
 @noting_approximations
+@shadowing_built_ins
 def simplify(
     node: Node, context: Context | None = None, state: ParseState | None = None
 ) -> Result:

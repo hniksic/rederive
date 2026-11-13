@@ -880,11 +880,24 @@ def released(value: sp.Basic) -> sp.Basic:
     try:
         if not value.atoms(Suspended, Commanded):
             return value
-        return value.replace(
-            lambda found: isinstance(found, Suspended | Commanded), _shown
-        )
     except Exception:
         return value
+    try:
+        return _released(value)
+    except Exception:
+        pass
+    # Rebuilding the parents of what was released can fail where the display is
+    # rejected as an operand (`1 > DIMENSION(...)` around a conditional), so they are
+    # rebuilt as they stand, without evaluation.
+    try:
+        with sp.evaluate(False):
+            return _released(value)
+    except Exception:
+        return value
+
+
+def _released(value: sp.Basic) -> sp.Basic:
+    return value.replace(lambda found: isinstance(found, Suspended | Commanded), _shown)
 
 
 def _shown(found: Suspended | Commanded) -> sp.Basic:

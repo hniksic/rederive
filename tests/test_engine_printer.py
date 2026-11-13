@@ -10,9 +10,11 @@ from __future__ import annotations
 import pytest
 import sympy as sp
 from sexpr import to_sexpr
+from sympy.core.function import UndefinedFunction
 
 from rederive.engine.computing import Context, author_text, from_sympy, to_sympy
 from rederive.engine.context import Precision
+from rederive.engine.evaluate import Suspended, released
 from rederive.engine.printer import numeral
 from rederive.engine.to_sympy import (
     Assign,
@@ -606,3 +608,49 @@ def test_a_supplied_state_learns_the_names_only_the_answer_uses():
     assert result.text == "2*k1"
     assert to_sympy(result.node) == sp.Symbol("k1", real=True) * 2
     assert "k1" not in state.variables
+
+
+# -- suspended conditionals ----------------------------------------------------
+
+i, j = sp.symbols("i j", real=True)
+
+
+def _suspended(display, *variables):
+    """A suspended conditional over `variables` showing as `display`, as the evaluator
+    makes them."""
+    head = UndefinedFunction(
+        "IF_9",
+        bases=(Suspended,),
+        __dict__={
+            "node": None,
+            "environment": None,
+            "display": display,
+            "variables": variables,
+        },
+    )
+    return head(*variables)
+
+
+def test_a_suspended_conditional_prints_as_its_conditional():
+    """Its class name is internal: TENSOR.MTH's `PERM_EL([1, 2, 3])` once printed
+    `IF_2(iIp, jJp)`."""
+    conditional = sp.Piecewise((i, i < j), (2, True))
+    assert written(_suspended(conditional, i, j)) == "IF(i < j, i, 2)"
+    # Applied to values other than its variables, it shows them substituted.
+    head = type(_suspended(conditional, i, j))
+    assert written(head(i, x)) == "IF(i < x, i, 2)"
+
+
+def test_a_suspended_conditional_is_released_where_its_parent_rejects_it():
+    """`1 > DIMENSION(APPEND([], ...))` around a conditional can't be rebuilt with the
+    conditional in place, since sympy holds a function of a matrix non-real; it is
+    rebuilt unevaluated instead."""
+    conditional = sp.Piecewise((i, i < j), (2, True))
+    dimension, append = sp.Function("DIMENSION"), sp.Function("APPEND")
+    with sp.evaluate(False):
+        test = sp.StrictGreaterThan(
+            1, dimension(append(sp.ImmutableMatrix([]), _suspended(conditional, i, j)))
+        )
+    shown = released(test)
+    assert not shown.atoms(Suspended)
+    assert written(shown) == "1 > DIMENSION(APPEND([], IF(i < j, i, 2)))"

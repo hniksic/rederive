@@ -499,7 +499,9 @@ class Session:
         tree, the typed line is kept, since faithfulness beats tidiness.
         """
         try:
-            written = parse_expression(write_expression(result.node), self.state)
+            written = parse_expression(
+                write_expression(result.node, greek_names=True), self.state
+            )
         except DeriveSyntaxError:
             return result
         return written if _same_tree(written.node, result.node) else result

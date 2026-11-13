@@ -33,6 +33,8 @@ such an answer change on a second Simplify.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from rederive.model.expr import Kind, Node
 from rederive.syntax.names import GREEK_GLYPHS
 
@@ -75,12 +77,25 @@ _SIGNS = {"+-": '"+-"'}
 _LOGICAL_PRECEDENCE = {Kind.AND: AND, Kind.OR: OR, Kind.XOR: XOR, Kind.IMP: IMP}
 
 
-def write_expression(node: Node, spaced: bool = False) -> str:
+def write_expression(node: Node, spaced: bool = False, greek_names: bool = False) -> str:
     """`node` in author notation, as stored in a file.
 
     With `spaced`, write it as the printer does instead; see the module docstring.
+    With `greek_names`, Greek letters are written by name even unspaced, as in an
+    entry's text, which spells `sigma` like `pi` and leaves the glyphs to the display.
     """
+    if greek_names and not spaced:
+        node = _greek_named(node)
     return _operand(node, ASSIGN, " " if spaced else "")
+
+
+def _greek_named(node: Node) -> Node:
+    """`node` with each Greek letter named by its spelled-out name."""
+    if node.kind in (Kind.NAME, Kind.UNKNOWN) and str(node.value) in GREEK_GLYPHS:
+        return replace(node, value=GREEK_GLYPHS[str(node.value)])
+    if not node.children:
+        return node
+    return replace(node, children=tuple(_greek_named(child) for child in node.children))
 
 
 def _operand(node: Node, required: int, gap: str) -> str:

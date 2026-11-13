@@ -13,9 +13,9 @@ from fractions import Fraction
 
 import pytest
 import sympy as sp
-from simplifying import declared, simp
+from simplifying import declared, declaring, parse, simp
 
-from rederive.engine.computing import Context
+from rederive.engine.computing import Context, approx
 from rederive.engine.context import Precision
 from rederive.engine.vocabulary import in_vocabulary
 
@@ -114,6 +114,72 @@ def test_a_polar_number_inside_a_branch_cut_keeps_its_sheet():
     # `pi*#i`, so the polar marker is kept.
     head = sp.Ei(X * sp.exp_polar(sp.I * sp.pi))
     assert in_vocabulary(head) == head
+
+
+# -- an added built-in the user has redefined ------------------------------------
+#
+# Derive has no `EI`, `SI`, `POLYLOG` or `POLYGAMMA`, so its utility files define them:
+# EXP_INT.MTH's `EI(x, m)` is a series of `m` terms and ZETA.MTH's `POLYLOG(n, z, m)` a
+# partial sum. The definition owns the name, so no answer may spell the built-in: read
+# back, it would call the user's function, and `-EI(-1)` approximated through `EI(x, m)`
+# is complex.
+
+
+def _defining(**bodies):
+    """A context defining each function `NAME="params: body"`."""
+    functions = {}
+    for name, definition in bodies.items():
+        parameters, body = definition.split(":")
+        functions[name] = (tuple(parameters.split(",")), parse(body))
+    return Context(functions=functions)
+
+
+EXP_INT = _defining(EI="x,m: x + m", SI="z: z", CI="z: z")
+
+
+@pytest.mark.parametrize(
+    ("text", "context", "built_in", "redefined"),
+    [
+        ("INT(#e^(-t)/t, t, 1, inf)", EXP_INT, "-EI(-1)", "INT(#e^(-t)/t, t, 1, inf)"),
+        ("INT(#e^x/x, x)", EXP_INT, "EI(x)", "INT(#e^x/x, x)"),
+        ("INT(1/LN(x), x)", EXP_INT, "EI(LN(x))", "INT(1/LN(x), x)"),
+        # The same arity and meaning, but still the user's name.
+        ("INT(SIN(t)/t, t, 0, x)", EXP_INT, "SI(x)", "INT(SIN(t)/t, t, 0, x)"),
+        (
+            "SUM(x^k/k^2, k, 1, inf)",
+            _defining(POLYLOG="n,z,m: n + z + m"),
+            "IF(ABS(x) <= 1, POLYLOG(2, x), SUM(x^k/k^2, k, 1, inf))",
+            "SUM(x^k/k^2, k, 1, inf)",
+        ),
+        # PROBABIL.MTH's `POLYGAMMA(n, z)` takes the name but not `DIGAMMA`'s.
+        (
+            "DIF(DIGAMMA(x), x)",
+            _defining(POLYGAMMA="n,z: n + z"),
+            "POLYGAMMA(1, x)",
+            "DIF(DIGAMMA(x), x)",
+        ),
+        (
+            "DIF(GAMMA(x), x)",
+            _defining(POLYGAMMA="n,z: n + z"),
+            "(x - 1)!*DIGAMMA(x)",
+            "(x - 1)!*DIGAMMA(x)",
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+def test_a_redefined_built_in_is_never_an_answer(text, context, built_in, redefined):
+    """Simplified once without the definition and once with it, in either order, since
+    integrals are cached."""
+    assert simp(text) == built_in
+    assert simp(text, context) == redefined
+    assert simp(text) == built_in
+
+
+def test_a_value_the_redefined_built_in_would_spell_is_approximated_as_it_stands():
+    """EXP_INT.MTH's `EN(1, 1)`, approximated from its unevaluated integral."""
+    state = declaring(*EXP_INT.functions)
+    node = parse("INT(#e^(-t)/t, t, 1, inf)", state)
+    assert approx(node, EXP_INT, state=state).text == "0.219383"
 
 
 # -- special values -----------------------------------------------------------

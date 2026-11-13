@@ -63,6 +63,13 @@ only another spelling of one of these is written in that one, so `INT(1/LN(x), x
 Derive shipped `SI` `CI` `EI` as `.MTH` definitions; the difference is that the engine
 *produces* them.
 
+A user function or variable named like one of these (EXP_INT.MTH's `EI(x, m)`, ZETA.MTH's
+`POLYLOG(n, z, m)`, PROBABIL.MTH's `POLYGAMMA(n, z)`) takes the name over: calls go to the
+definition, and no answer is written with the built-in, since reading it back would call
+the user's function. What would need it is left standing, as Derive leaves it: with
+EXP_INT.MTH loaded, `INT(#e^(-t)/t, t, 1, inf)` stays an integral rather than becoming
+`-EI(-1)`, and approximates to 0.219383.
+
 ## Where Rederive goes further
 
 **Integration.** Nonelementary antiderivatives, refused by the original:
