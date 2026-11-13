@@ -491,12 +491,22 @@ SELECTED = [
     ("SELECT(k > 1, k, 1, 10, 3)", "[4, 7, 10]"),
     ("SELECT(k^2 > 5, k, 1, 5)", "[3, 4, 5]"),
     ("SELECT(k > 5, k, 1, 3)", "[]"),
-    # A non-variable second argument, or an undecidable test, leaves the call as is.
-    # Derive answers the second with an empty vector, silently dropping the elements it
-    # couldn't judge; this engine keeps the call instead.
+    # A non-variable second argument leaves the call as is.
     ("SELECT(k > 1, 5, [1, 2])", "SELECT(k > 1, 5, [1, 2])"),
-    ("SELECT(PRIME(k), k, x, x + 2)", "SELECT(PRIME(k), k, x, x + 2)"),
+    # As in Derive, an element whose test is undecided is dropped. ODE.MTH's `FREE`
+    # relies on this to find a variable among `VARIABLES(u)`.
+    ("SELECT(PRIME(k), k, x, x + 2)", "[]"),
+    ("SELECT(k = y, k, [x, y])", "[y]"),
+    # A test that isn't a truth value is not true.
+    ("SELECT(k - 1, k, 1, 3)", "[]"),
 ]
+
+
+def test_a_shown_definition_keeps_a_selection_its_parameters_decide():
+    """The test is on a parameter, so a call decides it; nothing is dropped yet."""
+    assert simp("F(n) := SELECT(k = n, k, [1, 2, 3])") == (
+        "F(n) := SELECT(k = n, k, [1, 2, 3])"
+    )
 
 
 @pytest.mark.parametrize(("text", "expected"), SELECTED, ids=str)
@@ -734,9 +744,10 @@ DECOMPOSITION = [
     ("RHS(2*x + 3 = 5)", "5"),
     ("LHS([x = 1, y = 2])", "[x, y]"),
     ("RHS([x = 1, y = 2])", "[1, 2]"),
-    # A non-relation returns itself.
+    # A non-relation `u` reads as `u = 0`, as in Derive.
     ("LHS(2*x + 3)", "2*x + 3"),
-    ("RHS(3)", "3"),
+    ("RHS(3)", "0"),
+    ("RHS(x + y)", "0"),
     # Division in the main variable: the manual's pair.
     ("QUOTIENT(x^4 + 3*x^3 + 5*x + 6, x^2 - 5)", "x^2 + 3*x + 5"),
     ("REMAINDER(x^4 + 3*x^3 + 5*x + 6, x^2 - 5)", "20*x + 31"),

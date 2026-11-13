@@ -349,12 +349,16 @@ def _equated(relation: Relational, context: Context) -> bool | None:
     equal, a nonzero real means not. A non-real difference decides nothing, as in the
     original: `#i = 1` and `2*#i = #i` both stand.
 
-    Vectors of mismatched shapes, or a vector and a scalar, have no difference. Here
-    they are different values once they hold no variables: `[1, 2] = [1, 2, 3]` is
-    false, while `[x, y] = [1, 2, 3]` stands.
+    Vectors of mismatched shapes, or a vector and a scalar, have no difference. Two
+    vectors are different values once they hold no variables: `[1, 2] = [1, 2, 3]` is
+    false, while `[x, y] = [1, 2, 3]` stands. A vector and a scalar stand, as in Derive:
+    `[1, 2, 2] = 7` stays as written, which TENSOR.MTH's `NZEL_T` relies on to build
+    equations of indices and elements.
     """
     if any(isinstance(side, Vector) for side in relation.args):
-        if relation.free_symbols:
+        if relation.free_symbols or not all(
+            isinstance(side, Vector) for side in relation.args
+        ):
             return None
         same = relation.lhs == relation.rhs
         return same is isinstance(relation, sp.Equality)

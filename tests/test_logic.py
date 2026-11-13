@@ -62,6 +62,13 @@ def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
     assert simp("[x, y] = [1, 2, 3]") == "[x, y] = [1, 2, 3]"
 
 
+def test_an_equation_of_a_vector_and_a_scalar_stands():
+    """As in Derive, checked there. TENSOR.MTH's `NZEL_T` builds `[[1, 2, 3] = 1, ...]`,
+    pairing each element's indices with its value."""
+    assert simp("[1, 2, 2] = 7") == "[1, 2, 2] = 7"
+    assert simp("[[1, 2, 2] = 7]") == "[[1, 2, 2] = 7]"
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -391,3 +398,61 @@ def test_an_assignment_in_a_test_is_performed_and_read_back_in_the_branches():
     assert simp('IF("no" = a_ := 2 + 3, 1, a_, a_)') == "5"
     assert simp('IF("no" = a_ := "no", a_, 2, 2)') == '"no"'
     assert simp('IF(1 = a_ := 1, IF(2 = b_ := 2 + 3, 0, b_, b_), a_, a_)') == "5"
+
+
+def test_a_name_assigned_in_a_test_is_assigned_again_in_a_nested_test():
+    """ODE.MTH chains its methods as `IF(fail = (local :== M1(w)), IF(fail = (local
+    :== M2(w)), ..., local, local), local, local)` inside its functions. The second
+    assignment is to `local` again, not to `fail`, the value the first gave it.
+    """
+    body = parse("IF(f = (a :== f), IF(f = (a :== w), 7, a, a))")
+    context = Context(functions={"G": (("w",), body)})
+    assert simp("G(5)", context) == "5"
+    assert simp("f", context) == "f"
+
+
+#: Truth values as Derive computes with them, each checked in Derive.
+TRUTHS = [
+    # A `false` operand decides a conjunction and a `true` one a disjunction, whatever
+    # the others are.
+    ("1/2 AND false", "false"),
+    ("1/2 OR true", "true"),
+    # A test that isn't a relation means `test = 0`, and a vector is zero when each
+    # element is.
+    ("IF([0, 0], 1, 2, 3)", "1"),
+    ("IF([0, 1], 1, 2, 3)", "2"),
+    ("IF([0, x], 1, 2, 3)", "3"),
+    # Truth values add up like unknowns. In a sum the index is substituted before the
+    # test is decided, so `NUMBER(k)` is true at each value.
+    ("SUM(PRIME(k), k, 1, 3)", "false + 2*true"),
+    ("SUM(NUMBER(k), k, 1, 3)", "3*true"),
+    ("PRODUCT(PRIME(k), k, 1, 3)", "false*true^2"),
+    # A relation of numbers in a vector is decided like any other.
+    ("[1 = 1]", "[true]"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), TRUTHS, ids=str)
+def test_truth_values(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_predicate_awaiting_its_argument_is_a_test_as_written():
+    """`IF(PRIME(m), 2, 3)` stays as typed, reading back as itself; comparing the
+    predicate with zero would ask a different question.
+    """
+    context = Context(functions={"H": (("n",), parse("IF(PRIME(n), 2, 3)"))})
+    assert simp("H(m)", context) == "IF(PRIME(m), 2, 3)"
+    assert simp("IF(PRIME(m), 2, 3)") == "IF(PRIME(m), 2, 3)"
+    assert simp("H(5)", context) == "2"
+    assert simp("H(4)", context) == "3"
+
+
+def test_the_last_iterate_of_a_system_may_be_a_conditional():
+    """The test at the last step is undecided, so the `IF` is the last iterate, and
+    nothing needs to be taken apart for a further step.
+    """
+    assert simp(
+        "ITERATES(IF(DIF(ELEMENT([x, y^2], n), y) = 0, [p + 10, n + 1], [p + 1, n + 1]),"
+        " [p, n], [0, 1], 2)"
+    ) == "[[0, 1], [10, 2], IF(DIF(y^2, y) = 0, [20, 3], [11, 3])]"

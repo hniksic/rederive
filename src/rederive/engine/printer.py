@@ -217,12 +217,13 @@ def _constant_key(term: sp.Basic) -> tuple:
 
     This matches the manual, where the whole term's value, coefficient and sign
     included, decides: `SQRT(3) + SQRT(2)` (3.8 p.42) but `-SQRT(2)/8 - SQRT(6)/8 +
-    1/2` (6.3 p.104). Non-real terms go last, by string.
+    1/2` (6.3 p.104). Non-real terms go last, by string, leaving out the numeric
+    coefficient, so a sum of truth values is `false + 2*true`.
     """
     try:
         return (_CONSTANT, 0, -float(term), "")
     except (TypeError, ValueError):
-        return (_CONSTANT, 1, 0.0, str(term))
+        return (_CONSTANT, 1, 0.0, str(term.as_coeff_Mul()[1]), str(term))
 
 
 def _kernel_key(factor: sp.Basic, order: Sequence[str]) -> tuple:

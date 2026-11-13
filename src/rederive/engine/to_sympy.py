@@ -1261,7 +1261,7 @@ def multiplied(factors: list[sp.Basic]) -> sp.Basic:
         for factor in factors
     ):
         try:
-            return sp.Mul(*factors)
+            return sp.Mul(*(_arithmetic(factor) for factor in factors))
         except Exception:
             pass
     result = factors[0]
@@ -2270,8 +2270,12 @@ def _side(index: int) -> Handler:
     """`LHS(u)` and `RHS(u)`: one side of a relation.
 
     Vectors distribute, so `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is the vector of roots. A
-    non-relation is returned as is for both, as Derive gives `LHS(2*x + 3)` as
-    `2*x + 3`.
+    non-relation `u` reads as `u = 0`, as in Derive: `LHS(2*x + 3)` is `2*x + 3` and
+    `RHS(x + y)` is 0. ODE.MTH's `SIDE(w) := LHS(w) - RHS(w)` takes an expression for
+    an equation this way.
+
+    A command that stands, like a `SOLVE` of no form it accepts, has no known value to
+    read, so both sides are the call itself.
     """
 
     def handler(conv: Converter, args: list) -> sp.Basic:
@@ -2280,7 +2284,12 @@ def _side(index: int) -> Handler:
             return mapped(value, lambda element: handler(conv, [element]))
         if value.is_Relational:
             return value.args[index]
-        return value
+        standing = isinstance(value, AppliedUndef) and type(value).__name__ in (
+            COMMAND_HEADS
+        )
+        if index == 0 or standing:
+            return value
+        return sp.Integer(0)
 
     return handler
 
@@ -2550,7 +2559,12 @@ def _conditional(conv: Converter, args: list) -> sp.Basic:
 
     `IF(c)` alone is the test as 1 or 0, so `SUM(IF(PRIME(n)), n, 1, 100)` counts
     primes.
+
+    A test sympy doesn't take as a condition, like `PRIME(m)` for a variable `m`, also
+    leaves an inert head, which shows the test as written.
     """
+    if not isinstance(as_condition(args[0]), Boolean):
+        return conv.opaque("IF", args)
     if len(args) == 1:
         return sp.Piecewise(
             (sp.Integer(1), as_condition(args[0])), (sp.Integer(0), sp.true)
@@ -2628,10 +2642,23 @@ def as_condition(test: sp.Basic) -> sp.Basic:
     written. Any other expression is shorthand for comparing with zero: `IF(0, a, b)` is
     `a` and `IF(5, a, b)` is `b`, because Derive reads the test as `test = 0`. Sympy's
     truthiness would read it the opposite way.
+
+    A vector is zero when each of its elements is, so `IF([0, 0], 1, 2, 3)` is 1. A
+    predicate still waiting for a value, like `PRIME(m)`, is a test as written, and is
+    returned as is although sympy doesn't see it as a condition (see `_conditional`).
     """
     if isinstance(test, (Boolean, Logical)):
         return _test(test)
+    if isinstance(test, Vector):
+        return sp.And(*(as_condition(element) for element in test.args))
+    if isinstance(test, AppliedUndef) and type(test).__name__ in _PREDICATES:
+        return test
     return sp.Eq(test, 0)
+
+
+#: Built-ins answering true or false, which may stay a call until their argument is
+#: known.
+_PREDICATES = frozenset({"PRIME"})
 
 
 def _test(test: sp.Basic) -> sp.Basic:
@@ -3057,8 +3084,11 @@ def _selected(conv: Converter, args: list) -> sp.Basic:
     Values are specified as for `VECTOR`. The result is the values themselves:
     `SELECT(PRIME(k), k, 1, 100)` is the primes under a hundred.
 
-    Every test must be true or false. An undecidable one would silently drop its
-    element, so the call stays as written instead, which also keeps a `SELECT` in a
+    In Derive an element whose test is undecided is dropped: `SELECT(k = y, k, [x, y])`
+    is `[y]`, which ODE.MTH's `FREE` relies on. The evaluator does that, deciding the
+    test at each value (see `_Evaluator._counted`). Here the body is substituted into
+    without being evaluated again, as when a definition is shown, so every test must be
+    true or false; otherwise the call stays as written, which keeps a `SELECT` in a
     definition intact until it is applied.
     """
     body, index, *rest = args
@@ -3067,15 +3097,32 @@ def _selected(conv: Converter, args: list) -> sp.Basic:
     return chosen_from(steps(rest), lambda value: settled(body.subs(index, value)))
 
 
-def chosen_from(values: list, test: Callable[[sp.Basic], sp.Basic]) -> sp.Basic:
-    """The vector of `values` passing `test`; an undecided test raises."""
+def chosen_from(
+    values: list,
+    test: Callable[[sp.Basic], sp.Basic],
+    decide: Callable[[sp.Basic], bool | None] | None = None,
+) -> sp.Basic:
+    """The vector of `values` passing `test`.
+
+    With `decide`, which answers whether a test holds or None if undecided, an
+    undecided test drops its element, as in Derive. Without it, an undecided test
+    raises.
+
+    A test that isn't a truth value or relation, like `SELECT(k - 1, k, 1, 3)`, is not
+    true, so its element is dropped.
+    """
     chosen = []
     for value in values:
         held = _test(test(value))
         if held is sp.true:
             chosen.append(value)
-        elif held is not sp.false:
+            continue
+        if held is sp.false:
+            continue
+        if decide is None:
             raise ValueError("undecided")
+        if isinstance(held, (Boolean, Logical)) and decide(held):
+            chosen.append(value)
     return Vector(*chosen)
 
 
@@ -3169,7 +3216,12 @@ def _sequence(
             raise ValueError("no body to invert")
         step, count = _substituted(_inverted(body, names)), -count
     iterates = [_state(names, values)]
-    for _ in range(int(count)):
+    for left in reversed(range(int(count))):
+        if left == 0 and len(names) > 1:
+            # The last iterate of a system needn't be a vector of values, as when
+            # an undecided `IF` chooses it, since nothing is substituted into it.
+            iterates.append(_worked_out(step(names, values), conv.context))
+            break
         values = _updated(conv, step, names, values)
         iterates.append(_state(names, values))
     return iterates
@@ -3419,7 +3471,13 @@ def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
     `Logical` otherwise (e.g. an operand that is still a variable). Evaluation
     reconverts it once values are known: `LUCAS`'s `(n AND d_) = 0` tests a bit of `n`
     once iteration makes `d_` a number.
+
+    A `false` operand decides a conjunction and a `true` one a disjunction, whatever the
+    others are: `1/2 AND false` is `false`, as in Derive.
     """
+    deciding = _DECIDING.get(word)
+    if deciding is not None and any(operand is deciding for operand in operands):
+        return deciding
     bitwise = _BITWISE.get(word)
     numbers = operands and all(isinstance(operand, sp.Integer) for operand in operands)
     if bitwise is not None and numbers:
@@ -3435,6 +3493,9 @@ def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
             pass
     return Logical(sp.Symbol(word), *operands)
 
+
+#: The operand value that decides each operator alone.
+_DECIDING = {"AND": sp.false, "OR": sp.true}
 
 #: The inverse of `_HEADINGS`: operator name to sympy head.
 _BOOLEAN_HEADS = {word: head for head, word in _HEADINGS.items()}

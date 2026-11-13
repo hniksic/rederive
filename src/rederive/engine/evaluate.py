@@ -109,7 +109,9 @@ class Environment:
     """What names mean at a point of the evaluation, and how tests are decided.
 
     `bindings` maps call parameters to their arguments, and names assigned in a test
-    to their values for later branches. `supplied` records, for each call parameter,
+    to their values for later branches; `tested` holds the latter names, which are
+    variables, not parameters standing for their arguments, so assigning one again
+    assigns that name. `supplied` records, for each call parameter,
     the argument as written and where it was written, to evaluate it again once the
     body gives a value to a variable it mentions (see `Argument`). `bound` holds names
     that stand for themselves: a definition's parameters, and the variable of a sum,
@@ -143,6 +145,7 @@ class Environment:
     command: Command | None = None
     bindings: Mapping[str, sp.Basic] = field(default_factory=dict)
     supplied: Mapping[str, Argument] = field(default_factory=dict, compare=False)
+    tested: frozenset[str] = frozenset()
     bound: frozenset[str] = frozenset()
     parameters: frozenset[str] = frozenset()
     expanding: frozenset[str] = frozenset()
@@ -390,7 +393,7 @@ class _Evaluator(Converter):
         argument, which must then be a variable.
         """
         value = self.env.bindings.get(name)
-        if value is None:
+        if value is None or name in self.env.tested:
             return name
         if type(value) is sp.Symbol and value.name.isidentifier():
             return value.name
@@ -570,6 +573,7 @@ class _Evaluator(Converter):
         inner = replace(
             self.env,
             bindings=dict(zip(parameters, values, strict=False)),
+            tested=frozenset(),
             supplied={
                 parameter: Argument(argument, self.env, value)
                 for parameter, argument, value in zip(
@@ -606,6 +610,7 @@ class _Evaluator(Converter):
         inner = replace(
             self.env,
             bindings=dict(zip(parameters[1:], values[1:], strict=False)),
+            tested=frozenset(),
             bound=frozenset({parameters[0]}),
             depth=self.env.depth + 1,
         )
@@ -794,8 +799,11 @@ class _Evaluator(Converter):
 
         None if the values aren't all known (a symbolic end, or more than
         `_WRITTEN_OUT`); the call is then made over the body as is, for sympy to
-        handle. Also None if a `SELECT` test is undecidable or an iteration can't
-        continue.
+        handle. Also None if an iteration can't continue. A `SELECT` test that is
+        still undecided drops its element, as in Derive.
+
+        The terms of a `SUM` or `PRODUCT` may be truth values, which add up like
+        unknowns: `SUM(PRIME(k), k, 1, 3)` is `false + 2*true`.
         """
 
         def at(*values: sp.Basic) -> sp.Basic:
@@ -822,7 +830,10 @@ class _Evaluator(Converter):
                 return _total(name, limits, at, self.context)
             if name == "VECTOR":
                 return Vector(*(at(value) for value in steps(limits)))
-            return chosen_from(steps(limits), lambda value: _value_of(at(value)))
+            # A definition being shown keeps a call whose test is undecided: the test
+            # may be on a parameter, which a call of the function decides.
+            decide = None if self.env.defining else self.env.decides
+            return chosen_from(steps(limits), lambda value: _value_of(at(value)), decide)
         except Exception:
             return None
 
@@ -871,6 +882,7 @@ class _Evaluator(Converter):
             env = replace(
                 env,
                 bindings={**env.bindings, **performed},
+                tested=env.tested | (frozenset(performed) - env.supplied.keys()),
                 bound=env.bound - frozenset(performed),
             )
         if not branches:
@@ -1028,7 +1040,8 @@ def _total(
     Each running total is `carried`, so under Approximate a long sum stays numeric.
 
     The values are a vector, or a range (from 1 if only one end is given). None if
-    neither, or if a term isn't an expression, leaving the sum to sympy. A backwards
+    neither, or if a term is neither an expression nor a truth value (which adds like
+    an unknown, see `added`), leaving the sum to sympy. A backwards
     range gives the negated sum or reciprocal product over the values stepped back
     over.
     """
@@ -1043,7 +1056,7 @@ def _total(
     else:
         return None
     terms = [at(value) for value in values]
-    if not all(isinstance(term, sp.Expr) for term in terms):
+    if not all(isinstance(term, (sp.Expr, sp.logic.boolalg.Boolean)) for term in terms):
         return None
     def combine(*parts: sp.Basic) -> sp.Basic:
         if name == "SUM":
