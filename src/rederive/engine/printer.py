@@ -1322,6 +1322,12 @@ class AuthorPrinter(sp.StrPrinter):
             text = f"IF({', '.join(parts)})"
         return "?" if text is None else text
 
+    def _print_ITE(self, expr):
+        """A case split between truth values, as `IF(test, then, else)`. Sympy makes
+        one of a comparison with a case split: `DIMENSION(IF(k = 1, [f], [])) < 1`.
+        """
+        return f"IF({', '.join(self._print(arg) for arg in expr.args)})"
+
 
     # -- calculus heads that reached the output unevaluated -----------------
 

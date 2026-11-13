@@ -853,6 +853,13 @@ def test_the_utility_files_limit_of_a_generated_tensor():
     assert simp("S(3)", context) == "[[0, 1, 2], [-1, 0, 1], [-2, -1, 0]]"
 
 
+def test_a_limit_substitutes_into_a_vector_of_conditionals_on_its_index():
+    # TENSOR.MTH's GDELTA. Sympy makes a case split between truth values of the
+    # comparison, which must read back as a conditional.
+    text = "LIM(VECTOR(IF(DIMENSION(IF(k = 1, f*[1], f*[])) < 1, 0, 5), k, n), n, 2)"
+    assert simp(text) == "[5, 0]"
+
+
 def test_a_calculus_head_waits_for_the_body_of_the_call_under_it():
     """A call whose definition isn't expanded yet is not a constant.
 

@@ -417,6 +417,10 @@ TRUTHS = [
     # the others are.
     ("1/2 AND false", "false"),
     ("1/2 OR true", "true"),
+    # Also where the deciding operand is decided only once simplified, as in FUN.MTH's
+    # F21 at `c = 3/2`.
+    ("MOD(3/2 - 1/2) = 0 OR MOD(3/2) AND 3/2 >= 2", "true"),
+    ("MOD(3/2) AND 3/2 >= 2", "false"),
     # A test that isn't a relation means `test = 0`, and a vector is zero when each
     # element is.
     ("IF([0, 0], 1, 2, 3)", "1"),

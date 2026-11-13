@@ -42,7 +42,7 @@ import sympy as sp
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
 from sympy.functions.elementary.trigonometric import TrigonometricFunction
-from sympy.logic.boolalg import Boolean
+from sympy.logic.boolalg import Boolean, BooleanAtom
 from sympy.simplify.fu import TR2, TR5, TR6, TR7, TR8, TR11
 
 from rederive.engine.approximation import approximated, noting_approximations
@@ -85,6 +85,7 @@ from rederive.engine.to_sympy import (
     Vector,
     as_condition,
     authored_conditionals,
+    connected,
     digit_count,
 )
 from rederive.engine.vocabulary import INVERSE_HYPERBOLIC, in_vocabulary
@@ -224,13 +225,34 @@ def _transform(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic
         return expression
     if isinstance(expression, (Assign, FunDef)):
         return _definition(expression, context, decide)
-    if isinstance(expression, (Vector, Logical)):
+    if isinstance(expression, Logical):
+        return _logical(expression, context, decide)
+    if isinstance(expression, Vector):
         return expression.func(
             *(_transform(a, context, decide) for a in expression.args)
         )
     if isinstance(expression, Boolean):
         return _boolean(expression, context, decide)
     return _expression(expression, context, decide)
+
+
+def _logical(expression: Logical, context: Context, decide: bool) -> sp.Basic:
+    """An operator sympy declined, with its operands simplified and joined again.
+
+    An operand may be decided only once simplified: at `c = 3/2`, `MOD(c) AND c >= 2`
+    has the comparison false, which decides the conjunction, so `MOD(c - 1/2) = 0 OR
+    MOD(c) AND c >= 2` is true there, as in Derive. Operands that are still variables,
+    as in a truth table's headings, leave the operator as written.
+    """
+    word, *operands = expression.args
+    simplified = [_transform(operand, context, decide) for operand in operands]
+    if any(isinstance(operand, BooleanAtom) for operand in simplified) or all(
+        isinstance(operand, sp.Integer) for operand in simplified
+    ):
+        joined = connected(word.name, simplified)
+        if not isinstance(joined, Logical):
+            return _transform(joined, context, decide)
+    return Logical(word, *simplified)
 
 
 def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basic:

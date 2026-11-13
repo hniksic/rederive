@@ -81,6 +81,7 @@ __all__ = [
     "as_condition",
     "authored_conditionals",
     "chosen_from",
+    "connected",
     "divided",
     "dotted",
     "is_conditional",
@@ -940,7 +941,7 @@ class Converter:
 
     def _logical(self, node: Node) -> sp.Basic:
         """Boolean on booleans, bitwise on integers."""
-        return _connected(_LOGICAL_NAMES[node.kind], self._children(node))
+        return connected(_LOGICAL_NAMES[node.kind], self._children(node))
 
     # -- definitions, which convert their value and keep their shape --------
 
@@ -3464,7 +3465,7 @@ def _elements(value: sp.Basic) -> list[sp.Basic]:
     return list(value.args)
 
 
-def _connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
+def connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
     """`AND` and the other logical operators, interpreted by their operands.
 
     Bitwise on integers, boolean on anything sympy accepts as a statement, and an inert
