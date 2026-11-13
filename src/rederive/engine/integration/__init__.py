@@ -8,7 +8,7 @@ antiderivative is printed.
 
 from __future__ import annotations
 
-from rederive.engine.integration.indefinite import integral
+from rederive.engine.integration.indefinite import integral, numerically
 from rederive.engine.integration.proof import agrees, proved_zero
 
-__all__ = ["agrees", "integral", "proved_zero"]
+__all__ = ["agrees", "integral", "numerically", "proved_zero"]

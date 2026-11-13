@@ -45,6 +45,7 @@ __all__ = [
     "past_a_singular_end",
     "real_where_real",
     "unresolved",
+    "up_to_the_steps",
     "with_moving_poles",
     "within_each_case",
 ]
@@ -70,12 +71,70 @@ def real_where_real(head: sp.Basic, value: sp.Basic) -> sp.Basic:
     bounds = (low, high) if orientation > 0 else (high, low)
     if not Stretch(variable, *bounds).real(head.function):
         return value
+    if isinstance(value, sp.Piecewise) and _real_in_each_case(value):
+        return value
     if value.has(sp.Integral, sp.oo, -sp.oo, sp.zoo, sp.nan):
         return head
-    imaginary = attempt(value, lambda v: sp.im(sp.expand_complex(v)))
-    if imaginary is not None and proved_zero(imaginary):
+    if _real_within(value, sp.S.Reals):
         return value
     return by_the_antiderivative(head) or head
+
+
+def _real_in_each_case(value: sp.Piecewise) -> bool:
+    """Whether each case of a conditional value is real where it applies, as decided
+    by `_real_within`, its divergences aside.
+
+    `with_moving_poles` gives `INT(1/(1 - a*z), a, 0, 1)` as infinite at `z = 1`,
+    undefined for `z > 1`, and `-LN(z - 1)/z + pi*#i/z` otherwise, which for `z < 1` is
+    the real `-LN(1 - z)/z`. A case applies where its condition holds and no earlier
+    one does; conditions are on one variable.
+    """
+    symbols = set().union(*(condition.free_symbols for _, condition in value.args))
+    if len(symbols) != 1:
+        return False
+    taken = sp.S.EmptySet
+    for case, condition in value.args:
+        where = attempt(condition, lambda c: c.as_set() & sp.S.Reals)
+        applies = None if where is None else attempt(where, lambda w: w - taken)
+        if applies is None:
+            return False
+        taken = sp.Union(taken, where)
+        if case in (sp.oo, -sp.oo, sp.nan) or not case.has(sp.I):
+            continue
+        if applies is sp.S.EmptySet:
+            continue
+        if case.has(sp.Integral, sp.oo, -sp.oo, sp.zoo, sp.nan):
+            return False
+        if not _real_within(case, applies, *symbols):
+            return False
+    return True
+
+
+def _real_within(value: sp.Basic, where: sp.Set, *parameter: sp.Basic) -> bool:
+    """Whether the value's imaginary part is proved zero for the parameter in `where`,
+    an interval or the reals.
+
+    Over an interval with an infinite end, the parameter is written as that end's
+    finite neighbor plus or minus a positive variable, so that `LN(z - 1)` for `z < 1`
+    is `LN(-p)`, whose imaginary part is `pi`.
+    """
+    if parameter and where != sp.S.Reals:
+        if not isinstance(where, sp.Interval):
+            return False
+        (symbol,) = parameter
+        p = sp.Dummy("p", positive=True)
+        if where.start.is_finite and where.end is sp.oo:
+            value = value.xreplace({symbol: where.start + p})
+        elif where.end.is_finite and where.start is -sp.oo:
+            value = value.xreplace({symbol: where.end - p})
+        elif where.start.is_finite and where.end.is_finite:
+            value = value.xreplace(
+                {symbol: (where.start + where.end * p) / (1 + p)}
+            )
+        else:
+            return False
+    imaginary = attempt(value, lambda v: sp.im(sp.expand_complex(v)))
+    return imaginary is not None and proved_zero(imaginary)
 
 
 def odd_about_the_middle(head: sp.Basic) -> bool:
@@ -851,6 +910,71 @@ def across_the_steps(head: sp.Basic) -> sp.Basic | None:
         total += part
     constant, _ = sp.expand(total).as_independent(variable, as_Add=True)
     return folded_signs(sp.expand(total - constant))
+
+
+def up_to_the_steps(head: sp.Basic) -> sp.Basic | None:
+    """A definite integral of a step function with a symbolic limit, as the difference
+    of `across_the_steps` at the limits, or None if no step has infinitely many jumps
+    or a limit is infinite.
+
+    ELLIPTIC.MTH's `ELLIPTIC_E(phi, 1)` is `INT(ABS(COS(t)), t, 0, phi)`, which is
+    `SIGN(COS(phi))*SIN(phi) + 2*FLOOR(phi/pi + 1/2)` for every `phi`. Sympy's answer,
+    like its antiderivative, holds only over the first few jumps, so if the steps
+    can't be integrated across, the integral is left unevaluated.
+    """
+    if not definite(head):
+        return None
+    variable, low, high = head.limits[0]
+    if not (low.free_symbols or high.free_symbols):
+        return None
+    if low.is_infinite or high.is_infinite or low.has(variable) or high.has(variable):
+        return None
+    if variable.is_real is not True or not _endless_steps(head.function, variable):
+        return None
+    if not (low.is_extended_real is not False and high.is_extended_real is not False):
+        return None
+    antiderivative = across_the_steps(sp.Integral(head.function, variable))
+    if antiderivative is None:
+        return None
+    if antiderivative.has(sp.Integral):
+        return head
+    at_ends = [_at(antiderivative, variable, end) for end in (high, low)]
+    if None in at_ends:
+        return head
+    value = at_ends[0] - at_ends[1]
+    return head if value.has(sp.nan, sp.zoo, sp.Limit) else value
+
+
+def _at(antiderivative: sp.Basic, variable: sp.Basic, end: sp.Basic) -> sp.Basic | None:
+    """The value of a continuous antiderivative from `across_the_steps` at an end, or
+    None.
+
+    At a jump its steps take the value between their sides, so at a numeric end each
+    step is replaced by what it holds just above the end, and just below, and the two
+    must agree: `INT(ABS(SIN(t)), t, 0, b)` needs `-1` at 0, where `-SIGN(SIN(t))*COS(t)
+    + 2*FLOOR(t/pi)` is 0. The steps' jumps are a lattice spaced far wider than
+    `_BESIDE`. A symbolic end is taken to be away from the jumps, as the formula is for
+    every other value.
+    """
+    if end.free_symbols:
+        return attempt(antiderivative, lambda a: a.subs(variable, end))
+    steps = [step for step in antiderivative.atoms(*_STEPS) if step.has(variable)]
+    sides = []
+    for near in (end + _BESIDE, end - _BESIDE):
+        held = {step: _held(step, variable, near) for step in steps}
+        if any(value is None for value in held.values()):
+            return None
+        value = attempt(
+            antiderivative, lambda a: sp.expand(a.xreplace(held).subs(variable, end))
+        )
+        if value is None:
+            return None
+        sides.append(value)
+    return sides[0] if attempt(sides[0] - sides[1], sp.simplify) == 0 else None
+
+
+#: How far from a numeric end `_at` reads the steps.
+_BESIDE = sp.Rational(1, 10**9)
 
 
 def _endless_steps(integrand: sp.Basic, variable: sp.Basic) -> bool:

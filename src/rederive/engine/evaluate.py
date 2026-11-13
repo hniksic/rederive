@@ -1254,11 +1254,25 @@ def limit_by_substitution(
     written = {variable: point}
     if not substitutable(expression, written):
         return None
+    # A conditional's `?` case is a value it gives, not one the substitution makes.
+    undefined = sp.Dummy("undefined")
+    held = {}
+    if expression.has(sp.Piecewise, sp.nan):
+        try:
+            held = {sp.nan: undefined}
+            expression = expression.replace(
+                lambda e: isinstance(e, sp.Piecewise),
+                lambda e: e.xreplace(held),
+            )
+        except Exception:
+            return None
     try:
         value = settled(expression.subs(written))
     except Exception:
         return None
-    return value if defined(value) else None
+    if not defined(value):
+        return None
+    return value.xreplace({undefined: sp.nan}) if held else value
 
 
 def substitutable(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> bool:

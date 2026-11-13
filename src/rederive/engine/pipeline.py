@@ -65,7 +65,7 @@ from rederive.engine.evaluate import (
 from rederive.engine.expanding import EXPAND_AMOUNTS, expanded_expression
 from rederive.engine.factoring import amount_named, factored_expression
 from rederive.engine.from_sympy import from_sympy
-from rederive.engine.integration import agrees, integral, proved_zero
+from rederive.engine.integration import agrees, integral, numerically, proved_zero
 from rederive.engine.intervals import covering, decided, never_negative, settled
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
@@ -801,6 +801,9 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
     if isinstance(head, Approx):
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
+        if context.precision is Precision.APPROXIMATE and head.is_number:
+            with numerically():
+                return integral(head)
         return integral(head)
     if isinstance(head, (sp.Sum, sp.Product)):
         closed = _closed_by_rule(head, context)

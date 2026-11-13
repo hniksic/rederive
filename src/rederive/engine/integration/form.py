@@ -345,6 +345,8 @@ def continuous(value: sp.Basic, variable: sp.Basic | None) -> sp.Basic:
     """
     folded = attempt(value, sp.piecewise_fold)
     if not isinstance(folded, sp.Piecewise):
+        if variable is None:
+            return value
         regular, _, _ = _regularized(value, variable)
         return regular
     if len(folded.args) != 2 or folded.args[1][1] is not sp.true:
@@ -376,6 +378,11 @@ def _regularized(
         if principal is None:
             continue
         found = True
+        if principal.has(sp.I):
+            flipped = _with_logarithms_flipped(expression, divisor)
+            again = None if flipped is None else _principal_part(flipped, divisor)
+            if again is not None and not again.has(sp.I):
+                expression, principal = flipped, again
         if principal == 0:
             continue
         if variable is None or principal.has(variable):
@@ -383,6 +390,37 @@ def _regularized(
             continue
         expression = expression - principal
     return expression, found, kept
+
+
+def _with_logarithms_flipped(expression: sp.Basic, divisor: sp.Basic) -> sp.Basic | None:
+    """The expression with each logarithm whose argument is negative where the divisor
+    vanishes, or goes to minus infinity there, written over the negated argument, or
+    None if there is none.
+
+    The two differ by a constant multiple of `pi*#i`, so the antiderivative stays one.
+    Sympy's `INT(1/COS(a*x), x)` has `LN(SIN(a*x) - 1)`, which at `a = 0` is `LN(-1)`:
+    made continuous there as written, it carries a `-#i*pi/(2*a)` term, while over `LN(1
+    - SIN(a*x))` it needs none.
+    """
+    if len(divisor.free_symbols) != 1:
+        return None
+    (parameter,) = divisor.free_symbols
+    try:
+        roots = sp.solve(divisor, parameter)
+    except Exception:
+        return None
+    if len(roots) != 1:
+        return None
+    flips = {}
+    for call in expression.atoms(sp.log):
+        there = attempt(call.args[0], lambda a: sp.cancel(a.subs(parameter, roots[0])))
+        if there is not None and there.has(sp.zoo, sp.nan):
+            there = attempt(
+                call.args[0], lambda a: sp.limit(a, parameter, roots[0], "+-")
+            )
+        if there is not None and there.is_number and there.is_extended_negative:
+            flips[call] = sp.log(sp.expand(-call.args[0]))
+    return expression.xreplace(flips) if flips else None
 
 
 def parametric_divisors(expression: sp.Basic, variable: sp.Basic | None) -> list:

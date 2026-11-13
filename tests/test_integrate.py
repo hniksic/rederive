@@ -433,6 +433,54 @@ def test_an_elliptic_integral_is_left_without_a_search():
     assert simp(text) == text
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # The surface of the unit hemisphere, SURFACE_AREA in INT_APPS.MTH: the
+        # radicand comes to `1/(1 - x^2 - y^2)`, which integrates without a search.
+        (
+            "INT(LIM(INT(SQRT(1 + DIF(SQRT(1 - x^2 - y^2), x)^2 + DIF(SQRT(1 - x^2 -"
+            " y^2), y)^2), y, -SQRT(1 - u^2), SQRT(1 - u^2)), u, x), x, -1, 1)",
+            "2*pi",
+        ),
+        # For a radius `r`, the limits run backwards when `r` is negative.
+        (
+            "INT(LIM(INT(SQRT(1 + DIF(SQRT(r^2 - x^2 - y^2), x)^2 + DIF(SQRT(r^2 - x^2 -"
+            " y^2), y)^2), y, -SQRT(r^2 - u^2), SQRT(r^2 - u^2)), u, x), x, -r, r)",
+            "2*pi*r*ABS(r)",
+        ),
+    ],
+)
+def test_a_radicand_over_one_denominator_is_taken_apart(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_hemisphere_of_positive_radius():
+    text = (
+        "INT(LIM(INT(SQRT(1 + DIF(SQRT(r^2 - x^2 - y^2), x)^2 + DIF(SQRT(r^2 - x^2 -"
+        " y^2), y)^2), y, -SQRT(r^2 - u^2), SQRT(r^2 - u^2)), u, x), x, -r, r)"
+    )
+    assert simp(text, declared("r :epsilon Real (0, inf)")) == "2*pi*r^2"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # ELLIPTIC.MTH's `ELLIPTIC_E(phi, 1)`, valid across every jump of the sign.
+        (
+            "INT(ABS(COS(t)), t, 0, phi)",
+            "SIGN(COS(phi))*SIN(phi) + 2*FLOOR(phi/pi + 1/2)",
+        ),
+        # At a jump the steps are read on either side of the end.
+        ("INT(ABS(SIN(t)), t, 0, b)", "-SIGN(SIN(b))*COS(b) + 2*FLOOR(b/pi) + 1"),
+        # `ELLIPTIC_F(phi, 1)` diverges past `pi/2`, and the steps can't be crossed.
+        ("INT(1/ABS(COS(t)), t, 0, phi)", "INT(1/ABS(COS(t)), t, 0, phi)"),
+    ],
+)
+def test_a_step_function_is_integrated_up_to_a_symbolic_limit(text, expected):
+    assert simp(text) == expected
+
+
 # -- the gate ----------------------------------------------------------------------------
 
 
@@ -713,6 +761,21 @@ def test_an_antiderivative_is_continuous_in_its_parameters(text, expected):
     analytic in `n`, so the integral from a fixed point is too; the pole in sympy's
     formula was only in the constant. The answers match Derive exactly.
     """
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(1/(1 - a*z), a)", "-LN(1 - a*z)/z"),
+        ("INT(1/(z^2*x^4 - 1), z)", "(LN(1/x^2 - z) - LN(1/x^2 + z))/(2*x^2)"),
+        ("INT(1/COS(a*x), x)", "(LN(SIN(a*x) + 1) - LN(1 - SIN(a*x)))/(2*a)"),
+    ],
+)
+def test_a_logarithm_is_made_continuous_without_an_imaginary_constant(text, expected):
+    """Sympy's `-LN(a*z - 1)/z` is `LN(-1)/z` at `z = 0`, so made continuous there as
+    written it carries a `#i*pi/z` term. Over the negated argument, real where the
+    integrand is, no constant is needed."""
     assert simp(text) == expected
 
 
@@ -1193,6 +1256,8 @@ PARAMETRIC_INTEGRALS = [
         "INT(1/(x - a), x, 0, 1)",
         "IF(a = 0, inf, IF(a = 1, -inf, IF(0 < a < 1, ?, LN(1 - a) - LN(-a))))",
     ),
+    # Each case is real where it applies: `F21(1, 1, 2, z)` in FUN.MTH.
+    ("INT(1/(1 - a*z), a, 0, 1)", "IF(z = 1, inf, IF(z > 1, ?, -LN(1 - z)/z))"),
     # Where the pole cancels, the integral is a number.
     (
         "INT(x/(x - a), x, 0, 1)",
@@ -1336,8 +1401,8 @@ STEP_INTEGRALS = [
     ("INT(SIGN(SIN(x)), x, 0, 3*pi)", "pi"),
     ("INT(SIGN(COS(x)), x, 0, 5)", "5 - 2*pi"),
     ("INT(ABS(LN(x)), x, 1/2, 2)", "3*LN(2)/2 - 1/2"),
-    # The jumps can't be located numerically.
-    ("INT(FLOOR(x), x, 0, a)", "INT(FLOOR(x), x, 0, a)"),
+    # With a symbolic limit, the antiderivative across all the jumps is evaluated.
+    ("INT(FLOOR(x), x, 0, a)", "-FLOOR(a)^2/2 + a*FLOOR(a) - FLOOR(a)/2"),
 ]
 
 

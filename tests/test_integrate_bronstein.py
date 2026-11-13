@@ -532,7 +532,7 @@ CASES = [
         "-(a^2 - x^2)^(-n - 1)*(n*x^4 - a^2*x^2*(n + 1) + a^4)/(2*(n^2 - n))",
     ),
     ("73a", "INT(1/(x*(a^2 + x^2)), x)", "(2*LN(x) - LN(x^2 + a^2))/(2*a^2)"),
-    ("73b", "INT(1/(x*(a^2 - x^2)), x)", "-(LN(a^2/x^2 - 1) - #i*pi)/(2*a^2)"),
+    ("73b", "INT(1/(x*(a^2 - x^2)), x)", "-LN(1 - a^2/x^2)/(2*a^2)"),
     (
         "74a",
         "INT(1/(x*(a^2 + x^2)^2), x)",
@@ -1718,8 +1718,8 @@ CASES = [
     (
         "296",
         "INT(x/(1 - SIN(a*x)), x)",
-        "-(LN(1/(COS(a*x) + 1)) - 2*LN(TAN(a*x/2) - 1) - a*x*TAN(a*x/2 + pi/4) + LN(2) "
-        "+ 2*#i*pi)/a^2",
+        "(2*LN(1 - TAN(a*x/2)) - LN(1/(COS(a*x) + 1)) + a*x*TAN(a*x/2 + pi/4) - LN(2))"
+        "/a^2",
     ),
     (
         "297a",
@@ -1859,17 +1859,17 @@ CASES = [
         "INT(COS(a*x)/x^3, x)",
         "-COS(a*x)/(2*x^2) + a*SIN(a*x)/(2*x) - a^2*CI(a*x)/2",
     ),
-    ("325", "INT(1/COS(a*x), x)", "-(LN(SIN(a*x) - 1) - LN(SIN(a*x) + 1) - #i*pi)/(2*a)"),
+    ("325", "INT(1/COS(a*x), x)", "(LN(SIN(a*x) + 1) - LN(1 - SIN(a*x)))/(2*a)"),
     ("326", "INT(1/COS(a*x)^2, x)", "TAN(a*x)/a"),
     (
         "327",
         "INT(1/COS(a*x)^3, x)",
-        "-(LN(SIN(a*x) - 1) - LN(SIN(a*x) + 1) - 2*SIN(a*x)/COS(a*x)^2 - #i*pi)/(4*a)",
+        "-(LN(1 - SIN(a*x)) - LN(SIN(a*x) + 1) - 2*SIN(a*x)/COS(a*x)^2)/(4*a)",
     ),
     (
         "328@n=3",
         "INT(1/COS(a*x)^3, x)",
-        "-(LN(SIN(a*x) - 1) - LN(SIN(a*x) + 1) - 2*SIN(a*x)/COS(a*x)^2 - #i*pi)/(4*a)",
+        "-(LN(1 - SIN(a*x)) - LN(SIN(a*x) + 1) - 2*SIN(a*x)/COS(a*x)^2)/(4*a)",
     ),
     (
         "330",
@@ -2069,17 +2069,17 @@ CASES = [
     (
         "373",
         "INT(SIN(a*x)^2/COS(a*x), x)",
-        "-(LN(SIN(a*x) - 1) - LN(SIN(a*x) + 1) + 2*SIN(a*x) - #i*pi)/(2*a)",
+        "-(LN(1 - SIN(a*x)) - LN(SIN(a*x) + 1) + 2*SIN(a*x))/(2*a)",
     ),
     (
         "374",
         "INT(SIN(a*x)^2/COS(a*x)^3, x)",
-        "(LN(SIN(a*x) - 1) - LN(SIN(a*x) + 1) + 2*SIN(a*x)/COS(a*x)^2 - #i*pi)/(4*a)",
+        "(LN(1 - SIN(a*x)) - LN(SIN(a*x) + 1) + 2*SIN(a*x)/COS(a*x)^2)/(4*a)",
     ),
     (
         "375@n=3",
         "INT(SIN(a*x)^2/COS(a*x)^3, x)",
-        "(LN(SIN(a*x) - 1) - LN(SIN(a*x) + 1) + 2*SIN(a*x)/COS(a*x)^2 - #i*pi)/(4*a)",
+        "(LN(1 - SIN(a*x)) - LN(SIN(a*x) + 1) + 2*SIN(a*x)/COS(a*x)^2)/(4*a)",
     ),
     ("376", "INT(SIN(a*x)^3/COS(a*x), x)", "-(SIN(a*x)^2 + 2*LN(COS(a*x)))/(2*a)"),
     ("377", "INT(SIN(a*x)^3/COS(a*x)^2, x)", "(COS(a*x) - 1)^2/(a*COS(a*x))"),
@@ -2358,10 +2358,9 @@ CASES = [
     (
         "438",
         "INT(TANH(a*x)^2, x)",
-        "((-LN(2*#e^(a*x)/(#e^(a*x) + #e^(-a*x)) - 2) + LN(2/(#e^(a*x) + "
-        "#e^(-a*x))) + a*x - 2 + #i*pi)*#e^(2*a*x) - LN(2*#e^(a*x)/(#e^(a*x) + "
-        "#e^(-a*x)) - 2) + LN(2/(#e^(a*x) + #e^(-a*x))) + a*x + 2 + "
-        "#i*pi)/(2*a*(#e^(2*a*x) + 1))",
+        "((-LN(2 - 2*#e^(a*x)/(#e^(a*x) + #e^(-a*x))) + LN(2/(#e^(a*x) + "
+        "#e^(-a*x))) + a*x - 2)*#e^(2*a*x) - LN(2 - 2*#e^(a*x)/(#e^(a*x) + "
+        "#e^(-a*x))) + LN(2/(#e^(a*x) + #e^(-a*x))) + a*x + 2)/(2*a*(#e^(2*a*x) + 1))",
     ),
     ("439", "INT(COTH(a*x)^2, x)", "x - 2/(a*#e^(2*a*x) - a)"),
     (

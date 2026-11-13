@@ -524,3 +524,23 @@ def test_curv_fit_s_exponential_and_power_fits_come_out_as_documented():
     fitted = f"#e^LIM({line}, x, 0)*t^{slope}"
     assert simp(fitted, APPROXIMATE) == "2.19899/t^(1.90553)"
     assert "x" in simp(f"FIT([x, a*x + b], {logs})")
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # BESSEL.MTH's `BESSEL_I(1, 1.3)` times pi: I_1(1.3) is 0.7973293149... There is
+        # no closed form, and heuristic Risch would search for a minute before
+        # quadrature; it is skipped for an integral that is going to be approximated.
+        ("INT(#e^(1.3*COS(t))*COS(t), t, 0, pi)", "2.50488"),
+        # A pole inside the range is still found.
+        ("INT(1/x^2, x, -1, 1)", "inf"),
+        # ZETA.MTH's `DILOG(-1)`, which is Li2(2) = pi^2/4 - pi*LN(2)*#i: the range is cut
+        # at the logarithm's branch point, where sympy's quadrature never settles.
+        ("INT(LN(t)/(1 - t), t, 1, -1)", "2.46740 - 2.17758*#i"),
+        # `DILOG(2)`, Li2(-1) = -pi^2/12.
+        ("INT(LN(t)/(1 - t), t, 1, 2)", "-0.822467"),
+    ],
+)
+def test_a_numeric_integral_is_approximated_by_quadrature(text, expected):
+    assert simp(text, APPROXIMATE) == expected

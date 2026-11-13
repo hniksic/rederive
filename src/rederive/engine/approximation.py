@@ -504,7 +504,7 @@ def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
     `(12^(1/1000)*w)^1000` 12 rather than `12 + 5.06*10^-17*#i`. Otherwise the value
     is re-evaluated with enough extra digits for that part to be correct as well.
     """
-    part = _with_infinite_ranges_integrated(part, digits)
+    part = _with_integrals_by_quadrature(part, digits)
     value = _evalf(part, digits)
     parts = _parts(value)
     if parts is None:
@@ -528,32 +528,33 @@ def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
 _VANISHING = -(10**6)
 
 
-def _with_infinite_ranges_integrated(part: sp.Basic, digits: int) -> sp.Basic:
-    """`part` with each integral over an infinite range replaced by its value.
+def _with_integrals_by_quadrature(part: sp.Basic, digits: int) -> sp.Basic:
+    """`part` with each numeric definite integral replaced by its value by quadrature.
+
+    Sympy's own evaluation raises the precision until the digits agree, which through a
+    singularity never ends: ZETA.MTH's `DILOG(-1)`, `INT(LN(t)/(1 - t), t, 1, -1)`,
+    passes the branch point of the logarithm at 0. Here the range is cut where the
+    integrand may be singular (see `_breaks`), and the quadrature is done once at
+    working precision. An integral whose error estimate is not within the digits asked
+    for is left to sympy.
 
     Quadrature over an infinite range samples the integrand far out, and for
     BESSEL.MTH's `INT(#e^(-z*COSH(t))*COSH(n*t), t, 0, inf)` that means `#e^-x` for `x`
     so large that computing it (to a precision that grows with `x`) never ends, though
-    the value is far below any digit shown. Such an integral is computed here with an
-    exponential that gives 0 past `_VANISHING`. An integral whose error estimate is
-    not within the digits asked for is left to sympy.
+    the value is far below any digit shown. So an exponential gives 0 past
+    `_VANISHING`.
     """
 
-    def infinite(found: sp.Basic) -> bool:
+    def numeric(found: sp.Basic) -> bool:
         if not isinstance(found, sp.Integral) or len(found.limits) != 1:
             return False
-        limit = found.limits[0]
-        return (
-            len(limit) == 3
-            and any(end.is_infinite for end in limit[1:])
-            and found.is_number
-        )
+        return len(found.limits[0]) == 3 and found.is_number
 
     try:
         if not part.has(sp.Integral):
             return part
         return part.replace(
-            infinite, lambda found: _quadrature(found, digits), simultaneous=False
+            numeric, lambda found: _quadrature(found, digits), simultaneous=False
         )
     except Exception:
         return part
@@ -574,7 +575,11 @@ def _quadrature(integral: sp.Integral, digits: int) -> sp.Basic:
             variable, integral.function, modules=[{"exp": exp}, "mpmath"]
         )
         with mpmath.workdps(digits + GUARD):
-            value, error = mpmath.quad(integrand, [end(low), end(high)], error=True)
+            ends = [end(low), end(high)]
+            inner = _breaks(integral.function, variable, *ends)
+            if ends[0] > ends[1]:
+                inner.reverse()
+            value, error = mpmath.quad(integrand, [ends[0], *inner, ends[1]], error=True)
             if not mpmath.isfinite(value) or error > abs(value) * mpmath.mpf(10) ** (
                 -digits
             ):
@@ -584,6 +589,35 @@ def _quadrature(integral: sp.Integral, digits: int) -> sp.Basic:
         return number + sp.Float(imaginary, digits) * sp.I if imaginary else number
     except Exception:
         return integral
+
+
+def _breaks(
+    integrand: sp.Basic, variable: sp.Basic, low: mpmath.mpf, high: mpmath.mpf
+) -> list[mpmath.mpf]:
+    """The points strictly between the ends, in increasing order, where the integrand
+    may be singular: real roots of a polynomial argument of a logarithm or absolute
+    value, or of a base with a fractional or negative exponent. Other singularities
+    aren't looked for."""
+    bottom, top = sorted((low, high))
+    found = set()
+    arguments = [call.args[0] for call in integrand.atoms(sp.log, sp.Abs)]
+    arguments += [
+        power.base
+        for power in integrand.atoms(sp.Pow)
+        if not (power.exp.is_Integer and power.exp > 0)
+    ]
+    for argument in arguments:
+        if not argument.has(variable) or argument.is_polynomial(variable) is not True:
+            continue
+        try:
+            roots = sp.Poly(argument, variable).real_roots()
+        except Exception:
+            continue
+        for root in roots:
+            point = mpmath.mpf(str(sp.N(root, mpmath.mp.dps + GUARD)))
+            if bottom < point < top:
+                found.add(point)
+    return sorted(found)
 
 
 def _parts(value: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:

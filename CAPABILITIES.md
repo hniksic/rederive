@@ -158,6 +158,13 @@ never reduces to the digits shown. A function's own body is still computed exact
 `F(x) := SQRT(x) - 100` gives the same 0.00499987 for `F(10001)`. Values that still
 contain a variable are carried exactly.
 
+A definite integral that is a number is likewise worked out exactly first under
+`Precision := Approximate` and inside `APPROX`, but without the slow heuristic search
+for an antiderivative: where no closed form comes quickly, it goes to quadrature, as in
+Derive. `APPROX(INT(#e^(1.3*COS(t))*COS(t), t, 0, pi))` is 2.50488 at once. Poles in the
+interval are still found first, and the quadrature cuts the interval where a logarithm,
+root or denominator of a polynomial is singular.
+
 **Integrals through a pole.** A definite integral through a pole inside the interval is
 `inf` or `?` rather than the difference of the antiderivative's values at the ends:
 `INT(1/x^2, x, -1, 1)` is `inf`, not `-2`.

@@ -20,7 +20,8 @@ either.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
 from typing import NamedTuple
@@ -47,6 +48,7 @@ from rederive.engine.integration.definite import (
     past_a_singular_end,
     real_where_real,
     unresolved,
+    up_to_the_steps,
     with_moving_poles,
     within_each_case,
 )
@@ -67,7 +69,13 @@ from rederive.engine.rational import rational_antiderivative
 from rederive.engine.rewriting import attempt, forced
 from rederive.engine.trigonometric import trigonometric_antiderivative
 
-__all__ = ["by_a_positive_substitution", "by_sympy", "integral", "within_reach"]
+__all__ = [
+    "by_a_positive_substitution",
+    "by_sympy",
+    "integral",
+    "numerically",
+    "within_reach",
+]
 
 
 def integral(head: sp.Basic) -> sp.Basic:
@@ -82,22 +90,33 @@ def integral(head: sp.Basic) -> sp.Basic:
     Products of exponentials are combined first, as Simplify combines them, and an
     integral left unevaluated is tried once more with its radicals resolved (see
     `_with_radicals_resolved`).
+
+    Within `numerically`, heuristic Risch isn't run; see there.
     """
-    return _integral(head, shadowed_names())
+    return _integral(head, shadowed_names(), _numerically.get())
 
 
 @lru_cache(maxsize=256)
-def _integral(head: sp.Basic, shadowed: frozenset[str]) -> sp.Basic:
-    """`integral`, with `shadowed` the built-ins the answer may not use."""
+def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Basic:
+    """`integral`, with `shadowed` the built-ins the answer may not use, and `numeric`
+    whether it is within `numerically`."""
     combined = _with_exponentials_combined(head)
     if combined != head:
         return integral(combined)
+    over_one = _with_radicands_combined(head)
+    if over_one is not None:
+        found = integral(over_one)
+        if not found.has(sp.Integral):
+            return found
     stepped = between_the_steps(head)
     if stepped is not None:
         return stepped
     across = across_the_steps(head)
     if across is not None:
         return across
+    up_to = up_to_the_steps(head)
+    if up_to is not None:
+        return up_to
     value = _integral_through(head)
     moving = with_moving_poles(head, value)
     value = within_each_case(real_where_real(head, value if moving is None else moving))
@@ -108,6 +127,29 @@ def _integral(head: sp.Basic, shadowed: frozenset[str]) -> sp.Basic:
             if not again.has(sp.Integral):
                 return again
     return value
+
+
+#: Whether the integral being computed is a number that is going to be approximated.
+_numerically: ContextVar[bool] = ContextVar("_numerically", default=False)
+
+
+@contextmanager
+def numerically() -> Iterator[None]:
+    """Compute integrals that are going to be approximated: without heuristic Risch.
+
+    Under Approximate, a definite integral with numeric limits and no parameters is
+    computed exactly first and approximated after, but where no closed form comes
+    quickly, quadrature gives the digits at once, as it does in Derive. Heuristic Risch
+    is the search that doesn't come quickly: on `INT(#e^(1.3*COS(t))*COS(t), t, 0, pi)`
+    it takes a minute to fail, and BESSEL.MTH's BESSEL_I is that integral. The other
+    methods still run, and so does the examination of singularities, so that
+    `INT(1/x^2, x, -1, 1)` is still `inf` rather than a number.
+    """
+    token = _numerically.set(True)
+    try:
+        yield
+    finally:
+        _numerically.reset(token)
 
 
 def _with_exponentials_combined(head: sp.Basic) -> sp.Basic:
@@ -128,6 +170,48 @@ def _with_exponentials_combined(head: sp.Basic) -> sp.Basic:
     function = attempt(head.function, lambda f: f.replace(several, combined))
     if function is None or function == head.function:
         return head
+    return head.func(function, *head.limits)
+
+
+def _with_radicands_combined(head: sp.Basic) -> sp.Basic | None:
+    """The integral with each radicand that is a sum of quotients and comes to a
+    nonnegative constant over a function of the variables written as that quotient,
+    with the numerator taken out of the root, or None if there is none.
+
+    The surface of a sphere, SURFACE_AREA in INT_APPS.MTH, integrates `SQRT(x^2/(1 -
+    x^2 - y^2) + y^2/(1 - x^2 - y^2) + 1)`, which is `1/SQRT(1 - x^2 - y^2)`; as
+    written, the full methods search for seconds before giving up. Taking the
+    numerator out changes the root only where the denominator is negative and the
+    integrand isn't real, as in `_with_radicals_resolved`. The integral is used only
+    if this form answers it.
+    """
+    variables = [limit[0] for limit in head.limits]
+
+    def compound(e: sp.Basic) -> bool:
+        return (
+            e.is_Pow
+            and e.exp.is_Rational
+            and not e.exp.is_Integer
+            and e.base.is_Add
+            and any(sp.denom(term).has(*variables) for term in e.base.args)
+        )
+
+    def combined(power: sp.Basic) -> sp.Basic:
+        base, exponent = power.args
+        numerator, denominator = sp.fraction(sp.cancel(sp.together(base)))
+        if numerator.is_negative:
+            numerator, denominator = -numerator, sp.expand(-denominator)
+        if numerator.has(*variables) or numerator.is_nonnegative is not True:
+            return power
+        if not denominator.has(*variables):
+            return power
+        return numerator**exponent / denominator**exponent
+
+    if not head.function.has(*variables):
+        return None
+    function = attempt(head.function, lambda f: f.replace(compound, combined))
+    if function is None or function == head.function:
+        return None
     return head.func(function, *head.limits)
 
 
@@ -1179,6 +1263,8 @@ def _by_the_full_methods(head: sp.Basic) -> Candidate | None:
     if _an_arc_over_its_variable(head) or _unaffordable(head) or _elliptic(head):
         return None
     hints = within_reach(head)
+    if _numerically.get():
+        hints = {**hints, "heurisch": False}
     found = _standing(head, attempt(head, lambda h: h.doit(deep=False, **hints)))
     if found is None or found == head:
         return None
