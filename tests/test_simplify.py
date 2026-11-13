@@ -1427,6 +1427,75 @@ def test_a_counted_sum_is_written_out_for_the_recursion_under_it():
     assert simp("ROWS([[1, 0], [0, 0], [0, 3]])", context) == "2"
 
 
+def defining(**definitions):
+    """A context with these functions, each given as `F=("u, v", "body")`."""
+    state = declaring(*definitions)
+    return Context(
+        functions={
+            name: (tuple(p.strip() for p in params.split(",")), parse(body, state))
+            for name, (params, body) in definitions.items()
+        }
+    )
+
+
+#: NUMBER.MTH's RECURRENCE.
+RECURRENCE = (
+    "u, v, w, m",
+    "REVERSE_VECTOR(ITERATE(APPEND([u], v), v, w, m - DIMENSION(w)))",
+)
+
+#: Calls whose argument mentions a variable the body gives values to. Definitions are
+#: textual substitution, so the argument is evaluated again at each value.
+REWRITTEN_ARGUMENTS = [
+    ({"T": ("u, v, m", "ITERATE([u], v, [1], m)")}, "T(w SUB 1 + 1, w, 2)", "[3]"),
+    ({"F": ("p, v, d", "VECTOR(p, v, d)")}, "F([a, b, c] SUB k, k, 3)", "[a, b, c]"),
+    ({"T": ("u, x", "ITERATE(u, x, [3, 4], 1)")}, "T(DIMENSION(x), x)", "2"),
+    ({"R": RECURRENCE}, "R(v SUB 1 + v SUB 2, v, [1, 1], 6)", "[1, 1, 2, 3, 5, 8]"),
+    # ORTH_POL.MTH's CHEBYCHEV_T_LIST.
+    (
+        {"R": RECURRENCE},
+        "R(2*x*v SUB 1 - v SUB 2, v, [x, 1], 4)",
+        "[1, x, 2*x^2 - 1, 4*x^3 - 3*x]",
+    ),
+    # TENSOR.MTH's vNestx: the vector's index is the `n`th name of a parameter.
+    (
+        {"NEST": ("p, w, d, n", "IF(n < 1, p, NEST(VECTOR(p, w SUB n, d), w, d, n-1))")},
+        "NEST(a + b, [a, b], 2, 2)",
+        "[[2, 3], [3, 4]]",
+    ),
+    # TENSOR.MTH's OD_T, by way of vNestx: a derivative in an element of a vector of
+    # variables, taken once its index is known.
+    (
+        {"G": ("u, v", "DIF(u, v)"), "H": ("u, v", "VECTOR(u, v, 2)")},
+        "H(G(a*b, [a, b] SUB k), k)",
+        "[b, a]",
+    ),
+]
+
+
+@pytest.mark.parametrize(("functions", "text", "expected"), REWRITTEN_ARGUMENTS, ids=str)
+def test_an_argument_is_evaluated_again_where_the_body_binds_its_variable(
+    functions, text, expected
+):
+    assert simp(text, defining(**functions)) == expected
+
+
+def test_a_derivative_in_an_element_not_yet_known_stands():
+    # Taken in the unevaluated element it would be 0, the derivative of a constant.
+    assert simp("DIF(a*b, [a, b] SUB k)") == "DIF(a*b, ELEMENT([a, b], k))"
+    assert simp("DIF(a*b, [a, b] SUB 2)") == "a"
+    context = defining(G=("u, v", "DIF(u, v)"))
+    assert simp("G(a*b, [a, b] SUB k)", context) == "DIF(a*b, ELEMENT([a, b], k))"
+
+
+@pytest.mark.parametrize(
+    "text", ["SB(u, v, a) := ITERATE(u, v, a, 1)", "G(u, v) := DIF(u, v)"], ids=str
+)
+def test_a_definition_shows_a_binding_over_a_parameter_as_written(text):
+    # Its variable is whatever a call supplies, which the other arguments may mention.
+    assert simp(text) == text
+
+
 def test_two_spellings_of_one_variable_are_one_variable():
     """Case-insensitively, `x` and `X` name the same thing.
 

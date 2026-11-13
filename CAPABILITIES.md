@@ -25,7 +25,14 @@ The 110 names the original defines, all supported:
 | Combinatorics | `COMB` `PERM` |
 
 Bound-variable heads are `DIF INT ITERATE ITERATES LIM PRODUCT SELECT SUM TAYLOR VECTOR`,
-binding their second argument over the first.
+binding their second argument over the first. The second argument may also be an
+expression that evaluates to a variable, such as `[x, y] SUB n`; while it doesn't
+(`n` symbolic), the call stands.
+
+A user function's definition is textual substitution: an argument that mentions a
+variable the body binds is evaluated again at each value of it, so with `F(p, k) :=
+VECTOR(p, k, 3)`, `F([a, b, c] SUB k, k)` is `[a, b, c]`. When a definition is
+simplified, a bound-variable call over one of its parameters is shown as written.
 
 ## Added built-ins
 

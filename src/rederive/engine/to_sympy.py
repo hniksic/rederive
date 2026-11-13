@@ -42,7 +42,7 @@ from rederive.engine.context import (
 from rederive.engine.integration import integral
 from rederive.engine.ordering import main_order
 from rederive.model.expr import Kind, Node
-from rederive.syntax.names import PRIME_MARK
+from rederive.syntax.names import BINDING_FUNCTIONS, PRIME_MARK
 from rederive.syntax.writer import write_expression
 
 __all__ = [
@@ -554,11 +554,15 @@ def to_sympy(node: Node, context: Context | None = None) -> sp.Basic:
 
 
 class Converter:
-    """State for one conversion: the context and the labels being expanded."""
+    """State for one conversion: the context and the labels being expanded.
+
+    `parameters` are those of the definition whose body is being converted.
+    """
 
     def __init__(self, context: Context, open_labels: frozenset[int] = frozenset()):
         self.context = context
         self.open_labels = open_labels
+        self.parameters: frozenset[str] = frozenset()
 
     # -- the walk -----------------------------------------------------------
 
@@ -1052,8 +1056,31 @@ class Converter:
 
     def _fundef(self, node: Node) -> sp.Basic:
         params = sp.Tuple(*self._children(node.children[0]))
-        body = [self.convert(child) for child in node.children[1:]]
+        outer = self.parameters
+        self.parameters = frozenset(str(param) for param in params.args)
+        try:
+            body = [self.convert(child) for child in node.children[1:]]
+        finally:
+            self.parameters = outer
         return FunDef(sp.Symbol(str(node.value)), params, *body)
+
+    def binds_parameter(self, variable: sp.Basic) -> bool:
+        """Whether a binding call's variable is a parameter of the definition at hand.
+
+        Such a call stays a call in the definition: its variable is whatever a call of
+        the function supplies, which the other arguments may mention. `SB(u, v, a) :=
+        ITERATE(u, v, a, 1)` isn't `u`, and `G(u, v) := DIF(u, v)` isn't 0.
+        """
+        if not self.parameters:
+            return False
+        if isinstance(variable, (sp.MatrixBase, InertVector)):
+            variables = list(variable)
+        else:
+            variables = [variable]
+        return any(
+            getattr(each, "name", "").split(" SUB ")[0] in self.parameters
+            for each in variables
+        )
 
     def _declaration(self, node: Node) -> sp.Basic:
         """A declaration, converted to a `Declare` head describing itself.
@@ -1095,6 +1122,8 @@ class Converter:
                 return mapped
         handler = FUNCTIONS.get(name)
         if handler is None:
+            return self.opaque(name, args)
+        if name in BINDING_FUNCTIONS and len(args) > 1 and self.binds_parameter(args[1]):
             return self.opaque(name, args)
         try:
             result = handler(self, list(args))
@@ -2180,9 +2209,19 @@ def _integral(conv: Converter, args: list) -> sp.Basic:
 
 
 def _variable(variable: sp.Basic) -> None:
-    """Refuse a vector as a calculus function's variable."""
-    if isinstance(variable, (sp.MatrixBase, InertVector)):
+    """Refuse a vector, or an element not yet known, as a calculus function's variable.
+
+    `DIF(x1*x2, [x1, x2] SUB k)` is a derivative in `x1` or `x2` once `k` is known, and
+    stays a call until then, as in Derive. Taken in the unevaluated element it would be
+    0.
+    """
+    if isinstance(variable, (sp.MatrixBase, InertVector)) or _is_element(variable):
         raise TypeError("not a variable")
+
+
+def _is_element(value: sp.Basic) -> bool:
+    """Whether `value` is an `ELEMENT` access kept unevaluated."""
+    return isinstance(value, AppliedUndef) and type(value).__name__ == "ELEMENT"
 
 
 def _over_vector_limits(

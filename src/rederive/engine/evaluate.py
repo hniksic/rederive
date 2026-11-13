@@ -46,6 +46,7 @@ import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 
 import sympy as sp
 from sympy.core.function import AppliedUndef, UndefinedFunction
@@ -91,11 +92,14 @@ class Environment:
     """What names mean at a point of the evaluation, and how tests are decided.
 
     `bindings` maps call parameters to their arguments, and names assigned in a test
-    to their values for later branches. `bound` holds names that stand for themselves:
-    a definition's parameters, and the variable of a sum, integral or generated
-    vector. `expanding` and `labels` are the assigned names and labels being followed
-    on this branch, to stop self-reference. `depth` is the nesting depth of defined
-    function calls.
+    to their values for later branches. `supplied` records, for each call parameter,
+    the argument as written and where it was written, to evaluate it again once the
+    body gives a value to a variable it mentions (see `Argument`). `bound` holds names
+    that stand for themselves: a definition's parameters, and the variable of a sum,
+    integral or generated vector. `parameters` holds just the parameters of the
+    definition being shown. `expanding` and `labels` are the assigned names and labels
+    being followed on this branch, to stop self-reference. `depth` is the nesting
+    depth of defined function calls.
 
     `written` holds the values a suspended conditional was resumed with, substituted
     wherever those variables occur.
@@ -118,7 +122,9 @@ class Environment:
     work_out: WorkOut | None = None
     command: Command | None = None
     bindings: Mapping[str, sp.Basic] = field(default_factory=dict)
+    supplied: Mapping[str, Argument] = field(default_factory=dict, compare=False)
     bound: frozenset[str] = frozenset()
+    parameters: frozenset[str] = frozenset()
     expanding: frozenset[str] = frozenset()
     labels: frozenset[int] = frozenset()
     depth: int = 0
@@ -134,6 +140,68 @@ class Environment:
             return _plainly_decided(test, self.context)
         except Exception:
             return None
+
+
+@dataclass(frozen=True, eq=False)
+class Argument:
+    """A call's argument: as written, the environment it was written in, and its value.
+
+    Definitions are textual substitution, so an argument mentioning a variable the body
+    gives values to means something different at each value. `T(u, v, m) :=
+    ITERATE([u], v, [1], m)` called with `w SUB 1 + 1` for `u` and `w` for `v` adds one
+    to the first element at each step, which substituting into the value computed once
+    can't do, since `w SUB 1` of a symbol `w` is a name of its own. Likewise
+    `ELEMENT([a, b, c], k)` substituted for the index of a `VECTOR` only selects
+    elements once evaluated at each `k`. So the argument is evaluated again where the
+    body has given values to a variable in `names`: one written in it, or one its value
+    mentions. Elsewhere `value` is used as is.
+    """
+
+    node: Node
+    env: Environment
+    value: sp.Basic
+
+    @cached_property
+    def names(self) -> frozenset[str]:
+        return _written_names(self.node) | _symbol_names(self.value)
+
+    def rewritten(self, written: Mapping[sp.Basic, sp.Basic]) -> dict | None:
+        """The values `written` gives the variables of the argument since it was
+        written, or None if it gives none.
+        """
+        if written is self.env.written:
+            return None
+        new = {
+            symbol: value
+            for symbol, value in written.items()
+            if symbol not in self.env.written
+        }
+        if not any(getattr(symbol, "name", None) in self.names for symbol in new):
+            return None
+        return new
+
+
+def _written_names(node: Node) -> frozenset[str]:
+    """Every name written in `node`."""
+    names = {str(node.value)} if node.kind is Kind.NAME else set()
+    for child in node.children:
+        names |= _written_names(child)
+    return frozenset(names)
+
+
+def _symbol_names(value: sp.Basic) -> frozenset[str]:
+    """The names of the variables in `value`, and of the bases of subscripted ones."""
+    try:
+        symbols = value.free_symbols
+    except Exception:
+        return frozenset()
+    names = set()
+    for symbol in symbols:
+        name = getattr(symbol, "name", None)
+        if name is not None:
+            names.add(name)
+            names.add(name.split(" SUB ")[0])
+    return frozenset(names)
 
 
 def evaluate(node: Node, env: Environment) -> sp.Basic:
@@ -189,6 +257,7 @@ class _Evaluator(Converter):
     def __init__(self, env: Environment, performed: dict[str, sp.Basic] | None = None):
         super().__init__(env.context)
         self.env = env
+        self.parameters = env.parameters
         #: Names assigned by the test being evaluated, with their values. None outside
         #: a test, where an assignment is a definition rather than an action.
         self.performed = performed
@@ -212,6 +281,12 @@ class _Evaluator(Converter):
         env = self.env
         value = env.bindings.get(name)
         if value is not None:
+            argument = env.supplied.get(name)
+            if argument is not None and argument.value is value:
+                rewritten = argument.rewritten(env.written)
+                if rewritten is not None:
+                    again = replace(_at(argument.env, rewritten), writing=env.writing)
+                    return _value_of(_Evaluator(again).convert(argument.node))
             return _over(value, env.written)
         if name not in env.bound and name not in env.expanding:
             assigned = env.context.assignments.get(name)
@@ -278,13 +353,18 @@ class _Evaluator(Converter):
         return Assign(plain.convert(target), sp.Symbol(str(node.value)), *written)
 
     def _fundef(self, node: Node) -> sp.Basic:
-        """A definition: the body is evaluated, its parameters standing for themselves."""
+        """A definition: the body is evaluated, its parameters standing for themselves.
+
+        A variable-binding call over a parameter is left as a call, since its variable
+        is whatever a call of the function supplies (see `_binding`).
+        """
         parameters, *body = node.children
         names = frozenset(str(child.value) for child in parameters.children)
         inner = replace(
             self.env,
             bindings={},
             bound=self.env.bound | names,
+            parameters=names,
             written=_unwritten(self.env.written, names),
         )
         plain = Converter(self.context)
@@ -314,7 +394,7 @@ class _Evaluator(Converter):
         if definition is not None:
             if self.env.writing:
                 return self.opaque(name, values)
-            return self._entered(name, definition, values)
+            return self._entered(name, definition, values, arguments)
         made = self.call(name, values)
         if name in COMMAND_HEADS and _is_call_of(made, name):
             if self.env.command is not None and not self.env.writing:
@@ -358,12 +438,20 @@ class _Evaluator(Converter):
         return _worked_out(made, standing, work_out)
 
     def _entered(
-        self, name: str, definition: tuple[tuple[str, ...], Node], values: list
+        self,
+        name: str,
+        definition: tuple[tuple[str, ...], Node],
+        values: list,
+        arguments: Sequence[Node],
     ) -> sp.Basic:
         """A call of a defined function: its body evaluated over its arguments.
 
         Partial application binds only the leading parameters: `ACCELERATION(f, m) :=
         f/m` applied to 6 alone is `6/m`.
+
+        Each parameter stands for its argument's value, and the argument as written is
+        kept to be evaluated again where the body gives values to its variables (see
+        `Argument`).
         """
         if self.env.depth >= _NESTING:
             return self.opaque(name, values)
@@ -371,7 +459,14 @@ class _Evaluator(Converter):
         inner = replace(
             self.env,
             bindings=dict(zip(parameters, values, strict=False)),
+            supplied={
+                parameter: Argument(argument, self.env, value)
+                for parameter, argument, value in zip(
+                    parameters, arguments, values, strict=False
+                )
+            },
             bound=frozenset(),
+            parameters=frozenset(),
             depth=self.env.depth + 1,
         )
         return _Evaluator(inner).convert(body)
@@ -447,18 +542,34 @@ class _Evaluator(Converter):
         SOLVE.MTH depends on: `NEWTON_AUX`'s `LIM(a, x, xk)` is called with `[x, y]`
         for `x`.
 
-        A second argument that isn't a name or vector of names binds nothing, nor
-        does `SUM(v)` over a vector; both are evaluated like ordinary calls.
+        A parameter supplied with an element whose index isn't known yet binds nothing
+        either, so `DIF(u, v)` called with `[x1, x2] SUB k` for `v` stays a call until
+        `k` is a number, as written out it would.
+
+        A second argument written otherwise binds what it evaluates to, if that names
+        variables: TENSOR.MTH's `vNestx(P, ivP, d, n)` generates `VECTOR(P, ivP SUB n,
+        d)`, over the `n`th name in `ivP`. One that evaluates to anything else binds
+        nothing, nor does `SUM(v)` over a vector; both are evaluated like ordinary
+        calls.
+
+        In a definition being shown, a binding over one of its parameters is left as a
+        call with its arguments evaluated: `SB(u, v, a) := ITERATE(u, v, a, 1)` iterates
+        over whatever variable a call supplies for `v`, which `u` may then mention.
 
         For `BINDING_THROUGHOUT` heads the binding covers the later arguments too: a
         root sum ranges over the roots of a polynomial in the same variable, so an
         assigned `t` reaches no part of `ROOT_SUM(p, t, u)`.
         """
-        if len(arguments) < 2 or _variables_of(arguments[1]) is None:
-            values = [_value_of(self.convert(argument)) for argument in arguments]
-            return self._worked(self.call(name, values), values)
+        if len(arguments) < 2:
+            return self._unbound(name, arguments)
         body, written_index, *rest = arguments
-        index, names, shadowed = self._index(written_index)
+        if _variables_of(written_index) is not None and not self._pending(written_index):
+            index, names, shadowed = self._index(written_index)
+        else:
+            index = _value_of(self.convert(written_index))
+            names, shadowed = _names_in(index), frozenset()
+            if names is None:
+                return self._unbound(name, arguments, index)
         inner = replace(
             self.env,
             bindings={n: v for n, v in self.env.bindings.items() if n not in shadowed},
@@ -469,12 +580,34 @@ class _Evaluator(Converter):
         outer = evaluator if name in BINDING_THROUGHOUT else self
         limits = [_value_of(outer.convert(argument)) for argument in rest]
         taken = _taken(self.env.written, names)
+        if self.binds_parameter(index):
+            return self.opaque(name, [_value_of(evaluator.convert(body)), index, *limits])
         if name in _COUNTED and not self.env.writing:
             counted = self._counted(name, body, index, inner, limits)
             if counted is not None:
                 return _over(counted, taken)
         values = [_value_of(evaluator.convert(body)), index, *limits]
         return _over(self._worked(self.call(name, values), values), taken)
+
+    def _pending(self, index: Node) -> bool:
+        """Whether `index` is a parameter supplied with an element not yet known."""
+        if index.kind is not Kind.NAME:
+            return False
+        supplied = self.env.bindings.get(str(index.value))
+        return supplied is not None and _is_call_of(supplied, "ELEMENT")
+
+    def _unbound(
+        self, name: str, arguments: list[Node], index: sp.Basic | None = None
+    ) -> sp.Basic:
+        """A binding function's call that binds nothing, evaluated like any other.
+
+        `index` is the second argument's value, if already evaluated.
+        """
+        values = [
+            index if i == 1 and index is not None else _value_of(self.convert(argument))
+            for i, argument in enumerate(arguments)
+        ]
+        return self._worked(self.call(name, values), values)
 
     def _counted(
         self,
