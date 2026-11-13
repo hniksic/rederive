@@ -424,6 +424,15 @@ def test_only_factor_is_evaluated():
     assert simplify(parse("FACTORS(10!)"), Context()).text == "[3628800]"
 
 
+def test_the_factors_of_a_factored_number_are_its_prime_powers():
+    """As in Derive, they are shown as Factor wrote them, so like Factor's own answer
+    they are a form a second Simplify multiplies out."""
+    assert simplify(parse("FACTORS(FACTOR(360))"), Context()).text == "[2^3, 3^2, 5]"
+    assert simplify(parse("FACTORS(FACTOR(12/35))"), Context()).text == (
+        "[2^2, 3, 1/5, 1/7]"
+    )
+
+
 def test_a_subtree_is_factored_on_its_own():
     """Factor works on any subtree, so the session can factor the user's selection."""
     node = parse("(x^2 - 1) + SIN(z)")

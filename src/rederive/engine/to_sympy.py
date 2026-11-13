@@ -2098,10 +2098,20 @@ def _fit(conv: Converter, args: list) -> sp.Basic:
     for `ROW_REDUCE`: data written as `TAN(0.1)` would otherwise be solved for exactly,
     in a field of sixteen tangents.
 
+    With one argument, the label vector is the matrix's first row and the data its
+    other rows: `FIT([[x, a*x + b], [0, 1], [1, 3]])` is `2*x + 1`, as in Derive.
+    CURV_FIT.MTH fits that way.
+
     Degenerate cases raise, leaving the call inert: no parameters, rows of the wrong
     width, too few rows, or a rank-deficient design matrix.
     """
-    labels, data = args
+    if len(args) == 1:
+        labels, *rows = _elements(args[0])
+        if not rows:
+            raise TypeError("no data")
+        data = Vector(*rows)
+    else:
+        labels, data = args
     labels = _elements(labels)
     if len(labels) < 2:
         raise TypeError("not a label vector")
@@ -2208,7 +2218,9 @@ def _factors(conv: Converter, args: list) -> sp.Basic:
 
     The counterpart of `TERMS`, and likewise syntactic: `FACTORS(x^2 - 1)` is one factor
     (compose with `FACTOR` otherwise), and `FACTORS(12)` is `[12]`, not a prime
-    factorization.
+    factorization. `FACTORS(FACTOR(360))` is that factorization, `[2^3, 3^2, 5]`, as
+    `FACTOR` gives a number as a product of prime powers (see `factoring._primes`).
+    One is the empty product, so `FACTORS(1)` is `[]`.
 
     Factors are ordered as in Derive, by `_by_mainness`: `FACTORS(2*x*y)` is
     `[x, y, 2]`, and `[(x + 1)^2, x]` and `[SIN(x), x]` put compound factors first.
@@ -2220,6 +2232,13 @@ def _factors(conv: Converter, args: list) -> sp.Basic:
         return mapped(value, lambda element: _factors(conv, [element]))
     if not isinstance(value, sp.Expr):
         raise TypeError("no factors")
+    if value == 1:
+        return Vector()
+    if isinstance(value, sp.UnevaluatedExpr):
+        # A prime decomposition, its pieces in increasing order of the primes and
+        # still unevaluated, as the evaluator shows them.
+        product = value.args[0]
+        return Vector(*(product.args if product.is_Mul else [product]))
     factors = value.as_ordered_factors() if value.is_Mul else [value]
     return Vector(*_by_mainness(factors))
 
@@ -2943,6 +2962,34 @@ def _reversed_vector(conv: Converter, args: list) -> sp.Basic:
     return Vector(*_elements(_one(args))[::-1])
 
 
+def _sort(conv: Converter, args: list) -> sp.Basic:
+    """`SORT(v)`: the elements of `v` in ascending order.
+
+    The 4.11 README documents it for a vector of different rational numbers, which is
+    what NUMBER.MTH's `FAREY` and `DIVISORS` sort. Beyond that it follows the 6.1 help:
+    numbers go by their real parts, ties broken on their imaginary parts, so `SQRT(2)`
+    comes between 1 and 2; variables follow the numbers, in alphabetical order; and
+    vectors go by their first elements, ties broken on the second, and so on. Equal
+    elements are all kept. Anything else, such as `x + 1`, leaves the call as written.
+    """
+    elements = _elements(_one(args))
+    return Vector(*sorted(elements, key=_sorting_key))
+
+
+def _sorting_key(element: sp.Basic) -> tuple:
+    """Where `element` goes in `SORT`'s order; raises if it has no place in it."""
+    if isinstance(element, Vector):
+        return (2, tuple(_sorting_key(part) for part in element.args))
+    if type(element) is sp.Symbol:
+        return (1, element.name)
+    if isinstance(element, sp.Expr) and element.is_number:
+        value = sp.N(element, 30)
+        real, imaginary = value.as_real_imag()
+        if real.is_Number and imaginary.is_Number:
+            return (0, sp.Rational(real), sp.Rational(imaginary))
+    raise TypeError("nothing to sort by")
+
+
 def _appended(conv: Converter, args: list) -> sp.Basic:
     """`APPEND(v, w, ...)`: the elements of each, concatenated into one vector.
 
@@ -3099,6 +3146,9 @@ def _sequence(
 ) -> list[sp.Basic]:
     """The iterates, as many as requested.
 
+    A count that isn't an integer is floored, as in Derive: `ITERATES(x + 1, x, 0, 5/2)`
+    is `[0, 1, 2]`. ORTH_POL.MTH counts `n/2` steps for an odd `n`.
+
     A negative count iterates the inverse of `u` `|n|` times, which `MISC.MTH` uses to
     define `INVERSE(u, x) := ITERATE(u, x, x, -1)`. This needs the converted body.
     """
@@ -3110,6 +3160,8 @@ def _sequence(
     if not rest:
         return _until_repeated(conv, step, names, values)
     count = _one(rest)
+    if isinstance(count, (sp.Rational, sp.Float)):
+        count = sp.floor(count)
     if not isinstance(count, sp.Integer):
         raise TypeError("not a count")
     if count < 0:
@@ -3303,11 +3355,23 @@ def _undone(body: sp.Basic, name: sp.Symbol, value: sp.Basic) -> sp.Basic | None
     the reciprocal power, as in `INT_SUBST(t*SIN(t^2), t, t^2)`, which substitutes the
     manual's `SQRT(t)` (9.21, p.285).
 
+    A sum or product with `name` in one term or factor only is undone by moving the
+    rest to the other side, then undoing that term: `INVERSE(x^3 + 1, x)` is
+    `(x - 1)^(1/3)`, the principal one of three cube roots.
+
     Returns None if there is no known inverse or no solution.
     """
     solutions = sp.solve(sp.Eq(body, value), name)
     if len(solutions) == 1:
         return solutions[0]
+    if isinstance(body, sp.Add | sp.Mul):
+        inner = [part for part in body.args if part.has(name)]
+        if len(inner) != 1:
+            return None
+        (part,) = inner
+        rest = body.func(*(other for other in body.args if other is not part))
+        moved = value - rest if isinstance(body, sp.Add) else value / rest
+        return _undone(part, name, moved)
     if isinstance(body, sp.Pow) and body.base.has(name) and not body.exp.has(name):
         return _undone(body.base, name, sp.Pow(value, 1 / body.exp))
     if not (isinstance(body, sp.Function) and len(body.args) == 1):
@@ -3826,6 +3890,7 @@ FUNCTIONS: dict[str, Handler] = {
     "REPLACE_ELEMENT": _replace_element,
     "INSERT_ELEMENT": _insert_element,
     "REVERSE_VECTOR": _reversed_vector,
+    "SORT": _sort,
     "APPEND": _appended,
     "IDENTITY_MATRIX": _identity_matrix,
     "CROSS": _cross,

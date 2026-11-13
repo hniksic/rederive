@@ -7,7 +7,7 @@ places where Rederive intentionally gives a different answer.
 
 ## Derive's built-ins
 
-The 110 names the original defines, all supported:
+The 111 names the original defines, all supported:
 
 | | |
 |---|---|
@@ -17,7 +17,7 @@ The 110 names the original defines, all supported:
 | Complex | `RE` `IM` `CONJ` `PHASE` |
 | Calculus | `DIF` `INT` `LIM` `SUM` `PRODUCT` `TAYLOR` |
 | Algebra | `EXPAND` `FACTOR` `FACTORS` `SOLVE` `NORMAL` `TERMS` `APPROX` `POLY_GCD` `VARIABLES` |
-| Vectors, matrices | `VECTOR` `ELEMENT` `DIMENSION` `APPEND` `DET` `TRACE` `CHARPOLY` `EIGENVALUES` `IDENTITY_MATRIX` `ROW_REDUCE` `CROSS` `DELETE_ELEMENT` `INSERT_ELEMENT` `REPLACE_ELEMENT` `REVERSE_VECTOR` `SELECT` |
+| Vectors, matrices | `VECTOR` `ELEMENT` `DIMENSION` `APPEND` `DET` `TRACE` `CHARPOLY` `EIGENVALUES` `IDENTITY_MATRIX` `ROW_REDUCE` `CROSS` `DELETE_ELEMENT` `INSERT_ELEMENT` `REPLACE_ELEMENT` `REVERSE_VECTOR` `SELECT` `SORT` |
 | Vector calculus | `GRAD` `DIV` `CURL` `LAPLACIAN` `POTENTIAL` `VECTOR_POTENTIAL` |
 | Statistics | `AVERAGE` `RMS` `VAR` `STDEV` `FIT` |
 | Finance | `PVAL` `FVAL` `PMT` `NPER` `RATE` |
@@ -28,6 +28,10 @@ Bound-variable heads are `DIF INT ITERATE ITERATES LIM PRODUCT SELECT SUM TAYLOR
 binding their second argument over the first. The second argument may also be an
 expression that evaluates to a variable, such as `[x, y] SUB n`; while it doesn't
 (`n` symbolic), the call stands.
+
+The two numeric settings, `PrecisionDigits` and `NotationDigits`, read as variables
+holding the digits in force (6 by default; inside `APPROX(u, 20)`, 20). The other
+settings have keyword values and read as plain names.
 
 A user function's definition is textual substitution: an argument that mentions a
 variable the body binds is evaluated again at each value of it, so with `F(p, k) :=

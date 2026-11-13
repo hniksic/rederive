@@ -10,7 +10,7 @@ the utility files and demos are tested here too, since they rely on this arithme
 from __future__ import annotations
 
 import pytest
-from simplifying import declared, parse, simp
+from simplifying import declared, declaring, parse, simp
 
 from rederive.engine.computing import Context
 
@@ -529,6 +529,10 @@ ITERATION = [
     # power, a call by its inverse function. MISC.MTH's INT_SUBST depends on this (the
     # manual inverts `t^2` to `SQRT(t)`, 9.21, p.285).
     ("ITERATES(x^2, x, 2, -1)", "[2, SQRT(2)]"),
+    # A count that isn't an integer is floored, as in Derive. ORTH_POL.MTH counts `n/2`
+    # steps, which for an odd order is a half.
+    ("ITERATES(x + 1, x, 0, 5/2)", "[0, 1, 2]"),
+    ("ITERATE(x + 1, x, 0, 5/2)", "2"),
     # An uncounted iteration that never repeats stays unevaluated (Derive runs until
     # memory runs out), as does a symbolic count.
     ("ITERATES(x^2, x, 2)", "ITERATES(x^2, x, 2)"),
@@ -663,6 +667,18 @@ STRUCTURE = [
     # A matrix is reversed by rows.
     ("REVERSE_VECTOR([a, b, c])", "[c, b, a]"),
     ("REVERSE_VECTOR([[1, 2], [3, 4]])", "[[3, 4], [1, 2]]"),
+    # Sorting, which NUMBER.MTH's FAREY and DIVISORS need: numbers by value, then
+    # variables alphabetically (the 6.1 help's example), vectors element by element.
+    ("SORT([3, 1, 2])", "[1, 2, 3]"),
+    (
+        "SORT([3, 2, y, pi, #e, SQRT(2), z, x, 1, 0, 2, 0, 0, -3])",
+        "[-3, 0, 0, 0, 1, SQRT(2), 2, 2, #e, 3, pi, x, y, z]",
+    ),
+    ("SORT([[2, 3], [3, 1], [2, 1], [1, 5]])", "[[1, 5], [2, 1], [2, 3], [3, 1]]"),
+    ("SORT([#i, 1, -#i, 0])", "[-#i, 0, #i, 1]"),
+    ("SORT([])", "[]"),
+    # An element with no place in the order leaves the call as written.
+    ("SORT([x + 1, 2])", "SORT([x + 1, 2])"),
     # Concatenation. Matrices stack by rows, except that a single matrix is flattened,
     # as the manual specifies.
     ("APPEND([a, b], [c, d], [e, f])", "[a, b, c, d, e, f]"),
@@ -700,6 +716,11 @@ DECOMPOSITION = [
     ("FACTORS(12)", "[12]"),
     ("FACTORS(2/3)", "[2/3]"),
     ("FACTORS(x/y)", "[x, 1/y]"),
+    # Composed with FACTOR, a number's prime powers (see test_factor.py for how they
+    # are shown), values like any other once used. One is the empty product.
+    ("FACTORS(FACTOR(360)) SUB 1", "8"),
+    ("VECTOR(PRIME(k), k, FACTORS(FACTOR(360)))", "[false, false, true]"),
+    ("FACTORS(1)", "[]"),
     # Most main first; for the same variable, compound before simple.
     ("FACTORS(3*x*y)", "[x, y, 3]"),
     ("FACTORS(x^2*y^3)", "[x^2, y^3]"),
@@ -817,6 +838,80 @@ def test_the_utility_files_approximate_eigenvector_is_a_unit_vector():
     assert simp("E([[2, 0], [0, 3]], 201/100)", context) == (
         "[198*SQRT(39205)/39205, SQRT(39205)/39205]"
     )
+
+
+#: NUMBER.MTH's factorizations, which factor with `FACTORS(FACTOR(n))` and sort with SORT.
+NUMBER_THEORY_FILE = {
+    "PRIME_FACTORIZATION": (
+        ("n",),
+        "VECTOR(ITERATE(IF(PRIME(p_),[p_,k_],[p_^(k_/(k_+1)),k_+1],"
+        "[p_^(k_/(k_+1)),k_+1]),[p_,k_],[f_,1]),f_,FACTORS(FACTOR(n)))",
+    ),
+    "MOEBIUS_MU": (("n",), "PRODUCT(IF(PRIME(k_),-1,0),k_,FACTORS(FACTOR(n)))"),
+    "DIVISORS": (
+        ("n",),
+        "SORT((ITERATE(IF(DIMENSION(v_)=0,[u_,v_],[APPEND([u_]`*[ITERATES(v_ SUB 1"
+        " SUB 1*b_,b_,1,v_ SUB 1 SUB 2)]),DELETE_ELEMENT(v_)]),[u_,v_],[[1],"
+        "PRIME_FACTORIZATION(n)])) SUB 1)",
+    ),
+    "CYCLOTOMIC": (("n", "x"), "PRODUCT((x^(n/d_)-1)^MOEBIUS_MU(d_),d_,DIVISORS(n))"),
+}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("PRIME_FACTORIZATION(360)", "[[2, 3], [3, 2], [5, 1]]"),
+        ("PRIME_FACTORIZATION(1)", "[]"),
+        ("MOEBIUS_MU(30)", "-1"),
+        ("MOEBIUS_MU(12)", "0"),
+        ("MOEBIUS_MU(1)", "1"),
+        ("DIVISORS(12)", "[1, 2, 3, 4, 6, 12]"),
+        ("CYCLOTOMIC(12, x)", "x^4 - x^2 + 1"),
+    ],
+    ids=str,
+)
+def test_the_utility_files_factorizations(text, expected):
+    functions = {
+        name: (parameters, parse(body, declaring(*NUMBER_THEORY_FILE)))
+        for name, (parameters, body) in NUMBER_THEORY_FILE.items()
+    }
+    assert simp(text, Context(functions=functions)) == expected
+
+
+def test_the_utility_files_legendre_polynomial_of_odd_order():
+    # LEGENDRE_P counts `n/2` iterations, floored for an odd order.
+    body = parse(
+        "2^(-n)*(SUM(ITERATES([v SUB 1*(2*v SUB 2-n-1)*(2*v SUB 2-n-2)/(2*x^2*v SUB 2*"
+        "(2*v SUB 2-2*n-1)),v SUB 2+1],v,[COMB(2*n,n)*x^n,1],n/2))) SUB 1"
+    )
+    context = Context(functions={"P": (("n", "x"), body)})
+    assert simp("P(3, x)", context) == "5*x^3/2 - 3*x/2"
+
+
+def test_a_fit_takes_its_labels_from_the_first_row_of_a_single_matrix():
+    # As in Derive; CURV_FIT.MTH's `LSL(m_, x) := FIT(APPEND([[x, a*x + b]], m_))`.
+    assert simp("FIT([[x, a*x + b], [0, 1], [1, 3]])") == "2*x + 1"
+    body = parse("FIT(APPEND([[x,a*x+b]],m_))")
+    context = Context(functions={"LSL": (("m_", "x"), body)})
+    assert simp("LSL([[0, 1], [1, 3], [2, 5]], t)", context) == "2*t + 1"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("INVERSE(x^3 + 1, x)", "(x - 1)^(1/3)"),
+        ("INVERSE(SIN(x) + 1, x)", "ASIN(x - 1)"),
+        ("INVERSE(3*COS(2*x), x)", "ACOS(x/3)/2"),
+        # Two terms in `x` have no principal inverse to choose.
+        ("INVERSE(x^2 + x, x)", "ITERATE(x^2 + x, x, x, -1)"),
+    ],
+    ids=str,
+)
+def test_the_utility_files_inverse_takes_the_principal_branch(text, expected):
+    # MISC.MTH's `INVERSE(u, x) := ITERATE(u, x, x, -1)`.
+    context = Context(functions={"INVERSE": (("u", "x"), parse("ITERATE(u,x,x,-1)"))})
+    assert simp(text, context) == expected
 
 
 def test_the_demos_matrix_generator():

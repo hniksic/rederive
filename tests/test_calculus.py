@@ -765,6 +765,25 @@ def test_a_limit_that_settles_or_runs_away_is_no_interval():
     assert simp("LIM(LN(x), x, 0)") == "-inf"
 
 
+def test_a_limit_infinite_on_a_real_side_and_an_imaginary_one_is_unknown():
+    """At a branch point one side of the limit is imaginary, which `±inf` doesn't say.
+
+    ODE_APPR.MTH's `TAYLOR_ODE1(y^2 + SQRT(x), x, y, 0, 1, 2)` takes such a limit, and
+    the manual says it is `?`.
+    """
+    assert simp("LIM(1/SQRT(x), x, 0)") == "?"
+    assert simp("LIM(1/x^2, x, 0)") == "inf"
+    body = parse(
+        "ELEMENT(ITERATE([v_ SUB 1+1,DIF(v_ SUB 2,x)+r*DIF(v_ SUB 2,y),v_ SUB 3+(x-a)^v_"
+        " SUB 1*LIM(v_ SUB 2,[x,y],[a,b])/v_ SUB 1!],v_,[1,r,b],n),3)"
+    )
+    context = Context(
+        functions={"T": (("r", "x", "y", "a", "b", "n", "v_"), body)}
+    )
+    assert simp("T(y^2 + SQRT(x), x, y, 0, 1, 1)", context) == "x + 1"
+    assert simp("T(y^2 + SQRT(x), x, y, 0, 1, 2)", context) == "?"
+
+
 def test_a_limit_towards_a_moving_point_is_the_substitution_it_means():
     """A limit toward a point that depends on the variable is a substitution.
 

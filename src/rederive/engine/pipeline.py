@@ -1349,6 +1349,8 @@ def _limit(head: sp.Limit) -> sp.Basic:
     if value is None or value == asked or (value.has(sp.zoo) and value != sp.zoo):
         signed = _limit_by_the_sign_of_a_parameter(asked)
         value = value if signed is None else signed
+    if value is sp.zoo and str(direction) == "+-":
+        value = _unsigned_infinity(asked)
     if value is None or value == asked:
         return head
     if value.has(sp.Limit) and asked != head:
@@ -1509,6 +1511,27 @@ def _bounds_settled(expression: sp.Basic) -> sp.Basic:
             ),
         )
     return expression
+
+
+def _unsigned_infinity(asked: sp.Limit) -> sp.Basic:
+    """A two-sided limit sympy answers with unsigned infinity, as Derive answers it.
+
+    Sympy gives unsigned infinity whenever both sides are infinite, but Derive's `±inf`
+    is a real infinity of unknown sign, `LIM(1/x, x, 0)`. At a branch point one side
+    is imaginary: `1/SQRT(x)` tends to `inf` from the right and to `-#i*inf` from the
+    left. That is no value Rederive has, so it is `?`, which is why ODE_APPR.MTH's
+    `TAYLOR_ODE1(y^2 + SQRT(x), x, y, 0, 1, 2)` is `?`, as the manual says.
+    """
+    expression, variable, point = asked.args[:3]
+    for direction in ("+", "-"):
+        side = attempt(
+            asked, lambda a: sp.Limit(expression, variable, point, dir=direction).doit()
+        )
+        if side is None or side.has(sp.Limit):
+            return sp.zoo
+        if side not in (sp.oo, sp.S.NegativeInfinity, sp.zoo):
+            return sp.nan
+    return sp.zoo
 
 
 def _undecided(head: sp.Basic) -> sp.Basic:

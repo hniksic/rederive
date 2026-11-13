@@ -694,6 +694,19 @@ async def test_the_precision_digits_setting_reaches_the_command(session):
     assert (await session.approx("#1")).text == "3.14159265358"
 
 
+async def test_the_digit_settings_read_as_variables(session):
+    """`PrecisionDigits` and `NotationDigits` are the digits in force, as in Derive.
+
+    BESSEL.MTH's `BESSEL_J` sums a number of terms that depends on `PrecisionDigits`.
+    """
+    assert (await session.simplify("PrecisionDigits")).text == "6"
+    assert (await session.simplify("NotationDigits")).text == "6"
+    session.author("F(x) := x*PrecisionDigits")
+    session.settings.assign("PrecisionDigits", 12)
+    assert (await session.simplify("F(2)")).text == "24"
+    assert (await session.simplify("APPROX(PrecisionDigits + 0*pi, 20)")).text == "20"
+
+
 async def test_what_has_no_number_in_it_is_simplified_and_no_more(session):
     session.author("x + x")
     assert (await session.approx("#1")).text == "2*x"

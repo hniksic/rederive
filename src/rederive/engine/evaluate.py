@@ -75,6 +75,7 @@ from rederive.engine.to_sympy import (
     settled,
     steps,
 )
+from rederive.engine.vectors import mapped
 from rederive.model.expr import Kind, Node
 from rederive.syntax import ParseState
 from rederive.syntax.names import (
@@ -310,6 +311,10 @@ class _Evaluator(Converter):
             if assigned is not None:
                 deeper = replace(env, bindings={}, expanding=env.expanding | {name})
                 return self.within(deeper).convert(assigned)
+        if not env.writing:
+            digits = _digits_setting(name, env.context)
+            if digits is not None:
+                return digits
         return self._written(super()._name(node))
 
     def _written(self, symbol: sp.Basic) -> sp.Basic:
@@ -480,6 +485,8 @@ class _Evaluator(Converter):
                 return self.opaque(name, values)
             return self._entered(name, definition, values, arguments)
         made = self.call(name, values)
+        if name == "FACTORS" and _decomposed(values, made) and not self.env.writing:
+            return Commanded(made)
         if name in COMMAND_HEADS and _is_call_of(made, name):
             if self.env.command is not None and not self.env.writing:
                 return self.env.command(
@@ -1113,9 +1120,48 @@ def _negative(exponent: Node) -> bool:
     )
 
 
+def _digits_setting(name: str, context: Context) -> sp.Integer | None:
+    """The value of `PrecisionDigits` or `NotationDigits`, or None for another name.
+
+    The two numeric settings read as variables, 6 by default, as in Derive: BESSEL.MTH's
+    `BESSEL_J` sums `FLOOR(PrecisionDigits/2 + 4*ABS(z))` terms. The value is the one in
+    force, so inside `APPROX(u, 20)` it is 20. The other settings have keyword values
+    and stay names.
+    """
+    if name == "PrecisionDigits":
+        return sp.Integer(context.precision_digits)
+    if name == "NotationDigits":
+        return sp.Integer(context.notation_digits)
+    return None
+
+
+def _decomposed(values: Sequence[sp.Basic], made: sp.Basic) -> bool:
+    """Whether `made` is `FACTORS` of a prime decomposition, `FACTORS(FACTOR(360))`.
+
+    Its elements are the prime powers as `FACTOR` wrote them, `[2^3, 3^2, 5]`, which is
+    a form Simplify would multiply out, so it is shown as a command's answer is.
+    """
+    return (
+        len(values) == 1
+        and isinstance(values[0], sp.UnevaluatedExpr)
+        and isinstance(made, Vector)
+    )
+
+
 def _value_of(value: sp.Basic) -> sp.Basic:
-    """`value`, unwrapped from `Commanded` if wrapped."""
-    return value.args[0] if isinstance(value, Commanded) else value
+    """`value`, unwrapped from `Commanded` if wrapped.
+
+    The prime powers of `FACTORS(FACTOR(360))` are values like any other once used:
+    `PRIME` of its first element is false, that element being 8.
+    """
+    if not isinstance(value, Commanded):
+        return value
+    inner = value.args[0]
+    if isinstance(inner, Vector) and any(
+        isinstance(element, sp.Pow) and element.is_number for element in inner.args
+    ):
+        return mapped(inner, lambda element: element.doit())
+    return inner
 
 
 def released(value: sp.Basic) -> sp.Basic:
