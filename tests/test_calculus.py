@@ -344,6 +344,19 @@ def test_a_step_function_has_derivative_zero_between_its_jumps(text, expected):
     assert simp(text) == expected
 
 
+def test_a_derivative_of_a_derivative_differentiates_it_over_one_denominator():
+    """FUN.MTH's `F21` at half-integer parameters nests derivatives like these. Each is
+    put over one denominator before it is differentiated again, or the sums of
+    fractions multiply out with every order and this takes minutes."""
+    text = (
+        "DIF(z^(5/2)*DIF(z^2*(1 - z)^5*DIF(ATAN(SQRT(-z))/SQRT(-z), z, 5), z, 2), z, 3)"
+    )
+    assert simp(text) == (
+        "-945*(225*(-z)^(5/2)*ATAN(SQRT(-z)) + 1050*(-z)^(3/2)*ATAN(SQRT(-z))"
+        " + 945*SQRT(-z)*ATAN(SQRT(-z)) + 64*z^3 - 735*z^2 + 945*z)*SQRT(z^11)/(32*z^12)"
+    )
+
+
 def test_a_derivative_a_substitution_binds_is_not_evaluated():
     """A derivative held under `SUBS` is not evaluated.
 
@@ -840,7 +853,8 @@ LIMITS_BY_SUBSTITUTION = [
     ("LIM(y + (1 + x^2/y^2)/(-x^2/y^3 - 1/y), y, 1)", "0"),
     (
         "LIM(DIF((z^2 - 1)^2*LN((z + 1)/(1 - z)), z, 2), z, COS(1/5))",
-        "4*(3*COS(1/5)^2 - 1)*LN(-(COS(1/5) + 1)/(COS(1/5) - 1)) - 12*COS(1/5)",
+        "12*LN(-(COS(1/5) + 1)/(COS(1/5) - 1))*COS(1/5)^2 - 12*COS(1/5)"
+        " - 4*LN(-(COS(1/5) + 1)/(COS(1/5) - 1))",
     ),
     # At a jump, or where the value is undefined, the limit is taken.
     ("LIM(SIGN(x), x, 0)", "±1"),
@@ -889,7 +903,8 @@ def test_a_limit_substitutes_into_the_value_where_a_call_binds_its_variable():
     body = parse("DIF((z^2-1)^2*LN((z+1)/(1-z)),z,2)")
     context = Context(functions={"G": (("z",), body)})
     assert simp("LIM(G(k), k, COS(1/5))", context) == (
-        "4*(3*COS(1/5)^2 - 1)*LN(-(COS(1/5) + 1)/(COS(1/5) - 1)) - 12*COS(1/5)"
+        "12*LN(-(COS(1/5) + 1)/(COS(1/5) - 1))*COS(1/5)^2 - 12*COS(1/5)"
+        " - 4*LN(-(COS(1/5) + 1)/(COS(1/5) - 1))"
     )
 
 

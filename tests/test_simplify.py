@@ -1154,6 +1154,15 @@ def test_a_trigonometric_constant_is_written_as_the_number_it_is(text, expected)
     assert simp(text) == expected
 
 
+def test_a_trigonometric_constant_of_high_degree_is_rejected_quickly():
+    # GRAPHICS.MTH's ISOMETRICS with 25 panels evaluates such sums at every point. The
+    # value has degree 20, so it stays, but finding that out mustn't take seconds.
+    start = time.perf_counter()
+    assert simp("(SIN(4*pi/25) + COS(4*pi/25))/2") == "COS(4*pi/25)/2 + SIN(4*pi/25)/2"
+    assert simp("-SIN(4*pi/23)/2 - COS(4*pi/23)/2") == "-SIN(4*pi/23)/2 - COS(4*pi/23)/2"
+    assert time.perf_counter() - start < 3
+
+
 #: A sine or cosine at a rational multiple of pi past the first octant is the cofunction
 #: of the complement, and a denominator with many factors of two isn't expanded into
 #: nested roots. RANDOM_NORMAL in MISC.MTH takes such cosines of `2*pi*RANDOM(1)`.
@@ -1753,6 +1762,16 @@ REWRITTEN_ARGUMENTS = [
         },
         "P(x^2, x)",
         "[1, 3]",
+    ),
+    # TENSOR.MTH's TF_T: the elements of a matrix, selected by indices the nesting
+    # binds. The long entries, which no index reaches, are not written out and read
+    # back for each index, but they are still the elements selected.
+    (
+        {"NEST": ("p, w, d, n", "IF(n < 1, p, NEST(VECTOR(p, w SUB n, d), w, d, n-1))")},
+        "NEST([[SIN(t)^7*r + COS(t)^5, SIN(t)^3 - r^2*COS(t)^4],"
+        " [r*COS(t)^6 - SIN(t)^5, r^3*SIN(t)*COS(t)^3 + 1]] SUB b SUB a, [a, b], 2, 2)",
+        "[[r*SIN(t)^7 + COS(t)^5, r*COS(t)^6 - SIN(t)^5],"
+        " [SIN(t)^3 - r^2*COS(t)^4, r^3*SIN(t)*COS(t)^3 + 1]]",
     ),
     # The conditional is decided before anything is bound. Checked in Derive.
     (

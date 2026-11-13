@@ -69,7 +69,7 @@ from rederive.engine.factoring import amount_named, factored_expression
 from rederive.engine.from_sympy import from_sympy
 from rederive.engine.integration import agrees, integral, numerically, proved_zero
 from rederive.engine.intervals import covering, decided, never_negative, settled
-from rederive.engine.normal import normal_form
+from rederive.engine.normal import normal_form, over_one_denominator
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, shadowing_built_ins
 from rederive.engine.rewriting import Rewrite, attempt, forced, pays
@@ -1006,7 +1006,12 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
     if value is None:
         return head
     if isinstance(head, sp.Derivative):
-        return _flat_between_jumps(value)
+        # Over one denominator, since a derivative may be differentiated again, or
+        # have a point substituted into it, before it is simplified: sympy's raw
+        # derivative is a sum of fractions that the product rule multiplies out with
+        # every order. FUN.MTH's F21 nests three derivatives of up to fifth order,
+        # which left raw grow to hundreds of thousands of characters.
+        return over_one_denominator(_flat_between_jumps(value))
     return value
 
 
@@ -2842,7 +2847,7 @@ def _trigonometric_constants(expression: sp.Basic) -> sp.Basic:
     `COS(pi/7) - COS(2*pi/7) + COS(3*pi/7)` is 1/2 and
     `SIN(pi/7)*SIN(2*pi/7)*SIN(3*pi/7)` is `SQRT(7)/8`, though no single call
     simplifies. Each value is algebraic; if its minimal polynomial has degree one or
-    two, it is solved. `_cyclotomic_root` proves the value is a root exactly, and when
+    two, it is solved. `_quadratic_minimal` finds that polynomial exactly, and when
     there are two roots of different sign, the one matching `_known_sign` is kept.
 
     Single calls are skipped: sympy already evaluates those it can, and the rest have no
@@ -2880,13 +2885,11 @@ def _trigonometric_value(part: sp.Basic) -> sp.Basic:
     if degree is None or degree > _TRIGONOMETRIC_DEGREE:
         return part
     try:
-        minimal = sp.Poly(sp.minimal_polynomial(part, _ROOT), _ROOT)
+        minimal = _quadratic_minimal(part)
     except Exception:
         return part
     # An answer with coefficients this large is no simpler.
-    if minimal.degree() > 2 or max(map(abs, minimal.coeffs())) > _TRIGONOMETRIC_SIZE:
-        return part
-    if not _cyclotomic_root(part, minimal):
+    if minimal is None or max(map(abs, minimal.coeffs())) > _TRIGONOMETRIC_SIZE:
         return part
     candidates = list(dict.fromkeys(sp.roots(minimal, multiple=True)))
     if len(candidates) > 1:
@@ -2899,21 +2902,27 @@ def _trigonometric_value(part: sp.Basic) -> sp.Basic:
     return candidate if candidate.count_ops() < part.count_ops() else part
 
 
-def _cyclotomic_root(part: sp.Basic, polynomial: sp.Poly) -> bool:
-    """Whether a constant of trigonometric values at rational multiples of pi is proved
-    a root of the polynomial.
+def _quadratic_minimal(part: sp.Basic) -> sp.Poly | None:
+    """The minimal polynomial of a constant of trigonometric values at rational
+    multiples of pi, in `_ROOT`, if it has degree one or two, else None.
 
     With `z` a primitive `M`-th root of unity, `#e^(#i*pi*p/q)` is a power of `z` when
     `M` is a multiple of `2*q`, and so is `#i` when `M` is a multiple of 4. Each
-    trigonometric value is then a rational function of `z`, and so is the polynomial
-    evaluated at the constant. It is zero exactly when its numerator is divisible by
-    the order-`M` cyclotomic polynomial, the minimal polynomial of `z`. Constants with
-    anything else in them, including roots of rationals, are not proved.
+    trigonometric value is then a rational function of `z`, and so is the constant: an
+    element of the cyclotomic field, written exactly as a polynomial in `z` reduced
+    modulo the order-`M` cyclotomic polynomial. The constant is rational when that
+    polynomial is, and satisfies `x^2 + b*x + c` when its square minus `b` times it is
+    the rational `-c`, which is linear algebra on the coefficients. Constants with
+    anything else in them, including roots of rationals, give None.
+
+    Sympy's `minimal_polynomial` finds the same answer by composing the minimal
+    polynomials of the terms, whose product degree can run into the hundreds, and
+    factoring that, which takes seconds for `(SIN(4*pi/25) + COS(4*pi/25))/2`.
     """
     calls = part.atoms(TrigonometricFunction)
     turns = [call.args[0] / sp.pi for call in calls]
-    if not all(turn.is_Rational for turn in turns):
-        return False
+    if not turns or not all(turn.is_Rational for turn in turns):
+        return None
     order = sp.ilcm(4, *(2 * turn.q for turn in turns))
     z = sp.Dummy("z")
 
@@ -2931,19 +2940,33 @@ def _cyclotomic_root(part: sp.Basic, polynomial: sp.Poly) -> bool:
             sp.sec: 1 / cosine, sp.csc: 1 / sine,
         }
         if call.func not in quotients:
-            return False
+            return None
         written[call] = quotients[call.func]
     value = part.xreplace(written)
     if value.free_symbols != {z} or any(
         not power_.exp.is_Integer for power_ in value.atoms(sp.Pow) if power_.base != z
     ) or value.has(sp.I):
-        return False
-    try:
-        numerator, _ = sp.fraction(sp.together(polynomial.as_expr().subs(_ROOT, value)))
-        remainder = sp.rem(sp.expand(numerator), sp.cyclotomic_poly(order, z), z)
-    except Exception:
-        return False
-    return remainder == 0
+        return None
+    cyclotomic = sp.Poly(sp.cyclotomic_poly(order, z), z, domain=sp.QQ)
+    numerator, denominator = (
+        sp.Poly(side, z, domain=sp.QQ).rem(cyclotomic)
+        for side in sp.fraction(sp.together(value))
+    )
+    if denominator.is_zero:
+        return None
+    element = (numerator * denominator.invert(cyclotomic)).rem(cyclotomic)
+    if element.degree() <= 0:
+        return sp.Poly(_ROOT - element.as_expr(), _ROOT)
+    square = (element * element).rem(cyclotomic)
+    size = cyclotomic.degree()
+    first = [element.coeff_monomial(z**k) for k in range(size)]
+    second = [square.coeff_monomial(z**k) for k in range(size)]
+    leading = next(k for k in range(1, size) if first[k])
+    linear = -second[leading] / first[leading]
+    if any(second[k] + linear * first[k] for k in range(1, size)):
+        return None
+    constant = -(second[0] + linear * first[0])
+    return sp.Poly(_ROOT**2 + linear * _ROOT + constant, _ROOT)
 
 
 def _known_sign(constant: sp.Basic) -> int | None:

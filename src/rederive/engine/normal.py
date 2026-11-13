@@ -48,7 +48,7 @@ from rederive.engine.expanding import _BOUND
 from rederive.engine.ordering import ORDER_LIST
 from rederive.engine.vectors import Vector, mapped
 
-__all__ = ["normal_form"]
+__all__ = ["normal_form", "over_one_denominator"]
 
 
 def normal_form(
@@ -68,6 +68,35 @@ def normal_form(
     Never raises; a failed rewrite is skipped.
     """
     return _Writer(tuple(order), over_numbers).written(expression)
+
+
+def over_one_denominator(expression: sp.Basic) -> sp.Basic:
+    """`expression` over the least common denominator of its terms, with the factors it
+    shares with the numerator cancelled.
+
+    Only the top level is combined, and nothing is multiplied out: the denominator is
+    the product of the powers of its terms' denominators, each power the highest that
+    occurs, and the numerator is cancelled against it factor by factor (see
+    `_cancelled`). So `1/(x*(x - 1)) + 1/(x^2*(x - 1))` is `(x + 1)/(x^2*(x - 1))`, and
+    `(x + 1)/(x - 1) - 2/(x - 1)` is 1.
+
+    Never raises; what can't be combined is returned as it is.
+    """
+    combined = _attempt(expression, sp.together)
+    if combined is None:
+        return expression
+    if not (isinstance(combined, sp.Expr) and combined.is_Mul and combined.is_commutative):
+        return combined
+    tops, bottoms = _fraction(combined)
+    if all(bottom.is_Number for bottom in bottoms):
+        return combined
+    try:
+        cancelled = _cancelled(tops, bottoms)
+    except Exception:
+        return combined
+    if cancelled is None:
+        return combined
+    return sp.Mul(*cancelled[0]) / sp.Mul(*cancelled[1])
 
 
 class _Writer:

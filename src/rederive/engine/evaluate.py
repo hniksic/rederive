@@ -66,6 +66,7 @@ from rederive.engine.to_sympy import (
     Converter,
     FunDef,
     MovingLimit,
+    Subscript,
     Vector,
     added,
     as_condition,
@@ -226,7 +227,8 @@ class Argument:
         """
         context = self.env.context
         try:
-            node = from_sympy(released(self.value), context).exact
+            skeleton, held = _held_apart(released(self.value), written)
+            node = from_sympy(skeleton, context).exact
         except Exception:
             node = None
         if node is None or node.kind is Kind.STRING:
@@ -236,10 +238,104 @@ class Argument:
             bindings={},
             supplied={},
             tested=frozenset(),
-            bound=self.env.bound | self.names,
+            bound=self.env.bound | self.names | frozenset(held),
             writing=writing,
         )
-        return _value_of(_Evaluator(_at(plain, written)).convert(node))
+        value = _value_of(_Evaluator(_at(plain, written)).convert(node))
+        return _put_back(value, held)
+
+
+def _held_apart(
+    value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]
+) -> tuple[sp.Basic, dict[str, sp.Basic]]:
+    """`value` with each plain part that `written` doesn't reach replaced by a name, and
+    the parts by name.
+
+    `Argument.at` evaluates its value again by writing it out and reading it back, and
+    a part free of the substituted variables evaluates to itself. Held apart, it isn't
+    written out: TENSOR.MTH's `TF_T` substitutes each index into an element of a 3x3
+    matrix of long trigonometric entries, which would otherwise be written and read
+    three times per index. Only parts of sums, products, powers, vectors and element
+    accesses are held, and only parts built from numbers, variables and elementary
+    functions, so no head that binds or tests a variable is reached into, and no call
+    that may evaluate differently is hidden.
+    """
+    variables = set(written)
+    taken = {getattr(symbol, "name", None) for symbol in value.free_symbols} | {
+        getattr(symbol, "name", None) for symbol in variables
+    }
+    held: dict[str, sp.Basic] = {}
+    names: dict[sp.Basic, sp.Symbol] = {}
+
+    def plain(part: sp.Basic) -> bool:
+        return all(
+            node.is_Atom
+            or isinstance(node, (sp.Add, sp.Mul, sp.Pow))
+            or (
+                isinstance(node, sp.Function)
+                and not isinstance(node, AppliedUndef)
+                and type(node).__module__.startswith("sympy.functions.elementary")
+            )
+            for node in sp.preorder_traversal(part)
+        )
+
+    def hold(part: sp.Basic) -> sp.Basic:
+        name = names.get(part)
+        if name is None:
+            index = len(names) + 1
+            while f"hELd{index}_" in taken:
+                index += 1
+            name = names[part] = sp.Symbol(f"hELd{index}_")
+            held[name.name] = part
+        return name
+
+    def walk(part: sp.Basic) -> sp.Basic:
+        if part.is_Atom:
+            return part
+        if (
+            isinstance(part, sp.Expr)
+            and part.is_commutative
+            and not part.free_symbols & variables
+            and plain(part)
+        ):
+            return hold(part)
+        if isinstance(part, (Vector, sp.Add, sp.Mul, sp.Pow, Subscript)) or _is_call_of(
+            part, "ELEMENT"
+        ):
+            arguments = [walk(argument) for argument in part.args]
+            if all(new is old for new, old in zip(arguments, part.args)):
+                return part
+            return part.func(*arguments)
+        return part
+
+    if not isinstance(value, sp.Basic) or _size(value) < _HELD_APART:
+        return value, {}
+    skeleton = walk(value)
+    return (value, {}) if not held else (skeleton, held)
+
+
+#: Below this many nodes a value is written out whole: holding its parts apart costs
+#: more than it saves.
+_HELD_APART = 40
+
+
+def _size(value: sp.Basic) -> int:
+    return sum(1 for _ in sp.preorder_traversal(value))
+
+
+def _put_back(value: sp.Basic, held: Mapping[str, sp.Basic]) -> sp.Basic:
+    """`value` with the parts `_held_apart` named put back."""
+    if not held:
+        return value
+    try:
+        back = {
+            symbol: held[symbol.name]
+            for symbol in value.free_symbols
+            if getattr(symbol, "name", None) in held
+        }
+        return settled(value.xreplace(back)) if back else value
+    except Exception:
+        return value
 
 
 def _symbol_names(value: sp.Basic) -> frozenset[str]:

@@ -544,7 +544,7 @@ def test_an_antiderivative_that_does_not_differentiate_back_is_not_taken():
     notation can't express, so the integral stays, as in Derive.
     """
     assert simp("DIF(ATAN(x/SQRT(a))/SQRT(a), x)") == "1/(x^2 + a)"
-    assert simp("DIF(x - SQRT(a)*ATAN(x/SQRT(a)), x)") == "1 - a/(x^2 + a)"
+    assert simp("DIF(x - SQRT(a)*ATAN(x/SQRT(a)), x)") == "x^2/(x^2 + a)"
     assert simp("INT(1/SQRT(1 - x^4), x)") == "INT(1/SQRT(1 - x^4), x)"
 
 
