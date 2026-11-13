@@ -33,9 +33,12 @@ The two numeric settings, `PrecisionDigits` and `NotationDigits`, read as variab
 holding the digits in force (6 by default; inside `APPROX(u, 20)`, 20). The other
 settings have keyword values and read as plain names.
 
-A user function's definition is textual substitution: an argument that mentions a
-variable the body binds is evaluated again at each value of it, so with `F(p, k) :=
-VECTOR(p, k, 3)`, `F([a, b, c] SUB k, k)` is `[a, b, c]`. When a definition is
+A user function's arguments are evaluated before its body, as in Derive. Where the
+body gives values to a variable an argument's value mentions, they are substituted into
+that value, which is evaluated again: with `F(p, k) := VECTOR(p, k, 3)`, `F([a, b, c] SUB
+k, k)` is `[a, b, c]`, while with `Q(z, x) := ITERATES(x + z SUB 2, x, 1, 1)`,
+`Q(ITERATES(DIF(w, x), w, x^2, 1), x)` iterates over the derivatives already taken and
+is `[1, 3]`. When a definition is
 simplified, a bound-variable call over one of its parameters is shown as written.
 
 An assignment or definition in a function's body is performed when the function is

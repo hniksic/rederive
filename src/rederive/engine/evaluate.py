@@ -111,11 +111,11 @@ class Environment:
     `bindings` maps call parameters to their arguments, and names assigned in a test
     to their values for later branches; `tested` holds the latter names, which are
     variables, not parameters standing for their arguments, so assigning one again
-    assigns that name. `supplied` records, for each call parameter,
-    the argument as written and where it was written, to evaluate it again once the
-    body gives a value to a variable it mentions (see `Argument`). `bound` holds names
-    that stand for themselves: a definition's parameters, and the variable of a sum,
-    integral or generated vector. `parameters` holds just the parameters of the
+    assigns that name. `supplied` records, for each call parameter, its argument and
+    where it was evaluated, to evaluate it again once the body gives a value to a
+    variable it mentions (see `Argument`). `bound` holds names that stand for
+    themselves: a definition's parameters, and the variable of a sum, integral or
+    generated vector. `parameters` holds just the parameters of the
     definition being shown. `expanding` and `labels` are the assigned names and labels
     being followed on this branch, to stop self-reference. `depth` is the nesting
     depth of defined function calls.
@@ -168,30 +168,31 @@ class Environment:
 
 @dataclass(frozen=True, eq=False)
 class Argument:
-    """A call's argument: as written, the environment it was written in, and its value.
+    """A call's argument: its value, and the environment it was evaluated in.
 
-    Definitions are textual substitution, so an argument mentioning a variable the body
-    gives values to means something different at each value. `T(u, v, m) :=
-    ITERATE([u], v, [1], m)` called with `w SUB 1 + 1` for `u` and `w` for `v` adds one
-    to the first element at each step, which substituting into the value computed once
-    can't do, since `w SUB 1` of a symbol `w` is a name of its own. Likewise
-    `ELEMENT([a, b, c], k)` substituted for the index of a `VECTOR` only selects
-    elements once evaluated at each `k`. So the argument is evaluated again where the
-    body has given values to a variable in `names`: one written in it, or one its value
-    mentions. Elsewhere `value` is used as is.
+    As in Derive, an argument is evaluated once, before the body, and the parameter
+    stands for that value. Where the body gives values to variables the value mentions,
+    they are substituted into it and it is evaluated again, so that what couldn't be
+    evaluated with the variable symbolic now is. `T(u, v, m) := ITERATE([u], v, [1],
+    m)` called with `w SUB 1 + 1` for `u` and `w` for `v` adds one to the first element
+    at each step: the value keeps `w SUB 1`, which selects an element once `w` is a
+    vector. Likewise `ELEMENT([a, b, c], k)` substituted for the index of a `VECTOR`
+    selects an element at each `k`, and `DIMENSION(x)` counts what `x` is given. The
+    argument as written is never evaluated again: `Q(z, x) := ITERATES(x + z SUB 2, x,
+    1, 1)` called with `ITERATES(DIF(w, x), w, x^2, 1)` for `z` iterates over `[x^2,
+    2*x]`, not over a derivative taken with `x` a number.
     """
 
-    node: Node
     env: Environment
     value: sp.Basic
 
     @cached_property
     def names(self) -> frozenset[str]:
-        return _written_names(self.node) | _symbol_names(self.value)
+        return _symbol_names(self.value)
 
     def rewritten(self, written: Mapping[sp.Basic, sp.Basic]) -> dict | None:
-        """The values `written` gives the variables of the argument since it was
-        written, or None if it gives none.
+        """The values `written` gives the variables of the value since it was
+        evaluated, or None if it gives none.
         """
         if written is self.env.written:
             return None
@@ -204,13 +205,28 @@ class Argument:
             return None
         return new
 
+    def at(self, written: Mapping[sp.Basic, sp.Basic], writing: bool) -> sp.Basic:
+        """The value with `written` substituted, evaluated again.
 
-def _written_names(node: Node) -> frozenset[str]:
-    """Every name written in `node`."""
-    names = {str(node.value)} if node.kind is Kind.NAME else set()
-    for child in node.children:
-        names |= _written_names(child)
-    return frozenset(names)
+        Its variables stand for themselves, as they did when it was evaluated. A value
+        that doesn't read back as an expression is substituted into as it stands.
+        """
+        context = self.env.context
+        try:
+            node = from_sympy(released(self.value), context).exact
+        except Exception:
+            node = None
+        if node is None or node.kind is Kind.STRING:
+            return _over(self.value, written)
+        plain = replace(
+            self.env,
+            bindings={},
+            supplied={},
+            tested=frozenset(),
+            bound=self.env.bound | self.names,
+            writing=writing,
+        )
+        return _value_of(_Evaluator(_at(plain, written)).convert(node))
 
 
 def _symbol_names(value: sp.Basic) -> frozenset[str]:
@@ -309,8 +325,7 @@ class _Evaluator(Converter):
             if argument is not None and argument.value is value:
                 rewritten = argument.rewritten(env.written)
                 if rewritten is not None:
-                    again = replace(_at(argument.env, rewritten), writing=env.writing)
-                    return _value_of(_Evaluator(again).convert(argument.node))
+                    return argument.at(rewritten, env.writing)
             return _over(value, env.written)
         if name not in env.bound and name not in env.expanding:
             assigned = env.context.assigned(name)
@@ -489,7 +504,7 @@ class _Evaluator(Converter):
         if definition is not None:
             if self.env.writing:
                 return self.opaque(name, values)
-            return self._entered(name, definition, values, arguments)
+            return self._entered(name, definition, values)
         made = self.call(name, values)
         if name == "FACTORS" and _decomposed(values, made) and not self.env.writing:
             return Commanded(made)
@@ -556,16 +571,14 @@ class _Evaluator(Converter):
         name: str,
         definition: tuple[tuple[str, ...], Node],
         values: list,
-        arguments: Sequence[Node],
     ) -> sp.Basic:
         """A call of a defined function: its body evaluated over its arguments.
 
         Partial application binds only the leading parameters: `ACCELERATION(f, m) :=
         f/m` applied to 6 alone is `6/m`.
 
-        Each parameter stands for its argument's value, and the argument as written is
-        kept to be evaluated again where the body gives values to its variables (see
-        `Argument`).
+        Each parameter stands for its argument's value, which is evaluated again where
+        the body gives values to its variables (see `Argument`).
         """
         if self.env.depth >= _NESTING:
             return self.opaque(name, values)
@@ -575,10 +588,8 @@ class _Evaluator(Converter):
             bindings=dict(zip(parameters, values, strict=False)),
             tested=frozenset(),
             supplied={
-                parameter: Argument(argument, self.env, value)
-                for parameter, argument, value in zip(
-                    parameters, arguments, values, strict=False
-                )
+                parameter: Argument(self.env, value)
+                for parameter, value in zip(parameters, values, strict=False)
             },
             bound=frozenset(),
             parameters=frozenset(),

@@ -23,6 +23,7 @@ comparable simplicity.
 from __future__ import annotations
 
 import math
+import time
 import warnings
 from dataclasses import replace
 
@@ -1559,8 +1560,9 @@ RECURRENCE = (
     "REVERSE_VECTOR(ITERATE(APPEND([u], v), v, w, m - DIMENSION(w)))",
 )
 
-#: Calls whose argument mentions a variable the body gives values to. Definitions are
-#: textual substitution, so the argument is evaluated again at each value.
+#: Calls whose argument mentions a variable the body gives values to. As in Derive, the
+#: argument is evaluated first, and its value is evaluated again at each value the body
+#: gives the variable, never the argument as written.
 REWRITTEN_ARGUMENTS = [
     ({"T": ("u, v, m", "ITERATE([u], v, [1], m)")}, "T(w SUB 1 + 1, w, 2)", "[3]"),
     ({"F": ("p, v, d", "VECTOR(p, v, d)")}, "F([a, b, c] SUB k, k, 3)", "[a, b, c]"),
@@ -1585,6 +1587,27 @@ REWRITTEN_ARGUMENTS = [
         "H(G(a*b, [a, b] SUB k), k)",
         "[b, a]",
     ),
+    # TAY_ODE.MTH's TAY_ODE1_AUX: the derivatives are taken before the body iterates
+    # over `x`, so the iteration substitutes into `[x^2, 2*x]`. Checked in Derive.
+    (
+        {"Q": ("z, x", "ITERATES(x + z SUB 2, x, 1, 1)")},
+        "Q(ITERATES(DIF(w, x), w, x^2, 1), x)",
+        "[1, 3]",
+    ),
+    (
+        {
+            "Q": ("z, x", "ITERATES(x + z SUB 2, x, 1, 1)"),
+            "P": ("f, x", "Q(ITERATES(DIF(w, x), w, f, 1), x)"),
+        },
+        "P(x^2, x)",
+        "[1, 3]",
+    ),
+    # The conditional is decided before anything is bound. Checked in Derive.
+    (
+        {"NEST": ("p, w, d, n", "IF(n < 1, p, NEST(VECTOR(p, w SUB n, d), w, d, n-1))")},
+        "NEST(IF(a = b, 0, 7, 7), [a, b], 2, 2)",
+        "[[7, 7], [7, 7]]",
+    ),
 ]
 
 
@@ -1593,6 +1616,16 @@ def test_an_argument_is_evaluated_again_where_the_body_binds_its_variable(
     functions, text, expected
 ):
     assert simp(text, defining(**functions)) == expected
+
+
+def test_a_recursive_calls_argument_is_evaluated_once():
+    # PSERIES.MTH's QUOT_S recurses over a vector it extends with a sum of its
+    # elements. Evaluated anew at each level and index, it takes exponential time.
+    body = "IF(n = 0, c, W(APPEND(c, [SUM(ELEMENT(c, i), i, DIMENSION(c))]), n-1))"
+    context = defining(W=("c, n", body))
+    start = time.perf_counter()
+    assert simp("W([1], 10)", context) == "[1, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]"
+    assert time.perf_counter() - start < 5
 
 
 def test_a_derivative_in_an_element_not_yet_known_stands():
