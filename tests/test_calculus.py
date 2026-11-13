@@ -89,6 +89,10 @@ CALCULUS = [
     ("INT([0, 0], x)", "[0, 0]"),
     ("INT([[0, 0], [0, 0]], x, 0, 1)", "[[0, 0], [0, 0]]"),
     ("INT([x, x^2], x)", "[x^2/2, x^3/3]"),
+    # So is an indefinite sum, as ODE2.MTH's LIN2_CCF takes one; the antidifference
+    # of zero is zero.
+    ("SUM([1, 2], x)", "[x, 2*x]"),
+    ("SUM(0, x)", "0"),
     ("DIF([x^2, x], x, 2)", "[2, 0]"),
     # A definite integral of an equation integrates both sides. Indefinite integrals
     # stay, since each side's antiderivative has its own arbitrary constant.

@@ -3727,14 +3727,59 @@ def _rewritten_beside_standing(expression: sp.Basic, context: Context) -> sp.Bas
     pulling the integral under it and printing it twice.
     """
     if not isinstance(expression, sp.Add):
-        return _rewritten(expression, context)
+        return _retried(_rewritten(expression, context), context)
     standing = [term for term in expression.args if term.has(*_STANDING)]
     if not standing or len(standing) == len(expression.args):
-        return _rewritten(expression, context)
+        return _retried(_rewritten(expression, context), context)
     rest = sp.Add(*(term for term in expression.args if not term.has(*_STANDING)))
     return _rewritten(rest, context) + sp.Add(
-        *(_rewritten(term, context) for term in standing)
+        *(_retried(_rewritten(term, context), context) for term in standing)
     )
+
+
+def _retried(expression: sp.Basic, context: Context) -> sp.Basic:
+    """The rewritten expression with each unevaluated integral tried again, since the
+    rewrites may have changed its integrand into one that integrates.
+
+    `INT(SQRT(1 - SIN(t)^2), t, 0, pi/2)` is 1 once its integrand is `ABS(COS(t))`, and
+    `INT(SQRT(SIN(x)^2 + COS(x)^2), x)` is `x` once it is 1. The normal form doesn't
+    reach into an integral, so an integral still left is tried with its integrand in
+    normal form, but kept as it was unless that answers it. An integral the rewrites
+    left alone is answered from the cache, and one whose answer contains it again, as
+    the else case of a conditional, stays. An answer is rewritten in turn, but its own
+    unevaluated integrals are not tried again.
+
+    A limit around an integral is taken again too, innermost first, if the integral
+    changed: SURFACE_AREA in INT_APPS.MTH integrates a `LIM` of an inner integral.
+    """
+
+    def retried(e: sp.Basic) -> sp.Basic:
+        if not e.has(sp.Integral):
+            return e
+        arguments = [retried(argument) for argument in e.args]
+        changed = any(new is not old for new, old in zip(arguments, e.args))
+        rebuilt = e.func(*arguments) if changed else e
+        if isinstance(e, sp.Integral) or (isinstance(e, sp.Limit) and changed):
+            return tried(rebuilt)
+        return rebuilt
+
+    def tried(head: sp.Basic) -> sp.Basic:
+        answer = _evaluate(head, context)
+        if answer == head and isinstance(head, sp.Integral):
+            answer = normalized(head)
+        return head if answer.has(head) else answer
+
+    def normalized(head: sp.Integral) -> sp.Basic:
+        function = normal_form(head.function, context.order, over_numbers=False)
+        if function == head.function:
+            return head
+        answer = _evaluate(head.func(function, *head.limits), context)
+        return head if answer.has(sp.Integral) else answer
+
+    if not expression.has(sp.Integral):
+        return expression
+    again = forced(expression, retried)
+    return expression if again == expression else _rewritten(again, context)
 
 
 def _spelled(expression: sp.Basic, context: Context) -> sp.Basic:

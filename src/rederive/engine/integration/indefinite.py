@@ -48,6 +48,7 @@ from rederive.engine.integration.definite import (
     real_where_real,
     unresolved,
     with_moving_poles,
+    within_each_case,
 )
 from rederive.engine.integration.form import (
     anywhere,
@@ -77,6 +78,10 @@ def integral(head: sp.Basic) -> sp.Basic:
     sign. Results are cached, since an unevaluated integral is requested again by
     simplification and by later commands. The answers that can be written depend on the
     built-ins the user has redefined, so those are part of the key.
+
+    Products of exponentials are combined first, as Simplify combines them, and an
+    integral left unevaluated is tried once more with its radicals resolved (see
+    `_with_radicals_resolved`).
     """
     return _integral(head, shadowed_names())
 
@@ -84,6 +89,9 @@ def integral(head: sp.Basic) -> sp.Basic:
 @lru_cache(maxsize=256)
 def _integral(head: sp.Basic, shadowed: frozenset[str]) -> sp.Basic:
     """`integral`, with `shadowed` the built-ins the answer may not use."""
+    combined = _with_exponentials_combined(head)
+    if combined != head:
+        return integral(combined)
     stepped = between_the_steps(head)
     if stepped is not None:
         return stepped
@@ -92,7 +100,96 @@ def _integral(head: sp.Basic, shadowed: frozenset[str]) -> sp.Basic:
         return across
     value = _integral_through(head)
     moving = with_moving_poles(head, value)
-    return real_where_real(head, value if moving is None else moving)
+    value = within_each_case(real_where_real(head, value if moving is None else moving))
+    if value.has(sp.Integral):
+        resolved = _with_radicals_resolved(head)
+        if resolved is not None:
+            again = integral(resolved)
+            if not again.has(sp.Integral):
+                return again
+    return value
+
+
+def _with_exponentials_combined(head: sp.Basic) -> sp.Basic:
+    """The integral with each product of exponentials in its integrand written as one
+    exponential, as `#e^(-a*t)*#e^(-s*t)` is `#e^(-a*t - s*t)`. LAPLACE in INT_APPS.MTH
+    multiplies its integrand by such a factor."""
+
+    def several(e: sp.Basic) -> bool:
+        return e.is_Mul and sum(isinstance(f, sp.exp) for f in e.args) > 1
+
+    def combined(product: sp.Basic) -> sp.Basic:
+        exponents = [f.args[0] for f in product.args if isinstance(f, sp.exp)]
+        rest = [f for f in product.args if not isinstance(f, sp.exp)]
+        return sp.Mul(*rest) * sp.exp(sp.Add(*exponents))
+
+    if not head.function.has(sp.exp):
+        return head
+    function = attempt(head.function, lambda f: f.replace(several, combined))
+    if function is None or function == head.function:
+        return head
+    return head.func(function, *head.limits)
+
+
+def _with_radicals_resolved(head: sp.Basic) -> sp.Basic | None:
+    """The integral with radicals the integrators don't see through rewritten, or None
+    if it has none.
+
+    - A root of a reciprocal is the reciprocal of the root: `SQRT(1/(1 - y^2))` is
+      `1/SQRT(1 - y^2)`, which differs only where the radicand is negative and the
+      integrand isn't real, so `INT(SQRT(1/(1 - y^2)), y)` is `ASIN(y)`.
+    - Over a real variable, `a*(1 + COS(u))` is `2*a*COS(u/2)^2` and `a*(1 - COS(u))`
+      is `2*a*SIN(u/2)^2`, so for a positive `a` a root of one is a power of an
+      absolute value: `SQRT(1 + COS(x))` is `SQRT(2)*ABS(COS(x/2))`, which
+      integrates between jumps.
+    """
+    variables = [limit[0] for limit in head.limits]
+
+    def radical(e: sp.Basic) -> bool:
+        return (
+            e.is_Pow
+            and e.exp.is_Rational
+            and not e.exp.is_Integer
+            and e.base.has(*variables)
+        )
+
+    def resolved(power: sp.Basic) -> sp.Basic:
+        base, exponent = power.args
+        if base.is_Pow and base.exp.is_Integer and base.exp < 0:
+            return base.base ** (base.exp * exponent)
+        if not exponent.is_Rational or exponent.q != 2:
+            return power
+        if not all(variable.is_real for variable in variables):
+            return power
+        half = _half_angle_square(base)
+        return power if half is None else half**exponent
+
+    function = attempt(head.function, lambda f: f.replace(radical, resolved))
+    if function is None or function == head.function:
+        return None
+    return head.func(function, *head.limits)
+
+
+def _half_angle_square(base: sp.Basic) -> sp.Basic | None:
+    """`base` as `c*COS(u/2)^2` or `c*SIN(u/2)^2` with a positive `c`, where it is
+    `a + b*COS(u)` with `b` equal to `a` or `-a`, or None."""
+    expanded = sp.expand(base)
+    cosines = [c for c in expanded.atoms(sp.cos) if c.free_symbols]
+    if len(cosines) != 1:
+        return None
+    (cosine,) = cosines
+    b = expanded.coeff(cosine)
+    a = sp.expand(expanded - b * cosine)
+    if a.has(cosine) or b.has(cosine) or a.free_symbols & cosine.free_symbols:
+        return None
+    if b.free_symbols & cosine.free_symbols or not (2 * a).is_positive:
+        return None
+    half = cosine.args[0] / 2
+    if sp.expand(a - b) == 0:
+        return 2 * a * sp.cos(half) ** 2
+    if sp.expand(a + b) == 0:
+        return 2 * a * sp.sin(half) ** 2
+    return None
 
 
 def _integral_through(head: sp.Basic) -> sp.Basic:
@@ -336,7 +433,8 @@ def _of_a_power_times_its_derivative(head: sp.Basic) -> Candidate | None:
     for `f` are the bases of factors that are powers with a rational exponent `n` other
     than -1, so an integrand without one is rejected without work, and each costs one
     cancellation of `g/f'`. A power of the variable itself is left to the other
-    methods, as is a logarithm.
+    methods, as is a logarithm, and a base whose derivative vanishes, such as
+    `SIN(x)^2 + COS(x)^2`, is a constant in disguise.
 
     A parameter in the denominator of `k` makes `f'` vanish for some value of it, where
     the answer is undefined. For `n > -1` it is taken as generic, as the tables and
@@ -358,8 +456,11 @@ def _of_a_power_times_its_derivative(head: sp.Basic) -> Candidate | None:
         if not n.is_Rational or n == -1 or not f.has(variable):
             continue
         outside = sp.Mul(*factors[:index], *factors[index + 1 :])
-        k = attempt(outside / sp.diff(f, variable), sp.cancel)
-        if k is None or k.has(variable):
+        derivative = attempt(sp.diff(f, variable), sp.cancel)
+        if derivative is None or derivative == 0:
+            continue
+        k = attempt(outside / derivative, sp.cancel)
+        if k is None or k.has(variable, sp.zoo, sp.nan):
             continue
         if n < 0 and sp.denom(k).free_symbols:
             continue
@@ -591,6 +692,50 @@ def _over_an_exponential(head: sp.Basic) -> Candidate | None:
     return Candidate(found, trusted=True, tabled=True)
 
 
+def _of_an_exponential_times_a_wave(head: sp.Basic) -> Candidate | None:
+    """An antiderivative of `c*#e^(k*x + d)*COS(b*x + e)` or the same with a sine, by
+    the integral tables, or None.
+
+    The tables give `#e^(k*x + d)*(k*COS(b*x + e) + b*SIN(b*x + e))/(k^2 + b^2)`, and
+    `#e^(k*x + d)*(k*SIN(b*x + e) - b*COS(b*x + e))/(k^2 + b^2)` for the sine. Sympy
+    finds these for rational slopes but not for `INT(COS(x)*#e^((1 - SQRT(13))*x/2),
+    x)`, so only numeric slopes are taken here, real and nonzero; symbolic ones are
+    left to sympy, which splits off `k^2 + b^2 = 0`.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    coefficient, rest = integrand.as_independent(variable, as_Add=False)
+    exponent, wave = sp.S.Zero, None
+    for factor in sp.Mul.make_args(rest):
+        if isinstance(factor, sp.exp):
+            exponent += factor.args[0]
+        elif wave is None and isinstance(factor, (sp.sin, sp.cos)):
+            wave = factor
+        else:
+            return None
+    if wave is None or exponent == 0:
+        return None
+    slopes = []
+    for argument in (exponent, wave.args[0]):
+        polynomial = attempt(argument, lambda a: sp.Poly(a, variable))
+        if polynomial is None or polynomial.degree() != 1:
+            return None
+        slope = polynomial.LC()
+        if not slope.is_number or not slope.is_extended_real or slope == 0:
+            return None
+        slopes.append(slope)
+    k, b = slopes
+    argument = wave.args[0]
+    if isinstance(wave, sp.cos):
+        shape = k * sp.cos(argument) + b * sp.sin(argument)
+    else:
+        shape = k * sp.sin(argument) - b * sp.cos(argument)
+    scale = forced(1 / (k**2 + b**2), sp.radsimp)
+    value = coefficient * scale * sp.exp(exponent) * shape
+    return Candidate(value, trusted=True, tabled=True)
+
+
 def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
     """An antiderivative by `u = g(x)`, where the integrand is `h(g(x))*g'(x)` and
     contains a power with a symbolic exponent, or None.
@@ -623,7 +768,8 @@ def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
         core = base**exponent
         candidates.append((core, exponent * core * sp.diff(base, variable) / base))
     candidates.extend(_sine_and_cosine(integrand, variable))
-    candidates = list(dict.fromkeys(candidates))
+    nested = _sine_and_cosine(integrand, variable, nested=True)
+    candidates = list(dict.fromkeys(candidates + nested))
     u = sp.Dummy("u", real=True)
     token = _substituting.set(True)
     try:
@@ -634,10 +780,13 @@ def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
                     sp.cancel(q).subs(inner, u), inner, u
                 ),
             )
-            if substituted is None or substituted.has(variable):
+            if substituted is None or substituted.has(variable, sp.zoo, sp.nan):
                 continue
             if isinstance(inner, (sp.sin, sp.cos)) and substituted.atoms(sp.Function):
-                continue
+                if (inner, slope) not in nested or not all(
+                    call.has(u) for call in substituted.atoms(sp.Function)
+                ):
+                    continue
             done = integral(sp.Integral(substituted, u))
             if done.has(sp.Integral):
                 continue
@@ -650,16 +799,31 @@ def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
     return None
 
 
-def _sine_and_cosine(integrand: sp.Basic, variable: sp.Basic) -> list[tuple]:
+def _sine_and_cosine(
+    integrand: sp.Basic, variable: sp.Basic, nested: bool = False
+) -> list[tuple]:
     """Candidates for `u` in `_by_derivative_divides` from a sine or cosine of a linear
-    argument under a radical, as `u = COS(x)` for `SIN(x)/SQRT(1 - q^2*SIN(x)^2)`.
-    Rational functions of the two are left to `engine.trigonometric`.
+    argument under a radical, as `u = COS(x)` for `SIN(x)/SQRT(1 - q^2*SIN(x)^2)`, or,
+    if `nested`, inside another function, as `u = COS(t)` for
+    `SIN(t)^3*COS(2*COS(t))`. Rational functions of the two are left to
+    `engine.trigonometric`.
     """
     calls = integrand.atoms(sp.sin, sp.cos)
-    if not calls or not any(
-        power.exp.is_Rational and not power.exp.is_integer and power.base.has(*calls)
-        for power in integrand.atoms(sp.Pow)
-    ):
+    if nested:
+        inside = [
+            outer
+            for outer in integrand.atoms(sp.Function)
+            if outer.args and any(argument.has(*calls) for argument in outer.args)
+        ]
+    else:
+        inside = [
+            power
+            for power in integrand.atoms(sp.Pow)
+            if power.exp.is_Rational
+            and not power.exp.is_integer
+            and power.base.has(*calls)
+        ]
+    if not calls or not inside:
         return []
     candidates = []
     for call in calls:
@@ -1012,13 +1176,75 @@ def _by_the_full_methods(head: sp.Basic) -> Candidate | None:
     most of a minute and gigabytes of memory before giving up. So for a parametrized
     integrand it runs only if `affordable` says so.
     """
-    if _an_arc_over_its_variable(head) or _unaffordable(head):
+    if _an_arc_over_its_variable(head) or _unaffordable(head) or _elliptic(head):
         return None
     hints = within_reach(head)
     found = _standing(head, attempt(head, lambda h: h.doit(deep=False, **hints)))
     if found is None or found == head:
         return None
     return Candidate(found, retries=_RETRIES)
+
+
+def _elliptic(head: sp.Basic) -> bool:
+    """Whether the integrand is a rational function of `w = SIN(u)^2` times an odd power
+    of the square root of `a + b*w`, for a linear `u` and with neither `a`, `b` nor `a +
+    b` zero, so that the integral is elliptic and has no elementary antiderivative.
+
+    ELLIPTIC.MTH defines its integrals this way, and on `INT(1/((1 - 3*SIN(t)^2/10)*
+    SQRT(1 - SIN(t)^2/2)), t, 0, 1)` heuristic Risch searches for minutes.
+    """
+    variables = [limit[0] for limit in head.limits]
+    if len(variables) != 1:
+        return False
+    (variable,) = variables
+    integrand = head.function
+    calls = {call for call in integrand.atoms(sp.sin, sp.cos) if call.has(variable)}
+    arguments = {call.args[0] for call in calls}
+    if len(arguments) != 1:
+        return False
+    (argument,) = arguments
+    polynomial = attempt(argument, lambda a: sp.Poly(a, variable))
+    if polynomial is None or polynomial.degree() != 1:
+        return False
+    w = sp.Dummy("w", positive=True)
+
+    def squared(e: sp.Basic) -> bool:
+        return e.is_Pow and e.base in calls and e.exp.is_even
+
+    def in_w(e: sp.Basic) -> sp.Basic:
+        square = w if isinstance(e.base, sp.sin) else 1 - w
+        return square ** (e.exp / 2)
+
+    written = attempt(integrand, lambda f: f.replace(squared, in_w))
+    if written is None or written.has(variable):
+        return False
+    radicands = {
+        power.base
+        for power in written.atoms(sp.Pow)
+        if power.base.has(w) and power.exp.is_Rational and power.exp.q == 2
+    }
+    if len(radicands) != 1:
+        return False
+    (radicand,) = radicands
+    linear = attempt(radicand, lambda r: sp.Poly(r, w))
+    if linear is None or linear.degree() != 1:
+        return False
+    b, a = linear.all_coeffs()
+    if a == 0 or sp.expand(a + b) == 0:
+        return False
+    rooted = sp.Dummy("r", positive=True)
+    rest = written.replace(
+        lambda e: e.is_Pow and e.base == radicand and e.exp.is_Rational,
+        lambda e: rooted ** (2 * e.exp),
+    )
+    exponents = {
+        power.exp
+        for power in rest.atoms(sp.Pow)
+        if power.base == rooted and power.exp.is_Integer
+    }
+    return bool(exponents) and all(e.is_odd for e in exponents) and (
+        rest.is_rational_function(w, rooted) is True
+    )
 
 
 def _unaffordable(head: sp.Basic) -> bool:
@@ -1171,8 +1397,9 @@ def _standing(head: sp.Basic, value: sp.Basic | None) -> sp.Basic | None:
 
 
 def _over_a_positive_variable(head: sp.Basic) -> Candidate | None:
-    """An antiderivative by `by_a_positive_substitution`, or None."""
-    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+    """An antiderivative by `by_a_positive_substitution`, or None. An `_elliptic`
+    integrand is skipped, since sympy's search for it doesn't end."""
+    if len(head.limits) != 1 or len(head.limits[0]) != 1 or _elliptic(head):
         return None
     value = by_a_positive_substitution(head.function, head.limits[0][0])
     return None if value is None else Candidate(value, trusted=True, tabled=True)
@@ -1342,6 +1569,7 @@ _METHODS: tuple[Method, ...] = (
     _of_a_trigonometric_function,
     _of_a_radical,
     _over_an_exponential,
+    _of_an_exponential_times_a_wave,
     _by_derivative_divides,
     _by_products_as_sums,
     _by_parts_over_a_polynomial,

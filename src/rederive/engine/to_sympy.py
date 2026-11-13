@@ -430,6 +430,8 @@ class Antidifference(sp.Function):
         expression, index = self.args
         if type(index) is not sp.Symbol:
             return self
+        if expression == 0:
+            return sp.S.Zero
         try:
             certificate = gosper_term(expression, index)
         except Exception:
@@ -2250,11 +2252,13 @@ def _summation(conv: Converter, args: list) -> sp.Basic:
     per element, as for `INT`: `SUM(k, k, [1, 2], 3)` is `[6, 5]`.
 
     An indefinite `SUM(u, k)` is the antidifference of `u`, deferred like the calculus
-    heads.
+    heads, and of each element of a vector `u`: `SUM([1, 2], x)` is `[x, 2*x]`.
     """
     if len(args) == 1 and isinstance(args[0], sp.MatrixBase):
         return sp.Add(*args[0])
     _variable(args[1])
+    if len(args) == 2 and isinstance(args[0], sp.MatrixBase):
+        return args[0].applyfunc(lambda element: Antidifference(element, args[1]))
     if len(args) == 2:
         return Antidifference(*args)
     if len(args) == 3 and isinstance(args[2], sp.MatrixBase):

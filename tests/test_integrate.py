@@ -368,6 +368,71 @@ def test_partial_fractions_over_a_sine_leave_only_the_nonelementary_part_standin
     )
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # A base whose derivative vanishes is a constant, not a power to raise.
+        ("INT(SQRT(SIN(x)^2 + COS(x)^2), x)", "x"),
+        # Simplify writes the integrand as `ABS(COS(t))`, which integrates.
+        ("INT(SQRT(1 - SIN(t)^2), t, 0, pi/2)", "1"),
+        # The arc length of a helix, a manual exercise for INT_APPS.MTH.
+        (
+            "INT(SQRT(r^2*SIN(x)^2 + r^2*COS(x)^2 + h^2), x, -pi, pi)",
+            "2*pi*SQRT(h^2 + r^2)",
+        ),
+        # The integrand is integrated in normal form, `SQRT(1/(1 - x^2 - y^2))`.
+        (
+            "INT(SQRT(x^2/(1 - x^2 - y^2) + y^2/(1 - x^2 - y^2) + 1), y,"
+            " -SQRT(1 - x^2), SQRT(1 - x^2))",
+            "IF(-1 < x < 1, pi, -#i*LN(-2*SQRT(1 - x^2)) + #i*LN(2*SQRT(1 - x^2)))",
+        ),
+    ],
+)
+def test_an_integral_is_tried_again_once_its_integrand_simplifies(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Products of exponentials are combined, as LAPLACE in INT_APPS.MTH needs.
+        (
+            "INT(#e^(-a*t)*#e^(-s*t)*SIN(t), t)",
+            "-(COS(t) + a*SIN(t) + s*SIN(t))*#e^(-a*t)/(a^2*#e^(s*t) + 2*a*s*#e^(s*t)"
+            " + s^2*#e^(s*t) + #e^(s*t))",
+        ),
+        # The tables' rule for an exponential times a wave, with irrational slopes.
+        (
+            "INT(COS(x)*#e^((1 - SQRT(13))*x/2), x)",
+            "(SQRT(13) + 9)*((1 - SQRT(13))*COS(x) + 2*SIN(x))"
+            "*#e^((1 - SQRT(13))*x/2)/68",
+        ),
+        # A root of a reciprocal is the reciprocal of the root where it is real.
+        ("INT(SQRT(1/(1 - y^2)), y)", "ASIN(y)"),
+        # `1 + COS(x)` is `2*COS(x/2)^2`, so the root is an absolute value.
+        ("INT(SQRT(1 + COS(x)), x, 0, 2*pi)", "4*SQRT(2)"),
+        ("INT(SQRT(1 - COS(x)), x, -pi, pi)", "4*SQRT(2)"),
+        # `u = COS(t)`, with the cosine inside another function. Half-integer BESSEL_J
+        # in BESSEL.MTH needs this one.
+        ("INT(SIN(t)^3*COS(2*COS(t)), t, 0, pi)", "SIN(2)/2 - COS(2)"),
+        # Each case of a split is simplified for the sign its condition gives.
+        (
+            "INT(1/SQRT(a - y^2), y, -SQRT(a), SQRT(a))",
+            "IF(a > 0, pi, -#i*LN(-2*SQRT(a)) + #i*LN(2*SQRT(a)))",
+        ),
+    ],
+)
+def test_an_integrand_is_rewritten_into_one_the_methods_can_do(text, expected):
+    assert simp(text) == expected
+
+
+def test_an_elliptic_integral_is_left_without_a_search():
+    """ELLIPTIC.MTH's third kind has no elementary antiderivative, and heuristic Risch
+    and the positive substitution search for it for minutes."""
+    text = "INT(1/((1 - 3*SIN(t)^2/10)*SQRT(1 - SIN(t)^2/2)), t, 0, 1)"
+    assert simp(text) == text
+
+
 # -- the gate ----------------------------------------------------------------------------
 
 

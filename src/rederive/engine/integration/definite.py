@@ -46,6 +46,7 @@ __all__ = [
     "real_where_real",
     "unresolved",
     "with_moving_poles",
+    "within_each_case",
 ]
 
 
@@ -1130,6 +1131,74 @@ def _with_signed_conditions(value: sp.Basic, parameter: sp.Basic) -> sp.Basic:
         return sp.Piecewise(*rewritten)
 
     return value.replace(lambda e: isinstance(e, sp.Piecewise), cases)
+
+
+def within_each_case(value: sp.Basic) -> sp.Basic:
+    """A case split with each case simplified where its condition makes a radicand
+    positive.
+
+    `INT(1/SQRT(a - y^2), y, -SQRT(a), SQRT(a))` is `2*ASIN(SQRT(a)*SQRT(1/a))` where
+    `a > 0`, which for such `a` is `pi`. A radicand is positive there if the condition
+    says so, or if the condition is on one real variable and its set lies where the
+    radicand is positive, as `-1 < x < 1` for `1 - x^2`. The radicand is replaced by a
+    positive variable and back, so sympy's evaluation does the work.
+    """
+
+    def positive_under(radicand: sp.Basic, condition: sp.Basic) -> bool:
+        if isinstance(condition, sp.StrictGreaterThan) and condition.rhs == 0:
+            if condition.lhs == radicand:
+                return True
+        if isinstance(condition, sp.StrictLessThan) and condition.lhs == 0:
+            if condition.rhs == radicand:
+                return True
+        symbols = condition.free_symbols
+        if len(symbols) != 1 or not radicand.free_symbols <= symbols:
+            return False
+        (symbol,) = symbols
+        if not symbol.is_extended_real:
+            return False
+        inside = attempt(condition, lambda c: c.as_set())
+        where = attempt(
+            radicand,
+            lambda r: sp.solveset(sp.StrictGreaterThan(r, 0), symbol, sp.S.Reals),
+        )
+        return (
+            inside is not None and where is not None and inside.is_subset(where) is True
+        )
+
+    def signed(case: sp.Basic, condition: sp.Basic) -> sp.Basic:
+        if condition in (sp.true, sp.false) or not condition.free_symbols:
+            return case
+        radicands = {
+            power.base
+            for power in case.atoms(sp.Pow)
+            if power.exp.is_Rational and not power.exp.is_Integer
+        }
+        radicands = {
+            radicand.base if radicand.is_Pow and radicand.exp == -1 else radicand
+            for radicand in radicands
+        }
+        for radicand in sorted(radicands, key=sp.default_sort_key):
+            if radicand.is_number or not positive_under(radicand, condition):
+                continue
+            stand_in = sp.Dummy("p", positive=True)
+            within = attempt(case, lambda c: c.xreplace({radicand: stand_in}))
+            if within is None or within.has(sp.nan, sp.zoo):
+                continue
+            case = within.xreplace({stand_in: radicand})
+        return case
+
+    def cases(piecewise: sp.Piecewise) -> sp.Piecewise:
+        return sp.Piecewise(
+            *((signed(case, test), test) for case, test in piecewise.args)
+        )
+
+    if not value.has(sp.Piecewise):
+        return value
+    found = attempt(
+        value, lambda v: v.replace(lambda e: isinstance(e, sp.Piecewise), cases)
+    )
+    return value if found is None else found
 
 
 #: The comparison with zero that holds exactly when the parameter is positive,
