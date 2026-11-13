@@ -4402,7 +4402,8 @@ def _powers_of_e(expression: sp.Basic) -> sp.Basic:
     Exponentials of variables stay separate terms (`_exponentials_distributed`), but
     `#e` to a number is a constant that Derive collects like a variable over its
     denominator: `COS(pi + #i)` is `-#e^(-1)*(#e^2 + 1)/2`, and `INT(x*#e^(-x), x, 0,
-    1)` is `#e^(-1)*(#e - 2)`.
+    1)` is `#e^(-1)*(#e - 2)`. In a logarithm's argument the power comes out as a
+    term: `LN(1 - #e^(-1))` is `LN(#e - 1) - 1`.
     """
 
     def power(term: sp.Basic) -> tuple[sp.Rational, int] | None:
@@ -4439,6 +4440,12 @@ def _powers_of_e(expression: sp.Basic) -> sp.Basic:
             return node
         if node.is_Add and not in_sum and laurent(node):
             return collected(node)
+        if isinstance(node, sp.log) and len(node.args) == 1 and laurent(node.args[0]):
+            # The power of `#e` is positive, so it leaves the logarithm.
+            powers = [power(term) for term in node.args[0].args]
+            lowest = min(k for _, k in powers)
+            rest = sp.Add(*(c * sp.E ** (k - lowest) for c, k in powers))
+            return sp.log(rest) + lowest
         inner = node.is_Add or (in_sum and node.is_Mul)
         args = [walked(arg, inner) for arg in node.args]
         return node.func(*args) if args != list(node.args) else node

@@ -527,19 +527,26 @@ def _powers(factors: list[list[sp.Basic]]) -> list[sp.Expr]:
 def _quotient(tops: list[sp.Expr], bottoms: list[sp.Expr]) -> sp.Expr:
     """Numerator factors over denominator factors, written as Derive writes a quotient.
 
-    A sum in the numerator has its common factor taken out, as a gcd leaves it:
-    `(n^2 + n)/(x + 1)` is `n*(n + 1)/(x + 1)`. This is not full factoring: `(x^2 -
-    1)/(y + 1)` stays.
+    Over a denominator with a variable, a sum in the numerator has its common factor
+    taken out, as a gcd leaves it: `(n^2 + n)/(x + 1)` is `n*(n + 1)/(x + 1)`, and
+    `(4*x + 6)/(x^2 + 1)` is `2*(2*x + 3)/(x^2 + 1)`. This is not full factoring:
+    `(x^2 - 1)/(y + 1)` stays.
 
-    A number alone beside a sum in the numerator is multiplied in, since that is how
-    it reads back: `2*(x + 1)/y` parses as `2*(x + 1)` over `y`, which sympy turns into
-    `(2*x + 2)/y`.
+    Over a number, a number alone beside a sum in the numerator is multiplied in, as
+    sympy multiplies it in anyway.
     """
     tops, bottoms = _cleared(tops, bottoms)
     if any(bottom.free_symbols for bottom in bottoms):
         tops, bottoms = _numbers_taken_out(tops, bottoms)
         tops = [part for top in tops for part in sp.Mul.make_args(_content(top))]
-    if bottoms and len(tops) == 2 and sum(top.is_Number for top in tops) == 1:
+        numbers = [top for top in tops if top.is_Number]
+        sums = [top for top in tops if top.is_Add]
+        if len(numbers) == len(sums) == 1 == len(tops) - 1 and numbers[0] < 0:
+            # The sign of a number beside a lone sum goes into the sum: `(a^2 -
+            # 2*x^2)/x`, not `-(2*x^2 - a^2)/x`. An all-negative sum gives it back
+            # below.
+            tops = [-numbers[0], -sums[0]]
+    elif bottoms and len(tops) == 2 and sum(top.is_Number for top in tops) == 1:
         tops = [sp.Add(*map(_folded, sp.Add.make_args(sp.Mul(*tops))))]
     # Pull the sign out of an all-negative sum, `-z*(b + 2)` not `z*(-b - 2)`, which
     # is also how the text reads back.
@@ -605,30 +612,52 @@ def _cleared(
 def _numbers_taken_out(
     tops: list[sp.Expr], bottoms: list[sp.Expr]
 ) -> tuple[list[sp.Expr], list[sp.Expr]]:
-    """The factors with the numeric content of each denominator sum taken out of it.
+    """The factors with the numeric content of each sum taken out of it, above and below
+    the line, and combined into one number in front.
 
-    Derive writes a denominator sum with coprime integer coefficients and its content
-    in front: `(3 - 4*x)/(2*x^2 + 2)` is `(3 - 4*x)/(2*(x^2 + 1))`. The content then
-    cancels against the numerator's: `(2*x + 2)/(4*x^2 + 8)` is `(x + 1)/(2*(x^2 +
-    2))`.
+    Derive writes a sum in a quotient with coprime integer coefficients and its content
+    in front: `(3 - 4*x)/(2*x^2 + 2)` is `(3 - 4*x)/(2*(x^2 + 1))`, and `(4*x + 6)/(x^2
+    + 1)` is `2*(2*x + 3)/(x^2 + 1)`. The contents then cancel: `(2*x + 2)/(4*x^2 + 8)`
+    is `(x + 1)/(2*(x^2 + 2))`. A denominator sum gives up its sign with its content,
+    while a numerator's sign is settled by `_quotient`.
     """
-    scale = sp.S.One
-    taken = []
+    number = sp.S.One
+    taken_above = []
+    for top in tops:
+        if top.is_Number:
+            number *= top
+            continue
+        content, rest = _numeric_content(top, False)
+        number *= content
+        taken_above.append(rest)
+    taken_below = []
     for bottom in bottoms:
-        base, exponent = bottom.as_base_exp()
-        if base.is_Add and exponent.is_Integer and exponent > 0:
-            content, primitive = base.as_content_primitive()
-            if _all_negated(primitive):
-                content, primitive = -content, -primitive
-            if content.is_Integer and content != 1:
-                scale *= content**exponent
-                bottom = primitive**exponent
-        taken.append(bottom)
-    if scale == 1:
-        return tops, bottoms
-    contents = [top.as_content_primitive() for top in tops]
-    number = sp.Mul(*(content for content, _ in contents)) / scale
-    return [number, *(rest for _, rest in contents if rest != 1)], taken
+        if bottom.is_Number:
+            number /= bottom
+            continue
+        content, rest = _numeric_content(bottom, True)
+        base, exponent = rest.as_base_exp()
+        if _all_negated(base) and exponent.is_Integer:
+            content, rest = content * (-1) ** exponent, (-base) ** exponent
+        number /= content
+        taken_below.append(rest)
+    return [number, *taken_above], taken_below
+
+
+def _numeric_content(factor: sp.Expr, below: bool) -> tuple[sp.Expr, sp.Expr]:
+    """The numeric content of a sum, or of a positive integer power of one, and the rest.
+
+    `(4*x + 6)^2` is `4` and `(2*x + 3)^2`. Above the line the content may be a
+    fraction, `(x/2 + 1/3)` giving `1/6` and `3*x + 2`; below it only an integer is
+    taken, as `_cleared` has already cleared what fractions it can.
+    """
+    base, exponent = factor.as_base_exp()
+    if not (base.is_Add and exponent.is_Integer and exponent > 0):
+        return sp.S.One, factor
+    content, primitive = base.as_content_primitive()
+    if not (content.is_Integer if below else content.is_Rational) or content == 1:
+        return sp.S.One, factor
+    return content**exponent, primitive**exponent
 
 
 def _reciprocal_sum(expression: sp.Basic) -> bool:
@@ -689,21 +718,21 @@ def _coefficient_spelled(product: sp.Expr) -> sp.Expr:
         coefficient = coefficient / shared
     under = any(map(_under_the_line, others))
     if under:
-        # Cancel a number common to the sum's terms and the denominator: `(4*x +
-        # 6)/(4*y)` is `(2*x + 3)/(2*y)`. A term's number includes content inside
-        # brackets or denominators: `(2*b - 2*c)*u` has a 2, `4/(2*v + 2)` is `2/(v +
-        # 1)`.
+        # The number common to the sum's terms goes in front, where it cancels with
+        # the denominator: `(4*x + 6)/y` is `2*(2*x + 3)/y` and `(4*x + 6)/(4*y)` is
+        # `(2*x + 3)/(2*y)`. A term's number includes content inside brackets or
+        # denominators: `(2*b - 2*c)*u` has a 2, `4/(2*v + 2)` is `2/(v + 1)`.
         contents = [term.as_content_primitive() for term in terms]
         if all(content.is_Integer for content, _ in contents):
-            common = reduce(sp.igcd, (content for content, _ in contents), coefficient.q)
+            common = reduce(sp.igcd, (content for content, _ in contents), 0)
             if common != 1 or shared != 1:
                 terms = [content / common * rest for content, rest in contents]
                 coefficient = coefficient * common
     rewritten = terms != list(sums[0].args)
     if coefficient.q == 1:
-        if all(sp.fraction(other)[0] == 1 for other in others):
-            # An integer beside only denominators goes into the sum, matching
-            # `_quotient` and how it reads back.
+        if not under and all(sp.fraction(other)[0] == 1 for other in others):
+            # An integer beside only denominators with no variable goes into the
+            # sum, matching `_quotient` and how it reads back.
             if not rewritten and coefficient == 1:
                 return product
             spread = sp.Add(*(_folded(coefficient * term) for term in terms))

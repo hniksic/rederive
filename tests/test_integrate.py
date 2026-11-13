@@ -48,8 +48,8 @@ from rederive.syntax import ParseState, parse_expression
         ("INT(x^2/(a^3 + x^3), x)", "LN(x^3 + a^3)/3"),
         (
             "INT(1/(x^2 + x + a), x, 0, 1)",
-            "IF(a = 0, inf, IF(a = -2, -inf, IF(-2 < a < 0, ?, (2*ATAN(3/SQRT(4*a - 1)) "
-            "- 2*ATAN(1/SQRT(4*a - 1)))/SQRT(4*a - 1))))",
+            "IF(a = 0, inf, IF(a = -2, -inf, IF(-2 < a < 0, ?, 2*(ATAN(3/SQRT(4*a - 1)) "
+            "- ATAN(1/SQRT(4*a - 1)))/SQRT(4*a - 1))))",
         ),
     ],
 )

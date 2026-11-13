@@ -268,7 +268,7 @@ RATIONAL_FORM = [
     # `2*(x^2 + y^2 + 18)`, a form we can't represent - see
     # `test_a_numeric_factor_stays_among_the_terms_it_divides`.
     ("1/(9 + x^2 + (y - 3)^2) + 1/(9 + x^2 + (y + 3)^2)",
-     "(2*x^2 + 2*y^2 + 36)/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y + 18))"),
+     "2*(x^2 + y^2 + 18)/((x^2 + y^2 + 6*y + 18)*(x^2 + y^2 - 6*y + 18))"),
     # A denominator free of the primary variable is part of a coefficient, so it
     # is combined only when several terms share it.
     ("x/y + z", "x/y + z"),
@@ -292,12 +292,33 @@ NUMERATOR_CONTENT = [
     ("(x y + x)/z", "x*(y + 1)/z"),
     ("(n^2 + n)/(x + 1)", "n*(n + 1)/(x + 1)"),
     ("(x^2 + x)/(2 y)", "x*(x + 1)/(2*y)"),
+    # A number common to the terms goes in front too (Derive), with its sign, and
+    # combines with the denominator's content and any coefficient into one number.
+    ("(4*x + 6)/(x^2 + 1)", "2*(2*x + 3)/(x^2 + 1)"),
+    ("(2*x + 2)/y", "2*(x + 1)/y"),
+    ("(-2*x - 4)/(x^2 + 1)", "-2*(x + 2)/(x^2 + 1)"),
+    ("(2 - 4*x)/(x^2 + 1)", "2*(1 - 2*x)/(x^2 + 1)"),
+    # A negative number beside a lone sum gives its sign to the sum.
+    ("-(2*x^2 - a^2)/(x*SQRT(x^2 - a^2))", "(a^2 - 2*x^2)/(x*SQRT(x^2 - a^2))"),
+    ("-(2*ATAN(1/y) - 2*ATAN(3/y))/SQRT(y)", "2*(ATAN(3/y) - ATAN(1/y))/SQRT(y)"),
+    ("(4*x + 6)/(4*x^2 + 8)", "(2*x + 3)/(2*(x^2 + 2))"),
+    ("(4*x + 6)/(3*x^2 + 3)", "2*(2*x + 3)/(3*(x^2 + 1))"),
+    ("(4*x + 6)/(4*y)", "(2*x + 3)/(2*y)"),
+    ("(x/2 + 1/3)/(x^2 + 1)", "(3*x + 2)/(6*(x^2 + 1))"),
+    ("(2*a*x + 4*a)/(x^2 + 1)", "2*a*(x + 2)/(x^2 + 1)"),
+    ("(2 x y + 2 y)/z", "2*y*(x + 1)/z"),
+    ("(2*x + 2)^2/y", "4*(x + 1)^2/y"),
+    ("(2*x + 2)*(3*y + 3)/z", "6*(x + 1)*(y + 1)/z"),
+    ("(x^2 + 2*x)/(x + 1)", "x*(x + 2)/(x + 1)"),
     # A common factor, not a factorization: these terms share nothing, and Derive
     # prints them as they are.
     ("(x^2 - 1)/(y + 1)", "(x^2 - 1)/(y + 1)"),
     ("(x^2 + 2 x + 1)/y", "(x^2 + 2*x + 1)/y"),
-    # Without a quotient, a polynomial keeps its terms.
+    # Without a quotient, a polynomial keeps its terms (Derive).
     ("x^2 + x", "x^2 + x"),
+    ("4*x + 6", "4*x + 6"),
+    ("2*x^2 + 4*x", "2*x^2 + 4*x"),
+    ("6*x^2 + 4*x + 2", "6*x^2 + 4*x + 2"),
 ]
 
 
@@ -334,17 +355,6 @@ CANCELLED_CONTENT = [
 @pytest.mark.parametrize(("text", "expected"), CANCELLED_CONTENT, ids=str)
 def test_a_number_common_to_numerator_and_denominator_cancels(text, expected):
     assert simp(text) == expected
-
-
-def test_a_numeric_factor_stays_among_the_terms_it_divides():
-    """`(2*x + 2)/y` rather than Derive's `2*(x + 1)/y`.
-
-    Sympy distributes a number over a sum when building it, so the second form can't
-    survive a print/parse round trip, and `test_simplify_corpus` fails when text and
-    tree disagree. A factor containing a variable does survive, and is taken out.
-    """
-    assert simp("(2 x + 2)/y") == "(2*x + 2)/y"
-    assert simp("(2 x y + 2 y)/z") == "2*y*(x + 1)/z"
 
 
 #: The same rule from the other side: a polynomial's coefficients are rational, so a
@@ -1377,6 +1387,20 @@ COMPLEX_CONSTANTS = [
 
 @pytest.mark.parametrize(("text", "expected"), COMPLEX_CONSTANTS, ids=str)
 def test_a_complex_constant_is_written_as_its_principal_value(text, expected):
+    assert simp(text) == expected
+
+
+#: In a logarithm's argument, the lowest power of `#e` comes out as a term, since it is
+#: positive (Derive, FUN.MTH).
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("LN(1 - #e^(-1))", "LN(#e - 1) - 1"),
+        ("LN(#e^(-1) + #e^(-2))", "LN(#e + 1) - 2"),
+    ],
+    ids=str,
+)
+def test_a_power_of_e_leaves_a_logarithm(text, expected):
     assert simp(text) == expected
 
 

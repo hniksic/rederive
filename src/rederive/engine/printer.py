@@ -864,6 +864,45 @@ def _all_negated(factor: sp.Basic) -> bool:
     )
 
 
+def _contents_in_front(
+    above: list[sp.Basic], below: list[sp.Basic]
+) -> tuple[list[sp.Basic], list[sp.Basic]]:
+    """A quotient's factors, with the integer content of a lone sum above or below a
+    denominator with a variable written in front, as the normal form writes it.
+
+    The reader multiplies a number into a sum it stands alone beside, so `2*(x + 1)/y`
+    reads back as `(2*x + 2)/y`, and `1/(2*(x + 1))` as `1/(2*x + 2)`. Writing such a
+    sum with its content in front again keeps the text a fixed point. The numbers
+    above and below are combined into one ratio.
+    """
+    if all(factor.is_Number for factor in below):
+        return above, below
+    tops = [factor for factor in above if not factor.is_Number]
+    bottoms = [factor for factor in below if not factor.is_Number]
+    number = sp.Mul(*(f for f in above if f.is_Number)) / sp.Mul(
+        *(f for f in below if f.is_Number)
+    )
+    taken = False
+    for factors, power in ((tops, 1), (bottoms, -1)):
+        if len(factors) == 1 and factors[0].is_Add:
+            content, primitive = factors[0].as_content_primitive()
+            if content.is_Integer and content > 1 and _integral(primitive):
+                number *= content**power
+                factors[0] = primitive
+                taken = True
+    if not taken:
+        return above, below
+    if number.p != 1:
+        tops.insert(0, sp.Integer(number.p))
+    if number.q != 1:
+        bottoms.insert(0, sp.Integer(number.q))
+    return tops, bottoms
+
+
+def _integral(total: sp.Add) -> bool:
+    return all(term.as_coeff_Mul()[0].is_Integer for term in total.args)
+
+
 def _unevaluated(expr: sp.Basic) -> bool:
     """Whether `expr` is a product sympy was told not to evaluate, by sympy's own test: a
     leading one, or a number or integer power of one after the front.
@@ -1032,6 +1071,7 @@ class AuthorPrinter(sp.StrPrinter):
                 below.append(factor.base if power == 1 else _raised(factor.base, power))
             else:
                 above.append(factor)
+        above, below = _contents_in_front(above, below)
         if below:
             for index, factor in enumerate(above):
                 if self._leads_negative(factor):
@@ -1153,6 +1193,10 @@ class AuthorPrinter(sp.StrPrinter):
             if -expr.exp is sp.S.Half:
                 return f"1/SQRT({self._print(expr.base)})"
             if expr.exp is sp.S.NegativeOne:
+                if expr.base.is_Add:
+                    content = expr.base.as_content_primitive()[0]
+                    if content.is_Integer and content > 1:
+                        return self._divided(expr)
                 return f"1/{self.parenthesize(expr.base, level)}"
             if expr.exp.is_Number and expr.exp.is_negative:
                 # A denominator, as the inherited `_print_Mul` writes one in a

@@ -770,6 +770,25 @@ def test_an_expression_already_in_engine_form_comes_back_unchanged(text):
     assert written(text, state=declaring("F", "MY_FUNCTION")) == text
 
 
+#: Quotients with a sum's integer content in front, as the normal form writes them. The
+#: reader multiplies a number into a sum it stands alone beside, and the printer takes
+#: it out again.
+CONTENT_IN_FRONT = [
+    "2*(x + 1)/y",
+    "-2*(x + 2)/(x^2 + 1)",
+    "2*(2*x + 3)/(3*(x^2 + 1))",
+    "1/(2*(x + 1))",
+    "-1/(2*(x + 1))",
+    "(x + 1)/(2*(x^2 + 2))",
+    "3/(2*(2*x + 1))",
+]
+
+
+@pytest.mark.parametrize("text", CONTENT_IN_FRONT)
+def test_a_sum_s_content_in_front_survives_the_round_trip(text):
+    assert roundtrip(text) == (text, text)
+
+
 def test_every_node_kind_is_covered_by_a_round_trip_case():
     covered = set()
     for text in KINDS:
