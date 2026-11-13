@@ -33,7 +33,7 @@ from rederive.engine.approximation import GUARD, simplest_rational
 from rederive.engine.context import Context, Precision
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
-from rederive.engine.printer import is_written
+from rederive.engine.printer import is_written, spelling
 from rederive.engine.to_sympy import Vector
 
 __all__ = ["equations_of", "oriented", "solutions", "solution_variables"]
@@ -76,6 +76,10 @@ def solutions(
     None leaves it to the precision mode. `divisors` are what the equation divided by
     before Simplify cancelled anything: a value making one zero is not a solution.
     `real` drops solutions known to have an imaginary component.
+
+    A solution written with a function the notation has no name for, such as sympy's
+    inverse error function, is no answer, since it couldn't be typed back: the
+    equation is then left unsolved.
     """
     context = context or Context()
     constants = _Constants(context.arbitrary_index)
@@ -85,7 +89,7 @@ def solutions(
         divided = {name for divisor in divisors for name in _named_in(divisor)}
         variables = main_order(divided, context.order)[:1]
     try:
-        return _solutions(
+        found = _solutions(
             expression,
             context,
             tuple(variables),
@@ -94,10 +98,18 @@ def solutions(
             constants,
             real,
         )
+        if any(_unnamed(answer) for answer in found):
+            return _unsolvable(expression, context)
+        return found
     except Exception:
         # The engine never raises on parser output, and "can't solve this" is an
         # answer, not a failure: the residual equation says exactly what is known.
         return _unsolvable(expression, context)
+
+
+def _unnamed(answer: sp.Basic) -> bool:
+    """Whether `answer` holds a call the notation has no name for."""
+    return any(spelling(call) is None for call in answer.atoms(sp.Function))
 
 
 def solution_variables(

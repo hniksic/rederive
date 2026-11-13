@@ -603,8 +603,8 @@ PIECEWISE = [
     ("STEP(x)", "SIGN(x)/2 + 1/2"),
     # The 6.1 help: STEP is `(SIGN(x) + 1)/2`, so at zero, where the sign is
     # undetermined, the step is undecided, as CHI is at the edge of its interval.
-    ("STEP(0)", "(±1)/2 + 1/2"),
-    ("CHI(0, 0, 1)", "(±1)/2 + 1/2"),
+    ("STEP(0)", "±1/2 + 1/2"),
+    ("CHI(0, 0, 1)", "±1/2 + 1/2"),
     ("FLOOR(5.73)", "5"),
     ("MOD(m, 0)", "m"),
     ("MODS(m, 0)", "m"),

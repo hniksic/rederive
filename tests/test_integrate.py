@@ -69,7 +69,7 @@ def test_a_quadratic_with_parametric_coefficients_is_integrated_by_its_square(
         # No case for `a = 0`: the pole at `a^2` is only in the constant.
         (
             "INT(x/(SIN(a*x) + 1), x)",
-            "-(LN(1/(COS(a*x) + 1)) - 2*LN(TAN(a*x/2) + 1) + a*x/TAN(a*x/2 + pi/4)"
+            "-(LN(1/(COS(a*x) + 1)) - 2*LN(TAN(a*x/2) + 1) + a*x*COT(a*x/2 + pi/4)"
             " + LN(2))/a^2",
         ),
     ],
@@ -364,7 +364,7 @@ def test_partial_fractions_over_a_sine_leave_only_the_nonelementary_part_standin
     # The unevaluated integral is a separate term, not put over the common denominator.
     assert simp("INT(x/((SIN(a*x) + 1)*SIN(a*x)), x)") == (
         "INT(x/SIN(a*x), x) + (LN(1/(COS(a*x) + 1)) - 2*LN(TAN(a*x/2) + 1)"
-        " + a*x/TAN(a*x/2 + pi/4) + LN(2))/a^2"
+        " + a*x*COT(a*x/2 + pi/4) + LN(2))/a^2"
     )
 
 
@@ -908,7 +908,7 @@ def test_an_antiderivative_is_written_in_radicals_where_the_roots_are_known():
     assert simp("INT(1/(x^7 + 1), x)") == (
         "2*COS(pi/14)*ATAN(x/COS(pi/14) - TAN(pi/14))/7 "
         "+ 4*SIN(pi/7)*COS(pi/7)*ATAN(x/COS(3*pi/14) + TAN(3*pi/14))/7 "
-        "+ 2*SIN(pi/7)*ATAN(x/SIN(pi/7) - 1/TAN(pi/7))/7 "
+        "+ 2*SIN(pi/7)*ATAN(x/SIN(pi/7) - COT(pi/7))/7 "
         "- COS(pi/7)*LN(x^2 - 2*COS(pi/7)*x + 1)/7 "
         "+ SIN(3*pi/14)*LN(x^2 + 2*SIN(3*pi/14)*x + 1)/7 "
         "- SIN(pi/14)*LN(x^2 - 2*SIN(pi/14)*x + 1)/7 + LN(x + 1)/7"
@@ -1480,3 +1480,19 @@ def test_a_real_integral_over_a_positive_parameter_is_real():
     the value is real. Undeclared, it's off by `#i*pi` and the integral stays."""
     text = "INT((x^t - 1)/LN(x), x, 0, 1)"
     assert simp(text, declared("t :epsilon Real (0, inf)")) == "LN(t + 1)"
+
+
+def test_a_parameter_dividing_the_integrand_makes_no_case():
+    """At `c = 0` the integrand `x*#e^x/c` is undefined, so sympy's case for it is
+    dropped. ODENTH.MTH's DSOLVE3 integrates such quotients of its constant `c3`."""
+    assert simp("INT(x*#e^x/c, x)") == "(x - 1)*#e^x/c"
+    assert simp("INT(x*#e^(-x)/c, x, 0, 1)") == "(#e - 2)*#e^(-1)/c"
+
+
+def test_an_integral_beside_a_composition_fails_fast_and_stays_whole():
+    """A call of a non-polynomial argument beside other terms of a denominator has no
+    elementary integral unless the numerator brings its derivative."""
+    assert simp("INT((1+y+y^2)/(SIN(1/y)*(1+y+y^2)-y^2-y^3),y)") == (
+        "INT((y^2 + y + 1)/((y^2 + y + 1)*SIN(1/y) - y^3 - y^2), y)"
+    )
+    assert simp("INT((3*y^2-COS(1/y)/y^2)/(SIN(1/y)+y^3),y)") == "LN(SIN(1/y) + y^3)"

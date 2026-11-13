@@ -82,6 +82,7 @@ from rederive.engine.to_sympy import (
     FunDef,
     Logical,
     PlusMinus,
+    ambiguous_products,
     Vector,
     as_condition,
     authored_conditionals,
@@ -204,6 +205,7 @@ def simplified(
         decide=lambda test: _decide_simplified(test, context),
         work_out=lambda head: _evaluate(head, context),
         command=_commanded,
+        simplify=lambda value, context: _transform(value, context, True),
     )
     expression = evaluate(node, environment)
     try:
@@ -402,6 +404,9 @@ def _one_value(relation: Relational, context: Context) -> bool | None:
     difference = attempt(relation, lambda r: _rewritten(r.lhs - r.rhs, context))
     if difference is None or not difference.is_number:
         return None
+    # A variable beside an infinity is absorbed by it, so `x = inf` leaves `x` free.
+    if difference.is_finite is not True and relation.free_symbols:
+        return None
     if difference.is_zero:
         return True
     if difference.is_zero is False and difference.is_extended_real is True:
@@ -551,14 +556,17 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     # over `(0, 1)` cancels only once both bars are removed.
     expression = settled(expression, context)
     expression = _divergent(expression, context)
+    expression = forced(expression, _absorbed_by_infinity)
     expression = _rewritten_beside_standing(expression, context)
     expression = _factorials(expression)
+    expression = forced(expression, ambiguous_products)
     # The normal form is not gated on getting shorter.
     #
     # `over_numbers` is off so numeric denominators stay with their terms instead of
     # becoming a common denominator: `x^2/6 + x/2` comes back as authored.
     expression = normal_form(expression, context.order, over_numbers=False)
     expression = _spelled(expression, context)
+    expression = forced(expression, ambiguous_products)
     if held:
         expression = expression.xreplace(
             {dummy: found.args[0] for found, dummy in held.items()}
@@ -679,6 +687,32 @@ def _divergent(expression: sp.Basic, context: Context) -> sp.Basic:
     )
 
 
+def _absorbed_by_infinity(expression: sp.Basic) -> sp.Basic:
+    """Drop the terms with variables from each sum with a real infinite term.
+
+    Derive takes a variable for a finite value, so `inf - 1/x` is `inf`, like
+    `inf - x`, where sympy keeps `1/x` as possibly infinite. Terms holding an infinity
+    themselves stay, so `inf - inf*x` is not decided.
+    """
+    infinities = (sp.oo, sp.S.NegativeInfinity, sp.zoo, sp.nan)
+
+    def absorbed(total: sp.Basic) -> sp.Basic:
+        kept = [
+            term
+            for term in total.args
+            if not term.free_symbols or term.has(*infinities) or not term.is_Atom
+            and term.has(sp.Integral, sp.Sum, sp.Product, sp.Limit, sp.Derivative)
+        ]
+        return total if len(kept) == len(total.args) else sp.Add(*kept)
+
+    if not expression.has(sp.oo, sp.S.NegativeInfinity):
+        return expression
+    return expression.replace(
+        lambda e: e.is_Add and (sp.oo in e.args or sp.S.NegativeInfinity in e.args),
+        absorbed,
+    )
+
+
 def _infinity_of(limit: sp.Basic) -> sp.Basic | None:
     """The infinity a series diverges to if its terms tend to `limit`, or None if that
     doesn't show divergence."""
@@ -728,8 +762,19 @@ def _decide(test: sp.Basic, context: Context) -> bool | None:
     consulted, since symbols can't carry them into evaluation.
 
     A test that isn't a relation is read as a comparison with zero, as in conversion.
+
+    As a test, vectors of different lengths are unequal, whatever their elements:
+    ODE.MTH's `IF(u SUB 1 = [], ...)` takes the second branch for `[a] = []`. Shown as
+    an answer, such an equation of unknowns stands (see `_relation`).
     """
     test = as_condition(test)
+    if (
+        isinstance(test, (sp.Eq, sp.Ne))
+        and isinstance(test.lhs, Vector)
+        and isinstance(test.rhs, Vector)
+        and len(test.lhs.args) != len(test.rhs.args)
+    ):
+        return isinstance(test, sp.Ne)
     for candidate in _truths(test, context):
         if candidate is sp.true:
             return True
@@ -1618,9 +1663,27 @@ def _unsigned_infinity(asked: sp.Limit) -> sp.Basic:
         )
         if side is None or side.has(sp.Limit):
             return sp.zoo
-        if side not in (sp.oo, sp.S.NegativeInfinity, sp.zoo):
+        if not _real_infinity(side):
             return sp.nan
     return sp.zoo
+
+
+def _real_infinity(value: sp.Basic) -> bool:
+    """Whether `value` is an infinity of real but possibly unknown sign, such as `inf`
+    times the sign of a parameter: `LIM(1/(a*x), x, 0)` from the right is
+    `inf*SIGN(1/a)`, and with the other side that is `±inf`, since Derive's `±inf`
+    takes in a factor of unknown sign."""
+    if value in (sp.oo, sp.S.NegativeInfinity, sp.zoo):
+        return True
+    if not value.is_Mul:
+        return False
+    infinite = [factor for factor in value.args if factor in (sp.oo, -sp.oo)]
+    others = [factor for factor in value.args if factor not in infinite]
+    return len(infinite) == 1 and all(
+        isinstance(factor, sp.sign) and _real_where_defined(factor.args[0])
+        or factor.is_extended_real and factor.is_zero is False
+        for factor in others
+    )
 
 
 def _undecided(head: sp.Basic) -> sp.Basic:
@@ -1649,7 +1712,7 @@ def _undecided(head: sp.Basic) -> sp.Basic:
     if right != -left:
         return sp.nan
     # Opposite infinite sides make unsigned infinity, which Derive writes `±inf`.
-    return sp.zoo if right in (sp.oo, -sp.oo) else PlusMinus(right)
+    return sp.zoo if _real_infinity(right) else PlusMinus(right)
 
 
 # -- the FACTOR, EXPAND and SOLVE heads ---------------------------------------
@@ -1960,8 +2023,10 @@ _WRITTEN_AS: dict[type, Callable[..., sp.Basic]] = {
 #: hyperbolics and their inverses are exponentials and logarithms (6.5, 6.6), and
 #: `ERFC` is the complement of `ERF` (6.11). `STEP`, `MIN` and `MAX` use the closed
 #: forms of 6.7: a step is a half plus half a sign, and min and max are the midpoint
-#: minus or plus half the distance.
+#: minus or plus half the distance. `COT` is worked with as the reciprocal of `TAN`,
+#: and spelled back at the end (`_cotangents`).
 _DEFINED_OVER: dict[type, type] = {
+    sp.cot: sp.tan,
     sp.sec: sp.cos,
     sp.csc: sp.sin,
     sp.asec: sp.acos,
@@ -2067,6 +2132,31 @@ def _cancelled(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
     except Exception:
         return expression
     return candidate if cancelled and short else expression
+
+
+def _fewer_terms(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
+    """`rewrite`, if the result is simpler, or no longer and with fewer terms once
+    multiplied out: a cancellation, which Section 6.3's Auto applies, as in
+    `r*(COS(t)^2 - 1)` becoming `-r*SIN(t)^2`. Powers of sums beyond squares aren't
+    multiplied out to count."""
+    candidate = attempt(expression, rewrite)
+    if candidate is None:
+        return expression
+    if pays(candidate, expression):
+        return candidate
+    try:
+        if any(
+            power.base.is_Add and power.exp.is_Integer and abs(power.exp) > 2
+            for power in (*expression.atoms(sp.Pow), *candidate.atoms(sp.Pow))
+        ):
+            return expression
+        fewer = len(sp.Add.make_args(sp.expand(candidate))) < len(
+            sp.Add.make_args(sp.expand(expression))
+        )
+        short = sp.count_ops(candidate) <= sp.count_ops(expression)
+    except Exception:
+        return expression
+    return candidate if fewer and short else expression
 
 
 def _called_denominator(expression: sp.Basic) -> bool:
@@ -3198,7 +3288,14 @@ def _trigsimp(expression: sp.Basic) -> sp.Basic:
     nested = any(call.args[0].has(TrigonometricFunction) for call in calls)
     if nested and sp.count_ops(expression) > _NESTED_TRIGSIMP:
         return expression
-    return sp.trigsimp(expression)
+    try:
+        angle = _whole_angle(expression)
+        unchanged = angle is not None and _without_cancellation(
+            expression, sp.cancel(sp.expand_trig(expression)), angle
+        )
+    except Exception:
+        unchanged = False
+    return expression if unchanged else sp.trigsimp(expression)
 
 
 #: The largest expression with trigonometric calls nested in angles that `_trigsimp`
@@ -3293,6 +3390,8 @@ def _multiple_angles(expression: sp.Basic) -> sp.Basic:
         return expression
     single = sp.cancel(sp.expand_trig(expression))
     sine, cosine = sp.sin(angle), sp.cos(angle)
+    if _without_cancellation(expression, single, angle):
+        return expression
     candidates = []
     # A quotient may cancel further after rewriting squares of one function in the
     # other: `SIN(x)^3/(COS(x)^2 - 1)` is `-SIN(x)`.
@@ -3311,6 +3410,28 @@ def _multiple_angles(expression: sp.Basic) -> sp.Basic:
             sp.expand(TR6(squares, max=_DEGREE)),
         ]
     return min(candidates, key=sp.count_ops)
+
+
+def _without_cancellation(
+    expression: sp.Basic, single: sp.Basic, angle: sp.Basic
+) -> bool:
+    """Whether `expression`, a sum of sines and cosines of multiples of `angle` with
+    `single` its form over the single angle, has nothing that cancels.
+
+    Section 6.3's Auto applies only the transformations that clearly yield a
+    cancellation. A polynomial in the calls is taken to cancel only if its sum of
+    multiples, which is unique, has fewer terms than it: `COS(2*x) + COS(4*x)/4` and
+    `SIN(2*x) + SIN(4*x)/2` stay as written, rather than becoming `2*COS(x)^4 - 3/4`
+    and `4*SIN(x)*COS(x)^3`, while `SIN(x)^6 + COS(x)^6 + 3*SIN(x)^2*COS(x)^2` is 1.
+    A quotient with calls in its denominator is left to `_cancelled`.
+    """
+    if _called_denominator(expression):
+        return False
+    if not _trigonometric_polynomial(single, sp.sin(angle), sp.cos(angle)):
+        return False
+    multiples = _sum_of_multiples(sp.expand(single))
+    terms = sp.Add.make_args(sp.expand(expression))
+    return len(sp.Add.make_args(multiples)) >= len(terms)
 
 
 def _whole_angle(expression: sp.Basic) -> sp.Basic | None:
@@ -3407,17 +3528,26 @@ def _known(expression: sp.Basic) -> dict[str, bool]:
 
 
 def _logs_combined(expression: sp.Basic) -> sp.Basic:
-    """`logcombine` with the power rule `k*LN(a) = LN(a^k)` only for rational `k`.
+    """`logcombine` of logarithms added to each other, with the power rule
+    `k*LN(a) = LN(a^k)` only for rational `k`.
 
-    That is the manual's condition, while sympy takes any real `k`: `LN(3)*x + LN(5)`
-    stays as written instead of becoming `LN(5*3^x)`. In each product holding one
-    logarithm, every factor but the logarithm and a rational is hidden behind a symbol
-    of unknown sign, which sympy keeps outside; a product of several logarithms is
-    hidden whole. The sum rule is unaffected: `x*LN(2) + x*LN(3)` is `x*LN(6)`.
+    Only a sum holding two or more logarithmic terms combines; a lone `k*LN(a)` stays
+    as written beside other terms, as in Derive: `13*LN(2) - 1` is unchanged while
+    `3*LN(2) + LN(5)` is `LN(40)`. The power rule takes only rational `k`, the
+    manual's condition, while sympy takes any real `k`: `LN(3)*x + LN(5)` stays as
+    written instead of becoming `LN(5*3^x)`. In each term holding one logarithm, every
+    factor but the logarithm and a rational is hidden behind a symbol of unknown sign,
+    which sympy keeps outside; a product of several logarithms is hidden whole. The sum
+    rule is unaffected: `x*LN(2) + x*LN(3)` is `x*LN(6)`.
 
-    The rational must be small too, numerator and denominator at most `_LOG_POWER`: a
+    The rational must be small too, numerator and denominator at most `_LOG_POWER`,
+    and the power of a numeric argument it would build at most `_LOG_BITS` bits: a
     coefficient like `12345678901/98765432109`, as an approximation leaves it, is not
     a power anyone writes, and sympy would spend minutes on its root.
+
+    Each sum is combined on its own: the arguments of its logarithms and its terms
+    without one are hidden too, so that `logcombine`, which works on the whole tree,
+    does not reach the sums inside them, which were already handled.
     """
     if not expression.has(sp.log):
         return expression
@@ -3426,40 +3556,73 @@ def _logs_combined(expression: sp.Basic) -> sp.Basic:
         if node.is_Atom or not node.has(sp.log):
             return node
         node = node.func(*map(combined, node.args))
-        if not (node.is_Add or node.is_Mul):
+        if not node.is_Add:
+            return node
+        terms = sp.Add.make_args(node)
+        if sum(1 for term in terms if _log_term(term)) < 2:
             return node
         hidden: dict[sp.Basic, sp.Dummy] = {}
 
-        def hide(term: sp.Basic) -> sp.Basic:
-            if not term.is_Mul:
-                return term
-            logs = [factor for factor in term.args if isinstance(factor, sp.log)]
-            if not logs:
-                return term
-            return sp.Mul(
-                *(
-                    factor
-                    if _small_rational(factor) or len(logs) == 1 and factor == logs[0]
-                    else hidden.setdefault(factor, sp.Dummy())
-                    for factor in term.args
-                )
-            )
+        def hide(part: sp.Basic, **known: bool) -> sp.Dummy:
+            return hidden.setdefault(part, sp.Dummy(**known))
 
-        prepared = sp.Add(*map(hide, sp.Add.make_args(node)))
-        if not hidden:
-            return sp.logcombine(node)
-        back = {dummy: factor for factor, dummy in hidden.items()}
-        return sp.logcombine(prepared).xreplace(back)
+        def logarithm(log: sp.log) -> sp.Basic:
+            (argument,) = log.args
+            return sp.log(hide(argument, **_known(argument)), evaluate=False)
+
+        def prepared(term: sp.Basic) -> sp.Basic:
+            if isinstance(term, sp.log):
+                return logarithm(term)
+            logs = _log_term(term)
+            if not logs:
+                return hide(term)
+            if len(logs) > 1:
+                return hide(term)
+            (log,) = logs
+            factors = []
+            for factor in term.args:
+                if factor == log:
+                    factors.append(logarithm(log))
+                elif _small_rational(factor) and _small_power(log.args[0], factor):
+                    factors.append(factor)
+                else:
+                    factors.append(hide(factor))
+            return sp.Mul(*factors)
+
+        written = sp.Add(*map(prepared, terms))
+        back = {dummy: part for part, dummy in hidden.items()}
+        return sp.logcombine(written).xreplace(back)
 
     return combined(expression)
+
+
+def _log_term(term: sp.Basic) -> list[sp.log]:
+    """The logarithms that are `term` or its factors."""
+    if isinstance(term, sp.log):
+        return [term]
+    if term.is_Mul:
+        return [factor for factor in term.args if isinstance(factor, sp.log)]
+    return []
 
 
 def _small_rational(number: sp.Basic) -> bool:
     return bool(number.is_Rational) and max(abs(number.p), number.q) <= _LOG_POWER
 
 
+def _small_power(argument: sp.Basic, power: sp.Rational) -> bool:
+    """Whether `argument^power` is a number of at most `_LOG_BITS` bits, when the
+    argument is a rational."""
+    if not argument.is_Rational:
+        return True
+    bits = max(abs(argument.p), argument.q).bit_length()
+    return bits * abs(power.p) <= _LOG_BITS
+
+
 #: The largest numerator or denominator of a rational the logarithm's power rule takes.
 _LOG_POWER = 1000
+
+#: The largest power of a number, in bits, the logarithm's power rule builds.
+_LOG_BITS = 4096
 
 
 def _logarithmic_powers(expression: sp.Basic) -> sp.Basic:
@@ -3706,9 +3869,21 @@ def _perfect_powers(expression: sp.Basic) -> sp.Basic:
     `(x^2 + 2*x + 1)^(3/2)` is `(x + 1)^2*ABS(x + 1)`. The radicand must be a positive
     rational times a power of a polynomial, and sympy takes the root using declared
     domains: no bars when the base is provably nonnegative (`SQRT(x^4 + 2*x^2 + 1)` is
-    `x^2 + 1`), and a complex variable keeps its root.
+    `x^2 + 1`), and a complex variable keeps its root. A call is a variable of the
+    polynomial too: ODE.MTH's `SPECIAL_A_1` takes the root of `4*PHI(x)^2 -
+    8*k*PHI(x) + 4*k^2`.
     """
     return expression.replace(_is_polynomial_root, _perfect_root, simultaneous=False)
+
+
+def _any_perfect_powers(expression: sp.Basic) -> sp.Basic:
+    """Take roots of polynomials that are perfect powers, as `_perfect_powers` does,
+    but whatever the sign of the base, as Branch Any takes `SQRT(x^2)` to be `x`."""
+    return expression.replace(
+        _is_polynomial_root,
+        lambda power: _perfect_root(power, whatever=True),
+        simultaneous=False,
+    )
 
 
 def _is_polynomial_root(expression: sp.Basic) -> bool:
@@ -3722,10 +3897,10 @@ def _is_polynomial_root(expression: sp.Basic) -> bool:
     )
 
 
-def _perfect_root(power: sp.Pow) -> sp.Basic:
+def _perfect_root(power: sp.Pow, whatever: bool = False) -> sp.Basic:
     base, exponent = power.args
     try:
-        polynomial = sp.Poly(base, *sorted(base.free_symbols, key=sp.default_sort_key))
+        polynomial = sp.Poly(base)
     except sp.PolynomialError:
         return power
     if not polynomial.domain.is_QQ and not polynomial.domain.is_ZZ:
@@ -3739,6 +3914,8 @@ def _perfect_root(power: sp.Pow) -> sp.Basic:
     root = sp.Mul(*(factor ** (times // multiple) for factor, times in factors))
     whole = root**multiple
     taken = content**exponent * whole**exponent
+    if whatever:
+        taken = sp.powdenest(taken, force=True)
     if any(found.base == whole for found in taken.atoms(sp.Pow)):
         return power
     return taken
@@ -4014,6 +4191,10 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
     expression = _applied(expression, _IDENTITIES, context)
     for setting, directions in _DIRECTED.items():
         rules = directions.get(getattr(context, setting), ())
+        if setting == "logarithm" and context.precision == Precision.APPROXIMATE:
+            rules = tuple(
+                rule._replace(rewrite=_numbers_held(rule.rewrite)) for rule in rules
+            )
         expression = _applied(expression, rules, context)
     # Not in the tables, whose rules don't see the order list. Following the original,
     # the exponential stays under Collect.
@@ -4022,6 +4203,28 @@ def _rewritten(expression: sp.Basic, context: Context) -> sp.Basic:
             expression, lambda e: _powers_of_logarithms(e, context.order)
         )
     return expression
+
+
+def _numbers_held(rewrite: Rewrite) -> Rewrite:
+    """`rewrite` with the logarithms of numbers held as they are.
+
+    Under Approximate, Derive approximates the logarithms of numbers as it goes, so
+    they are never combined: `#e^(t*(LN(5) - LN(2))/3)` is `#e^(0.305430*t)`, not a
+    power of 5/2.
+    """
+
+    def run(expression: sp.Basic) -> sp.Basic:
+        held = {
+            log: sp.Dummy(real=True)
+            for log in expression.atoms(sp.log)
+            if log.args[0].is_number
+        }
+        if not held:
+            return rewrite(expression)
+        back = {dummy: log for log, dummy in held.items()}
+        return rewrite(expression.xreplace(held)).xreplace(back)
+
+    return run
 
 
 #: Heads that remain in an answer as unevaluated integrals, sums and products.
@@ -4125,9 +4328,19 @@ def _one_denominator(expression: sp.Basic) -> sp.Basic:
     return _exponentials_distributed(sp.radsimp(expression))
 
 
-def _exponentials_distributed(expression: sp.Basic) -> sp.Basic:
+def _polynomials_distributed(expression: sp.Basic) -> sp.Basic:
+    """`_exponentials_distributed` for products of nothing else but numbers, of sums
+    without symbolic denominators, as the normal form leaves `SINH(2*x)/COSH(x)`:
+    `(#e^(2*x) - 1)*#e^(-x)` is `#e^x - #e^(-x)`."""
+    return _exponentials_distributed(expression, polynomial=True)
+
+
+def _exponentials_distributed(
+    expression: sp.Basic, polynomial: bool = False
+) -> sp.Basic:
     """Every product of a reciprocal exponential and a sum of exponentials multiplied
-    out, each term's powers collected."""
+    out, each term's powers collected; with `polynomial`, only products of nothing else
+    but numbers, of sums whose terms have numeric denominators."""
 
     def exponential(node: sp.Basic) -> bool:
         return isinstance(node, sp.exp) or (
@@ -4135,7 +4348,10 @@ def _exponentials_distributed(expression: sp.Basic) -> sp.Basic:
         )
 
     def reciprocal(node: sp.Basic) -> bool:
-        return exponential(node) and node.as_base_exp()[1].could_extract_minus_sign()
+        exponent = exponential(node) and node.as_base_exp()[1]
+        return bool(exponent) and bool(exponent.free_symbols) and (
+            exponent.could_extract_minus_sign()
+        )
 
     def of_exponentials(factor: sp.Basic) -> bool:
         base, exponent = factor.as_base_exp()
@@ -4144,6 +4360,16 @@ def _exponentials_distributed(expression: sp.Basic) -> sp.Basic:
             and exponent.is_Integer
             and exponent > 0
             and any(map(exponential, sp.preorder_traversal(base)))
+            and not (polynomial and any(map(divided, base.args)))
+        )
+
+    def divided(term: sp.Basic) -> bool:
+        return any(
+            factor.is_Pow
+            and factor.exp.is_negative
+            and not factor.base.is_number
+            and not exponential(factor)
+            for factor in sp.Mul.make_args(term)
         )
 
     def spread(product: sp.Basic) -> bool:
@@ -4151,7 +4377,11 @@ def _exponentials_distributed(expression: sp.Basic) -> sp.Basic:
             product.is_Mul
             and any(map(reciprocal, product.args))
             and any(map(of_exponentials, product.args))
+            and not (polynomial and any(map(other, product.args)))
         )
+
+    def other(factor: sp.Basic) -> bool:
+        return not (factor.is_number or reciprocal(factor) or of_exponentials(factor))
 
     def spread_out(product: sp.Basic) -> sp.Basic:
         terms = sp.Add.make_args(
@@ -4162,6 +4392,97 @@ def _exponentials_distributed(expression: sp.Basic) -> sp.Basic:
     if not expression.has(sp.exp, sp.Pow):
         return expression
     return expression.replace(spread, spread_out)
+
+
+def _powers_of_e(expression: sp.Basic) -> sp.Basic:
+    """Each sum of rational multiples of integer powers of `#e`, one of them negative,
+    written as the lowest power times a polynomial in `#e`, unless it is part of a
+    larger sum, which the normal form would multiply out again.
+
+    Exponentials of variables stay separate terms (`_exponentials_distributed`), but
+    `#e` to a number is a constant that Derive collects like a variable over its
+    denominator: `COS(pi + #i)` is `-#e^(-1)*(#e^2 + 1)/2`, and `INT(x*#e^(-x), x, 0,
+    1)` is `#e^(-1)*(#e - 2)`.
+    """
+
+    def power(term: sp.Basic) -> tuple[sp.Rational, int] | None:
+        coefficient, rest = term.as_coeff_Mul()
+        if not coefficient.is_Rational:
+            return None
+        if rest == 1:
+            return coefficient, 0
+        base, exponent = rest.as_base_exp()
+        if base is not sp.E or not exponent.is_Integer:
+            return None
+        return coefficient, int(exponent)
+
+    def laurent(total: sp.Basic) -> bool:
+        if not total.is_Add:
+            return False
+        powers = [power(term) for term in total.args]
+        return None not in powers and min(k for _, k in powers) < 0
+
+    def collected(total: sp.Basic) -> sp.Basic:
+        powers = [power(term) for term in total.args]
+        lowest = min(k for _, k in powers)
+        inner = sp.Add(*(c * sp.E ** (k - lowest) for c, k in powers))
+        content, primitive = inner.primitive()
+        if max(powers, key=lambda p: p[1])[0] < 0:
+            content, primitive = -content, -primitive
+        factors = (content, sp.exp(lowest), primitive) if content != 1 else (
+            sp.exp(lowest), primitive
+        )
+        return sp.Mul(*factors, evaluate=False)
+
+    def walked(node: sp.Basic, in_sum: bool) -> sp.Basic:
+        if node.is_Atom:
+            return node
+        if node.is_Add and not in_sum and laurent(node):
+            return collected(node)
+        inner = node.is_Add or (in_sum and node.is_Mul)
+        args = [walked(arg, inner) for arg in node.args]
+        return node.func(*args) if args != list(node.args) else node
+
+    if not expression.has(sp.E, sp.exp):
+        return expression
+    return walked(expression, False)
+
+
+def _cotangents(expression: sp.Basic) -> sp.Basic:
+    """Each reciprocal power of a tangent written as a power of the cotangent, which
+    Derive prints: `1/TAN(x)` is `COT(x)`. Not where the same tangent stands elsewhere
+    in the product, as in `(TAN(x)^2 - 1)/TAN(x)`, which would mix the two."""
+
+    def reciprocal(factor: sp.Basic) -> bool:
+        return (
+            factor.is_Pow
+            and isinstance(factor.base, sp.tan)
+            and factor.exp.is_Integer
+            and factor.exp < 0
+        )
+
+    def written(node: sp.Basic) -> sp.Basic:
+        if node.is_Atom:
+            return node
+        if reciprocal(node):
+            return sp.cot(node.base.args[0]) ** -node.exp
+        if not node.is_Mul:
+            args = [written(arg) for arg in node.args]
+            return node.func(*args) if args != list(node.args) else node
+        factors = []
+        for factor in node.args:
+            others = [other for other in node.args if other is not factor]
+            if reciprocal(factor) and not any(o.has(factor.base) for o in others):
+                factors.append(sp.cot(factor.base.args[0]) ** -factor.exp)
+            elif reciprocal(factor):
+                factors.append(factor)
+            else:
+                factors.append(written(factor))
+        return sp.Mul(*factors)
+
+    if not expression.has(sp.tan):
+        return expression
+    return written(expression)
 
 
 def _combinatorial(expression: sp.Basic) -> sp.Basic:
@@ -4251,11 +4572,13 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
                   "a power of a power is one power, whatever the base"),
             _Rule("any powsimp", lambda e: sp.powsimp(e, force=True), forced,
                   "powers over one exponent are one power, whatever the bases"),
+            _Rule("any perfect powers", _any_perfect_powers, forced,
+                  "SQRT(PHI(x)^2 - 2*PHI(x) + 1) is PHI(x) - 1, whatever PHI(x) is"),
         ),
     },
     "trigonometry": {
         Direction.AUTO: (
-            _Rule("pythagorean", _pythagorean, _gated,
+            _Rule("pythagorean", _pythagorean, _fewer_terms,
                   "SIN(z)^2 + COS(z)^2 is 1, in sums of any size"),
             _Rule("trigsimp", _trigsimp, _gated,
                   "trigonometric identities, where they cancel something"),
@@ -4336,4 +4659,9 @@ _SPELLINGS = (
     _Rule("collected powers", _collected_powers, forced,
           "powers of one base are one power: n*x^n/x is n*x^(n - 1)",
           yields_to="exponential"),
+    _Rule("distributed exponentials", _polynomials_distributed, forced,
+          "#e^x - #e^(-x), not (#e^(2*x) - 1)*#e^(-x), as the normal form leaves it"),
+    _Rule("powers of #e", _powers_of_e, forced,
+          "#e/2 + #e^(-1)/2 is #e^(-1)*(#e^2 + 1)/2: #e collected like a variable"),
+    _Rule("cotangents", _cotangents, forced, "1/TAN(x) is COT(x)"),
 )

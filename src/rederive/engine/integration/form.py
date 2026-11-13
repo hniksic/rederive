@@ -267,6 +267,57 @@ def somewhere_only(value: sp.Basic) -> bool:
     )
 
 
+def defined_cases(
+    value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
+) -> sp.Basic:
+    """The answer without the cases of a split where the integrand is undefined.
+
+    Sympy integrates `x*#e^x/c` as a conditional on `c /= 0` whose other case is
+    `x^2/(2*c)`, though at `c = 0` the integrand itself is undefined. A case reached
+    only where a parameter takes a value excluded by an earlier case, `c /= 0` here, is
+    dropped when the integrand is undefined at that value, so `INT(x*#e^x/c, x)` is
+    `(x - 1)*#e^x/c`.
+    """
+
+    def excluded(condition: sp.Basic) -> list[tuple[sp.Basic, sp.Basic]] | None:
+        parts = condition.args if isinstance(condition, sp.And) else (condition,)
+        points = []
+        for part in parts:
+            if not isinstance(part, sp.Ne):
+                return None
+            for one, other in (part.args, part.args[::-1]):
+                if isinstance(one, sp.Symbol) and one != variable:
+                    if not other.has(variable):
+                        points.append((one, other))
+                        break
+            else:
+                return None
+        return points
+
+    def undefined(point: tuple[sp.Basic, sp.Basic]) -> bool:
+        found = attempt(integrand, lambda f: f.subs(*point))
+        return found is not None and found.has(sp.zoo, sp.nan)
+
+    def narrowed(split: sp.Piecewise) -> sp.Basic:
+        kept = [split.args[0]]
+        for case in split.args[1:]:
+            points = [excluded(earlier.cond) for earlier in kept]
+            if all(found and all(map(undefined, found)) for found in points):
+                continue
+            kept.append(case)
+        if len(kept) == len(split.args):
+            return split
+        if len(kept) == 1:
+            return kept[0].expr
+        return sp.Piecewise(*kept[:-1], (kept[-1].expr, True))
+
+    if not value.has(sp.Piecewise):
+        return value
+    return forced(
+        value, lambda v: v.replace(lambda e: isinstance(e, sp.Piecewise), narrowed)
+    )
+
+
 def anywhere(
     value: sp.Basic, integrand: sp.Basic, variable: sp.Basic
 ) -> sp.Basic | None:

@@ -180,3 +180,14 @@ root or denominator of a polynomial is singular.
 **Integrals through a pole.** A definite integral through a pole inside the interval is
 `inf` or `?` rather than the difference of the antiderivative's values at the ends:
 `INT(1/x^2, x, -1, 1)` is `inf`, not `-2`.
+
+**Limits of relations.** `LIM` substitutes into both sides of an equation or inequality,
+as Derive 3.14 does, wherever each side is continuous at the point, and takes each side's
+limit where it isn't. Derive 4.11 does the same at a symbolic point, but at a numeric one
+answers `false`, even for a true equation:
+
+```
+LIM(x + 1 = y, x, a)       a + 1 = y         Derive 4.11: a + 1 = y
+LIM(x^2 = c, x, 3)         9 = c             Derive 4.11: false
+LIM(x^2 = 9, x, 3)         true              Derive 4.11: false
+```

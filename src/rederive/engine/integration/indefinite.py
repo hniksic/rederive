@@ -27,6 +27,8 @@ from functools import lru_cache
 from typing import NamedTuple
 
 import sympy as sp
+from sympy.functions.elementary.hyperbolic import HyperbolicFunction
+from sympy.functions.elementary.trigonometric import TrigonometricFunction
 from sympy.integrals.manualintegrate import manualintegrate
 from sympy.integrals.risch import NonElementaryIntegral, risch_integrate
 from sympy.simplify.fu import TR8
@@ -56,6 +58,7 @@ from rederive.engine.integration.form import (
     anywhere,
     antiderivative,
     continuous,
+    defined_cases,
     on_the_principal_sheet,
     parametrised,
     single_case,
@@ -383,7 +386,7 @@ def _accepted(head: sp.Basic, candidate: Candidate) -> sp.Basic | None:
     narrowed to a case valid everywhere. Answers with no antiderivative to prove
     (definite, multiple, unevaluated, or `formed`) are taken as is.
     """
-    value = candidate.value
+    value = defined_cases(candidate.value, head.function, head.limits[0][0])
     if (
         candidate.formed
         or len(head.limits) != 1
@@ -1130,7 +1133,8 @@ def _by_linearity(head: sp.Basic) -> sp.Basic:
     numerator becomes one integral per term. A denominator polynomial in one sine or
     cosine is split into partial fractions over it, but only for indefinite integrals.
 
-    A definite integral is split only if some pieces have finite values and none is
+    The split is kept only if some piece is evaluated, so an integral that no method
+    answers stays whole. A definite integral is split only if moreover none is
     infinite, since the pieces of a convergent integral need not converge: `INT((x^t -
     x^s)/LN(x), x, 0, 1)` converges, while its two pieces don't.
     """
@@ -1145,14 +1149,15 @@ def _by_linearity(head: sp.Basic) -> sp.Basic:
     if len(terms) < 2:
         return head
     pieces = [head.func(term, *head.limits) for term in terms]
-    if definite(head):
-        values = [integral(piece) for piece in pieces]
-        if all(value.has(sp.Integral) for value in values) or any(
-            value.has(sp.oo, -sp.oo, sp.zoo, sp.nan)
-            for value in values
-            if not value.has(sp.Integral)
-        ):
-            return head
+    values = [integral(piece) for piece in pieces]
+    if all(value.has(sp.Integral) for value in values):
+        return head
+    if definite(head) and any(
+        value.has(sp.oo, -sp.oo, sp.zoo, sp.nan)
+        for value in values
+        if not value.has(sp.Integral)
+    ):
+        return head
     return sp.Add(*pieces)
 
 
@@ -1215,7 +1220,7 @@ def _by_the_bounded_methods(head: sp.Basic) -> Candidate | None:
     methods are unaffordable. For a definite integral left unevaluated or depending on
     an unknown sign, the Meijer G route is also tried.
     """
-    if _an_arc_over_its_variable(head):
+    if _an_arc_over_its_variable(head) or _beside_a_composition(head):
         return None
     hints = within_reach(head)
     found = _standing(
@@ -1260,7 +1265,12 @@ def _by_the_full_methods(head: sp.Basic) -> Candidate | None:
     most of a minute and gigabytes of memory before giving up. So for a parametrized
     integrand it runs only if `affordable` says so.
     """
-    if _an_arc_over_its_variable(head) or _unaffordable(head) or _elliptic(head):
+    if (
+        _an_arc_over_its_variable(head)
+        or _beside_a_composition(head)
+        or _unaffordable(head)
+        or _elliptic(head)
+    ):
         return None
     hints = within_reach(head)
     if _numerically.get():
@@ -1269,6 +1279,47 @@ def _by_the_full_methods(head: sp.Basic) -> Candidate | None:
     if found is None or found == head:
         return None
     return Candidate(found, retries=_RETRIES)
+
+
+def _beside_a_composition(head: sp.Basic) -> bool:
+    """Whether the integrand's denominator holds a sum in which a transcendental call of
+    a non-polynomial argument stands beside a term that varies without it, as in
+    `1/(SIN(1/y) + y^3)`, while the numerator holds no such call.
+
+    Such an integral has no elementary antiderivative, since the derivative of the
+    denominator, which a logarithm or a power of it would need, brings in the
+    derivative of the call; sympy's methods search for most of a minute before giving
+    up. With such a call in the numerator, `(3*y^2 - COS(1/y)/y^2)/(SIN(1/y) + y^3)`
+    is `LN(SIN(1/y) + y^3)`, and the methods run. Only indefinite integrals of one
+    variable are considered.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return False
+    variable = head.limits[0][0]
+    try:
+        numerator, denominator = head.function.as_numer_denom()
+    except Exception:
+        return False
+
+    def composed(term: sp.Basic) -> bool:
+        return any(
+            call.args[0].has(variable)
+            and call.args[0].is_polynomial(variable) is False
+            for call in term.atoms(TrigonometricFunction, HyperbolicFunction, sp.exp)
+        )
+
+    if composed(numerator):
+        return False
+    for factor in sp.Mul.make_args(denominator):
+        base = factor.as_base_exp()[0]
+        if not base.is_Add:
+            continue
+        terms = sp.Add.make_args(base)
+        if any(map(composed, terms)) and any(
+            term.has(variable) and not composed(term) for term in terms
+        ):
+            return True
+    return False
 
 
 def _elliptic(head: sp.Basic) -> bool:

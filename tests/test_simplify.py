@@ -1264,6 +1264,13 @@ def test_which_root_an_expression_may_mean(text, expected, branch):
     assert simp(text, Context(branch=branch)) == expected
 
 
+def test_any_branch_takes_the_root_of_a_perfect_square_in_a_call():
+    # ODE.MTH's SPECIAL_A_1 takes this root, of `q^2 - 4*r` for a declared PHI(x).
+    text = "SQRT(4*F(x)^2 - 8*k*F(x) + 4*k^2)"
+    context = Context(branch=Branch.ANY)
+    assert simp(text, context, declaring("F")) == "2*k - 2*F(x)"
+
+
 #: `#e^(u*LN(b))` is `b^u`, following the original: term by term through a sum in the
 #: exponent, with the terms that have no logarithm left over `#e`. Of two logarithms in a
 #: term, the one whose argument has the most main variable gives the base. The
@@ -1357,8 +1364,9 @@ COMPLEX_CONSTANTS = [
     ("#e^(#i*pi/5)", "#e^(#i*pi/5)"),
     ("#e^(#i*pi/7)", "#e^(#i*pi/7)"),
     ("#e^#i", "#e^#i"),
-    # A cosine or sine of a complex number is split around its real angle.
-    ("COS(pi + #i)", "-#e^(-1)/2 - #e/2"),
+    # A cosine or sine of a complex number is split around its real angle, and the
+    # powers of `#e` collected over the lowest (Derive).
+    ("COS(pi + #i)", "-(#e^2 + 1)*#e^(-1)/2"),
     (
         "COS(pi/3 + #i)",
         "#e/4 + #e^(-1)/4 - SQRT(3)*#i*(#e/2 - #e^(-1)/2)/2",
@@ -2011,3 +2019,98 @@ def test_a_heading_heads_its_column_only_while_it_is_a_heading():
 
 #: Corpus expressions that settle only on a second pass are listed in
 #: `test_simplify_corpus.py`, next to the sweep that finds them.
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("1/LIM(SIGN(t), t, 0)", "±1"),
+        ("-LIM(SIGN(t), t, 0)", "±1"),
+        ("LIM(SIGN(t), t, 0)^2", "1"),
+        ("LIM(SIGN(t), t, 0)^3", "±1"),
+        ("3*a*LIM(SIGN(t), t, 0)", "±3*a"),
+    ],
+)
+def test_plus_or_minus_takes_in_signs_and_odd_powers(text, expected):
+    """`±u` is `u` times an unknown sign, so multiplying it by anything keeps the sign
+    unknown and an even power loses it."""
+    assert simp(text) == expected
+
+
+def test_an_equation_with_an_infinite_side_and_a_variable_stands():
+    """A variable is finite, and `inf - 1/x` is `inf`, but `x = inf` is no falsehood."""
+    assert simp("x = inf") == "x = inf"
+    assert simp("x = inf - 1/x") == "x = inf"
+    assert simp("2 = inf") == "false"
+    assert simp("inf = inf") == "true"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("COS(2*x) + COS(4*x)/4", "COS(2*x) + COS(4*x)/4"),
+        ("SIN(2*x) + SIN(4*x)/2", "SIN(2*x) + SIN(4*x)/2"),
+        ("SIN(x)^6 + COS(x)^6 + 3*SIN(x)^2*COS(x)^2", "1"),
+        ("SIN(3*x)/SIN(x)", "2*COS(2*x) + 1"),
+    ],
+)
+def test_multiple_angles_are_transformed_under_auto_only_where_that_cancels(
+    text, expected
+):
+    """Section 6.3: Auto applies only the transformations that clearly yield a
+    cancellation. INT_APPS.MTH's FOURIER series keep their harmonics."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("COS(pi + #i)", "-(#e^2 + 1)*#e^(-1)/2"),
+        ("INT(x*#e^(-x), x, 0, 1)", "(#e - 2)*#e^(-1)"),
+        ("SINH(2*x)/COSH(x)", "#e^x - #e^(-x)"),
+        ("COSH(1/COS(x))", "#e^(1/COS(x))/2 + #e^(-1/COS(x))/2"),
+        ("3*SECH(SEC(x))", "6*#e^(1/COS(x))/(#e^(2/COS(x)) + 1)"),
+        ("INT(SINH(a*x)^2, x)", "#e^(2*a*x)/(8*a) - #e^(-2*a*x)/(8*a) - x/2"),
+    ],
+)
+def test_exponentials_of_variables_stay_terms_while_powers_of_e_are_collected(
+    text, expected
+):
+    """`#e` to a number is collected over its lowest power like a variable; exponentials
+    of variables stay separate terms outside a denominator (Derive)."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("(29446391*LN(2) - 1)/x", "(29446391*LN(2) - 1)/x"),
+        ("13*LN(2) - 1", "13*LN(2) - 1"),
+        ("3*LN(2) + LN(5)", "LN(40)"),
+        ("LN(3)*x + LN(5)", "LN(3)*x + LN(5)"),
+    ],
+)
+def test_a_coefficient_goes_into_a_logarithm_only_when_logarithms_combine(
+    text, expected
+):
+    """A lone `k*LN(a)` beside other terms stays, as in Derive; a large `k` would build
+    a number of millions of digits."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("r*(COS(t)^2 - 1)", "-r*SIN(t)^2"),
+        ("SIN(x)^2 - 1", "-COS(x)^2"),
+        ("1/TAN(x)", "COT(x)"),
+        ("COS(x)/SIN(x)", "COT(x)"),
+    ],
+)
+def test_a_cancelling_square_and_a_reciprocal_tangent_are_written_as_derive_does(
+    text, expected
+):
+    """A Pythagorean rewrite that removes a term is a cancellation, which Auto applies
+    though it is no shorter; TENSOR1's Christoffel symbols show it. A reciprocal
+    tangent is the cotangent."""
+    assert simp(text) == expected

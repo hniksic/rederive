@@ -821,8 +821,29 @@ LIMITS_BY_SUBSTITUTION = [
     ("LIM(FLOOR(x), x, 1, -1)", "0"),
     ("LIM(DIF(ABS(x), x), x, 0)", "±1"),
     ("LIM(x/x^3, x, 0)", "inf"),
-    # Derive takes no limit of an equation (D).
-    ("LIM(x + 1 = y, x, 2)", "LIM(x + 1 = y, x, 2)"),
+    # A relation is substituted into on both sides, as in Derive 3.14 (D), whatever
+    # the point (Derive 4.11 gives false at a numeric one).
+    ("LIM(x + 1 = y, x, 2)", "3 = y"),
+    ("LIM(x + 1 = y, x, a)", "a + 1 = y"),
+    ("LIM(x + 1 = y, x, 2*x)", "2*x + 1 = y"),
+    ("LIM(y^2/2 = LN(x) + c, y, y/x)", "y^2/(2*x^2) = LN(x) + c"),
+    ("LIM(x^2 = c, x, 3)", "9 = c"),
+    ("LIM(x < y, x, 2)", "2 < y"),
+    # An equation between numbers is decided as any other is.
+    ("LIM([x = 1, x + 1], x, 2)", "[false, 3]"),
+    # Where a side isn't continuous at the point, its limit is taken.
+    ("LIM(SIN(x)/x = c, x, 0)", "1 = c"),
+    ("LIM(SIGN(x) = c, x, 0)", "±1 = c"),
+    # The variables of a vector are substituted one after another (D).
+    ("LIM(x^2*(y^2 + 1)/2 = c, [y, x], [j, y])", "y^2*(j^2 + 1)/2 = c"),
+    ("LIM(x + y, [x, y], [y, 2])", "4"),
+    ("LIM(x + 2*y, [x, y], [x*y, x])", "x^2 + 2*x"),
+    ("LIM([x, y], [x, y], [y, x])", "[x, x]"),
+    ("LIM(x/y, [y, x], [a*(x - 1), 1])", "±inf"),
+    # An indefinite sum is evaluated at the point once summed; unsolved, it has no value
+    # there, and the point never goes into its index.
+    ("LIM(SUM(x, x), x, 3)", "3"),
+    ("LIM(SUM(1/x^2, x), x, 0)", "LIM(SUM(1/x^2, x), x, 0)"),
 ]
 
 
@@ -872,3 +893,38 @@ def test_a_calculus_head_waits_for_the_body_of_the_call_under_it():
     assert simp("F(0)", context) == "x^2"
     assert simp("F(1)", context) == "2*x"
     assert simp("F(2)", context) == "2"
+
+
+def test_a_limit_infinite_with_a_parameters_sign_is_plus_or_minus_infinity():
+    """Derive's `±inf` takes in a factor of unknown sign, so a pole times a parameter is
+    `±inf`. ODE_APPR.MTH's LIM2 writes `@1` for such a factor, so that SEG draws a
+    vertical segment at a pole of the slope."""
+    assert simp("LIM(1/(a*x), x, 0)") == "±inf"
+    assert simp("LIM(1/(@1*x), x, 0)") == "±inf"
+    assert simp("LIM(a/x, x, 0)") == "±inf"
+    lim2 = parse("LIM(u,[y,x],[q+@1*(x-p),p])")
+    seg = parse(
+        "IF(d<ABS(r)*e,[[x-d/r,y-d],[x+d/r,y+d]],[[x-e,y-r*e],[x+e,y+r*e]],?)"
+    )
+    context = Context(
+        functions={
+            "L": (("u", "x", "y", "p", "q"), lim2),
+            "S": (("r", "x", "y", "e", "d"), seg),
+        }
+    )
+    assert simp("S(L(x/y, x, y, 1, 0), 1, 0, 1/4, 1/4)", context) == (
+        "[[1, -1/4], [1, 1/4]]"
+    )
+    assert simp("S(L(x/y, x, y, 0, 0), 0, 0, 1/4, 1/4)", context) == "?"
+
+
+def test_a_limit_toward_a_multiple_of_its_variable_changes_an_integrals_variable():
+    """An indefinite integral `G(y)` of `F(y)` at `c*y` is the integral of `c*F(c*y)`,
+    as Derive writes it; ODE1.MTH's HOMOGENEOUS_GEN substitutes `y/x` into one. Any
+    other moving point leaves the limit standing."""
+    assert simp("LIM(INT(1/(SIN(1/y)+y^3),y),y,y/x)") == (
+        "x^2*INT(1/(x^3*SIN(x/y) + y^3), y)"
+    )
+    assert simp("LIM(INT(1/(SIN(1/y)+y^3),y),y,y^2)") == (
+        "LIM(INT(1/(SIN(1/y) + y^3), y), y, y^2)"
+    )

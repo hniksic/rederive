@@ -196,6 +196,11 @@ def test_a_solution_is_written_in_its_plainer_spelling():
     ]
 
 
+def test_a_solution_in_a_function_with_no_name_leaves_the_equation_unsolved():
+    # Sympy's inverse error function can't be typed back; the equation stands instead.
+    assert sol("ERF(x) = y", ("x",)) == ["ERF(x) - y = 0"]
+
+
 def test_a_symbolic_equation_solves_for_whichever_variable_was_chosen():
     assert sol("a*x + b = 0", ("x",)) == ["x = -b/a"]
     assert sol("a*x + b = 0", ("a",)) == ["a = -b/x"]

@@ -173,7 +173,7 @@ def test_a_variable_the_expression_does_not_mention_selects_nothing():
 def test_a_polynomial_in_something_that_is_not_a_variable():
     """With no variables given, sympy picks its own generator, so this factors in
     `SIN(x)`; in `x` it wouldn't factor at all."""
-    assert fact("SIN(x)^2 - 1", RATIONAL) == "(SIN(x) - 1)*(SIN(x) + 1)"
+    assert fact("SIN(x)^2 - 4", RATIONAL) == "(SIN(x) - 2)*(SIN(x) + 2)"
 
 
 # -- numbers ------------------------------------------------------------------
@@ -431,6 +431,8 @@ def test_the_factors_of_a_factored_number_are_its_prime_powers():
     assert simplify(parse("FACTORS(FACTOR(12/35))"), Context()).text == (
         "[2^2, 3, 1/5, 1/7]"
     )
+    # A negative number's sign comes first (D).
+    assert simplify(parse("FACTORS(FACTOR(-12))"), Context()).text == "[-1, 2^2, 3]"
 
 
 def test_a_subtree_is_factored_on_its_own():
@@ -440,20 +442,14 @@ def test_a_subtree_is_factored_on_its_own():
     assert factor(part, Context(), RATIONAL).text == "(x + 1)*(x - 1)"
 
 
-# -- what the engine does not do yet ------------------------------------------
+# -- the Pythagorean identity -------------------------------------------------
 
 
-@pytest.mark.skip(reason="a Simplify gap, not a Factor one: see the test below")
 def test_a_pythagorean_difference_becomes_a_single_square():
     assert fact("SIN(x)^2 - 1") == "-COS(x)^2"
 
 
-def test_the_pythagorean_gap_belongs_to_simplify():
-    """Derive's Simplify turns `SIN(x)^2 - 1` into `-COS(x)^2`; Factor shows that only
-    because Simplify ran first.
-
-    This engine's Simplify leaves it alone, so Factor returns the factorization. The fix
-    belongs in `pipeline`; when Simplify learns the identity, this test will fail and
-    point at the skipped one above.
-    """
-    assert simplify(parse("SIN(x)^2 - 1"), Context()).text == "SIN(x)^2 - 1"
+def test_simplify_reduces_a_pythagorean_difference():
+    """Derive's Simplify turns `SIN(x)^2 - 1` into `-COS(x)^2`, a cancellation of one
+    term, so Factor shows it too."""
+    assert simplify(parse("SIN(x)^2 - 1"), Context()).text == "-COS(x)^2"

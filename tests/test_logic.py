@@ -426,6 +426,9 @@ TRUTHS = [
     ("IF([0, 0], 1, 2, 3)", "1"),
     ("IF([0, 1], 1, 2, 3)", "2"),
     ("IF([0, x], 1, 2, 3)", "3"),
+    # Vectors of different lengths are unequal, whatever their elements.
+    ("IF([a] = [], 1, 2, 3)", "2"),
+    ("IF([a] /= [b, c], 1, 2, 3)", "1"),
     # Truth values add up like unknowns. In a sum the index is substituted before the
     # test is decided, so `NUMBER(k)` is true at each value.
     ("SUM(PRIME(k), k, 1, 3)", "false + 2*true"),
@@ -459,4 +462,12 @@ def test_the_last_iterate_of_a_system_may_be_a_conditional():
     assert simp(
         "ITERATES(IF(DIF(ELEMENT([x, y^2], n), y) = 0, [p + 10, n + 1], [p + 1, n + 1]),"
         " [p, n], [0, 1], 2)"
-    ) == "[[0, 1], [10, 2], IF(DIF(y^2, y) = 0, [20, 3], [11, 3])]"
+    ) == "[[0, 1], [10, 2], IF(2*y = 0, [20, 3], [11, 3])]"
+
+
+def test_an_undecidable_conditional_shows_its_test_worked_out_and_its_arms_as_written():
+    # As Derive 4.11 shows it (D).
+    assert simp("IF(DIF(x^2, x) = 0, 1 + 1, 2 + 2)") == "IF(2*x = 0, 1 + 1, 2 + 2)"
+    assert simp("IF(x = 0, 0, INT(t*x, t, 0, 1))") == "IF(x = 0, 0, INT(t*x, t, 0, 1))"
+    context = Context(functions={"F": (("x",), parse("IF(x=0,0,INT(t*x,t,0,1))"))})
+    assert simp("F(y) + 1 + 1", context) == "IF(y = 0, 0, INT(t*y, t, 0, 1)) + 2"

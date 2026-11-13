@@ -269,7 +269,7 @@ INDICATOR_AND_NORMAL = [
     ("CHI(2, x, 1)", "SIGN(x - 2)/2 - SIGN(x - 1)/2"),
     # At a bound the indicator is undecided, since `SIGN(0)` is `±1`. Derive writes
     # `±1/2` for the same number this printer writes `(±1)/2`.
-    ("CHI(0, 0, 1)", "(±1)/2 + 1/2"),
+    ("CHI(0, 0, 1)", "±1/2 + 1/2"),
     # The cumulative normal distribution, via the error function. Derive writes
     # `(ERF(√2*z/2) + 1)/2`; sympy distributes the half.
     ("NORMAL(z)", "ERF(SQRT(2)*z/2)/2 + 1/2"),

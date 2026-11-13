@@ -71,6 +71,7 @@ from rederive.engine.to_sympy import (
     digit_count,
     divided,
     is_conditional,
+    with_worked_test,
     iterated,
     multiplied,
     negated,
@@ -102,6 +103,13 @@ __all__ = [
 Decider = Callable[[sp.Basic], bool | None]
 WorkOut = Callable[[sp.Basic], sp.Basic]
 Command = Callable[[str, list, list, Context], sp.Basic]
+Simplifier = Callable[[sp.Basic, Context], sp.Basic]
+
+#: Built-ins whose answer depends on the form of their argument, which Derive
+#: simplifies first: `VARIABLES((a^2*y^2 + a^2*y*z)/(y^2 + y*z))` is `[a]`, since the
+#: argument cancels to `a^2`. ODE.MTH's `SYMMETRIC_TEST` relies on this, and its `FREE`
+#: tests, which decide which method solves an equation, on the full simplification.
+_SIMPLIFIED_ARGUMENTS = frozenset({"VARIABLES"})
 
 
 @dataclass(frozen=True)
@@ -132,6 +140,8 @@ class Environment:
     as written; see `divisors`), at the precision of the point of call, which inside
     `APPROX` is Approximate. Simplify supplies both. Without them these heads are
     left as is, which suits callers that only want an expression's variables.
+    `simplify` simplifies the argument of a built-in in `_SIMPLIFIED_ARGUMENTS`;
+    without it the argument is taken as evaluated.
 
     `writing` means only substitute names, used to display an undecidable
     conditional: no call is entered and no test decided, so branches stay as written.
@@ -143,6 +153,7 @@ class Environment:
     decide: Decider | None = None
     work_out: WorkOut | None = None
     command: Command | None = None
+    simplify: Simplifier | None = None
     bindings: Mapping[str, sp.Basic] = field(default_factory=dict)
     supplied: Mapping[str, Argument] = field(default_factory=dict, compare=False)
     tested: frozenset[str] = frozenset()
@@ -505,6 +516,8 @@ class _Evaluator(Converter):
             if self.env.writing:
                 return self.opaque(name, values)
             return self._entered(name, definition, values)
+        if name in _SIMPLIFIED_ARGUMENTS:
+            values = self._simplified(values)
         made = self.call(name, values)
         if name == "FACTORS" and _decomposed(values, made) and not self.env.writing:
             return Commanded(made)
@@ -514,6 +527,20 @@ class _Evaluator(Converter):
                     name, list(made.args), self._divisors(name, arguments), self.context
                 )
         return self._worked(made, values)
+
+    def _simplified(self, values: list[sp.Basic]) -> list[sp.Basic]:
+        """`values` simplified, as Derive simplifies a built-in's arguments, where
+        `Environment.simplify` is supplied. A value that fails to simplify is kept."""
+        simplify = self.env.simplify
+        if simplify is None or self.env.writing:
+            return values
+        simplified = []
+        for value in values:
+            try:
+                simplified.append(simplify(value, self.context))
+            except Exception:
+                simplified.append(value)
+        return simplified
 
     def _approximating(self, arguments: Sequence[Node]) -> list[sp.Basic]:
         """The arguments of `APPROX(u, n)`, with `u` evaluated under Approximate.
@@ -578,11 +605,13 @@ class _Evaluator(Converter):
         f/m` applied to 6 alone is `6/m`.
 
         Each parameter stands for its argument's value, which is evaluated again where
-        the body gives values to its variables (see `Argument`).
+        the body gives values to its variables (see `Argument`). A quotient that cancels
+        to fewer variables is passed cancelled (see `_cancelled`).
         """
         if self.env.depth >= _NESTING:
             return self.opaque(name, values)
         parameters, body = definition
+        values = [_cancelled(value) for value in values]
         inner = replace(
             self.env,
             bindings=dict(zip(parameters, values, strict=False)),
@@ -743,10 +772,11 @@ class _Evaluator(Converter):
         INT_APPS.MTH's `SURFACE_AREA` integrates the limit of an integral. Only
         Simplify takes limits, so without `Environment.work_out` this isn't tried.
 
-        A vector of variables takes a vector of points, all substituted at once. The
-        name of a constant stands for the constant, so `LIM(2*true + false, [true,
-        false], [1, 0])` is 2. A point at infinity, or one mentioning a variable (see
-        `MovingLimit`), is left to the limit.
+        A vector of variables takes a vector of points, substituted together where no
+        point mentions a variable, when the order makes no difference. The name of a
+        constant stands for the constant, so `LIM(2*true + false, [true, false], [1,
+        0])` is 2. A point at infinity, or one mentioning a variable (see `MovingLimit`
+        and `_iterated_limit`), is left to the limit.
         """
         written = _limit_point(index, limits)
         work_out = self.env.work_out
@@ -911,8 +941,16 @@ class _Evaluator(Converter):
         return self._suspended(node)
 
     def _suspended(self, node: Node) -> sp.Basic:
-        """An undecidable conditional, suspended as a function of its variables."""
+        """An undecidable conditional, suspended as a function of its variables.
+
+        Its display has names substituted and nothing entered, decided or performed.
+        Its test shows the calculus in it worked out, while its branches stay as
+        written, as Derive shows them: `IF(DIF(x^2, x) = 0, 1 + 1, 2 + 2)` is `IF(2*x
+        = 0, 1 + 1, 2 + 2)`, and `IF(x = 0, 0, INT(t*x, t, 0, 1))` keeps its integral.
+        """
         display = _Evaluator(replace(self.env, writing=True)).convert(node)
+        if self.env.work_out is not None and display.has(*CALCULUS_HEADS):
+            display = self._worked_test(display)
         if not is_conditional(display):
             return display
         cls = self.env.suspended.get(display)
@@ -933,6 +971,13 @@ class _Evaluator(Converter):
             return cls(*cls.variables)
         except Exception:
             return display
+
+    def _worked_test(self, display: sp.Basic) -> sp.Basic:
+        """The conditional `display` with the calculus heads in its test worked out
+        (see `with_worked_test`)."""
+        work_out = self.env.work_out
+        assert work_out is not None
+        return with_worked_test(display, lambda head: _worked_out(head, set(), work_out))
 
 
 class Suspended(AppliedUndef):
@@ -1217,17 +1262,43 @@ def _digits_setting(name: str, context: Context) -> sp.Integer | None:
     return None
 
 
+def _cancelled(value: sp.Basic) -> sp.Basic:
+    """`value` as a function's argument: cancelled if it is a quotient of polynomials
+    that cancels to fewer variables, and otherwise as it is.
+
+    Derive simplifies an argument before the body sees it. Rederive leaves that to the
+    end, except here, where the form as evaluated would mislead the body about what
+    the value depends on: ODE.MTH's `SYMMETRIC_N_4` computes a scaling exponent as a
+    ratio of two dot products that cancels to 1, then transforms the equation by
+    `#e^(n*x)`, which with the ratio uncancelled runs away.
+    """
+    if isinstance(value, Vector) or not isinstance(value, sp.Expr):
+        return value
+    try:
+        denominator = sp.fraction(value)[1]
+        if not denominator.free_symbols or not value.is_rational_function():
+            return value
+        cancelled = sp.cancel(value)
+        if cancelled.free_symbols < value.free_symbols:
+            return cancelled
+    except Exception:
+        pass
+    return value
+
+
 def _decomposed(values: Sequence[sp.Basic], made: sp.Basic) -> bool:
     """Whether `made` is `FACTORS` of a prime decomposition, `FACTORS(FACTOR(360))`.
 
     Its elements are the prime powers as `FACTOR` wrote them, `[2^3, 3^2, 5]`, which is
-    a form Simplify would multiply out, so it is shown as a command's answer is.
+    a form Simplify would multiply out, so it is shown as a command's answer is. A
+    negative number's decomposition is its sign times the decomposition.
     """
-    return (
-        len(values) == 1
-        and isinstance(values[0], sp.UnevaluatedExpr)
-        and isinstance(made, Vector)
-    )
+    if len(values) != 1 or not isinstance(made, Vector):
+        return False
+    (value,) = values
+    if isinstance(value, sp.UnevaluatedExpr):
+        return True
+    return value.is_Mul and any(isinstance(f, sp.UnevaluatedExpr) for f in value.args)
 
 
 def _limit_point(
@@ -1290,25 +1361,33 @@ def substitutable(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> bool
     """Whether substituting `written` into `value` gives its limit there, as far as
     the form of `value` shows.
 
-    The points must be finite and free of the variables. `value` must not be a
-    relation: Derive takes no limit of an equation, so `LIM(x + 1 = y, x, 2)` isn't
-    `3 = y`. And it must be continuous at the point: every function with a jump
-    (`SIGN`, `FLOOR`, a conditional's test, ...) must have its argument away from the
-    jump there, and a power of a base going to zero must have a constant exponent,
-    since `x^x` is 1 at zero only by convention. A symbolic point is taken to be away
-    from every jump, as Derive takes `LIM(F(x), x, a)` to be `F(a)`. A numeric point
-    must be shown away, so a jump is assumed where that can't be decided. A vector
-    substituted for a variable selects or combines elements and is taken as it is.
+    The points must be finite. A point mentioning its own variable is left to
+    `MovingLimit`, and one mentioning another variable of a vector to the limits taken
+    one after another, as Derive takes them: `LIM(x + y, [x, y], [y, 2])` is 4. And
+    `value` must be continuous at the point: every function with a jump (`SIGN`, `FLOOR`, a
+    conditional's test, ...) must have its argument away from the jump there, and a
+    power of a base going to zero must have a constant exponent, since `x^x` is 1 at
+    zero only by convention. A symbolic point is taken to be away from every jump, as
+    Derive takes `LIM(F(x), x, a)` to be `F(a)`. A numeric point must be shown away,
+    so a jump is assumed where that can't be decided. A vector substituted for a
+    variable selects or combines elements and is taken as it is.
+
+    A relation is substituted into on both sides, as Derive 3.14 does: `LIM(x + 1 =
+    y, x, 2)` is `3 = y`.
+
+    An indefinite integral in a variable has no value at a point until it is worked
+    out: substituted into, it would integrate in the point.
     """
     variables = set(written)
-    points = list(written.values())
     try:
-        if any(point.free_symbols & variables for point in points):
+        if any(point.has(*variables) for point in written.values()):
             return False
-        if any(point.has(sp.oo, -sp.oo, sp.zoo, sp.nan) for point in points):
+        for integral in value.atoms(sp.Integral):
+            if any(len(limit) == 1 and limit[0] in variables for limit in integral.limits):
+                return False
+        if any(point.has(sp.oo, -sp.oo, sp.zoo, sp.nan) for point in written.values()):
             return False
-        if _relation(value):
-            return False
+        points = list(written.values())
         if any(isinstance(point, Vector) for point in points):
             return True
         return all(
@@ -1331,15 +1410,6 @@ def defined(value: sp.Basic) -> bool:
         return not value.has(sp.nan, sp.zoo, sp.AccumBounds, sp.Subs)
     except Exception:
         return False
-
-
-def _relation(value: sp.Basic) -> bool:
-    """Whether `value` is a relation or truth value, or a vector holding one."""
-    if isinstance(value, Vector):
-        return any(_relation(element) for element in value.args)
-    return isinstance(value, sp.logic.boolalg.Boolean) and not isinstance(
-        value, (sp.Expr, sp.logic.boolalg.BooleanAtom)
-    )
 
 
 def _jumps(

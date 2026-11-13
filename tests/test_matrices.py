@@ -367,10 +367,10 @@ VECTOR_CALCULUS = [
     # A two-row second argument is a coordinate geometry matrix: variables above, scale
     # factors below. This is the manual's spherical example, written out rather than
     # loaded from VECTOR.MTH. The manual's `COT(phi)*COS(theta)` comes out as
-    # `COS(theta)/TAN(phi)` in the engine's canonical form.
+    # `COS(theta)*COT(phi)` in the engine's canonical form.
     (
         "GRAD(r*SIN(theta)*COS(phi), [[r, theta, phi], [1, r*SIN(phi), r]])",
-        "[SIN(theta)*COS(phi), COS(theta)/TAN(phi), -SIN(theta)*SIN(phi)]",
+        "[SIN(theta)*COS(phi), COS(theta)*COT(phi), -SIN(theta)*SIN(phi)]",
     ),
     # Cylindrical coordinates, where the scale factors change the answers: `DIV` of a
     # radial field grows with the circumference.
@@ -539,9 +539,14 @@ ITERATION = [
     # power, a call by its inverse function. MISC.MTH's INT_SUBST depends on this (the
     # manual inverts `t^2` to `SQRT(t)`, 9.21, p.285).
     ("ITERATES(x^2, x, 2, -1)", "[2, SQRT(2)]"),
-    # A count that isn't an integer is floored, as in Derive. ORTH_POL.MTH counts `n/2`
-    # steps, which for an odd order is a half.
+    # An inverse the notation has no name for (sympy's inverse error function) is no
+    # answer: the iteration stays as written, which reads back. ODE.MTH's INVERT
+    # relies on this to see that there is no inverse.
+    ("ITERATE(ERF(x), x, x, -1)", "ITERATE(ERF(x), x, x, -1)"),
+    # A count that isn't an integer is truncated toward zero, as in Derive (D).
+    # ORTH_POL.MTH counts `n/2` steps, which for an odd order is a half.
     ("ITERATES(x + 1, x, 0, 5/2)", "[0, 1, 2]"),
+    ("ITERATES(x + 1, x, 0, -5/2)", "[0, -1, -2]"),
     ("ITERATE(x + 1, x, 0, 5/2)", "2"),
     # An uncounted iteration that never repeats stays unevaluated (Derive runs until
     # memory runs out), as does a symbolic count.
@@ -647,6 +652,9 @@ STRUCTURE = [
     ("VARIABLES(x^2 + a*y)", "[x, y, a]"),
     ("VARIABLES(a*b*z)", "[z, a, b]"),
     ("VARIABLES(5)", "[]"),
+    # The argument is simplified first, as in Derive: this one cancels to `a^2`.
+    # ODE.MTH's SYMMETRIC_TEST relies on this.
+    ("VARIABLES((a^2*y^2 + a^2*y*z)/(y^2 + y*z))", "[a]"),
     # NUMBER is a predicate and always answers a truth value. The manual's example is
     # the second pair: true exactly when the sum of two squares is a perfect square.
     ("NUMBER(2/3)", "true"),

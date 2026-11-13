@@ -28,6 +28,7 @@ import sympy as sp
 from sympy.concrete.gosper import gosper_term
 from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
+from sympy.functions.elementary.piecewise import ExprCondPair
 from sympy.logic.boolalg import Boolean, BooleanFunction
 
 from rederive.engine.approximation import GUARD, approximated, rescaled, simplest
@@ -41,6 +42,7 @@ from rederive.engine.context import (
 )
 from rederive.engine.integration import integral
 from rederive.engine.ordering import main_order
+from rederive.engine.printer import author_text, spelling
 from rederive.engine.vectors import (
     Vector,
     column,
@@ -129,11 +131,53 @@ DIMENSION = sp.Dummy("n", positive=True, integer=True)
 class PlusMinus(sp.Function):
     """`+-u`, kept ambiguous.
 
-    Its argument simplifies, but arithmetic doesn't see through it, so `+-1 + 1` stays
-    a sum rather than becoming `0` or `2`.
+    Its argument simplifies, but sums don't see through it, so `+-1 + 1` stays a sum
+    rather than becoming `0` or `2`. Section 4.9 makes `+-u` a value of known magnitude
+    and unknown sign, `s*u` for `s` one of 1 and -1, so the arithmetic that only
+    multiplies the sign is done: `+-(-u)` is `+-u`, an odd power `(+-u)^n` is
+    `+-(u^n)` (so `1/(+-1)` is `+-1`) and an even one is `u^n`. Products are taken in
+    by `ambiguous_products`.
     """
 
     nargs = 1
+
+    @classmethod
+    def eval(cls, operand: sp.Basic) -> sp.Basic | None:
+        if operand.is_zero:
+            return sp.S.Zero
+        if isinstance(operand, PlusMinus):
+            return operand
+        if operand.could_extract_minus_sign():
+            return cls(-operand)
+        return None
+
+    def _eval_power(self, exponent: sp.Basic) -> sp.Basic | None:
+        if not exponent.is_integer:
+            return None
+        if exponent.is_even:
+            return self.args[0] ** exponent
+        if exponent.is_odd:
+            return PlusMinus(self.args[0] ** exponent)
+        return None
+
+
+def ambiguous_products(expression: sp.Basic) -> sp.Basic:
+    """Each product with a factor `+-u` written as `+-` the product, since the unknown
+    sign stays unknown when multiplied: `-COS(phi)*(+-1)` is `+-COS(phi)`, and so is a
+    product of several ambiguous factors."""
+
+    def taken_in(product: sp.Basic) -> sp.Basic:
+        rest = [
+            factor.args[0] if isinstance(factor, PlusMinus) else factor
+            for factor in product.args
+        ]
+        return PlusMinus(sp.Mul(*rest))
+
+    if not expression.has(PlusMinus):
+        return expression
+    return expression.replace(
+        lambda e: e.is_Mul and any(isinstance(f, PlusMinus) for f in e.args), taken_in
+    )
 
 
 class Gcd(sp.Function):
@@ -392,6 +436,13 @@ class MovingLimit(sp.Function):
     in `LIM(DIF(LIM(p, y, x*v - y), y), y, x*v - y)`, substituting into an unevaluated
     derivative would produce a `SUBS` nothing expands. So it waits like the calculus
     heads, and is evaluated after the derivative beneath it.
+
+    An unevaluated indefinite integral over the variable is an antiderivative `G(y)`
+    of `F(y)`, and `G(c*y)` is an antiderivative of `c*F(c*y)`. So at a point that is
+    the variable times a constant, the integral's variable is changed, as Derive does:
+    `LIM(INT(F(y), y), y, y/x)` is `INT(F(y/x)/x, y)`. At any other point that
+    mentions the variable the head stands, since `INT(F(y), y, y^2)` would mean
+    nothing.
     """
 
     nargs = 3
@@ -400,9 +451,38 @@ class MovingLimit(sp.Function):
         """The substitution, or this head if it fails."""
         expression, variable, point = self.args
         try:
-            return expression.subs(variable, point)
+            indefinite = [
+                found
+                for found in expression.atoms(sp.Integral)
+                if found.limits == ((variable,),)
+            ]
+            if not indefinite:
+                return expression.subs(variable, point)
+            factor = sp.cancel(point / variable)
+            if factor.has(variable) or factor.is_zero is not False:
+                return self
+            held = {found: sp.Dummy() for found in indefinite}
+            rest = expression.xreplace(held)
+            if rest.has(sp.Integral):
+                return self
+            changed = {
+                dummy: _scaled_integral(found.function, variable, factor)
+                for found, dummy in held.items()
+            }
+            return rest.subs(variable, point).xreplace(changed)
         except Exception:
             return self
+
+
+def _scaled_integral(
+    integrand: sp.Basic, variable: sp.Basic, factor: sp.Basic
+) -> sp.Basic:
+    """`INT(integrand, variable)` with `variable` changed to `factor*variable`, the new
+    integrand over one denominator and its constant factor taken out:
+    `INT(1/(SIN(1/y) + y^3), y)` at `y/x` is `x^2*INT(1/(x^3*SIN(x/y) + y^3), y)`."""
+    changed = sp.together(factor * integrand.subs(variable, factor * variable))
+    constant, varying = changed.as_independent(variable, as_Add=False)
+    return constant * sp.Integral(varying, variable)
 
 
 class Approx(sp.Function):
@@ -428,6 +508,14 @@ class Antidifference(sp.Function):
     """
 
     nargs = 2
+
+    def _eval_subs(self, old: sp.Basic, new: sp.Basic) -> sp.Basic | None:
+        """A value for the index is a substitution into the unknown antidifference, kept as
+        such, not a value for the bound index: RECUREQN.MTH's `LIN2_CCF_BV` takes
+        `LIM` of an unsolved sum at a point, which isn't `SUM(u(0), 0)`."""
+        if old == self.args[1] and not isinstance(new, sp.Symbol):
+            return sp.Subs(self, old, new)
+        return None
 
     def doit(self, deep: bool = False, **hints) -> sp.Basic:
         """The antidifference, or this head if there is none.
@@ -464,6 +552,14 @@ class Antiquotient(sp.Function):
     """
 
     nargs = 2
+
+    def _eval_subs(self, old: sp.Basic, new: sp.Basic) -> sp.Basic | None:
+        """A value for the index is a substitution into the unknown antiquotient, kept as
+        such, not a value for the bound index: RECUREQN.MTH's `LIN2_CCF_BV` takes
+        `LIM` of an unsolved sum at a point, which isn't `SUM(u(0), 0)`."""
+        if old == self.args[1] and not isinstance(new, sp.Symbol):
+            return sp.Subs(self, old, new)
+        return None
 
     def doit(self, deep: bool = False, **hints) -> sp.Basic:
         """The antiquotient, or this head if there is none.
@@ -2259,6 +2355,17 @@ def _factors(conv: Converter, args: list) -> sp.Basic:
         # still unevaluated, as the evaluator shows them.
         product = value.args[0]
         return Vector(*(product.args if product.is_Mul else [product]))
+    if value.is_Mul and any(isinstance(f, sp.UnevaluatedExpr) for f in value.args):
+        # A negative number's decomposition: the sign first, as in Derive, so
+        # `FACTORS(FACTOR(-12))` is `[-1, 2^2, 3]`.
+        signs = [f for f in value.args if not isinstance(f, sp.UnevaluatedExpr)]
+        primes = [
+            piece
+            for f in value.args
+            if isinstance(f, sp.UnevaluatedExpr)
+            for piece in _factors(conv, [f]).args
+        ]
+        return Vector(*signs, *primes)
     factors = value.as_ordered_factors() if value.is_Mul else [value]
     return Vector(*_by_mainness(factors))
 
@@ -2617,6 +2724,10 @@ def authored_conditionals(node: Node, context: Context) -> dict[sp.Basic, str]:
     The authored subtree is converted before any definitions are substituted, since
     the goal is to show what the author wrote; if that differs from what the command
     converted, there is no match and the answer prints as computed.
+
+    A test with calculus in it is shown worked out (see `with_worked_test`), and
+    the arms still as written: `IF(DIF(x^2, x) = 0, 1 + 1, 2 + 2)` is `IF(2*x = 0, 1 +
+    1, 2 + 2)`.
     """
     authored: dict[sp.Basic, str] = {}
     for found in _conditional_nodes(node):
@@ -2624,9 +2735,92 @@ def authored_conditionals(node: Node, context: Context) -> dict[sp.Basic, str]:
             converted = to_sympy(found, context)
         except Exception:
             continue
-        if is_conditional(converted):
-            authored.setdefault(converted, write_expression(found, spaced=True))
+        if not is_conditional(converted):
+            continue
+        authored.setdefault(converted, write_expression(found, spaced=True))
+        worked = _with_test_worked(found, converted, context)
+        if worked is not None:
+            authored.setdefault(*worked)
     return authored
+
+
+def _with_test_worked(
+    found: Node, converted: sp.Basic, context: Context
+) -> tuple[sp.Basic, str] | None:
+    """The authored conditional `found` with its test worked out, and its text, or None
+    if its test has no calculus to work out."""
+    if not converted.has(*CALCULUS_HEADS) or len(found.children) < 3:
+        return None
+    try:
+        worked = with_worked_test(converted, lambda head: head.doit())
+        if worked == converted:
+            return None
+        test = worked.args[0].cond if isinstance(worked, sp.Piecewise) else worked.args[0]
+        arms = [write_expression(arm, spaced=True) for arm in found.children[2:]]
+        return worked, f"IF({', '.join([author_text(test, context), *arms])})"
+    except Exception:
+        return None
+
+
+def with_worked_test(
+    conditional: sp.Basic, work: Callable[[sp.Basic], sp.Basic]
+) -> sp.Basic:
+    """`conditional` with the outermost calculus heads in its test replaced by what
+    `work` gives for them, and its arms as they are: `IF(DIF(y^2, y) = 0, ...)`
+    becomes `IF(2*y = 0, ...)`, as Derive shows an undecided conditional.
+
+    The test is rebuilt around the answers as usual, except that a relation and the
+    conditional are rebuilt as they stand, since sympy would reduce `2*y = 0` to `y =
+    0`. A head whose answer still contains it, such as a sum that converges only
+    under a condition, is left as it is, rather than nest a copy of that conditional
+    in itself.
+    """
+
+    def worked(test: sp.Basic) -> sp.Basic:
+        heads = [
+            found
+            for found in sp.preorder_traversal(test)
+            if isinstance(found, CALCULUS_HEADS)
+        ]
+        outermost = [h for h in heads if not any(h != o and o.has(h) for o in heads)]
+        answers = {}
+        for head in outermost:
+            try:
+                answer = work(head)
+            except Exception:
+                continue
+            if answer != head and not answer.has(head):
+                answers[head] = answer
+        return _replaced_in(test, answers) if answers else test
+
+    try:
+        if isinstance(conditional, sp.Piecewise):
+            pairs = [ExprCondPair(arm, worked(test)) for arm, test in conditional.args]
+            with sp.evaluate(False):
+                return sp.Piecewise(*pairs)
+        if is_conditional(conditional) and conditional.args:
+            test, *arms = conditional.args
+            with sp.evaluate(False):
+                return conditional.func(worked(test), *arms)
+    except Exception:
+        pass
+    return conditional
+
+
+def _replaced_in(value: sp.Basic, answers: dict[sp.Basic, sp.Basic]) -> sp.Basic:
+    """`value` with `answers` substituted, rebuilt around them as usual except for
+    relations and conditionals (see `with_worked_test`)."""
+    if value in answers:
+        return answers[value]
+    if not value.args or not any(value.has(found) for found in answers):
+        return value
+    args = [_replaced_in(arg, answers) for arg in value.args]
+    if isinstance(value, Relational | sp.Piecewise | ExprCondPair) or is_conditional(
+        value
+    ):
+        with sp.evaluate(False):
+            return value.func(*args)
+    return value.func(*args)
 
 
 def _conditional_nodes(node: Node) -> list[Node]:
@@ -2809,11 +3003,17 @@ def _approached(
 
     Vectors are handled element-wise, at any depth, since sympy has no limits of
     vectors. SOLVE.MTH's `NEWTON_AUX` relies on this, substituting the current iterate
-    into a whole augmented matrix with `LIM(a, x, xk)`.
+    into a whole augmented matrix with `LIM(a, x, xk)`. A relation takes the limit of
+    each side, as Derive 3.14 does: `LIM(SIN(x)/x = c, x, 0)` is `1 = c`.
     """
     if isinstance(expression, Vector):
         return mapped(
             expression, lambda element: _approached(element, variable, point, direction)
+        )
+    if isinstance(expression, Relational):
+        return expression.func(
+            _approached(expression.lhs, variable, point, direction),
+            _approached(expression.rhs, variable, point, direction),
         )
     if point.has(variable):
         return MovingLimit(expression, variable, point)
@@ -2825,6 +3025,11 @@ def _iterated_limit(args: list) -> sp.Basic:
 
     The first variable is innermost, so the outer limit applies to the inner result.
     All limits are left for evaluation.
+
+    The variables are taken one after another, as in Derive, so a later point may
+    mention an earlier variable, and an earlier point a later one, which then moves
+    too: `LIM(x + 2*y, [x, y], [x*y, x])` is `x*(x + 2)`, and `LIM(x + y, [x, y],
+    [y, 2])` is 4.
     """
     expression, variables, points = args
     names = _elements(variables)
@@ -3213,8 +3418,9 @@ def _sequence(
 ) -> list[sp.Basic]:
     """The iterates, as many as requested.
 
-    A count that isn't an integer is floored, as in Derive: `ITERATES(x + 1, x, 0, 5/2)`
-    is `[0, 1, 2]`. ORTH_POL.MTH counts `n/2` steps for an odd `n`.
+    A count that isn't an integer is truncated toward zero, as in Derive:
+    `ITERATES(x + 1, x, 0, 5/2)` is `[0, 1, 2]` and `ITERATES(x + 1, x, 0, -5/2)` is
+    `[0, -1, -2]`. ORTH_POL.MTH counts `n/2` steps for an odd `n`.
 
     A negative count iterates the inverse of `u` `|n|` times, which `MISC.MTH` uses to
     define `INVERSE(u, x) := ITERATE(u, x, x, -1)`. This needs the converted body.
@@ -3228,7 +3434,7 @@ def _sequence(
         return _until_repeated(conv, step, names, values)
     count = _one(rest)
     if isinstance(count, (sp.Rational, sp.Float)):
-        count = sp.floor(count)
+        count = sp.floor(count) if count >= 0 else sp.ceiling(count)
     if not isinstance(count, sp.Integer):
         raise TypeError("not a count")
     if count < 0:
@@ -3405,6 +3611,9 @@ def _inverted(body: sp.Basic, names: list) -> sp.Basic:
 
     Solves `u(x) = t` for `x`: `ITERATES(TAN(x), x, x, -1)` is `[x, ATAN(x)]`. Only a
     unique (or principal, see `_undone`) inverse is accepted, and systems have none.
+    An inverse written with a function the notation has no name for, such as sympy's
+    inverse error function, is no answer: the iteration is left as written, which
+    reads back, where the function's sympy name wouldn't.
     """
     if len(names) != 1:
         raise ValueError("no inverse of a system")
@@ -3413,6 +3622,8 @@ def _inverted(body: sp.Basic, names: list) -> sp.Basic:
     undone = _undone(body, name, point)
     if undone is None:
         raise ValueError("not invertible")
+    if any(spelling(call) is None for call in undone.atoms(sp.Function)):
+        raise ValueError("no name for the inverse")
     return undone.subs(point, name)
 
 
