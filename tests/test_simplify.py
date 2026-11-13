@@ -1315,11 +1315,37 @@ def test_a_long_rational_coefficient_of_a_logarithm_stays_outside():
         ("SQRT(x^2)", "ABS(x)", Branch.PRINCIPAL),
         # Any permits the rewrite without a domain proof.
         ("SQRT(x^2)", "x", Branch.ANY),
+        ("SQRT(x^2 - 2*x + 1)", "ABS(x - 1)", Branch.PRINCIPAL),
+        # Confirmed in Derive 4.11.
+        ("SQRT(x^2 - 2*x + 1)", "x - 1", Branch.ANY),
+        ("SQRT(8/(2*SIN(x)^2))", "2/ABS(SIN(x))", Branch.PRINCIPAL),
+        ("SQRT(8/(2*SIN(x)^2))", "2/SIN(x)", Branch.ANY),
+        # A power with a multiple exponent stays one power, not the power of an
+        # absolute value.
+        ("(x - r)^(2*k)", "(x - r)^(2*k)", Branch.ANY),
+        ("x^(-2*k)", "x^(-2*k)", Branch.ANY),
+        ("SQRT(x)*SQRT(y)", "SQRT(x*y)", Branch.ANY),
     ],
     ids=str,
 )
 def test_which_root_an_expression_may_mean(text, expected, branch):
     assert simp(text, Context(branch=branch)) == expected
+
+
+def test_any_branch_substitutes_into_a_root_whatever_the_sign():
+    # ODE.MTH's HOMOGENEOUS_2 substitutes `y*x^2` for `y` in `-x*(x + SQRT(y))/y`.
+    text = "LIM(-x*(x + SQRT(y))/y, y, y*x^2)"
+    assert simp(text, Context(branch=Branch.ANY)) == "-(SQRT(y) + 1)/y"
+
+
+def test_any_branch_introduces_no_absolute_value_in_a_logarithm():
+    # ODE.MTH's FUNCTIONAL integrates this for `y' - TAN(x - y + 1) - 1`; Derive gives
+    # `-LN(COT(t))`.
+    context = Context(branch=Branch.ANY)
+    assert simp("INT((TAN(t)^2 + 1)/TAN(t), t)", context) == "LN(TAN(t))"
+    assert simp("#e^(-INT((TAN(t)^2 + 1)/TAN(t), t))", context) == "COT(t)"
+    assert simp("LN(x^2)", context) == "2*LN(x)"
+    assert simp("LN(x^2)") == "2*LN(ABS(x))"
 
 
 def test_any_branch_takes_the_root_of_a_perfect_square_in_a_call():

@@ -23,7 +23,7 @@ from rederive.engine.computing import (
     solve,
     to_sympy,
 )
-from rederive.engine.context import Angle, Precision
+from rederive.engine.context import Angle, Branch, Precision
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, parse_expression
 from rederive.syntax.state import InputMode
@@ -941,3 +941,13 @@ def test_real_does_not_make_a_declared_domain_filter():
     name, domain = domain_of_node(parse("x :epsilon Real", state))
     context = Context(domains={name: domain})
     assert simplify(parse("SOLVE(x^2 + 1, x)"), context).text == "[x = #i, x = -#i]"
+
+
+def test_any_branch_solves_a_symbolic_power_whatever_the_base():
+    # ODE.MTH's POLES finds the second singular point of the hypergeometric equation in
+    # `(x - r)^k`. A power to an exponent not known to be positive is no zero factor.
+    context = Context(branch=Branch.ANY)
+    text = "-(x - r)*(1 - z*(x - r)^k)/(2*k*z*(x - r)^k) = 0"
+    assert sol(text, ("x",), context) == ["x = (1/z)^(1/k) + r"]
+    assert sol("x^k = z", ("x",), context) == ["x = z^(1/k)"]
+    assert sol("x^k = z", ("x",)) == ["x^k - z = 0"]

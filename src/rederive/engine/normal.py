@@ -538,7 +538,7 @@ def _symbolic_powers_multiplied_in(
     tops: list[sp.Expr], bottoms: list[sp.Expr]
 ) -> tuple[list[sp.Expr], list[sp.Expr]]:
     """The factors with a reciprocal power of a variable to a symbolic exponent
-    multiplied into a numerator sum that has a term in that power, as Derive writes
+    multiplied into a numerator sum with a term in that very power, as Derive writes
     it: `x^(-2*k)*(x^(2*k)*(1 - 4*v^2)/4 + z^2)` is `z^2*x^(-2*k) - v^2 + 1/4`. A
     numeric power stays a denominator: `(x^2 + z)/x^2`.
     """
@@ -548,8 +548,10 @@ def _symbolic_powers_multiplied_in(
         if not base.is_Symbol or exponent.is_Number:
             continue
         for place, top in enumerate(tops):
+            # Only where a term is left free of the power, so that the sum does not
+            # share it again for the common factor to take back out.
             if top.is_Add and any(
-                (term.as_powers_dict().get(base, sp.S.Zero) - exponent).is_Number
+                sp.expand(term.as_powers_dict().get(base, sp.S.Zero) - exponent) == 0
                 for term in top.args
             ):
                 tops[place] = sp.Add(*(term / bottom for term in top.args))

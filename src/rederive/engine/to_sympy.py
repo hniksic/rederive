@@ -34,6 +34,7 @@ from sympy.logic.boolalg import Boolean, BooleanFunction
 from rederive.engine.approximation import GUARD, approximated, rescaled, simplest
 from rederive.engine.context import (
     Angle,
+    Branch,
     Context,
     Domain,
     DomainKind,
@@ -71,6 +72,7 @@ __all__ = [
     "FunDef",
     "Logical",
     "MovingLimit",
+    "AnyMovingLimit",
     "PlusMinus",
     "Power",
     "Quotient",
@@ -471,7 +473,7 @@ class MovingLimit(sp.Function):
                 if found.limits == ((variable,),)
             ]
             if not indefinite:
-                return expression.subs(variable, point)
+                return self._substituted(expression, variable, point)
             factor = sp.cancel(point / variable)
             # A symbolic factor is taken to be nonzero, as `SQRT(t)` for real `t`.
             if factor.has(variable) or factor.is_zero or factor == 0:
@@ -484,9 +486,44 @@ class MovingLimit(sp.Function):
                 dummy: _scaled_integral(found.function, variable, factor)
                 for found, dummy in held.items()
             }
-            return rest.subs(variable, point).xreplace(changed)
+            return self._substituted(rest, variable, point).xreplace(changed)
         except Exception:
             return self
+
+    @staticmethod
+    def _substituted(
+        expression: sp.Basic, variable: sp.Basic, point: sp.Basic
+    ) -> sp.Basic:
+        return expression.subs(variable, point)
+
+
+class AnyMovingLimit(MovingLimit):
+    """A `MovingLimit` under Branch Any, whose substitution takes each root of a power
+    whatever the sign of its base (see `any_root`): `LIM(SQRT(y), y, y*x^2)` is
+    `x*SQRT(y)`, where sympy, for real `x`, writes `ABS(x)*SQRT(y)`."""
+
+    @staticmethod
+    def _substituted(
+        expression: sp.Basic, variable: sp.Basic, point: sp.Basic
+    ) -> sp.Basic:
+        # Without assumptions, so that sympy keeps the root of a power for `any_root`.
+        symbols = (expression.free_symbols | point.free_symbols) - {variable}
+        plain = {
+            symbol: sp.Dummy(symbol.name) for symbol in symbols if symbol.is_Symbol
+        }
+        moved = variable.xreplace(plain)
+        if moved == variable:
+            plain[variable] = moved = sp.Dummy(variable.name)
+        substituted = expression.xreplace(plain).subs(moved, point.xreplace(plain))
+
+        def rooted(power: sp.Pow) -> sp.Basic:
+            root = any_root(*power.args)
+            return power if root is None else root
+
+        substituted = substituted.replace(
+            lambda e: e.is_Pow and e.exp.is_Rational and not e.exp.is_Integer, rooted
+        )
+        return substituted.xreplace({dummy: symbol for symbol, dummy in plain.items()})
 
 
 def _scaled_integral(
@@ -618,6 +655,7 @@ CALCULUS_HEADS = (
     Antidifference,
     Antiquotient,
     MovingLimit,
+    AnyMovingLimit,
     Taylor,
     Approx,
 )
@@ -924,8 +962,17 @@ class Converter:
             case "/":
                 return divided(left, right)
             case "^":
-                return power(left, right)
+                return self.raised(left, right)
         return dotted(left, right)
+
+    def raised(self, base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
+        """`base^exponent`, a root of a power taken whatever its base's sign under
+        Branch Any (see `any_root`)."""
+        if self.context.branch is Branch.ANY:
+            root = any_root(base, exponent)
+            if root is not None:
+                return root
+        return power(base, exponent)
 
     def _unop(self, node: Node) -> sp.Basic:
         operator = str(node.value)
@@ -1526,6 +1573,35 @@ def power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
         return sp.Pow(base, exponent, evaluate=False)
 
 
+def any_root(base: sp.Basic, exponent: sp.Basic) -> sp.Basic | None:
+    """A fractional power of a product of powers, each power's exponent multiplied
+    in, as Branch Any takes it: `SQRT(4/SIN(x)^2)` is `2/SIN(x)`, where sympy, for real
+    `x`, writes `2/ABS(SIN(x))`. None where that does not apply."""
+    if not (
+        isinstance(base, sp.Expr)
+        and not isinstance(base, Vector)
+        and isinstance(exponent, sp.Rational)
+        and not exponent.is_Integer
+        and base.free_symbols
+    ):
+        return None
+    factors = []
+    changed = False
+    for factor in sp.Mul.make_args(base):
+        inner, power_of = factor.as_base_exp()
+        if power_of.is_Integer and power_of != 1 and inner.free_symbols:
+            factors.append(inner ** (power_of * exponent))
+            changed = True
+        else:
+            factors.append(factor**exponent)
+    if not changed:
+        return None
+    try:
+        return sp.Mul(*factors)
+    except Exception:
+        return None
+
+
 def settled(value: sp.Basic) -> sp.Basic:
     """`value` with any vector arithmetic left undone by substitution done.
 
@@ -1642,6 +1718,16 @@ def _direct(func: Callable[..., sp.Basic]) -> Handler:
         return func(*args)
 
     return handler
+
+
+def _sqrt(conv: Converter, args: list) -> sp.Basic:
+    """`SQRT(u)`, taken whatever the sign of a power in `u` under Branch Any."""
+    argument = _one(args)
+    if conv.context.branch is Branch.ANY:
+        root = any_root(argument, sp.S.Half)
+        if root is not None:
+            return root
+    return _direct(sp.sqrt)(conv, args)
 
 
 def _trig(func: Callable[..., sp.Basic]) -> Handler:
@@ -3006,18 +3092,24 @@ def _limit(conv: Converter, args: list) -> sp.Basic:
             else sp.Integer(0)
         )
         args = [*args, point]
+    whatever = conv.context.branch is Branch.ANY
     if isinstance(args[1], Vector):
-        return _iterated_limit(args)
+        return _iterated_limit(args, whatever)
     if len(args) == 3:
-        return _approached(*args, "+-")
+        return _approached(*args, "+-", whatever)
     expression, variable, point, side = args
     if not side:
-        return _approached(expression, variable, point, "+-")
-    return _approached(expression, variable, point, "+" if side > 0 else "-")
+        return _approached(expression, variable, point, "+-", whatever)
+    direction = "+" if side > 0 else "-"
+    return _approached(expression, variable, point, direction, whatever)
 
 
 def _approached(
-    expression: sp.Basic, variable: sp.Basic, point: sp.Basic, direction: str
+    expression: sp.Basic,
+    variable: sp.Basic,
+    point: sp.Basic,
+    direction: str,
+    whatever: bool = False,
 ) -> sp.Basic:
     """One limit as a sympy `Limit`, or a `MovingLimit` substitution.
 
@@ -3028,19 +3120,21 @@ def _approached(
     """
     if isinstance(expression, Vector):
         return mapped(
-            expression, lambda element: _approached(element, variable, point, direction)
+            expression,
+            lambda element: _approached(element, variable, point, direction, whatever),
         )
     if isinstance(expression, Relational):
         return expression.func(
-            _approached(expression.lhs, variable, point, direction),
-            _approached(expression.rhs, variable, point, direction),
+            _approached(expression.lhs, variable, point, direction, whatever),
+            _approached(expression.rhs, variable, point, direction, whatever),
         )
     if point.has(variable):
-        return MovingLimit(expression, variable, point)
+        moving = AnyMovingLimit if whatever else MovingLimit
+        return moving(expression, variable, point)
     return sp.Limit(expression, variable, point, dir=direction)
 
 
-def _iterated_limit(args: list) -> sp.Basic:
+def _iterated_limit(args: list, whatever: bool = False) -> sp.Basic:
     """`LIM(u, [x, y], [a, b])`: the limit in `x`, then in `y`.
 
     The first variable is innermost, so the outer limit applies to the inner result.
@@ -3057,7 +3151,7 @@ def _iterated_limit(args: list) -> sp.Basic:
     if len(names) != len(values):
         raise ValueError("not a point for every variable")
     for name, value in zip(names, values, strict=True):
-        expression = _approached(expression, name, value, "+-")
+        expression = _approached(expression, name, value, "+-", whatever)
     return expression
 
 
@@ -4154,6 +4248,7 @@ FUNCTIONS: dict[str, Handler] = {
     **{name: _trig(func) for name, func in _TRIGONOMETRIC.items()},
     **{name: _arctrig(func) for name, func in _INVERSE_TRIGONOMETRIC.items()},
     **{name: _direct(func) for name, func in _DIRECT.items()},
+    "SQRT": _sqrt,
     "ATAN": _atan,
     "ACOT": _acot,
     "PHASE": _phase,

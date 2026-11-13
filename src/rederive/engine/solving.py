@@ -30,7 +30,7 @@ import sympy as sp
 from sympy.core.relational import Relational
 
 from rederive.engine.approximation import GUARD, simplest_rational
-from rederive.engine.context import Context, Precision
+from rederive.engine.context import Branch, Context, Precision
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, spelling
@@ -245,6 +245,8 @@ def _equation(
     if residual.is_zero or _cancels(residual, variable):
         return (_equated(variable, constants.fresh(), context),)
     found = _values(residual, variable)
+    if (found is None or found.has(sp.ConditionSet)) and context.branch is Branch.ANY:
+        found = _inverted_whatever(residual, variable) or found
     if found is not None:
         polynomial = _polynomial(residual, variable) is not None
 
@@ -475,6 +477,44 @@ def _inverted(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     if not found or not all(
         is_written(value) and _satisfies(residual, variable, value) for value in found
     ):
+        return None
+    return sp.FiniteSet(*found)
+
+
+def _inverted_whatever(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """What `solve` finds, as `_inverted`, checked as Branch Any takes powers, where a
+    power of a power is one power whatever the base: `z*(x - r)^k = 1` is solved by `x =
+    r + (1/z)^(1/k)`, which ODE.MTH's `POLES` needs for the hypergeometric equation.
+
+    A product is solved factor by factor, and a power to an exponent not known to be
+    positive is no factor that vanishes: `(1 - z*(x - r)^k)*(x - r)^(1 - k)` is zero
+    only where its first factor is."""
+    if residual.is_Mul:
+        found = []
+        for factor in residual.args:
+            if not factor.has(variable):
+                continue
+            base, exponent = factor.as_base_exp()
+            if not exponent.is_Number and exponent.is_positive is not True:
+                continue
+            values = _inverted_whatever(factor, variable)
+            if values is None:
+                return None
+            found.extend(values)
+        return sp.FiniteSet(*found) if found else None
+    try:
+        found = sp.solve(residual, variable)
+    except Exception:
+        return None
+
+    def checks(value: sp.Basic) -> bool:
+        try:
+            left = sp.powdenest(residual.subs(variable, value), force=True)
+            return sp.simplify(left).is_zero is True
+        except Exception:
+            return False
+
+    if not found or not all(is_written(value) and checks(value) for value in found):
         return None
     return sp.FiniteSet(*found)
 

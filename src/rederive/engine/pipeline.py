@@ -33,6 +33,7 @@ previous form. Nothing sympy does can turn a valid entry into an error.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from functools import reduce
 from itertools import combinations
 from math import gcd
@@ -209,13 +210,26 @@ def simplified(
         command=_commanded,
         simplify=_argument,
     )
-    expression = evaluate(node, environment)
+    token = _simplified_already.set({})
     try:
-        result = _transform(expression, context, decide)
-    except Exception:
-        # The evaluated input is still a correct answer.
-        result = expression
+        expression = evaluate(node, environment)
+        try:
+            result = _transform(expression, context, decide)
+        except Exception:
+            # The evaluated input is still a correct answer.
+            result = expression
+    finally:
+        _simplified_already.reset(token)
     return released(result)
+
+
+#: The expressions `_expression` has simplified during one `simplified` call, keyed by
+#: the expression, `decide` and whether it is an argument, with the context it was
+#: simplified in. ODE.MTH's tests ask about the same long parameters again and again:
+#: `F21_SOL` tests `MOD` of each of three in two conditions.
+_simplified_already: ContextVar[dict | None] = ContextVar(
+    "_simplified_already", default=None
+)
 
 
 def _argument(value: sp.Basic, context: Context) -> sp.Basic:
@@ -235,11 +249,18 @@ def _argument(value: sp.Basic, context: Context) -> sp.Basic:
     held = {head: sp.Dummy("held") for head in heads}
     if held:
         value = value.xreplace(held)
-    simplified = _transform(value, context, True)
+    token = _in_argument.set(True)
+    try:
+        simplified = _transform(value, context, True)
+    finally:
+        _in_argument.reset(token)
     if held:
         simplified = simplified.xreplace({dummy: head for head, dummy in held.items()})
     return simplified
 
+
+#: Whether an argument is being simplified by `_argument`.
+_in_argument: ContextVar[bool] = ContextVar("_in_argument", default=False)
 
 #: Calculus heads `_argument` leaves standing.
 _HELD = (sp.Integral, sp.Sum, sp.Product, sp.Limit, sp.Derivative, MovingLimit)
@@ -560,6 +581,24 @@ def _reduced(expression: Boolean) -> sp.Basic | None:
 
 
 def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
+    """`_simplified_expression`, remembered for the rest of the command (see
+    `_simplified_already`)."""
+    memo = _simplified_already.get()
+    if memo is None:
+        return _simplified_expression(expression, context, decide)
+    try:
+        key = (expression, decide, _in_argument.get())
+        found = memo.get(key)
+    except TypeError:
+        return _simplified_expression(expression, context, decide)
+    if found is not None and found[0] is context:
+        return found[1]
+    result = _simplified_expression(expression, context, decide)
+    memo[key] = (context, result)
+    return result
+
+
+def _simplified_expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
     """Run an ordinary expression through the whole sequence.
 
     The answer of a `FACTOR`, `EXPAND` or `SOLVE` head is the form the author asked for,
@@ -579,8 +618,10 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     expression = _numeric(expression)
     expression = forced(expression, _spliced_cases)
     # Roots of perfect powers go before the intervals, which then settle the absolute
-    # value left behind: `SQRT(x^2 + 2*x + 1)` is `-x - 1` below -1.
-    expression = forced(expression, _perfect_powers)
+    # value left behind: `SQRT(x^2 + 2*x + 1)` is `-x - 1` below -1. Under Branch Any
+    # the root is taken whatever the sign, by the branch rules.
+    if context.branch is not Branch.ANY:
+        expression = forced(expression, _perfect_powers)
     # Before the rewrites, so they see what the intervals settle: `ABS(x) + ABS(x - 1)`
     # over `(0, 1)` cancels only once both bars are removed.
     expression = settled(expression, context)
@@ -825,6 +866,8 @@ def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
     verdict = _decide(test, context)
     if verdict is not None:
         return verdict
+    if _against_a_lone_variable(test, context):
+        return None
     try:
         simplified = _transform(as_condition(test), context, True)
     except Exception:
@@ -834,6 +877,26 @@ def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
     if simplified is sp.false:
         return False
     return None
+
+
+def _against_a_lone_variable(test: sp.Basic, context: Context) -> bool:
+    """Whether `test` equates an undeclared variable with something not mentioning it,
+    which holds for one value of the variable and not for others, so that simplifying
+    cannot decide it: ODE.MTH's `IF(fail = (local :== ...), ...)` compares the word
+    `fail` with each method's answer, often long, and gives `local` when undecided."""
+    if not isinstance(test, (sp.Eq, sp.Ne)):
+        return False
+    for side, other in (test.args, reversed(test.args)):
+        if (
+            type(side) is sp.Symbol
+            and side.name not in context.domains
+            and isinstance(other, sp.Basic)
+            and not isinstance(other, Relational)
+            and not other.has(side)
+            and other.free_symbols
+        ):
+            return True
+    return False
 
 
 def _against_a_relation(test: sp.Basic) -> bool:
@@ -915,6 +978,11 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
         if context.precision is Precision.APPROXIMATE and head.is_number:
             with numerically():
                 return integral(head)
+        if context.branch is Branch.ANY:
+            # Under Branch Any a logarithm of a power is split with no absolute value:
+            # `INT((TAN(t)^2 + 1)/TAN(t), t)`, found as `LN(TAN(t)^2)/2`, is
+            # `LN(TAN(t))`, and its exponential is not `ABS(TAN(t))`.
+            return forced(integral(head), _any_extracted_powers)
         return integral(head)
     if isinstance(head, (sp.Sum, sp.Product)):
         closed = _closed_by_rule(head, context)
@@ -1515,6 +1583,7 @@ def _limit(head: sp.Limit) -> sp.Basic:
         factor = sp.S.One
     if factor != 1 and _finite_nonzero(factor):
         constant, varying = factor, rest
+    varying = _symbolic_powers_combined(varying, variable)
     if point is sp.S.NegativeInfinity:
         # Take the limit of the reflection at `inf` instead; sympy's limit at `-inf`
         # wrongly sends `2^x` to `inf`.
@@ -1538,6 +1607,32 @@ def _limit(head: sp.Limit) -> sp.Basic:
         value = forced(value, sp.simplify)
     split = attempt(value, lambda v: _split_on_a_sign(v, head))
     return value if split is None else split
+
+
+def _symbolic_powers_combined(expression: sp.Basic, variable: sp.Basic) -> sp.Basic:
+    """`expression` multiplied out, if it has powers of `variable` to symbolic
+    exponents, so that those powers are combined term by term.
+
+    Sympy's limit compares growth factor by factor and does not see powers of the
+    variable cancel across a product: ODE.MTH's KUMMER takes `LIM(x^(-2*k - 2)*(...),
+    x, inf)` of a sum with terms in `x^(2*k + 2)`, which is finite, and sympy finds it
+    infinite.
+    """
+    try:
+        powers = [
+            power
+            for power in expression.atoms(sp.Pow)
+            if power.base == variable and power.exp.free_symbols - {variable}
+        ]
+        if not powers or sp.count_ops(expression) > _COMBINED_SIZE:
+            return expression
+        return sp.expand(expression, log=False)
+    except Exception:
+        return expression
+
+
+#: The largest expression, in operations, that `_symbolic_powers_combined` multiplies out.
+_COMBINED_SIZE = 200
 
 
 def _split_on_a_sign(value: sp.Basic, head: sp.Limit) -> sp.Basic | None:
@@ -3348,7 +3443,14 @@ def _trigsimp(expression: sp.Basic) -> sp.Basic:
     third Newton step for `COS(x) - x` from 1, a tower of 150 operations, takes
     minutes, while its second step, of 35, takes a third of a second. Such a tower is
     left as it is beyond `_NESTED_TRIGSIMP` operations.
+
+    Nor is it tried on the argument of a built-in that reads its form (see
+    `_argument`): which variables such an argument has, or its numerator, are told by
+    cancelling, and ODE.MTH's `FREE` asks that of equations in `TAN(x - y + 1)` dozens
+    of times.
     """
+    if _in_argument.get():
+        return expression
     calls = expression.atoms(TrigonometricFunction)
     nested = any(call.args[0].has(TrigonometricFunction) for call in calls)
     if nested and sp.count_ops(expression) > _NESTED_TRIGSIMP:
@@ -3795,7 +3897,17 @@ def _extracted_powers(expression: sp.Basic) -> sp.Basic:
     )
 
 
-def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
+def _any_extracted_powers(expression: sp.Basic) -> sp.Basic:
+    """`_extracted_powers` under Branch Any, which takes `LN(x^2)` to be `2*LN(x)`, with
+    no absolute value."""
+    return expression.replace(
+        lambda e: _extracted_power(e, whatever=True) is not None,
+        lambda e: _extracted_power(e, whatever=True),
+        simultaneous=False,
+    )
+
+
+def _extracted_power(expression: sp.Basic, whatever: bool = False) -> sp.Basic | None:
     """`k*LN(z)`, if `expression` is a logarithm of `z^k` that may be split.
 
     Section 6.2 gives `k*LN(x) <-> LN(x^k)` for rational `k` when `x` is nonnegative,
@@ -3808,6 +3920,8 @@ def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
 
     A factor `#e^u` with real `u` is positive, so its logarithm leaves whatever it
     multiplies: `LN(2*x^3*#e^x)` is `LN(2*x^3) + x`.
+
+    `whatever` splits a power of any base and exponent, as Branch Any does.
     """
     if not isinstance(expression, sp.log) or len(expression.args) != 1:
         return None
@@ -3823,7 +3937,7 @@ def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
         )
         if exponentials:
             remaining = sp.log(sp.Mul(*rest))
-            split = _extracted_power(remaining)
+            split = _extracted_power(remaining, whatever)
             exponents = sp.Add(*(factor.args[0] for factor in exponentials))
             return (remaining if split is None else split) + exponents
     if argument.is_Add and argument.is_polynomial():
@@ -3839,7 +3953,7 @@ def _extracted_power(expression: sp.Basic) -> sp.Basic | None:
         return None
     if not exponent.is_Rational:
         return None
-    if base.is_nonnegative or bool(-1 < exponent <= 1):
+    if whatever or base.is_nonnegative or bool(-1 < exponent <= 1):
         return exponent * sp.log(base)
     if exponent.is_Integer and exponent.is_even and _real_where_defined(base):
         return exponent * sp.log(_magnitude(base))
@@ -3941,6 +4055,48 @@ def _perfect_powers(expression: sp.Basic) -> sp.Basic:
     return expression.replace(_is_polynomial_root, _perfect_root, simultaneous=False)
 
 
+def _any_powsimp(expression: sp.Basic) -> sp.Basic:
+    """Powers over one exponent as one power, whatever the bases, as Branch Any takes
+    them: `SQRT(x)*SQRT(y)` is `SQRT(x*y)`.
+
+    Sympy writes a power with a multiple exponent as a power of a power, `(x - r)^(2*k)`
+    as `((x - r)^2)^k`, which for real `x` is `ABS(x - r)^(2*k)`. The integer part of
+    such an exponent goes back into it.
+    """
+
+    def joined(power: sp.Pow) -> sp.Basic:
+        base, exponent = power.args
+        if base.is_Pow and base.exp.is_Integer:
+            return base.base ** (base.exp * exponent)
+        powers = [factor.as_base_exp() for factor in base.args]
+        if not all(power.is_Integer for _, power in powers):
+            return power
+        common = gcd(*(int(power) for _, power in powers))
+        if common < 2:
+            return power
+        inner = sp.Mul(*(factor ** (power // common) for factor, power in powers))
+        return inner ** (common * exponent)
+
+    # Without assumptions, so that sympy keeps a power of a power for this to join.
+    plain = {symbol: sp.Dummy(symbol.name) for symbol in expression.free_symbols}
+    combined = sp.powsimp(expression.xreplace(plain), force=True)
+    back = {dummy: symbol for symbol, dummy in plain.items()}
+    if combined.xreplace(back) == expression:
+        return expression
+    combined = combined.replace(
+        lambda e: (
+            e.is_Pow
+            and not e.exp.is_Number
+            and (
+                (e.base.is_Pow and e.base.exp.is_Integer)
+                or e.base.is_Mul
+            )
+        ),
+        joined,
+    )
+    return combined.xreplace(back)
+
+
 def _any_perfect_powers(expression: sp.Basic) -> sp.Basic:
     """Take roots of polynomials that are perfect powers, as `_perfect_powers` does,
     but whatever the sign of the base, as Branch Any takes `SQRT(x^2)` to be `x`."""
@@ -3974,13 +4130,18 @@ def _perfect_root(power: sp.Pow, whatever: bool = False) -> sp.Basic:
         return power
     content, factors = sp.sqf_list(base)
     multiple = reduce(gcd, (int(times) for _, times in factors), 0)
-    if multiple < 2 or not content.is_positive:
+    # Whatever the sign, a negative content's root is taken too: `SQRT(-a^2 + 2*a*b -
+    # b^2)` is `#i*(a - b)`.
+    if multiple < 2 or not (content.is_positive or whatever and content.is_nonzero):
         return power
     root = sp.Mul(*(factor ** (times // multiple) for factor, times in factors))
     whole = root**multiple
-    taken = content**exponent * whole**exponent
     if whatever:
-        taken = sp.powdenest(taken, force=True)
+        # Raised in one step, since sympy writes `((x - 1)^2)^(1/2)` as `ABS(x - 1)`
+        # for real `x`.
+        taken = content**exponent * root ** (multiple * exponent)
+    else:
+        taken = content**exponent * whole**exponent
     if any(found.base == whole for found in taken.atoms(sp.Pow)):
         return power
     return taken
@@ -4377,7 +4538,10 @@ def _applied(
     for rule in rules:
         if rule.yields_to is not None and getattr(context, rule.yields_to) != "Auto":
             continue
-        expression = rule.kept(expression, rule.rewrite)
+        rewrite = rule.rewrite
+        if rewrite is _extracted_powers and context.branch is Branch.ANY:
+            rewrite = _any_extracted_powers
+        expression = rule.kept(expression, rewrite)
     return expression
 
 
@@ -4644,7 +4808,7 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
         Branch.ANY: (
             _Rule("any powdenest", lambda e: sp.powdenest(e, force=True), forced,
                   "a power of a power is one power, whatever the base"),
-            _Rule("any powsimp", lambda e: sp.powsimp(e, force=True), forced,
+            _Rule("any powsimp", _any_powsimp, forced,
                   "powers over one exponent are one power, whatever the bases"),
             _Rule("any perfect powers", _any_perfect_powers, forced,
                   "SQRT(PHI(x)^2 - 2*PHI(x) + 1) is PHI(x) - 1, whatever PHI(x) is"),

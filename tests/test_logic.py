@@ -43,6 +43,12 @@ def test_a_word_compared_with_a_relation_is_left_undecided_at_once():
     assert simp(text) == "2"
 
 
+def test_a_word_compared_with_an_expression_without_it_is_left_undecided():
+    # ODE.MTH's `IF(fail = (local :== ...), ...)` with a method's long answer: it holds
+    # for one value of `fail`, so it is undecided whatever the answer simplifies to.
+    assert simp("IF(fail = SQRT((a^2 - 2*a*b + b^2)/(x - r)^2), 1, 2, 3)") == "3"
+
+
 def test_a_relation_that_holds_for_every_value_is_decided():
     """Each holds for all values of its variables, the last two by their declared
     intervals."""

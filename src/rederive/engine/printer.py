@@ -100,6 +100,7 @@ _FUNCTION_NAMES = {
     "Antidifference": "SUM",
     "Antiquotient": "PRODUCT",
     "MovingLimit": "LIM",
+    "AnyMovingLimit": "LIM",
     "Substitution": "SUBS",
     "log": "LN",
     "arg": "PHASE",

@@ -8,7 +8,7 @@ mathematics. Integrals are tested in `test_integrate.py`.
 from __future__ import annotations
 
 import pytest
-from simplifying import declaring, parse, simp
+from simplifying import declared, declaring, parse, simp
 
 from rederive.engine.computing import Context, simplify
 from rederive.model.expr import Kind
@@ -916,6 +916,17 @@ def test_a_limit_infinite_with_a_parameters_sign_is_plus_or_minus_infinity():
         "[[1, -1/4], [1, 1/4]]"
     )
     assert simp("S(L(x/y, x, y, 0, 0), 0, 0, 1/4, 1/4)", context) == "?"
+
+
+def test_a_limit_at_infinity_combines_symbolic_powers_of_its_variable_first():
+    # ODE.MTH's KUMMER takes this limit of a canonic term; sympy, comparing factor by
+    # factor, found it infinite.
+    context = declared("k :epsilon Real (0, inf)")
+    text = (
+        "LIM(x^(-2*k - 2)*(-4*a*x^(k + 2)*z - x^2*(b*x^k - z)^2 + 2*x^(k + 2)*(k + 2)*"
+        "(b*x^k - z) - 2*x^(k + 2)*(b*k*x^k + b*x^k - z)), x, inf)"
+    )
+    assert simp(text, context) == "2*b - b^2"
 
 
 def test_a_limit_toward_a_symbolic_multiple_and_then_another_variable():
