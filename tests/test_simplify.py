@@ -307,16 +307,25 @@ def test_a_quotient_carries_its_numerator_s_common_factor_outside(text, expected
 
 #: A number common to a numerator and a denominator sum cancels, as the gcd over the
 #: rationals leaves it (Derive), and so does a constant such as `pi`. A denominator sum
-#: keeps whatever content doesn't cancel.
+#: has its numeric content, and the sign of an all-negative sum, taken out in front
+#: (Derive).
 CANCELLED_CONTENT = [
     ("(2*x + 2)/(2*x^2 + 4)", "(x + 1)/(x^2 + 2)"),
-    ("(2*x + 2)/(4*x^2 + 8)", "(x + 1)/(2*x^2 + 4)"),
+    ("(2*x + 2)/(4*x^2 + 8)", "(x + 1)/(2*(x^2 + 2))"),
     ("2/(2*x^2 + 4)", "1/(x^2 + 2)"),
     ("4*x/(2*x + 2)^2", "x/(x + 1)^2"),
-    ("(3 - 4*x)/(2*x^2 + 2)", "(3 - 4*x)/(2*x^2 + 2)"),
-    ("x/(2*x + 2)", "x/(2*x + 2)"),
+    ("(3 - 4*x)/(2*x^2 + 2)", "(3 - 4*x)/(2*(x^2 + 1))"),
+    ("x/(2*x + 2)", "x/(2*(x + 1))"),
+    ("1/(2*x + 2)", "1/(2*(x + 1))"),
+    ("y/(2*x + 2)^2", "y/(4*(x + 1)^2)"),
+    ("y/(-x - 1)", "-y/(x + 1)"),
+    ("1/(-2*x - 2)", "-1/(2*(x + 1))"),
+    ("(x/2 + 1)/(3*x + 3)", "(x + 2)/(6*(x + 1))"),
     ("(pi - pi*ERF(z))/pi", "1 - ERF(z)"),
     ("(#e*x + #e)/#e", "x + 1"),
+    ("(SQRT(2)*x + SQRT(2))/SQRT(2)", "x + 1"),
+    ("(SQRT(2)*x + SQRT(2))/(2*SQRT(2))", "x/2 + 1/2"),
+    ("SQRT(3)*(SQRT(3)*x + SQRT(3)*y)", "3*x + 3*y"),
     ("(x + 1)/pi", "(x + 1)/pi"),
 ]
 
@@ -892,9 +901,20 @@ def test_a_sum_that_is_zero_by_the_pythagorean_identity_is_zero_however_large():
     assert simp(f"({jacobian}` . {v}) . ({inverse} . {v}) - {v} . {v}") == "0"
 
 
+def test_a_tower_of_nested_trigonometric_calls_comes_back_in_seconds():
+    """Exact Newton steps for `COS(x) - x` (SOLVE.MTH's NEWTON) nest cosines in
+    cosines. Trigonometric identities and multiplying out are not tried on the third
+    step, which took them minutes; it comes back as it stands."""
+    steps = simp("ITERATES(x - (COS(x) - x)/DIF(COS(x) - x, x), x, 1, 3)")
+    assert steps.startswith("[1, (COS(1) - 1)/(SIN(1) + 1) + 1, ")
+    assert "COS(1 - (COS(1) - 1)/(-SIN(1) - 1))" in steps
+
+
 def test_a_hyperbolic_function_of_a_trigonometric_one_keeps_the_latter():
-    """Only the hyperbolic call is written over exponentials, not its argument."""
-    assert simp("COSH(1/COS(x))") == "(#e^(2/COS(x)) + 1)*#e^(-1/COS(x))/2"
+    """Only the hyperbolic call is written over exponentials, not its argument, and a
+    sum of exponentials outside any denominator is kept (Derive)."""
+    assert simp("COSH(1/COS(x))") == "#e^(1/COS(x))/2 + #e^(-1/COS(x))/2"
+    assert simp("#e^(1/x)/2 + #e^(-1/x)/2") == "#e^(1/x)/2 + #e^(-1/x)/2"
     assert simp("COSH(TAN(x))") == "#e^TAN(x)/2 + #e^(-TAN(x))/2"
     assert simp("3*SECH(SEC(x))") == "6*#e^(1/COS(x))/(#e^(2/COS(x)) + 1)"
     assert simp("STEP(x)") == "SIGN(x)/2 + 1/2"
@@ -1214,6 +1234,15 @@ def test_a_line_through_logarithms_stays_a_line_when_approximated():
     assert simp(fitted, approximate) == "1.07709 - 0.660877*x"
 
 
+def test_a_long_rational_coefficient_of_a_logarithm_stays_outside():
+    """The power rule is for small rationals: a long one, as approximation leaves it,
+    would take sympy minutes to raise a number to."""
+    approximate = Context().with_precision(Precision.APPROXIMATE)
+    k = "12345678901/98765432109"
+    assert simp(f"(LN(0.65) + 0.5772156649)*{k}", approximate) == "0.0183040"
+    assert simp(f"LN(2)*{k} + LN(3)") == "LN(3) + 12345678901*LN(2)/98765432109"
+
+
 # -- the branch setting -------------------------------------------------------
 
 
@@ -1328,7 +1357,7 @@ COMPLEX_CONSTANTS = [
     ("#e^(#i*pi/7)", "#e^(#i*pi/7)"),
     ("#e^#i", "#e^#i"),
     # A cosine or sine of a complex number is split around its real angle.
-    ("COS(pi + #i)", "-(#e^2 + 1)*#e^(-1)/2"),
+    ("COS(pi + #i)", "-#e^(-1)/2 - #e/2"),
     (
         "COS(pi/3 + #i)",
         "#e/4 + #e^(-1)/4 - SQRT(3)*#i*(#e/2 - #e^(-1)/2)/2",

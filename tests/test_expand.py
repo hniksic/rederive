@@ -441,3 +441,13 @@ def test_a_head_that_will_not_survive_freezing_is_held_whole(monkeypatch):
     assert frozen.xreplace(held) == total
     # Replaced whole, rather than written about `x` with a term missing.
     assert frozen.is_Symbol
+
+
+def test_an_approximate_spline_segment_expands_to_its_monomials():
+    """SPLINE.DOC's #37 is the Expand of PARA under Approximate: `0.642857 t^3 -
+    0.642857 t` for the segment PARA leaves as `t*(9*t^2 - 9)/14`."""
+    assert exp("t*(9*t^2 - 9)/14", context=APPROXIMATE) == "0.642857*t^3 - 0.642857*t"
+    assert (
+        exp("-t*(27*t^2 - 81*t + 54)/28", context=APPROXIMATE)
+        == "-0.964285*t^3 + 2.89285*t^2 - 1.92857*t"
+    )

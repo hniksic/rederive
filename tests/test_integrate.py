@@ -41,8 +41,8 @@ from rederive.syntax import ParseState, parse_expression
         (
             "INT(1/((x^2 + 1)*(x^2 + x + a)), x)",
             "-(2*a - 3)*ATAN((2*x + 1)/SQRT(4*a - 1))/(SQRT(4*a - 1)*(a^2 - 2*a + 2)) "
-            "+ (a - 1)*ATAN(x)/(a^2 - 2*a + 2) + (LN(x^2 + x + a) - LN(x^2 + 1))/(2*a^2 "
-            "- 4*a + 4)",
+            "+ (a - 1)*ATAN(x)/(a^2 - 2*a + 2) + (LN(x^2 + x + a) - LN(x^2 + 1))/(2*(a^2 "
+            "- 2*a + 2))",
         ),
         # Two logarithms with the same coefficient are combined.
         ("INT(x^2/(a^3 + x^3), x)", "LN(x^3 + a^3)/3"),
@@ -595,7 +595,7 @@ def test_an_antiderivative_holds_wherever_the_integrand_is_real(text, expected):
         # A number times a single factor is multiplied out, which is how it reads back.
         (
             "INT((2*x^2 + 2*x + 13)/((x - 2)*(x^2 + 1)^2), x)",
-            "-4*ATAN(x) + LN(x - 2) - LN(x^2 + 1)/2 + (3 - 4*x)/(2*x^2 + 2)",
+            "-4*ATAN(x) + LN(x - 2) - LN(x^2 + 1)/2 + (3 - 4*x)/(2*(x^2 + 1))",
         ),
         # The constant is chosen to make the rational part vanish at zero, when that
         # shortens its numerator.
@@ -639,13 +639,13 @@ def test_the_rational_part_is_over_factors_and_vanishes_at_zero_where_shorter(
 @pytest.mark.parametrize(
     "text, rational, longest",
     [
-        ("INT(1/(x^6 + 16)^2, x)", " + x/(96*x^6 + 1536)", 270),
+        ("INT(1/(x^6 + 16)^2, x)", " + x/(96*(x^6 + 16))", 270),
         (
             "INT(1/(x^6 + 16)^3, x)",
-            " + x*(11*x^6 + 272)/(18432*x^12 + 589824*x^6 + 4718592)",
+            " + x*(11*x^6 + 272)/(18432*(x^12 + 32*x^6 + 256))",
             322,
         ),
-        ("INT(1/(x^6 + 2)^2, x)", " + x/(12*x^6 + 24)", 228),
+        ("INT(1/(x^6 + 2)^2, x)", " + x/(12*(x^6 + 2))", 229),
     ],
 )
 def test_a_factored_rational_part_does_not_put_the_answer_over_one_denominator(

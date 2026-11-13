@@ -537,7 +537,57 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
         expression = expression.xreplace(
             {dummy: found.args[0] for found, dummy in held.items()}
         )
+    if context.precision == Precision.APPROXIMATE:
+        expression = forced(expression, _one_exponential)
     return approximated(expression, context)
+
+
+def _one_exponential(expression: sp.Basic) -> sp.Basic:
+    """Powers of numbers over multiples of one exponent as one exponential, and the
+    constant part of an exponential's exponent as a factor.
+
+    Under Approximate, Derive approximates the logarithms in `#e^(t*(LN(5) - LN(2))/3)`
+    as it goes, so the answer is `#e^(0.305430*t)`. The exact rewrites turn it into
+    `2^(-t/3)*5^(t/3)` first, which this puts back before approximation. A single power
+    stays: `5^(t/3)` is `5^(0.333333*t)`.
+
+    Likewise `#e^1.15479*#e^(-0.701797*t)` stays two factors, the first a number:
+    CURV_FIT.DOC's exponential fit is `3.17338*#e^(-0.701797*t)`. Sympy joins the two,
+    so the constant is split off again here, unevaluated for approximation to round.
+    """
+
+    def split(power: sp.Basic) -> sp.Basic:
+        constant, rest = power.args[0].as_independent(*power.free_symbols, as_Add=True)
+        if constant == 0 or not rest.free_symbols:
+            return power
+        return sp.Mul(sp.exp(constant), sp.exp(rest), evaluate=False)
+
+    def merged(product: sp.Basic) -> sp.Basic:
+        groups: dict[sp.Basic, list[tuple[sp.Basic, sp.Basic]]] = {}
+        for factor in product.args:
+            base, exponent = factor.as_base_exp()
+            if base.is_Rational and base > 0 and base != 1 and exponent.free_symbols:
+                coefficient, rest = exponent.as_coeff_Mul()
+                groups.setdefault(rest, []).append((factor, coefficient * sp.log(base)))
+        merging = {rest: group for rest, group in groups.items() if len(group) > 1}
+        if not merging:
+            return product
+        dropped = {factor for group in merging.values() for factor, _ in group}
+        kept = [factor for factor in product.args if factor not in dropped]
+        powers = [
+            sp.exp(sp.Mul(sp.Add(*(log for _, log in group)), rest, evaluate=False))
+            for rest, group in merging.items()
+        ]
+        return sp.Mul(*kept, *powers)
+
+    if expression.has(sp.Pow):
+        expression = expression.replace(lambda e: e.is_Mul, merged)
+    if not expression.has(sp.exp):
+        return expression
+    return expression.replace(
+        lambda e: isinstance(e, sp.exp) and e.args[0].is_Add and bool(e.free_symbols),
+        split,
+    )
 
 
 def _spliced_cases(expression: sp.Basic) -> sp.Basic:
@@ -3106,6 +3156,27 @@ _MULTIPLE_OPERATIONS = 60
 _DEGREE = 4 * _MULTIPLE_ANGLE
 
 
+def _trigsimp(expression: sp.Basic) -> sp.Basic:
+    """`trigsimp`, unless the expression is too costly for it.
+
+    Sympy's `futrig` tries its identities on every trigonometric call and on every call
+    inside the angles, and the cost grows steeply with calls nested in angles: the
+    third Newton step for `COS(x) - x` from 1, a tower of 150 operations, takes
+    minutes, while its second step, of 35, takes a third of a second. Such a tower is
+    left as it is beyond `_NESTED_TRIGSIMP` operations.
+    """
+    calls = expression.atoms(TrigonometricFunction)
+    nested = any(call.args[0].has(TrigonometricFunction) for call in calls)
+    if nested and sp.count_ops(expression) > _NESTED_TRIGSIMP:
+        return expression
+    return sp.trigsimp(expression)
+
+
+#: The largest expression with trigonometric calls nested in angles that `_trigsimp`
+#: takes on, in operations.
+_NESTED_TRIGSIMP = 60
+
+
 def _pythagorean(expression: sp.Basic) -> sp.Basic:
     """A rational function of sines and cosines reduced by `SIN(z)^2 + COS(z)^2 = 1`.
 
@@ -3314,6 +3385,10 @@ def _logs_combined(expression: sp.Basic) -> sp.Basic:
     logarithm, every factor but the logarithm and a rational is hidden behind a symbol
     of unknown sign, which sympy keeps outside; a product of several logarithms is
     hidden whole. The sum rule is unaffected: `x*LN(2) + x*LN(3)` is `x*LN(6)`.
+
+    The rational must be small too, numerator and denominator at most `_LOG_POWER`: a
+    coefficient like `12345678901/98765432109`, as an approximation leaves it, is not
+    a power anyone writes, and sympy would spend minutes on its root.
     """
     if not expression.has(sp.log):
         return expression
@@ -3335,7 +3410,7 @@ def _logs_combined(expression: sp.Basic) -> sp.Basic:
             return sp.Mul(
                 *(
                     factor
-                    if factor.is_Rational or len(logs) == 1 and factor == logs[0]
+                    if _small_rational(factor) or len(logs) == 1 and factor == logs[0]
                     else hidden.setdefault(factor, sp.Dummy())
                     for factor in term.args
                 )
@@ -3348,6 +3423,14 @@ def _logs_combined(expression: sp.Basic) -> sp.Basic:
         return sp.logcombine(prepared).xreplace(back)
 
     return combined(expression)
+
+
+def _small_rational(number: sp.Basic) -> bool:
+    return bool(number.is_Rational) and max(abs(number.p), number.q) <= _LOG_POWER
+
+
+#: The largest numerator or denominator of a rational the logarithm's power rule takes.
+_LOG_POWER = 1000
 
 
 def _logarithmic_powers(expression: sp.Basic) -> sp.Basic:
@@ -4001,6 +4084,57 @@ def _applied(
     return expression
 
 
+def _one_denominator(expression: sp.Basic) -> sp.Basic:
+    """`radsimp`, with a reciprocal exponential multiplied back into its sum.
+
+    Sympy takes `#e^(-z)` as a denominator, so `radsimp` puts `#e^z/2 + #e^(-z)/2` over
+    `#e^z` as `(#e^(2*z) + 1)*#e^(-z)/2`, which is shorter. Derive keeps the
+    exponentials as separate terms, as COSH's definition gives them: `COSH(1/COS(x))`
+    is `#e^(1/COS(x))/2 + #e^(-1/COS(x))/2`. A denominator under a denominator stays
+    cleared: `1/(#e^z + #e^(-z))` is `#e^z/(#e^(2*z) + 1)`.
+    """
+    return _exponentials_distributed(sp.radsimp(expression))
+
+
+def _exponentials_distributed(expression: sp.Basic) -> sp.Basic:
+    """Every product of a reciprocal exponential and a sum of exponentials multiplied
+    out, each term's powers collected."""
+
+    def exponential(node: sp.Basic) -> bool:
+        return isinstance(node, sp.exp) or (
+            isinstance(node, sp.Pow) and node.base.is_number and not node.exp.is_Number
+        )
+
+    def reciprocal(node: sp.Basic) -> bool:
+        return exponential(node) and node.as_base_exp()[1].could_extract_minus_sign()
+
+    def of_exponentials(factor: sp.Basic) -> bool:
+        base, exponent = factor.as_base_exp()
+        return (
+            base.is_Add
+            and exponent.is_Integer
+            and exponent > 0
+            and any(map(exponential, sp.preorder_traversal(base)))
+        )
+
+    def spread(product: sp.Basic) -> bool:
+        return (
+            product.is_Mul
+            and any(map(reciprocal, product.args))
+            and any(map(of_exponentials, product.args))
+        )
+
+    def spread_out(product: sp.Basic) -> sp.Basic:
+        terms = sp.Add.make_args(
+            sp.expand(product, power_base=False, power_exp=False, log=False)
+        )
+        return sp.Add(*(sp.powsimp(term) for term in terms))
+
+    if not expression.has(sp.exp, sp.Pow):
+        return expression
+    return expression.replace(spread, spread_out)
+
+
 def _combinatorial(expression: sp.Basic) -> sp.Basic:
     """`combsimp`, if the expression is combinatorial and small enough."""
     if expression.has(*_COMBINATORIAL) and sp.count_ops(expression) <= _COMBSIMP:
@@ -4066,7 +4200,7 @@ _IDENTITIES = (
           "a constant over nested radicals reduced in the field its surds span"),
     _Rule("trigonometric constants", _trigonometric_constants, _gated,
           "COS(pi/9)*COS(2*pi/9)*COS(4*pi/9) is 1/8: values of rational angles"),
-    _Rule("one denominator", sp.radsimp, _gated,
+    _Rule("one denominator", _one_denominator, _gated,
           "a denominator under a denominator is cleared, #e^(-z) put over #e^z"),
 )
 
@@ -4094,7 +4228,7 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
         Direction.AUTO: (
             _Rule("pythagorean", _pythagorean, _gated,
                   "SIN(z)^2 + COS(z)^2 is 1, in sums of any size"),
-            _Rule("trigsimp", sp.trigsimp, _gated,
+            _Rule("trigsimp", _trigsimp, _gated,
                   "trigonometric identities, where they cancel something"),
             _Rule("multiple angles", _multiple_angles, _cancelled,
                   "SIN(3*x)/SIN(x) is 2*COS(2*x) + 1: multiples of one angle reduced"),

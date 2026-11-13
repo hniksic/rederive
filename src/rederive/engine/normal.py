@@ -109,7 +109,9 @@ class _Writer:
             rebuilt = _attempt(expression, _rebuilt)
             return self._number(expression if rebuilt is None else rebuilt)
         arguments = [self.written(argument) for argument in expression.args]
-        if algebraic and isinstance(expression, (sp.Add, sp.Mul)):
+        if algebraic and (
+            isinstance(expression, (sp.Add, sp.Mul)) or _reciprocal_sum(expression)
+        ):
             return self._step(expression.func(*arguments))
         if all(new is old for new, old in zip(arguments, expression.args)):
             return expression
@@ -126,7 +128,7 @@ class _Writer:
             return built
         if built.is_Add:
             rewrite = self._sum
-        elif built.is_Mul:
+        elif built.is_Mul or _reciprocal_sum(built):
             rewrite = self._product
         else:
             return built
@@ -170,13 +172,14 @@ class _Writer:
         18))` is not expanded into a quartic. A constant other than a number is a
         factor like any other: `(pi - pi*ERF(z))/pi` is `1 - ERF(z)`.
         """
-        if not product.is_Mul:
+        if not (product.is_Mul or _reciprocal_sum(product)):
             return product
         # An undecidable four-argument `IF` can put a truth value in a product; only
         # expressions have numerators.
         if not all(isinstance(factor, sp.Expr) for factor in product.args):
             return product
         tops, bottoms = _fraction(product)
+        tops, bottoms = _constants_cancelled(tops, bottoms)
         if not all(bottom.is_Number for bottom in bottoms):
             cancelled = _cancelled(tops, bottoms)
             if cancelled is not None:
@@ -475,6 +478,38 @@ def _cancelled(
     return _powers(highs), _powers(lows)
 
 
+def _constants_cancelled(
+    tops: list[sp.Expr], bottoms: list[sp.Expr]
+) -> tuple[list[sp.Expr], list[sp.Expr]]:
+    """The factors with a constant common to a numerator sum's terms merged into the
+    constant factors, if that leaves a rational number.
+
+    `(SQRT(2)*x + SQRT(2))/SQRT(2)` is `SQRT(2)*(SQRT(2)*x + SQRT(2))/2` to sympy, and
+    is `x + 1`.
+    """
+    constants = [top for top in tops if not top.free_symbols]
+    numbers = [bottom for bottom in bottoms if not bottom.free_symbols]
+    if not constants or all(top.is_Rational for top in constants):
+        return tops, bottoms
+    constant = sp.Mul(*constants) / sp.Mul(*numbers)
+    rest = [top for top in tops if top.free_symbols]
+    for index, top in enumerate(rest):
+        if not top.is_Add:
+            continue
+        factored = _attempt(top, sp.factor_terms)
+        if factored is None:
+            continue
+        common, primitive = factored.as_independent(
+            *top.free_symbols, as_Add=False
+        )
+        merged = constant * common
+        if common.is_Rational or not merged.is_Rational:
+            continue
+        rest[index] = primitive
+        return [merged, *rest], [b for b in bottoms if b.free_symbols]
+    return tops, bottoms
+
+
 def _cancellable(factor: list[sp.Basic]) -> bool:
     base, exponent = factor
     return (
@@ -502,7 +537,7 @@ def _quotient(tops: list[sp.Expr], bottoms: list[sp.Expr]) -> sp.Expr:
     """
     tops, bottoms = _cleared(tops, bottoms)
     if any(bottom.free_symbols for bottom in bottoms):
-        tops, bottoms = _numbers_cancelled(tops, bottoms)
+        tops, bottoms = _numbers_taken_out(tops, bottoms)
         tops = [part for top in tops for part in sp.Mul.make_args(_content(top))]
     if bottoms and len(tops) == 2 and sum(top.is_Number for top in tops) == 1:
         tops = [sp.Add(*map(_folded, sp.Add.make_args(sp.Mul(*tops))))]
@@ -567,45 +602,43 @@ def _cleared(
     return [number, *(top for top in tops if not top.is_Number)], cleared
 
 
-def _numbers_cancelled(
+def _numbers_taken_out(
     tops: list[sp.Expr], bottoms: list[sp.Expr]
 ) -> tuple[list[sp.Expr], list[sp.Expr]]:
-    """The factors with a number common to the numerator and a denominator sum cancelled.
+    """The factors with the numeric content of each denominator sum taken out of it.
 
-    `(2*x + 2)/(2*x^2 + 4)` is `(x + 1)/(x^2 + 2)`, as the gcd of the two polynomials
-    over the rationals leaves it. Only what cancels is taken out of a denominator sum,
-    which keeps the rest of its content: `(3 - 4*x)/(2*x^2 + 2)` stays, and
-    `(2*x + 2)/(4*x^2 + 8)` is `(x + 1)/(2*x^2 + 4)`.
+    Derive writes a denominator sum with coprime integer coefficients and its content
+    in front: `(3 - 4*x)/(2*x^2 + 2)` is `(3 - 4*x)/(2*(x^2 + 1))`. The content then
+    cancels against the numerator's: `(2*x + 2)/(4*x^2 + 8)` is `(x + 1)/(2*(x^2 +
+    2))`.
     """
-    contents = [top.as_content_primitive() for top in tops]
-    numerator = sp.Mul(*(content for content, _ in contents))
-    if not (numerator.is_Rational and abs(numerator.p) > 1):
-        return tops, bottoms
-    cancelled = []
+    scale = sp.S.One
+    taken = []
     for bottom in bottoms:
         base, exponent = bottom.as_base_exp()
         if base.is_Add and exponent.is_Integer and exponent > 0:
             content, primitive = base.as_content_primitive()
-            common = _dividing(content, numerator.p, int(exponent))
-            if common > 1:
-                numerator /= sp.Integer(common) ** exponent
-                bottom = (content / common * primitive) ** exponent
-        cancelled.append(bottom)
-    if cancelled == bottoms:
+            if _all_negated(primitive):
+                content, primitive = -content, -primitive
+            if content.is_Integer and content != 1:
+                scale *= content**exponent
+                bottom = primitive**exponent
+        taken.append(bottom)
+    if scale == 1:
         return tops, bottoms
-    return [numerator, *(rest for _, rest in contents)], cancelled
+    contents = [top.as_content_primitive() for top in tops]
+    number = sp.Mul(*(content for content, _ in contents)) / scale
+    return [number, *(rest for _, rest in contents if rest != 1)], taken
 
 
-def _dividing(content: sp.Basic, number: int, exponent: int) -> int:
-    """The largest divisor of `content` whose power `exponent` divides `number`."""
-    if not (content.is_Integer and content > 1):
-        return 1
-    common = sp.igcd(int(content), number)
-    if exponent == 1 or common == 1:
-        return int(common)
-    if common > 10**6:
-        return 1
-    return max(d for d in sp.divisors(common) if number % d**exponent == 0)
+def _reciprocal_sum(expression: sp.Basic) -> bool:
+    """Whether `expression` is a sum to a negative integer power, a quotient alone."""
+    return (
+        isinstance(expression, sp.Pow)
+        and expression.base.is_Add
+        and expression.exp.is_Integer
+        and expression.exp < 0
+    )
 
 
 def _all_negated(factor: sp.Expr) -> bool:
@@ -1065,13 +1098,25 @@ def _arithmetic(number: sp.Expr) -> sp.Expr | None:
     Rationalizing multiplies the numerator by the conjugate, which for a least-squares
     fit's coefficients (quotients of sums of `SIN(4)` and `ATAN(4)`) yields far too
     many terms.
+
+    Nor if multiplying out inside function arguments more than doubles the number,
+    whose result would then be kept only if shorter: the third Newton step for `COS(x)
+    - x` from 1, a tower of 150 operations, multiplies out to 2,700 and rationalizes
+    for minutes.
     """
     if _expanded_terms(number) > _EXPANSION:
         return None
-    rationalized = sp.radsimp(sp.expand(number, log=False))
+    expanded = sp.expand(number, log=False)
+    if sp.count_ops(expanded) > 2 * sp.count_ops(number) + _GROWTH:
+        return None
+    rationalized = sp.radsimp(expanded)
     if _expanded_terms(rationalized) > _EXPANSION:
         return None
     return _expanded(rationalized)
+
+
+#: Operations a number may gain by `_arithmetic` multiplying it out, beyond doubling.
+_GROWTH = 20
 
 
 def _rebuilt(expression: sp.Basic) -> sp.Basic:

@@ -487,3 +487,40 @@ def test_an_integral_over_an_infinite_range_of_a_vanishing_integrand():
         sp.exp(-sp.Rational(13, 10) * sp.cosh(t)) * sp.cosh(t), (t, 0, sp.oo)
     )
     assert approximated(integral, APPROXIMATE) == sp.Rational(4690, 12589)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Derive approximates the logarithms before the exponential is split into
+        # powers of 2 and 5 (CURV_FIT's G_1).
+        ("#e^(t*(LN(5) - LN(2))/3)", "#e^(0.305430*t)"),
+        ("5^(t/3)", "5^(0.333333*t)"),
+        ("2^x*3^y", "2^x*3^y"),
+        # The constant part of an exponent is a factor: CURV_FIT.DOC's exponential fit
+        # is `3.17338*#e^(-0.701797*t)`.
+        ("#e^(x + 1)", "2.71828*#e^x"),
+        ("#e^2*#e^(-t)", "7.38905*#e^(-t)"),
+    ],
+)
+def test_an_approximated_exponential_has_a_numeric_exponent_and_coefficient(
+    text, expected
+):
+    assert simp(text, APPROXIMATE) == expected
+
+
+def test_curv_fit_s_exponential_and_power_fits_come_out_as_documented():
+    """CURV_FIT.DOC fits `3.17338 #e^(-0.701797 t)` and `2.19899/t^(1.90553)` to the
+    logarithms of its data; the exact fit of the logarithms is quick too."""
+    data = "[[1, 1.5], [2, 0.8], [3, 0.4], [4, 0.2], [5, 0.09], [6, 0.047]]"
+    logs = f"VECTOR([{data} SUB k SUB 1, LN({data} SUB k SUB 2)], k, 1, 6)"
+    both = f"VECTOR([LN({data} SUB k SUB 1), LN({data} SUB k SUB 2)], k, 1, 6)"
+    line = f"FIT([x, a*x + b], {logs})"
+    slope = f"(LIM({line}, x, 1) - LIM({line}, x, 0))"
+    fitted = f"#e^LIM({line}, x, 0)*#e^(t*{slope})"
+    assert simp(fitted, APPROXIMATE) == "3.17338*#e^(-0.701797*t)"
+    line = f"FIT([x, a*x + b], {both})"
+    slope = f"(LIM({line}, x, 1) - LIM({line}, x, 0))"
+    fitted = f"#e^LIM({line}, x, 0)*t^{slope}"
+    assert simp(fitted, APPROXIMATE) == "2.19899/t^(1.90553)"
+    assert "x" in simp(f"FIT([x, a*x + b], {logs})")
