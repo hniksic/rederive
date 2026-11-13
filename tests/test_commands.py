@@ -278,6 +278,38 @@ async def test_a_parameter_names_the_variable_a_sum_ranges_over(session):
     assert (await session.simplify("#2")).text == "(m - 1)!"
 
 
+async def test_a_parameter_called_with_a_number_is_substituted_after_its_binding(session):
+    """A derivative in a parameter called with a number is the derivative at that number.
+
+    The parameter is the variable of differentiation, and the argument is substituted
+    into the result, so no name the caller didn't write is left over. ORTH_POL.MTH's
+    `ASSOCIATED_LEGENDRE_P` differentiates in its argument this way.
+    """
+    session.author("F(x) := DIF(x^3, x)")
+    session.author("G(x) := DIF(x^3, x, 2)")
+    session.author("H(x) := INT(x^2, x)")
+    session.author("V(x) := VECTOR(x^2, x, 3)")
+    assert (await session.simplify("F(2)")).text == "12"
+    assert (await session.simplify("F(y^2)")).text == "3*y^4"
+    assert (await session.simplify("G(2)")).text == "12"
+    assert (await session.simplify("H(2)")).text == "8/3"
+    assert (await session.simplify("V(7)")).text == "[1, 4, 9]"
+
+
+async def test_names_differing_in_case_stay_apart_inside_a_function(session):
+    """Under `CaseMode := Sensitive` an argument's `p` and `P` are two variables, also
+    where the body ranges over a variable the argument mentions. TENSOR.MTH sets this
+    mode, and its `TP_T` transposes a matrix holding both.
+    """
+    session.author("CaseMode := Sensitive")
+    session.author("M := 5")
+    session.author("Fv(Z) := VECTOR(Z, j, 2)")
+    session.author("Fs(Z) := SUM(Z, j, 1, 2)")
+    assert (await session.simplify("Fv(j*p + P)")).text == "[P + p, P + 2*p]"
+    assert (await session.simplify("Fs(j*p + j*P)")).text == "3*P + 3*p"
+    assert (await session.simplify("Fv(j*m)")).text == "[m, 2*m]"
+
+
 async def test_every_definition_on_a_line_is_recorded(session):
     session.author("[a := 2, b := 3]")
     session.author("a b")

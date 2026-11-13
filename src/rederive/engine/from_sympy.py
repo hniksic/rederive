@@ -27,6 +27,7 @@ from rederive.engine.printer import author_text, is_written, named
 from rederive.engine.to_sympy import FunDef, StringLiteral
 from rederive.model.expr import Kind, Node
 from rederive.syntax import (
+    CaseMode,
     DeriveSyntaxError,
     FunctionDeclaration,
     ParseState,
@@ -157,11 +158,12 @@ def parse_state_for(expression: sp.Basic, context: Context) -> ParseState:
     Every name in the expression and the context is declared, so multi-character
     names lex as one name.
 
-    Modes are the defaults (Character input, case-insensitive); only the input base
-    comes from the context. A session in another mode should pass its own state: under
-    `CaseMode := Sensitive`, `n` and `N` are different variables.
+    The input mode is the default, Character, with every name declared. The input base
+    and case mode come from the context: under `CaseMode := Sensitive`, `n` and `N` are
+    different variables.
     """
-    state = ParseState(input_base=context.input_base)
+    case_mode = CaseMode.SENSITIVE if context.case_sensitive else CaseMode.INSENSITIVE
+    state = ParseState(input_base=context.input_base, case_mode=case_mode)
     # All symbols, not only free ones: a sum's index and a limit's variable must lex
     # too. Declared nonscalars are `MatrixSymbol`s, not `Symbol`s.
     for symbol in expression.atoms(sp.Symbol, sp.MatrixSymbol):

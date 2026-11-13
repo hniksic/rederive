@@ -1495,6 +1495,14 @@ def test_a_demonstration_is_its_comments_and_the_lines_under_them(tmp_path):
     )
 
 
+def test_a_continuation_is_joined_with_its_leading_blanks(tmp_path):
+    """The original breaks a line at a fixed width, here between `m` and `sub`, as in
+    FIT_.DMO. The next line goes on exactly where the break was."""
+    path = tmp_path / "show.dmo"
+    path.write_text("; fit\n[F(2 x,x,m~\n sub 2 sub 1)]\n")
+    assert worksheet.demonstration(path) == (("fit", "[F(2 x,x,m sub 2 sub 1)]"),)
+
+
 def test_a_quoted_line_is_the_comment_of_the_step_under_it(tmp_path):
     """This is how the original's plot galleries are written."""
     path = tmp_path / "gallery.mth"

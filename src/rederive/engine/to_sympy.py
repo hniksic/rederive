@@ -3655,12 +3655,15 @@ _ITERATE_OPERATIONS = 1000
 def outsized(value: sp.Basic) -> bool:
     """Whether a value has grown too large to keep iterating on.
 
-    This is the size limit for open-ended computations like uncounted iteration.
+    This is the size limit for open-ended computations like uncounted iteration. A
+    fraction's numerator and denominator count as numbers: Newton's method for
+    `SQRT(3)` from 2 doubles their length at every step.
     """
     if sp.count_ops(value) > _ITERATE_OPERATIONS:
         return True
     return any(
-        int(number).bit_length() > _ITERATE_BITS for number in value.atoms(sp.Integer)
+        max(abs(number.p), number.q).bit_length() > _ITERATE_BITS
+        for number in value.atoms(sp.Rational)
     )
 
 

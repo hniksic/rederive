@@ -147,8 +147,11 @@ def steps_of(text: str) -> tuple[tuple[str, str], ...]:
     """The steps of a demonstration: each comment paired with the line below it.
 
     A demonstration is a math file whose comments are script text rather than
-    annotations. `~` continuations are joined, and a step without a comment has a
-    blank band.
+    annotations. A step without a comment has a blank band.
+
+    A line ending in `~` continues on the next, which is joined as it stands, leading
+    blanks included, as when a utility file is read: the original breaks lines at a
+    fixed width, even inside a name or between the words of `m sub 2`.
 
     A line that is only a quoted string also counts as a comment, so the original's
     plot galleries (a caption, then the expression) work as demonstrations.
@@ -161,12 +164,15 @@ def steps_of(text: str) -> tuple[tuple[str, str], ...]:
     pending: list[str] = []
     caption = ""
     for number, line in enumerate(_lines(text), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith(COMMENT):
-            continue
-        if _captioning(stripped):
-            caption = stripped[1:-1].strip()
-            continue
+        if pending:
+            stripped = line.rstrip()
+        else:
+            stripped = line.strip()
+            if not stripped or stripped.startswith(COMMENT):
+                continue
+            if _captioning(stripped):
+                caption = stripped[1:-1].strip()
+                continue
         pending.append(stripped)
         if stripped.endswith(CONTINUATION):
             pending[-1] = stripped[: -len(CONTINUATION)]

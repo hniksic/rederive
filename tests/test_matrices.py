@@ -555,10 +555,17 @@ ITERATION = [
     ("ITERATES(x + 1, x, 0, 5/2)", "[0, 1, 2]"),
     ("ITERATES(x + 1, x, 0, -5/2)", "[0, -1, -2]"),
     ("ITERATE(x + 1, x, 0, 5/2)", "2"),
+    # A count that isn't a number runs the iteration as if it were omitted, as the
+    # manual says and Derive does: SOLVE.MTH's `NEWTON` called without its count.
+    ("ITERATES(1/x, x, 2, n)", "[2, 1/2, 2]"),
+    ("ITERATE(1/x, x, 2, n)", "?"),
     # An uncounted iteration that never repeats stays unevaluated (Derive runs until
-    # memory runs out), as does a symbolic count.
+    # memory runs out), whether its iterates grow in size, in digits (Newton's method
+    # for SQRT(3), exactly) or in neither.
     ("ITERATES(x^2, x, 2)", "ITERATES(x^2, x, 2)"),
+    ("ITERATES((x^2 + 3)/(2*x), x, 2, n)", "ITERATES((x^2 + 3)/(2*x), x, 2, n)"),
     ("ITERATE(a*x, a, 1, n)", "ITERATE(a*x, a, 1, n)"),
+    ("ITERATES(x + 1, x, 0, n)", "ITERATES(x + 1, x, 0, n)"),
 ]
 
 

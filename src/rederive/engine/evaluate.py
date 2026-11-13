@@ -700,6 +700,14 @@ class _Evaluator(Converter):
         SOLVE.MTH depends on: `NEWTON_AUX`'s `LIM(a, x, xk)` is called with `[x, y]`
         for `x`.
 
+        A parameter supplied with a number or another expression that names no variable
+        binds the parameter itself, and its argument is substituted into the result,
+        as `_taken` does for a resumed value: with `F(x) := DIF(x^3, x)`, `F(2)`
+        differentiates in `x` and is 12 at 2, the derivative of `F` there, rather than
+        `3*x^2` with a name the caller never wrote. `F(x) := INT(x^2, x)` is likewise an
+        antiderivative evaluated at the argument, while a definite integral or a sum
+        over the parameter has no `x` left to substitute.
+
         A parameter supplied with an element whose index isn't known yet binds nothing
         either, so `DIF(u, v)` called with `[x1, x2] SUB k` for `v` stays a call until
         `k` is a number, as written out it would.
@@ -737,7 +745,14 @@ class _Evaluator(Converter):
         evaluator = self.within(inner)
         outer = evaluator if name in BINDING_THROUGHOUT else self
         limits = [_value_of(outer.convert(argument)) for argument in rest]
-        taken = _taken(self.env.written, names)
+        taken = {
+            **_taken(self.env.written, names),
+            **{
+                self.symbol(name): self.env.bindings[name]
+                for name in shadowed
+                if name in self.env.bindings
+            },
+        }
         if self.binds_parameter(index):
             return self.opaque(name, [_value_of(evaluator.convert(body)), index, *limits])
         if name in _COUNTED and not self.env.writing:
@@ -861,6 +876,8 @@ class _Evaluator(Converter):
                 if not limits or len(limits) > 2:
                     return None
                 start, *count = limits
+                if count and self._uncounted(count[0]):
+                    count = []
                 return iterated(
                     name,
                     self,
@@ -887,6 +904,21 @@ class _Evaluator(Converter):
             return chosen_from(steps(limits), lambda value: _value_of(at(value)), decide)
         except Exception:
             return None
+
+    def _uncounted(self, count: sp.Basic) -> bool:
+        """Whether an `ITERATE` count runs the iteration as if it were omitted.
+
+        The manual: "If n is a positive integer, the iteration is repeated n times;
+        otherwise, it is repeated until x is equal to one of its earlier values."
+        SOLVE.MTH's `NEWTON(u, x, x0, n)` called without `n` leaves it a variable, and
+        Derive then iterates to convergence. A number is a count (see `_sequence`).
+        In a definition being shown, or where the count mentions a parameter or bound
+        variable, it may yet become a number, so the call is left as written.
+        """
+        if self.env.defining or getattr(count, "is_number", True):
+            return False
+        names = _symbol_names(count)
+        return not names & (self.env.bound | self.env.parameters)
 
     def _index(self, index: Node) -> tuple[sp.Basic, frozenset[str], frozenset[str]]:
         """The variable a binding call ranges over, the names it binds, and the

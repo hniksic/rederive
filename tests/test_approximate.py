@@ -447,6 +447,13 @@ def test_a_system_iterates_numerically_in_approximate_mode():
     )
 
 
+def test_an_iteration_with_a_symbolic_count_runs_until_it_repeats():
+    # SOLVE.MTH's `NEWTON(u, x, x0, n)` called without `n`, which Derive then runs to
+    # convergence; exactly, Newton's method for SQRT(3) never repeats.
+    text = "ITERATES((x^2 + 3)/(2*x), x, 2, n)"
+    assert simp(text, APPROXIMATE) == "[2, 1.75, 1.73214, 1.73205, 1.73205]"
+
+
 def test_a_recursion_goes_numeric_step_by_step():
     # The arithmetic-geometric mean of 1 and 2 is 1.4567910310...; computed exactly,
     # each level nests the square roots of the last.
