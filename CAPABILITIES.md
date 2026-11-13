@@ -25,27 +25,7 @@ The 111 names the original defines, all supported:
 | Combinatorics | `COMB` `PERM` |
 
 Bound-variable heads are `DIF INT ITERATE ITERATES LIM PRODUCT SELECT SUM TAYLOR VECTOR`,
-binding their second argument over the first. The second argument may also be an
-expression that evaluates to a variable, such as `[x, y] SUB n`; while it doesn't
-(`n` symbolic), the call stands.
-
-The two numeric settings, `PrecisionDigits` and `NotationDigits`, read as variables
-holding the digits in force (6 by default; inside `APPROX(u, 20)`, 20). The other
-settings have keyword values and read as plain names.
-
-A user function's arguments are evaluated before its body, as in Derive. Where the
-body gives values to a variable an argument's value mentions, they are substituted into
-that value, which is evaluated again: with `F(p, k) := VECTOR(p, k, 3)`, `F([a, b, c] SUB
-k, k)` is `[a, b, c]`, while with `Q(z, x) := ITERATES(x + z SUB 2, x, 1, 1)`,
-`Q(ITERATES(DIF(w, x), w, x^2, 1), x)` iterates over the derivatives already taken and
-is `[1, 3]`. When a definition is
-simplified, a bound-variable call over one of its parameters is shown as written.
-
-An assignment or definition in a function's body is performed when the function is
-called, with the arguments written in, and holds from then on, within the same command
-too. With `A1(u, x) := (A2(x) := u)`, `A1(y^2, y)` is `y^2` and defines `A2(y) := y^2`;
-with `B(u) := (b := u)`, `B(7)` is 7 and gives `b` the value 7. Simplifying a definition
-performs nothing.
+binding their second argument over the first.
 
 ## Added built-ins
 
@@ -83,12 +63,8 @@ only another spelling of one of these is written in that one, so `INT(1/LN(x), x
 Derive shipped `SI` `CI` `EI` as `.MTH` definitions; the difference is that the engine
 *produces* them.
 
-A user function or variable named like one of these (EXP_INT.MTH's `EI(x, m)`, ZETA.MTH's
-`POLYLOG(n, z, m)`, PROBABIL.MTH's `POLYGAMMA(n, z)`) takes the name over: calls go to the
-definition, and no answer is written with the built-in, since reading it back would call
-the user's function. What would need it is left standing, as Derive leaves it: with
-EXP_INT.MTH loaded, `INT(#e^(-t)/t, t, 1, inf)` stays an integral rather than becoming
-`-EI(-1)`, and approximates to 0.219383.
+A user definition named like one of these takes the name over, as EXP_INT.MTH's
+`EI(x, m)` does: calls go to the definition, and no answer is written with the built-in.
 
 ## Where Rederive goes further
 
@@ -150,44 +126,6 @@ SQRT(10001) - 100              0.00499987          Derive: 0.00499722
 SQRT(10^200 + 1) - 10^100      5.00000*10^-101     Derive: 0
 ```
 
-This holds within one step of a computation, not across steps. A value carried from one
-step to the next is rounded to working precision (five digits past those asked for) as
-it is handed on: each iterate of `ITERATE` and `ITERATES`, each running total of a `SUM`
-or `PRODUCT` taken term by term, and the number a defined function returns. So an
-iteration, a recursion or a chain of functions (an AGM, a Runge-Kutta step, a Bessel
-recurrence) goes numeric step by step under `Precision := Approximate` and inside
-`APPROX`, as in Derive, instead of building an exact tower of nested radicals that
-never reduces to the digits shown. A function's own body is still computed exactly, so
-`F(x) := SQRT(x) - 100` gives the same 0.00499987 for `F(10001)`. Values that still
-contain a variable are carried exactly. A least-squares `FIT` is one such step: its
-coefficients are rounded to working precision, so FIT_.MTH's reweighted rational fits
-stay quick, while exact data still give their exact fit.
-
-An approximate quotient is shown in Derive's normal form, its denominator cleared of
-fractions, as long as its numbers are short: CURV_FIT.DOC's `3655.76/(9783*t -
-11564)`. Where clearing approximate coefficients would show a scale that cancels
-between numerator and denominator, the denominator is made monic instead, so
-`PADE(TAN(x), x, 1, 2, 2)` is `(1.55740*x^2 - 6.11481*x - 0.114815)/(x^2 + 2.67222*x
-- 6.67222)`, and `NUMERATOR` and `DENOMINATOR` agree with what is shown.
-
-A definite integral that is a number is likewise worked out exactly first under
-`Precision := Approximate` and inside `APPROX`, but without the slow heuristic search
-for an antiderivative: where no closed form comes quickly, it goes to quadrature, as in
-Derive. `APPROX(INT(#e^(1.3*COS(t))*COS(t), t, 0, pi))` is 2.50488 at once. Poles in the
-interval are still found first, and the quadrature cuts the interval where a logarithm,
-root or denominator of a polynomial is singular.
-
 **Integrals through a pole.** A definite integral through a pole inside the interval is
 `inf` or `?` rather than the difference of the antiderivative's values at the ends:
 `INT(1/x^2, x, -1, 1)` is `inf`, not `-2`.
-
-**Limits of relations.** `LIM` substitutes into both sides of an equation or inequality,
-as Derive 3.14 does, wherever each side is continuous at the point, and takes each side's
-limit where it isn't. Derive 4.11 does the same at a symbolic point, but at a numeric one
-answers `false`, even for a true equation:
-
-```
-LIM(x + 1 = y, x, a)       a + 1 = y         Derive 4.11: a + 1 = y
-LIM(x^2 = c, x, 3)         9 = c             Derive 4.11: false
-LIM(x^2 = 9, x, 3)         true              Derive 4.11: false
-```
