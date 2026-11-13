@@ -65,6 +65,9 @@ def _as_gamma_ratio(base: sp.Basic, count: sp.Basic) -> sp.Basic:
 #: rising factorial only at removable points (the gamma poles). Fresnel integrals are
 #: handled by `_as_error_functions`. `POLYLOG(1, z)` is `-LN(1 - z)` everywhere, with
 #: the same branch cut, and is the one elementary polylogarithm sympy doesn't expand.
+#: Sympy's `acot(z)` is `ATAN(1/z)`, an odd function, while Derive's `ACOT(z)` is
+#: `pi/2 - ATAN(z)`; they differ by `pi` for negative `z`, so `acot` can't be printed as
+#: `ACOT`.
 _SPELLED_OVER: dict[type, Callable[..., sp.Basic]] = {
     sp.Li: lambda x: sp.Ei(sp.log(x)) - sp.Ei(sp.log(2)),
     sp.li: lambda x: sp.Ei(sp.log(x)),
@@ -75,6 +78,7 @@ _SPELLED_OVER: dict[type, Callable[..., sp.Basic]] = {
     sp.loggamma: _as_log_gamma,
     sp.sinc: lambda x: sp.sin(x) / x,
     sp.polylog: lambda s, z: -sp.log(1 - z) if s == 1 else sp.polylog(s, z),
+    sp.acot: lambda z: sp.atan(1 / z),
 }
 
 #: The Fresnel integrals, which are `ERF`s of complex arguments.

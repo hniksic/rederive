@@ -117,7 +117,12 @@ VECTORS = [
     ("[[1, 2], [3, 4]]/[[1, 2], [2, 4]]", "[[1, 2], [3, 4]] . [[1, 2], [2, 4]]^-1"),
     ("CROSS([1, 2], [1, 2, 3])", "CROSS([1, 2], [1, 2, 3])"),
     ("ELEMENT([1, 2], 3)", "ELEMENT([1, 2], 3)"),
-    ("a . b", "a . b"),
+    # Anything not declared nonscalar is a scalar (8.5), so `.` between scalars is a
+    # product. MATRIX.DMO's vector algebra step.
+    ("a . b", "a*b"),
+    ("a . b - b . a", "0"),
+    ("a . (b + c) - (b` . a`)`", "a*c"),
+    ("a . [1, 2]", "a . [1, 2]"),
     # Ragged: not a matrix, and left alone.
     ("[[1, 2], [3]]", "[[1, 2], [3]]"),
 ]
@@ -217,6 +222,9 @@ NONSCALARS = [
     # A scalar commutes with everything, so a negated product needs no parentheses.
     ("a . b - b . a", "a . b - b . a"),
     ("-(a . b)", "-a . b"),
+    # A distributed product cancels against the rest of the sum, as MATRIX.DMO's
+    # vector algebra step shows.
+    ("a . (b + c) - (b` . a`)`", "a . c"),
     # Dividing by a matrix means multiplying by its inverse.
     ("1/a", "a^-1"),
     ("x/a", "x*a^-1"),

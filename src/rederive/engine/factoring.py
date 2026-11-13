@@ -139,8 +139,41 @@ def _trivial(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:
 
     The generators are ignored: the content (gcd of the coefficients and the least
     power of each variable) is the same whichever variables were named.
+
+    Exponentials are content too. Each is split into a product, one factor per term of
+    its exponent, so that `#e^(2*t - b)` shares `#e^(2*t)` with `a*#e^(2*t)`; the
+    factors left in each product of the result are joined again. So
+    `a*#e^(2*t) - #e^(2*t - b)` is `#e^(2*t - b)*(a*#e^b - 1)`, as in Derive, which
+    ODE.MTH's `BARE` relies on to strip such factors from a differential equation.
     """
-    return sp.factor_terms(sp.together(expression))
+    split = expression.replace(
+        sp.exp,
+        lambda exponent: sp.Mul(
+            *(sp.exp(term) for term in sp.Add.make_args(sp.expand(exponent)))
+        ),
+    )
+    return _joined_exponentials(sp.factor_terms(sp.together(split)))
+
+
+def _is_exponential(factor: sp.Basic) -> bool:
+    return isinstance(factor, sp.exp) or factor is sp.E
+
+
+def _joined_exponentials(expression: sp.Expr) -> sp.Expr:
+    """`expression` with the exponentials in each product multiplied into one."""
+
+    def joined(product: sp.Mul) -> sp.Expr:
+        exponents = [
+            sp.S.One if factor is sp.E else factor.args[0]
+            for factor in product.args
+            if _is_exponential(factor)
+        ]
+        rest = [factor for factor in product.args if not _is_exponential(factor)]
+        return sp.Mul(*rest) * sp.exp(sp.Add(*exponents))
+
+    return expression.replace(
+        lambda e: e.is_Mul and sum(map(_is_exponential, e.args)) > 1, joined
+    )
 
 
 def _squarefree(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:

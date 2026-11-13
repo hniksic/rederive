@@ -365,9 +365,10 @@ def _range(expression: sp.Basic, ranges: dict[sp.Symbol, _Range]) -> _Range | No
     if isinstance(expression, sp.Pow):
         return _power(expression, ranges)
     if isinstance(expression, (sp.sin, sp.cos)):
-        if _range(expression.args[0], ranges) is None:
+        inner = _range(expression.args[0], ranges)
+        if inner is None:
             return None
-        return _Range(sp.S.NegativeOne, sp.S.One, False, False)
+        return _wave(inner, isinstance(expression, sp.cos))
     if isinstance(expression, sp.cosh):
         # Even, and increasing in the size of its argument.
         inner = _range(expression.args[0], ranges)
@@ -378,6 +379,39 @@ def _range(expression: sp.Basic, ranges: dict[sp.Symbol, _Range]) -> _Range | No
         return None
     inner = _range(expression.args[0], ranges)
     return None if inner is None else rule(inner)
+
+
+#: The most turning points of a sine counted over a range; past two, it covers [-1, 1].
+_TURNS = 2
+
+
+def _wave(reach: _Range, cosine: bool) -> _Range:
+    """The values of the sine, or cosine, over a range of angles.
+
+    The extremes are at the ends or at the turning points `pi/2 + k*pi` strictly
+    between them, where the sine is `(-1)^k`. So `SIN(t)` over `(0, pi)` is in `(0, 1]`.
+    The cosine is the sine a quarter turn on. An unbounded range, or one whose turning
+    points can't be located, gives `[-1, 1]`.
+    """
+    whole = _Range(sp.S.NegativeOne, sp.S.One, False, False)
+    shift = sp.pi / 2 if cosine else sp.S.Zero
+    low, high = reach.low + shift, reach.high + shift
+    if not (low.is_finite and high.is_finite):
+        return whole
+    first = sp.ceiling((low - sp.pi / 2) / sp.pi)
+    last = sp.floor((high - sp.pi / 2) / sp.pi)
+    if not (first.is_Integer and last.is_Integer):
+        return whole
+    if last - first >= _TURNS:
+        return whole
+    candidates = [(sp.sin(low), not reach.low_open), (sp.sin(high), not reach.high_open)]
+    for turn in range(int(first), int(last) + 1):
+        point = sp.pi / 2 + turn * sp.pi
+        if _true(point > low) and _true(point < high):
+            candidates.append((sp.S.NegativeOne**turn, True))
+        elif point != low and point != high:
+            return whole
+    return _hull(candidates) or whole
 
 
 def _assumed(symbol: sp.Symbol) -> _Range | None:

@@ -247,7 +247,13 @@ def test_a_dot_of_conforming_matrices_is_their_product():
 
 def test_a_dot_of_shapes_that_will_not_multiply_stays_inert():
     assert type(convert("[[1, 2], [3, 4]] . [1, 2, 3]")).__name__ == "Dot"
-    assert type(convert("a . b")).__name__ == "Dot"
+    assert type(convert("a . [1, 2]")).__name__ == "Dot"
+
+
+def test_a_dot_of_scalars_is_their_product():
+    # Anything not declared nonscalar is a scalar (section 8.5).
+    assert convert("a . b") == convert("a*b")
+    assert convert("SIN(x) . 2") == convert("2*SIN(x)")
 
 
 def test_multiplying_two_vectors_is_their_dot_product():
@@ -722,7 +728,7 @@ UNCHANGED = [
     "x SUB (i + 1)",
     "(x + 1) SUB 2",
     "(x = 1)`",
-    "a . b",
+    "a . [1, 2]",
     "±x",
     '"note"',
     "?",

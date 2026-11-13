@@ -351,6 +351,16 @@ CANCELLED_CONTENT = [
     ("(SQRT(2)*x + SQRT(2))/(2*SQRT(2))", "x/2 + 1/2"),
     ("SQRT(3)*(SQRT(3)*x + SQRT(3)*y)", "3*x + 3*y"),
     ("(x + 1)/pi", "(x + 1)/pi"),
+    # Over a numeric denominator, a numerator sum's integer content cancels as far as
+    # the denominator allows, beside another factor too (NUMBER.MTH's EULER_POLY).
+    ("(x - 1)*(6*x^2 + 12*x)/6", "(x - 1)*(x^2 + 2*x)"),
+    ("(x - 1)*(2*x + 4)/6", "(x - 1)*(x + 2)/3"),
+    # A number with constants cancels as a quotient of polynomials in them, but isn't
+    # put over a denominator when nothing cancels.
+    ("4*#e*pi^2/(4*pi^2 + 1) + #e/(4*pi^2 + 1) - 1", "#e - 1"),
+    ("(pi*#e + pi)/(#e + 1)", "pi"),
+    ("pi/2 + 1/2", "pi/2 + 1/2"),
+    ("1/pi + 1/(pi + 1)", "1/pi + 1/(pi + 1)"),
 ]
 
 
@@ -496,11 +506,13 @@ DOMAINS = [
         "INT(SIN(2*x)*SIN(m*x), x, 0, pi)",
         declared("m :epsilon Integer"),
     ),
-    # The tangent pair sums to a right angle with the sign of its argument, which
-    # covers both cases and so is not a guess. For complex arguments the identity
-    # doesn't hold (`SIGN` is no longer `±1`), so the pair stays.
-    ("ACOT(t) + ATAN(t)", "pi*SIGN(t)/2", None),
-    ("ACOT(x) + ATAN(x)", "ATAN(x) + ACOT(x)", COMPLEX_X),
+    # An arctangent and the arctangent of the reciprocal sum to a right angle with the
+    # sign of the argument, which covers both cases and so is not a guess. For complex
+    # arguments the identity doesn't hold (`SIGN` is no longer `±1`), so the pair stays.
+    ("ATAN(1/t) + ATAN(t)", "pi*SIGN(t)/2", None),
+    ("ATAN(1/x) + ATAN(x)", "ATAN(1/x) + ATAN(x)", COMPLEX_X),
+    # `ACOT(z)` is `pi/2 - ATAN(z)` by definition (section 6.4), for every `z`.
+    ("ACOT(x) + ATAN(x)", "pi/2", COMPLEX_X),
 ]
 
 #: What a declared interval tells beyond its sign. A sympy symbol can only carry
@@ -528,6 +540,17 @@ INTERVALS = [
     # reason about an integer bounded by a relation.
     ("ABS(n - 7)", "7 - n", "n :epsilon Integer [2, 5]"),
     ("ABS(n - 7)", "ABS(n - 7)", "n :epsilon Integer [2, 9]"),
+    # A sine or cosine over an interval of angles takes the values at the ends and at
+    # the turning points between: the 3.14 manual's spherical `GEOMETRY_MATRIX` has
+    # `r*SIN(phi)` for `phi` in `(0, pi)`.
+    ("ABS(SIN(p))", "SIN(p)", "p :epsilon Real (0, pi)"),
+    ("ABS(SIN(p))", "SIN(p)", "p :epsilon Real [0, pi]"),
+    ("SIGN(SIN(p))", "1", "p :epsilon Real (0, pi)"),
+    ("ABS(SIN(p))", "-SIN(p)", "p :epsilon Real (pi, 2*pi)"),
+    ("ABS(SIN(p))", "ABS(SIN(p))", "p :epsilon Real (0, 2*pi)"),
+    ("ABS(COS(p))", "COS(p)", "p :epsilon Real (-pi/2, pi/2)"),
+    ("ABS(COS(p))", "ABS(COS(p))", "p :epsilon Real (0, pi)"),
+    ("ABS(SIN(p) - 1)", "1 - SIN(p)", "p :epsilon Real (0, pi)"),
     # An `IF` test and a bare relation are decided the same way.
     ("IF(x < 1, a, b)", "a", "x :epsilon Real (0, 1)"),
     ("IF(x > 1, a, b)", "b", "x :epsilon Real (0, 1)"),
@@ -874,21 +897,23 @@ TRIGONOMETRY = [
     ("SIN(6*x)/SIN(3*x)", "2*COS(3*x)", None),
     ("ATAN(2 + SQRT(3))", "5*pi/12", None),
     ("ATAN(1, 1)", "pi/4", None),
-    # Complementary arcs of one argument sum to a right angle. For the tangent pair
-    # the sign of the argument matters, so the answer has `SIGN` unless a
-    # declaration or a nonnegative argument decides it.
+    # Complementary arcs of one argument sum to a right angle. `ACOT(t)` is
+    # `pi/2 - ATAN(t)` (section 6.4), with values from 0 to `pi`, so the tangent pair
+    # is a right angle whatever the sign of `t`, as in TRIG.DMO.
     ("ASIN(x) + ACOS(x)", "pi/2", None),
     ("ASEC(x) + ACSC(x)", "pi/2", None),
     ("2*ASIN(x) + 2*ACOS(x)", "pi", None),
     ("ASIN(x) + ACOS(x) + y", "y + pi/2", None),
     ("ASIN(x) + ACOS(x)", "90", Context(angle=Angle.DEGREE)),
-    ("ACOT(t) + ATAN(t)", "pi*SIGN(t)/2", None),
-    ("ATAN(t) + ACOT(t) + y", "pi*SIGN(t)/2 + y", None),
-    ("2*ACOT(t) + 2*ATAN(t)", "pi*SIGN(t)", None),
-    ("ACOT(t) + ATAN(t)", "90*SIGN(t)", Context(angle=Angle.DEGREE)),
-    ("ACOT(t) + ATAN(t)", "pi/2", declared("t :epsilon Real (0, inf)")),
-    ("ACOT(t) + ATAN(t)", "-pi/2", declared("t :epsilon Real (-inf, 0)")),
-    # `ACOT(0)` is `pi/2`, so for a square argument the sum is `pi/2` everywhere.
+    ("ACOT(t) + ATAN(t)", "pi/2", None),
+    ("ATAN(t) + ACOT(t) + y", "y + pi/2", None),
+    ("2*ACOT(t) + 2*ATAN(t)", "pi", None),
+    ("ACOT(t) + ATAN(t)", "90", Context(angle=Angle.DEGREE)),
+    ("ACOT(t) + ATAN(t)", "pi/2", declared("t :epsilon Real (-inf, 0)")),
+    ("ACOT(-1)", "3*pi/4", None),
+    ("ACOT(-1)", "135", Context(angle=Angle.DEGREE)),
+    ("ACOT(-inf)", "pi", None),
+    ("ACOT(x)", "pi/2 - ATAN(x)", None),
     ("ACOT(x^2) + ATAN(x^2)", "pi/2", None),
     ("ACOT(x^2 + 1) + ATAN(x^2 + 1)", "pi/2", None),
     ("ACOT(3) + ATAN(3)", "pi/2", None),
@@ -976,6 +1001,11 @@ def test_a_sum_that_is_zero_by_the_pythagorean_identity_is_zero_however_large():
     assert simp(f"({jacobian}` . {v}) . ({inverse} . {v}) - {v} . {v}") == "0"
 
 
+def test_of_two_equally_short_pythagorean_forms_the_one_with_fewer_terms_is_taken():
+    # A Christoffel symbol of TENSOR1.DMO, next to entries with `SIN(theta)^2`.
+    assert simp("-r*SIN(t)^2/2 + r*COS(t)^2/2 - r/2") == "-r*SIN(t)^2"
+
+
 def test_a_tower_of_nested_trigonometric_calls_comes_back_in_seconds():
     """Exact Newton steps for `COS(x) - x` (SOLVE.MTH's NEWTON) nest cosines in
     cosines. Trigonometric identities and multiplying out are not tried on the third
@@ -1035,7 +1065,7 @@ ARC_TANGENT_SUMS = [
     ("ATAN(1/2) + ATAN(1/4)", "ATAN(1/2) + ATAN(1/4)", None),
     ("ATAN(2) + ATAN(4)", "ATAN(4) + ATAN(2)", None),
     ("3*ATAN(1/5)", "3*ATAN(1/5)", None),
-    # `ATAN(1/u)` is `ACOT(u)` for real `u`, and pairs with `ATAN(u)` the same way.
+    # `ATAN(u) + ATAN(1/u)` is a right angle with the sign of `u`, for real `u`.
     ("ATAN(x) + ATAN(1/x)", "pi*SIGN(x)/2", None),
     ("ATAN(x/y) + ATAN(y/x)", "pi*SIGN(x/y)/2", None),
     ("2*ATAN(x) + 2*ATAN(1/x)", "pi*SIGN(x)", None),

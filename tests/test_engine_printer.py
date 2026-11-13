@@ -362,7 +362,7 @@ INERT = [
     # Sympy transposes whatever it can (a scalar's transpose is the scalar), so the
     # inert head only remains around a non-expression.
     Transposed(sp.Eq(x, 1)),
-    Dot(sp.Symbol("a", real=True), sp.Symbol("b", real=True)),
+    Dot(sp.Symbol("a", real=True), Vector(1, 2)),
     Vector(Vector(1, 2), Vector(3)),
     Logical(sp.Symbol("AND"), sp.Integer(3), sp.Symbol("p", real=True)),
     Assign(sp.Symbol("u", real=True), sp.Symbol(":="), sp.Integer(5)),

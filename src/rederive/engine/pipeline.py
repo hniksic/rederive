@@ -2160,9 +2160,18 @@ def _distributed(expression: sp.Basic) -> sp.Basic:
     The others are written for scalars and mangle matrices (`radsimp` returns a plain
     product of two matrices sympy can't work with), and sympy's construction already
     applies the other rules of section 8.8.
+
+    A sum that gains a sum as a term is rebuilt with sympy's evaluation, which
+    flattens it and collects like terms, so `p . (q + r) - p . q` is `p . r`. That
+    doesn't evaluate the products inside, so `a . a^-1` stays.
     """
-    return expression.replace(
+    distributed = expression.replace(
         _is_matrix_product, lambda product: product.expand(), simultaneous=False
+    )
+    return distributed.replace(
+        lambda e: isinstance(e, sp.MatAdd)
+        and any(isinstance(term, sp.MatAdd) for term in e.args),
+        lambda total: sp.MatAdd(*total.args, evaluate=True),
     )
 
 
@@ -3060,14 +3069,15 @@ def _cyclotomic_degree(constant: sp.Basic) -> int | None:
 
 
 #: Each inverse function and its complement. `ASIN(u) + ACOS(u)` is a right angle
-#: wherever defined; the tangent pair is a right angle with the sign of its argument.
-#: `ASEC` and `ACSC` are covered because they are rewritten as `ACOS` and `ASIN`
-#: first.
-_COMPLEMENT = {
+#: wherever defined. `ASEC` and `ACSC` are covered because they are rewritten as `ACOS`
+#: and `ASIN` first, and `ACOT(u)` is `pi/2 - ATAN(u)` from the start. The complement of
+#: an arctangent is the arctangent of the reciprocal, `_RECIPROCAL` in the table: the
+#: pair is a right angle with the sign of its argument.
+_RECIPROCAL = "arctangent of the reciprocal"
+_COMPLEMENT: dict[type, type | str] = {
     sp.asin: sp.acos,
     sp.acos: sp.asin,
-    sp.atan: sp.acot,
-    sp.acot: sp.atan,
+    sp.atan: _RECIPROCAL,
 }
 
 
@@ -3094,18 +3104,18 @@ def _right_angle(expression: sp.Basic) -> sp.Basic | None:
         if arc is None:
             continue
         arcs[(type(arc), coefficient, arc.args[0])] = index
-        # `ATAN(1/u)` is `ACOT(u)` for real nonzero `u`, so it pairs with `ATAN(u)`.
         if isinstance(arc, sp.atan) and not arc.args[0].is_number:
-            arcs.setdefault((sp.acot, coefficient, 1 / arc.args[0]), index)
+            arcs.setdefault((_RECIPROCAL, coefficient, 1 / arc.args[0]), index)
     for (func, coefficient, argument), index in arcs.items():
+        if func is _RECIPROCAL:
+            continue
         other = arcs.get((_COMPLEMENT[func], coefficient, argument))
         if other is None or other == index:
             continue
-        pair = {type(_arc(expression.args[i])[0]) for i in (index, other)}
-        if pair == {sp.atan}:
+        if func is sp.atan:
             # For `ATAN(u) + ATAN(1/u)`, either argument gives the sign; use the
             # shorter.
-            func, argument = sp.atan, min(argument, 1 / argument, key=sp.count_ops)
+            argument = min(argument, 1 / argument, key=sp.count_ops)
         angle = _quarter_turn(func, argument)
         if angle is None:
             continue
@@ -3128,17 +3138,12 @@ def _arc(term: sp.Basic) -> tuple[sp.Basic | None, sp.Basic]:
 def _quarter_turn(func: type, argument: sp.Basic) -> sp.Basic | None:
     """What the pair adds up to, or None.
 
-    `ATAN(t) + ACOT(t)` is `pi/2` for positive `t` and `-pi/2` for negative, i.e.
-    `pi*SIGN(t)/2`. Derive answers `pi/2` regardless, which is wrong for negative `t`.
-
-    At zero, `ACOT(0)` is `pi/2` by the convention sympy and Derive share, so the sum is
-    `pi/2` while `SIGN` gives 0. A nonnegative argument therefore gets `pi/2`, exact
-    everywhere; the general answer is off only at the single point where `ACOT` jumps.
-
-    The identity fails for complex arguments (at `#i/2` the sum is `-pi/2`), so a pair
-    not known to be real is left as written.
+    `ATAN(t) + ATAN(1/t)` is `pi/2` for positive `t` and `-pi/2` for negative, i.e.
+    `pi*SIGN(t)/2`; at zero the pair is undefined, so a nonnegative argument gets
+    `pi/2`. The identity fails for complex arguments (at `#i/2` the sum is `-pi/2`), so
+    a pair not known to be real is left as written.
     """
-    if func in (sp.atan, sp.acot):
+    if func is sp.atan:
         if not _real_where_defined(argument):
             return None
         if argument.is_nonnegative:
@@ -3557,8 +3562,13 @@ def _pythagorean(expression: sp.Basic) -> sp.Basic:
             return expression
         if parts != [sp.expand(numerator), sp.expand(denominator)]:
             candidates.append((parts[0] / parts[1]).xreplace(back))
-    # Without a square to reduce, the result would only be multiplied out.
-    return min(candidates, key=sp.count_ops) if candidates else expression
+    # Without a square to reduce, the result would only be multiplied out. Of two
+    # equally short, the one with fewer terms: `-r*SIN(t)^2`, not `r*COS(t)^2 - r`.
+    return (
+        min(candidates, key=lambda c: (sp.count_ops(c), len(sp.Add.make_args(c))))
+        if candidates
+        else expression
+    )
 
 
 def _squares_reduced(

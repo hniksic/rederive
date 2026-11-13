@@ -128,8 +128,6 @@ NEVER_TO_HOLD = {
         "the writer spells every absolute value ABS; the screen draws the bars",
     "test_trigonometry[ACOS(z)-pi/2 - ASIN(z)]":
         "the arc rules of 6.4 are equivalences, not rewrites; ACOS stays ACOS",
-    "test_trigonometry[ACOT(z)-pi/2 - ATAN(z)]":
-        "ACOT is sympy's odd branch; the identity is false on the negative reals",
 }
 
 
@@ -484,9 +482,6 @@ TRIGONOMETRY = [
     # the `ASEC` line's answer gives `pi/2 - ASIN(1/z)`, which the section doesn't
     # print. The engine keeps `ASIN`, `ACOS` and `ATAN` and writes reciprocal arcs in
     # terms of them, so the reciprocal lines hold and the `ACOS` line doesn't.
-    #
-    # The `ACOT` line assumes a branch this engine doesn't use: its `ACOT` is odd
-    # (`ACOT(-1)` is `-pi/4`), while `pi/2 - ATAN(z)` agrees with it only above zero.
     ("ACOT(z)", "pi/2 - ATAN(z)"),
     ("ACOT(x, y)", "ATAN(y, x)"),
     ("ACOS(z)", "pi/2 - ASIN(z)"),

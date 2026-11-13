@@ -155,6 +155,7 @@ class _Writer:
         value = sp.Add(*terms)
         if _power_evaluated(number, value):
             return value
+        value = min(value, _constants_divided(number), key=sp.count_ops)
         try:
             shorter = sp.count_ops(value) < sp.count_ops(number)
         except Exception:
@@ -630,9 +631,12 @@ def _quotient(tops: list[sp.Expr], bottoms: list[sp.Expr]) -> sp.Expr:
     `(x^2 - 1)/(y + 1)` stays.
 
     Over a number, a number alone beside a sum in the numerator is multiplied in, as
-    sympy multiplies it in anyway.
+    sympy multiplies it in anyway, and the integer content of a numerator sum cancels
+    against the number: `(x - 1)*(6*x^2 + 12*x)/6` is `(x - 1)*(x^2 + 2*x)`.
     """
     tops, bottoms = _cleared(tops, bottoms)
+    if bottoms and all(bottom.is_Integer for bottom in bottoms):
+        tops, bottoms = _contents_cancelled(tops, bottoms)
     if any(bottom.free_symbols for bottom in bottoms):
         tops, bottoms = _numbers_taken_out(tops, bottoms)
         tops = [part for top in tops for part in sp.Mul.make_args(_content(top))]
@@ -653,6 +657,33 @@ def _quotient(tops: list[sp.Expr], bottoms: list[sp.Expr]) -> sp.Expr:
         tops.append(sp.Integer(-1) ** sum(negated))
     quotient = sp.Mul(*tops, *(sp.Pow(bottom, -1) for bottom in bottoms))
     return _coefficient_spelled(quotient)
+
+
+def _contents_cancelled(
+    tops: list[sp.Expr], bottoms: list[sp.Expr]
+) -> tuple[list[sp.Expr], list[sp.Expr]]:
+    """The factors over an integer denominator with the part of each numerator sum's
+    integer content that divides the denominator cancelled.
+
+    Only what cancels is taken out, so a sum keeps its coefficients otherwise:
+    `(x - 1)*(2*x + 4)/6` is `(x - 1)*(x + 2)/3`.
+    """
+    denominator = int(sp.Mul(*bottoms))
+    tops = list(tops)
+    for index, top in enumerate(tops):
+        if not top.is_Add:
+            continue
+        content, primitive = top.as_content_primitive()
+        if not content.is_Integer:
+            continue
+        shared = sp.igcd(int(content), denominator)
+        if shared == 1:
+            continue
+        tops[index] = sp.Add(*(term / shared for term in top.args))
+        denominator //= shared
+    if denominator == int(sp.Mul(*bottoms)):
+        return tops, bottoms
+    return tops, [] if denominator == 1 else [sp.Integer(denominator)]
 
 
 def _folded(product: sp.Expr) -> sp.Expr:
@@ -1273,6 +1304,35 @@ def _arithmetic(number: sp.Expr) -> sp.Expr | None:
     if _expanded_terms(rationalized) > _EXPANSION:
         return None
     return _expanded(rationalized)
+
+
+def _constants_divided(number: sp.Expr) -> sp.Expr:
+    """A number with symbolic constants, such as `pi` and `#e`, as a quotient of
+    polynomials in them with the common factors cancelled, or the number itself.
+
+    `(4*#e*pi^2 + #e)/(4*pi^2 + 1)` is `#e`. The cancelled factors are factors of the
+    denominator, so nonzero wherever the number is defined. Only for numbers built of
+    such constants and rationals by arithmetic, which the polynomial gcd handles.
+    """
+    if not number.atoms(sp.NumberSymbol) or number.atoms(sp.Function):
+        return number
+    if any(not power.exp.is_Integer for power in number.atoms(sp.Pow)):
+        return number
+    if _expanded_terms(number) > _EXPANSION:
+        return number
+
+    def divided(value: sp.Expr) -> sp.Expr:
+        top, bottom = value.as_numer_denom()
+        if not bottom.atoms(sp.NumberSymbol):
+            return value
+        # Only a factor other than a rational: otherwise `pi/2 + 1/2` would merely be
+        # put over its denominator.
+        if sp.gcd(top, bottom).is_Rational:
+            return value
+        return sp.cancel(value)
+
+    cancelled = _attempt(number, divided)
+    return number if cancelled is None else cancelled
 
 
 #: Operations a number may gain by `_arithmetic` multiplying it out, beyond doubling.

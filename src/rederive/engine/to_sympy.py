@@ -1499,6 +1499,9 @@ def dotted(left: sp.Basic, right: sp.Basic) -> sp.Basic:
 
     Declared nonscalars are matrices with unknown elements, so their product is
     symbolic, which sympy rewrites by the rules of section 8.8.
+
+    Two scalars multiply: anything not declared nonscalar is a scalar (section 8.5), so
+    `a . b - b . a` is 0. Only operands that are certainly scalars count, see `_scalar`.
     """
     if _symbolic_matrix(left) or _symbolic_matrix(right):
         return _symbolic_product(left, right)
@@ -1506,7 +1509,33 @@ def dotted(left: sp.Basic, right: sp.Basic) -> sp.Basic:
         product = _vector_product(left, right)
         if product is not None:
             return product
+    if _scalar(left) and _scalar(right):
+        return left * right
     return Dot(left, right)
+
+
+def _scalar(value: sp.Basic) -> bool:
+    """Whether `value` is certainly a scalar.
+
+    It must be built of numbers and variables that aren't nonscalar (a variable under
+    `default :epsilon Nonscalar` is noncommutative) by arithmetic and sympy's
+    functions. A user function, an inert head such as `VECTOR(u, i, 1, n)` or an
+    unevaluated operator such as `Dot` might stand for a vector, so it doesn't count.
+    """
+    if not isinstance(value, sp.Expr) or not value.is_commutative:
+        return False
+    for part in sp.preorder_traversal(value):
+        if isinstance(part, StringLiteral):
+            return False
+        if isinstance(part, sp.Symbol | sp.Add | sp.Mul | sp.Pow):
+            continue
+        if part.is_Atom and part.is_number:
+            continue
+        if isinstance(part, sp.Function) and not isinstance(part, AppliedUndef):
+            if type(part).__module__.startswith("sympy."):
+                continue
+        return False
+    return True
 
 
 def _vector_product(left: Vector, right: Vector) -> sp.Basic | None:
@@ -1866,7 +1895,6 @@ _INVERSE_TRIGONOMETRIC = {
     "ASIN": sp.asin,
     "ACOS": sp.acos,
     "ATAN": sp.atan,
-    "ACOT": sp.acot,
     "ASEC": sp.asec,
     "ACSC": sp.acsc,
 }
@@ -2142,14 +2170,18 @@ def _atan(conv: Converter, args: list) -> sp.Basic:
 
 
 def _acot(conv: Converter, args: list) -> sp.Basic:
-    """`ACOT(x, y)` is `ATAN(y, x)`, per section 6.4.
+    """`ACOT(z)` is `pi/2 - ATAN(z)`, and `ACOT(x, y)` is `ATAN(y, x)`, per section 6.4.
+
+    That makes `ACOT(x)` run from `pi` down to 0 over the reals, continuous at zero.
+    Sympy's `acot` is `ATAN(1/z)` instead, an odd function with values in
+    `(-pi/2, pi/2]`, so it isn't used.
 
     The two arguments are the legs of the triangle rather than their ratio, which
     preserves the quadrant.
     """
     if len(args) == 2:
         return conv.angle_out(sp.atan2(args[1], args[0]))
-    return conv.angle_out(sp.acot(_one(args)))
+    return conv.angle_out(sp.pi / 2 - sp.atan(_one(args)))
 
 
 def _phase(conv: Converter, args: list) -> sp.Basic:
