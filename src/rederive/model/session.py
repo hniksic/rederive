@@ -70,12 +70,14 @@ from rederive.syntax import (
     ClearWhat,
     Declaration,
     DeriveSyntaxError,
+    FunctionDeclaration,
     InputMode,
     Language,
     ParseResult,
     ParseState,
     SettingDeclaration,
     Source,
+    VariableDeclaration,
     is_name,
     parse_expression,
     source_lines,
@@ -470,6 +472,7 @@ class Session:
             return self._append(result.source.text, result.node)
         shown = result.node.children[0]
         answer = await self.runner.simplify(shown, self.context, self.state)
+        self._perform(answer)
         line, node = self._equated(shown, answer.node)
         exact = None if answer.value is None else self._equated(shown, answer.value)[1]
         return self._append(line, node, AUTHORED, exact)
@@ -575,6 +578,26 @@ class Session:
                     declared = engine.domain_of_node(found)
                     if declared is not None:
                         self.domains[declared[0]] = declared[1]
+
+    def _perform(self, result: engine.Result) -> None:
+        """Perform what a command performed while computing: the assignments and
+        definitions in the bodies of the functions it called.
+
+        `A1(u, x) := (A2(x) := u)` simplifies `A1(y^2, y)` to `y^2` and defines `A2(y)
+        := y^2`, so `A2(3)` is 9 afterwards, as in Derive.
+        """
+        for node in result.performed:
+            if node.kind is Kind.FUNDEF:
+                self._defined(node)
+                parameters = tuple(str(child.value) for child in node.children[0].children)
+                has_body = len(node.children) > 1
+                self.state.declare(
+                    FunctionDeclaration(str(node.value), parameters, has_body)
+                )
+            else:
+                self._assigned(node, set())
+                name = str(node.children[0].value)
+                self.state.declare(VariableDeclaration(name, len(node.children) > 1))
 
     def _assigned(self, node: Node, settings: set[str]) -> None:
         """`x := 5` gives x a value; `x :=` with nothing after it takes it away."""
@@ -745,6 +768,8 @@ class Session:
             interval,
             self.state,
         )
+        for result in results:
+            self._perform(result)
         return [
             self._append(result.text, result.node, f"Solve({source})", result.value)
             for result in results
@@ -1029,6 +1054,7 @@ class Session:
 
     async def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
         result = await run(node, self.context, self.state)
+        self._perform(result)
         return self._append(result.text, result.node, annotation, result.value)
 
     async def _answered_part(self, entry: Entry, run: Command, prefix: str) -> Entry:
@@ -1040,6 +1066,7 @@ class Session:
         part = self.selected_node
         assert part is not None
         result = await run(part, self.context, self.state)
+        self._perform(result)
         text, node = self._spliced(entry, part, result.text)
         return self._append(text, node, f"{prefix}(#{entry.number}')")
 

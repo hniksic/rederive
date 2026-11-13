@@ -34,6 +34,12 @@ variable the body binds is evaluated again at each value of it, so with `F(p, k)
 VECTOR(p, k, 3)`, `F([a, b, c] SUB k, k)` is `[a, b, c]`. When a definition is
 simplified, a bound-variable call over one of its parameters is shown as written.
 
+An assignment or definition in a function's body is performed when the function is
+called, with the arguments written in, and holds from then on, within the same command
+too. With `A1(u, x) := (A2(x) := u)`, `A1(y^2, y)` is `y^2` and defines `A2(y) := y^2`;
+with `B(u) := (b := u)`, `B(7)` is 7 and gives `b` the value 7. Simplifying a definition
+performs nothing.
+
 ## Added built-ins
 
 Sympy answers in its own vocabulary, and some of what it returns has no name in the

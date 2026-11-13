@@ -34,7 +34,8 @@ dispatches them:
 * `SUBS(u, [x], [a])`: the substitution is made, unless it binds into a derivative,
   which is kept as sympy's `Subs`.
 * An assignment keeps its target unevaluated, and a definition's parameters stand for
-  themselves in its body.
+  themselves in its body. Inside a called function's body, an assignment or definition
+  is also performed (see `_Evaluator.performs`).
 
 Everything else is handled by the converter.
 """
@@ -53,6 +54,7 @@ from sympy.core.function import AppliedUndef, UndefinedFunction
 
 from rederive.engine.approximation import carried
 from rederive.engine.context import Context, Precision
+from rederive.engine.from_sympy import from_sympy
 from rederive.engine.intervals import decided
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
@@ -71,7 +73,12 @@ from rederive.engine.to_sympy import (
 )
 from rederive.model.expr import Kind, Node
 from rederive.syntax import ParseState
-from rederive.syntax.names import BINDING_FUNCTIONS, BINDING_THROUGHOUT, PRIME_MARK
+from rederive.syntax.names import (
+    BINDING_FUNCTIONS,
+    BINDING_THROUGHOUT,
+    PRIME_MARK,
+    SETTINGS,
+)
 
 __all__ = [
     "Commanded",
@@ -118,6 +125,8 @@ class Environment:
 
     `writing` means only substitute names, used to display an undecidable
     conditional: no call is entered and no test decided, so branches stay as written.
+    `defining` means a definition is being shown, so the calls its body enters perform
+    no assignment.
     """
 
     context: Context
@@ -133,6 +142,7 @@ class Environment:
     depth: int = 0
     written: Mapping[sp.Basic, sp.Basic] = field(default_factory=dict)
     writing: bool = False
+    defining: bool = False
     suspended: dict[sp.Basic, type] = field(default_factory=dict, compare=False)
 
     def decides(self, test: sp.Basic) -> bool | None:
@@ -292,7 +302,7 @@ class _Evaluator(Converter):
                     return _value_of(_Evaluator(again).convert(argument.node))
             return _over(value, env.written)
         if name not in env.bound and name not in env.expanding:
-            assigned = env.context.assignments.get(name)
+            assigned = env.context.assigned(name)
             if assigned is not None:
                 deeper = replace(env, bindings={}, expanding=env.expanding | {name})
                 return self.within(deeper).convert(assigned)
@@ -338,6 +348,17 @@ class _Evaluator(Converter):
 
     # -- definitions --------------------------------------------------------
 
+    def performs(self) -> bool:
+        """Whether an assignment or definition here is performed.
+
+        It is in the body of a called function, as in Derive: with `A1(u, x) := (A2(x)
+        := u)`, `A1(y^2, y)` defines `A2(y) := y^2` and is `y^2`. It isn't in what the
+        user wrote, which only states a definition (the session makes it), nor in a
+        definition being shown or a conditional being written out.
+        """
+        env = self.env
+        return env.depth > 0 and not env.writing and not env.defining
+
     def _assign(self, node: Node) -> sp.Basic:
         """An assignment: the value is evaluated, the target isn't.
 
@@ -346,21 +367,63 @@ class _Evaluator(Converter):
         relies on it: `IF("inapplicable" = a_ := SEP(...), ..., a_, a_)` tries a
         method, checks whether it declined, and returns its result. The assignment
         evaluates to the value, and `_conditional` binds the name in the branches.
+
+        In a called function's body it is performed for good, and evaluates to the
+        value; taking a value away evaluates to the assignment. FIT_.MTH's `[y_ :=,
+        FIT_AUX5(...)] SUB 2` makes `y_` a variable again before using it.
         """
         target, *values = node.children
         written = [self.convert(child) for child in values]
+        if target.kind is Kind.NAME and self.performs():
+            name = self._target(str(target.value))
+            if name is not None and name not in SETTINGS:
+                assignment = Assign(
+                    sp.Symbol(name), sp.Symbol(str(node.value)), *written[-1:]
+                )
+                if self._perform(assignment, Kind.ASSIGN) and self.performed is None:
+                    return written[-1] if written else assignment
         if self.performed is not None and written and target.kind is Kind.NAME:
             self.performed[str(target.value)] = written[-1]
             return written[-1]
         plain = Converter(self.context)
         return Assign(plain.convert(target), sp.Symbol(str(node.value)), *written)
 
+    def _target(self, name: str) -> str | None:
+        """The name a definition here assigns or uses for `name`, or None if it has none.
+
+        Definitions are textual substitution, so a parameter of the call stands for its
+        argument, which must then be a variable.
+        """
+        value = self.env.bindings.get(name)
+        if value is None:
+            return name
+        if type(value) is sp.Symbol and value.name.isidentifier():
+            return value.name
+        return None
+
+    def _perform(self, definition: sp.Basic, kind: Kind) -> bool:
+        """Perform `definition`, an `Assign` or `FunDef`, if it reads back as one."""
+        try:
+            node = from_sympy(definition, self.context).exact
+        except Exception:
+            return False
+        if node.kind is not kind:
+            return False
+        self.context.performed.perform(node)
+        return True
+
     def _fundef(self, node: Node) -> sp.Basic:
         """A definition: the body is evaluated, its parameters standing for themselves.
 
         A variable-binding call over a parameter is left as a call, since its variable
         is whatever a call of the function supplies (see `_binding`).
+
+        In a called function's body it is performed instead (see `_performed`).
         """
+        if self.performs():
+            performed = self._performed(node)
+            if performed is not None:
+                return performed
         parameters, *body = node.children
         names = frozenset(str(child.value) for child in parameters.children)
         inner = replace(
@@ -369,6 +432,7 @@ class _Evaluator(Converter):
             bound=self.env.bound | names,
             parameters=names,
             written=_unwritten(self.env.written, names),
+            defining=True,
         )
         plain = Converter(self.context)
         written = [self.within(inner).convert(part) for part in body]
@@ -377,6 +441,33 @@ class _Evaluator(Converter):
             sp.Tuple(*(plain.convert(child) for child in parameters.children)),
             *written,
         )
+
+    def _performed(self, node: Node) -> sp.Basic | None:
+        """A definition in a called function's body, performed: the body's value.
+
+        The call's arguments are written into the definition, its parameters included:
+        `A1(u, x) := (A2(x) := u)` called with `y^2` and `y` defines `A2(y) := y^2`.
+        The body is stored as written, with only names substituted, and the new
+        definition holds while the body's value is worked out, so it may recurse.
+
+        None, leaving the definition as written, if a parameter is supplied with
+        something other than a variable, or the definition doesn't read back.
+        """
+        parameters, *body = node.children
+        name = self._target(str(node.value))
+        names = [self._target(str(child.value)) for child in parameters.children]
+        if name is None or None in names:
+            return None
+        head = sp.Symbol(name)
+        symbols = sp.Tuple(*(sp.Symbol(parameter) for parameter in names))
+        if not body:
+            definition = FunDef(head, symbols)
+            return definition if self._perform(definition, Kind.FUNDEF) else None
+        written = replace(self.env, writing=True, bound=self.env.bound | set(names))
+        stored = released(self.within(written).convert(body[0]))
+        if not self._perform(FunDef(head, symbols, stored), Kind.FUNDEF):
+            return None
+        return self.convert(body[0])
 
     # -- calls --------------------------------------------------------------
 
@@ -396,7 +487,7 @@ class _Evaluator(Converter):
         derived = self._derived(name, values)
         if derived is not None:
             return derived
-        definition = self.context.functions.get(name)
+        definition = self.context.function(name)
         if definition is not None:
             if self.env.writing:
                 return self.opaque(name, values)
@@ -506,7 +597,7 @@ class _Evaluator(Converter):
         """
         base = name.rstrip(PRIME_MARK)
         order = len(name) - len(base)
-        definition = self.context.functions.get(base)
+        definition = self.context.function(base)
         if not order or definition is None or not values or self.env.writing:
             return None
         parameters, body = definition

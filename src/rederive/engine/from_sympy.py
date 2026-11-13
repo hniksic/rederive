@@ -68,7 +68,7 @@ def from_sympy(
     """Write `expression` as author notation, and read it back as a tree.
 
     `authored` is passed to the printer, which writes each expression it maps as the
-    given text.
+    given text. The answer carries what the command performed in `context`.
     """
     context = context or Context()
     # Name dummies first so the symbol table is built from the names in the text.
@@ -84,7 +84,8 @@ def from_sympy(
         # This shouldn't happen, but an unreadable result is kept as an inert string
         # rather than failing the command.
         _unreadable(text)
-        return Result(Node(Kind.STRING, 0, len(text), (), text), text)
+        string = Node(Kind.STRING, 0, len(text), (), text)
+        return Result(string, text, performed=tuple(context.performed.nodes))
     if node.kind is Kind.STRING and not isinstance(expression, StringLiteral):
         # The printer had no name for a head and quoted it as a string. It reparses
         # but is just as dead, so record it too. Authored strings are not failures.
@@ -92,7 +93,8 @@ def from_sympy(
     elif not is_written(expression):
         # Likewise for a function head quoted inside a larger answer.
         _unreadable(text)
-    return Result(node, text, _exact(expression, context, state, text, authored))
+    exact = _exact(expression, context, state, text, authored)
+    return Result(node, text, exact, tuple(context.performed.nodes))
 
 
 def _exact(

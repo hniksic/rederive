@@ -297,6 +297,42 @@ async def test_an_assignment_in_a_body_is_made_when_the_function_is_called(sessi
     assert (await session.simplify("#2")).text == "8"
 
 
+async def test_a_definition_in_a_body_is_made_when_the_function_is_called(session):
+    """As in Derive, the call defines the inner function with its arguments written in.
+
+    `A1(y^2, y)` defines `A2(y) := y^2`, parameter included, and is `y^2`.
+    """
+    session.author("A1(u, x) := (A2(x) := u)")
+    session.author("A1(y^2, y)")
+    assert (await session.simplify("#2")).text == "y^2"
+    assert (await session.simplify("A2(3)")).text == "9"
+
+
+async def test_a_definition_made_by_a_call_holds_for_the_rest_of_the_command(session):
+    """FIT_.MTH's `SUBST` defines a function in one element and calls it in the next."""
+    session.author("S1(u, x) := (S2(x) := u)")
+    session.author("S(u, x, x0) := [S1(u, x), S2(x0)] * [0, 1]")
+    session.author("S(y^2 + 1, y, 3)")
+    assert (await session.simplify("#3")).text == "10"
+
+
+async def test_a_variable_assigned_in_a_body_keeps_its_value(session):
+    session.author("B(u) := (b := u)")
+    session.author("B(7)")
+    assert (await session.simplify("#2")).text == "7"
+    assert (await session.simplify("b + 1")).text == "8"
+    session.author("C(u) := [b :=, u] SUB 2")
+    assert (await session.simplify("C(4)")).text == "4"
+    assert "b" not in session.assignments
+
+
+async def test_a_definition_being_shown_performs_nothing(session):
+    session.author("B(u) := (b := u)")
+    session.author("G(u) := B(u)")
+    await session.simplify("#2")
+    assert session.assignments == {}
+
+
 def test_a_setting_is_not_a_variable(session):
     session.author("Notation := Mixed")
     assert session.assignments == {}

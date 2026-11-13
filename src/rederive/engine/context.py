@@ -139,6 +139,35 @@ def domain_of_node(node: Node) -> tuple[str, Domain] | None:
 Definition = tuple[tuple[str, ...], Node]
 
 
+@dataclass(eq=False)
+class Performed:
+    """The assignments and definitions a command performed while computing, in order.
+
+    A function body's `x := u` or `F(x) := u` is performed when the function is called,
+    as in Derive, and takes effect at once: FIT_.MTH's `SUBST(u, x, x0) :=
+    [SUBST_AUX1(u, x), SUBST_AUX2(x0)] * [0, 1]` defines `SUBST_AUX2` in the first
+    element and calls it in the second. `nodes` are the `ASSIGN` and `FUNDEF` trees,
+    which the answer carries back for the session to perform too (see
+    `Result.performed`). `functions` and `assignments` are the meanings they gave, None
+    for a name whose body or value was taken away.
+    """
+
+    nodes: list[Node] = field(default_factory=list)
+    functions: dict[str, Definition | None] = field(default_factory=dict)
+    assignments: dict[str, Node | None] = field(default_factory=dict)
+
+    def perform(self, node: Node) -> None:
+        """Record `node`, an `ASSIGN` of a name or a `FUNDEF`, and give its meaning."""
+        if node.kind is Kind.FUNDEF:
+            parameters = tuple(str(child.value) for child in node.children[0].children)
+            body = node.children[1] if len(node.children) > 1 else None
+            self.functions[str(node.value)] = None if body is None else (parameters, body)
+        else:
+            value = node.children[1] if len(node.children) > 1 else None
+            self.assignments[str(node.children[0].value)] = value
+        self.nodes.append(node)
+
+
 @dataclass(frozen=True)
 class Context:
     """Everything an engine command's answer may depend on.
@@ -175,6 +204,19 @@ class Context:
     assignments: Mapping[str, Node] = field(default_factory=dict)
     functions: Mapping[str, Definition] = field(default_factory=dict)
     labels: Mapping[int, Node] = field(default_factory=dict)
+    performed: Performed = field(default_factory=Performed, compare=False)
+
+    def function(self, name: str) -> Definition | None:
+        """The definition of function `name`, including one performed by this command."""
+        if name in self.performed.functions:
+            return self.performed.functions[name]
+        return self.functions.get(name)
+
+    def assigned(self, name: str) -> Node | None:
+        """The value of variable `name`, including one performed by this command."""
+        if name in self.performed.assignments:
+            return self.performed.assignments[name]
+        return self.assignments.get(name)
 
     def domain(self, name: str) -> Domain:
         """The domain of variable `name`.

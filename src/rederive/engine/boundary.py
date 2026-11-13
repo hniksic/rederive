@@ -43,11 +43,16 @@ class Result:
     `value` is the exact answer, which differs from `node` only where a number is shown
     as something other than its ratio: one third *shown* as `0.333333` is still one
     third. The worksheet saves and draws `node`; the next command computes with `value`.
+
+    `performed` are the assignments and definitions the command performed on the way,
+    as `ASSIGN` and `FUNDEF` trees in order, for the session to perform after it (see
+    `Context.performed`).
     """
 
     node: Node
     text: str
     value: Node | None = None
+    performed: tuple[Node, ...] = ()
 
     @property
     def exact(self) -> Node:
