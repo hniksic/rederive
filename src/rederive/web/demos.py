@@ -25,7 +25,7 @@ from typing import Any
 
 from rederive.model import demos as catalogue
 from rederive.model import worksheet
-from rederive.platform.web import WebStorage
+from rederive.platform.web import WebStorage, received
 from rederive.ui.app import RederiveApp
 
 __all__ = ["Demos"]
@@ -93,7 +93,7 @@ class Demos:
         demo = catalogue.named(file)
         if demo is None:
             return
-        self._storage.keep(Path(demo.file), worksheet.decoded(_bytes(data)))
+        self._storage.keep(Path(demo.file), worksheet.decoded(received(data)))
 
     def chose(self, file: str, data: Any = None) -> None:
         """Run this demonstration, storing any bytes the page downloaded.
@@ -113,7 +113,7 @@ class Demos:
         # but an explicit `null` arrives as a JavaScript null, which is falsy but not
         # `None`.
         if data:
-            self._storage.keep(Path(demo.file), worksheet.decoded(_bytes(data)))
+            self._storage.keep(Path(demo.file), worksheet.decoded(received(data)))
         said = DRAWING if demo.plotting else RUNNING
         self._page.said(said.format(name=demo.file))
         # Schedule on the loop: this runs in a DOM callback, and a demonstration started
@@ -129,7 +129,7 @@ class Demos:
         eight files from the diskette were already stored by the page.
         """
         try:
-            raw = _bytes(await self._page.brought(demo.file))
+            raw = received(await self._page.brought(demo.file))
         except Exception as trouble:
             raise OSError(_sentence(trouble)) from None
         self._storage.keep(Path(demo.file), worksheet.decoded(raw))
@@ -161,14 +161,3 @@ def _sentence(trouble: Exception) -> str:
     """
     said = str(trouble).strip().splitlines()
     return said[0].removeprefix("Error: ") if said else NOT_FETCHED
-
-
-def _bytes(data: Any) -> bytes:
-    """Convert file data to bytes.
-
-    The browser passes a `Uint8Array`, which is copied out of JS memory; tests pass
-    bytes directly.
-    """
-    if isinstance(data, (bytes, bytearray, memoryview)):
-        return bytes(data)
-    return bytes(data.to_py())

@@ -9,9 +9,11 @@ The tab is faked only as far as the code uses it (a store with a size limit, a
 clipboard that can refuse, an address). No browser is started.
 """
 
+import json
 from pathlib import Path
 
 import pytest
+from dfwsheet import Sheet
 from fakepage import Clipboard, FakeTab, Store, browser
 
 from rederive import platform
@@ -357,7 +359,99 @@ def test_a_reset_puts_the_settings_back_for_this_visit_and_the_next(page, storag
 
 def test_a_dropped_file_names_the_command_that_reads_it(page, storage):
     """It arrived unrequested, so the notice says how to open it."""
-    Files(page, Session(), storage).arrived("theirs.mth", "x^3\n")
+    Files(page, Session(), storage).arrived("theirs.mth", b"x^3\n")
     assert storage.read(Path("theirs.mth")) == b"x^3\n"
     assert "theirs.mth" in page.notices[-1]
     assert "Transfer Load Derive" in page.notices[-1]
+
+
+# -- worksheets of Derive for Windows, which are binary -------------------------
+
+DFW = Path("work.dfw")
+
+
+def _worksheet(*expressions):
+    sheet = Sheet()
+    for expression in expressions:
+        sheet.expression(expression)
+    return sheet.bytes()
+
+
+def test_a_dropped_worksheet_is_kept_as_its_bytes_and_loads(page, storage):
+    """As on the desktop: the bytes Load reads are the bytes that were dropped."""
+    data = _worksheet("x^2", "#1+1")
+    Files(page, Session(), storage).arrived(DFW.name, data)
+    assert storage.read(DFW) == data
+    assert "Transfer Load Derive" in page.notices[-1]
+    session = Session()
+    session.load(DFW)
+    assert [entry.text for entry in session.entries] == ["x^2", "#1+1"]
+
+
+def test_a_worksheet_is_remembered_by_the_next_visit(page, storage):
+    data = _worksheet("x")
+    Files(page, Session(), storage).arrived(DFW.name, data)
+    returning = again(page)
+    assert returning.read(DFW) == data
+    session = Session()
+    session.merge(DFW)
+    assert [entry.text for entry in session.entries] == ["x"]
+
+
+def test_a_worksheet_too_large_to_remember_still_loads_now(page):
+    """A worksheet with plot images can outgrow the whole store.
+
+    It stays for this visit and the user is told the next one won't have it. Leaving it
+    out of what is written keeps the store working for every other file.
+    """
+    import js
+
+    js.localStorage = Store(room=2000)
+    platform.use(Web(page))
+    storage = platform.current().storage()
+    files = Files(page, Session(), storage)
+    files.arrived("small.mth", b"x + 1\n")
+    files.arrived(DFW.name, _worksheet(*["x^2 + 1"] * 200))
+    assert "no room to remember it" in page.notices[-1]
+    session = Session()
+    session.load(DFW)
+    assert len(session.entries) == 200
+    storage.write(SHEET, "y\n")
+    returning = again(page)
+    assert not returning.exists(DFW)
+    assert returning.read(Path("small.mth")) == b"x + 1\n"
+    assert returning.read(SHEET) == b"y\n"
+
+
+def test_a_store_from_before_binary_files_still_reads(page):
+    """An earlier visit wrote every file as a plain string, and they all still read."""
+    import js
+
+    store = Store()
+    store.setItem(KEPT, json.dumps({"old.mth": "x + 1\n", "odd": 7}))
+    js.localStorage = store
+    returning = again(page)
+    assert returning.read(Path("old.mth")) == b"x + 1\n"
+    assert not returning.exists(Path("odd"))
+
+
+def test_a_dos_math_file_is_decoded_as_on_the_desktop(page, storage):
+    """Code page 437, where `\\xe3` is pi, as Derive for DOS wrote it."""
+    raw = b"\xe3 + 1\r\n"
+    Files(page, Session(), storage).arrived("old.mth", raw)
+    assert storage.read(Path("old.mth")).decode("utf-8") == worksheet.decoded(raw)
+    session = Session()
+    session.load(Path("old.mth"))
+    assert [entry.text for entry in session.entries] == ["pi+1"]
+
+
+def test_a_worksheet_is_linked_as_the_math_file_it_saves_as(page, storage):
+    """A link carries what Save writes: the expressions, as text."""
+    Files(page, Session(), storage).arrived(DFW.name, _worksheet("x^2"))
+    session = Session()
+    session.load(DFW)
+    assert session.file == Path("work.mth")
+    Files(page, session, storage).linked()
+    arrived = Session()
+    Files(page, arrived, again(page, hash=page.fragment)).shared()
+    assert [entry.text for entry in arrived.entries] == ["x^2"]

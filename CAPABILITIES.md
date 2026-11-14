@@ -112,6 +112,10 @@ infinities are refused.
 Derive expands the first of these; the largest exceeds the memory it can address, and it
 answers `Memory Full`.
 
+**Derive for Windows worksheets.** Transfer Load and Merge read the binary `.dfw`
+files of Derive 5 and 6, restoring the definitions and settings saved with them; plots
+and embedded objects are left out. They are saved back as math files.
+
 ## Intentional differences
 
 **Approximation.** When asked to approximate, Derive works in fixed precision: every

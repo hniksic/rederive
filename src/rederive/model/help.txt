@@ -442,6 +442,10 @@ Transfer Load Utility reads a file of definitions without numbering what it
 reads; use it to bring a library of functions into a session. The utility
 files written for the original Derive can be read this way.
 
+Transfer Load and Merge also read the worksheets Derive for Windows saves
+(.dfw files): their expressions and text, without plots, and the definitions
+and settings saved with them. Such a worksheet is saved back as a math file.
+
 Transfer Save writes a worksheet in this program's own format, and also writes
 a highlighted expression out as C, Python, Rust or Julia source.
 

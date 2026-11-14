@@ -115,11 +115,23 @@ DOMAINS: frozenset[str] = frozenset("Integer Real Complex Nonscalar".split())
 
 # Glyph spellings of function names. They are resolved in the lexer and have no grammar
 # of their own: `√x^2` parses exactly like `SQRT x^2`.
+#
+# Derive 6 spells built-in names and operators with the characters its help lists as
+# "Reserved Unicode Characters", some of them in the Private Use Area. They appear in its
+# worksheets and, written as `\x7fXXXX` escapes, in its math files.
 FUNCTION_GLYPHS: dict[str, str] = {
     "√": "SQRT",  # square root sign
     "Γ": "GAMMA",  # capital gamma
     "Σ": "SUM",  # capital sigma
     "Π": "PRODUCT",  # capital pi
+    "∑": "SUM",  # n-ary summation, U+2211
+    "∏": "PRODUCT",  # n-ary product, U+220F
+    "∂": "DIF",  # partial differential
+    "∫": "INT",  # integral
+    "\ue7c4": "GAMMA",  # Derive's gamma function
+    "\ue7c5": "ZETA",  # Derive's zeta function
+    "\ue7c6": "CHI",  # Derive's chi function
+    "\ue7c7": "DIGAMMA",  # Derive's digamma function
 }
 
 # Glyph spellings of constants.
@@ -129,6 +141,10 @@ CONSTANT_GLYPHS: dict[str, str] = {
     "°": "deg",  # degree sign
     "ê": "#e",  # e with circumflex
     "î": "#i",  # i with circumflex
+    "\ue7c0": "#e",  # Derive's base of natural logarithms
+    "\ue7c1": "#i",  # Derive's imaginary unit
+    "\ue7c2": "pi",  # Derive's pi
+    "\ue7c3": "euler_gamma",  # Derive's Euler gamma
 }
 
 # How each predefined Greek variable prints: as the lowercase letter, as in Derive's
@@ -158,22 +174,32 @@ GREEK_GLYPHS: dict[str, str] = {glyph: name for name, glyph in GREEK_CANONICAL.i
     "Ω": "omega",  # capital omega
 }
 
-# Operator glyphs and their canonical ASCII spelling. Note that `·` U+00B7 is
-# multiplication and `∙` U+2219 is the dot product.
+# Operator glyphs and their canonical spelling, ASCII or a keyword operator. Note that
+# `·` U+00B7 is multiplication, and `∙` U+2219 and Derive's `⋅` U+22C5 the dot product.
 OPERATOR_GLYPHS: dict[str, str] = {
     "≤": "<=",
     "≥": ">=",
+    "≠": "/=",
+    "≔": ":=",
     "·": "*",
     "∙": ".",
+    "⋅": ".",
     "±": "+-",
     "│": "|",
     ":ε": ":epsilon",
     ":∈": ":epsilon",
+    "\ue7c8": ":epsilon",  # Derive's domain declaration sign
+    "↓": "SUB",
+    "¬": "NOT",
+    "∧": "AND",
+    "∨": "OR",
+    "⊻": "XOR",
+    "→": "IMP",
 }
 
 # All spellings of the domain operator. A lone `ε` is the name `epsilon`, not an
 # operator: `q ε Real` is `q*epsilon*Real`.
-DOMAIN_OPERATORS: tuple[str, ...] = (":epsilon", ":ε", ":∈")
+DOMAIN_OPERATORS: tuple[str, ...] = (":epsilon", ":ε", ":∈", "\ue7c8")
 
 # Longest match wins, so within each leading character this lists longer operators first.
 OPERATORS: tuple[str, ...] = (
@@ -187,6 +213,8 @@ OPERATORS: tuple[str, ...] = (
     "/=",
     "≤",
     "≥",
+    "≠",
+    "≔",
     "=",
     "<",
     ">",
@@ -209,6 +237,14 @@ OPERATORS: tuple[str, ...] = (
     "?",
     "·",
     "∙",
+    "⋅",
     "±",
     "│",
+    "\ue7c8",
+    "↓",
+    "¬",
+    "∧",
+    "∨",
+    "⊻",
+    "→",
 )

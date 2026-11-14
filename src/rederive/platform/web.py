@@ -8,6 +8,8 @@ A tab has no real filesystem, so storage uses three things:
 
 * **The store**, a dict kept in localStorage and keyed by the path the user typed. It
   makes a name refer to the same file again, and unlike MEMFS it survives a reload.
+  It holds text, except for a binary file such as a Derive for Windows worksheet,
+  which it holds as bytes.
 * **A download**, where a save actually goes. It is the only way to get a file out of
   the tab.
 * **MEMFS**, where the wheel is unpacked, read-only for our purposes. Reads try the
@@ -22,16 +24,22 @@ way whenever the tab is hidden.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-__all__ = ["Web", "WebStorage", "heap"]
+__all__ = ["Web", "WebStorage", "heap", "received"]
 
 #: localStorage key holding the whole store as JSON. Worksheets are small, and writing
 #: the store in one piece means a failed write can't leave it half-updated.
 KEPT = "rederive.files"
+
+#: The key under which the store's JSON holds a binary file, as `{"base64": ...}`. A
+#: text file is held as a plain string, as it always has been.
+BINARY = "base64"
 
 #: Message shown when the clipboard refuses the text, suggesting the browser's own copy.
 CLIPBOARD_REFUSED = "The browser did not allow the clipboard; select and copy instead"
@@ -46,13 +54,19 @@ class WebStorage:
 
     The store is read once at startup and written whole on every change. Both are
     cheap, and failures aren't worth retrying.
+
+    A file the store has no room for is still held for this visit, and is left out of
+    what is written, so that it doesn't cost every other file its place too: a
+    worksheet with plot images can be larger than all of localStorage.
     """
 
     def __init__(self, page: Any = None) -> None:
         #: The page's file module, which handles the DOM side: downloads, the file
         #: picker, the drop target and notices. None outside a browser.
         self._page = page
-        self._files: dict[str, str] = {}
+        self._files: dict[str, str | bytes] = {}
+        #: The names held for this visit only, since the store had no room for them.
+        self._unremembered: set[str] = set()
         #: Whether localStorage is available. In private mode or with site data
         #: disabled it isn't, and nothing survives a reload, which the screen mentions.
         self.remembers = self._read_store()
@@ -66,8 +80,10 @@ class WebStorage:
         as the working directory does on the desktop.
         """
         kept = self._files.get(_key(path))
-        if kept is not None:
+        if isinstance(kept, str):
             return kept.encode("utf-8")
+        if kept is not None:
+            return kept
         return path.read_bytes()
 
     def write(self, path: Path, text: str) -> None:
@@ -83,7 +99,7 @@ class WebStorage:
             except Exception as refused:
                 raise OSError(f"the browser refused the download: {refused}") from None
         self._files[_key(path)] = text
-        if not self._write_store() and self._page is not None:
+        if not self._remember(_key(path)) and self._page is not None:
             self._page.said(NO_ROOM.format(name=path.name))
 
     def names(self, directory: Path) -> Sequence[str]:
@@ -108,17 +124,19 @@ class WebStorage:
 
     # -- what the page asks for --------------------------------------------
 
-    def keep(self, path: Path, text: str) -> None:
-        """Store a file without downloading it.
+    def keep(self, path: Path, contents: str | bytes) -> bool:
+        """Store a file without downloading it, and say whether it will be remembered.
 
         Used for files that came from elsewhere: picked or dropped by the user, carried
-        by a link, or the settings, which the page writes whenever it is hidden.
+        by a link, or the settings, which the page writes whenever it is hidden. Text is
+        held as text, and bytes as bytes.
 
-        Unlike in `write`, a full store isn't reported: the file is still in memory, and
-        only the next visit loses it.
+        A file the store has no room for is still held for this visit, and False says
+        only the next visit loses it; reporting that is up to the caller. A tab that
+        remembers nothing at all has already said so, and gets True.
         """
-        self._files[_key(path)] = text
-        self._write_store()
+        self._files[_key(path)] = contents
+        return self._remember(_key(path)) or not self.remembers
 
     def kept(self) -> list[str]:
         """Return every name in the store, for the page to display."""
@@ -130,7 +148,7 @@ class WebStorage:
         """Load the store from localStorage, returning whether localStorage exists.
 
         Unreadable contents (e.g. from an older format) are ignored rather than treated
-        as an error.
+        as an error, and so is an entry that is neither text nor readable bytes.
         """
         storage = _local()
         if storage is None:
@@ -138,29 +156,76 @@ class WebStorage:
         try:
             held = storage.getItem(KEPT)
             if held:
-                self._files = {
-                    name: text
-                    for name, text in json.loads(held).items()
-                    if isinstance(text, str)
-                }
+                for name, stored in json.loads(held).items():
+                    contents = _unpacked(stored)
+                    if contents is not None:
+                        self._files[name] = contents
         except Exception:
             return True
         return True
+
+    def _remember(self, name: str) -> bool:
+        """Write the store with `name` in it, returning whether there was room.
+
+        If there wasn't, the store is written without it, so that what fits is still
+        remembered.
+        """
+        self._unremembered.discard(name)
+        if self._write_store():
+            return True
+        self._unremembered.add(name)
+        self._write_store()
+        return False
 
     def _write_store(self) -> bool:
         """Save the store to localStorage, returning whether it succeeded.
 
         Failure nearly always means the quota (usually 5 MB) is exceeded, which takes a
-        great many worksheets.
+        great many worksheets, or one with large plot images.
         """
         storage = _local()
         if storage is None:
             return False
+        held = {
+            name: _packed(contents)
+            for name, contents in self._files.items()
+            if name not in self._unremembered
+        }
         try:
-            storage.setItem(KEPT, json.dumps(self._files))
+            storage.setItem(KEPT, json.dumps(held))
         except Exception:
             return False
         return True
+
+
+def _packed(contents: str | bytes) -> str | dict[str, str]:
+    """A file as the store's JSON holds it: text as itself, bytes in base64."""
+    if isinstance(contents, str):
+        return contents
+    return {BINARY: base64.b64encode(contents).decode("ascii")}
+
+
+def _unpacked(stored: Any) -> str | bytes | None:
+    """A file from the store's JSON, or None if the entry is not one."""
+    if isinstance(stored, str):
+        return stored
+    if isinstance(stored, dict) and isinstance(stored.get(BINARY), str):
+        try:
+            return base64.b64decode(stored[BINARY], validate=True)
+        except (binascii.Error, ValueError):
+            return None
+    return None
+
+
+def received(data: Any) -> bytes:
+    """The bytes of a file the page handed over.
+
+    The browser passes a `Uint8Array`, which is copied out of JS memory; tests pass
+    bytes directly.
+    """
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        return bytes(data)
+    return bytes(data.to_py())
 
 
 def _key(path: Path) -> str:

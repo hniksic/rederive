@@ -15,6 +15,10 @@ no header or version, so files can be edited and diffed as text, and the origina
 `Source.from_file` in the syntax package strips comments and joins continuations
 when reading. This module interprets the comments and writes files.
 
+Wherever a math file is read, a Derive for Windows worksheet is read too: `read` tells
+them apart by content, since the extension is not reliable, and `dfw` reads the binary
+format.
+
 All file access goes through `platform.current().storage()` (`pathlib` on the
 desktop, a page-local store in a browser); path interpretation stays here.
 """
@@ -26,7 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rederive import platform
-from rederive.syntax.source import END_MARKER
+from rederive.model import dfw
+from rederive.syntax.source import END_MARKER, unescaped
 
 #: The extension added to a name typed without one.
 SUFFIX = ".mth"
@@ -34,6 +39,12 @@ SUFFIX = ".mth"
 #: Extensions of demonstration scripts and data files, which Transfer also reads.
 DEMO_SUFFIX = ".dmo"
 DATA_SUFFIX = ".dat"
+
+#: The extension of Derive for Windows worksheets, which are read but never written.
+DFW_SUFFIX = ".dfw"
+
+#: The extensions offered when choosing a worksheet to read.
+READABLE = (SUFFIX, DFW_SUFFIX)
 
 COMMENT = ";"
 CONTINUATION = "~"
@@ -126,16 +137,29 @@ def decoded(raw: bytes) -> str:
     Rederive writes UTF-8; the original wrote code page 437, which matters only for
     non-ASCII glyphs such as Greek names. Code page 437 decodes any byte, so
     decoding never fails.
+
+    Derive 6 writes a character beyond ASCII as an escape, `\x7f2211` for `∑`, which
+    is decoded here too.
     """
     try:
-        return raw.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        return raw.decode("cp437")
+        text = raw.decode("cp437")
+    return unescaped(text)
 
 
 def text_of(path: Path) -> str:
     """A file's text, decoded by `decoded`. Raises on read errors."""
     return decoded(platform.current().storage().read(path))
+
+
+def read(path: Path) -> str | dfw.Worksheet:
+    """The math file or Derive for Windows worksheet at `path`.
+
+    Raises `OSError` on read errors, including a worksheet that can't be read whole.
+    """
+    raw = platform.current().storage().read(path)
+    return dfw.read(raw) if dfw.is_worksheet(raw) else decoded(raw)
 
 
 def demonstration(path: Path) -> tuple[tuple[str, str], ...]:
@@ -179,7 +203,7 @@ def steps_of(text: str) -> tuple[tuple[str, str], ...]:
             continue
         # The comment belongs to the line the expression started on.
         start = number - len(pending) + 1
-        steps.append((comments.get(start, caption), "".join(pending)))
+        steps.append((comments.get(start, caption), unescaped("".join(pending))))
         pending = []
         caption = ""
     return tuple(steps)
@@ -206,13 +230,13 @@ def path_of(name: str, suffix: str = SUFFIX) -> Path:
     return path if path.suffix else path.with_suffix(suffix)
 
 
-def matches(name: str, suffix: str = SUFFIX) -> list[str]:
+def matches(name: str, suffix: str | tuple[str, ...] = SUFFIX) -> list[str]:
     """All names that `name` could be completed to, in order, including itself.
 
     Used by file prompts for browsing and completion. Offers files with extension
-    `suffix` (case-insensitively, since the original's files are uppercase) and all
-    directories, with a trailing separator. Dotfiles are offered only if `name`'s
-    last component starts with a dot, as in a shell.
+    `suffix`, or with any of several, case-insensitively since the original's files
+    are uppercase, and all directories, with a trailing separator. Dotfiles are
+    offered only if `name`'s last component starts with a dot, as in a shell.
 
     The typed prefix, including `~`, is kept verbatim, so any result can replace
     the input directly. An exact match is included so the list stays consistent
@@ -223,6 +247,9 @@ def matches(name: str, suffix: str = SUFFIX) -> list[str]:
     reached by typing its names, which the help text and README document.
     """
     storage = platform.current().storage()
+    suffixes = tuple(
+        offered.lower() for offered in ((suffix,) if isinstance(suffix, str) else suffix)
+    )
     head, separator, typed = name.rpartition("/")
     directory = Path(head + separator).expanduser() if separator else Path()
     offered = []
@@ -233,11 +260,11 @@ def matches(name: str, suffix: str = SUFFIX) -> list[str]:
             continue
         if storage.is_directory(directory / entry):
             offered.append(f"{head}{separator}{entry}/")
-        elif entry.lower().endswith(suffix.lower()):
+        elif entry.lower().endswith(suffixes):
             offered.append(f"{head}{separator}{entry}")
     return offered
 
 
-def completions(name: str, suffix: str = SUFFIX) -> list[str]:
+def completions(name: str, suffix: str | tuple[str, ...] = SUFFIX) -> list[str]:
     """The matches that extend `name`, i.e. `matches` without `name` itself."""
     return [grown for grown in matches(name, suffix) if len(grown) > len(name)]

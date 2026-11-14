@@ -52,6 +52,7 @@ BY_SUFFIX = {
     worksheet.SUFFIX: "math",
     worksheet.DATA_SUFFIX: "data",
     worksheet.DEMO_SUFFIX: "demo",
+    worksheet.DFW_SUFFIX: "math",
 }
 
 #: Default extension for each kind. A utility file is a math file read differently, so

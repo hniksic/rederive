@@ -2,11 +2,13 @@
 
 * **Save** is handled by `platform.web.WebStorage` in the command itself: the file is
   downloaded and also kept in page storage under its name.
-* **A file picked or dropped** on the page arrives at `arrived` and goes into storage,
-  where the Load prompt can find it. It isn't loaded on arrival, since Load replaces
-  the worksheet and a dropped file shouldn't discard the current one.
+* **A file picked or dropped** on the page arrives at `arrived`, as bytes, and goes
+  into storage, where the Load prompt can find it. It isn't loaded on arrival, since
+  Load replaces the worksheet and a dropped file shouldn't discard the current one.
 * **A link** carries the worksheet in the URL fragment, which is never sent to a server.
-  `linked` writes it there and `shared` reads it back on the next visit.
+  `linked` writes it there and `shared` reads it back on the next visit. It carries
+  what Save would write, so a worksheet read from a Derive for Windows file goes as a
+  math file, without the state that file saved.
 
 Settings are handled here too. A tab has no home directory for a state file, so the
 settings are written to storage whenever the tab is hidden and read back before the
@@ -27,9 +29,10 @@ from typing import Any
 
 from rederive import platform
 from rederive.engine.client import ORDER_LIST
+from rederive.model import dfw, worksheet
 from rederive.model.session import Session
 from rederive.model.settings import DEFAULTS
-from rederive.platform.web import WebStorage
+from rederive.platform.web import WebStorage, received
 from rederive.ui.app import STATE_FILE
 
 __all__ = ["Files", "SHARED", "STATE"]
@@ -69,6 +72,12 @@ TOO_LONG = (
 
 #: Shown when a file is picked or dropped, naming the command that loads it.
 ARRIVED = "{name} is in this page now; Transfer Load Derive reads it by that name"
+
+#: The same for a file the store has no room for, which only this visit has.
+ARRIVED_UNREMEMBERED = (
+    "{name} is in this page until it is closed, with no room to remember it longer;"
+    " Transfer Load Derive reads it by that name"
+)
 
 #: Shown when the worksheet in the address can't be decoded, usually because the link
 #: was truncated.
@@ -185,10 +194,19 @@ class Files:
         js.window.addEventListener("pagehide", leaving)
         js.document.addEventListener("visibilitychange", leaving)
 
-    def arrived(self, name: str, text: str) -> None:
-        """Store a file the user picked or dropped, and tell them its name."""
-        self._storage.keep(Path(name), text)
-        self._page.said(ARRIVED.format(name=name))
+    def arrived(self, name: str, data: Any) -> None:
+        """Store a file the user picked or dropped, and tell them its name.
+
+        The page hands over the file's bytes. A Derive for Windows worksheet is kept as
+        them; anything else is text, decoded as on the desktop, so a file in the DOS
+        code page reads the same here.
+        """
+        raw = received(data)
+        contents = raw if dfw.is_worksheet(raw) else worksheet.decoded(raw)
+        if self._storage.keep(Path(name), contents):
+            self._page.said(ARRIVED.format(name=name))
+        else:
+            self._page.said(ARRIVED_UNREMEMBERED.format(name=name))
 
     def linked(self) -> None:
         """Put the worksheet in the address, and copy it to the clipboard if allowed.

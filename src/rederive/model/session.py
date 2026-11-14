@@ -50,7 +50,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -62,14 +62,15 @@ from rederive.display import DisplayOptions, Layout, Region, render
 # half imports it separately, in `_computing_here`.
 from rederive.engine import client as engine
 from rederive.engine.replacing import same_expression
-from rederive.model import data, state, worksheet
+from rederive.model import data, dfw, state, worksheet
 from rederive.model.expr import Kind, Node
-from rederive.model.settings import Settings
+from rederive.model.settings import FIELDS, Settings
 from rederive.syntax import (
     PARSING_SETTINGS,
     ClearWhat,
     Declaration,
     DeriveSyntaxError,
+    DomainDeclaration,
     FunctionDeclaration,
     InputMode,
     Language,
@@ -84,6 +85,7 @@ from rederive.syntax import (
     write_expression,
     write_source,
 )
+from rederive.syntax.state import NameBinding
 
 #: A route into an entry's selection tree: indices into `Region.children`,
 #: empty for the whole expression.
@@ -113,6 +115,11 @@ LABEL = re.compile(r"#(\d+)")
 #: An arbitrary value, as written by soLve or by Simplify of an authored `SOLVE`. The
 #: session scans every entry for these so its counter never reuses one.
 ARBITRARY = re.compile(r"@(\d+)")
+
+#: What reading a line of a file may raise when the line can't be read. Besides syntax
+#: errors, that is an expression nested deeper than the parser's recursion allows,
+#: which a file can hold in thousands of levels.
+UNREADABLE = (DeriveSyntaxError, RecursionError)
 
 #: Maps a label number to its replacement, or to None to leave it unchanged.
 Rename = Callable[[int], int | None]
@@ -1580,13 +1587,15 @@ class Session:
         Returns how many of the file's expressions failed to parse and were skipped.
 
         The file is read before the history is cleared, so a bad path loses nothing.
+
+        A Derive for Windows worksheet loads too; see `_read_worksheet`.
         """
-        text = worksheet.text_of(path)
+        contents = worksheet.read(path)
         self.entries = []
         self.selected = None
         self.route = ()
         self._next_number = 1
-        return self._read(path, text)
+        return self._read(path, contents)
 
     def merge(self, path: Path) -> int:
         """Append the expressions in `path` to the history.
@@ -1596,7 +1605,7 @@ class Session:
         after five others. The original resolves references while reading; Rederive
         keeps them, so they must be shifted.
         """
-        return self._read(path, worksheet.text_of(path))
+        return self._read(path, worksheet.read(path))
 
     def load_utility(self, path: Path) -> int:
         """Take the definitions in `path` without showing them.
@@ -1607,16 +1616,29 @@ class Session:
 
         The file is read in Word input mode; see `reading_file`.
 
+        Of a Derive for Windows worksheet, the definitions taken are those its session
+        had when it was saved, and its settings are left alone.
+
         Returns how many of the file's expressions did not parse.
         """
-        source = Source.from_file(worksheet.text_of(path), str(path))
+        contents = worksheet.read(path)
+        if isinstance(contents, dfw.Worksheet):
+            lines = [
+                line
+                for line in contents.state
+                if line is None or dfw.setting_of(line) is None
+            ]
+            with self.reading_file():
+                restored = self._restore(lines)
+            return restored.undecodable + restored.refused
+        source = Source.from_file(contents, str(path))
         skipped = 0
         with self.reading_file():
             for start, stop in source_lines(source):
                 try:
                     line = source.text[start:stop].strip()
                     result = parse_expression(line, self.state)
-                except DeriveSyntaxError:
+                except UNREADABLE:
                     skipped += 1
                     continue
                 for declaration in result.declarations:
@@ -1658,44 +1680,151 @@ class Session:
         self.file = path
         return skipped
 
-    def _read(self, path: Path, text: str) -> int:
+    def _read(self, path: Path, contents: str | dfw.Worksheet) -> int:
         """Append what `path` holds, and say how many lines would not parse.
 
         As in the original, a line that doesn't parse is skipped and the rest is read, so
         one bad line doesn't lose the whole file. The file is read in Word input mode;
         see `reading_file`.
         """
-        source = Source.from_file(text, str(path))
-        annotations = worksheet.annotations_of(text)
+        if isinstance(contents, dfw.Worksheet):
+            skipped = self._read_worksheet(contents)
+            # The worksheet is saved as a math file, never over the binary original.
+            self.file = path.with_suffix(worksheet.SUFFIX)
+            return skipped
+        source = Source.from_file(contents, str(path))
+        annotations = worksheet.annotations_of(contents)
         offset = self._next_number - 1
+        rename = (lambda number: number + offset) if offset else None
         skipped = 0
         with self.reading_file():
             for start, stop in source_lines(source):
                 annotation = annotations.get(source.locate(start)[0], AUTHORED)
                 try:
-                    self._entered(source.text[start:stop].strip(), annotation, offset)
-                except DeriveSyntaxError:
+                    self._entered(source.text[start:stop].strip(), annotation, rename)
+                except UNREADABLE:
                     skipped += 1
         self.file = path
         return skipped
 
-    def _entered(self, text: str, annotation: str, offset: int) -> None:
-        """Append one line of a file as an entry, with its label references shifted.
+    def _read_worksheet(self, sheet: dfw.Worksheet) -> int:
+        """Append a Derive for Windows worksheet, and restore the state it saved.
+
+        Its expressions are read like a math file's, and each text object becomes a
+        string per paragraph, as a math file writes prose. Label references follow the
+        expressions to their new numbers, which differ once the text takes numbers too.
+
+        The state block is the session as it was saved, after everything shown was
+        entered, so it has the last word, as when the original opens a worksheet: it is
+        applied after the expressions, overriding what they define. A name they define
+        that the saved session no longer had is forgotten, unless a line of the state
+        block could not be read, as it might have defined that name. The state block is
+        also applied before the expressions, so that they parse knowing the names and
+        settings in effect when they were written.
+
+        Returns how many expressions would not parse; the state block is not counted,
+        since none of it is shown.
+        """
+        skipped = 0
+        renamed: dict[int, int] = {}
+        shown: set[str] = set()
+        with self.reading_file():
+            restored = self._restore(sheet.state)
+            for found in sheet.objects:
+                if isinstance(found, dfw.Text):
+                    for paragraph in found.paragraphs:
+                        quoted = paragraph.replace(worksheet.QUOTE, "'")
+                        try:
+                            self._entered(f"{worksheet.QUOTE}{quoted}{worksheet.QUOTE}")
+                        except UNREADABLE:
+                            skipped += 1
+                    continue
+                annotation = AUTHORED if found.typed else found.annotation
+                renamed[found.number] = self._next_number
+                try:
+                    result = self._entered(found.text, annotation, renamed.get)
+                except UNREADABLE:
+                    del renamed[found.number]
+                    skipped += 1
+                    continue
+                shown |= _declared_names(result.declarations)
+            self._reapply(restored)
+        if not restored.undecodable and not restored.refused:
+            for name in shown - restored.names:
+                self._forget(name)
+        return skipped
+
+    def _restore(self, lines: Iterable[str | None]) -> _Restored:
+        """Apply the lines of a worksheet's state block, and say how that went.
+
+        A line is skipped if it couldn't be decoded or doesn't parse, and so is a
+        setting that Rederive doesn't have. The variable order goes to `order`.
+        """
+        restored = _Restored()
+        for line in lines:
+            if line is None:
+                restored.undecodable += 1
+                continue
+            setting = dfw.setting_of(line)
+            if setting is not None and setting[0] == state.ORDER:
+                self._apply(setting[1])
+                restored.applied.append(setting[1])
+                continue
+            if setting is not None and setting[0] not in FIELDS:
+                restored.ignored += 1
+                continue
+            try:
+                parsed = parse_expression(line, self.state)
+                self._apply(parsed)
+            except UNREADABLE:
+                restored.refused += 1
+                continue
+            restored.applied.append(parsed)
+            restored.names |= _declared_names(parsed.declarations)
+        return restored
+
+    def _reapply(self, restored: _Restored) -> None:
+        """Apply again what `_restore` applied, without parsing it again."""
+        for applied in restored.applied:
+            self._apply(applied)
+
+    def _apply(self, applied: ParseResult | str) -> None:
+        """Apply a line of a state block: its parse, or the variable order's text."""
+        if isinstance(applied, str):
+            order = self.order_list(applied.removeprefix("[").removesuffix("]"))
+            if order is not None:
+                self.order = order
+            return
+        for declaration in applied.declarations:
+            self.declare(declaration)
+        self._define(applied.node, applied.declarations)
+
+    def _forget(self, name: str) -> None:
+        """Undo every definition and declaration of `name`."""
+        self.assignments.pop(name, None)
+        self.functions.pop(name, None)
+        self.domains.pop(name, None)
+        self.state.rebind(NameBinding(name, None, None))
+
+    def _entered(
+        self, text: str, annotation: str = AUTHORED, rename: Rename | None = None
+    ) -> ParseResult:
+        """Append one line of a file as an entry, with its label references renamed.
 
         The line is redrawn like an authored line, normalizing hand-written files; files
         this program wrote come back unchanged.
         """
         result = parse_expression(text, self.state)
-        if offset:
-            text = _shift_labels(text, result.node, offset)
+        if rename is not None:
+            text = _rewrite_labels(text, result.node, rename)
             result = parse_expression(text, self.state)
+            annotation = _rewrite_annotation(annotation, rename)
         result = self._redrawn(result)
         for declaration in result.declarations:
             self.declare(declaration)
         self._define(result.node, result.declarations)
-        self._append(
-            result.source.text, result.node, _shift_annotation(annotation, offset)
-        )
+        self._append(result.source.text, result.node, annotation)
+        return result
 
     # -- clearing ----------------------------------------------------------
 
@@ -2107,16 +2236,30 @@ def _rewrite_annotation(annotation: str, rename: Rename) -> str:
     return LABEL.sub(renamed, annotation)
 
 
-def _shift_labels(text: str, node: Node, offset: int) -> str:
-    """`text` with every label it refers to shifted by `offset`."""
-    return _rewrite_labels(text, node, lambda number: number + offset)
+@dataclass
+class _Restored:
+    """What `Session._restore` did with a worksheet's state block.
+
+    `applied` holds each line applied, as its parse or, for the variable order, as the
+    order's text. `names` are the names those lines define or declare.
+    """
+
+    applied: list[ParseResult | str] = field(default_factory=list)
+    names: set[str] = field(default_factory=set)
+    undecodable: int = 0
+    refused: int = 0
+    ignored: int = 0
 
 
-def _shift_annotation(annotation: str, offset: int) -> str:
-    """`_shift_labels` for an annotation, which is text rather than a tree."""
-    if not offset:
-        return annotation
-    return _rewrite_annotation(annotation, lambda number: number + offset)
+def _declared_names(declarations: Iterable[Declaration]) -> set[str]:
+    """The names `declarations` define or declare; settings aren't names."""
+    return {
+        declaration.name
+        for declaration in declarations
+        if isinstance(
+            declaration, (VariableDeclaration, FunctionDeclaration, DomainDeclaration)
+        )
+    }
 
 
 def _same_tree(one: Node, other: Node) -> bool:

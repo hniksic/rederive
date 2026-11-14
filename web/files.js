@@ -135,15 +135,17 @@ export function said(text) {
 
 // -- what the gestures produce ------------------------------------------------
 
-// Every file handed over, read as text and passed on one at a time. A file
-// that will not read is reported and the rest still arrive: a drop of six
+// Every file handed over, read as bytes and passed on one at a time. Bytes
+// rather than text: a Derive for Windows worksheet is binary, and an old math
+// file is in a DOS code page, and which a file is Python decides. A file that
+// will not read is reported and the rest still arrive: a drop of six
 // worksheets should not be lost to one of them.
 function take(files) {
   if (!ready()) return;
   for (const file of files) {
     file
-      .text()
-      .then((text) => handlers.arrived(file.name, text))
+      .arrayBuffer()
+      .then((buffer) => handlers.arrived(file.name, new Uint8Array(buffer)))
       .catch((error) => said(`${file.name} could not be read: ${error}`));
   }
 }

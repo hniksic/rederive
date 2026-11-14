@@ -502,7 +502,7 @@ class FileNames(Suggester):
     Nothing is cached, since files come and go while the program runs.
     """
 
-    def __init__(self, suffix: str) -> None:
+    def __init__(self, suffix: str | tuple[str, ...]) -> None:
         # Case-sensitive, since the filesystem distinguishes `Work.mth` from `work.mth`.
         super().__init__(use_cache=False, case_sensitive=True)
         self.suffix = suffix
@@ -1156,8 +1156,8 @@ class RederiveApp(App[None]):
         self.opening_demo = demo
         #: The action for the file named on the prompt line.
         self.file_command: Callable[[str], None] | None = None
-        #: That command's file extension, used for completion.
-        self.file_suffix = worksheet.SUFFIX
+        #: That command's file extensions, used for completion.
+        self.file_suffix: str | tuple[str, ...] = worksheet.SUFFIX
         #: The names in the completion list, and the index of the one copied onto the
         #: line (None if the line holds the user's typing). The list is closed when
         #: `completions` is empty. Kept together so the line and list never disagree.
@@ -3778,16 +3778,16 @@ class RederiveApp(App[None]):
         )
 
     def _command_load(self) -> None:
-        self._ask_file(LOAD_PROMPT, self._load)
+        self._ask_file(LOAD_PROMPT, self._load, worksheet.READABLE)
 
     def _command_merge(self) -> None:
-        self._ask_file(MERGE_PROMPT, self._merge)
+        self._ask_file(MERGE_PROMPT, self._merge, worksheet.READABLE)
 
     def _command_load_data(self) -> None:
         self._ask_file(LOAD_DATA_PROMPT, self._load_data, worksheet.DATA_SUFFIX)
 
     def _command_load_utility(self) -> None:
-        self._ask_file(LOAD_UTILITY_PROMPT, self._load_utility)
+        self._ask_file(LOAD_UTILITY_PROMPT, self._load_utility, worksheet.READABLE)
 
     def _command_save_state(self) -> None:
         self._ask_file(
@@ -3803,7 +3803,7 @@ class RederiveApp(App[None]):
         self,
         label: str,
         command: Callable[[str], None],
-        suffix: str = worksheet.SUFFIX,
+        suffix: str | tuple[str, ...] = worksheet.SUFFIX,
         offered: str | None = None,
     ) -> None:
         """Show the prompt band for a command that takes a file name.
@@ -3811,7 +3811,8 @@ class RederiveApp(App[None]):
         As in Derive, the session's last file is offered, so saving again is one
         keystroke. The State commands offer the last state file instead.
 
-        The line completes files ending in `suffix`, and directories.
+        The line completes files ending in `suffix`, or in any of several, and
+        directories.
         """
         self.file_command = command
         self.file_suffix = suffix

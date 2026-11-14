@@ -20,7 +20,7 @@ from rederive.syntax.state import CaseMode, InputMode, ParseState
 from rederive.syntax.tokens import Token, TokenKind
 
 _SPACE = " \t"
-_ASSIGN_OPS = (":==", ":=")
+_ASSIGN_OPS = (":==", ":=", "≔")
 _LETTER_CATEGORIES = frozenset(("Lu", "Ll", "Lt", "Lm", "Lo"))
 _CONTINUATION_CATEGORIES = _LETTER_CATEGORIES | frozenset(("Mn", "Mc", "Nd"))
 _MARK_CATEGORIES = frozenset(("Mn", "Mc"))
