@@ -2050,13 +2050,16 @@ def _domain_word(argument: sp.Basic) -> str | None:
 
 
 def _solved_for(argument: sp.Basic) -> tuple[str, ...]:
-    """The variables a `SOLVE` head names: one, or a vector of them."""
+    """The variables a `SOLVE` head names: one, or a vector of them, in order.
+
+    A vector may hold vectors of variables, as when a utility file passes its vector of
+    unknowns `a` as `[a]`; those are read in order too.
+    """
     if isinstance(argument, sp.Symbol):
         return (argument.name,)
     if not isinstance(argument, Vector):
         return ()
-    elements = list(argument.args)
-    return tuple(e.name for e in elements if isinstance(e, sp.Symbol))
+    return tuple(name for element in argument.args for name in _solved_for(element))
 
 
 # -- evaluating what is only a number ----------------------------------------
