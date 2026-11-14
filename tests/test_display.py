@@ -541,6 +541,40 @@ CALCULUS = [
         x→0+   x
         """,
     ),
+    # A limit point and the bounds of a sum, product or integral are drawn like
+    # scripts, so a fraction in them is written on one row, as the original does.
+    (
+        "LIM(p,v,u+c/2)",
+        """
+           lim    p
+        v→u + c/2
+        """,
+    ),
+    (
+        "SUM(k,k,1/2,n/2)",
+        """
+         n/2
+          Σ   k
+        k=1/2
+        """,
+    ),
+    (
+        "PRODUCT(k,k,1,n/2)",
+        """
+        n/2
+         Π  k
+        k=1
+        """,
+    ),
+    (
+        "INT(x,x,0,a/2)",
+        """
+         a/2
+        ╭
+        ╯    x dx
+         0
+        """,
+    ),
 ]
 
 CORPUS = FRACTIONS + SCRIPTS + FENCES + VECTORS + CALCULUS

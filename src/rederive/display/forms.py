@@ -199,7 +199,8 @@ def integral(engine, node, arguments, level, budget) -> Box:
     """`⌠ u dx`, with the bounds stacked against the sign when there are any.
 
     The sign is as tall as the integrand but at least two rows, since a lone `⌠` looks
-    like a broken glyph.
+    like a broken glyph. The bounds are drawn like scripts, so a fraction in them stays
+    on one row.
     """
     # The ` dx` terminates the integrand, so for fencing purposes nothing follows it.
     integrand = body(engine, arguments[0], level, budget, MUL)
@@ -209,8 +210,8 @@ def integral(engine, node, arguments, level, budget) -> Box:
     head = rail(glyphs.INTEGRAL, above, below, None)
     operands = (integrand, variable)
     if len(arguments) == 4:
-        lower = engine.box(arguments[2], level, budget)
-        upper = engine.box(arguments[3], level, budget)
+        lower = engine.box(arguments[2], level + 1, budget)
+        upper = engine.box(arguments[3], level + 1, budget)
         operands += (lower, upper)
         head = Box(
             1 + max(lower.width, upper.width),
@@ -242,18 +243,19 @@ def _big_operator(engine, node, arguments, level, budget, glyph: str) -> Box:
 
     The two-argument form (the antidifference or antiquotient, which `Calculus Sum`
     builds when both limits are blank) has no bounds, so only the index goes under the
-    sign and nothing goes above.
+    sign and nothing goes above. The index and bounds are drawn like scripts, so a
+    fraction in them stays on one row.
     """
     inner = body(engine, arguments[0], level, budget, MUL)
-    index = engine.box(arguments[1], level, budget)
+    index = engine.box(arguments[1], level + 1, budget)
     if len(arguments) == 2:
         lower, upper = index, None
         operands = (inner, index)
     else:
-        start = engine.box(arguments[2], level, budget)
+        start = engine.box(arguments[2], level + 1, budget)
         # The index and its start value print without spaces, as one label.
         lower = row([index, text("="), start])
-        upper = engine.box(arguments[3], level, budget)
+        upper = engine.box(arguments[3], level + 1, budget)
         operands = (inner, index, start, upper)
     sign = text(glyph)
     width = max(sign.width, lower.width, 0 if upper is None else upper.width)
@@ -277,14 +279,17 @@ def _big_operator(engine, node, arguments, level, budget, glyph: str) -> Box:
 def limit(engine, node, arguments, level, budget) -> Box:
     """`lim` on the baseline with `x→a` centered below it.
 
+    `x→a` is drawn like a script, as the original draws it: a fraction in the point
+    stays on one row rather than pushing the arrow down under its numerator.
+
     An optional fourth argument gives the direction, drawn as a sign rather than a
     number: `x→2-` from the left, `x→2+` from the right, and nothing for the two-sided
     limit (written `0`, called Both in the menu). The direction isn't a selectable
     operand, since there's nothing on screen to select.
     """
     inner = body(engine, arguments[0], level, budget, MUL)
-    variable = engine.box(arguments[1], level, budget)
-    target = engine.box(arguments[2], level, budget)
+    variable = engine.box(arguments[1], level + 1, budget)
+    target = engine.box(arguments[2], level + 1, budget)
     side = "" if len(arguments) == 3 else side_of(arguments[3])
     approach = row([variable, text(glyphs.ARROW), target, text(side)])
     sign = text(glyphs.LIMIT)
