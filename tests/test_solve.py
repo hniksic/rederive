@@ -835,6 +835,16 @@ def test_a_degenerate_solve_head_mints_an_arbitrary_value():
     assert simplify(parse("SOLVE(x = x, x)"), EXACT).text == "[x = @1]"
 
 
+def test_each_solve_in_one_simplification_mints_its_own_values():
+    """A utility file makes fresh unknowns this way, so they must not coincide."""
+    assert simplify(parse("VECTOR(SOLVE(w = w, w), i, 1, 3)"), EXACT).text == (
+        "[[w = @1], [w = @2], [w = @3]]"
+    )
+    assert simplify(parse("[SOLVE(w = w, w), SOLVE(v = v, v)]"), EXACT).text == (
+        "[[w = @1], [v = @2]]"
+    )
+
+
 def test_the_four_argument_form_is_numeric_in_every_mode():
     """The original's help says "if in approximate mode", but the shipped files use it
     as if it always applied, and that gives the call one meaning. In Exact mode the

@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import cmath
 import math
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import sympy as sp
 from sympy.core.relational import Relational
@@ -66,6 +68,29 @@ class _Constants:
         return constant
 
 
+#: The `@n` counter of the command being computed, or None outside `minting`.
+_MINTING: ContextVar[_Constants | None] = ContextVar("minting", default=None)
+
+
+@contextmanager
+def minting(context: Context) -> Iterator[None]:
+    """Run a command whose solves share one `@n` counter, starting at the context's.
+
+    Every solve during the command starts past the values the earlier ones handed out,
+    so `VECTOR(SOLVE(w = w, w), i, 1, 3)` gives `@1`, `@2` and `@3` rather than one
+    constant three times: a utility file makes fresh unknowns this way. A command run
+    inside another, as Simplify runs inside soLve, shares the outer one's counter.
+    """
+    if _MINTING.get() is not None:
+        yield
+        return
+    token = _MINTING.set(_Constants(context.arbitrary_index))
+    try:
+        yield
+    finally:
+        _MINTING.reset(token)
+
+
 def solutions(
     expression: sp.Basic,
     context: Context | None = None,
@@ -87,7 +112,12 @@ def solutions(
     equation is then left unsolved.
     """
     context = context or Context()
-    constants = _Constants(context.arbitrary_index)
+    minted = _MINTING.get()
+    constants = _Constants(
+        context.arbitrary_index
+        if minted is None
+        else max(minted.next, context.arbitrary_index)
+    )
     if not variables and not _named_in(expression):
         # An equation whose variable cancelled out, like `x/x = 1`, is still in that
         # variable via its divisors, and is solved by any value of it.
@@ -105,6 +135,8 @@ def solutions(
         )
         if any(_unnamed(answer) for answer in found):
             return _unsolvable(expression, context)
+        if minted is not None:
+            minted.next = constants.next
         return found
     except Exception:
         # The engine never raises on parser output, and "can't solve this" is an

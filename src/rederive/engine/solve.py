@@ -29,7 +29,7 @@ from rederive.engine.printer import shadowing_built_ins
 from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.evaluate import divisors
 from rederive.engine.pipeline import simplified
-from rederive.engine.solving import solutions
+from rederive.engine.solving import minting, solutions
 from rederive.engine.to_sympy import to_sympy
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
@@ -73,20 +73,19 @@ def solved(
     Factor.
     """
     context = context or Context()
-    exact = context.with_precision(Precision.EXACT)
-    expression = simplified(node, exact, decide=False)
-    divided = []
-    for divisor in divisors(node):
-        try:
-            divided.append(simplified(divisor, exact, decide=False))
-        except Exception:
-            continue
-    interval = (
-        None
-        if bounds is None
-        else (to_sympy(bounds[0], exact), to_sympy(bounds[1], exact))
-    )
-    return tuple(
-        approximated(answer, context)
-        for answer in solutions(expression, context, variables, interval, divided)
-    )
+    with minting(context):
+        exact = context.with_precision(Precision.EXACT)
+        expression = simplified(node, exact, decide=False)
+        divided = []
+        for divisor in divisors(node):
+            try:
+                divided.append(simplified(divisor, exact, decide=False))
+            except Exception:
+                continue
+        interval = (
+            None
+            if bounds is None
+            else (to_sympy(bounds[0], exact), to_sympy(bounds[1], exact))
+        )
+        answers = solutions(expression, context, variables, interval, divided)
+    return tuple(approximated(answer, context) for answer in answers)

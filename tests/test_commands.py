@@ -627,6 +627,15 @@ async def test_an_authored_arbitrary_value_moves_the_counter_past_itself(session
     assert (await session.solve("#3"))[0].text == "x = @2"
 
 
+async def test_the_counter_moves_past_every_value_one_simplification_mints(session):
+    session.author("SOLVE(z = z, z)")
+    assert (await session.simplify("#1")).text == "[z = @1]"
+    assert (await session.simplify("VECTOR(SOLVE(w = w, w), i, 1, 2)")).text == (
+        "[[w = @2], [w = @3]]"
+    )
+    assert (await session.simplify("SOLVE(v = v, v)")).text == "[v = @4]"
+
+
 async def test_the_bounds_reach_the_command(session):
     session.author("Precision := Approximate")
     session.author("x^2 - 5 x + 6 = 0")

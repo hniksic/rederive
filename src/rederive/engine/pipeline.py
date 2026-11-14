@@ -74,7 +74,7 @@ from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, shadowing_built_ins
 from rederive.engine.rewriting import Rewrite, attempt, forced, pays
 from rederive.engine.signs import folded_signs, polar_logarithms
-from rederive.engine.solving import oriented, solutions
+from rederive.engine.solving import minting, oriented, solutions
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
     Antidifference,
@@ -136,12 +136,13 @@ def simplify(
     if whole is not None:
         value, digits = whole
         return approx(value, context, digits, state)
-    return from_sympy(
-        simplified(node, context),
-        context,
-        state,
-        authored_conditionals(node, context),
-    )
+    with minting(context):
+        return from_sympy(
+            simplified(node, context),
+            context,
+            state,
+            authored_conditionals(node, context),
+        )
 
 
 def approx(
