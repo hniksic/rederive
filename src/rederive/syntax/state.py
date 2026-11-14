@@ -307,6 +307,21 @@ class ParseState:
             self.functions[binding.name] = binding.function
         self.revision += 1
 
+    def tables(self) -> tuple[dict[str, FunctionInfo], dict[str, VariableInfo]]:
+        """Copies of the function and variable tables, for `restore` to put back."""
+        return dict(self.functions), dict(self.variables)
+
+    def restore(
+        self, tables: tuple[dict[str, FunctionInfo], dict[str, VariableInfo]]
+    ) -> None:
+        """Put back the tables `tables` copied, undoing every declaration since."""
+        functions, variables = tables
+        self.functions.clear()
+        self.functions.update(functions)
+        self.variables.clear()
+        self.variables.update(variables)
+        self.revision += 1
+
     def clear(self, what: ClearWhat) -> None:
         """Transfer Clear."""
         if what in (ClearWhat.VARIABLES, ClearWhat.ALL):

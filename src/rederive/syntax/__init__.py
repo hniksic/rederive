@@ -121,6 +121,17 @@ def parse_source(source: Source, state: ParseState) -> Iterator[ParseResult]:
 
 
 def _parse_one(source: Source, state: ParseState, start: int, limit: int) -> ParseResult:
+    """Parse one expression, leaving `state` as it was if the expression doesn't parse.
+
+    A function definition declares its name before its body is parsed, so the body can
+    call it. If the line then fails, the name must not stay declared: a later line
+    calling it would parse as a call to a function that was never defined.
+    """
+    tables = state.tables()
     parser = Parser(Lexer(source, state, start, limit))
-    node = parser.parse()
+    try:
+        node = parser.parse()
+    except DeriveSyntaxError:
+        state.restore(tables)
+        raise
     return ParseResult(node, tuple(parser.declarations), source)

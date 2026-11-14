@@ -302,6 +302,27 @@ def test_a_parameter_hands_back_the_variable_it_shadowed():
     assert sexpr("terab", state) == "(juxt tera b)"
 
 
+def test_a_definition_that_fails_to_parse_leaves_its_name_undeclared():
+    # The name is declared while the body is parsed, so the body can recurse, but a
+    # body that doesn't parse must not leave it behind: a later call would then name a
+    # function that was never defined.
+    state = ParseState()
+    with pytest.raises(DeriveSyntaxError):
+        parse("BIS_AUX(u,x,a,b):=SUBST(u,x,a)", state)
+    assert "BIS_AUX" not in state.functions
+    with pytest.raises(DeriveSyntaxError):
+        parse("BISECT(u,x):=BIS_AUX(u,x,1,2)", state)
+
+
+def test_a_definition_that_fails_to_parse_keeps_the_earlier_one():
+    state = ParseState()
+    parse("f(a,b):=a+b", state)
+    state.declare(FunctionDeclaration("F", ("a", "b"), has_body=True))
+    with pytest.raises(DeriveSyntaxError):
+        parse("f(a):=SUBST(a,x,1)", state)
+    assert sexpr("f(1,2)", state) == "(call F 1 2)"
+
+
 def test_clearing_the_table_makes_a_name_split_again():
     state = ParseState()
     parse("tera:=10^12", state)
