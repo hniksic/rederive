@@ -1010,6 +1010,10 @@ class Converter:
                 return sp.factorial(operand)
             case "%":
                 return operand / 100
+        return self._transpose(operand)
+
+    def _transpose(self, operand: sp.Basic) -> sp.Basic:
+        """``operand` ``, given its value; see `_postop`."""
         if isinstance(operand, Vector):
             flipped = transposed(operand)
             return Transposed(operand) if flipped is None else flipped

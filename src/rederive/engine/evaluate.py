@@ -423,6 +423,18 @@ class _Evaluator(Converter):
                 return Converter(self.context).convert(node)
         return super().convert(node)
 
+    def _transpose(self, operand: sp.Basic) -> sp.Basic:
+        """``operand` ``, seeing through the `Commanded` wrapper of a vector.
+
+        A `SOLVE` answers with a vector, still wrapped when it is an element of the
+        operand, so `[SOLVE(w = 1, w), SOLVE(w = 2, w)]`` would otherwise look like a
+        flat vector, which is its own transpose, rather than the column it is.
+        """
+        operand = _vector_value(operand)
+        if isinstance(operand, Vector):
+            operand = mapped(operand, _vector_value)
+        return super()._transpose(operand)
+
     # -- names --------------------------------------------------------------
 
     def _name(self, node: Node) -> sp.Basic:
@@ -1705,6 +1717,13 @@ def _away(jump: sp.Basic, integer: bool) -> bool:
             return False
         decided = other.is_integer if integer else other.is_zero
     return decided is False
+
+
+def _vector_value(value: sp.Basic) -> sp.Basic:
+    """`value`, unwrapped from `Commanded` if what it wraps is a vector."""
+    if isinstance(value, Commanded) and isinstance(value.args[0], Vector):
+        return _value_of(value)
+    return value
 
 
 def _value_of(value: sp.Basic) -> sp.Basic:

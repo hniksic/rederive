@@ -811,6 +811,11 @@ HEADS = [
     # EXACT_EIGENVECTOR.
     ("SOLVE([a - 1, b - 2], [a, b])", "[[a = 1, b = 2]]"),
     ("SOLVE([q - p, p - q], [p, q])", "[[p = @1, q = @1]]"),
+    # Each answer is a vector, so a vector of them is a column and transposes to a row.
+    ("[SOLVE(w = 1, w), SOLVE(w = 2, w)]`", "[[w = 1, w = 2]]"),
+    ("VECTOR(SOLVE(w = i, w), i, 1, 3)`", "[[w = 1, w = 2, w = 3]]"),
+    # A single answer is a flat vector, its own transpose.
+    ("SOLVE(w = 1, w)`", "[w = 1]"),
 ]
 
 
