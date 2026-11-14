@@ -1,10 +1,13 @@
 """The help system: the document, and the two-level reader over it."""
 
+import re
+
 import pytest
 from screen import band, highlighted, highlighted_rows, message, prompt, work_area
 
 from rederive.model import help as helps
 from rederive.model.settings import Settings
+from rederive.syntax import names
 from rederive.ui.app import RederiveApp
 
 
@@ -82,6 +85,14 @@ def test_the_state_subject_lays_out_in_one_column_where_two_would_not_fit():
     assert any(line.count(":") == 2 for page in wide for line in page)
     assert all(line.count(":") <= 1 for page in narrow for line in page)
     assert len(narrow) > len(wide)
+
+
+def test_the_functions_subject_documents_every_built_in_name():
+    blocks = helps.BY_WORD["Functions"].blocks
+    text = "\n".join(line for block in blocks for line in block)
+    documented = set(re.findall(r"#?\w+", text))
+    built_in = names.BUILTIN_FUNCTIONS | names.CONSTANTS | names.KEYWORD_OPERATORS
+    assert sorted(built_in - documented) == []
 
 
 # -- the reader ------------------------------------------------------------

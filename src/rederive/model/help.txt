@@ -190,6 +190,8 @@ Constants:
   deg                one degree, so 90 deg is a right angle
   euler_gamma        Euler's constant
   true, false        the two truth values
+  unit_circle        an unspecified point on the unit circle of the complex
+                     plane
   ?                  an unknown value, written in answers that have none
 
 Operators:
@@ -275,6 +277,28 @@ Probability and statistical functions:
   VAR(...)           the variance
   STDEV(...)         the standard deviation
   NORMAL(z), NORMAL(z, m, s)  the cumulative normal distribution
+  FIT(v, A)          the least squares fit to the rows of the data matrix A;
+                     v lists the data variables and then the expression to
+                     fit, whose other variables are solved for
+  FIT(A)             the same, with v as the first row of A
+  RANDOM(n)          for n above 1, a random integer from 0 up to n - 1
+  RANDOM(1)          a random number from 0 up to, but not including, 1
+  RANDOM(-n)         start the random sequence again from the seed n
+  RANDOM(0)          start it from the clock
+
+Financial functions:
+  PVAL(i, n, p, f, t)  the present value
+  FVAL(i, n, p, v, t)  the future value
+  PMT(i, n, v, f, t)   the payment made each period
+  NPER(i, p, v, f, t)  the number of periods
+  RATE(n, p, v, f, t)  the interest rate, sought between 0 and 1
+  RATE(n, p, v, f, t, a, b)  the interest rate, sought between a and b
+
+All five describe one contract: n periods at the rate i per period, a payment
+p each period, a present value v and a future value f. Money received and
+money paid out have opposite signs. Payments fall at the end of each period
+when t is 0 and at the start when it is 1. Arguments left off the end are
+zero. RATE searches numerically, so it wants numbers for all its arguments.
 
 Error and special functions:
   ERF(z), ERFC(z)    the error function and its complement
@@ -304,6 +328,18 @@ Expression decomposition functions:
   VARIABLES(u)       the free variables of u, the main one first
   NUMBER(u)          whether u simplifies to a number
   APPROX(u), APPROX(u, n)  u as a number, at the set precision or at n digits
+
+Commands written as functions:
+  FACTOR(u), FACTOR(u, x, ...)   u factored, over all its variables or over
+                                 the ones named; the Factor command
+  FACTOR(u, amount, x, ...)      the same, as far as the amount says: Trivial,
+                                 Squarefree, Rational, raDical or Complex
+  EXPAND(u), EXPAND(u, x, ...)   u expanded; the Expand command
+  EXPAND(u, amount, x, ...)      the same, with any amount but Complex
+
+Written this way, a command can be part of a larger expression or of a
+function's definition. SOLVE and APPROX are the soLve and approX commands in
+the same form.
 
 Calculus functions:
   DIF(u, x), DIF(u, x, n)      the derivative, to the first or the nth order
@@ -336,6 +372,9 @@ Vector manipulation functions:
   INSERT_ELEMENT(u, v, n)    v with u written in before its nth element
   DELETE_ELEMENT(v, n)       v with its nth element gone
   REPLACE_ELEMENT(u, v, n)   v with u where its nth element was
+  SORT(v)                    the elements in ascending order: numbers, then
+                             variables by name; vectors by their first
+                             elements
 
 A matrix is a vector of its rows, so every one of these takes a matrix and
 works on rows.
@@ -358,6 +397,18 @@ Vector calculus:
   VECTOR_POTENTIAL(v), VECTOR_POTENTIAL(v, p)  a vector whose curl is v
 Each of the six takes an optional vector of coordinates, so the same function
 serves cartesian, cylindrical and spherical coordinates.
+
+Functions that turn up in answers. Each can be typed back in, but they are
+rarely written by hand:
+  INTERVAL(a, b)     a value known only to lie between a and b, such as the
+                     limit of SIN(1/x) at zero
+  ROOT_OF(p, t, n)   root number n of the polynomial p in t, counted from
+                     zero with the real roots first; for roots that have no
+                     formula
+  ROOT_SUM(p, t, u)  the sum of u over every root t of the polynomial p
+  SUBS(u, [x, ...], [a, ...])  u with a in place of x, where the replacement
+                               has to wait: the derivative of an undefined
+                               function at a point
 
 %topic Algebra | Algebra window commands | Algebra Window Command Menu
 
