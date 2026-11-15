@@ -672,6 +672,15 @@ def test_a_system_nonlinear_in_its_variables_is_solved_too():
     ]
 
 
+def test_a_nonlinear_system_gives_its_free_variables_arbitrary_values():
+    """As a singular linear system does, each solution with its own."""
+    assert sol("[x*y = 1]", ("x", "y")) == ["[x = 1/@1, y = @1]"]
+    assert sol("[x^2 + y^2 = t^2]", ("x", "y", "t")) == [
+        "[x = @1, y = @2, t = -SQRT(@1^2 + @2^2)]",
+        "[x = @3, y = @4, t = SQRT(@3^2 + @4^2)]",
+    ]
+
+
 def test_a_nonlinear_system_with_a_cubic_resolvent_has_all_four_solutions():
     """Eliminating `y` leaves a quartic with the root 2 and an irreducible cubic.
 

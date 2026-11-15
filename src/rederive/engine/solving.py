@@ -1496,6 +1496,7 @@ def _system(
             for mapping in solved
             if not any(_imaginary(value) for value in mapping.values())
         ]
+    solved = [_with_arbitrary_values(mapping, chosen, constants) for mapping in solved]
     answers = [
         Vector(
             *(
@@ -1517,6 +1518,27 @@ def _system(
             )
         )
     return tuple(answers)
+
+
+def _with_arbitrary_values(
+    mapping: dict[sp.Symbol, sp.Basic],
+    chosen: tuple[sp.Symbol, ...],
+    constants: _Constants,
+) -> dict[sp.Symbol, sp.Basic]:
+    """A solution with each chosen variable it leaves free given a fresh `@n` constant,
+    in its own entry and in the values written in it: `[x^2 + y^2 = t^2]` solved for
+    `x`, `y` and `t` has `x = @1, y = @2, t = SQRT(@1^2 + @2^2)`.
+    """
+    free = [variable for variable in chosen if variable not in mapping]
+    if not free:
+        return mapping
+    arbitrary = {variable: constants.fresh() for variable in free}
+    return {
+        variable: arbitrary[variable]
+        if variable in arbitrary
+        else mapping[variable].xreplace(arbitrary)
+        for variable in chosen
+    }
 
 
 def _inequalities(
