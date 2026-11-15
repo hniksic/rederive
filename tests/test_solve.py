@@ -151,7 +151,18 @@ ABSOLUTE = [
     ("ABS(x - 1) + ABS(x + 1) = 2", ["-1 <= x <= 1"]),
     # Each periodic family is sampled once, as without the `ABS`.
     ("ABS(SIN(x)) = 1/2", ["x = -5*pi/6", "x = -pi/6", "x = pi/6", "x = 5*pi/6"]),
+    # Three `ABS` at once, as a `MAX` on each side gives.
+    ("MAX(2 - x^2, x) = MAX(-x, x^3/9)", ["x = -1", "x = 3"]),
 ]
+
+
+def test_an_equation_in_abs_keeps_a_cubic_root_of_one_piece():
+    """`MAX(2 - x^2, x) = x^3/9` is `x^3 + 9*x^2 - 18 = 0` for `-2 < x < 1`, where one
+    of the cubic's roots lies; the other two pieces give -3 and 3."""
+    answers = sol("MAX(2 - x^2, x) = x^3/9")
+    assert len(answers) == 3
+    assert answers[0] == "x = -3" and answers[2] == "x = 3"
+    assert "ACOS(-2/3)" in answers[1]
 
 
 @pytest.mark.parametrize(("text", "expected"), ABSOLUTE, ids=str)
@@ -187,6 +198,34 @@ EXPONENTIALS = [
 def test_an_equation_in_powers_of_a_number_is_solved_through_logarithms(
     text, expected
 ):
+    assert sol(text) == expected
+
+
+def test_powers_of_parameters_are_solved_through_logarithms_too():
+    assert sol("a*b^x = c*d^x", ("x",)) == ["x = (LN(c) - LN(a))/(LN(b) - LN(d))"]
+
+
+def test_a_polynomial_in_a_function_of_the_variable_is_solved_through_its_roots():
+    """`SIN(x)^2 + 1` is zero where `SIN(x)` is `#i` or `-#i`; the factors of the
+    product are solved each on its own."""
+    answers = sol("(x + 1)*(SIN(x)^2 + 1)^2*COS(3*x)^3 = 0")
+    assert answers[:3] == ["x = -1", "x = -pi/6", "x = pi/6"]
+    assert "x = #i*LN(SQRT(2) + 1)" in answers
+    assert len(answers) == 7
+
+
+EQUAL_ARCS = [
+    ("ASIN(x) = ATAN(x)", ["x = 0"]),
+    ("ACOS(x) = ATAN(x)", ["x = SQRT(SQRT(5)/2 - 1/2)"]),
+    ("ACOS(x) = ASIN(x)", ["x = SQRT(2)/2"]),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), EQUAL_ARCS, ids=str)
+def test_an_equation_between_two_arcs_is_solved_through_their_tangents(
+    text, expected
+):
+    """The negative root of the tangents' equation is no solution of the arcs'."""
     assert sol(text) == expected
 
 
@@ -611,6 +650,33 @@ def test_a_nonlinear_system_with_a_cubic_resolvent_has_all_four_solutions():
     answers = sol("[x^2 + y = 7, x + y^2 = 11]", ("x", "y"))
     assert len(answers) == 4
     assert answers[0] == "[x = 2, y = 3]"
+
+
+def test_a_polynomial_system_with_roots_of_a_quintic_is_left_unsolved():
+    """Besides `[x = 1, y = 1, z = 1]` and `[x = -1, y = 1, z = 1]`, `z` can be a root of
+    a quintic with no radicals, so listing the two would leave solutions out."""
+    eqn = "[x^2*y + 3*y*z = 4, 2*y^2 - 3*x^2*z = -1, 2*y*z^2 - z^2 = 1]"
+    (answer,) = sol(eqn, ("x", "y", "z"))
+    assert answer.count("= 0") == 3
+
+
+def test_a_complex_equation_in_real_variables_is_split_into_its_parts():
+    state = ParseState()
+    domains = dict(
+        domain_of_node(parse(f"{name} :epsilon Real", state)) for name in "xy"
+    )
+    context = Context(domains=domains)
+    assert sol("3*x - (2 + #i)*y = -3*#i", ("x", "y"), context=context) == [
+        "[x = 2, y = 3]"
+    ]
+
+
+def test_the_conjugate_of_a_complex_variable_makes_two_real_unknowns():
+    state = ParseState()
+    name, domain = domain_of_node(parse("z :epsilon Complex", state))
+    context = Context(domains={name: domain})
+    eqn = "(1 + #i)*z + (2 - #i)*CONJ(z) = -3*#i"
+    assert sol(eqn, ("z",), context=context) == ["z = 2 + 3*#i"]
 
 
 def test_a_system_nobody_can_solve_falls_back_to_its_own_residuals():

@@ -32,7 +32,7 @@ import sympy as sp
 from sympy.core.relational import Relational
 
 from rederive.engine.approximation import GUARD, simplest_rational
-from rederive.engine.context import Branch, Context, Precision
+from rederive.engine.context import Branch, Context, DomainKind, Precision
 from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, spelling
@@ -211,9 +211,100 @@ def _solutions(
     equations = equations_of(expression)
     if equations is None and isinstance(expression, sp.And):
         equations = equations_of(Vector(*expression.args))
+    if bounds is None:
+        parted = _in_parts(expression, equations, context, variables, constants)
+        if parted is not None:
+            return parted
     if equations is not None:
         return _system(equations, context, variables, constants, real)
     return _scalar(expression, context, variables, bounds, divisors, constants, real)
+
+
+def _in_parts(
+    expression: sp.Basic,
+    equations: tuple[Relational, ...] | None,
+    context: Context,
+    variables: tuple[str, ...],
+    constants: _Constants,
+) -> tuple[sp.Basic, ...] | None:
+    """Complex equations in variables declared real, solved as the system of their real
+    and imaginary parts, or None if that doesn't apply.
+
+    With `x` and `y` declared Real, `3*x - (2 + #i)*y = -3*#i` is the two equations
+    `3*x - 2*y = 0` and `-y = -3`. A variable declared Complex that the equation takes
+    the conjugate, real or imaginary part of is two real unknowns: `(1 + #i)*z + (2 -
+    #i)*CONJ(z) = -3*#i` is solved by `z = 2 + 3*#i`. This applies only where each
+    equation splits into two that aren't trivial, so `ABS(z - 1) = 2`, a circle, is
+    not split.
+    """
+    if equations is None:
+        if not isinstance(expression, sp.Equality):
+            return None
+        equations = (expression,)
+    if not all(isinstance(equation, sp.Equality) for equation in equations):
+        return None
+    joined = Vector(*equations)
+    if not variables:
+        return None
+    symbols = _symbols_of(joined)
+    chosen = [symbols.get(name) for name in variables]
+    if any(symbol is None for symbol in chosen):
+        return None
+    residuals = [_residual(equation) for equation in equations]
+    declared = [context.domains.get(symbol.name) for symbol in chosen]
+    kinds = {None if domain is None else domain.kind for domain in declared}
+    replaced: dict[sp.Symbol, sp.Basic] = {}
+    unknowns: list[sp.Symbol] = []
+    if kinds == {DomainKind.REAL}:
+        if len(chosen) <= len(equations) or not any(r.has(sp.I) for r in residuals):
+            return None
+        unknowns = list(chosen)
+    elif kinds == {DomainKind.COMPLEX}:
+        if len(chosen) != len(equations):
+            return None
+        if not any(r.has(sp.conjugate, sp.re, sp.im) for r in residuals):
+            return None
+        for symbol in chosen:
+            real_part = sp.Dummy(f"{symbol.name}_re", real=True)
+            imaginary_part = sp.Dummy(f"{symbol.name}_im", real=True)
+            replaced[symbol] = real_part + sp.I * imaginary_part
+            unknowns += [real_part, imaginary_part]
+    else:
+        return None
+    parts = []
+    try:
+        for residual in residuals:
+            written = sp.expand_complex(residual.xreplace(replaced))
+            for part in written.as_real_imag():
+                if part.has(sp.re, sp.im, sp.conjugate):
+                    return None
+                parts.append(sp.expand(part))
+    except Exception:
+        return None
+    if any(part.is_zero for part in parts):
+        return None
+    solved = _linear(parts, tuple(unknowns), constants)
+    if solved is None:
+        solved = _nonlinear(parts, tuple(unknowns))
+    if not solved:
+        return None
+    answers = []
+    for mapping in solved:
+        values = [
+            replaced[symbol].xreplace(mapping)
+            if replaced
+            else mapping.get(symbol, symbol)
+            for symbol in chosen
+        ]
+        if any(value.has(*unknowns) for value in values):
+            return None
+        relations = [
+            _equated(symbol, sp.expand(value), context)
+            for symbol, value in zip(chosen, values)
+        ]
+        single = len(relations) == 1 and equations == (expression,)
+        answers.append(relations[0] if single else Vector(*relations))
+    return tuple(answers)
 
 
 def _scalar(
@@ -346,11 +437,13 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     if found.has(sp.ConditionSet):
         found = _candidates_checked(found, residual, variable)
     if found.has(sp.ConditionSet):
+        found = _through_kernels(found, variable)
+    if found.has(sp.ConditionSet):
         rewritten = _exponential(residual, variable)
         if rewritten is not None:
             found = rewritten
     if isinstance(found, sp.ConditionSet):
-        return _inverted(residual, variable)
+        return _between_arcs(residual, variable) or _inverted(residual, variable)
     return found
 
 
@@ -382,6 +475,141 @@ def _candidates_checked(
     if isinstance(found, sp.Union):
         return sp.Union(*(decided(part) for part in found.args))
     return decided(found)
+
+
+def _through_kernels(found: sp.Set, variable: sp.Symbol) -> sp.Set:
+    """`found` with each condition set over the complexes solved through a kernel, where
+    its equation is a polynomial in one function of the variable, as `(SIN(x)^2 + 1)^2`
+    is in `SIN(x)`: the polynomial's roots `r` are found, then `SIN(x) = r` is solved
+    for each. A condition set not solved that way is left as it is.
+    """
+
+    def solved(part: sp.Set) -> sp.Set:
+        if not isinstance(part, sp.ConditionSet) or part.base_set != sp.S.Complexes:
+            return part
+        condition = part.condition
+        if not isinstance(condition, sp.Equality):
+            return part
+        residual = (condition.lhs - condition.rhs).xreplace({part.sym: variable})
+        return _kernel_solved(residual, variable) or part
+
+    if isinstance(found, sp.Union):
+        return sp.Union(*(solved(part) for part in found.args))
+    return solved(found)
+
+
+def _kernel_solved(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """The solutions of `residual = 0` as a polynomial in a function of `variable`, as in
+    `_through_kernels`, or None."""
+    kernels = {part for part in residual.atoms(sp.Function) if part.has(variable)}
+    unknown = sp.Dummy("u")
+    for kernel in sorted(kernels, key=sp.count_ops):
+        written = residual.xreplace({kernel: unknown})
+        if written.has(variable):
+            continue
+        polynomial = _polynomial(written, unknown)
+        if polynomial is None or polynomial.degree() < 1:
+            continue
+        values = _values(written, unknown)
+        if not isinstance(values, sp.FiniteSet):
+            continue
+        pieces = []
+        for value in values.args:
+            try:
+                piece = sp.solveset(kernel - value, variable, sp.S.Complexes)
+            except Exception:
+                return None
+            if piece.has(sp.ConditionSet):
+                return None
+            pieces.append(piece)
+        return sp.Union(*pieces)
+    return None
+
+
+#: The inverse trigonometric functions an equation between two of them may use, with
+#: the range of each over nonnegative and over negative real arguments.
+_ARCS = {
+    sp.asin: ((0, sp.pi / 2), (-sp.pi / 2, 0)),
+    sp.atan: ((0, sp.pi / 2), (-sp.pi / 2, 0)),
+    sp.acot: ((0, sp.pi / 2), (-sp.pi / 2, 0)),
+    sp.acos: ((0, sp.pi / 2), (sp.pi / 2, sp.pi)),
+}
+
+
+def _between_arcs(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """The real solutions of an equation between two inverse trigonometric functions of
+    the variable, like `ASIN(x) = ATAN(x)`, or None.
+
+    Taking the tangent of both sides leaves an algebraic equation, whose real roots
+    are the candidates. Equal tangents make the two sides differ by a multiple of
+    `pi`, and a candidate is a solution if that multiple is zero: the ranges of the two
+    functions, read off the signs of their arguments, are within `pi` of each other.
+    A candidate that can't be decided either way leaves the equation unsolved.
+    """
+    terms = sp.Add.make_args(residual)
+    if len(terms) != 2:
+        return None
+    sides = []
+    for term in terms:
+        coefficient, arc = term.as_coeff_Mul()
+        if coefficient not in (1, -1) or type(arc) not in _ARCS:
+            return None
+        sides.append(arc)
+    if terms[0].as_coeff_Mul()[0] == terms[1].as_coeff_Mul()[0]:
+        return None
+    left, right = sides
+    if left.args[0].has(*_ARCS) or right.args[0].has(*_ARCS):
+        return None
+    try:
+        tangents = sp.fraction(sp.together(sp.tan(left) - sp.tan(right)))[0]
+        candidates = sp.solveset(tangents, variable, sp.S.Reals)
+    except Exception:
+        return None
+    if not isinstance(candidates, sp.FiniteSet):
+        return None
+    kept = []
+    for value in candidates.args:
+        holds = _arcs_agree(left, right, variable, value)
+        if holds is None:
+            return None
+        if holds:
+            kept.append(value)
+    return sp.FiniteSet(*kept)
+
+
+def _arcs_agree(
+    left: sp.Basic, right: sp.Basic, variable: sp.Symbol, value: sp.Basic
+) -> bool | None:
+    """Whether two inverse trigonometric functions are equal at `value`, a real root of
+    the equation between their tangents, as in `_between_arcs`, or None if undecided."""
+    if _satisfies(left - right, variable, value):
+        return True
+    if _fails(left - right, variable, value):
+        return False
+    ranges = []
+    for arc in (left, right):
+        argument = sp.simplify(arc.args[0].subs(variable, value))
+        if argument.is_extended_real is not True:
+            return None
+        if type(arc) in (sp.asin, sp.acos) and (sp.Abs(argument) - 1).is_positive:
+            return None
+        sign = argument.is_nonnegative
+        if sign is None:
+            return None
+        ranges.append(_ARCS[type(arc)][0 if sign else 1])
+        tangent = sp.simplify(sp.tan(arc.func(argument)))
+        if tangent.is_finite is not True:
+            return None
+    tangents = sp.tan(left) - sp.tan(right)
+    if sp.simplify(tangents.subs(variable, value)).is_zero is not True:
+        return None
+    (low, high), (other_low, other_high) = ranges
+    # The difference lies in `[low - other_high, high - other_low]`; a multiple of `pi`
+    # in there other than zero would need a side at an end where its tangent is
+    # infinite.
+    if high - other_low <= sp.pi and other_high - low <= sp.pi:
+        return True
+    return None
 
 
 def _vanishes_at(
@@ -419,22 +647,95 @@ def _over_reals(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     try:
         found = sp.solveset(residual, variable, sp.S.Reals)
     except Exception:
+        found = None
+    if found is None or found.has(sp.ConditionSet, sp.Intersection):
+        return _sign_by_sign(residual, variable) or None
+    return found
+
+
+def _sign_by_sign(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """The real solutions of an equation in the `ABS` of rational polynomials, found
+    between consecutive real roots of the arguments, or None.
+
+    `solveset` resolves one `ABS` at a time and gives up on `MAX(2 - x^2, x) =
+    MAX(-x, x^3/9)`, which has three. Between two roots every argument has a fixed sign,
+    read at a rational point, so the equation there is free of `ABS`; a solution of it
+    counts if it is real and provably inside. The roots themselves are substituted.
+    """
+    absolutes = [part for part in residual.atoms(sp.Abs) if part.has(variable)]
+    product = sp.S.One
+    for part in absolutes:
+        polynomial = _polynomial(part.args[0], variable)
+        if polynomial is None or polynomial.domain not in (sp.ZZ, sp.QQ):
+            return None
+        product *= part.args[0]
+    try:
+        polynomial = sp.Poly(product, variable).sqf_part()
+        roots = polynomial.real_roots()
+        isolating = [interval for interval, _ in polynomial.intervals()]
+    except Exception:
         return None
-    return None if found.has(sp.ConditionSet) else found
+    if roots:
+        samples = [sp.Rational(isolating[0][0]) - 1]
+        samples += [
+            (sp.Rational(isolating[i][1]) + sp.Rational(isolating[i + 1][0])) / 2
+            for i in range(len(roots) - 1)
+        ]
+        samples.append(sp.Rational(isolating[-1][1]) + 1)
+    else:
+        samples = [sp.S.Zero]
+    ends = [sp.S.NegativeInfinity, *roots, sp.S.Infinity]
+    found: list[sp.Set] = []
+    for index, sample in enumerate(samples):
+        low, high = ends[index], ends[index + 1]
+        signs = {}
+        for part in absolutes:
+            sign = sp.sign(part.args[0].subs(variable, sample))
+            if sign == 0:
+                return None
+            signs[part] = sign * part.args[0]
+        piece = sp.expand(residual.xreplace(signs))
+        if piece.is_zero:
+            found.append(sp.Interval.open(low, high))
+            continue
+        values = _values(piece, variable)
+        if not isinstance(values, sp.FiniteSet):
+            return None
+        for value in values.args:
+            if _imaginary(value):
+                continue
+            inside = [
+                value.is_extended_real,
+                low.is_infinite or (value - low).is_positive,
+                high.is_infinite or (high - value).is_positive,
+            ]
+            if False in inside:
+                continue
+            if None in inside:
+                return None
+            found.append(sp.FiniteSet(value))
+    for root in roots:
+        vanishes = _vanishes_at(residual, variable, root)
+        if vanishes is None:
+            return None
+        if vanishes:
+            found.append(sp.FiniteSet(root))
+    return sp.Union(*found)
 
 
 def _exponential(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
-    """The solutions of `residual` with powers of positive numbers rewritten as powers of
-    `#e`, or None if that doesn't help, since `solveset` inverts `#e^x = c` but not
-    `3^x = c`.
+    """The solutions of `residual` with powers of positive numbers or of parameters
+    rewritten as powers of `#e`, or None if that doesn't help, since `solveset` inverts
+    `#e^x = c` but not `3^x = c`. A power of a parameter `b^x` is `#e^(x*LN(b))` on the
+    principal branch, which is what makes `a*b^x = c*d^x` solvable.
     """
 
     def rewritable(part: sp.Basic) -> bool:
         return (
             part.is_Pow
             and part.base is not sp.E
-            and part.base.is_number
-            and part.base.is_positive is True
+            and not part.base.has(variable)
+            and (part.base.is_positive is True or not part.base.is_number)
             and part.exp.has(variable)
         )
 
@@ -447,6 +748,7 @@ def _exponential(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
         found = sp.solveset(rewritten, variable, sp.S.Complexes)
     except Exception:
         return None
+    found = _candidates_checked(found, rewritten, variable)
     return None if found.has(sp.ConditionSet) else found
 
 
@@ -629,11 +931,30 @@ def _satisfies(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool
         left = residual.subs(variable, value)
         if sp.simplify(left).is_zero is True:
             return True
+        if left.has(sp.exp) and _exponentials_cancel(left):
+            return True
         if left.free_symbols or not left.has(sp.LambertW):
             return False
         return sp.simplify(_unwound(left)).is_zero is True
     except Exception:
         return False
+
+
+def _exponentials_cancel(left: sp.Basic) -> bool:
+    """Whether a sum of exponentials is proved zero by dividing it by its first term and
+    combining each quotient of exponentials into one, with its exponent cancelled: at
+    `x = (LN(c) - LN(a))/(LN(b) - LN(d))`, `a*#e^(x*LN(b)) - c*#e^(x*LN(d))` is `a`
+    times `1 - c/a*#e^(LN(c) - LN(a))`.
+    """
+    terms = sp.Add.make_args(sp.expand(left))
+    if len(terms) < 2:
+        return False
+    ratio = sp.powsimp(sp.expand(left / terms[0]), combine="exp")
+    ratio = ratio.replace(
+        lambda e: isinstance(e, sp.exp),
+        lambda e: sp.exp(sp.cancel(sp.together(e.args[0]))),
+    )
+    return sp.simplify(ratio).is_zero is True
 
 
 def _unwound(expression: sp.Basic) -> sp.Basic:
@@ -1150,9 +1471,39 @@ def _nonlinear(
         found = sp.solve(residuals, list(chosen), dict=True)
     except Exception:
         return None
-    if not found:
+    if not found or _roots_unwritten(residuals, chosen):
         return None
     return [dict(mapping) for mapping in found]
+
+
+def _roots_unwritten(residuals: list[sp.Basic], chosen: tuple[sp.Symbol, ...]) -> bool:
+    """Whether a polynomial system has solutions that `solve` leaves out: those whose
+    last variable is a root of a factor of the eliminating polynomial that has no
+    radicals, which `solve` drops without a word. For `[x^2*y + 3*y*z = 4, 2*y^2 -
+    3*x^2*z = -1, 2*y*z^2 - z^2 = 1]` it finds two solutions, but `z` is also a root of
+    a quintic.
+    """
+    try:
+        polynomials = [
+            sp.Poly(sp.fraction(sp.together(residual))[0], *chosen)
+            for residual in residuals
+        ]
+        basis = sp.groebner(polynomials, *chosen, order="lex")
+    except Exception:
+        return False
+    last = chosen[-1]
+    for polynomial in basis.exprs:
+        if polynomial.free_symbols & set(chosen) != {last}:
+            continue
+        try:
+            _, factors = sp.factor_list(polynomial, last)
+        except Exception:
+            return False
+        for factor, _ in factors:
+            degree = sp.degree(factor, last)
+            if degree > 0 and sum(sp.roots(factor, last).values()) < degree:
+                return True
+    return False
 
 
 # -- numbers -----------------------------------------------------------------
